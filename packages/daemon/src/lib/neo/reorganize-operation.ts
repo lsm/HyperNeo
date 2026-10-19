@@ -28,7 +28,6 @@ const Result = z.union([
   z.object({ ok: z.literal(false), reason: z.literal('main_neo_only') }),
   z.object({
     ok: z.literal(true),
-    merged: z.array(z.object({ sourceId: z.string(), targetId: z.string() })),
     cleanupPlanned: z.array(
       z.object({
         action: z.enum(['delete', 'merge']),
@@ -44,12 +43,11 @@ const Result = z.union([
 type Stay = z.infer<typeof Stayed>;
 type Outcome = z.infer<typeof Result>;
 type Project = { projectId: string; sessionId: string };
-type Merged = { sourceId: string; targetId: string };
 
 export interface NeoReorganizeRuntime {
   getBinding(sessionId: string): NeoBinding | null;
   rootSessionId(): string | null;
-  mergeProjects(): Promise<{ merged: Merged[] }>;
+  recordIdentities(): Promise<void>;
   projectFacts(): NeoProjectFacts[];
   machine(): string;
   cleanup(step: NeoProjectCleanup): Promise<void>;
@@ -83,7 +81,6 @@ export function requireNeoAskProject(
 }
 
 export type NeoReorganized = {
-  merged: Merged[];
   cleanupPlanned: NeoProjectCleanup[];
   cleanupApplied: boolean;
   cleanupFailed: { projectId: string; reason: string }[];
@@ -102,9 +99,7 @@ export function createNeoProjectsReorganizer(
     const mirrored = await runtime.mirroredAliases(
       neoCleanupFolders(runtime.projectFacts(), runtime.machine())
     );
-    const { merged } = await runtime.mergeProjects();
-    for (const merge of merged)
-      runtime.log(`neo reorganize: merged project ${merge.sourceId} into ${merge.targetId}`);
+    await runtime.recordIdentities();
     if (!mirrored) runtime.log('neo reorganize: no project cleanup, the places could not be read');
     const cleanupPlanned = mirrored ? planNeoProjectCleanupNow(mirrored) : [];
     const cleanupFailed: { projectId: string; reason: string }[] = [];
@@ -130,7 +125,6 @@ export function createNeoProjectsReorganizer(
       );
     }
     return {
-      merged,
       cleanupPlanned,
       cleanupApplied: apply === true || cleanupRan,
       cleanupFailed,
@@ -155,7 +149,7 @@ export function createNeoReorganizeOperation(runtime: NeoReorganizeRuntime) {
   return defineOperation({
     name: 'neo.projects.reorganize',
     description:
-      'Merge sibling projects whose code identity matches (the older one stays; old links and conversations of the merged one keep working). Sibling projects that share a repository but whose identity cannot be read stay separate. Nothing is shown to the human; every merge is logged. It also plans project cleanup and returns it in cleanupPlanned; it applies it only with apply: true, and the daily pass applies every step except merges on its own, and leaves merges for a run with apply: true. Repository projects are left to the merge above. A project with no repository is deleted when empty and the mirror would not create it again, merged into the repository project where most of its cards ran (else one with its title), and otherwise kept. A project only on another machine is deleted when empty and otherwise left alone. It also runs on its own about once a day, after the human has been away for three hours. Main Neo, the default session or the human only.',
+      "Record each local project's code identity and plan project cleanup, returned in cleanupPlanned. Projects never merge on their own: a merge happens only when a run with apply: true applies a planned merge step (the older project stays; old links and conversations of the merged one keep working). It applies the plan only with apply: true, and the daily pass applies every step except merges on its own. Repository projects are never cleaned up. A project with no repository is deleted when empty and the mirror would not create it again, merged into the repository project where most of its cards ran (else one with its title), and otherwise kept. A project only on another machine is deleted when empty and otherwise left alone. It also runs on its own about once a day, after the human has been away for three hours. Main Neo, the default session or the human only.",
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'mutate', roles: ['neo'] },

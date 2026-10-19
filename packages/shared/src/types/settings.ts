@@ -103,12 +103,26 @@ export interface NeoModelPreference {
   thinkingLevel: ThinkingLevel;
 }
 
+export const NEO_WORKER_PERMISSION_MODES = [
+  'bypassPermissions',
+  'auto',
+  'acceptEdits',
+  'default',
+] as const;
+export type NeoWorkerPermissionMode = (typeof NEO_WORKER_PERMISSION_MODES)[number];
+
 export interface NeoSettings {
   standingRules?: string[];
   preferences?: NeoModelPreference;
   packs?: string[];
   mutedSessions?: string[];
   autoDispatch?: boolean;
+  workerPermissionMode?: NeoWorkerPermissionMode;
+}
+
+export function neoWorkerPermissionMode(settings?: NeoSettings): NeoWorkerPermissionMode {
+  const mode = settings?.workerPermissionMode;
+  return mode && NEO_WORKER_PERMISSION_MODES.includes(mode) ? mode : 'bypassPermissions';
 }
 
 export const NEO_STANDING_RULES_MAX = 20;

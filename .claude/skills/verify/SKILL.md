@@ -94,6 +94,10 @@ adds its journey here.
    2-minute check window): the todo is `done` with evidence `#8 merged`,
    `evidence/gh.log` shows the `gh pr view`, and root's transcript holds the note
    `Todo "Fix the loader" is done: #8 merged`.
+   Settling done waits for the todos: right after seeding,
+   `rpc.ts neo.ask.settle '{"askId":"ask-verify","status":"done","outcome":"Shipped."}'`
+   replies `todos_unfinished: … "Fix the loader" (todo-verify, doing).` and the ask
+   stays `open`; the same call after the todo is `done` settles the ask `done`.
 4. **The web UI renders.** `/neo` shows the conversation with the human message
    marked Received; `/session/<root>` shows root's transcript, including the
    mocked replies and the todo note. The session view takes a few seconds to
@@ -122,7 +126,16 @@ adds its journey here.
    with only its repo's todos (`neo_todos.repo`). On `/neo`, "Your work" lists
    the two child cards, and Recent outcomes shows the request as Done with that
    outcome under Details.
-7. **A todo whose PR lands in another repo moves to that repo's card.** After
+7. **Projects never merge on their own.** After journey 1 opened root, insert two
+   `neo_concerns` rows whose `repo:` aliases in `neo_project_workspaces` name the
+   same repository, then call `rpc.ts neo.projects.reorganize '{}'`. End state:
+   the reply has no `merged` field, both projects remain, `neo_project_merges` is
+   empty, and the `repository:` identity belongs to the older project. To see what
+   the cleanup would do on a real daemon without touching it, run
+   `bun .claude/skills/verify/cleanup-dry-run.ts [db]` (read-only; defaults to
+   `~/.hyperneo/data/daemon.db`): it prints the planned deletes, and any merge it
+   lists runs only with `apply: true`.
+8. **A todo whose PR lands in another repo moves to that repo's card.** After
    journey 1 opened root, run
    `VERIFY_CARD_REPO=github.com/verify-test/app .claude/skills/verify/seed-todo.sh "$RUN"`.
    That files journey 3's todo on a `verify-test/app` card while its report names a

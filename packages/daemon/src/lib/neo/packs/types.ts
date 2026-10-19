@@ -34,11 +34,6 @@ export interface NeoPackFragment {
   instructions: string;
 }
 
-export interface NeoPackCardFacts {
-  text: string;
-  data: Record<string, unknown>;
-}
-
 export interface NeoSessionFacts {
   ref: WorkRef;
   status: WorkStatus;
@@ -79,32 +74,17 @@ export interface NeoPack extends NeoPackBrief {
   ): Record<string, string | number | null>[];
   workerRules?: string;
   prepareExecution?: NeoExecutionPreparation;
-  prerequisiteParameters?(
-    items: readonly NeoAskItem[]
-  ): Promise<
-    { ok: true; value: Record<string, string[]> } | { ok: false; reason: string; retry: boolean }
-  >;
   instructions(ask: NeoAsk | null): string | null;
   readEvidence?(work: NeoWork, changedAt?: number | null): Promise<NeoEvidenceRead | null>;
   reportEvidence?(work: NeoWork): NeoEvidence[];
-  cardFacts?(workId: string, stale: boolean): NeoPackCardFacts | null;
   askCardEvidence?(ask: NeoAsk, works: readonly NeoWork[]): NeoEvidence[];
-  readAskEvidence?(ask: NeoAsk): Promise<NeoEvidence[]>;
   readAskTicks?(
     ask: NeoAsk,
     works: readonly NeoWork[]
   ): Promise<{ id: string; evidence: string }[]>;
-  readAskWatchTicks?(ask: NeoAsk): Promise<{ id: string; evidence: string }[]>;
-  readAskEventTicks?(
-    ask: NeoAsk,
-    event: ExternalEvent
-  ): Promise<{ id: string; evidence: string }[]>;
-  askTopics?(ask: NeoAsk): string[];
   checks?: Record<string, NeoPackCheck>;
   askTickChecks?: readonly string[];
   checkEvidence?: Record<string, { independent: boolean }>;
-  workerMcpServers?: string[];
-  externalTopics?(work: NeoWork): string[];
   routeExternalEvent?(
     event: ExternalEvent,
     subscriptions: readonly NeoCardEventSubscription[]

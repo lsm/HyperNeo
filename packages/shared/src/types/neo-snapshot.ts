@@ -31,25 +31,6 @@ export function isNeoWorkClosedDone(report: string | null | undefined): boolean 
   return !!report?.startsWith(NEO_WORK_CLOSED_DONE_PREFIX);
 }
 
-export interface NeoWorkContinue {
-  workId: string;
-  count: number;
-  continuedAt: number;
-  lastMessage: string;
-  progress: string | null;
-  stalled: number;
-}
-
-export interface NeoWorkWake {
-  workId: string;
-  wakes: number;
-  note: string | null;
-  progress: string | null;
-  stalled: number;
-  wokeAt: number | null;
-  continuedWake: number | null;
-}
-
 export type NeoAskStatus = 'open' | 'waiting' | 'achieved' | 'abandoned' | 'blocked';
 export type NeoAskApprovalSpent = 'continues' | 'expired';
 

@@ -4,31 +4,13 @@ import { hostname, tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import type { NeoProject } from '@hyperneo/shared/types/neo-context';
-import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import { neoReorganizeRuntime } from '../../../../src/lib/neo/operations.ts';
-import {
-  NEO_PROJECT_SAME,
-  NEO_PROJECT_SEPARATE,
-  readNeoProjectDecision,
-} from '../../../../src/lib/neo/project-merge.ts';
 import type { NeoService } from '../../../../src/lib/neo/service.ts';
-import { NeoAskRepository } from '../../../../src/storage/repositories/neo-ask-repository.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 const identity = `git:${'a'.repeat(40)}`;
-const decisionItem = (question: string, decides: string) => ({
-  id: 'i1',
-  position: 0,
-  text: question,
-  check: null,
-  outcomeKind: 'state' as const,
-  kind: 'decision' as const,
-  question,
-  decides,
-  options: [NEO_PROJECT_SAME, NEO_PROJECT_SEPARATE],
-});
 const repository = 'repo:lsm/web';
 const project = (id: string, extra: Partial<NeoProject> = {}): NeoProject => ({
   id,
@@ -43,64 +25,14 @@ const project = (id: string, extra: Partial<NeoProject> = {}): NeoProject => ({
   ...extra,
 });
 
-describe('readNeoProjectDecision', () => {
-  const ask = (
-    state: 'pending' | 'met',
-    evidence: string | null,
-    status: NeoAsk['status'] = 'waiting'
-  ) =>
-    ({
-      status,
-      doneItems: [
-        {
-          id: 'i1',
-          text: 'q',
-          state,
-          evidence,
-          check: null,
-          metBy: null,
-          removed: false,
-          addedAt: 1,
-          decides: 'k',
-        },
-      ],
-    }) as Pick<NeoAsk, 'doneItems' | 'status'>;
-
-  test('reads only an exact button answer as a decision', () => {
-    expect(readNeoProjectDecision([], 'k')).toEqual({ ask: 1 });
-    expect(readNeoProjectDecision([ask('pending', null)], 'k')).toEqual({
-      decision: 'pending',
-    });
-    expect(
-      readNeoProjectDecision([ask('met', `The human answered: ${NEO_PROJECT_SAME}`)], 'k')
-    ).toEqual({ decision: 'same' });
-    expect(
-      readNeoProjectDecision([ask('met', `The human answered: ${NEO_PROJECT_SEPARATE}`)], 'k')
-    ).toEqual({ decision: 'separate' });
-  });
-
-  test('asks again after a dropped or unclear question, at most three times', () => {
-    const dropped = ask('pending', null, 'abandoned');
-    const unclear = ask('met', 'The human answered: maybe, ask me later');
-    expect(readNeoProjectDecision([dropped], 'k')).toEqual({ ask: 2 });
-    expect(readNeoProjectDecision([dropped, unclear], 'k')).toEqual({ ask: 3 });
-    expect(readNeoProjectDecision([dropped, unclear, dropped], 'k')).toEqual({
-      decision: 'separate',
-    });
-    expect(readNeoProjectDecision([ask('pending', null)], 'other')).toEqual({ ask: 2 });
-  });
-});
-
-describe('reorganize merge questions on a real store', () => {
+describe('reorganize identities on a real store', () => {
   let directory: string;
   let db: Database;
   let repo: NeoRepository;
-  let asks: NeoAskRepository;
   let logged: string[];
   const notified: number[] = [];
   const root = 'neo:10000000-0000-4000-8000-000000000001';
   const inbox = 'neo:10000000-0000-4000-8000-000000000002';
-  const key = 'neo-project-merge:web\u0000web-shallow';
 
   beforeEach(() => {
     directory = mkdtempSync(join(tmpdir(), 'neo-project-questions-'));
@@ -108,7 +40,6 @@ describe('reorganize merge questions on a real store', () => {
     createTables(db);
     runMigrations(db, () => {});
     repo = new NeoRepository(db);
-    asks = new NeoAskRepository(db);
     logged = [];
     repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
     repo.saveProject({ id: 'inbox', title: 'Inbox', summary: 'Inbox', context: '' }, 0);
@@ -131,22 +62,9 @@ describe('reorganize merge questions on a real store', () => {
       repo,
       db: { getDatabase: () => db },
       notifyChanged: () => notified.push(1),
-      askRecords: asks,
       defaultSessionId: () => inbox,
       logReorganize: (line: string) => logged.push(line),
     } as unknown as NeoService);
-  const answer = (choice: string) => {
-    const ask = asks.forRequest(key)!;
-    const item = ask.doneItems!.find((entry) => entry.decides === key)!;
-    asks.tickItem(
-      ask.id,
-      { id: item.id, state: 'met', evidence: `The human answered: ${choice}`, metBy: 'human' },
-      Date.now(),
-      item,
-      true
-    );
-  };
-
   test('keeps every title, even a generated one, and records local identity', async () => {
     const uuid = '50028a5f-f9ce-4692-a1ab-63f786f65b1f';
     const save = (id: string, title: string, summary = `Project: ${title}`) =>
@@ -186,7 +104,7 @@ describe('reorganize merge questions on a real store', () => {
       `folder:${hostname()}\u0000${tree}`,
       'local'
     );
-    await runtime().mergeProjects();
+    await runtime().recordIdentities();
     expect(repo.getProject('gone')?.title).toBe(uuid);
     expect(repo.getProject('kept')?.title).toBe('e6e0cc8b-1aba-47ce-9453-838b17d96dda');
     expect(repo.getProject('local')?.title).toBe('ee72a104-5c52-4e27-b08d-dcbfc49a1d7f');
@@ -197,53 +115,14 @@ describe('reorganize merge questions on a real store', () => {
     ).toEqual({ project_id: 'local' });
   });
 
-  const question = (answerWith?: string) => {
-    const opened = asks.open({
-      id: crypto.randomUUID(),
-      requestKey: key,
-      projectId: null,
-      originSessionId: root,
-      originMessageId: null,
-      title: 'web-shallow and web: one project?',
-      ask: 'Are web-shallow and web the same project?',
-      doneWhen: 'The human decided.',
-      doneSource: 'daemon',
-    })!;
-    const item = decisionItem('Are web-shallow and web the same project?', key);
-    asks.settle(opened, 'waiting', 'q', 'q', item.id, item);
-    if (answerWith) answer(answerWith);
-  };
-
-  test('merges siblings sharing a repository without asking', async () => {
-    expect(await runtime().mergeProjects()).toEqual({
-      merged: [{ sourceId: 'web-shallow', targetId: 'web' }],
-    });
-    expect(asks.forRequest(key)).toBeNull();
-    expect(
-      repo
-        .listProjects()
-        .map((item) => item.id)
-        .sort()
-    ).toEqual(['inbox', 'web']);
-    expect(notified.length).toBeGreaterThan(0);
-  });
-
-  test('withdraws an earlier open question once the repository rule merges the pair', async () => {
-    question();
-    expect((await runtime().mergeProjects()).merged).toEqual([
-      { sourceId: 'web-shallow', targetId: 'web' },
-    ]);
-    expect(asks.forRequest(key)?.status).toBe('abandoned');
-  });
-
-  test('an answer to keep them separate still keeps them apart', async () => {
-    question(NEO_PROJECT_SEPARATE);
-    expect(await runtime().mergeProjects()).toEqual({ merged: [] });
+  test('siblings sharing a repository stay separate projects', async () => {
+    await runtime().recordIdentities();
     expect(
       repo
         .listProjects()
         .map((item) => item.id)
         .sort()
     ).toEqual(['inbox', 'web', 'web-shallow']);
+    expect(repo.projectMerges.redirects()).toEqual([]);
   });
 });
