@@ -36,7 +36,7 @@ export const en = {
   'todo.blocked': 'Blocked: {reason}',
   'todo.nextAction': 'Next: {action}',
   'todo.checking': 'Session reported; checking',
-  'todo.awaitingNeo': 'Session stopped; waiting for Neo to check',
+  'todo.awaitingNeo': 'Turn finished; waiting for Neo to check',
   'todo.reportedDone': 'Session says it is done',
   'todo.done': 'Done',
   'todo.pr.merged': '{pr} merged',

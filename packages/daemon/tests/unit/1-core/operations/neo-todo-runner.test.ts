@@ -462,7 +462,7 @@ describe('planNeoTodoSettled', () => {
       report: 'Done',
       state: 'blocked',
       blockedBy: 'worker',
-      blockedReason: 'Its session stopped before the todo was done.',
+      blockedReason: 'Its session finished its turn; nothing confirms the todo is done yet.',
       nextAction: 'Tick it done with evidence, continue the session, or close it.',
     });
     expect(planNeoTodoSettled(doing, { status: 'failed', report: 'It stopped.' }, 5)).toEqual({
@@ -548,12 +548,12 @@ describe('neoTodoNote', () => {
       neoTodoNote({
         title: 'T',
         state: 'blocked',
-        blockedReason: 'Its session stopped before the todo was done.',
+        blockedReason: 'Its session finished its turn; nothing confirms the todo is done yet.',
         nextAction: 'Close it.',
         report: 'Waiting on CI',
       } as NeoTodo)
     ).toBe(
-      'Todo "T" is blocked: Its session stopped before the todo was done.\nNext: Close it.\nIts last report:\nWaiting on CI'
+      'Todo "T" is blocked: Its session finished its turn; nothing confirms the todo is done yet.\nNext: Close it.\nIts last report:\nWaiting on CI'
     );
   });
 });

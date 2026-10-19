@@ -28,7 +28,7 @@ const NEO_TODO_STATUS_EN = {
   'todo.doing': 'In progress',
   'todo.blocked': 'Blocked: {reason}',
   'todo.checking': 'Session reported; checking',
-  'todo.awaitingNeo': 'Session stopped; waiting for Neo to check',
+  'todo.awaitingNeo': 'Turn finished; waiting for Neo to check',
   'todo.reportedDone': 'Session says it is done',
   'todo.done': 'Done',
 } as const;
