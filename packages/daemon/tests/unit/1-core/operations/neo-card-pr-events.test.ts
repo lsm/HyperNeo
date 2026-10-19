@@ -261,9 +261,9 @@ describe('Neo todo pull request events', () => {
     expect(sent).toHaveLength(1);
     expect(jobs()).toHaveLength(1);
   });
-  test('a closed unmerged PR ends its subscription without checking the todo', async () => {
+  test('a just-closed unmerged PR ends its subscription and leaves the todo in its replacement grace', async () => {
     const row = todo();
-    prs = [{ ...open, state: 'CLOSED' }];
+    prs = [{ ...open, state: 'CLOSED', closedAt: Date.now() }];
     await event('closed', { state: 'closed', merged: false });
     expect(service.todos.getTodo(row.id)?.state).toBe('doing');
     expect(service.cardEvents.listActive()).toEqual([]);
