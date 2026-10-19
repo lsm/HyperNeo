@@ -1,6 +1,5 @@
 import type { NeoBinding, NeoProject, NeoWork } from '@hyperneo/shared/types/neo-context';
 import { neoProjectMoveReason, neoProjectPath } from '@hyperneo/shared/types/neo-project-tree';
-import type { NeoHealthFacts } from '../../lib/neo/health-digest.ts';
 import type { NeoProjectFacts } from '../../lib/neo/project-cleanup.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoProjectMergeRepository } from './neo-project-merge-repository.ts';
@@ -90,47 +89,6 @@ export class NeoRepository {
       this.db.prepare('DELETE FROM neo_concerns WHERE id = ?').run(projectId);
     })();
     this.notify();
-  }
-
-  healthFacts(since: number): NeoHealthFacts {
-    const count = (sql: string, ...args: (string | number)[]) =>
-      (this.db.prepare(sql).get(...args) as { n: number }).n;
-    return {
-      projects: count(
-        'SELECT count(*) AS n FROM neo_concerns WHERE id NOT IN (SELECT source_id FROM neo_project_merges)'
-      ),
-      projectsCreated: count('SELECT count(*) AS n FROM neo_concerns WHERE created_at > ?', since),
-      projectsMerged: count(
-        'SELECT count(*) AS n FROM neo_project_merges WHERE merged_at > ?',
-        since
-      ),
-      refusals: this.db
-        .prepare(`SELECT what, count(*) AS count FROM neo_work_refusals WHERE at > ?
-          GROUP BY what ORDER BY count DESC`)
-        .all(since) as NeoHealthFacts['refusals'],
-      doorRefusals: this.db
-        .prepare(`SELECT operation, reason, count(*) AS count FROM operation_refusals WHERE at > ?
-          GROUP BY operation, reason ORDER BY count DESC`)
-        .all(since) as NeoHealthFacts['doorRefusals'],
-      repeatedReplies: this.db
-        .prepare(`SELECT json_extract(payload_json, '$.producerInput.messageId') AS trigger,
-            count(*) AS count FROM neo_publications
-          WHERE created_at > ?
-          GROUP BY conversation_id, trigger HAVING count(*) > 1 ORDER BY count DESC`)
-        .all(new Date(since).toISOString()) as NeoHealthFacts['repeatedReplies'],
-      liveAsks: this.db
-        .prepare(`SELECT id, title, status, updated_at AS updatedAt FROM legacy_neo_asks
-          WHERE status IN ('open', 'waiting', 'blocked') ORDER BY updated_at`)
-        .all() as NeoHealthFacts['liveAsks'],
-      unreadRepos: this.db
-        .prepare(`SELECT owner || '/' || repo AS repo,
-            json_extract(poll_cursor, '$.lastPollError') AS error
-          FROM space_github_watched_repos
-          WHERE enabled = 1 AND polling_enabled = 1
-            AND json_extract(poll_cursor, '$.lastPollError') IS NOT NULL
-          ORDER BY owner, repo`)
-        .all() as NeoHealthFacts['unreadRepos'],
-    };
   }
 
   resolveProjectRef(ref: string): string | null {

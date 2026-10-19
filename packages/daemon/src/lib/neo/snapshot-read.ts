@@ -4,7 +4,7 @@ export interface NeoSnapshotRead {
 }
 
 export const NEO_SNAPSHOT_UNCHANGED_GUIDANCE =
-  'Waiting here does not bring news: consultation answers, work reports and trigger notes arrive as new messages, and trigger notes are held until this turn ends, so reading again only delays them.';
+  'Waiting here does not bring news: work reports and trigger notes arrive as new messages, and trigger notes are held until this turn ends, so reading again only delays them.';
 
 export function planNeoSnapshotRead<T extends { ok: boolean; rev?: string; unchanged?: true }>(
   read: T,

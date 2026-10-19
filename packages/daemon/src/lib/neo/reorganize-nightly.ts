@@ -11,7 +11,6 @@ export interface NeoNightlyReorganizeDeps {
   now(): number;
   lastHumanAt(): number | null;
   reorganize(): Promise<NeoReorganized>;
-  digest(run: NeoReorganized, since: number): Promise<void>;
   log(line: string): void;
 }
 
@@ -80,7 +79,6 @@ export const runNeoNightlyReorganize = (
       deps.log(
         `neo reorganize: nightly run merged ${merged.length} project(s), applied ${cleaned} cleanup step(s), left ${cleanupPlanned.length - cleaned - cleanupFailed.length} merge(s) for apply: true`
       );
-      await deps.digest(run, readLastRunAt(job) ?? deps.now() - NEO_REORGANIZE_EVERY_MS);
       return { ran: true };
     },
     ['job', 'deps'],

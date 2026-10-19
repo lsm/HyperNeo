@@ -156,50 +156,6 @@ async function streamIntoRunningTurn(harness: Harness, head: string) {
 }
 
 describe('Neo note queue', () => {
-  it('marks every note folded into a running turn consumed when the turn takes it', async () => {
-    const harness = await makeHarness('neo:streamed');
-    const fold = ['w1:stall:1', 'w2:stall:2', 'neo-ask-evidence:a1:x'];
-    for (const uuid of fold) queueNote(harness, uuid);
-    const { generator, turn, sent } = await streamIntoRunningTurn(harness, fold[0]);
-    expect(fold.map((uuid) => statusOf(harness, uuid))).toEqual([
-      'consumed',
-      'consumed',
-      'consumed',
-    ]);
-    sent.onSent();
-    expect(await turn).toEqual({ outcome: 'completed' });
-    await generator.return?.(undefined);
-  });
-
-  it('never discards a note folded into a turn that is taking it', async () => {
-    const harness = await makeHarness('neo:in-flight');
-    const fold = ['w1:stall:1', 'w2:stall:2', 'neo-ask-evidence:a1:x'];
-    for (const uuid of fold) queueNote(harness, uuid);
-    const { agentSession, sessionId } = harness;
-    agentSession.messageQueue.start();
-    const generator = agentSession.messageQueue.messageGenerator(sessionId, {
-      suppressPreYieldCallback: true,
-    });
-    const turn = agentSession.driveDeliveryTurn(fold[0], 'note', null, false, () => true);
-    const yielded = await generator.next();
-    consumeHumanInput(harness, 'h-mid-turn');
-    await harness.service.deliverForward(sessionId, 'w2:stall:9', 'stalled', sessionId, null);
-    expect(fold.map((uuid) => statusOf(harness, uuid))).toEqual([
-      'enqueued',
-      'enqueued',
-      'enqueued',
-    ]);
-    agentSession.markHolderInputConsumed(fold[0]);
-    expect(fold.map((uuid) => statusOf(harness, uuid))).toEqual([
-      'consumed',
-      'consumed',
-      'consumed',
-    ]);
-    yielded.value?.onSent();
-    expect(await turn).toEqual({ outcome: 'completed' });
-    await generator.return?.(undefined);
-  });
-
   it('retains older notes when a newer note for the same card or ask arrives', async () => {
     const harness = await makeHarness('neo:supersede');
     queueNote(harness, 'w1:done-check:1');

@@ -71,8 +71,6 @@
 619	packages/daemon/tests/unit/1-core/agent/model-switch-session-continuity.test.ts
 65	packages/daemon/tests/unit/1-core/agent/native-compaction-behavior.test.ts
 582	packages/daemon/tests/unit/1-core/agent/neo-input-consumed-once.test.ts
-1652	packages/daemon/tests/unit/1-core/agent/neo-note-fold-delivery.test.ts
-7	packages/daemon/tests/unit/1-core/agent/neo-note-fold.test.ts
 1699	packages/daemon/tests/unit/1-core/agent/neo-note-queue.test.ts
 23	packages/daemon/tests/unit/1-core/agent/network-outage-pause.test.ts
 20	packages/daemon/tests/unit/1-core/agent/non-interrupting-model-switch.test.ts

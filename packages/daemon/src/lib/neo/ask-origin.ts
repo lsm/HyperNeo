@@ -30,13 +30,6 @@ export function neoDoneCheckMessageId(
   return `${workId}:done-check:${continued}${prRevision ? `:pr:${prRevision}` : ''}${followedAt ? `:at:${followedAt}` : ''}${stalled > 0 ? `:s:${stalled}` : ''}`;
 }
 
-const NEO_FOLDABLE_NOTE =
-  /^neo-ask-evidence:|^neo-session-notices:|^neo-card-pr:|:stall:\d+$|:needs-you:\d+$/;
-
-export function isNeoFoldableNote(messageId: string): boolean {
-  return NEO_FOLDABLE_NOTE.test(messageId);
-}
-
 export function neoWorkReturnMessageId(workId: string, retries: number, continued = 0): string {
   const base = retries ? `${workId}:retry:${retries}` : workId;
   return continued ? `${base}:continued:${continued}` : base;

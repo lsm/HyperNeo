@@ -70,7 +70,6 @@ describe('runNeoNightlyReorganize', () => {
             cleanupFailed: [],
           };
         },
-        digest: async () => {},
         log: () => {},
       }
     );
