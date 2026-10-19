@@ -7,6 +7,8 @@ const MAX_RECORDING_MS = 300_000;
 
 type RecorderNode = AudioWorkletNode | ScriptProcessorNode;
 
+type PcmTap = (samples: Float32Array, sampleRate: number) => void;
+
 export interface VoiceRecording {
   audioBase64: string;
   mimeType: 'audio/wav';
@@ -31,6 +33,7 @@ class VoiceRecorderStore {
   private node: RecorderNode | null = null;
   private analyser: AnalyserNode | null = null;
   private chunks: Float32Array[] = [];
+  private pcmTap: PcmTap | null = null;
   private sampleRate: number = TARGET_SAMPLE_RATE;
   private smoothedLevel = 0;
   private starting = false;
@@ -156,6 +159,7 @@ class VoiceRecorderStore {
         node.port.onmessage = (event: MessageEvent<Float32Array>) => {
           if (this.stoppedByLimit) return;
           chunks.push(event.data);
+          this.pcmTap?.(event.data, context.sampleRate);
           totalSamples += event.data.length;
           if (totalSamples >= maxContextSamples) hitLimit();
         };
@@ -169,6 +173,7 @@ class VoiceRecorderStore {
           if (this.stoppedByLimit) return;
           const data = new Float32Array(event.inputBuffer.getChannelData(0));
           chunks.push(data);
+          this.pcmTap?.(data, context.sampleRate);
           totalSamples += data.length;
           if (totalSamples >= maxContextSamples) hitLimit();
         };
@@ -259,6 +264,11 @@ class VoiceRecorderStore {
     await this.teardown();
   };
 
+  readonly setPcmTap = (tap: PcmTap | null): void => {
+    this.pcmTap = tap;
+    if (tap && this.isRecording.value) for (const chunk of this.chunks) tap(chunk, this.sampleRate);
+  };
+
   readonly orphan = (ownerId: string): void => {
     if (this.recordingOwnerId.value !== ownerId) return;
     this.recordingOwnerId.value = null;
@@ -279,6 +289,7 @@ class VoiceRecorderStore {
             clearTimeout(this.maxDurationTimer);
             this.maxDurationTimer = null;
           }
+          this.pcmTap = null;
           if (this.node) {
             if ('port' in this.node) this.node.port.onmessage = null;
             else this.node.onaudioprocess = null;

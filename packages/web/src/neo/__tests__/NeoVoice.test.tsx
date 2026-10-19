@@ -13,12 +13,17 @@ const voice = vi.hoisted(() => ({
   cancel: vi.fn(),
   submit: vi.fn(),
   deleteRecord: vi.fn(),
+  batch: vi.fn(),
+  hub: null as object | null,
+  openStream: vi.fn(),
 }));
 vi.mock('../useNeoVoiceSettings.ts', () => ({ useNeoVoiceSettings: () => voice.enabled }));
 vi.mock('../../hooks/useVoiceRecorder.ts', () => ({
   isVoiceRecordingSupported: () => true,
   useVoiceRecorder: () => ({
-    isRecording: voice.recording,
+    get isRecording() {
+      return voice.recording;
+    },
     isStarting: voice.starting,
     durationLimitHit: false,
     start: voice.start,
@@ -30,7 +35,12 @@ vi.mock('../../hooks/useVoiceRecorder.ts', () => ({
 }));
 vi.mock('../../lib/voice/voice-submit-pipeline.ts', () => ({
   runVoiceSubmit: voice.submit,
+  requestVoiceTranscription: voice.batch,
   VOICE_SUBMIT_SILENCE_PEAK_LEVEL: 0.001,
+}));
+vi.mock('../../lib/voice/voice-stream.ts', () => ({ openVoiceStream: voice.openStream }));
+vi.mock('../../lib/connection-manager.ts', () => ({
+  connectionManager: { getHubIfConnected: () => voice.hub },
 }));
 vi.mock('../../lib/voice/voice-audio-store.ts', () => ({ deleteVoiceRecord: voice.deleteRecord }));
 const pendingRecords = vi.hoisted(() => ({ set: (_records: unknown[]) => {} }));
@@ -63,6 +73,7 @@ beforeEach(() => {
   voice.enabled = false;
   voice.recording = false;
   voice.starting = false;
+  voice.hub = null;
 });
 afterEach(cleanup);
 
@@ -402,5 +413,89 @@ describe('Neo voice', () => {
       )
     );
     expect(voice.deleteRecord).not.toHaveBeenCalled();
+  });
+
+  it('streams while recording, shows interim text, and takes the streamed final text', async () => {
+    voice.enabled = true;
+    voice.hub = {};
+    voice.start.mockImplementation(async () => {
+      voice.recording = true;
+    });
+    let heard: (text: string) => void = () => {};
+    const finish = vi.fn(async (): Promise<string | null> => 'hello neo');
+    const close = vi.fn();
+    voice.openStream.mockImplementation((_hub: unknown, onText: (text: string) => void) => {
+      heard = onText;
+      return { push: vi.fn(), finish, close };
+    });
+    voice.batch.mockResolvedValue({ text: 'batch text' });
+    voice.submit.mockImplementation(
+      async (_input: unknown, deps: Pick<VoiceSubmitDeps, 'transcribe'>) => {
+        const recording = { audioBase64: 'wav', mimeType: 'audio/wav' as const, peakLevel: 1 };
+        const first = await deps.transcribe(recording);
+        finish.mockResolvedValueOnce(null);
+        const second = await deps.transcribe(recording);
+        return {
+          kind: 'routed',
+          outcome: { kind: 'insert', transcript: `${first.text}|${second.text}`, autoSend: false },
+          recordId: 'recording',
+        };
+      }
+    );
+    const onInterim = vi.fn();
+    const onTranscript = vi.fn();
+    const props = {
+      sessionId: 'neo:club',
+      connected: true,
+      draftText: '',
+      onTranscript,
+      onInterim,
+      onSendVoice: vi.fn(async () => ({ kind: 'accepted' }) as const),
+      onError: vi.fn(),
+      onPhase: vi.fn(),
+      onSendHandle: vi.fn(),
+    };
+    const view = render(<NeoVoice {...props} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
+    await waitFor(() =>
+      expect(voice.openStream).toHaveBeenCalledWith(voice.hub, expect.any(Function))
+    );
+    heard('hello ne');
+    expect(onInterim).toHaveBeenLastCalledWith('hello ne');
+    view.rerender(<NeoVoice {...props} draftText=" " />);
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Stop recording and keep the text as a draft' })
+    );
+    await waitFor(() => expect(onTranscript).toHaveBeenCalledWith('hello neo|batch text'));
+    expect(voice.batch).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(close).toHaveBeenCalled());
+    expect(onInterim).toHaveBeenLastCalledWith('');
+  });
+
+  it('keeps the batch path when no stream was opened', async () => {
+    voice.recording = true;
+    voice.submit.mockResolvedValue({
+      kind: 'routed',
+      outcome: { kind: 'insert', transcript: 'batch only', autoSend: false },
+      recordId: 'recording',
+    });
+    const onTranscript = vi.fn();
+    render(
+      <NeoVoice
+        sessionId="neo:club"
+        connected
+        draftText=""
+        onTranscript={onTranscript}
+        onSendVoice={vi.fn(async () => ({ kind: 'accepted' }) as const)}
+        onError={vi.fn()}
+        onPhase={vi.fn()}
+        onSendHandle={vi.fn()}
+      />
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Stop recording and keep the text as a draft' })
+    );
+    await waitFor(() => expect(onTranscript).toHaveBeenCalledWith('batch only'));
+    expect(voice.submit.mock.calls[0][1]).not.toHaveProperty('transcribe');
   });
 });

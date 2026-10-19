@@ -169,6 +169,22 @@ describe('voiceRecorderStore', () => {
     expect(voiceRecorderStore.isRecording.value).toBe(false);
   });
 
+  it('setPcmTap() replays captured audio, forwards new chunks, and is cleared on stop', async () => {
+    await voiceRecorderStore.start('owner-a', 's1');
+    const handler = workletNode.onaudioprocess;
+    const first = new Float32Array(4).fill(0.1);
+    handler({ inputBuffer: { getChannelData: () => first } });
+    const tap = vi.fn();
+    voiceRecorderStore.setPcmTap(tap);
+    expect(tap).toHaveBeenCalledWith(first, 48_000);
+    handler({ inputBuffer: { getChannelData: () => new Float32Array(4).fill(0.2) } });
+    expect(tap).toHaveBeenCalledTimes(2);
+    await voiceRecorderStore.stop();
+    await voiceRecorderStore.start('owner-a', 's1');
+    workletNode.onaudioprocess({ inputBuffer: { getChannelData: () => new Float32Array(4) } });
+    expect(tap).toHaveBeenCalledTimes(2);
+  });
+
   it('stop() without a recording rejects', async () => {
     await expect(voiceRecorderStore.stop()).rejects.toThrow('not recording');
   });

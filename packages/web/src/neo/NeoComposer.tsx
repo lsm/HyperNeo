@@ -64,6 +64,7 @@ export function NeoComposer({
   const [sending, setSending] = useState(false);
   const coarsePointer = useCoarsePointer();
   const [voicePhase, setVoicePhase] = useState<VoicePhase>('idle');
+  const [interim, setInterim] = useState('');
   const voiceBusy = voicePhase !== 'idle';
   const recordingVoice = voicePhase === 'recording';
   const listening = recordingVoice || voicePhase === 'working';
@@ -271,6 +272,7 @@ export function NeoComposer({
           start={draft.length}
           end={draft.length}
           transcribing={voicePhase === 'sending' || voicePhase === 'drafting'}
+          interim={interim}
           newLine
           hint={listening ? t('composer.listening') : undefined}
           heightPx={idleHeight.current || undefined}
@@ -359,6 +361,7 @@ export function NeoComposer({
             connected={connected}
             draftText={draft}
             onTranscript={onTranscript}
+            onInterim={setInterim}
             onSendVoice={async (text, recordId) => {
               const record = await getVoiceRecord(recordId);
               if (!record) return { kind: 'unconfirmed' } as const;
