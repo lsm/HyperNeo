@@ -39,6 +39,8 @@ type Startable = {
 const fail = (reason: string): { reason: Rejection } => ({ reason: { ok: false, reason } });
 
 export const NEO_TODO_CHECK_MS = 2 * 60_000;
+export const NEO_TODO_IDLE_MS = 30 * 60_000;
+export const NEO_TODO_IDLE_REMINDERS = 2;
 
 export interface NeoTodoRunnerDeps {
   store: NeoAskTodoRepository;
@@ -141,6 +143,21 @@ function planNeoTodoBlocked(
     : { state: 'blocked', blockedBy, blockedReason, nextAction };
 }
 
+export function planNeoTodoIdle(
+  read: { since: number; nudges: number },
+  now: number
+): { kind: 'remind'; nudges: number } | { kind: 'block' } | null {
+  const due = Math.floor((now - read.since) / NEO_TODO_IDLE_MS);
+  if (read.nudges > NEO_TODO_IDLE_REMINDERS || due <= read.nudges) return null;
+  return read.nudges < NEO_TODO_IDLE_REMINDERS
+    ? { kind: 'remind', nudges: read.nudges + 1 }
+    : { kind: 'block' };
+}
+
+export function neoTodoIdleReminder(todo: Pick<NeoTodo, 'title' | 'doneWhen'>, minutes: number) {
+  return `Todo "${todo.title}" is not done yet (done when: ${todo.doneWhen}), and your session has been stopped for ${minutes} min. Continue it, or report what blocks you.`;
+}
+
 export function planNeoTodoFailure(
   todo: NeoTodo,
   reason: string,
@@ -162,6 +179,7 @@ export function planNeoTodoSettled(
   now: number
 ): NeoTodoPatch | null {
   if (settled.status === 'failed') return planNeoTodoFailure(todo, settled.report, now);
+  if (todo.check) return todo.report === settled.report ? null : { report: settled.report };
   return {
     report: settled.report,
     ...planNeoTodoBlocked(
@@ -362,7 +380,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     anchorFollow: (id, at) => sessions.recordFollowAnchor(id, at),
     returnReport: async (card) => {
       const todo = store.getTodo(card.id);
-      if (todo) await deps.tell(ask, todo, neoTodoNote(todo));
+      if (todo && todo.state !== 'doing') await deps.tell(ask, todo, neoTodoNote(todo));
     },
   });
 
@@ -453,6 +471,58 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       'followed'
     )
     .endAsync('followed') as (todo: NeoTodo, now: number) => Promise<void>;
+
+  const idle = new Map<string, { since: number; nudges: number }>();
+  const nudge = async (todo: NeoTodo, now: number) => {
+    const ref = sessions.readRef(todo.id);
+    const ask = store.getAsk(todo.askId);
+    const waiting = deps
+      .packs()
+      .some((pack) => pack.id === todo.check?.pack && pack.todos?.waiting?.(todo));
+    if (
+      todo.state !== 'doing' ||
+      !todo.check ||
+      !todo.report ||
+      !ref ||
+      ask?.status !== 'open' ||
+      waiting
+    ) {
+      idle.delete(todo.id);
+      return;
+    }
+    const seen = idle.get(todo.id);
+    const read = seen?.since === todo.updatedAt ? seen : { since: todo.updatedAt, nudges: 0 };
+    idle.set(todo.id, read);
+    const plan = planNeoTodoIdle(read, now);
+    if (!plan) return;
+    const live = readDriverLive(await deps.invoke(caller(ask), 'work.status', { ref }));
+    if (!live || !['done', 'stopped'].includes(live.status)) return;
+    const minutes = Math.round((now - read.since) / 60_000);
+    if (plan.kind === 'remind') {
+      const sent = await deps.invoke(caller(ask), 'work.send', {
+        ref,
+        message: neoTodoIdleReminder(todo, minutes),
+      });
+      if (sent.kind === 'completed' && (sent.value as { ok?: unknown } | null)?.ok === true) {
+        idle.set(todo.id, { since: read.since, nudges: plan.nudges });
+        return;
+      }
+    }
+    idle.delete(todo.id);
+    await finish(
+      todo,
+      ask,
+      planNeoTodoBlocked(
+        todo,
+        'worker',
+        plan.kind === 'remind'
+          ? `Its session stopped ${minutes} min ago and could not be reached.`
+          : `Its session stopped ${minutes} min ago and did not continue after ${NEO_TODO_IDLE_REMINDERS} reminders.`,
+        'Continue the session with neo.todo.continue, or close the todo.'
+      ),
+      now
+    );
+  };
 
   const read = (todoId: string) => {
     const todo = store.getTodo(todoId);
@@ -557,6 +627,9 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         await settle(todoId, ref).catch((error) => warn('Todo session refresh pending', error));
       for (const todo of store.listCheckable()) {
         await follow(todo, Date.now()).catch((error) => warn('Todo follow pending', error));
+        await nudge(store.getTodo(todo.id) ?? todo, Date.now()).catch((error) =>
+          warn('Todo nudge pending', error)
+        );
         await check(store.getTodo(todo.id) ?? todo, Date.now()).catch((error) =>
           warn('Todo check pending', error)
         );

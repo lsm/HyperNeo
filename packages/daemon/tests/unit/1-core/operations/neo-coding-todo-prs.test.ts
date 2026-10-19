@@ -471,3 +471,16 @@ describe('planCodingTodoClaims', () => {
     ).toEqual([]);
   });
 });
+
+describe('coding todo pack waiting', () => {
+  test('a todo with an open PR of its own is waiting on that PR, not idle', () => {
+    const { db, pack, repo, todo } = setup(async () => []);
+    const row = todo({ pack: 'coding', kind: 'pr_merged', params: {} });
+    expect(pack.waiting!(row)).toBe(false);
+    repo.record(row.id, [pr(1, 'OPEN')], 2);
+    expect(pack.waiting!(row)).toBe(true);
+    repo.record(row.id, [pr(1, 'MERGED')], 3);
+    expect(pack.waiting!(row)).toBe(false);
+    db.close();
+  });
+});

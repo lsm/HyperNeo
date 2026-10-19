@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { vi } from 'vitest';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoPack, NeoTodoCheckResult } from '../../../../src/lib/neo/packs/types.ts';
 import {
@@ -6,6 +7,7 @@ import {
   neoAskIdleNote,
   neoTodoNote,
   planNeoTodoCheck,
+  planNeoTodoIdle,
   planNeoTodoSettled,
   requireNeoTodoStartable,
 } from '../../../../src/lib/neo/todo-runner.ts';
@@ -39,6 +41,7 @@ function setup(packDone: boolean | null = null) {
   const askNotes: string[] = [];
   const checkedTodos: string[] = [];
   let status: unknown = null;
+  let sendResult: unknown;
   let result: NeoTodoCheckResult | null | undefined;
   const pack = {
     id: 'coding',
@@ -64,6 +67,8 @@ function setup(packDone: boolean | null = null) {
       calls.push({ name, input });
       if (name === 'work.start')
         return completed({ ok: true, value: { ref, lastActivityAt: 1_000, link: '/session/w' } });
+      if (name === 'work.send')
+        return completed(sendResult ?? { ok: true, value: { delivered: true } });
       return completed(status);
     },
     packs: () => [pack],
@@ -101,6 +106,9 @@ function setup(packDone: boolean | null = null) {
     add,
     setStatus: (value: unknown) => {
       status = value;
+    },
+    setSend: (value: unknown) => {
+      sendResult = value;
     },
     setResult: (value: NeoTodoCheckResult | null) => {
       result = value;
@@ -178,10 +186,10 @@ describe('neo todo runner', () => {
     runner.recheck([todo.id]);
     await runner.refresh(() => {});
     expect(store.getTodo(todo.id)).toMatchObject({
-      state: 'blocked',
+      state: 'doing',
       report: expect.stringContaining('https://github.com/a/b/pull/9'),
     });
-    expect(told).toEqual([expect.stringContaining('Todo "Rows" is blocked')]);
+    expect(told).toEqual([]);
     expect(db.prepare('SELECT count(*) AS count FROM neo_work').get()).toEqual({ count: 0 });
     db.close();
   });
@@ -222,12 +230,7 @@ describe('neo todo runner', () => {
       report: expect.stringContaining('pull/1'),
       evidence: '#1 已合并',
     });
-    expect(told).toEqual([
-      expect.stringContaining(
-        'Todo "Rows" is blocked: Its session stopped before the todo was done.'
-      ),
-      'Todo "Rows" is done: #1 已合并',
-    ]);
+    expect(told).toEqual(['Todo "Rows" is done: #1 已合并']);
   });
 
   test("a todo checked by a pack sends that pack's worker rules after its instruction", async () => {
@@ -448,14 +451,19 @@ describe('requireNeoTodoStartable', () => {
 });
 
 describe('planNeoTodoSettled', () => {
-  test('a stopped session blocks the todo with its report; a failure fails it, and the same failure twice blocks it', () => {
+  test('a stopped session keeps a checked todo doing and blocks an unchecked one; a failure fails it, and the same failure twice blocks it', () => {
     const doing = { state: 'doing', check: { pack: 'coding' }, reason: null } as NeoTodo;
     expect(planNeoTodoSettled(doing, { status: 'reported', report: 'Opened #12' }, 5)).toEqual({
       report: 'Opened #12',
+    });
+    expect(
+      planNeoTodoSettled({ ...doing, check: null }, { status: 'reported', report: 'Done' }, 5)
+    ).toEqual({
+      report: 'Done',
       state: 'blocked',
       blockedBy: 'worker',
       blockedReason: 'Its session stopped before the todo was done.',
-      nextAction: 'Continue the session with neo.todo.continue, or close the todo.',
+      nextAction: 'Tick it done with evidence, continue the session, or close it.',
     });
     expect(planNeoTodoSettled(doing, { status: 'failed', report: 'It stopped.' }, 5)).toEqual({
       state: 'failed',
@@ -744,5 +752,85 @@ describe('blocked todos', () => {
     await runner.checkNow([todo.id], warn);
     expect(store.getTodo(todo.id)).toMatchObject({ state: 'todo', blockedBy: null });
     expect(told).toEqual([expect.stringContaining('is blocked: No progress for 2 hours')]);
+  });
+});
+
+describe('stopped worker ladder', () => {
+  const MIN = 60_000;
+
+  async function stopped() {
+    const harness = setup();
+    const todo = harness.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+    await harness.runner.start(todo.id);
+    harness.setStatus({
+      ok: true,
+      value: {
+        status: 'done',
+        lastActivityAt: 2_000,
+        exchange: [
+          { at: 1_500, role: 'user', text: String(harness.calls[0].input.message) },
+          { at: 2_000, role: 'agent', text: 'Pushed the first half.' },
+        ],
+      },
+    });
+    await harness.runner.refresh(() => {});
+    const base = Date.now();
+    const clock = vi.spyOn(Date, 'now');
+    const at = async (minutes: number) => {
+      clock.mockReturnValue(base + minutes * MIN);
+      harness.runner.recheck([todo.id]);
+      await harness.runner.refresh(() => {});
+    };
+    const sends = () =>
+      harness.calls
+        .filter((call) => call.name === 'work.send')
+        .map((call) => String(call.input.message));
+    return { ...harness, todo, at, sends, clock };
+  }
+
+  test('a worker that stops before done is reminded at 30 and 60 minutes, then blocked once for Neo', async () => {
+    const h = await stopped();
+    expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
+    expect(h.told).toEqual([]);
+    for (const minutes of [29, 30, 45, 60, 75]) await h.at(minutes);
+    expect(h.sends()).toEqual([
+      expect.stringContaining('your session has been stopped for 30 min'),
+      expect.stringContaining('your session has been stopped for 60 min'),
+    ]);
+    expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
+    await h.at(90);
+    await h.at(120);
+    expect(h.store.getTodo(h.todo.id)).toMatchObject({
+      state: 'blocked',
+      blockedBy: 'worker',
+      blockedReason: 'Its session stopped 90 min ago and did not continue after 2 reminders.',
+    });
+    expect(h.told).toEqual([expect.stringContaining('did not continue after 2 reminders')]);
+    h.clock.mockRestore();
+    h.db.close();
+  });
+
+  test('a worker that cannot be reached is blocked at the first reminder', async () => {
+    const h = await stopped();
+    h.setSend({ ok: false, reason: 'unreachable', detail: 'gone' });
+    await h.at(30);
+    expect(h.store.getTodo(h.todo.id)?.blockedReason).toBe(
+      'Its session stopped 30 min ago and could not be reached.'
+    );
+    h.clock.mockRestore();
+    h.db.close();
+  });
+});
+
+describe('planNeoTodoIdle', () => {
+  test('reminds at D and 2D, blocks at 3D, then stays quiet', () => {
+    const at = (minutes: number, nudges: number) =>
+      planNeoTodoIdle({ since: 0, nudges }, minutes * 60_000);
+    expect(at(29, 0)).toBeNull();
+    expect(at(30, 0)).toEqual({ kind: 'remind', nudges: 1 });
+    expect(at(59, 1)).toBeNull();
+    expect(at(60, 1)).toEqual({ kind: 'remind', nudges: 2 });
+    expect(at(90, 2)).toEqual({ kind: 'block' });
+    expect(at(300, 3)).toBeNull();
   });
 });

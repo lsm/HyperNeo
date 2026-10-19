@@ -316,6 +316,7 @@ export function createCodingTodoPack(
       return todo.check ? codingTodoCheck(todo.check.kind, prs) : null;
     },
     statusLine: (todo) => codingTodoStatusLine(todo, repo.prs(todo.id)),
+    waiting: (todo) => repo.prs(todo.id).some((pr) => pr.state === 'OPEN'),
     topics: (todo) =>
       repo.urls(todo.id).flatMap((url) => {
         const parsed = (repo.latest(url)?.pr.state ?? 'OPEN') === 'OPEN' ? parsePrUrl(url) : null;
