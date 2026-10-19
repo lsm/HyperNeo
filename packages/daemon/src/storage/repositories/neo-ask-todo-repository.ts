@@ -151,7 +151,9 @@ export class NeoAskTodoRepository {
       .run(status, outcome, now, now, ask.id);
     this.db
       .prepare(
-        "UPDATE neo_todos SET state = 'removed', reason = ?, finished_at = ?, updated_at = ? WHERE ask_id = ? AND state IN ('todo', 'doing', 'blocked')"
+        `UPDATE neo_todos SET state = 'removed', reason = ?, finished_at = ?, updated_at = ?,
+           blocked_reason = NULL, next_action = NULL, blocked_by = NULL
+         WHERE ask_id = ? AND state IN ('todo', 'doing', 'blocked')`
       )
       .run(`The ask was settled ${status}.`, now, now, ask.id);
     this.retireQuestions(ask.id, now);

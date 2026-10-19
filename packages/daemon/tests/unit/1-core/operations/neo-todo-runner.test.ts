@@ -656,7 +656,11 @@ describe('blocked todos', () => {
     const todo = add();
     store.updateTodo(todo, { state: 'blocked', blockedBy: 'worker', blockedReason: 'Stopped' }, 2);
     store.settleAsk(store.getAsk('ask')!, 'dropped', 'Not needed', 3);
-    expect(store.getTodo(todo.id)).toMatchObject({ state: 'removed' });
+    expect(store.getTodo(todo.id)).toMatchObject({
+      state: 'removed',
+      blockedBy: null,
+      blockedReason: null,
+    });
   });
 
   test('a start that fails the same way twice is blocked, and retry starts it again', async () => {
