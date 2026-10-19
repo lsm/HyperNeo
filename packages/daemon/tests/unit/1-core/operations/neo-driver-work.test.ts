@@ -15,9 +15,7 @@ import {
   type DriverSent,
   decideCardLiveStatus,
   decideStuckReminder,
-  driverDoneCheckNote,
   driverExchangeReport,
-  driverStartedReport,
   driverWorkCall,
   driverWorkCaller,
   isNeoReceiptUnconfirmed,
@@ -29,17 +27,11 @@ import {
   type NeoDriverTarget,
   NeoDriverTargetSchema,
   neoCardSent,
-  neoNoteCards,
-  neoWorkProgress,
-  planNeoStartReceiptAdoption,
   readDriverLanded,
-  readDriverNeedsYou,
   readDriverOutcome,
   readDriverSendBaseline,
   readDriverSent,
   readDriverSettlement,
-  readNeoStartFolder,
-  requireNeoStartFolder,
   requireNeoWorkRetryable,
   withWorkGoal,
 } from '../../../../src/lib/neo/driver-work.ts';
@@ -135,96 +127,6 @@ describe('isNeoReceiptUnconfirmed', () => {
     ['a later send', { inputBefore: 5_000 }, 100 + NEO_CARD_CONFIRM_MS, false],
   ])('%s', (_label, overrides, now, unconfirmed) => {
     expect(isNeoReceiptUnconfirmed({ ...card, ...overrides }, now)).toBe(unconfirmed);
-  });
-});
-
-describe('done-check note data', () => {
-  const ask = {
-    id: 'a1',
-    originSessionId: 'neo:root',
-    status: 'open',
-    doneWhen: '- merged\n- deployed',
-    doneItems: [
-      { id: 'i1', text: 'merged', state: 'met', removed: false },
-      { id: 'i2', text: 'deployed', state: 'pending', removed: false },
-      { id: 'i3', text: 'gone', state: 'pending', removed: true },
-    ],
-    workIds: ['w1'],
-  } as unknown as NeoAsk;
-  test('items carry text only until met, and the done list is not repeated', () => {
-    const note = driverDoneCheckNote(
-      { id: 'w1', title: 'Ship', report: 'Merged.', originSessionId: 'neo:root' },
-      { workId: 'w1', goal: 'Ship it', doneWhen: '- merged\n- deployed' },
-      2,
-      {
-        ask,
-        facts: neoCardPrFacts(
-          [
-            {
-              url: 'u',
-              state: 'MERGED',
-              checks: 'passing',
-              review: 'approved',
-              title: 'x',
-              createdAt: 1,
-            },
-          ],
-          false
-        ),
-      }
-    );
-    const data = JSON.parse(note.slice(note.indexOf('\n{')));
-    expect(data.items).toEqual([
-      { id: 'i1', state: 'met' },
-      { id: 'i2', state: 'pending', text: 'deployed' },
-    ]);
-    expect(data.card.doneWhen).toBeUndefined();
-    expect(data.askDoneWhen).toBeUndefined();
-    expect(data.card.prs).toEqual([
-      { url: 'u', state: 'MERGED', checks: 'passing', review: 'approved' },
-    ]);
-    expect(note).not.toContain('wakes for this card bring no new commit');
-  });
-  test('a done list the items do not restate stays: a preamble, or a card list of its own', () => {
-    const note = (goalDoneWhen: string, askDoneWhen: string) =>
-      JSON.parse(
-        ((text) => text.slice(text.indexOf('\n{')))(
-          driverDoneCheckNote(
-            { id: 'w1', title: 'Ship', report: null, originSessionId: 'neo:root' },
-            { workId: 'w1', goal: 'Ship it', doneWhen: goalDoneWhen },
-            0,
-            { ask: { ...ask, doneWhen: askDoneWhen } }
-          )
-        )
-      );
-    const own = note('- docs updated', '- merged\n- deployed');
-    expect(own.card.doneWhen).toBe('- docs updated');
-    expect(own.askDoneWhen).toBeUndefined();
-    const preamble = note(
-      'Both, on the laptop:\n- merged\n- deployed',
-      'Both, on the laptop:\n- merged\n- deployed'
-    );
-    expect(preamble.card.doneWhen).toContain('on the laptop');
-    expect(preamble.askDoneWhen).toContain('on the laptop');
-  });
-
-  test('another card shows one PR verdict, the first one not done', () => {
-    const pr = (state: NeoWorkPr['state'], checks: NeoWorkPr['checks']) =>
-      ({ url: 'u', state, checks, review: 'none' }) as NeoWorkPr;
-    expect(
-      neoNoteCards([
-        {
-          id: 'w2',
-          title: 'Docs',
-          status: 'queued',
-          prs: [pr('MERGED', 'passing'), pr('OPEN', 'failing')],
-        },
-        { id: 'w3', title: 'Quiet', status: 'proposed' },
-      ])
-    ).toEqual([
-      { id: 'w2', title: 'Docs', status: 'queued', pr: 'failed' },
-      { id: 'w3', title: 'Quiet', status: 'proposed' },
-    ]);
   });
 });
 
@@ -326,50 +228,6 @@ describe('driverWorkCall', () => {
   });
 });
 
-describe('requireNeoStartFolder', () => {
-  const start = (folder: string, extra: Record<string, unknown> = {}): NeoDriverTarget => ({
-    verb: 'start',
-    adapter: 'claude-desktop',
-    place: { machine: 'laptop', folder, name: 'hn', ...extra },
-  });
-
-  test('refuses a local start in a folder that does not exist, and nothing else', () => {
-    const missing = start('/Users/lsm/focus/hn-neo-test-5554');
-    expect(
-      requireNeoStartFolder(
-        missing,
-        readNeoStartFolder(missing, () => false),
-        'v'
-      )
-    ).toMatchObject({
-      reason: { ok: false, reason: expect.stringContaining('Never invent a folder') },
-    });
-    expect(
-      requireNeoStartFolder(
-        missing,
-        readNeoStartFolder(missing, () => true),
-        'v'
-      )
-    ).toEqual({
-      value: 'v',
-    });
-    const remote = start('/elsewhere', { daemon: 'tts' });
-    expect(readNeoStartFolder(remote, () => false)).toEqual({ exists: null });
-    const created = { ...start('/Users/lsm/new-app'), createFolder: true };
-    expect(readNeoStartFolder(created, () => false)).toEqual({ exists: null });
-    const send: NeoDriverTarget = { verb: 'send', ref: { adapter: 'claude-desktop', id: 'x' } };
-    expect(
-      requireNeoStartFolder(
-        send,
-        readNeoStartFolder(send, () => false),
-        'v'
-      )
-    ).toEqual({
-      value: 'v',
-    });
-  });
-});
-
 describe('withWorkGoal', () => {
   test('appends the goal and checklist, and gives every brief the blocker line', () => {
     const goal = { workId: 'w1', goal: 'A full iOS app', doneWhen: '- runs in the simulator' };
@@ -466,23 +324,6 @@ describe('driverWorkCaller', () => {
   });
 });
 
-describe('readDriverNeedsYou', () => {
-  test('parses one status reply once, however many readers read it', () => {
-    let statusReads = 0;
-    const status = {
-      get status() {
-        statusReads += 1;
-        return 'needs_you';
-      },
-      lastActivityAt: 7,
-    };
-    const outcome = { kind: 'completed' as const, value: { ok: true, value: status } };
-    expect(readDriverNeedsYou(outcome)).toEqual({ needsYou: true, since: 7, lastReply: undefined });
-    expect(readDriverNeedsYou(outcome)?.needsYou).toBe(true);
-    expect(statusReads).toBe(1);
-  });
-});
-
 describe('readDriverOutcome', () => {
   test('retains reported effort and ignores malformed effort without inventing a value', () => {
     const ref = { adapter: 'codex-desktop', id: 't1' };
@@ -511,9 +352,6 @@ describe('readDriverOutcome', () => {
         value: { ok: true, value: { ...started, model: 'gpt-6-luna' } },
       })
     ).toEqual({ ref: started.ref, model: 'gpt-6-luna' });
-    expect(driverStartedReport(started.ref, undefined, 'gpt-6-luna')).toContain(
-      'It runs on gpt-6-luna.'
-    );
     expect(
       readDriverOutcome(sendTarget, {
         kind: 'completed',
@@ -908,32 +746,6 @@ describe('Neo work with a drivers target', () => {
   }
 });
 
-describe('readDriverNeedsYou', () => {
-  test('reads whether the work waits on the user, and ignores failures', () => {
-    expect(
-      readDriverNeedsYou({
-        kind: 'completed',
-        value: { ok: true, value: { status: 'needs_you', lastActivityAt: 9, lastReply: 'Allow?' } },
-      })
-    ).toEqual({ needsYou: true, since: 9, lastReply: 'Allow?' });
-    expect(
-      readDriverNeedsYou({
-        kind: 'completed',
-        value: { ok: true, value: { status: 'running', lastActivityAt: 9 } },
-      })
-    ).toMatchObject({ needsYou: false });
-    expect(
-      readDriverNeedsYou({
-        kind: 'completed',
-        value: { ok: false, reason: 'unreachable', detail: 'asleep' },
-      })
-    ).toBeNull();
-    expect(
-      readDriverNeedsYou({ kind: 'failed', code: 'execution_failed', message: 'boom' })
-    ).toBeNull();
-  });
-});
-
 describe('readDriverSettlement', () => {
   const work = { updatedAt: 100 };
   const status = (value: Record<string, unknown>) => ({
@@ -1026,34 +838,5 @@ describe('readDriverSettlement', () => {
         value: { ok: false, reason: 'not_found', detail: 'thread deleted' },
       })
     ).toEqual({ status: 'failed', report: 'The work is gone: thread deleted' });
-  });
-});
-
-describe('planNeoStartReceiptAdoption', () => {
-  const startReceipt = { executionId: 's-code', inputId: 'kickoff' };
-  const status = (extra: Record<string, unknown> = { startReceipt }) =>
-    ({
-      kind: 'completed',
-      value: { ok: true, value: { status: 'running', lastActivityAt: 1, ...extra } },
-    }) as never;
-  const sent = { inputBefore: 0, opening: 'raise it to 16px' };
-
-  test('a started card without a receipt adopts the start receipt status reports', () => {
-    expect(planNeoStartReceiptAdoption(status(), sent, 'start')).toEqual({
-      ...sent,
-      receipt: startReceipt,
-    });
-  });
-
-  test('a card that has a receipt, was sent or adopted, or got a malformed one keeps what it has', () => {
-    const own = { executionId: 's-code', inputId: 'brief' };
-    expect(planNeoStartReceiptAdoption(status(), { ...sent, receipt: own }, 'start')).toBeNull();
-    expect(planNeoStartReceiptAdoption(status(), sent, 'send')).toBeNull();
-    expect(planNeoStartReceiptAdoption(status(), sent, 'adopt')).toBeNull();
-    expect(planNeoStartReceiptAdoption(status(), null, 'start')).toBeNull();
-    expect(
-      planNeoStartReceiptAdoption(status({ startReceipt: { executionId: '' } }), sent, 'start')
-    ).toBeNull();
-    expect(planNeoStartReceiptAdoption(status({}), sent, 'start')).toBeNull();
   });
 });

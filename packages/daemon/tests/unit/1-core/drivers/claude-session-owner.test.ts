@@ -23,7 +23,7 @@ describe('claudeSessionOwner', () => {
   test.each(['2.1.295', '2.1.299', '2.1.302', '2.2.0'])(
     'recognizes matched CLI and SDK registrations on any engine version %s',
     (version) => {
-      for (const entrypoint of ['cli', 'sdk-ts']) {
+      for (const entrypoint of ['cli', 'sdk-cli', 'sdk-ts']) {
         expect(claudeSessionOwner(live, { ...registration, version, entrypoint })).toBe('cli');
       }
     }

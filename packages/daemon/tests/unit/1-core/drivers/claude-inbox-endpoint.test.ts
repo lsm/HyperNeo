@@ -27,7 +27,7 @@ const desktop = {
 };
 
 describe('requireClaudeInboxEndpoint', () => {
-  test.each(['cli', 'sdk-ts'])(
+  test.each(['cli', 'sdk-cli', 'sdk-ts'])(
     'returns only the registered endpoint for a matching %s owner',
     (entrypoint) => {
       expect(requireClaudeInboxEndpoint(live, { ...registration, entrypoint })).toEqual({

@@ -13,8 +13,6 @@ import type { NeoBinding, NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
   classifyNeoAskInput,
   createNeoAskOriginResolver,
-  neoDoneCheckMessageId,
-  neoWorkReturnMessageId,
   requireNeoAskCoordinator,
   requireNeoAskReference,
   type NeoAskOrigin,
@@ -142,7 +140,7 @@ function fixtures() {
 describe('stamped ask origins', () => {
   test('a note resolves to its delivery stamp in one read, whatever its card does next', () => {
     const f = fixtures();
-    const note = { sessionId: root.sessionId, messageId: neoDoneCheckMessageId(work.id, 0) };
+    const note = { sessionId: root.sessionId, messageId: `neo-note:${work.id}` };
     f.put(note, 'system');
     f.stamps.set(f.key(note), ask);
     expect(f.resolve(note)).toEqual(ask);
@@ -153,20 +151,11 @@ describe('stamped ask origins', () => {
 
   test('an unstamped system note has no ask, and a human input is its own', () => {
     const f = fixtures();
-    const note = { sessionId: root.sessionId, messageId: neoDoneCheckMessageId(work.id, 0) };
+    const note = { sessionId: root.sessionId, messageId: `neo-note:${work.id}` };
     f.put(note, 'system');
     f.put(ask);
     expect(f.resolve(note)).toBeNull();
     expect(f.resolve(ask)).toEqual(ask);
-  });
-});
-
-describe('neoWorkReturnMessageId', () => {
-  test('a continued card returns under a new id so its next report is not swallowed', () => {
-    expect(neoWorkReturnMessageId('w1', 0)).toBe('w1');
-    expect(neoWorkReturnMessageId('w1', 2)).toBe('w1:retry:2');
-    expect(neoWorkReturnMessageId('w1', 0, 1)).toBe('w1:continued:1');
-    expect(neoWorkReturnMessageId('w1', 2, 3)).toBe('w1:retry:2:continued:3');
   });
 });
 
