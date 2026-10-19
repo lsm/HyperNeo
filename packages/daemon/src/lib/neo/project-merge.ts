@@ -15,14 +15,13 @@ export interface NeoProjectMergeState {
   projects: readonly NeoProject[];
   identities: Readonly<Record<string, readonly string[]>>;
   repositories?: Readonly<Record<string, readonly string[]>>;
-  unavailable: readonly string[];
   retired: readonly string[];
 }
 export type NeoProjectMergeResult =
   | { ok: true; sourceId: string; targetId: string }
   | {
       ok: false;
-      reason: 'superseded' | 'unsafe_tree' | 'project_busy' | 'identity_conflict' | 'needs_human';
+      reason: 'superseded' | 'unsafe_tree' | 'identity_conflict' | 'needs_human';
     };
 type Plan = { source: NeoProject; target: NeoProject };
 type Gate = { value: Plan } | { reason: NeoProjectMergeResult };
@@ -59,12 +58,6 @@ export function requireNeoMergeTree(plan: Plan, state: NeoProjectMergeState): Ga
     (source.parentId ?? null) === (target.parentId ?? null)
     ? { value: plan }
     : { reason: { ok: false, reason: 'unsafe_tree' } };
-}
-
-export function requireNeoMergeIdle(plan: Plan, state: NeoProjectMergeState): Gate {
-  return [plan.source.id, plan.target.id].some((id) => state.unavailable.includes(id))
-    ? { reason: { ok: false, reason: 'project_busy' } }
-    : { value: plan };
 }
 
 export function requireNeoMergeIdentity(
@@ -123,7 +116,6 @@ export function createNeoProjectMergePipeline(
     .pipe(read, 'input', 'state')
     .pipe(requireNeoMergeCurrent, ['input', 'state'], 'result:merge')
     .pipe(requireNeoMergeTree, ['merge', 'state'], 'result:merge')
-    .pipe(requireNeoMergeIdle, ['merge', 'state'], 'result:merge')
     .pipe(requireNeoMergeIdentity, ['merge', 'input', 'state'], 'result:merge')
     .pipe(write, 'merge', 'merge')
     .end('merge') as (input: NeoProjectMergeInput) => NeoProjectMergeResult;

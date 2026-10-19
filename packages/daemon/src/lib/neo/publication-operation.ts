@@ -1,24 +1,12 @@
-import type { NeoBinding, NeoWork } from '@hyperneo/shared/types/neo-context';
-import type {
-  NeoPublicationAppendResult,
-  NeoPublicationInput,
-  NeoPublicationLink,
-} from '@hyperneo/shared/types/neo-publication';
+import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
+import type { NeoPublicationAppendResult, NeoPublicationInput, NeoPublicationLink } from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { NeoAskOrigin } from './ask-origin.ts';
-import {
-  NeoPublicationSchema,
-  NeoPublicationResultSchema,
-  withNeoPublicationAnswer,
-} from './publication.ts';
+import { NeoPublicationSchema, NeoPublicationResultSchema, withNeoPublicationAnswer } from './publication.ts';
 import { isMainNeoBinding } from './binding-roles.ts';
-import {
-  NEO_HUMAN_TRIGGER_PREFIX,
-  neoHumanTrigger,
-  requirePublicationTrigger,
-} from './notification-triggers.ts';
+import { NEO_HUMAN_TRIGGER_PREFIX, neoHumanTrigger, requirePublicationTrigger } from './notification-triggers.ts';
 import { neoDerivedId } from './derived-id.ts';
 
 const Draft = NeoPublicationSchema.omit({
@@ -55,7 +43,6 @@ interface NeoPublicationRuntime {
   getBinding(id: string): NeoBinding | null;
   getRootBinding(): NeoBinding | null;
   hasProject(id: string): boolean;
-  getWork(id: string): NeoWork | null;
   resolveAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
   resolveHumanAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
   append(input: NeoPublicationInput): Receipt;
@@ -168,16 +155,7 @@ export function requirePublicationLifetime(
 }
 
 function readLinkEvidence(link: NeoPublicationLink, runtime: NeoPublicationRuntime): LinkEvidence {
-  if (link.kind === 'project') return { link, exists: runtime.hasProject(link.id), origin: null };
-  const item = link.kind === 'work' ? runtime.getWork(link.id) : null;
-  const input = item?.originMessageId
-    ? { sessionId: item.originSessionId, messageId: item.originMessageId }
-    : null;
-  return {
-    link,
-    exists: !!item,
-    origin: input ? runtime.resolveAskOrigin(input) : null,
-  };
+  return { link, exists: link.kind === 'project' && runtime.hasProject(link.id), origin: null };
 }
 
 export function createNeoPublisher(runtime: NeoPublicationRuntime) {

@@ -59,7 +59,6 @@ function withTodoText(snapshot: NeoSnapshot, limit: number): NeoSnapshot {
 function withShortText(snapshot: NeoSnapshot): NeoSnapshot {
   return {
     ...snapshot,
-    sessionLoad: [],
     working: [],
     sessionNoticeGroups: snapshot.sessionNoticeGroups?.slice(0, 1),
     projects: snapshot.projects.map((project) => ({

@@ -33,8 +33,8 @@ export type NeoDriverTargetCard = {
 export class NeoDriverSessionRows {
   constructor(
     protected readonly db: Database,
-    private readonly table: 'neo_work_driver_targets' | 'neo_todo_sessions',
-    private readonly key: 'work_id' | 'todo_id'
+    private readonly table: 'neo_todo_sessions',
+    private readonly key: 'todo_id'
   ) {}
 
   get(id: string): NeoDriverTarget | null {

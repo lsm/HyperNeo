@@ -84,18 +84,10 @@ export class NeoProjectMergeRepository {
       if (repository && !repositories[row.project_id]?.includes(repository))
         (repositories[row.project_id] ??= []).push(repository);
     }
-    const unavailable = new Set<string>();
-    for (const [table, condition] of [['legacy_neo_asks', "status IN ('waiting', 'blocked')"]]) {
-      for (const row of this.db
-        .prepare(`SELECT DISTINCT concern_id AS id FROM ${table} WHERE ${condition}`)
-        .all() as { id: string }[])
-        unavailable.add(row.id);
-    }
     return {
       projects,
       identities,
       repositories,
-      unavailable: [...unavailable],
       retired: (
         this.db.prepare('SELECT source_id FROM neo_project_merges').all() as { source_id: string }[]
       ).map((row) => row.source_id),
@@ -111,10 +103,6 @@ export class NeoProjectMergeRepository {
             .prepare(`INSERT INTO neo_project_merges(source_id, target_id, merged_at)
           VALUES (?, ?, ?)`)
             .run(source.id, target.id, Date.now());
-          for (const table of ['legacy_neo_asks', 'neo_work'])
-            this.db
-              .prepare(`UPDATE ${table} SET concern_id = ? WHERE concern_id = ?`)
-              .run(target.id, source.id);
           this.db
             .prepare('UPDATE neo_project_workspaces SET project_id = ? WHERE project_id = ?')
             .run(target.id, source.id);
