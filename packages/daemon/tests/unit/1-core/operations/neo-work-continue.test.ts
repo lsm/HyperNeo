@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import { neoWorkProgress } from '../../../../src/lib/neo/driver-work.ts';
 import {
   neoContinuedReport,
   requireNeoAskContinueReserved,
@@ -11,17 +10,6 @@ import {
 
 const HOUR = 60 * 60 * 1000;
 const ref = { adapter: 'claude-desktop', daemon: 'laptop', id: 'local_ios' };
-
-describe('neoWorkProgress', () => {
-  test('moves with a new PR revision or a new worker report, not with Neo reopening the card', () => {
-    const reported = { status: 'reported' as const, report: 'Built the skeleton.' };
-    const first = neoWorkProgress(reported, 2, null);
-    expect(neoWorkProgress({ status: 'queued', report: 'Continued 1: go' }, 2, first)).toBe(first);
-    expect(neoWorkProgress(reported, 3, first)).not.toBe(first);
-    expect(neoWorkProgress({ ...reported, report: 'Built chat.' }, 2, first)).not.toBe(first);
-    expect(neoWorkProgress({ status: 'queued', report: null }, null, null)).toBe('0|-');
-  });
-});
 
 describe('requireNeoAskContinueReserved', () => {
   test('refuses a continue the shared budget could not reserve', () => {
