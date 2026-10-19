@@ -8,6 +8,7 @@ import {
   NEO_HOLDER_SNAPSHOT_SCOPE,
   NEO_SPEAKING_POLICY,
   NEO_ROOT_PROMPT,
+  NEO_ROOT_TURN_END,
   NEO_SYSTEM_PROMPT,
 } from '@hyperneo/prompts';
 import type { NeoPackBrief } from './packs/types.ts';
@@ -30,7 +31,10 @@ export function neoPrompt(
   projectId: string | null,
   packs: readonly NeoPackBrief[] = neoSettingsPackBriefs()
 ): string {
-  if (!projectId) return [NEO_ROOT_PROMPT, neoPackBriefing(packs)].filter(Boolean).join('\n\n');
+  if (!projectId)
+    return [NEO_ROOT_PROMPT, neoPackBriefing(packs), NEO_ROOT_TURN_END]
+      .filter(Boolean)
+      .join('\n\n');
   return fillPrompt(NEO_SYSTEM_PROMPT, {
     capabilities: NEO_CAPABILITIES_BRIEFING,
     root_clarify: '',
