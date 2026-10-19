@@ -20,13 +20,6 @@ const NUDGE_PREFIX = 'neo-nudge:';
 
 export const NEO_ASK_ANSWER_PREFIX = 'neo-ask-answer:';
 
-const NEO_FOLDABLE_NOTE =
-  /^neo-ask-evidence:|^neo-session-notices:|^neo-card-pr:|:stall:\d+$|:needs-you:\d+$/;
-
-export function isNeoFoldableNote(messageId: string): boolean {
-  return NEO_FOLDABLE_NOTE.test(messageId);
-}
-
 export function nudgedMessageId(messageId: string): string | null {
   return messageId.startsWith(NUDGE_PREFIX) ? messageId.slice(NUDGE_PREFIX.length) || null : null;
 }

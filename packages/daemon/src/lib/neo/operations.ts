@@ -419,7 +419,7 @@ export function neoSnapshotRevision<T extends { ok: boolean }>(
 }
 
 export const NEO_HUMAN_TURN_REFUSAL =
-  'Neo can do this only while answering the human’s own chat message, not from a system note or consultation.';
+  'Neo can do this only while answering the human’s own chat message, not from a system note.';
 
 function readNeoAskTold(service: NeoService, ask: NeoAsk): NonNullable<NeoSnapshot['told']> {
   const conversation = service.repo.conversationId();
