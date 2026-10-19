@@ -106,17 +106,12 @@ export function requireNeoTodoContinuable(read: {
   todo: NeoTodo | null;
   ask: NeoAsk | null;
   ref: WorkRef | null;
-  needsYouSince: number | null;
 }): Gate<{ todo: NeoTodo; ask: NeoAsk; ref: WorkRef }> {
   const { todo, ask, ref } = read;
   if (!todo || !ask) return fail('not_found: no such todo.');
   if (ask.status !== 'open') return fail(`ask_settled: this ask is ${ask.status}.`);
   if (todo.state === 'todo' || todo.state === 'removed' || !ref)
     return fail(`not_started: this todo is ${todo.state} and has no session to continue.`);
-  if (read.needsYouSince !== null)
-    return fail(
-      'needs_you: its session is waiting on the human; ask them to answer it there, then continue.'
-    );
   return { value: { todo, ask, ref } };
 }
 
@@ -369,6 +364,25 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     )
     .endAsync('outcome') as (todoId: string) => Promise<{ ok: true; todo: NeoTodo } | Rejection>;
 
+  const noteNeedsYou = async (
+    todoId: string,
+    ask: NeoAsk,
+    live: ReturnType<typeof readDriverLive>
+  ) => {
+    if (!live) return;
+    const since = sessions.readNeedsYouSince(todoId);
+    if (live.status !== 'needs_you') {
+      if (since !== null) sessions.recordNeedsYouSince(todoId, null);
+      return;
+    }
+    const todo = store.getTodo(todoId);
+    const followed =
+      todo?.state === 'doing' || (todo?.state === 'blocked' && todo.blockedBy === 'worker');
+    if (since !== null || !todo || !followed) return;
+    sessions.recordNeedsYouSince(todoId, Date.now());
+    await deps.tell(ask, todo, neoTodoNeedsYouNote(todo, live));
+  };
+
   const settleDeps = (ask: NeoAsk): NeoDriverSettleDeps => ({
     readStartedAt: (id) => sessions.readStartedAt(id),
     readSent: (id) => {
@@ -398,14 +412,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       return false;
     },
     notifyChanged: () => deps.changed(),
-    noteUnsettled: async (card, _ref, outcome) => {
-      const live = readDriverLive(outcome);
-      const todo = store.getTodo(card.id);
-      if (live?.status !== 'needs_you' || todo?.state !== 'doing') return;
-      if (sessions.readNeedsYouSince(card.id) !== null) return;
-      sessions.recordNeedsYouSince(card.id, Date.now());
-      await deps.tell(ask, todo, neoTodoNeedsYouNote(todo, live));
-    },
+    noteUnsettled: (card, _ref, outcome) => noteNeedsYou(card.id, ask, readDriverLive(outcome)),
     forgetActivity: () => {},
     transition: (card, settled) => {
       const todo = store.getTodo(card.id);
@@ -487,6 +494,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         observe(todo.id, outcome);
         const live = readDriverLive(outcome);
         if (live) sessions.recordLive(todo.id, live.status, live.link, live.remoteLink);
+        await noteNeedsYou(todo.id, target.ask, live);
         sessions.recordCardCheck(todo.id, { checkedAt: now, unchecked: !live });
         deps.changed();
         const report = readDriverFollowUp(outcome, since, sent);
@@ -567,7 +575,6 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       todo,
       ask: todo ? store.getAsk(todo.askId) : null,
       ref: todo ? sessions.readRef(todo.id) : null,
-      needsYouSince: todo ? sessions.readNeedsYouSince(todo.id) : null,
       target: todo ? sessions.get(todo.id) : null,
       interrupted: todo ? sessions.readStartInterrupted(todo.id) : false,
     };
@@ -579,6 +586,10 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     const { todo, ask, ref } = gate.value;
     const text = withWorkGoal(message, { workId: todo.id, goal: null, doneWhen: todo.doneWhen });
     const status = await deps.invoke(caller(ask), 'work.status', { ref });
+    if (readDriverLive(status)?.status === 'needs_you')
+      return fail(
+        'needs_you: its session is waiting on the human; ask them to answer it there, then continue.'
+      ).reason;
     const baseline = readDriverSendBaseline(status, Date.now(), !!ref.daemon);
     const sent = readDriverSent(status, text, todo.createdAt);
     const delivered = readDriverOutcome(

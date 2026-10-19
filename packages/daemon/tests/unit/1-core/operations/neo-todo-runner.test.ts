@@ -394,6 +394,31 @@ describe('a todo session waiting on the human', () => {
     await runner.refresh(warn);
     expect(told.filter((note) => note.includes('waiting on the human'))).toHaveLength(2);
   });
+
+  test('continue reads the session fresh, so a todo closed while it waited is not stuck', async () => {
+    const { store, runner, add, setStatus } = setup();
+    const todo = add();
+    await runner.start(todo.id);
+    setStatus({ ok: true, value: { status: 'needs_you', lastActivityAt: 2_000 } });
+    await runner.refresh(warn);
+    store.updateTodo(store.getTodo(todo.id)!, { state: 'done', report: 'Closed' }, 3);
+    setStatus({ ok: true, value: { status: 'done', lastActivityAt: 4_000 } });
+    expect(await runner.proceed(todo.id, 'next')).toMatchObject({ ok: true });
+  });
+
+  test('a worker-blocked todo whose session waits on the human tells Neo too', async () => {
+    const { store, runner, told, add, setStatus } = setup();
+    const todo = add();
+    await runner.start(todo.id);
+    store.updateTodo(
+      store.getTodo(todo.id)!,
+      { state: 'blocked', blockedBy: 'worker', report: 'Stopped', blockedReason: 'x' },
+      3
+    );
+    setStatus({ ok: true, value: { status: 'needs_you', lastActivityAt: 4_000 } });
+    await runner.refresh(warn);
+    expect(told.filter((note) => note.includes('waiting on the human'))).toHaveLength(1);
+  });
 });
 
 describe('neo todo runner uncertainty', () => {
