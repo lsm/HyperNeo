@@ -251,7 +251,6 @@
 36	packages/daemon/tests/unit/1-core/operations/neo-conversation-images.test.ts
 8	packages/daemon/tests/unit/1-core/operations/neo-coordinator-cwd.test.ts
 1152	packages/daemon/tests/unit/1-core/operations/neo-daemon-ticks.test.ts
-8	packages/daemon/tests/unit/1-core/operations/neo-done-check.test.ts
 491	packages/daemon/tests/unit/1-core/operations/neo-draft-recover.test.ts
 9	packages/daemon/tests/unit/1-core/operations/neo-driver-refresh.test.ts
 22994	packages/daemon/tests/unit/1-core/operations/neo-driver-work.test.ts

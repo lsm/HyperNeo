@@ -20,21 +20,6 @@ const NUDGE_PREFIX = 'neo-nudge:';
 
 export const NEO_ASK_ANSWER_PREFIX = 'neo-ask-answer:';
 
-export function neoDoneCheckMessageId(
-  workId: string,
-  continued: number,
-  prRevision?: number,
-  followedAt?: number,
-  stalled = 0
-): string {
-  return `${workId}:done-check:${continued}${prRevision ? `:pr:${prRevision}` : ''}${followedAt ? `:at:${followedAt}` : ''}${stalled > 0 ? `:s:${stalled}` : ''}`;
-}
-
-export function neoWorkReturnMessageId(workId: string, retries: number, continued = 0): string {
-  const base = retries ? `${workId}:retry:${retries}` : workId;
-  return continued ? `${base}:continued:${continued}` : base;
-}
-
 export function nudgedMessageId(messageId: string): string | null {
   return messageId.startsWith(NUDGE_PREFIX) ? messageId.slice(NUDGE_PREFIX.length) || null : null;
 }

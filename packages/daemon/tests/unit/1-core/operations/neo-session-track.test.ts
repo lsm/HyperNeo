@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { z } from 'zod';
 import type { MessageHub } from '@hyperneo/shared';
-import { requireNeoDriverVerb } from '../../../../src/lib/neo/driver-work.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import {
   findNeoSessionNotice,
@@ -79,18 +78,6 @@ describe('requireNeoTrackedAdoption', () => {
     expect(requireNeoTrackedAdoption({ verb: 'adopt', ref }, [ref], 'ok')).toEqual({
       reason: { ok: false, reason: 'A Neo card already follows this session.' },
     });
-  });
-});
-
-describe('requireNeoDriverVerb', () => {
-  test('adopting needs an adapter that reads status, not one that sends', () => {
-    const adopt = { verb: 'adopt' as const, ref };
-    expect(
-      requireNeoDriverVerb(adopt, [{ id: 'codex-desktop', capabilities: ['find', 'status'] }], 1)
-    ).toEqual({ value: 1 });
-    expect(
-      requireNeoDriverVerb(adopt, [{ id: 'codex-desktop', capabilities: ['find', 'send'] }], 1)
-    ).toMatchObject({ reason: { ok: false } });
   });
 });
 
