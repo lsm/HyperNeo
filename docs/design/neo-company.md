@@ -1,112 +1,67 @@
 # Neo company: home repo, scheduler, goals
 
-Status: proposal, awaiting the human's approval. Nothing here is built yet. Section 0 (workers message Neo mid-work) is the top requirement and its slices go first.
+Status: proposal, awaiting the human's approval. Nothing here is built yet. Section 0 (sessions message each other) is the top requirement and its slices go first.
 
 Root Neo owns the projects it runs for the human (OAP and the review bot first). It
 keeps their direction in a small git repo, wakes itself on a schedule to push each
 project forward, and tracks each project's goals with a journal of what worked. The
 human stays in one conversation with Neo; scheduled work shows there as one quiet row.
 
-Authors: fullstack 3 (home repo, scheduler, worker messages, shared sections),
+Authors: fullstack 3 (session messages, home repo, scheduler, shared sections),
 fullstack 2 (goals, UI).
 
-## 0. Workers message Neo mid-work (fs3; the human's top requirement)
+## 0. Sessions message each other (fs3; the human's top requirement)
 
-Workers must be able to tell Neo things while they work, the way Claude sessions message
-each other today: ask a question and keep going, report progress, flag a block, say
-done. Turn-end reports alone are too rigid. This section's slices come first (section 10).
+Workers must be able to tell Neo things while they work, and Neo must be able to answer,
+the way Claude Code sessions use `SendMessage` today. Turn-end reports alone are too
+rigid. The model is that simple: every HyperNeo session has an inbox, root Neo is one of
+them, and there is one action, send `{to, text}`. This section's slices come first
+(section 10).
 
-### Today
+### The one action
 
-No worker can deliberately message Neo mid-work. Neo learns by polling `work.status`
-(`session-watcher.ts`, `settle-driver-work.ts`) and from Claude inbox replies.
+`message.send` already exists (`lib/messaging/message-send.ts:211`). It persists a
+message for a session addressed by session id (or a remote daemon's session), records
+the sender as `session:<caller>`, and refuses `inputKind: 'human'` from an agent. We keep
+it and change only what is needed:
 
-- **HyperNeo workers** get the operations MCP server (`query-options-builder.ts:318`), but
-  no operation reaches Neo: `work.report` is not registered and nothing creates `worker`
-  bindings; `neo.message.send` is local-human only (`intake.ts:71`).
-- **Claude Code / Desktop** sessions can reply with `SendMessage`, but only after the
-  daemon has messaged them over the inbox; the `claude -p` start carries no reply address.
-  Replies land in Neo as `system` input and wait for Neo's turn to end
-  (`claude-inbox-submit.ts:20`, `mailbox/registration.ts:108`).
-- **Codex** threads start with nothing attached: no MCP server, no environment
-  (`codex-desktop-adapter.ts:1039`).
-- **Receiving:** only `human` inputs steer a running Neo turn (`service.ts:906`); system
-  notes are deferred to the turn's end (`service.ts:926`).
+- **Addressing is by session id.** HyperNeo has no handle system for sessions (short ids
+  exist only for tasks and goals), so the id is the address. When Neo sends a worker
+  anything (a todo start, a reply), the message ends with `Reply with message.send to
+  <neo session id>.` The worker replies to that id. Neo replies to the sender id it sees.
+- **Delivery works like Claude Code.** If the recipient is mid-turn, the message is
+  injected at its next tool round and the turn carries on; if it is idle, the message
+  wakes it. Nobody waits for a reply. For HyperNeo sessions this reuses the steer path
+  root Neo already uses for human input (`messageQueue.steer`, `agent-session.ts:3204`),
+  opened to `session:` senders. Other adapters deliver as they do today (`work.send`).
+- **Attribution.** The recipient sees `From <session title> (<session id>): <text>`, so
+  it knows who to answer.
 
-### Sending
+### How each worker sends
 
-One operation, `neo.worker.message`, with one store behind it, reached three ways:
-
-```
-neo.worker.message { kind: 'progress' | 'question' | 'blocked' | 'done',
-              text,                      // up to 4,000 chars
-              forHuman?: boolean,        // a question only the human can answer
-              todoId? }                  // optional; resolved from the sender if absent
--> { accepted: true, messageId } | { accepted: false, reason }
-```
-
-| Worker | Path | Sender identity |
+| Worker | How it sends | Sender identity |
 | --- | --- | --- |
-| HyperNeo session | the operations MCP server it already has; `neo.worker.message` admits worker sessions | the daemon-assigned caller session id (MCP door) |
-| Claude Code / Desktop | `SendMessage` to the HyperNeo inbox address. Right after a start, the daemon sends one inbox note giving that address and the kind tags (`[question]`, `[blocked]`, `[done]`, `[for human]`). Replies become `neo.worker.message` calls. | the reply's socket path matched to the live registration (`claude-inbox-endpoint.ts:72`), as today |
-| Codex thread | a stdio MCP server, `hyperneo --hyperneo-worker-mcp`, put in the thread's `config.mcp_servers` at `thread/start`, with a per-thread token. Same bridge pattern as the ACP MCP proxy (`acp/mcp-proxy-bridge.ts`). | the token, which the daemon issued and maps to that thread |
-| Anything with Bash | `hyperneo neo message --kind question "…"`, reading `HYPERNEO_WORKER_TOKEN`; only where the daemon controls the environment (HyperNeo sessions, the Codex app-server). Optional. | the token |
+| HyperNeo session | `message.send` through the operations tool it already has | the daemon-assigned caller session id |
+| Claude Code, Codex, anything with Bash | `hyperneo send <session-id> "<text>"`, a new CLI subcommand that calls `message.send` on the local daemon | `HYPERNEO_SESSION_ID`, which the daemon sets in the environment of the processes it starts; see the risk on processes it does not start |
 
-The sender is always resolved by the daemon, never read from the text. A sender must be a
-session Neo dispatched: it resolves to a todo session or a Neo work target; anything else
-is refused (`not_a_worker`). The todo is the one whose session ref matches the sender,
-unless `todoId` names another todo of the same ask.
+Everything is local and same-user, so there are no tokens and no MCP bridges.
 
-### Receiving
+### In the human's chat
 
-- Every message is stored in `neo_worker_messages` (sender ref, todo, kind, text,
-  forHuman, created, delivered, dedupe hash), then delivered to root Neo as input kind
-  `worker`, attributed: `From "<session title>" (<adapter>) on todo "<title>", <kind>: …`.
-- **Neo mid-turn, in a non-human turn** (a scheduled wake, a note, another worker
-  message): the message steers into the running turn, the same path as human steering
-  (`steerHumanMessages`), widened to `worker` inputs for those turns only.
-- **Neo mid-turn, in a human turn:** the message is held until that turn ends, then
-  delivered as its own turn. A human turn's authority comes from its human prompt
-  (`hasNeoHumanWorkInput`, `work-origin.ts:11`; `isNeoHumanTurn`, `operations.ts:255`), so
-  a worker steer there would inherit it. A human message steered into a worker turn is
-  unaffected.
-- **Neo idle:** it wakes Neo, as todo notes do (`continues`).
-- **Batching:** messages that arrive while a steer or wake is pending merge into one input
-  ("3 worker messages"), oldest first, so a chatty worker costs one interruption.
-- **`forHuman` questions:** the daemon files a `neo.question.ask` (kind `reply`) on the
-  todo's ask, so the human sees it among Neo's questions. The answer goes back to the
-  worker (below) and to Neo as a note.
-- **Chat:** each delivered batch shows as one collapsible row, `role: 'worker'` in
-  `neo.conversation.read`, the same pattern as wake rows (section 5): sender, todo, kind
-  chips and the first line, expanding to the texts. Rendering is fs2's.
-
-### Replying
-
-- `neo.worker.reply { messageId, text }` (root Neo, or the human through the question
-  path) resolves the sender's ref and calls `work.send` with a `replyTo` line naming the
-  message, and a new `steer: true` flag.
-- With `steer`, adapters that can steer do: Codex `turn/steer`, Claude through the inbox at
-  `priority: 'next'` (lands at the next tool round). HyperNeo sessions queue until the
-  worker is idle (no steer there yet). Without steer support it is a normal send.
-- The worker never waits for a reply; it keeps working, and the reply arrives mid-turn or
-  at its next idle point.
+Messages between Neo and its workers show in the human's conversation as collapsible
+rows (`role: 'session'` in `neo.conversation.read`): who, to whom, the first line,
+expanding to the text. The same pattern as wake rows (section 5). Rendering is fs2's.
 
 ### Guardrails
 
-- **Rate limit** per sender: 6 a minute and 60 an hour. Past that, messages are stored
-  but delivered as one "N more messages from <worker>" line per batch.
-- **Dedupe:** the same sender, kind and text hash within 10 minutes is dropped, and the
-  sender gets `{accepted: true, duplicate: true}`.
-- **No human authority:** input kind `worker` is never `human`, and worker messages never
-  steer into a human turn (above). As defence in depth, the human-authority checks
-  (`hasNeoHumanWorkInput`, `isNeoHumanTurn`) also refuse when the turn has carried any
-  `worker` input (`coordinator-turn.ts` records what each turn carried). So
-  `neo.session.archive`, `neo.rule.save`, mandate saves and start answers stay human-only
-  even if a steer slips in. W2 tests both: a worker message during a human turn is held,
-  and a turn that carried a worker input cannot archive. Neo's prompt treats worker text
-  as data from that worker, never as the human's instruction.
-- **Scope:** a worker can message only about its own todos, and only while its todo is
-  open.
+- **Rate limit** per sender: 6 a minute. Past that, messages are refused with
+  `rate_limited` until the minute passes.
+- **Dedupe:** the same sender, recipient and text within 10 minutes is accepted once.
+- **No human authority:** a message from a session is never `human` input
+  (`message-send.ts:143` already refuses that). Because it can be injected into a human
+  turn, the human-authority checks (`hasNeoHumanWorkInput`, `isNeoHumanTurn`) refuse a
+  turn that has carried any `session:` input, so archive, standing rules, mandate saves
+  and start answers stay human-only.
 
 ## 1. Neo home repo (fs3)
 
@@ -494,13 +449,14 @@ The same list feeds iOS.
 - **Goals** (`lib/goals/`, existing subsystem): goal state, the journal and the facts.
   It is a schedule source and an operations owner. It never writes git and never
   delivers messages itself.
-- **Neo core** (`lib/neo/`): worker messages (`neo.worker.message`, `neo.worker.reply`, the
-  store, delivery and steering), the home repo (`lib/neo/home/`: `neo.home.init | save |
-  read`), the mandate confirm gate, and the prompt that tells Neo how a goal cycle runs.
-- **Drivers** (`lib/drivers/`): the per-adapter halves of worker messages: the Claude
-  inbox intro note and reply mapping, the Codex worker MCP config and token, and
-  `work.send`'s `steer` flag.
-  Neo is the only goal owner for now, but goals take any owner session.
+- **Messaging** (`lib/messaging/`, existing subsystem): `message.send`, its mid-turn
+  delivery, the rate limit and dedupe. Any session uses it; Neo is not special there.
+- **CLI** (`packages/cli`): `hyperneo send`, a thin client of `message.send`.
+- **Neo core** (`lib/neo/`): the reply-to line in what Neo sends, the human-authority
+  rule for turns that carried a session message, the home repo (`lib/neo/home/`:
+  `neo.home.init | save | read`), the mandate confirm gate, and the prompt that tells
+  Neo how a goal cycle runs. Neo is the only goal owner for now, but goals take any
+  owner session.
 - **Packs**: the coding pack contributes to a goal's facts through its existing
   `statusLine` and `prs` hooks. Packs never call the scheduler or the home repo directly.
 - **Adapters**: unchanged. The scheduler reads `work.status` and delivers through the same
@@ -508,13 +464,11 @@ The same list feeds iOS.
 
 ## 8. Data model and migrations (fs3 + fs2)
 
-Worker messages, scheduler and home repo (fs3):
+Session messages, scheduler and home repo (fs3):
 
 | Change | Migration | Notes |
 | --- | --- | --- |
-| `neo_worker_messages` | new table | `id`, `sender_ref` (JSON), `todo_id`, `kind`, `text`, `for_human`, `dedupe_hash`, `created_at`, `delivered_at`, `batch_id`, `reply_of`. Index on (`delivered_at`, `created_at`) and on `todo_id`. |
-| `neo_worker_tokens` | new table | `token_hash`, `sender_ref`, `todo_id`, `created_at`, `revoked_at`. Tokens are stored hashed and revoked when the todo closes. |
-| Input kind `worker` | none | The mailbox `inputKind` gains `worker`; input origins record the message ids. |
+| Session messages | none | `message.send` already persists them as mailbox rows with a `session:<id>` origin. The rate limit and dedupe read those rows. |
 | `session_schedules` | new table | Columns as in section 2. Unique (`source_kind`, `source_id`); index on (`status`, `next_run_at`) and on `target`. No foreign keys: targets may be on other adapters. |
 | `neo_concerns.home_path` | `ADD COLUMN` | Nullable. The project's folder under `projects/` in the home repo, set once. |
 | `neo_questions.confirm_json` | `ADD COLUMN` | Nullable `{path, sha256}` that the home-save gate checks. |
@@ -541,13 +495,13 @@ Reused as is:
 - The goal model, `lib/goals`, the `goal.*` operations and `space_goal_events`.
 - The coding pack's ledger and status hooks for facts.
 
-Reused for worker messages: the operations MCP server on HyperNeo sessions, the Claude
-inbox and its registration-based sender check, the ACP MCP proxy bridge pattern, human
-steering, `continues` delivery, and `neo.question.ask`.
+Reused for session messages: `message.send` itself, the operations tool HyperNeo
+sessions already have, the steer path root Neo uses for human input, and `work.send` for
+other adapters.
 
 New:
-- `neo.worker.message`, `neo.worker.reply`, `neo_worker_messages`, worker tokens, the Codex
-  worker MCP bridge and `work.send`'s `steer` flag.
+- Mid-turn delivery for `session:` senders, the rate limit and dedupe, the `hyperneo send`
+  CLI, and the human-authority rule for turns that carried a session message.
 - `lib/scheduler/` with `session_schedules`, the fire handler, sources and five operations.
 - `lib/neo/home/` with `neo.home.init | save | read` and the confirm gate.
 - Owner-session goals, `goal_journal`, `goal.journal.*` and `goal.facts`.
@@ -555,24 +509,18 @@ New:
 
 ## 10. Slices in order, with sizes
 
-Worker messages first (fs3 unless marked), each one PR from dev; sizes are production
+Session messages first (fs3 unless marked), each one PR from dev; sizes are production
 lines:
 
-- **W1. `neo.worker.message` for HyperNeo workers** (~200): `neo_worker_messages`, the
-  operation with sender resolution, scope, rate limit and dedupe, and delivery to root Neo
-  as attributed `worker` input with batching (wake when idle).
-- **W2. Steering** (~90): `worker` inputs steer a running non-human Neo turn and are held
-  through a human turn; the human-authority checks refuse a turn that carried a `worker`
-  input.
-- **W3. Replies** (~120): `neo.worker.reply`, `work.send`'s `replyTo` and `steer`, Codex
-  `turn/steer`, Claude inbox at `next`, HyperNeo queue.
-- **W4. Claude workers** (~120): the intro inbox note after a start, and inbox replies
-  mapped to `neo.worker.message` with kind tags.
-- **W5. Worker chat rows** (fs2, ~150): the `worker` item in `neo.conversation.read`, the
-  web row, and `forHuman` questions filed as Neo questions.
-- **W6. Codex workers and the CLI** (~200): `neo_worker_tokens`, the
-  `--hyperneo-worker-mcp` bridge in `thread/start` config, and
-  `hyperneo neo message`.
+- **M1. Mid-turn delivery** (~80): `message.send` from a `session:` sender is injected
+  into a running HyperNeo turn through the steer path and wakes an idle one; the
+  `From <title> (<id>)` attribution; the rate limit and dedupe.
+- **M2. Neo side** (~50): the `Reply with message.send to <neo id>` line on what Neo
+  sends, and the human-authority checks refusing a turn that carried a `session:` input.
+- **M3. `hyperneo send` CLI** (~100): the subcommand, `HYPERNEO_SESSION_ID` set by the
+  adapters on the processes they start, and the local daemon address.
+- **M4. Session message rows** (fs2, ~120): the `session` item in `neo.conversation.read`
+  and the web row.
 
 Scheduler and home repo (fs3):
 
@@ -597,23 +545,22 @@ Combined order (who, and what each needs):
 
 | Step | fs3 | fs2 |
 | --- | --- | --- |
-| W-a | W1 `neo.worker.message` for HyperNeo workers | G1 goals scope migration |
-| W-b | W2 steering, then W3 replies | W5 worker chat rows (needs W1) |
-| W-c | W4 Claude workers, then W6 Codex and CLI | G2 owner-session goals |
+| M-a | M1 mid-turn delivery, then M2 Neo side | G1 goals scope migration |
+| M-b | M3 `hyperneo send` CLI | M4 session message rows (needs M1), then G2 owner-session goals |
 | 1 | S1 scheduler model | G3 journal |
 | 2 | S2 fire and delivery | |
 | 3 | H1 home repo | G4 goals as a source (needs S1, S2) |
-| 4 | H2 confirm gate | G5 wake rows (needs S2, W5), G7 schedules strip (needs S1) |
+| 4 | H2 confirm gate | G5 wake rows (needs S2, M4), G7 schedules strip (needs S1) |
 | 5 | P1 Neo prompt (needs G4, H2) | G6 goals panel |
 | 6 | H3 remote and sync | G8 what works and mandate reconcile (needs H1, G4) |
 
-After W-b, HyperNeo workers can message Neo mid-work and get replies, and the human sees
-those exchanges as rows. W-c brings Claude and Codex workers in. After step 5 the goal
-loop works end to end on one machine: a goal wakes Neo, Neo acts and journals, and
-mandate changes need a yes. Step 6 adds the second machine. Then the OAP and review-bot
-mandates and handoffs get written (not code).
+After M-a, HyperNeo sessions (Neo and its HyperNeo workers) message each other mid-turn.
+M-b brings Claude Code and Codex workers in through the CLI, and the human sees the
+exchanges as rows. After step 5 the goal loop works end to end on one machine: a goal
+wakes Neo, Neo acts and journals, and mandate changes need a yes. Step 6 adds the second
+machine. Then the OAP and review-bot mandates and handoffs get written (not code).
 
-Total: about 1,510 fs3 lines and 1,270 fs2 lines over 20 PRs.
+Total: about 1,010 fs3 lines and 1,240 fs2 lines over 18 PRs.
 
 Goals and UI (fs2), each one PR from dev; sizes are production lines:
 
@@ -627,7 +574,7 @@ Goals and UI (fs2), each one PR from dev; sizes are production lines:
    `neo_asks.goal_id` and the `neo.ask.open` gate, and the schedule lifecycle on
    create/pause/close. Needs the scheduler service.
 5. **Wake rows** (~150): the `wake` item in `neo.conversation.read` and the web row.
-   Needs the `scheduled_wake` origin. Reuses W5's collapsible row and its extra item
+   Needs the `scheduled_wake` origin. Reuses M4's collapsible row and its extra item
    role in `neo.conversation.read`, so only the wake data and its additions are new.
 6. **Neo goals panel** (web, ~200).
 7. **Schedules strip** (web, ~100). Needs `schedule.session.list`.
@@ -638,23 +585,24 @@ iOS work for 5 to 7 is Neo iOS's, against the contracts in sections 5 and 6.
 
 ## 11. Risks
 
-Worker messages (fs3):
+Session messages (fs3):
 
-- **Latency during human turns.** Worker messages wait while Neo works on a human
-  request, so a worker's question can sit for that turn's length. That is the price of
-  keeping human authority clean. The worker keeps working meanwhile, and a long human
-  turn is visible in the chat.
-- **Claude sender proof is a same-user file check**, not authentication: the reply socket
-  is matched to `~/.claude/sessions/<pid>.json`. Any process running as the user could
-  forge it. That is today's trust level for the inbox, and acceptable on a single-user
-  machine.
-- **Injected text.** A worker message can contain anything. It is tagged `worker`, so it
-  never passes a human-authority check, and Neo's prompt says so. A worker can still
-  mislead Neo about facts. Neo checks claims that matter (PR merged, tests green) with its
-  own reads before acting on them.
-- **Codex config.** `config.mcp_servers` at `thread/start` is not yet used anywhere. If
-  the Codex desktop handoff drops it, W6 falls back to the CLI with the token in the
-  app-server environment. This needs a live check before W6.
+- **Sender identity is trust in the local user.** `HYPERNEO_SESSION_ID` is just an
+  environment variable, so any process of the same user can claim any session. That is
+  the same trust level as Claude Code's own inbox, and fine on a single-user machine.
+- **Processes the daemon did not start.** A Claude session reopened in Claude Desktop
+  runs in Desktop's own process and does not inherit the variable; one Codex app-server
+  serves many threads, so one variable cannot name a thread. For those, `hyperneo send`
+  without the variable falls back to the nearest ancestor process registered as a Claude
+  session (`~/.claude/sessions/<pid>.json`). Codex needs a live check before M3 to pick
+  its identity source (a thread-id variable, or the app-server's per-thread cwd).
+- **A message during a human turn removes human authority for the rest of that turn.**
+  If the human's request needed it (archive, a rule), Neo asks the human to repeat it.
+  This is rare and safe; the alternative was holding messages, which the human found
+  too rigid.
+- **Injected text.** A session message can contain anything. It is never human input,
+  and Neo's prompt treats it as data from that session. Neo checks claims that matter
+  (PR merged, tests green) with its own reads before acting on them.
 
 Scheduler and home repo (fs3):
 
