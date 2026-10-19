@@ -123,7 +123,7 @@ export async function sweepCodingPrs(
       nudge.kind === 'remind' &&
       (await deps.tell(row.owner!, key, codingPrNudgeText(row, now)).catch(() => false));
     if (nudge.kind === 'remind')
-      log.info(`PR sweep ${key} to ${owned(row.owner!)}: ${told ? 'told' : 'not told'}`);
+      log.warn(`PR sweep ${key} to ${owned(row.owner!)}: ${told ? 'told' : 'not told'}`);
     if (told) {
       repo.mark(row, nudge.nudges, now);
       continue;
@@ -131,7 +131,7 @@ export async function sweepCodingPrs(
     const woken = await deps
       .wake(key, codingPrEscalationText(row, now, nudge.kind === 'remind'))
       .catch(() => false);
-    log.info(`PR sweep ${key} escalated to Neo: ${woken ? 'woken' : 'not woken'}`);
+    log.warn(`PR sweep ${key} escalated to Neo: ${woken ? 'woken' : 'not woken'}`);
     if (woken) repo.mark(row, CODING_PR_REMINDERS + 1, now);
   }
 }
