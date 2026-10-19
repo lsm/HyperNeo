@@ -45,6 +45,7 @@ import {
   readCodingLedgerRepo,
   reconcileCodingPrLedger,
 } from './pr-ledger.ts';
+import { type CodingPrSweepRepository, type CodingSweepDeps, sweepCodingPrs } from './pr-sweep.ts';
 import { readCodingPrerequisiteBase } from './prerequisite-base.ts';
 import {
   CODING_CHECK_PR_MERGED,
@@ -285,6 +286,8 @@ export function createCodingPack(
     cardStartedAt?: (workId: string) => number | null;
     todoPrs: CodingTodoPrRepository;
     prLedger: CodingPrLedgerRepository;
+    prSweep: CodingPrSweepRepository;
+    prSweepDeps: CodingSweepDeps;
     projectRepos: () => string[];
     readLedgerRepo?: CodingLedgerRead;
   }
@@ -296,14 +299,16 @@ export function createCodingPack(
     ...CODING_PACK_BRIEF,
     prepareExecution: prepareCodingExecution,
     todos: createCodingTodoPack(deps.todoPrs, deps.readPrs),
-    sweep: (now) =>
-      reconcileCodingPrLedger(
+    sweep: async (now) => {
+      await reconcileCodingPrLedger(
         deps.prLedger,
         deps.projectRepos(),
         deps.readLedgerRepo ?? readCodingLedgerRepo,
         now,
         ledgerSkips
-      ),
+      );
+      await sweepCodingPrs(deps.prSweep, deps.prSweepDeps, now);
+    },
     snapshotRows: (repos, now) => deps.prLedger.snapshot(repos, now),
     prerequisiteParameters: (items) =>
       readCodingPrerequisiteBase(items, {
