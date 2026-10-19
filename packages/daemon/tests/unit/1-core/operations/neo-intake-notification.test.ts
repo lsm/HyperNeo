@@ -132,7 +132,7 @@ describe('accepted public ask notification', () => {
       expect(observed).toEqual([[1, 1, 1]]);
       expect(ledger.list(conversationId)![0]).toMatchObject({
         requestId,
-        askOrigin: { sessionId: binding.sessionId, messageId: requestId },
+        askOrigin: { sessionId: root.sessionId, messageId: requestId },
       });
     }
   );
@@ -167,19 +167,19 @@ describe('accepted public ask notification', () => {
     expect(kept.id).toBe(previous.dbMessageId);
   });
 
-  test('accepts a manual-mode holder ask and still notifies after its commit', async () => {
+  test('takes an ask sent to a holder into a manual-mode root and notifies root after its commit', async () => {
     writer
       .prepare('UPDATE sessions SET config = ? WHERE id = ?')
-      .run(JSON.stringify({ queryMode: 'manual' }), holder.sessionId);
-    expect(sessions.getSession(holder.sessionId)!.config).toMatchObject({ queryMode: 'manual' });
+      .run(JSON.stringify({ queryMode: 'manual' }), root.sessionId);
+    expect(sessions.getSession(root.sessionId)!.config).toMatchObject({ queryMode: 'manual' });
     expect(await receipt({ ...input, sessionId: holder.sessionId })).toMatchObject({ ok: true });
     expect(observed).toEqual([[1, 1, 1]]);
-    expect(notify).toHaveBeenCalledExactlyOnceWith(holder.sessionId);
+    expect(notify).toHaveBeenCalledExactlyOnceWith(root.sessionId);
     const row = writer
       .prepare('SELECT send_status FROM sdk_messages WHERE sdk_uuid = ?')
       .get(requestId) as { send_status: string };
     expect(row.send_status).toBe('deferred');
-    expect(ledger.list(conversationId)![0].askOrigin.sessionId).toBe(holder.sessionId);
+    expect(ledger.list(conversationId)![0].askOrigin.sessionId).toBe(root.sessionId);
   });
 
   test.each([

@@ -170,7 +170,7 @@ describe('a merged project in a real store', () => {
       targetIdentities: [],
     });
 
-  test('answering an old conversation after its project merged reaches the kept avatar', async () => {
+  test('answering an old conversation after its project merged reaches root Neo', async () => {
     expect(mergeCopyIntoWeb()).toMatchObject({ ok: true });
     const requestId = '20000000-0000-4000-8000-000000000001';
     const sent = await invokeOperation(
@@ -182,7 +182,7 @@ describe('a merged project in a real store', () => {
     expect(sent).toMatchObject({ kind: 'completed', value: { ok: true, requestId } });
     expect(
       writer.prepare('SELECT session_id FROM sdk_messages WHERE sdk_uuid = ?').get(requestId)
-    ).toEqual({ session_id: kept.sessionId });
+    ).toEqual({ session_id: root.sessionId });
   });
 
   test('merges every duplicate in one run and logs a merge the gates refuse', () => {

@@ -61,7 +61,7 @@ describe('neo.message.send replyTo', () => {
     store.openAsk({
       id: 'ask',
       projectId: 'c1',
-      sessionId: holder,
+      sessionId: root,
       originMessageId: null,
       title: 'iOS card',
       request: 'Redo the iOS card',
@@ -118,13 +118,13 @@ describe('neo.message.send replyTo', () => {
       ).payload_json
     );
 
-  test('a reply to a question goes to the ask owner and records the words as its answer', async () => {
+  test('a reply to a question goes to root Neo and records the words as its answer', async () => {
     const id = crypto.randomUUID();
     expect(await send(id, '在做 / 做完', { kind: 'question', id: 'q1' })).toMatchObject({
       value: { ok: true, created: true },
     });
     expect(prompt(id)).toMatchObject({
-      session_id: holder,
+      session_id: root,
       replyTo: { kind: 'question', id: 'q1' },
       message: {
         content: [
@@ -158,18 +158,18 @@ describe('neo.message.send replyTo', () => {
     expect(store.getQuestion('q1')?.state).toBe('open');
   });
 
-  test('a reply about a todo goes to the ask owner without answering anything', async () => {
+  test('a reply about a todo goes to root Neo without answering anything', async () => {
     const id = crypto.randomUUID();
     await send(id, 'Use the new session', { kind: 'todo', id: 't1' });
     expect(prompt(id).message.content[0].text).toBe('The human replied about todo t1:');
     expect(store.getQuestion('q1')?.state).toBe('open');
   });
 
-  test('a reply to a work card goes to its ask owner with the card title as context', async () => {
+  test('a reply to a work card goes to root Neo with the card title as context', async () => {
     const id = crypto.randomUUID();
     await send(id, 'Where is this stuck?', { kind: 'ask', id: 'ask' });
     expect(prompt(id)).toMatchObject({
-      session_id: holder,
+      session_id: root,
       replyTo: { kind: 'ask', id: 'ask' },
       message: {
         content: [
@@ -182,9 +182,8 @@ describe('neo.message.send replyTo', () => {
     expect(store.getQuestion('q1')?.state).toBe('open');
   });
 
-  test('a reply whose owner session is unavailable goes to Neo without recording an answer', async () => {
-    (db.getSession as unknown as (id: string) => { status: string } | undefined)(holder)!.status =
-      'archived';
+  test('a reply about an ask a holder still owns goes to root Neo without recording an answer', async () => {
+    mailbox.db.prepare('UPDATE neo_asks SET session_id = ?').run(holder);
     const id = crypto.randomUUID();
     await send(id, '在做', { kind: 'question', id: 'q1' });
     expect(prompt(id)).toMatchObject({
@@ -194,7 +193,7 @@ describe('neo.message.send replyTo', () => {
     expect(store.getQuestion('q1')?.state).toBe('open');
   });
 
-  test('a reply to a message goes to the session that wrote it, without the router', async () => {
+  test('a reply to a message a holder wrote goes to root Neo', async () => {
     const publicationId = '30000000-0000-4000-8000-000000000001';
     const origin = { sessionId: holder, messageId: 'turn-1' };
     mailbox.db
@@ -215,14 +214,9 @@ describe('neo.message.send replyTo', () => {
         }),
         new Date().toISOString()
       );
-    const routed: string[] = [];
-    const router = async (text: string) => {
-      routed.push(text);
-      return { choice: null };
-    };
     const reply = (requestId: string, id: string) =>
       invokeOperation(
-        createOperationRegistry([createNeoIntakeOperation(db, repo, () => {}, router)]),
+        createOperationRegistry([createNeoIntakeOperation(db, repo)]),
         'neo.message.send',
         { sessionId: root, requestId, content: 'Thanks', replyTo: { kind: 'message', id } },
         human
@@ -236,7 +230,7 @@ describe('neo.message.send replyTo', () => {
       excerpt: 'Card is redone.',
     };
     expect(prompt(id)).toMatchObject({
-      session_id: holder,
+      session_id: root,
       replyTo: snapshot,
       message: {
         content: [
@@ -250,25 +244,20 @@ describe('neo.message.send replyTo', () => {
     );
     const unknown = crypto.randomUUID();
     await reply(unknown, 'pub-1');
-    expect([prompt(unknown).session_id, routed]).toEqual([root, ['Thanks']]);
+    expect(prompt(unknown).session_id).toBe(root);
     expect([ledger(unknown).replyTo, prompt(unknown).message.content]).toEqual([
       { kind: 'message', id: 'pub-1' },
       [{ type: 'text', text: 'Thanks' }],
     ]);
   });
 
-  test('a reply quoting the human’s own message goes to the session that answered it', async () => {
-    const routed: string[] = [];
-    const router = async (text: string) => {
-      routed.push(text);
-      return { choice: null };
-    };
+  test('a reply quoting the human’s own message goes to root Neo', async () => {
     const own = crypto.randomUUID();
     await send(own, '在做', { kind: 'question', id: 'q1' });
-    expect(prompt(own).session_id).toBe(holder);
+    expect(prompt(own).session_id).toBe(root);
     const id = crypto.randomUUID();
     await invokeOperation(
-      createOperationRegistry([createNeoIntakeOperation(db, repo, () => {}, router)]),
+      createOperationRegistry([createNeoIntakeOperation(db, repo)]),
       'neo.message.send',
       {
         sessionId: root,
@@ -278,7 +267,7 @@ describe('neo.message.send replyTo', () => {
       },
       human
     );
-    expect([prompt(id).session_id, routed]).toEqual([holder, []]);
+    expect(prompt(id).session_id).toBe(root);
     expect(ledger(id).replyTo).toEqual({
       kind: 'message',
       id: own,

@@ -528,7 +528,7 @@ describe('refreshDriverWork', () => {
       );
       await Promise.all([service.refreshDriverWork(), service.refreshDriverWork()]);
       expect(events.filter(([name]) => name === 'neo.session.notices')).toHaveLength(1);
-      expect(db.getSDKMessagesByType('neo:inbox', 'system', 'session_notices')).toEqual([
+      expect(db.getSDKMessagesByType('neo:root', 'system', 'session_notices')).toEqual([
         expect.objectContaining({ content: 'Codex · Quiet-model research failed · Open' }),
       ]);
     } finally {
@@ -554,7 +554,7 @@ describe('refreshDriverWork', () => {
       const disposing = service.dispose();
       release();
       await Promise.all([refreshing, disposing]);
-      expect(db.getSDKMessagesByType('neo:inbox', 'system', 'session_notices')).toEqual([
+      expect(db.getSDKMessagesByType('neo:root', 'system', 'session_notices')).toEqual([
         expect.objectContaining({
           group: expect.objectContaining({
             notices: [expect.objectContaining({ kind: 'failed' })],
@@ -578,11 +578,11 @@ describe('refreshDriverWork', () => {
         () => clock
       );
       service.dispose();
-      const saved = db.getSDKMessagesByType('neo:inbox', 'system', 'session_notices');
+      const saved = db.getSDKMessagesByType('neo:root', 'system', 'session_notices');
       events.length = 0;
       await service.refreshDriverWork();
       expect(events.filter(([name]) => name === 'neo.session.notices')).toEqual([]);
-      expect(db.getSDKMessagesByType('neo:inbox', 'system', 'session_notices')).toEqual(saved);
+      expect(db.getSDKMessagesByType('neo:root', 'system', 'session_notices')).toEqual(saved);
     } finally {
       time.mockRestore();
     }
@@ -674,10 +674,10 @@ describe('refreshDriverWork', () => {
       listed = [work({ status: 'failed', lastActivityAt: clock - 1_000 })];
       status = { status: 'failed', lastActivityAt: clock - 1_000 };
       await service.refreshDriverWork();
-      expect(db.getSDKMessagesByType('neo:inbox', 'system', 'session_notices')).toEqual([]);
+      expect(db.getSDKMessagesByType('neo:root', 'system', 'session_notices')).toEqual([]);
 
       service.dispose();
-      expect(db.getSDKMessagesByType('neo:inbox', 'system', 'session_notices')).toHaveLength(1);
+      expect(db.getSDKMessagesByType('neo:root', 'system', 'session_notices')).toHaveLength(1);
       const restarted = new NeoService(
         db,
         { getOperationRegistry: () => createOperationRegistry([]) } as unknown as SessionManager,
@@ -761,7 +761,7 @@ describe('refreshDriverWork', () => {
         ],
       ]);
       expect(service.sessionNoticeGroups).toHaveLength(1);
-      expect(db.getSDKMessagesByType('neo:inbox', 'system', 'session_notices')).toEqual([
+      expect(db.getSDKMessagesByType('neo:root', 'system', 'session_notices')).toEqual([
         expect.objectContaining({
           uuid: service.sessionNoticeGroups[0].id,
           group: service.sessionNoticeGroups[0],

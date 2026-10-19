@@ -14,7 +14,6 @@ import {
   planNeoProjectQuestions,
   readNeoProjectDecision,
 } from '../../../../src/lib/neo/project-merge.ts';
-import type { NeoRouter } from '../../../../src/lib/neo/router.ts';
 import type { NeoService } from '../../../../src/lib/neo/service.ts';
 import { NeoAskRepository } from '../../../../src/storage/repositories/neo-ask-repository.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
@@ -155,17 +154,14 @@ describe('reorganize merge questions on a real store', () => {
   });
 
   const runtime = () =>
-    neoReorganizeRuntime(
-      {
-        repo,
-        db: { getDatabase: () => db },
-        notifyChanged: () => notified.push(1),
-        askRecords: asks,
-        defaultSessionId: () => inbox,
-        logReorganize: (line: string) => logged.push(line),
-      } as unknown as NeoService,
-      (async () => ({ choice: null })) as unknown as NeoRouter
-    );
+    neoReorganizeRuntime({
+      repo,
+      db: { getDatabase: () => db },
+      notifyChanged: () => notified.push(1),
+      askRecords: asks,
+      defaultSessionId: () => inbox,
+      logReorganize: (line: string) => logged.push(line),
+    } as unknown as NeoService);
   const answer = (choice: string) => {
     const ask = asks.forRequest(key)!;
     const item = ask.doneItems!.find((entry) => entry.decides === key)!;

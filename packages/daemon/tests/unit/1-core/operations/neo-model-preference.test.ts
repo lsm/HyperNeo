@@ -173,8 +173,7 @@ describe('neo.preferences.set', () => {
       { event: mock(() => {}) } as unknown as MessageHub,
       new InternalEventBus<DaemonInternalEventMap>()
     );
-    service.repo.saveProject({ id: 'inbox', title: 'Inbox', summary: '', context: '' }, 0);
-    service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'project', projectId: 'inbox' });
+    service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', projectId: null });
   });
   afterEach(() => {
     service.dispose();

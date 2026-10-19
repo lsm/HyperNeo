@@ -6,6 +6,7 @@ import {
   loggedNeoRoute,
   replayedNeoRoute,
   requireNeoIntakeTarget,
+  requireNeoRootTarget,
   wantsNeoRoute,
 } from '../../../../src/lib/neo/intake.ts';
 import type { NeoRouter } from '../../../../src/lib/neo/router.ts';
@@ -57,6 +58,26 @@ describe('Neo intake gates', () => {
     { candidate: binding, session: { ...target, status: 'archived' as const } },
   ])('rejects unavailable or noncoordinator targets: %j', ({ candidate, session }) => {
     expect(requireNeoIntakeTarget(input, candidate, session)).toHaveProperty('reason.ok', false);
+  });
+  test('retargets an admitted holder ask to the live root session', () => {
+    type Session = Parameters<typeof requireNeoRootTarget>[2];
+    const root = target as Session;
+    const holder = { sessionId: 'neo:holder', projectId: 'c1', kind: 'project' as const };
+    const admitted = {
+      binding: holder,
+      target: { ...root!, id: holder.sessionId },
+      conversationId: 'c',
+    };
+    expect(requireNeoRootTarget(admitted, binding, root)).toEqual({
+      value: { binding, target: root, conversationId: 'c' },
+    });
+    for (const [owner, session] of [
+      [null, root],
+      [binding, null],
+      [binding, { ...root!, id: 'other' }],
+      [binding, { ...root!, status: 'archived' as const }],
+    ] as const)
+      expect(requireNeoRootTarget(admitted, owner, session)).toHaveProperty('reason.ok', false);
   });
 });
 
@@ -160,30 +181,9 @@ describe('durable Neo intake operation', () => {
       caller
     );
   }
-  test('an ask the gates reject never pays for routing', async () => {
-    let routed = 0;
-    const router: NeoRouter = async () => {
-      routed += 1;
-      return { choice: null };
-    };
+  test('an archived root session rejects the ask before any write', async () => {
     sessions.set(input.sessionId, { ...target, status: 'archived' as never });
-    const registry = createOperationRegistry([
-      createNeoIntakeOperation(db, repo, undefined, router),
-    ]);
-    expect(await invokeOperation(registry, 'neo.message.send', input, human)).toMatchObject({
-      value: { ok: false, reason: 'This Neo conversation is no longer available.' },
-    });
-    expect(routed).toBe(0);
-  });
-
-  test('a conversation archived while the ask is being routed rejects it before any write', async () => {
-    const router: NeoRouter = async () => {
-      sessions.set(input.sessionId, { ...target, status: 'archived' as never });
-      return { choice: null };
-    };
-    const registry = createOperationRegistry([
-      createNeoIntakeOperation(db, repo, undefined, router),
-    ]);
+    const registry = createOperationRegistry([createNeoIntakeOperation(db, repo)]);
     expect(await invokeOperation(registry, 'neo.message.send', input, human)).toMatchObject({
       value: { ok: false, reason: 'This Neo conversation is no longer available.' },
     });
@@ -252,27 +252,11 @@ describe('durable Neo intake operation', () => {
     expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)).toHaveLength(2);
     expect(repo.listProjects()).toEqual([]);
   });
-  test('a retry whose routing log was lost goes back to the holder its ask first went to', async () => {
-    const holderId = 'neo:holder:c1';
-    repo.saveProject({ id: 'c1', title: 'C1', summary: '', context: '' }, 0);
-    repo.reserveBinding({ sessionId: holderId, kind: 'project', projectId: 'c1' });
-    mailbox.db.prepare('INSERT INTO sessions (id) VALUES (?)').run(holderId);
-    sessions.set(holderId, { ...target, id: holderId });
-    let routed = 0;
-    const router: NeoRouter = async () =>
-      routed++ === 0
-        ? { choice: { projectId: 'c1', sessionId: holderId, signal: 'embedding', confidence: 0.9 } }
-        : { choice: null };
-    const registry = createOperationRegistry([
-      createNeoIntakeOperation(db, repo, undefined, router),
-    ]);
-    expect(await invokeOperation(registry, 'neo.message.send', input, human)).toMatchObject({
-      value: { ok: true, created: true },
-    });
+  test('a retry whose routing log was lost stays the same root ask', async () => {
+    expect(await invoke()).toMatchObject({ value: { ok: true, created: true } });
     mailbox.db.exec('DELETE FROM neo_routing_log');
-    expect(await invokeOperation(registry, 'neo.message.send', input, human)).toMatchObject({
-      value: { ok: true, created: false },
-    });
+    expect(await invoke()).toMatchObject({ value: { ok: true, created: false } });
+    expect(mailbox.sdkRows().map((row) => row.session_id)).toEqual([input.sessionId]);
   });
 
   test('same-ID concurrent retries preserve one prompt and one delivery job', async () => {

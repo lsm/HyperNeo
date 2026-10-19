@@ -83,15 +83,7 @@ import {
 } from './project-merge.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
 import { neoSessionStatus } from './session-status.ts';
-import {
-  createNeoRouter,
-  NEO_INBOX_ID,
-  type NeoRouter,
-  neoNewProject,
-  openNeoDefaultSession,
-  openNeoNewProject,
-  reopenNeoHolder,
-} from './router.ts';
+import { NEO_INBOX_ID, neoNewProject, openNeoNewProject } from './router.ts';
 import { createNeoInboxPromoteOperation } from './inbox-promote-operation.ts';
 import { createNeoPublicationChangeOperations } from './publication-change-operation.ts';
 import { createNeoPublicationOperation } from './publication-operation.ts';
@@ -760,18 +752,13 @@ function settleNeoQuestions(
   );
 }
 
-export function neoReorganizeRuntime(
-  service: NeoService,
-  router: NeoRouter = createNeoRouter(service.db, service.repo, (projectId) =>
-    service.open(projectId)
-  )
-): NeoReorganizeRuntime {
+export function neoReorganizeRuntime(service: NeoService): NeoReorganizeRuntime {
   return {
     getBinding: (sessionId) => service.repo.getBindingBySession(sessionId),
     rootSessionId: () => service.repo.defaultBinding()?.sessionId ?? null,
     liveAsks: () => service.askRecords.listLive(),
     ask: (id) => service.askRecords.get(id),
-    route: (ask) => router(`${ask.title}\n${ask.ask}`),
+    route: async () => ({ choice: null }),
     sessionStatus: (sessionId) =>
       neoSessionStatus(service.db.getSession(sessionId)?.processingState),
     projectSession: (projectId) => service.repo.getBindingForProject(projectId)?.sessionId ?? null,
@@ -1396,7 +1383,7 @@ export function createNeoOperations(service: NeoService) {
         ).catch(() => null),
       0
     );
-    const sessionId = await service.open(projectId);
+    const sessionId = await service.open(null);
     return { ...snapshot(caller, undefined, undefined, input.summaries), sessionId };
   });
   const readReceipt = path('neo.receipt.read', (input: z.infer<typeof ReceiptRead>, caller) => {
@@ -1539,20 +1526,6 @@ export function createNeoOperations(service: NeoService) {
         }
       : { ok: true as const, pack: { id: pack.id, describe: pack.describe }, instructions };
   });
-  const router = createNeoRouter(
-    service.db,
-    service.repo,
-    (projectId) => service.open(projectId),
-    async (text) => {
-      const registry = service.sessions.getOperationRegistry();
-      const caller: OperationCaller = { source: 'rpc', principal: 'local' };
-      await invokeOperation(registry, 'work.find', { limit: 50 }, caller);
-      for (const [id] of [
-        ...text.matchAll(/\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b/gi),
-      ].slice(0, 10))
-        await invokeOperation(registry, 'work.find', { id, limit: 50 }, caller);
-    }
-  );
   const todoControls: NeoTodoControls = {
     start: (todoId) => service.todoRunner.start(todoId),
     proceed: (todoId, message) => service.todoRunner.proceed(todoId, message),
@@ -1562,16 +1535,11 @@ export function createNeoOperations(service: NeoService) {
   return [
     ...createNeoProjectTreeOperations(service.repo),
     createNeoCrossProjectOperation(service),
-    createNeoIntakeOperation(
-      service.db,
-      service.repo,
-      (sessionId) => {
-        service.notifyChanged();
-        void service.preemptForHumanMessage(sessionId);
-      },
-      router
-    ),
-    createNeoReorganizeOperation(neoReorganizeRuntime(service, router)),
+    createNeoIntakeOperation(service.db, service.repo, (sessionId) => {
+      service.notifyChanged();
+      void service.preemptForHumanMessage(sessionId);
+    }),
+    createNeoReorganizeOperation(neoReorganizeRuntime(service)),
     createNeoPublicationOperation(service.publish),
     ...createNeoPublicationChangeOperations({
       getBinding: (id) => service.repo.getBindingBySession(id),
@@ -1589,11 +1557,11 @@ export function createNeoOperations(service: NeoService) {
     createNeoRouteCorrectOperation(service.db, service.repo),
     createNeoRouteFailureOperation(service.db),
     createNeoInboxPromoteOperation({
-      ...neoReorganizeRuntime(service, router),
+      ...neoReorganizeRuntime(service),
       createProject: (title) =>
         openNeoNewProject(
           service.repo,
-          (projectId) => service.open(projectId),
+          () => service.open(null),
           neoNewProject(title, crypto.randomUUID())
         ),
     }),
@@ -1606,12 +1574,7 @@ export function createNeoOperations(service: NeoService) {
         return resolved ? service.repo.getProject(resolved) : null;
       },
       listProjects: () => service.repo.listProjects(),
-      openDefault: async () =>
-        (
-          await openNeoDefaultSession(service.repo, (projectId) =>
-            reopenNeoHolder(service.repo, service.db, (id) => service.open(id), projectId)
-          )
-        ).sessionId,
+      openDefault: () => service.open(null),
       askContent: (ask) => {
         const conversation = service.repo.conversationId();
         const stored = conversation ? service.asks.find(conversation, ask.messageId) : null;
@@ -1620,8 +1583,7 @@ export function createNeoOperations(service: NeoService) {
           ? stored.content
           : null;
       },
-      open: (projectId) =>
-        reopenNeoHolder(service.repo, service.db, (id) => service.open(id), projectId),
+      open: () => service.open(null),
       record: (ask, forward) => service.askForwards.record(ask, forward),
       moveAsks: (from, to) => service.todos.moveAsks(from, to),
       unrecord: (ask, hop) => service.askForwards.remove(ask, hop),
@@ -1703,7 +1665,8 @@ export function createNeoOperations(service: NeoService) {
     }),
     defineOperation({
       name: 'neo.open',
-      description: 'Open the human Neo or project conversation.',
+      description:
+        'Open the one Neo conversation; a projectId is checked and opens the same session.',
       inputSchema: Scope,
       resultSchema: Snapshot,
       policy: { safetyClass: 'human_only' },

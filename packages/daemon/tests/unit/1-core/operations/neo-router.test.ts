@@ -437,7 +437,7 @@ describe('createNeoRouter', () => {
   });
 });
 
-describe('neo.message.send with a router', () => {
+describe('neo.message.send to the one Neo session', () => {
   const conversationId = '10000000-0000-4000-8000-000000000001';
   const root: NeoBinding = { sessionId: `neo:${conversationId}`, kind: 'neo', projectId: null };
   const holder: NeoBinding = {
@@ -451,7 +451,6 @@ describe('neo.message.send with a router', () => {
   let db: Database;
   let repo: NeoRepository;
   let sdk: SDKMessageRepository;
-  let calls: string[];
 
   beforeEach(() => {
     directory = mkdtempSync(join(tmpdir(), 'neo-router-'));
@@ -461,7 +460,6 @@ describe('neo.message.send with a router', () => {
     sdk = new SDKMessageRepository(writer as never);
     const jobs = new JobQueueRepository(writer);
     repo = new NeoRepository(writer);
-    calls = [];
     for (const binding of [root, holder]) {
       repo.reserveBinding(binding);
       sessions.createSession({
@@ -488,30 +486,7 @@ describe('neo.message.send with a router', () => {
 
   const send = (sessionId: string, requestId: string, content: string) =>
     invokeOperation(
-      createOperationRegistry([
-        createNeoIntakeOperation(
-          db,
-          repo,
-          () => {},
-          async (text) => {
-            calls.push(text);
-            return text.includes('driver')
-              ? {
-                  choice: {
-                    projectId: 'drivers',
-                    sessionId: drivers.sessionId,
-                    signal: 'embedding',
-                    confidence: 0.71,
-                  },
-                }
-              : {
-                  choice: null,
-                  fallback: 'classifier-timeout',
-                  cause: 'no answer within 15000 ms',
-                };
-          }
-        ),
-      ]),
+      createOperationRegistry([createNeoIntakeOperation(db, repo, () => {})]),
       'neo.message.send',
       { sessionId, requestId, content },
       { source: 'rpc', principal: 'local' }
@@ -519,45 +494,18 @@ describe('neo.message.send with a router', () => {
   const delivered = (sessionId: string, requestId: string) =>
     sdk.getDeliveryMessageIdsByUuids(sessionId, [requestId]).length;
 
-  test('delivers a confident ask to the holder and logs why', async () => {
+  test('delivers an ask naming a project to root Neo, once per request, and logs it', async () => {
+    await send(root.sessionId, ask(1), 'merge the driver PR');
     await send(root.sessionId, ask(1), 'merge the driver PR');
     expect([delivered(holder.sessionId, ask(1)), delivered(root.sessionId, ask(1))]).toEqual([
-      1, 0,
+      0, 1,
     ]);
     expect(new NeoRoutingLogRepository(writer).find(ask(1))).toMatchObject({
-      destination: 'holder',
-      projectId: 'drivers',
-      signal: 'embedding',
-      confidence: 0.71,
-    });
-  });
-
-  test('keeps an unsure ask with main Neo and reuses the first route on retry', async () => {
-    await send(root.sessionId, ask(2), 'weather tomorrow?');
-    expect(delivered(root.sessionId, ask(2))).toBe(1);
-    expect(new NeoRoutingLogRepository(writer).find(ask(2))).toMatchObject({
       destination: 'main',
-      signal: 'classifier-timeout',
-      cause: 'no answer within 15000 ms',
+      targetSessionId: root.sessionId,
+      projectId: null,
+      signal: 'root',
     });
-    expect(new NeoRoutingLogRepository(writer).latestFailure()).toMatchObject({
-      signal: 'classifier-timeout',
-      cause: 'no answer within 15000 ms',
-    });
-    await send(root.sessionId, ask(3), 'merge the driver PR');
-    await send(root.sessionId, ask(3), 'merge the driver PR');
-    expect(calls).toEqual(['weather tomorrow?', 'merge the driver PR']);
-    expect(delivered(holder.sessionId, ask(3))).toBe(1);
-  });
-
-  test('queues an ask for a holder that is busy with another turn', async () => {
-    new SessionRepository(writer).updateSession(holder.sessionId, {
-      processingState: JSON.stringify({ status: 'processing', messageId: 'other' }),
-    });
-    await send(root.sessionId, ask(5), 'merge the driver PR');
-    expect([delivered(holder.sessionId, ask(5)), delivered(root.sessionId, ask(5))]).toEqual([
-      1, 0,
-    ]);
   });
 
   test('reopens an archived holder on a fresh session, and a live one as it is', async () => {
@@ -579,10 +527,11 @@ describe('neo.message.send with a router', () => {
     expect(repo.getBindingForProject(null)).toMatchObject({ sessionId: root.sessionId });
   });
 
-  test('does not reroute an ask sent to a holder directly', async () => {
+  test('delivers an ask sent to a holder session to root Neo', async () => {
     await send(holder.sessionId, ask(4), 'weather tomorrow?');
-    expect(calls).toEqual([]);
-    expect(delivered(holder.sessionId, ask(4))).toBe(1);
+    expect([delivered(holder.sessionId, ask(4)), delivered(root.sessionId, ask(4))]).toEqual([
+      0, 1,
+    ]);
   });
 });
 

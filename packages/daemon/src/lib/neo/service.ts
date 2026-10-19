@@ -333,12 +333,7 @@ import { neoPrompt } from './prompt.ts';
 import { createNeoPublicationCommit } from './publication-commit.ts';
 import { createNeoPublisher } from './publication-operation.ts';
 import { runNeoReadWork } from './read-work.ts';
-import {
-  NEO_INBOX_ID,
-  neoDefaultSessionId,
-  openNeoDefaultSession,
-  reopenNeoHolder,
-} from './router.ts';
+import { NEO_INBOX_ID, openNeoDefaultSession } from './router.ts';
 import {
   type NeoSavedRulesNote,
   planNeoSavedRulesAppend,
@@ -389,7 +384,6 @@ import {
   neoWorkerRefKey,
   rerouteNeoDriverWork,
 } from './work-reroute.ts';
-import { returnWorkThroughHolder } from './work-return.ts';
 import { createNeoWorkTargetResolver } from './work-target.ts';
 
 const dispatchNeoConsultationWaiter = (
@@ -708,7 +702,7 @@ export class NeoService {
     };
     this.sessionWatcher = new NeoSessionWatcher({
       db,
-      defaultSessionId: () => neoDefaultSessionId(this.repo),
+      defaultSessionId: () => this.defaultSessionId(),
       announceSessionNoticeGroup: (group) => hub.event('neo.session.notices', { group }),
       seen: new NeoSessionSeenRepository(db.getDatabase()),
       announceSessionNotice: (notice) => hub.event('neo.session.notice', notice),
@@ -1246,7 +1240,7 @@ export class NeoService {
     .end('plan') as (turn: NeoReminderTurnInput) => unknown;
 
   modelPreference(): (NeoModelPreference & { saved: boolean }) | null {
-    const fallback = neoDefaultSessionId(this.repo);
+    const fallback = this.defaultSessionId();
     const settings = this.db.getGlobalSettings?.();
     return effectiveNeoPreference(
       settings?.neo?.preferences,
@@ -2035,14 +2029,11 @@ export class NeoService {
   }
 
   defaultSessionId(): string | undefined {
-    return neoDefaultSessionId(this.repo);
+    return this.repo.defaultBinding()?.sessionId;
   }
 
   async openDefault(): Promise<string> {
-    const opened = await openNeoDefaultSession(this.repo, (projectId) =>
-      reopenNeoHolder(this.repo, this.db, (id) => this.open(id), projectId)
-    );
-    return opened.sessionId;
+    return (await openNeoDefaultSession(this.repo, () => this.open(null))).sessionId;
   }
 
   async recover(): Promise<void> {
@@ -2786,9 +2777,7 @@ export class NeoService {
               ? [
                   {
                     projectId: work.projectId,
-                    owner: ask
-                      ? (this.repo.getBindingBySession(ask.sessionId)?.projectId ?? null)
-                      : null,
+                    owner: ask?.projectId ?? null,
                   },
                 ]
               : [];
@@ -3335,11 +3324,6 @@ export class NeoService {
         work,
         (id, error) => this.log.warn(`Neo pack ${id} evidence read failed`, error)
       );
-    const rootId = await this.open(null);
-    if (work.projectId) {
-      await returnWorkThroughHolder(this, work, rootId);
-      return;
-    }
     const retries = this.driverTargets.readRetries(work.id);
     const retryNote =
       'value' in requireNeoWorkRetryable(work, this.retryCard(work.id), true)

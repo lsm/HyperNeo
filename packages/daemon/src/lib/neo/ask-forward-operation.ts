@@ -311,12 +311,13 @@ function createForward(runtime: NeoAskForwardRuntime) {
     )
     .pipe(take, 'outcome', 'message')
     .pipe(
-      async (target: Target): Promise<Gate<string>> => {
+      async (target: Target, holder: Holder): Promise<Gate<string>> => {
         const sessionId =
           target.to === NEO_INBOX_ID ? await runtime.openDefault() : await runtime.open(target.to);
-        return sessionId ? { value: sessionId } : refuse('unknown_project');
+        if (!sessionId) return refuse('unknown_project');
+        return sessionId === holder.sessionId ? refuse('same_project') : { value: sessionId };
       },
-      'target',
+      ['target', 'holder'],
       'result:outcome'
     )
     .pipe(take, 'outcome', 'session')
