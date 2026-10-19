@@ -12,10 +12,15 @@ const names = [
   'neo_route_pr_insert',
   'neo_route_pr_update',
   'neo_route_pr_delete',
+  'idx_neo_route_work',
+  'idx_neo_asks_route_id',
+  'idx_neo_work_route_id',
+  'idx_neo_concerns_route_id',
+  'idx_sessions_route_id',
 ];
 
 describe('runMigration402', () => {
-  test('drops the PR reference tables and triggers, PR writes keep working, and it reruns', async () => {
+  test('drops the PR reference tables, triggers and unused route indexes, PR writes keep working, and it reruns', async () => {
     const test = await createTestDb();
     try {
       const db = test.getDatabase();
