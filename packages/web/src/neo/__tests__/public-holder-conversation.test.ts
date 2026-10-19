@@ -15,9 +15,6 @@ const snapshot = (fields: Partial<NeoSnapshot> = {}): NeoSnapshot => ({
   ok: true,
   sessionId: root,
   projects: [],
-  work: [],
-  cards: [],
-  askViews: [],
   ...fields,
 });
 const ask = (sessionId: string, messageId: string, sequence: number): NeoConversationAsk => ({

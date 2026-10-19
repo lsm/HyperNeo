@@ -62,7 +62,6 @@ export function NeoLive() {
   const scrollProgress = useRef(1);
   const projects = neo.snapshot?.projects ?? [];
   const view = neo.snapshot;
-  const relevant = view?.work ?? [];
   const publicConversation =
     neo.viewPublicConversation?.conversationId || publicationConversationId(neo.sessionId)
       ? neo.viewPublicConversation
@@ -299,11 +298,6 @@ export function NeoLive() {
     neo.publications.refresh();
   }
 
-  function openWork(id: string) {
-    const work = relevant.find((item) => item.id === id);
-    if (work?.sessionId) setChat({ sessionId: work.sessionId, title: work.title });
-  }
-
   return (
     <div
       ref={shell}
@@ -424,10 +418,8 @@ export function NeoLive() {
               onQuote={ready ? (quote) => setQuoted({ scope: neo.sessionId!, quote }) : undefined}
               store={neo.store}
               sessionId={neo.sessionId}
-              works={relevant.filter((work) => work.sessionId)}
               replyLabels={replyLabels}
               publicConversation={publicConversation}
-              onOpenPublicWork={openWork}
               onRetryPublic={retryPublicConversation}
               busy={neoBusyWords(
                 neo.snapshot?.working ?? [],

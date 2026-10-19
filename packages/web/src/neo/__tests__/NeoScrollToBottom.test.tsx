@@ -40,27 +40,8 @@ const project = (id: string) => ({
 });
 const snapshot: NeoSnapshot = {
   ok: true,
-  cards: [],
-  askViews: [],
   sessionId: 'root',
   projects: [project('a'), project('b')],
-  work: [
-    {
-      id: 'w-queued',
-      requestKey: 'w',
-      projectId: 'a',
-      originSessionId: 'root',
-      originMessageId: 'ask-w',
-      title: 'Title w',
-      instruction: 'Instruction w',
-      targetSessionId: null,
-      sessionId: 'w-session',
-      status: 'queued',
-      report: null,
-      createdAt: 20,
-      updatedAt: 21,
-    },
-  ],
 };
 
 const resized: Array<() => void> = [];

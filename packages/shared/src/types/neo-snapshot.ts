@@ -351,26 +351,17 @@ export interface NeoSnapshotWork extends NeoWork {
 export interface NeoSnapshot {
   ok: true;
   rev?: string;
-  scopedTo?: string;
   sessionId: string | null;
   conversationId?: string | null;
   projects: NeoProject[];
   projectRedirects?: { sourceId: string; targetId: string }[];
-  work: NeoSnapshotWork[];
-  askOrigins?: NeoReceiptAskOrigin[];
-  workResources?: NeoWorkResourceReceipt[];
   sessionNotices?: NeoSessionNotice[];
   sessionNoticeGroups?: NeoSessionNoticeGroup[];
   mutedSessions?: string[];
   standingRules?: string[];
-  asks?: NeoAsk[];
-  told?: { publicationId: string; at: string; shortText: string; triggerId?: string }[];
-  moreSettled?: boolean;
-  omitted?: { work?: number; asks?: number };
-  cards: NeoCardView[];
+  omitted?: { asks?: number };
   sessionLoad?: NeoSessionLoad[];
   working?: NeoWorkingSession[];
-  askViews: NeoAskView[];
   todoAsks?: NeoAskEntry[];
   packRows?: NeoPackRows[];
   preferences?: (NeoModelPreference & { saved: boolean }) | null;

@@ -2,15 +2,6 @@ const PREFIX = 'The human answered: ';
 const OPTION_PREFIX = 'The human answered with option: ';
 const CITATION = / \(their message [^()]+\)$/;
 
-export function neoAskAnswerEvidence(
-  choice: string,
-  messageId: string | null,
-  option?: string,
-  at?: number
-): string {
-  return `${option || at !== undefined ? OPTION_PREFIX + JSON.stringify({ choice, option: option ?? choice, ...(at !== undefined ? { at } : {}) }) : PREFIX + choice}${messageId ? ` (their message ${messageId})` : ''}`;
-}
-
 function readOptionEvidence(
   evidence: string
 ): { choice: string; option: string; at: number | null } | null {
@@ -29,12 +20,6 @@ function readOptionEvidence(
 export function readNeoAskAnswerChoice(evidence: string | null | undefined): string | null {
   if (evidence?.startsWith(OPTION_PREFIX)) return readOptionEvidence(evidence)?.choice ?? null;
   return evidence?.startsWith(PREFIX) ? evidence.slice(PREFIX.length).replace(CITATION, '') : null;
-}
-
-export function readNeoAskAnswerOption(evidence: string | null | undefined): string | null {
-  return evidence?.startsWith(OPTION_PREFIX)
-    ? (readOptionEvidence(evidence)?.option ?? null)
-    : readNeoAskAnswerChoice(evidence);
 }
 
 export function readNeoAskAnswerAt(evidence: string | null | undefined): number | null {

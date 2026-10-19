@@ -48,11 +48,8 @@ const project = (id: string) => ({
 });
 const snapshot: NeoSnapshot = {
   ok: true,
-  cards: [],
-  askViews: [],
   sessionId: 'root',
   projects: [project('a'), project('b')],
-  work: [],
   todoAsks: [
     testAskEntry('ask-w', 'Title w', {
       state: 'doing',

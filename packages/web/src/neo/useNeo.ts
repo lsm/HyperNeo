@@ -48,9 +48,7 @@ export function useNeo() {
     const current = () => alive.current && ticket === refreshGeneration.current;
     try {
       const hub = await connectionManager.getHub();
-      const result = await invokeOperation<NeoResult<NeoSnapshot>>(hub, 'neo.snapshot', {
-        summaries: true,
-      });
+      const result = await invokeOperation<NeoResult<NeoSnapshot>>(hub, 'neo.snapshot', {});
       if (!current()) return;
       if (!result.ok) throw new Error(result.reason);
       setSnapshot(result);
@@ -66,9 +64,7 @@ export function useNeo() {
     setError('');
     try {
       const hub = await connectionManager.getHub();
-      const result = await invokeOperation<NeoResult<NeoSnapshot>>(hub, 'neo.open', {
-        summaries: true,
-      });
+      const result = await invokeOperation<NeoResult<NeoSnapshot>>(hub, 'neo.open', {});
       if (!result.ok) throw new Error(result.reason);
       if (!alive.current || ticket !== generation.current) return;
       if (opened === refreshGeneration.current) setSnapshot(result);

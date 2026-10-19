@@ -1,5 +1,4 @@
 import type { SDKMessage } from '@hyperneo/shared/sdk';
-import type { NeoAskSessionView } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import type { PlaceGroup, WorkRef, WorkStatus } from '../drivers/types.ts';
@@ -9,15 +8,7 @@ import { invokeOperation } from '../operations/invoke.ts';
 import type { OperationRegistry } from '../operations/registry.ts';
 import { readDriverLastInputAt, readDriverLive, readDriverSessionFacts } from './driver-work.ts';
 import type { NeoSessionFacts } from './packs/types.ts';
-import {
-  describeNeoAskSessions,
-  keepNeoSessionPrs,
-  linkNeoSessionsToAsks,
-  type NeoAskPrs,
-  type NeoSessionAskLink,
-  planNeoHeldSessionNotices,
-  planNeoSessionPrReads,
-} from './session-ask-links.ts';
+import { keepNeoSessionPrs, planNeoSessionPrReads } from './session-ask-links.ts';
 import {
   keepNeoSessionNoticeGroups,
   keepNeoSessionNotices,
@@ -45,7 +36,6 @@ export type NeoSessionWatcherDeps = {
   registry: () => OperationRegistry;
   followedCardRefs: (now: number) => WorkRef[];
   mutedSessions: () => readonly string[] | undefined;
-  liveAskPrs: () => NeoAskPrs[];
   sessionBranchPrs: (ref: WorkRef) => Promise<string[]>;
   readRemotes: (folder: string) => Promise<string[]>;
   observeSessions: (sessions: NeoSessionFacts[]) => void;
@@ -56,7 +46,6 @@ export class NeoSessionWatcher {
   sessionNotices: NeoSessionNotice[] = [];
   sessionNoticeGroups: NeoSessionNoticeGroup[] = [];
   openSessionNotices: NeoSessionNotice[] = [];
-  askSessions = new Map<string, NeoAskSessionView[]>();
   private readonly sessionsSeen: Map<string, NeoSessionSeen>;
   private savedSeen: string;
   private sessionPrs = new Map<string, string[]>();
@@ -220,36 +209,17 @@ export class NeoSessionWatcher {
         const kept = keepNeoSessionPrs(this.sessionPrs, read.found);
         const keep = new Set(listed.sessions.map((session) => session.key));
         const prs = listed.complete ? new Map([...kept].filter(([key]) => keep.has(key))) : kept;
-        const watched = new Map([...prs].filter(([key, urls]) => keep.has(key) && urls.length));
-        const asks = watched.size ? this.deps.liveAskPrs() : [];
-        return { prs, links: linkNeoSessionsToAsks(asks, watched) };
+        return { prs };
       },
       ['listed', 'read'],
       'linked'
     )
     .pipe((read: { facts: NeoSessionFacts[] }) => this.deps.observeSessions(read.facts), 'read')
     .pipe(
-      (
-        listed: { sessions: NeoListedSession[] },
-        plan: ReturnType<typeof planNeoSessionWatch>,
-        notices: { planned: ReturnType<typeof planNeoSessionNotice>[] },
-        linked: { links: NeoSessionAskLink[] }
-      ) => {
-        const shown = new Set(listed.sessions.map((session) => session.key));
-        const read = new Map(
-          plan.reads.map((session, index) => [session.key, notices.planned[index]?.seen.status])
-        );
-        const next = planNeoHeldSessionNotices(
-          this.heldSessionNotices,
-          notices.planned.flatMap((item) => (item.notice ? [item.notice] : [])),
-          new Set(linked.links.map((link) => link.key)),
-          (key) =>
-            shown.has(key) ? (read.get(key) ?? this.sessionsSeen.get(key)?.status) : undefined
-        );
-        this.heldSessionNotices = next.held;
-        return { notices: next.notices };
-      },
-      ['listed', 'plan', 'notices', 'linked'],
+      (notices: { planned: ReturnType<typeof planNeoSessionNotice>[] }) => ({
+        notices: notices.planned.flatMap((item) => (item.notice ? [item.notice] : [])),
+      }),
+      'notices',
       'added'
     )
     .pipe(
@@ -289,23 +259,16 @@ export class NeoSessionWatcher {
       (
         root: string,
         listed: { sessions: NeoListedSession[]; complete: boolean },
-        linked: { prs: Map<string, string[]>; links: NeoSessionAskLink[] },
+        linked: { prs: Map<string, string[]> },
         added: { notices: NeoSessionNotice[] },
         grouped: ReturnType<typeof planNeoSessionNoticeGroup>
       ) => {
-        const askSessions = describeNeoAskSessions(
-          linked.links,
-          listed.sessions,
-          (session) => this.sessionsSeen.get(session.key)?.status ?? session.status
-        );
-        const moved = JSON.stringify([...askSessions]) !== JSON.stringify([...this.askSessions]);
         this.sessionPrs = linked.prs;
-        this.askSessions = askSessions;
         this.openSessionNotices = grouped.open;
         this.sessionNotices = keepNeoSessionNotices(this.sessionNotices, added.notices);
         for (const notice of added.notices) this.deps.announceSessionNotice(notice);
         for (const group of grouped.closed) this.postSessionNoticeGroup(root, group);
-        if (added.notices.length || grouped.closed.length || moved) this.deps.notifyChanged();
+        if (added.notices.length || grouped.closed.length) this.deps.notifyChanged();
       },
       ['root', 'listed', 'linked', 'added', 'grouped']
     )

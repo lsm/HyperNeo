@@ -47,7 +47,9 @@ function ViewProbe() {
   return (
     <>
       <button onClick={() => void neo.open()}>Open Neo</button>
-      <p>Overview work: {neo.snapshot?.work.map((item) => item.id).join(',') ?? 'loading'}</p>
+      <p>
+        Overview projects: {neo.snapshot?.projects.map((item) => item.id).join(',') ?? 'loading'}
+      </p>
       <p>Session: {neo.sessionId ?? 'none'}</p>
       <p>Working: {neo.snapshot?.working?.map((item) => item.sessionId).join(',') ?? 'none'}</p>
       {neo.error && <p role="alert">{neo.error}</p>}
@@ -70,7 +72,7 @@ describe('useNeo intake client', () => {
       async (_method: string, { name, input }: { name: string; input: { requestId?: string } }) =>
         name === 'neo.message.send'
           ? { ok: true, requestId: input.requestId, messageId: input.requestId, created: true }
-          : { ok: true, sessionId: 'neo:root', projects: [], work: [] }
+          : { ok: true, sessionId: 'neo:root', projects: [] }
     );
     render(<IntakeProbe />);
     fireEvent.click(screen.getByRole('button', { name: 'Send ask' }));
@@ -94,7 +96,6 @@ describe('useNeo root conversation', () => {
       ok: true,
       sessionId: 'root',
       projects: [],
-      work: [],
       working: [{ sessionId: 'root', projectId: null, title: 'Neo', status: 'processing' }],
     }));
     render(<ViewProbe />);
@@ -119,34 +120,19 @@ describe('useNeo root conversation', () => {
     request.mockImplementation(async () => ({
       ok: true,
       sessionId: 'root',
-      projects: [],
-      work: [
-        {
-          id: version,
-          requestKey: version,
-          projectId: null,
-          originSessionId: 'root',
-          sessionId: version,
-          title: version,
-          instruction: 'Do this',
-          status: 'queued',
-          report: null,
-          createdAt: 1,
-          updatedAt: 1,
-        },
-      ],
+      projects: [{ id: version, title: 'Project' }],
     }));
     render(<ViewProbe />);
-    await waitFor(() => expect(screen.getByText('Overview work: global')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Overview projects: global')).toBeTruthy());
     expect(request.mock.calls.filter(([, call]) => call.name === 'neo.snapshot')).toHaveLength(0);
     version = 'refreshed';
     act(() => neoEvents.changed?.());
-    await waitFor(() => expect(screen.getByText('Overview work: refreshed')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Overview projects: refreshed')).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: 'Open Neo' }));
     await waitFor(() =>
       expect(request.mock.calls.filter(([, call]) => call.name === 'neo.open')).toHaveLength(2)
     );
-    for (const [, call] of request.mock.calls) expect(call.input).toEqual({ summaries: true });
+    for (const [, call] of request.mock.calls) expect(call.input).toEqual({});
     expect(screen.queryByRole('alert')).toBeNull();
   });
   it('shows the opened snapshot while the conversation is still loading', async () => {
@@ -157,25 +143,10 @@ describe('useNeo root conversation', () => {
     request.mockImplementation(async () => ({
       ok: true,
       sessionId: 'root',
-      projects: [],
-      work: [
-        {
-          id: 'first',
-          requestKey: 'first',
-          projectId: null,
-          originSessionId: 'root',
-          sessionId: 'first',
-          title: 'first',
-          instruction: 'Do this',
-          status: 'queued',
-          report: null,
-          createdAt: 1,
-          updatedAt: 1,
-        },
-      ],
+      projects: [{ id: 'first', title: 'Project' }],
     }));
     render(<ViewProbe />);
-    await waitFor(() => expect(screen.getByText('Overview work: first')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Overview projects: first')).toBeTruthy());
     expect(screen.getByText('Session: none')).toBeTruthy();
     act(() => release());
     await waitFor(() => expect(screen.getByText('Session: root')).toBeTruthy());

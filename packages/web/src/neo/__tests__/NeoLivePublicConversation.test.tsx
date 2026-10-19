@@ -69,8 +69,6 @@ const publication = (
 });
 const snapshot = (): NeoSnapshot => ({
   ok: true,
-  cards: [],
-  askViews: [],
   sessionId: root,
   projects: ['a', 'b'].map((id) => ({
     id,
@@ -81,8 +79,6 @@ const snapshot = (): NeoSnapshot => ({
     createdAt: 1,
     updatedAt: 1,
   })),
-  work: [],
-  askOrigins: [],
 });
 const nativeState = (sessionId: string): SessionState =>
   ({
