@@ -211,9 +211,12 @@ const prNumber = (pr: NeoWorkPr) => `#${pr.url.replace(/\/+$/, '').split('/').po
 
 const createdAt = (pr: NeoWorkPr) => pr.createdAt ?? 0;
 
+export const CODING_PR_REPLACEMENT_GRACE_MS = 15 * 60_000;
+
 export function codingTodoCheck(
   kind: string,
-  prs: readonly NeoWorkPr[]
+  prs: readonly NeoWorkPr[],
+  now = Date.now()
 ): NeoTodoCheckResult | null {
   if (kind !== 'pr_merged') return null;
   const spare = prs.filter((pr) => pr.state !== 'CLOSED');
@@ -225,12 +228,16 @@ export function codingTodoCheck(
       const at = spare.findIndex((pr) => createdAt(pr) > createdAt(closed));
       return at < 0 || !spare.splice(at, 1);
     });
-  if (unreplaced.length)
+  const expired = unreplaced.filter(
+    (pr) => now - (pr.closedAt ?? 0) >= CODING_PR_REPLACEMENT_GRACE_MS
+  );
+  if (expired.length)
     return {
       done: false,
       evidence: null,
-      failed: `${unreplaced.map(prNumber).join(' ')} closed without merging and no pull request replaced it`,
+      failed: `${expired.map(prNumber).join(' ')} closed without merging and no pull request replaced it`,
     };
+  if (unreplaced.length) return { done: false, evidence: null };
   const merged = live.filter((pr) => pr.state === 'MERGED');
   return live.length && merged.length === live.length
     ? { done: true, evidence: `${merged.map(prNumber).join(' ')} merged` }

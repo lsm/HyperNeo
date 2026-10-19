@@ -315,6 +315,29 @@ describe('codingTodoCheck', () => {
   });
 });
 
+describe('codingTodoCheck replacement grace', () => {
+  test('a PR closed unmerged fails the todo only after 15 minutes without a replacement', () => {
+    const closedAt = 1_000_000;
+    const prs = [pr(1, 'MERGED', { createdAt: 10 }), pr(2, 'CLOSED', { createdAt: 20, closedAt })];
+    expect(codingTodoCheck('pr_merged', prs, closedAt + 14 * 60_000)).toEqual({
+      done: false,
+      evidence: null,
+    });
+    expect(codingTodoCheck('pr_merged', prs, closedAt + 15 * 60_000)).toEqual({
+      done: false,
+      evidence: null,
+      failed: '#2 closed without merging and no pull request replaced it',
+    });
+    expect(
+      codingTodoCheck(
+        'pr_merged',
+        [...prs, pr(3, 'MERGED', { createdAt: closedAt + 60_000 })],
+        closedAt + 60 * 60_000
+      )
+    ).toEqual({ done: true, evidence: '#1 #3 merged' });
+  });
+});
+
 describe('codingTodoStatusLine', () => {
   const doing = { state: 'doing' as const, report: null, evidence: null };
 

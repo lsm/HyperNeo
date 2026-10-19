@@ -168,6 +168,7 @@ export interface NeoWorkPr {
   blockers?: string[];
   createdAt?: number;
   mergedAt?: number;
+  closedAt?: number;
   title?: string;
   branch?: string;
   head?: string;
