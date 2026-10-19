@@ -198,7 +198,7 @@ export function planNeoTodoSettled(
     ...planNeoTodoBlocked(
       todo,
       'worker',
-      'Its session stopped before the todo was done.',
+      'Its session finished its turn; nothing confirms the todo is done yet.',
       todo.check
         ? 'Continue the session with neo.todo.continue, or close the todo.'
         : 'Tick it done with evidence, continue the session, or close it.'

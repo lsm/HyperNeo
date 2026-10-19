@@ -63,7 +63,7 @@ describe('neoTodoStatusLine', () => {
 
   test('a session that stopped without a check', () => {
     expect(neoTodoStatusLine(todo({ state: 'doing', report: 'r', check: null }), [], null)).toEqual(
-      coded('Session stopped; waiting for Neo to check', 'todo.awaitingNeo')
+      coded('Turn finished; waiting for Neo to check', 'todo.awaitingNeo')
     );
   });
 
