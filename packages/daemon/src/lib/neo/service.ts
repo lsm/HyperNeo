@@ -50,6 +50,7 @@ import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-re
 import { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { createNeoTodoRunner, neoTodoCard, type NeoTodoRunner } from './todo-runner.ts';
 import { CodingPrLedgerRepository } from './packs/coding/pr-ledger.ts';
+import { CodingPrEventRepository } from './packs/coding/pr-events.ts';
 import { CodingPrSweepRepository } from './packs/coding/pr-sweep.ts';
 import { CodingTodoPrRepository } from './packs/coding/todo-prs.ts';
 import { neoCardPrAttention } from './packs/coding/card-facts.ts';
@@ -798,6 +799,7 @@ export class NeoService {
         todoPrs: this.todoPrs,
         prLedger: new CodingPrLedgerRepository(db.getDatabase()),
         prSweep: new CodingPrSweepRepository(db.getDatabase()),
+        prEvents: new CodingPrEventRepository(db.getDatabase()),
         prSweepDeps: {
           tell: (ref, key, text) => this.sendToRef(ref, key, text),
           wake: (key, text) => this.wakeNeo(key, text),
@@ -2206,7 +2208,7 @@ export class NeoService {
     return todo &&
       ask &&
       ask.status !== 'dropped' &&
-      ((ask.status === 'open' && (todo.state === 'todo' || todo.state === 'doing')) ||
+      ((ask.status === 'open' && ['todo', 'doing', 'blocked'].includes(todo.state)) ||
         (todo.state === 'done' && this.todoPrs.prs(workId).some((pr) => pr.state === 'MERGED')))
       ? neoTodoCard(todo, ask)
       : null;

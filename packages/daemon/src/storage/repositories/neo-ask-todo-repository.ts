@@ -21,6 +21,9 @@ export type NeoTodoPatch = Partial<
     | 'evidence'
     | 'startedAt'
     | 'finishedAt'
+    | 'blockedReason'
+    | 'nextAction'
+    | 'blockedBy'
   >
 >;
 
@@ -34,6 +37,9 @@ const TODO_COLUMNS: Record<keyof NeoTodoPatch, string> = {
   evidence: 'evidence',
   startedAt: 'started_at',
   finishedAt: 'finished_at',
+  blockedReason: 'blocked_reason',
+  nextAction: 'next_action',
+  blockedBy: 'blocked_by',
 };
 
 const ASK_SELECT = `SELECT id, project_id AS projectId, session_id AS sessionId,
@@ -41,7 +47,8 @@ const ASK_SELECT = `SELECT id, project_id AS projectId, session_id AS sessionId,
   created_at AS createdAt, updated_at AS updatedAt, settled_at AS settledAt FROM neo_asks`;
 
 const TODO_SELECT = `SELECT id, ask_id AS askId, position, title, done_when AS doneWhen,
-  check_json AS checkJson, instruction, named, state, reason, replaced_by AS replacedBy,
+  check_json AS checkJson, instruction, named, state, reason, blocked_reason AS blockedReason,
+  next_action AS nextAction, blocked_by AS blockedBy, replaced_by AS replacedBy,
   added_after_start AS addedAfterStart, report, evidence, created_at AS createdAt,
   updated_at AS updatedAt, started_at AS startedAt, finished_at AS finishedAt FROM neo_todos`;
 
@@ -144,7 +151,9 @@ export class NeoAskTodoRepository {
       .run(status, outcome, now, now, ask.id);
     this.db
       .prepare(
-        "UPDATE neo_todos SET state = 'removed', reason = ?, finished_at = ?, updated_at = ? WHERE ask_id = ? AND state IN ('todo', 'doing')"
+        `UPDATE neo_todos SET state = 'removed', reason = ?, finished_at = ?, updated_at = ?,
+           blocked_reason = NULL, next_action = NULL, blocked_by = NULL
+         WHERE ask_id = ? AND state IN ('todo', 'doing', 'blocked')`
       )
       .run(`The ask was settled ${status}.`, now, now, ask.id);
     this.retireQuestions(ask.id, now);
@@ -206,7 +215,11 @@ export class NeoAskTodoRepository {
     return this.getTodo(id)!;
   }
 
-  updateTodo(todo: NeoTodo, patch: NeoTodoPatch, now: number): NeoTodo {
+  updateTodo(todo: NeoTodo, change: NeoTodoPatch, now: number): NeoTodo {
+    const patch: NeoTodoPatch =
+      change.state && change.state !== 'blocked'
+        ? { ...change, blockedReason: null, nextAction: null, blockedBy: null }
+        : change;
     const keys = Object.keys(patch) as (keyof NeoTodoPatch)[];
     this.db
       .prepare(
@@ -234,7 +247,7 @@ export class NeoAskTodoRepository {
     return (
       this.db
         .prepare(
-          `${TODO_SELECT} WHERE state IN ('todo', 'doing')
+          `${TODO_SELECT} WHERE state IN ('todo', 'doing', 'blocked')
              AND ask_id IN (SELECT id FROM neo_asks WHERE status = 'open')`
         )
         .all() as TodoRow[]

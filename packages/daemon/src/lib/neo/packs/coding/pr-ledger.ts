@@ -36,19 +36,41 @@ const Node = z.object({
   isDraft: z.boolean(),
   mergeable: z.string(),
   reviewDecision: z.string().nullable(),
-  reviews: z.object({
-    nodes: z.array(
-      z.object({ state: z.string(), commit: z.object({ oid: z.string() }).nullable() })
-    ),
-  }),
+  reviews: z
+    .object({
+      nodes: z.array(
+        z.object({ state: z.string(), commit: z.object({ oid: z.string() }).nullable() })
+      ),
+    })
+    .default({ nodes: [] }),
   closedAt: z.string().nullable(),
-  commits: z.object({
-    nodes: z.array(
-      z.object({
-        commit: z.object({ statusCheckRollup: z.object({ state: z.string() }).nullable() }),
-      })
-    ),
-  }),
+  author: z.object({ login: z.string() }).nullable().default(null),
+  comments: z
+    .object({
+      nodes: z.array(
+        z.object({ author: z.object({ login: z.string() }).nullable(), createdAt: z.string() })
+      ),
+    })
+    .default({ nodes: [] }),
+  replies: z
+    .object({
+      nodes: z.array(
+        z.object({
+          author: z.object({ login: z.string() }).nullable(),
+          submittedAt: z.string().nullable(),
+        })
+      ),
+    })
+    .default({ nodes: [] }),
+  commits: z
+    .object({
+      nodes: z.array(
+        z.object({
+          commit: z.object({ statusCheckRollup: z.object({ state: z.string() }).nullable() }),
+        })
+      ),
+    })
+    .default({ nodes: [] }),
 });
 type Node = z.infer<typeof Node>;
 
@@ -64,8 +86,14 @@ const Response = z.object({
   errors: z.array(z.unknown()).optional(),
 });
 
-const FIELDS = `number title headRefName headRefOid state isDraft mergeable reviewDecision closedAt
+const DONE_FIELDS =
+  'number title headRefName headRefOid state isDraft mergeable reviewDecision closedAt';
+
+const FIELDS = `${DONE_FIELDS}
   reviews(last: 30, states: [APPROVED, CHANGES_REQUESTED]) { nodes { state commit { oid } } }
+  author { login }
+  comments(last: 10) { nodes { author { login } createdAt } }
+  replies: reviews(last: 10, states: [COMMENTED]) { nodes { author { login } submittedAt } }
   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }`;
 
 export const CODING_LEDGER_QUERY = `query($o: String!, $n: String!) {
@@ -73,9 +101,18 @@ export const CODING_LEDGER_QUERY = `query($o: String!, $n: String!) {
   repository(owner: $o, name: $n) {
     nameWithOwner
     open: pullRequests(states: OPEN, first: 100) { pageInfo { hasNextPage } nodes { ${FIELDS} } }
-    done: pullRequests(states: [MERGED, CLOSED], first: 50, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { ${FIELDS} } }
+    done: pullRequests(states: [MERGED, CLOSED], first: 50, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { ${DONE_FIELDS} } }
   }
 }`;
+
+export function codingPrReplyAt(pr: Node): number | null {
+  const by = pr.author?.login;
+  const times = [
+    ...pr.comments.nodes.map((item) => ({ login: item.author?.login, at: item.createdAt })),
+    ...pr.replies.nodes.map((item) => ({ login: item.author?.login, at: item.submittedAt })),
+  ].flatMap((item) => (by && item.login === by && item.at ? [Date.parse(item.at)] : []));
+  return times.length ? Math.max(...times) : null;
+}
 
 export function codingPrState(pr: Node): CodingPrState {
   if (pr.state === 'MERGED') return 'merged';
@@ -93,6 +130,8 @@ export function codingPrState(pr: Node): CodingPrState {
   return 'waiting_review';
 }
 
+export type CodingPrTransition = CodingLedgerRow & { from: CodingPrState };
+
 export type CodingLedgerRow = {
   repo: string;
   number: number;
@@ -101,6 +140,8 @@ export type CodingLedgerRow = {
   head: string;
   state: CodingPrState;
   closedAt: number | null;
+  ci?: string | null;
+  replyAt?: number | null;
 };
 
 export function planCodingLedgerRead(
@@ -120,6 +161,8 @@ export function planCodingLedgerRead(
       branch: pr.headRefName,
       head: pr.headRefOid,
       state: codingPrState(pr),
+      ci: pr.commits.nodes[0]?.commit.statusCheckRollup?.state ?? null,
+      replyAt: codingPrReplyAt(pr),
       closedAt: pr.closedAt ? Date.parse(pr.closedAt) : null,
     }))
     .filter((row) => row.closedAt === null || now - row.closedAt < CODING_LEDGER_KEEP_MS);
@@ -129,7 +172,14 @@ export function planCodingLedgerRead(
 export class CodingPrLedgerRepository {
   constructor(private readonly db: Database) {}
 
-  replace(repo: string, rows: readonly CodingLedgerRow[], now: number): void {
+  replace(repo: string, rows: readonly CodingLedgerRow[], now: number): CodingPrTransition[] {
+    const before = new Map(
+      (
+        this.db
+          .prepare('SELECT number, state FROM pack_coding_pr_ledger WHERE repo = ?')
+          .all(repo) as { number: number; state: CodingPrState }[]
+      ).map((row) => [row.number, row.state])
+    );
     this.upsert(rows, now);
     this.db
       .prepare(
@@ -137,19 +187,29 @@ export class CodingPrLedgerRepository {
            AND number NOT IN (SELECT value FROM json_each(?))`
       )
       .run(repo, JSON.stringify(rows.map((row) => row.number)));
+    return rows.flatMap((row) => {
+      const from = before.get(row.number);
+      return from && from !== row.state ? [{ ...row, from }] : [];
+    });
   }
 
   private upsert(rows: readonly CodingLedgerRow[], now: number): void {
     const insert = this.db.prepare(
       `INSERT INTO pack_coding_pr_ledger
-         (repo, number, title, branch, head, state, state_since, closed_at, read_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         (repo, number, title, branch, head, state, state_since, closed_at, read_at, reply_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(repo, number) DO UPDATE SET
          title = excluded.title, branch = excluded.branch, closed_at = excluded.closed_at,
          read_at = excluded.read_at,
-         nudges = CASE WHEN head = excluded.head AND state = excluded.state THEN nudges ELSE 0 END,
-         state_since = CASE WHEN head = excluded.head AND state = excluded.state
-           THEN state_since ELSE excluded.read_at END,
+         nudges = CASE WHEN head = excluded.head AND state = excluded.state
+             AND NOT (reply_at IS NOT NULL AND COALESCE(excluded.reply_at, 0) > reply_at)
+           THEN nudges ELSE 0 END,
+         state_since = CASE WHEN head <> excluded.head OR state <> excluded.state
+             THEN excluded.read_at
+           WHEN reply_at IS NOT NULL AND COALESCE(excluded.reply_at, 0) > reply_at
+             THEN MAX(state_since, excluded.reply_at)
+           ELSE state_since END,
+         reply_at = COALESCE(excluded.reply_at, reply_at),
          head = excluded.head, state = excluded.state`
     );
     for (const row of rows)
@@ -162,7 +222,8 @@ export class CodingPrLedgerRepository {
         row.state,
         now,
         row.closedAt,
-        now
+        now,
+        row.replyAt ?? null
       );
   }
 
@@ -301,8 +362,9 @@ export async function reconcileCodingPrLedger(
   read: CodingLedgerRead,
   now: number,
   skips: Map<string, number> = new Map()
-): Promise<void> {
+): Promise<CodingPrTransition[]> {
   const seen = new Set<string>();
+  const transitions: CodingPrTransition[] = [];
   const last = ledger.lastReads();
   const order = [...repos].sort((a, b) => (last.get(a) ?? 0) - (last.get(b) ?? 0));
   for (const repo of order) {
@@ -317,7 +379,8 @@ export async function reconcileCodingPrLedger(
       );
     if (typeof error === 'string' && isRateLimitError(error)) break;
     if (planned && planned.repo !== repo.toLowerCase()) ledger.dropRepo(repo.toLowerCase());
-    if (planned && !seen.has(planned.repo)) ledger.replace(planned.repo, planned.rows, now);
+    if (planned && !seen.has(planned.repo))
+      transitions.push(...ledger.replace(planned.repo, planned.rows, now));
     if (planned) seen.add(planned.repo);
     if (planned && planned.remaining < CODING_LEDGER_MIN_RATE) break;
   }
@@ -325,4 +388,5 @@ export async function reconcileCodingPrLedger(
   ledger.linkOwners();
   ledger.recordSessionPrs([], now);
   ledger.pruneSessionPrs(now);
+  return transitions;
 }

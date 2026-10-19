@@ -45,6 +45,7 @@ import {
   readCodingLedgerRepo,
   reconcileCodingPrLedger,
 } from './pr-ledger.ts';
+import { type CodingPrEventRepository, deliverCodingPrEvents } from './pr-events.ts';
 import { type CodingPrSweepRepository, type CodingSweepDeps, sweepCodingPrs } from './pr-sweep.ts';
 import { readCodingPrerequisiteBase } from './prerequisite-base.ts';
 import {
@@ -287,6 +288,7 @@ export function createCodingPack(
     todoPrs: CodingTodoPrRepository;
     prLedger: CodingPrLedgerRepository;
     prSweep: CodingPrSweepRepository;
+    prEvents: CodingPrEventRepository;
     prSweepDeps: CodingSweepDeps;
     projectRepos: () => string[];
     readLedgerRepo?: CodingLedgerRead;
@@ -301,13 +303,14 @@ export function createCodingPack(
     todos: createCodingTodoPack(deps.todoPrs, deps.readPrs),
     observeSessionLinks: (links, now) => deps.prLedger.recordSessionPrs(links, now),
     sweep: async (now) => {
-      await reconcileCodingPrLedger(
+      const transitions = await reconcileCodingPrLedger(
         deps.prLedger,
         deps.projectRepos(),
         deps.readLedgerRepo ?? readCodingLedgerRepo,
         now,
         ledgerSkips
       );
+      await deliverCodingPrEvents(deps.prEvents, transitions, deps.prSweepDeps);
       await sweepCodingPrs(deps.prSweep, deps.prSweepDeps, now);
     },
     snapshotRows: (repos, now) => deps.prLedger.snapshot(repos, now),

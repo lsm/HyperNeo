@@ -31,6 +31,17 @@ const todo = (patch: Partial<NeoTodo>): NeoTodo =>
 const ask = (status: NeoAsk['status'] = 'open') => ({ status }) as NeoAsk;
 const question = (state: NeoQuestion['state']) => ({ state }) as NeoQuestion;
 
+describe('blocked todo cards', () => {
+  test('show the reason over the pack line and put the ask in waiting', () => {
+    const blocked = todo({ state: 'blocked', blockedReason: 'CI keeps failing' });
+    expect(neoTodoStatusLine(blocked, [], { status: '#3 CI failing', statusCodes: [] })).toEqual({
+      status: 'Blocked: CI keeps failing',
+      statusCodes: [{ code: 'todo.blocked', params: { reason: 'CI keeps failing' } }],
+    });
+    expect(neoAskEntryState(ask(), [blocked, todo({ state: 'done' })], [])).toBe('waiting');
+  });
+});
+
 describe('neoTodoStatusLine', () => {
   const next = todo({ id: 'n', title: 'Claude Code 新会话' });
   const coded = (status: string, code: string, params: Record<string, string> = {}) => ({

@@ -21,6 +21,7 @@ import { createNeoPublicationTable } from '../../../../src/storage/schema/m288-n
 import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins.ts';
 import { runMigration289 } from '../../../../src/storage/schema/m289-neo-conversation-asks.ts';
 import { runMigration387 } from '../../../../src/storage/schema/m387-neo-ask-todo-tables.ts';
+import { runMigration398 } from '../../../../src/storage/schema/m398-neo-todo-blocked.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
 
@@ -39,6 +40,7 @@ describe('neo.message.send replyTo', () => {
     runMigration283(mailbox.db);
     runMigration289(mailbox.db);
     runMigration387(mailbox.db);
+    runMigration398(mailbox.db);
     createNeoPublicationTable(mailbox.db);
     runMigration344(mailbox.db);
     for (const id of [root, holder])
