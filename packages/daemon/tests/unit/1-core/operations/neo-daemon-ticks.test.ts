@@ -7,12 +7,7 @@ import {
   InternalEventBus,
   type DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus.ts';
-import {
-  planNeoDaemonCardSettle,
-  requireNeoCardTurn,
-} from '../../../../src/lib/neo/card-settle.ts';
 import { readNeoDaemonCommits } from '../../../../src/lib/neo/daemon-commits.ts';
-import { neoDaemonTickPath } from '../../../../src/lib/neo/needs-you.ts';
 import {
   judgeNeoDeployCheck,
   planNeoDeployChecks,
@@ -161,54 +156,5 @@ describe('readNeoDaemonCommits', () => {
       { includeSessions: false },
       { timeoutMs: 5000 },
     ]);
-  });
-});
-
-describe('neoDaemonTickPath', () => {
-  test('reads only the check and the watch, never the words', () => {
-    expect(neoDaemonTickPath(item('i', { check: 'coding.deployed', watch: [pull(1)] }))).toBe(
-      'check'
-    );
-    expect(neoDaemonTickPath(item('i', { check: 'life-admin.confirmed' }))).toBe('check');
-    expect(neoDaemonTickPath(item('i', { watch: [pull(1)] }))).toBe('watch');
-    for (const text of ['Deployed to the iMac', 'lsm/HyperNeo#6700 merged', `${pull(3)} closed`])
-      expect(neoDaemonTickPath(item('i', { text }))).toBe(null);
-  });
-});
-
-describe('planNeoDaemonCardSettle', () => {
-  const merged = {
-    evidence: [{ key: pull(7), state: 'done' as const, summary: 'merged', blockers: [] }],
-    read: { ok: true, okAt: 1 },
-  };
-  const waiting = ask([
-    item('i1', { state: 'met' }),
-    item('i2', { watch: [pull(8)] }),
-    item('i3', { question: 'Did it work?' }),
-  ]);
-
-  test('closes a merged card when every open item waits on the daemon or the human', () => {
-    const settle = planNeoDaemonCardSettle({ report: 'Merged it.' }, merged, waiting);
-    expect(settle).toEqual({
-      report: `Closed as done by the daemon: ${pull(7)} merged.\n\nMerged it.`,
-    });
-    expect(requireNeoCardTurn(settle, 'goal')).toEqual({ reason: 'daemon_settled' });
-  });
-
-  test('leaves the card to Neo while it is unmerged, unread, a deploy or a judgement is open, or nothing is', () => {
-    const cases: [typeof merged | null, NeoAsk | null][] = [
-      [{ ...merged, evidence: [{ ...merged.evidence[0], state: 'ready' }] }, waiting],
-      [{ ...merged, read: { ok: false, okAt: 1 } }, waiting],
-      [null, waiting],
-      [merged, ask([item('i1', { check: 'coding.deployed' })])],
-      [merged, ask([item('i1', { text: 'Docs updated' })])],
-      [merged, ask([item('i1', { state: 'met' })])],
-      [merged, null],
-    ];
-    for (const [read, current] of cases) {
-      const settle = planNeoDaemonCardSettle({ report: null }, read, current);
-      expect(settle).toEqual({ report: null });
-      expect(requireNeoCardTurn(settle, 'goal')).toEqual({ value: 'goal' });
-    }
   });
 });

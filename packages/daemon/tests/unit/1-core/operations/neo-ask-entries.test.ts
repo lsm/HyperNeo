@@ -63,7 +63,7 @@ describe('neoTodoStatusLine', () => {
 
   test('a session that stopped without a check', () => {
     expect(neoTodoStatusLine(todo({ state: 'doing', report: 'r', check: null }), [], null)).toEqual(
-      coded('Session stopped; waiting for Neo to check', 'todo.awaitingNeo')
+      coded('Turn finished; waiting for Neo to check', 'todo.awaitingNeo')
     );
   });
 
@@ -184,6 +184,9 @@ describe('projectNeoAskEntries', () => {
     store.claimStart(row, 2);
     expect(store.listAsks('p', 10).map((item) => item.id)).toEqual(['ask']);
     expect(store.listAsks('other', 10)).toEqual([]);
+    expect([store.countAsks('p'), store.countAsks('other'), store.countAsks(undefined)]).toEqual([
+      1, 0, 1,
+    ]);
     const [entry] = projectNeoAskEntries([opened], store, sessions, []);
     expect(entry).toMatchObject({
       state: 'doing',
@@ -297,9 +300,6 @@ describe('fitNeoSnapshotBudget with todoAsks', () => {
       ok: true,
       sessionId: 'neo',
       projects: [],
-      work: [],
-      cards: [],
-      askViews: [],
       todoAsks: [
         ...Array.from({ length: 20 }, (_, index) => entry(`open-${index}`, 'open')),
         entry('settled', 'done'),
@@ -313,6 +313,17 @@ describe('fitNeoSnapshotBudget with todoAsks', () => {
     const dropped = 21 - (fitted.todoAsks?.length ?? 0);
     expect(neoSnapshotOmitted(fitted, snapshot).omitted).toEqual({ asks: dropped });
     if (dropped > 1) expect(fitted.trimmed).toContain('this is not every open ask');
+  });
+
+  test('omitted also counts the asks the listing left out', () => {
+    const listed: NeoSnapshot = {
+      ok: true,
+      sessionId: 'neo',
+      projects: [],
+      todoAsks: [],
+      omitted: { asks: 4 },
+    };
+    expect(neoSnapshotOmitted(listed, listed).omitted).toEqual({ asks: 4 });
   });
 });
 
@@ -408,9 +419,6 @@ describe('fitNeoSnapshotBudget with packRows', () => {
       ok: true,
       sessionId: 'neo',
       projects: [],
-      work: [],
-      cards: [],
-      askViews: [],
       packRows: [
         {
           pack: 'coding',

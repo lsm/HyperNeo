@@ -1,7 +1,5 @@
 import { neoStateNote, restartNeo } from './restart.ts';
 import { projectNeoAskEntries } from './ask-entries.ts';
-import { NeoWorkControlFailureRepository } from '../../storage/repositories/neo-work-control-failure-repository.ts';
-import { neoControlFailureForRef } from './control-failure.ts';
 import { hostname } from 'node:os';
 import { neoWorkingKey, readNeoWorking } from './working.ts';
 import { fillPrompt, NEO_SESSION_TRACK } from '@hyperneo/prompts';
@@ -9,19 +7,13 @@ import type { GlobalSettings, MessageHub, Provider } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { MailboxMessageContent } from '../mailbox/entry.ts';
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
-import {
-  type NeoAsk,
-  type NeoAskSessionView,
-  type NeoWorkPr,
-  type NeoWorkingEvent,
-} from '@hyperneo/shared/types/neo-snapshot';
+import { type NeoWorkPr, type NeoWorkingEvent } from '@hyperneo/shared/types/neo-snapshot';
 import { type NeoModelPreference, neoStandingRules } from '@hyperneo/shared/types/settings';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inventory-repository.ts';
 import { NeoAgentWorkTargetRepository } from '../../storage/repositories/neo-agent-work-target-repository.ts';
 import { NeoAskCheckRepository } from '../../storage/repositories/neo-ask-check-repository.ts';
-import { neoStartDecision } from './start-question.ts';
 import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.ts';
 import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
@@ -40,12 +32,7 @@ import { NeoPublicationRepository } from '../../storage/repositories/neo-publica
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
 import { NeoWorkCheckRepository } from '../../storage/repositories/neo-work-check-repository.ts';
-import { NeoWorkContinueRepository } from '../../storage/repositories/neo-work-continue-repository.ts';
 import { NeoWorkDriverTargetRepository } from '../../storage/repositories/neo-work-driver-target-repository.ts';
-import { NeoWorkGoalRepository } from '../../storage/repositories/neo-work-goal-repository.ts';
-import { NeoWorkRefusalRepository } from '../../storage/repositories/neo-work-refusal-repository.ts';
-import { NeoWorkSupersessionRepository } from '../../storage/repositories/neo-work-supersession-repository.ts';
-import { NeoWorkWakeRepository } from '../../storage/repositories/neo-work-wake-repository.ts';
 import { BUILD_METADATA } from '../build-metadata.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
@@ -72,16 +59,13 @@ import {
   planNeoCardTopicsEnded,
   neoCardWorkerSession,
 } from './card-events.ts';
-import type { NeoCardWait } from './card-views.ts';
 import { readNeoDaemonCommits } from './daemon-commits.ts';
 import { neoNoteDeliveryMode, neoSessionStatus } from './session-status.ts';
 import {
   driverWorkCaller,
-  type NeoWorkRetryCard,
   neoCardSent,
   readDriverCardExchange,
   readDriverOpenedPrs,
-  requireNeoWorkRetryable,
 } from './driver-work.ts';
 import { neoFolderPath } from './folder.ts';
 import { effectiveNeoPreference, planNeoAlignment } from './model-preference.ts';
@@ -90,7 +74,6 @@ import {
   neoDeliveryTrigger,
   neoHumanTrigger,
 } from './notification-triggers.ts';
-import { buildNeoCheckRegistry } from './packs/check-registry.ts';
 import {
   type NeoRefStateReader,
   readCodingCardRefs,
@@ -118,7 +101,7 @@ import { NeoWorkPrClaimRepository } from './packs/coding/neo-work-pr-claim-repos
 import { NeoWorkPrRepository, type NeoWorkPrRow } from './packs/coding/neo-work-pr-repository.ts';
 import { createCodingPack, type NeoCardPrDeps } from './packs/coding/pack.ts';
 import { type NeoWorkPrReader, readGithubPrs } from './packs/coding/work-prs.ts';
-import { neoEnabledPacks, neoPackAskCardEvidence, neoPackBriefs, neoPacks } from './packs/index.ts';
+import { neoEnabledPacks, neoPackBriefs, neoPacks } from './packs/index.ts';
 import { createLifeAdminPack } from './packs/life-admin/pack.ts';
 import type {
   NeoCardEventSubscription,
@@ -135,7 +118,6 @@ import {
   planNeoSavedRulesNote,
   withNeoSavedRules,
 } from './saved-rules.ts';
-import { type NeoAskPrs, neoAskPrKeys } from './session-ask-links.ts';
 import {
   neoCoordinatorAllowedTools,
   neoCoordinatorBinding,
@@ -144,7 +126,6 @@ import {
 import type { NeoSessionNotice, NeoSessionNoticeGroup } from './session-watch.ts';
 import { NeoSessionWatcher } from './session-watcher.ts';
 import type { NeoSnapshotRead } from './snapshot-read.ts';
-import { isNeoAdmissionApproved, neoOutcomeEligibility } from './work-admission.ts';
 import { createNeoWorkTargetResolver } from './work-target.ts';
 
 export class NeoService {
@@ -154,10 +135,6 @@ export class NeoService {
   readonly publish: ReturnType<typeof createNeoPublisher>;
   readonly agentTargets: NeoAgentWorkTargetRepository;
   readonly driverTargets: NeoWorkDriverTargetRepository;
-  readonly workGoals: NeoWorkGoalRepository;
-  readonly workContinues: NeoWorkContinueRepository;
-  readonly workWakes: NeoWorkWakeRepository;
-  readonly workSupersessions: NeoWorkSupersessionRepository;
   readonly askRecords: NeoAskRepository;
   readonly todos: NeoAskTodoRepository;
   readonly todoSessions: NeoTodoSessionRepository;
@@ -170,8 +147,6 @@ export class NeoService {
   private readonly sessionEvents: SessionExternalEventStore;
   watchExternalTopic: ((topic: string) => Promise<void>) | null = null;
   readonly workPrClaims: NeoWorkPrClaimRepository;
-  readonly workRefusals: NeoWorkRefusalRepository;
-  readonly controlFailures: NeoWorkControlFailureRepository;
   readonly workChecks: NeoWorkCheckRepository;
   readonly askChecks: NeoAskCheckRepository;
   private readonly askEvidenceReads = new Map<string, number>();
@@ -181,10 +156,6 @@ export class NeoService {
 
   get sessionNoticeGroups(): NeoSessionNoticeGroup[] {
     return this.sessionWatcher.sessionNoticeGroups;
-  }
-
-  get askSessions(): Map<string, NeoAskSessionView[]> {
-    return this.sessionWatcher.askSessions;
   }
 
   get trackableNotices(): NeoSessionNotice[] {
@@ -249,7 +220,6 @@ export class NeoService {
       registry: () => this.sessions.getOperationRegistry(),
       followedCardRefs: (now) => this.followedCardRefs(now),
       mutedSessions: () => this.db.getGlobalSettings?.().neo?.mutedSessions,
-      liveAskPrs: () => this.askRecords.listLive().map((ask) => this.askPrs(ask)),
       sessionBranchPrs: (ref) => this.sessionBranchPrs(ref),
       readRemotes: async (folder) => (await readWorkspaceIdentity(folder)).remotes ?? [],
       observeSessions: (sessions) => {
@@ -257,17 +227,11 @@ export class NeoService {
       },
       notifyChanged: () => this.notifyChanged(),
     });
-    this.workRefusals = new NeoWorkRefusalRepository(db.getDatabase());
-    this.controlFailures = new NeoWorkControlFailureRepository(db.getDatabase());
     this.repo = new NeoRepository(db.getDatabase(), this.notifyChanged);
     this.publications = new NeoPublicationRepository(db.getDatabase());
     this.asks = new NeoConversationAskRepository(db.getDatabase());
     this.agentTargets = new NeoAgentWorkTargetRepository(db.getDatabase());
     this.driverTargets = new NeoWorkDriverTargetRepository(db.getDatabase());
-    this.workGoals = new NeoWorkGoalRepository(db.getDatabase());
-    this.workContinues = new NeoWorkContinueRepository(db.getDatabase());
-    this.workWakes = new NeoWorkWakeRepository(db.getDatabase());
-    this.workSupersessions = new NeoWorkSupersessionRepository(db.getDatabase());
     this.todos = new NeoAskTodoRepository(db.getDatabase(), this.notifyChanged);
     this.todoSessions = new NeoTodoSessionRepository(db.getDatabase());
     this.todoPrs = new CodingTodoPrRepository(db.getDatabase());
@@ -452,15 +416,6 @@ export class NeoService {
       offCompacted();
       offExternal();
     };
-  }
-
-  checkedAt(workId: string): number | null {
-    return this.driverTargets.readCardCheck(workId)?.checkedAt ?? null;
-  }
-
-  uncheckedSince(workId: string): number | null {
-    const check = this.driverTargets.readCardCheck(workId);
-    return check?.unchecked ? check.checkedAt : null;
   }
 
   private pruneReadThrottles(_now: number): void {
@@ -648,91 +603,6 @@ export class NeoService {
       });
   }
 
-  private startTarget(workId: string) {
-    const work = this.repo.getWork(workId);
-    return {
-      workId,
-      title: work?.title,
-      target: JSON.stringify(
-        this.driverTargets.get(workId) ??
-          this.agentTargets.get(workId) ??
-          work?.targetSessionId ??
-          null
-      ),
-    };
-  }
-
-  proposalApproval(workId: string): boolean | null {
-    const ask = this.askRecords.forWork(workId);
-    const decision = ask && neoStartDecision(ask, this.startTarget(workId));
-    return decision === null ? null : decision === 'approved';
-  }
-
-  private waitingCards() {
-    return this.dependencies.waiting(neoOutcomeEligibility(this.checkRegistry()));
-  }
-
-  cardWaits(
-    workIds: readonly string[],
-    now = Date.now(),
-    workOf?: ReadonlyMap<string, NeoWork>
-  ): NeoCardWait[] {
-    const waiting = this.waitingCards();
-    const auto = this.db.getGlobalSettings?.().neo?.autoDispatch === true;
-    return workIds.flatMap((id) => {
-      const blockers = waiting.get(id) ?? [];
-      const status = (workOf ? workOf.get(id) : this.repo.getWork(id))?.status;
-      const uncertain =
-        ['proposed', 'queued', 'failed'].includes(status ?? '') &&
-        this.driverTargets.readStartInterrupted(id);
-      if (!blockers.length && !uncertain) return [];
-      const authorized =
-        this.proposalApproval(id) ??
-        (this.dependencies.hasStartIntent(id) ||
-          isNeoAdmissionApproved(this.askRecords.forWork(id), now));
-      return [
-        {
-          workId: id,
-          waitingFor: blockers.map((blocker) => {
-            const items = this.askRecords.forWork(blocker.workId)?.doneItems ?? [];
-            return {
-              workId: blocker.workId,
-              title: this.repo.getWork(blocker.workId)?.title ?? blocker.workId,
-              reason: blocker.reason,
-              items: blocker.itemIds.map((itemId) => ({
-                id: itemId,
-                text: items.find((item) => item.id === itemId)?.text ?? itemId,
-              })),
-            };
-          }),
-          autoStart: auto && blockers.length > 0 && authorized,
-          uncertain,
-        },
-      ];
-    });
-  }
-
-  retryCard(workId: string): NeoWorkRetryCard {
-    const driver = this.driverTargets.readCard(workId);
-    return {
-      target: !!driver?.target,
-      ref: !!driver?.ref,
-      interrupted: !!driver?.startInterrupted,
-    };
-  }
-
-  isRetryable(workId: string, work = this.repo.getWork(workId)): boolean {
-    return !!work && 'value' in requireNeoWorkRetryable(work, this.retryCard(workId), true);
-  }
-
-  cardControlFailures(workIds: readonly string[]) {
-    const rows = this.controlFailures.list(workIds);
-    return workIds.flatMap((workId) => {
-      const failure = neoControlFailureForRef(rows, workId, this.driverTargets.readRef(workId));
-      return failure ? [{ workId, ...failure }] : [];
-    });
-  }
-
   defaultSessionId(): string | undefined {
     return this.repo.defaultBinding()?.sessionId;
   }
@@ -842,10 +712,6 @@ export class NeoService {
       seen.add(pack.id);
       return true;
     });
-  }
-
-  checkRegistry() {
-    return buildNeoCheckRegistry(this.packs());
   }
 
   pack(id: string): NeoPack | null {
@@ -1086,15 +952,6 @@ export class NeoService {
     const localId = localCodingSessionId(ref);
     const branch = neoWorkBranch(localId ? this.db.getSession(localId) : null);
     return branch ? this.readBranchPrs(branch) : [];
-  }
-
-  private askPrs(ask: NeoAsk): NeoAskPrs {
-    const works = ask.workIds.flatMap((id) => this.repo.getWork(id) ?? []);
-    return {
-      id: ask.id,
-      status: ask.status,
-      prs: neoAskPrKeys(ask, neoPackAskCardEvidence(this.packs(), ask, works)),
-    };
   }
 
   hasDelivery(sessionId: string, messageId: string): boolean {

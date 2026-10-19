@@ -41,6 +41,7 @@ export function testAskEntry(
       id,
       projectId: null,
       repo: null,
+      parentId: null,
       sessionId: 'neo',
       originMessageId: null,
       title,

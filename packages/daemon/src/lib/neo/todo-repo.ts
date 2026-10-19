@@ -1,4 +1,5 @@
 import type { NeoAsk } from '@hyperneo/shared/types/neo-ask';
+import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { z } from 'zod';
 import type { NeoTodoDraftSchema } from './todo-operations.ts';
 import type { NeoPack } from './packs/types.ts';
@@ -21,4 +22,35 @@ export function neoTodoRepo(
     place?.remotes?.map(neoGitRepo).find(Boolean) ??
     ask.repo
   );
+}
+
+export function neoRepoName(repo: string): string {
+  return repo.split('/').at(-1) ?? repo;
+}
+
+export function neoTodoHome(
+  store: NeoAskTodoRepository,
+  ask: NeoAsk,
+  repo: string | null,
+  split: boolean
+): NeoAsk {
+  if (!repo || ask.repo === repo || (!split && !ask.repo)) return ask;
+  const child = store.childAsk(ask.id, repo);
+  if (child || ask.status !== 'open') return child ?? ask;
+  return store.openAsk({
+    id: crypto.randomUUID(),
+    projectId: ask.projectId,
+    sessionId: ask.sessionId,
+    originMessageId: ask.originMessageId,
+    title: `${ask.title} · ${neoRepoName(repo)}`,
+    request: ask.request,
+    createdAt: Date.now(),
+    repo,
+    parentId: ask.id,
+  });
+}
+
+export function neoSplitOutcome(children: readonly NeoAsk[], filed: number): string {
+  const names = children.flatMap((child) => (child.repo ? [neoRepoName(child.repo)] : []));
+  return `Filed ${filed} todo${filed === 1 ? '' : 's'} across ${names.join(', ')} cards.`;
 }

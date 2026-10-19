@@ -7,8 +7,6 @@ import {
   NEO_WORK_UNVERIFIED_REPLY_NOTE,
   readDriverSettlement,
 } from '../../../../src/lib/neo/driver-work.ts';
-import { planNeoWorkFollow } from '../../../../src/lib/neo/work-follow.ts';
-import { projectNeoCardViews } from '../../../../src/lib/neo/card-views.ts';
 
 type Receipt = NonNullable<WorkDelivery['receipt']>;
 
@@ -142,48 +140,5 @@ describe('readDriverSettlement', () => {
     const report = (await readDriverSettlement(work, await status(undefined), 10_000, 5))?.report;
     expect(report?.startsWith(NEO_WORK_UNVERIFIED_REPLY_NOTE)).toBe(true);
     expect(report).toContain('Aggregate from every node');
-  });
-
-  test('evidence that cannot be read keeps the reply visibly unverified', async () => {
-    db.exec("UPDATE sdk_messages SET sdk_message = 'broken' WHERE sdk_uuid = 'own-result'");
-    const report = readDriverSettlement(
-      work,
-      await status(),
-      10_000,
-      5,
-      true,
-      opening,
-      receipt
-    )?.report;
-    expect(report?.startsWith(NEO_WORK_UNVERIFIED_REPLY_NOTE)).toBe(true);
-    const [card] = projectNeoCardViews({
-      work: [{ ...work, status: 'reported', report: report ?? null }],
-      drivers: [],
-      prs: [],
-      goals: [],
-      continues: [],
-      supersessions: [],
-      asks: [],
-    });
-    expect(card.label).toBe('Reply received · not verified');
-    expect(card.tone).not.toBe('success');
-  });
-});
-
-describe('planNeoWorkFollow', () => {
-  test("follows up only on the card's own input, never the later PR event", async () => {
-    write('own-later', 'result', 11, 'Also raised the headings.');
-    db.exec(
-      `UPDATE sdk_messages SET timestamp = '${new Date(1020).toISOString()}' WHERE sdk_uuid = 'own-later'`
-    );
-    const followed = planNeoWorkFollow(
-      { updatedAt: work.updatedAt, report: 'Agent: Raised the body font to 16px.' },
-      { outcome: await status() },
-      { since: 1011, sent: { inputBefore: 0, opening, receipt } }
-    );
-    expect(followed).toEqual({
-      value:
-        'Agent: Also raised the headings.\n\nEarlier report:\nAgent: Raised the body font to 16px.',
-    });
   });
 });

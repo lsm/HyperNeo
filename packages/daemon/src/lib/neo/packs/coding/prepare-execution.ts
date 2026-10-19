@@ -86,7 +86,7 @@ export function requireVerifySkill(
   )
     return { value: true };
   return refuse(
-    'verify_skill_missing: this repository has no verify skill (.claude/skills/verify/SKILL.md or a Verify section in AGENTS.md). Add a todo before this one whose worker writes it and runs it end to end once, start that todo with target.preparationParameters.verifySkill "create", and ask the human to approve it before its pull request merges; then retry this todo.'
+    'verify_skill_missing: this repository has no verify skill (.claude/skills/verify/SKILL.md or a Verify section in AGENTS.md). Add a todo before this one whose worker writes it and runs it end to end once, start that todo with target.preparationParameters.verifySkill "create", and merge its pull request under the repository’s normal merge rule; then retry this todo.'
   );
 }
 

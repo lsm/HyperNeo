@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Session, Space, SpaceWorkflow } from '@hyperneo/shared';
-import type { McpServer, McpServerConfig } from '@hyperneo/shared/sdk';
+import type { McpServerConfig } from '@hyperneo/shared/sdk';
 import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import {
   QueryOptionsBuilder,

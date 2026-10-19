@@ -48,7 +48,6 @@ import { ensureNeoProject, fileNeoSessions } from '../neo/folder.ts';
 import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import { createNeoOperations, neoReorganizeRuntime } from '../neo/operations.ts';
 import { createNeoProjectsReorganizer } from '../neo/reorganize-operation.ts';
-import { neoHealthDigest } from '../neo/health-digest.ts';
 import {
   NEO_REORGANIZE_IDLE_MS,
   NEO_TOPICS_REORGANIZE_NIGHTLY,
@@ -1722,18 +1721,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         return root ? deps.db.getSDKMessageRepo().lastHumanPromptAt(root) : null;
       },
       reorganize: () => reorganizeTopics({ apply: 'unattended' }),
-      digest: async (run, since) => {
-        const session = neoService.defaultSessionId();
-        if (session && neoService.repo.conversationId())
-          await neoService.deliverForward(
-            session,
-            `neo-health-digest:${Date.now()}`,
-            neoHealthDigest(neoService.repo.healthFacts(since), run, since),
-            session,
-            null,
-            null
-          );
-      },
       log: (line) => neoService.logReorganize(line),
     })
   );

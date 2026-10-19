@@ -8,8 +8,6 @@ export type NeoWorkBlocker = z.infer<typeof NeoWorkBlockerSchema>;
 
 export const NEO_WORK_REPORT_LIMIT = 12_000;
 
-export const NEO_WORK_EARLIER_REPORT = '\n\nEarlier report:\n';
-
 function neoWorkBlockerLine(blocker: NeoWorkBlocker): string {
   return `Blocked (${blocker.kind}): ${blocker.what.replace(/\s+/g, ' ').trim()}`;
 }

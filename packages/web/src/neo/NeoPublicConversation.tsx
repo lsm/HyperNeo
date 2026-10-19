@@ -4,7 +4,6 @@ import type {
   NeoConversationImageRef,
 } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoReplyTo } from '@hyperneo/shared/types/neo-ask';
-import type { NeoPublicationLink } from '@hyperneo/shared/types/neo-publication';
 import type { NeoSessionNoticeGroup } from '@hyperneo/shared/types/neo-snapshot';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { CopyButton } from '../components/ui/CopyButton.tsx';
@@ -358,8 +357,6 @@ function ReplyQuote({
 
 function PublicEntry({
   entry,
-  onOpenScene,
-  canOpenScene,
   onEditUndelivered,
   replyLabels,
   onQuote,
@@ -371,8 +368,6 @@ function PublicEntry({
   onSeek?: (messageId: string) => void;
   replyLabels?: ReadonlyMap<string, { label: string; askId: string }>;
   onQuote?: (quote: NeoQuote) => void;
-  onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
-  canOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => boolean;
   onEditUndelivered?: NeoEditUndelivered;
 }) {
   const ask = entry.kind === 'ask' ? entry.ask : null;
@@ -563,17 +558,7 @@ function PublicEntry({
                 >
                   {links.map((link) => (
                     <li key={JSON.stringify([link.kind, link.id])}>
-                      {onOpenScene && (canOpenScene?.(link) ?? true) ? (
-                        <button
-                          type="button"
-                          class="text-left hover:underline"
-                          onClick={() => onOpenScene({ kind: link.kind, id: link.id })}
-                        >
-                          {link.label}
-                        </button>
-                      ) : (
-                        <span>{link.label}</span>
-                      )}
+                      <span>{link.label}</span>
                     </li>
                   ))}
                 </ul>
@@ -783,8 +768,6 @@ export function PendingAsk({
 export function NeoPublicConversation({
   conversation,
   statuses,
-  onOpenScene,
-  canOpenScene,
   onRetry,
   onLoadEarlier,
   onEditUndelivered,
@@ -797,8 +780,6 @@ export function NeoPublicConversation({
   statuses?: ReadonlyMap<string, NeoMessageStatus>;
   onQuote?: (quote: NeoQuote) => void;
   mute?: NeoSessionMute;
-  onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
-  canOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => boolean;
   onEditUndelivered?: NeoEditUndelivered;
   onRetry?: () => void;
   onLoadEarlier?: () => void;
@@ -857,8 +838,6 @@ export function NeoPublicConversation({
           <PublicEntry
             key={entry.key}
             entry={entry}
-            onOpenScene={onOpenScene}
-            canOpenScene={canOpenScene}
             onEditUndelivered={onEditUndelivered}
             replyLabels={labels}
             onSeek={seek}

@@ -34,13 +34,8 @@ import type { OperationCaller } from '../operations/registry.ts';
 import { defineOperation } from '../operations/registry.ts';
 import { hashString32 } from '../runtime-hash.ts';
 import type { NeoService } from './service.ts';
-import type { NeoProject, NeoWork } from '@hyperneo/shared/types/neo-context';
-import {
-  type NeoAsk,
-  type NeoReceiptAskOrigin,
-  type NeoSnapshot,
-  type NeoWorkResourceReceipt,
-} from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoProject } from '@hyperneo/shared/types/neo-context';
+import { type NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import {
   NEO_STANDING_RULE_MAX_CHARS,
   NEO_STANDING_RULES_MAX,
@@ -62,16 +57,10 @@ import {
 } from './conversation-ask-read-operation.ts';
 import { createNeoDraftRecoveryOperation } from './draft-recovery-operation.ts';
 import {
-  compactNeoSnapshotAsks,
-  compactNeoSnapshotCards,
   fitNeoSnapshotBudget,
   NEO_MCP_SNAPSHOT_BUDGET,
   neoSnapshotOmitted,
-  NEO_SNAPSHOT_SETTLED_ASKS,
-  summarizeNeoSnapshot,
 } from './snapshot-compact.ts';
-import { isNeoAskSettled } from './done-check.ts';
-import { projectNeoSnapshotAskOrigins } from './snapshot-origins.ts';
 import { hasNeoHumanWorkInput, neoTurnOrigin } from './work-origin.ts';
 import { type NeoDriverTarget } from './driver-work.ts';
 import { invokeOperation, type OperationOutcome } from '../operations/invoke.ts';
@@ -89,20 +78,12 @@ import {
   requireNeoTrackRoot,
   requireNeoTrackableSession,
 } from './session-track.ts';
-import { NeoWorkResourceReferences } from './work-resource-refs.ts';
 import { createNeoQuestionOperations } from './question-operations.ts';
 import { createNeoTodoOperations, type NeoTodoControls } from './todo-operations.ts';
 import { createNeoAskRecordOperations } from './ask-record-operations.ts';
 import { NeoAskEntrySchema, projectNeoAskEntries } from './ask-entries.ts';
-import { NeoAskSchema } from './ask-inputs.ts';
-import { projectNeoSnapshotAsks } from './ask-plans.ts';
-import { isNeoWorkPrWaiting } from './packs/coding/work-prs.ts';
 import { createNeoPreferenceOperation } from './model-preference.ts';
 import { planNeoRuleEdit, planNeoSavedRules, requireNeoRuleCitation } from './saved-rules.ts';
-import { projectNeoCardViews } from './card-views.ts';
-import { NeoAskViewSchema, NeoCardViewSchema } from './card-view-schema.ts';
-import { projectNeoAskViews } from './ask-views.ts';
-import { busyNeoAskSessions, unmutedNeoAskSessions } from './session-ask-links.ts';
 
 type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
 
@@ -125,53 +106,17 @@ const Project = z.object({
   createdAt: z.number(),
   updatedAt: z.number(),
 } satisfies ZodShape<NeoProject>);
-const Work = z.object({
-  id: z.string(),
-  requestKey: z.string(),
-  projectId: z.string().nullable(),
-  originSessionId: z.string(),
-  originMessageId: z.string().nullable(),
-  title: z.string(),
-  instruction: z.string(),
-  targetSessionId: z.string().nullable().optional(),
-  sessionId: z.string().nullable(),
-  status: z.enum(['proposed', 'queued', 'reported', 'failed', 'cancelled']),
-  report: z.string().nullable(),
-  follows: z.string().nullable().optional(),
-  createdAt: z.number(),
-  updatedAt: z.number(),
-} satisfies ZodShape<NeoWork>);
 const Failure = z.object({ ok: z.literal(false), reason: z.string() });
-const NEO_ASK_TOLD_LIMIT = 20;
-const NEO_ASK_TOLD_TEXT = 300;
 const SnapshotOk = z.object({
   ok: z.literal(true),
   sessionId: z.string().nullable(),
   projects: z.array(Project),
   conversationId: z.string().nullable().optional(),
   projectRedirects: z.array(z.object({ sourceId: z.string(), targetId: z.string() })).optional(),
-  work: z.array(
-    Work.extend({
-      summarized: z.literal(true).optional(),
-      askId: z.string().optional(),
-      phase: NeoCardViewSchema.shape.phase.optional(),
-      label: z.string().optional(),
-    })
-  ),
   standingRules: z.array(z.string()).optional(),
-  workResources: z
-    .array(
-      z.object({
-        workId: z.string(),
-        refs: NeoWorkResourceReferences.nullable(),
-      } satisfies ZodShape<NeoWorkResourceReceipt>)
-    )
-    .max(100)
-    .optional(),
   sessionNotices: z.array(NeoSessionNoticeSchema).max(20).optional(),
   sessionNoticeGroups: z.array(NeoSessionNoticeGroupSchema).max(10).optional(),
   mutedSessions: z.array(z.string()).max(NEO_SESSION_MUTES_MAX).optional(),
-  asks: z.array(NeoAskSchema).optional(),
   todoAsks: z.array(NeoAskEntrySchema).optional(),
   packRows: z
     .array(
@@ -181,22 +126,7 @@ const SnapshotOk = z.object({
       })
     )
     .optional(),
-  told: z
-    .array(
-      z.object({
-        publicationId: z.string(),
-        at: z.string(),
-        shortText: z.string(),
-        triggerId: z.string().optional(),
-      })
-    )
-    .max(NEO_ASK_TOLD_LIMIT)
-    .optional(),
-  moreSettled: z.boolean().optional(),
-  omitted: z
-    .object({ work: z.number().int().optional(), asks: z.number().int().optional() })
-    .optional(),
-  cards: z.array(NeoCardViewSchema).max(100),
+  omitted: z.object({ asks: z.number().int().optional() }).optional(),
   sessionLoad: z
     .array(z.object({ sessionId: z.string(), liveCards: z.number().int(), busy: z.boolean() }))
     .max(50)
@@ -212,7 +142,6 @@ const SnapshotOk = z.object({
     )
     .max(100)
     .optional(),
-  askViews: z.array(NeoAskViewSchema),
   preferences: z
     .object({
       model: z.string(),
@@ -222,34 +151,20 @@ const SnapshotOk = z.object({
     })
     .nullable()
     .optional(),
-  askOrigins: z
-    .array(
-      z.object({
-        kind: z.literal('work'),
-        id: z.string(),
-        origin: z.object({ sessionId: z.string(), messageId: z.string() }).nullable(),
-      } satisfies ZodShape<NeoReceiptAskOrigin>)
-    )
-    .optional(),
   trimmed: z.string().optional(),
   rev: z.string().optional(),
-  scopedTo: z.string().optional(),
 } satisfies ZodShape<NeoSnapshot>);
 const SnapshotUnchanged = z.object({
   ok: z.literal(true),
   unchanged: z.literal(true),
   rev: z.string(),
   note: z.string(),
-  scopedTo: z.string().optional(),
 });
 const Snapshot = z.union([Failure, SnapshotUnchanged, SnapshotOk]);
 const Scope = z
   .object({
     projectId: z.string().min(1).optional(),
-    askId: z.string().min(1).optional(),
-    all: z.boolean().optional(),
     sinceRev: z.string().min(1).max(40).optional(),
-    summaries: z.boolean().optional(),
   })
   .default({});
 const Save = z.object({
@@ -390,50 +305,24 @@ export function isNeoWorkMissingHere(outcome: OperationOutcome | null): boolean 
 
 export function neoSnapshotRevision<T extends { ok: boolean }>(
   snapshot: T,
-  sinceRev: string | undefined,
-  scopedTo: string | undefined
-):
-  | T
-  | (T & { rev: string; scopedTo?: string })
-  | {
-      ok: true;
-      unchanged: true;
-      rev: string;
-      note: string;
-      scopedTo?: string;
-    } {
+  sinceRev: string | undefined
+): T | (T & { rev: string }) | { ok: true; unchanged: true; rev: string; note: string } {
   if (!snapshot.ok) return snapshot;
   const rev = hashString32(
     JSON.stringify(snapshot, (key, value) => (key === 'checkedAt' ? undefined : value))
   ).toString(36);
-  const scoped = scopedTo ? { scopedTo } : {};
   return sinceRev === rev
     ? {
         ok: true,
         unchanged: true,
         rev,
         note: `unchanged since rev ${rev}: nothing changed since your last read. ${NEO_SNAPSHOT_UNCHANGED_GUIDANCE}`,
-        ...scoped,
       }
-    : { ...snapshot, rev, ...scoped };
+    : { ...snapshot, rev };
 }
 
 export const NEO_HUMAN_TURN_REFUSAL =
-  'Neo can do this only while answering the human’s own chat message, not from a system note or consultation.';
-
-function readNeoAskTold(service: NeoService, ask: NeoAsk): NonNullable<NeoSnapshot['told']> {
-  const conversation = service.repo.conversationId();
-  if (!conversation) return [];
-  return service.publications
-    .toldForAsk(conversation, ask)
-    .slice(-NEO_ASK_TOLD_LIMIT)
-    .map(({ publicationId, createdAt, shortText, triggerId }) => ({
-      publicationId,
-      at: createdAt,
-      shortText: shortText.slice(0, NEO_ASK_TOLD_TEXT),
-      ...(triggerId ? { triggerId } : {}),
-    }));
-}
+  'Neo can do this only while answering the human’s own chat message, not from a system note.';
 
 function readNeoRuleSource(service: NeoService, caller: OperationCaller): string | null {
   if (caller.source === 'rpc' && caller.principal === 'local') return null;
@@ -550,116 +439,23 @@ export function createNeoOperations(service: NeoService) {
       .pipe(action, ['input', 'admission'], 'admission')
       .endAsync('admission') as (input: I, caller: OperationCaller) => Promise<O | Rejection>;
   }
-  function unmutedAskSessions() {
-    return unmutedNeoAskSessions(
-      service.askSessions,
-      service.db.getGlobalSettings?.().neo?.mutedSessions ?? []
-    );
-  }
-  function projectCards(visibleWork: NeoWork[], asks: NeoAsk[]) {
-    const workOf = new Map(visibleWork.map((item) => [item.id, item]));
-    const workIds = [...workOf.keys()];
-    const workPrs = service.workPrs
-      .list(workIds)
-      .map(({ workId, prs }) => ({ workId, prs, waiting: isNeoWorkPrWaiting(prs) }));
-    const cards = projectNeoCardViews({
-      work: visibleWork,
-      drivers: workDrivers(workOf),
-      waits: service.cardWaits(workIds, Date.now(), workOf),
-      prs: workPrs,
-      goals: service.workGoals.list(workIds),
-      continues: service.workContinues.list(workIds),
-      supersessions: service.workSupersessions.list(workIds),
-      asks,
-      refusals: service.workRefusals.list(),
-      controlFailures: service.cardControlFailures(workIds),
-    });
-    return { workPrs, cards };
-  }
-  function workDrivers(workOf: ReadonlyMap<string, NeoWork>) {
-    return service.driverTargets.receipts([...workOf.keys()]).map((receipt) => {
-      const since = service.uncheckedSince(receipt.workId);
-      const checkedAt = service.checkedAt(receipt.workId);
-      return {
-        ...receipt,
-        ...(since === null ? {} : { uncheckedSince: since }),
-        ...(checkedAt === null ? {} : { checkedAt }),
-        ...(service.isRetryable(receipt.workId, workOf.get(receipt.workId) ?? null)
-          ? { retryable: true as const }
-          : {}),
-      };
-    });
-  }
-
-  function snapshot(
-    caller: OperationCaller,
-    requested?: string,
-    askId?: string,
-    summaries = false
-  ) {
-    const built = buildSnapshot(caller, requested, askId, summaries);
-    return built.ok && caller.source !== 'rpc'
-      ? neoSnapshotOmitted(
-          fitNeoSnapshotBudget(built, NEO_MCP_SNAPSHOT_BUDGET, { focused: !!askId }),
-          built
-        )
+  function snapshot(caller: OperationCaller, requested?: string) {
+    const built = buildSnapshot(caller, requested);
+    return caller.source !== 'rpc'
+      ? neoSnapshotOmitted(fitNeoSnapshotBudget(built, NEO_MCP_SNAPSHOT_BUDGET), built)
       : built;
   }
-  function buildSnapshot(
-    caller: OperationCaller,
-    requested: string | undefined,
-    askId: string | undefined,
-    summaries: boolean
-  ) {
-    const focus = askId ? service.askRecords.get(askId) : null;
-    if (askId && !focus) return { ok: false as const, reason: 'Ask not found.' };
-    const scope = focus
-      ? (focus.projectId ?? undefined)
-      : requested
-        ? (service.repo.projectMerges.resolve(requested) ?? requested)
-        : undefined;
+  function buildSnapshot(caller: OperationCaller, requested: string | undefined) {
+    const scope = requested
+      ? (service.repo.projectMerges.resolve(requested) ?? requested)
+      : undefined;
     const detailed = caller.source === 'rpc';
-    const cardDetail = detailed || !!focus;
-    const compact = caller.source !== 'rpc' && !focus;
     const all = service.repo.listProjects();
-    const projects = all.filter((item) =>
-      focus ? item.id === focus.projectId : !scope || item.id === scope
-    );
+    const projects = all.filter((item) => !scope || item.id === scope);
     const repositories = service.repo.repositories();
-    const work = focus
-      ? focus.workIds.flatMap((id) => service.repo.getWork(id) ?? [])
-      : service.repo.listWork(scope === undefined ? undefined : scope);
-    const limit = caller.source === 'rpc' ? 50 : 10;
-    const recentWork = focus ? work.slice(-limit).reverse() : work.slice(0, limit);
-    const olderActiveWork = focus
-      ? []
-      : work
-          .slice(limit)
-          .filter((item) => item.status === 'proposed' || item.status === 'queued')
-          .slice(0, limit);
-    const visibleWork = [...recentWork, ...olderActiveWork];
-    const listed = focus
-      ? [focus]
-      : service.askRecords.list(scope === undefined ? undefined : scope);
-    const summarize = caller.source === 'rpc' && !focus && summaries;
-    const asks = projectNeoSnapshotAsks(
-      listed,
-      caller.source === 'rpc' && !summarize ? 50 : NEO_SNAPSHOT_SETTLED_ASKS,
-      Date.now(),
-      new Set()
-    );
-    const visibleIds = new Set(visibleWork.map((row) => row.id));
-    const askWorkIds = new Set(asks.flatMap((ask) => ask.workIds));
-    const projectedWork =
-      caller.source === 'rpc'
-        ? work.filter((row) => visibleIds.has(row.id) || askWorkIds.has(row.id))
-        : visibleWork;
-    const { workPrs: allWorkPrs, cards: allCards } = projectCards(projectedWork, asks);
-    const cards = allCards.filter((card) => visibleIds.has(card.workId));
-    const cardOf = new Map(cards.map((card) => [card.workId, card]));
-    const omittedWork = work.length - visibleWork.length;
-    const omittedAsks = listed.length - asks.length;
-    const built = {
+    const asks = service.todos.listAsks(scope, caller.source === 'rpc' ? 50 : 10);
+    const unlisted = service.todos.countAsks(scope) - asks.length;
+    return {
       ok: true as const,
       sessionId: service.defaultSessionId() ?? null,
       standingRules: neoStandingRules(service.db.getGlobalSettings?.().neo),
@@ -680,17 +476,17 @@ export function createNeoOperations(service: NeoService) {
           context: detailed ? item.context : '',
         };
       }),
-      ...(caller.source === 'rpc' && !focus ? { sessionNotices: service.sessionNotices } : {}),
-      sessionNoticeGroups: focus ? [] : latestNeoSessionNoticeGroups(service.sessionNoticeGroups),
+      ...(caller.source === 'rpc' ? { sessionNotices: service.sessionNotices } : {}),
+      sessionNoticeGroups: latestNeoSessionNoticeGroups(service.sessionNoticeGroups),
       mutedSessions: service.db.getGlobalSettings?.().neo?.mutedSessions ?? [],
       preferences: service.modelPreference(),
-      asks: compact ? compactNeoSnapshotAsks(asks) : asks,
       todoAsks: projectNeoAskEntries(
-        focus ? [] : service.todos.listAsks(scope, caller.source === 'rpc' ? 50 : 10),
+        asks,
         service.todos,
         service.todoSessions,
         service.installedPacks()
       ),
+      ...(unlisted > 0 ? { omitted: { asks: unlisted } } : {}),
       packRows: service.packs().flatMap((pack) => {
         const rows = pack.snapshotRows?.(
           scope ? service.repo.allRepositories(scope) : null,
@@ -698,53 +494,9 @@ export function createNeoOperations(service: NeoService) {
         );
         return rows?.length ? [{ pack: pack.id, rows }] : [];
       }),
-      ...(focus ? { told: readNeoAskTold(service, focus) } : {}),
-      ...(summarize
-        ? { moreSettled: listed.filter(isNeoAskSettled).length > NEO_SNAPSHOT_SETTLED_ASKS }
-        : {}),
-      ...(omittedWork || omittedAsks
-        ? {
-            omitted: {
-              ...(omittedWork ? { work: omittedWork } : {}),
-              ...(omittedAsks ? { asks: omittedAsks } : {}),
-            },
-          }
-        : {}),
-      cards: compact ? compactNeoSnapshotCards(cards) : cards,
       sessionLoad: readNeoSessionLoad(service.db.getDatabase()).slice(0, 50),
       working: readNeoWorking(service.db.getDatabase()).slice(0, 100),
-      askViews: projectNeoAskViews(
-        asks,
-        allCards,
-        allWorkPrs,
-        unmutedAskSessions(),
-        busyNeoAskSessions(service.askSessions),
-        caller.source === 'rpc'
-          ? {
-              work: projectedWork,
-              supersessions: service.workSupersessions.list(projectedWork.map((row) => row.id)),
-            }
-          : undefined
-      ),
-      workResources: visibleWork.map((item) => ({
-        workId: item.id,
-        refs: service.db?.neoWorkResources?.get(item.id) ?? null,
-      })),
-      askOrigins: projectNeoSnapshotAskOrigins(visibleWork, service.resolveAskOrigin),
-      work: visibleWork.map((item) =>
-        caller.source === 'rpc'
-          ? item
-          : {
-              ...item,
-              instruction: cardDetail ? item.instruction.slice(0, 1000) : '',
-              report: cardDetail ? (item.report?.slice(0, 3000) ?? null) : null,
-              ...(cardOf.get(item.id)
-                ? { phase: cardOf.get(item.id)!.phase, label: cardOf.get(item.id)!.label }
-                : {}),
-            }
-      ),
     };
-    return summarize ? summarizeNeoSnapshot(built, listed) : built;
   }
   const muteSession = (superpipe({})('neo.session.mute') as PipelineAPI)
     .input(['input', 'caller'])
@@ -852,35 +604,11 @@ export function createNeoOperations(service: NeoService) {
     input: z.infer<typeof SaveRules>,
     caller: OperationCaller
   ) => z.infer<typeof RulesResult>;
-  const turnAsk = (caller: OperationCaller): string | undefined => {
-    if (caller.source !== 'mcp' || !caller.sessionId || !caller.neoTurn?.messageId)
-      return undefined;
-    const origin = service.resolveAskOrigin({
-      sessionId: caller.sessionId,
-      messageId: caller.neoTurn.messageId,
-    });
-    const ask = origin
-      ? service.askRecords.liveForOrigin(origin.sessionId, origin.messageId)
-      : null;
-    const binding = service.repo.getBindingBySession(caller.sessionId);
-    return ask && binding?.kind === 'neo' ? ask.id : undefined;
-  };
-  const scopeOf = (input: z.infer<typeof Scope>, caller: OperationCaller) => {
-    if (input.askId || input.projectId || input.all)
-      return { askId: input.askId, scopedTo: undefined };
-    const askId = turnAsk(caller);
-    return { askId, scopedTo: askId };
-  };
   const read = path('neo.snapshot', (input: z.infer<typeof Scope>, caller) => {
-    const scope = scopeOf(input, caller);
-    const read = neoSnapshotRevision(
-      snapshot(caller, input.projectId, scope.askId, input.summaries),
-      input.sinceRev,
-      scope.scopedTo
-    );
+    const read = neoSnapshotRevision(snapshot(caller, input.projectId), input.sinceRev);
     const turn = caller.source === 'mcp' ? caller.neoTurn?.messageId : undefined;
     if (!caller.sessionId || !turn) return read;
-    const key = [caller.sessionId, turn, input.projectId, scope.askId, input.all].join('\n');
+    const key = [caller.sessionId, turn, input.projectId].join('\n');
     const planned = planNeoSnapshotRead(
       read,
       service.snapshotReads.get(key) ?? null,
@@ -907,7 +635,7 @@ export function createNeoOperations(service: NeoService) {
       0
     );
     const sessionId = await service.open();
-    return { ...snapshot(caller, undefined, undefined, input.summaries), sessionId };
+    return { ...snapshot(caller), sessionId };
   });
   const save = (superpipe({})('neo.project.save') as PipelineAPI)
     .input(['input', 'caller'])
@@ -1113,7 +841,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.snapshot',
       description:
-        'Read durable project summaries and execution receipts. Pass projectId to load that project’s full context, or askId to read one ask with its cards, their reports, drivers and pull requests, and told: every message the human actually received for it (read it before saying something was already sent). Without askId, settled asks keep only their title, status and a short outcome, and finished cards drop their goal and doneWhen; read one with askId when you need its full text. Each work item carries phase and label, the same card view the human sees: handed means given to a worker but not seen working yet; running means the worker reports it running, and its label says when that is not confirmed; cancelled closes the human request; it does not prove the external execution stopped. Optional controlFailure names unsupported/unavailable stop or withdraw, with detail and time; open the session to check. Phase labels describe the last observation, not a process shutdown guarantee. status is only storage, and queued does not mean running. A list that does not hold every item says so in omitted ({work, asks}: how many were left out), so never answer all or none from it. A snapshot over 40 KB is trimmed and carries a trimmed note saying what was cut. In a turn that belongs to an ask, the snapshot is scoped to that ask (scopedTo says which) unless you pass askId, projectId or all: true. Every snapshot carries rev; pass it back as sinceRev and an unchanged snapshot answers only {unchanged: true, rev}, so read again only after something happened.',
+        'Read durable project summaries and todo asks. Pass projectId to load that project’s full context. todoAsks holds each ask with its todos (state, report, evidence) and open questions; packRows holds pack facts, such as the coding pack’s pull request ledger with each PR’s state and owner. A list that does not hold every ask says so in omitted ({asks}: how many were left out), so never answer all or none from it. A snapshot over 40 KB is trimmed and carries a trimmed note saying what was cut. Every snapshot carries rev; pass it back as sinceRev and an unchanged snapshot answers only {unchanged: true, rev}, so read again only after something happened.',
       inputSchema: Scope,
       resultSchema: Snapshot,
       policy: { safetyClass: 'read', roles: ['neo'] },

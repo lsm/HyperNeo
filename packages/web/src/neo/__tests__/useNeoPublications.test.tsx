@@ -477,11 +477,9 @@ it('wires the consumer to the global root without querying SDK transcripts for p
   const before = io.request.mock.calls.length;
   fireEvent.click(screen.getByRole('button', { name: 'Reopen Neo' }));
   await waitFor(() =>
-    expect(
-      io.request.mock.calls
-        .slice(before)
-        .some(([, call]) => call.name === 'neo.open' && call.input.summaries === true)
-    ).toBe(true)
+    expect(io.request.mock.calls.slice(before).some(([, call]) => call.name === 'neo.open')).toBe(
+      true
+    )
   );
   expect(screen.getByText(`ready/${id}/1`)).toBeTruthy();
   expect(requests()).toHaveLength(1);
