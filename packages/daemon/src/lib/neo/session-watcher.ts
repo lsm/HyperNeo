@@ -50,7 +50,6 @@ export class NeoSessionWatcher {
   private savedSeen: string;
   private sessionPrs = new Map<string, string[]>();
   private sessionPrsCheckedAt = new Map<string, number>();
-  private heldSessionNotices = new Map<string, NeoSessionNotice>();
 
   constructor(private readonly deps: NeoSessionWatcherDeps) {
     this.sessionsSeen = new Map(deps.seen.list());

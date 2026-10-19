@@ -6,7 +6,7 @@ import {
 import { neoSnapshotRevision } from '../../../../src/lib/neo/operations.ts';
 
 describe('planNeoSnapshotRead', () => {
-  const full = { ok: true, rev: 'r1', scopedTo: 'ask-1' };
+  const full = { ok: true, rev: 'r1' };
 
   test('remembers a first read and answers it in full', () => {
     expect(planNeoSnapshotRead(full, null, 0)).toEqual({
@@ -24,7 +24,6 @@ describe('planNeoSnapshotRead', () => {
         note: expect.stringMatching(
           /held until this turn ends, so reading again only delays them\.$/
         ),
-        scopedTo: 'ask-1',
       },
       remember: null,
     });

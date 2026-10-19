@@ -117,12 +117,6 @@ describe('NeoService session ask links', () => {
   const human = { source: 'rpc' as const, principal: 'local' as const };
   const invoke = (name: string, input: unknown) =>
     invokeOperation(createOperationRegistry(createNeoOperations(service)), name, input, human);
-  const askViews = async () => {
-    const snapshot = await invoke('neo.snapshot', {});
-    return 'value' in snapshot
-      ? (snapshot.value as { askViews: Record<string, unknown>[] }).askViews
-      : [];
-  };
   const watch = async (state: WorkStatus, at: number, openedPrs: string[]) => {
     sessions = [
       {

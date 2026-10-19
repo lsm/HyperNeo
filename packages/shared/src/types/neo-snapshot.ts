@@ -1,12 +1,6 @@
 import type { NeoAskEntry, NeoStatusCode } from './neo-ask.ts';
-import type { DaemonInventoryLink } from './daemon-snapshot.ts';
-import type { NeoProject, NeoWork } from './neo-context.ts';
+import type { NeoProject } from './neo-context.ts';
 import type { NeoModelPreference } from './settings.ts';
-
-export interface NeoWorkResourceReceipt {
-  workId: string;
-  refs: DaemonInventoryLink[] | null;
-}
 
 export interface NeoWorkDriverReceipt {
   workId: string;
@@ -64,12 +58,6 @@ export interface NeoWorkSupersession {
 
 export type NeoAskStatus = 'open' | 'waiting' | 'achieved' | 'abandoned' | 'blocked';
 export type NeoAskApprovalSpent = 'continues' | 'expired';
-
-export function isPooledNeoAsk<T extends Pick<NeoAsk, 'status' | 'approvedAt'>>(
-  ask: T | null | undefined
-): ask is T & { approvedAt: number } {
-  return ask?.approvedAt != null && ask.status !== 'achieved' && ask.status !== 'abandoned';
-}
 
 export interface NeoAskItem {
   answer?: { choice: string | null; at: number | null };
@@ -177,150 +165,11 @@ export function neoWorkPrVerdict(
   return pr.review === 'approved' ? 'ready' : 'pending';
 }
 
-export interface NeoWorkPrReceipt {
-  workId: string;
-  prs: NeoWorkPr[];
-  waiting: boolean;
-}
-
-export type NeoCardPhase =
-  | 'proposed'
-  | 'handed'
-  | 'running'
-  | 'needs_you'
-  | 'checking'
-  | 'abandoned'
-  | 'stopped'
-  | 'pr_open'
-  | 'pr_setback'
-  | 'merged'
-  | 'reported'
-  | 'failed'
-  | 'cancelled';
-
-export type NeoCardGroup = 'attention' | 'running' | 'outcomes';
-export type NeoCardTone = 'accent' | 'warning' | 'success';
-export type NeoCardAction = 'start' | 'cancel' | 'retry' | 'close' | 'done';
-
-export interface NeoCardPrimary {
-  kind: 'start' | 'retry' | 'close' | 'answer' | 'open' | 'chat' | 'none';
-  label: string | null;
-  link: string | null;
-}
-
-export interface NeoCardPrSummary {
-  number: string;
-  label: string;
-  count: number;
-  inProgress: boolean;
-  setback: boolean;
-  merged: string[];
-}
-
-export interface NeoCardOpenTarget {
-  link: string | null;
-  remoteLink: string | null;
-  sessionId: string | null;
-  daemon: string | null;
-}
-
-export interface NeoCardWaiting {
-  workId: string;
-  title: string;
-  reason: string;
-  items: { id: string; text: string }[];
-}
-
 export interface NeoCardControlFailure {
   operation: 'stop' | 'withdraw';
   reason: 'unsupported' | 'unavailable';
   detail: string;
   at: number;
-}
-
-export interface NeoCardView {
-  controlFailure?: NeoCardControlFailure;
-  waitingFor?: NeoCardWaiting[];
-  autoStart?: boolean;
-  uncertain?: boolean;
-  model?: string;
-  effort?: string;
-  talk?: string;
-  replyUnverified?: string;
-  workId: string;
-  phase: NeoCardPhase;
-  group: NeoCardGroup;
-  tone: NeoCardTone;
-  label: string;
-  hidden: boolean;
-  primary: NeoCardPrimary;
-  actions: NeoCardAction[];
-  adapter: string | null;
-  open: NeoCardOpenTarget;
-  pr: NeoCardPrSummary | null;
-  goal: string | null;
-  doneWhen: string | null;
-  continued: number;
-  continuedMessage: string | null;
-  pooled: boolean;
-  superseded: boolean;
-  uncheckedSince: number | null;
-  checkedAt: number | null;
-  unconfirmed: boolean;
-  abandoned: boolean;
-  retryable: boolean;
-}
-
-export interface NeoAskSessionView {
-  key: string;
-  title: string;
-  adapter: string;
-  status: NonNullable<NeoWorkDriverReceipt['status']>;
-  kind: 'needs_you' | 'failed' | null;
-  open: NeoCardOpenTarget;
-}
-
-export interface NeoAskTodo {
-  open?: NeoCardOpenTarget;
-  id: string;
-  workId: string | null;
-  title: string;
-  state: 'pending' | 'running' | 'done' | 'failed' | 'cancelled';
-  status: string;
-  added: boolean;
-}
-
-export interface NeoAskView {
-  todos?: NeoAskTodo[];
-  askId: string;
-  group: NeoCardGroup;
-  label: string;
-  labelCodes?: NeoStatusCode[];
-  settled: boolean;
-  needsYou: boolean;
-  idle?: true;
-  idleReason?: string;
-  done: number;
-  total: number;
-  workIds: string[];
-  doneWorkIds: string[];
-  summary: string | null;
-  sessions?: NeoAskSessionView[];
-  humanActions?: NeoAskHumanAction[];
-}
-
-export interface NeoAskHumanAction {
-  kind: 'question';
-  itemId: string;
-  question: string;
-  options: string[];
-  steps?: { id: string; title: string }[];
-}
-
-export interface NeoReceiptAskOrigin {
-  kind: 'work';
-  id: string;
-  origin: { sessionId: string; messageId: string } | null;
 }
 
 export interface NeoSessionNotice {
@@ -339,13 +188,6 @@ export interface NeoSessionNoticeGroup {
   line: string;
   lineCodes?: NeoStatusCode[];
   notices: NeoSessionNotice[];
-}
-
-export interface NeoSnapshotWork extends NeoWork {
-  summarized?: true;
-  askId?: string;
-  phase?: NeoCardPhase;
-  label?: string;
 }
 
 export interface NeoSnapshot {
