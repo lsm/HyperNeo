@@ -8,6 +8,7 @@ import {
   reconcileCodingPrLedger,
 } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
+import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
@@ -24,6 +25,7 @@ const node = (
   isDraft: false,
   mergeable: 'MERGEABLE',
   reviewDecision: null,
+  reviews: { nodes: [] },
   closedAt: null,
   commits: { nodes: [{ commit: { statusCheckRollup: ci ? { state: ci } : null } }] },
   ...more,
@@ -37,11 +39,28 @@ const response = (
   data: {
     rateLimit: { remaining: more.remaining },
     repository: {
+      nameWithOwner: 'x/x',
       open: { pageInfo: { hasNextPage: more.next }, nodes: open },
       done: { nodes: done },
     },
   },
 });
+
+type Read = (repo: string) => Promise<unknown | null>;
+const named =
+  (read: Read): Read =>
+  async (repo) => {
+    const raw = (await read(repo)) as { data?: { repository?: { nameWithOwner: string } } } | null;
+    if (raw?.data?.repository) raw.data.repository.nameWithOwner = repo;
+    return raw;
+  };
+const reconcile = (
+  ledger: CodingPrLedgerRepository,
+  repos: string[],
+  read: Read,
+  now: number,
+  skips?: Map<string, number>
+) => reconcileCodingPrLedger(ledger, repos, named(read), now, skips);
 
 function setup() {
   const db = new Database(':memory:');
@@ -75,7 +94,6 @@ describe('planCodingLedgerRead', () => {
     const recent = new Date(now - 60_000).toISOString();
     const old = new Date(now - CODING_LEDGER_KEEP_MS - 1).toISOString();
     const planned = planCodingLedgerRead(
-      'lsm/hyperneo',
       response(
         [node(1)],
         [
@@ -91,12 +109,12 @@ describe('planCodingLedgerRead', () => {
     ]);
     expect(planned?.remaining).toBe(4000);
     expect(
-      planCodingLedgerRead('r/x', response([node(1)], [], { remaining: 4000, next: true }), now)
+      planCodingLedgerRead(response([node(1)], [], { remaining: 4000, next: true }), now)
     ).toBeNull();
     expect(
-      planCodingLedgerRead('r/x', { ...response([node(1)]), errors: [{ message: 'x' }] }, now)
+      planCodingLedgerRead({ ...response([node(1)]), errors: [{ message: 'x' }] }, now)
     ).toBeNull();
-    expect(planCodingLedgerRead('r/x', null, now)).toBeNull();
+    expect(planCodingLedgerRead(null, now)).toBeNull();
   });
 });
 
@@ -106,16 +124,16 @@ describe('reconcileCodingPrLedger', () => {
     let second = [node(7)];
     const read = async (repo: string) =>
       repo === 'lsm/hyperneo' ? response([node(1), node(2, { isDraft: true })]) : response(second);
-    await reconcileCodingPrLedger(ledger, ['lsm/hyperneo', 'lsm/neo-ios'], read, 100);
+    await reconcile(ledger, ['lsm/hyperneo', 'lsm/neo-ios'], read, 100);
     expect(ledger.list().map((row) => [row.repo, row.number, row.state, row.stateSince])).toEqual([
       ['lsm/hyperneo', 1, 'waiting_review', 100],
       ['lsm/hyperneo', 2, 'draft', 100],
       ['lsm/neo-ios', 7, 'waiting_review', 100],
     ]);
     db.exec('UPDATE pack_coding_pr_ledger SET nudges = 2');
-    await reconcileCodingPrLedger(ledger, ['lsm/hyperneo', 'lsm/neo-ios'], read, 200);
+    await reconcile(ledger, ['lsm/hyperneo', 'lsm/neo-ios'], read, 200);
     second = [node(7, { headRefOid: 'pushed' })];
-    await reconcileCodingPrLedger(ledger, ['lsm/hyperneo', 'lsm/neo-ios'], read, 300);
+    await reconcile(ledger, ['lsm/hyperneo', 'lsm/neo-ios'], read, 300);
     const rows = db
       .prepare(
         'SELECT number, state_since AS since, nudges, read_at AS readAt FROM pack_coding_pr_ledger ORDER BY number'
@@ -131,9 +149,9 @@ describe('reconcileCodingPrLedger', () => {
 
   test('a failed or partial read leaves the rows untouched, and a low rate limit ends the cycle', async () => {
     const { db, ledger } = setup();
-    await reconcileCodingPrLedger(ledger, ['a/a'], async () => response([node(1)]), 100);
+    await reconcile(ledger, ['a/a'], async () => response([node(1)]), 100);
     const reads: string[] = [];
-    await reconcileCodingPrLedger(
+    await reconcile(
       ledger,
       ['a/a', 'b/b', 'c/c'],
       async (repo) => {
@@ -154,19 +172,14 @@ describe('reconcileCodingPrLedger', () => {
   test('drops rows closed more than 7 days ago', async () => {
     const { db, ledger } = setup();
     const closedAt = new Date(1_000).toISOString();
-    await reconcileCodingPrLedger(
+    await reconcile(
       ledger,
       ['a/a'],
       async () => response([], [node(1, { state: 'MERGED', closedAt })]),
       2_000
     );
     expect(ledger.list()).toHaveLength(1);
-    await reconcileCodingPrLedger(
-      ledger,
-      ['a/a'],
-      async () => null,
-      1_000 + CODING_LEDGER_KEEP_MS + 1
-    );
+    await reconcile(ledger, ['a/a'], async () => null, 1_000 + CODING_LEDGER_KEEP_MS + 1);
     expect(ledger.list()).toEqual([]);
     db.close();
   });
@@ -175,13 +188,13 @@ describe('reconcileCodingPrLedger', () => {
 describe('reconcileCodingPrLedger cleanup', () => {
   test('drops an open row the next full read no longer lists, rows of repos no project names, and rows unread for 7 days', async () => {
     const { db, ledger } = setup();
-    await reconcileCodingPrLedger(
+    await reconcile(
       ledger,
       ['a/a', 'b/b', 'c/c'],
       async (repo) => response(repo === 'a/a' ? [node(1), node(2)] : [node(3)]),
       100
     );
-    await reconcileCodingPrLedger(
+    await reconcile(
       ledger,
       ['a/a', 'b/b'],
       async (repo) => (repo === 'a/a' ? response([node(1)]) : null),
@@ -191,7 +204,7 @@ describe('reconcileCodingPrLedger cleanup', () => {
       ['a/a', 1],
       ['b/b', 3],
     ]);
-    await reconcileCodingPrLedger(
+    await reconcile(
       ledger,
       ['a/a', 'b/b'],
       async (repo) => (repo === 'a/a' ? response([node(1)]) : null),
@@ -206,11 +219,74 @@ describe('reconcileCodingPrLedger cleanup', () => {
     const skips = new Map<string, number>();
     let good = false;
     const read = async () => (good ? response([node(1)]) : null);
-    for (const at of [1, 2, 3]) await reconcileCodingPrLedger(ledger, ['a/a'], read, at, skips);
+    for (const at of [1, 2, 3]) await reconcile(ledger, ['a/a'], read, at, skips);
     expect(skips.get('a/a')).toBe(3);
     good = true;
-    await reconcileCodingPrLedger(ledger, ['a/a'], read, 4, skips);
+    await reconcile(ledger, ['a/a'], read, 4, skips);
     expect(skips.get('a/a')).toBe(0);
+    db.close();
+  });
+});
+
+describe('ledger approval and repo coverage', () => {
+  test('approval comes from the latest review on the head commit when the repo requires none', () => {
+    const state = (reviews: { state: string; oid: string }[], decision: string | null = null) =>
+      codingPrState(
+        node(1, {
+          reviewDecision: decision,
+          reviews: {
+            nodes: reviews.map((item) => ({ state: item.state, commit: { oid: item.oid } })),
+          },
+        }) as never
+      );
+    expect(state([{ state: 'APPROVED', oid: 'h1' }])).toBe('approved_green');
+    expect(state([{ state: 'APPROVED', oid: 'old' }])).toBe('waiting_review');
+    expect(
+      state([
+        { state: 'APPROVED', oid: 'h1' },
+        { state: 'CHANGES_REQUESTED', oid: 'h1' },
+      ])
+    ).toBe('changes_requested');
+    expect(state([{ state: 'APPROVED', oid: 'old' }], 'APPROVED')).toBe('approved_green');
+  });
+
+  test('a renamed repo listed under both names is read into one set of rows under its GitHub name', async () => {
+    const { db, ledger } = setup();
+    const reads: string[] = [];
+    await reconcileCodingPrLedger(
+      ledger,
+      ['lsm/hyperneo', 'lsm/neokai'],
+      async (repo) => {
+        reads.push(repo);
+        const raw = response([node(1)]);
+        raw.data.repository.nameWithOwner = 'lsm/HyperNeo';
+        return raw;
+      },
+      100
+    );
+    expect(reads).toEqual(['lsm/hyperneo', 'lsm/neokai']);
+    expect(ledger.list().map((row) => [row.repo, row.number])).toEqual([['lsm/hyperneo', 1]]);
+    db.close();
+  });
+
+  test('every repo of every project is listed, not one per project', () => {
+    const { db } = setup();
+    for (const id of ['project:a', 'project:b'])
+      db.prepare(
+        "INSERT INTO neo_concerns (id, title, summary, context, revision, created_at, updated_at) VALUES (?, 't', '', '', 1, 1, 1)"
+      ).run(id);
+    const alias = db.prepare(
+      'INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)'
+    );
+    alias.run('repository:github.com/lsm/hyperneo', 'project:a');
+    alias.run('repository:github.com/lsm/hyperneo-review', 'project:a');
+    alias.run('repo:lsm/hyperneo\u0000/Users/x/hn', 'project:a');
+    alias.run('repo:lsm/Ops\u0000/Users/x/ops', 'project:b');
+    expect(new NeoRepository(db).allRepositories()).toEqual([
+      'lsm/hyperneo',
+      'lsm/hyperneo-review',
+      'lsm/ops',
+    ]);
     db.close();
   });
 });

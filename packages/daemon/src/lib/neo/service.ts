@@ -798,7 +798,7 @@ export class NeoService {
         cardStartedAt: (workId) => this.repo.workStartedAt(workId),
         todoPrs: this.todoPrs,
         prLedger: new CodingPrLedgerRepository(db.getDatabase()),
-        projectRepos: () => [...new Set(this.repo.repositories().values())],
+        projectRepos: () => this.repo.allRepositories(),
       }),
       createLifeAdminPack(),
     ];
