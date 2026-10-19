@@ -553,6 +553,7 @@ describe('Neo MVP', () => {
     ).toEqual([
       'neo.project.move',
       'neo.project.section',
+      'neo.project.forget',
       'neo.message.send',
       'neo.projects.reorganize',
       'neo.publication.publish',

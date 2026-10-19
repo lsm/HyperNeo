@@ -10,6 +10,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.open',
   'neo.pack.read',
   'neo.preferences.set',
+  'neo.project.forget',
   'neo.project.move',
   'neo.project.save',
   'neo.project.section',
