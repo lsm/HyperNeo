@@ -42,12 +42,15 @@ Everything that existed only because there were several Neo sessions goes:
 - the per-project holder sessions and their bindings;
 - ask ownership by session;
 - forwarding and consultations between sessions;
-- the send-time injections: the catch-up view, the project snapshot, and the local-time hook. The local time, if kept, is written into the stored message.
+- the send-time injections:
+  - the catch-up view;
+  - the project snapshot;
+  - the hook that adds the human's local time as each message is sent (the `UserPromptSubmit` hook in `restrictNeoQuery`, `session-policy.ts`). The local time is written into the stored message when the message arrives, next to the quoted-message fact.
 
 ## Build order
 
 1. Make Neo one session, and add a restart control that keeps the database state.
-2. Remove the send-time injections.
+2. Remove the send-time injections, and write the local time into the stored message on arrival.
 3. Add the four states, the core's wake rule, and the pack interface.
 4. Port the coding pack onto it: the ledger, then progress sent to the working session, then the sweep and the status line.
 5. Delete the router, holders, ownership, forwarding and consultations.
