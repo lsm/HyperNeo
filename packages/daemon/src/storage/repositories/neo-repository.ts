@@ -177,13 +177,6 @@ export class NeoRepository {
     };
   }
 
-  listProjectTitles(): Array<{ id: string; title: string }> {
-    return this.db.prepare('SELECT id, title FROM neo_concerns').all() as Array<{
-      id: string;
-      title: string;
-    }>;
-  }
-
   resolveProjectRef(ref: string): string | null {
     const key = ref.trim();
     const bare = key.replace(/^project:/i, '');

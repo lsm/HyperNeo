@@ -1,14 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import type { HookInput, Options } from '@anthropic-ai/claude-agent-sdk';
+import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import {
   NEO_PACK_CODING_INSTRUCTIONS,
   NEO_ROOT_PROMPT,
   NEO_ROOT_TURN_END,
 } from '@hyperneo/prompts';
-import { OPERATION_NAMES } from '@hyperneo/shared/types/operation-names';
-import { FindWorkResultSchema } from '../../../../src/lib/drivers/find-operation.ts';
-import { ReadWorkInputSchema } from '../../../../src/lib/drivers/read-operation.ts';
-import { WorkSummarySchema } from '../../../../src/lib/drivers/types.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import {
   neoCoordinatorAllowedTools,
