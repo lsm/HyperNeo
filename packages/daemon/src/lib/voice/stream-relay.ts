@@ -222,7 +222,7 @@ export class VoiceStream {
     this.socket = socket;
     this.protocol = protocol;
     socket.on('message', (data, isBinary) => {
-      const parsed = isBinary ? null : protocol.parse(data.toString());
+      const parsed = isBinary || this.cancelled ? null : protocol.parse(data.toString());
       if (!parsed) return;
       if (parsed.isFinal) {
         if (parsed.text) this.finals.push(parsed.text);
@@ -277,6 +277,7 @@ export class VoiceStream {
       socket.send(this.protocol.finish());
       const finished = await closed;
       this.close();
+      if (this.cancelled) return { error: 'Voice stream cancelled' };
       const text = this.text();
       if (finished && (text || this.bytes === 0)) {
         this.deps.push({ streamId: this.id, text, isFinal: true });
