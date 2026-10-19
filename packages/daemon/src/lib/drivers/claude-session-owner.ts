@@ -28,7 +28,7 @@ export function claudeSessionOwner(
   const record = parsed.data;
   if (live.pid !== record.pid || live.sessionId !== record.sessionId) return 'unknown';
   if (record.entrypoint === 'claude-desktop') return 'desktop';
-  return ['cli', 'sdk-ts'].includes(record.entrypoint) ? 'cli' : 'unknown';
+  return ['cli', 'sdk-cli', 'sdk-ts'].includes(record.entrypoint) ? 'cli' : 'unknown';
 }
 
 export async function readClaudeSessionOwner(
