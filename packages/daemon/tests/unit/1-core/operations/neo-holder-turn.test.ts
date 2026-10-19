@@ -168,7 +168,7 @@ describe('Neo isolated holder turns', () => {
     expect(finished).toBe(true);
   });
 
-  test('a root turn takes steered human messages mid-turn, leaves notes queued, and requeues an unanswered one', async () => {
+  test('a root turn takes steered human messages mid-turn, leaves notes queued, and requeues only one no request carried', async () => {
     service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', projectId: null });
     const consumed: string[] = [];
     const requeued: string[] = [];
@@ -198,12 +198,21 @@ describe('Neo isolated holder turns', () => {
     void rootQueue.admitWithId('human-b', 'Second', false, { durable: true }).catch(() => {});
     expect(rootQueue.steer('human-b')).toBe(true);
     expect((await input.next()).value?.uuid).toBe('human-b');
+    rootRunner.noteRequestedInputs({
+      type: 'system',
+      subtype: 'status',
+      user_message_uuids: [note, 'human-b'],
+    } as never);
+    void rootQueue
+      .admitWithId('human-c', 'Third', false, { durable: true, steer: true })
+      .catch(() => {});
+    expect((await input.next()).value?.uuid).toBe('human-c');
     vi.spyOn(active, 'answered').mockImplementation((id) => id === 'human-a');
     const end = input.next();
     active.dispose();
     expect((await end).done).toBe(true);
-    expect(consumed).toEqual([note, 'human-a', 'human-b']);
-    expect(requeued).toEqual(['human-b']);
+    expect(consumed).toEqual([note, 'human-a', 'human-b', 'human-c']);
+    expect(requeued).toEqual(['human-c']);
     expect(rootQueue.hasPendingOrClaimed('later-note')).toBe(true);
     rootQueue.clear();
     rootQueue.stop();
