@@ -105,6 +105,10 @@ adds its journey here.
    (its `prs[]`, with `dismissed`); `... codex <thread_id>` prints a Codex
    thread's `pull_request` attachments from `~/.codex/state_5.sqlite`. It never
    reads credential files. End state: the list matches the app's sidebar.
+   `bun .claude/skills/verify/pr-owners.ts` replays the coding pack's owner
+   choice over every local Claude, Codex and HyperNeo session against the live
+   ledger (opened `?mode=ro`) and prints owned-before/after counts plus each
+   owner change; check every change names the session that created the PR.
 
 ## Evidence
 

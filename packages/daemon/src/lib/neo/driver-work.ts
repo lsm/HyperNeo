@@ -42,7 +42,7 @@ import { WORK_MESSAGE_MAX } from '../drivers/work-operations.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import { hashString32 } from '../runtime-hash.ts';
-import type { NeoPackCardFacts, NeoPackFragment } from './packs/types.ts';
+import type { NeoPackCardFacts, NeoPackFragment, NeoSessionFacts } from './packs/types.ts';
 import { neoAskProgressNote, neoNoteChecklist } from './ask-progress.ts';
 import { NeoReadWorkTarget } from './read-work.ts';
 import { awaitingNeoWorker } from './work-reroute.ts';
@@ -264,6 +264,18 @@ const DriverStatusSchema = z.discriminatedUnion('ok', [
         exchange: z.array(WorkExchangeEntrySchema).optional(),
         exchangeCut: z.boolean().optional(),
         openedPrs: z.array(z.string()).optional(),
+        linkedPrs: z
+          .array(
+            z.object({
+              url: z.string(),
+              dismissed: z.literal(true).optional(),
+              own: z.literal(true).optional(),
+            })
+          )
+          .optional(),
+        linkedPrsWindow: z.literal(true).optional(),
+        branches: z.array(z.string()).optional(),
+        execution: z.object({ directory: z.string() }).passthrough().optional(),
       })
       .passthrough(),
   }),
@@ -442,6 +454,21 @@ export function readDriverAdoptedSent(outcome: OperationOutcome): DriverSent | n
   )?.at(-1);
   const opening = input ? messageOpening(input.text) : '';
   return input && opening ? { inputBefore: input.at - 1, opening } : null;
+}
+
+export function readDriverSessionFacts(
+  outcome: OperationOutcome
+): Omit<NeoSessionFacts, 'ref' | 'status' | 'lastActivityAt' | 'remotes'> | null {
+  const value = parseDriverStatus(outcome);
+  return value
+    ? {
+        ...(value.execution ? { folder: value.execution.directory } : {}),
+        branches: value.branches ?? [],
+        ...(value.linkedPrs ? { linkedPrs: value.linkedPrs } : {}),
+        ...(value.linkedPrsWindow ? { linkedPrsWindow: true as const } : {}),
+        openedPrs: value.openedPrs ?? [],
+      }
+    : null;
 }
 
 export function readDriverOpenedPrs(outcome: OperationOutcome): string[] {

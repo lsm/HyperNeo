@@ -49,6 +49,7 @@ import { NeoWorkSupersessionRepository } from '../../storage/repositories/neo-wo
 import { NeoWorkWakeRepository } from '../../storage/repositories/neo-work-wake-repository.ts';
 import { BUILD_METADATA } from '../build-metadata.ts';
 import type { WorkRef } from '../drivers/types.ts';
+import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
 import type { ExternalEventPublishedPayload } from '../external-events/external-event-service.ts';
 import { sessionEventText } from '../external-events/session-event-delivery.ts';
 import {
@@ -302,8 +303,9 @@ export class NeoService {
       mutedSessions: () => this.db.getGlobalSettings?.().neo?.mutedSessions,
       liveAskPrs: () => this.askRecords.listLive().map((ask) => this.askPrs(ask)),
       sessionBranchPrs: (ref) => this.sessionBranchPrs(ref),
-      observeSessionPrs: (links) => {
-        for (const pack of this.packs()) pack.observeSessionLinks?.(links, Date.now());
+      readRemotes: async (folder) => (await readWorkspaceIdentity(folder)).remotes ?? [],
+      observeSessions: (sessions) => {
+        for (const pack of this.packs()) pack.observeSessions?.(sessions, Date.now());
       },
       notifyChanged: () => this.notifyChanged(),
     });

@@ -17,7 +17,7 @@ describe('withCodexState', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test('reads a WAL state file that Codex is not running against', () => {
+  test('reads a WAL state file that Codex is not running against, from before thread branches', () => {
     dir = mkdtempSync(join(tmpdir(), 'codex-state-'));
     const statePath = join(dir, 'state_5.sqlite');
     const db = new Database(statePath);
@@ -35,7 +35,11 @@ describe('withCodexState', () => {
     rmSync(`${statePath}-shm`, { force: true });
     chmodSync(dir, 0o555);
     expect(existsSync(`${statePath}-shm`)).toBe(false);
-    expect(readCodexThread(statePath, 't1')?.thread).toMatchObject({ id: 't1', title: 'loader' });
+    expect(readCodexThread(statePath, 't1')?.thread).toMatchObject({
+      id: 't1',
+      title: 'loader',
+      branch: null,
+    });
     expect(withCodexState(statePath, (state) => state.prepare('SELECT 1 AS one').get())).toEqual({
       one: 1,
     });
