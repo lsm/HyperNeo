@@ -19,6 +19,7 @@ import {
 } from '../../../../src/lib/neo/consultation-origin.ts';
 import { runMigration393 } from '../../../../src/storage/schema/m393-neo-root-asks.ts';
 import { runMigration394 } from '../../../../src/storage/schema/m394-neo-end-consultations.ts';
+import { runMigration395 } from '../../../../src/storage/schema/m395-neo-archive-holders.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
 const root = 'neo:root';
@@ -195,5 +196,101 @@ describe('Neo as one session', () => {
     await service.recoverConsultations();
     await service.recoverConsultations();
     expect(delivered).toEqual([`${root} neo-consult:from-root:reply`]);
+  });
+
+  test('m395 ends what holders still hold, closes dead legacy items and archives holders, waking no one', async () => {
+    const jobs = db.getJobQueueRepo();
+    const toHolder = jobs.enqueue({
+      queue: 'mailbox',
+      payload: { to: { kind: 'session', sessionId: holder }, messageUuid: 'note' },
+    });
+    const deliveryToHolder = jobs.enqueue({
+      queue: 'message_delivery',
+      payload: { sessionId: holder, messageUuid: 'prompt' },
+    });
+    const toRoot = jobs.enqueue({
+      queue: 'mailbox',
+      payload: { to: { kind: 'session', sessionId: root }, messageUuid: 'root-note' },
+    });
+    for (const [sessionId, uuid] of [
+      [holder, 'held'],
+      [root, 'kept'],
+    ])
+      db.getSDKMessageRepo().saveSDKMessage(sessionId, {
+        type: 'user',
+        uuid,
+        session_id: sessionId,
+        parent_tool_use_id: null,
+        message: { role: 'user', content: 'note' },
+      } as never);
+    db.getDatabase().exec("UPDATE sdk_messages SET send_status = 'deferred'");
+    service.askRecords.open({
+      id: 'legacy',
+      requestKey: 'legacy',
+      projectId: 'web',
+      originSessionId: root,
+      originMessageId: 'm1',
+      title: 'Legacy',
+      ask: 'Legacy',
+      doneWhen: 'Done',
+      doneSource: 'human',
+    });
+    const card = (id: string) =>
+      service.repo.proposeWork({
+        id,
+        requestKey: id,
+        projectId: 'web',
+        originSessionId: root,
+        originMessageId: 'm1',
+        title: id,
+        instruction: id,
+      });
+    card('proposed');
+    const failed = card('failed');
+    service.repo.transitionWork(failed.id, failed, { status: 'failed', report: 'Never started' });
+    const reported = card('reported');
+    service.repo.transitionWork(reported.id, reported, { status: 'reported', report: 'Done' });
+
+    runMigration395(db.getDatabase(), 5);
+    runMigration395(db.getDatabase(), 6);
+
+    const status = (id: string) => jobs.getJob(id)?.status;
+    expect([toHolder, deliveryToHolder, toRoot].map((job) => status(job.id))).toEqual([
+      'dead',
+      'dead',
+      'pending',
+    ]);
+    expect(
+      db
+        .getDatabase()
+        .prepare('SELECT sdk_uuid, send_status FROM sdk_messages ORDER BY sdk_uuid')
+        .all()
+    ).toEqual([
+      { sdk_uuid: 'held', send_status: 'failed' },
+      { sdk_uuid: 'kept', send_status: 'deferred' },
+    ]);
+    expect(service.askRecords.get('legacy')).toMatchObject({ status: 'abandoned' });
+    expect(service.repo.getWork('reported')?.report).toBe(
+      'Closed as done by the move to one Neo session.\n\nDone'
+    );
+    expect(
+      Object.fromEntries(service.repo.listWork().map((work) => [work.id, work.status]))
+    ).toEqual({
+      proposed: 'cancelled',
+      failed: 'cancelled',
+      reported: 'reported',
+    });
+    expect([db.getSession(holder)?.status, db.getSession(root)?.status]).toEqual([
+      'archived',
+      'active',
+    ]);
+    const delivered: string[] = [];
+    Object.assign(service, {
+      deliver: async (sessionId: string, messageId: string) => {
+        delivered.push(`${sessionId} ${messageId}`);
+      },
+    });
+    await service.recover();
+    expect([delivered, told]).toEqual([[], []]);
   });
 });
