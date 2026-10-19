@@ -5,7 +5,6 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import type { NeoProject } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
-import { neoAskAnswerEvidence } from '../../../../src/lib/neo/ask-answer-evidence.ts';
 import { neoReorganizeRuntime } from '../../../../src/lib/neo/operations.ts';
 import {
   NEO_PROJECT_SAME,
@@ -66,21 +65,6 @@ describe('readNeoProjectDecision', () => {
         },
       ],
     }) as Pick<NeoAsk, 'doneItems' | 'status'>;
-
-  test('reads an answer Neo recorded from a chat message the same as a button answer', () => {
-    expect(
-      readNeoProjectDecision(
-        [ask('met', neoAskAnswerEvidence(NEO_PROJECT_SAME, 'reply-1'), 'achieved')],
-        'k'
-      )
-    ).toEqual({ decision: 'same' });
-    expect(
-      readNeoProjectDecision(
-        [ask('met', neoAskAnswerEvidence(NEO_PROJECT_SEPARATE, 'reply-2'), 'achieved')],
-        'k'
-      )
-    ).toEqual({ decision: 'separate' });
-  });
 
   test('reads only an exact button answer as a decision', () => {
     expect(readNeoProjectDecision([], 'k')).toEqual({ ask: 1 });

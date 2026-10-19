@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import type { SpaceWorkflow, SpaceWorkflowRun, WorkflowCondition } from '@hyperneo/shared';
+import type { SpaceWorkflow, SpaceWorkflowRun } from '@hyperneo/shared';
 import type {
   CommandRunner,
   ConditionContext,

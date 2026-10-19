@@ -1,5 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import type { McpServer } from '@hyperneo/shared/sdk';
 import { assembleSessionBriefing } from '../../../../src/lib/briefings/assemble-session-briefing.ts';
 import type { AttachedMcpServerConfig } from '../../../../src/lib/briefings/contribution.ts';
 import { dbQueryCapabilityContribution } from '../../../../src/lib/db-query/briefing.ts';

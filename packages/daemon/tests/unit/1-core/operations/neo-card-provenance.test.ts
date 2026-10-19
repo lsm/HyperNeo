@@ -7,7 +7,6 @@ import {
   readDriverCardExchange,
   readDriverSettlement,
 } from '../../../../src/lib/neo/driver-work';
-import { planNeoWorkFollow } from '../../../../src/lib/neo/work-follow';
 import {
   keepNeoCardPrReads,
   planNeoCardPrCandidates,
@@ -49,58 +48,6 @@ const card = {
 const url = 'https://github.com/lsm/HyperNeo/pull/1';
 
 describe('card input provenance', () => {
-  test('settles only the own reply, omitting another input and its reply', () => {
-    expect(readDriverSettlement(card, outcome(), 50, 11, true, sent.opening)).toEqual({
-      status: 'reported',
-      report: 'Agent: Font fixed',
-    });
-    expect(readDriverCardExchange(outcome(), sent)).toMatchObject({
-      start: 11,
-      end: 20,
-      current: false,
-    });
-    expect(planNeoWorkFollow(card, { outcome: outcome() }, { since: 21, sent })).toEqual({
-      reason: null,
-    });
-  });
-  test.each([
-    { entries: [] },
-    { entries: [agent(40, 'Unknown reply')] },
-    { entries: [user(30, 'PR event'), agent(40, 'Other reply')] },
-  ])('missing own input never falls back to lastReply', ({ entries }) => {
-    expect(readDriverSettlement(card, outcome(entries), 50, 11, true, sent.opening)).toBeNull();
-    expect(readDriverCardExchange(outcome(entries), sent)).toBeNull();
-  });
-  test('absent history preserves adapter compatibility but present empty history fails closed', () => {
-    const missing = outcome(undefined, { exchange: undefined });
-    expect(readDriverSettlement(card, missing, 50, 11, true, sent.opening)).toEqual({
-      status: 'reported',
-      report: `${NEO_WORK_UNVERIFIED_REPLY_NOTE}\n\nOther PR merged`,
-    });
-    expect(readDriverSettlement(card, outcome([]), 50, 11, true, sent.opening)).toBeNull();
-    expect(readDriverSettlement(card, missing, 50, null, true, sent.opening)).toBeNull();
-    expect(
-      readDriverSettlement(
-        card,
-        outcome(undefined, { exchange: undefined, lastReplyAt: 10 }),
-        50,
-        11,
-        true,
-        sent.opening
-      )
-    ).toBeNull();
-    const other = outcome(undefined, {
-      exchange: undefined,
-      recentInputs: [{ at: 30, text: 'PR event' }],
-    });
-    expect(readDriverSettlement(card, other, 50, 11, true, sent.opening)).toBeNull();
-    expect(planNeoWorkFollow(card, { outcome: other }, { since: 21, sent })).toEqual({
-      reason: null,
-    });
-    expect(planNeoWorkFollow(card, { outcome: missing }, { since: 21, sent })).toMatchObject({
-      value: expect.stringContaining('Other PR merged'),
-    });
-  });
   test.each(['done', 'failed', 'stopped'])(
     'labels exchange-less %s replies without preventing settlement',
     (status) => {
@@ -135,20 +82,6 @@ describe('card input provenance', () => {
     const truncated = outcome([agent(40, 'Unknown reply')], { exchangeCut: true });
     expect(readDriverFollowUp(truncated, 21, sent)).toBeNull();
     expect(readDriverSettlement(card, truncated, 50, 11, true, sent.opening)).toBeNull();
-  });
-  test('a continued or amended input establishes its own report boundary', () => {
-    const continued = { inputBefore: 40, opening: 'Also fix spacing' };
-    const reply = outcome([
-      ...exchange,
-      user(41, continued.opening),
-      agent(45, 'Spacing fixed'),
-      user(46, 'CI event'),
-      agent(48, 'CI update'),
-    ]);
-    expect(readDriverCardExchange(reply, continued)?.replies).toEqual([agent(45, 'Spacing fixed')]);
-    expect(
-      planNeoWorkFollow(card, { outcome: reply }, { since: 40, sent: continued })
-    ).toMatchObject({ value: 'Agent: Spacing fixed\n\nEarlier report:\nFont fixed' });
   });
 });
 

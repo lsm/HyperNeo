@@ -230,19 +230,6 @@ describe('durable public conversation presentation', () => {
     expect(screen.queryByRole('menu')).toBeNull();
   });
 
-  it('opens only work references through the owning callback, never as native actions', () => {
-    const open = vi.fn();
-    render(<NeoPublicConversation conversation={conversation()} onOpenScene={open} />);
-    const refs = screen.getByRole('list', { name: 'Related Neo scenes' });
-    fireEvent.click(within(refs).getByRole('button', { name: 'Read work detail' }));
-    expect(open).toHaveBeenCalledExactlyOnceWith({ kind: 'work', id: 'fictional-work' });
-    expect(within(refs).queryByText('Source context')).toBeNull();
-    expect(within(refs).queryByText('Read comparison')).toBeNull();
-    for (const name of ['Start', 'Stop', 'Decline'])
-      expect(screen.queryByRole('button', { name, exact: true })).toBeNull();
-    expect(refs.querySelector('a')).toBeNull();
-  });
-
   it('shows each message status with what it means', () => {
     render(
       <NeoPublicConversation

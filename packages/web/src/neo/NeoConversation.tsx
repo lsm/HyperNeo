@@ -1,6 +1,5 @@
 import { NeoBusyRow } from './NeoBusyRow.tsx';
 import type { ChatMessage } from '@hyperneo/shared';
-import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { neoMessageImageSources } from './neo-message-images.ts';
 import type { SessionStore } from '../lib/session-store.ts';
@@ -60,9 +59,7 @@ export function completedConversation(messages: ChatMessage[]): ChatMessage[] {
 export function NeoConversation({
   store,
   sessionId,
-  works = [],
   publicConversation,
-  onOpenPublicWork,
   onRetryPublic,
   onLoadEarlierPublic,
   onProgress,
@@ -85,9 +82,7 @@ export function NeoConversation({
   onEditAsk?: (requestId: string) => void;
   replyLabels?: ReadonlyMap<string, { label: string; askId: string }>;
   sessionId: string;
-  works?: NeoWork[];
   publicConversation?: PublicConversation;
-  onOpenPublicWork?: (workId: string) => void;
   onRetryPublic?: () => void;
   onLoadEarlierPublic?: () => void;
   onProgress?: (label: string | null) => void;
@@ -155,13 +150,6 @@ export function NeoConversation({
             conversation={publicConversation}
             statuses={statuses}
             replyLabels={replyLabels}
-            canOpenScene={(ref) =>
-              ref.kind === 'work' && !!onOpenPublicWork && works.some((work) => work.id === ref.id)
-            }
-            onOpenScene={(ref) => {
-              if (ref.kind === 'work' && works.some((work) => work.id === ref.id))
-                onOpenPublicWork?.(ref.id);
-            }}
             onRetry={onRetryPublic}
             onLoadEarlier={onLoadEarlierPublic}
             onEditUndelivered={onEditUndelivered}
