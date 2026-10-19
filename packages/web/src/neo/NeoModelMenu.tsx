@@ -22,6 +22,7 @@ export function NeoModelMenu({
   onThinking,
   onClose,
   onReload,
+  onRestart,
   align = 'left',
 }: {
   id?: string;
@@ -37,6 +38,7 @@ export function NeoModelMenu({
   onThinking: (level: ThinkingLevel) => void;
   onClose: () => void;
   onReload?: () => void;
+  onRestart?: () => void;
   align?: 'left' | 'right';
 }) {
   const [query, setQuery] = useState('');
@@ -188,6 +190,21 @@ export function NeoModelMenu({
           <p class="text-xs text-fg-faint">Not available for this model</p>
         )}
       </div>
+      {onRestart && (
+        <div class="shrink-0 border-t border-line p-2">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onRestart}
+            class="w-full rounded-lg px-2 py-1.5 text-left text-xs text-fg-muted transition-colors hover:bg-fill-soft hover:text-fg disabled:opacity-50"
+          >
+            Restart Neo
+            <span class="block text-[10px] text-fg-faint">
+              Fresh context; open asks, todos and questions carry over
+            </span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }

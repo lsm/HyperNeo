@@ -51,6 +51,33 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Neo preferences', () => {
+  it('restarts Neo after the human confirms, and offers no restart for a plain session', async () => {
+    const store = makeStore();
+    api.request.mockImplementation(async (method: string) =>
+      method === 'operation.invoke' ? { ok: true, sessionId: 'neo:root' } : { providers: [] }
+    );
+    const confirm = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
+    vi.stubGlobal('confirm', confirm);
+    render(<NeoPreferences sessionId="neo:root" store={store} onError={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Model and thinking' }));
+    fireEvent.click(screen.getByRole('button', { name: /Restart Neo/ }));
+    expect(api.request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
+    fireEvent.click(screen.getByRole('button', { name: /Restart Neo/ }));
+    await waitFor(() =>
+      expect(api.request).toHaveBeenCalledWith('operation.invoke', {
+        name: 'neo.restart',
+        input: {},
+      })
+    );
+    await waitFor(() => expect(store.refresh).toHaveBeenCalled());
+    expect(confirm).toHaveBeenCalledTimes(2);
+    cleanup();
+    render(<NeoPreferences sessionId="s1" store={makeStore()} onError={vi.fn()} forSession />);
+    fireEvent.click(screen.getByRole('button', { name: 'Model and thinking' }));
+    expect(screen.queryByRole('button', { name: /Restart Neo/ })).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
   it('opens one control for model and thinking and saves both as Neo’s preference', async () => {
     const store = makeStore();
     const saved = vi.fn();
