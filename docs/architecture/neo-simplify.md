@@ -102,20 +102,22 @@ Each PR comes from fresh `dev` and ships on its own. Deletions never share a PR 
 | S1 | One session: every human message goes to the one Neo session; holder sessions archived; projects become labels | A message about any project lands in the one session, and open asks keep their todos |
 | S2 | Restart control; the snapshot as a stored message after a restart or a compaction | After a restart Neo lists the same open asks and todos |
 | S3 | Coordinator prompt, on Opus 5.5 by default | `neo.snapshot` reports the model |
-| D1 | Remove the send-time injections; store the local time at intake | The SDK request for a human turn equals the stored message |
+| S4 | Write the human's local time into the stored message at intake, next to the quote fact | A stored human message carries its local time |
+| D1 | Remove the send-time injections: the catch-up view, the snapshot and the local-time hook | The SDK request for a human turn equals the stored message |
 | L1 | PR ledger and reconcile, feeding the snapshot | `neo.snapshot` lists every open PR in the project repos |
 | L2 | Sweep, with reassign-first escalation | An idle `approved_green` PR's worker is told at 20 and 40 min, then the PR is reassigned |
 | L3 | Todo gate | `neo.todo.close` on an open PR returns `pr_open`, and the merge marks it met |
 | L9 | Progress pushed to the owning worker | A failing check reaches the worker once and never Neo |
 | L10 | Milestone wakes for Neo | A day of PR traffic gives Neo only milestone messages |
-| L11 | Card status line from the ledger, on web and on iOS | The card shows a GitHub change within one reconcile, with no Neo turn |
+| L11a | Card status line from the ledger on web | The web card shows a GitHub change within one reconcile, with no Neo turn |
+| L11b | The same in lsm/neo-ios | The iOS card does the same |
 | L5 | Idle and awaiting-check todos join the sweep | An idle doing todo is told, then escalated |
 | L6, L7, L8 | Prompts for merge ownership; follow-ups join the open ask; titles in the human's language | Each one's refusal code fires on the case it names |
 | D2, D3, L4 | Delete the router; delete holders, ownership, forwarding and consultations; delete old PR tracking and relays | None of the deleted operations is left in the catalog |
 
 **Order:**
-- S1 → S2 → S3. D1 can run any time.
-- L1 → L2 → L3, then L9 → L10, with L11 after L1.
+- S1 → S2 → S3. S4 → D1, at any time.
+- L1 → L2 → L3, then L9 → L10, with L11a and L11b after L1.
 - D2 and D3 follow S1. L4 follows L10.
 - L5–L8 can run alongside.
 
