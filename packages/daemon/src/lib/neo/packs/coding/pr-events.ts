@@ -1,7 +1,10 @@
 import type { WorkRef } from '../../../drivers/types.ts';
+import { Logger } from '../../../logger.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import type { CodingPrTransition } from './pr-ledger.ts';
 import type { CodingSweepDeps } from './pr-sweep.ts';
+
+const log = new Logger('NeoPrSweep');
 
 const head = (row: CodingPrTransition) => row.head.slice(0, 7);
 const pr = (row: CodingPrTransition) => `${row.repo}#${row.number} "${row.title}"`;
@@ -53,6 +56,9 @@ export async function deliverCodingPrEvents(
     const event = planCodingPrEvent(row);
     const route = event ? repo.route(row) : null;
     if (!event || !route?.owner || route.claimed) continue;
-    await deps.tell(route.owner, event.key, event.text).catch(() => false);
+    const told = await deps.tell(route.owner, event.key, event.text).catch(() => false);
+    log.warn(
+      `PR event ${event.key} to ${route.owner.adapter}:${route.owner.id}: ${told ? 'told' : 'not told'}`
+    );
   }
 }
