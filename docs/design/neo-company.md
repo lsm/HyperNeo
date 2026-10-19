@@ -592,7 +592,7 @@ loop works end to end on one machine: a goal wakes Neo, Neo acts and journals, a
 mandate changes need a yes. Step 6 adds the second machine. Then the OAP and review-bot
 mandates and handoffs get written (not code).
 
-Total: about 1,450 fs3 lines and 1,320 fs2 lines over 20 PRs.
+Total: about 1,450 fs3 lines and 1,270 fs2 lines over 20 PRs.
 
 Goals and UI (fs2), each one PR from dev; sizes are production lines:
 
