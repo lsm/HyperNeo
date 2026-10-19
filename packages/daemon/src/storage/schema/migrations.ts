@@ -852,7 +852,7 @@ export function runMigrations(
   run(migrationMarkerKey(395), () => runMigration395(db));
   run(migrationMarkerKey(396), () => runMigration396(db));
   run(migrationMarkerKey(397), () => runMigration397(db));
-  rewrite(migrationMarkerKey(398), () => runMigration398(db));
+  run(migrationMarkerKey(398), () => runMigration398(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }
