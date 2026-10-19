@@ -47,6 +47,20 @@ describe('runMigration398', () => {
     db.close();
   });
 
+  test('a foreign-key violation in an unrelated table does not stop it', () => {
+    const db = legacyTodos();
+    db.exec(`PRAGMA foreign_keys = OFF;
+      CREATE TABLE parents (id TEXT PRIMARY KEY);
+      CREATE TABLE orphans (parent_id TEXT REFERENCES parents(id));
+      INSERT INTO orphans (parent_id) VALUES ('missing');
+      PRAGMA foreign_keys = ON;`);
+    runMigration398(db);
+    expect(
+      db.prepare("SELECT sql FROM sqlite_master WHERE name = 'neo_todos'").get()
+    ).toMatchObject({ sql: expect.stringContaining("'blocked'") });
+    db.close();
+  });
+
   test('leaves a database without todos alone', () => {
     const db = new Database(':memory:');
     runMigration398(db);

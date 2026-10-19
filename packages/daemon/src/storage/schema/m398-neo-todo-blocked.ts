@@ -23,6 +23,12 @@ function allowBlocked(db: Database): void {
     .join(', ');
   const foreignKeys = (db.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number })
     .foreign_keys;
+  const references = db
+    .prepare(
+      `SELECT DISTINCT m.name FROM sqlite_master m JOIN pragma_foreign_key_list(m.name) f
+       WHERE m.type = 'table' AND f."table" = 'neo_todos'`
+    )
+    .all() as { name: string }[];
   db.exec('PRAGMA foreign_keys = OFF');
   try {
     db.transaction(() => {
@@ -31,8 +37,13 @@ function allowBlocked(db: Database): void {
       db.exec('DROP TABLE neo_todos');
       db.exec('ALTER TABLE neo_todos_blocked_new RENAME TO neo_todos');
       for (const object of objects) db.exec(object.sql);
-      if ((db.prepare('SELECT 1 FROM pragma_foreign_key_check').all() as unknown[]).length)
-        throw new Error('neo_todo_blocked_foreign_key_violation');
+      for (const name of new Set(['neo_todos', ...references.map((row) => row.name)])) {
+        const violations = db
+          .prepare('SELECT parent FROM pragma_foreign_key_check(?)')
+          .all(name) as { parent: string }[];
+        if (violations.some(({ parent }) => name === 'neo_todos' || parent === 'neo_todos'))
+          throw new Error('neo_todo_blocked_foreign_key_violation');
+      }
     })();
   } finally {
     db.exec(`PRAGMA foreign_keys = ${foreignKeys ? 'ON' : 'OFF'}`);
