@@ -54,7 +54,12 @@ The daemon never changes what goes to the model at send time. Nothing is injecte
 
 - **Additions are stored.** Anything the daemon must add (a quote fact, the local time) is written into the stored message itself. The session's own transcript and UI then show exactly what the model got.
 - **Daemon messages are stored messages.** A milestone or a snapshot after a restart is a message the daemon writes into the Neo session, so it is in the transcript like any other.
-- **The existing injections go.** The "Recorded conversation since your last input" view (`publication-view.ts`) and the project snapshot are added at send time today. With one session there is nothing to catch up on, so D1 deletes both (§6).
+- **The existing injections go.** Three things are added at send time today:
+  - the "Recorded conversation since your last input" view (`publication-view.ts`);
+  - the project snapshot;
+  - the human's local time, added as SDK `additionalContext` by the `UserPromptSubmit` hook in `restrictNeoQuery` (`session-policy.ts:130-147`, `neoLocalNow` in `local-time.ts:15`).
+
+  With one session there is nothing to catch up on, so D1 deletes the view and the snapshot. D1 moves the local time into the stored message at intake, next to the quote fact (`intake.ts:116`), and removes the hook (§6).
 
 ## 4. The finished Neo
 
@@ -197,9 +202,10 @@ Everything that exists only because there were several Neo sessions goes. Sizes 
 - `storage/repositories/neo-publication-anchor-repository.ts` (38) and table `neo_publication_anchors` (m382), with its `cursor_json` column (m384).
 - `storage/repositories/neo-session-seen-repository.ts` (27) and table `neo_session_seen` (m340).
 
-**7. The fresh-context project snapshot injection (D1):**
+**7. The other send-time injections: the fresh-context project snapshot and the local time (D1):**
 - `readNeoProjectSnapshot` in `lib/neo/session-policy.ts:68`, called from `lib/agent/agent-session.ts:365` and folded into the turn by `query-runner.ts` beside the catch-up view.
 - After a compaction or restart, the snapshot becomes a stored daemon message (S2) instead.
+- The local-time `UserPromptSubmit` hook in `restrictNeoQuery` (`session-policy.ts:130-147`), which adds `neoLocalNow` (`local-time.ts:15`) as `additionalContext`. The local time is written into the stored message at intake instead.
 
 **8. Notes that exist only to tell one Neo session what another did (D3):**
 - `neo/ask-moved.md` and `neo/ask-forwarded.md` (also in item 4).
@@ -238,7 +244,7 @@ Each PR is opened from fresh `dev` and ships and verifies on its own. Deletions 
 | S1 | One session: `neo.open` and `neo.message.send` always use the single Neo session; new projects are labels; the existing holder sessions are archived, with their open asks re-labelled | A message about any project lands in the one session; no new holder session is created; open asks keep their todos |
 | S2 | Restart control: archive the session and open a fresh one on the same database, with the snapshot as a stored daemon message; the same message after compaction | After a restart Neo lists the same open asks and todos; the message is in the session transcript |
 | S3 | Coordinator prompt on Opus 5.5 by default | `neo.snapshot` reports the model |
-| D1 | Delete the send-time injections: the catch-up view and the snapshot | The SDK request for a human turn equals the stored message; `query-runner.ts` adds nothing before the SDK call |
+| D1 | Delete the send-time injections: the catch-up view, the snapshot, and the local-time `UserPromptSubmit` hook; write the local time into the stored message at intake | The SDK request for a human turn equals the stored message; `query-runner.ts` adds nothing before the SDK call |
 | D2 | Delete the router, route facts, routing log, route operations and prompts, and the route settings | No route classification runs; `neo.route.*` isn't in the catalog |
 | D3 | Delete holders, consultations, forwards, cross-project dispatch and `inbox.promote`, with their tables, operations and prompts | None of the operations in §6 is in the catalog; their migrations reverse cleanly |
 | L1 | PR ledger and reconcile, feeding the snapshot | `neo.snapshot` lists every open PR in the project repos, including PRs no todo opened |
