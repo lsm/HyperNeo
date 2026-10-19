@@ -95,16 +95,11 @@ import {
   planNeoCardPrCandidates,
   neoCardPrWindow,
 } from './packs/coding/card-pr-claims.ts';
-import {
-  type NeoDeployReader,
-  readGithubDeploys,
-  readMergeCommit,
-} from './packs/coding/deploy-checks.ts';
+import { type NeoDeployReader, readGithubDeploys } from './packs/coding/deploy-checks.ts';
 import { listNeoGithub, type NeoGithubLister } from './packs/coding/github-query.ts';
 import { NeoWorkPrClaimRepository } from './packs/coding/neo-work-pr-claim-repository.ts';
 import { NeoWorkPrRepository, type NeoWorkPrRow } from './packs/coding/neo-work-pr-repository.ts';
 import { createCodingPack, type NeoCardPrDeps } from './packs/coding/pack.ts';
-import { codingCardBase } from './packs/coding/watch-checks.ts';
 import { type NeoWorkPrReader, readGithubPrs } from './packs/coding/work-prs.ts';
 import { neoEnabledPacks, neoPackBriefs, neoPacks } from './packs/index.ts';
 import { createLifeAdminPack } from './packs/life-admin/pack.ts';
@@ -181,7 +176,6 @@ export class NeoService {
   readWorkRepo: NeoWorkRepoReader = readGithubWorkRepo;
   readRefStates: NeoRefStateReader = readGithubRefStates;
   listGithub: NeoGithubLister = (args) => listNeoGithub(args);
-  readMergeCommit = (url: string): Promise<string | null> => readMergeCommit(url);
   readDeploys: NeoDeployReader = (urls) =>
     readGithubDeploys(urls, () =>
       readNeoDaemonCommits({ name: hostname(), commit: BUILD_METADATA.commit }, remoteDaemons)
@@ -294,13 +288,8 @@ export class NeoService {
     this.builtinPacks = [
       createCodingPack({
         ...this.cardPrDeps,
-        runningPrUrls: (workIds) => this.runningPrUrls(workIds),
-        cardReports: (workIds) => workIds.flatMap((id) => this.repo.getWork(id)?.report ?? []),
         readRefStates: (refs) => this.readRefStates(refs),
         readDeploys: (urls) => this.readDeploys(urls),
-        readMergeCommit: (url) => this.readMergeCommit(url),
-        cardBase: (workId) => codingCardBase(this.driverTargets.get(workId)),
-        cardStartedAt: (workId) => this.repo.workStartedAt(workId),
         todoPrs: this.todoPrs,
         prLedger: new CodingPrLedgerRepository(db.getDatabase()),
         prSweep: new CodingPrSweepRepository(db.getDatabase()),
@@ -963,11 +952,6 @@ export class NeoService {
     const localId = localCodingSessionId(ref);
     const branch = neoWorkBranch(localId ? this.db.getSession(localId) : null);
     return branch ? this.readBranchPrs(branch) : [];
-  }
-
-  private async runningPrUrls(workIds: readonly string[]): Promise<string[]> {
-    const running = workIds.filter((id) => this.repo.getWork(id)?.status === 'queued');
-    return (await Promise.all(running.map((id) => this.branchPrUrls(id)))).flat();
   }
 
   hasDelivery(sessionId: string, messageId: string): boolean {

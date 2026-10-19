@@ -15,10 +15,7 @@ import {
 } from '../../../../src/lib/internal-event-bus.ts';
 import { neoCardWorkerSession, planNeoCardSend } from '../../../../src/lib/neo/card-events.ts';
 import { isSessionTopicCovered } from '../../../../src/lib/external-events/topic-trie.ts';
-import {
-  isNeoCardPrActionable,
-  neoCardPrTopics,
-} from '../../../../src/lib/neo/packs/coding/card-pr-events.ts';
+import { isNeoCardPrActionable } from '../../../../src/lib/neo/packs/coding/card-pr-events.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import {
   createOperationRegistry,
@@ -36,17 +33,6 @@ const open = {
   checks: 'passing' as const,
   review: 'none' as const,
 };
-
-describe('neoCardPrTopics', () => {
-  test('follows every event of each open pull request, never a merged or closed one', () => {
-    expect(
-      neoCardPrTopics([
-        open,
-        { ...open, url: 'https://github.com/lsm/HyperNeo/pull/8', state: 'MERGED' },
-      ])
-    ).toEqual(['github/lsm/HyperNeo/pull_request/7.*']);
-  });
-});
 
 describe('isNeoCardPrActionable', () => {
   test.each([

@@ -127,8 +127,6 @@ describe('coding pack instructions', () => {
           stored: stored?.prs ?? [],
         }),
       claims: { forUrls: () => [], replace: () => {}, drop: () => {} },
-      runningPrUrls: async () => [],
-      cardReports: () => [],
       readPrs: async () => [],
       workPrs: { get: () => null, recordFailedRead: () => {} },
       record: () => null,
@@ -197,8 +195,6 @@ describe('readEvidence', () => {
           stored: stored?.prs ?? [],
         }),
       claims: { forUrls: () => claimed, replace: () => {}, drop: () => {} },
-      runningPrUrls: async () => [],
-      cardReports: () => [],
       readPrs: async () => read,
       workPrs: { get: () => stored, recordFailedRead: (_id, at) => failed.push(at) },
       record: (_id, prs) => {
@@ -602,9 +598,6 @@ describe('neoPackAskCardEvidence', () => {
       readPrs: async () => [],
       prCandidates: async () => [],
       claims: { forUrls: () => [], replace: () => {}, drop: () => {} },
-      runningPrUrls: async () => [],
-      cardReports: () => [],
-      readMergeCommit: async () => null,
       readRefStates: async () => [],
       workPrs: {
         get: () => null,

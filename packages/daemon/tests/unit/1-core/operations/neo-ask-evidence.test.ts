@@ -1,20 +1,14 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
-import { vi } from 'vitest';
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
-import type { NeoEvidence } from '../../../../src/lib/neo/evidence.ts';
 import {
   extractNeoAskRefs,
   extractNeoCardRefs,
-  neoAskCardRefs,
-  neoAskRefNews,
   readGithubRefStates,
   readNeoPrRefUrls,
   type NeoRef,
   type NeoRefState,
 } from '../../../../src/lib/neo/packs/coding/ask-prs.ts';
-import { createCodingPack } from '../../../../src/lib/neo/packs/coding/pack.ts';
-import type { NeoPack } from '../../../../src/lib/neo/packs/types.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import {
   InternalEventBus,
@@ -62,12 +56,6 @@ const merged = (n: number, at: number): NeoRefState => ({
   at,
   done: true,
   closedBy: null,
-});
-const news = (n: number): NeoEvidence => ({
-  key: url(n),
-  state: 'done',
-  summary: 'merged',
-  blockers: [],
 });
 
 describe('extractNeoAskRefs', () => {
@@ -175,116 +163,6 @@ describe('readNeoPrRefUrls', () => {
     expect(await readNeoPrRefUrls(refs, read)).toEqual(['https://github.com/lsm/neokai/pull/7101']);
     expect(await readNeoPrRefUrls(refs, read)).toEqual(['https://github.com/lsm/neokai/pull/7101']);
     expect(reads).toBe(1);
-  });
-});
-
-describe('neoAskCardRefs', () => {
-  test("adds running cards' branch pull requests the cards don't track yet, each once", () => {
-    expect(neoAskCardRefs([ref(6159)], [url(6159), url(6283), url(6288)], [url(6288)])).toEqual([
-      ref(6159),
-      ref(6283),
-    ]);
-  });
-});
-
-describe('neoAskRefNews', () => {
-  const issue = (overrides: Partial<NeoRefState>): NeoRefState => ({
-    url: 'https://github.com/lsm/HyperNeo/issues/1',
-    kind: 'issue',
-    state: 'CLOSED',
-    at: 200,
-    done: true,
-    closedBy: null,
-    ...overrides,
-  });
-  test.each<[string, NeoRefState, NeoEvidence[]]>([
-    ['a pull request merged after the ask opened', merged(1, 200), [news(1)]],
-    ['a pull request merged before the ask opened', merged(1, 50), []],
-    [
-      'a pull request closed unmerged',
-      { ...merged(1, 200), state: 'CLOSED', done: false },
-      [{ key: url(1), state: 'failed', summary: 'closed unmerged', blockers: [] }],
-    ],
-    ['a pull request still open', { ...merged(1, 200), state: 'OPEN', at: null }, []],
-    [
-      'an issue closed by a pull request',
-      issue({ closedBy: url(7) }),
-      [
-        {
-          key: 'https://github.com/lsm/HyperNeo/issues/1',
-          state: 'done',
-          summary: `closed as completed by ${url(7)}`,
-          blockers: [],
-        },
-      ],
-    ],
-    [
-      'an issue closed as not planned',
-      issue({ done: false }),
-      [
-        {
-          key: 'https://github.com/lsm/HyperNeo/issues/1',
-          state: 'failed',
-          summary: 'closed as not planned',
-          blockers: [],
-        },
-      ],
-    ],
-    [
-      'an issue closed as a duplicate',
-      issue({ done: false, duplicate: true }),
-      [
-        {
-          key: 'https://github.com/lsm/HyperNeo/issues/1',
-          state: 'failed',
-          summary: 'closed as a duplicate',
-          blockers: [],
-        },
-      ],
-    ],
-    [
-      'an issue created after the ask opened',
-      issue({ state: 'OPEN', at: null, done: false, createdAt: 150 }),
-      [
-        {
-          key: 'https://github.com/lsm/HyperNeo/issues/1',
-          state: 'pending',
-          summary: 'created',
-          blockers: [],
-        },
-      ],
-    ],
-    [
-      'an issue linked as a sub-issue after the ask opened',
-      issue({
-        state: 'OPEN',
-        at: null,
-        done: false,
-        createdAt: 150,
-        parent: { url: 'https://github.com/lsm/HyperNeo/issues/6002', at: 180 },
-      }),
-      [
-        {
-          key: 'https://github.com/lsm/HyperNeo/issues/1',
-          state: 'pending',
-          summary: 'linked as a sub-issue of https://github.com/lsm/HyperNeo/issues/6002',
-          blockers: [],
-        },
-      ],
-    ],
-    [
-      'an open issue created and linked before the ask opened',
-      issue({
-        state: 'OPEN',
-        at: null,
-        done: false,
-        createdAt: 50,
-        parent: { url: 'https://github.com/lsm/HyperNeo/issues/6002', at: 60 },
-      }),
-      [],
-    ],
-  ])('%s', (_label, state, evidence) => {
-    expect(neoAskRefNews([state], 100)).toEqual(evidence);
   });
 });
 
@@ -440,32 +318,5 @@ describe('readGithubRefStates', () => {
       clock.mockRestore();
     }
     expect(asked.filter((m) => m === 9003)).toHaveLength(2);
-  });
-});
-
-describe('readAskEvidence', () => {
-  test('reports what the ask names that merged or closed since it opened', async () => {
-    const read: NeoRef[][] = [];
-    const pack = createCodingPack({
-      readPrs: async () => [],
-      prCandidates: async () => [],
-      claims: { forUrls: () => [], replace: () => {}, drop: () => {} },
-      runningPrUrls: async () => [url(6283), url(32, 'lsm/neo-ios')],
-      cardReports: () => ['Filed https://github.com/lsm/HyperNeo/issues/6600 under the epic.'],
-      readMergeCommit: async () => null,
-      cardBase: () => null,
-      readRefStates: async (refs) => {
-        read.push([...refs]);
-        return [merged(6159, 200), merged(6205, 50)];
-      },
-      workPrs: {
-        get: () => null,
-        list: () => [{ workId: 'w1', prs: [{ url: url(32, 'lsm/neo-ios') }] }] as never,
-        recordFailedRead: () => {},
-      },
-      record: () => null,
-    });
-    expect(await pack.readAskEvidence!({ ...ask, workIds: ['w1'] })).toEqual([news(6159)]);
-    expect(read).toEqual([[ref(6159), ref(6205), ref(6600), ref(6283)]]);
   });
 });

@@ -17,13 +17,9 @@ describe('buildNeoCheckRegistry', () => {
     const coding = createCodingPack({
       prCandidates: async () => [],
       claims: { forUrls: () => [], replace: () => {}, drop: () => {} },
-      runningPrUrls: async () => [],
-      cardReports: () => [],
-      readMergeCommit: async () => null,
       readPrs: async () => [],
       readRefStates: async () => [],
       readDeploys: async () => ({ prs: [], daemons: [] }),
-      cardBase: () => null,
       workPrs: { get: () => null, list: () => [], recordFailedRead: () => {} },
       record: () => null,
     });

@@ -156,7 +156,6 @@ export function createLifeAdminPack(): NeoPack {
   return {
     ...LIFE_ADMIN_PACK_BRIEF,
     instructions: () => NEO_PACK_LIFE_ADMIN_INSTRUCTIONS,
-    workerMcpServers: ['chrome-devtools-user'],
     readEvidence: async (work: NeoWork) => {
       const evidence = lifeAdminReportEvidence(work);
       return evidence.length ? { evidence, read: { ok: true, okAt: Date.now() } } : null;
