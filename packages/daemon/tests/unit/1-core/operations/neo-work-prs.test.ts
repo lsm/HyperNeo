@@ -63,6 +63,12 @@ describe('extractNeoWorkPrUrls', () => {
 });
 
 describe('summarizeNeoWorkPr', () => {
+  test('keeps when a closed PR was closed', () => {
+    expect(
+      summarizeNeoWorkPr(ghPr({ state: 'CLOSED', closedAt: '2026-10-19T03:00:00Z' }))?.closedAt
+    ).toBe(Date.parse('2026-10-19T03:00:00Z'));
+  });
+
   test.each<[string, unknown[], NeoWorkPr['checks']]>([
     ['no checks', [], 'none'],
     ['a running check', [run('COMPLETED', 'SUCCESS'), run('IN_PROGRESS')], 'pending'],

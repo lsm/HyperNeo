@@ -26,6 +26,7 @@ import {
 } from './driver-work.ts';
 import type { NeoPack, NeoTodoCheckResult } from './packs/types.ts';
 import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
+import { readNeoTodoCompletion } from './todo-completion.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -138,9 +139,9 @@ export function planNeoTodoCheck(
   result: NeoTodoCheckResult | null,
   now: number
 ): NeoTodoPatch | null {
-  return result?.done && todo.state !== 'done'
-    ? { state: 'done', evidence: result.evidence, finishedAt: now }
-    : null;
+  if (!result || todo.state === 'done' || todo.state === 'failed') return null;
+  if (result.failed) return { state: 'failed', reason: result.failed, finishedAt: now };
+  return result.done ? { state: 'done', evidence: result.evidence, finishedAt: now } : null;
 }
 
 export function neoTodoNote(todo: NeoTodo): string {
@@ -329,7 +330,9 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     if (!packs.length || !ask || now - (checked.get(todo.id) ?? 0) < NEO_TODO_CHECK_MS) return;
     checked.set(todo.id, now);
     for (const pack of packs) {
-      const result = await pack.check(todo);
+      const result = todo.check
+        ? await readNeoTodoCompletion(deps.packs(), todo)
+        : await pack.check(todo);
       const live = store.listCheckable().find((item) => item.id === todo.id);
       const patch = live?.check ? planNeoTodoCheck(live, result, now) : null;
       if (patch && live) await finish(live, ask, patch, now);
