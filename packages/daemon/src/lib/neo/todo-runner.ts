@@ -82,6 +82,10 @@ export function neoTodoCard(todo: NeoTodo, ask: NeoAsk, workerRules?: string): N
   };
 }
 
+export function isNeoTodoStartable(todo: NeoTodo): boolean {
+  return todo.state === 'todo' || (todo.state === 'blocked' && todo.blockedBy === 'question');
+}
+
 export function requireNeoTodoStartable(read: {
   todo: NeoTodo | null;
   ask: NeoAsk | null;
@@ -90,7 +94,7 @@ export function requireNeoTodoStartable(read: {
   const { todo, ask, target } = read;
   if (!todo || !ask) return fail('not_found: no such todo.');
   if (ask.status !== 'open') return fail(`ask_settled: this ask is ${ask.status}.`);
-  if (todo.state !== 'todo') return fail(`already_started: this todo is ${todo.state}.`);
+  if (!isNeoTodoStartable(todo)) return fail(`already_started: this todo is ${todo.state}.`);
   if (!todo.instruction || !target)
     return fail('no_session: this todo has no instruction and target; the daemon checks it.');
   if (target.verb === 'read' || target.verb === 'adopt')
@@ -141,6 +145,15 @@ function planNeoTodoBlocked(
     todo.blockedReason === blockedReason
     ? null
     : { state: 'blocked', blockedBy, blockedReason, nextAction };
+}
+
+export function planNeoTodoAwaitingStart(todo: NeoTodo): NeoTodoPatch | null {
+  return planNeoTodoBlocked(
+    todo,
+    'question',
+    'Waiting for the human to start it.',
+    'The human answers the start question.'
+  );
 }
 
 export function planNeoTodoIdle(

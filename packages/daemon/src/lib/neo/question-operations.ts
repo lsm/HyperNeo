@@ -13,6 +13,7 @@ import type {
 import { requireLocalUser } from '../operations/caller.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { requireNeoAskOwner } from './todo-operations.ts';
+import { isNeoTodoStartable } from './todo-runner.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -82,7 +83,7 @@ export function planNeoQuestion(
     startTodos: input.kind === 'start' ? [...new Set(input.todos)] : null,
   };
   const unstartable = draft.startTodos?.filter(
-    (id) => !todos.some((todo) => todo.id === id && todo.state === 'todo' && todo.instruction)
+    (id) => !todos.some((todo) => todo.id === id && isNeoTodoStartable(todo) && todo.instruction)
   );
   return unstartable?.length
     ? fail(

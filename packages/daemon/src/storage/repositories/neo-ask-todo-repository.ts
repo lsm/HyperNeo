@@ -235,7 +235,9 @@ export class NeoAskTodoRepository {
   claimStart(todo: NeoTodo, now: number): NeoTodo | null {
     const changed = this.db
       .prepare(
-        "UPDATE neo_todos SET state = 'doing', started_at = ?, updated_at = ? WHERE id = ? AND state = 'todo'"
+        `UPDATE neo_todos SET state = 'doing', started_at = ?, updated_at = ?,
+           blocked_reason = NULL, next_action = NULL, blocked_by = NULL
+         WHERE id = ? AND (state = 'todo' OR (state = 'blocked' AND blocked_by = 'question'))`
       )
       .run(now, now, todo.id).changes;
     if (!changed) return null;
@@ -304,12 +306,16 @@ export class NeoAskTodoRepository {
     by: 'button' | 'chat',
     now: number
   ): NeoQuestion | null {
-    const changed = this.db
-      .prepare(
-        `UPDATE neo_questions SET state = 'answered', answer = ?, answered_by = ?, answered_at = ?
-         WHERE id = ? AND state = 'open'`
-      )
-      .run(JSON.stringify(answer), by, now, question.id).changes;
+    const changed = this.db.transaction(() => {
+      const answered = this.db
+        .prepare(
+          `UPDATE neo_questions SET state = 'answered', answer = ?, answered_by = ?, answered_at = ?
+           WHERE id = ? AND state = 'open'`
+        )
+        .run(JSON.stringify(answer), by, now, question.id).changes;
+      if (answered) this.releaseStartTodos(question.id, now);
+      return answered;
+    })();
     if (!changed) return null;
     this.touchAsk(question.askId, now);
     return this.getQuestion(question.id);
@@ -321,12 +327,16 @@ export class NeoAskTodoRepository {
     replacedBy: string | null,
     now: number
   ): NeoQuestion | null {
-    const changed = this.db
-      .prepare(
-        `UPDATE neo_questions SET state = 'retired', retired_reason = ?, replaced_by = ?
-         WHERE id = ? AND state = 'open'`
-      )
-      .run(reason, replacedBy, question.id).changes;
+    const changed = this.db.transaction(() => {
+      const retired = this.db
+        .prepare(
+          `UPDATE neo_questions SET state = 'retired', retired_reason = ?, replaced_by = ?
+           WHERE id = ? AND state = 'open'`
+        )
+        .run(reason, replacedBy, question.id).changes;
+      if (retired) this.releaseStartTodos(question.id, now);
+      return retired;
+    })();
     if (!changed) return null;
     this.touchAsk(question.askId, now);
     return this.getQuestion(question.id);
@@ -349,6 +359,20 @@ export class NeoAskTodoRepository {
       .prepare("UPDATE neo_questions SET state = 'retired' WHERE ask_id = ? AND state = 'open'")
       .run(askId);
     this.touchAsk(askId, now);
+  }
+
+  private releaseStartTodos(questionId: string, now: number): void {
+    this.db
+      .prepare(
+        `UPDATE neo_todos SET state = 'todo', updated_at = ?,
+           blocked_reason = NULL, next_action = NULL, blocked_by = NULL
+         WHERE state = 'blocked' AND blocked_by = 'question' AND id IN (
+           SELECT value FROM json_each(
+             (SELECT start_todos FROM neo_questions WHERE id = ? AND start_todos IS NOT NULL)
+           )
+         )`
+      )
+      .run(now, questionId);
   }
 
   private touchAsk(askId: string, now: number): void {

@@ -11,6 +11,7 @@ import { NeoTodoTargetSchema } from './driver-work.ts';
 import type { NeoPack } from './packs/types.ts';
 import { neoStartQuestionTitle } from './start-question.ts';
 import { readNeoTodoCompletion, requireNeoTodoMayFinish } from './todo-completion.ts';
+import { isNeoTodoStartable, planNeoTodoAwaitingStart } from './todo-runner.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 
 type Rejection = { ok: false; reason: string };
@@ -84,7 +85,7 @@ export function planNeoStartQuestionJoin(
 ): { questionId: string | null; startTodos: string[]; text: string } {
   const open = questions.find((question) => question.kind === 'start' && question.state === 'open');
   const startable = (id: string) =>
-    todos.some((item) => item.id === id && item.state === 'todo' && item.instruction);
+    todos.some((item) => item.id === id && isNeoTodoStartable(item) && item.instruction);
   const startTodos = [...new Set([...(open?.startTodos ?? []).filter(startable), todo.id])];
   const text = neoStartQuestionTitle(
     startTodos.map((id) => ({ title: todos.find((item) => item.id === id)?.title }))
@@ -115,6 +116,8 @@ function joinNeoStartQuestion(todos: NeoAskTodoRepository, todo: NeoTodo): void 
       },
       now
     );
+  const blocked = planNeoTodoAwaitingStart(todo);
+  if (blocked) todos.updateTodo(todo, blocked, now);
 }
 
 const Edit = z.object({
