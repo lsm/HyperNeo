@@ -4,6 +4,7 @@ import {
   NEO_CAPABILITIES_BRIEFING,
   NEO_PACK_CODING_INSTRUCTIONS,
   NEO_ROOT_PROMPT,
+  NEO_ROOT_TURN_END,
   NEO_SPEAKING_POLICY,
 } from '@hyperneo/prompts';
 import { OPERATION_NAMES } from '@hyperneo/shared/types/operation-names';
@@ -47,10 +48,13 @@ describe('root Neo system prompt', () => {
     restrictNeoQuery(options, null, undefined, []);
     expect(options.systemPrompt).toEqual({
       type: 'custom',
-      prompt: NEO_ROOT_PROMPT,
+      prompt: `${NEO_ROOT_PROMPT}\n\n${NEO_ROOT_TURN_END}`,
       snapshot: false,
     });
-    expect(neoPrompt(null, [])).toBe(NEO_ROOT_PROMPT);
+    expect(neoPrompt(null, [])).toBe(`${NEO_ROOT_PROMPT}\n\n${NEO_ROOT_TURN_END}`);
+    expect(NEO_ROOT_TURN_END.trim()).toBe(
+      'End every turn with exactly one line: Done. No summary.'
+    );
     expect(NEO_ROOT_PROMPT.split(/\s+/).length).toBeLessThan(160);
     for (const fact of [
       'work.find',
@@ -59,7 +63,6 @@ describe('root Neo system prompt', () => {
       'neo.question.ask',
       'neo.rule.save',
       'Plain assistant text is never shown to the human.',
-      'After your last tool call, end the turn with exactly: Done.',
     ])
       expect(NEO_ROOT_PROMPT).toContain(fact);
   });
@@ -68,6 +71,7 @@ describe('root Neo system prompt', () => {
     const coding = neoPrompt(null);
     expect(coding.startsWith(`${NEO_ROOT_PROMPT}\n\nDomain packs carry the field`)).toBe(true);
     expect(coding).toContain(NEO_PACK_CODING_INSTRUCTIONS);
+    expect(coding.trim().split('\n').at(-1)).toBe(NEO_ROOT_TURN_END.trim());
     expect(neoPrompt(null, [])).not.toContain('Domain packs');
     expect(coding).not.toMatch(/holder|consult|forward|dispatch/i);
   });

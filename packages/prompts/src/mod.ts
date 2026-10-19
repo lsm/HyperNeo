@@ -51,6 +51,7 @@ import mdneoSystemHolderSnapshotScope from './neo/system/holder-snapshot-scope.m
 import mdneoSystemDoneCheckSteps from './neo/system/done-check-steps.md' with { type: 'text' };
 import mdneoSystemPrompt from './neo/system/prompt.md' with { type: 'text' };
 import mdneoSystemRoot from './neo/system/root.md' with { type: 'text' };
+import mdneoSystemRootTurnEnd from './neo/system/root-turn-end.md' with { type: 'text' };
 import mdneoSystemLookUp from './neo/system/look-up.md' with { type: 'text' };
 import mdneoWorkDoneCheck from './neo/work/done-check.md' with { type: 'text' };
 import mdneoWorkDoneCheckAskForeign from './neo/work/done-check-ask-foreign.md' with {
@@ -317,6 +318,7 @@ const registry: Record<string, string> = {
   'neo/system/done-check-steps.md': mdneoSystemDoneCheckSteps,
   'neo/system/prompt.md': mdneoSystemPrompt,
   'neo/system/root.md': mdneoSystemRoot,
+  'neo/system/root-turn-end.md': mdneoSystemRootTurnEnd,
   'neo/system/look-up.md': mdneoSystemLookUp,
   'neo/work/done-check-ask-foreign.md': mdneoWorkDoneCheckAskForeign,
   'neo/work/done-check-ask-owned.md': mdneoWorkDoneCheckAskOwned,
@@ -482,6 +484,7 @@ export const {
   NEO_HOLDER_SNAPSHOT_SCOPE,
   NEO_SYSTEM_PROMPT,
   NEO_ROOT_PROMPT,
+  NEO_ROOT_TURN_END,
   NEO_LOOK_UP,
   NEO_WORK_DONE_CHECK_ASK_FOREIGN,
   NEO_WORK_DONE_CHECK_ASK_OWNED,
