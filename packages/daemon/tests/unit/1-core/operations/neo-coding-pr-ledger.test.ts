@@ -298,3 +298,23 @@ describe('codingLedgerArgs', () => {
     expect(args).not.toContain('-F');
   });
 });
+
+describe('CodingPrLedgerRepository.recordSessionPrs', () => {
+  test('the first session seen with a PR owns it, also when the PR reaches the ledger later', async () => {
+    const { db, ledger } = setup();
+    const opener = { adapter: 'claude-desktop', id: 'opener' };
+    ledger.recordSessionPrs([{ ref: opener, urls: ['https://github.com/LSM/a/pull/1'] }], 1);
+    ledger.recordSessionPrs(
+      [{ ref: { adapter: 'hyperneo', id: 'later' }, urls: ['https://github.com/lsm/a/pull/1'] }],
+      2
+    );
+    await reconcile(ledger, ['lsm/a'], async () => response([node(1), node(2)]), 100);
+    expect(
+      db.prepare('SELECT number, owner FROM pack_coding_pr_ledger ORDER BY number').all()
+    ).toEqual([
+      { number: 1, owner: JSON.stringify(opener) },
+      { number: 2, owner: null },
+    ]);
+    db.close();
+  });
+});

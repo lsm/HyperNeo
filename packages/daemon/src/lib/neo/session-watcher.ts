@@ -46,6 +46,7 @@ export type NeoSessionWatcherDeps = {
   mutedSessions: () => readonly string[] | undefined;
   liveAskPrs: () => NeoAskPrs[];
   sessionBranchPrs: (ref: WorkRef | null) => Promise<string[]>;
+  observeSessionPrs: (links: { ref: WorkRef; urls: string[] }[]) => void;
   notifyChanged: () => void;
 };
 
@@ -205,6 +206,16 @@ export class NeoSessionWatcher {
       },
       ['listed', 'read'],
       'linked'
+    )
+    .pipe(
+      (listed: { sessions: NeoListedSession[] }, linked: { prs: Map<string, string[]> }) =>
+        this.deps.observeSessionPrs(
+          listed.sessions.flatMap((session) => {
+            const urls = linked.prs.get(session.key) ?? [];
+            return urls.length ? [{ ref: session.ref, urls }] : [];
+          })
+        ),
+      ['listed', 'linked']
     )
     .pipe(
       (

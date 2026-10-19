@@ -4,6 +4,7 @@ import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { Logger } from '../../../logger.ts';
 import { spawnProcess } from '../../../runtime-spawn/index.ts';
+import { codingPrKey } from './todo-prs.ts';
 
 export type CodingPrState =
   | 'draft'
@@ -163,6 +164,22 @@ export class CodingPrLedgerRepository {
       );
   }
 
+  recordSessionPrs(links: readonly { ref: unknown; urls: readonly string[] }[], now: number): void {
+    const insert = this.db.prepare(
+      'INSERT INTO pack_coding_session_prs (url, ref, seen_at) VALUES (?, ?, ?) ON CONFLICT(url) DO NOTHING'
+    );
+    for (const link of links)
+      for (const url of link.urls) {
+        const key = codingPrKey(url);
+        if (key) insert.run(key, JSON.stringify(link.ref), now);
+      }
+    this.db.exec(`UPDATE pack_coding_pr_ledger SET owner = (
+        SELECT s.ref FROM pack_coding_session_prs s
+         WHERE s.url = 'https://github.com/' || pack_coding_pr_ledger.repo || '/pull/'
+                 || pack_coding_pr_ledger.number)
+      WHERE owner IS NULL`);
+  }
+
   prune(repos: readonly string[], now: number): void {
     this.db
       .prepare(
@@ -224,4 +241,5 @@ export async function reconcileCodingPrLedger(
     if (planned && planned.remaining < CODING_LEDGER_MIN_RATE) break;
   }
   ledger.prune([...repos, ...seen], now);
+  ledger.recordSessionPrs([], now);
 }
