@@ -2,11 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
 import { ExternalEventService } from '../../../../src/lib/external-events/external-event-service.ts';
-import {
-  SESSION_EVENT_SCOPE,
-  SessionExternalEventStore,
-} from '../../../../src/lib/external-events/session-external-event-store.ts';
-import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts';
+import { SessionExternalEventStore } from '../../../../src/lib/external-events/session-external-event-store.ts';
 import {
   InternalEventBus,
   type DaemonInternalEventMap,
@@ -60,18 +56,6 @@ const ask = (items: NeoAskItem[], id = 'a1'): NeoAsk => ({
   workIds: [],
   doneItems: items,
 });
-const prEvent = (n: number, action: string, payload: Record<string, unknown>): ExternalEvent => ({
-  id: `event-${n}-${action}`,
-  spaceId: SESSION_EVENT_SCOPE,
-  source: 'github',
-  topic: `github/lsm/hyperneo/pull_request/${n}.${action}`,
-  dedupeKey: `lsm/hyperneo:${n}:${action}`,
-  occurredAt: 9_000,
-  ingestedAt: 9_000,
-  summary: `PR #${n} ${action}`,
-  payload: { prUrl: pull(n), prNumber: n, ...payload },
-});
-
 describe('deploy checks', () => {
   const deployItem = (extra: Partial<NeoAskItem> = {}) =>
     item('i1', { check: 'coding.deployed', ...extra });
