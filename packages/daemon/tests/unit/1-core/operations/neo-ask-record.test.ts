@@ -159,6 +159,33 @@ describe('neo.ask.open and neo.ask.settle', () => {
     expect(store.getAsk(opened.ask.id)?.status).toBe('open');
   });
 
+  test('done is refused while a todo is neither done nor removed with a reason', async () => {
+    const { call, store, stopped } = setup();
+    const opened = await call('neo.ask.open', opening, turn('m7'));
+    if (!opened.ok) throw new Error(opened.reason);
+    const [fix, deploy] = opened.todos;
+    const settle = () =>
+      call(
+        'neo.ask.settle',
+        { askId: opened.ask.id, status: 'done', outcome: 'Shipped.' },
+        turn('m7')
+      );
+    expect(await settle()).toEqual({
+      ok: false,
+      reason: `todos_unfinished: finish or remove these todos first: "Fix it" (${fix.id}, doing), "Deploy" (${deploy.id}, todo).`,
+    });
+    expect(store.getAsk(opened.ask.id)?.status).toBe('open');
+    expect(stopped).toEqual([]);
+    store.updateTodo(fix, { state: 'done', evidence: '#8 merged', finishedAt: 3 }, 3);
+    store.updateTodo(deploy, { state: 'removed', reason: 'The human deploys it.' }, 3);
+    const settled = await call(
+      'neo.ask.settle',
+      { askId: opened.ask.id, status: 'done', outcome: 'Shipped.' },
+      turn('m7')
+    );
+    expect(settled.ok && settled.ask.status).toBe('done');
+  });
+
   test('settling stops running sessions, retires open questions and ends the ask', async () => {
     const { call, store, stopped } = setup();
     const opened = await call('neo.ask.open', opening, turn('m3'));

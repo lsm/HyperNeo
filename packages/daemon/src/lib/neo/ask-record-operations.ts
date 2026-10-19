@@ -55,6 +55,24 @@ export function requireNeoAskSession(
     : { reason: { ok: false, reason: 'no_session: only a Neo session opens an ask.' } };
 }
 
+function requireNeoAskTodosFinished(
+  ask: NeoAsk,
+  status: z.infer<typeof Settle>['status'],
+  todos: readonly NeoTodo[]
+): Gate<NeoAsk> {
+  const unfinished = todos.filter(
+    (todo) => todo.state !== 'done' && !(todo.state === 'removed' && todo.reason)
+  );
+  if (status !== 'done' || !unfinished.length) return { value: ask };
+  const listed = unfinished.map((todo) => `"${todo.title}" (${todo.id}, ${todo.state})`);
+  return {
+    reason: {
+      ok: false,
+      reason: `todos_unfinished: finish or remove these todos first: ${listed.join(', ')}.`,
+    },
+  };
+}
+
 export function requireNeoAskProject(
   input: { projectId?: string | null },
   resolveProject: (projectId: string) => string | null,
@@ -181,6 +199,12 @@ export function createNeoAskRecordOperations(
       'result:outcome'
     )
     .pipe(
+      (ask: NeoAsk, input: z.infer<typeof Settle>) =>
+        requireNeoAskTodosFinished(ask, input.status, store.listTodos(ask.id)),
+      ['outcome', 'input'],
+      'result:outcome'
+    )
+    .pipe(
       async (ask: NeoAsk, input: z.infer<typeof Settle>): Promise<AskReceipt | Rejection> => {
         const failed: string[] = [];
         const stopped: string[] = [];
@@ -224,7 +248,7 @@ export function createNeoAskRecordOperations(
     defineOperation({
       name: 'neo.ask.settle',
       description:
-        'End an ask: done when its todos are done, dropped when the human drops it. outcome is one short sentence the ask shows. Open questions are retired and running sessions stop.',
+        'End an ask: done when its todos are done, dropped when the human drops it. done is refused while any todo is neither done nor removed with a reason; the refusal lists them. outcome is one short sentence the ask shows. Open questions are retired and running sessions stop.',
       inputSchema: Settle,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
