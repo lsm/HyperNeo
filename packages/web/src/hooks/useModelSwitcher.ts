@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'preact/hooks';
-import type { ModelInfo } from '@hyperneo/shared';
+import type { ModelInfo, PendingModelSwitch } from '@hyperneo/shared';
 import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
+import { t } from '../lib/i18n/index.ts';
 import { connectionManager } from '../lib/connection-manager';
 import { connectionState } from '../lib/state';
 import { toast } from '../lib/toast';
@@ -247,7 +248,10 @@ export function useFilteredModelsForPicker(
   }, [models, providerAuthMap, currentProvider, currentModelId, searchQuery]);
 }
 
-export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResult {
+export function useModelSwitcher(
+  sessionId: string | null,
+  pendingSwitch: PendingModelSwitch | null = null
+): UseModelSwitcherResult {
   const [currentModel, setCurrentModel] = useState<string>('');
   const [currentModelInfo, setCurrentModelInfo] = useState<ModelInfo | null>(null);
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
@@ -326,6 +330,12 @@ export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResu
     };
   }, [loadModelInfo, connectionState.value]);
 
+  const hadPending = useRef(false);
+  useEffect(() => {
+    if (hadPending.current && !pendingSwitch) void loadModelInfo();
+    hadPending.current = !!pendingSwitch;
+  }, [pendingSwitch, loadModelInfo]);
+
   const switchModel = useCallback(
     async (model: ModelInfo) => {
       if (!model.provider) {
@@ -333,7 +343,11 @@ export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResu
         return;
       }
 
-      if (model.id === currentModel && model.provider === currentModelInfo?.provider) {
+      if (
+        !pendingSwitch &&
+        model.id === currentModel &&
+        model.provider === currentModelInfo?.provider
+      ) {
         toast.info(`Already using ${currentModelInfo?.name || currentModel}`);
         return;
       }
@@ -354,9 +368,12 @@ export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResu
           success: boolean;
           model: string;
           error?: string;
+          pending?: { model: string; provider: string };
         };
 
-        if (result.success) {
+        if (result.success && result.pending) {
+          toast.info(`${model.name || result.pending.model}: ${t('composer.switchesNextTurn')}`);
+        } else if (result.success) {
           setCurrentModel(result.model);
           const newModelInfo =
             availableModels.find((m) => m.id === result.model && m.provider === model.provider) ??
@@ -373,7 +390,7 @@ export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResu
         setSwitching(false);
       }
     },
-    [sessionId, currentModel, currentModelInfo, availableModels]
+    [sessionId, currentModel, currentModelInfo, availableModels, pendingSwitch]
   );
 
   return {

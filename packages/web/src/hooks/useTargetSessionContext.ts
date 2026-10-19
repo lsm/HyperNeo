@@ -1,6 +1,7 @@
 import type {
   ContextInfo,
   ModelInfo,
+  PendingModelSwitch,
   SessionState,
   SpaceTaskActivityMember,
   ThinkingLevel,
@@ -124,7 +125,8 @@ export function useTargetSessionContext({
   }
   const isStarted = !!targetSessionId;
 
-  const modelSwitcher = useModelSwitcher(targetSessionId);
+  const [pendingSwitch, setPendingSwitch] = useState<PendingModelSwitch | null>(null);
+  const modelSwitcher = useModelSwitcher(targetSessionId, pendingSwitch);
 
   const [preConfiguredModel, setPreConfiguredModel] = useState<
     Map<string, { id: string; provider: string; taskId: string }>
@@ -189,6 +191,7 @@ export function useTargetSessionContext({
 
     const applySessionState = (state: SessionState) => {
       setContextInfo(state.sessionInfo?.metadata?.lastContextInfo ?? null);
+      setPendingSwitch(state.sessionInfo?.metadata?.pendingModelSwitch ?? null);
     };
 
     const setupContextSubscriptions = async () => {

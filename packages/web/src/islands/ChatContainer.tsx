@@ -575,6 +575,7 @@ export default function ChatContainer({
     setCoordinatorMode,
     sandboxEnabled,
     setSandboxEnabled,
+    pendingModelSwitch: store.sessionInfo.value?.metadata?.pendingModelSwitch ?? null,
   });
 
   const selectSearchMessage = useCallback(

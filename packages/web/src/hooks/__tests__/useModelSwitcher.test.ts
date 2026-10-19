@@ -911,6 +911,58 @@ describe('useModelSwitcher', () => {
       expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringContaining('Switched to'));
     });
 
+    it('says a switch requested during a turn applies next turn, keeping the current model', async () => {
+      const mockHub = {
+        onEvent: vi.fn(() => () => {}),
+        request: vi
+          .fn()
+          .mockResolvedValueOnce({ currentModel: 'claude-sonnet-4-20250514', modelInfo: null })
+          .mockResolvedValueOnce({
+            models: [
+              { id: 'claude-sonnet-4-20250514', display_name: 'Sonnet', description: '' },
+              { id: 'claude-opus-4-5-20251101', display_name: 'Opus', description: '' },
+            ],
+          })
+          .mockResolvedValueOnce({
+            success: true,
+            model: 'claude-opus-4-5-20251101',
+            pending: { model: 'claude-opus-4-5-20251101', provider: 'anthropic', requestedAt: 1 },
+          }),
+      };
+      mockGetHubIfConnected.mockReturnValue(mockHub);
+      const { result } = renderHook(() => useModelSwitcher('session-1'));
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      await act(async () => {
+        await result.current.switchModel({
+          id: 'claude-opus-4-5-20251101',
+          name: 'Opus',
+          provider: 'anthropic',
+        });
+      });
+      expect(result.current.currentModel).toBe('claude-sonnet-4-20250514');
+      expect(mockToastInfo).toHaveBeenCalledWith('Opus: switches next turn');
+      expect(mockToastSuccess).not.toHaveBeenCalled();
+    });
+
+    it('reloads the shown model once a pending switch is applied', async () => {
+      const request = vi.fn(async (method: string) =>
+        method === 'session.model.get'
+          ? { currentModel: 'claude-sonnet-4-20250514', modelInfo: null }
+          : { models: [] }
+      );
+      mockGetHubIfConnected.mockReturnValue({ onEvent: vi.fn(() => () => {}), request });
+      const pending = { model: 'opus', provider: 'anthropic', requestedAt: 1 };
+      const { result, rerender } = renderHook(
+        ({ waiting }: { waiting: typeof pending | null }) => useModelSwitcher('session-1', waiting),
+        { initialProps: { waiting: pending as typeof pending | null } }
+      );
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      const loads = () => request.mock.calls.filter(([m]) => m === 'session.model.get').length;
+      const before = loads();
+      rerender({ waiting: null });
+      await waitFor(() => expect(loads()).toBe(before + 1));
+    });
+
     it('should handle switch failure from server', async () => {
       const mockHub = {
         onEvent: vi.fn(() => () => {}),

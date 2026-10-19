@@ -34,13 +34,21 @@ export function NeoPreferences({
   onSaved?: () => void;
   forSession?: boolean;
 }) {
-  const model = useModelSwitcher(sessionId);
+  const pending = store.sessionInfo.value?.metadata?.pendingModelSwitch ?? null;
+  const model = useModelSwitcher(sessionId, pending);
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [auth, setAuth] = useState(new Map<string, ProviderAuthStatus>());
   const ref = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const connected = connectionState.value === 'connected';
+  const pendingInfo = pending
+    ? model.availableModels.find(
+        (item) =>
+          (item.id === pending.model || item.alias === pending.model) &&
+          item.provider === pending.provider
+      )
+    : undefined;
   const chosen =
     preference && !forSession
       ? model.availableModels.find(
@@ -79,18 +87,20 @@ export function NeoPreferences({
     (item) =>
       (item.id === currentId || item.alias === currentId) && item.provider === info?.provider
   );
-  const name = shortenModelName(info?.name || currentId || 'Model');
+  const name = pending
+    ? shortenModelName(pendingInfo?.name || pending.model)
+    : shortenModelName(info?.name || currentId || 'Model');
   const thinking = options.length
     ? (options.find((option) => option.value === level)?.label ?? 'Off')
     : 'Off';
 
-  async function save(next: NeoModelPreference) {
+  async function save(next: NeoModelPreference, picked = false) {
     setSaving(true);
     try {
       const hub = connectionManager.getHubIfConnected();
       if (!hub) throw new Error('Reconnect before changing the model.');
       if (forSession) {
-        if (next.model !== currentId || next.provider !== info?.provider) {
+        if ((picked && pending) || next.model !== currentId || next.provider !== info?.provider) {
           const switched = await hub.request<{ success: boolean; error?: string }>(
             'session.model.switch',
             { sessionId, model: next.model, provider: next.provider }
@@ -131,7 +141,7 @@ export function NeoPreferences({
       )
     )
       return;
-    await save({ model: next.id, provider: next.provider, thinkingLevel: level });
+    await save({ model: next.id, provider: next.provider, thinkingLevel: level }, true);
   }
 
   async function changeThinking(next: ThinkingLevel) {
@@ -162,7 +172,18 @@ export function NeoPreferences({
         <span class="flex shrink-0" style={{ color: providerLogoColor(info?.provider) }}>
           <ProviderLogo provider={info?.provider ?? 'anthropic'} class="h-3.5 w-3.5" />
         </span>
-        <span class="max-w-32 truncate">{saving ? 'Switching…' : name}</span>
+        <span class="max-w-32 truncate">
+          {saving
+            ? 'Switching…'
+            : pending
+              ? shortenModelName(pendingInfo?.name || pending.model)
+              : name}
+        </span>
+        {pending && !saving && (
+          <span data-pending-model-switch class="shrink-0 text-[11px] text-accent">
+            {t('composer.switchesNextTurn')}
+          </span>
+        )}
         <span aria-hidden="true" class="text-fg-faint">
           ·
         </span>

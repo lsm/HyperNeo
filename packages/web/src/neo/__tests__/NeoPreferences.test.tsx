@@ -138,9 +138,71 @@ describe('Neo preferences', () => {
     );
     render(<NeoPreferences sessionId="s1" store={makeStore(true)} onError={onError} forSession />);
     fireEvent.click(screen.getByRole('button', { name: 'Model and thinking' }));
-    expect(screen.getByText('Switching the model stops the current reply')).toBeTruthy();
+    expect(screen.getByText('A new model takes over from the next turn')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Haiku · Anthropic' }));
     await waitFor(() => expect(onError).toHaveBeenCalledWith('Invalid model: haiku'));
+  });
+  it('marks a model switch waiting for the next turn, and clears it once applied', () => {
+    const store = makeStore(true);
+    const info = store.sessionInfo as unknown as {
+      value: { config: Record<string, unknown>; metadata?: Record<string, unknown> };
+    };
+    info.value = {
+      config: { thinkingLevel: 'off' },
+      metadata: {
+        pendingModelSwitch: { model: 'haiku', provider: 'anthropic', requestedAt: 1 },
+      },
+    };
+    const view = render(
+      <NeoPreferences sessionId="s1" store={store} onError={vi.fn()} forSession />
+    );
+    const trigger = screen.getByRole('button', { name: 'Model and thinking' });
+    expect(trigger.textContent).toContain('Haiku');
+    expect(trigger.textContent).toContain('switches next turn');
+    info.value = { config: { thinkingLevel: 'off' }, metadata: { pendingModelSwitch: null } };
+    view.rerender(<NeoPreferences sessionId="s1" store={store} onError={vi.fn()} forSession />);
+    expect(trigger.textContent).not.toContain('switches next turn');
+    expect(trigger.textContent).toContain('Sonnet');
+  });
+  it('re-picking the running model cancels a pending switch', async () => {
+    const store = makeStore(true);
+    (store.sessionInfo as unknown as { value: unknown }).value = {
+      config: { thinkingLevel: 'off' },
+      metadata: { pendingModelSwitch: { model: 'haiku', provider: 'anthropic', requestedAt: 1 } },
+    };
+    api.request.mockImplementation(async (method: string) =>
+      method === 'session.model.switch' ? { success: true, model: 'sonnet' } : { providers: [] }
+    );
+    render(<NeoPreferences sessionId="s1" store={store} onError={vi.fn()} forSession />);
+    const trigger = screen.getByRole('button', { name: 'Model and thinking' });
+    expect(trigger.title).toContain('Haiku');
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole('button', { name: 'Sonnet · Anthropic' }));
+    await waitFor(() =>
+      expect(api.request).toHaveBeenCalledWith('session.model.switch', {
+        sessionId: 's1',
+        model: 'sonnet',
+        provider: 'anthropic',
+      })
+    );
+  });
+  it('keeps a pending switch when only thinking changes', async () => {
+    const store = makeStore(true);
+    (store.sessionInfo as unknown as { value: unknown }).value = {
+      config: { thinkingLevel: 'off' },
+      metadata: { pendingModelSwitch: { model: 'haiku', provider: 'anthropic', requestedAt: 1 } },
+    };
+    api.request.mockResolvedValue({ providers: [] });
+    render(<NeoPreferences sessionId="s1" store={store} onError={vi.fn()} forSession />);
+    fireEvent.click(screen.getByRole('button', { name: 'Model and thinking' }));
+    fireEvent.change(screen.getByRole('slider', { name: 'Thinking' }), { target: { value: '2' } });
+    await waitFor(() =>
+      expect(api.request).toHaveBeenCalledWith('session.thinking.set', {
+        sessionId: 's1',
+        level: 'think16k',
+      })
+    );
+    expect(api.request).not.toHaveBeenCalledWith('session.model.switch', expect.anything());
   });
   it('lets Neo’s preference change while it works, applying from its next reply', () => {
     render(<NeoPreferences sessionId="neo:root" store={makeStore(true)} onError={vi.fn()} />);
