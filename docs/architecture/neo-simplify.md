@@ -36,7 +36,7 @@ The pack keeps its own PR ledger: one row per pull request, kept current from Gi
 
 ## Deletions
 
-Everything that existed only because there were several Neo sessions goes:
+These go. Most existed only because there were several Neo sessions; the send-time injections break the core rule that nothing is added at send time.
 
 - the router and the route classifier;
 - the per-project holder sessions and their bindings;
