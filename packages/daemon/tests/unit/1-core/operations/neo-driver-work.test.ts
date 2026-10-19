@@ -42,7 +42,6 @@ import {
   requireNeoProposalAsk,
 } from '../../../../src/lib/neo/operations.ts';
 import type { NeoRef } from '../../../../src/lib/neo/packs/coding/ask-prs.ts';
-import { neoCardPrFacts } from '../../../../src/lib/neo/packs/coding/card-facts.ts';
 import { lifeAdminReportEvidence } from '../../../../src/lib/neo/packs/life-admin/pack.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { pickNeoReplacementWorkers } from '../../../../src/lib/neo/work-reroute.ts';

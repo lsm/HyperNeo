@@ -3,20 +3,8 @@ import { externalEventTopicSuffix } from '../../../external-events/event-tiers.t
 import { requireClosedPrEvent } from '../../../external-events/session-subscription-close.ts';
 import { topicMatchesPattern } from '../../../external-events/topic-trie.ts';
 import type { ExternalEvent } from '../../../external-events/types.ts';
-import {
-  buildPrEventTopicPattern,
-  parsePrUrl,
-  pullRequestUrlOfTopic,
-} from '../../../github/parse-pr-url.ts';
+import { pullRequestUrlOfTopic } from '../../../github/parse-pr-url.ts';
 import type { NeoCardEventSubscription, NeoPackEventRoute } from '../types.ts';
-
-export function neoCardPrTopics(prs: readonly NeoWorkPr[]): string[] {
-  return prs.flatMap((pr) => {
-    const parsed = pr.state === 'OPEN' ? parsePrUrl(pr.url) : null;
-    if (!parsed || parsed.host.toLowerCase() !== 'github.com') return [];
-    return [buildPrEventTopicPattern(parsed)];
-  });
-}
 
 function isNeoCardPrEventCurrent(
   read: { pr: NeoWorkPr; readAt: number } | null,
