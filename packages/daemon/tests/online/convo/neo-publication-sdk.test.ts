@@ -52,7 +52,8 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
       res.end(JSON.stringify({ input_tokens: 100 }));
       return;
     }
-    if (JSON.stringify(body.messages).includes('had no visible output')) nudged.push(req.url ?? '');
+    if (JSON.stringify(body.messages ?? []).includes('had no visible output'))
+      nudged.push(req.url ?? '');
     const invoke = body.tools?.find((tool) => tool.name.endsWith('hyperneo-operations__invoke'));
     const active = !!invoke && JSON.stringify(body.messages).includes('fictional moon garden');
     requests.push({ path: req.url ?? '', tools: body.tools?.length ?? 0, active });
