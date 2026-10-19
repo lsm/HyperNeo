@@ -1,4 +1,5 @@
 import type { WorkRef } from '../../../drivers/types.ts';
+import { Logger } from '../../../logger.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import type { CodingPrState } from './pr-ledger.ts';
 
@@ -12,6 +13,8 @@ export const CODING_PR_DEADLINE_MIN: Partial<Record<CodingPrState, number>> = {
 };
 export const CODING_PR_FRESH_MS = 15 * 60_000;
 export const CODING_PR_REMINDERS = 2;
+
+const log = new Logger('NeoPrSweep');
 
 export type CodingSweepRow = {
   repo: string;
@@ -30,13 +33,23 @@ export type CodingSweepDeps = {
   wake(key: string, text: string): Promise<boolean>;
 };
 
+const STATE_TEXT: Partial<Record<CodingPrState, string>> = {
+  approved_green: 'approved and green',
+  dirty: 'in conflict with its base',
+  failing: 'failing CI',
+  changes_requested: 'waiting on requested changes',
+  waiting_review: 'waiting for review',
+  approved_pending: 'approved with CI still pending',
+};
+
 const NEXT_STEP: Partial<Record<CodingPrState, string>> = {
   approved_green: 'Merge it now with a manual squash on this head.',
   dirty: 'Merge the base branch in, resolve the conflicts and push.',
   failing: 'Fix the failing CI and push.',
   changes_requested: 'Address the review and push.',
   waiting_review: 'Get it reviewed; re-request the review bot if its review stalled.',
-  approved_pending: 'Check that CI is still progressing, and merge once it is green.',
+  approved_pending:
+    'This is usually CI capacity, not something to fix; merge once CI is green, and look only if a check is stuck.',
 };
 
 export function planCodingPrNudge(
@@ -58,7 +71,7 @@ const minutesSince = (row: CodingSweepRow, now: number) =>
 const owned = (ref: WorkRef) => `${ref.adapter}:${ref.id}${ref.daemon ? `@${ref.daemon}` : ''}`;
 
 export function codingPrNudgeText(row: CodingSweepRow, now: number): string {
-  return `${row.repo}#${row.number} "${row.title}" has been ${row.state.replace('_', ' ')} for ${minutesSince(row, now)} min on head ${row.head.slice(0, 7)}. ${NEXT_STEP[row.state] ?? ''}`;
+  return `${row.repo}#${row.number} "${row.title}" has been ${STATE_TEXT[row.state] ?? row.state} for ${minutesSince(row, now)} min on head ${row.head.slice(0, 7)}. ${NEXT_STEP[row.state] ?? ''}`;
 }
 
 export function codingPrEscalationText(
@@ -69,7 +82,7 @@ export function codingPrEscalationText(
   const why = unreachable
     ? `its owner ${owned(row.owner!)} could not be reached`
     : `its owner ${owned(row.owner!)} was reminded ${CODING_PR_REMINDERS} times without progress`;
-  return `PR sweep: ${row.repo}#${row.number} "${row.title}" has been ${row.state.replace('_', ' ')} for ${minutesSince(row, now)} min on head ${row.head.slice(0, 7)}, and ${why}. Reassign it to a free session, or merge it yourself if it is approved and green and the owner is gone.`;
+  return `PR sweep: ${row.repo}#${row.number} "${row.title}" has been ${STATE_TEXT[row.state] ?? row.state} for ${minutesSince(row, now)} min on head ${row.head.slice(0, 7)}, and ${why}. Reassign it to a free session, or merge it yourself if it is approved and green and the owner is gone.`;
 }
 
 export class CodingPrSweepRepository {
@@ -109,6 +122,8 @@ export async function sweepCodingPrs(
     const told =
       nudge.kind === 'remind' &&
       (await deps.tell(row.owner!, key, codingPrNudgeText(row, now)).catch(() => false));
+    if (nudge.kind === 'remind')
+      log.info(`PR sweep ${key} to ${owned(row.owner!)}: ${told ? 'told' : 'not told'}`);
     if (told) {
       repo.mark(row, nudge.nudges, now);
       continue;
@@ -116,6 +131,7 @@ export async function sweepCodingPrs(
     const woken = await deps
       .wake(key, codingPrEscalationText(row, now, nudge.kind === 'remind'))
       .catch(() => false);
+    log.info(`PR sweep ${key} escalated to Neo: ${woken ? 'woken' : 'not woken'}`);
     if (woken) repo.mark(row, CODING_PR_REMINDERS + 1, now);
   }
 }

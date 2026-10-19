@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   CodingPrSweepRepository,
+  codingPrNudgeText,
   planCodingPrNudge,
   sweepCodingPrs,
 } from '../../../../src/lib/neo/packs/coding/pr-sweep.ts';
@@ -62,7 +63,7 @@ describe('PR sweep ladder', () => {
     ]);
     expect(told[0]).toMatchObject({ ref: owner });
     expect(told[0].text).toBe(
-      'lsm/hyperneo#7 "Fix login" has been approved green for 20 min on head abc1234. Merge it now with a manual squash on this head.'
+      'lsm/hyperneo#7 "Fix login" has been approved and green for 20 min on head abc1234. Merge it now with a manual squash on this head.'
     );
     expect(woken).toHaveLength(1);
     expect(woken[0].text).toContain('was reminded 2 times without progress');
@@ -147,6 +148,29 @@ describe('sweepCodingPrs', () => {
     ]);
     expect(woken.map((item) => item.text)).toEqual([expect.stringContaining('lsm/hyperneo#1')]);
     db.close();
+  });
+});
+
+describe('codingPrNudgeText', () => {
+  test('a long CI wait reads as CI still pending, not as something to fix', () => {
+    expect(
+      codingPrNudgeText(
+        {
+          repo: 'lsm/open-agent-protocol',
+          number: 1266,
+          title: 'hub',
+          head: 'abcdef1234',
+          state: 'approved_pending',
+          stateSince: 0,
+          readAt: 0,
+          nudges: 0,
+          owner,
+        },
+        65 * MIN
+      )
+    ).toBe(
+      'lsm/open-agent-protocol#1266 "hub" has been approved with CI still pending for 65 min on head abcdef1. This is usually CI capacity, not something to fix; merge once CI is green, and look only if a check is stuck.'
+    );
   });
 });
 
