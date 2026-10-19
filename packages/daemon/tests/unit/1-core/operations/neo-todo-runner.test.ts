@@ -148,11 +148,15 @@ describe('idle open asks', () => {
 });
 
 describe('neo todo runner', () => {
-  test('follows a reported todo session for a later PR report without writing legacy work', async () => {
-    const { db, store, sessions, runner, add, setStatus, calls } = setup();
+  test('follows a stopped todo session for a later PR report without writing legacy work', async () => {
+    const { db, store, sessions, runner, add, setStatus, calls, told } = setup();
     const todo = add({ pack: 'coding', kind: 'pr_merged', params: {} });
     await runner.start(todo.id);
-    store.updateTodo(store.getTodo(todo.id)!, { report: 'Initial report' }, 2000);
+    store.updateTodo(
+      store.getTodo(todo.id)!,
+      { state: 'blocked', blockedBy: 'worker', report: 'Initial report' },
+      2000
+    );
     sessions.recordFollowAnchor(todo.id, 2000);
     setStatus({
       ok: true,
@@ -169,10 +173,15 @@ describe('neo todo runner', () => {
     const report = store.getTodo(todo.id)?.report;
     expect(report).toContain('https://github.com/a/b/pull/9');
     expect(report).toContain('Initial report');
+    expect(store.getTodo(todo.id)?.state).toBe('doing');
     expect(sessions.readFollowAnchor(todo.id)).toBe(4000);
     runner.recheck([todo.id]);
     await runner.refresh(() => {});
-    expect(store.getTodo(todo.id)?.report).toBe(report);
+    expect(store.getTodo(todo.id)).toMatchObject({
+      state: 'blocked',
+      report: expect.stringContaining('https://github.com/a/b/pull/9'),
+    });
+    expect(told).toEqual([expect.stringContaining('Todo "Rows" is blocked')]);
     expect(db.prepare('SELECT count(*) AS count FROM neo_work').get()).toEqual({ count: 0 });
     db.close();
   });
@@ -474,45 +483,46 @@ describe('planNeoTodoCheck', () => {
   };
   test('a passing check finishes an unfinished todo; a failing one fails it', () => {
     const doing = { state: 'doing', reason: null } as NeoTodo;
-    expect(planNeoTodoCheck(doing, { done: true, evidence: 'ok' }, 1)).toMatchObject({
+    expect(planNeoTodoCheck(doing, { done: true, evidence: 'ok' }, 1, true)).toMatchObject({
       state: 'done',
       evidence: 'ok',
       finishedAt: 1,
     });
-    expect(planNeoTodoCheck(doing, { done: false, evidence: null }, 1)).toBeNull();
+    expect(planNeoTodoCheck(doing, { done: false, evidence: null }, 1, true)).toBeNull();
     expect(
-      planNeoTodoCheck(doing, { done: false, evidence: null, failed: '#2 closed' }, 1)
+      planNeoTodoCheck(doing, { done: false, evidence: null, failed: '#2 closed' }, 1, true)
     ).toMatchObject({ state: 'failed', reason: '#2 closed', finishedAt: 1 });
     expect(
-      planNeoTodoCheck({ state: 'done' } as NeoTodo, { done: true, evidence: 'ok' }, 1)
+      planNeoTodoCheck({ state: 'done' } as NeoTodo, { done: true, evidence: 'ok' }, 1, true)
     ).toBeNull();
   });
 
   test('a pack block blocks once and its clearing unblocks; other blockers stay', () => {
     const doing = { state: 'doing', reason: null } as NeoTodo;
-    const patch = planNeoTodoCheck(doing, { done: false, evidence: null, blocked }, 1);
+    const patch = planNeoTodoCheck(doing, { done: false, evidence: null, blocked }, 1, true);
     expect(patch).toEqual({
       state: 'blocked',
       blockedBy: 'check',
       blockedReason: blocked.reason,
       nextAction: blocked.nextAction,
     });
-    const held = { ...doing, ...patch, startedAt: 1 } as NeoTodo;
-    expect(planNeoTodoCheck(held, { done: false, evidence: null, blocked }, 2)).toBeNull();
-    expect(
-      planNeoTodoCheck({ ...held, startedAt: null }, { done: false, evidence: null }, 2)
-    ).toEqual({ state: 'todo' });
-    expect(planNeoTodoCheck(held, { done: false, evidence: null }, 2)).toEqual({
+    const held = { ...doing, ...patch } as NeoTodo;
+    expect(planNeoTodoCheck(held, { done: false, evidence: null, blocked }, 2, true)).toBeNull();
+    expect(planNeoTodoCheck(held, { done: false, evidence: null }, 2, false)).toEqual({
+      state: 'todo',
+    });
+    expect(planNeoTodoCheck(held, { done: false, evidence: null }, 2, true)).toEqual({
       state: 'doing',
     });
     expect(
-      planNeoTodoCheck({ ...held, blockedBy: 'worker' }, { done: false, evidence: null }, 2)
+      planNeoTodoCheck({ ...held, blockedBy: 'worker' }, { done: false, evidence: null }, 2, true)
     ).toBeNull();
     expect(
       planNeoTodoCheck(
         { ...held, blockedBy: 'worker' },
         { done: false, evidence: null, blocked },
-        2
+        2,
+        true
       )
     ).toBeNull();
   });
@@ -612,7 +622,8 @@ describe('blocked todos', () => {
   test('a pack block is stored once, survives a restart and clears on progress', async () => {
     const { db, store, runner, told, add, setResult } = setup();
     const todo = add({ pack: 'coding', kind: 'pr_merged', params: {} });
-    store.updateTodo(todo, { state: 'doing', startedAt: 2 }, 2);
+    await runner.start(todo.id);
+    store.updateTodo(store.getTodo(todo.id)!, { startedAt: null }, 2);
     setResult({ done: false, evidence: null, blocked });
     await runner.checkNow([todo.id], warn);
     await runner.checkNow([todo.id], warn);
@@ -649,6 +660,27 @@ describe('blocked todos', () => {
     expect(told.at(-1)).toContain('Todo "Rows" is blocked: Failed twice: CI keeps failing');
     await runner.proceed(todo.id, 'Try another approach.');
     expect(store.getTodo(todo.id)).toMatchObject({ state: 'doing', blockedBy: null });
+  });
+
+  test('a session that stops again after a follow-up blocks the todo again', async () => {
+    const { store, runner, told, add, setStatus, calls } = setup();
+    const todo = add();
+    await runner.start(todo.id);
+    const opening = { at: 1_500, role: 'user', text: String(calls[0].input.message) };
+    setStatus({
+      ok: true,
+      value: {
+        status: 'done',
+        lastActivityAt: 2_000,
+        lastReply: 'Opened the PR',
+        exchange: [opening, { at: 2_000, role: 'agent', text: 'Opened the PR' }],
+      },
+    });
+    await runner.refresh(warn);
+    store.updateTodo(store.getTodo(todo.id)!, { state: 'doing', report: 'Pushed a fix' }, 3);
+    await runner.refresh(warn);
+    expect(store.getTodo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'worker' });
+    expect(told.filter((note) => note.includes('is blocked'))).toHaveLength(2);
   });
 
   test('settling the ask removes a blocked todo with the rest', () => {

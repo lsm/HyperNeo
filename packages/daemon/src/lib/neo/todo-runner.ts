@@ -178,7 +178,8 @@ export function planNeoTodoSettled(
 export function planNeoTodoCheck(
   todo: NeoTodo,
   result: NeoTodoCheckResult | null,
-  now: number
+  now: number,
+  started: boolean
 ): NeoTodoPatch | null {
   if (!result || todo.state === 'done' || todo.state === 'failed') return null;
   if (result.failed) return planNeoTodoFailure(todo, result.failed, now);
@@ -188,7 +189,7 @@ export function planNeoTodoCheck(
       ? null
       : planNeoTodoBlocked(todo, 'check', result.blocked.reason, result.blocked.nextAction);
   return todo.state === 'blocked' && todo.blockedBy === 'check'
-    ? { state: todo.startedAt === null ? 'todo' : 'doing' }
+    ? { state: started ? 'doing' : 'todo' }
     : null;
 }
 
@@ -353,8 +354,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     forgetActivity: () => {},
     transition: (card, settled) => {
       const todo = store.getTodo(card.id);
-      if (!todo || todo.state !== 'doing' || todo.report || todo.updatedAt !== card.updatedAt)
-        return null;
+      if (!todo || todo.state !== 'doing' || todo.updatedAt !== card.updatedAt) return null;
       const now = Date.now();
       const patch = planNeoTodoSettled(todo, settled, now);
       return patch ? neoTodoCard(store.updateTodo(todo, patch, now), ask) : null;
@@ -385,7 +385,13 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         ? await readNeoTodoCompletion(deps.packs(), todo)
         : await pack.check(todo);
       const live = store.listCheckable().find((item) => item.id === todo.id);
-      if (live?.check) await finish(live, ask, planNeoTodoCheck(live, result, now), now);
+      if (live?.check)
+        await finish(
+          live,
+          ask,
+          planNeoTodoCheck(live, result, now, sessions.readRef(live.id) !== null),
+          now
+        );
     }
     deps.changed();
   };
