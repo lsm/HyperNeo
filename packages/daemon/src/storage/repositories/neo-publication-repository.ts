@@ -11,7 +11,6 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { admitNeoPublication } from '../../lib/neo/publication.ts';
 import type { Database } from '../sqlite-compat.ts';
-import { NeoRoutingLogRepository } from './neo-routing-log-repository.ts';
 
 type Row = { sequence: number; payloadJson: string; createdAt: string };
 const columns = 'sequence, payload_json AS payloadJson, created_at AS createdAt';
@@ -142,7 +141,6 @@ export class NeoPublicationRepository {
   append(input: unknown): NeoPublicationAppendResult {
     const result = append(input, this.db);
     if (result === 'invalid_publication') return { accepted: false, reason: result };
-    if (result.accepted) this.recordReplyOutcome(result.publication);
     return result;
   }
 
@@ -221,21 +219,12 @@ export class NeoPublicationRepository {
           'UPDATE neo_publications SET payload_json = ? WHERE conversation_id = ? AND publication_id = ?'
         )
         .run(JSON.stringify(next.value), conversationId, publicationId);
-      const publication = this.get(conversationId, publicationId)!;
-      this.recordReplyOutcome(publication);
-      return { accepted: true, created: false, publication };
+      return {
+        accepted: true,
+        created: false,
+        publication: this.get(conversationId, publicationId)!,
+      };
     })();
-  }
-
-  private recordReplyOutcome(publication: NeoPublication): void {
-    const { askOrigin, shortText, askSummary, awaiting } = publication;
-    new NeoRoutingLogRepository(this.db).recordOutcome(
-      askOrigin.messageId,
-      shortText,
-      Date.now(),
-      { askSummary, awaiting },
-      !!publication.answerInput
-    );
   }
 
   toldForAsk(

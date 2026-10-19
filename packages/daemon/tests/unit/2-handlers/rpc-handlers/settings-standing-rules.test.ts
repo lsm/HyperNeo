@@ -2,15 +2,15 @@ import { describe, expect, test } from 'bun:test';
 import type { GlobalSettings } from '@hyperneo/shared';
 import { keepNeoOwnedSettings } from '../../../../src/lib/rpc-handlers/settings-handlers';
 
-const current = { neo: { routeTimeoutMs: 1, standingRules: ['saved rule'] } } as GlobalSettings;
+const current = { neo: { autoDispatch: false, standingRules: ['saved rule'] } } as GlobalSettings;
 
 describe('keepNeoOwnedSettings', () => {
   test('a settings save cannot replace or drop the saved standing rules', () => {
     expect(
-      keepNeoOwnedSettings({ neo: { routeTimeoutMs: 9, standingRules: ['stale'] } }, current)
-    ).toEqual({ neo: { routeTimeoutMs: 9, standingRules: ['saved rule'] } });
-    expect(keepNeoOwnedSettings({ neo: { routeTimeoutMs: 9 } }, current)).toEqual({
-      neo: { routeTimeoutMs: 9, standingRules: ['saved rule'] },
+      keepNeoOwnedSettings({ neo: { autoDispatch: true, standingRules: ['stale'] } }, current)
+    ).toEqual({ neo: { autoDispatch: true, standingRules: ['saved rule'] } });
+    expect(keepNeoOwnedSettings({ neo: { autoDispatch: true } }, current)).toEqual({
+      neo: { autoDispatch: true, standingRules: ['saved rule'] },
     });
   });
 
@@ -18,10 +18,10 @@ describe('keepNeoOwnedSettings', () => {
     expect(keepNeoOwnedSettings({ autoScroll: false }, current)).toEqual({ autoScroll: false });
     expect(
       keepNeoOwnedSettings(
-        { neo: { routeTimeoutMs: 9, standingRules: ['x'] } },
+        { neo: { autoDispatch: true, standingRules: ['x'] } },
         {} as GlobalSettings
       )
-    ).toEqual({ neo: { routeTimeoutMs: 9 } });
+    ).toEqual({ neo: { autoDispatch: true } });
   });
 
   test('a settings save cannot replace or drop the saved Neo model preference', () => {
@@ -33,19 +33,19 @@ describe('keepNeoOwnedSettings', () => {
     const saved = { neo: { preferences } } as GlobalSettings;
     expect(
       keepNeoOwnedSettings(
-        { neo: { routeTimeoutMs: 9, preferences: { ...preferences, model: 'stale' } } },
+        { neo: { autoDispatch: true, preferences: { ...preferences, model: 'stale' } } },
         saved
       )
-    ).toEqual({ neo: { routeTimeoutMs: 9, preferences } });
+    ).toEqual({ neo: { autoDispatch: true, preferences } });
   });
 
   test('a settings save cannot replace or drop the muted sessions', () => {
     const saved = { neo: { mutedSessions: ['codex-desktop::t1'] } } as GlobalSettings;
-    expect(keepNeoOwnedSettings({ neo: { routeTimeoutMs: 9 } }, saved)).toEqual({
-      neo: { routeTimeoutMs: 9, mutedSessions: ['codex-desktop::t1'] },
+    expect(keepNeoOwnedSettings({ neo: { autoDispatch: true } }, saved)).toEqual({
+      neo: { autoDispatch: true, mutedSessions: ['codex-desktop::t1'] },
     });
     expect(
-      keepNeoOwnedSettings({ neo: { routeTimeoutMs: 9, mutedSessions: ['x', 'y'] } }, saved)
-    ).toEqual({ neo: { routeTimeoutMs: 9, mutedSessions: ['codex-desktop::t1'] } });
+      keepNeoOwnedSettings({ neo: { autoDispatch: true, mutedSessions: ['x', 'y'] } }, saved)
+    ).toEqual({ neo: { autoDispatch: true, mutedSessions: ['codex-desktop::t1'] } });
   });
 });

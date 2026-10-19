@@ -16,7 +16,6 @@ import {
   NeoConversationAskRepository,
 } from '../../storage/repositories/neo-conversation-ask-repository.ts';
 import { neoImageSize } from './image-size.ts';
-import { NeoRoutingLogRepository } from '../../storage/repositories/neo-routing-log-repository.ts';
 import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import { toMailboxMessage } from '../mailbox/entry.ts';
 import { MessageSessionIdSchema, SendMessageInputSchema } from '../messaging/message-send.ts';
@@ -309,29 +308,6 @@ function neoAskText(content: IntakeInput['content'], separator = ' '): string {
         .join(separator);
 }
 
-function logNeoRoute(
-  receipt: IntakeResult,
-  message: ReturnType<typeof neoIntakeMessage>,
-  root: IntakeTarget,
-  db: Database
-): IntakeResult {
-  if (!receipt.ok) return receipt;
-  try {
-    new NeoRoutingLogRepository(db.getDatabase()).record({
-      messageId: message.uuid,
-      conversationId: root.conversationId,
-      askedAt: Date.now(),
-      ask: neoAskText(message.humanContent ?? message.message.content) || '(attachment)',
-      destination: 'main',
-      targetSessionId: root.binding.sessionId,
-      projectId: null,
-      signal: 'root',
-      confidence: 1,
-    });
-  } catch {}
-  return receipt;
-}
-
 function notifyNeoIntakeAcceptance(
   receipt: IntakeResult,
   notify: NeoIntakeNotifier,
@@ -476,7 +452,6 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
     ['receipt', 'input', 'root', 'db'],
     'receipt'
   )
-  .pipe(logNeoRoute, ['receipt', 'message', 'root', 'db'], 'receipt')
   .pipe(notifyNeoIntakeAcceptance, ['receipt', 'notify', 'root'], 'receipt')
   .endAsync('receipt') as (
   input: IntakeInput,

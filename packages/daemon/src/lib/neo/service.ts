@@ -69,7 +69,6 @@ import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-o
 import { NeoNotificationTriggerRepository } from '../../storage/repositories/neo-notification-trigger-repository.ts';
 import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
-import { NeoRoutingLogRepository } from '../../storage/repositories/neo-routing-log-repository.ts';
 import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
 import {
   NeoWorkCheckRepository,
@@ -1194,11 +1193,11 @@ export class NeoService {
   }
 
   waitingReminders(turn: { sessionId: string; messageId: string }) {
-    const route = new NeoRoutingLogRepository(this.db.getDatabase()).find(
-      nudgedMessageId(turn.messageId) ?? turn.messageId
-    );
-    return route
-      ? planNeoWaitingReminders(this.askRecords.waitingFor(turn.sessionId), route.askedAt)
+    const prompt = this.db
+      .getSDKMessageRepo()
+      .getHumanPrompt(turn.sessionId, nudgedMessageId(turn.messageId) ?? turn.messageId);
+    return prompt
+      ? planNeoWaitingReminders(this.askRecords.waitingFor(turn.sessionId), prompt.at)
       : [];
   }
 
@@ -1713,7 +1712,7 @@ export class NeoService {
         human:
           caller.human ||
           isNeoHumanInputSince(
-            new NeoRoutingLogRepository(this.db.getDatabase()).lastAskedAt(work.originSessionId),
+            this.db.getSDKMessageRepo().lastHumanPromptAt(work.originSessionId),
             this.workContinues.get(work.id)?.continuedAt ?? work.createdAt
           ),
         doneWhenMet: isNeoCardDoneWhenMet(work, ask),

@@ -3,10 +3,6 @@ import { runMigration368 } from './m368-neo-project-tree.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { createNeoPublicationTable } from './m288-neo-publications.ts';
 import { createNeoConsultationPublicationTable } from './m291-neo-consultation-publications.ts';
-import { createNeoRoutingLogTable } from './m299-neo-routing-log.ts';
-import { addNeoRoutingDigestedColumn } from './m300-neo-routing-digested.ts';
-import { addNeoRoutingTurnNoteColumns } from './m301-neo-routing-turn-notes.ts';
-import { runMigration379 } from './m379-neo-routing-cause.ts';
 import { runMigration380 } from './m380-neo-work-follows.ts';
 import { runMigration385 } from './m385-neo-work-kickoff.ts';
 import { runMigration389 } from './m389-neo-conversation.ts';
@@ -58,8 +54,4 @@ export function createNeoTables(db: Database): void {
   runMigration370(db);
   createNeoPublicationTable(db);
   createNeoConsultationPublicationTable(db);
-  createNeoRoutingLogTable(db);
-  addNeoRoutingDigestedColumn(db);
-  addNeoRoutingTurnNoteColumns(db);
-  runMigration379(db);
 }

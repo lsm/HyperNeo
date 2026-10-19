@@ -19,7 +19,6 @@ export const EXCLUDED_TABLE_NAMES: string[] = [
   'neo_consultation_waiters',
   'neo_context_write_grants',
   'neo_publications',
-  'neo_routing_log',
   'neo_conversation_asks',
   'neo_conversation_ask_images',
   'neo_consultation_publications',

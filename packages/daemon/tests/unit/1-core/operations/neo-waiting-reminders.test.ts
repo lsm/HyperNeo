@@ -25,7 +25,6 @@ import {
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
-import { NeoRoutingLogRepository } from '../../../../src/storage/repositories/neo-routing-log-repository.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
@@ -177,17 +176,9 @@ describe('Neo turns with an ask waiting on the human', () => {
       inputKind: 'human',
       message: { role: 'user', content: 'something else' },
     } as unknown as SDKUserMessage);
-    new NeoRoutingLogRepository(db.getDatabase()).record({
-      messageId,
-      conversationId,
-      askedAt,
-      ask: 'something else',
-      destination: 'main',
-      targetSessionId: root,
-      projectId: null,
-      signal: 'opened',
-      confidence: 1,
-    });
+    db.getDatabase()
+      .prepare('UPDATE sdk_messages SET timestamp = ? WHERE session_id = ? AND sdk_uuid = ?')
+      .run(new Date(askedAt).toISOString(), root, messageId);
   };
 
   beforeEach(async () => {

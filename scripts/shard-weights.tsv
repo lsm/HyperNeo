@@ -297,7 +297,6 @@
 326	packages/daemon/tests/unit/1-core/operations/neo-reorganize.test.ts
 6	packages/daemon/tests/unit/1-core/operations/neo-reply-language.test.ts
 1100	packages/daemon/tests/unit/1-core/operations/neo-response-input.test.ts
-970	packages/daemon/tests/unit/1-core/operations/neo-routing-log.test.ts
 1438	packages/daemon/tests/unit/1-core/operations/neo-saved-rules.test.ts
 1721	packages/daemon/tests/unit/1-core/operations/neo-session-ask-links.test.ts
 2668	packages/daemon/tests/unit/1-core/operations/neo-session-load.test.ts

@@ -97,24 +97,13 @@ export type VoiceMode = 'batch' | 'streaming' | 'auto';
 
 export type VoiceStreamProtocol = 'deepgram' | 'openai-realtime';
 
-export const DEFAULT_NEO_ROUTE_TIMEOUT_MS = 15_000;
-
 export interface NeoModelPreference {
   model: string;
   provider: string;
   thinkingLevel: ThinkingLevel;
 }
 
-export interface NeoRouteModel {
-  provider: string;
-  model: string;
-  thinkingLevel?: ThinkingLevel;
-}
-
 export interface NeoSettings {
-  routeModel?: NeoRouteModel;
-  routeFallbacks?: NeoRouteModel[];
-  routeTimeoutMs?: number;
   standingRules?: string[];
   preferences?: NeoModelPreference;
   packs?: string[];

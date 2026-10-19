@@ -61,7 +61,6 @@ import {
   runNeoNightlyReorganize,
   scheduleNeoNightlyReorganize,
 } from '../neo/reorganize-nightly.ts';
-import { NeoRoutingLogRepository } from '../../storage/repositories/neo-routing-log-repository.ts';
 import { loadNeoFilePacks } from '../neo/packs/file-packs.ts';
 import { adoptNeoFilePacks } from '../neo/packs/index.ts';
 import { getDataDir } from '../data-dir.ts';
@@ -1729,11 +1728,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     runNeoAdmissionWake(job, neoService)
   );
   const reorganizeTopics = createNeoProjectsReorganizer(neoReorganizeRuntime(neoService));
-  const routingLog = new NeoRoutingLogRepository(deps.db.getDatabase());
   deps.jobProcessor.register(NEO_TOPICS_REORGANIZE_NIGHTLY, (job) =>
     runNeoNightlyReorganize(job, deps.jobQueue, {
       now: () => Date.now(),
-      lastHumanAt: () => routingLog.recent(1)[0]?.askedAt ?? null,
+      lastHumanAt: () => {
+        const root = neoService.repo.defaultBinding()?.sessionId;
+        return root ? deps.db.getSDKMessageRepo().lastHumanPromptAt(root) : null;
+      },
       reorganize: () => reorganizeTopics({ apply: 'unattended' }),
       digest: async (run, since) => {
         const session = neoService.defaultSessionId();

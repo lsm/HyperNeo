@@ -13,7 +13,6 @@ import {
 import { NeoPublicationRepository } from '../../../../src/storage/repositories/neo-publication-repository.ts';
 import { neoDerivedId } from '../../../../src/lib/neo/derived-id.ts';
 import { createNeoPublicationTable } from '../../../../src/storage/schema/m288-neo-publications.ts';
-import { createNeoRoutingLogTable } from '../../../../src/storage/schema/m299-neo-routing-log.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 const conversation = '10000000-0000-4000-8000-000000000001';
@@ -48,10 +47,6 @@ const call = async (name: 'edit' | 'recent', change: unknown, who = caller()) =>
 beforeEach(() => {
   db = new Database(':memory:');
   createNeoPublicationTable(db);
-  createNeoRoutingLogTable(db);
-  db.exec('ALTER TABLE neo_routing_log ADD COLUMN digested_at INTEGER');
-  db.exec('ALTER TABLE neo_routing_log ADD COLUMN ask_summary TEXT');
-  db.exec('ALTER TABLE neo_routing_log ADD COLUMN awaiting TEXT');
   publications = new NeoPublicationRepository(db);
   publications.append(input);
   notified = 0;
