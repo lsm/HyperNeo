@@ -1,8 +1,7 @@
 import type { Database } from '../../storage/database.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import { resumedPromptUuid } from '../agent/restart-turn-recovery.ts';
-import { neoHumanTrigger, neoHumanTurnOrigin } from './notification-triggers.ts';
-import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
+import { neoHumanTurnOrigin } from './notification-triggers.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-origin-repository.ts';
 import { NeoAskForwardRepository } from '../../storage/repositories/neo-ask-forward-repository.ts';
@@ -53,10 +52,6 @@ export class NeoHolderTurn {
                   message.type === 'user' && 'inputKind' in message && message.inputKind === 'human'
               )
         );
-    if (origin !== null && origin === messageId && this.answered(origin)) {
-      this.closed = true;
-      return false;
-    }
     const human = origin !== null || (!item && this.ownsForward(messageId));
     this.turn = {
       messageId,
@@ -76,17 +71,6 @@ export class NeoHolderTurn {
   steers(): boolean {
     const repo = new NeoRepository(this.db.getDatabase());
     return repo.defaultBinding()?.sessionId === this.sessionId;
-  }
-
-  answered(messageId: string): boolean {
-    const conversationId = new NeoRepository(this.db.getDatabase()).conversationId();
-    return (
-      !!conversationId &&
-      !!new NeoPublicationRepository(this.db.getDatabase()).byTrigger(
-        conversationId,
-        neoHumanTrigger(messageId)
-      )
-    );
   }
 
   private ownsForward(messageId: string): boolean {
