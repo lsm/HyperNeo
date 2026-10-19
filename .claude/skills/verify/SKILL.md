@@ -94,6 +94,10 @@ adds its journey here.
    2-minute check window): the todo is `done` with evidence `#8 merged`,
    `evidence/gh.log` shows the `gh pr view`, and root's transcript holds the note
    `Todo "Fix the loader" is done: #8 merged`.
+   Settling done waits for the todos: right after seeding,
+   `rpc.ts neo.ask.settle '{"askId":"ask-verify","status":"done","outcome":"Shipped."}'`
+   replies `todos_unfinished: … "Fix the loader" (todo-verify, doing).` and the ask
+   stays `open`; the same call after the todo is `done` settles the ask `done`.
 4. **The web UI renders.** `/neo` shows the conversation with the human message
    marked Received; `/session/<root>` shows root's transcript, including the
    mocked replies and the todo note. The session view takes a few seconds to
