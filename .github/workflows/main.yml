@@ -3,8 +3,10 @@
 # A full automatic run schedules 9 unit legs (shared + 8 balanced daemon),
 # 11 online legs and 1 web leg, plus quality checks, path filtering and Deno
 # boot smoke. The balance report follows the tests. This can exceed the
-# repo's 20 shared concurrent runners; jobs may queue, especially when PRs
-# overlap. Smaller unit buckets shorten the longest leg, not the queue.
+# account's 20 shared concurrent runners; jobs may queue, especially when PRs
+# overlap, so a PR's new head cancels its old run and the path filter skips
+# legs a PR cannot affect. Smaller unit buckets shorten the longest leg, not
+# the queue.
 # Coverage instrumentation is REMOVED from CI entirely (owner directive
 # 2026-08-23):
 # no per-job --coverage, no lcov artifacts, no coverage gate, baseline, or
