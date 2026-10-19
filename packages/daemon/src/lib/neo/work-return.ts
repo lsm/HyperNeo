@@ -25,11 +25,7 @@ export const returnWorkThroughHolder = (superpipe({})('neo-work-holder-return') 
     ['service', 'work', 'rootId'],
     'result:admission'
   )
-  .pipe(
-    (service: NeoService, work: NeoWork) => service.open(work.projectId),
-    ['service', 'work'],
-    'holderId'
-  )
+  .pipe((service: NeoService) => service.open(), 'service', 'holderId')
   .pipe(
     (service: NeoService, work: NeoWork) => service.environmentMoveNote(work),
     ['service', 'work'],

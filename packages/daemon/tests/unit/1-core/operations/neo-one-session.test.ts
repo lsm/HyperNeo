@@ -13,7 +13,12 @@ import {
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
+import {
+  NEO_SINGLE_SESSION,
+  requireNeoOtherSession,
+} from '../../../../src/lib/neo/consultation-origin.ts';
 import { runMigration393 } from '../../../../src/storage/schema/m393-neo-root-asks.ts';
+import { runMigration394 } from '../../../../src/storage/schema/m394-neo-end-consultations.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
 const root = 'neo:root';
@@ -23,13 +28,15 @@ describe('Neo as one session', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   let service: NeoService;
   const told: { sessionId: string; messageId: string }[] = [];
+  const createSession = vi.fn();
 
   beforeEach(async () => {
     told.length = 0;
+    createSession.mockReset();
     db = await createTestDb();
     service = new NeoService(
       db,
-      { createSession: vi.fn(), getSessionAsync: vi.fn() } as unknown as SessionManager,
+      { createSession, getSessionAsync: vi.fn() } as unknown as SessionManager,
       { event: vi.fn() } as unknown as MessageHub,
       new InternalEventBus<DaemonInternalEventMap>()
     );
@@ -128,5 +135,65 @@ describe('Neo as one session', () => {
     expect(told.filter((note) => note.messageId.startsWith(`neo-todo:${id}:`))).toEqual([
       { sessionId: root, messageId: expect.stringContaining(id) },
     ]);
+  });
+
+  test('opening Neo always returns root and never creates a holder session', async () => {
+    expect(await Promise.all([service.open(), service.open()])).toEqual([root, root]);
+    expect(createSession).not.toHaveBeenCalled();
+    db.getDatabase().exec("DELETE FROM neo_session_bindings WHERE kind = 'neo'");
+    const fresh = await service.open();
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(service.repo.defaultBinding()).toMatchObject({ sessionId: fresh, kind: 'neo' });
+    expect(service.repo.listProjectBindings().map((binding) => binding.sessionId)).toEqual([
+      holder,
+    ]);
+  });
+
+  test('consult and dispatch refuse with guidance when the target is this session', () => {
+    const origin = { originSessionId: root, originMessageId: 'm1' };
+    expect(requireNeoOtherSession(origin, [root])).toEqual({
+      reason: { ok: false, reason: NEO_SINGLE_SESSION },
+    });
+    expect(NEO_SINGLE_SESSION).toContain('work.send');
+    expect(requireNeoOtherSession(origin, [holder])).toEqual({ value: origin });
+  });
+
+  test('m394 ends open consultations: root hears once, a holder hears nothing, queued waiters cancel', async () => {
+    service.repo.saveProject({ id: 'app', title: 'App', summary: '', context: '' }, 0);
+    const consult = (id: string, projectId: string, originSessionId: string) =>
+      service.consultations.reserve({
+        id,
+        requestKey: id,
+        projectId,
+        originSessionId,
+        sessionId: holder,
+        question: 'What changed?',
+      });
+    consult('from-root', 'web', root);
+    consult('from-holder', 'app', holder);
+    service.consultationWaiters.enqueue({
+      id: 'waiting',
+      requestKey: 'waiting',
+      projectId: 'web',
+      originSessionId: root,
+      originMessageId: 'm1',
+      sessionId: holder,
+      question: 'Next?',
+    });
+    runMigration394(db.getDatabase());
+    expect(service.consultations.get('from-root')).toMatchObject({
+      status: 'failed',
+      answer: expect.stringContaining('work.send'),
+    });
+    expect(service.consultationWaiters.get('waiting')?.status).toBe('cancelled');
+    const delivered: string[] = [];
+    Object.assign(service, {
+      deliver: async (sessionId: string, messageId: string) => {
+        delivered.push(`${sessionId} ${messageId}`);
+      },
+    });
+    await service.recoverConsultations();
+    await service.recoverConsultations();
+    expect(delivered).toEqual([`${root} neo-consult:from-root:reply`]);
   });
 });
