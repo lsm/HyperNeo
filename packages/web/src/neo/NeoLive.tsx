@@ -1,4 +1,3 @@
-import { neoProjectPath } from '@hyperneo/shared/types/neo-project-tree';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { getBannerLevel } from '../components/ConnectionOverlay.tsx';
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
@@ -21,7 +20,6 @@ import { type NeoAskGroup, neoAskEntryGroup } from './neo-asks.ts';
 import { restoreNeoImages, useNeoAttachments } from './neo-attachments.ts';
 import { createNeoDraftReloadBuffer } from './neo-draft-reload-buffer.ts';
 import { neoAwaitingReply, neoBusyWords } from './processing-activity.ts';
-import { resolveNeoProjectId } from './project-redirects.ts';
 import { useNeo } from './useNeo.ts';
 import { useNeoDraftReloadRecovery } from './useNeoDraftReloadRecovery.ts';
 import { publicationConversationId } from './useNeoPublications.ts';
@@ -65,16 +63,6 @@ export function NeoLive() {
   const projects = neo.snapshot?.projects ?? [];
   const view = neo.snapshot;
   const relevant = view?.work ?? [];
-  const projectTitles = new Map(
-    (view?.publicAuthorBindings ?? []).flatMap((binding) => {
-      const title = binding.projectId
-        ? neoProjectPath(projects, resolveNeoProjectId(view?.projectRedirects, binding.projectId))
-            .map((project) => project.title)
-            .join(' › ')
-        : '';
-      return title ? [[binding.sessionId, title] as const] : [];
-    })
-  );
   const publicConversation =
     neo.viewPublicConversation?.conversationId || publicationConversationId(neo.sessionId)
       ? neo.viewPublicConversation
@@ -437,7 +425,6 @@ export function NeoLive() {
               store={neo.store}
               sessionId={neo.sessionId}
               works={relevant.filter((work) => work.sessionId)}
-              projects={projectTitles}
               replyLabels={replyLabels}
               publicConversation={publicConversation}
               onOpenPublicWork={openWork}

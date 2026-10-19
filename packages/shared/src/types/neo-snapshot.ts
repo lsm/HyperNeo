@@ -354,12 +354,9 @@ export interface NeoSnapshot {
   scopedTo?: string;
   sessionId: string | null;
   conversationId?: string | null;
-  defaultSessionId?: string | null;
-  neoSessions?: { sessionId: string; projectId: string | null }[];
   projects: NeoProject[];
   projectRedirects?: { sourceId: string; targetId: string }[];
   projectFacts?: { reference: string; projectId?: string | null }[];
-  publicAuthorBindings?: { sessionId: string; projectId: string; kind: 'project' }[];
   work: NeoSnapshotWork[];
   askOrigins?: NeoReceiptAskOrigin[];
   workResources?: NeoWorkResourceReceipt[];

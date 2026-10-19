@@ -559,23 +559,12 @@ describe('Neo MVP', () => {
     expect(order).toEqual(['open', 'read']);
   });
 
-  test('open names the conversation, root as the default session and every Neo session', async () => {
+  test('open names the conversation and returns root for any project', async () => {
     service.repo.saveProject(project, 0);
-    const holder = 'neo:holder';
-    service.repo.reserveBinding({ sessionId: holder, kind: 'project', projectId: project.id });
     const root = await service.openDefault();
-    const opened = (await invoke('neo.open', { projectId: project.id })) as {
-      value: { sessionId: string; neoSessions: unknown[] };
-    };
-    expect(opened).toMatchObject({
-      value: { sessionId: root, conversationId: root.slice(4), defaultSessionId: root },
+    expect(await invoke('neo.open', { projectId: project.id })).toMatchObject({
+      value: { sessionId: root, conversationId: root.slice(4) },
     });
-    expect(opened.value.neoSessions).toEqual(
-      expect.arrayContaining([
-        { sessionId: root, projectId: null },
-        { sessionId: holder, projectId: project.id },
-      ])
-    );
     expect(service.repo.getBindingForProject('inbox')).toBeNull();
   });
 
