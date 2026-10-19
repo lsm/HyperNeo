@@ -149,7 +149,9 @@ export function createNeoAskRecordOperations(
               packs(),
               ask
             );
-          return recorded.find((item) => item.title === todo.title && filed(item) === repo);
+          return recorded.find(
+            (item) => item.title === todo.title && (item.repo === repo || filed(item) === repo)
+          );
         };
         const homeless =
           ask.status !== 'open' &&

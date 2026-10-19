@@ -333,6 +333,20 @@ describe('repo child cards', () => {
     db.close();
   });
 
+  test('a retry that names the repo a todo moved to does not re-file it', async () => {
+    const { db, store, open } = setup();
+    const named = (repository: string) => ({ ...draft, title: 'Go', named: { repository } });
+    const first = (await open({ title: 'T', request: 'T', todos: [named('lsm/HyperNeo')] })) as {
+      todos: NeoTodo[];
+    };
+    neoMoveTodo(store, first.todos[0], 'github.com/lsm/ops');
+    const again = (await open({ title: 'T', request: 'T', todos: [named('lsm/ops')] })) as {
+      todos: NeoTodo[];
+    };
+    expect(again.todos.map((todo) => todo.repo)).toEqual(['github.com/lsm/ops']);
+    db.close();
+  });
+
   test('a retry that adds other repos keeps the card’s own repo on the card', async () => {
     const { db, store, open } = setup();
     const first = (await open({ title: 'T', request: 'T', todos: [pr('HyperNeo', 1)] })) as {
