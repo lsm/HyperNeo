@@ -165,34 +165,17 @@ describe('claude-desktop start', () => {
         '--',
         'Raise the body font to 16px.',
       ],
-      [
-        'script',
-        '-q',
-        '/dev/null',
-        'claude',
-        '--desktop',
-        '--resume',
-        'u1',
-        '--permission-mode',
-        'bypassPermissions',
-        '--allow-dangerously-skip-permissions',
-      ],
+      ['script', '-q', '/dev/null', 'claude', '--desktop', '--resume', 'u1'],
     ]);
     expect(effects).not.toContain('liveSessions');
   });
 
-  test('the worker permission mode setting reaches both the first turn and Desktop', async () => {
+  test('the worker permission mode setting runs the first turn; Desktop gets no flag', async () => {
     expect(await adapter({ permissionMode: 'acceptEdits' }).start?.(request, user)).toMatchObject({
       ok: true,
     });
     expect(spawned[0].slice(6, 8)).toEqual(['--permission-mode', 'acceptEdits']);
-    expect(spawned[1].slice(4)).toEqual([
-      '--desktop',
-      '--resume',
-      'u1',
-      '--permission-mode',
-      'acceptEdits',
-    ]);
+    expect(spawned[1].slice(4)).toEqual(['--desktop', '--resume', 'u1']);
   });
 
   test('status finds the started session before Desktop registers it', async () => {

@@ -1102,26 +1102,15 @@ export async function runToExit(
 export function launchInClaudeDesktop(
   cliSessionId: string,
   cwd: string,
-  deps: Pick<ClaudeDesktopAdapterDeps, 'spawn'>,
-  permissionMode?: string
+  deps: Pick<ClaudeDesktopAdapterDeps, 'spawn'>
 ): void {
-  const mode = permissionMode
-    ? [
-        '--permission-mode',
-        permissionMode,
-        ...(permissionMode === 'bypassPermissions' ? ['--allow-dangerously-skip-permissions'] : []),
-      ]
-    : [];
   deps
-    .spawn(
-      ['script', '-q', '/dev/null', 'claude', '--desktop', '--resume', cliSessionId, ...mode],
-      {
-        cwd,
-        stdout: 'ignore',
-        stderr: 'ignore',
-        detached: true,
-      }
-    )
+    .spawn(['script', '-q', '/dev/null', 'claude', '--desktop', '--resume', cliSessionId], {
+      cwd,
+      stdout: 'ignore',
+      stderr: 'ignore',
+      detached: true,
+    })
     .exited.catch(() => undefined);
 }
 
@@ -1232,7 +1221,7 @@ export async function startClaudeSession(
     BOOTSTRAP_TIMEOUT_MS / DELIVERY_POLL_MS,
     () => {
       try {
-        launchInClaudeDesktop(cliSessionId, cwd, deps, permissionMode);
+        launchInClaudeDesktop(cliSessionId, cwd, deps);
       } catch {}
     }
   );
