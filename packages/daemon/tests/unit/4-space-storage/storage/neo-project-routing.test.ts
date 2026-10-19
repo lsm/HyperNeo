@@ -16,15 +16,6 @@ import {
   neoFactOwners,
   neoRepoAlias,
 } from '../../../../src/lib/neo/project-route-facts.ts';
-import {
-  chooseNeoRoute,
-  createNeoRouter,
-  neoDefaultSessionId,
-  NEO_INBOX_ID,
-  type NeoRouterDeps,
-  openNeoDefaultSession,
-  reopenNeoHolder,
-} from '../../../../src/lib/neo/router.ts';
 
 let db: Database;
 let repo: NeoRepository;
@@ -149,116 +140,12 @@ describe('readNeoProjectFacts', () => {
   });
 });
 
-describe('the default Neo session', () => {
-  const opened: string[] = [];
-  const open = async (projectId: string) => {
-    opened.push(projectId);
-    repo.reserveBinding({ sessionId: `neo:inbox-${opened.length}`, kind: 'project', projectId });
-    return repo.getBindingForProject(projectId)!.sessionId;
-  };
-  const openDefault = async () =>
-    (await openNeoDefaultSession(repo, (id) => reopenNeoHolder(repo, db, open, id))).sessionId;
-
-  test('the default session is the Inbox holder, opened once and then found', async () => {
-    opened.length = 0;
-    expect(neoDefaultSessionId(repo)).toBeUndefined();
-    expect(await openDefault()).toBe('neo:inbox-1');
-    expect(await openDefault()).toBe('neo:inbox-1');
-    expect(opened).toEqual([NEO_INBOX_ID, NEO_INBOX_ID]);
-    expect(repo.getProject(NEO_INBOX_ID)?.title).toBe('Inbox');
-    expect(neoDefaultSessionId(repo)).toBe('neo:inbox-1');
-  });
-
-  test('an archived default session is replaced, not reused', async () => {
-    opened.length = 0;
-    await openDefault();
-    db.createSession(createTestSession('neo:inbox-1'));
-    db.updateSession('neo:inbox-1', { status: 'archived' });
-    expect(await openDefault()).toBe('neo:inbox-2');
-    expect(neoDefaultSessionId(repo)).toBe('neo:inbox-2');
-  });
-});
-
 describe('neoRepoAlias', () => {
   test('normalizes GitHub remote links without making them code identities', () => {
     expect(neoRepoAlias('git@github.com:LSM/HyperNeo.git')).toBe('repo:lsm/hyperneo\u0000');
     expect(neoRepoAlias('https://github.com/lsm/HyperNeo.git')).toBe('repo:lsm/hyperneo\u0000');
     expect(neoRepoAlias('/local/repo')).toBeNull();
   });
-});
-
-describe('chooseNeoRoute', () => {
-  const deps = (): NeoRouterDeps => ({
-    holders: () => [
-      { projectId: 'alpha', sessionId: 'holder-alpha', title: 'alpha', summary: '' },
-      { projectId: 'beta', sessionId: 'holder-beta', title: 'beta', summary: '' },
-    ],
-    facts: (text) => readNeoProjectFacts(db.getDatabase(), text),
-    recentTurns: () => [],
-    projectTurns: () => [],
-    recentAsks: () => [],
-    embed: async () => {
-      throw new Error('Facts must short-circuit embeddings');
-    },
-    classify: async () => {
-      throw new Error('Facts must short-circuit classification');
-    },
-  });
-  test('a single factual owner wins over competing text', async () => {
-    work('card-one', 'alpha');
-    expect((await chooseNeoRoute('beta beta but card-one', deps())).choice).toMatchObject({
-      projectId: 'alpha',
-      signal: 'facts',
-      confidence: 1,
-    });
-  });
-  test('several owners go to root without running a classifier', async () => {
-    work('card-one', 'alpha');
-    work('card-two', 'beta');
-    expect(await chooseNeoRoute('card-one and card-two', deps())).toEqual({
-      choice: null,
-      fallback: 'facts:cross_project',
-    });
-  });
-  test('an unknown reference is no evidence: known facts decide, otherwise the classifier does', async () => {
-    const asked: string[] = [];
-    const classified = (): NeoRouterDeps => ({
-      ...deps(),
-      embed: async () => null,
-      classify: async (text) => {
-        asked.push(text);
-        return null;
-      },
-    });
-    expect(await chooseNeoRoute('unknown/repo#2 and #99999', classified())).toMatchObject({
-      choice: null,
-      fallback: 'classifier-unanswered',
-    });
-    expect(asked).toEqual(['unknown/repo#2 and #99999', 'unknown/repo#2 and #99999']);
-    work('card-one', 'alpha');
-    expect((await chooseNeoRoute('card-one and #99999', deps())).choice).toMatchObject({
-      projectId: 'alpha',
-      signal: 'facts',
-    });
-  });
-});
-
-describe('createNeoRouter explicit identity', () => {
-  test.each(['alpha', 'lsm/HyperNeo', 'https://github.com/lsm/HyperNeo'])(
-    'uses known project and repository names in the real router: %s',
-    async (text) => {
-      db.createSession(createTestSession('holder-alpha'));
-      repo.reserveBinding({ sessionId: 'holder-alpha', projectId: 'alpha', kind: 'project' });
-      db.getDatabase()
-        .prepare('INSERT INTO neo_project_workspaces VALUES (?, ?)')
-        .run('repository:github.com/lsm/HyperNeo', 'alpha');
-      expect((await createNeoRouter(db, repo)(text)).choice).toMatchObject({
-        projectId: 'alpha',
-        sessionId: 'holder-alpha',
-        signal: 'facts',
-      });
-    }
-  );
 });
 
 describe('NeoCrossProjectRepository', () => {

@@ -7,7 +7,6 @@ import {
   neoReplyFact,
   neoReplySnapshot,
   readNeoReply,
-  repliedNeoRoute,
 } from '../../../../src/lib/neo/intake.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
@@ -305,22 +304,6 @@ describe('neoQuoteFact', () => {
       'The human replied to their earlier message "Ship it":'
     );
     expect(neoQuoteFact({ kind: 'message', id: 'm' })).toBeNull();
-  });
-});
-
-describe('repliedNeoRoute', () => {
-  test('an ask owned by the main Neo session stays there', () => {
-    const repo = { getBindingBySession: () => ({ sessionId: root, kind: 'neo', projectId: null }) };
-    const reply = {
-      replyTo: { kind: 'question' as const, id: 'q' },
-      ask: { sessionId: root } as never,
-      question: null,
-      todo: null,
-    };
-    expect(repliedNeoRoute(neoReplyAuthor(reply, null, null, []), repo as never)).toEqual({
-      reason: { choice: null, fallback: 'reply' },
-    });
-    expect(repliedNeoRoute(null, repo as never)).toEqual({ value: null });
   });
 });
 

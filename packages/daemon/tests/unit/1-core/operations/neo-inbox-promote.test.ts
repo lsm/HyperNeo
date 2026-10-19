@@ -8,7 +8,7 @@ import {
   requireNeoInboxAsks,
   requireNeoInboxHolder,
 } from '../../../../src/lib/neo/inbox-promote-operation.ts';
-import { NEO_INBOX_ID } from '../../../../src/lib/neo/router.ts';
+import { NEO_INBOX_ID } from '../../../../src/lib/neo/inbox.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,

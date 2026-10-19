@@ -8,7 +8,7 @@ import { defineOperation, type OperationCaller } from '../operations/registry.ts
 import type { NeoAskOrigin } from './ask-origin.ts';
 import { isNeoCoordinatorBinding } from './binding-roles.ts';
 import { NEO_SINGLE_SESSION } from './consultation-origin.ts';
-import { NEO_INBOX_ID } from './router.ts';
+import { NEO_INBOX_ID } from './inbox.ts';
 import type { MailboxMessageContent } from '../mailbox/entry.ts';
 
 const Input = z.object({
