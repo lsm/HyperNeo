@@ -22,14 +22,20 @@ export function encodeWav({ sampleRate, samples }: WavEncodingOptions): Uint8Arr
   writeAscii(view, 36, 'data');
   view.setUint32(40, dataSize, true);
 
-  let offset = 44;
+  const bytes = new Uint8Array(buffer);
+  bytes.set(encodePcm16(samples), 44);
+  return bytes;
+}
+
+export function encodePcm16(samples: Float32Array): Uint8Array {
+  const view = new DataView(new ArrayBuffer(samples.length * 2));
+  let offset = 0;
   for (const sample of samples) {
     const clamped = Math.max(-1, Math.min(1, sample));
     view.setInt16(offset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
     offset += 2;
   }
-
-  return new Uint8Array(buffer);
+  return new Uint8Array(view.buffer);
 }
 
 export function downsampleMono(

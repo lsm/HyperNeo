@@ -6,6 +6,7 @@ export interface VoiceDraftPreviewProps {
   start: number;
   end: number;
   transcribing: boolean;
+  interim?: string;
   newLine?: boolean;
   hint?: string;
   heightPx?: number;
@@ -17,6 +18,7 @@ export function VoiceDraftPreview({
   start,
   end,
   transcribing,
+  interim = '',
   newLine = false,
   hint,
   heightPx,
@@ -34,7 +36,7 @@ export function VoiceDraftPreview({
     const overflow = marker.offsetTop + marker.offsetHeight - box.clientHeight;
     const line = Number.parseFloat(getComputedStyle(box).lineHeight) || marker.offsetHeight || 1;
     box.scrollTop = overflow > 0 ? Math.ceil(overflow / line) * line : 0;
-  }, [text, from, to, transcribing, heightPx]);
+  }, [text, from, to, transcribing, interim, heightPx]);
 
   return (
     <div
@@ -56,8 +58,13 @@ export function VoiceDraftPreview({
           {text.slice(from, to)}
         </mark>
       )}
-      {newLine && transcribing && from > 0 ? '\n' : null}
-      {!text && hint && !transcribing && <span class="text-fg-faint">{hint}</span>}
+      {newLine && (transcribing || interim) && from > 0 ? '\n' : null}
+      {interim && (
+        <span data-testid="voice-interim-text" class="text-fg-faint">
+          {interim}
+        </span>
+      )}
+      {!text && !interim && hint && !transcribing && <span class="text-fg-faint">{hint}</span>}
       {transcribing ? (
         <span
           ref={markerRef}
@@ -65,7 +72,7 @@ export function VoiceDraftPreview({
           data-testid="voice-transcribing-placeholder"
           class={cn(
             'inline-block h-[0.9em] translate-y-[0.1em] rounded-md bg-fg-muted/40 motion-safe:animate-pulse',
-            newLine ? 'w-[45%] max-w-64' : 'mx-1 w-[4em]'
+            newLine && !interim ? 'w-[45%] max-w-64' : 'mx-1 w-[4em]'
           )}
         />
       ) : (

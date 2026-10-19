@@ -1,7 +1,10 @@
 import { generateUUID } from '@hyperneo/shared';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { useVoiceRecorder, isVoiceRecordingSupported } from '../hooks/useVoiceRecorder.ts';
-import { runVoiceSubmit } from '../lib/voice/voice-submit-pipeline.ts';
+import { requestVoiceTranscription, runVoiceSubmit } from '../lib/voice/voice-submit-pipeline.ts';
+import { openVoiceStream, type VoiceLiveStream } from '../lib/voice/voice-stream.ts';
+import { voiceRecorderStore } from '../lib/voice/voice-recorder-store.ts';
+import { connectionManager } from '../lib/connection-manager.ts';
 import { deleteVoiceRecord, type VoiceRecordEntry } from '../lib/voice/voice-audio-store.ts';
 import {
   beginInteractiveVoiceSubmit,
@@ -27,6 +30,7 @@ export function NeoVoice({
   connected,
   draftText,
   onTranscript,
+  onInterim,
   onSendVoice,
   onSendHandle,
   onError,
@@ -38,6 +42,7 @@ export function NeoVoice({
   connected: boolean;
   draftText: string;
   onTranscript: (text: string) => void;
+  onInterim?: (text: string) => void;
   onSendVoice: (text: string, recordId: string) => Promise<VoiceSendOutcome>;
   onSendHandle: (finish: ((intent: 'draft' | 'send') => void) | null) => void;
   onError: (message: string) => void;
@@ -51,6 +56,18 @@ export function NeoVoice({
   const recorder = useVoiceRecorder(sessionId, { autoAdopt: false });
   const latest = useRef(recorder);
   latest.current = recorder;
+  const liveStream = useRef<VoiceLiveStream | null>(null);
+  const interim = useRef(onInterim);
+  interim.current = onInterim;
+  function takeLiveStream(): VoiceLiveStream | null {
+    const live = liveStream.current;
+    liveStream.current = null;
+    return live;
+  }
+  function dropLiveStream() {
+    takeLiveStream()?.close();
+    interim.current?.('');
+  }
   const active =
     recorder.isRecording || recorder.isStarting || recorder.durationLimitHit || !!transcribing;
   const phase: VoicePhase = recorder.isRecording
@@ -74,6 +91,7 @@ export function NeoVoice({
     mounted.current = true;
     return () => {
       mounted.current = false;
+      dropLiveStream();
       void latest.current.cancel();
     };
   }, []);
@@ -81,6 +99,12 @@ export function NeoVoice({
   async function start() {
     try {
       await recorder.start();
+      const hub = connectionManager.getHubIfConnected();
+      if (!hub || !latest.current.isRecording) return;
+      dropLiveStream();
+      const live = openVoiceStream(hub, (text) => interim.current?.(text));
+      liveStream.current = live;
+      voiceRecorderStore.setPcmTap(live.push);
     } catch (error) {
       onError(error instanceof Error ? error.message : 'Could not open the microphone.');
     }
@@ -104,6 +128,7 @@ export function NeoVoice({
     setTranscribeIntent(intent);
     markVoiceAudioBusy(id);
     beginInteractiveVoiceSubmit();
+    const live = entry ? null : takeLiveStream();
     try {
       if (intent === 'send' && entry?.sendText) {
         await deliverSendIntent(entry.id, entry.sendText);
@@ -113,6 +138,14 @@ export function NeoVoice({
         { sessionId, mode: 'stay', retrySilent: !!entry, intent, sendDraft: draftText, door },
         {
           stopRecording: entry ? async () => recordingFromEntry(entry) : recorder.stop,
+          ...(live
+            ? {
+                transcribe: async (recording) => {
+                  const text = await live.finish();
+                  return text === null ? requestVoiceTranscription(recording) : { text };
+                },
+              }
+            : {}),
           generateId: () => id,
           isMounted: () => mounted.current,
           currentSessionId: () => sessionId,
@@ -136,6 +169,8 @@ export function NeoVoice({
     } catch (error) {
       onError(error instanceof Error ? error.message : 'Could not transcribe the recording.');
     } finally {
+      live?.close();
+      if (live) interim.current?.('');
       running.current = false;
       endInteractiveVoiceSubmit();
       unmarkVoiceAudioBusy(id);
@@ -182,7 +217,9 @@ export function NeoVoice({
               isTranscribing={!!transcribing}
               startedAt={recorder.recordingStartedAt}
               onCancel={() => {
-                if (!running.current) void recorder.cancel();
+                if (running.current) return;
+                dropLiveStream();
+                void recorder.cancel();
               }}
             />
           </div>
