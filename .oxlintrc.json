@@ -24,6 +24,7 @@
     "**/*.test.tsx",
     "packages/cli/**",
     "**/scripts/**",
+    ".claude/skills/**",
     "**/build.ts",
     "packages/daemon/main.ts",
     "packages/daemon/src/app.ts",

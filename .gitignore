@@ -62,8 +62,11 @@ packages/desktop/src-tauri/target/
 packages/desktop/src-tauri/binaries/
 packages/desktop/src-tauri/gen/
 
-# Claude Code — ignore everything under .claude/
-.claude/
+# Claude Code — ignore everything under .claude/ except the verify skill
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/verify/
 # Local tool artifacts (codebase-memory index, Playwright CLI cache)
 .codebase-memory/
 .playwright-cli/
