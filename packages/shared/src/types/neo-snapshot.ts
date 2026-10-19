@@ -341,11 +341,6 @@ export interface NeoSessionNoticeGroup {
   notices: NeoSessionNotice[];
 }
 
-export interface NeoWaitingOnHuman {
-  note: string;
-  asks: { id: string; title: string; status: NeoAskStatus; question: string }[];
-}
-
 export interface NeoSnapshotConsultation extends NeoConsultation {
   summarized?: true;
 }
@@ -388,7 +383,6 @@ export interface NeoSnapshot {
   askViews: NeoAskView[];
   todoAsks?: NeoAskEntry[];
   packRows?: NeoPackRows[];
-  waitingOnHuman?: NeoWaitingOnHuman;
   preferences?: (NeoModelPreference & { saved: boolean }) | null;
   trimmed?: string;
 }

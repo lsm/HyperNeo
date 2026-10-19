@@ -260,13 +260,6 @@ function withBareText(snapshot: NeoSnapshot): NeoSnapshot {
     })),
     consultationWaiters: snapshot.consultationWaiters?.map((item) => ({ ...item, question: '' })),
     askViews: snapshot.askViews.map((view) => ({ ...view, summary: null, sessions: [] })),
-    waitingOnHuman: snapshot.waitingOnHuman && {
-      ...snapshot.waitingOnHuman,
-      asks: snapshot.waitingOnHuman.asks.map((ask) => ({
-        ...ask,
-        question: ask.question.slice(0, 80),
-      })),
-    },
   };
 }
 

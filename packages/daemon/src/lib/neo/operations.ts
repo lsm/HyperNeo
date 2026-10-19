@@ -44,7 +44,6 @@ import {
   type NeoAsk,
   type NeoReceiptAskOrigin,
   type NeoSnapshot,
-  type NeoWaitingOnHuman,
   type NeoWorkResourceReceipt,
 } from '@hyperneo/shared/types/neo-snapshot';
 import {
@@ -105,7 +104,6 @@ import { NeoAskEntrySchema, projectNeoAskEntries } from './ask-entries.ts';
 import { NeoAskSchema } from './ask-inputs.ts';
 import { projectNeoSnapshotAsks } from './ask-plans.ts';
 import { isNeoWorkPrWaiting } from './packs/coding/work-prs.ts';
-import { neoWaitingOnHuman } from './waiting-reminders.ts';
 import { createNeoPreferenceOperation } from './model-preference.ts';
 import { planNeoRuleEdit, planNeoSavedRules, requireNeoRuleCitation } from './saved-rules.ts';
 import { projectNeoCardViews } from './card-views.ts';
@@ -263,19 +261,6 @@ const SnapshotOk = z.object({
     .max(100)
     .optional(),
   askViews: z.array(NeoAskViewSchema),
-  waitingOnHuman: z
-    .object({
-      note: z.string(),
-      asks: z.array(
-        z.object({
-          id: z.string(),
-          title: z.string(),
-          status: NeoAskSchema.shape.status,
-          question: z.string(),
-        } satisfies ZodShape<NeoWaitingOnHuman['asks'][number]>)
-      ),
-    } satisfies ZodShape<NeoWaitingOnHuman>)
-    .optional(),
   preferences: z
     .object({
       model: z.string(),
@@ -783,15 +768,6 @@ export function createNeoOperations(service: NeoService) {
     const built = {
       ok: true as const,
       sessionId: service.repo.getBindingForProject(scope ?? null)?.sessionId ?? null,
-      waitingOnHuman:
-        caller.neoTurn && caller.sessionId
-          ? neoWaitingOnHuman(
-              service.listWaitingReminders({
-                sessionId: caller.sessionId,
-                messageId: caller.neoTurn.messageId,
-              }).asks
-            )
-          : undefined,
       standingRules: neoStandingRules(service.db.getGlobalSettings?.().neo),
       ...(caller.source === 'rpc'
         ? {
