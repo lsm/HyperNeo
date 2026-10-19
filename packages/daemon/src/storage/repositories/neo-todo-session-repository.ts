@@ -58,7 +58,7 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
         .prepare(
           `SELECT s.todo_id AS todoId, s.ref FROM neo_todo_sessions s
              JOIN neo_todos t ON t.id = s.todo_id
-            WHERE s.ref IS NOT NULL AND t.state = 'doing' AND t.report IS NULL`
+            WHERE s.ref IS NOT NULL AND t.state = 'doing'`
         )
         .all() as { todoId: string; ref: string }[]
     ).map((row) => ({ todoId: row.todoId, ref: JSON.parse(row.ref) as WorkRef }));

@@ -57,6 +57,7 @@ export interface NeoTodoRunnerDeps {
 const CARD_STATUS: Record<NeoTodo['state'], NeoWork['status']> = {
   todo: 'proposed',
   doing: 'queued',
+  blocked: 'queued',
   done: 'reported',
   failed: 'failed',
   removed: 'cancelled',
@@ -120,28 +121,76 @@ export function requireNeoTodoRetryable(read: {
     return fail(
       'start_uncertain: the start failed after the driver may have opened a session; find it with work.find before starting again.'
     );
-  if (todo.state !== 'failed' || ref || !target)
+  const failed =
+    todo.state === 'failed' || (todo.state === 'blocked' && todo.blockedBy === 'failure');
+  if (!failed || ref || !target)
     return fail('not_retryable: only a todo that failed before its session started goes again.');
   return { value: todo };
 }
 
+function planNeoTodoBlocked(
+  todo: NeoTodo,
+  blockedBy: NonNullable<NeoTodo['blockedBy']>,
+  blockedReason: string,
+  nextAction: string
+): NeoTodoPatch | null {
+  return todo.state === 'blocked' &&
+    todo.blockedBy === blockedBy &&
+    todo.blockedReason === blockedReason
+    ? null
+    : { state: 'blocked', blockedBy, blockedReason, nextAction };
+}
+
+export function planNeoTodoFailure(
+  todo: NeoTodo,
+  reason: string,
+  now: number
+): NeoTodoPatch | null {
+  return todo.reason === reason
+    ? planNeoTodoBlocked(
+        todo,
+        'failure',
+        `Failed twice: ${reason}`,
+        'Ask the human how to go on, or take another approach.'
+      )
+    : { state: 'failed', reason, finishedAt: now };
+}
+
 export function planNeoTodoSettled(
+  todo: NeoTodo,
   settled: { status: 'reported' | 'failed'; report: string },
   now: number
-): NeoTodoPatch {
-  return settled.status === 'failed'
-    ? { state: 'failed', reason: settled.report, finishedAt: now }
-    : { report: settled.report };
+): NeoTodoPatch | null {
+  if (settled.status === 'failed') return planNeoTodoFailure(todo, settled.report, now);
+  return {
+    report: settled.report,
+    ...planNeoTodoBlocked(
+      todo,
+      'worker',
+      'Its session stopped before the todo was done.',
+      todo.check
+        ? 'Continue the session with neo.todo.continue, or close the todo.'
+        : 'Tick it done with evidence, continue the session, or close it.'
+    ),
+  };
 }
 
 export function planNeoTodoCheck(
   todo: NeoTodo,
   result: NeoTodoCheckResult | null,
-  now: number
+  now: number,
+  started: boolean
 ): NeoTodoPatch | null {
   if (!result || todo.state === 'done' || todo.state === 'failed') return null;
-  if (result.failed) return { state: 'failed', reason: result.failed, finishedAt: now };
-  return result.done ? { state: 'done', evidence: result.evidence, finishedAt: now } : null;
+  if (result.failed) return planNeoTodoFailure(todo, result.failed, now);
+  if (result.done) return { state: 'done', evidence: result.evidence, finishedAt: now };
+  if (result.blocked)
+    return todo.state === 'blocked' && todo.blockedBy !== 'check'
+      ? null
+      : planNeoTodoBlocked(todo, 'check', result.blocked.reason, result.blocked.nextAction);
+  return todo.state === 'blocked' && todo.blockedBy === 'check'
+    ? { state: started ? 'doing' : 'todo' }
+    : null;
 }
 
 export function neoTodoNote(todo: NeoTodo): string {
@@ -150,9 +199,9 @@ export function neoTodoNote(todo: NeoTodo): string {
     return `Todo "${todo.title}" is done: ${todo.evidence}`;
   if (todo.state === 'done')
     return `Todo "${todo.title}" reported and is done:\n${todo.report ?? ''}`;
-  return `Todo "${todo.title}": its session stopped, which is not completion; the todo stays doing ${
-    todo.check ? 'until its check passes' : 'until it is ticked with evidence'
-  }. Its last report:\n${todo.report ?? '(none)'}`;
+  return `Todo "${todo.title}" is blocked: ${todo.blockedReason ?? ''}\nNext: ${
+    todo.nextAction ?? ''
+  }\nIts last report:\n${todo.report ?? '(none)'}`;
 }
 
 export function neoAskIdleNote(
@@ -160,7 +209,7 @@ export function neoAskIdleNote(
   todos: readonly NeoTodo[],
   questions: readonly NeoQuestion[]
 ): string | null {
-  if (todos.some((todo) => todo.state === 'doing')) return null;
+  if (todos.some((todo) => todo.state === 'doing' || todo.state === 'blocked')) return null;
   if (questions.some((question) => question.state === 'open')) return null;
   const listed = todos.filter((todo) => todo.state !== 'removed');
   return `Ask "${ask.title}" is open, but no todo is running and no question is open. Todos: ${
@@ -173,9 +222,11 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   const checked = new Map<string, number>();
   const starting = new Set<string>();
   const caller = (ask: NeoAsk) => driverWorkCaller({ originSessionId: ask.sessionId });
-  const finish = async (todo: NeoTodo, ask: NeoAsk, patch: NeoTodoPatch, now: number) => {
+  const finish = async (todo: NeoTodo, ask: NeoAsk, patch: NeoTodoPatch | null, now: number) => {
+    if (!patch) return todo;
     const next = store.updateTodo(todo, patch, now);
-    await deps.tell(ask, next, neoTodoNote(next));
+    if (next.state === 'done' || next.state === 'failed' || next.state === 'blocked')
+      await deps.tell(ask, next, neoTodoNote(next));
     return next;
   };
 
@@ -209,7 +260,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         todo: await finish(
           todo,
           ask,
-          { state: 'failed', reason: `Could not start: ${result.failure}`, finishedAt: Date.now() },
+          planNeoTodoFailure(todo, `Could not start: ${result.failure}`, Date.now()),
           Date.now()
         ),
       };
@@ -303,10 +354,10 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     forgetActivity: () => {},
     transition: (card, settled) => {
       const todo = store.getTodo(card.id);
-      if (!todo || todo.state !== 'doing' || todo.report || todo.updatedAt !== card.updatedAt)
-        return null;
+      if (!todo || todo.state !== 'doing' || todo.updatedAt !== card.updatedAt) return null;
       const now = Date.now();
-      return neoTodoCard(store.updateTodo(todo, planNeoTodoSettled(settled, now), now), ask);
+      const patch = planNeoTodoSettled(todo, settled, now);
+      return patch ? neoTodoCard(store.updateTodo(todo, patch, now), ask) : null;
     },
     anchorFollow: (id, at) => sessions.recordFollowAnchor(id, at),
     returnReport: async (card) => {
@@ -334,8 +385,13 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         ? await readNeoTodoCompletion(deps.packs(), todo)
         : await pack.check(todo);
       const live = store.listCheckable().find((item) => item.id === todo.id);
-      const patch = live?.check ? planNeoTodoCheck(live, result, now) : null;
-      if (patch && live) await finish(live, ask, patch, now);
+      if (live?.check)
+        await finish(
+          live,
+          ask,
+          planNeoTodoCheck(live, result, now, sessions.readRef(live.id) !== null),
+          now
+        );
     }
     deps.changed();
   };
@@ -352,7 +408,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       (todo: NeoTodo, now: number) => {
         const ref = sessions.readRef(todo.id);
         const ask = store.getAsk(todo.askId);
-        return todo.state === 'doing' &&
+        return (todo.state === 'doing' ||
+          (todo.state === 'blocked' && todo.blockedBy === 'worker')) &&
           todo.report &&
           ref &&
           ask?.status === 'open' &&
@@ -380,8 +437,15 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         const report = readDriverFollowUp(outcome, since, sent);
         if (report) {
           const current = store.getTodo(todo.id);
-          if (current?.state !== 'doing' || current.updatedAt !== todo.updatedAt) return;
-          store.updateTodo(todo, { report: `${report}\n\n${todo.report}`.slice(0, 12_000) }, now);
+          if (current?.state !== todo.state || current.updatedAt !== todo.updatedAt) return;
+          store.updateTodo(
+            todo,
+            {
+              report: `${report}\n\n${todo.report}`.slice(0, 12_000),
+              ...(todo.state === 'blocked' ? { state: 'doing' } : {}),
+            },
+            now
+          );
           sessions.recordFollowAnchor(todo.id, readDriverActivity(outcome)?.lastActivityAt ?? now);
         }
       },
@@ -421,7 +485,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     sessions.recordSent(todo.id, sent && { ...sent, receipt: delivered.receipt });
     const next = store.updateTodo(
       todo,
-      { state: 'doing', report: null, evidence: null, reason: null, finishedAt: null },
+      { state: 'doing', report: null, evidence: null, finishedAt: null },
       Date.now()
     );
     checked.delete(todo.id);
@@ -455,7 +519,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       sessions.recordRetry(todoId);
       store.updateTodo(
         gate.value,
-        { state: 'todo', reason: null, startedAt: null, finishedAt: null },
+        { state: 'todo', startedAt: null, finishedAt: null },
         Date.now()
       );
       return start(todoId);
@@ -481,11 +545,11 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         await finish(
           todo,
           ask,
-          {
-            state: 'failed',
-            reason: 'Start was interrupted; a session may have started without being recorded.',
-            finishedAt: Date.now(),
-          },
+          planNeoTodoFailure(
+            todo,
+            'Start was interrupted; a session may have started without being recorded.',
+            Date.now()
+          ),
           Date.now()
         ).catch((error) => warn('Todo start recovery pending', error));
       }
