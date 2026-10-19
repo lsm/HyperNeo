@@ -283,6 +283,14 @@ const SnapshotOk = z.object({
   mutedSessions: z.array(z.string()).max(NEO_SESSION_MUTES_MAX).optional(),
   asks: z.array(NeoAskSchema).optional(),
   todoAsks: z.array(NeoAskEntrySchema).optional(),
+  packRows: z
+    .array(
+      z.object({
+        pack: z.string(),
+        rows: z.array(z.record(z.string(), z.union([z.string(), z.number(), z.null()]))),
+      })
+    )
+    .optional(),
   told: z
     .array(
       z.object({
@@ -1046,6 +1054,13 @@ export function createNeoOperations(service: NeoService) {
         service.todoSessions,
         service.installedPacks()
       ),
+      packRows: service.packs().flatMap((pack) => {
+        const rows = pack.snapshotRows?.(
+          scope ? [repositories.get(scope) ?? []].flat() : null,
+          Date.now()
+        );
+        return rows?.length ? [{ pack: pack.id, rows }] : [];
+      }),
       ...(focus ? { told: readNeoAskTold(service, focus) } : {}),
       ...(summarize
         ? { moreSettled: listed.filter(isNeoAskSettled).length > NEO_SNAPSHOT_SETTLED_ASKS }

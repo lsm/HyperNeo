@@ -61,6 +61,10 @@ export interface NeoTodoPack {
 export interface NeoPack extends NeoPackBrief {
   todos?: NeoTodoPack;
   sweep?(now: number): Promise<void>;
+  snapshotRows?(
+    repos: readonly string[] | null,
+    now: number
+  ): Record<string, string | number | null>[];
   workerRules?: string;
   prepareExecution?: NeoExecutionPreparation;
   prerequisiteParameters?(

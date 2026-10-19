@@ -118,7 +118,7 @@ describe('planCodingLedgerRead', () => {
   });
 });
 
-describe('reconcileCodingPrLedger', () => {
+describe('PR ledger reconcile', () => {
   test('lists every open PR across repos and moves state_since only on a state or head change', async () => {
     const { db, ledger } = setup();
     let second = [node(7)];
@@ -185,7 +185,7 @@ describe('reconcileCodingPrLedger', () => {
   });
 });
 
-describe('reconcileCodingPrLedger cleanup', () => {
+describe('PR ledger cleanup', () => {
   test('drops an open row the next full read no longer lists, rows of repos no project names, and rows unread for 7 days', async () => {
     const { db, ledger } = setup();
     await reconcile(
@@ -287,6 +287,86 @@ describe('ledger approval and repo coverage', () => {
       'lsm/hyperneo-review',
       'lsm/ops',
     ]);
+    db.close();
+  });
+});
+
+describe('CodingPrLedgerRepository owners and snapshot', () => {
+  const claim = (
+    db: Database,
+    todo: string,
+    state: string,
+    startedAt: number,
+    url: string,
+    ref: unknown
+  ) => {
+    db.prepare(
+      `INSERT INTO neo_asks (id, project_id, session_id, origin_message_id, title, request, status, created_at, updated_at)
+       VALUES ('ask', NULL, 'neo', NULL, 'A', 'R', 'open', 1, 1) ON CONFLICT DO NOTHING`
+    ).run();
+    db.prepare(
+      `INSERT INTO neo_todos (id, ask_id, position, title, done_when, state, started_at, created_at, updated_at)
+       VALUES (?, 'ask', 0, 'T', 'D', ?, ?, 1, 1)`
+    ).run(todo, state, startedAt);
+    db.prepare('INSERT INTO neo_todo_sessions (todo_id, target, ref) VALUES (?, ?, ?)').run(
+      todo,
+      '{}',
+      ref ? JSON.stringify(ref) : null
+    );
+    db.prepare(
+      "INSERT INTO pack_coding_pr_claims (todo_id, url, claim, claimed_at) VALUES (?, ?, 'branch', 1)"
+    ).run(todo, url);
+  };
+
+  test('takes the owner from the open todo that claims the PR, and leaves an unclaimed PR unassigned', async () => {
+    const { db, ledger } = setup();
+    const url = 'https://github.com/lsm/hyperneo/pull/1';
+    claim(db, 'old', 'done', 50, url, { adapter: 'codex-desktop', id: 'thread-old' });
+    claim(db, 'live', 'doing', 10, url, { adapter: 'hyperneo', id: 'worker-1', daemon: 'imac' });
+    await reconcile(ledger, ['lsm/hyperneo'], async () => response([node(1), node(2)]), 100);
+    expect(
+      ledger
+        .snapshot(null, 100)
+        .map((row) => [row.pr, row.ownerAdapter, row.ownerId, row.ownerDaemon])
+    ).toEqual([
+      ['lsm/hyperneo#1', 'hyperneo', 'worker-1', 'imac'],
+      ['lsm/hyperneo#2', null, null, null],
+    ]);
+    db.close();
+  });
+
+  test('lists open PRs and ones closed in the last day, for the requested repos', async () => {
+    const { ledger, db } = setup();
+    const now = 10 * CODING_LEDGER_KEEP_MS;
+    const ago = (ms: number) => new Date(now - ms).toISOString();
+    await reconcile(
+      ledger,
+      ['a/a', 'b/b'],
+      async (repo) =>
+        repo === 'a/a'
+          ? response(
+              [node(1, { reviewDecision: 'APPROVED' })],
+              [
+                node(2, { state: 'MERGED', closedAt: ago(60_000) }),
+                node(3, { state: 'CLOSED', closedAt: ago(2 * 24 * 60 * 60_000) }),
+              ]
+            )
+          : response([node(9)]),
+      now
+    );
+    expect(ledger.snapshot(['a/a'], now)).toEqual([
+      {
+        pr: 'a/a#1',
+        title: 'PR 1',
+        state: 'approved_green',
+        since: new Date(now).toISOString(),
+        ownerAdapter: null,
+        ownerId: null,
+        ownerDaemon: null,
+      },
+      expect.objectContaining({ pr: 'a/a#2', state: 'merged' }),
+    ]);
+    expect(ledger.snapshot(null, now).map((row) => row.pr)).toEqual(['a/a#1', 'a/a#2', 'b/b#9']);
     db.close();
   });
 });

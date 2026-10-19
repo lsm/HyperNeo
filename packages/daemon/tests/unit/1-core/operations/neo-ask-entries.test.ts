@@ -391,3 +391,34 @@ describe('NeoTodoSessionRepository.readLinks', () => {
     expect(sessions.readLinks('t').remoteLink).toBeNull();
   });
 });
+
+describe('fitNeoSnapshotBudget with packRows', () => {
+  test('halves pack rows to fit instead of dropping the asks', () => {
+    const snapshot: NeoSnapshot = {
+      ok: true,
+      sessionId: 'neo',
+      projects: [],
+      consultations: [],
+      work: [],
+      cards: [],
+      askViews: [],
+      packRows: [
+        {
+          pack: 'coding',
+          rows: Array.from({ length: 100 }, (_, index) => ({
+            pr: `lsm/hyperneo#${index}`,
+            title: 't'.repeat(400),
+            state: 'waiting_review',
+          })),
+        },
+      ],
+    };
+    snapshot.packRows?.push({ ...snapshot.packRows[0], pack: 'other' });
+    const fitted = fitNeoSnapshotBudget(snapshot, 20_000);
+    expect(JSON.stringify(fitted).length).toBeLessThanOrEqual(20_000);
+    expect(fitted.packRows?.[1].rows.length).toBe(fitted.packRows?.[0].rows.length);
+    expect(fitted.packRows?.[0].rows.length).toBeGreaterThan(0);
+    expect(fitted.packRows?.[0].rows.length).toBeLessThan(100);
+    expect(fitted.packRows?.[0].rows[0].pr).toBe('lsm/hyperneo#0');
+  });
+});
