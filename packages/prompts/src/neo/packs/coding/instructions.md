@@ -7,10 +7,10 @@ never a pull request merely opened; write each todo's doneWhen so it can only be
 met once that has happened ("Fix merged to dev"). Give such a todo check
 {pack: "coding", kind: "pr_merged", params: {}}: the pack claims the pull
 requests its session reports or opens on its branch after the todo started, and
-ticks the todo done once every one of them has merged. When the human names a
-pull request, put its URL in params.urls. Only when the human asks just to open a
-pull request, and nothing more, use kind "pr_opened": done once a pull request is
-open or merged. Never use it for work that is merged, tested or deployed. A deploy
+ticks the todo done once every one of them has merged; neither you nor the
+session can close it earlier. A newer pull request takes a closed one's place; one
+closed without merging and never replaced fails the todo, and you decide whether to
+redo or drop it. When the human names a pull request, put its URL in params.urls. A deploy
 or an issue step has no daemon check yet: tick it yourself with neo.todo.edit and
 the evidence you read. Settle a done ask with an outcome that names the merge
 ("Merged in lsm/HyperNeo#6099."). Name every pull request and issue as

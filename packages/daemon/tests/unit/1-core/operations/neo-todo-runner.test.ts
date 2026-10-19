@@ -441,6 +441,9 @@ describe('planNeoTodoCheck', () => {
     });
     expect(planNeoTodoCheck(doing, { done: false, evidence: null }, 1)).toBeNull();
     expect(
+      planNeoTodoCheck(doing, { done: false, evidence: null, failed: '#2 closed' }, 1)
+    ).toEqual({ state: 'failed', reason: '#2 closed', finishedAt: 1 });
+    expect(
       planNeoTodoCheck({ state: 'done' } as NeoTodo, { done: true, evidence: 'ok' }, 1)
     ).toBeNull();
   });

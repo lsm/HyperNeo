@@ -8,7 +8,9 @@ import type {
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { isLocalUser } from '../operations/caller.ts';
 import { NeoTodoTargetSchema } from './driver-work.ts';
+import type { NeoPack } from './packs/types.ts';
 import { neoStartQuestionTitle } from './start-question.ts';
+import { readNeoTodoCompletion, requireNeoTodoMayFinish } from './todo-completion.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 
 type Rejection = { ok: false; reason: string };
@@ -232,8 +234,11 @@ export function planNeoTodoClose(
 export function createNeoTodoOperations(
   todos: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
-  controls: NeoTodoControls
+  controls: NeoTodoControls,
+  packs: () => readonly NeoPack[]
 ) {
+  const completion = (plan: { todo: NeoTodo; patch: NeoTodoPatch }) =>
+    plan.patch.state === 'done' ? readNeoTodoCompletion(packs(), plan.todo) : null;
   const write = (plan: { todo: NeoTodo; patch: NeoTodoPatch }): TodoReceipt => {
     const todo = todos.updateTodo(plan.todo, plan.patch, Date.now());
     return { ok: true, todo, todos: todos.listTodos(todo.askId) };
@@ -277,11 +282,13 @@ export function createNeoTodoOperations(
 
   const edit = owned(superpipe({})('neo.todo.edit') as PipelineAPI)
     .pipe(planNeoTodoEdit, ['outcome', 'input'], 'result:outcome')
+    .pipe(completion, 'outcome', 'completion')
+    .pipe(requireNeoTodoMayFinish, ['outcome', 'completion'], 'result:outcome')
     .pipe(write, 'outcome', 'outcome')
-    .end('outcome') as (
+    .endAsync('outcome') as (
     input: z.infer<typeof Edit>,
     caller: OperationCaller
-  ) => TodoReceipt | Rejection;
+  ) => Promise<TodoReceipt | Rejection>;
 
   const remove = owned(superpipe({})('neo.todo.remove') as PipelineAPI)
     .pipe(
@@ -317,6 +324,8 @@ export function createNeoTodoOperations(
 
   const close = owned(superpipe({})('neo.todo.close') as PipelineAPI)
     .pipe(planNeoTodoClose, ['outcome', 'input'], 'result:outcome')
+    .pipe(completion, 'outcome', 'completion')
+    .pipe(requireNeoTodoMayFinish, ['outcome', 'completion'], 'result:outcome')
     .pipe(stopAndWrite, 'outcome', 'outcome')
     .endAsync('outcome') as (
     input: z.infer<typeof Close>,
