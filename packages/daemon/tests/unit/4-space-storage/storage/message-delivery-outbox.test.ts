@@ -9,6 +9,7 @@ import {
   persistAndEnqueueDelivery,
   persistPrompt,
   PromptContentConflictError,
+  redeliverPrompt,
   retryPrompt,
   verifyPromptContent,
 } from '../../../../src/lib/agent/message-delivery-outbox';
@@ -784,6 +785,34 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         .get(MESSAGE_DELIVERY) as { c: number };
       expect(jobCount.c).toBe(0);
       expect(published).toBe(0);
+    });
+
+    it('redeliverPrompt gives a consumed row whose job completed a new pending delivery', () => {
+      persistAndEnqueueDelivery({
+        db: db as never,
+        jobQueue,
+        sdkMessageRepo: sdkRepo,
+        sessionId: SESSION,
+        message: userMessage('steered'),
+        sendStatus: 'enqueued',
+        delivery: { origin: 'chat' },
+      });
+      const [job] = jobQueue.dequeue(MESSAGE_DELIVERY, 1);
+      jobQueue.complete(job.id, {}, job.claimToken);
+      db.prepare(`UPDATE sdk_messages SET send_status = 'consumed' WHERE sdk_uuid = ?`).run(
+        'steered'
+      );
+      expect(
+        redeliverPrompt({
+          db: db as never,
+          jobQueue,
+          sdkMessageRepo: sdkRepo,
+          sessionId: SESSION,
+          messageUuid: 'steered',
+        })
+      ).toBe(true);
+      expect(rowStatus('steered')).toBe('enqueued');
+      expect(jobsFor('steered').map((row) => row.status)).toEqual(['pending']);
     });
 
     it('retryPrompt reopens a failed row with no prior job as a fresh released job', async () => {

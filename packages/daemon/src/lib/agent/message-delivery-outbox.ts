@@ -953,6 +953,31 @@ const runRetryPrompt = (superpipe({})('retry-prompt') as PipelineAPI)
   .pipe(publishRetriedPrompt, 'ctx', 'ctx')
   .endAsync('ctx') as (ctx: RetryPromptArgs) => Promise<RetryPromptCtx>;
 
+export function redeliverPrompt(args: {
+  db: BunDatabase;
+  jobQueue: JobQueueRepository;
+  sdkMessageRepo: SDKMessageRepository;
+  sessionId: string;
+  messageUuid: string;
+}): boolean {
+  const dbId = args.sdkMessageRepo.findMessageIdByUuid(args.sessionId, args.messageUuid);
+  if (!dbId) return false;
+  return args.db.transaction(() => {
+    args.sdkMessageRepo.updateMessageStatus([dbId], 'enqueued');
+    return rePendingDeliveryJob(
+      args.db,
+      args.jobQueue,
+      buildReleasedPayload({
+        sessionId: args.sessionId,
+        messageUuid: args.messageUuid,
+        origin: 'chat',
+        released: true,
+        priority: 1,
+      })
+    );
+  }, 'immediate')();
+}
+
 export async function retryPrompt(args: RetryPromptArgs): Promise<RetryPromptResult | null> {
   const ctx = await runRetryPrompt(args);
   return ctx.retried;

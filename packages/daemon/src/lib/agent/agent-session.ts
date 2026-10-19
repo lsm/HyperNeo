@@ -274,6 +274,7 @@ import {
   type SessionConfigHandlerContext,
 } from './session-config-handler.ts';
 import { SlashCommandManager, type SlashCommandManagerContext } from './slash-command-manager.ts';
+import { redeliverPrompt } from './message-delivery-outbox.ts';
 import {
   buildTaskNotificationRequeryEscalationEvent,
   resolveTaskNotificationRequery,
@@ -3206,14 +3207,13 @@ export class AgentSession
   }
 
   requeueNeoInput(messageUuid: string): void {
-    const repo = this.db.getSDKMessageRepo();
-    const loaded = repo.getDeliveryContent(this.session.id, messageUuid);
-    const dbId = repo.findMessageIdByUuid(this.session.id, messageUuid);
-    if (!loaded || !dbId) return;
-    repo.updateMessageStatus([dbId], 'enqueued');
-    void this.messageQueue
-      .admitWithId(messageUuid, loaded.content, false, { durable: true, prepend: true })
-      .catch(() => undefined);
+    redeliverPrompt({
+      db: this.db.getDatabase(),
+      jobQueue: this.db.getJobQueueRepo(),
+      sdkMessageRepo: this.db.getSDKMessageRepo(),
+      sessionId: this.session.id,
+      messageUuid,
+    });
   }
 
   markHolderInputConsumed(messageUuid: string): void {
