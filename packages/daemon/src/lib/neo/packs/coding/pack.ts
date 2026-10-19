@@ -39,6 +39,12 @@ import {
 import type { NeoWorkPrClaimRepository } from './neo-work-pr-claim-repository.ts';
 import type { NeoWorkPrRepository, NeoWorkPrRow } from './neo-work-pr-repository.ts';
 import { prepareCodingExecution } from './prepare-execution.ts';
+import {
+  type CodingLedgerRead,
+  type CodingPrLedgerRepository,
+  readCodingLedgerRepo,
+  reconcileCodingPrLedger,
+} from './pr-ledger.ts';
 import { readCodingPrerequisiteBase } from './prerequisite-base.ts';
 import {
   CODING_CHECK_PR_MERGED,
@@ -278,14 +284,26 @@ export function createCodingPack(
     cardBase: (workId: string) => string | null;
     cardStartedAt?: (workId: string) => number | null;
     todoPrs: CodingTodoPrRepository;
+    prLedger: CodingPrLedgerRepository;
+    projectRepos: () => string[];
+    readLedgerRepo?: CodingLedgerRead;
   }
 ): NeoPack {
   const cardPrs = (workId: string) => deps.workPrs.get(workId)?.prs ?? [];
+  const ledgerSkips = new Map<string, number>();
   const { readRefStates, cardBase, cardStartedAt } = deps;
   return {
     ...CODING_PACK_BRIEF,
     prepareExecution: prepareCodingExecution,
     todos: createCodingTodoPack(deps.todoPrs, deps.readPrs),
+    sweep: (now) =>
+      reconcileCodingPrLedger(
+        deps.prLedger,
+        deps.projectRepos(),
+        deps.readLedgerRepo ?? readCodingLedgerRepo,
+        now,
+        ledgerSkips
+      ),
     prerequisiteParameters: (items) =>
       readCodingPrerequisiteBase(items, {
         readRefStates: deps.readRefStates,

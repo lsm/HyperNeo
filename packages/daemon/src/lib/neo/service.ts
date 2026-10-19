@@ -48,6 +48,7 @@ import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.
 import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { createNeoTodoRunner, neoTodoCard, type NeoTodoRunner } from './todo-runner.ts';
+import { CodingPrLedgerRepository } from './packs/coding/pr-ledger.ts';
 import { CodingTodoPrRepository } from './packs/coding/todo-prs.ts';
 import { neoCardPrAttention } from './packs/coding/card-facts.ts';
 import { neoDerivedId } from './derived-id.ts';
@@ -796,6 +797,8 @@ export class NeoService {
         cardBase: (workId) => codingCardBase(this.driverTargets.get(workId)),
         cardStartedAt: (workId) => this.repo.workStartedAt(workId),
         todoPrs: this.todoPrs,
+        prLedger: new CodingPrLedgerRepository(db.getDatabase()),
+        projectRepos: () => [...new Set(this.repo.repositories().values())],
       }),
       createLifeAdminPack(),
     ];
@@ -2065,6 +2068,13 @@ export class NeoService {
     }
     for (const workId of new Set(this.dependencies.edges().map((edge) => edge.workId)))
       scheduleNeoAdmissionWake(this.db.getJobQueueRepo(), workId);
+  }
+
+  async sweepPacks(): Promise<void> {
+    for (const pack of this.packs())
+      await pack
+        .sweep?.(Date.now())
+        .catch((error) => this.log.warn(`Neo ${pack.id} sweep failed`, error));
   }
 
   async refreshDriverWork(): Promise<void> {

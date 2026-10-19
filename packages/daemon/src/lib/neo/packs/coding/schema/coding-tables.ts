@@ -13,7 +13,22 @@ export function createCodingPackTables(db: Database): void {
     claimed_at INTEGER NOT NULL,
     PRIMARY KEY (todo_id, url)
   );
-  CREATE INDEX IF NOT EXISTS idx_pack_coding_pr_claims_url ON pack_coding_pr_claims(url)`);
+  CREATE INDEX IF NOT EXISTS idx_pack_coding_pr_claims_url ON pack_coding_pr_claims(url);
+  CREATE TABLE IF NOT EXISTS pack_coding_pr_ledger (
+    repo TEXT NOT NULL,
+    number INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    head TEXT NOT NULL,
+    state TEXT NOT NULL,
+    state_since INTEGER NOT NULL,
+    closed_at INTEGER,
+    owner TEXT CHECK (owner IS NULL OR json_valid(owner)),
+    nudges INTEGER NOT NULL DEFAULT 0,
+    told_at INTEGER,
+    read_at INTEGER NOT NULL,
+    PRIMARY KEY (repo, number)
+  )`);
   if (db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'neo_todo_pr_refs'").get())
     db.exec(
       `INSERT OR IGNORE INTO neo_todo_pr_refs (reference, number, todo_id) ${CODING_TODO_PR_REFS}`
