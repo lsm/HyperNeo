@@ -9,8 +9,6 @@ export type NeoProjectFacts = {
   context: number;
   asks: number;
   liveAsks: number;
-  work: { ref: string | null }[];
-  liveWork: number;
   aliases: readonly string[];
 };
 
@@ -24,8 +22,7 @@ const repositories = (project: NeoProjectFacts) =>
 const hasRepo = (project: NeoProjectFacts) =>
   project.aliases.some((alias) => alias.startsWith('repository:') || alias.startsWith('repo:'));
 
-const isEmpty = (project: NeoProjectFacts) =>
-  project.asks + project.work.length + project.context === 0;
+const isEmpty = (project: NeoProjectFacts) => project.asks + project.context === 0;
 
 export function neoMirroredAliases(
   places: readonly PlaceGroup[],
@@ -38,7 +35,7 @@ export function neoMirroredAliases(
   );
 }
 
-const isLive = (project: NeoProjectFacts) => project.liveAsks + project.liveWork > 0;
+const isLive = (project: NeoProjectFacts) => project.liveAsks > 0;
 
 export function neoCleanupFolders(projects: readonly NeoProjectFacts[], machine: string): string[] {
   const local = `folder:${machine}\u0000`;
@@ -57,25 +54,8 @@ const isElsewhere = (project: NeoProjectFacts, machine: string) => {
 
 const sameKey = (title: string) => title.trim().toLowerCase();
 
-const cards = (project: NeoProjectFacts, other: NeoProjectFacts) =>
-  project.work.filter(
-    (item) =>
-      item.ref &&
-      other.aliases.some(
-        (alias) => alias.startsWith('work:') && alias.endsWith(`\u0000${item.ref}`)
-      )
-  ).length;
-
-function home(
-  project: NeoProjectFacts,
-  homes: readonly NeoProjectFacts[]
-): NeoProjectFacts | undefined {
-  const byCards = homes
-    .map((other) => ({ other, count: cards(project, other) }))
-    .filter((entry) => entry.count > 0)
-    .sort((a, b) => b.count - a.count)[0]?.other;
-  return byCards ?? homes.find((other) => sameKey(other.title) === sameKey(project.title));
-}
+const home = (project: NeoProjectFacts, homes: readonly NeoProjectFacts[]) =>
+  homes.find((other) => sameKey(other.title) === sameKey(project.title));
 
 export function planNeoProjectCleanup(
   projects: readonly NeoProjectFacts[],

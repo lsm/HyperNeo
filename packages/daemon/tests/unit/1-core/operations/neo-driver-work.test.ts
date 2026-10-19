@@ -11,29 +11,7 @@ import {
   type DaemonInternalEventMap,
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
-import {
-  type DriverSent,
-  decideCardLiveStatus,
-  decideStuckReminder,
-  driverExchangeReport,
-  driverWorkCall,
-  driverWorkCaller,
-  isNeoReceiptUnconfirmed,
-  NEO_CARD_CONFIRM_MS,
-  NEO_WORK_STUCK_STEPS_MS,
-  NEO_WORK_UNANCHORED_NOTE,
-  NEO_WORK_UNANCHORED_SETTLE_MS,
-  NEO_WORK_UNVERIFIED_REPLY_NOTE,
-  type NeoDriverTarget,
-  NeoDriverTargetSchema,
-  neoCardSent,
-  readDriverLanded,
-  readDriverOutcome,
-  readDriverSendBaseline,
-  readDriverSent,
-  readDriverSettlement,
-  withWorkGoal,
-} from '../../../../src/lib/neo/driver-work.ts';
+import { type DriverSent, decideCardLiveStatus, driverExchangeReport, driverWorkCall, driverWorkCaller, isNeoReceiptUnconfirmed, NEO_CARD_CONFIRM_MS, NEO_WORK_UNANCHORED_NOTE, NEO_WORK_UNANCHORED_SETTLE_MS, NEO_WORK_UNVERIFIED_REPLY_NOTE, type NeoDriverTarget, NeoDriverTargetSchema, neoCardSent, readDriverLanded, readDriverOutcome, readDriverSendBaseline, readDriverSent, readDriverSettlement, withWorkGoal } from '../../../../src/lib/neo/driver-work.ts';
 import { neoEvidenceSignature } from '../../../../src/lib/neo/evidence.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import type { NeoRef } from '../../../../src/lib/neo/packs/coding/ask-prs.ts';

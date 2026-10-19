@@ -39,29 +39,18 @@ export class NeoRepository {
       .prepare(`SELECT c.id, c.title, c.created_at AS createdAt,
           (c.epic_url IS NOT NULL OR EXISTS (SELECT 1 FROM neo_concerns k WHERE k.parent_id = c.id)) AS section,
           length(c.context) AS context,
-          (SELECT count(*) FROM legacy_neo_asks a WHERE a.concern_id = c.id)
-            + (SELECT count(*) FROM neo_asks n WHERE n.project_id = c.id) AS asks,
-          (SELECT count(*) FROM legacy_neo_asks a WHERE a.concern_id = c.id
-            AND a.status IN ('open', 'waiting', 'blocked'))
-            + (SELECT count(*) FROM neo_asks n WHERE n.project_id = c.id
-              AND n.status = 'open') AS liveAsks,
-          (SELECT count(*) FROM neo_work w WHERE w.concern_id = c.id
-            AND w.status IN ('proposed', 'queued')) AS liveWork
+          (SELECT count(*) FROM neo_asks n WHERE n.project_id = c.id) AS asks,
+          (SELECT count(*) FROM neo_asks n WHERE n.project_id = c.id
+            AND n.status = 'open') AS liveAsks
         FROM neo_concerns c
         WHERE c.id NOT IN (SELECT source_id FROM neo_project_merges)`)
-      .all() as (Omit<NeoProjectFacts, 'section' | 'work' | 'aliases'> & { section: number })[];
-    const work = this.db
-      .prepare(`SELECT w.concern_id AS projectId,
-          json_extract(t.ref, '$.adapter') || char(0) || json_extract(t.ref, '$.id') AS ref
-        FROM neo_work w LEFT JOIN neo_work_driver_targets t ON t.work_id = w.id`)
-      .all() as { projectId: string; ref: string | null }[];
+      .all() as (Omit<NeoProjectFacts, 'section' | 'aliases'> & { section: number })[];
     const aliases = this.db
       .prepare('SELECT project_id AS projectId, alias FROM neo_project_workspaces')
       .all() as { projectId: string; alias: string }[];
     return rows.map((row) => ({
       ...row,
       section: !!row.section,
-      work: work.filter((entry) => entry.projectId === row.id).map((entry) => ({ ref: entry.ref })),
       aliases: aliases.filter((entry) => entry.projectId === row.id).map((entry) => entry.alias),
     }));
   }
@@ -72,9 +61,7 @@ export class NeoRepository {
         .prepare(`SELECT 1 FROM neo_concerns c WHERE c.id = ? AND length(c.context) = 0
           AND c.epic_url IS NULL
           AND NOT EXISTS (SELECT 1 FROM neo_concerns k WHERE k.parent_id = c.id)
-          AND NOT EXISTS (SELECT 1 FROM legacy_neo_asks a WHERE a.concern_id = c.id)
-          AND NOT EXISTS (SELECT 1 FROM neo_asks n WHERE n.project_id = c.id)
-          AND NOT EXISTS (SELECT 1 FROM neo_work w WHERE w.concern_id = c.id)`)
+          AND NOT EXISTS (SELECT 1 FROM neo_asks n WHERE n.project_id = c.id)`)
         .get(projectId);
       if (!empty) throw new Error('the project is no longer empty');
       this.db.prepare('DELETE FROM neo_project_workspaces WHERE project_id = ?').run(projectId);
@@ -319,5 +306,4 @@ export class NeoRepository {
       .run(session.slice(4), Date.now());
     return (this.db.prepare('SELECT id FROM neo_conversation').get() as { id: string }).id;
   }
-
 }
