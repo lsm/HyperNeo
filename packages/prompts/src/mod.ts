@@ -216,9 +216,6 @@ import mdagentTaskNotificationContinue from './agent/task-notification-continue.
 };
 import mdagentsInactivityNag from './agents/inactivity-nag.md' with { type: 'text' };
 import mdgoalsOutcomeReady from './goals/outcome-ready.md' with { type: 'text' };
-import mddriversClaudeDesktopOpening from './drivers/claude-desktop-opening.md' with {
-  type: 'text',
-};
 import mddriversClaudeDesktopRelay from './drivers/claude-desktop-relay.md' with { type: 'text' };
 import mddriversClaudeRcToggleBrief from './drivers/claude-rc-toggle-brief.md' with {
   type: 'text',
@@ -461,7 +458,6 @@ const registry: Record<string, string> = {
   'agent/task-notification-continue.md': mdagentTaskNotificationContinue,
   'agents/inactivity-nag.md': mdagentsInactivityNag,
   'goals/outcome-ready.md': mdgoalsOutcomeReady,
-  'drivers/claude-desktop-opening.md': mddriversClaudeDesktopOpening,
   'drivers/claude-desktop-relay.md': mddriversClaudeDesktopRelay,
   'drivers/claude-rc-toggle-brief.md': mddriversClaudeRcToggleBrief,
   'drivers/claude-rc-toggle-request.md': mddriversClaudeRcToggleRequest,
@@ -647,7 +643,6 @@ export const {
   AGENT_TASK_NOTIFICATION_CONTINUE,
   AGENT_INACTIVITY_NAG,
   GOAL_OUTCOME_READY,
-  CLAUDE_DESKTOP_OPENING,
   CLAUDE_DESKTOP_RELAY,
   CLAUDE_RC_TOGGLE_BRIEF,
   CLAUDE_RC_TOGGLE_REQUEST,

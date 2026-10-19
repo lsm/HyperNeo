@@ -39,6 +39,7 @@ describe('claude-desktop start', () => {
   let cwds: (string | undefined)[];
   let clock: number;
   let effects: string[];
+  let killed: string[];
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'claude-start-'));
@@ -46,71 +47,56 @@ describe('claude-desktop start', () => {
     cwds = [];
     clock = 1_000;
     effects = [];
+    killed = [];
   });
 
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  function adapter(options: {
-    prepareExecution?: WorkExecutionPreparer;
-    openExit?: number;
-    appearsAfter?: number;
-    probeFails?: boolean;
-    twin?: boolean;
-    checkout?: { repo: string; linked: boolean };
-    owner?: 'desktop' | 'cli' | 'unknown';
-  }) {
-    const transcripts = join(dir, 'projects', '-focus-dolmen');
-    mkdirSync(transcripts, { recursive: true });
-    let polls = 0;
+  function adapter(
+    options: {
+      prepareExecution?: WorkExecutionPreparer;
+      exit?: number;
+      silent?: boolean;
+      checkout?: { repo: string; linked: boolean };
+    } = {}
+  ) {
     return createClaudeDesktopAdapter({
       sessionsDir: join(dir, 'sessions'),
-      admitInbox: () => ({ value: user.from }),
-      sendInbox: async () => {
-        appendFileSync(
-          join(transcripts, 'u1.jsonl'),
-          `${JSON.stringify({ type: 'user', uuid: 'u-brief' })}\n`
-        );
-        return {
-          ok: true,
-          value: {
-            delivered: false,
-            unconfirmed: true,
-            receipt: { executionId: 'u1', inputId: 'u-brief' },
-          },
-        };
-      },
       prepareExecution: options.prepareExecution,
       projectsDir: join(dir, 'projects'),
       machine: 'laptop',
       liveSessions: async () => {
         effects.push('liveSessions');
-        if (options.probeFails) throw new Error('agent listing unavailable');
-        polls++;
-        return options.appearsAfter !== undefined && polls > options.appearsAfter
-          ? [
-              {
-                sessionId: 'u1',
-                status: 'idle',
-                name: 'Bigger font',
-                pid: 1,
-                owner: options.owner ?? 'desktop',
-              },
-              ...(options.twin
-                ? [{ sessionId: 'other', status: 'idle', name: 'Bigger font' }]
-                : []),
-            ]
-          : [];
+        return [];
       },
       spawn: (args, spawnOptions) => {
         spawned.push(args);
         cwds.push(spawnOptions?.cwd);
-        const code = args[2] === '--session-id' ? (options.openExit ?? 0) : 0;
+        const code = args[1] === '-p' ? (options.exit ?? 0) : 0;
+        const worktree = args[args.indexOf('--worktree') + 1];
+        const cwd = args.includes('--worktree')
+          ? join(spawnOptions?.cwd ?? '', '.claude', 'worktrees', worktree)
+          : (spawnOptions?.cwd ?? '');
+        const transcripts = join(dir, 'projects', cwd.replace(/[/.]/g, '-'));
+        mkdirSync(transcripts, { recursive: true });
+        if (args[1] === '-p' && !code && !options.silent)
+          appendFileSync(
+            join(transcripts, 'u1.jsonl'),
+            `${JSON.stringify({
+              type: 'user',
+              uuid: 'u-task',
+              timestamp: '2026-10-18T20:00:00.000Z',
+              message: { content: args.at(-1) },
+            })}\n`
+          );
         return {
           stdout: null,
           stderr: new Response(code ? 'no auth' : '').body,
           exited: Promise.resolve(code),
           exitCode: code,
-          kill: () => {},
+          kill: (signal?: string) => {
+            killed.push(String(signal));
+          },
         };
       },
       folderExists: () => {
@@ -144,16 +130,55 @@ describe('claude-desktop start', () => {
     'refuses explicit configuration %j before start effects',
     async (configuration, reason) => {
       expect(
-        await adapter({}).start?.({ ...request, createFolder: true, ...configuration }, user)
+        await adapter().start?.({ ...request, createFolder: true, ...configuration }, user)
       ).toMatchObject({ ok: false, reason });
       expect(effects).toEqual([]);
       expect(spawned).toEqual([]);
     }
   );
 
+  test('the task itself is the first turn, then the session opens in Desktop', async () => {
+    expect(await adapter().start?.(request, user)).toEqual({
+      ok: true,
+      value: {
+        ref: { adapter: 'claude-desktop', id: 'local_u1' },
+        title: 'Bigger font',
+        place,
+        status: 'running',
+        lastActivityAt: 1_000,
+        link: 'claude://claude.ai/epitaxy/local_u1',
+        receipt: { executionId: 'u1', inputId: 'u-task' },
+      },
+    });
+    expect(spawned).toEqual([
+      [
+        'claude',
+        '-p',
+        '--session-id',
+        'u1',
+        '-n',
+        'Bigger font',
+        '--permission-mode',
+        'bypassPermissions',
+        '--',
+        'Raise the body font to 16px.',
+      ],
+      ['script', '-q', '/dev/null', 'claude', '--desktop', '--resume', 'u1'],
+    ]);
+    expect(effects).not.toContain('liveSessions');
+  });
+
+  test('status finds the started session before Desktop registers it', async () => {
+    const driver = adapter();
+    const started = await driver.start?.(request, user);
+    expect(started).toMatchObject({ ok: true });
+    expect(
+      await driver.status!({ adapter: 'claude-desktop', id: 'local_u1' }, undefined)
+    ).toMatchObject({ ok: true, value: { ref: { id: 'local_u1' }, title: 'Bigger font' } });
+  });
+
   test('uses the prepared directory for CLI creation and desktop without --worktree', async () => {
     const driver = adapter({
-      appearsAfter: 0,
       prepareExecution: async () => ({
         ok: true,
         value: {
@@ -168,10 +193,8 @@ describe('claude-desktop start', () => {
       { ...request, preparation: { pack: 'coding', parameters: { target: 'dev' } } },
       user
     );
-    expect(cwds[0]).toBe('/fresh/remote-base');
-    expect(cwds[1]).toBe('/fresh/remote-base');
+    expect(cwds).toEqual(['/fresh/remote-base', '/fresh/remote-base']);
     expect(spawned[0]).not.toContain('--worktree');
-    expect(spawned[0]).toContain('bypassPermissions');
     expect(spawned[1]).not.toContain('--permission-mode');
   });
 
@@ -189,100 +212,21 @@ describe('claude-desktop start', () => {
     expect(spawned).toEqual([]);
   });
 
-  test('sends only when the newly created session has a confirmed live CLI owner', async () => {
-    expect(await adapter({ appearsAfter: 0, owner: 'cli' }).start?.(request, user)).toEqual({
-      ok: true,
-      value: {
-        ref: { adapter: 'claude-desktop', id: 'local_u1' },
-        title: 'Bigger font',
-        place,
-        status: 'running',
-        lastActivityAt: 1_000,
-        link: 'claude://claude.ai/epitaxy/local_u1',
-        receipt: { executionId: 'u1', inputId: 'u-brief' },
-      },
-    });
-    expect(spawned[0]).toEqual([
-      'claude',
-      '-p',
-      '--session-id',
-      'u1',
-      '-n',
-      'Bigger font',
-      '--permission-mode',
-      'bypassPermissions',
-      '--',
-      'HyperNeo is handing you a task; it arrives in the next message. Reply only: ready.',
-    ]);
-    expect(spawned[1]).toEqual([
-      'script',
-      '-q',
-      '/dev/null',
-      'claude',
-      '--desktop',
-      '--resume',
-      'u1',
-    ]);
-    expect(spawned).toHaveLength(2);
-  });
-
-  test('hands the new Desktop-owned session task to its verified inbox callback', async () => {
-    expect(
-      await adapter({ appearsAfter: 0, owner: 'desktop' }).start?.(request, user)
-    ).toMatchObject({
-      ok: true,
-      value: { status: 'running', receipt: { executionId: 'u1', inputId: 'u-brief' } },
-    });
-    expect(spawned).toHaveLength(2);
-    expect(spawned.some((args) => args.includes('HyperNeo relay'))).toBe(false);
-  });
-
-  test('refuses to resume or relay after Desktop ownership probing fails', async () => {
-    expect(await adapter({ probeFails: true }).start?.(request, user)).toMatchObject({
-      ok: false,
-      reason: 'not_delivered',
-      detail:
-        'local_u1 was created, but the task did not reach it: Claude Code Desktop did not open Bigger font.',
-    });
-    expect(spawned).toHaveLength(2);
-    expect(spawned[0]).toContain('--session-id');
-    expect(spawned[1]).toContain('--desktop');
-    expect(spawned.some((args) => args.includes('SendMessage ListAgents'))).toBe(false);
-  });
-
   test('opens work in a git repo in its own worktree and resumes it there', async () => {
-    await adapter({ appearsAfter: 0, checkout: { repo: '/focus/dolmen', linked: false } }).start?.(
-      request,
-      user
-    );
-    expect(spawned[0]).toEqual([
-      'claude',
-      '-p',
-      '--session-id',
-      'u1',
-      '-n',
-      'Bigger font',
-      '--permission-mode',
-      'bypassPermissions',
-      '--worktree',
-      'neo-u1',
-      '--',
-      'HyperNeo is handing you a task; it arrives in the next message. Reply only: ready.',
-    ]);
-    expect(cwds.slice(0, 2)).toEqual(['/focus/dolmen', '/focus/dolmen/.claude/worktrees/neo-u1']);
+    await adapter({ checkout: { repo: '/focus/dolmen', linked: false } }).start?.(request, user);
+    expect(spawned[0]).toContain('--worktree');
+    expect(spawned[0]).toContain('neo-u1');
+    expect(cwds).toEqual(['/focus/dolmen', '/focus/dolmen/.claude/worktrees/neo-u1']);
   });
 
   test('runs work in a folder that is already a linked worktree without making another', async () => {
-    await adapter({
-      appearsAfter: 0,
-      checkout: { repo: '/focus/main', linked: true },
-    }).start?.(request, user);
+    await adapter({ checkout: { repo: '/focus/main', linked: true } }).start?.(request, user);
     expect(spawned[0]).not.toContain('--worktree');
-    expect(cwds.slice(0, 2)).toEqual(['/focus/dolmen', '/focus/dolmen']);
+    expect(cwds).toEqual(['/focus/dolmen', '/focus/dolmen']);
   });
 
-  test('stops when the opening turn fails', async () => {
-    expect(await adapter({ openExit: 1 }).start?.(request, user)).toEqual({
+  test('stops when the first turn fails to start, without opening Desktop', async () => {
+    expect(await adapter({ exit: 1 }).start?.(request, user)).toEqual({
       ok: false,
       reason: 'not_delivered',
       detail: 'no auth',
@@ -290,34 +234,13 @@ describe('claude-desktop start', () => {
     expect(spawned).toHaveLength(1);
   });
 
-  test('waits for Desktop to open the new session before handing it the task', async () => {
-    expect(await adapter({ appearsAfter: 3 }).start?.(request, user)).toMatchObject({
-      ok: true,
-      value: { status: 'running', receipt: { executionId: 'u1', inputId: 'u-brief' } },
-    });
-    expect(spawned).toHaveLength(2);
-    expect(clock).toBe(7_000);
-  });
-
-  test('reports partial creation when Desktop never opens the new session', async () => {
-    expect(await adapter({}).start?.(request, user)).toMatchObject({
+  test('reports a task that never reaches the transcript', async () => {
+    expect(await adapter({ silent: true }).start?.(request, user)).toEqual({
       ok: false,
       reason: 'not_delivered',
-      detail: expect.stringContaining('Claude Code Desktop did not open Bigger font'),
+      detail: 'the message did not appear in the session transcript',
     });
-    expect(spawned).toHaveLength(2);
-    expect(spawned.some((args) => args.includes('HyperNeo relay'))).toBe(false);
-  });
-
-  test('reports partial creation without task delivery for an unknown live owner', async () => {
-    expect(
-      await adapter({ appearsAfter: 0, owner: 'unknown' }).start?.(request, user)
-    ).toMatchObject({
-      ok: false,
-      reason: 'not_delivered',
-      detail: expect.stringContaining('ownership is unknown'),
-    });
-    expect(spawned).toHaveLength(2);
-    expect(spawned.some((args) => args.includes('HyperNeo relay'))).toBe(false);
+    expect(spawned).toHaveLength(1);
+    expect(killed).toEqual(['SIGKILL']);
   });
 });
