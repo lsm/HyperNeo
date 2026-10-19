@@ -73,7 +73,7 @@ describe('planNeoSessionPrReads', () => {
     );
   });
 
-  test('reads a session that came back with no PRs again after a while, not one with PRs', () => {
+  test('reads every known session again after a while, so later PRs are found too', () => {
     const empty = listed('empty');
     const found = listed('found');
     const known = new Map([
@@ -89,7 +89,7 @@ describe('planNeoSessionPrReads', () => {
       planNeoSessionPrReads([empty, found], known, [], checked, NEO_SESSION_PR_RECHECK_MS).map(
         (session) => session.title
       )
-    ).toEqual(['empty']);
+    ).toEqual(['empty', 'found']);
   });
 });
 
