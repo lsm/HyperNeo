@@ -9,6 +9,8 @@ import {
   reconcileCodingPrLedger,
 } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
 import type { NeoSessionFacts } from '../../../../src/lib/neo/packs/types.ts';
+import { createCodingPack } from '../../../../src/lib/neo/packs/coding/pack.ts';
+import { CodingTodoPrRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -382,6 +384,37 @@ describe('CodingPrLedgerRepository owners and snapshot', () => {
       ['live', 'lsm/hyperneo#2', tracked?.state],
       ['live', 'other/repo#7', 'merged'],
       [null, 'lsm/hyperneo#1', tracked?.state],
+    ]);
+    db.close();
+  });
+
+  test('tags only the PRs a todo owns, not other PRs it was ever matched to', async () => {
+    const { ledger, db } = setup();
+    await reconcile(ledger, ['lsm/hyperneo'], async () => response([node(1), node(2)]), 100);
+    db.exec(`INSERT INTO neo_asks (id, session_id, title, request, status, created_at, updated_at)
+      VALUES ('ask', 'neo', 'A', 'R', 'open', 1, 1);
+      INSERT INTO neo_todos (id, ask_id, position, title, done_when, state, created_at, updated_at)
+      VALUES ('live', 'ask', 0, 'T', 'D', 'doing', 1, 1)`);
+    const todoPrs = new CodingTodoPrRepository(db);
+    const url = (n: number) => `https://github.com/lsm/hyperneo/pull/${n}`;
+    todoPrs.claim(
+      'live',
+      [
+        { url: url(1), claim: 'named' },
+        { url: url(2), claim: 'branch' },
+      ],
+      1
+    );
+    todoPrs.record('live', [{ url: url(1), state: 'OPEN', checks: 'passing', review: 'none' }], 1);
+    const coding = createCodingPack({
+      todoPrs,
+      prLedger: ledger,
+    } as unknown as Parameters<typeof createCodingPack>[0]);
+    expect(
+      coding.snapshotRows?.(null, 100, ['live']).map((row) => [row.todoId ?? null, row.pr])
+    ).toEqual([
+      ['live', 'lsm/hyperneo#1'],
+      [null, 'lsm/hyperneo#2'],
     ]);
     db.close();
   });

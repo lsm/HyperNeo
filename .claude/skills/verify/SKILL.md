@@ -101,11 +101,12 @@ adds its journey here.
 4. **An open todo's PR leads the PR ledger in the snapshot.** After journey 1
    opened root, run `.claude/skills/verify/seed-ledger.sh "$RUN"`. It writes a
    project for `verify-test/demo` (so the pack sweep keeps its ledger rows), an
-   open ask with a `doing` todo that claims `verify-test/demo#8`, and 120 older
-   open ledger rows in the same repo. End state: `rpc.ts neo.snapshot '{}'`
-   returns `packRows` whose first coding row is `verify-test/demo#8` with
-   `todoId: "todo-ledger"`, its state and its owner, even though the ledger
-   lists only its 100 oldest rows otherwise.
+   open ask with a `doing` todo that owns `verify-test/demo#8` (and was once
+   branch-matched to `#100`), and 120 older open ledger rows in the same repo.
+   End state: `rpc.ts neo.snapshot '{}'` returns `packRows` whose first coding
+   row is `verify-test/demo#8` with `todoId: "todo-ledger"`, its state and its
+   owner, even though the ledger lists only its 100 oldest rows otherwise, and
+   `#100` carries no `todoId`.
 5. **The web UI renders.** `/neo` shows the conversation with the human message
    marked Received; `/session/<root>` shows root's transcript, including the
    mocked replies and the todo note. The session view takes a few seconds to
@@ -143,6 +144,15 @@ adds its journey here.
    `bun .claude/skills/verify/cleanup-dry-run.ts [db]` (read-only; defaults to
    `~/.hyperneo/data/daemon.db`): it prints the planned deletes, and any merge it
    lists runs only with `apply: true`.
+8. **A todo whose PR lands in another repo moves to that repo's card.** After
+   journey 1 opened root, run
+   `VERIFY_CARD_REPO=github.com/verify-test/app .claude/skills/verify/seed-todo.sh "$RUN"`.
+   That files journey 3's todo on a `verify-test/app` card while its report names a
+   `verify-test/demo` PR. End state within ~3 min: `neo_asks` holds a new open
+   child `Fix the demo loader · demo` (`parent_id` `ask-verify`, `repo`
+   `github.com/verify-test/demo`) and `todo-verify` sits on it with that repo
+   (then completes as in journey 3); `ask-verify` keeps its repo and is left
+   without todos.
 
 ## Evidence
 

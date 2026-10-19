@@ -1,11 +1,10 @@
-import type { NeoAsk } from '@hyperneo/shared/types/neo-ask';
+import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
-import type { z } from 'zod';
-import type { NeoTodoDraftSchema } from './todo-operations.ts';
+import type { NeoDriverTarget } from './driver-work.ts';
 import type { NeoPack } from './packs/types.ts';
 import { neoRepositoryIdentity } from './project-mirror.ts';
 
-type Draft = z.infer<typeof NeoTodoDraftSchema>;
+type Draft = Pick<NeoTodo, 'check' | 'named'> & { id?: string; target?: NeoDriverTarget | null };
 
 export function neoGitRepo(remote: string | undefined): string | null {
   return neoRepositoryIdentity(remote)?.slice('repository:'.length) ?? null;
@@ -37,6 +36,10 @@ export function neoTodoHome(
   if (!repo || ask.repo === repo || (!split && !ask.repo)) return ask;
   const child = store.childAsk(ask.id, repo);
   if (child || ask.status !== 'open') return child ?? ask;
+  return neoChildAsk(store, ask, repo);
+}
+
+function neoChildAsk(store: NeoAskTodoRepository, ask: NeoAsk, repo: string): NeoAsk {
   return store.openAsk({
     id: crypto.randomUUID(),
     projectId: ask.projectId,
@@ -48,6 +51,26 @@ export function neoTodoHome(
     repo,
     parentId: ask.id,
   });
+}
+
+export function neoMoveTodo(
+  store: NeoAskTodoRepository,
+  todo: NeoTodo,
+  repo: string | null
+): NeoTodo | null {
+  const ask = store.getAsk(todo.askId);
+  if (!repo || todo.repo === repo || ask?.status !== 'open') return null;
+  const root = (ask.parentId && store.getAsk(ask.parentId)) || ask;
+  const home =
+    root.repo === repo
+      ? root
+      : (store.childAsk(root.id, repo) ??
+        (!ask.repo && !store.listChildAsks(root.id).length
+          ? ask
+          : root.status === 'open'
+            ? neoChildAsk(store, root, repo)
+            : root));
+  return home.status === 'open' ? store.moveTodo(todo, home.id, repo, Date.now()) : null;
 }
 
 export function neoSplitOutcome(children: readonly NeoAsk[], filed: number): string {
