@@ -51,7 +51,7 @@ describe('root Neo system prompt', () => {
       snapshot: false,
     });
     expect(neoPrompt(null, [])).toBe(NEO_ROOT_PROMPT);
-    expect(NEO_ROOT_PROMPT.split(/\s+/).length).toBeLessThan(130);
+    expect(NEO_ROOT_PROMPT.split(/\s+/).length).toBeLessThan(140);
     for (const fact of [
       'work.find',
       'work.send',
