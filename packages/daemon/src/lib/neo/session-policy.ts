@@ -89,6 +89,10 @@ export function restrictNeoQuery(
     snapshot: false,
   };
   delete options.maxTurns;
+  options.settings = {
+    ...(typeof options.settings === 'object' ? options.settings : {}),
+    attribution: { commit: '', pr: '' },
+  };
   const operations = options.mcpServers?.[OPERATIONS_MCP_SERVER_NAME];
   options.tools = neoCoordinatorNativeTools();
   options.additionalDirectories = [homedir()];
