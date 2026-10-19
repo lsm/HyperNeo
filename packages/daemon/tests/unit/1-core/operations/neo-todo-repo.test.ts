@@ -4,7 +4,7 @@ import { createNeoAskRecordOperations } from '../../../../src/lib/neo/ask-record
 import { codingTodoRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
 import type { NeoPack } from '../../../../src/lib/neo/packs/types.ts';
 import { createNeoTodoOperations } from '../../../../src/lib/neo/todo-operations.ts';
-import { neoTodoRepo } from '../../../../src/lib/neo/todo-repo.ts';
+import { neoMoveTodo, neoTodoRepo } from '../../../../src/lib/neo/todo-repo.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -45,6 +45,15 @@ describe('codingTodoRepository', () => {
       codingTodoRepository({ check: null, named: { repository: 'lsm/open-agent-protocol' } })
     ).toBe('github.com/lsm/open-agent-protocol');
     expect(codingTodoRepository({ check: null, named: { engine: 'codex' } })).toBeNull();
+  });
+
+  test('a claimed pull request outranks a named repository', () => {
+    expect(
+      codingTodoRepository({ check: null, named: { repository: 'lsm/HyperNeo' } }, [
+        'https://github.com/lsm/ops/pull/3',
+        'https://github.com/lsm/web/pull/4',
+      ])
+    ).toBe('github.com/lsm/ops');
   });
 });
 
@@ -355,6 +364,83 @@ describe('repo child cards', () => {
       ['Notes', null],
       ['Notes', 'github.com/lsm/ops'],
     ]);
+    db.close();
+  });
+});
+
+describe('neoMoveTodo', () => {
+  function setup() {
+    const db = new Database(':memory:');
+    runMigrations(db, () => {});
+    createTables(db);
+    const store = new NeoAskTodoRepository(db);
+    const ask = (id: string, repo: string | null, parentId: string | null = null) =>
+      store.openAsk({
+        id,
+        projectId: null,
+        sessionId: 'neo',
+        originMessageId: null,
+        title: 'Ship',
+        request: 'Ship',
+        createdAt: 1,
+        repo,
+        parentId,
+      });
+    return { db, store, ask };
+  }
+
+  test('moves a todo whose work lands in another repo to that repo’s child card', () => {
+    const { db, store, ask } = setup();
+    ask('parent', 'github.com/lsm/hyperneo');
+    store.addTodo('stay', 'parent', draft, 1, 'github.com/lsm/hyperneo');
+    const todo = store.addTodo('go', 'parent', draft, 1, 'github.com/lsm/hyperneo');
+    const moved = neoMoveTodo(store, todo, 'github.com/lsm/ops')!;
+    const child = store.getAsk(moved.askId)!;
+    expect(child).toMatchObject({
+      title: 'Ship · ops',
+      parentId: 'parent',
+      repo: 'github.com/lsm/ops',
+    });
+    expect(moved).toMatchObject({ repo: 'github.com/lsm/ops', position: 0 });
+    expect(store.listTodos('parent').map((item) => item.id)).toEqual(['stay']);
+    expect(neoMoveTodo(store, moved, 'github.com/lsm/ops')).toBeNull();
+    expect(neoMoveTodo(store, moved, null)).toBeNull();
+    db.close();
+  });
+
+  test('moves a child card’s todo to its sibling, or back to its parent’s repo', () => {
+    const { db, store, ask } = setup();
+    ask('parent', 'github.com/lsm/hyperneo');
+    ask('ops', 'github.com/lsm/ops', 'parent');
+    ask('web', 'github.com/lsm/web', 'parent');
+    const todo = store.addTodo('t', 'ops', draft, 1, 'github.com/lsm/ops');
+    const sibling = neoMoveTodo(store, todo, 'github.com/lsm/web')!;
+    expect(sibling.askId).toBe('web');
+    expect(neoMoveTodo(store, sibling, 'github.com/lsm/hyperneo')?.askId).toBe('parent');
+    expect(store.listChildAsks('parent')).toHaveLength(2);
+    db.close();
+  });
+
+  test('gives a lone repo-less card the repo instead of splitting it', () => {
+    const { db, store, ask } = setup();
+    ask('card', null);
+    const todo = store.addTodo('t', 'card', draft, 1);
+    expect(neoMoveTodo(store, todo, 'github.com/lsm/ops')).toMatchObject({
+      askId: 'card',
+      repo: 'github.com/lsm/ops',
+    });
+    expect(store.getAsk('card')?.repo).toBe('github.com/lsm/ops');
+    expect(store.listChildAsks('card')).toEqual([]);
+    db.close();
+  });
+
+  test('leaves a settled card’s todo where it is', () => {
+    const { db, store, ask } = setup();
+    const card = ask('card', 'github.com/lsm/hyperneo');
+    const todo = store.addTodo('t', 'card', draft, 1, 'github.com/lsm/hyperneo');
+    store.settleAsk(card, 'done', 'Done.', 2);
+    expect(neoMoveTodo(store, store.getTodo('t')!, 'github.com/lsm/ops')).toBeNull();
+    expect(store.getTodo(todo.id)?.askId).toBe('card');
     db.close();
   });
 });
