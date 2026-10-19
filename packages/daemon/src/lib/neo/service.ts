@@ -1253,12 +1253,11 @@ export class NeoService {
     const neo = this.db.getGlobalSettings().neo;
     const updated = this.db.updateGlobalSettings({ neo: { ...neo, preferences } });
     this.publishSettings?.(updated);
-    for (const binding of [this.repo.defaultBinding(), ...this.repo.listProjectBindings()]) {
-      if (binding)
-        await this.alignModelPreference(binding.sessionId).catch((error) =>
-          this.log.warn('Neo model preference not applied', error)
-        );
-    }
+    const root = this.repo.defaultBinding();
+    if (root)
+      await this.alignModelPreference(root.sessionId).catch((error) =>
+        this.log.warn('Neo model preference not applied', error)
+      );
   }
 
   private async alignHolderTitles(): Promise<void> {
