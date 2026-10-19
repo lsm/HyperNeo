@@ -180,6 +180,10 @@ export class CodingPrLedgerRepository {
       WHERE owner IS NULL`);
   }
 
+  dropRepo(repo: string): void {
+    this.db.prepare('DELETE FROM pack_coding_pr_ledger WHERE repo = ?').run(repo);
+  }
+
   prune(repos: readonly string[], now: number): void {
     this.db
       .prepare(
@@ -236,6 +240,7 @@ export async function reconcileCodingPrLedger(
     skips.set(repo, skipped);
     if (skipped === CODING_LEDGER_WARN_SKIPS)
       log.warn(`PR ledger read for ${repo} failed or was partial ${skipped} times in a row`);
+    if (planned && planned.repo !== repo.toLowerCase()) ledger.dropRepo(repo.toLowerCase());
     if (planned && !seen.has(planned.repo)) ledger.replace(planned.repo, planned.rows, now);
     if (planned) seen.add(planned.repo);
     if (planned && planned.remaining < CODING_LEDGER_MIN_RATE) break;

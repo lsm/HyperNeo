@@ -318,3 +318,23 @@ describe('CodingPrLedgerRepository.recordSessionPrs', () => {
     db.close();
   });
 });
+
+describe('reconcileCodingPrLedger renamed repos', () => {
+  test('rows kept under a repo alias are dropped once GitHub answers with another name', async () => {
+    const { db, ledger } = setup();
+    await reconcile(ledger, ['lsm/neokai'], async () => response([node(7563)]), 100);
+    expect(ledger.list().map((row) => row.repo)).toEqual(['lsm/neokai']);
+    await reconcileCodingPrLedger(
+      ledger,
+      ['lsm/hyperneo', 'lsm/neokai'],
+      async () => {
+        const raw = response([node(7577)]);
+        raw.data.repository.nameWithOwner = 'lsm/HyperNeo';
+        return raw;
+      },
+      200
+    );
+    expect(ledger.list().map((row) => [row.repo, row.number])).toEqual([['lsm/hyperneo', 7577]]);
+    db.close();
+  });
+});
