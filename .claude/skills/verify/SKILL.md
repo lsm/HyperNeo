@@ -99,6 +99,13 @@ adds its journey here.
    mocked replies and the todo note. The session view takes a few seconds to
    load; wait for the transcript before the screenshot.
 
+5. **Session PR links come from the desktop apps' own stores.** Read-only, on the
+   human's machine: `bun .claude/skills/verify/linked-prs.ts claude <local_id>`
+   prints the `linkedPrs` that `work.status` reports for a Claude Desktop session
+   (its `prs[]`, with `dismissed`); `... codex <thread_id>` prints a Codex
+   thread's `pull_request` attachments from `~/.codex/state_5.sqlite`. It never
+   reads credential files. End state: the list matches the app's sidebar.
+
 ## Evidence
 
 Keep everything in `$RUN/evidence/` and quote it in the pull request:

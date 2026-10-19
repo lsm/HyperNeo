@@ -114,6 +114,7 @@ export interface CodexDesktopAdapterDeps {
 export interface CodexThreadDetail {
   thread: CodexThreadRow & { rolloutPath: string };
   roots: CodexRootRow[];
+  linkedPrs?: string[];
 }
 
 export interface CodexTurnState {
@@ -326,7 +327,17 @@ export function readCodexThread(statePath: string, id: string): CodexThreadDetai
            FROM projects p JOIN project_roots r ON r.project_id = p.id WHERE r.path IS NOT NULL`
       )
       .all() as CodexRootRow[];
-    return { thread, roots };
+    const links = db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'thread_attachments'")
+      .get()
+      ? (db
+          .prepare(
+            `SELECT json_extract(payload, '$.url') AS url FROM thread_attachments
+              WHERE thread_id = ? AND attachment_type = 'pull_request' ORDER BY created_at`
+          )
+          .all(id) as { url: string | null }[])
+      : [];
+    return { thread, roots, linkedPrs: links.flatMap((row) => (row.url ? [row.url] : [])) };
   });
 }
 
@@ -559,6 +570,7 @@ export function describeCodexThread(
       ...(state.inputs ? { recentInputs: state.inputs } : {}),
       ...withExchange(state.exchange),
       ...(state.openedPrs ? { openedPrs: state.openedPrs } : {}),
+      ...(detail.linkedPrs?.length ? { linkedPrs: detail.linkedPrs.map((url) => ({ url })) } : {}),
     },
   };
 }
