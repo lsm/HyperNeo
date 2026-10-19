@@ -34,9 +34,12 @@ export function runMigration395(db: Database, now = Date.now()): void {
        WHERE status = 'reported' AND substr(COALESCE(report, ''), 1, ?) != ?`
     ).run(CLOSED_DONE, NEO_WORK_CLOSED_DONE_PREFIX.length, NEO_WORK_CLOSED_DONE_PREFIX);
   }
-  if (hasTable(db, 'sessions'))
-    db.prepare(
-      `UPDATE sessions SET status = 'archived', archived_at = ?
-       WHERE status != 'archived' AND id IN (${HOLDERS})`
-    ).run(new Date(now).toISOString());
+  if (!hasTable(db, 'sessions')) return;
+  const stamped = (db.prepare('PRAGMA table_info(sessions)').all() as { name: string }[]).some(
+    (column) => column.name === 'archived_at'
+  );
+  db.prepare(
+    `UPDATE sessions SET status = 'archived'${stamped ? ', archived_at = ?' : ''}
+     WHERE status != 'archived' AND id IN (${HOLDERS})`
+  ).run(...(stamped ? [new Date(now).toISOString()] : []));
 }
