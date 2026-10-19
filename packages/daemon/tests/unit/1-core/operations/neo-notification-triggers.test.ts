@@ -606,13 +606,8 @@ describe('NeoService notification triggers', () => {
     expect(new Set(outcomes().map((item) => item.messageUuid)).size).toBe(2);
   });
 
-  test('a root opener whose session row is gone is recreated for the note, not the holder', async () => {
+  test('a root opener whose session row is gone is recreated for the note', async () => {
     service.repo.saveProject({ id: 'labs', title: 'Labs', summary: '', context: '' }, 0);
-    service.repo.reserveBinding({
-      sessionId: 'neo:holder:labs',
-      kind: 'project',
-      projectId: 'labs',
-    });
     const opened = service.askRecords.open(
       {
         id: 'a3',

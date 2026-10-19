@@ -509,7 +509,6 @@ export function neoReorganizeRuntime(service: NeoService): NeoReorganizeRuntime 
       return { merged: [...backfilled, ...merged] };
     },
     projectFacts: () => service.repo.projectCleanupFacts(),
-    retiredHolders: () => [],
     machine: () => hostname(),
     cleanup: createNeoProjectCleanupApply(service),
     mirroredAliases: async (folders) => {

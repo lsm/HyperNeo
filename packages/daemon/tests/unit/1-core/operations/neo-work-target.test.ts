@@ -94,14 +94,14 @@ describe('Neo work target pure gates', () => {
       expect(requireNeoWorkTargetBinding(target, binding)).toEqual({ value: target });
     }
   );
-  test.each([
-    { ...worker, kind: 'neo' as const, projectId: null },
-    { ...worker, kind: 'project' as const },
-  ])('holders/coordinators are context buffers, not execution targets: %j', (binding) => {
-    expect(requireNeoWorkTargetBinding(target, binding)).toEqual(
-      rejection('target_is_coordinator')
-    );
-  });
+  test.each([{ ...worker, kind: 'neo' as const, projectId: null }])(
+    'holders/coordinators are context buffers, not execution targets: %j',
+    (binding) => {
+      expect(requireNeoWorkTargetBinding(target, binding)).toEqual(
+        rejection('target_is_coordinator')
+      );
+    }
+  );
   test('binding identity must match even for an execution worker', () => {
     expect(requireNeoWorkTargetBinding(target, { ...worker, sessionId: 'other' })).toEqual(
       rejection('invalid_target_binding')
@@ -169,7 +169,7 @@ describe('Neo work target composition', () => {
   });
   test('coordinator binding stops selection without replacing the target', () => {
     const f = fixture();
-    f.deps.readBinding.mockReturnValue({ ...worker, kind: 'project' });
+    f.deps.readBinding.mockReturnValue({ ...worker, kind: 'neo' });
     expect(f.resolve(target.id)).toEqual({ accepted: false, reason: 'target_is_coordinator' });
     expect(f.deps.readTarget).toHaveBeenCalledTimes(1);
     expect(f.deps.readSession).toHaveBeenCalledTimes(1);
@@ -237,7 +237,6 @@ describe('NeoService work-target read facet', () => {
         .prepare(`INSERT INTO space_long_horizon_agents(id, space_id, handle, display_name, session_id, instructions, created_at, updated_at)
         VALUES ('manager', 'space-a', 'manager', 'Manager', 'space-manager', 'Existing responsibilities', 1, 1)`)
         .run();
-      service.repo.reserveBinding({ sessionId: 'holder', kind: 'project', projectId: 'research' });
       const base = {
         requestKey: 'unused',
         projectId: 'research',
@@ -278,10 +277,6 @@ describe('NeoService work-target read facet', () => {
           targetSessionId: workId,
         });
       expect(service.resolveWorkTarget('space-manager')).toEqual({
-        accepted: false,
-        reason: 'target_owned_context',
-      });
-      expect(service.resolveWorkTarget('holder')).toEqual({
         accepted: false,
         reason: 'target_owned_context',
       });

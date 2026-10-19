@@ -118,7 +118,7 @@ describe('Neo recipient report pure stages', () => {
     expect(requireNeoWorkReportRecord(input, { work })).toEqual({ value: work });
     expect(requireNeoWorkReportBinding(work, { binding: value })).toEqual({ value: work });
   });
-  test.each(['neo', 'project'] as const)('context %s bindings never execute reports', (kind) => {
+  test.each(['neo'] as const)('context %s bindings never execute reports', (kind) => {
     expect(requireNeoWorkReportBinding(work, { binding: { ...binding, kind } })).toEqual(
       rejection('recipient_is_coordinator')
     );
@@ -219,16 +219,13 @@ describe('Neo recipient report composition', () => {
     expect(f.deps.transitionWork).not.toHaveBeenCalled();
     expect(f.deps.returnReport).not.toHaveBeenCalled();
   });
-  test.each(['neo', 'project'] as const)(
-    'actual %s binding blocks writes and returns',
-    async (kind) => {
-      const f = fixture();
-      f.deps.readBinding.mockReturnValue({ ...binding, kind });
-      expect(await f.report(input, caller)).toEqual(failure('recipient_is_coordinator'));
-      expect(f.deps.transitionWork).not.toHaveBeenCalled();
-      expect(f.deps.returnReport).not.toHaveBeenCalled();
-    }
-  );
+  test.each(['neo'] as const)('actual %s binding blocks writes and returns', async (kind) => {
+    const f = fixture();
+    f.deps.readBinding.mockReturnValue({ ...binding, kind });
+    expect(await f.report(input, caller)).toEqual(failure('recipient_is_coordinator'));
+    expect(f.deps.transitionWork).not.toHaveBeenCalled();
+    expect(f.deps.returnReport).not.toHaveBeenCalled();
+  });
   test.each(['proposed', 'cancelled'] as const)(
     'closed %s state never writes or returns',
     async (status) => {

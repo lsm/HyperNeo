@@ -298,11 +298,11 @@ describe('QueryRunner startup gate', () => {
     });
   });
 
-  it('runs isolated holder inputs sequentially with fresh MCP identity and no post-start overwrite', async () => {
+  it('runs isolated coordinator inputs sequentially with fresh MCP identity and no post-start overwrite', async () => {
     const sql = new SQLite(':memory:');
     createNeoTables(sql);
     sql.exec(`INSERT INTO neo_concerns (id, title, summary, context, revision, created_at, updated_at) VALUES ('club','Club','','Six',1,1,1);
-      INSERT INTO neo_session_bindings VALUES ('neo:holder','club','project')`);
+      INSERT INTO neo_session_bindings VALUES ('neo:holder',NULL,'neo')`);
     const queue = new MessageQueue();
     const base = createRunner('base');
     const identities: Array<() => OperationCaller['neoTurn']> = [];

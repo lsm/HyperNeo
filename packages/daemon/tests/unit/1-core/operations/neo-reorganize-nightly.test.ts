@@ -67,7 +67,7 @@ describe('runNeoNightlyReorganize', () => {
           moved: [{ askId: 'a', projectId: 'c' }],
           stayed: [{ askId: 'b', reason: 'stays_main' }],
           cleanupPlanned: [
-            { action: 'drop', projectId: 'p', title: 'P', sessionId: 's' },
+            { action: 'delete', projectId: 'p', title: 'P' },
             { action: 'merge', projectId: 'q', title: 'Q', targetId: 'r' },
           ],
           cleanupApplied: false,

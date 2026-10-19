@@ -76,7 +76,6 @@ describe('neo.draft.recover', () => {
     sessions.createSession(session(WORKER, { inputDraft: 'saved worker' }));
     repo = new NeoRepository(sqlite);
     repo.reserveBinding({ sessionId: ROOT, kind: 'neo', projectId: null });
-    repo.reserveBinding({ sessionId: HOLDER, kind: 'project', projectId: 'garden' });
     repo.reserveBinding({ sessionId: WORKER, kind: 'worker', projectId: null });
     asks = new NeoConversationAskRepository(sqlite);
     unconditional = mock(() => {});
@@ -158,15 +157,6 @@ describe('neo.draft.recover', () => {
     });
   });
 
-  test('restores a concern holder draft without consuming its staged voice', async () => {
-    expect(
-      await recover({ sessionId: HOLDER, text: 'holder edit', base: 'saved holder' })
-    ).toMatchObject({ value: { ok: true } });
-    expect(draft(HOLDER).inputDraft).toBe('holder edit');
-    expect(draft(HOLDER).inputDraftVoicePending).toBe('staged voice');
-    expect(draft(ROOT).inputDraft).toBe('saved root');
-  });
-
   test('refuses when a newer draft was saved after the edit was captured', async () => {
     sessions.updateSession(ROOT, { metadata: { inputDraft: 'other tab' } as SessionMetadata });
     expect(await recover({ sessionId: ROOT, text: 'stale edit', base: 'saved root' })).toEqual({
@@ -215,13 +205,9 @@ describe('neo.draft.recover', () => {
   test('only the newest ask from the same session counts as submitted', async () => {
     send('older ask');
     send('newer ask');
-    send('holder ask', HOLDER);
     expect(await recover({ sessionId: ROOT, text: 'older ask', base: 'saved root' })).toMatchObject(
       { value: { ok: true } }
     );
-    expect(
-      await recover({ sessionId: HOLDER, text: 'newer ask', base: 'saved holder' })
-    ).toMatchObject({ value: { ok: true } });
   });
 
   test.each([
@@ -239,7 +225,7 @@ describe('neo.draft.recover', () => {
     }
   );
 
-  test.each([WORKER, 'neo:unknown'])('refuses session %s', async (sessionId) => {
+  test.each([WORKER, HOLDER, 'neo:unknown'])('refuses session %s', async (sessionId) => {
     expect(await recover({ sessionId, text: 'x', base: 'saved worker' })).toMatchObject({
       value: { ok: false, reason: 'session_not_found' },
     });
@@ -247,8 +233,8 @@ describe('neo.draft.recover', () => {
   });
 
   test('refuses a bound session whose row is gone', async () => {
-    sqlite.prepare('DELETE FROM sessions WHERE id = ?').run(HOLDER);
-    expect(await recover({ sessionId: HOLDER, text: 'x', base: null })).toMatchObject({
+    sqlite.prepare('DELETE FROM sessions WHERE id = ?').run(ROOT);
+    expect(await recover({ sessionId: ROOT, text: 'x', base: null })).toMatchObject({
       value: { ok: false, reason: 'session_not_found' },
     });
   });

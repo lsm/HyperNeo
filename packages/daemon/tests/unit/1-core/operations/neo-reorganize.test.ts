@@ -58,12 +58,10 @@ const routed = (projectId: string | null): NeoRouted => ({
 const neoCaller: OperationCaller = { source: 'mcp', sessionId: root, role: 'neo' };
 
 describe('admitNeoReorganizer', () => {
-  test('lets main Neo, the default session and the human run it, not a project avatar', () => {
+  test('lets main Neo and the human run it, not another session', () => {
     const main = { sessionId: root, kind: 'neo', projectId: null } as NeoBinding;
-    const inbox = { sessionId: 'i', kind: 'project', projectId: 'inbox' } as NeoBinding;
-    const holder = { sessionId: 'h', kind: 'project', projectId: 'c' } as NeoBinding;
+    const holder = { sessionId: 'h', kind: 'worker', projectId: 'inbox' } as NeoBinding;
     expect(admitNeoReorganizer(neoCaller, main)).toEqual({ value: true });
-    expect(admitNeoReorganizer({ ...neoCaller, sessionId: 'i' }, inbox)).toEqual({ value: true });
     expect(admitNeoReorganizer({ source: 'rpc', principal: 'local' }, null)).toEqual({
       value: true,
     });
@@ -226,7 +224,6 @@ describe('neo.projects.reorganize', () => {
       mergeProjects: async () => ({ merged }),
       projectFacts: () => [],
       machine: () => 'here',
-      retiredHolders: () => [],
       cleanup: async (step) => {
         cleaned.push(step.projectId);
         if (step.projectId === 'stuck') throw new Error('busy');
@@ -309,9 +306,6 @@ describe('neo.projects.reorganize', () => {
         liveAsks: 0,
         work: [],
         liveWork: 0,
-        holderMessages: 0,
-        archived: false,
-        holder: null,
         aliases: [],
       },
     ];
@@ -325,45 +319,21 @@ describe('neo.projects.reorganize', () => {
     expect(logged).toContain('neo reorganize: no project cleanup, the places could not be read');
   });
 
-  test('a merged holder mid-turn waits for a later pass; a human-named archive is still planned', async () => {
-    const { deps } = runtime([], {}, ['holder:busy', 'retired:busy']);
-    deps.retiredHolders = () => [
-      { projectId: 'old', title: 'Old', sessionId: 'retired:busy', spoke: true },
-      { projectId: 'idle', title: 'Idle', sessionId: 'retired:idle', spoke: true },
-    ];
+  test('the nightly mode applies every step but a merge, and leaves each merge for apply: true', async () => {
+    const { deps, logged, cleaned } = runtime([], {});
     deps.projectFacts = () => [
       {
-        id: 'named',
-        title: 'Named',
-        createdAt: 1,
+        id: 'empty',
+        title: 'Empty',
+        createdAt: 3,
         section: false,
-        context: 1,
+        context: 0,
         asks: 0,
         liveAsks: 0,
         work: [],
         liveWork: 0,
-        holderMessages: 0,
-        archived: false,
-        holder: 'holder:busy',
         aliases: [],
       },
-    ];
-    expect(await invoke(deps, neoCaller, { archive: ['named'] })).toMatchObject({
-      ok: true,
-      cleanupPlanned: [
-        { action: 'archive', projectId: 'named', title: 'Named', sessionId: 'holder:busy' },
-        { action: 'archive', projectId: 'idle', title: 'Idle', sessionId: 'retired:idle' },
-      ],
-    });
-  });
-
-  test('the nightly mode applies every step but a merge, and leaves each merge for apply: true', async () => {
-    const { deps, logged, cleaned } = runtime([], {});
-    deps.retiredHolders = () => [
-      { projectId: 'silent', title: 'Silent', sessionId: 's1', spoke: false },
-      { projectId: 'talked', title: 'Talked', sessionId: 's2', spoke: true },
-    ];
-    deps.projectFacts = () => [
       {
         id: 'home',
         title: 'Topic',
@@ -374,9 +344,6 @@ describe('neo.projects.reorganize', () => {
         liveAsks: 0,
         work: [],
         liveWork: 0,
-        holderMessages: 1,
-        archived: false,
-        holder: null,
         aliases: ['repository:github.com/lsm/app'],
       },
       {
@@ -389,19 +356,16 @@ describe('neo.projects.reorganize', () => {
         liveAsks: 0,
         work: [],
         liveWork: 0,
-        holderMessages: 1,
-        archived: false,
-        holder: null,
         aliases: [],
       },
     ];
     const result = await createNeoProjectsReorganizer(deps)({ apply: 'unattended' });
-    expect(result.cleanupPlanned.map((step) => step.action)).toEqual(['merge', 'drop', 'archive']);
-    expect(cleaned).toEqual(['silent', 'talked']);
+    expect(result.cleanupPlanned.map((step) => step.action).sort()).toEqual(['delete', 'merge']);
+    expect(cleaned).toEqual(['empty']);
     expect(logged).toEqual(
       expect.arrayContaining([
         'neo reorganize: left for apply: true: merge project topic (Topic) into home',
-        'neo reorganize: did archive project talked (Talked) holder s2',
+        'neo reorganize: did delete project empty (Empty)',
       ])
     );
   });
@@ -418,9 +382,6 @@ describe('neo.projects.reorganize', () => {
       liveAsks: 0,
       work: [],
       liveWork: 0,
-      holderMessages: 0,
-      archived: false,
-      holder: null,
       aliases: [],
     });
     deps.projectFacts = () => [empty('empty'), empty('stuck')];

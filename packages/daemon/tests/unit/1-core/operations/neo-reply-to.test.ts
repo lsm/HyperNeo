@@ -48,7 +48,6 @@ describe('neo.message.send replyTo', () => {
     repo = new NeoRepository(mailbox.db);
     repo.reserveBinding({ sessionId: root, projectId: null, kind: 'neo' });
     repo.saveProject({ id: 'c1', title: 'C1', summary: '', context: '' }, 0);
-    repo.reserveBinding({ sessionId: holder, kind: 'project', projectId: 'c1' });
     const sessions = new Map(
       [root, holder].map((id) => [id, { id, status: 'active' as const, config: {} }])
     );

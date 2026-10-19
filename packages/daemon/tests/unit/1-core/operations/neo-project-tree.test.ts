@@ -154,11 +154,11 @@ describe('Neo project hierarchy', () => {
     }
   });
 
-  test('authorization rejects holders before external reads or writes', async () => {
+  test('authorization rejects non-root sessions before external reads or writes', async () => {
     save('root');
     save('child');
     workspace('root');
-    repo.reserveBinding({ kind: 'project', projectId: 'child', sessionId: 'holder' });
+    repo.reserveBinding({ kind: 'worker', projectId: 'child', sessionId: 'holder' });
     const read = mock(async () => [epic]);
     const [move, section] = createNeoProjectTreeOperations(repo, read);
     const caller = { source: 'mcp' as const, sessionId: 'holder' };

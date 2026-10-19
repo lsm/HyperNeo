@@ -62,18 +62,11 @@ describe('NeoRepository', () => {
     expect(notify).toHaveBeenCalledTimes(2);
   });
 
-  test('reserves one root and one coordinator per concern with separate workers', () => {
+  test('reserves one root and separate workers', () => {
     repo.saveProject(concern, 0);
     const root = { sessionId: 'root', projectId: null, kind: 'neo' as const };
-    const coordinator = {
-      sessionId: 'concern-session',
-      projectId: concern.id,
-      kind: 'project' as const,
-    };
     expect(repo.reserveBinding(root)).toBe(true);
     expect(repo.reserveBinding({ ...root, sessionId: 'another-root' })).toBe(false);
-    expect(repo.reserveBinding(coordinator)).toBe(true);
-    expect(repo.reserveBinding({ ...coordinator, sessionId: 'another-coordinator' })).toBe(false);
     for (const sessionId of ['worker-1', 'worker-2']) {
       expect(repo.reserveBinding({ sessionId, projectId: concern.id, kind: 'worker' })).toBe(true);
     }
@@ -81,8 +74,7 @@ describe('NeoRepository', () => {
       false
     );
     expect(repo.getBindingBySession('root')).toEqual(root);
-    expect(repo.getBindingForProject(null)).toEqual(root);
-    expect(repo.getBindingForProject(concern.id)).toEqual(coordinator);
+    expect(repo.defaultBinding()).toEqual(root);
     expect(repo.getBindingBySession('unknown')).toBeNull();
   });
 
@@ -97,9 +89,6 @@ describe('NeoRepository', () => {
   });
 
   test('enforces coordinator kind and existing concern references', () => {
-    expect(() =>
-      repo.reserveBinding({ sessionId: 'invalid', kind: 'project', projectId: null })
-    ).toThrow();
     expect(() =>
       repo.reserveBinding({ sessionId: 'invalid', kind: 'worker', projectId: 'missing' })
     ).toThrow();
@@ -206,7 +195,7 @@ describe('NeoRepository', () => {
       runMigration283(reopened);
       const restored = new NeoRepository(reopened);
       expect(restored.getProject(concern.id)).toMatchObject({ ...concern, revision: 1 });
-      expect(restored.getBindingForProject(null)?.sessionId).toBe('root');
+      expect(restored.defaultBinding()?.sessionId).toBe('root');
       expect(restored.getWork(proposal.id)).toMatchObject({
         ...proposal,
         originMessageId: 'persisted-ask',

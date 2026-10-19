@@ -5032,7 +5032,7 @@ describe('AgentSession', () => {
       });
     });
 
-    it.each(['neo', 'project', 'worker', 'ordinary'] as const)(
+    it.each(['neo', 'worker', 'ordinary'] as const)(
       'preserves the intended %s query boundary across all live MCP refresh paths',
       async (kind) => {
         const sqlite = new SqliteDatabase(':memory:');
@@ -5040,14 +5040,8 @@ describe('AgentSession', () => {
         const session = makeMockSession();
         session.id = kind === 'ordinary' ? 'ordinary' : `neo:${kind}`;
         const repo = new NeoRepository(sqlite);
-        if (kind === 'project')
-          repo.saveProject({ id: 'club', title: 'Club', summary: '', context: '' }, 0);
         if (kind !== 'ordinary')
-          repo.reserveBinding({
-            sessionId: session.id,
-            projectId: kind === 'project' ? 'club' : null,
-            kind,
-          });
+          repo.reserveBinding({ sessionId: session.id, projectId: null, kind });
         const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
         mockDb.getDatabase = () => sqlite;
         const agentSession = new AgentSession(
@@ -5072,7 +5066,7 @@ describe('AgentSession', () => {
           agentSession.replaceAllRuntimeMcpServers({ replacement });
           expect(agentSession.getSessionData().config.mcpServers).toEqual({ replacement });
           await Promise.resolve();
-          if (kind === 'neo' || kind === 'project') {
+          if (kind === 'neo') {
             expect(setMcpServers).not.toHaveBeenCalled();
           } else {
             expect(setMcpServers).toHaveBeenCalledTimes(4);
@@ -5094,7 +5088,7 @@ describe('AgentSession', () => {
       session.id = 'neo:holder';
       const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
       (mockDb as unknown as { getDatabase: () => unknown }).getDatabase = () => ({
-        prepare: () => ({ get: () => ({ kind: 'project' }) }),
+        prepare: () => ({ get: () => ({ kind: 'neo' }) }),
       });
       const agentSession = new AgentSession(
         session,

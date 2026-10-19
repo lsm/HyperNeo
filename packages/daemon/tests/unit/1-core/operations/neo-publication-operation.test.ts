@@ -37,7 +37,7 @@ import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbo
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
 const root = { sessionId: `neo:${conversationId}`, kind: 'neo' as const, projectId: null };
-const holder = { sessionId: 'holder:a', kind: 'project' as const, projectId: 'a' };
+const holder = { sessionId: 'holder:a', kind: 'worker' as const, projectId: 'a' };
 const ask = { sessionId: root.sessionId, messageId: 'ask-original' };
 const draft = {
   publicationId: '20000000-0000-4000-8000-000000000001',
@@ -119,7 +119,6 @@ describe('runtime-bound publication operation', () => {
     for (const binding of [
       root,
       holder,
-      { sessionId: 'holder:b', kind: 'project' as const, projectId: 'b' },
       { sessionId: 'worker', kind: 'worker' as const, projectId: 'a' },
     ]) {
       mailbox.db.prepare('INSERT INTO sessions(id) VALUES (?)').run(binding.sessionId);
@@ -135,7 +134,7 @@ describe('runtime-bound publication operation', () => {
     notify = vi.fn();
     runtime = {
       getBinding: (id) => repo.getBindingBySession(id),
-      getRootBinding: () => repo.getBindingForProject(null),
+      getRootBinding: () => repo.defaultBinding(),
       hasProject: (id) => !!repo.getProject(id),
       getWork: (id) => repo.getWork(id),
       resolveAskOrigin: resolve,

@@ -2,7 +2,7 @@ import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { isNeoCoordinatorBinding } from './binding-roles.ts';
+import { isMainNeoBinding } from './binding-roles.ts';
 
 export interface NeoAskOrigin {
   readonly sessionId: string;
@@ -61,7 +61,7 @@ export function requireNeoAskReference(input: Input): Gate {
 }
 
 export function requireNeoAskCoordinator(input: NeoAskOrigin, binding: NeoBinding | null): Gate {
-  return binding?.sessionId === input.sessionId && isNeoCoordinatorBinding(binding)
+  return binding?.sessionId === input.sessionId && isMainNeoBinding(binding)
     ? { value: input }
     : { reason: unknown };
 }
