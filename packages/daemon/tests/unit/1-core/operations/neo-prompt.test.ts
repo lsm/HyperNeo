@@ -51,6 +51,9 @@ describe('root Neo system prompt', () => {
       snapshot: false,
     });
     expect(neoPrompt(null, [])).toBe(NEO_ROOT_PROMPT);
+    expect(NEO_ROOT_PROMPT.trim().split('\n').at(-1)).toBe(
+      'End every turn with exactly one line: Done. No summary.'
+    );
     expect(NEO_ROOT_PROMPT.split(/\s+/).length).toBeLessThan(160);
     for (const fact of [
       'work.find',
@@ -59,7 +62,6 @@ describe('root Neo system prompt', () => {
       'neo.question.ask',
       'neo.rule.save',
       'Plain assistant text is never shown to the human.',
-      'After your last tool call, end the turn with exactly: Done.',
     ])
       expect(NEO_ROOT_PROMPT).toContain(fact);
   });
