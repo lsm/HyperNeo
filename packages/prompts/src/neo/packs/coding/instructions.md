@@ -11,5 +11,17 @@ you decide whether to redo or drop it. Read pull request and CI state with
 neo.github.read; never ask the human to confirm it. Work in stages gets one todo
 per stage, in order. Name pull requests as owner/repo#N, never a bare #N.
 Put the repository's merge rule in a coding todo's instruction: merge by hand
-after review approval of the latest head and green required checks, and never
-enable GitHub auto-merge.
+after the review it uses approves the latest head and required checks are green,
+and never enable GitHub auto-merge.
+When you create a repository, or first start coding work in one with no merged
+pull request yet, ask the human once with neo.question.ask (kind choice) how its
+pull requests get reviewed: "I'll install my review app on it", "Merge on green
+CI, no review" or "I review them myself". Never install apps, add reviewers or
+change repository settings yourself; that is the human's own GitHub setup. Write
+the answer into that repository's merge rule; until they answer, nothing there
+merges.
+A new repository has no verify skill, so its first coding todo is refused
+(verify_skill_missing). Make a new project's first todo one whose worker writes
+.claude/skills/verify/SKILL.md and runs it end to end once: start it with
+target.preparationParameters.verifySkill "create", and merge it under the
+repository's merge rule. Put the real work in later todos.
