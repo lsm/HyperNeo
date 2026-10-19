@@ -1,3 +1,4 @@
+import { neoWorkerPermissionMode } from '@hyperneo/shared/types/settings';
 import { sleep } from '../../utils/sleep.ts';
 import { withdrawOwnedInput } from '../../drivers/owned-input-withdrawal.ts';
 import {
@@ -240,7 +241,8 @@ function claudeDesktopAdapters(
   searchChats: (text: string, kinds: readonly WorkChatKind[]) => Promise<readonly WorkChatMatch[]>,
   prepareExecution: WorkExecutionPreparer,
   inbox: FamilyOperationContext['claudeInbox'],
-  mods: FamilyOperationContext['claudeDesktopMods']
+  mods: FamilyOperationContext['claudeDesktopMods'],
+  permissionMode: () => string
 ): WorkAdapter[] {
   const sessionsDir = CLAUDE_DESKTOP_SESSIONS;
   if (!existsSync(sessionsDir)) return [];
@@ -262,6 +264,7 @@ function claudeDesktopAdapters(
     sleep,
     now: Date.now,
     searchChats: (text) => searchChats(text, ['claude']),
+    permissionMode,
   };
   return [withClaudeRemoteControl(createClaudeDesktopAdapter(deps), deps)];
 }
@@ -485,7 +488,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       searchChats,
       prepareExecution,
       context.claudeInbox,
-      context.claudeDesktopMods
+      context.claudeDesktopMods,
+      () => neoWorkerPermissionMode(context.deps.db.getGlobalSettings().neo)
     ),
     ...claudeCodeAdapters(searchChats, () => readHyperneoSdkSessions(db()), context.claudeInbox),
     ...acpAgentAdapters(
