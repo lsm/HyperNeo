@@ -14,12 +14,14 @@ clean_env=(env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)")
 cd "$REPO"
 "${clean_env[@]}" bun .claude/skills/verify/mock-api.ts < /dev/null > "$RUN/mock-api.log" 2>&1 &
 echo $! > "$RUN/mock-api.pid"
-"${clean_env[@]}" HYPERNEO_DATA_DIR="$RUN/data" \
-  /usr/sbin/taskpolicy -b /usr/bin/nice -n 19 \
+low=(nice -n 19)
+[ -x /usr/sbin/taskpolicy ] && low=(/usr/sbin/taskpolicy -b nice -n 19)
+"${clean_env[@]}" HYPERNEO_DATA_DIR="$RUN/data" "${low[@]}" \
   bun run packages/cli/main.ts --port "$PORT" --host 127.0.0.1 --db-path "$RUN/data/daemon.db" \
   < /dev/null > "$RUN/daemon.log" 2>&1 &
 echo $! > "$RUN/daemon.pid"
 for _ in $(seq 1 120); do
+  kill -0 "$(cat "$RUN/daemon.pid")" 2>/dev/null || { echo "daemon exited; see $RUN/daemon.log"; exit 1; }
   if curl -fs -o /dev/null "http://127.0.0.1:$PORT/"; then
     echo "ready: http://127.0.0.1:$PORT  run dir: $RUN"
     exit 0
