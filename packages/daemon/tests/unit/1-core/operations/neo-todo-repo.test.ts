@@ -425,7 +425,11 @@ describe('neoMoveTodo', () => {
       parentId: 'parent',
       repo: 'github.com/lsm/ops',
     });
-    expect(moved).toMatchObject({ repo: 'github.com/lsm/ops', position: 0 });
+    expect(moved).toMatchObject({
+      repo: 'github.com/lsm/ops',
+      position: 0,
+      updatedAt: todo.updatedAt,
+    });
     expect(store.listTodos('parent').map((item) => item.id)).toEqual(['stay']);
     expect(neoMoveTodo(store, moved, 'github.com/lsm/ops')).toBeNull();
     expect(neoMoveTodo(store, moved, null)).toBeNull();
