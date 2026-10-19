@@ -589,7 +589,7 @@ function admitNeoCaller(
     return { reason: { ok: false, reason: 'This operation belongs to Neo.' } };
   if (name === 'neo.rule.save' && !isNeoHumanTurn(service, caller))
     return { reason: { ok: false, reason: NEO_HUMAN_TURN_REFUSAL } };
-  if (['neo.open', 'neo.restart', 'neo.project.cancel', 'neo.session.track'].includes(name))
+  if (['neo.open', 'neo.restart', 'neo.session.track'].includes(name))
     return { reason: { ok: false, reason: 'This action needs the user.' } };
   return { value: caller };
 }
