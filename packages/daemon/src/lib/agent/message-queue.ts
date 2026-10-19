@@ -960,15 +960,19 @@ export class MessageQueue {
       this.wakeWaiters();
     });
     while (this.running && !ended) {
-      const index = this.queue.findIndex((message) => message.steer);
+      const held = this.deliveryGate || this.hasOutstandingInternalCompaction();
+      const index = held ? -1 : this.queue.findIndex((message) => message.steer);
       if (index !== -1) {
         const message = this.queue.splice(index, 1)[0];
         this.claimed.add(message);
         return message;
       }
-      await new Promise<void>((resolve) => {
-        this.waiters.push(resolve);
-      });
+      await Promise.race([
+        ...(this.deliveryGate ? [this.deliveryGate.catch(() => {})] : []),
+        new Promise<void>((resolve) => {
+          this.waiters.push(resolve);
+        }),
+      ]);
     }
     return null;
   }

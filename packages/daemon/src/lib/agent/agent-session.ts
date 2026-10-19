@@ -3207,13 +3207,21 @@ export class AgentSession
   }
 
   requeueNeoInput(messageUuid: string): void {
-    redeliverPrompt({
+    const dbId = redeliverPrompt({
       db: this.db.getDatabase(),
       jobQueue: this.db.getJobQueueRepo(),
       sdkMessageRepo: this.db.getSDKMessageRepo(),
       sessionId: this.session.id,
       messageUuid,
     });
+    if (dbId)
+      void this.internalEventBus
+        .publish('messages.statusChanged', {
+          sessionId: this.session.id,
+          messageIds: [dbId],
+          status: 'enqueued',
+        })
+        .catch(() => {});
   }
 
   markHolderInputConsumed(messageUuid: string): void {

@@ -810,7 +810,7 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
           sessionId: SESSION,
           messageUuid: 'steered',
         })
-      ).toBe(true);
+      ).toBe(sdkRepo.findMessageIdByUuid(SESSION, 'steered'));
       expect(rowStatus('steered')).toBe('enqueued');
       expect(jobsFor('steered').map((row) => row.status)).toEqual(['pending']);
     });

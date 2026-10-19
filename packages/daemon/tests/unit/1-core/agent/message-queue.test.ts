@@ -18,6 +18,32 @@ describe('MessageQueue', () => {
     queue = new MessageQueue();
   });
 
+  describe('steers', () => {
+    it('feeds only steered messages, holds them behind the delivery gate, and ends with the turn', async () => {
+      queue.start();
+      let openGate!: () => void;
+      queue.setDeliveryGate(new Promise<void>((resolve) => (openGate = resolve)));
+      let endTurn!: () => void;
+      const steers = queue.messageGenerator(testSessionId, {
+        steersUntil: new Promise<void>((resolve) => (endTurn = resolve)),
+      });
+      void queue.enqueueWithId('note', 'Note', false, { durable: true }).catch(() => {});
+      void queue.admitWithId('human', 'Hi', false, { durable: true, steer: true }).catch(() => {});
+      let fed: string | undefined;
+      const next = steers.next().then((step) => (fed = step.value?.message.uuid));
+      await tick(10);
+      expect(fed).toBeUndefined();
+      openGate();
+      await next;
+      expect(fed).toBe('human');
+      const after = steers.next();
+      endTurn();
+      expect((await after).done).toBe(true);
+      expect(queue.hasPendingOrClaimed('note')).toBe(true);
+      queue.clear();
+    });
+  });
+
   describe('enqueue', () => {
     it('should enqueue a message and return message ID', async () => {
       queue.start();

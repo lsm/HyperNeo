@@ -959,12 +959,12 @@ export function redeliverPrompt(args: {
   sdkMessageRepo: SDKMessageRepository;
   sessionId: string;
   messageUuid: string;
-}): boolean {
+}): string | null {
   const dbId = args.sdkMessageRepo.findMessageIdByUuid(args.sessionId, args.messageUuid);
-  if (!dbId) return false;
+  if (!dbId) return null;
   return args.db.transaction(() => {
     args.sdkMessageRepo.updateMessageStatus([dbId], 'enqueued');
-    return rePendingDeliveryJob(
+    rePendingDeliveryJob(
       args.db,
       args.jobQueue,
       buildReleasedPayload({
@@ -975,6 +975,7 @@ export function redeliverPrompt(args: {
         priority: 1,
       })
     );
+    return dbId;
   }, 'immediate')();
 }
 
