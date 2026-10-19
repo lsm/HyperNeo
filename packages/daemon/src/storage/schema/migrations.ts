@@ -29,6 +29,7 @@ import { runMigration398 } from './m398-neo-todo-blocked.ts';
 import { runMigration399 } from './m399-drop-neo-ask-forwards.ts';
 import { runMigration400 } from './m400-drop-neo-consultations.ts';
 import { runMigration401 } from './m401-drop-neo-card-pr-relays.ts';
+import { runMigration402 } from './m402-drop-neo-pr-refs.ts';
 import { runMigration384 } from './m384-neo-conversation-cursors.ts';
 import { runMigration385 } from './m385-neo-work-kickoff.ts';
 import { runMigration366 } from './m366-neo-work-dependencies.ts';
@@ -859,6 +860,7 @@ export function runMigrations(
   run(migrationMarkerKey(399), () => runMigration399(db));
   run(migrationMarkerKey(400), () => runMigration400(db));
   run(migrationMarkerKey(401), () => runMigration401(db));
+  run(migrationMarkerKey(402), () => runMigration402(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

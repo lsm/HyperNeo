@@ -2,7 +2,6 @@ import { type DbScopeType, getScopeConfig } from '../../src/lib/db-query/scope-c
 
 export const EXCLUDED_TABLE_NAMES: string[] = [
   'claude_inbox_routes',
-  'neo_todo_pr_refs',
   'claude_desktop_bridge_events',
   'claude_desktop_bridge_instances',
   'session_incarnations',
@@ -12,7 +11,6 @@ export const EXCLUDED_TABLE_NAMES: string[] = [
   'neo_concerns',
   'neo_project_merges',
   'neo_project_workspaces',
-  'neo_route_pr_refs',
   'neo_publications',
   'neo_conversation_asks',
   'neo_conversation_ask_images',

@@ -356,7 +356,6 @@ export interface NeoSnapshot {
   conversationId?: string | null;
   projects: NeoProject[];
   projectRedirects?: { sourceId: string; targetId: string }[];
-  projectFacts?: { reference: string; projectId?: string | null }[];
   work: NeoSnapshotWork[];
   askOrigins?: NeoReceiptAskOrigin[];
   workResources?: NeoWorkResourceReceipt[];
