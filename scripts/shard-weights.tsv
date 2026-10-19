@@ -270,7 +270,6 @@
 22994	packages/daemon/tests/unit/1-core/operations/neo-driver-work.test.ts
 7	packages/daemon/tests/unit/1-core/operations/neo-evidence.test.ts
 12	packages/daemon/tests/unit/1-core/operations/neo-file-packs.test.ts
-4	packages/daemon/tests/unit/1-core/operations/neo-fit-lines.test.ts
 1107	packages/daemon/tests/unit/1-core/operations/neo-holder-parent.test.ts
 59	packages/daemon/tests/unit/1-core/operations/neo-holder-turn.test.ts
 13	packages/daemon/tests/unit/1-core/operations/neo-human-work-prompt.test.ts
