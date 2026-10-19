@@ -262,15 +262,15 @@ describe('VoiceStream against a stub Deepgram server', () => {
     expect([...Buffer.from(batches[0], 'base64').subarray(44)]).toEqual([1, 0, 2, 0]);
   });
 
-  test('a cancel during a stop that heard no text ends it without the batch fallback', async () => {
+  test('a cancel during a stop drops the finals the server flushes and skips the batch fallback', async () => {
     onAudio = () => {};
     const { stream } = await start();
     stream.write(new Uint8Array([1, 0, 2, 0]));
     const stopping = stream.stop();
     stream.cancel();
-    expect(await stopping).toEqual({ error: 'Audio data is empty' });
+    expect(await stopping).toEqual({ error: 'Voice stream cancelled' });
     expect(batches).toEqual([]);
-    expect(pushed.some((text) => text.isFinal)).toBe(false);
+    expect(pushed).toEqual([]);
   });
 
   test('a cancel during a batch transcription already running drops its result', async () => {
