@@ -124,7 +124,10 @@ export function createNeoAskRecordOperations(
           new Set(input.todos.map((todo) => neoTodoRepo(todo, packs(), ask)).filter(Boolean)).size >
             1;
         for (const todo of input.todos) {
-          const row = recorded.find((item) => item.title === todo.title);
+          const repo = neoTodoRepo(todo, packs(), ask);
+          const row = recorded.find(
+            (item) => item.title === todo.title && (item.repo === repo || item.repo === null)
+          );
           const added = !row
             ? await addNeoTodo(
                 store,

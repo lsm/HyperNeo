@@ -145,7 +145,7 @@ export class NeoAskTodoRepository {
 
   listChildAsks(parentId: string): NeoAsk[] {
     return this.db
-      .prepare(`${ASK_SELECT} WHERE parent_id = ? ORDER BY created_at`)
+      .prepare(`${ASK_SELECT} WHERE parent_id = ? ORDER BY created_at, rowid`)
       .all(parentId) as NeoAsk[];
   }
 

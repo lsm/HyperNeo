@@ -295,4 +295,27 @@ describe('repo child cards', () => {
     expect(store.getAsk(first.ask.id)?.status).toBe('open');
     db.close();
   });
+
+  test('a retry keeps a same-titled todo of another repo', async () => {
+    const { db, store, open } = setup();
+    const tests = (repo: string) => ({ ...pr(repo, 1), title: 'Write tests' });
+    const first = (await open({
+      title: 'T',
+      request: 'T',
+      todos: [tests('HyperNeo'), pr('ops', 2)],
+    })) as {
+      ask: { id: string };
+    };
+    await open({
+      title: 'T',
+      request: 'T',
+      todos: [tests('HyperNeo'), pr('ops', 2), tests('ops')],
+    });
+    expect(
+      store
+        .listChildAsks(first.ask.id)
+        .map((child) => store.listTodos(child.id).map((todo) => todo.title))
+    ).toEqual([['Write tests'], ['PR ops 2', 'Write tests']]);
+    db.close();
+  });
 });
