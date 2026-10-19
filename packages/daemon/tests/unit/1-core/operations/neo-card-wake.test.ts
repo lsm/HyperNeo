@@ -2,7 +2,6 @@ import { isNeoCardPrAwaited } from '../../../../src/lib/neo/packs/coding/card-fa
 import { describe, expect, test } from 'bun:test';
 import type { NeoAsk, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import {
-  isNeoCardAwaitingPr,
   isNeoCardDoneWhenMet,
   isNeoCardPrRoutine,
   isNeoHumanInputSince,
@@ -74,15 +73,6 @@ describe('isNeoCardPrRoutine', () => {
     ['merged', { state: 'MERGED' }, false],
   ])('%s', (_label, extra, routine) => {
     expect(isNeoCardPrRoutine(pr(extra))).toBe(routine);
-  });
-});
-
-describe('isNeoCardAwaitingPr', () => {
-  test('a card waits only when every open PR is routine', () => {
-    expect(isNeoCardAwaitingPr([])).toBe(false);
-    expect(isNeoCardAwaitingPr([pr({ state: 'MERGED' })])).toBe(false);
-    expect(isNeoCardAwaitingPr([pr({ state: 'MERGED' }), pr({ checks: 'pending' })])).toBe(true);
-    expect(isNeoCardAwaitingPr([pr(), pr({ checks: 'failing' })])).toBe(false);
   });
 });
 

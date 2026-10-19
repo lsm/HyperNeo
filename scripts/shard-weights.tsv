@@ -239,9 +239,7 @@
 97	packages/daemon/tests/unit/1-core/operations/metadata-standalone.test.ts
 328	packages/daemon/tests/unit/1-core/operations/neo-agent-work-target.test.ts
 630	packages/daemon/tests/unit/1-core/operations/neo-ask-evidence.test.ts
-606	packages/daemon/tests/unit/1-core/operations/neo-ask-idle.test.ts
 282	packages/daemon/tests/unit/1-core/operations/neo-ask-origin.test.ts
-6	packages/daemon/tests/unit/1-core/operations/neo-ask-stall.test.ts
 5	packages/daemon/tests/unit/1-core/operations/neo-binding-roles.test.ts
 36	packages/daemon/tests/unit/1-core/operations/neo-branch-prs.test.ts
 4	packages/daemon/tests/unit/1-core/operations/neo-card-check.test.ts

@@ -41,9 +41,7 @@ import mdneoSessionTrack from './neo/session-track.md' with { type: 'text' };
 import mdneoAskEvidence from './neo/ask-evidence.md' with { type: 'text' };
 import mdneoAskProgress from './neo/ask-progress.md' with { type: 'text' };
 import mdneoCardProgress from './neo/card-progress.md' with { type: 'text' };
-import mdneoAskIdle from './neo/ask-idle.md' with { type: 'text' };
 import mdneoAskMoved from './neo/ask-moved.md' with { type: 'text' };
-import mdneoAskStalled from './neo/ask-stalled.md' with { type: 'text' };
 import mdneoTriggerNote from './neo/trigger-note.md' with { type: 'text' };
 import mdneoSystemHolderOperations from './neo/system/holder-operations.md' with { type: 'text' };
 import mdneoSystemHolderRole from './neo/system/holder-role.md' with { type: 'text' };
@@ -311,9 +309,7 @@ const registry: Record<string, string> = {
   'neo/ask-evidence.md': mdneoAskEvidence,
   'neo/ask-progress.md': mdneoAskProgress,
   'neo/card-progress.md': mdneoCardProgress,
-  'neo/ask-idle.md': mdneoAskIdle,
   'neo/ask-moved.md': mdneoAskMoved,
-  'neo/ask-stalled.md': mdneoAskStalled,
   'neo/trigger-note.md': mdneoTriggerNote,
   'neo/system/holder-operations.md': mdneoSystemHolderOperations,
   'neo/system/holder-role.md': mdneoSystemHolderRole,
@@ -479,10 +475,8 @@ export const {
   NEO_ASK_EVIDENCE,
   NEO_ASK_PROGRESS,
   NEO_CARD_PROGRESS,
-  NEO_ASK_STALLED,
   NEO_TRIGGER_NOTE,
   NEO_ASK_MOVED,
-  NEO_ASK_IDLE,
   NEO_HOLDER_OPERATIONS,
   NEO_HOLDER_ROLE,
   NEO_HOLDER_SNAPSHOT_SCOPE,
