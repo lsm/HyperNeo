@@ -732,8 +732,7 @@ describe('NeoService notification triggers', () => {
     const reopen = vi.spyOn(service, 'open').mockRejectedValue(new Error('not recreated in test'));
     tickMet(opened);
     await sweep();
-    expect(reopen).toHaveBeenCalledWith(null);
-    expect(reopen).not.toHaveBeenCalledWith('labs');
+    expect(reopen).toHaveBeenCalledExactlyOnceWith();
   });
 
   test('a note for an ask with no origin message is attributed to itself and keeps its trigger', async () => {
