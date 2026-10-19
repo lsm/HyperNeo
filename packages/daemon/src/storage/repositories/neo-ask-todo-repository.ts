@@ -128,7 +128,8 @@ export class NeoAskTodoRepository {
       (this.db
         .prepare(
           `${ASK_SELECT} WHERE session_id = ? AND origin_message_id IS ? AND title = ?
-           AND (status = 'open' OR EXISTS (SELECT 1 FROM neo_asks c WHERE c.parent_id = neo_asks.id))`
+           AND (status = 'open' OR (status = 'done'
+             AND EXISTS (SELECT 1 FROM neo_asks c WHERE c.parent_id = neo_asks.id)))`
         )
         .get(sessionId, originMessageId, title) as NeoAsk | null) ?? null
     );

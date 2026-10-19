@@ -35,20 +35,19 @@ export function neoTodoHome(
   split: boolean
 ): NeoAsk {
   if (!repo || ask.repo === repo || (!split && !ask.repo)) return ask;
-  return (
-    store.childAsk(ask.id, repo) ??
-    store.openAsk({
-      id: crypto.randomUUID(),
-      projectId: ask.projectId,
-      sessionId: ask.sessionId,
-      originMessageId: ask.originMessageId,
-      title: `${ask.title} · ${neoRepoName(repo)}`,
-      request: ask.request,
-      createdAt: Date.now(),
-      repo,
-      parentId: ask.id,
-    })
-  );
+  const child = store.childAsk(ask.id, repo);
+  if (child || ask.status !== 'open') return child ?? ask;
+  return store.openAsk({
+    id: crypto.randomUUID(),
+    projectId: ask.projectId,
+    sessionId: ask.sessionId,
+    originMessageId: ask.originMessageId,
+    title: `${ask.title} · ${neoRepoName(repo)}`,
+    request: ask.request,
+    createdAt: Date.now(),
+    repo,
+    parentId: ask.id,
+  });
 }
 
 export function neoSplitOutcome(children: readonly NeoAsk[], filed: number): string {
