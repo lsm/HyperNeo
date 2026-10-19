@@ -19,7 +19,10 @@ INSERT INTO neo_asks (id, session_id, title, request, status, created_at, update
 INSERT INTO neo_todos (id, ask_id, position, title, done_when, state, created_at, updated_at, started_at)
   VALUES ('todo-ledger', 'ask-ledger', 1, 'Fix the loader', 'PR merged', 'doing', $NOW_MS, $NOW_MS, $NOW_MS);
 INSERT INTO pack_coding_pr_claims (todo_id, url, claim, claimed_at)
-  VALUES ('todo-ledger', 'https://github.com/verify-test/demo/pull/8', 'named', $NOW_MS);
+  VALUES ('todo-ledger', 'https://github.com/verify-test/demo/pull/8', 'named', $NOW_MS),
+    ('todo-ledger', 'https://github.com/verify-test/demo/pull/100', 'branch', $NOW_MS);
+INSERT INTO pack_coding_todo_prs (todo_id, prs_json, read_at)
+  VALUES ('todo-ledger', '[{\"url\":\"https://github.com/verify-test/demo/pull/8\",\"state\":\"OPEN\",\"checks\":\"passing\",\"review\":\"approved\"}]', $NOW_MS);
 INSERT INTO pack_coding_pr_ledger (repo, number, title, branch, head, state, state_since, owner, read_at)
   VALUES ('verify-test/demo', 8, 'Fix the loader', 'fix-loader', 'aaa111', 'approved_green', $NOW_MS,
     '{\"adapter\":\"hyperneo\",\"id\":\"worker-1\"}', $NOW_MS);
