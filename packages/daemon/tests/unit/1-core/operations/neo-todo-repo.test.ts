@@ -238,11 +238,13 @@ describe('repo child cards', () => {
       await open({ ...request, todos: [...request.todos, { ...draft, title: 'Write notes' }] })
     ).toMatchObject({ ok: false, reason: expect.stringContaining('ask_settled') });
     expect(store.listTodos(receipt.ask.id)).toEqual([]);
-    expect(await open({ ...request, todos: [...request.todos, pr('ops', 4)] })).toMatchObject({
-      ok: false,
-      reason: expect.stringContaining('ask_settled'),
-    });
+    expect(
+      await open({ ...request, todos: [...request.todos, pr('HyperNeo', 5), pr('ops', 4)] })
+    ).toMatchObject({ ok: false, reason: expect.stringContaining('nothing was added') });
     expect(store.listChildAsks(receipt.ask.id)).toHaveLength(2);
+    expect(
+      store.listChildAsks(receipt.ask.id).map((child) => store.listTodos(child.id).length)
+    ).toEqual([2, 1]);
     db.prepare("UPDATE neo_asks SET status = 'dropped' WHERE id = ?").run(receipt.ask.id);
     const reopened = (await open(request)) as { ask: { id: string } };
     expect(reopened.ask.id).not.toBe(receipt.ask.id);

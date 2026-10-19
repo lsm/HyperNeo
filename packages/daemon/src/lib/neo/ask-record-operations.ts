@@ -123,11 +123,25 @@ export function createNeoAskRecordOperations(
           store.listChildAsks(ask.id).length > 0 ||
           new Set(input.todos.map((todo) => neoTodoRepo(todo, packs(), ask)).filter(Boolean)).size >
             1;
-        for (const todo of input.todos) {
+        const recordedRow = (todo: (typeof input.todos)[number]) => {
           const repo = neoTodoRepo(todo, packs(), ask);
-          const row = recorded.find(
+          return recorded.find(
             (item) => item.title === todo.title && (item.repo === repo || item.repo === null)
           );
+        };
+        const homeless =
+          ask.status !== 'open' &&
+          input.todos.find((todo) => {
+            const repo = neoTodoRepo(todo, packs(), ask);
+            return !recordedRow(todo) && (!repo || !store.childAsk(ask.id, repo));
+          });
+        if (homeless)
+          return {
+            ok: false,
+            reason: `ask_settled: ${ask.title} is settled and "${homeless.title}" has no open card in it; nothing was added. Open a new ask for it.`,
+          };
+        for (const todo of input.todos) {
+          const row = recordedRow(todo);
           const added = !row
             ? await addNeoTodo(
                 store,
