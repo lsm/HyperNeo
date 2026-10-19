@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createNeoProjectForgetOperation } from '../../../../src/lib/neo/project-forget-operation.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
-import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
+import {
+  createOperationRegistry,
+  type OperationCaller,
+} from '../../../../src/lib/operations/registry.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
@@ -19,9 +22,9 @@ const alias = (name: string, projectId: string) =>
     .prepare('INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)')
     .run(name, projectId);
 
-const forget = async (projectId: string) => {
+const forget = async (projectId: string, caller: OperationCaller = human) => {
   const registry = createOperationRegistry([createNeoProjectForgetOperation(repo)]);
-  const result = await invokeOperation(registry, 'neo.project.forget', { projectId }, human);
+  const result = await invokeOperation(registry, 'neo.project.forget', { projectId }, caller);
   return result.kind === 'completed' ? result.value : result;
 };
 
@@ -61,5 +64,15 @@ describe('neo.project.forget', () => {
     expect(repo.getProject(atlas)?.title).toBe('atlas');
     expect(await forget('project:nope')).toEqual({ ok: false, reason: 'missing' });
     expect(repo.getBindingForProject(atlas)?.sessionId).toBe(holder);
+  });
+
+  test('refuses an agent session that is not root Neo', async () => {
+    const agent: OperationCaller = { source: 'mcp', sessionId: holder };
+    expect(await forget(atlas, agent)).toEqual({ ok: false, reason: 'root_or_human_only' });
+    expect(await forget(atlas, { source: 'mcp', sessionId: 'session:other' })).toEqual({
+      ok: false,
+      reason: 'root_or_human_only',
+    });
+    expect(repo.getProject(atlas)?.title).toBe('atlas');
   });
 });
