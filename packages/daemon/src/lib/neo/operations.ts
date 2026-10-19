@@ -46,7 +46,6 @@ import {
   neoStandingRules,
   type NeoSettings,
 } from '@hyperneo/shared/types/settings';
-import { isNeoProjectEventTurn } from './card-events.ts';
 import { createNeoIntakeOperation } from './intake.ts';
 import { createNeoReorganizeOperation, type NeoReorganizeRuntime } from './reorganize-operation.ts';
 import { mergeNeoDuplicateProjects, readNeoProjectIdentities } from './project-merge.ts';
@@ -389,18 +388,6 @@ export function isNeoWorkMissingHere(outcome: OperationOutcome | null): boolean 
   return value?.ok === false && value.reason === 'not_found';
 }
 
-export function isNeoTurnAskReadable(
-  binding: { kind: string; projectId: string | null } | null,
-  ask: Pick<NeoAsk, 'projectId'>
-): boolean {
-  return (
-    binding?.kind === 'neo' ||
-    (binding?.kind === 'project' &&
-      binding.projectId !== null &&
-      ask.projectId === binding.projectId)
-  );
-}
-
 export function neoSnapshotRevision<T extends { ok: boolean }>(
   snapshot: T,
   sinceRev: string | undefined,
@@ -480,7 +467,7 @@ function admitNeoCaller(
 ): { value: OperationCaller } | { reason: Rejection } {
   if (caller.source === 'rpc' && caller.principal === 'local') return { value: caller };
   const binding = caller.sessionId ? service.repo.getBindingBySession(caller.sessionId) : null;
-  if (caller.source !== 'mcp' || !binding || binding.kind === 'worker')
+  if (caller.source !== 'mcp' || binding?.kind !== 'neo')
     return { reason: { ok: false, reason: 'This operation belongs to Neo.' } };
   if (name === 'neo.rule.save' && !isNeoHumanTurn(service, caller))
     return { reason: { ok: false, reason: NEO_HUMAN_TURN_REFUSAL } };
@@ -514,7 +501,7 @@ export function neoReorganizeRuntime(service: NeoService): NeoReorganizeRuntime 
       return { merged: [...backfilled, ...merged] };
     },
     projectFacts: () => service.repo.projectCleanupFacts(),
-    retiredHolders: () => service.repo.retiredHolders(),
+    retiredHolders: () => [],
     machine: () => hostname(),
     cleanup: createNeoProjectCleanupApply(service),
     mirroredAliases: async (folders) => {
@@ -629,15 +616,12 @@ export function createNeoOperations(service: NeoService) {
   ) {
     const focus = askId ? service.askRecords.get(askId) : null;
     if (askId && !focus) return { ok: false as const, reason: 'Ask not found.' };
-    const binding = caller.sessionId ? service.repo.getBindingBySession(caller.sessionId) : null;
     const scope = focus
       ? (focus.projectId ?? undefined)
       : requested
         ? (service.repo.projectMerges.resolve(requested) ?? requested)
-        : binding?.kind === 'project'
-          ? binding.projectId
-          : undefined;
-    const detailed = caller.source === 'rpc' || binding?.kind === 'project';
+        : undefined;
+    const detailed = caller.source === 'rpc';
     const cardDetail = detailed || !!focus;
     const compact = caller.source !== 'rpc' && !focus;
     const all = service.repo.listProjects();
@@ -680,7 +664,7 @@ export function createNeoOperations(service: NeoService) {
     const omittedAsks = listed.length - asks.length;
     const built = {
       ok: true as const,
-      sessionId: service.repo.getBindingForProject(scope ?? null)?.sessionId ?? null,
+      sessionId: service.defaultSessionId() ?? null,
       standingRules: neoStandingRules(service.db.getGlobalSettings?.().neo),
       ...(caller.source === 'rpc'
         ? {
@@ -882,7 +866,7 @@ export function createNeoOperations(service: NeoService) {
       ? service.askRecords.liveForOrigin(origin.sessionId, origin.messageId)
       : null;
     const binding = service.repo.getBindingBySession(caller.sessionId);
-    return ask && isNeoTurnAskReadable(binding, ask) ? ask.id : undefined;
+    return ask && binding?.kind === 'neo' ? ask.id : undefined;
   };
   const scopeOf = (input: z.infer<typeof Scope>, caller: OperationCaller) => {
     if (input.askId || input.projectId || input.all)
@@ -928,10 +912,6 @@ export function createNeoOperations(service: NeoService) {
     const sessionId = await service.open();
     return { ...snapshot(caller, undefined, undefined, input.summaries), sessionId };
   });
-  const isHolder = (caller: OperationCaller) =>
-    caller.source === 'mcp' &&
-    !!caller.sessionId &&
-    service.repo.getBindingBySession(caller.sessionId)?.kind === 'project';
   const save = (superpipe({})('neo.project.save') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
@@ -942,26 +922,6 @@ export function createNeoOperations(service: NeoService) {
     )
     .pipe(
       (input: SaveRequest, caller: OperationCaller) => requireNeoProjectSaveId(input, caller),
-      ['input', 'admission'],
-      'result:admission'
-    )
-    .pipe(
-      (input: SaveRequest, caller: OperationCaller) => {
-        const turn = caller.neoTurn;
-        const origin =
-          turn && caller.sessionId
-            ? service.resolveAskOrigin({ sessionId: caller.sessionId, messageId: turn.messageId })
-            : null;
-        return isHolder(caller) &&
-          (!turn?.isLive() || (!turn.human && !isNeoProjectEventTurn(origin ?? turn)))
-          ? {
-              reason: {
-                ok: false as const,
-                reason: 'A live holder input is required to save context.',
-              },
-            }
-          : { value: caller };
-      },
       ['input', 'admission'],
       'result:admission'
     )
@@ -1071,7 +1031,7 @@ export function createNeoOperations(service: NeoService) {
       (projectId) => service.repo.resolveProjectRef(projectId),
       (sessionId) => {
         const binding = service.repo.getBindingBySession(sessionId);
-        return !!binding && binding.kind !== 'worker';
+        return binding?.kind === 'neo';
       },
       () => service.repo.listProjects()
     ),

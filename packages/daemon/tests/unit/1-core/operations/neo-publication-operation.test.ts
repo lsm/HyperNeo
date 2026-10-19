@@ -545,30 +545,28 @@ describe('runtime-bound publication operation', () => {
     expect(ledger.list(conversationId)![0].links).toEqual(links);
   });
 
-  test.each(['unknown', 'foreign-ask', 'foreign-project', 'unsafe-kind'])(
+  test.each(['unknown', 'foreign-ask', 'unsafe-kind'])(
     'rejects %s scene refs, without partial publication',
     async (kind) => {
       const input = 'neo-note:1';
-      prompt(holder.sessionId, input, 'system');
-      stamp({ sessionId: holder.sessionId, messageId: input }, ask, 'continues');
-      work(
-        'work:1',
-        kind === 'foreign-ask' ? 'other-ask' : ask.messageId,
-        kind === 'foreign-project' ? 'b' : 'a'
-      );
+      prompt(root.sessionId, input, 'system');
+      stamp({ sessionId: root.sessionId, messageId: input }, ask, 'continues');
+      work('work:1', kind === 'foreign-ask' ? 'other-ask' : ask.messageId);
       prompt(root.sessionId, 'other-ask');
       const link = {
         label: 'Open',
         kind: kind === 'unsafe-kind' ? 'url' : 'work',
         id: kind === 'unknown' ? 'missing' : 'work:1',
       };
-      const result = await invoke({ ...draft, links: [link] }, caller(holder.sessionId, input));
+      const result = await invoke(
+        { ...draft, links: [link] },
+        caller(root.sessionId, input, false)
+      );
       const detail = {
         unknown:
           'work link "missing" does not exist; link only Neo project or work ids, never work.find refs or session ids',
         'foreign-ask':
           'work link "work:1" was not started for this ask; link only work this ask created',
-        'foreign-project': 'work link "work:1" belongs to another project',
       }[kind];
       expect(result).toMatchObject(
         kind === 'unsafe-kind'
@@ -580,32 +578,18 @@ describe('runtime-bound publication operation', () => {
     }
   );
 
-  test('holder cannot link another project even when the project exists', () => {
-    prompt(holder.sessionId, 'holder-human');
-    expect(
-      publish(
-        { ...draft, links: [{ label: 'Other', kind: 'project', id: 'b' }] },
-        caller(holder.sessionId, 'holder-human')
-      )
-    ).toEqual({
-      accepted: false,
-      reason: 'invalid_scene_reference',
-      detail: 'project link "b" belongs to another project',
-    });
-  });
-
   test('pure link/lifetime gates refuse foreign evidence and superseded turns', () => {
     const who = caller();
     const producer = requirePublicationProducer(who, root, root);
     if (!('value' in producer)) throw new Error('Expected producer');
     const proof = { ...producer.value, ask };
     const link = { label: 'Open', kind: 'work' as const, id: 'work:1' };
-    expect(
-      requirePublicationLinks(proof, [{ link, exists: true, projectId: 'a', origin: ask }])
-    ).toEqual({ value: proof });
+    expect(requirePublicationLinks(proof, [{ link, exists: true, origin: ask }])).toEqual({
+      value: proof,
+    });
     expect(
       requirePublicationLinks(proof, [
-        { link, exists: true, projectId: 'a', origin: { ...ask, messageId: 'foreign' } },
+        { link, exists: true, origin: { ...ask, messageId: 'foreign' } },
       ])
     ).toHaveProperty('reason.reason', 'invalid_scene_reference');
     expect(requirePublicationLifetime(proof, who, root, root)).toEqual({ value: proof });

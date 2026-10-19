@@ -137,9 +137,6 @@ describe('Neo as one session', () => {
     const fresh = await service.open();
     expect(createSession).toHaveBeenCalledTimes(1);
     expect(service.repo.defaultBinding()).toMatchObject({ sessionId: fresh, kind: 'neo' });
-    expect(service.repo.listProjectBindings().map((binding) => binding.sessionId)).toEqual([
-      holder,
-    ]);
   });
 
   test('m395 ends what holders still hold, closes dead legacy items and archives holders, waking no one', async () => {

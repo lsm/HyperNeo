@@ -752,8 +752,8 @@ export class NeoService {
 
   async recover(): Promise<void> {
     this.sessionWatcher.loadSessionNoticeGroups();
-    for (const binding of [this.repo.defaultBinding(), ...this.repo.listProjectBindings()])
-      if (binding) await this.removeTurnLimit(binding.sessionId);
+    const root = this.repo.defaultBinding();
+    if (root) await this.removeTurnLimit(root.sessionId);
   }
 
   async sweepPacks(): Promise<void> {
