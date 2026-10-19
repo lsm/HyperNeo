@@ -277,6 +277,29 @@ describe('repo child cards', () => {
     db.close();
   });
 
+  test('a stray todo on an open family parent goes to a child card', async () => {
+    const { db, store, open, add } = setup();
+    const receipt = (await open({
+      title: 'Ship',
+      request: 'Ship',
+      todos: [{ ...draft, title: 'Write notes' }, pr('HyperNeo', 1), pr('ops', 2)],
+    })) as { ask: { id: string; repo: string | null } };
+    expect(receipt.ask.repo).toBeNull();
+    const hyperneo = (await add({ askId: receipt.ask.id, ...pr('HyperNeo', 4) })) as {
+      todo: { askId: string };
+    };
+    const web = (await add({ askId: receipt.ask.id, ...pr('web', 3) })) as {
+      todo: { askId: string };
+    };
+    expect(store.getAsk(hyperneo.todo.askId)?.title).toBe('Ship · hyperneo');
+    expect(store.getAsk(web.todo.askId)).toMatchObject({
+      title: 'Ship · web',
+      parentId: receipt.ask.id,
+    });
+    expect(store.listTodos(receipt.ask.id).map((todo) => todo.title)).toEqual(['Write notes']);
+    db.close();
+  });
+
   test('a retry that adds other repos keeps the card’s own repo on the card', async () => {
     const { db, store, open } = setup();
     const first = (await open({ title: 'T', request: 'T', todos: [pr('HyperNeo', 1)] })) as {

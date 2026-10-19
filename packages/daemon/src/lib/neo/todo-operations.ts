@@ -74,7 +74,7 @@ export async function addNeoTodo(
   split = false
 ): Promise<{ ok: true; todo: NeoTodo } | Rejection> {
   const repo = neoTodoRepo(input, packs, ask);
-  const home = neoTodoHome(todos, ask, repo, split);
+  const home = neoTodoHome(todos, ask, repo, split || todos.listChildAsks(ask.id).length > 0);
   if (home.status !== 'open')
     return {
       ok: false,
