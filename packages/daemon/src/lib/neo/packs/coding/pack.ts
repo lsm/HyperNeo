@@ -313,7 +313,18 @@ export function createCodingPack(
       await deliverCodingPrEvents(deps.prEvents, transitions, deps.prSweepDeps);
       await sweepCodingPrs(deps.prSweep, deps.prSweepDeps, now);
     },
-    snapshotRows: (repos, now) => deps.prLedger.snapshot(repos, now),
+    snapshotRows: (repos, now, openTodoIds) =>
+      deps.prLedger.snapshot(
+        repos,
+        now,
+        openTodoIds.flatMap((todoId) =>
+          deps.todoPrs.urls(todoId).map((url) => ({
+            todoId,
+            url,
+            state: deps.todoPrs.latest(url)?.pr.state ?? null,
+          }))
+        )
+      ),
     prerequisiteParameters: (items) =>
       readCodingPrerequisiteBase(items, {
         readRefStates: deps.readRefStates,

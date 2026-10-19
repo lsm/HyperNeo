@@ -75,7 +75,8 @@ export interface NeoPack extends NeoPackBrief {
   observeSessions?(sessions: readonly NeoSessionFacts[], now: number): void;
   snapshotRows?(
     repos: readonly string[] | null,
-    now: number
+    now: number,
+    openTodoIds: readonly string[]
   ): Record<string, string | number | null>[];
   workerRules?: string;
   prepareExecution?: NeoExecutionPreparation;

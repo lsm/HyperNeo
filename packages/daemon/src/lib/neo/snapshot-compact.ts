@@ -7,7 +7,7 @@ const SKELETON_LIST_LIMIT = 20;
 const NEO_SNAPSHOT_TRIMMED =
   'This snapshot was trimmed to fit: settled asks are left out, and long text is cut.';
 const NEO_SNAPSHOT_SKELETON =
-  'This snapshot was too large even trimmed, so only open asks and project identities are left.';
+  'This snapshot was too large even trimmed, so only open asks, their PRs and project identities are left.';
 
 export function neoSnapshotTrimmedNote(droppedOpen: number): string {
   return droppedOpen > 0
@@ -78,6 +78,17 @@ function withBareText(snapshot: NeoSnapshot): NeoSnapshot {
   };
 }
 
+function todoPackRows(
+  packRows: NeoSnapshot['packRows'],
+  todoAsks: NeoSnapshot['todoAsks']
+): NeoSnapshot['packRows'] {
+  const todos = new Set(todoAsks?.flatMap((entry) => entry.todos.map((todo) => todo.id)));
+  return packRows?.flatMap((item) => {
+    const rows = item.rows.filter((row) => todos.has(String(row.todoId)));
+    return rows.length ? [{ ...item, rows }] : [];
+  });
+}
+
 export function fitNeoSnapshotBudget<T extends NeoSnapshot>(snapshot: T, budget: number): T {
   if (size(snapshot) <= budget) return snapshot;
   const room = budget - TRIMMED_NOTE_RESERVE;
@@ -87,14 +98,23 @@ export function fitNeoSnapshotBudget<T extends NeoSnapshot>(snapshot: T, budget:
   for (let count = fitted.todoAsks?.length ?? 0; size(fitted) > room && count > 1; )
     fitted = { ...fitted, todoAsks: fitted.todoAsks?.slice(0, (count = Math.floor(count / 2))) };
   for (
-    let count = Math.max(0, ...(fitted.packRows ?? []).map((item) => item.rows.length));
+    let count = Math.max(
+      0,
+      ...(fitted.packRows ?? []).map((item) => item.rows.filter((row) => !row.todoId).length)
+    );
     size(fitted) > room && count > 1;
   ) {
     count = Math.floor(count / 2);
     const keep = count;
     fitted = {
       ...fitted,
-      packRows: fitted.packRows?.map((item) => ({ ...item, rows: item.rows.slice(0, keep) })),
+      packRows: fitted.packRows?.map((item) => ({
+        ...item,
+        rows: [
+          ...item.rows.filter((row) => row.todoId),
+          ...item.rows.filter((row) => !row.todoId).slice(0, keep),
+        ],
+      })),
     };
   }
   if (size(fitted) > room) fitted = withTodoText(withBareText(fitted), 0);
@@ -120,12 +140,15 @@ export function fitNeoSnapshotBudget<T extends NeoSnapshot>(snapshot: T, budget:
       })),
       questions: [],
     })),
+    packRows: todoPackRows(fitted.packRows, fitted.todoAsks),
     trimmed: NEO_SNAPSHOT_SKELETON,
   };
   for (let count = skeleton.todoAsks?.length ?? 0; size(skeleton) > budget && count > 0; ) {
     count = Math.floor(count / 2);
-    skeleton = { ...skeleton, todoAsks: skeleton.todoAsks?.slice(0, count) };
+    const todoAsks = skeleton.todoAsks?.slice(0, count);
+    skeleton = { ...skeleton, todoAsks, packRows: todoPackRows(fitted.packRows, todoAsks) };
   }
   if (size(skeleton) > budget) skeleton = { ...skeleton, standingRules: [] };
+  if (size(skeleton) > budget) skeleton = { ...skeleton, packRows: [] };
   return skeleton as T;
 }

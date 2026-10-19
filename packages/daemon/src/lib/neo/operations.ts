@@ -455,6 +455,12 @@ export function createNeoOperations(service: NeoService) {
     const repositories = service.repo.repositories();
     const asks = service.todos.listAsks(scope, caller.source === 'rpc' ? 50 : 10);
     const unlisted = service.todos.countAsks(scope) - asks.length;
+    const todoAsks = projectNeoAskEntries(
+      asks,
+      service.todos,
+      service.todoSessions,
+      service.installedPacks()
+    );
     return {
       ok: true as const,
       sessionId: service.defaultSessionId() ?? null,
@@ -480,17 +486,15 @@ export function createNeoOperations(service: NeoService) {
       sessionNoticeGroups: latestNeoSessionNoticeGroups(service.sessionNoticeGroups),
       mutedSessions: service.db.getGlobalSettings?.().neo?.mutedSessions ?? [],
       preferences: service.modelPreference(),
-      todoAsks: projectNeoAskEntries(
-        asks,
-        service.todos,
-        service.todoSessions,
-        service.installedPacks()
-      ),
+      todoAsks,
       ...(unlisted > 0 ? { omitted: { asks: unlisted } } : {}),
       packRows: service.packs().flatMap((pack) => {
         const rows = pack.snapshotRows?.(
           scope ? service.repo.allRepositories(scope) : null,
-          Date.now()
+          Date.now(),
+          todoAsks
+            .filter((entry) => entry.ask.status === 'open')
+            .flatMap((entry) => entry.todos.map((todo) => todo.id))
         );
         return rows?.length ? [{ pack: pack.id, rows }] : [];
       }),
