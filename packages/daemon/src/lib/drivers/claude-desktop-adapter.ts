@@ -96,6 +96,10 @@ const LiveSessionSchema = z.object({
     .string()
     .nullish()
     .transform((name) => name ?? undefined),
+  waitingFor: z
+    .string()
+    .nullish()
+    .transform((waitingFor) => waitingFor?.slice(0, 200) || undefined),
 });
 
 export type ClaudeDesktopRecord = z.infer<typeof RecordSchema>;
@@ -106,6 +110,7 @@ export interface ClaudeLiveSession {
   owner?: ClaudeSessionOwner;
   status: string;
   name?: string;
+  waitingFor?: string;
 }
 
 export interface ClaudeDesktopAdapterDeps {
@@ -130,6 +135,7 @@ export interface ClaudeDesktopAdapterDeps {
   sleep: (ms: number) => Promise<void>;
   now: () => number;
   searchChats?: (text: string) => Promise<readonly WorkChatMatch[]>;
+  permissionMode?: () => string;
 }
 
 type Gate<Value> = { value: Value } | { reason: Rejected };
@@ -548,9 +554,13 @@ export function describeClaudeSession(
   deps: ClaudeDesktopAdapterDeps
 ): Result<WorkDetail> {
   const live = new Map(liveSessions.map((session) => [session.sessionId, session.status]));
+  const waitingFor = liveSessions.find(
+    (session) => session.sessionId === record.cliSessionId && session.status === 'waiting'
+  )?.waitingFor;
   const work = {
     ...toClaudeWork(record, live, deps.machine),
     ...workExecutionLocation(record.cwd, deps.machine),
+    ...(waitingFor ? { waitingFor } : {}),
   };
   if (!transcript) return { ok: true, value: { ...work, ...claudeLinkedPrs(record) } };
   return {
@@ -1194,6 +1204,7 @@ export async function startClaudeSession(
     prepared ? null : await deps.gitCheckout(folder).catch(() => null)
   );
   const worktree = placement.kind === 'worktree' ? `neo-${cliSessionId.slice(0, 8)}` : null;
+  const permissionMode = deps.permissionMode?.() ?? 'bypassPermissions';
   const cwd =
     placement.kind === 'worktree' && worktree
       ? join(placement.repo, '.claude', 'worktrees', worktree)
@@ -1207,7 +1218,7 @@ export async function startClaudeSession(
       '-n',
       request.title,
       '--permission-mode',
-      'bypassPermissions',
+      permissionMode,
       ...(worktree ? ['--worktree', worktree] : []),
       '--',
       request.message,
@@ -1231,7 +1242,7 @@ export async function startClaudeSession(
     title: request.title,
     isArchived: false,
     lastActivityAt: deps.now(),
-    permissionMode: 'bypassPermissions',
+    permissionMode,
   };
   cache.set(`${STARTED_KEY}${sessionId}`, { modifiedAt: 0, records: [record] });
   return {

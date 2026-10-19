@@ -358,6 +358,69 @@ describe('neo todo runner follow-ups', () => {
   });
 });
 
+describe('a todo session waiting on the human', () => {
+  const warn = () => {};
+
+  test('tells Neo once with the link, holds sends, and clears when the session runs again', async () => {
+    const { runner, told, calls, add, setStatus } = setup();
+    const todo = add();
+    await runner.start(todo.id);
+    const waiting = {
+      ok: true,
+      value: {
+        status: 'needs_you',
+        lastActivityAt: 2_000,
+        waitingFor: 'permission prompt',
+        link: 'claude://claude.ai/epitaxy/local_x',
+      },
+    };
+    setStatus(waiting);
+    await runner.refresh(warn);
+    await runner.refresh(warn);
+    const notes = told.filter((note) => note.includes('waiting on the human'));
+    expect(notes).toEqual([
+      'Todo "Rows": its session is waiting on the human (permission prompt). Ask the human once to answer it there: claude://claude.ai/epitaxy/local_x. Do not send to it until it runs again.',
+    ]);
+    const sends = calls.filter((call) => call.name === 'work.send').length;
+    expect(await runner.proceed(todo.id, 'next')).toEqual({
+      ok: false,
+      reason:
+        'needs_you: its session is waiting on the human; ask them to answer it there, then continue.',
+    });
+    expect(calls.filter((call) => call.name === 'work.send')).toHaveLength(sends);
+    setStatus({ ok: true, value: { status: 'running', lastActivityAt: 3_000 } });
+    await runner.refresh(warn);
+    setStatus(waiting);
+    await runner.refresh(warn);
+    expect(told.filter((note) => note.includes('waiting on the human'))).toHaveLength(2);
+  });
+
+  test('continue reads the session fresh, so a todo closed while it waited is not stuck', async () => {
+    const { store, runner, add, setStatus } = setup();
+    const todo = add();
+    await runner.start(todo.id);
+    setStatus({ ok: true, value: { status: 'needs_you', lastActivityAt: 2_000 } });
+    await runner.refresh(warn);
+    store.updateTodo(store.getTodo(todo.id)!, { state: 'done', report: 'Closed' }, 3);
+    setStatus({ ok: true, value: { status: 'done', lastActivityAt: 4_000 } });
+    expect(await runner.proceed(todo.id, 'next')).toMatchObject({ ok: true });
+  });
+
+  test('a worker-blocked todo whose session waits on the human tells Neo too', async () => {
+    const { store, runner, told, add, setStatus } = setup();
+    const todo = add();
+    await runner.start(todo.id);
+    store.updateTodo(
+      store.getTodo(todo.id)!,
+      { state: 'blocked', blockedBy: 'worker', report: 'Stopped', blockedReason: 'x' },
+      3
+    );
+    setStatus({ ok: true, value: { status: 'needs_you', lastActivityAt: 4_000 } });
+    await runner.refresh(warn);
+    expect(told.filter((note) => note.includes('waiting on the human'))).toHaveLength(1);
+  });
+});
+
 describe('neo todo runner uncertainty', () => {
   test('a start that may have opened a session is not retried, and a running session is stopped', async () => {
     const { db, store, add, calls } = setup();

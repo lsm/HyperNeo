@@ -231,15 +231,17 @@ export function readDriverLive(outcome: OperationOutcome): {
   lastReplyAt?: number;
   link?: string;
   remoteLink?: string;
+  waitingFor?: string;
 } | null {
   const value = parseDriverStatus(outcome);
   if (!value) return null;
-  const { status, lastActivityAt, lastReplyAt, link, remoteLink } = value as {
+  const { status, lastActivityAt, lastReplyAt, link, remoteLink, waitingFor } = value as {
     status: WorkStatus;
     lastActivityAt: number;
     lastReplyAt?: number;
     link?: unknown;
     remoteLink?: unknown;
+    waitingFor?: unknown;
   };
   return {
     status,
@@ -247,6 +249,7 @@ export function readDriverLive(outcome: OperationOutcome): {
     ...(lastReplyAt !== undefined ? { lastReplyAt } : {}),
     ...(typeof link === 'string' ? { link } : {}),
     ...(typeof remoteLink === 'string' ? { remoteLink } : {}),
+    ...(typeof waitingFor === 'string' ? { waitingFor } : {}),
   };
 }
 

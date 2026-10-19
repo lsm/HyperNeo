@@ -107,7 +107,14 @@ describe('claude-desktop adapter against the app session records', () => {
 
   function adapter(
     live: ClaudeLiveSession[] | Error | (() => ClaudeLiveSession[]) = [
-      { sessionId: 'cli-a1', status: 'waiting', name: 'lakehouse loader', owner: 'cli', pid: 1 },
+      {
+        sessionId: 'cli-a1',
+        status: 'waiting',
+        name: 'lakehouse loader',
+        owner: 'cli',
+        pid: 1,
+        waitingFor: 'permission prompt',
+      },
     ],
     exitCode = 0,
     onSpawn = () => {},
@@ -608,6 +615,7 @@ describe('claude-desktop adapter against the app session records', () => {
         lastActivityAt: 30,
         link: 'claude://claude.ai/epitaxy/local_a1',
         execution: { directory: '/focus/dolmen/.claude/worktrees/w1', machine: 'laptop' },
+        waitingFor: 'permission prompt',
         lastReply: 'Loaded 3 tables.',
         recentInputs: [],
       },
@@ -924,6 +932,25 @@ describe('readLiveClaudeSessions', () => {
       kill: () => {},
     });
   }
+
+  test('keeps what a waiting session waits for', async () => {
+    expect(
+      await readLiveClaudeSessions(
+        spawnWith(
+          '[{"pid":1,"sessionId":"cli-a1","status":"waiting","waitingFor":"permission prompt"}]'
+        ),
+        '/missing-claude-registrations'
+      )
+    ).toEqual([
+      {
+        pid: 1,
+        sessionId: 'cli-a1',
+        status: 'waiting',
+        waitingFor: 'permission prompt',
+        owner: 'unknown',
+      },
+    ]);
+  });
 
   test('reads the live sessions claude agents reports', async () => {
     expect(
