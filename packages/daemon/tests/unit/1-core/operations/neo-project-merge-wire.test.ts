@@ -4,11 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Session } from '@hyperneo/shared';
 import type { NeoBinding, NeoProject } from '@hyperneo/shared/types/neo-context';
-import {
-  mergeNeoDuplicateProjects,
-  planNeoProjectMerges,
-  readNeoProjectIdentities,
-} from '../../../../src/lib/neo/project-merge.ts';
+import { readNeoProjectIdentities } from '../../../../src/lib/neo/project-merge.ts';
 import type { Database } from '../../../../src/storage/database.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
@@ -29,56 +25,6 @@ const project = (id: string, extra: Partial<NeoProject> = {}): NeoProject => ({
   createdAt: 1,
   updatedAt: 1,
   ...extra,
-});
-
-describe('planNeoProjectMerges', () => {
-  test('merges newer siblings with the same code identity into the oldest', () => {
-    expect(
-      planNeoProjectMerges(
-        {
-          projects: [
-            project('web-copy', { createdAt: 5, revision: 3 }),
-            project('web', { createdAt: 2 }),
-            project('web-nested', { createdAt: 6, parentId: 'travel' }),
-            project('notes', { createdAt: 1 }),
-          ],
-          identities: { web: [identity] },
-          unavailable: [],
-          retired: [],
-        },
-        { 'web-copy': [identity], 'web-nested': [identity] }
-      )
-    ).toEqual([
-      {
-        sourceId: 'web-copy',
-        targetId: 'web',
-        sourceRevision: 3,
-        targetRevision: 1,
-        sourceIdentities: [identity],
-        targetIdentities: [],
-      },
-    ]);
-  });
-
-  test('never plans a merge without identity, for a section, the inbox or a retired project', () => {
-    expect(
-      planNeoProjectMerges(
-        {
-          projects: [
-            project('a'),
-            project('b'),
-            project('inbox'),
-            project('section', { epicUrl: 'https://github.com/o/r/issues/1' }),
-            project('old'),
-          ],
-          identities: { inbox: [identity], section: [identity], old: [identity] },
-          unavailable: [],
-          retired: ['old'],
-        },
-        { a: [identity], c: [identity] }
-      )
-    ).toEqual([]);
-  });
 });
 
 describe('readNeoProjectIdentities', () => {
@@ -161,30 +107,9 @@ describe('a merged project in a real store', () => {
       targetIdentities: [],
     });
 
-  test('merges every duplicate in one run', () => {
-    repo.saveProject({ id: 'web-third', title: 'web-third', summary: '', context: '' }, 0);
-    const fresh = { 'web-copy': [identity], 'web-third': [identity] };
-    const logged: string[] = [];
-    expect(
-      mergeNeoDuplicateProjects(
-        () => repo.projectMerges.plan(fresh),
-        (input) => repo.projectMerges.merge(input),
-        (line) => logged.push(line)
-      )
-    ).toEqual([
-      { sourceId: 'web-copy', targetId: 'web' },
-      { sourceId: 'web-third', targetId: 'web' },
-    ]);
-    expect(logged).toEqual([]);
-    expect(repo.listProjects().map((item) => item.id)).toEqual(['web']);
-  });
-
   test('the merged project leaves the project list but its old links still resolve', () => {
     expect(repo.projectMerges.localFolders('laptop')).toEqual([
       { projectId: 'web-copy', folder: '/w/web-copy' },
-    ]);
-    expect(repo.projectMerges.plan({ 'web-copy': [identity] })).toMatchObject([
-      { sourceId: 'web-copy', targetId: 'web' },
     ]);
     expect(mergeCopyIntoWeb()).toMatchObject({ ok: true });
     expect(repo.listProjects().map((item) => item.id)).toEqual(['web']);

@@ -44,7 +44,7 @@ import {
 } from '@hyperneo/shared/types/settings';
 import { createNeoIntakeOperation } from './intake.ts';
 import { createNeoReorganizeOperation, type NeoReorganizeRuntime } from './reorganize-operation.ts';
-import { mergeNeoDuplicateProjects, readNeoProjectIdentities } from './project-merge.ts';
+import { readNeoProjectIdentities } from './project-merge.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
 import { createNeoPublicationChangeOperations } from './publication-change-operation.ts';
 import { createNeoPublicationOperation } from './publication-operation.ts';
@@ -369,23 +369,12 @@ export function neoReorganizeRuntime(service: NeoService): NeoReorganizeRuntime 
   return {
     getBinding: (sessionId) => service.repo.getBindingBySession(sessionId),
     rootSessionId: () => service.repo.defaultBinding()?.sessionId ?? null,
-    mergeProjects: async () => {
-      const merges = service.repo.projectMerges;
-      const before = new Set(merges.redirects().map((entry) => entry.sourceId));
+    recordIdentities: async () => {
       if (backfillNeoRepositoryIdentities(service.db.getDatabase())) service.notifyChanged();
-      const backfilled = merges
-        .redirects()
-        .filter((entry) => !before.has(entry.sourceId))
-        .map(({ sourceId, targetId }) => ({ sourceId, targetId }));
-      const local = merges.localFolders(hostname());
-      const fresh = await readNeoProjectIdentities(local, readWorkspaceIdentity);
-      merges.recordIdentities(fresh);
-      const merged = mergeNeoDuplicateProjects(
-        () => merges.plan(fresh),
-        (input) => merges.merge(input),
-        (line) => service.logReorganize(line)
+      const merges = service.repo.projectMerges;
+      merges.recordIdentities(
+        await readNeoProjectIdentities(merges.localFolders(hostname()), readWorkspaceIdentity)
       );
-      return { merged: [...backfilled, ...merged] };
     },
     projectFacts: () => service.repo.projectCleanupFacts(),
     machine: () => hostname(),
