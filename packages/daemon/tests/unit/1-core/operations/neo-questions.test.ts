@@ -167,20 +167,13 @@ describe('neo.question operations', () => {
     ]);
   });
 
-  test('only the human answers, and another Neo session cannot ask on the ask', async () => {
+  test('only the human answers', async () => {
     const { call, asked } = setup();
     const reply = await asked({ kind: 'reply', text: 'Which?' });
     expect(await call('neo.question.answer', { questionId: reply.id, answer: 'x' })).toEqual({
       ok: false,
       reason: 'This action needs the user.',
     });
-    expect(
-      await call(
-        'neo.question.ask',
-        { askId: 'ask', kind: 'reply', text: 'x' },
-        { source: 'mcp', sessionId: 'neo-b', role: 'neo' }
-      )
-    ).toEqual({ ok: false, reason: 'not_owner: another Neo session owns this ask.' });
   });
 });
 
@@ -235,7 +228,7 @@ describe('neoQuestionAnsweredNote', () => {
 });
 
 describe('neo.question.retire and replaces', () => {
-  test('the owner retires a moot open question with its reason, and the ask stops waiting', async () => {
+  test('Neo retires a moot open question with its reason, and the ask stops waiting', async () => {
     const { store, call, asked } = setup();
     const moot = await asked({ kind: 'reply', text: 'Allow a placeholder key?' });
     expect(store.listQuestions('ask').filter((q) => q.state === 'open')).toHaveLength(1);
@@ -252,13 +245,6 @@ describe('neo.question.retire and replaces', () => {
       ok: false,
       reason: 'question_closed: this question is retired.',
     });
-    expect(
-      await call(
-        'neo.question.retire',
-        { questionId: (await asked({ kind: 'reply', text: 'Other?' })).id, reason: 'x' },
-        { source: 'mcp', sessionId: 'neo-b', role: 'neo' }
-      )
-    ).toMatchObject({ ok: false });
   });
 
   test('asking with replaces retires the old question as replaced and opens the new one', async () => {

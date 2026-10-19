@@ -111,15 +111,12 @@ describe('Neo as one session', () => {
     expect(owners('legacy_neo_asks', 'origin_session_id')).toEqual({ legacy: root });
   });
 
-  test('root works a moved ask, its old holder cannot, and the todo note reaches root', async () => {
+  test('root works a moved ask and the todo note reaches root', async () => {
     openAsk('open', holder);
     runMigration393(db.getDatabase());
     const invoke = (name: string, input: unknown, as: OperationCaller) =>
       invokeOperation(createOperationRegistry(createNeoOperations(service)), name, input, as);
     const todo = { title: 'Fix header', doneWhen: 'Merged' };
-    expect(await invoke('neo.todo.add', { askId: 'open', ...todo }, caller(holder))).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('not_owner') },
-    });
     const added = await invoke('neo.todo.add', { askId: 'open', ...todo }, caller(root));
     expect(added).toMatchObject({ value: { ok: true } });
     const id = (added as { value: { todo: { id: string } } }).value.todo.id;

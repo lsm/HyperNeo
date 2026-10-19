@@ -6,7 +6,6 @@ import type {
   NeoTodoPatch,
 } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
-import { isLocalUser } from '../operations/caller.ts';
 import { NeoTodoTargetSchema } from './driver-work.ts';
 import type { NeoPack } from './packs/types.ts';
 import { neoStartQuestionTitle } from './start-question.ts';
@@ -163,22 +162,16 @@ const TodoResult = z.union([
   z.object({ ok: z.literal(true), todo: NeoTodoSchema, todos: z.array(NeoTodoSchema) }),
 ]);
 
-export function requireNeoAskOwner(ask: NeoAsk | null, caller: OperationCaller): Gate<NeoAsk> {
+export function requireNeoOpenAsk(ask: NeoAsk | null): Gate<NeoAsk> {
   if (!ask) return fail('not_found: no such ask.');
   if (ask.status !== 'open') return fail(`ask_settled: this ask is ${ask.status}.`);
-  if (!isLocalUser(caller) && caller.sessionId !== ask.sessionId)
-    return fail('not_owner: another Neo session owns this ask.');
   return { value: ask };
 }
 
-export function requireNeoTodoOwner(
-  todo: NeoTodo | null,
-  ask: NeoAsk | null,
-  caller: OperationCaller
-): Gate<NeoTodo> {
+export function requireNeoOpenTodo(todo: NeoTodo | null, ask: NeoAsk | null): Gate<NeoTodo> {
   if (!todo) return fail('not_found: no such todo.');
-  const owned = requireNeoAskOwner(ask, caller);
-  return 'reason' in owned ? owned : { value: todo };
+  const open = requireNeoOpenAsk(ask);
+  return 'reason' in open ? open : { value: todo };
 }
 
 export function planNeoTodoEdit(
@@ -265,14 +258,13 @@ export function createNeoTodoOperations(
       .input(['input', 'caller'])
       .pipe((input: { todoId: string }) => todos.getTodo(input.todoId), 'input', 'todo')
       .pipe((todo: NeoTodo | null) => (todo ? todos.getAsk(todo.askId) : null), 'todo', 'ask')
-      .pipe(requireNeoTodoOwner, ['todo', 'ask', 'caller'], 'result:outcome');
+      .pipe(requireNeoOpenTodo, ['todo', 'ask'], 'result:outcome');
 
   const add = (superpipe({})('neo.todo.add') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
-      (input: z.infer<typeof Add>, caller: OperationCaller) =>
-        requireNeoAskOwner(todos.getAsk(input.askId), caller),
-      ['input', 'caller'],
+      (input: z.infer<typeof Add>) => requireNeoOpenAsk(todos.getAsk(input.askId)),
+      'input',
       'result:outcome'
     )
     .pipe(
