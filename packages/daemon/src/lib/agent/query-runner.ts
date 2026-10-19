@@ -403,8 +403,6 @@ export interface QueryRunnerContext {
   requeueNeoInput?(messageUuid: string): void;
 }
 
-const SETTLES_ALL = '*';
-
 export class QueryRunner {
   private promptSpentGeneration: number | null = null;
   private turnEndedGeneration: number | null = null;
@@ -436,7 +434,7 @@ export class QueryRunner {
 
   private redeliveredFedPrompts: string[] = [];
 
-  private readonly settledInputs = new Set<string>();
+  private readonly requestedInputs = new Set<string>();
 
   private turnEndedState(queryGeneration: number): { turnEnded: boolean; hasFedPrompt: boolean } {
     if (this.turnEndedGeneration !== queryGeneration)
@@ -737,7 +735,7 @@ export class QueryRunner {
     let isAbortError = false;
     this.turnEndedGeneration = null;
     this.fedAfterTurnEnd = [];
-    this.settledInputs.clear();
+    this.requestedInputs.clear();
 
     const inactivityBackstopMs = getSdkStartInactivityBackstopMs();
     const nudgeThresholdMs = DEFAULT_SDK_STARTUP_NUDGE_THRESHOLD_MS;
@@ -1384,7 +1382,7 @@ export class QueryRunner {
             }
           }
 
-          if (holderTurn) this.noteSettledInputs(message);
+          if (holderTurn) this.noteRequestedInputs(message);
           if (holderTurn && (message.type === 'assistant' || message.type === 'result'))
             message = stampNeoResponseInput(
               message,
@@ -2286,16 +2284,14 @@ export class QueryRunner {
       onSent();
     }
     await turn.ended;
-    if (this.settledInputs.has(SETTLES_ALL)) return;
-    for (const uuid of fed)
-      if (!this.settledInputs.has(uuid) && !turn.published(uuid)) this.ctx.requeueNeoInput?.(uuid);
+    for (const uuid of fed) if (!this.requestedInputs.has(uuid)) this.ctx.requeueNeoInput?.(uuid);
   }
 
-  noteSettledInputs(message: SDKMessage): void {
-    const succeeded = message.type === 'result' && message.subtype === 'success';
-    if (!succeeded && message.type !== 'assistant') return;
-    if (succeeded && !message.user_message_uuids) this.settledInputs.add(SETTLES_ALL);
-    for (const uuid of message.user_message_uuids ?? []) this.settledInputs.add(uuid);
+  noteRequestedInputs(message: SDKMessage): void {
+    if (message.type !== 'system' || message.subtype !== 'status') return;
+    const uuids = (message as { user_message_uuids?: unknown }).user_message_uuids;
+    if (Array.isArray(uuids))
+      for (const uuid of uuids) if (typeof uuid === 'string') this.requestedInputs.add(uuid);
   }
 
   async handleSDKMessage(message: SDKMessage, queryGeneration?: number): Promise<void> {

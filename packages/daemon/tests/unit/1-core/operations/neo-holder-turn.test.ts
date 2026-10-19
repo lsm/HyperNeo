@@ -165,7 +165,7 @@ describe('Neo isolated holder turns', () => {
     expect(finished).toBe(true);
   });
 
-  test('a root turn takes steered human messages mid-turn, leaves notes queued, and requeues only one nothing shows the model received', async () => {
+  test('a root turn takes steered human messages mid-turn, leaves notes queued, and requeues only one no request carried, even when the turn ends without a result', async () => {
     service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', projectId: null });
     const consumed: string[] = [];
     const requeued: string[] = [];
@@ -199,55 +199,17 @@ describe('Neo isolated holder turns', () => {
       .admitWithId('human-c', 'Third', false, { durable: true, steer: true })
       .catch(() => {});
     expect((await input.next()).value?.uuid).toBe('human-c');
-    rootRunner.noteSettledInputs({
-      type: 'result',
-      subtype: 'error_during_execution',
-      user_message_uuids: [note, 'human-a', 'human-b', 'human-c'],
+    rootRunner.noteRequestedInputs({
+      type: 'system',
+      subtype: 'status',
+      user_message_uuids: [note, 'human-a', 'human-b'],
     } as never);
-    rootRunner.noteSettledInputs({
-      type: 'assistant',
-      user_message_uuids: [note, 'human-a'],
-    } as never);
-    vi.spyOn(active, 'published').mockImplementation((id) => id === 'human-b');
-    const end = input.next();
+    const aborted = input.next();
     active.dispose();
-    expect((await end).done).toBe(true);
+    expect((await aborted).done).toBe(true);
     expect(consumed).toEqual([note, 'human-a', 'human-b', 'human-c']);
     expect(requeued).toEqual(['human-c']);
     expect(rootQueue.hasPendingOrClaimed('later-note')).toBe(true);
-    rootQueue.clear();
-    rootQueue.stop();
-  });
-
-  test('a successful root result that names no inputs settles every steer it fed', async () => {
-    service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', projectId: null });
-    const requeued: string[] = [];
-    const rootQueue = new MessageQueue();
-    rootQueue.start();
-    const rootRunner = new QueryRunner({
-      session: { id: 'neo:root' },
-      db,
-      messageQueue: rootQueue,
-      stateManager: { setProcessing: async () => {} },
-      logger: { debug: () => {} },
-      firstMessageReceived: true,
-      markHolderInputConsumed: () => {},
-      requeueNeoInput: (uuid: string) => requeued.push(uuid),
-    } as unknown as QueryRunnerContext);
-    void rootQueue.enqueueWithId('note', 'Note', false, { durable: true }).catch(() => {});
-    const active = new NeoHolderTurn(db, 'neo:root', attempts.allocate());
-    turns.push(active);
-    const input = rootRunner.createMessageGeneratorWrapper(1, undefined, active);
-    expect((await input.next()).value?.uuid).toBe('note');
-    void rootQueue
-      .admitWithId('human', 'Hi', false, { durable: true, steer: true })
-      .catch(() => {});
-    expect((await input.next()).value?.uuid).toBe('human');
-    rootRunner.noteSettledInputs({ type: 'result', subtype: 'success' } as never);
-    const end = input.next();
-    active.dispose();
-    expect((await end).done).toBe(true);
-    expect(requeued).toEqual([]);
     rootQueue.clear();
     rootQueue.stop();
   });
