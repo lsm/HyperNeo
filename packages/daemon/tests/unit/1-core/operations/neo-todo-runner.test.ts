@@ -501,8 +501,11 @@ describe('planNeoTodoCheck', () => {
       blockedReason: blocked.reason,
       nextAction: blocked.nextAction,
     });
-    const held = { ...doing, ...patch } as NeoTodo;
+    const held = { ...doing, ...patch, startedAt: 1 } as NeoTodo;
     expect(planNeoTodoCheck(held, { done: false, evidence: null, blocked }, 2)).toBeNull();
+    expect(
+      planNeoTodoCheck({ ...held, startedAt: null }, { done: false, evidence: null }, 2)
+    ).toMatchObject({ state: 'todo', blockedBy: null });
     expect(planNeoTodoCheck(held, { done: false, evidence: null }, 2)).toEqual({
       state: 'doing',
       blockedReason: null,
@@ -609,7 +612,7 @@ describe('blocked todos', () => {
   test('a pack block is stored once, survives a restart and clears on progress', async () => {
     const { db, store, runner, told, add, setResult } = setup();
     const todo = add({ pack: 'coding', kind: 'pr_merged', params: {} });
-    store.updateTodo(todo, { state: 'doing' }, 2);
+    store.updateTodo(todo, { state: 'doing', startedAt: 2 }, 2);
     setResult({ done: false, evidence: null, blocked });
     await runner.checkNow([todo.id], warn);
     await runner.checkNow([todo.id], warn);
@@ -654,5 +657,30 @@ describe('blocked todos', () => {
     store.updateTodo(todo, { state: 'blocked', blockedBy: 'worker', blockedReason: 'Stopped' }, 2);
     store.settleAsk(store.getAsk('ask')!, 'dropped', 'Not needed', 3);
     expect(store.getTodo(todo.id)).toMatchObject({ state: 'removed' });
+  });
+
+  test('a start that fails the same way twice is blocked, and retry starts it again', async () => {
+    const { db, store, runner, add, told } = setup();
+    const todo = add();
+    const failing = createNeoTodoRunner({
+      store,
+      sessions: new NeoTodoSessionRepository(db),
+      invoke: async () => completed({ ok: false, reason: 'unavailable', detail: 'login expired' }),
+      packs: () => [],
+      tell: async (_ask, _todo, note) => {
+        told.push(note);
+      },
+      tellAsk: async () => {},
+      changed: () => {},
+    });
+    await failing.start(todo.id);
+    await failing.retry(todo.id);
+    expect(store.getTodo(todo.id)).toMatchObject({
+      state: 'blocked',
+      blockedBy: 'failure',
+      blockedReason: 'Failed twice: Could not start: unavailable: login expired',
+    });
+    expect(await runner.retry(todo.id)).toMatchObject({ ok: true });
+    expect(store.getTodo(todo.id)).toMatchObject({ state: 'doing', blockedBy: null });
   });
 });

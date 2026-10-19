@@ -121,7 +121,9 @@ export function requireNeoTodoRetryable(read: {
     return fail(
       'start_uncertain: the start failed after the driver may have opened a session; find it with work.find before starting again.'
     );
-  if (todo.state !== 'failed' || ref || !target)
+  const failed =
+    todo.state === 'failed' || (todo.state === 'blocked' && todo.blockedBy === 'failure');
+  if (!failed || ref || !target)
     return fail('not_retryable: only a todo that failed before its session started goes again.');
   return { value: todo };
 }
@@ -187,7 +189,7 @@ export function planNeoTodoCheck(
   if (result.blocked)
     return planNeoTodoBlocked(todo, 'check', result.blocked.reason, result.blocked.nextAction);
   return todo.state === 'blocked' && todo.blockedBy === 'check'
-    ? { state: 'doing', ...UNBLOCKED }
+    ? { state: todo.startedAt === null ? 'todo' : 'doing', ...UNBLOCKED }
     : null;
 }
 
@@ -511,7 +513,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       sessions.recordRetry(todoId);
       store.updateTodo(
         gate.value,
-        { state: 'todo', startedAt: null, finishedAt: null },
+        { state: 'todo', startedAt: null, finishedAt: null, ...UNBLOCKED },
         Date.now()
       );
       return start(todoId);
