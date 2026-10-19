@@ -31,6 +31,7 @@ import {
   refreshNeoDriverWork,
   scheduleDriverRefresh,
 } from '../neo/driver-refresh.ts';
+import { NEO_PACK_SWEEP, schedulePackSweep, sweepNeoPacks } from '../neo/pack-sweep.ts';
 import { NEO_WORK_DELIVERY_RETRY, runNeoDeliveryRetry } from '../neo/delivery-retry.ts';
 import { NEO_WORK_ADMISSION_WAKE, runNeoAdmissionWake } from '../neo/admission-wake.ts';
 import {
@@ -1721,6 +1722,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     refreshNeoDriverWork(deps.jobQueue, neoService)
   );
   scheduleDriverRefresh(deps.jobQueue);
+  deps.jobProcessor.register(NEO_PACK_SWEEP, () => sweepNeoPacks(deps.jobQueue, neoService));
+  schedulePackSweep(deps.jobQueue, 0);
   deps.jobProcessor.register(NEO_WORK_DELIVERY_RETRY, (job) =>
     runNeoDeliveryRetry(job, neoService)
   );

@@ -60,6 +60,7 @@ export interface NeoTodoPack {
 
 export interface NeoPack extends NeoPackBrief {
   todos?: NeoTodoPack;
+  sweep?(now: number): Promise<void>;
   workerRules?: string;
   prepareExecution?: NeoExecutionPreparation;
   prerequisiteParameters?(
