@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type { NeoAsk, NeoAskEntry, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import {
   neoAskEntryState,
   neoTodoStatusLine,
@@ -437,5 +437,44 @@ describe('fitNeoSnapshotBudget with packRows', () => {
     expect(fitted.packRows?.[0].rows.length).toBeGreaterThan(0);
     expect(fitted.packRows?.[0].rows.length).toBeLessThan(100);
     expect(fitted.packRows?.[0].rows[0].pr).toBe('lsm/hyperneo#0');
+  });
+
+  test("keeps an open todo's PR rows while it halves the other rows and the asks", () => {
+    const rows = (count: number, todoId?: string) =>
+      Array.from({ length: count }, (_, index) => ({
+        pr: `lsm/hyperneo#${todoId ? 1000 + index : index}`,
+        title: 't'.repeat(80),
+        state: 'waiting_review',
+        ...(todoId ? { todoId } : {}),
+      }));
+    const ask = (n: number) =>
+      ({
+        ask: { id: `ask-${n}`, title: 'Ship', request: 'r'.repeat(5_000), status: 'open' },
+        state: 'doing',
+        todos: Array.from({ length: 20 }, (_, index) => ({
+          id: `todo-${n}-${index}`,
+          title: 'Fix',
+          doneWhen: 'Merged',
+          status: 's'.repeat(2_000),
+        })),
+        questions: [],
+      }) as unknown as NeoAskEntry;
+    const snapshot: NeoSnapshot = {
+      ok: true,
+      sessionId: 'neo',
+      projects: [],
+      todoAsks: Array.from({ length: 40 }, (_, n) => ask(n)),
+      packRows: [{ pack: 'coding', rows: [...rows(3, 'todo-0-0'), ...rows(100)] }],
+    };
+    const halved = fitNeoSnapshotBudget({ ...snapshot, todoAsks: [ask(0)] }, 20_000);
+    expect(halved.packRows?.[0].rows.filter((row) => row.todoId).length).toBe(3);
+    expect(halved.packRows?.[0].rows.length).toBeLessThan(103);
+    const trimmed = fitNeoSnapshotBudget(snapshot, 20_000);
+    expect(trimmed.todoAsks?.length).toBeLessThan(40);
+    expect(trimmed.packRows?.[0].rows.filter((row) => row.todoId).map((row) => row.pr)).toEqual([
+      'lsm/hyperneo#1000',
+      'lsm/hyperneo#1001',
+      'lsm/hyperneo#1002',
+    ]);
   });
 });

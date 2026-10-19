@@ -63,7 +63,7 @@ UI is served, that RPC answers, and that the mock model API is up. It ends with
   arrived.
 - State: read the run's DB read-only, e.g.
   `sqlite3 -readonly "$RUN/data/daemon.db" "SELECT ..."`. Only `seed-todo.sh`
-  writes to it, to set up journey 3.
+  and `seed-ledger.sh` write to it, to set up journeys 3 and 4.
 - Web UI: open `http://127.0.0.1:<port>/neo` (Neo) or
   `/session/<sessionId>` (a session) in the browser; read the page text and take
   a screenshot.
@@ -98,12 +98,20 @@ adds its journey here.
    `rpc.ts neo.ask.settle '{"askId":"ask-verify","status":"done","outcome":"Shipped."}'`
    replies `todos_unfinished: … "Fix the loader" (todo-verify, doing).` and the ask
    stays `open`; the same call after the todo is `done` settles the ask `done`.
-4. **The web UI renders.** `/neo` shows the conversation with the human message
+4. **An open todo's PR leads the PR ledger in the snapshot.** After journey 1
+   opened root, run `.claude/skills/verify/seed-ledger.sh "$RUN"`. It writes a
+   project for `verify-test/demo` (so the pack sweep keeps its ledger rows), an
+   open ask with a `doing` todo that claims `verify-test/demo#8`, and 120 older
+   open ledger rows in the same repo. End state: `rpc.ts neo.snapshot '{}'`
+   returns `packRows` whose first coding row is `verify-test/demo#8` with
+   `todoId: "todo-ledger"`, its state and its owner, even though the ledger
+   lists only its 100 oldest rows otherwise.
+5. **The web UI renders.** `/neo` shows the conversation with the human message
    marked Received; `/session/<root>` shows root's transcript, including the
    mocked replies and the todo note. The session view takes a few seconds to
    load; wait for the transcript before the screenshot.
 
-5. **Session PR links come from the desktop apps' own stores.** Read-only, on the
+6. **Session PR links come from the desktop apps' own stores.** Read-only, on the
    human's machine: `bun .claude/skills/verify/linked-prs.ts claude <local_id>`
    prints the `linkedPrs` that `work.status` reports for a Claude Desktop session
    (its `prs[]`, with `dismissed`); `... codex <thread_id>` prints a Codex
@@ -114,7 +122,7 @@ adds its journey here.
    ledger (opened `?mode=ro`) and prints owned-before/after counts plus each
    owner change; check every change names the session that created the PR.
 
-6. **A cross-repo request becomes one card per repo.** Launch with
+7. **A cross-repo request becomes one card per repo.** Launch with
    `VERIFY_MOCK=neo-script-api.ts .claude/skills/verify/launch.sh 9311 "$RUN"`.
    That mock plays root's model: when the human's message contains
    `verify-cross-repo`, it calls `neo.ask.open` with todos for two repos
