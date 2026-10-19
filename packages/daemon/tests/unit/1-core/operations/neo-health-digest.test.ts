@@ -13,8 +13,6 @@ describe('neoHealthDigest', () => {
         projects: 14,
         projectsCreated: 2,
         projectsMerged: 1,
-        holders: 5,
-        holdersOpened: 2,
         refusals: [],
         doorRefusals: [{ operation: 'neo.ask.open', reason: 'invalid_input', count: 3 }],
         repeatedReplies: [{ trigger: 'neo-turn-limit:r1', count: 4 }],
@@ -37,7 +35,6 @@ describe('neoHealthDigest', () => {
     expect(digest.split('\n')).toEqual([
       'Nightly health digest since 2026-10-15T00:00:00.000Z. Facts only.',
       'Projects: 14 now, 2 created, 1 merged away.',
-      'Project holder sessions: 5 live, 2 opened.',
       'Cleanup done tonight: drop P (p).',
       'Cleanup failed tonight: x: busy.',
       'Merges asked of the human, not applied: merge Q (q) into r.',
@@ -62,7 +59,6 @@ describe('NeoRepository.healthFacts', () => {
     repo.saveProject({ id: 'p', title: 'P', summary: '', context: '' }, 0);
     expect(repo.healthFacts(since)).toMatchObject({
       projectsMerged: 0,
-      holders: 0,
       refusals: [],
       liveAsks: [],
       unreadRepos: [],

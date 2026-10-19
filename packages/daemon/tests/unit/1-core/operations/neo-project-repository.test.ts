@@ -1,6 +1,5 @@
 import { describe, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
-import { NEO_LOOK_UP } from '@hyperneo/prompts';
 import {
   type DaemonInternalEventMap,
   InternalEventBus,
@@ -50,10 +49,5 @@ describe('neo.snapshot project repository', () => {
     } finally {
       db.close();
     }
-  });
-
-  test('tells Neo a folder without .git is never evidence of history', () => {
-    expect(NEO_LOOK_UP).toContain('A folder without .git');
-    expect(NEO_LOOK_UP).toContain('An unreachable repository leaves that history unknown');
   });
 });

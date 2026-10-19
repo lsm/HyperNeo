@@ -32,7 +32,6 @@ import {
 } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation, isOperationAdmitted } from '../../../../src/lib/operations/invoke.ts';
 import { listOperationSummaries } from '../../../../src/lib/operations/discovery.ts';
-import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import { QueryAttemptRegistry } from '../../../../src/lib/agent/query-attempt-token.ts';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter.ts';
 import { withNeoProposalAsk } from '../../helpers/neo-proposal-ask.ts';
@@ -47,10 +46,6 @@ const project = {
 };
 
 describe('Neo MVP', () => {
-  test('the holder prompt has no root rule-saving operation', () => {
-    expect(neoPrompt('book-club')).not.toContain('neo.rule.save');
-  });
-
   let sqlite: SQLite;
   let service: NeoService;
   let db: Database;
@@ -215,34 +210,6 @@ describe('Neo MVP', () => {
     expect(
       await invoke('neo.snapshot', {}, { source: 'mcp', role: 'neo', sessionId: root })
     ).toMatchObject({ value: { projects: [{ context: '' }] } });
-  });
-
-  test('a holder session title follows its project title', async () => {
-    service.repo.saveProject(project, 0);
-    const id = 'neo:holder';
-    service.repo.reserveBinding({ sessionId: id, kind: 'project', projectId: project.id });
-    active.add(id);
-    const titles = new Map([[id, 'Neo · an old name']]);
-    Object.assign(db, {
-      getSession: (sessionId: string) =>
-        active.has(sessionId) ? { id: sessionId, title: titles.get(sessionId) } : null,
-    });
-    Object.assign(sessions, {
-      updateSession: async (sessionId: string, updates: { title: string }) => {
-        titles.set(sessionId, updates.title);
-      },
-    });
-    await invoke('neo.project.save', { ...project, title: 'Renamed', expectedRevision: 1 });
-    expect(titles.get(id)).toBe('Neo · Renamed');
-    titles.set(id, 'My name');
-    Object.assign(db, {
-      getSession: (sessionId: string) =>
-        active.has(sessionId)
-          ? { id: sessionId, title: titles.get(sessionId), metadata: { titleSetBy: 'user' } }
-          : null,
-    });
-    await invoke('neo.project.save', { ...project, title: 'Again', expectedRevision: 2 });
-    expect(titles.get(id)).toBe('My name');
   });
 
   test('a project snapshot lists the folders the project owns on every machine', async () => {
@@ -656,7 +623,7 @@ describe('Neo MVP', () => {
       agent: 'coder',
       agents: { coder: { description: 'work', prompt: 'work' } },
     };
-    restrictNeoQuery(options, null, 'neo:runtime-test');
+    restrictNeoQuery(options, 'neo:runtime-test');
     expect(options.tools).toEqual(neoCoordinatorNativeTools());
     expect(options.additionalDirectories).toEqual([homedir()]);
     expect(options.mcpServers).toEqual({ 'hyperneo-operations': operationServer });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { NEO_PACK_CODING_INSTRUCTIONS, NEO_SYSTEM_PROMPT } from '@hyperneo/prompts';
+import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoAskItem, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoEvidence } from '../../../../src/lib/neo/evidence.ts';
@@ -134,7 +134,6 @@ describe('coding pack instructions', () => {
     ])
       expect(NEO_PACK_CODING_INSTRUCTIONS).toContain(fact);
     expect(NEO_PACK_CODING_INSTRUCTIONS).not.toMatch(/pr_opened|holds it|holder/);
-    expect(NEO_SYSTEM_PROMPT).not.toContain('neo.github.read');
   });
 });
 

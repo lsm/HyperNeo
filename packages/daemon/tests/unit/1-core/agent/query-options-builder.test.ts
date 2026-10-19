@@ -2014,7 +2014,7 @@ describe('QueryOptionsBuilder', () => {
             expect(options.permissionMode).toBe('dontAsk');
             expect(options.systemPrompt).toEqual({
               type: 'custom',
-              prompt: neoPrompt(projectId),
+              prompt: neoPrompt(),
               snapshot: false,
             });
           } else {

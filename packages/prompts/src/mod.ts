@@ -41,16 +41,8 @@ import mdneoAskProgress from './neo/ask-progress.md' with { type: 'text' };
 import mdneoCardProgress from './neo/card-progress.md' with { type: 'text' };
 import mdneoAskMoved from './neo/ask-moved.md' with { type: 'text' };
 import mdneoTriggerNote from './neo/trigger-note.md' with { type: 'text' };
-import mdneoSystemHolderOperations from './neo/system/holder-operations.md' with { type: 'text' };
-import mdneoSystemHolderRole from './neo/system/holder-role.md' with { type: 'text' };
-import mdneoSystemHolderSnapshotScope from './neo/system/holder-snapshot-scope.md' with {
-  type: 'text',
-};
-import mdneoSystemDoneCheckSteps from './neo/system/done-check-steps.md' with { type: 'text' };
-import mdneoSystemPrompt from './neo/system/prompt.md' with { type: 'text' };
 import mdneoSystemRoot from './neo/system/root.md' with { type: 'text' };
 import mdneoSystemRootTurnEnd from './neo/system/root-turn-end.md' with { type: 'text' };
-import mdneoSystemLookUp from './neo/system/look-up.md' with { type: 'text' };
 import mdneoWorkDoneCheck from './neo/work/done-check.md' with { type: 'text' };
 import mdneoWorkDoneCheckAskForeign from './neo/work/done-check-ask-foreign.md' with {
   type: 'text',
@@ -185,8 +177,6 @@ import mdmessagingReplyToTarget from './messaging/reply-to-target.md' with { typ
 import mdmessagingReplyToTask from './messaging/reply-to-task.md' with { type: 'text' };
 import mdspaceOperationsDoorListing from './space/operations-door-listing.md' with { type: 'text' };
 import { buildPromptRegistry } from './loader.ts';
-import mdneoCapabilities from './neo/capabilities.md' with { type: 'text' };
-import mdneoSpeakingPolicy from './neo/speaking-policy.md' with { type: 'text' };
 import mdruntimePostApprovalCompletion from './runtime/post-approval-completion.md' with {
   type: 'text',
 };
@@ -301,21 +291,13 @@ const registry: Record<string, string> = {
   'coordinator/verifier.md': mdcoordinatorVerifier,
   'github/router-system-prompt.md': mdgithubRouterSystemPrompt,
   'github/security-system-prompt.md': mdgithubSecuritySystemPrompt,
-  'neo/capabilities.md': mdneoCapabilities,
-  'neo/speaking-policy.md': mdneoSpeakingPolicy,
   'neo/session-track.md': mdneoSessionTrack,
   'neo/ask-progress.md': mdneoAskProgress,
   'neo/card-progress.md': mdneoCardProgress,
   'neo/ask-moved.md': mdneoAskMoved,
   'neo/trigger-note.md': mdneoTriggerNote,
-  'neo/system/holder-operations.md': mdneoSystemHolderOperations,
-  'neo/system/holder-role.md': mdneoSystemHolderRole,
-  'neo/system/holder-snapshot-scope.md': mdneoSystemHolderSnapshotScope,
-  'neo/system/done-check-steps.md': mdneoSystemDoneCheckSteps,
-  'neo/system/prompt.md': mdneoSystemPrompt,
   'neo/system/root.md': mdneoSystemRoot,
   'neo/system/root-turn-end.md': mdneoSystemRootTurnEnd,
-  'neo/system/look-up.md': mdneoSystemLookUp,
   'neo/work/done-check-ask-foreign.md': mdneoWorkDoneCheckAskForeign,
   'neo/work/done-check-ask-owned.md': mdneoWorkDoneCheckAskOwned,
   'neo/work/done-check-budget.md': mdneoWorkDoneCheckBudget,
@@ -462,9 +444,6 @@ export const {
   SUBAGENT_VERIFIER_PROMPT,
   GITHUB_ROUTER_SYSTEM_PROMPT,
   GITHUB_SECURITY_SYSTEM_PROMPT,
-  NEO_CAPABILITIES_BRIEFING,
-  NEO_SPEAKING_POLICY,
-  NEO_DONE_CHECK_STEPS,
   NEO_PACK_CODING_INSTRUCTIONS,
   NEO_PACK_CODING_WORKER_RULES,
   NEO_PACK_LIFE_ADMIN_INSTRUCTIONS,
@@ -473,13 +452,8 @@ export const {
   NEO_CARD_PROGRESS,
   NEO_TRIGGER_NOTE,
   NEO_ASK_MOVED,
-  NEO_HOLDER_OPERATIONS,
-  NEO_HOLDER_ROLE,
-  NEO_HOLDER_SNAPSHOT_SCOPE,
-  NEO_SYSTEM_PROMPT,
   NEO_ROOT_PROMPT,
   NEO_ROOT_TURN_END,
-  NEO_LOOK_UP,
   NEO_WORK_DONE_CHECK_ASK_FOREIGN,
   NEO_WORK_DONE_CHECK_ASK_OWNED,
   NEO_WORK_DONE_CHECK_BUDGET,

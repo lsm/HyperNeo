@@ -148,14 +148,6 @@ export class NeoRepository {
         'SELECT count(*) AS n FROM neo_project_merges WHERE merged_at > ?',
         since
       ),
-      holders:
-        count(`SELECT count(*) AS n FROM neo_session_bindings b JOIN sessions s ON s.id = b.session_id
-        WHERE b.kind = 'project' AND s.status != 'archived'`),
-      holdersOpened: count(
-        `SELECT count(*) AS n FROM neo_session_bindings b JOIN sessions s ON s.id = b.session_id
-          WHERE b.kind = 'project' AND s.created_at > ?`,
-        new Date(since).toISOString()
-      ),
       refusals: this.db
         .prepare(`SELECT what, count(*) AS count FROM neo_work_refusals WHERE at > ?
           GROUP BY what ORDER BY count DESC`)

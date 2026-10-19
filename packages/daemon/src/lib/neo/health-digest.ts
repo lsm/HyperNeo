@@ -4,8 +4,6 @@ export type NeoHealthFacts = {
   projects: number;
   projectsCreated: number;
   projectsMerged: number;
-  holders: number;
-  holdersOpened: number;
   refusals: { what: string; count: number }[];
   doorRefusals: { operation: string; reason: string; count: number }[];
   repeatedReplies: { trigger: string; count: number }[];
@@ -32,7 +30,6 @@ export function neoHealthDigest(facts: NeoHealthFacts, run: NeoHealthRun, since:
   return [
     `Nightly health digest since ${new Date(since).toISOString()}. Facts only.`,
     `Projects: ${facts.projects} now, ${facts.projectsCreated} created, ${facts.projectsMerged} merged away.`,
-    `Project holder sessions: ${facts.holders} live, ${facts.holdersOpened} opened.`,
     `Cleanup done tonight: ${done.length ? done.map(step).join('; ') : 'none'}.`,
     `Cleanup failed tonight: ${run.cleanupFailed.length ? run.cleanupFailed.map((entry) => `${entry.projectId}: ${entry.reason}`).join('; ') : 'none'}.`,
     `Merges asked of the human, not applied: ${left.length ? left.map(step).join('; ') : 'none'}.`,
