@@ -98,6 +98,10 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
   prerequisites_unmet:
     'The card’s prerequisites are not done yet. It starts by itself once they are met.',
   project_busy: 'One of these projects has work running. Wait until both are idle, then merge.',
+  project_in_use:
+    'The project still has sections, cards, open asks, merges or a bound worker, so it cannot be forgotten. Settle its open asks and move its cards and sections first.',
+  project_missing: 'No project has that id. Read the project ids from neo.snapshot.',
+  project_protected: 'The Inbox is a system project and cannot be forgotten. Pick another project.',
   publication_superseded:
     'This turn’s session or conversation changed after the reply was prepared, so it cannot publish. Publish from the current live turn.',
   recipient_is_coordinator:
