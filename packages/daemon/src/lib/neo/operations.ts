@@ -12,7 +12,6 @@ import { createNeoProjectTreeOperations } from './project-tree-operations.ts';
 import { neoMirroredAliases } from './project-cleanup.ts';
 import { createNeoProjectCleanupApply } from './project-cleanup-apply.ts';
 import type { PlaceGroup } from '../drivers/types.ts';
-import { readNeoProjectFacts } from './project-route-facts.ts';
 import { existsSync } from 'node:fs';
 import { neoPromptText } from './reply-language.ts';
 import { readNeoSessionLoad } from './session-load.ts';
@@ -158,9 +157,6 @@ const SnapshotOk = z.object({
     .array(z.object({ sessionId: z.string(), projectId: z.string().nullable() }))
     .optional(),
   projectRedirects: z.array(z.object({ sourceId: z.string(), targetId: z.string() })).optional(),
-  projectFacts: z
-    .array(z.object({ reference: z.string(), projectId: z.string().nullable().optional() }))
-    .optional(),
   publicAuthorBindings: z
     .array(
       z.object({
@@ -778,18 +774,6 @@ export function createNeoOperations(service: NeoService) {
         : {}),
       publicAuthorBindings:
         caller.source === 'rpc' ? service.repo.listProjectBindings(scope ?? undefined) : [],
-      projectFacts:
-        binding?.kind === 'neo' && caller.sessionId && caller.neoTurn
-          ? readNeoProjectFacts(
-              service.db.getDatabase(),
-              service.humanAskText(
-                service.resolveAskOrigin({
-                  sessionId: caller.sessionId,
-                  messageId: caller.neoTurn.messageId,
-                }) ?? { sessionId: caller.sessionId, messageId: caller.neoTurn.messageId }
-              ) ?? ''
-            )
-          : undefined,
       projects: projects.map((item) => {
         const aliases = service.repo.workspaceAliases(item.id, all);
         const folders = neoProjectFolders(aliases);

@@ -2752,23 +2752,6 @@ export class NeoService {
     );
   }
 
-  humanAskText(ask: NeoAskOrigin): string | null {
-    const conversation = this.repo.conversationId();
-    const stored = conversation ? this.asks.find(conversation, ask.messageId) : null;
-    if (
-      !stored ||
-      stored.askOrigin.sessionId !== ask.sessionId ||
-      stored.askOrigin.messageId !== ask.messageId
-    )
-      return null;
-    if (typeof stored.content === 'string') return stored.content.trim() || null;
-    const text = (stored.content as { type: string; text?: string }[])
-      .flatMap((block) => (block.type === 'text' && block.text ? [block.text] : []))
-      .join('\n')
-      .trim();
-    return text || null;
-  }
-
   async reconcile(id: string): Promise<void> {
     const work = this.repo.getWork(id);
     if (!work?.sessionId) {
