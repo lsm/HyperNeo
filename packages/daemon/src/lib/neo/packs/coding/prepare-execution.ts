@@ -53,7 +53,25 @@ function planPreparation(request: Request): Gate<Plan> {
 
 const VERIFY_SKILL = /^\.claude\/skills\/verify[^/]*\/SKILL\.md$/m;
 const VERIFY_SECTION = /^#{1,6}\s*Verify\b/m;
-const FENCED = /^ {0,3}(```|~~~)[^\n]*(?:\n[\s\S]*?^ {0,3}\1[^\n]*$|[\s\S]*)/gm;
+const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+
+function withoutFencedCode(markdown: string): string {
+  let open: string | null = null;
+  return markdown
+    .split('\n')
+    .filter((line) => {
+      const fence = FENCE.exec(line);
+      if (open === null) {
+        if (!fence || (fence[1][0] === '`' && fence[2].includes('`'))) return true;
+        open = fence[1];
+        return false;
+      }
+      if (fence && fence[1][0] === open[0] && fence[1].length >= open.length && !fence[2].trim())
+        open = null;
+      return false;
+    })
+    .join('\n');
+}
 
 export function requireVerifySkill(
   mode: unknown,
@@ -64,7 +82,7 @@ export function requireVerifySkill(
   if (listed.code !== 0) return refuse(`verify_skill_unreadable: ${listed.stderr.trim()}`);
   if (
     VERIFY_SKILL.test(listed.stdout) ||
-    (agents?.code === 0 && VERIFY_SECTION.test(agents.stdout.replace(FENCED, '')))
+    (agents?.code === 0 && VERIFY_SECTION.test(withoutFencedCode(agents.stdout)))
   )
     return { value: true };
   return refuse(
