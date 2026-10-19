@@ -104,7 +104,7 @@ export function NeoSessionPane({
   const [notice, setNotice] = useState('');
   const running = store.isWorking.value;
   const messages = store.sdkMessages.value;
-  const blocks = projectSessionTranscript(messages, running);
+  const blocks = projectSessionTranscript(messages, running, sessionId.startsWith('neo:'));
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [slow, setSlow] = useState(false);
   const [attempt, setAttempt] = useState(0);

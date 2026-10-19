@@ -16,6 +16,7 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
   const receipts: { accepted: boolean; created?: boolean }[] = [];
   const requests: { path: string; tools: number; active: boolean }[] = [];
   const sent: { system: string; human: unknown }[] = [];
+  const nudged: string[] = [];
   let round = 0;
   const fixture = createServer(async (req, res) => {
     if (req.url?.startsWith('/v1/models')) {
@@ -51,6 +52,7 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
       res.end(JSON.stringify({ input_tokens: 100 }));
       return;
     }
+    if (JSON.stringify(body.messages).includes('had no visible output')) nudged.push(req.url ?? '');
     const invoke = body.tools?.find((tool) => tool.name.endsWith('hyperneo-operations__invoke'));
     const active = !!invoke && JSON.stringify(body.messages).includes('fictional moon garden');
     requests.push({ path: req.url ?? '', tools: body.tools?.length ?? 0, active });
@@ -83,7 +85,7 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
             input: { requestId: 'fictional-send', shortText, fullText, links: [] },
           },
         }
-      : { type: 'text', text: 'Fictional execution transcript only.' };
+      : { type: 'text', text: 'Done.' };
     if (active) calls.push(block.type);
     const message = {
       id: `msg-fictional-${randomUUID()}`,
@@ -125,7 +127,7 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
             type: 'input_json_delta',
             partial_json: JSON.stringify('input' in block ? block.input : {}),
           }
-        : { type: 'text_delta', text: 'Fictional execution transcript only.' },
+        : { type: 'text_delta', text: 'Done.' },
     });
     event('content_block_stop', { type: 'content_block_stop', index: 0 });
     event('message_delta', {
@@ -239,6 +241,8 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
       },
     ]);
     expect((await read()).items).toEqual(page.items);
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    expect(nudged, 'ending with Done. keeps the CLI from nudging for visible output').toEqual([]);
     const { neoPrompt } = await import('../../../src/lib/neo/prompt.ts');
     expect(sent[0].system).toContain(neoPrompt(null));
     const human = (sent[0].human as { type: string; text?: string }[]).filter(

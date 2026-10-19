@@ -58,8 +58,8 @@ describe('root Neo system prompt', () => {
       'neo.publication.publish',
       'neo.question.ask',
       'neo.rule.save',
-      'plain assistant text is discarded and never shown to the human',
-      'After your last tool call, end the turn with no text.',
+      'Plain assistant text is never shown to the human.',
+      'After your last tool call, end the turn with exactly: Done.',
     ])
       expect(NEO_ROOT_PROMPT).toContain(fact);
   });
