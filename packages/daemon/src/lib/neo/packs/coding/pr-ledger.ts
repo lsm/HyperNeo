@@ -281,6 +281,15 @@ export class CodingPrLedgerRepository {
     return row?.state ?? null;
   }
 
+  recordAlias(alias: string, canonical: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO pack_coding_repo_aliases (alias, canonical) VALUES (?, ?)
+         ON CONFLICT(alias) DO UPDATE SET canonical = excluded.canonical`
+      )
+      .run(alias, canonical);
+  }
+
   dropRepo(repo: string): void {
     this.db.prepare('DELETE FROM pack_coding_pr_ledger WHERE repo = ?').run(repo);
   }
@@ -302,12 +311,15 @@ export class CodingPrLedgerRepository {
       .prepare(
         `SELECT repo, number, title, state, state_since AS since, owner FROM pack_coding_pr_ledger
           WHERE (closed_at IS NULL OR closed_at > ?)
-            AND (? IS NULL OR repo IN (SELECT value FROM json_each(?)))
+            AND (? IS NULL OR repo IN (SELECT value FROM json_each(?))
+              OR repo IN (SELECT canonical FROM pack_coding_repo_aliases
+                           WHERE alias IN (SELECT value FROM json_each(?))))
           ORDER BY state_since LIMIT 100`
       )
       .all(
         now - CODING_LEDGER_SNAPSHOT_CLOSED_MS,
         repos ? 1 : null,
+        JSON.stringify(repos ?? []),
         JSON.stringify(repos ?? [])
       ) as {
       repo: string;
@@ -397,6 +409,7 @@ export async function reconcileCodingPrLedger(
         `PR ledger read for ${repo} failed or was partial ${skipped} times in a row${typeof error === 'string' ? `: ${error.slice(0, 200)}` : ''}`
       );
     if (typeof error === 'string' && isRateLimitError(error)) break;
+    if (planned) ledger.recordAlias(repo.toLowerCase(), planned.repo);
     if (planned && planned.repo !== repo.toLowerCase()) ledger.dropRepo(repo.toLowerCase());
     if (planned && !seen.has(planned.repo))
       transitions.push(...ledger.replace(planned.repo, planned.rows, now));

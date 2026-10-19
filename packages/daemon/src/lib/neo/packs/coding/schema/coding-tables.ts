@@ -29,6 +29,10 @@ export function createCodingPackTables(db: Database): void {
     read_at INTEGER NOT NULL,
     PRIMARY KEY (repo, number)
   );
+  CREATE TABLE IF NOT EXISTS pack_coding_repo_aliases (
+    alias TEXT PRIMARY KEY,
+    canonical TEXT NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS pack_coding_session_prs (
     url TEXT PRIMARY KEY,
     ref TEXT NOT NULL CHECK (json_valid(ref)),

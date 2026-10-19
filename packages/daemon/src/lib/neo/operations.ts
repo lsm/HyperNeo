@@ -943,7 +943,7 @@ export function createNeoOperations(service: NeoService) {
       ),
       packRows: service.packs().flatMap((pack) => {
         const rows = pack.snapshotRows?.(
-          scope ? [repositories.get(scope) ?? []].flat() : null,
+          scope ? service.repo.allRepositories(scope) : null,
           Date.now()
         );
         return rows?.length ? [{ pack: pack.id, rows }] : [];
