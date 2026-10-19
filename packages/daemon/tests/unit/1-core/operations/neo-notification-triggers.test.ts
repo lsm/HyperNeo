@@ -15,7 +15,6 @@ import {
   type NeoAskTrigger,
   type NeoTriggerSweepDeps,
   neoAskIdleLine,
-  neoAskTriggerConcern,
   neoAskTriggerKeys,
   neoHumanTurnOrigin,
   neoTriggerMessageId,
@@ -85,20 +84,6 @@ const item = (id: string, state: 'met' | 'pending') => ({
   metBy: null,
   removed: false,
   addedAt: null,
-});
-
-describe('neoAskTriggerConcern', () => {
-  const projectAsk = { ...ask, projectId: 'labs' };
-
-  test('a trigger about an ask goes to the coordinator that opened it, not the project holder', () => {
-    expect(neoAskTriggerConcern(projectAsk, { kind: 'neo', projectId: null })).toBeNull();
-    expect(neoAskTriggerConcern(ask, { kind: 'project', projectId: 'other' })).toBe('other');
-  });
-
-  test('an ask whose opener is no coordinator falls back to its project holder', () => {
-    expect(neoAskTriggerConcern(projectAsk, null)).toBe('labs');
-    expect(neoAskTriggerConcern(projectAsk, { kind: 'worker', projectId: 'w' })).toBe('labs');
-  });
 });
 
 describe('trigger keys of an ask', () => {

@@ -408,7 +408,7 @@ describe('real SQLite ask lineage facade', () => {
       ])
     );
   });
-  test('snapshot origin metadata keeps the holder default scope and root detail redaction', async () => {
+  test('snapshot origin metadata redacts root detail and refuses a legacy project session', async () => {
     const a = await intake();
     const b = await intake(root.sessionId, 'e4da4c3c-d629-46dc-a550-047144cf9499');
     service.repo.saveProject(
@@ -435,19 +435,14 @@ describe('real SQLite ask lineage facade', () => {
       true
     );
     expect(overview.askOrigins).toContainEqual({ kind: 'work', id: 'work-b', origin: b });
-    const scoped = await snapshot(holderCaller);
-    expect(scoped.projects.map((item) => item.id)).toEqual(['a']);
-    expect(scoped.projects[0].context).toBe('Private A');
-    expect(scoped.work.map((item) => item.id)).toEqual([work.id]);
-    expect(scoped.askOrigins).toEqual([{ kind: 'work', id: work.id, origin: a }]);
     expect(
       await invokeOperation(
         createOperationRegistry(createNeoOperations(service)),
         'neo.snapshot',
-        { projectId: 'b' },
+        { projectId: 'a' },
         holderCaller
       )
-    ).toMatchObject({ kind: 'completed', value: { ok: true } });
+    ).toMatchObject({ kind: 'completed', value: { ok: false } });
   });
   test('snapshot projects only already-visible bounded receipts for humans and root agents', async () => {
     const a = await intake();

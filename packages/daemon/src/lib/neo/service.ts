@@ -107,7 +107,6 @@ import {
   type NeoTriggerSweepDeps,
   neoAskOutcomeBase,
   neoAskTriggerKeys,
-  neoAskTriggerConcern,
   neoDeliveryTrigger,
   neoHumanTrigger,
   neoHumanTriggerMessageId,
@@ -638,16 +637,12 @@ export class NeoService {
     }
   }
 
-  private triggerConcern(ask: NeoAsk): string | null {
-    return neoAskTriggerConcern(ask, this.repo.getBindingBySession(ask.originSessionId));
-  }
-
-  private triggerOwner(ask: NeoAsk): string | null {
-    return this.repo.getBindingForProject(this.triggerConcern(ask))?.sessionId ?? null;
+  private triggerOwner(): string | null {
+    return this.defaultSessionId() ?? null;
   }
 
   private isTriggerOwnerBusy(ask: NeoAsk): boolean {
-    const owner = this.triggerOwner(ask);
+    const owner = this.triggerOwner();
     if (!owner) return true;
     return neoTriggerWatchSessions(
       owner,
@@ -971,8 +966,8 @@ export class NeoService {
   async recover(): Promise<void> {
     this.sessionWatcher.loadSessionNoticeGroups();
     this.initializeTriggerFacts();
-    for (const binding of [this.repo.defaultBinding(), ...this.repo.listProjectBindings()])
-      if (binding) await this.removeTurnLimit(binding.sessionId);
+    const root = this.repo.defaultBinding();
+    if (root) await this.removeTurnLimit(root.sessionId);
     await this.clearStaleNeedsYou().catch((error) =>
       this.log.warn('Stale needs_you check pending', error)
     );

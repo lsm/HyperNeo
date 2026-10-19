@@ -48,7 +48,6 @@ type Triggered = Proof & { triggerId?: string };
 type LinkEvidence = {
   link: NeoPublicationLink;
   exists: boolean;
-  projectId: string | null;
   origin: NeoAskOrigin | null;
 };
 
@@ -109,8 +108,8 @@ export function requirePublicationProducer(
     binding.sessionId === caller.sessionId &&
     isMainNeoBinding(root) &&
     root.sessionId.startsWith('neo:') &&
-    ((isMainNeoBinding(binding) && binding.sessionId === root.sessionId) ||
-      (binding.kind === 'project' && binding.projectId !== null)) &&
+    isMainNeoBinding(binding) &&
+    binding.sessionId === root.sessionId &&
     turn?.messageId &&
     turn.isLive()
     ? {
@@ -126,13 +125,11 @@ export function requirePublicationProducer(
 
 function publicationLinkProblem(
   proof: Proof,
-  { link, exists, projectId, origin }: LinkEvidence
+  { link, exists, origin }: LinkEvidence
 ): string | null {
   const ref = `${link.kind} link "${link.id}"`;
   if (!exists)
     return `${ref} does not exist; link only Neo project or work ids, never work.find refs or session ids`;
-  if (proof.binding.kind !== 'neo' && projectId !== proof.binding.projectId)
-    return `${ref} belongs to another project`;
   if (
     link.kind !== 'project' &&
     (origin?.sessionId !== proof.ask.sessionId || origin.messageId !== proof.ask.messageId)
@@ -171,8 +168,7 @@ export function requirePublicationLifetime(
 }
 
 function readLinkEvidence(link: NeoPublicationLink, runtime: NeoPublicationRuntime): LinkEvidence {
-  if (link.kind === 'project')
-    return { link, exists: runtime.hasProject(link.id), projectId: link.id, origin: null };
+  if (link.kind === 'project') return { link, exists: runtime.hasProject(link.id), origin: null };
   const item = link.kind === 'work' ? runtime.getWork(link.id) : null;
   const input = item?.originMessageId
     ? { sessionId: item.originSessionId, messageId: item.originMessageId }
@@ -180,7 +176,6 @@ function readLinkEvidence(link: NeoPublicationLink, runtime: NeoPublicationRunti
   return {
     link,
     exists: !!item,
-    projectId: item?.projectId ?? null,
     origin: input ? runtime.resolveAskOrigin(input) : null,
   };
 }
