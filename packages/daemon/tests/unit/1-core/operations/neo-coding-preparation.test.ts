@@ -166,25 +166,6 @@ describe('prepareCodingExecution', () => {
     if (sectioned.ok) await sectioned.value.release();
   });
 
-  test.each([
-    ['a column-0 fence', '```md\n## Verify\n```\n', false],
-    ['an indented fence', '   ~~~\n## Verify\n   ~~~\n', false],
-    ['an unclosed fence', '```\n## Verify\nrun it\n', false],
-    ['a heading after a closed fence', '```\nx\n```\n\n## Verify\n', true],
-    ['a 4-backtick fence around a 3-backtick line', '````\n```\n## Verify\n````\n', false],
-    ['a heading after a 4-backtick fence with an inner line', '````\n```\n````\n## Verify\n', true],
-    ['a closer with trailing text', '```\n``` not a closer\n## Verify\n```\n', false],
-    ['a bare hash before a Verify paragraph', '#\n\nVerify changes with make check.\n', false],
-    ['a hash with no space', '#Verify\n', false],
-    ['an indented heading', '  ## Verify\n', true],
-    ['a CRLF fence', '```md\r\n## Verify\r\n```\r\n', false],
-    ['a CRLF heading', '## Verify\r\nRun it.\r\n', true],
-  ])('a Verify heading in %s counts only outside code', (_case, doc, passes) => {
-    const listed = { code: 0, stdout: 'AGENTS.md\n', stderr: '' };
-    const agents = { code: 0, stdout: `# Repo\n\n${doc}`, stderr: '' };
-    expect('value' in requireVerifySkill(undefined, listed, agents)).toBe(passes);
-  });
-
   test('an omitted target uses the advertised remote default, never local HEAD', async () => {
     const f = fixture();
     const result = await prepareCodingExecution({ ...f.request, parameters: {} }, f.effects);
@@ -309,5 +290,26 @@ describe('prepareCodingExecution', () => {
     const result = await prepareCodingExecution(f.request, f.effects);
     expect(result.ok).toBe(false);
     expect(readFileSync(f.destination, 'utf8')).toBe('existing content');
+  });
+});
+
+describe('requireVerifySkill', () => {
+  test.each([
+    ['a column-0 fence', '```md\n## Verify\n```\n', false],
+    ['an indented fence', '   ~~~\n## Verify\n   ~~~\n', false],
+    ['an unclosed fence', '```\n## Verify\nrun it\n', false],
+    ['a heading after a closed fence', '```\nx\n```\n\n## Verify\n', true],
+    ['a 4-backtick fence around a 3-backtick line', '````\n```\n## Verify\n````\n', false],
+    ['a heading after a 4-backtick fence with an inner line', '````\n```\n````\n## Verify\n', true],
+    ['a closer with trailing text', '```\n``` not a closer\n## Verify\n```\n', false],
+    ['a bare hash before a Verify paragraph', '#\n\nVerify changes with make check.\n', false],
+    ['a hash with no space', '#Verify\n', false],
+    ['an indented heading', '  ## Verify\n', true],
+    ['a CRLF fence', '```md\r\n## Verify\r\n```\r\n', false],
+    ['a CRLF heading', '## Verify\r\nRun it.\r\n', true],
+  ])('a Verify heading in %s counts only outside code', (_case, doc, passes) => {
+    const listed = { code: 0, stdout: 'AGENTS.md\n', stderr: '' };
+    const agents = { code: 0, stdout: `# Repo\n\n${doc}`, stderr: '' };
+    expect('value' in requireVerifySkill(undefined, listed, agents)).toBe(passes);
   });
 });

@@ -118,7 +118,7 @@ describe('planCodingLedgerRead', () => {
   });
 });
 
-describe('PR ledger reconcile', () => {
+describe('PR ledger cycle', () => {
   test('lists every open PR across repos and moves state_since only on a state or head change', async () => {
     const { db, ledger } = setup();
     let second = [node(7)];
