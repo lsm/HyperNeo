@@ -158,6 +158,14 @@ export class NeoAskTodoRepository {
       .all(projectId === undefined ? 0 : 1, projectId ?? null, limit) as NeoAsk[];
   }
 
+  countAsks(projectId: string | null | undefined): number {
+    return (
+      this.db
+        .prepare('SELECT COUNT(*) AS count FROM neo_asks WHERE (?1 = 0 OR project_id IS ?2)')
+        .get(projectId === undefined ? 0 : 1, projectId ?? null) as { count: number }
+    ).count;
+  }
+
   listOpenAsks(): NeoAsk[] {
     return this.db.prepare(`${ASK_SELECT} WHERE status = 'open'`).all() as NeoAsk[];
   }

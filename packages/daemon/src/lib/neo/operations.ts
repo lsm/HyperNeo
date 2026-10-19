@@ -452,6 +452,8 @@ export function createNeoOperations(service: NeoService) {
     const all = service.repo.listProjects();
     const projects = all.filter((item) => !scope || item.id === scope);
     const repositories = service.repo.repositories();
+    const asks = service.todos.listAsks(scope, caller.source === 'rpc' ? 50 : 10);
+    const unlisted = service.todos.countAsks(scope) - asks.length;
     return {
       ok: true as const,
       sessionId: service.defaultSessionId() ?? null,
@@ -478,11 +480,12 @@ export function createNeoOperations(service: NeoService) {
       mutedSessions: service.db.getGlobalSettings?.().neo?.mutedSessions ?? [],
       preferences: service.modelPreference(),
       todoAsks: projectNeoAskEntries(
-        service.todos.listAsks(scope, caller.source === 'rpc' ? 50 : 10),
+        asks,
         service.todos,
         service.todoSessions,
         service.installedPacks()
       ),
+      ...(unlisted > 0 ? { omitted: { asks: unlisted } } : {}),
       packRows: service.packs().flatMap((pack) => {
         const rows = pack.snapshotRows?.(
           scope ? service.repo.allRepositories(scope) : null,

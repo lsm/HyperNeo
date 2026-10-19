@@ -17,7 +17,8 @@ export function neoSnapshotTrimmedNote(droppedOpen: number): string {
 
 export function neoSnapshotOmitted<T extends NeoSnapshot>(fitted: T, built: NeoSnapshot): T {
   const { omitted: _omitted, ...rest } = fitted;
-  const asks = (built.todoAsks?.length ?? 0) - (fitted.todoAsks?.length ?? 0);
+  const asks =
+    (built.omitted?.asks ?? 0) + (built.todoAsks?.length ?? 0) - (fitted.todoAsks?.length ?? 0);
   return (asks ? { ...rest, omitted: { asks } } : rest) as T;
 }
 
