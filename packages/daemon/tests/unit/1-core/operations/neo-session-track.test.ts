@@ -173,6 +173,25 @@ describe('neo.session.track', () => {
     db.close();
   });
 
+  test('a tap opens an ask whose todo follows the session and blocks when it stops', async () => {
+    Object.assign(service, { deliver: async () => {} });
+    const tapped = Date.now();
+    await service.trackSession('neo:root', notice({ link: 'codex://threads/t1' }), tapped);
+    const [ask] = service.todos.listOpenAsks();
+    expect(ask).toMatchObject({ sessionId: 'neo:root', title: 'Quiet-model research' });
+    const [todo] = service.todos.listTodos(ask.id);
+    expect(todo).toMatchObject({ state: 'doing', instruction: null, startedAt: tapped });
+    expect(service.todoSessions.readRef(todo.id)).toEqual(ref);
+    expect(service.followedCardRefs(tapped)).toEqual([ref]);
+    status = { status: 'done', lastActivityAt: tapped - 1 };
+    await service.todoRunner.refresh(() => {});
+    expect(service.todos.getTodo(todo.id)?.state).toBe('doing');
+    status = { status: 'done', lastActivityAt: tapped + 10_000 };
+    await service.todoRunner.refresh(() => {});
+    expect(service.todos.getTodo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'worker' });
+    expect(service.askRecords.list()).toEqual([]);
+  });
+
   test('a restart mid-adoption finishes adopting instead of failing the card', async () => {
     const { work: card } = service.driverTargets.propose(
       service.repo,

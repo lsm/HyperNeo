@@ -323,7 +323,7 @@ import { neoPrompt } from './prompt.ts';
 import { createNeoPublicationCommit } from './publication-commit.ts';
 import { createNeoPublisher } from './publication-operation.ts';
 import { runNeoReadWork } from './read-work.ts';
-import { NEO_INBOX_ID, openNeoDefaultSession } from './inbox.ts';
+import { openNeoDefaultSession } from './inbox.ts';
 import {
   type NeoSavedRulesNote,
   planNeoSavedRulesAppend,
@@ -2203,25 +2203,30 @@ export class NeoService {
     this.trackedSessions = tracked;
     const messageId = `neo-track:${notice.key}:${tracked.get(notice.key)}`;
     const done = 'The session finishes its work';
-    const ask = this.askRecords.open(
-      {
-        id: crypto.randomUUID(),
-        requestKey: messageId,
-        projectId: NEO_INBOX_ID,
-        originSessionId: root,
-        originMessageId: messageId,
-        title: notice.title,
-        ask: `See ${notice.title} through.`,
-        doneWhen: `- ${done}`,
-        doneSource: 'human',
-      },
-      [{ text: done, check: null }]
+    const ask = this.todos.openAsk({
+      id: crypto.randomUUID(),
+      projectId: null,
+      sessionId: root,
+      originMessageId: messageId,
+      title: notice.title,
+      request: `See ${notice.title} through.`,
+      createdAt: now,
+    });
+    const todo = this.todos.addTodo(
+      crypto.randomUUID(),
+      ask.id,
+      { title: done, doneWhen: done, check: null, instruction: null, named: null },
+      now
     );
-    if (ask) this.askRecords.approve(ask.id, now, ask.revision ?? 0);
+    this.todoSessions.create(todo.id, { verb: 'adopt', ref: notice.ref });
+    this.todoSessions.recordRef(todo.id, notice.ref, now, notice.link);
+    this.todoSessions.recordFollowAnchor(todo.id, now);
+    this.todos.updateTodo(todo, { state: 'doing', startedAt: now }, now);
     const content = fillPrompt(NEO_SESSION_TRACK, {
       title: JSON.stringify(notice.title),
       ref: JSON.stringify(notice.ref),
-      askId: JSON.stringify(ask?.id ?? null),
+      askId: JSON.stringify(ask.id),
+      todoId: JSON.stringify(todo.id),
     });
     await this.deliver(root, messageId, content, root);
     return { ok: true };
