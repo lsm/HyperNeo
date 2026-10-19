@@ -245,7 +245,6 @@
 6	packages/daemon/tests/unit/1-core/operations/neo-ask-stall.test.ts
 5	packages/daemon/tests/unit/1-core/operations/neo-binding-roles.test.ts
 36	packages/daemon/tests/unit/1-core/operations/neo-branch-prs.test.ts
-1644	packages/daemon/tests/unit/1-core/operations/neo-card-attention.test.ts
 4	packages/daemon/tests/unit/1-core/operations/neo-card-check.test.ts
 1107	packages/daemon/tests/unit/1-core/operations/neo-card-pr-claims.test.ts
 2735	packages/daemon/tests/unit/1-core/operations/neo-card-pr-events.test.ts

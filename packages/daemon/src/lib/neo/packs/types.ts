@@ -39,11 +39,6 @@ export interface NeoPackCardFacts {
   data: Record<string, unknown>;
 }
 
-export interface NeoPackCardAttention {
-  attention: { signature: string; facts: string } | null;
-  pending: boolean;
-}
-
 export interface NeoTodoCheckResult {
   done: boolean;
   evidence: string | null;
@@ -82,7 +77,6 @@ export interface NeoPack extends NeoPackBrief {
   readEvidence?(work: NeoWork, changedAt?: number | null): Promise<NeoEvidenceRead | null>;
   reportEvidence?(work: NeoWork): NeoEvidence[];
   cardFacts?(workId: string, stale: boolean): NeoPackCardFacts | null;
-  cardAttention?(workId: string): NeoPackCardAttention;
   askCardEvidence?(ask: NeoAsk, works: readonly NeoWork[]): NeoEvidence[];
   readAskEvidence?(ask: NeoAsk): Promise<NeoEvidence[]>;
   readAskTicks?(

@@ -70,8 +70,6 @@ import mdneoAskMoved from './neo/ask-moved.md' with { type: 'text' };
 import mdneoAskStalled from './neo/ask-stalled.md' with { type: 'text' };
 import mdneoTriggerNote from './neo/trigger-note.md' with { type: 'text' };
 import mdneoReviewRequest from './neo/consultation/review-request.md' with { type: 'text' };
-import mdneoCardPrAttention from './neo/packs/coding/card-pr-attention.md' with { type: 'text' };
-import mdneoCardAttentionNeo from './neo/card-attention-neo.md' with { type: 'text' };
 import mdneoSystemHolderConsultationReturn from './neo/system/holder-consultation-return.md' with {
   type: 'text',
 };
@@ -357,7 +355,6 @@ const registry: Record<string, string> = {
   'neo/ask-stalled.md': mdneoAskStalled,
   'neo/trigger-note.md': mdneoTriggerNote,
   'neo/consultation/review-request.md': mdneoReviewRequest,
-  'neo/card-attention-neo.md': mdneoCardAttentionNeo,
   'neo/system/holder-consultation-return.md': mdneoSystemHolderConsultationReturn,
   'neo/system/holder-operations.md': mdneoSystemHolderOperations,
   'neo/system/holder-role.md': mdneoSystemHolderRole,
@@ -370,7 +367,6 @@ const registry: Record<string, string> = {
   'neo/work/done-check-ask-owned.md': mdneoWorkDoneCheckAskOwned,
   'neo/work/done-check-budget.md': mdneoWorkDoneCheckBudget,
   'neo/work/done-check-continue.md': mdneoWorkDoneCheckContinue,
-  'neo/packs/coding/card-pr-attention.md': mdneoCardPrAttention,
   'neo/packs/coding/done-check-prs-live.md': mdneoWorkDoneCheckPrsLive,
   'neo/packs/coding/done-check-prs-mergeable.md': mdneoWorkDoneCheckPrsMergeable,
   'neo/packs/coding/done-check-prs-stale.md': mdneoWorkDoneCheckPrsStale,
@@ -539,8 +535,6 @@ export const {
   NEO_TRIGGER_NOTE,
   NEO_WORK_REVIEW_REQUEST,
   NEO_ASK_MOVED,
-  NEO_CARD_ATTENTION_NEO,
-  NEO_CARD_PR_ATTENTION,
   NEO_ASK_IDLE,
   NEO_HOLDER_CONSULTATION_RETURN,
   NEO_HOLDER_OPERATIONS,
