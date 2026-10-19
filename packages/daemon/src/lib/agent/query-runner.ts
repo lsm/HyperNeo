@@ -2184,6 +2184,7 @@ export class QueryRunner {
         startGuard?.();
         if (!holderTurn.bind(message.uuid ?? '')) {
           this.promptSpentGeneration = queryGeneration;
+          if (message.uuid) this.ctx.markHolderInputConsumed?.(message.uuid);
           onSent();
           return;
         }
