@@ -71,6 +71,15 @@ describe('coding todo pack', () => {
     expect(repo.urls(row.id).sort()).toEqual([1, 2, 3].map((n) => pr(n, 'OPEN').url));
     db.close();
   });
+  test('a todo that replaces a removed one owns the PR they both name and closes on merge', async () => {
+    const { db, pack, repo, todo } = setup(async () => [pr(9, 'MERGED')]);
+    const check = { pack: 'coding', kind: 'pr_merged', params: { urls: [pr(9, 'OPEN').url] } };
+    const removed = todo(check);
+    repo.claim(removed.id, [{ url: pr(9, 'OPEN').url, claim: 'named' }], 1);
+    new NeoAskTodoRepository(db).updateTodo(removed, { state: 'removed', reason: 'Replaced.' }, 2);
+    expect(await pack.check(todo(check))).toEqual({ done: true, evidence: '#9 merged' });
+    db.close();
+  });
   test('claims PRs the check names and the report names, then checks their merge state', async () => {
     const reads: string[][] = [];
     const { pack, repo, todo } = setup(async (urls) => {
