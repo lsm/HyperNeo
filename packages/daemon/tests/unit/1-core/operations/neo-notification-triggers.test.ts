@@ -9,7 +9,6 @@ import {
 } from '../../../../src/lib/internal-event-bus.ts';
 import { neoCardGroup } from '../../../../src/lib/neo/card-phase.ts';
 import {
-  isNeoAskReportUnsettled,
   isNeoCardFailedForGood,
   isNeoHumanOwnTurn,
   NEO_TRIGGER_DELIVERY_RETRY_MS,
@@ -24,7 +23,6 @@ import {
   neoTriggerWatchSessions,
   noteNeoAskTrigger,
   planNeoAskTrigger,
-  planNeoSettledReports,
 } from '../../../../src/lib/neo/notification-triggers.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
@@ -105,13 +103,7 @@ describe('neoAskTriggerConcern', () => {
 
 describe('trigger keys of an ask', () => {
   const keys = (target: NeoAsk, read = { view: view(), cards: [card()] }, pending = false) =>
-    neoAskTriggerKeys(
-      target,
-      read,
-      work,
-      () => pending,
-      () => true
-    ).map((key) => [key.kind, key.key]);
+    neoAskTriggerKeys(target, read, work, () => pending).map((key) => [key.kind, key.key]);
 
   test('an ask with nothing running wakes Neo once per ended card and once per refused propose', () => {
     const idle = {
@@ -123,60 +115,6 @@ describe('trigger keys of an ask', () => {
     expect(keys({ ...ask, workIds: [], refused: 'No adapter.', refusedCount: 2 }, idle)).toEqual([
       ['idle', 'idle:10:2'],
     ]);
-  });
-
-  test('replays ask 7fedf43a: the report at 01:43:52 wakes no idle trigger until the daemon has processed it', () => {
-    const at = (time: string) => Date.parse(`2026-10-16T${time}Z`);
-    const reportedAt = at('01:43:52.579');
-    const card = (id: string) => ({
-      id,
-      title: `Card ${id}`,
-      updatedAt: reportedAt,
-      status: 'reported' as const,
-    });
-    const idle = { view: view({ idle: true, humanActions: [] }), cards: [] };
-    const settled = new Map<string, number>();
-    const sweep = () =>
-      neoAskTriggerKeys(
-        ask,
-        idle,
-        card,
-        () => false,
-        (id, updatedAt) => settled.get(id) === updatedAt
-      ).map((key) => key.kind);
-    expect(sweep()).toEqual([]);
-    settled.set('w1', at('01:43:26.010'));
-    expect(sweep()).toEqual([]);
-    settled.set('w1', reportedAt);
-    expect(sweep()).toEqual(['idle']);
-    expect(
-      neoAskTriggerKeys(
-        { ...ask, status: 'achieved' },
-        idle,
-        card,
-        () => false,
-        () => false
-      ).map((key) => key.kind)
-    ).toEqual(['outcome']);
-    expect(
-      isNeoAskReportUnsettled(
-        { workIds: ['w1', 'w2'] },
-        (id) => (id === 'w2' ? work(id) : card(id)),
-        () => false
-      )
-    ).toBe(true);
-  });
-
-  test('a report whose processing failed stays unsettled, so idle waits for the next sweep', () => {
-    const settled = planNeoSettledReports(
-      [
-        { id: 'done', status: 'reported', updatedAt: 1 },
-        { id: 'failed', status: 'reported', updatedAt: 2 },
-        { id: 'running', status: 'queued', updatedAt: 3 },
-      ],
-      new Set(['failed'])
-    );
-    expect([...settled]).toEqual([['done', 1]]);
   });
 
   test('an idle ask is never quiet: Neo is told to move the work, then to ask the human', () => {
@@ -191,8 +129,7 @@ describe('trigger keys of an ask', () => {
         },
         idle,
         work,
-        () => false,
-        () => true
+        () => false
       ).find((key) => key.kind === 'idle')?.line;
     expect(line(1)).toContain('outcome is not met');
     expect(line(1)).toContain('The claude-code adapter cannot start work.');
@@ -380,7 +317,6 @@ describe('noteNeoAskTrigger', () => {
       read: () => read,
       work,
       deliveryRetryPending: () => false,
-      reportSettled: () => true,
       recorded: (_askId, id) => receipts.has(id),
       record: (askId, keys, triggerId) => {
         recorded.set(askId, new Set([...(recorded.get(askId) ?? []), ...keys]));

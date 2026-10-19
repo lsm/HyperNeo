@@ -46,7 +46,6 @@ export interface NeoTriggerSweepDeps {
   read(ask: NeoAsk): NeoAskTriggerRead | null;
   work(id: string): Card | null;
   deliveryRetryPending(workId: string): boolean;
-  reportSettled(workId: string, updatedAt: number): boolean;
   recorded(askId: string, triggerId: string): boolean;
   record(askId: string, keys: readonly string[], triggerId: string | null): void;
   wake(ask: NeoAsk, trigger: NeoAskTrigger): Promise<boolean>;
@@ -136,34 +135,11 @@ export function neoAskOutcomeKey(ask: Pick<NeoAsk, 'doneItems'>): string {
   return `${neoAskOutcomeBase(ask)}${open ? `:q${open}` : ''}`;
 }
 
-export function planNeoSettledReports(
-  cards: readonly Pick<NeoWork, 'id' | 'status' | 'updatedAt'>[],
-  unprocessed: ReadonlySet<string>
-): Map<string, number> {
-  return new Map(
-    cards
-      .filter((card) => card.status === 'reported' && !unprocessed.has(card.id))
-      .map((card) => [card.id, card.updatedAt])
-  );
-}
-
-export function isNeoAskReportUnsettled(
-  ask: Pick<NeoAsk, 'workIds'>,
-  work: (id: string) => Card | null,
-  settled: (workId: string, updatedAt: number) => boolean
-): boolean {
-  return ask.workIds.some((id) => {
-    const card = work(id);
-    return card?.status === 'reported' && !settled(card.id, card.updatedAt);
-  });
-}
-
 export function neoAskTriggerKeys(
   ask: NeoAsk,
   read: NeoAskTriggerRead,
   work: (id: string) => Card | null,
-  pending: (workId: string) => boolean,
-  settled: (workId: string, updatedAt: number) => boolean
+  pending: (workId: string) => boolean
 ): NeoTriggerKey[] {
   const items = (ask.doneItems ?? []).filter((item) => !item.removed);
   const answer = isNeoAskAnswerReady(ask);
@@ -206,16 +182,15 @@ export function neoAskTriggerKeys(
         ]
       : []
   );
-  const idle: NeoTriggerKey[] =
-    read.view.idle && !isNeoAskReportUnsettled(ask, work, settled)
-      ? [
-          {
-            key: `idle:${Math.max(ask.createdAt, ...ask.workIds.map((id) => work(id)?.updatedAt ?? 0))}:${ask.refusedCount ?? 0}`,
-            kind: 'idle',
-            line: neoAskIdleLine(ask),
-          },
-        ]
-      : [];
+  const idle: NeoTriggerKey[] = read.view.idle
+    ? [
+        {
+          key: `idle:${Math.max(ask.createdAt, ...ask.workIds.map((id) => work(id)?.updatedAt ?? 0))}:${ask.refusedCount ?? 0}`,
+          kind: 'idle',
+          line: neoAskIdleLine(ask),
+        },
+      ]
+    : [];
   return [
     ...failed,
     ...refused,
@@ -307,8 +282,7 @@ const readKeys = (ask: NeoAsk, read: NeoAskTriggerRead, deps: NeoTriggerSweepDep
     ask,
     read,
     (id) => deps.work(id),
-    (id) => deps.deliveryRetryPending(id),
-    (id, updatedAt) => deps.reportSettled(id, updatedAt)
+    (id) => deps.deliveryRetryPending(id)
   );
 
 export const noteNeoAskTrigger = (superpipe({})('neo-ask-trigger') as PipelineAPI)

@@ -32,8 +32,6 @@ import {
   scheduleDriverRefresh,
 } from '../neo/driver-refresh.ts';
 import { NEO_PACK_SWEEP, schedulePackSweep, sweepNeoPacks } from '../neo/pack-sweep.ts';
-import { NEO_WORK_DELIVERY_RETRY, runNeoDeliveryRetry } from '../neo/delivery-retry.ts';
-import { NEO_WORK_ADMISSION_WAKE, runNeoAdmissionWake } from '../neo/admission-wake.ts';
 import {
   runTurnEmbedding,
   scheduleTurnEmbedding,
@@ -1724,12 +1722,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   scheduleDriverRefresh(deps.jobQueue);
   deps.jobProcessor.register(NEO_PACK_SWEEP, () => sweepNeoPacks(deps.jobQueue, neoService));
   schedulePackSweep(deps.jobQueue, 0);
-  deps.jobProcessor.register(NEO_WORK_DELIVERY_RETRY, (job) =>
-    runNeoDeliveryRetry(job, neoService)
-  );
-  deps.jobProcessor.register(NEO_WORK_ADMISSION_WAKE, (job) =>
-    runNeoAdmissionWake(job, neoService)
-  );
   const reorganizeTopics = createNeoProjectsReorganizer(neoReorganizeRuntime(neoService));
   deps.jobProcessor.register(NEO_TOPICS_REORGANIZE_NIGHTLY, (job) =>
     runNeoNightlyReorganize(job, deps.jobQueue, {

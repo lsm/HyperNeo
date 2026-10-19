@@ -6,13 +6,7 @@ import { buildNeoCheckRegistry } from './check-registry.ts';
 import { CODING_PACK_BRIEF } from './coding/pack.ts';
 import { requireNeoWorkPrRefresh } from './coding/work-prs.ts';
 import { LIFE_ADMIN_PACK_BRIEF } from './life-admin/pack.ts';
-import type {
-  NeoPack,
-  NeoPackBrief,
-  NeoPackCardFacts,
-  NeoPackCheck,
-  NeoPackFragment,
-} from './types.ts';
+import type { NeoPack, NeoPackBrief, NeoPackCheck, NeoPackFragment } from './types.ts';
 
 export const NEO_DEFAULT_PACKS = ['coding'];
 
@@ -126,20 +120,6 @@ export function neoPackFragment(
   if (!id) return null;
   const instructions = installed.find((pack) => pack.id === id)?.instructions(ask ?? null) ?? null;
   return instructions ? { id, instructions } : null;
-}
-
-export function neoPackCardFacts(
-  packs: readonly NeoPack[],
-  workId: string,
-  stale: boolean
-): NeoPackCardFacts | null {
-  const facts = packs.flatMap((pack) => pack.cardFacts?.(workId, stale) ?? []);
-  return facts.length
-    ? {
-        text: facts.map((fact) => fact.text).join(' '),
-        data: Object.assign({}, ...facts.map((fact) => fact.data)),
-      }
-    : null;
 }
 
 export function neoPacks(input: {
