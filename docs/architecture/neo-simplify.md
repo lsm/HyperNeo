@@ -1,6 +1,6 @@
 # Neo simplify
 
-Status: the human's decision of 2026-10-18, with the open questions answered. Code references are on `dev` at `a0c491a280`; unprefixed paths are under `packages/daemon/src/lib/neo/`.
+Status: the human's decision of 2026-10-18, with the open questions answered. Code references are on `dev` at `a0c491a280`; unprefixed paths are under `packages/daemon/src/lib/neo/`, `lib/` paths under `packages/daemon/src/`, `shared/` paths under `packages/`, and prompt (`.md`) paths under `packages/prompts/src/`.
 
 ## The core
 
@@ -89,9 +89,9 @@ Native tools are Read, Bash, WebSearch and WebFetch. Projects and domains such a
 | Ask ownership by session | owner resolution in `ask-origin.ts`, `outcome-binding-policy.ts`, and `intake.ts` routing | `neo/work/done-check-ask-foreign.md` and `-owned.md`, merged into one |
 | Forwarding | `ask-forward-operation.ts`, `inbox-promote-operation.ts` | `neo_ask_forwards`; `neo.ask.forward`, `neo.inbox.promote`; `neo/ask-forwarded.md`, `neo/ask-moved.md` |
 | Consultations | `consultation-*.ts`, `cross-project-operation.ts` | `neo_consultations`, `neo_consultation_waiters`, `neo_consultation_publications`, `neo_cross_project_dispatches*`; `neo.project.consult`, `.respond`, `.cancel`, `neo.projects.dispatch`, `neo.receipt.read`; `neo/consultation/*.md` |
-| Send-time injections | `publication-view.ts` and its call in `agent/query-runner.ts`; `readNeoProjectSnapshot`; the local-time `UserPromptSubmit` hook in `restrictNeoQuery` (`session-policy.ts`) | `neo_publication_anchors`, `neo_session_seen`. The local time is written into the stored message at intake |
-| PR relays to Neo | `card-attention.ts`; `needsOf` and `neoCardPrAttention` in `packs/coding/card-facts.ts` | `neo_card_pr_relays`, `neo_card_event_subscriptions`; `neo/card-attention-neo.md`, `packs/coding/card-pr-attention.md` |
-| Old PR tracking | `drivers/opened-prs.ts`; the claim rules in `packs/coding/todo-prs.ts`; `ask-idle.ts`, `ask-stall.ts` | `pack_coding_pr_claims` |
+| Send-time injections | `publication-view.ts` and its call in `lib/agent/query-runner.ts`; `readNeoProjectSnapshot`; the local-time `UserPromptSubmit` hook in `restrictNeoQuery` (`session-policy.ts`) | `neo_publication_anchors`, `neo_session_seen`. The local time is written into the stored message at intake |
+| PR relays to Neo | `card-attention.ts`; `needsOf` and `neoCardPrAttention` in `packs/coding/card-facts.ts` | `neo_card_pr_relays`, `neo_card_event_subscriptions`; `neo/card-attention-neo.md`, `neo/packs/coding/card-pr-attention.md` |
+| Old PR tracking | `lib/drivers/opened-prs.ts`; the claim rules in `packs/coding/todo-prs.ts`; `ask-idle.ts`, `ask-stall.ts` | `pack_coding_pr_claims` |
 
 ## PR plan
 
