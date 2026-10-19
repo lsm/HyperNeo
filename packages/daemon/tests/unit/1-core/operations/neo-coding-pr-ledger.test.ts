@@ -118,7 +118,7 @@ describe('planCodingLedgerRead', () => {
   });
 });
 
-describe('reconcileCodingPrLedger', () => {
+describe('PR ledger reconcile', () => {
   test('lists every open PR across repos and moves state_since only on a state or head change', async () => {
     const { db, ledger } = setup();
     let second = [node(7)];
@@ -185,7 +185,7 @@ describe('reconcileCodingPrLedger', () => {
   });
 });
 
-describe('reconcileCodingPrLedger cleanup', () => {
+describe('PR ledger cleanup', () => {
   test('drops an open row the next full read no longer lists, rows of repos no project names, and rows unread for 7 days', async () => {
     const { db, ledger } = setup();
     await reconcile(
