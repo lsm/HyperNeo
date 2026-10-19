@@ -252,6 +252,27 @@ describe('VoiceStream against a stub ASR server', () => {
     expect([...Buffer.from(batches[0], 'base64').subarray(44)]).toEqual([1, 0, 2, 0]);
   });
 
+  test('a cancel during a stop that heard no text ends it without the batch fallback', async () => {
+    onAudio = () => {};
+    const { stream } = await start();
+    stream.write(new Uint8Array([1, 0, 2, 0]));
+    const stopping = stream.stop();
+    stream.cancel();
+    expect(await stopping).toEqual({ error: 'Audio data is empty' });
+    expect(batches).toEqual([]);
+    expect(pushed.some((text) => text.isFinal)).toBe(false);
+  });
+
+  test('a cancel during a batch transcription already running drops its result', async () => {
+    const { stream } = await start({ mode: 'batch' });
+    stream.write(new Uint8Array([1, 0]));
+    const stopping = stream.stop();
+    stream.cancel();
+    expect(await stopping).toEqual({ error: 'Voice stream cancelled' });
+    expect(batches).toHaveLength(1);
+    expect(pushed).toEqual([]);
+  });
+
   test('a mid-stream drop falls back to batch without losing audio sent before or after it', async () => {
     onAudio = (socket) => socket.terminate();
     const { stream } = await start();
