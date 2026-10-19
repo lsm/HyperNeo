@@ -487,4 +487,11 @@ describe('codingTodoStatusLine from the ledger', () => {
       ],
     });
   });
+
+  test('a PR in a repo with no reviewer yet says so', () => {
+    expect(codingTodoStatusLine(doing, [pr(1, 'OPEN')], () => 'unreviewed')).toEqual({
+      status: '#1 open, no reviewer yet',
+      statusCodes: [{ code: 'todo.pr.noReviewer', params: { pr: '#1' } }],
+    });
+  });
 });

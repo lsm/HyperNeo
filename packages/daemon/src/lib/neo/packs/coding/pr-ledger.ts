@@ -11,6 +11,7 @@ import { codingPrKey } from './todo-prs.ts';
 export type CodingPrState =
   | 'draft'
   | 'waiting_review'
+  | 'unreviewed'
   | 'changes_requested'
   | 'failing'
   | 'dirty'
@@ -118,7 +119,7 @@ export function codingPrReplyAt(pr: Node): number | null {
   return times.length ? Math.max(...times) : null;
 }
 
-export function codingPrState(pr: Node, repoHasCi = false): CodingPrState {
+export function codingPrState(pr: Node, repoHasCi = false, repoHasReview = true): CodingPrState {
   if (pr.state === 'MERGED') return 'merged';
   if (pr.state === 'CLOSED') return 'closed';
   if (pr.isDraft) return 'draft';
@@ -133,7 +134,7 @@ export function codingPrState(pr: Node, repoHasCi = false): CodingPrState {
   if (review === 'CHANGES_REQUESTED') return 'changes_requested';
   if (review === 'APPROVED')
     return noCi || ci === 'SUCCESS' ? 'approved_green' : 'approved_pending';
-  return 'waiting_review';
+  return repoHasReview ? 'waiting_review' : 'unreviewed';
 }
 
 export type CodingPrTransition = CodingLedgerRow & { from: CodingPrState };
@@ -164,6 +165,9 @@ export function planCodingLedgerRead(
       !!pr.commits.nodes[0]?.commit.statusCheckRollup ||
       (pr.commits.nodes[0]?.commit.checkSuites?.totalCount ?? 0) > 0
   );
+  const repoHasReview = [...open.nodes, ...done.nodes].some(
+    (pr) => pr.state === 'MERGED' || pr.reviews.nodes.length > 0 || pr.reviewDecision !== null
+  );
   const rows = [...open.nodes, ...done.nodes]
     .map((pr) => ({
       repo: canonical,
@@ -171,7 +175,7 @@ export function planCodingLedgerRead(
       title: pr.title,
       branch: pr.headRefName,
       head: pr.headRefOid,
-      state: codingPrState(pr, repoHasCi),
+      state: codingPrState(pr, repoHasCi, repoHasReview),
       ci: pr.commits.nodes[0]?.commit.statusCheckRollup?.state ?? null,
       replyAt: codingPrReplyAt(pr),
       closedAt: pr.closedAt ? Date.parse(pr.closedAt) : null,

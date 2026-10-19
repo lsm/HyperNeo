@@ -48,6 +48,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'todo.pr.waitingCi': '{pr} 开着，等 CI',
   'todo.pr.approved': '{pr} 已批准，等合并',
   'todo.pr.waitingReview': '{pr} 开着，等 review',
+  'todo.pr.noReviewer': '{pr} 开着，还没有人 review',
   'todo.pr.approvedGreen': '{pr} 已批准，CI 已过',
   'todo.pr.approvedPending': '{pr} 已批准，CI 还在跑',
   'todo.pr.dirty': '{pr} 和基线冲突',

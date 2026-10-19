@@ -196,5 +196,6 @@ describe('planCodingPrNudge', () => {
     expect(row('waiting_review', 29)).toBeNull();
     expect(row('waiting_review', 30)).toEqual({ kind: 'remind', nudges: 1 });
     expect(row('merged', 600)).toBeNull();
+    expect(row('unreviewed', 600)).toBeNull();
   });
 });
