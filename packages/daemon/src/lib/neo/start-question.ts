@@ -1,7 +1,6 @@
 import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
 import { z } from 'zod';
 import { readNeoAskAnswerOption } from './ask-answer-evidence.ts';
-import { neoDerivedId } from './derived-id.ts';
 import { neoStatusLine, type NeoStatusLine } from './status-codes.ts';
 
 export const NEO_START_QUESTION_PREFIX = 'neo-start:';
@@ -61,21 +60,4 @@ export function neoStartQuestionLine(steps: readonly { title?: string }[]): NeoS
 
 export function neoStartQuestionTitle(steps: readonly { title?: string }[]): string {
   return neoStartQuestionLine(steps).status;
-}
-
-export function planNeoStartQuestion(ask: NeoAsk, proposed: NeoStartTarget[]) {
-  const pending = proposed.filter(
-    (entry) => !['approved', 'declined'].includes(neoStartDecision(ask, entry) ?? '')
-  );
-  if (!pending.length) return null;
-  const action =
-    NEO_START_QUESTION_PREFIX +
-    JSON.stringify(pending.map(({ workId, target }) => ({ workId, target })));
-  return {
-    id: neoDerivedId(action),
-    action: NEO_START_QUESTION_PREFIX + JSON.stringify(pending),
-    text: neoStartQuestionTitle(pending),
-    options: ['先不做', '开始'],
-    decides: pending.map((entry) => entry.title ?? entry.workId).join('\n'),
-  };
 }

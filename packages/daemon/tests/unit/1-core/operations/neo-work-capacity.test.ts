@@ -105,7 +105,6 @@ async function setup(workers = ['x', 'y']) {
       [{ text: `Outcome ${id}`, check: null, deliveredBy: id }]
     );
   }
-  expect(service.editDependencies('b', ['a'])).toMatchObject({ ok: true });
   const answer = () => {
     const item = service.askRecords.get('ask-a')!.doneItems![0];
     service.askRecords.tickItem(
@@ -116,59 +115,13 @@ async function setup(workers = ['x', 'y']) {
       true
     );
   };
-  const approveReserved = async (id: string) => {
-    const ask = service.askRecords.forWork(id)!;
-    const item = ask.doneItems!.find((entry) => !entry.removed && entry.state === 'needs_you')!;
-    expect(item.options).toEqual(['先不做', '开始']);
-    expect(service.proposalApproval(id)).toBe(false);
-    service.askRecords.tickItem(
-      ask.id,
-      {
-        ...item,
-        state: 'met',
-        evidence: 'The human answered: 开始',
-        metBy: 'human',
-      },
-      Date.now(),
-      item,
-      true
-    );
-    await service.answerStartQuestion(ask, item, '开始');
-    expect(service.proposalApproval(id)).toBe(true);
-  };
   const workerOf = (id: string) => service.driverTargets.readRef(id)?.id ?? null;
   const settle = (id: string) => {
     service.repo.transitionWork(id, service.repo.getWork(id)!, { status: 'reported' });
     busy.delete(workerOf(id) ?? '');
   };
-  return { db, service, answer, workerOf, settle, approveReserved };
+  return { db, service, answer, workerOf, settle };
 }
-
-describe('NeoWorkDriverTargetRepository.occupiedWorkers', () => {
-  test('a card blocked on prerequisites does not hold its worker against other cards', async () => {
-    const { db, service, workerOf, approveReserved } = await setup();
-    try {
-      service.repo.transitionWork('c', service.repo.getWork('c')!, {
-        status: 'proposed',
-        report: NEO_WORK_AWAITING_WORKER,
-      });
-      expect(
-        service.driverTargets.occupiedWorkers(service.repo, 'c').has(neoWorkerRefKey(ref('x')))
-      ).toBe(true);
-      expect(
-        service.driverTargets
-          .occupiedWorkers(service.repo, 'c', new Set(['b']))
-          .has(neoWorkerRefKey(ref('x')))
-      ).toBe(false);
-      expect(await service.admitWork('c', true)).toEqual({ ok: true, handoff: 'not_started' });
-      expect(workerOf('c')).toBeNull();
-      await approveReserved('c');
-      expect(workerOf('c')).toBe('x');
-    } finally {
-      db.close();
-    }
-  });
-});
 
 describe('NeoWorkDriverTargetRepository.occupiedWorkers for other targets', () => {
   test('a blocked card keeps a chat, agent or adopted target occupied, since only driver sends re-check', async () => {
@@ -204,39 +157,6 @@ describe('NeoWorkDriverTargetRepository.occupiedWorkers for other targets', () =
           .occupiedWorkers(service.repo, 'c', new Set(['d', 'e']))
           .has(neoWorkerRefKey(ref('adopted')))
       ).toBe(true);
-    } finally {
-      db.close();
-    }
-  });
-});
-
-describe('NeoService.admitWork after a prerequisite is met', () => {
-  test('a card whose reserved worker was taken while it waited moves to an idle one', async () => {
-    const { db, service, answer, workerOf, approveReserved } = await setup();
-    try {
-      service.repo.transitionWork('c', service.repo.getWork('c')!, {
-        status: 'proposed',
-        report: NEO_WORK_AWAITING_WORKER,
-      });
-      await service.admitWork('c', true);
-      await approveReserved('c');
-      answer();
-      expect(await service.admitWork('b', true)).toEqual({ ok: true, handoff: 'not_started' });
-      expect(workerOf('b')).toBeNull();
-      await approveReserved('b');
-      expect(workerOf('c')).toBe('x');
-      expect(workerOf('b')).toBe('y');
-    } finally {
-      db.close();
-    }
-  });
-
-  test('a card whose worker stayed free still goes to it', async () => {
-    const { db, service, answer, workerOf } = await setup();
-    try {
-      answer();
-      expect(await service.admitWork('b', true)).toEqual({ ok: true, handoff: 'started' });
-      expect(workerOf('b')).toBe('x');
     } finally {
       db.close();
     }

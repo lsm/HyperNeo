@@ -1,5 +1,5 @@
 import type { SDKMessage } from '@hyperneo/shared/sdk';
-import type { NeoBinding, NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { isNeoCoordinatorBinding } from './binding-roles.ts';
@@ -20,23 +20,7 @@ export interface NeoAskOriginReads {
 const unknown: Stop = { kind: 'unknown' };
 const NUDGE_PREFIX = 'neo-nudge:';
 
-export function neoAskTickedMessageId(askId: string, itemId: string, at: number): string {
-  return `neo-ask-ticked:${askId}:${itemId}:${at}`;
-}
-
 export const NEO_ASK_ANSWER_PREFIX = 'neo-ask-answer:';
-
-export function neoAskAnswerMessageId(askId: string, itemId: string, at: number): string {
-  return `${NEO_ASK_ANSWER_PREFIX}${askId}:${itemId}:${at}`;
-}
-
-export function neoWorkParent(
-  work: Pick<NeoWork, 'originSessionId' | 'originMessageId'>
-): NeoAskOrigin | null {
-  return work.originMessageId
-    ? { sessionId: work.originSessionId, messageId: work.originMessageId }
-    : null;
-}
 
 export function neoAskParent(ask: NeoAskOriginAsk): NeoAskOrigin | null {
   return ask.originMessageId
@@ -54,19 +38,11 @@ export function neoDoneCheckMessageId(
   return `${workId}:done-check:${continued}${prRevision ? `:pr:${prRevision}` : ''}${followedAt ? `:at:${followedAt}` : ''}${stalled > 0 ? `:s:${stalled}` : ''}`;
 }
 
-export function neoStallMessageId(workId: string, since: number): string {
-  return `${workId}:stall:${since}`;
-}
-
 const NEO_FOLDABLE_NOTE =
   /^neo-ask-evidence:|^neo-session-notices:|^neo-card-pr:|:stall:\d+$|:needs-you:\d+$/;
 
 export function isNeoFoldableNote(messageId: string): boolean {
   return NEO_FOLDABLE_NOTE.test(messageId);
-}
-
-export function neoNeedsYouMessageId(workId: string, at: number): string {
-  return `${workId}:needs-you:${at}`;
 }
 
 export function neoWorkReturnMessageId(workId: string, retries: number, continued = 0): string {

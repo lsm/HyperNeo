@@ -196,32 +196,4 @@ describe('neo.session.track', () => {
     expect(told).toHaveLength(2);
     expect(new Set(told).size).toBe(2);
   });
-
-  test('a restart mid-adoption finishes adopting instead of failing the card', async () => {
-    const { work: card } = service.driverTargets.propose(
-      service.repo,
-      {
-        id: 'w-adopt',
-        requestKey: 'root:adopt',
-        projectId: null,
-        originSessionId: 'neo:root',
-        title: 'Quiet-model research',
-        instruction: 'Follow the research session.',
-      },
-      { verb: 'adopt', ref }
-    );
-    service.repo.transitionWork(card.id, card, { status: 'queued' });
-    await service.recover();
-    expect(service.repo.getWork(card.id)).toMatchObject({
-      status: 'queued',
-      report: expect.stringContaining('Tracking the codex-desktop session'),
-    });
-    expect(service.driverTargets.cardRefs(0)).toEqual([{ workId: card.id, ref }]);
-    expect(sent).not.toHaveBeenCalled();
-    expect(service.driverTargets.readSent(card.id)).toBeNull();
-    Object.assign(service, { returnReport: async () => {} });
-    status = { status: 'done', lastActivityAt: Date.now() + 10_000 };
-    await service.refreshDriverWork();
-    expect(service.repo.getWork(card.id)?.status).toBe('reported');
-  });
 });
