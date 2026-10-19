@@ -1,4 +1,5 @@
 import { workStartPreparation, type WorkExecutionPreparer } from './start-preparation.ts';
+import { workExecutionLocation } from './execution-location.ts';
 import { basename, join, sep } from 'node:path';
 import type { WorkspaceHistoryEntry } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -75,6 +76,7 @@ export interface HyperneoSessionRow {
   processing: string | null;
   lastActiveAt: string | null;
   branch?: string | null;
+  directory?: string | null;
 }
 
 export interface HyperneoSessionControl {
@@ -349,7 +351,8 @@ export function readHyperneoSession(db: BunDatabase, id: string): HyperneoSessio
   const row = db
     .prepare(
       `SELECT id, title, status, ${FOLDER} AS folder, last_active_at AS lastActiveAt,
-         ${PROCESSING} AS processing, COALESCE(worktree_branch, git_branch) AS branch
+         ${PROCESSING} AS processing, COALESCE(worktree_branch, git_branch) AS branch,
+         COALESCE(worktree_path, workspace_path) AS directory
          FROM sessions WHERE id = ? AND ${OWN_SESSIONS}`
     )
     .get(id) as HyperneoSessionRow | null | undefined;
@@ -477,6 +480,7 @@ export function describeHyperneoWork(
         : {}),
       recentInputs: readHyperneoInputs(deps.db(), row.id, since),
       ...(row.branch ? { branches: [row.branch] } : {}),
+      ...workExecutionLocation(row.directory ?? undefined, deps.machine),
       ...withExchange(
         since === undefined ? undefined : readHyperneoExchange(deps.db(), row.id, since)
       ),

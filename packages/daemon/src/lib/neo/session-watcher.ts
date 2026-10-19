@@ -46,6 +46,7 @@ export type NeoSessionWatcherDeps = {
   followedCardRefs: (now: number) => WorkRef[];
   mutedSessions: () => readonly string[] | undefined;
   liveAskPrs: () => NeoAskPrs[];
+  sessionBranchPrs: (ref: WorkRef) => Promise<string[]>;
   readRemotes: (folder: string) => Promise<string[]>;
   observeSessions: (sessions: NeoSessionFacts[]) => void;
   notifyChanged: () => void;
@@ -156,6 +157,7 @@ export class NeoSessionWatcher {
                     lastActivityAt: session.lastActivityAt,
                     remotes: facts.folder ? await this.deps.readRemotes(facts.folder) : [],
                   },
+                  branchPrs: await this.deps.sessionBranchPrs(session.ref),
                 }
               : null;
           })
@@ -171,7 +173,8 @@ export class NeoSessionWatcher {
           facts: reads.flatMap((read) => (read ? [read.facts] : [])),
           found: new Map(
             sessions.flatMap((session, index) => {
-              const facts = reads[index]?.facts;
+              const read = reads[index];
+              const facts = read?.facts;
               return facts
                 ? [
                     [
@@ -179,6 +182,7 @@ export class NeoSessionWatcher {
                       [
                         ...facts.openedPrs,
                         ...(facts.linkedPrs ?? []).flatMap((pr) => (pr.dismissed ? [] : [pr.url])),
+                        ...read.branchPrs,
                       ],
                     ] as const,
                   ]

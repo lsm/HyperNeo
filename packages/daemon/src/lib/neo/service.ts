@@ -302,6 +302,7 @@ export class NeoService {
       followedCardRefs: (now) => this.followedCardRefs(now),
       mutedSessions: () => this.db.getGlobalSettings?.().neo?.mutedSessions,
       liveAskPrs: () => this.askRecords.listLive().map((ask) => this.askPrs(ask)),
+      sessionBranchPrs: (ref) => this.sessionBranchPrs(ref),
       readRemotes: async (folder) => (await readWorkspaceIdentity(folder)).remotes ?? [],
       observeSessions: (sessions) => {
         for (const pack of this.packs()) pack.observeSessions?.(sessions, Date.now());

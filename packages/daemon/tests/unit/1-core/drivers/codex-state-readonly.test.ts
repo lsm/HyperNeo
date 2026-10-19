@@ -17,7 +17,7 @@ describe('withCodexState', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test('reads a WAL state file that Codex is not running against', () => {
+  test('reads a WAL state file that Codex is not running against, from before thread branches', () => {
     dir = mkdtempSync(join(tmpdir(), 'codex-state-'));
     const statePath = join(dir, 'state_5.sqlite');
     const db = new Database(statePath);
@@ -25,9 +25,9 @@ describe('withCodexState', () => {
     db.exec(`CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, updated_at_ms INTEGER)`);
     db.exec(`CREATE TABLE project_roots (project_id TEXT, position INTEGER, path TEXT)`);
     db.exec(`CREATE TABLE threads (id TEXT PRIMARY KEY, name TEXT, title TEXT, first_user_message TEXT,
-      cwd TEXT, source TEXT, archived INTEGER, updated_at_ms INTEGER, rollout_path TEXT, git_branch TEXT)`);
+      cwd TEXT, source TEXT, archived INTEGER, updated_at_ms INTEGER, rollout_path TEXT)`);
     db.exec(
-      `INSERT INTO threads VALUES ('t1', 'loader', '', '', '/focus/dolmen', 'vscode', 0, 5, '/r.jsonl', NULL)`
+      `INSERT INTO threads VALUES ('t1', 'loader', '', '', '/focus/dolmen', 'vscode', 0, 5, '/r.jsonl')`
     );
     db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
     db.close();
@@ -35,7 +35,11 @@ describe('withCodexState', () => {
     rmSync(`${statePath}-shm`, { force: true });
     chmodSync(dir, 0o555);
     expect(existsSync(`${statePath}-shm`)).toBe(false);
-    expect(readCodexThread(statePath, 't1')?.thread).toMatchObject({ id: 't1', title: 'loader' });
+    expect(readCodexThread(statePath, 't1')?.thread).toMatchObject({
+      id: 't1',
+      title: 'loader',
+      branch: null,
+    });
     expect(withCodexState(statePath, (state) => state.prepare('SELECT 1 AS one').get())).toEqual({
       one: 1,
     });

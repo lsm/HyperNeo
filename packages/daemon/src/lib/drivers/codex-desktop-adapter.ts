@@ -316,7 +316,11 @@ export function readCodexThread(statePath: string, id: string): CodexThreadDetai
   return withCodexState(statePath, (db) => {
     const thread = db
       .prepare(
-        `SELECT ${THREAD_COLUMNS}, rollout_path AS rolloutPath, git_branch AS branch FROM threads
+        `SELECT ${THREAD_COLUMNS}, rollout_path AS rolloutPath, ${
+          db.prepare("SELECT 1 FROM pragma_table_info('threads') WHERE name = 'git_branch'").get()
+            ? 'git_branch'
+            : 'NULL'
+        } AS branch FROM threads
           WHERE id = ? AND ${OWN_THREADS}`
       )
       .get(id) as CodexThreadDetail['thread'] | null | undefined;
