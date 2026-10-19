@@ -201,9 +201,14 @@ try {
     port: args.port,
     fetch: async (request) => {
       const method = request.method.toUpperCase();
-      const url = request.url.replace(/^(http:\/\/[^/:]+):\d+/, `$1:${MOCK_PORT}`);
+      const url = request.url;
       const bodyText = method === 'GET' ? '' : await request.text();
-      const mock = findMock(mocks, method, url, bodyText);
+      const mock = findMock(
+        mocks,
+        method,
+        url.replace(/^(http:\/\/[^/:]+):\d+/, `$1:${MOCK_PORT}`),
+        bodyText
+      );
       if (!mock) {
         console.error(`[dev-proxy-stub] no mock matched ${method} ${url}`);
         return unmockedResponse(method, url);
