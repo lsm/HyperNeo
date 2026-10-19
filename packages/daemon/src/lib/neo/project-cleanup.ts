@@ -33,6 +33,9 @@ export type NeoRetiredHolder = {
 const repositories = (project: NeoProjectFacts) =>
   project.aliases.filter((alias) => alias.startsWith('repository:'));
 
+const hasRepo = (project: NeoProjectFacts) =>
+  project.aliases.some((alias) => alias.startsWith('repository:') || alias.startsWith('repo:'));
+
 const isEmpty = (project: NeoProjectFacts) =>
   project.asks + project.work.length + project.context + project.holderMessages === 0;
 
@@ -52,7 +55,7 @@ const isLive = (project: NeoProjectFacts) => project.liveAsks + project.liveWork
 export function neoCleanupFolders(projects: readonly NeoProjectFacts[], machine: string): string[] {
   const local = `folder:${machine}\u0000`;
   return projects
-    .filter((project) => !repositories(project).length && isEmpty(project))
+    .filter((project) => !hasRepo(project) && isEmpty(project))
     .flatMap((project) => project.aliases.filter((alias) => alias.startsWith(local)))
     .map((alias) => alias.slice(local.length));
 }
@@ -121,7 +124,7 @@ export function planNeoProjectCleanup(
       return project.holder ? [{ action: 'archive', ...named, sessionId: project.holder }] : [];
     if (repositories(project).length) return [];
     if (isEmpty(project))
-      return project.aliases.some((alias) => scope.mirrored.has(alias))
+      return hasRepo(project) || project.aliases.some((alias) => scope.mirrored.has(alias))
         ? []
         : [{ action: 'delete', ...named }];
     if (isElsewhere(project, scope.machine)) return [];
