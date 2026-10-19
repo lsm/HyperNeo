@@ -484,7 +484,7 @@ describe('runtime-bound publication operation', () => {
   test('refuses a dead turn before any append', async () => {
     const who = caller(root.sessionId, 'unrecorded');
     who.neoTurn!.isLive = () => false;
-    expect(await invoke(draft, who)).toMatchObject({ value: { accepted: false } });
+    expect(await invoke(draft, who)).toMatchObject({ kind: 'failed', code: 'forbidden' });
     expect(ledger.list(conversationId)).toEqual([]);
   });
 

@@ -223,7 +223,7 @@ describe('neo.publication.edit', () => {
   test('rechecks the live caller at the revision write boundary', async () => {
     let checks = 0;
     const who = caller();
-    const turn = { ...who.neoTurn!, isLive: () => ++checks === 1 };
+    const turn = { ...who.neoTurn!, isLive: () => ++checks <= 2 };
     expect(
       await call(
         'edit',
@@ -257,12 +257,19 @@ describe('neo.publication.edit', () => {
 
   test.each([
     { source: 'rpc', principal: 'local' },
-    { ...caller(), neoTurn: { ...caller().neoTurn!, isLive: () => false } },
     { ...caller(), sessionId: 'worker' },
-  ] satisfies OperationCaller[])('refuses an unauthorized or dead publisher: %j', async (who) => {
+  ] satisfies OperationCaller[])('refuses an unauthorized publisher: %j', async (who) => {
     expect(
       await call('edit', { publicationId: original, requestId: 'r1', shortText: 'Wrong.' }, who)
     ).toMatchObject({ accepted: false, reason: 'live_avatar_required' });
+    expect(notified).toBe(0);
+  });
+
+  test('refuses a dead publisher before the operation runs', async () => {
+    const who = { ...caller(), neoTurn: { ...caller().neoTurn!, isLive: () => false } };
+    expect(
+      await call('edit', { publicationId: original, requestId: 'r1', shortText: 'Wrong.' }, who)
+    ).toMatchObject({ kind: 'failed', code: 'forbidden' });
     expect(notified).toBe(0);
   });
 

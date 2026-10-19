@@ -119,7 +119,8 @@ describe('Cross-project runtime', () => {
   test('refuses a stale input before creating a group', async () => {
     live = false;
     expect(await invoke('neo.projects.dispatch', { parts: parts() })).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('live Neo') },
+      kind: 'failed',
+      code: 'forbidden',
     });
     expect(service.crossProjects.pending()).toEqual([]);
   });

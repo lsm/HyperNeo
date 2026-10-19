@@ -94,11 +94,15 @@ export async function parseOperationInput(
   }
 }
 
+function isEndedTurnWrite(operation: OperationDefinition, caller: OperationCaller): boolean {
+  return !!caller.neoTurn && !caller.neoTurn.isLive() && operation.policy?.safetyClass !== 'read';
+}
+
 export function isOperationAdmitted(
-  _operation: OperationDefinition,
-  _caller: OperationCaller
+  operation: OperationDefinition,
+  caller: OperationCaller
 ): boolean {
-  return true;
+  return !isEndedTurnWrite(operation, caller);
 }
 
 export function admitOperationCaller(
@@ -111,7 +115,9 @@ export function admitOperationCaller(
         reason: {
           kind: 'failed',
           code: 'forbidden',
-          message: `Operation ${prepared.operation.name} is not available to this caller`,
+          message: isEndedTurnWrite(prepared.operation, caller)
+            ? `Operation ${prepared.operation.name} changes state, and this turn has ended or was superseded`
+            : `Operation ${prepared.operation.name} is not available to this caller`,
         },
       };
 }
