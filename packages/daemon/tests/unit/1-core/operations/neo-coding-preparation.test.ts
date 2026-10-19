@@ -177,6 +177,8 @@ describe('prepareCodingExecution', () => {
     ['a bare hash before a Verify paragraph', '#\n\nVerify changes with make check.\n', false],
     ['a hash with no space', '#Verify\n', false],
     ['an indented heading', '  ## Verify\n', true],
+    ['a CRLF fence', '```md\r\n## Verify\r\n```\r\n', false],
+    ['a CRLF heading', '## Verify\r\nRun it.\r\n', true],
   ])('a Verify heading in %s counts only outside code', (_case, doc, passes) => {
     const listed = { code: 0, stdout: 'AGENTS.md\n', stderr: '' };
     const agents = { code: 0, stdout: `# Repo\n\n${doc}`, stderr: '' };

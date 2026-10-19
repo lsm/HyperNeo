@@ -58,7 +58,7 @@ const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 function withoutFencedCode(markdown: string): string {
   let open: string | null = null;
   return markdown
-    .split('\n')
+    .split(/\r\n?|\n/)
     .filter((line) => {
       const fence = FENCE.exec(line);
       if (open === null) {
