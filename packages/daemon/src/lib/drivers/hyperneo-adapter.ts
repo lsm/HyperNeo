@@ -74,6 +74,7 @@ export interface HyperneoSessionRow {
   folder: string | null;
   processing: string | null;
   lastActiveAt: string | null;
+  branch?: string | null;
 }
 
 export interface HyperneoSessionControl {
@@ -348,7 +349,8 @@ export function readHyperneoSession(db: BunDatabase, id: string): HyperneoSessio
   const row = db
     .prepare(
       `SELECT id, title, status, ${FOLDER} AS folder, last_active_at AS lastActiveAt,
-         ${PROCESSING} AS processing FROM sessions WHERE id = ? AND ${OWN_SESSIONS}`
+         ${PROCESSING} AS processing, COALESCE(worktree_branch, git_branch) AS branch
+         FROM sessions WHERE id = ? AND ${OWN_SESSIONS}`
     )
     .get(id) as HyperneoSessionRow | null | undefined;
   return row ?? null;
@@ -474,6 +476,7 @@ export function describeHyperneoWork(
         ? { lastReply: last.reply.slice(0, REPLY_LIMIT), lastReplyAt: timestamp(last.at) }
         : {}),
       recentInputs: readHyperneoInputs(deps.db(), row.id, since),
+      ...(row.branch ? { branches: [row.branch] } : {}),
       ...withExchange(
         since === undefined ? undefined : readHyperneoExchange(deps.db(), row.id, since)
       ),

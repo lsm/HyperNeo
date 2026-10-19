@@ -471,9 +471,9 @@ describe('NeoService session ask links', () => {
       owner: JSON.stringify(ref),
     });
     await watch('running', Date.now() - 500, []);
-    expect(raw.prepare('SELECT url, ref FROM pack_coding_session_prs').all()).toEqual([
-      { url: pr(12).toLowerCase(), ref: JSON.stringify(ref) },
-    ]);
+    expect(raw.prepare('SELECT owner FROM pack_coding_pr_ledger').get()).toEqual({
+      owner: JSON.stringify(ref),
+    });
   });
 
   test('a session whose PR the ask names in its text is linked too', async () => {

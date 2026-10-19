@@ -8,6 +8,7 @@ import {
   planCodingLedgerRead,
   reconcileCodingPrLedger,
 } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
+import type { NeoSessionFacts } from '../../../../src/lib/neo/packs/types.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -392,20 +393,107 @@ describe('codingLedgerArgs', () => {
   });
 });
 
-describe('CodingPrLedgerRepository.recordSessionPrs', () => {
-  test('the first session seen with a PR owns it, also when the PR reaches the ledger later', async () => {
+describe('CodingPrLedgerRepository.observeSessions', () => {
+  const facts = (
+    ref: { adapter: string; id: string },
+    more: Partial<NeoSessionFacts> = {}
+  ): NeoSessionFacts => ({
+    ref,
+    status: 'running',
+    lastActivityAt: 1,
+    remotes: [],
+    branches: [],
+    openedPrs: [],
+    ...more,
+  });
+  const owners = (db: Database) =>
+    db.prepare('SELECT number, owner FROM pack_coding_pr_ledger ORDER BY number').all();
+
+  test('an app link owns its PR before a branch match, and the first owner keeps it', async () => {
     const { db, ledger } = setup();
     const opener = { adapter: 'claude-desktop', id: 'opener' };
-    ledger.recordSessionPrs([{ ref: opener, urls: ['https://github.com/LSM/a/pull/1'] }], 1);
-    ledger.recordSessionPrs(
-      [{ ref: { adapter: 'hyperneo', id: 'later' }, urls: ['https://github.com/lsm/a/pull/1'] }],
-      2
+    const worker = { adapter: 'hyperneo', id: 'worker' };
+    await reconcile(ledger, ['lsm/a'], async () => response([node(1), node(2), node(3)]), 100);
+    ledger.observeSessions(
+      [
+        facts(opener, {
+          linkedPrs: [{ url: 'https://github.com/LSM/a/pull/1' }],
+          linkedPrsWindow: true,
+          branches: ['b1'],
+        }),
+      ],
+      101
     );
-    await reconcile(ledger, ['lsm/a'], async () => response([node(1), node(2)]), 100);
-    expect(
-      db.prepare('SELECT number, owner FROM pack_coding_pr_ledger ORDER BY number').all()
-    ).toEqual([
+    ledger.observeSessions(
+      [
+        facts(worker, {
+          lastActivityAt: 5,
+          remotes: ['git@github.com:lsm/a.git'],
+          branches: ['b1', 'b2'],
+          openedPrs: ['https://github.com/lsm/a/pull/1'],
+        }),
+      ],
+      102
+    );
+    expect(owners(db)).toEqual([
       { number: 1, owner: JSON.stringify(opener) },
+      { number: 2, owner: JSON.stringify(worker) },
+      { number: 3, owner: null },
+    ]);
+    db.close();
+  });
+
+  test('a session the app marks as the PR author wins over a more recent session that only linked it', async () => {
+    const { db, ledger } = setup();
+    const author = { adapter: 'claude-desktop', id: 'author' };
+    const reviewer = { adapter: 'claude-desktop', id: 'reviewer' };
+    const url = 'https://github.com/lsm/a/pull/1';
+    await reconcile(ledger, ['lsm/a'], async () => response([node(1)]), 100);
+    ledger.observeSessions(
+      [
+        facts(reviewer, { lastActivityAt: 9, linkedPrs: [{ url }], linkedPrsWindow: true }),
+        facts(author, {
+          lastActivityAt: 1,
+          linkedPrs: [{ url, own: true }],
+          linkedPrsWindow: true,
+        }),
+      ],
+      101
+    );
+    expect(owners(db)).toEqual([{ number: 1, owner: JSON.stringify(author) }]);
+    db.close();
+  });
+
+  test('a PR leaving the capped Claude list stays linked; a dismissal or a removed Codex row unlinks', async () => {
+    const { db, ledger } = setup();
+    const claude = { adapter: 'claude-desktop', id: 'c' };
+    const codex = { adapter: 'codex-desktop', id: 'x' };
+    await reconcile(ledger, ['lsm/a'], async () => response([node(1), node(2)]), 100);
+    const pr = (n: number) => `https://github.com/lsm/a/pull/${n}`;
+    ledger.observeSessions(
+      [
+        facts(claude, { linkedPrs: [{ url: pr(1) }], linkedPrsWindow: true }),
+        facts(codex, { linkedPrs: [{ url: pr(2) }] }),
+      ],
+      101
+    );
+    ledger.observeSessions(
+      [facts(claude, { linkedPrs: [], linkedPrsWindow: true, openedPrs: [pr(2)] })],
+      102
+    );
+    expect(owners(db)).toEqual([
+      { number: 1, owner: JSON.stringify(claude) },
+      { number: 2, owner: JSON.stringify(codex) },
+    ]);
+    ledger.observeSessions(
+      [
+        facts(claude, { linkedPrs: [{ url: pr(1), dismissed: true }], linkedPrsWindow: true }),
+        facts(codex, { linkedPrs: [] }),
+      ],
+      103
+    );
+    expect(owners(db)).toEqual([
+      { number: 1, owner: null },
       { number: 2, owner: null },
     ]);
     db.close();
@@ -432,27 +520,29 @@ describe('reconcileCodingPrLedger renamed repos', () => {
   });
 });
 
-describe('CodingPrLedgerRepository.pruneSessionPrs', () => {
-  test('forgets old session links whose PR left the ledger and ignores non-github.com hosts', async () => {
+describe('CodingPrLedgerRepository.pruneSessions', () => {
+  test('forgets sessions not seen for the keep window, and keeps the owner they gave', async () => {
     const { db, ledger } = setup();
     const ref = { adapter: 'hyperneo', id: 's' };
-    ledger.recordSessionPrs(
+    await reconcile(ledger, ['lsm/a'], async () => response([node(1)]), 1);
+    ledger.observeSessions(
       [
         {
           ref,
-          urls: [
-            'https://github.com/lsm/a/pull/1',
-            'https://github.com/lsm/a/pull/2',
-            'https://ghe.example.com/lsm/a/pull/3',
-          ],
+          status: 'idle',
+          lastActivityAt: 1,
+          remotes: ['https://github.com/lsm/a'],
+          branches: ['b1'],
+          openedPrs: [],
         },
       ],
       1
     );
     await reconcile(ledger, ['lsm/a'], async () => response([node(1)]), CODING_LEDGER_KEEP_MS + 2);
-    expect(db.prepare('SELECT url FROM pack_coding_session_prs ORDER BY url').all()).toEqual([
-      { url: 'https://github.com/lsm/a/pull/1' },
-    ]);
+    expect(db.prepare('SELECT ref FROM pack_coding_session_facts').all()).toEqual([]);
+    expect(db.prepare('SELECT owner FROM pack_coding_pr_ledger').get()).toEqual({
+      owner: JSON.stringify(ref),
+    });
     db.close();
   });
 });

@@ -112,7 +112,7 @@ export interface CodexDesktopAdapterDeps {
 }
 
 export interface CodexThreadDetail {
-  thread: CodexThreadRow & { rolloutPath: string };
+  thread: CodexThreadRow & { rolloutPath: string; branch?: string | null };
   roots: CodexRootRow[];
   linkedPrs?: string[];
 }
@@ -316,7 +316,7 @@ export function readCodexThread(statePath: string, id: string): CodexThreadDetai
   return withCodexState(statePath, (db) => {
     const thread = db
       .prepare(
-        `SELECT ${THREAD_COLUMNS}, rollout_path AS rolloutPath FROM threads
+        `SELECT ${THREAD_COLUMNS}, rollout_path AS rolloutPath, git_branch AS branch FROM threads
           WHERE id = ? AND ${OWN_THREADS}`
       )
       .get(id) as CodexThreadDetail['thread'] | null | undefined;
@@ -336,8 +336,12 @@ export function readCodexThread(statePath: string, id: string): CodexThreadDetai
               WHERE thread_id = ? AND attachment_type = 'pull_request' ORDER BY created_at`
           )
           .all(id) as { url: string | null }[])
-      : [];
-    return { thread, roots, linkedPrs: links.flatMap((row) => (row.url ? [row.url] : [])) };
+      : null;
+    return {
+      thread,
+      roots,
+      ...(links ? { linkedPrs: links.flatMap((row) => (row.url ? [row.url] : [])) } : {}),
+    };
   });
 }
 
@@ -570,7 +574,8 @@ export function describeCodexThread(
       ...(state.inputs ? { recentInputs: state.inputs } : {}),
       ...withExchange(state.exchange),
       ...(state.openedPrs ? { openedPrs: state.openedPrs } : {}),
-      ...(detail.linkedPrs?.length ? { linkedPrs: detail.linkedPrs.map((url) => ({ url })) } : {}),
+      ...(detail.linkedPrs ? { linkedPrs: detail.linkedPrs.map((url) => ({ url })) } : {}),
+      ...(thread.branch ? { branches: [thread.branch] } : {}),
     },
   };
 }

@@ -25,9 +25,9 @@ describe('withCodexState', () => {
     db.exec(`CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, updated_at_ms INTEGER)`);
     db.exec(`CREATE TABLE project_roots (project_id TEXT, position INTEGER, path TEXT)`);
     db.exec(`CREATE TABLE threads (id TEXT PRIMARY KEY, name TEXT, title TEXT, first_user_message TEXT,
-      cwd TEXT, source TEXT, archived INTEGER, updated_at_ms INTEGER, rollout_path TEXT)`);
+      cwd TEXT, source TEXT, archived INTEGER, updated_at_ms INTEGER, rollout_path TEXT, git_branch TEXT)`);
     db.exec(
-      `INSERT INTO threads VALUES ('t1', 'loader', '', '', '/focus/dolmen', 'vscode', 0, 5, '/r.jsonl')`
+      `INSERT INTO threads VALUES ('t1', 'loader', '', '', '/focus/dolmen', 'vscode', 0, 5, '/r.jsonl', NULL)`
     );
     db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
     db.close();

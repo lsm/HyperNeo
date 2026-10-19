@@ -7,7 +7,8 @@ import type { NeoSessionSeenRepository } from '../../storage/repositories/neo-se
 import type { Logger } from '../logger.ts';
 import { invokeOperation } from '../operations/invoke.ts';
 import type { OperationRegistry } from '../operations/registry.ts';
-import { readDriverLastInputAt, readDriverLive, readDriverOpenedPrs } from './driver-work.ts';
+import { readDriverLastInputAt, readDriverLive, readDriverSessionFacts } from './driver-work.ts';
+import type { NeoSessionFacts } from './packs/types.ts';
 import {
   describeNeoAskSessions,
   keepNeoSessionPrs,
@@ -45,8 +46,8 @@ export type NeoSessionWatcherDeps = {
   followedCardRefs: (now: number) => WorkRef[];
   mutedSessions: () => readonly string[] | undefined;
   liveAskPrs: () => NeoAskPrs[];
-  sessionBranchPrs: (ref: WorkRef | null) => Promise<string[]>;
-  observeSessionPrs: (links: { ref: WorkRef; urls: string[] }[]) => void;
+  readRemotes: (folder: string) => Promise<string[]>;
+  observeSessions: (sessions: NeoSessionFacts[]) => void;
   notifyChanged: () => void;
 };
 
@@ -144,13 +145,17 @@ export class NeoSessionWatcher {
               { source: 'internal', sessionId: root, role: 'neo' }
             );
             const live = readDriverLive(outcome);
-            return live
+            const facts = live ? readDriverSessionFacts(outcome) : null;
+            return live && facts
               ? {
                   detail: { status: live.status, lastInputAt: readDriverLastInputAt(outcome) },
-                  opened: [
-                    ...readDriverOpenedPrs(outcome),
-                    ...(await this.deps.sessionBranchPrs(session.ref)),
-                  ],
+                  facts: {
+                    ...facts,
+                    ref: session.ref,
+                    status: live.status,
+                    lastActivityAt: session.lastActivityAt,
+                    remotes: facts.folder ? await this.deps.readRemotes(facts.folder) : [],
+                  },
                 }
               : null;
           })
@@ -163,10 +168,21 @@ export class NeoSessionWatcher {
               return detail ? [[session.key, detail.status] as const] : [];
             })
           ),
+          facts: reads.flatMap((read) => (read ? [read.facts] : [])),
           found: new Map(
             sessions.flatMap((session, index) => {
-              const opened = reads[index]?.opened;
-              return opened ? [[session.key, opened] as const] : [];
+              const facts = reads[index]?.facts;
+              return facts
+                ? [
+                    [
+                      session.key,
+                      [
+                        ...facts.openedPrs,
+                        ...(facts.linkedPrs ?? []).flatMap((pr) => (pr.dismissed ? [] : [pr.url])),
+                      ],
+                    ] as const,
+                  ]
+                : [];
             })
           ),
         };
@@ -207,16 +223,7 @@ export class NeoSessionWatcher {
       ['listed', 'read'],
       'linked'
     )
-    .pipe(
-      (listed: { sessions: NeoListedSession[] }, linked: { prs: Map<string, string[]> }) =>
-        this.deps.observeSessionPrs(
-          listed.sessions.flatMap((session) => {
-            const urls = linked.prs.get(session.key) ?? [];
-            return urls.length ? [{ ref: session.ref, urls }] : [];
-          })
-        ),
-      ['listed', 'linked']
-    )
+    .pipe((read: { facts: NeoSessionFacts[] }) => this.deps.observeSessions(read.facts), 'read')
     .pipe(
       (
         listed: { sessions: NeoListedSession[] },

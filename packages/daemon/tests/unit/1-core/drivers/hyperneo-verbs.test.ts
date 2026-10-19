@@ -72,7 +72,8 @@ describe('hyperneo adapter send and status', () => {
     outcome = { kind: 'enqueued', id: 'mb1' };
     db = new Database(':memory:');
     db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, workspace_path TEXT, main_repo_path TEXT,
-      status TEXT, last_active_at TEXT, processing_state TEXT, type TEXT, space_id TEXT, room_id TEXT)`);
+      status TEXT, last_active_at TEXT, processing_state TEXT, type TEXT, space_id TEXT, room_id TEXT,
+      worktree_branch TEXT, git_branch TEXT)`);
     db.exec(`CREATE TABLE sdk_messages (session_id TEXT, message_type TEXT, sdk_message TEXT,
       timestamp TEXT, parent_tool_use_id TEXT, send_status TEXT)`);
     const session =
@@ -555,7 +556,8 @@ describe('hyperneo adapter start and stop', () => {
     uuids = [];
     db = new Database(':memory:');
     db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, workspace_path TEXT, main_repo_path TEXT,
-      status TEXT, last_active_at TEXT, processing_state TEXT, type TEXT, space_id TEXT, room_id TEXT)`);
+      status TEXT, last_active_at TEXT, processing_state TEXT, type TEXT, space_id TEXT, room_id TEXT,
+      worktree_branch TEXT, git_branch TEXT)`);
     db.exec(`INSERT INTO sessions (id, title, workspace_path, status, last_active_at, processing_state, type)
       VALUES ('busy', 'parser', '/focus/dolmen', 'active', '2026-10-04T10:00:00.000Z', '{"status":"processing"}', 'worker'),
              ('idle', 'loader', '/focus/dolmen', 'active', '2026-10-04T10:00:00.000Z', '{"status":"idle"}', 'worker')`);
