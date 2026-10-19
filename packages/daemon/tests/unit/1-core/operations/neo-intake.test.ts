@@ -6,6 +6,7 @@ import {
   loggedNeoRoute,
   replayedNeoRoute,
   requireNeoIntakeTarget,
+  requireNeoRootTarget,
   wantsNeoRoute,
 } from '../../../../src/lib/neo/intake.ts';
 import type { NeoRouter } from '../../../../src/lib/neo/router.ts';
@@ -57,6 +58,24 @@ describe('Neo intake gates', () => {
     { candidate: binding, session: { ...target, status: 'archived' as const } },
   ])('rejects unavailable or noncoordinator targets: %j', ({ candidate, session }) => {
     expect(requireNeoIntakeTarget(input, candidate, session)).toHaveProperty('reason.ok', false);
+  });
+  test('retargets an admitted holder ask to the live root session', () => {
+    const holder = { sessionId: 'neo:holder', projectId: 'c1', kind: 'project' as const };
+    const admitted = {
+      binding: holder,
+      target: { ...target, id: holder.sessionId },
+      conversationId: 'c',
+    };
+    expect(requireNeoRootTarget(admitted, binding, target)).toEqual({
+      value: { binding, target, conversationId: 'c' },
+    });
+    for (const [root, session] of [
+      [null, target],
+      [binding, null],
+      [binding, { ...target, id: 'other' }],
+      [binding, { ...target, status: 'archived' as const }],
+    ] as const)
+      expect(requireNeoRootTarget(admitted, root, session)).toHaveProperty('reason.ok', false);
   });
 });
 
@@ -160,30 +179,9 @@ describe('durable Neo intake operation', () => {
       caller
     );
   }
-  test('an ask the gates reject never pays for routing', async () => {
-    let routed = 0;
-    const router: NeoRouter = async () => {
-      routed += 1;
-      return { choice: null };
-    };
+  test('an archived root session rejects the ask before any write', async () => {
     sessions.set(input.sessionId, { ...target, status: 'archived' as never });
-    const registry = createOperationRegistry([
-      createNeoIntakeOperation(db, repo, undefined, router),
-    ]);
-    expect(await invokeOperation(registry, 'neo.message.send', input, human)).toMatchObject({
-      value: { ok: false, reason: 'This Neo conversation is no longer available.' },
-    });
-    expect(routed).toBe(0);
-  });
-
-  test('a conversation archived while the ask is being routed rejects it before any write', async () => {
-    const router: NeoRouter = async () => {
-      sessions.set(input.sessionId, { ...target, status: 'archived' as never });
-      return { choice: null };
-    };
-    const registry = createOperationRegistry([
-      createNeoIntakeOperation(db, repo, undefined, router),
-    ]);
+    const registry = createOperationRegistry([createNeoIntakeOperation(db, repo)]);
     expect(await invokeOperation(registry, 'neo.message.send', input, human)).toMatchObject({
       value: { ok: false, reason: 'This Neo conversation is no longer available.' },
     });

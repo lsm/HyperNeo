@@ -89,7 +89,7 @@ describe('real human intake joint persistence', () => {
   }
 
   test.each([root, holder])(
-    'records original source %o in the current root conversation atomically',
+    "records an ask sent to %o as root Neo's, in the root conversation atomically",
     async (binding) => {
       expect(
         await invoke({
@@ -105,11 +105,11 @@ describe('real human intake joint persistence', () => {
       expect(ask).toMatchObject({
         conversationId,
         requestId: input.requestId,
-        askOrigin: { sessionId: binding.sessionId, messageId: input.requestId },
+        askOrigin: { sessionId: root.sessionId, messageId: input.requestId },
         content: [{ type: 'text', text: input.content }],
       });
       expect(mailbox.sdkRows()).toHaveLength(1);
-      expect(mailbox.sdkRows()[0].session_id).toBe(binding.sessionId);
+      expect(mailbox.sdkRows()[0].session_id).toBe(root.sessionId);
       expect(JSON.parse(mailbox.sdkRows()[0].sdk_message).inputKind).toBe('human');
       expect(mailbox.rows()).toHaveLength(1);
       expect(repo.listWork()).toEqual([]);
@@ -162,11 +162,11 @@ describe('real human intake joint persistence', () => {
     empty();
   });
 
-  test('same request cannot migrate to another holder source or overwrite its public ask', async () => {
+  test('the same request sent again through a holder is a retry of the root ask', async () => {
     await invoke();
     const before = ledger.list(conversationId);
     expect(await invoke({ ...input, sessionId: holder.sessionId })).toMatchObject({
-      value: { ok: false, reason: 'This request id already belongs to a different ask.' },
+      value: { ok: true, created: false },
     });
     expect(ledger.list(conversationId)).toEqual(before);
     expect(mailbox.sdkRows()).toHaveLength(1);
@@ -188,9 +188,9 @@ describe('real human intake joint persistence', () => {
     expect(mailbox.rows()).toEqual([]);
   });
 
-  test('holder manual mode and photo/text bytes persist without releasing or re-routing', async () => {
-    sessions.set(holder.sessionId, {
-      ...active(holder.sessionId),
+  test('root manual mode and photo/text bytes persist without releasing or re-routing', async () => {
+    sessions.set(root.sessionId, {
+      ...active(root.sessionId),
       config: { queryMode: 'manual' },
     });
     const content = [
@@ -203,7 +203,7 @@ describe('real human intake joint persistence', () => {
     expect(ledger.list(conversationId)![0].content).toEqual(content);
     expect(mailbox.sdkRows()[0].send_status).toBe('deferred');
     expect(JSON.parse(mailbox.rows()[0].payload)).toMatchObject({
-      sessionId: holder.sessionId,
+      sessionId: root.sessionId,
       released: false,
     });
     expect(await invoke({ ...input, sessionId: holder.sessionId, content })).toMatchObject({

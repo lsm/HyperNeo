@@ -155,7 +155,7 @@ describe('Neo durable busy consultation intake', () => {
         .listProjects()
         .map((project) => project.id)
         .sort()
-    ).toEqual(['family', 'inbox', 'research']);
+    ).toEqual(['family', 'research']);
     expect(service.repo.listWork()).toEqual([]);
     const snapshot = await invoke('neo.snapshot', {}, b.source);
     expect(snapshot).toMatchObject({

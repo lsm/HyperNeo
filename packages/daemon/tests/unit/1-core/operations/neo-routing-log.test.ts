@@ -94,12 +94,12 @@ describe('neo.message.send routing log', () => {
       rows.map((row) => [row.messageId, row.destination, row.targetSessionId, row.projectId])
     ).toEqual([
       [ask(1), 'main', root.sessionId, null],
-      [ask(2), 'holder', holder.sessionId, 'research'],
+      [ask(2), 'main', root.sessionId, null],
     ]);
     expect(rows[0]).toMatchObject({
       conversationId,
       ask: 'What is the Cloudflare post about?',
-      signal: 'opened',
+      signal: 'root',
       confidence: 1,
       outcome: null,
     });
@@ -118,13 +118,13 @@ describe('neo.message.send routing log', () => {
     });
   });
 
-  test('stores the answerer ask summary and waiting question, and profiles use the summary', async () => {
+  test('stores the answerer ask summary and waiting question', async () => {
     await send(holder.sessionId, ask(7), `https://example.com ${'x'.repeat(50)} can we join?`);
     new NeoPublicationRepository(writer).append({
       conversationId,
       publicationId: ask(107),
-      askOrigin: { sessionId: holder.sessionId, messageId: ask(7) },
-      producerInput: { sessionId: holder.sessionId, messageId: ask(7) },
+      askOrigin: { sessionId: root.sessionId, messageId: ask(7) },
+      producerInput: { sessionId: root.sessionId, messageId: ask(7) },
       shortText: 'Yes, through the beta.',
       fullText: 'Yes, through the beta.',
       links: [],
@@ -135,7 +135,6 @@ describe('neo.message.send routing log', () => {
       askSummary: 'How can we join the Cloudflare git beta?',
       awaiting: 'Want me to draft the signup note?',
     });
-    expect(log.recentAsks('research', 1)).toEqual(['How can we join the Cloudflare git beta?']);
   });
 
   test('repairs a lost routing outcome when a message send is retried', async () => {

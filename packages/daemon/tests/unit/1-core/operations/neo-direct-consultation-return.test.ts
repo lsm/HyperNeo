@@ -451,7 +451,7 @@ describe('NeoService direct consultation return', () => {
     expect(read.value.told.every((item) => item.shortText.length <= 300)).toBe(true);
   });
 
-  test('a work review is acted on quietly: its publication is refused and its end settles it without a root reply', async () => {
+  test('a work review is acted on quietly: its publication is refused, and the work returns to its origin directly', async () => {
     db.getDatabase().prepare('DELETE FROM neo_consultations').run();
     prompt(holder, 'holder-human', 'human');
     const work = service.repo.proposeWork({
@@ -487,7 +487,9 @@ describe('NeoService direct consultation return', () => {
       answer: 'The context holder reviewed the returned work.',
     });
     expect(returned(id)).toEqual({ returned: 1 });
-    expect(mailbox()).toEqual([]);
+    expect(
+      (mailbox() as { payload: string }[]).map((job) => JSON.parse(job.payload).messageUuid)
+    ).toEqual(['work']);
     expect(service.publications.list(conversationId)).toEqual([]);
   });
   test.each(['reported', 'failed'] as const)(
@@ -553,7 +555,7 @@ describe('NeoService direct consultation return', () => {
     expect(service.inputTrigger(reply)).toBe(`human:${ask.messageId}`);
   });
 
-  test('a returned answer admits queued holder requests and reconciles terminal work', async () => {
+  test('a returned answer admits queued holder requests and returns terminal work to root', async () => {
     service.consultationWaiters.enqueue({
       id: 'next',
       requestKey: 'next',
@@ -585,11 +587,11 @@ describe('NeoService direct consultation return', () => {
     const blocked = service.consultations.get('next')!;
     service.consultations.finish(blocked.id, 'failed', 'Not available');
     await service.syncConsultation('check');
-    expect(service.consultations.get('neo-work:other-work:review')?.status).toBe('pending');
+    expect(service.consultations.get('neo-work:other-work:review')).toBeNull();
     expect(
       db.getJobQueueRepo().listActiveByPayload('mailbox', {
-        'to.sessionId': holder,
-        messageUuid: 'neo-consult:neo-work:other-work:review:request',
+        'to.sessionId': root,
+        messageUuid: 'other-work',
       })
     ).toHaveLength(1);
   });
