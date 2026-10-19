@@ -13,7 +13,7 @@ type Body = {
   tools?: { name: string }[];
 };
 
-test('restarting root Neo starts a fresh context in the same session from a visible state note', async () => {
+test('a restart and a /compact each start root Neo from a visible state note in the same session', async () => {
   const isolated = mkdtempSync(join(tmpdir(), 'neo-sdk-restart-'));
   const noted: string[] = [];
   const earlier: string[] = [];
@@ -58,7 +58,12 @@ test('restarting root Neo starts a fresh context in the same session from a visi
             },
           },
         }
-      : { type: 'text', text: '' };
+      : {
+          type: 'text',
+          text: text.includes('followed by a <summary> block')
+            ? '<analysis>Moon garden.</analysis>\n<summary>The human planned a moon garden.</summary>'
+            : 'Done.',
+        };
     const message = {
       id: `msg-restart-${randomUUID()}`,
       type: 'message',
@@ -84,17 +89,16 @@ test('restarting root Neo starts a fresh context in the same session from a visi
     event('content_block_start', {
       type: 'content_block_start',
       index: 0,
-      content_block: publishing ? { ...block, input: {} } : block,
+      content_block: publishing ? { ...block, input: {} } : { type: 'text', text: '' },
     });
-    if (publishing)
-      event('content_block_delta', {
-        type: 'content_block_delta',
-        index: 0,
-        delta: {
-          type: 'input_json_delta',
-          partial_json: JSON.stringify('input' in block ? block.input : {}),
-        },
-      });
+    event('content_block_delta', {
+      type: 'content_block_delta',
+      index: 0,
+      delta:
+        'input' in block
+          ? { type: 'input_json_delta', partial_json: JSON.stringify(block.input) }
+          : { type: 'text_delta', text: block.text },
+    });
     event('content_block_stop', { type: 'content_block_stop', index: 0 });
     event('message_delta', {
       type: 'message_delta',
@@ -113,6 +117,7 @@ test('restarting root Neo starts a fresh context in the same session from a visi
     HYPERNEO_DATA_DIR: join(isolated, 'data'),
     HYPERNEO_WORKSPACE_PATH: isolated,
     CLAUDE_CONFIG_DIR: join(isolated, 'sdk'),
+    TEST_SDK_SESSION_DIR: join(isolated, 'sdk'),
     ANTHROPIC_BASE_URL: `http://127.0.0.1:${address.port}`,
     ANTHROPIC_API_KEY: 'sk-fictional-acceptance-only',
     ANTHROPIC_AUTH_TOKEN: 'fictional-acceptance-only',
@@ -206,6 +211,15 @@ test('restarting root Neo starts a fresh context in the same session from a visi
     expect(page.items.map((item) => item.shortText)).toEqual([
       'Plant the moon garden: Order blue seeds',
     ]);
+    const sent = noted.length;
+    await hub.request('message.send', { sessionId: opened.sessionId, content: '/compact' });
+    const compacted = () => noted.slice(sent).find((text) => !text.includes('restart-recall'));
+    const after = Date.now() + 45000;
+    while (!compacted() && Date.now() < after)
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(compacted(), 'the context after /compact starts from the state note').toContain(
+      'Order blue seeds'
+    );
   } finally {
     await transport?.close();
     await daemon?.cleanup();

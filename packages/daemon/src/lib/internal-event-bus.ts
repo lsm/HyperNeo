@@ -442,6 +442,7 @@ interface AgentControlEvents {
   'agent.interrupted': { sessionId: string };
   'agent.resetRequest': { sessionId: string; restartQuery?: boolean };
   'agent.reset': { sessionId: string; success: boolean; error?: string };
+  'session.compacted': { sessionId: string };
   'message.persisted': {
     sessionId: string;
     messageId: string;
