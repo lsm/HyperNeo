@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, jest, spyOn } from 'bun:test';
 import { Database } from '../../../src/storage/sqlite-compat';
 import { SpaceGoalService } from '../../../src/lib/goals/service';
 import { ScheduleService } from '../../../src/lib/schedule/schedule-service';
@@ -821,19 +821,24 @@ describe('SpaceGoalService', () => {
   });
 
   it('records a goal event capturing the schedule cadence change', () => {
-    const goal = service.createGoal({
-      spaceId,
-      title: 'Audited cadence',
-      type: 'recurring',
-      checkInCronExpression: '0 9 * * 1',
-    });
+    jest.setSystemTime(new Date('2026-10-21T12:00:00Z'));
+    try {
+      const goal = service.createGoal({
+        spaceId,
+        title: 'Audited cadence',
+        type: 'recurring',
+        checkInCronExpression: '0 9 * * 1',
+      });
 
-    service.updateGoal(goal.id, { checkInCronExpression: '0 * * * *' });
+      service.updateGoal(goal.id, { checkInCronExpression: '0 * * * *' });
 
-    const events = service.listGoalEvents(goal.id);
-    const last = events.find((event) => event.eventType === 'updated');
-    expect(last).toBeDefined();
-    expect(last?.diff?.nextCheckInAt).toBeDefined();
+      const events = service.listGoalEvents(goal.id);
+      const last = events.find((event) => event.eventType === 'updated');
+      expect(last).toBeDefined();
+      expect(last?.diff?.nextCheckInAt).toBeDefined();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('rejects an invalid cron expression when editing the schedule', () => {
