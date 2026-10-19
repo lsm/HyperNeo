@@ -115,6 +115,17 @@ describe('sessionItems', () => {
     ]);
     expect(items).toEqual([]);
   });
+
+  it('hides Neo’s turn-end line, but keeps it for other sessions', () => {
+    const turn = [row('assistant', 'a1', [text('Published.'), text(' Done. ')], 1)];
+    expect(sessionItems(turn, true).map((item) => item.kind)).toEqual([
+      { type: 'assistant', text: 'Published.' },
+    ]);
+    expect(sessionItems(turn).map((item) => item.kind)).toEqual([
+      { type: 'assistant', text: 'Published.' },
+      { type: 'assistant', text: ' Done. ' },
+    ]);
+  });
 });
 
 describe('sessionEntryBlocks', () => {

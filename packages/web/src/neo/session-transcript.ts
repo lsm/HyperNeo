@@ -79,7 +79,9 @@ function imageBlocks(content: unknown): unknown[] {
   return content.filter((block) => projectNeoMessageImageSources([block]).length > 0);
 }
 
-export function sessionItems(messages: readonly ChatMessage[]): SessionItem[] {
+const NEO_TURN_END = 'Done.';
+
+export function sessionItems(messages: readonly ChatMessage[], neo = false): SessionItem[] {
   const out: SessionItem[] = [];
   const toolIndex = new Map<string, number>();
   for (const row of messages as readonly Row[]) {
@@ -124,6 +126,7 @@ export function sessionItems(messages: readonly ChatMessage[]): SessionItem[] {
     let imagesPlaced = false;
     blocks.forEach((block, index) => {
       const id = `${rowId}#${index}`;
+      if (neo && block?.type === 'text' && String(block.text).trim() === NEO_TURN_END) return;
       if (block?.type === 'text' && typeof block.text === 'string' && block.text) {
         out.push({
           id,
@@ -236,8 +239,12 @@ export function sessionClock(ms: number): string {
 }
 
 export const projectSessionTranscript = (superpipe({})('neo-session-transcript') as PipelineAPI)
-  .input(['messages', 'running'])
-  .pipe(sessionItems, 'messages', 'items')
+  .input(['messages', 'running', 'neo'])
+  .pipe(sessionItems, ['messages', 'neo'], 'items')
   .pipe(sessionEntries, ['items', 'running'], 'entries')
   .pipe(sessionEntryBlocks, 'entries', 'blocks')
-  .end('blocks') as (messages: readonly ChatMessage[], running: boolean) => SessionEntry[][];
+  .end('blocks') as (
+  messages: readonly ChatMessage[],
+  running: boolean,
+  neo?: boolean
+) => SessionEntry[][];
