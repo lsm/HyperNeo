@@ -77,18 +77,6 @@ describe('Neo coordinator turns', () => {
     turns.push(result);
     return result;
   }
-  function save(active: NeoCoordinatorTurn, input: Record<string, unknown> = {}) {
-    const handler = createOperationMcpHandler(
-      createOperationRegistry(createNeoOperations(service)),
-      () => ({ sessionId: 'neo:holder', role: 'neo', neoTurn: active.identity() })
-    );
-    return handler({
-      name: 'neo.project.save',
-      input: { ...concern, expectedRevision: 1, ...input },
-      caller: { source: 'rpc', principal: 'local', neoTurn: { human: true } },
-    });
-  }
-
   test('restart recovery preserves human and event identities across repeated interruptions', () => {
     const human = turn();
     human.bind('restart-recovery:restart-recovery:human-input');
@@ -252,77 +240,6 @@ describe('Neo coordinator turns', () => {
     active.dispose();
     expect((await input.next()).done).toBe(true);
     await sent;
-  });
-
-  test('MCP writes use the server-bound turn, ignoring forged input provenance', async () => {
-    const current = turn();
-    current.bind('human-input');
-    expect((await save(current, { context: 'Eight people' })).content).toEqual([
-      expect.objectContaining({ text: expect.stringContaining('"ok":true') }),
-    ]);
-    current.dispose();
-    expect(
-      (
-        await save(current, {
-          expectedRevision: 2,
-          context: 'Stale overwrite',
-          neoTurn: { human: true },
-        })
-      ).content
-    ).toEqual([
-      expect.objectContaining({ text: expect.stringMatching(/"ok":false|"code":"forbidden"/) }),
-    ]);
-    expect(service.repo.getProject('club')?.context).toBe('Eight people');
-  });
-
-  test('missing, unbound, closed and superseded identities cannot write; human turns still can', async () => {
-    const old = turn();
-    expect((await save(old)).content).toEqual([
-      expect.objectContaining({ text: expect.stringMatching(/"ok":false|"code":"forbidden"/) }),
-    ]);
-    old.bind('neo-project-event:club:event-0');
-    const human = turn();
-    human.bind('human-input');
-    expect((await save(old)).content).toEqual([
-      expect.objectContaining({ text: expect.stringMatching(/"ok":false|"code":"forbidden"/) }),
-    ]);
-    expect((await save(human, { context: 'Direct correction' })).content).toEqual([
-      expect.objectContaining({ text: expect.stringContaining('"ok":true') }),
-    ]);
-    human.dispose();
-    expect((await save(human, { expectedRevision: 2 })).content).toEqual([
-      expect.objectContaining({ text: expect.stringMatching(/"ok":false|"code":"forbidden"/) }),
-    ]);
-    expect(service.repo.getProject('club')?.context).toBe('Direct correction');
-    const unknown = turn();
-    unknown.bind('untrusted-input');
-    expect((await save(unknown, { expectedRevision: 2 })).content).toEqual([
-      expect.objectContaining({ text: expect.stringMatching(/"ok":false|"code":"forbidden"/) }),
-    ]);
-    expect(() => unknown.bind('human-input')).toThrow('already bound');
-  });
-
-  test('a project event note turn may save what the event changed', async () => {
-    const note = turn();
-    note.bind('neo-project-event:club:event-1');
-    expect((await save(note, { context: 'PR #93 merged' })).content).toEqual([
-      expect.objectContaining({ text: expect.stringContaining('"ok":true') }),
-    ]);
-    expect(service.repo.getProject('club')?.context).toBe('PR #93 merged');
-    note.dispose();
-    expect((await save(note, { expectedRevision: 2 })).content).toEqual([
-      expect.objectContaining({ text: expect.stringMatching(/"ok":false|"code":"forbidden"/) }),
-    ]);
-    service.inputOrigins.record(
-      { sessionId: 'neo:holder', messageId: 'neo-turn-limit:r1' },
-      { sessionId: 'neo:holder', messageId: 'neo-project-event:club:event-1' },
-      Date.now()
-    );
-    const resumed = turn();
-    resumed.bind('neo-turn-limit:r1');
-    expect(
-      (await save(resumed, { expectedRevision: 2, context: 'PR #93 merged; deployed' })).content
-    ).toEqual([expect.objectContaining({ text: expect.stringContaining('"ok":true') })]);
   });
 
   test('yield closes only the bound sender turn and aborts its SDK stream', async () => {

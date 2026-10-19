@@ -1,7 +1,7 @@
 import type { NeoBinding, NeoProject, NeoWork } from '@hyperneo/shared/types/neo-context';
 import { neoProjectMoveReason, neoProjectPath } from '@hyperneo/shared/types/neo-project-tree';
 import type { NeoHealthFacts } from '../../lib/neo/health-digest.ts';
-import type { NeoProjectFacts, NeoRetiredHolder } from '../../lib/neo/project-cleanup.ts';
+import type { NeoProjectFacts } from '../../lib/neo/project-cleanup.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoProjectMergeRepository } from './neo-project-merge-repository.ts';
 
@@ -108,19 +108,6 @@ export class NeoRepository {
     })();
     this.notify();
     return holder;
-  }
-
-  retiredHolders(): NeoRetiredHolder[] {
-    return (
-      this.db
-        .prepare(`SELECT m.source_id AS projectId, c.title, m.source_session_id AS sessionId,
-            EXISTS (SELECT 1 FROM sdk_messages x WHERE x.session_id = m.source_session_id) AS spoke
-          FROM neo_project_merges m
-          JOIN neo_concerns c ON c.id = m.source_id
-          JOIN sessions s ON s.id = m.source_session_id
-          WHERE s.status != 'archived'`)
-        .all() as (Omit<NeoRetiredHolder, 'spoke'> & { spoke: number })[]
-    ).map((row) => ({ ...row, spoke: !!row.spoke }));
   }
 
   unbindHolder(sessionId: string): void {
@@ -356,31 +343,6 @@ export class NeoRepository {
     return result;
   }
 
-  retireArchivedBinding(projectId: string, sessionId: string): boolean {
-    const result = this.db
-      .prepare(`DELETE FROM neo_session_bindings
-        WHERE concern_id = ? AND session_id = ? AND kind = 'project'`)
-      .run(projectId, sessionId);
-    if (result.changes > 0) this.notify();
-    return result.changes > 0;
-  }
-
-  discardUnopenedProject(id: string): boolean {
-    const removed = this.db.transaction(() => {
-      this.db
-        .prepare(`DELETE FROM neo_session_bindings WHERE concern_id = ? AND kind = 'project'
-          AND NOT EXISTS (SELECT 1 FROM sessions WHERE sessions.id = neo_session_bindings.session_id)`)
-        .run(id);
-      return this.db
-        .prepare(`DELETE FROM neo_concerns WHERE id = ?
-          AND NOT EXISTS (SELECT 1 FROM neo_session_bindings WHERE concern_id = ?)
-          AND NOT EXISTS (SELECT 1 FROM neo_concerns WHERE parent_id = ?)`)
-        .run(id, id, id).changes;
-    })();
-    if (removed > 0) this.notify();
-    return removed > 0;
-  }
-
   reserveBinding(binding: NeoBinding): boolean {
     const result = this.db
       .prepare(`INSERT INTO neo_session_bindings (session_id, concern_id, kind)
@@ -420,16 +382,6 @@ export class NeoRepository {
       )
       .run(session.slice(4), Date.now());
     return (this.db.prepare('SELECT id FROM neo_conversation').get() as { id: string }).id;
-  }
-
-  listProjectBindings(projectId?: string): (NeoBinding & { kind: 'project'; projectId: string })[] {
-    return this.db
-      .prepare(`SELECT ${bindingColumns} FROM neo_session_bindings WHERE kind = 'project'
-        ${projectId === undefined ? '' : 'AND concern_id = ?'} ORDER BY session_id`)
-      .all(...(projectId === undefined ? [] : [projectId])) as (NeoBinding & {
-      kind: 'project';
-      projectId: string;
-    })[];
   }
 
   listWork(projectId?: string | null): NeoWork[] {

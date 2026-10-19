@@ -29,8 +29,7 @@ export function admitSessionArchive(ref: WorkRef, caller: OperationCaller, db: D
   if (
     !isLocalUser(caller) &&
     !(
-      binding &&
-      binding.kind !== 'worker' &&
+      binding?.kind === 'neo' &&
       caller.role === 'neo' &&
       turn?.isLive() &&
       db.getSession(binding.sessionId)?.status === 'active' &&

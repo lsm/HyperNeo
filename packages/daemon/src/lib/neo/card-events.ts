@@ -76,9 +76,3 @@ export function planNeoCardEventSends(
   }
   return [...groups].map(([target, ids]) => ({ target, workIds: ids }));
 }
-
-const PROJECT_EVENT = 'neo-project-event:';
-
-export function isNeoProjectEventTurn(turn: { messageId: string } | undefined): boolean {
-  return !!turn?.messageId.startsWith(PROJECT_EVENT);
-}

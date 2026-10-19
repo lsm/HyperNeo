@@ -158,7 +158,7 @@ describe('neo.conversation.read', () => {
     });
   });
 
-  test('authorized project Neo can read the same current public conversation', async () => {
+  test('a legacy project session cannot read the public conversation', async () => {
     const project = repo.saveProject(
       { id: 'research', title: 'Research', summary: '', context: '' },
       0
@@ -171,11 +171,7 @@ describe('neo.conversation.read', () => {
         { ...neo, sessionId: binding.sessionId },
         binding
       )
-    ).toHaveProperty('value');
-    expect(await read({ conversationId }, { ...neo, sessionId: binding.sessionId })).toMatchObject({
-      kind: 'completed',
-      value: { ok: true, items: [] },
-    });
+    ).toHaveProperty('reason');
   });
 
   test.each([

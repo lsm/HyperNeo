@@ -238,27 +238,6 @@ describe('NeoRepository.projectCleanupFacts', () => {
     ).toEqual([{ action: 'delete', projectId: 'child', title: 'Child' }]);
   });
 
-  test('retiredHolders lists merged projects whose holder session is not archived', () => {
-    repo.saveProject({ id: 'gone', title: 'Gone', summary: '', context: '' }, 0);
-    repo.saveProject({ id: 'done', title: 'Done', summary: '', context: '' }, 0);
-    repo.saveProject({ id: 'home', title: 'Home', summary: '', context: '' }, 0);
-    const raw = db.getDatabase();
-    const session =
-      raw.prepare(`INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata)
-      VALUES (?, 'holder', '2026-01-01', '2026-01-01', ?, '{}', '{}')`);
-    session.run('s-gone', 'active');
-    session.run('s-done', 'archived');
-    const merge =
-      raw.prepare(`INSERT INTO neo_project_merges (source_id, target_id, source_session_id, merged_at)
-      VALUES (?, 'home', ?, 1)`);
-    merge.run('gone', 's-gone');
-    merge.run('done', 's-done');
-    expect(repo.retiredHolders()).toEqual([
-      { projectId: 'gone', title: 'Gone', sessionId: 's-gone', spoke: false },
-    ]);
-    expect(repo.sessionSpoke('s-gone')).toBe(false);
-  });
-
   test('deleteEmptyProject removes an empty project with its binding and aliases, and refuses one with content', () => {
     repo.saveProject({ id: 'empty', title: 'Empty', summary: '', context: '' }, 0);
     repo.saveProject({ id: 'full', title: 'Full', summary: '', context: 'notes' }, 0);
