@@ -1,5 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import { NEO_ASK_EVIDENCE } from '@hyperneo/prompts';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import { neoAskProgressNote } from '../../../../src/lib/neo/ask-progress.ts';
 
@@ -20,7 +19,7 @@ const parts = (note: string) => ({
 });
 
 describe('neoAskProgressNote', () => {
-  test.each([NEO_ASK_EVIDENCE, 'card w1 "Fix" is waiting on the user.'])(
+  test.each(['an evidence note.', 'card w1 "Fix" is waiting on the user.'])(
     'one ask-progress shape for every source: %s',
     (what) => {
       const { head, data } = parts(neoAskProgressNote(ask, what, { cards: [] }));
@@ -38,7 +37,7 @@ describe('neoAskProgressNote', () => {
   );
 
   test('carries what the source adds, and states facts with no command', () => {
-    const note = neoAskProgressNote(ask, NEO_ASK_EVIDENCE, { replacedBy: 'a2' });
+    const note = neoAskProgressNote(ask, 'an evidence note.', { replacedBy: 'a2' });
     expect(parts(note).data.replacedBy).toBe('a2');
     expect(note).not.toMatch(/Tell the human|Decide now|Check each|Settle/);
   });

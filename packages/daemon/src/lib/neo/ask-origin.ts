@@ -2,7 +2,6 @@ import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { NeoBinding, NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { hashString32 } from '../runtime-hash.ts';
 import { isNeoCoordinatorBinding } from './binding-roles.ts';
 
 export interface NeoAskOrigin {
@@ -20,10 +19,6 @@ export interface NeoAskOriginReads {
 }
 const unknown: Stop = { kind: 'unknown' };
 const NUDGE_PREFIX = 'neo-nudge:';
-
-export function neoAskEvidenceMessageId(askId: string, signature: string): string {
-  return `neo-ask-evidence:${askId}:${hashString32(signature).toString(36)}`;
-}
 
 export function neoAskTickedMessageId(askId: string, itemId: string, at: number): string {
   return `neo-ask-ticked:${askId}:${itemId}:${at}`;
