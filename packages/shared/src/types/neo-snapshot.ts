@@ -160,6 +160,11 @@ export interface NeoAsk {
   settledAt: number | null;
 }
 
+export interface NeoPackRows {
+  pack: string;
+  rows: Record<string, string | number | null>[];
+}
+
 export interface NeoWorkPr {
   url: string;
   state: 'OPEN' | 'MERGED' | 'CLOSED';
@@ -398,6 +403,7 @@ export interface NeoSnapshot {
   working?: NeoWorkingSession[];
   askViews: NeoAskView[];
   todoAsks?: NeoAskEntry[];
+  packRows?: NeoPackRows[];
   waitingOnHuman?: NeoWaitingOnHuman;
   preferences?: (NeoModelPreference & { saved: boolean }) | null;
   trimmed?: string;

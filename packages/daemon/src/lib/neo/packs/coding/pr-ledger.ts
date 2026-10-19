@@ -21,6 +21,7 @@ export type CodingLedgerRead = (repo: string) => Promise<unknown | null>;
 export const CODING_LEDGER_MIN_RATE = 500;
 export const CODING_LEDGER_KEEP_MS = 7 * 24 * 60 * 60_000;
 export const CODING_LEDGER_WARN_SKIPS = 3;
+export const CODING_LEDGER_SNAPSHOT_CLOSED_MS = 24 * 60 * 60_000;
 
 const log = new Logger('NeoCodingLedger');
 
@@ -163,6 +164,54 @@ export class CodingPrLedgerRepository {
       );
   }
 
+  linkOwners(): void {
+    this.db.exec(`UPDATE pack_coding_pr_ledger SET owner = COALESCE((
+        SELECT s.ref FROM pack_coding_pr_claims c
+          JOIN neo_todo_sessions s ON s.todo_id = c.todo_id
+          JOIN neo_todos t ON t.id = c.todo_id
+         WHERE c.url = 'https://github.com/' || lower(pack_coding_pr_ledger.repo) || '/pull/'
+                 || pack_coding_pr_ledger.number
+           AND s.ref IS NOT NULL
+         ORDER BY t.state IN ('todo', 'doing') DESC, COALESCE(t.started_at, 0) DESC
+         LIMIT 1), owner)`);
+  }
+
+  snapshot(repos: readonly string[] | null, now: number): Record<string, string | number | null>[] {
+    const rows = this.db
+      .prepare(
+        `SELECT repo, number, title, state, state_since AS since, owner FROM pack_coding_pr_ledger
+          WHERE (closed_at IS NULL OR closed_at > ?)
+            AND (? IS NULL OR repo IN (SELECT value FROM json_each(?)))
+          ORDER BY state_since LIMIT 100`
+      )
+      .all(
+        now - CODING_LEDGER_SNAPSHOT_CLOSED_MS,
+        repos ? 1 : null,
+        JSON.stringify(repos ?? [])
+      ) as {
+      repo: string;
+      number: number;
+      title: string;
+      state: CodingPrState;
+      since: number;
+      owner: string | null;
+    }[];
+    return rows.map((row) => {
+      const owner = row.owner
+        ? (JSON.parse(row.owner) as { adapter: string; id: string; daemon?: string })
+        : null;
+      return {
+        pr: `${row.repo}#${row.number}`,
+        title: row.title.slice(0, 80),
+        state: row.state,
+        since: new Date(row.since).toISOString(),
+        ownerAdapter: owner?.adapter ?? null,
+        ownerId: owner?.id ?? null,
+        ownerDaemon: owner?.daemon ?? null,
+      };
+    });
+  }
+
   prune(repos: readonly string[], now: number): void {
     this.db
       .prepare(
@@ -224,4 +273,5 @@ export async function reconcileCodingPrLedger(
     if (planned && planned.remaining < CODING_LEDGER_MIN_RATE) break;
   }
   ledger.prune([...repos, ...seen], now);
+  ledger.linkOwners();
 }
