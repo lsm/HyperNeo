@@ -316,51 +316,31 @@ describe('NeoService direct consultation return', () => {
     expect(deliver).not.toHaveBeenCalled();
   });
 
-  test('a waiting human message ends a root turn answering a daemon note', async () => {
+  test('a human message waiting while root works is steered into the running turn, never preempting it', async () => {
+    const steerNeoInput = vi.fn(() => true);
     const handleInterrupt = vi.fn(async () => {});
     Object.assign(service.sessions, {
-      getSessionForControl: vi.fn(async () => ({ handleInterrupt })),
+      getSessionForControl: vi.fn(async () => ({ steerNeoInput, handleInterrupt })),
     });
-    const note = 'neo-trigger:idle:a1:abc';
-    prompt(root, note, 'system');
-    service.inputOrigins.record({ sessionId: root, messageId: note }, ask, 0, 'idle:a1:abc');
-    db.updateSession(root, {
-      processingState: JSON.stringify({
-        status: 'processing',
-        messageId: note,
-        phase: 'streaming',
-      }),
-    });
-    await service.preemptForHumanMessage(root);
-    expect(handleInterrupt).toHaveBeenCalledExactlyOnceWith({ preserveDeliveryJobs: true });
-  });
-
-  test('a waiting human message ends a root turn whose trigger is already answered', async () => {
-    const handleInterrupt = vi.fn(async () => {});
-    Object.assign(service.sessions, {
-      getSessionForControl: vi.fn(async () => ({ handleInterrupt })),
-    });
-    db.updateSession(root, {
-      processingState: JSON.stringify({
-        status: 'processing',
-        messageId: ask.messageId,
-        phase: 'streaming',
-      }),
-    });
-    await service.preemptForHumanMessage(root);
-    expect(handleInterrupt).not.toHaveBeenCalled();
-    await respond();
-    await invokeOperation(
-      ops(),
-      'neo.publication.publish',
-      withMintedPublicationId(service, draft),
-      rootCaller()
+    prompt(root, 'waiting-human', 'human');
+    db.getSDKMessageRepo().updateMessageStatus(
+      [db.getSDKMessageRepo().findMessageIdByUuid(root, 'waiting-human')!],
+      'enqueued'
     );
-    await service.preemptForHumanMessage(root);
-    expect(handleInterrupt).toHaveBeenCalledExactlyOnceWith({ preserveDeliveryJobs: true });
-    db.updateSession(root, { processingState: JSON.stringify({ status: 'idle' }) });
-    await service.preemptForHumanMessage(root);
-    expect(handleInterrupt).toHaveBeenCalledTimes(1);
+    await events.publish('session.updated', {
+      sessionId: root,
+      processingState: { status: 'idle' },
+    });
+    await service.steerHumanMessages(root);
+    expect(steerNeoInput).not.toHaveBeenCalled();
+    await events.publish('session.updated', {
+      sessionId: root,
+      processingState: { status: 'processing', messageId: 'note', phase: 'initializing' },
+    });
+    await vi.waitFor(() => expect(steerNeoInput).toHaveBeenCalledWith('waiting-human'));
+    await service.steerHumanMessages(holder);
+    expect(steerNeoInput).toHaveBeenCalledTimes(1);
+    expect(handleInterrupt).not.toHaveBeenCalled();
   });
 
   test('an ask read lists what the human was actually told for it, and nothing else', async () => {

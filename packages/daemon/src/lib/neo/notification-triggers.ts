@@ -288,22 +288,6 @@ export function requireNeoTriggerUnrecorded(
   return deps.recorded(ask.id, trigger.triggerId) ? { reason: null } : { value: trigger };
 }
 
-export function shouldPreemptNeoTurn(
-  processingState: string | undefined,
-  trigger: (messageId: string) => string | null,
-  answered: (trigger: string) => boolean
-): boolean {
-  let state: { status?: unknown; messageId?: unknown } | null = null;
-  try {
-    state = processingState ? JSON.parse(processingState) : null;
-  } catch {
-    return false;
-  }
-  if (state?.status !== 'processing' || typeof state.messageId !== 'string') return false;
-  const current = trigger(state.messageId);
-  return !!current && (!current.startsWith(NEO_HUMAN_TRIGGER_PREFIX) || answered(current));
-}
-
 export function neoHumanTurnOrigin(
   messageId: string,
   trigger: string | null,

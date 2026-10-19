@@ -274,6 +274,7 @@ import {
   type SessionConfigHandlerContext,
 } from './session-config-handler.ts';
 import { SlashCommandManager, type SlashCommandManagerContext } from './slash-command-manager.ts';
+import { redeliverPrompt } from './message-delivery-outbox.ts';
 import {
   buildTaskNotificationRequeryEscalationEvent,
   resolveTaskNotificationRequery,
@@ -3193,6 +3194,34 @@ export class AgentSession
         this.logger.warn('Queued-state publication failed after durable insertion:', error);
       }
     });
+  }
+
+  steerNeoInput(messageUuid: string): boolean {
+    if (this.messageQueue.steer(messageUuid)) return true;
+    const loaded = this.db.getSDKMessageRepo().getDeliveryContent(this.session.id, messageUuid);
+    if (loaded?.sendStatus !== 'enqueued' || loaded.inputKind !== 'human') return false;
+    void this.messageQueue
+      .admitWithId(messageUuid, loaded.content, false, { durable: true, steer: true })
+      .catch(() => undefined);
+    return true;
+  }
+
+  requeueNeoInput(messageUuid: string): void {
+    const dbId = redeliverPrompt({
+      db: this.db.getDatabase(),
+      jobQueue: this.db.getJobQueueRepo(),
+      sdkMessageRepo: this.db.getSDKMessageRepo(),
+      sessionId: this.session.id,
+      messageUuid,
+    });
+    if (dbId)
+      void this.internalEventBus
+        .publish('messages.statusChanged', {
+          sessionId: this.session.id,
+          messageIds: [dbId],
+          status: 'enqueued',
+        })
+        .catch(() => {});
   }
 
   markHolderInputConsumed(messageUuid: string): void {

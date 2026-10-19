@@ -65,7 +65,7 @@ describe('Neo turn end', () => {
       });
       await vi.advanceTimersByTimeAsync(30_000);
       expect(service.publications.list(conversationId)).toEqual([]);
-      expect(db.getSDKMessageRepo().listQueuedSystemInputs(root)).toEqual([]);
+      expect(db.getSDKMessageRepo().listQueuedInputs(root)).toEqual([]);
       expect(
         service.asks.list(conversationId)?.find((ask) => ask.requestId === messageId)
       ).not.toBeNull();

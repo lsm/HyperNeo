@@ -168,6 +168,47 @@ describe('Neo isolated holder turns', () => {
     expect(finished).toBe(true);
   });
 
+  test('a root turn takes steered human messages mid-turn, leaves notes queued, and requeues an unanswered one', async () => {
+    service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', projectId: null });
+    const consumed: string[] = [];
+    const requeued: string[] = [];
+    const rootQueue = new MessageQueue();
+    rootQueue.start();
+    const rootRunner = new QueryRunner({
+      session: { id: 'neo:root' },
+      db,
+      messageQueue: rootQueue,
+      stateManager: { setProcessing: async () => {} },
+      logger: { debug: () => {} },
+      firstMessageReceived: true,
+      markHolderInputConsumed: (uuid: string) => consumed.push(uuid),
+      requeueNeoInput: (uuid: string) => requeued.push(uuid),
+    } as unknown as QueryRunnerContext);
+    const note = 'neo-project-event:club:event-1';
+    void rootQueue.enqueueWithId(note, 'Note', false, { durable: true }).catch(() => {});
+    const active = new NeoHolderTurn(db, 'neo:root', attempts.allocate());
+    turns.push(active);
+    const input = rootRunner.createMessageGeneratorWrapper(1, undefined, active);
+    expect((await input.next()).value?.uuid).toBe(note);
+    void rootQueue.enqueueWithId('later-note', 'Later', false, { durable: true }).catch(() => {});
+    void rootQueue
+      .admitWithId('human-a', 'First', false, { durable: true, steer: true })
+      .catch(() => {});
+    expect((await input.next()).value?.uuid).toBe('human-a');
+    void rootQueue.admitWithId('human-b', 'Second', false, { durable: true }).catch(() => {});
+    expect(rootQueue.steer('human-b')).toBe(true);
+    expect((await input.next()).value?.uuid).toBe('human-b');
+    vi.spyOn(active, 'answered').mockImplementation((id) => id === 'human-a');
+    const end = input.next();
+    active.dispose();
+    expect((await end).done).toBe(true);
+    expect(consumed).toEqual([note, 'human-a', 'human-b']);
+    expect(requeued).toEqual(['human-b']);
+    expect(rootQueue.hasPendingOrClaimed('later-note')).toBe(true);
+    rootQueue.clear();
+    rootQueue.stop();
+  });
+
   test('a bound input is recorded consumed the moment its turn takes it', async () => {
     const consumed: string[] = [];
     const bound = new QueryRunner({
