@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 
-test('real SDK publishes an authored fictional reply through the daemon operation', async () => {
+test('real SDK sends root Neo its system prompt and the stored human message, and publishes the reply', async () => {
   const isolated = mkdtempSync(join(tmpdir(), 'neo-sdk-publication-'));
   const requestId = randomUUID();
   const shortText = 'The fictional moon garden is ready.';
@@ -15,6 +15,7 @@ test('real SDK publishes an authored fictional reply through the daemon operatio
   const calls: string[] = [];
   const receipts: { accepted: boolean; created?: boolean }[] = [];
   const requests: { path: string; tools: number; active: boolean }[] = [];
+  const sent: { system: string; human: unknown }[] = [];
   let round = 0;
   const fixture = createServer(async (req, res) => {
     if (req.url?.startsWith('/v1/models')) {
@@ -38,8 +39,12 @@ test('real SDK publishes an authored fictional reply through the daemon operatio
     for await (const chunk of req) chunks.push(Buffer.from(chunk));
     const body = JSON.parse(Buffer.concat(chunks).toString() || '{}') as {
       stream?: boolean;
-      messages?: { content?: string | { type: string; content?: { text?: string }[] }[] }[];
+      messages?: {
+        role?: string;
+        content?: string | { type: string; text?: string; content?: { text?: string }[] }[];
+      }[];
       tools?: { name: string }[];
+      system?: string | { text: string }[];
     };
     if (req.url?.startsWith('/v1/messages/count_tokens')) {
       res.setHeader('content-type', 'application/json');
@@ -49,6 +54,17 @@ test('real SDK publishes an authored fictional reply through the daemon operatio
     const invoke = body.tools?.find((tool) => tool.name.endsWith('hyperneo-operations__invoke'));
     const active = !!invoke && JSON.stringify(body.messages).includes('fictional moon garden');
     requests.push({ path: req.url ?? '', tools: body.tools?.length ?? 0, active });
+    if (active && !sent.length)
+      sent.push({
+        system:
+          typeof body.system === 'string'
+            ? body.system
+            : (body.system ?? []).map((part) => part.text).join('\n'),
+        human: body.messages?.find(
+          (message) =>
+            message.role === 'user' && JSON.stringify(message).includes('fictional moon garden')
+        )?.content,
+      });
     if (active) {
       const content = body.messages?.at(-1)?.content;
       if (Array.isArray(content))
@@ -223,6 +239,15 @@ test('real SDK publishes an authored fictional reply through the daemon operatio
       },
     ]);
     expect((await read()).items).toEqual(page.items);
+    const { neoPrompt } = await import('../../../src/lib/neo/prompt.ts');
+    expect(sent[0].system).toContain(neoPrompt(null));
+    const human = (sent[0].human as { type: string; text?: string }[]).filter(
+      (part) => part.type === 'text' && !part.text?.startsWith('<system-reminder>')
+    );
+    expect(human.map((part) => part.text)).toEqual([
+      expect.stringMatching(/^\(local time: \w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+\)$/),
+      'Tell me about the fictional moon garden.',
+    ]);
   } finally {
     await transport?.close();
     await daemon?.cleanup();
