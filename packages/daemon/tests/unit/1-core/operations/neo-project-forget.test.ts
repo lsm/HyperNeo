@@ -89,4 +89,28 @@ describe('neo.project.forget', () => {
     expect(await forget(atlas)).toEqual({ ok: false, reason: 'project_in_use' });
     expect(repo.getProject(atlas)?.title).toBe('atlas');
   });
+
+  test('an open ask blocks forget; a settled ask moves to the root', async () => {
+    const ask = (id: string, status: string) =>
+      db
+        .getDatabase()
+        .prepare(
+          `INSERT INTO neo_asks (id, session_id, project_id, title, request, status, created_at, updated_at)
+           VALUES (?, 'neo:root', ?, 'Ask', 'Ask', ?, 1, 1)`
+        )
+        .run(id, atlas, status);
+    ask('a-open', 'open');
+    expect(await forget(atlas)).toEqual({ ok: false, reason: 'project_in_use' });
+    db.getDatabase().prepare("UPDATE neo_asks SET status = 'dropped' WHERE id = 'a-open'").run();
+    ask('a-done', 'done');
+    expect(await forget(atlas)).toEqual({ ok: true, repos: ['lsm/neo-atlas'] });
+    const rows = db
+      .getDatabase()
+      .prepare("SELECT id, project_id AS projectId FROM neo_asks WHERE id LIKE 'a-%' ORDER BY id")
+      .all();
+    expect(rows).toEqual([
+      { id: 'a-done', projectId: null },
+      { id: 'a-open', projectId: null },
+    ]);
+  });
 });
