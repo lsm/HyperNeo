@@ -5,14 +5,13 @@ import type { ProviderCredentialManager } from '../credentials/provider-credenti
 import { withVoiceCredentialLock } from '../rpc-handlers/voice-credential-lock.ts';
 import { resolveTranscriptionEndpoint, withTimeout } from './transcribe-fetch.ts';
 import { resolveApiKey, type VoiceTranscribeOutcome } from './transcribe-pipeline.ts';
+import { joinFinals, streamProtocol, type StreamProtocol } from './stream-protocols.ts';
 
 const STREAM_SAMPLE_RATE = 16_000;
 const CONNECT_TIMEOUT_MS = 5_000;
 const START_TIMEOUT_MS = 8_000;
 const CREDENTIAL_LOOKUP_TIMEOUT_MS = 16_000;
-const SETTLE_QUIET_MS = 700;
-const SETTLE_MAX_MS = 3_000;
-const STREAM_PATH = /\/audio\/transcriptions\/?$/;
+const CLOSE_TIMEOUT_MS = 5_000;
 
 export interface VoiceStreamText {
   streamId: string;
@@ -40,20 +39,20 @@ export function admitVoiceStream(voice: VoiceSettings | undefined): Gate<VoiceSe
   return { value: voice };
 }
 
-export function voiceStreamUrl(voice: VoiceSettings): URL | null {
+export function voiceStreamRoute(
+  voice: VoiceSettings
+): { url: URL; protocol: StreamProtocol } | null {
+  const protocol = streamProtocol(voice.streamProtocol);
+  const endpoint = voice.streamEndpoint?.trim();
+  if (!protocol || !endpoint) return null;
   let url: URL;
   try {
-    url = new URL(voice.endpoint);
+    url = new URL(endpoint);
   } catch {
     return null;
   }
-  if ((url.protocol !== 'https:' && url.protocol !== 'http:') || !STREAM_PATH.test(url.pathname))
-    return null;
-  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-  url.pathname = url.pathname.replace(STREAM_PATH, '/audio/streaming_transcriptions');
-  url.search = '';
-  url.searchParams.set('model', voice.model.trim());
-  return url;
+  if (url.protocol !== 'wss:' && url.protocol !== 'ws:') return null;
+  return { url: protocol.url(url, STREAM_SAMPLE_RATE), protocol };
 }
 
 export function voiceStreamTls(voice: VoiceSettings): { ca?: string; rejectUnauthorized: boolean } {
@@ -83,55 +82,10 @@ export function pcm16Wav(pcm: Uint8Array): Uint8Array {
   return wav;
 }
 
-export function asrText(raw: string): { text: string; isFinal: boolean } | null {
-  try {
-    const message = JSON.parse(raw) as { text?: unknown; is_final?: unknown };
-    return typeof message.text === 'string'
-      ? { text: message.text, isFinal: message.is_final === true }
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-export function mergeAsrWindow(previous: string, next: string): string {
-  const old = previous.split(/\s+/).filter(Boolean);
-  const fresh = next.split(/\s+/).filter(Boolean);
-  if (!old.length || !fresh.length) return (fresh.length ? fresh : old).join(' ');
-  const key = (word: string) => word.toLowerCase().replace(/[^\p{L}\p{N}']/gu, '');
-  const oldKeys = old.map(key);
-  const freshKeys = fresh.map(key);
-  for (let skip = 0; skip < fresh.length; skip++) {
-    if (!freshKeys[skip]) continue;
-    let best: { at: number; run: number } | null = null;
-    for (let at = 0; at < oldKeys.length; at++) {
-      let run = 0;
-      while (
-        at + run < oldKeys.length &&
-        skip + run < freshKeys.length &&
-        oldKeys[at + run] === freshKeys[skip + run]
-      )
-        run++;
-      const toEnd = at + run === oldKeys.length;
-      const wholeWindow = skip === 0 && run === freshKeys.length;
-      const revised = at === 0 && skip === 0 && run >= 1 && freshKeys.length >= oldKeys.length;
-      const fits = run >= 3 || revised || (toEnd && (run >= 2 || wholeWindow));
-      if (fits && (!best || run >= best.run)) best = { at, run };
-    }
-    if (best) {
-      const head = fresh[skip];
-      const titleCase = /^\p{Lu}[^\p{Lu}]*$/u.test(head);
-      const kept =
-        best.at > 0 && titleCase && /^\p{Ll}/u.test(old[best.at]) ? head.toLowerCase() : head;
-      return [...old.slice(0, best.at), kept, ...fresh.slice(skip + 1)].join(' ');
-    }
-  }
-  return [...old, ...fresh].join(' ');
-}
-
 async function openAsrSocket(
   voice: VoiceSettings,
   url: URL,
+  protocol: StreamProtocol,
   deps: VoiceStreamDeps
 ): Promise<Gate<WebSocket>> {
   try {
@@ -161,13 +115,16 @@ async function openAsrSocket(
       tls: { ...tls, ...(pinned ? { serverName: url.hostname } : {}) },
       headers: {
         ...(pinned ? { Host: url.host } : {}),
-        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+        ...(apiKey ? { Authorization: protocol.authorization(apiKey) } : {}),
       },
       handshakeTimeout: CONNECT_TIMEOUT_MS,
     } as WebSocket.ClientOptions);
     return await new Promise((resolve) => {
       socket.on('error', (error) => resolve({ reason: error?.message || 'connection failed' }));
-      socket.once('open', () => resolve({ value: socket }));
+      socket.once('open', () => {
+        for (const message of protocol.opening()) socket.send(message);
+        resolve({ value: socket });
+      });
     });
   } catch (error) {
     return { reason: error instanceof Error ? error.message : String(error) };
@@ -177,9 +134,10 @@ async function openAsrSocket(
 async function openAsrSocketWithin(
   voice: VoiceSettings,
   url: URL,
+  protocol: StreamProtocol,
   deps: VoiceStreamDeps
 ): Promise<Gate<WebSocket>> {
-  const opening = openAsrSocket(voice, url, deps);
+  const opening = openAsrSocket(voice, url, protocol, deps);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const expired = new Promise<Gate<WebSocket>>((resolve) => {
     timer = setTimeout(
@@ -203,23 +161,27 @@ export const planVoiceStream = (superpipe({})('voice-stream-start') as PipelineA
     (admitted: VoiceSettings) => ({
       voice: admitted,
       mode: voiceMode(admitted),
-      url: voiceMode(admitted) === 'batch' ? null : voiceStreamUrl(admitted),
+      route: voiceMode(admitted) === 'batch' ? null : voiceStreamRoute(admitted),
     }),
     'plan',
     'plan'
   )
-  .end('plan') as (
-  voice: VoiceSettings | undefined
-) => { voice: VoiceSettings; mode: VoiceMode; url: URL | null } | string;
+  .end('plan') as (voice: VoiceSettings | undefined) =>
+  | {
+      voice: VoiceSettings;
+      mode: VoiceMode;
+      route: { url: URL; protocol: StreamProtocol } | null;
+    }
+  | string;
 
 export class VoiceStream {
   private chunks: Uint8Array[] = [];
   private cancelled = false;
   private bytes = 0;
   private socket: WebSocket | null = null;
+  private protocol: StreamProtocol | null = null;
   private finals: string[] = [];
   private partial = '';
-  private lastMessageAt = 0;
   private stopping: Promise<
     { text: string; via: 'streaming' | 'batch' } | { error: string; retryable?: true }
   > | null = null;
@@ -238,7 +200,7 @@ export class VoiceStream {
     const plan = planVoiceStream(deps.voice());
     if (typeof plan === 'string') return { error: plan };
     const stream = new VoiceStream(id, deps);
-    if (!plan.url) {
+    if (!plan.route) {
       return plan.mode === 'streaming'
         ? { error: 'The voice endpoint has no streaming transcription route' }
         : {
@@ -247,25 +209,25 @@ export class VoiceStream {
             ...(plan.mode === 'auto' ? { fallback: 'no streaming route' } : {}),
           };
     }
-    const opened = await openAsrSocketWithin(plan.voice, plan.url, deps);
+    const opened = await openAsrSocketWithin(plan.voice, plan.route.url, plan.route.protocol, deps);
     if ('reason' in opened)
       return plan.mode === 'streaming'
         ? { error: `Streaming transcription is unavailable: ${opened.reason}` }
         : { stream, via: 'batch', fallback: opened.reason };
-    stream.attach(opened.value);
+    stream.attach(opened.value, plan.route.protocol);
     return { stream, via: 'streaming' };
   }
 
-  private attach(socket: WebSocket): void {
+  private attach(socket: WebSocket, protocol: StreamProtocol): void {
     this.socket = socket;
+    this.protocol = protocol;
     socket.on('message', (data, isBinary) => {
-      const parsed = isBinary ? null : asrText(data.toString());
+      const parsed = isBinary ? null : protocol.parse(data.toString());
       if (!parsed) return;
-      this.lastMessageAt = Date.now();
       if (parsed.isFinal) {
-        if (parsed.text.trim()) this.finals.push(parsed.text.trim());
+        if (parsed.text) this.finals.push(parsed.text);
         this.partial = '';
-      } else this.partial = mergeAsrWindow(this.partial, parsed.text.trim());
+      } else this.partial = parsed.text;
       this.deps.push({ streamId: this.id, text: this.text(), isFinal: false });
     });
     socket.on('close', () => {
@@ -277,7 +239,7 @@ export class VoiceStream {
   }
 
   private text(): string {
-    return [...this.finals, this.partial].filter(Boolean).join(' ');
+    return joinFinals([...this.finals, this.partial]);
   }
 
   write(pcm: Uint8Array): string | null {
@@ -286,7 +248,8 @@ export class VoiceStream {
       return 'Audio data exceeds the 10 MB voice input limit';
     this.chunks.push(pcm);
     this.bytes += pcm.byteLength;
-    if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(pcm);
+    if (this.socket?.readyState === WebSocket.OPEN && this.protocol)
+      this.socket.send(this.protocol.audio(pcm));
     return null;
   }
 
@@ -302,22 +265,22 @@ export class VoiceStream {
   private async finish(): Promise<
     { text: string; via: 'streaming' | 'batch' } | { error: string; retryable?: true }
   > {
-    if (this.socket) {
-      const started = Date.now();
-      this.lastMessageAt = Math.max(this.lastMessageAt, started);
-      while (
-        this.socket &&
-        Date.now() - this.lastMessageAt < SETTLE_QUIET_MS &&
-        Date.now() - started < SETTLE_MAX_MS
-      )
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      if (this.socket) {
-        const text = this.text();
-        this.close();
-        if (text || this.bytes === 0) {
-          this.deps.push({ streamId: this.id, text, isFinal: true });
-          return { text, via: 'streaming' };
-        }
+    const socket = this.socket;
+    if (socket && this.protocol) {
+      const closed = new Promise<boolean>((resolve) => {
+        const timer = setTimeout(() => resolve(false), CLOSE_TIMEOUT_MS);
+        socket.once('close', () => {
+          clearTimeout(timer);
+          resolve(true);
+        });
+      });
+      socket.send(this.protocol.finish());
+      const finished = await closed;
+      this.close();
+      const text = this.text();
+      if (finished && (text || this.bytes === 0)) {
+        this.deps.push({ streamId: this.id, text, isFinal: true });
+        return { text, via: 'streaming' };
       }
     }
     if (this.bytes === 0) return { error: 'Audio data is empty' };
