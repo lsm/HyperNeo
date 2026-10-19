@@ -49,6 +49,7 @@ import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-re
 import { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { createNeoTodoRunner, neoTodoCard, type NeoTodoRunner } from './todo-runner.ts';
 import { CodingPrLedgerRepository } from './packs/coding/pr-ledger.ts';
+import { CodingPrSweepRepository } from './packs/coding/pr-sweep.ts';
 import { CodingTodoPrRepository } from './packs/coding/todo-prs.ts';
 import { neoCardPrAttention } from './packs/coding/card-facts.ts';
 import { neoDerivedId } from './derived-id.ts';
@@ -801,6 +802,11 @@ export class NeoService {
         cardStartedAt: (workId) => this.repo.workStartedAt(workId),
         todoPrs: this.todoPrs,
         prLedger: new CodingPrLedgerRepository(db.getDatabase()),
+        prSweep: new CodingPrSweepRepository(db.getDatabase()),
+        prSweepDeps: {
+          tell: (ref, key, text) => this.sendToRef(ref, key, text),
+          wake: (key, text) => this.wakeNeo(key, text),
+        },
         projectRepos: () => this.repo.allRepositories(),
       }),
       createLifeAdminPack(),
@@ -2821,6 +2827,29 @@ export class NeoService {
       for (const row of route.ending) this.cardEvents.end(row.workId, row.topic, Date.now());
     }, 'route')
     .endAsync('route') as (payload: ExternalEventPublishedPayload) => Promise<unknown>;
+
+  async sendToRef(ref: WorkRef, key: string, text: string): Promise<boolean> {
+    const root = this.defaultSessionId();
+    if (!root) return false;
+    if (ref.adapter === 'hyperneo' && !ref.daemon && this.db.getSession(ref.id)) {
+      await this.deliver(ref.id, key, text, root);
+      return true;
+    }
+    const sent = await invokeOperation(
+      this.sessions.getOperationRegistry(),
+      'work.send',
+      { ref, message: text },
+      driverWorkCaller({ originSessionId: root })
+    );
+    return sent.kind === 'completed' && (sent.value as { ok?: unknown } | null)?.ok === true;
+  }
+
+  async wakeNeo(key: string, text: string): Promise<boolean> {
+    const root = this.defaultSessionId();
+    if (!root) return false;
+    await this.deliver(root, key, text, root);
+    return true;
+  }
 
   async sendToCard(workId: string, key: string, text: string): Promise<boolean> {
     const work = this.followedTodo(workId);
