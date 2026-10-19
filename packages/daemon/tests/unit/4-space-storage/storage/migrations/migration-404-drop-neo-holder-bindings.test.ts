@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { createTestDb } from '../../../../helpers/database.ts';
 import { NeoRepository } from '../../../../../src/storage/repositories/neo-repository.ts';
-import { runMigration403 } from '../../../../../src/storage/schema/m403-drop-neo-holder-bindings.ts';
+import { runMigration404 } from '../../../../../src/storage/schema/m404-drop-neo-holder-bindings.ts';
 
-describe('runMigration403', () => {
+describe('runMigration404', () => {
   test('deletes holder bindings and keeps root, workers, projects and their aliases', async () => {
     const test = await createTestDb();
     try {
@@ -18,8 +18,8 @@ describe('runMigration403', () => {
         'repo:lsm/web\u0000web',
         'web'
       );
-      runMigration403(db);
-      runMigration403(db);
+      runMigration404(db);
+      runMigration404(db);
       expect(
         db.prepare('SELECT session_id, kind FROM neo_session_bindings ORDER BY session_id').all()
       ).toEqual([
