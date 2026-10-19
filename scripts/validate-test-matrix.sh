@@ -1271,7 +1271,7 @@ _check_job_gate() {
 }
 _check_job_gate test-daemon-shared-unit "$MAIN_WORKFLOW" "always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.daemon == 'true')"
 _check_job_gate test-web "$MAIN_WORKFLOW" "always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.web == 'true') && (github.event_name == 'pull_request' && github.base_ref == 'dev' || github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref_type == 'tag') || github.event_name == 'workflow_dispatch')"
-_check_job_gate test-daemon-online "$MAIN_WORKFLOW" "always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.daemon == 'true') && (github.ref_type != 'tag' || github.event_name == 'push')"
+_check_job_gate test-daemon-online "$MAIN_WORKFLOW" "always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.online == 'true') && (github.ref_type != 'tag' || github.event_name == 'push')"
 # Reject module: scalars with invalid characters (a typo like `comp_onents` is a
 # distinct module to GitHub — splits a combination while this guard cannot match).
 reject_invalid_module_values "$MAIN_WORKFLOW" test-daemon-online

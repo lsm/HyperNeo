@@ -3,8 +3,10 @@
 # A full automatic run schedules 9 unit legs (shared + 8 balanced daemon),
 # 11 online legs and 1 web leg, plus quality checks, path filtering and Deno
 # boot smoke. The balance report follows the tests. This can exceed the
-# repo's 20 shared concurrent runners; jobs may queue, especially when PRs
-# overlap. Smaller unit buckets shorten the longest leg, not the queue.
+# account's 20 shared concurrent runners; jobs may queue, especially when PRs
+# overlap, so a PR's new head cancels its old run and the path filter skips
+# legs a PR cannot affect. Smaller unit buckets shorten the longest leg, not
+# the queue.
 # Coverage instrumentation is REMOVED from CI entirely (owner directive
 # 2026-08-23):
 # no per-job --coverage, no lcov artifacts, no coverage gate, baseline, or
@@ -19,6 +21,7 @@
 # |---------------------------------------|-------------------------------------------------|
 # | PR to dev (mixed code changes)        | check + 9 unit shards + 11 online shards + web  |
 # | PR to dev (daemon-only, per changes)  | check + unit + online (web skipped)             |
+# | PR to dev (prompts/daemon unit tests) | check + unit (online + web skipped)             |
 # | PR to dev (web-only, per changes)     | check + web (unit + online skipped)             |
 # | PR to dev (docs-only, per changes)    | check only                                      |
 # | Push to dev                           | check + unit + online + web (no path filter)    |
@@ -49,15 +52,14 @@ on:
     branches: [dev]
   workflow_dispatch:
 
-# Cancel in-progress runs when a new run is triggered on the same ref. Tag
-# runs land in their own group (ci-refs/tags/<tag>), so a release's CI
-# evidence run is never cancelled by newer dev pushes; the group also carries
-# the event name for tags so a manual workflow_dispatch on the same tag
-# cannot cancel the push evidence run mid-watch. Dev pushes and PRs keep
-# their existing per-ref cancel semantics.
+# One group per ref. A PR's new head cancels the run for its old head, which
+# frees the account's shared runners. Dev pushes, tags and manual runs are
+# never cancelled mid-run: a newer push waits for the running one. Tag runs
+# land in their own group (ci-refs/tags/<tag>-<event>), so a release's CI
+# evidence run is never touched by dev pushes or a manual run on the tag.
 concurrency:
   group: ci-${{ github.ref }}${{ github.ref_type == 'tag' && format('-{0}', github.event_name) || '' }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -199,9 +201,10 @@ jobs:
 
   # ============================================
   # PATH FILTERS
-  # PR-only. Tree-diffs the PR merge commit against the dev tip and emits two
-  # booleans so daemon-only PRs skip web tests, web-only PRs skip daemon
-  # unit+online, and docs-only PRs run check alone. Everything outside
+  # PR-only. Tree-diffs the PR merge commit against the dev tip and emits three
+  # booleans (daemon unit, online, web) so daemon-only PRs skip web tests,
+  # web-only PRs skip daemon unit+online, prompt or daemon-unit-test PRs skip
+  # online, and docs-only PRs run check alone. Everything outside
   # packages/web (resp. the daemon-side packages) counts as daemon (resp.
   # web) work, so unknown/infra paths (scripts/, .github/, lockfiles) run
   # BOTH suites — the safe default. Push/workflow_dispatch events skip this
@@ -215,6 +218,7 @@ jobs:
     if: github.event_name == 'pull_request'
     outputs:
       daemon: ${{ steps.filter.outputs.daemon }}
+      online: ${{ steps.filter.outputs.online }}
       web: ${{ steps.filter.outputs.web }}
 
     steps:
@@ -222,7 +226,7 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Compute daemon/web path filters
+      - name: Compute daemon/online/web path filters
         id: filter
         run: |
           set -euo pipefail
@@ -238,10 +242,12 @@ jobs:
           if [ -z "$files" ]; then
             echo "Empty diff against dev — defaulting to run everything."
             echo "daemon=true" >> "$GITHUB_OUTPUT"
+            echo "online=true" >> "$GITHUB_OUTPUT"
             echo "web=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           daemon=false
+          online=false
           web=false
           while IFS= read -r f; do
             # Inert docs: docs/ trees and TOP-LEVEL *.md only. Bash case globs
@@ -255,19 +261,28 @@ jobs:
               *.md) case "$f" in */*) ;; *) doc=true ;; esac ;;
             esac
             if [ "$doc" = true ]; then continue; fi
-            # daemon unless the file is web-only
+            # daemon unit shards unless the file is web-only
             case "$f" in
               packages/web/*) ;;
               *) daemon=true ;;
             esac
-            # web unless the file is daemon-side-only (packages/ui and root
-            # tooling count as web-relevant — they feed the web build)
+            # online shards unless the file is web-only, a prompt (unit tests
+            # assert prompt text; no online test does) or a daemon unit test
+            # (no online test imports tests/unit)
             case "$f" in
-              packages/daemon/*|packages/cli/*|packages/skills/*|packages/desktop/*) ;;
+              packages/web/*|packages/prompts/*|packages/daemon/tests/unit/*) ;;
+              *) online=true ;;
+            esac
+            # web unless the file is daemon-side-only (packages/ui and root
+            # tooling count as web-relevant — they feed the web build; the web
+            # never imports packages/prompts)
+            case "$f" in
+              packages/daemon/*|packages/cli/*|packages/skills/*|packages/desktop/*|packages/prompts/*) ;;
               *) web=true ;;
             esac
           done <<< "$files"
           echo "daemon=$daemon" >> "$GITHUB_OUTPUT"
+          echo "online=$online" >> "$GITHUB_OUTPUT"
           echo "web=$web" >> "$GITHUB_OUTPUT"
 
   # ============================================
@@ -285,7 +300,7 @@ jobs:
     name: Daemon Online (${{ matrix.module }})
     runs-on: ubuntu-latest
     needs: [changes]
-    if: always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.daemon == 'true') && (github.ref_type != 'tag' || github.event_name == 'push')
+    if: always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.online == 'true') && (github.ref_type != 'tag' || github.event_name == 'push')
     timeout-minutes: 15
 
     strategy:
@@ -649,7 +664,7 @@ jobs:
             FAILED=1
           fi
 
-          # test-daemon-online: PR to dev (daemon paths), push to dev
+          # test-daemon-online: PR to dev (online paths), push to dev
           if [[ "${{ needs.test-daemon-online.result }}" == "failure" ]]; then
             echo "❌ test-daemon-online failed"
             FAILED=1
