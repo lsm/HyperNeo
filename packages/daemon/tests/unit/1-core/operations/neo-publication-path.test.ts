@@ -14,7 +14,7 @@ function sources(dir: string): string[] {
 }
 
 describe('one Neo publication path', () => {
-  test('only NeoService.commitPublication writes a publication; every caller goes through it', () => {
+  test('only NeoService.appendPublication writes a publication; every caller goes through it', () => {
     const writers = sources(SRC)
       .filter((path) => !path.includes('/storage/'))
       .flatMap((path) =>
@@ -30,13 +30,6 @@ describe('one Neo publication path', () => {
       ].sort()
     );
     const service = readFileSync(join(SRC, 'lib/neo/service.ts'), 'utf8');
-    const commit = service.slice(
-      service.indexOf('this.commitPublication = createNeoPublicationCommit('),
-      service.indexOf('published: (input')
-    );
-    expect(commit).toContain('this.appendPublication(input)');
-    expect(
-      service.match(/append: \(input(, consultationId)?\) =>\s*this\.commitPublication\(/g)
-    ).toHaveLength(1);
+    expect(service.match(/append: \(input\) => this\.appendPublication\(input\)/g)).toHaveLength(1);
   });
 });

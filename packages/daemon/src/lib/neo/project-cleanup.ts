@@ -11,30 +11,21 @@ export type NeoProjectFacts = {
   liveAsks: number;
   work: { ref: string | null }[];
   liveWork: number;
-  holderMessages: number;
-  archived: boolean;
-  holder: string | null;
   aliases: readonly string[];
 };
 
 export type NeoProjectCleanup =
   | { action: 'delete'; projectId: string; title: string }
-  | { action: 'merge'; projectId: string; title: string; targetId: string }
-  | { action: 'archive'; projectId: string; title: string; sessionId: string }
-  | { action: 'drop'; projectId: string; title: string; sessionId: string };
-
-export type NeoRetiredHolder = {
-  projectId: string;
-  title: string;
-  sessionId: string;
-  spoke: boolean;
-};
+  | { action: 'merge'; projectId: string; title: string; targetId: string };
 
 const repositories = (project: NeoProjectFacts) =>
   project.aliases.filter((alias) => alias.startsWith('repository:'));
 
+const hasRepo = (project: NeoProjectFacts) =>
+  project.aliases.some((alias) => alias.startsWith('repository:') || alias.startsWith('repo:'));
+
 const isEmpty = (project: NeoProjectFacts) =>
-  project.asks + project.work.length + project.context + project.holderMessages === 0;
+  project.asks + project.work.length + project.context === 0;
 
 export function neoMirroredAliases(
   places: readonly PlaceGroup[],
@@ -52,7 +43,7 @@ const isLive = (project: NeoProjectFacts) => project.liveAsks + project.liveWork
 export function neoCleanupFolders(projects: readonly NeoProjectFacts[], machine: string): string[] {
   const local = `folder:${machine}\u0000`;
   return projects
-    .filter((project) => !repositories(project).length && isEmpty(project))
+    .filter((project) => !hasRepo(project) && isEmpty(project))
     .flatMap((project) => project.aliases.filter((alias) => alias.startsWith(local)))
     .map((alias) => alias.slice(local.length));
 }
@@ -88,57 +79,25 @@ function home(
 
 export function planNeoProjectCleanup(
   projects: readonly NeoProjectFacts[],
-  scope: {
-    pinned: ReadonlySet<string>;
-    machine: string;
-    mirrored: ReadonlySet<string>;
-    archive?: ReadonlySet<string>;
-    retired?: readonly NeoRetiredHolder[];
-    busy?: ReadonlySet<string>;
-  }
+  scope: { pinned: ReadonlySet<string>; machine: string; mirrored: ReadonlySet<string> }
 ): NeoProjectCleanup[] {
-  const idle = (sessionId: string) => !scope.busy?.has(sessionId);
   const homes = projects
-    .filter(
-      (project) =>
-        repositories(project).length &&
-        !project.archived &&
-        !scope.archive?.has(project.id) &&
-        !isElsewhere(project, scope.machine)
-    )
+    .filter((project) => repositories(project).length && !isElsewhere(project, scope.machine))
     .sort((a, b) => a.createdAt - b.createdAt);
-  const retired = (scope.retired ?? [])
-    .filter((holder) => idle(holder.sessionId))
-    .map(
-      ({ spoke, ...holder }): NeoProjectCleanup => ({
-        action: spoke ? 'archive' : 'drop',
-        ...holder,
-      })
-    );
   const decide = (project: NeoProjectFacts): NeoProjectCleanup[] => {
     const named = { projectId: project.id, title: project.title };
-    if (scope.archive?.has(project.id))
-      return project.holder ? [{ action: 'archive', ...named, sessionId: project.holder }] : [];
     if (repositories(project).length) return [];
     if (isEmpty(project))
-      return project.aliases.some((alias) => scope.mirrored.has(alias))
+      return hasRepo(project) || project.aliases.some((alias) => scope.mirrored.has(alias))
         ? []
         : [{ action: 'delete', ...named }];
     if (isElsewhere(project, scope.machine)) return [];
     const target = home(project, homes);
     return target ? [{ action: 'merge', ...named, targetId: target.id }] : [];
   };
-  const steps = projects
-    .filter((project) => !scope.pinned.has(project.id) && !project.section && !project.archived)
-    .flatMap((project): NeoProjectCleanup[] => {
-      if (isLive(project)) return [];
-      const decided = decide(project);
-      const { holder } = project;
-      return !decided.length && holder && !project.holderMessages && idle(holder)
-        ? [{ action: 'drop', projectId: project.id, title: project.title, sessionId: holder }]
-        : decided;
-    });
-  return [...steps, ...retired];
+  return projects
+    .filter((project) => !scope.pinned.has(project.id) && !project.section)
+    .flatMap((project) => (isLive(project) ? [] : decide(project)));
 }
 
 export const isNeoUnattendedCleanup = (step: NeoProjectCleanup) => step.action !== 'merge';

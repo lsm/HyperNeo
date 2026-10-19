@@ -16,7 +16,7 @@ export interface NeoProject {
 export interface NeoBinding {
   sessionId: string;
   projectId: string | null;
-  kind: 'neo' | 'project' | 'worker';
+  kind: 'neo' | 'worker';
 }
 
 export interface NeoWork {

@@ -148,6 +148,17 @@ export const WorkDetailSchema = WorkSummarySchema.extend({
   exchange: z.array(WorkExchangeEntrySchema).optional(),
   exchangeCut: z.boolean().optional(),
   openedPrs: z.array(z.string()).optional(),
+  linkedPrs: z
+    .array(
+      z.object({
+        url: z.string(),
+        dismissed: z.literal(true).optional(),
+        own: z.literal(true).optional(),
+      })
+    )
+    .optional(),
+  linkedPrsWindow: z.literal(true).optional(),
+  branches: z.array(z.string()).optional(),
 });
 
 export type WorkStatus = z.infer<typeof WorkStatusSchema>;

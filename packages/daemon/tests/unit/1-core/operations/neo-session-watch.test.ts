@@ -428,7 +428,6 @@ describe('refreshDriverWork', () => {
     service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', projectId: null });
     db.createSession(createTestSession('neo:inbox'));
     service.repo.saveProject({ id: 'inbox', title: 'Inbox', summary: '', context: '' }, 0);
-    service.repo.reserveBinding({ sessionId: 'neo:inbox', kind: 'project', projectId: 'inbox' });
   });
   afterEach(() => {
     service.dispose();

@@ -17,7 +17,7 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 const conversation = '10000000-0000-4000-8000-000000000001';
 const original = '20000000-0000-4000-8000-000000000002';
 const root: NeoBinding = { sessionId: `neo:${conversation}`, projectId: null, kind: 'neo' };
-const holder: NeoBinding = { sessionId: 'neo:holder', projectId: 'p1', kind: 'project' };
+const holder: NeoBinding = { sessionId: 'neo:holder', projectId: 'p1', kind: 'worker' };
 const input = {
   conversationId: conversation,
   publicationId: original,

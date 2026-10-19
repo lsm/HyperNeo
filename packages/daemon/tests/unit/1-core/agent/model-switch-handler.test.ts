@@ -364,7 +364,6 @@ describe('ModelSwitchHandler', () => {
 
       const cases = [
         { name: 'Neo', binding: 'neo', path: 'coordinator' },
-        { name: 'context holder', binding: 'project', path: 'coordinator' },
         { name: 'delegated worker', binding: 'worker', path: 'workspace' },
         { name: 'ordinary workspace', binding: null, path: 'workspace' },
         { name: 'ordinary worktree', binding: null, path: 'worktree' },
@@ -391,14 +390,7 @@ describe('ModelSwitchHandler', () => {
               };
             }
             if (scenario.binding) {
-              const projectId = scenario.binding === 'project' ? 'project' : null;
-              if (projectId) {
-                sqlite
-                  .prepare(
-                    'INSERT INTO neo_concerns (id, title, summary, context, revision, created_at, updated_at) VALUES (?, ?, ?, ?, 1, 0, 0)'
-                  )
-                  .run(projectId, 'Project', '', '');
-              }
+              const projectId = null;
               sqlite
                 .prepare('INSERT INTO neo_session_bindings VALUES (?, ?, ?)')
                 .run(mockSession.id, projectId, scenario.binding);

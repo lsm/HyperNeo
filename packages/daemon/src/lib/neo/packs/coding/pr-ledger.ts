@@ -5,6 +5,7 @@ import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { Logger } from '../../../logger.ts';
 import { spawnProcess } from '../../../runtime-spawn/index.ts';
 import { isRateLimitError } from '../../../session/rate-limit-detector.ts';
+import type { NeoSessionFacts } from '../types.ts';
 import { codingPrKey } from './todo-prs.ts';
 
 export type CodingPrState =
@@ -179,6 +180,42 @@ export function planCodingLedgerRead(
   return { repo: canonical, rows, remaining: parsed.data.data.rateLimit.remaining };
 }
 
+type CodingSessionLinks = {
+  ref: string;
+  repos: string[];
+  branches: string[];
+  owned: string[];
+  prs: string[];
+  dismissed: string[];
+};
+
+export function codingRemoteRepo(remote: string): string | null {
+  const match = /github\.com[:/]([^/\s]+\/[^/\s]+?)(?:\.git)?\/*$/i.exec(remote.trim());
+  return match ? match[1].toLowerCase() : null;
+}
+
+export function planCodingPrOwner(
+  row: { repo: string; number: number; branch: string; owner: string | null },
+  claims: ReadonlyMap<string, string>,
+  sessions: readonly CodingSessionLinks[]
+): string | null {
+  const url = `https://github.com/${row.repo.toLowerCase()}/pull/${row.number}`;
+  const claim = claims.get(url);
+  if (claim) return claim;
+  const owned = sessions.filter((session) => session.owned.includes(url));
+  const linked = sessions.filter((session) => session.prs.includes(url));
+  const branched = sessions.filter(
+    (session) =>
+      !session.dismissed.includes(url) &&
+      session.repos.includes(row.repo.toLowerCase()) &&
+      session.branches.includes(row.branch)
+  );
+  const candidates = [owned, linked, branched].find((tier) => tier.length) ?? [];
+  if (candidates.some((session) => session.ref === row.owner)) return row.owner;
+  if (candidates.length) return candidates[0].ref;
+  return sessions.some((session) => session.ref === row.owner) ? null : row.owner;
+}
+
 export class CodingPrLedgerRepository {
   constructor(private readonly db: Database) {}
 
@@ -237,28 +274,105 @@ export class CodingPrLedgerRepository {
       );
   }
 
-  recordSessionPrs(links: readonly { ref: unknown; urls: readonly string[] }[], now: number): void {
-    const insert = this.db.prepare(
-      'INSERT INTO pack_coding_session_prs (url, ref, seen_at) VALUES (?, ?, ?) ON CONFLICT(url) DO NOTHING'
+  observeSessions(sessions: readonly NeoSessionFacts[], now: number): void {
+    const upsert = this.db.prepare(
+      `INSERT INTO pack_coding_session_facts
+         (ref, repos, branches, linked, linked_window, owned, opened, dismissed, active_at, seen_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(ref) DO UPDATE SET
+         repos = (SELECT json_group_array(DISTINCT value) FROM
+           (SELECT value FROM json_each(repos) UNION SELECT value FROM json_each(excluded.repos))),
+         branches = (SELECT json_group_array(DISTINCT value) FROM
+           (SELECT value FROM json_each(branches) UNION SELECT value FROM json_each(excluded.branches))),
+         opened = (SELECT json_group_array(DISTINCT value) FROM
+           (SELECT value FROM json_each(opened) UNION SELECT value FROM json_each(excluded.opened))),
+         linked = CASE WHEN excluded.linked_window AND linked IS NOT NULL THEN
+           (SELECT json_group_array(DISTINCT value) FROM
+             (SELECT value FROM json_each(linked) UNION SELECT value FROM json_each(excluded.linked))
+            WHERE value NOT IN (SELECT value FROM json_each(excluded.dismissed)))
+           ELSE excluded.linked END,
+         owned = (SELECT json_group_array(DISTINCT value) FROM
+             (SELECT value FROM json_each(owned) UNION SELECT value FROM json_each(excluded.owned))
+            WHERE value NOT IN (SELECT value FROM json_each(excluded.dismissed))),
+         linked_window = excluded.linked_window, dismissed = excluded.dismissed,
+         active_at = excluded.active_at, seen_at = excluded.seen_at`
     );
-    for (const link of links)
-      for (const url of link.urls) {
-        const key = codingPrKey(url);
-        if (key?.startsWith('https://github.com/')) insert.run(key, JSON.stringify(link.ref), now);
-      }
-    this.db.exec(`UPDATE pack_coding_pr_ledger SET owner = (
-        SELECT s.ref FROM pack_coding_session_prs s
-         WHERE s.url = 'https://github.com/' || pack_coding_pr_ledger.repo || '/pull/'
-                 || pack_coding_pr_ledger.number)
-      WHERE owner IS NULL`);
+    const keys = (urls: readonly string[]) => urls.flatMap((url) => codingPrKey(url) ?? []);
+    for (const session of sessions)
+      upsert.run(
+        JSON.stringify(session.ref),
+        JSON.stringify(session.remotes.flatMap((remote) => codingRemoteRepo(remote) ?? [])),
+        JSON.stringify(session.branches),
+        session.linkedPrs
+          ? JSON.stringify(
+              keys(session.linkedPrs.filter((pr) => !pr.dismissed).map((pr) => pr.url))
+            )
+          : null,
+        session.linkedPrsWindow ? 1 : 0,
+        JSON.stringify(
+          keys(
+            (session.linkedPrs ?? []).filter((pr) => pr.own && !pr.dismissed).map((pr) => pr.url)
+          )
+        ),
+        JSON.stringify(keys(session.openedPrs)),
+        JSON.stringify(
+          keys((session.linkedPrs ?? []).filter((pr) => pr.dismissed).map((pr) => pr.url))
+        ),
+        session.lastActivityAt,
+        now
+      );
+    this.assignOwners();
   }
 
-  pruneSessionPrs(now: number): void {
+  assignOwners(): void {
+    const claims = new Map(
+      (
+        this.db
+          .prepare(
+            `SELECT c.url, s.ref FROM pack_coding_pr_claims c
+               JOIN neo_todo_sessions s ON s.todo_id = c.todo_id
+               JOIN neo_todos t ON t.id = c.todo_id
+              WHERE s.ref IS NOT NULL
+              ORDER BY t.state IN ('todo', 'doing'), COALESCE(t.started_at, 0)`
+          )
+          .all() as { url: string; ref: string }[]
+      ).map((row) => [row.url, row.ref])
+    );
+    const sessions = (
+      this.db
+        .prepare(
+          `SELECT ref, repos, branches, linked, owned, opened, dismissed FROM pack_coding_session_facts
+            ORDER BY active_at DESC`
+        )
+        .all() as (Record<
+        'ref' | 'repos' | 'branches' | 'owned' | 'opened' | 'dismissed',
+        string
+      > & {
+        linked: string | null;
+      })[]
+    ).map((row) => ({
+      ref: row.ref,
+      repos: JSON.parse(row.repos) as string[],
+      branches: JSON.parse(row.branches) as string[],
+      owned: JSON.parse(row.owned) as string[],
+      prs: JSON.parse(row.linked ?? row.opened) as string[],
+      dismissed: JSON.parse(row.dismissed) as string[],
+    }));
+    const rows = this.db
+      .prepare('SELECT repo, number, branch, owner FROM pack_coding_pr_ledger')
+      .all() as { repo: string; number: number; branch: string; owner: string | null }[];
+    const update = this.db.prepare(
+      'UPDATE pack_coding_pr_ledger SET owner = ? WHERE repo = ? AND number = ?'
+    );
+    for (const row of rows) {
+      const owner = planCodingPrOwner(row, claims, sessions);
+      if (owner !== row.owner) update.run(owner, row.repo, row.number);
+    }
+  }
+
+  pruneSessions(now: number): void {
     this.db
-      .prepare(
-        `DELETE FROM pack_coding_session_prs WHERE seen_at < ? AND url NOT IN
-           (SELECT 'https://github.com/' || repo || '/pull/' || number FROM pack_coding_pr_ledger)`
-      )
+      .prepare('DELETE FROM pack_coding_session_facts WHERE seen_at < ?')
       .run(now - CODING_LEDGER_KEEP_MS);
   }
 
@@ -292,18 +406,6 @@ export class CodingPrLedgerRepository {
 
   dropRepo(repo: string): void {
     this.db.prepare('DELETE FROM pack_coding_pr_ledger WHERE repo = ?').run(repo);
-  }
-
-  linkOwners(): void {
-    this.db.exec(`UPDATE pack_coding_pr_ledger SET owner = COALESCE((
-        SELECT s.ref FROM pack_coding_pr_claims c
-          JOIN neo_todo_sessions s ON s.todo_id = c.todo_id
-          JOIN neo_todos t ON t.id = c.todo_id
-         WHERE c.url = 'https://github.com/' || lower(pack_coding_pr_ledger.repo) || '/pull/'
-                 || pack_coding_pr_ledger.number
-           AND s.ref IS NOT NULL
-         ORDER BY t.state IN ('todo', 'doing') DESC, COALESCE(t.started_at, 0) DESC
-         LIMIT 1), owner)`);
   }
 
   snapshot(repos: readonly string[] | null, now: number): Record<string, string | number | null>[] {
@@ -417,8 +519,7 @@ export async function reconcileCodingPrLedger(
     if (planned && planned.remaining < CODING_LEDGER_MIN_RATE) break;
   }
   ledger.prune([...repos, ...seen], now);
-  ledger.linkOwners();
-  ledger.recordSessionPrs([], now);
-  ledger.pruneSessionPrs(now);
+  ledger.pruneSessions(now);
+  ledger.assignOwners();
   return transitions;
 }

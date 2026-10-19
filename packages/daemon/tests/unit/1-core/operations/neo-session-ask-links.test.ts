@@ -73,7 +73,7 @@ describe('planNeoSessionPrReads', () => {
     );
   });
 
-  test('reads a session that came back with no PRs again after a while, not one with PRs', () => {
+  test('reads every known session again after a while, so later PRs are found too', () => {
     const empty = listed('empty');
     const found = listed('found');
     const known = new Map([
@@ -89,7 +89,7 @@ describe('planNeoSessionPrReads', () => {
       planNeoSessionPrReads([empty, found], known, [], checked, NEO_SESSION_PR_RECHECK_MS).map(
         (session) => session.title
       )
-    ).toEqual(['empty']);
+    ).toEqual(['empty', 'found']);
   });
 });
 
@@ -363,7 +363,6 @@ describe('NeoService session ask links', () => {
     service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', projectId: null });
     db.createSession(createTestSession('neo:inbox'));
     service.repo.saveProject({ id: 'inbox', title: 'Inbox', summary: '', context: '' }, 0);
-    service.repo.reserveBinding({ sessionId: 'neo:inbox', kind: 'project', projectId: 'inbox' });
   });
   afterEach(() => {
     service.dispose();
@@ -471,9 +470,9 @@ describe('NeoService session ask links', () => {
       owner: JSON.stringify(ref),
     });
     await watch('running', Date.now() - 500, []);
-    expect(raw.prepare('SELECT url, ref FROM pack_coding_session_prs').all()).toEqual([
-      { url: pr(12).toLowerCase(), ref: JSON.stringify(ref) },
-    ]);
+    expect(raw.prepare('SELECT owner FROM pack_coding_pr_ledger').get()).toEqual({
+      owner: JSON.stringify(ref),
+    });
   });
 
   test('a session whose PR the ask names in its text is linked too', async () => {

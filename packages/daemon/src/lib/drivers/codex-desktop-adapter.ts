@@ -112,8 +112,9 @@ export interface CodexDesktopAdapterDeps {
 }
 
 export interface CodexThreadDetail {
-  thread: CodexThreadRow & { rolloutPath: string };
+  thread: CodexThreadRow & { rolloutPath: string; branch?: string | null };
   roots: CodexRootRow[];
+  linkedPrs?: string[];
 }
 
 export interface CodexTurnState {
@@ -315,7 +316,11 @@ export function readCodexThread(statePath: string, id: string): CodexThreadDetai
   return withCodexState(statePath, (db) => {
     const thread = db
       .prepare(
-        `SELECT ${THREAD_COLUMNS}, rollout_path AS rolloutPath FROM threads
+        `SELECT ${THREAD_COLUMNS}, rollout_path AS rolloutPath, ${
+          db.prepare("SELECT 1 FROM pragma_table_info('threads') WHERE name = 'git_branch'").get()
+            ? 'git_branch'
+            : 'NULL'
+        } AS branch FROM threads
           WHERE id = ? AND ${OWN_THREADS}`
       )
       .get(id) as CodexThreadDetail['thread'] | null | undefined;
@@ -326,7 +331,21 @@ export function readCodexThread(statePath: string, id: string): CodexThreadDetai
            FROM projects p JOIN project_roots r ON r.project_id = p.id WHERE r.path IS NOT NULL`
       )
       .all() as CodexRootRow[];
-    return { thread, roots };
+    const links = db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'thread_attachments'")
+      .get()
+      ? (db
+          .prepare(
+            `SELECT json_extract(payload, '$.url') AS url FROM thread_attachments
+              WHERE thread_id = ? AND attachment_type = 'pull_request' ORDER BY created_at`
+          )
+          .all(id) as { url: string | null }[])
+      : null;
+    return {
+      thread,
+      roots,
+      ...(links ? { linkedPrs: links.flatMap((row) => (row.url ? [row.url] : [])) } : {}),
+    };
   });
 }
 
@@ -559,6 +578,8 @@ export function describeCodexThread(
       ...(state.inputs ? { recentInputs: state.inputs } : {}),
       ...withExchange(state.exchange),
       ...(state.openedPrs ? { openedPrs: state.openedPrs } : {}),
+      ...(detail.linkedPrs ? { linkedPrs: detail.linkedPrs.map((url) => ({ url })) } : {}),
+      ...(thread.branch ? { branches: [thread.branch] } : {}),
     },
   };
 }

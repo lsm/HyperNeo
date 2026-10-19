@@ -51,7 +51,6 @@ import { createNeoIntakeOperation } from './intake.ts';
 import { createNeoReorganizeOperation, type NeoReorganizeRuntime } from './reorganize-operation.ts';
 import { mergeNeoDuplicateProjects, readNeoProjectIdentities } from './project-merge.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
-import { neoSessionStatus } from './session-status.ts';
 import { createNeoPublicationChangeOperations } from './publication-change-operation.ts';
 import { createNeoPublicationOperation } from './publication-operation.ts';
 import { createNeoConversationReadOperation } from './conversation-read-operation.ts';
@@ -481,16 +480,6 @@ export function neoReorganizeRuntime(service: NeoService): NeoReorganizeRuntime 
   return {
     getBinding: (sessionId) => service.repo.getBindingBySession(sessionId),
     rootSessionId: () => service.repo.defaultBinding()?.sessionId ?? null,
-    liveAsks: () => service.askRecords.listLive(),
-    ask: (id) => service.askRecords.get(id),
-    route: async () => ({ choice: null }),
-    sessionStatus: (sessionId) =>
-      neoSessionStatus(service.db.getSession(sessionId)?.processingState),
-    projectSession: () => null,
-    cards: (ask) => ask.workIds.flatMap((id) => service.repo.getWork(id) ?? []),
-    deliver: (sessionId, messageId, content, from, parent) =>
-      service.deliverForward(sessionId, messageId, content, from, parent, null),
-    move: (ask, cards, owner) => service.moveAsk(ask, cards, owner),
     mergeProjects: async () => {
       const merges = service.repo.projectMerges;
       const before = new Set(merges.redirects().map((entry) => entry.sourceId));
@@ -510,7 +499,6 @@ export function neoReorganizeRuntime(service: NeoService): NeoReorganizeRuntime 
       return { merged: [...backfilled, ...merged] };
     },
     projectFacts: () => service.repo.projectCleanupFacts(),
-    retiredHolders: () => [],
     machine: () => hostname(),
     cleanup: createNeoProjectCleanupApply(service),
     mirroredAliases: async (folders) => {
@@ -1043,7 +1031,8 @@ export function createNeoOperations(service: NeoService) {
         const binding = service.repo.getBindingBySession(sessionId);
         return binding?.kind === 'neo';
       },
-      () => service.repo.listProjects()
+      () => service.repo.listProjects(),
+      () => service.installedPacks()
     ),
     ...createNeoQuestionOperations(
       service.todos,

@@ -16,7 +16,7 @@ export interface NeoNightlyReorganizeDeps {
 }
 
 type NightlyPlan = { lastRunAt: number | null; nextAt: number; run: boolean };
-type NightlyResult = { ran: false; nextAt: number } | { ran: true; moved: number; stayed: number };
+type NightlyResult = { ran: false; nextAt: number } | { ran: true };
 
 export function planNeoNightlyReorganize(
   now: number,
@@ -75,13 +75,13 @@ export const runNeoNightlyReorganize = (
   .pipe(
     async (job: Job, deps: NeoNightlyReorganizeDeps): Promise<NightlyResult> => {
       const run = await deps.reorganize();
-      const { merged, moved, stayed, cleanupPlanned, cleanupFailed } = run;
+      const { merged, cleanupPlanned, cleanupFailed } = run;
       const cleaned = cleanupPlanned.filter(isNeoUnattendedCleanup).length - cleanupFailed.length;
       deps.log(
-        `neo reorganize: nightly run merged ${merged.length} project(s), moved ${moved.length} ask(s), left ${stayed.length} with main, applied ${cleaned} cleanup step(s), left ${cleanupPlanned.length - cleaned - cleanupFailed.length} merge(s) for apply: true`
+        `neo reorganize: nightly run merged ${merged.length} project(s), applied ${cleaned} cleanup step(s), left ${cleanupPlanned.length - cleaned - cleanupFailed.length} merge(s) for apply: true`
       );
       await deps.digest(run, readLastRunAt(job) ?? deps.now() - NEO_REORGANIZE_EVERY_MS);
-      return { ran: true, moved: moved.length, stayed: stayed.length };
+      return { ran: true };
     },
     ['job', 'deps'],
     'result'

@@ -1,8 +1,7 @@
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
-import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { isNeoCoordinatorBinding } from './binding-roles.ts';
+import { isMainNeoBinding } from './binding-roles.ts';
 
 export interface NeoAskOrigin {
   readonly sessionId: string;
@@ -11,7 +10,6 @@ export interface NeoAskOrigin {
 type Input = { readonly sessionId: string; readonly messageId: string | null };
 type Stop = { kind: 'unknown' } | { kind: 'human'; origin: NeoAskOrigin };
 type Gate = { value: NeoAskOrigin } | { reason: Stop };
-type NeoAskOriginAsk = Pick<NeoAsk, 'id' | 'originSessionId' | 'originMessageId'>;
 export interface NeoAskOriginReads {
   getBinding(sessionId: string): NeoBinding | null;
   getPrompts(sessionId: string, messageId: string): readonly SDKMessage[];
@@ -21,12 +19,6 @@ const unknown: Stop = { kind: 'unknown' };
 const NUDGE_PREFIX = 'neo-nudge:';
 
 export const NEO_ASK_ANSWER_PREFIX = 'neo-ask-answer:';
-
-export function neoAskParent(ask: NeoAskOriginAsk): NeoAskOrigin | null {
-  return ask.originMessageId
-    ? { sessionId: ask.originSessionId, messageId: ask.originMessageId }
-    : null;
-}
 
 export function neoDoneCheckMessageId(
   workId: string,
@@ -61,7 +53,7 @@ export function requireNeoAskReference(input: Input): Gate {
 }
 
 export function requireNeoAskCoordinator(input: NeoAskOrigin, binding: NeoBinding | null): Gate {
-  return binding?.sessionId === input.sessionId && isNeoCoordinatorBinding(binding)
+  return binding?.sessionId === input.sessionId && isMainNeoBinding(binding)
     ? { value: input }
     : { reason: unknown };
 }

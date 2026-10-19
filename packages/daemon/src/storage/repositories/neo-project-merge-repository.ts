@@ -37,21 +37,6 @@ export class NeoProjectMergeRepository {
     });
   }
 
-  redirectSession(sessionId: string): string | null {
-    const row = this.db
-      .prepare('SELECT source_id FROM neo_project_merges WHERE source_session_id = ?')
-      .get(sessionId) as { source_id: string } | null;
-    const target = row ? this.resolve(row.source_id) : null;
-    const binding = target
-      ? (this.db
-          .prepare(
-            "SELECT session_id FROM neo_session_bindings WHERE concern_id = ? AND kind = 'project'"
-          )
-          .get(target) as { session_id: string } | null)
-      : null;
-    return binding?.session_id ?? null;
-  }
-
   localFolders(machine: string): { projectId: string; folder: string }[] {
     const prefix = `folder:${machine}\u0000`;
     return (
@@ -105,13 +90,6 @@ export class NeoProjectMergeRepository {
         (repositories[row.project_id] ??= []).push(repository);
     }
     const unavailable = new Set<string>();
-    for (const row of this.db
-      .prepare(`SELECT b.concern_id AS id FROM neo_session_bindings b
-      JOIN sessions s ON s.id = b.session_id WHERE b.kind = 'project'
-      AND s.processing_state IS NOT NULL AND
-      (NOT json_valid(s.processing_state) OR json_extract(s.processing_state, '$.status') IS NOT 'idle')`)
-      .all() as { id: string }[])
-      unavailable.add(row.id);
     for (const [table, condition] of [['legacy_neo_asks', "status IN ('waiting', 'blocked')"]]) {
       for (const row of this.db
         .prepare(`SELECT DISTINCT concern_id AS id FROM ${table} WHERE ${condition}`)
@@ -134,15 +112,10 @@ export class NeoProjectMergeRepository {
       createNeoProjectMergePipeline(
         () => this.state(),
         ({ source, target }) => {
-          const binding = this.db
-            .prepare(
-              "SELECT session_id FROM neo_session_bindings WHERE concern_id = ? AND kind = 'project'"
-            )
-            .get(source.id) as { session_id: string } | null;
           this.db
-            .prepare(`INSERT INTO neo_project_merges(source_id, target_id, source_session_id, merged_at)
-          VALUES (?, ?, ?, ?)`)
-            .run(source.id, target.id, binding?.session_id ?? null, Date.now());
+            .prepare(`INSERT INTO neo_project_merges(source_id, target_id, merged_at)
+          VALUES (?, ?, ?)`)
+            .run(source.id, target.id, Date.now());
           for (const table of ['legacy_neo_asks', 'neo_work'])
             this.db
               .prepare(`UPDATE ${table} SET concern_id = ? WHERE concern_id = ?`)
@@ -160,9 +133,6 @@ export class NeoProjectMergeRepository {
               'UPDATE neo_session_bindings SET concern_id = ? WHERE concern_id = ? AND kind = ?'
             )
             .run(target.id, source.id, 'worker');
-          this.db
-            .prepare("DELETE FROM neo_session_bindings WHERE concern_id = ? AND kind = 'project'")
-            .run(source.id);
           this.db
             .prepare(`UPDATE neo_concerns SET context = ?, summary = ?, revision = revision + 1,
           updated_at = ? WHERE id = ?`)

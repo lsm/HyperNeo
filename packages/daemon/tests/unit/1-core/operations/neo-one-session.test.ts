@@ -39,7 +39,11 @@ describe('Neo as one session', () => {
     for (const id of [root, holder]) db.createSession(createTestSession(id));
     service.repo.saveProject({ id: 'web', title: 'Web', summary: '', context: '' }, 0);
     service.repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
-    service.repo.reserveBinding({ sessionId: holder, kind: 'project', projectId: 'web' });
+    db.getDatabase()
+      .prepare(
+        "INSERT INTO neo_session_bindings (session_id, concern_id, kind) VALUES (?, 'web', 'project')"
+      )
+      .run(holder);
     Object.assign(service, {
       deliverForward: async (sessionId: string, messageId: string) => {
         told.push({ sessionId, messageId });

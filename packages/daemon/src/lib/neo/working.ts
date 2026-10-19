@@ -38,7 +38,7 @@ export function readNeoWorking(db: BunDatabase): NeoWorkingSession[] {
            FROM neo_session_bindings b
            JOIN sessions s ON s.id = b.session_id
            LEFT JOIN neo_concerns c ON c.id = b.concern_id
-          WHERE b.kind IN ('neo', 'project') AND s.status IS NOT 'archived'`
+          WHERE b.kind = 'neo' AND s.status IS NOT 'archived'`
       )
       .all() as Row[]
   );

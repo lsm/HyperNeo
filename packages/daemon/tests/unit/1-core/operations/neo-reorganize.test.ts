@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { NEO_ASK_MOVED } from '@hyperneo/prompts';
 import type { MessageHub } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { NeoBinding, NeoWork } from '@hyperneo/shared/types/neo-context';
@@ -14,14 +13,7 @@ import {
   createNeoProjectsReorganizer,
   createNeoReorganizeOperation,
   type NeoReorganizeRuntime,
-  neoMovedAskMessageId,
-  neoMovedAskNote,
-  requireNeoAskMovable,
   requireNeoAskProject,
-  requireNeoAskUnchanged,
-  requireNeoProjectIdle,
-  requireNeoSourceIdle,
-  selectNeoReorganizableAsks,
 } from '../../../../src/lib/neo/reorganize-operation.ts';
 import type { NeoRouted } from '../../../../src/lib/neo/reorganize-operation.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
@@ -58,60 +50,16 @@ const routed = (projectId: string | null): NeoRouted => ({
 const neoCaller: OperationCaller = { source: 'mcp', sessionId: root, role: 'neo' };
 
 describe('admitNeoReorganizer', () => {
-  test('lets main Neo, the default session and the human run it, not a project avatar', () => {
+  test('lets main Neo and the human run it, not another session', () => {
     const main = { sessionId: root, kind: 'neo', projectId: null } as NeoBinding;
-    const inbox = { sessionId: 'i', kind: 'project', projectId: 'inbox' } as NeoBinding;
-    const holder = { sessionId: 'h', kind: 'project', projectId: 'c' } as NeoBinding;
+    const holder = { sessionId: 'h', kind: 'worker', projectId: 'inbox' } as NeoBinding;
     expect(admitNeoReorganizer(neoCaller, main)).toEqual({ value: true });
-    expect(admitNeoReorganizer({ ...neoCaller, sessionId: 'i' }, inbox)).toEqual({ value: true });
     expect(admitNeoReorganizer({ source: 'rpc', principal: 'local' }, null)).toEqual({
       value: true,
     });
     expect(admitNeoReorganizer({ ...neoCaller, sessionId: 'h' }, holder)).toEqual({
       reason: { ok: false, reason: 'main_neo_only' },
     });
-  });
-});
-
-describe('selectNeoReorganizableAsks', () => {
-  test('takes main’s asks and every project’s asks, not asks another conversation opened', () => {
-    const asks = [ask('a'), ask('b', { projectId: 'c' }), ask('c', { originSessionId: 'h' })];
-    expect(selectNeoReorganizableAsks(asks, root).map((item) => item.id)).toEqual(['a', 'b']);
-  });
-});
-
-describe('requireNeoSourceIdle', () => {
-  test('leaves an ask whose own avatar is mid-turn', () => {
-    expect(requireNeoSourceIdle(ask('a'), 'processing')).toEqual({
-      reason: { askId: 'a', reason: 'project_busy' },
-    });
-    expect(requireNeoSourceIdle(ask('a'), null)).toMatchObject({ value: { id: 'a' } });
-  });
-});
-
-describe('requireNeoAskMovable', () => {
-  test('leaves an ask waiting on or blocked on the human with main', () => {
-    expect(requireNeoAskMovable(ask('a', { status: 'waiting' }))).toEqual({
-      reason: { askId: 'a', reason: 'waiting_on_human' },
-    });
-    expect(requireNeoAskMovable(ask('a', { status: 'blocked' }))).toEqual({
-      reason: { askId: 'a', reason: 'waiting_on_human' },
-    });
-    expect(requireNeoAskMovable(ask('a'))).toMatchObject({ value: { id: 'a' } });
-  });
-});
-
-describe('requireNeoAskUnchanged', () => {
-  test('stops an ask settled, gone or re-homed while it was routed', () => {
-    const changed = { reason: { askId: 'a', reason: 'changed' as const } };
-    expect(requireNeoAskUnchanged(ask('a'), null, root)).toEqual(changed);
-    expect(requireNeoAskUnchanged(ask('a'), ask('a', { status: 'achieved' }), root)).toEqual(
-      changed
-    );
-    expect(requireNeoAskUnchanged(ask('a'), ask('a', { projectId: 'c' }), root)).toEqual(changed);
-    expect(
-      requireNeoAskUnchanged(ask('a'), ask('a', { status: 'waiting', title: 'Now' }), root)
-    ).toMatchObject({ value: { status: 'waiting', title: 'Now' } });
   });
 });
 
@@ -140,58 +88,6 @@ describe('requireNeoAskProject', () => {
   });
 });
 
-describe('requireNeoProjectIdle', () => {
-  test('skips a project whose avatar is mid-turn', () => {
-    const project = { projectId: 'c', sessionId: 'h' };
-    expect(requireNeoProjectIdle(ask('a'), project, 'processing')).toEqual({
-      reason: { askId: 'a', reason: 'project_busy' },
-    });
-    expect(requireNeoProjectIdle(ask('a'), project, 'idle')).toEqual({ value: project });
-    expect(requireNeoProjectIdle(ask('a'), project, null)).toEqual({ value: project });
-  });
-});
-
-describe('neoMovedAskNote', () => {
-  test('hands over the ask, its open items and its cards, without doneWhen when items restate it', () => {
-    const note = neoMovedAskNote(
-      ask('a', {
-        doneItems: [
-          {
-            id: 'i1',
-            text: 'merged',
-            state: 'pending',
-            evidence: null,
-            check: null,
-            metBy: null,
-            removed: false,
-            addedAt: null,
-          },
-          {
-            id: 'i2',
-            text: 'gone',
-            state: 'pending',
-            evidence: null,
-            check: null,
-            metBy: null,
-            removed: true,
-            addedAt: null,
-          },
-        ],
-      }),
-      [{ id: 'w1', title: 'Fix', status: 'queued' } as NeoWork]
-    );
-    expect(note.startsWith(NEO_ASK_MOVED)).toBe(true);
-    expect(JSON.parse(note.slice(NEO_ASK_MOVED.length + 1))).toEqual({
-      askId: 'a',
-      title: 'Ask a',
-      ask: 'Do a',
-      status: 'open',
-      items: [{ id: 'i1', text: 'merged', state: 'pending' }],
-      cards: [{ id: 'w1', title: 'Fix', status: 'queued' }],
-    });
-  });
-});
-
 describe('neo.projects.reorganize', () => {
   function runtime(
     asks: NeoAsk[],
@@ -200,8 +96,6 @@ describe('neo.projects.reorganize', () => {
     current: Record<string, NeoAsk | null> = {},
     merged: { sourceId: string; targetId: string }[] = []
   ) {
-    const delivered: { sessionId: string; messageId: string; parent: unknown }[] = [];
-    const moves: { askId: string; projectId: string; messageId: string }[] = [];
     const logged: string[] = [];
     const cleaned: string[] = [];
     const deps: NeoReorganizeRuntime = {
@@ -210,23 +104,9 @@ describe('neo.projects.reorganize', () => {
           ? ({ sessionId: root, kind: 'neo', projectId: null } as NeoBinding)
           : null,
       rootSessionId: () => root,
-      liveAsks: () => asks,
-      ask: (id) => (id in current ? current[id] : (asks.find((item) => item.id === id) ?? null)),
-      route: async (item) => routed(routes[item.id] ?? null),
-      sessionStatus: (sessionId) => (busy.includes(sessionId) ? 'processing' : 'idle'),
-      projectSession: (projectId) => `holder:${projectId}`,
-      cards: () => [],
-      deliver: async (sessionId, messageId, _content, _from, parent) => {
-        delivered.push({ sessionId, messageId, parent });
-      },
-      move: (item, _cards, owner) => {
-        moves.push({ askId: item.id, projectId: owner.projectId, messageId: owner.messageId });
-        return true;
-      },
       mergeProjects: async () => ({ merged }),
       projectFacts: () => [],
       machine: () => 'here',
-      retiredHolders: () => [],
       cleanup: async (step) => {
         cleaned.push(step.projectId);
         if (step.projectId === 'stuck') throw new Error('busy');
@@ -236,7 +116,7 @@ describe('neo.projects.reorganize', () => {
         logged.push(line);
       },
     };
-    return { deps, delivered, moves, logged, cleaned };
+    return { deps, logged, cleaned };
   }
   const invoke = (
     deps: NeoReorganizeRuntime,
@@ -250,50 +130,15 @@ describe('neo.projects.reorganize', () => {
       caller
     ).then((outcome) => (outcome as { value?: unknown }).value);
 
-  test('without a main session it still merges projects and moves no asks', async () => {
-    const { deps, moves } = runtime([ask('a')], { a: 'drivers' }, [], {}, [
+  test('without a main session it still merges projects', async () => {
+    const { deps } = runtime([ask('a')], { a: 'drivers' }, [], {}, [
       { sourceId: 'web-shallow', targetId: 'web' },
     ]);
     deps.rootSessionId = () => null;
     expect(await invoke(deps, { source: 'rpc', principal: 'local' })).toMatchObject({
       ok: true,
       merged: [{ sourceId: 'web-shallow', targetId: 'web' }],
-      moved: [],
-      stayed: [],
     });
-    expect(moves).toEqual([]);
-  });
-
-  test('moves each main ask to its project and reports what stayed and why', async () => {
-    const { deps, delivered, moves } = runtime(
-      [ask('a'), ask('b', { status: 'waiting' }), ask('c'), ask('d'), ask('e')],
-      { a: 'drivers', c: null, d: 'inbox', e: 'busy' },
-      ['holder:busy']
-    );
-    expect(await invoke(deps)).toEqual({
-      ok: true,
-      cleanupPlanned: [],
-      cleanupApplied: false,
-      cleanupFailed: [],
-      merged: [],
-      moved: [{ askId: 'a', projectId: 'drivers' }],
-      stayed: [
-        { askId: 'b', reason: 'waiting_on_human' },
-        { askId: 'c', reason: 'stays_main' },
-        { askId: 'd', reason: 'one_off' },
-        { askId: 'e', reason: 'project_busy' },
-      ],
-    });
-    expect(delivered).toEqual([
-      {
-        sessionId: 'holder:drivers',
-        messageId: neoMovedAskMessageId(ask('a')),
-        parent: { sessionId: root, messageId: 'm-a' },
-      },
-    ]);
-    expect(moves).toEqual([
-      { askId: 'a', projectId: 'drivers', messageId: neoMovedAskMessageId(ask('a')) },
-    ]);
   });
 
   test('plans the project cleanup as a dry run: it logs and reports, and applies nothing', async () => {
@@ -309,9 +154,6 @@ describe('neo.projects.reorganize', () => {
         liveAsks: 0,
         work: [],
         liveWork: 0,
-        holderMessages: 0,
-        archived: false,
-        holder: null,
         aliases: [],
       },
     ];
@@ -323,87 +165,6 @@ describe('neo.projects.reorganize', () => {
     deps.mirroredAliases = async () => null;
     expect(await invoke(deps)).toMatchObject({ ok: true, cleanupPlanned: [] });
     expect(logged).toContain('neo reorganize: no project cleanup, the places could not be read');
-  });
-
-  test('a merged holder mid-turn waits for a later pass; a human-named archive is still planned', async () => {
-    const { deps } = runtime([], {}, ['holder:busy', 'retired:busy']);
-    deps.retiredHolders = () => [
-      { projectId: 'old', title: 'Old', sessionId: 'retired:busy', spoke: true },
-      { projectId: 'idle', title: 'Idle', sessionId: 'retired:idle', spoke: true },
-    ];
-    deps.projectFacts = () => [
-      {
-        id: 'named',
-        title: 'Named',
-        createdAt: 1,
-        section: false,
-        context: 1,
-        asks: 0,
-        liveAsks: 0,
-        work: [],
-        liveWork: 0,
-        holderMessages: 0,
-        archived: false,
-        holder: 'holder:busy',
-        aliases: [],
-      },
-    ];
-    expect(await invoke(deps, neoCaller, { archive: ['named'] })).toMatchObject({
-      ok: true,
-      cleanupPlanned: [
-        { action: 'archive', projectId: 'named', title: 'Named', sessionId: 'holder:busy' },
-        { action: 'archive', projectId: 'idle', title: 'Idle', sessionId: 'retired:idle' },
-      ],
-    });
-  });
-
-  test('the nightly mode applies every step but a merge, and leaves each merge for apply: true', async () => {
-    const { deps, logged, cleaned } = runtime([], {});
-    deps.retiredHolders = () => [
-      { projectId: 'silent', title: 'Silent', sessionId: 's1', spoke: false },
-      { projectId: 'talked', title: 'Talked', sessionId: 's2', spoke: true },
-    ];
-    deps.projectFacts = () => [
-      {
-        id: 'home',
-        title: 'Topic',
-        createdAt: 1,
-        section: false,
-        context: 0,
-        asks: 0,
-        liveAsks: 0,
-        work: [],
-        liveWork: 0,
-        holderMessages: 1,
-        archived: false,
-        holder: null,
-        aliases: ['repository:github.com/lsm/app'],
-      },
-      {
-        id: 'topic',
-        title: 'Topic',
-        createdAt: 2,
-        section: false,
-        context: 5,
-        asks: 1,
-        liveAsks: 0,
-        work: [],
-        liveWork: 0,
-        holderMessages: 1,
-        archived: false,
-        holder: null,
-        aliases: [],
-      },
-    ];
-    const result = await createNeoProjectsReorganizer(deps)({ apply: 'unattended' });
-    expect(result.cleanupPlanned.map((step) => step.action)).toEqual(['merge', 'drop', 'archive']);
-    expect(cleaned).toEqual(['silent', 'talked']);
-    expect(logged).toEqual(
-      expect.arrayContaining([
-        'neo reorganize: left for apply: true: merge project topic (Topic) into home',
-        'neo reorganize: did archive project talked (Talked) holder s2',
-      ])
-    );
   });
 
   test('apply runs the same plan, logs each step and reports the ones that failed', async () => {
@@ -418,9 +179,6 @@ describe('neo.projects.reorganize', () => {
       liveAsks: 0,
       work: [],
       liveWork: 0,
-      holderMessages: 0,
-      archived: false,
-      holder: null,
       aliases: [],
     });
     deps.projectFacts = () => [empty('empty'), empty('stuck')];
@@ -446,84 +204,8 @@ describe('neo.projects.reorganize', () => {
       cleanupApplied: false,
       cleanupFailed: [],
       merged: [{ sourceId: 'web-2', targetId: 'web' }],
-      moved: [],
-      stayed: [],
     });
     expect(logged).toEqual(['neo reorganize: merged project web-2 into web']);
-  });
-
-  test('moves an off-project ask between projects unless either avatar is mid-turn', async () => {
-    const moved = ask('a', {
-      projectId: 'web',
-      originSessionId: 'holder:web',
-      originMessageId: 'neo-moved:a:x',
-    });
-    const { deps, delivered, moves } = runtime(
-      [moved, ask('b', { projectId: 'busy', originSessionId: 'holder:busy' })],
-      { a: 'drivers', b: 'drivers' },
-      ['holder:busy']
-    );
-    expect(await invoke(deps)).toEqual({
-      ok: true,
-      cleanupPlanned: [],
-      cleanupApplied: false,
-      cleanupFailed: [],
-      merged: [],
-      moved: [{ askId: 'a', projectId: 'drivers' }],
-      stayed: [{ askId: 'b', reason: 'project_busy' }],
-    });
-    expect(delivered).toEqual([
-      {
-        sessionId: 'holder:drivers',
-        messageId: neoMovedAskMessageId(moved),
-        parent: { sessionId: 'holder:web', messageId: 'neo-moved:a:x' },
-      },
-    ]);
-    expect(moves).toEqual([
-      { askId: 'a', projectId: 'drivers', messageId: neoMovedAskMessageId(moved) },
-    ]);
-    expect(neoMovedAskMessageId(moved)).not.toBe(neoMovedAskMessageId(ask('a')));
-  });
-
-  test('re-reads each ask after routing and leaves one that changed meanwhile', async () => {
-    const { deps, delivered, moves } = runtime(
-      [ask('a'), ask('b'), ask('c')],
-      { a: 'drivers', b: 'drivers', c: 'drivers' },
-      [],
-      { a: ask('a', { status: 'achieved' }), b: ask('b', { status: 'blocked' }), c: null }
-    );
-    expect(await invoke(deps)).toEqual({
-      ok: true,
-      cleanupPlanned: [],
-      cleanupApplied: false,
-      cleanupFailed: [],
-      merged: [],
-      moved: [],
-      stayed: [
-        { askId: 'a', reason: 'changed' },
-        { askId: 'b', reason: 'waiting_on_human' },
-        { askId: 'c', reason: 'changed' },
-      ],
-    });
-    expect(delivered).toEqual([]);
-    expect(moves).toEqual([]);
-  });
-
-  test('never moves an ask when the handoff note fails to reach the avatar', async () => {
-    const { deps, moves } = runtime([ask('a')], { a: 'drivers' });
-    deps.deliver = async () => {
-      throw new Error('mailbox down');
-    };
-    expect(await invoke(deps)).toEqual({
-      ok: true,
-      cleanupPlanned: [],
-      cleanupApplied: false,
-      cleanupFailed: [],
-      merged: [],
-      moved: [],
-      stayed: [{ askId: 'a', reason: 'handoff_failed' }],
-    });
-    expect(moves).toEqual([]);
   });
 });
 
@@ -543,46 +225,6 @@ describe('NeoService.moveAsk', () => {
   afterEach(() => {
     service.dispose();
     db.close();
-  });
-
-  test('gives the ask and its cards to the project avatar in one step', () => {
-    service.repo.saveProject({ id: 'drivers', title: 'Drivers', summary: '', context: '' }, 0);
-    const opened = service.askRecords.open({
-      id: 'a1',
-      requestKey: 'k-a1',
-      projectId: null,
-      originSessionId: root,
-      originMessageId: 'm-a1',
-      title: 'Fix login',
-      ask: 'Fix login',
-      doneWhen: '- merged',
-      doneSource: 'human',
-    })!;
-    const card = service.repo.proposeWork({
-      id: 'w1',
-      requestKey: 'k-w1',
-      projectId: null,
-      originSessionId: root,
-      originMessageId: 'm-a1',
-      title: 'Fix login',
-      instruction: 'Fix it.',
-    });
-    service.askRecords.link(opened.id, card.id);
-    const owner = { projectId: 'drivers', sessionId: 'holder:drivers', messageId: 'neo-moved:a1' };
-    expect(service.moveAsk({ ...opened, projectId: 'garden' }, [card], owner)).toBe(false);
-    expect(service.askRecords.get('a1')).toMatchObject({ projectId: null });
-    expect(service.moveAsk(opened, [card], owner)).toBe(true);
-    expect(service.askRecords.get('a1')).toMatchObject({
-      projectId: 'drivers',
-      originSessionId: 'holder:drivers',
-      originMessageId: 'neo-moved:a1',
-      status: 'open',
-    });
-    expect(service.repo.getWork('w1')).toMatchObject({
-      projectId: 'drivers',
-      originSessionId: 'holder:drivers',
-      originMessageId: 'neo-moved:a1',
-    });
   });
 
   test('a moved-ask note hands the ask over without the human’s publish trigger; a forward keeps it', async () => {

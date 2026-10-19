@@ -23,6 +23,7 @@ const todo = (id: string, patch: Partial<NeoTodoEntry> = {}): NeoTodoEntry => ({
   check: null,
   instruction: 'Do it',
   named: null,
+  repo: null,
   state: 'todo',
   reason: null,
   blockedReason: null,
@@ -66,6 +67,7 @@ const entry = (patch: Partial<NeoAskEntry>): NeoAskEntry => ({
   ask: {
     id: 'ask',
     projectId: null,
+    repo: null,
     sessionId: 'neo',
     originMessageId: null,
     title: 'iOS 卡片照网页第二版改',

@@ -79,7 +79,7 @@ export function requireNeoIntakeTarget(
   binding: NeoBinding | null,
   session: Target | null
 ): Gate<Target> {
-  if (!binding || binding.sessionId !== input.sessionId || binding.kind === 'worker')
+  if (binding?.kind !== 'neo' || binding.sessionId !== input.sessionId)
     return { reason: { ok: false, reason: 'Open a Neo conversation before sending.' } };
   if (!session || session.id !== input.sessionId || session.status === 'archived')
     return { reason: { ok: false, reason: 'This Neo conversation is no longer available.' } };
@@ -363,7 +363,6 @@ function admitNeoIntakeTarget(
 const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
   .input(['input', 'caller', 'db', 'repo', 'notify', 'store'])
   .pipe(admitNeoIntake, ['input', 'caller'], 'result:receipt')
-  .pipe(redirectNeoIntakeInput, ['input', 'repo'], 'input')
   .pipe(
     (input: IntakeInput, store: NeoAskTodoRepository) => readNeoReply(input.replyTo, store),
     ['input', 'store'],
@@ -461,12 +460,6 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
   notify: NeoIntakeNotifier,
   store: NeoAskTodoRepository
 ) => Promise<IntakeResult>;
-
-export function redirectNeoIntakeInput(input: IntakeInput, repo: NeoRepository): IntakeInput {
-  if (repo.getBindingBySession(input.sessionId)) return input;
-  const sessionId = repo.projectMerges.redirectSession(input.sessionId);
-  return sessionId ? { ...input, sessionId } : input;
-}
 
 export function createNeoIntakeOperation(
   db: Database,

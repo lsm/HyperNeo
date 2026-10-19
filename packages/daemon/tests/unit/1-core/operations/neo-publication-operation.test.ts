@@ -20,12 +20,10 @@ import {
   createOperationRegistry,
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
-import { createNeoPublicationCommit } from '../../../../src/lib/neo/publication-commit.ts';
 import {
   type NeoDeliveryTrigger,
   neoDeliveryTrigger,
   neoHumanTrigger,
-  neoTriggerMessageId,
   requirePublicationTrigger,
 } from '../../../../src/lib/neo/notification-triggers.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
@@ -37,7 +35,7 @@ import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbo
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
 const root = { sessionId: `neo:${conversationId}`, kind: 'neo' as const, projectId: null };
-const holder = { sessionId: 'holder:a', kind: 'project' as const, projectId: 'a' };
+const holder = { sessionId: 'holder:a', kind: 'worker' as const, projectId: 'a' };
 const ask = { sessionId: root.sessionId, messageId: 'ask-original' };
 const draft = {
   publicationId: '20000000-0000-4000-8000-000000000001',
@@ -119,7 +117,6 @@ describe('runtime-bound publication operation', () => {
     for (const binding of [
       root,
       holder,
-      { sessionId: 'holder:b', kind: 'project' as const, projectId: 'b' },
       { sessionId: 'worker', kind: 'worker' as const, projectId: 'a' },
     ]) {
       mailbox.db.prepare('INSERT INTO sessions(id) VALUES (?)').run(binding.sessionId);
@@ -135,7 +132,7 @@ describe('runtime-bound publication operation', () => {
     notify = vi.fn();
     runtime = {
       getBinding: (id) => repo.getBindingBySession(id),
-      getRootBinding: () => repo.getBindingForProject(null),
+      getRootBinding: () => repo.defaultBinding(),
       hasProject: (id) => !!repo.getProject(id),
       getWork: (id) => repo.getWork(id),
       resolveAskOrigin: resolve,
@@ -143,10 +140,7 @@ describe('runtime-bound publication operation', () => {
         const origin = resolve(input);
         return origin && isHuman(origin) ? origin : null;
       },
-      append: createNeoPublicationCommit({
-        commit: (input) => ledger.append(input),
-        published: () => {},
-      }),
+      append: (input) => ledger.append(input),
       inputTrigger,
       isDeliveredHumanInput: (input) =>
         isHuman(input) &&

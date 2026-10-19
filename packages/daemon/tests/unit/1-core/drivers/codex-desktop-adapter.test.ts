@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import {
   codexProjectFolder,
   createCodexDesktopAdapter,
+  readCodexThread,
 } from '../../../../src/lib/drivers/codex-desktop-adapter';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn';
 import { Database } from '../../../../src/storage/sqlite-compat';
@@ -335,5 +336,50 @@ describe('codex-desktop adapter against a Codex state database', () => {
       newId: () => 'abcd1234-0000',
     }).find({ includeClosed: false, limit: 20, spaceId: 'sp1' });
     expect(groups).toEqual([]);
+  });
+});
+
+describe('readCodexThread linked PRs', () => {
+  test('returns the thread branch and the pull requests Codex linked to it, and none on an older store', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'codex-links-'));
+    const path = join(dir, 'state_5.sqlite');
+    const db = new Database(path);
+    db.exec(`CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, updated_at_ms INTEGER)`);
+    db.exec(`CREATE TABLE project_roots (project_id TEXT, position INTEGER, path TEXT)`);
+    db.exec(`CREATE TABLE threads (id TEXT PRIMARY KEY, name TEXT, title TEXT,
+      first_user_message TEXT, cwd TEXT, source TEXT, archived INTEGER, updated_at_ms INTEGER,
+      rollout_path TEXT, git_branch TEXT)`);
+    db.exec(
+      `INSERT INTO threads VALUES ('t1', 'fix', '', '', '/focus/dolmen', 'vscode', 0, 1, '/r', 'fix/x')`
+    );
+    db.close();
+    expect(readCodexThread(path, 't1')).toMatchObject({ thread: { branch: 'fix/x' } });
+    expect(readCodexThread(path, 't1')?.linkedPrs).toBeUndefined();
+    const add = new Database(path);
+    add.exec(`CREATE TABLE thread_attachments (id TEXT PRIMARY KEY, thread_id TEXT,
+      attachment_type TEXT, identity_key TEXT, payload TEXT, created_at INTEGER)`);
+    const row = add.prepare('INSERT INTO thread_attachments VALUES (?, ?, ?, ?, ?, ?)');
+    row.run(
+      'a',
+      't1',
+      'pull_request',
+      'k1',
+      JSON.stringify({ url: 'https://github.com/lsm/dolmen/pull/7' }),
+      2
+    );
+    row.run('b', 't1', 'worktree', 'k2', JSON.stringify({ path: '/w' }), 3);
+    row.run(
+      'c',
+      't2',
+      'pull_request',
+      'k3',
+      JSON.stringify({ url: 'https://github.com/lsm/dolmen/pull/8' }),
+      4
+    );
+    add.close();
+    expect(readCodexThread(path, 't1')?.linkedPrs).toEqual([
+      'https://github.com/lsm/dolmen/pull/7',
+    ]);
+    rmSync(dir, { recursive: true, force: true });
   });
 });
