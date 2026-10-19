@@ -458,6 +458,24 @@ describe('NeoService session ask links', () => {
     });
   });
 
+  test('a PR a session without a todo opened gets that session as its ledger owner', async () => {
+    const raw = db.getDatabase();
+    raw
+      .prepare(
+        `INSERT INTO pack_coding_pr_ledger (repo, number, title, branch, head, state, state_since, read_at)
+         VALUES (?, 12, 'Fix', 'b', 'h', 'waiting_review', 1, 1)`
+      )
+      .run(pr(12).split('/').slice(3, 5).join('/').toLowerCase());
+    await watch('running', Date.now() - 1_000, [pr(12)]);
+    expect(raw.prepare('SELECT owner FROM pack_coding_pr_ledger').get()).toEqual({
+      owner: JSON.stringify(ref),
+    });
+    await watch('running', Date.now() - 500, []);
+    expect(raw.prepare('SELECT url, ref FROM pack_coding_session_prs').all()).toEqual([
+      { url: pr(12).toLowerCase(), ref: JSON.stringify(ref) },
+    ]);
+  });
+
   test('a session whose PR the ask names in its text is linked too', async () => {
     openAsk(`Land ${pr(12)}`);
     const now = Date.now();
