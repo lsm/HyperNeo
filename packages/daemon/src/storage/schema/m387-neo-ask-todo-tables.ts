@@ -3,8 +3,6 @@ import type { Database } from '../sqlite-compat.ts';
 const hasTable = (db: Database, name: string): boolean =>
   !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name);
 
-const NEW_TABLES = ['pack_facts', 'neo_questions', 'neo_todo_sessions', 'neo_todos', 'neo_asks'];
-
 function renameTable(db: Database, from: string, to: string): void {
   const legacy = (db.prepare('PRAGMA legacy_alter_table').get() as { legacy_alter_table: number })
     .legacy_alter_table;

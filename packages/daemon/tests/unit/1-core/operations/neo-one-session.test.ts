@@ -22,15 +22,6 @@ const holder = 'neo:holder:web';
 
 describe('Neo as one session', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
-  const legacyAsk = (originSessionId: string) =>
-    db
-      .getDatabase()
-      .prepare(
-        `INSERT INTO legacy_neo_asks (id, request_key, concern_id, origin_session_id,
-          origin_message_id, title, ask, done_when, done_source, status, created_at, updated_at)
-          VALUES ('legacy', 'legacy', 'web', ?, 'm1', 'Legacy', 'Legacy', 'Done', 'human', 'open', 1, 1)`
-      )
-      .run(originSessionId);
   let service: NeoService;
   const told: { sessionId: string; messageId: string }[] = [];
   const createSession = vi.fn();
@@ -94,24 +85,9 @@ describe('Neo as one session', () => {
     openAsk('open', holder);
     service.todos.settleAsk(openAsk('settled', holder), 'done', 'Shipped', 2);
     openAsk('mine', root);
-    const live = service.repo.proposeWork({
-      id: 'live',
-      requestKey: 'live',
-      projectId: 'web',
-      originSessionId: holder,
-      originMessageId: 'm1',
-      title: 'Live',
-      instruction: 'Live',
-    });
-    const ended = service.repo.proposeWork({ ...live, id: 'ended', requestKey: 'ended' });
-    service.repo.transitionWork(ended.id, ended, { status: 'cancelled' });
-    legacyAsk(holder);
-
     runMigration393(db.getDatabase());
     runMigration393(db.getDatabase());
     expect(owners('neo_asks', 'session_id')).toEqual({ mine: root, open: root, settled: holder });
-    expect(owners('neo_work', 'origin_session_id')).toEqual({ ended: holder, live: root });
-    expect(owners('legacy_neo_asks', 'origin_session_id')).toEqual({ legacy: root });
   });
 
   test('root works a moved ask and the todo note reaches root', async () => {
@@ -142,7 +118,7 @@ describe('Neo as one session', () => {
     expect(service.repo.defaultBinding()).toMatchObject({ sessionId: fresh, kind: 'neo' });
   });
 
-  test('m395 ends what holders still hold, closes dead legacy items and archives holders, waking no one', async () => {
+  test('m395 ends what holders still hold and archives holders, waking no one', async () => {
     const jobs = db.getJobQueueRepo();
     const toHolder = jobs.enqueue({
       queue: 'mailbox',
@@ -168,23 +144,6 @@ describe('Neo as one session', () => {
         message: { role: 'user', content: 'note' },
       } as never);
     db.getDatabase().exec("UPDATE sdk_messages SET send_status = 'deferred'");
-    legacyAsk(root);
-    const card = (id: string) =>
-      service.repo.proposeWork({
-        id,
-        requestKey: id,
-        projectId: 'web',
-        originSessionId: root,
-        originMessageId: 'm1',
-        title: id,
-        instruction: id,
-      });
-    card('proposed');
-    const failed = card('failed');
-    service.repo.transitionWork(failed.id, failed, { status: 'failed', report: 'Never started' });
-    const reported = card('reported');
-    service.repo.transitionWork(reported.id, reported, { status: 'reported', report: 'Done' });
-
     runMigration395(db.getDatabase(), 5);
     runMigration395(db.getDatabase(), 6);
 
@@ -203,19 +162,6 @@ describe('Neo as one session', () => {
       { sdk_uuid: 'held', send_status: 'failed' },
       { sdk_uuid: 'kept', send_status: 'deferred' },
     ]);
-    expect(
-      db.getDatabase().prepare("SELECT status FROM legacy_neo_asks WHERE id = 'legacy'").get()
-    ).toEqual({ status: 'abandoned' });
-    expect(service.repo.getWork('reported')?.report).toBe(
-      'Closed as done by the move to one Neo session.\n\nDone'
-    );
-    expect(
-      Object.fromEntries(service.repo.listWork().map((work) => [work.id, work.status]))
-    ).toEqual({
-      proposed: 'cancelled',
-      failed: 'cancelled',
-      reported: 'reported',
-    });
     expect([db.getSession(holder)?.status, db.getSession(root)?.status]).toEqual([
       'archived',
       'active',

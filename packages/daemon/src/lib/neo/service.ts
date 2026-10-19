@@ -30,7 +30,10 @@ import type { WorkRef } from '../drivers/types.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
 import type { ExternalEventPublishedPayload } from '../external-events/external-event-service.ts';
 import { sessionEventText } from '../external-events/session-event-delivery.ts';
-import { SESSION_EVENT_SCOPE, SessionExternalEventStore } from '../external-events/session-external-event-store.ts';
+import {
+  SESSION_EVENT_SCOPE,
+  SessionExternalEventStore,
+} from '../external-events/session-external-event-store.ts';
 import type { ExternalEvent } from '../external-events/types.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
@@ -41,27 +44,56 @@ import type { OperationCaller } from '../operations/registry.ts';
 import { remoteDaemons } from '../remote-daemons/registry.ts';
 import type { SessionManager } from '../session/session-manager.ts';
 import { createNeoAskOriginResolver, type NeoAskOrigin } from './ask-origin.ts';
-import { planNeoCardEventRoute, planNeoCardEventSends, planNeoCardSend, planNeoCardTopicsEnded, neoCardWorkerSession } from './card-events.ts';
+import {
+  planNeoCardEventRoute,
+  planNeoCardEventSends,
+  planNeoCardSend,
+  planNeoCardTopicsEnded,
+  neoCardWorkerSession,
+} from './card-events.ts';
 import { readNeoDaemonCommits } from './daemon-commits.ts';
 import { neoNoteDeliveryMode, neoSessionStatus } from './session-status.ts';
 import { driverWorkCaller } from './driver-work.ts';
 import { neoFolderPath } from './folder.ts';
 import { effectiveNeoPreference, planNeoAlignment } from './model-preference.ts';
-import { type NeoDeliveryTrigger, neoDeliveryTrigger, neoHumanTrigger } from './notification-triggers.ts';
+import {
+  type NeoDeliveryTrigger,
+  neoDeliveryTrigger,
+  neoHumanTrigger,
+} from './notification-triggers.ts';
 import { type NeoRefStateReader, readGithubRefStates } from './packs/coding/ask-prs.ts';
-import { localCodingSessionId, type NeoBranchPrReader, neoWorkBranch, readGithubBranchPrs } from './packs/coding/branch-prs.ts';
+import {
+  localCodingSessionId,
+  type NeoBranchPrReader,
+  neoWorkBranch,
+  readGithubBranchPrs,
+} from './packs/coding/branch-prs.ts';
 import { type NeoDeployReader, readGithubDeploys } from './packs/coding/deploy-checks.ts';
 import { listNeoGithub, type NeoGithubLister } from './packs/coding/github-query.ts';
 import { createCodingPack } from './packs/coding/pack.ts';
 import { type NeoWorkPrReader, readGithubPrs } from './packs/coding/work-prs.ts';
 import { neoEnabledPacks, neoPackBriefs, neoPacks } from './packs/index.ts';
 import { createLifeAdminPack } from './packs/life-admin/pack.ts';
-import type { NeoCardEventSubscription, NeoPack, NeoPackBrief, NeoPackEventRoute } from './packs/types.ts';
+import type {
+  NeoCardEventSubscription,
+  NeoPack,
+  NeoPackBrief,
+  NeoPackEventRoute,
+} from './packs/types.ts';
 import { neoPrompt } from './prompt.ts';
 import { createNeoPublisher } from './publication-operation.ts';
 import { openNeoDefaultSession } from './inbox.ts';
-import { type NeoSavedRulesNote, planNeoSavedRulesAppend, planNeoSavedRulesNote, withNeoSavedRules } from './saved-rules.ts';
-import { neoCoordinatorAllowedTools, neoCoordinatorBinding, neoCoordinatorNativeTools } from './session-policy.ts';
+import {
+  type NeoSavedRulesNote,
+  planNeoSavedRulesAppend,
+  planNeoSavedRulesNote,
+  withNeoSavedRules,
+} from './saved-rules.ts';
+import {
+  neoCoordinatorAllowedTools,
+  neoCoordinatorBinding,
+  neoCoordinatorNativeTools,
+} from './session-policy.ts';
 import type { NeoSessionNotice, NeoSessionNoticeGroup } from './session-watch.ts';
 import { NeoSessionWatcher } from './session-watcher.ts';
 import type { NeoSnapshotRead } from './snapshot-read.ts';

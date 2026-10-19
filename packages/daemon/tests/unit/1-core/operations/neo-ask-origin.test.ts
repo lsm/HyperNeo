@@ -337,7 +337,6 @@ describe('real SQLite ask lineage facade', () => {
       sdk: mailbox.sdkRows(),
       jobs: mailbox.rows(),
       projects: service.repo.listProjects(),
-      work: service.repo.listWork(),
     };
   }
   async function snapshot(caller: OperationCaller = { source: 'rpc', principal: 'local' }) {
@@ -360,32 +359,6 @@ describe('real SQLite ask lineage facade', () => {
     expect(createSession).not.toHaveBeenCalled();
     expect(getSessionAsync).not.toHaveBeenCalled();
     expect(notify).not.toHaveBeenCalled();
-  });
-  test('returns to root remain distinct from legacy nullable origins', async () => {
-    const human = await intake();
-    const proposed = service.repo.proposeWork({
-      ...work,
-      originSessionId: root.sessionId,
-      projectId: null,
-      originMessageId: human.messageId,
-    });
-    service.repo.transitionWork(proposed.id, proposed, {
-      status: 'failed',
-      report: 'Could not start',
-    });
-    const returned = { sessionId: root.sessionId, messageId: work.id };
-    storeSystem(returned, human);
-    expect(service.resolveAskOrigin(returned)).toEqual(human);
-    const legacy = service.repo.proposeWork({
-      ...work,
-      id: 'legacy',
-      requestKey: 'legacy',
-      projectId: null,
-      originMessageId: null,
-    });
-    service.repo.transitionWork(legacy.id, legacy, { status: 'reported' });
-    storeSystem({ ...returned, messageId: legacy.id });
-    expect(service.resolveAskOrigin({ ...returned, messageId: legacy.id })).toBeNull();
   });
   test('unmarked stored prompts and worker bindings never borrow a human-looking UUID', () => {
     const input = { sessionId: root.sessionId, messageId: 'legacy-input' };

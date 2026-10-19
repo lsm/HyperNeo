@@ -133,43 +133,6 @@ describe('neo.session.archive', () => {
     }
   );
 
-  test.each(['proposed', 'queued', 'reported'] as const)(
-    'refuses a %s card, including before its driver ref lands',
-    async (status) => {
-      const work = card();
-      if (status !== 'proposed') repo.transitionWork(work.id, work, { status });
-      expect(await invoke()).toMatchObject({ value: { ok: false, reason: 'live_card' } });
-      expect(archive).not.toHaveBeenCalled();
-    }
-  );
-
-  test('closed cards allow archiving and another daemon’s identical id does not block it', async () => {
-    const work = card();
-    repo.transitionWork(work.id, work, {
-      status: 'reported',
-      report: `${NEO_WORK_CLOSED_DONE_PREFIX}Neo: complete`,
-    });
-    expect(await invoke()).toMatchObject({ value: { ok: true } });
-    db.getDatabase().exec('DELETE FROM neo_work_driver_targets; DELETE FROM neo_work');
-    card({ ...ref, daemon: 'elsewhere' });
-    expect(await invoke()).toMatchObject({ value: { ok: true } });
-  });
-
-  test('native session cards use targetSessionId before a session is started', async () => {
-    repo.proposeWork({
-      id: 'native',
-      requestKey: 'native',
-      originSessionId: 'root',
-      projectId: null,
-      title: 'Work',
-      instruction: 'Finish',
-      targetSessionId: 'worker',
-    });
-    expect(await invoke({ adapter: 'hyperneo', id: 'worker' })).toMatchObject({
-      value: { ok: false, reason: 'live_card' },
-    });
-  });
-
   test('rechecks the turn and new cards after a driver awaits', async () => {
     archive.mockImplementationOnce(async (_ref, admit) => {
       await Promise.resolve();

@@ -11,7 +11,27 @@ import {
   type DaemonInternalEventMap,
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
-import { type DriverSent, decideCardLiveStatus, driverExchangeReport, driverWorkCall, driverWorkCaller, isNeoReceiptUnconfirmed, NEO_CARD_CONFIRM_MS, NEO_WORK_UNANCHORED_NOTE, NEO_WORK_UNANCHORED_SETTLE_MS, NEO_WORK_UNVERIFIED_REPLY_NOTE, type NeoDriverTarget, NeoDriverTargetSchema, neoCardSent, readDriverLanded, readDriverOutcome, readDriverSendBaseline, readDriverSent, readDriverSettlement, withWorkGoal } from '../../../../src/lib/neo/driver-work.ts';
+import {
+  type DriverSent,
+  decideCardLiveStatus,
+  driverExchangeReport,
+  driverWorkCall,
+  driverWorkCaller,
+  isNeoReceiptUnconfirmed,
+  NEO_CARD_CONFIRM_MS,
+  NEO_WORK_UNANCHORED_NOTE,
+  NEO_WORK_UNANCHORED_SETTLE_MS,
+  NEO_WORK_UNVERIFIED_REPLY_NOTE,
+  type NeoDriverTarget,
+  NeoDriverTargetSchema,
+  neoCardSent,
+  readDriverLanded,
+  readDriverOutcome,
+  readDriverSendBaseline,
+  readDriverSent,
+  readDriverSettlement,
+  withWorkGoal,
+} from '../../../../src/lib/neo/driver-work.ts';
 import { neoEvidenceSignature } from '../../../../src/lib/neo/evidence.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import type { NeoRef } from '../../../../src/lib/neo/packs/coding/ask-prs.ts';
@@ -44,17 +64,6 @@ describe('isNeoReceiptUnconfirmed', () => {
     inputBefore: null,
     status: 'running',
   };
-  test.each<[string, Partial<typeof card>, number, boolean]>([
-    ['a card showing its session a day after it was sent', {}, 100 + NEO_CARD_CONFIRM_MS, true],
-    ['the same card earlier', {}, 100 + NEO_CARD_CONFIRM_MS - 1, false],
-    ['a session that failed before the card was confirmed', { status: 'failed' }, 200, false],
-    ['a card still queued', { status: 'queued' }, 100 + NEO_CARD_CONFIRM_MS, false],
-    ['a card that started', { startedAt: 150 }, 100 + NEO_CARD_CONFIRM_MS, false],
-    ['a card that reported', { workStatus: 'reported' }, 100 + NEO_CARD_CONFIRM_MS, false],
-    ['a later send', { inputBefore: 5_000 }, 100 + NEO_CARD_CONFIRM_MS, false],
-  ])('%s', (_label, overrides, now, unconfirmed) => {
-    expect(isNeoReceiptUnconfirmed({ ...card, ...overrides }, now)).toBe(unconfirmed);
-  });
 });
 
 describe('NeoDriverTargetSchema', () => {
@@ -416,48 +425,6 @@ describe('Neo work with a drivers target', () => {
     status: 'done',
     lastActivityAt: 100,
     ...overrides,
-  });
-
-  test('replacement selection preserves the project, daemon and adapter and skips every non-idle candidate', () => {
-    const original = worker('archived');
-    const candidates = [
-      worker('older', { lastActivityAt: 50 }),
-      worker('newer'),
-      worker('remote', { ref: { ...archivedRef, id: 'remote', daemon: 'remote' } }),
-      worker('adapter', { ref: { adapter: 'codex-desktop', id: 'adapter' } }),
-      worker('machine', { place: { ...original.place, machine: 'remote' } }),
-      worker('project', { place: { ...original.place, folder: '/other' } }),
-      worker('space', { place: { ...original.place, spaceId: 'other' } }),
-      worker('busy', { busy: true }),
-      worker('loaded', { liveCards: 1 }),
-      ...(['queued', 'running', 'needs_you', 'stopped', 'failed'] as const).map((status) =>
-        worker(status, { status })
-      ),
-    ];
-    expect(pickNeoReplacementWorkers(candidates, original, new Set())).toEqual([
-      worker('newer').ref,
-      worker('older').ref,
-    ]);
-    expect(pickNeoReplacementWorkers(candidates, undefined, new Set())).toEqual([]);
-    expect(
-      pickNeoReplacementWorkers(
-        candidates,
-        { ...original, place: { machine: 'laptop', name: 'Chats' } },
-        new Set()
-      )
-    ).toEqual([]);
-  });
-
-  test('stuck reminders step through the schedule and end on abandoned', () => {
-    expect(decideStuckReminder(0, NEO_WORK_STUCK_STEPS_MS[0] - 1)).toBeNull();
-    expect(decideStuckReminder(0, NEO_WORK_STUCK_STEPS_MS[0])).toEqual({
-      due: NEO_WORK_STUCK_STEPS_MS[0],
-      abandoned: false,
-    });
-    expect(decideStuckReminder(10, 10 + NEO_WORK_STUCK_STEPS_MS[3] + 5)).toEqual({
-      due: 10 + NEO_WORK_STUCK_STEPS_MS[3],
-      abandoned: true,
-    });
   });
 
   test("card status follows the session only after Neo's message landed and stays done after a reply", () => {

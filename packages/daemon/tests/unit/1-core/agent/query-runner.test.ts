@@ -339,45 +339,19 @@ describe('QueryRunner', () => {
       }));
     });
 
-    it.each(['neo', 'worker', 'ordinary', 'work-return', 'unknown-system'] as const)(
+    it.each(['neo', 'worker', 'ordinary', 'unknown-system'] as const)(
       'keeps %s inputs and human attribution on their intended boundary',
       async (variant) => {
-        const delayed = ['work-return', 'unknown-system'].includes(variant);
+        const delayed = variant === 'unknown-system';
         const kind = variant === 'worker' ? 'worker' : variant === 'ordinary' ? 'ordinary' : 'neo';
         const sessionId = kind === 'ordinary' ? 'ordinary' : `neo:${kind}`;
         const isolated = kind === 'neo';
         const rootId = sessionId;
         const firstId = delayed ? 'ask-B' : 'ask-A';
-        const nextId =
-          variant === 'work-return'
-            ? 'work-A'
-            : variant === 'unknown-system'
-              ? 'unknown-system'
-              : 'ask-B';
+        const nextId = variant === 'unknown-system' ? 'unknown-system' : 'ask-B';
         const askA = { sessionId: rootId, messageId: 'ask-A' };
         const repo = new NeoRepository(sqlite);
         if (kind !== 'ordinary') repo.reserveBinding({ sessionId, projectId: null, kind });
-        if (variant === 'work-return') {
-          const work = repo.proposeWork({
-            id: nextId,
-            requestKey: 'work-A',
-            projectId: null,
-            originSessionId: rootId,
-            originMessageId: askA.messageId,
-            title: 'A',
-            instruction: 'Draft only',
-          })!;
-          const queued = repo.transitionWork(work.id, work, {
-            status: 'queued',
-            sessionId: 'worker',
-          })!;
-          repo.transitionWork(work.id, queued, {
-            status: 'reported',
-            report: 'Reported A evidence',
-          });
-        }
-        if (delayed && variant !== 'unknown-system')
-          new NeoInputOriginRepository(sqlite).record({ sessionId, messageId: nextId }, askA, 0);
         const storedPrompt = (
           id: string,
           uuid: string

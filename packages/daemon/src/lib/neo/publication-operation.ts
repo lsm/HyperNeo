@@ -1,12 +1,24 @@
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
-import type { NeoPublicationAppendResult, NeoPublicationInput, NeoPublicationLink } from '@hyperneo/shared/types/neo-publication';
+import type {
+  NeoPublicationAppendResult,
+  NeoPublicationInput,
+  NeoPublicationLink,
+} from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { NeoAskOrigin } from './ask-origin.ts';
-import { NeoPublicationSchema, NeoPublicationResultSchema, withNeoPublicationAnswer } from './publication.ts';
+import {
+  NeoPublicationSchema,
+  NeoPublicationResultSchema,
+  withNeoPublicationAnswer,
+} from './publication.ts';
 import { isMainNeoBinding } from './binding-roles.ts';
-import { NEO_HUMAN_TRIGGER_PREFIX, neoHumanTrigger, requirePublicationTrigger } from './notification-triggers.ts';
+import {
+  NEO_HUMAN_TRIGGER_PREFIX,
+  neoHumanTrigger,
+  requirePublicationTrigger,
+} from './notification-triggers.ts';
 import { neoDerivedId } from './derived-id.ts';
 
 const Draft = NeoPublicationSchema.omit({

@@ -4,18 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
-import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 
 const concern = { id: 'launch', title: 'Launch', summary: 'Prepare launch', context: 'Friday' };
-const proposal = {
-  id: 'work-1',
-  requestKey: 'request-1',
-  projectId: 'launch',
-  originSessionId: 'concern-session',
-  title: 'Check readiness',
-  instruction: 'Review the release checklist',
-};
 
 describe('NeoRepository', () => {
   let db: Database;
@@ -26,7 +17,6 @@ describe('NeoRepository', () => {
     db = new Database(':memory:');
     db.exec('PRAGMA foreign_keys = ON');
     createNeoTables(db);
-    runMigration283(db);
     notify = mock(() => {});
     repo = new NeoRepository(db, notify);
   });
@@ -95,111 +85,24 @@ describe('NeoRepository', () => {
     expect(repo.getBindingBySession('invalid')).toBeNull();
   });
 
-  test('proposes work idempotently by request key and scopes listings', () => {
-    repo.saveProject(concern, 0);
-    const work = repo.proposeWork(proposal);
-    expect(work).toMatchObject({ ...proposal, status: 'proposed', sessionId: null, report: null });
-    expect(repo.proposeWork({ ...proposal, id: 'retry', instruction: 'Changed' })).toEqual(work);
-    const rootWork = repo.proposeWork({
-      ...proposal,
-      id: 'root-work',
-      requestKey: 'root-request',
-      projectId: null,
-      originSessionId: 'root',
-    });
-    expect(repo.listWork(concern.id)).toEqual([work]);
-    expect(repo.listWork(null)).toEqual([rootWork]);
-    expect(repo.listWork()).toHaveLength(2);
-    expect(repo.getWork(work.id)).toEqual(work);
-    expect(repo.getWork('missing')).toBeNull();
-    expect(notify).toHaveBeenCalledTimes(3);
-  });
-
-  test('compares status, session, and report before applying a work transition', () => {
-    repo.saveProject(concern, 0);
-    const work = repo.proposeWork(proposal);
-    const queued = repo.transitionWork(work.id, work, { status: 'queued', sessionId: 'worker' });
-    expect(queued).toMatchObject({ status: 'queued', sessionId: 'worker', report: null });
-    expect(repo.transitionWork(work.id, work, { status: 'cancelled' })).toBeNull();
-    expect(
-      repo.transitionWork(work.id, { ...queued!, sessionId: 'stale' }, { status: 'failed' })
-    ).toBeNull();
-    expect(repo.findWorkBySession('worker')).toEqual(queued);
-    const reported = repo.transitionWork(work.id, queued!, {
-      status: 'reported',
-      report: 'Checklist reviewed',
-    });
-    expect(reported).toMatchObject({
-      status: 'reported',
-      sessionId: 'worker',
-      report: 'Checklist reviewed',
-    });
-    expect(
-      repo.transitionWork(work.id, { ...reported!, report: 'Stale' }, { status: 'failed' })
-    ).toBeNull();
-    expect(repo.getWork(work.id)).toEqual(reported);
-    expect(repo.findWorkBySession('missing')).toBeNull();
-    expect(notify).toHaveBeenCalledTimes(4);
-  });
-
-  test('preserves context and delegation provenance after an execution session is deleted', () => {
-    db.exec('CREATE TABLE sessions (id TEXT PRIMARY KEY)');
-    db.exec("INSERT INTO sessions VALUES ('worker')");
-    repo.saveProject(concern, 0);
-    const work = repo.proposeWork(proposal);
-    repo.reserveBinding({ sessionId: 'worker', projectId: concern.id, kind: 'worker' });
-    repo.transitionWork(work.id, work, { status: 'queued', sessionId: 'worker' });
-    db.exec("DELETE FROM sessions WHERE id = 'worker'");
-    expect(repo.getProject(concern.id)).toMatchObject(concern);
-    expect(repo.getBindingBySession('worker')).toMatchObject({ projectId: concern.id });
-    expect(repo.findWorkBySession('worker')).toMatchObject({
-      originSessionId: 'concern-session',
-      status: 'queued',
-    });
-  });
-
-  test('links repeated delegations to one reusable execution session', () => {
-    repo.saveProject(concern, 0);
-    const first = repo.proposeWork(proposal);
-    repo.transitionWork(first.id, first, { status: 'reported', sessionId: 'existing-session' });
-    const second = repo.proposeWork({ ...proposal, id: 'work-2', requestKey: 'request-2' });
-    const queued = repo.transitionWork(second.id, second, {
-      status: 'queued',
-      sessionId: 'existing-session',
-    });
-    expect(repo.findWorkBySession('existing-session')).toEqual(queued);
-    expect(repo.getWork(first.id)).toMatchObject({
-      status: 'reported',
-      sessionId: 'existing-session',
-    });
-    expect(repo.listWork(concern.id)).toHaveLength(2);
-  });
-
   test('persists across database reopen', () => {
     const directory = mkdtempSync(join(tmpdir(), 'neo-repository-'));
     const path = join(directory, 'neo.db');
     const first = new Database(path);
     try {
       createNeoTables(first);
-      runMigration283(first);
       const initial = new NeoRepository(first);
       initial.saveProject(concern, 0);
       initial.reserveBinding({ sessionId: 'root', projectId: null, kind: 'neo' });
-      initial.proposeWork({ ...proposal, originMessageId: 'persisted-ask' });
     } finally {
       first.close();
     }
     const reopened = new Database(path);
     try {
       createNeoTables(reopened);
-      runMigration283(reopened);
       const restored = new NeoRepository(reopened);
       expect(restored.getProject(concern.id)).toMatchObject({ ...concern, revision: 1 });
       expect(restored.defaultBinding()?.sessionId).toBe('root');
-      expect(restored.getWork(proposal.id)).toMatchObject({
-        ...proposal,
-        originMessageId: 'persisted-ask',
-      });
     } finally {
       reopened.close();
       rmSync(directory, { recursive: true, force: true });

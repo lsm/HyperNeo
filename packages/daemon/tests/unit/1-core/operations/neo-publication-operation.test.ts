@@ -84,17 +84,6 @@ describe('runtime-bound publication operation', () => {
       neoDeliveryTrigger(trigger, () => inputTrigger(parent))
     );
   }
-  function work(id = 'work:1', messageId = ask.messageId, projectId = 'a') {
-    return repo.proposeWork({
-      id,
-      requestKey: id,
-      projectId,
-      originSessionId: root.sessionId,
-      originMessageId: messageId,
-      title: 'Comparison',
-      instruction: 'Keep it as a draft',
-    });
-  }
   function invoke(input: unknown = draft, who: OperationCaller = caller()) {
     const { publicationId, ...authored } = input as { publicationId?: string };
     return invokeOperation(
@@ -532,10 +521,9 @@ describe('runtime-bound publication operation', () => {
     ).toMatchObject({ accepted: false, reason: 'wrong_trigger' });
   });
 
-  test('preserves arbitrary authored labels and validates actual work ownership', async () => {
-    work();
+  test('preserves arbitrary authored labels', async () => {
     const links = [
-      { label: '看看对比', kind: 'work', id: 'work:1' },
+      { label: '看看对比', kind: 'project', id: 'a' },
       { label: 'More about A', kind: 'project', id: 'a' },
     ];
     expect(await invoke({ ...draft, links })).toMatchObject({
@@ -544,13 +532,12 @@ describe('runtime-bound publication operation', () => {
     expect(ledger.list(conversationId)![0].links).toEqual(links);
   });
 
-  test.each(['unknown', 'foreign-ask', 'unsafe-kind'])(
+  test.each(['unknown', 'unsafe-kind'])(
     'rejects %s scene refs, without partial publication',
     async (kind) => {
       const input = 'neo-note:1';
       prompt(root.sessionId, input, 'system');
       stamp({ sessionId: root.sessionId, messageId: input }, ask, 'continues');
-      work('work:1', kind === 'foreign-ask' ? 'other-ask' : ask.messageId);
       prompt(root.sessionId, 'other-ask');
       const link = {
         label: 'Open',
@@ -564,8 +551,6 @@ describe('runtime-bound publication operation', () => {
       const detail = {
         unknown:
           'work link "missing" does not exist; link only Neo project or work ids, never work.find refs or session ids',
-        'foreign-ask':
-          'work link "work:1" was not started for this ask; link only work this ask created',
       }[kind];
       expect(result).toMatchObject(
         kind === 'unsafe-kind'

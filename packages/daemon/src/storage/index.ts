@@ -536,7 +536,6 @@ export class Database {
     return this.providerRepo;
   }
 
-
   close(): void {
     if (this.messageSearchIndexTimer) {
       clearInterval(this.messageSearchIndexTimer);

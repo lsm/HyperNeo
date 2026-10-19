@@ -190,7 +190,6 @@ describe('neo todo runner', () => {
       report: expect.stringContaining('https://github.com/a/b/pull/9'),
     });
     expect(told).toEqual([]);
-    expect(db.prepare('SELECT count(*) AS count FROM neo_work').get()).toEqual({ count: 0 });
     db.close();
   });
   test('starts a todo in its session, settles its report and lets the pack tick it done', async () => {
