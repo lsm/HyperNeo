@@ -155,24 +155,25 @@ export class CodingPrLedgerRepository {
   }
 }
 
-export const readCodingLedgerRepo: CodingLedgerRead = async (repo) => {
+export function codingLedgerArgs(repo: string): string[] {
   const [owner, name] = repo.split('/');
-  const outcome = await runGhJson(
-    [
-      'gh',
-      'api',
-      'graphql',
-      '-f',
-      `query=${CODING_LEDGER_QUERY}`,
-      '-F',
-      `o=${owner}`,
-      '-F',
-      `n=${name}`,
-    ],
-    homedir(),
-    spawnProcess,
-    { resourceHint: 'graphql' }
-  );
+  return [
+    'gh',
+    'api',
+    'graphql',
+    '-f',
+    `query=${CODING_LEDGER_QUERY}`,
+    '-f',
+    `o=${owner}`,
+    '-f',
+    `n=${name}`,
+  ];
+}
+
+export const readCodingLedgerRepo: CodingLedgerRead = async (repo) => {
+  const outcome = await runGhJson(codingLedgerArgs(repo), homedir(), spawnProcess, {
+    resourceHint: 'graphql',
+  });
   return outcome.ok ? outcome.data : null;
 };
 

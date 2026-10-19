@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   CODING_LEDGER_KEEP_MS,
   CodingPrLedgerRepository,
+  codingLedgerArgs,
   codingPrState,
   planCodingLedgerRead,
   reconcileCodingPrLedger,
@@ -168,5 +169,13 @@ describe('reconcileCodingPrLedger', () => {
     );
     expect(ledger.list()).toEqual([]);
     db.close();
+  });
+});
+
+describe('codingLedgerArgs', () => {
+  test('passes owner and name as strings, so an all-digit repo is not sent as an Int', () => {
+    const args = codingLedgerArgs('gabrielecirulli/2048');
+    expect(args.slice(-4)).toEqual(['-f', 'o=gabrielecirulli', '-f', 'n=2048']);
+    expect(args).not.toContain('-F');
   });
 });
