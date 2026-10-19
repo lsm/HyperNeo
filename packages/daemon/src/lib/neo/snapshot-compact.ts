@@ -25,14 +25,25 @@ export function neoSnapshotOmitted<T extends NeoSnapshot>(fitted: T, built: NeoS
 const size = (snapshot: NeoSnapshot) => Buffer.byteLength(JSON.stringify(snapshot), 'utf8');
 
 function withTodoText(snapshot: NeoSnapshot, limit: number): NeoSnapshot {
-  const cut = (text: string | null) => (text === null ? null : text.slice(0, limit));
+  const cut = (text: string | null) => text?.slice(0, limit) ?? null;
   return {
     ...snapshot,
     todoAsks: snapshot.todoAsks?.map((entry) => ({
       ...entry,
-      ask: { ...entry.ask, request: entry.ask.request.slice(0, limit) },
+      ask: {
+        ...entry.ask,
+        title: entry.ask.title.slice(0, Math.max(limit, 80)),
+        request: entry.ask.request.slice(0, limit),
+        outcome: cut(entry.ask.outcome),
+      },
       todos: entry.todos.map((todo) => ({
         ...todo,
+        title: todo.title.slice(0, Math.max(limit, 80)),
+        doneWhen: todo.doneWhen.slice(0, limit),
+        status: todo.status.slice(0, Math.max(limit, 80)),
+        reason: cut(todo.reason),
+        blockedReason: cut(todo.blockedReason),
+        nextAction: cut(todo.nextAction),
         instruction: cut(todo.instruction),
         report: cut(todo.report),
         evidence: cut(todo.evidence),
@@ -92,14 +103,29 @@ export function fitNeoSnapshotBudget<T extends NeoSnapshot>(snapshot: T, budget:
       ...fitted,
       trimmed: neoSnapshotTrimmedNote(open.length - (fitted.todoAsks?.length ?? 0)),
     } as T;
-  return {
+  let skeleton: NeoSnapshot = {
     ok: true,
     sessionId: fitted.sessionId,
     projects: fitted.projects
       .slice(0, SKELETON_LIST_LIMIT)
       .map((project) => ({ ...project, summary: '', context: '' })),
     standingRules: fitted.standingRules,
-    todoAsks: fitted.todoAsks,
+    todoAsks: fitted.todoAsks?.map((entry) => ({
+      ...entry,
+      todos: entry.todos.slice(0, SKELETON_LIST_LIMIT).map((todo) => ({
+        ...todo,
+        check: null,
+        named: null,
+        statusCodes: [],
+      })),
+      questions: [],
+    })),
     trimmed: NEO_SNAPSHOT_SKELETON,
-  } as T;
+  };
+  for (let count = skeleton.todoAsks?.length ?? 0; size(skeleton) > budget && count > 0; ) {
+    count = Math.floor(count / 2);
+    skeleton = { ...skeleton, todoAsks: skeleton.todoAsks?.slice(0, count) };
+  }
+  if (size(skeleton) > budget) skeleton = { ...skeleton, standingRules: [] };
+  return skeleton as T;
 }

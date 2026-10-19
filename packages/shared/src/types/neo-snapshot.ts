@@ -50,12 +50,6 @@ export interface NeoWorkWake {
   continuedWake: number | null;
 }
 
-export interface NeoWorkSupersession {
-  workId: string;
-  supersededBy: string;
-  supersededAt: number;
-}
-
 export type NeoAskStatus = 'open' | 'waiting' | 'achieved' | 'abandoned' | 'blocked';
 export type NeoAskApprovalSpent = 'continues' | 'expired';
 
@@ -163,13 +157,6 @@ export function neoWorkPrVerdict(
   if (pr.checks === 'pending') return 'waiting';
   if (pr.checks === 'failing' || pr.review === 'changes_requested') return 'failed';
   return pr.review === 'approved' ? 'ready' : 'pending';
-}
-
-export interface NeoCardControlFailure {
-  operation: 'stop' | 'withdraw';
-  reason: 'unsupported' | 'unavailable';
-  detail: string;
-  at: number;
 }
 
 export interface NeoSessionNotice {

@@ -1,6 +1,5 @@
 import { neoStateNote, restartNeo } from './restart.ts';
 import { projectNeoAskEntries } from './ask-entries.ts';
-import { NeoWorkControlFailureRepository } from '../../storage/repositories/neo-work-control-failure-repository.ts';
 import { hostname } from 'node:os';
 import { neoWorkingKey, readNeoWorking } from './working.ts';
 import { fillPrompt, NEO_SESSION_TRACK } from '@hyperneo/prompts';
@@ -33,12 +32,7 @@ import { NeoPublicationRepository } from '../../storage/repositories/neo-publica
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
 import { NeoWorkCheckRepository } from '../../storage/repositories/neo-work-check-repository.ts';
-import { NeoWorkContinueRepository } from '../../storage/repositories/neo-work-continue-repository.ts';
 import { NeoWorkDriverTargetRepository } from '../../storage/repositories/neo-work-driver-target-repository.ts';
-import { NeoWorkGoalRepository } from '../../storage/repositories/neo-work-goal-repository.ts';
-import { NeoWorkRefusalRepository } from '../../storage/repositories/neo-work-refusal-repository.ts';
-import { NeoWorkSupersessionRepository } from '../../storage/repositories/neo-work-supersession-repository.ts';
-import { NeoWorkWakeRepository } from '../../storage/repositories/neo-work-wake-repository.ts';
 import { BUILD_METADATA } from '../build-metadata.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
@@ -146,10 +140,6 @@ export class NeoService {
   readonly publish: ReturnType<typeof createNeoPublisher>;
   readonly agentTargets: NeoAgentWorkTargetRepository;
   readonly driverTargets: NeoWorkDriverTargetRepository;
-  readonly workGoals: NeoWorkGoalRepository;
-  readonly workContinues: NeoWorkContinueRepository;
-  readonly workWakes: NeoWorkWakeRepository;
-  readonly workSupersessions: NeoWorkSupersessionRepository;
   readonly askRecords: NeoAskRepository;
   readonly todos: NeoAskTodoRepository;
   readonly todoSessions: NeoTodoSessionRepository;
@@ -162,8 +152,6 @@ export class NeoService {
   private readonly sessionEvents: SessionExternalEventStore;
   watchExternalTopic: ((topic: string) => Promise<void>) | null = null;
   readonly workPrClaims: NeoWorkPrClaimRepository;
-  readonly workRefusals: NeoWorkRefusalRepository;
-  readonly controlFailures: NeoWorkControlFailureRepository;
   readonly workChecks: NeoWorkCheckRepository;
   readonly askChecks: NeoAskCheckRepository;
   private readonly askEvidenceReads = new Map<string, number>();
@@ -245,17 +233,11 @@ export class NeoService {
       },
       notifyChanged: () => this.notifyChanged(),
     });
-    this.workRefusals = new NeoWorkRefusalRepository(db.getDatabase());
-    this.controlFailures = new NeoWorkControlFailureRepository(db.getDatabase());
     this.repo = new NeoRepository(db.getDatabase(), this.notifyChanged);
     this.publications = new NeoPublicationRepository(db.getDatabase());
     this.asks = new NeoConversationAskRepository(db.getDatabase());
     this.agentTargets = new NeoAgentWorkTargetRepository(db.getDatabase());
     this.driverTargets = new NeoWorkDriverTargetRepository(db.getDatabase());
-    this.workGoals = new NeoWorkGoalRepository(db.getDatabase());
-    this.workContinues = new NeoWorkContinueRepository(db.getDatabase());
-    this.workWakes = new NeoWorkWakeRepository(db.getDatabase());
-    this.workSupersessions = new NeoWorkSupersessionRepository(db.getDatabase());
     this.todos = new NeoAskTodoRepository(db.getDatabase(), this.notifyChanged);
     this.todoSessions = new NeoTodoSessionRepository(db.getDatabase());
     this.todoPrs = new CodingTodoPrRepository(db.getDatabase());

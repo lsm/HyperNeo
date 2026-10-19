@@ -5,7 +5,17 @@ import { fitNeoSnapshotBudget } from '../../../../src/lib/neo/snapshot-compact.t
 const entry = (id: string, status: 'open' | 'done', text = 'x'.repeat(2000)) =>
   ({
     ask: { id, title: `Ask ${id}`, request: text, status },
-    todos: [{ id: `${id}-t`, title: 'Todo', instruction: text, report: text, evidence: null }],
+    todos: [
+      {
+        id: `${id}-t`,
+        title: 'Todo',
+        doneWhen: 'Done',
+        status: 'Not started',
+        instruction: text,
+        report: text,
+        evidence: null,
+      },
+    ],
     questions: [{ id: `${id}-q`, text: 'Which one?' }],
   }) as unknown as NeoAskEntry;
 
@@ -45,5 +55,35 @@ describe('fitNeoSnapshotBudget', () => {
       const fitted = fitNeoSnapshotBudget(snapshot(30, 30), budget);
       expect(bytes(fitted)).toBeLessThanOrEqual(budget);
     }
+  });
+
+  test('the skeleton stays under budget with long todo titles, statuses and many todos', () => {
+    const long = 'y'.repeat(5_000);
+    const heavy = (id: string) =>
+      ({
+        ask: { id, title: long, request: long, status: 'open' },
+        todos: Array.from({ length: 60 }, (_, n) => ({
+          id: `${id}-${n}`,
+          title: long,
+          doneWhen: long,
+          status: long,
+          reason: long,
+          instruction: long,
+          report: long,
+          evidence: long,
+        })),
+        questions: [{ id: `${id}-q`, text: long }],
+      }) as unknown as NeoAskEntry;
+    const full: NeoSnapshot = {
+      ok: true,
+      sessionId: 'neo:root',
+      projects: [],
+      todoAsks: Array.from({ length: 8 }, (_, n) => heavy(`h${n}`)),
+    };
+    for (const budget of [3_000, 12_000, 40_000]) {
+      const fitted = fitNeoSnapshotBudget(full, budget);
+      expect(bytes(fitted)).toBeLessThanOrEqual(budget);
+    }
+    expect(fitNeoSnapshotBudget(full, 40_000).todoAsks?.length).toBeGreaterThan(0);
   });
 });
