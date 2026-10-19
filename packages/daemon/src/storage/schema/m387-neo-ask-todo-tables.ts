@@ -22,6 +22,7 @@ export function runMigration387(db: Database): void {
   db.exec(`CREATE TABLE IF NOT EXISTS neo_asks (
     id TEXT PRIMARY KEY,
     project_id TEXT REFERENCES neo_concerns(id),
+    repo TEXT,
     session_id TEXT NOT NULL,
     origin_message_id TEXT,
     title TEXT NOT NULL,
@@ -43,6 +44,7 @@ export function runMigration387(db: Database): void {
     check_json TEXT CHECK (check_json IS NULL OR json_valid(check_json)),
     instruction TEXT,
     named TEXT CHECK (named IS NULL OR json_valid(named)),
+    repo TEXT,
     state TEXT NOT NULL DEFAULT 'todo'
       CHECK (state IN ('todo', 'doing', 'done', 'failed', 'removed')),
     reason TEXT,

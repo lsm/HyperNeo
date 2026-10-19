@@ -9,6 +9,7 @@ import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-to
 import { NeoTodoTargetSchema } from './driver-work.ts';
 import type { NeoPack } from './packs/types.ts';
 import { neoStartQuestionTitle } from './start-question.ts';
+import { neoTodoRepo } from './todo-repo.ts';
 import { readNeoTodoCompletion, requireNeoTodoMayFinish } from './todo-completion.ts';
 import { isNeoTodoStartable, planNeoTodoAwaitingStart } from './todo-runner.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
@@ -67,10 +68,17 @@ export async function addNeoTodo(
   todos: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
   start: NeoTodoControls['start'],
-  askId: string,
-  input: z.infer<typeof NeoTodoDraftSchema>
+  ask: NeoAsk,
+  input: z.infer<typeof NeoTodoDraftSchema>,
+  packs: readonly NeoPack[]
 ): Promise<{ ok: true; todo: NeoTodo } | Rejection> {
-  const added = todos.addTodo(crypto.randomUUID(), askId, input, Date.now());
+  const added = todos.addTodo(
+    crypto.randomUUID(),
+    ask.id,
+    input,
+    Date.now(),
+    neoTodoRepo(input, packs, ask)
+  );
   if (input.target) sessions.create(added.id, input.target);
   if (input.start) return start(added.id);
   if (added.instruction) joinNeoStartQuestion(todos, added);
@@ -142,6 +150,7 @@ export const NeoTodoSchema = z.object({
   check: TodoCheck.nullable(),
   instruction: z.string().nullable(),
   named: z.record(z.string(), z.unknown()).nullable(),
+  repo: z.string().nullable(),
   state: z.enum(['todo', 'doing', 'blocked', 'done', 'failed', 'removed']),
   reason: z.string().nullable(),
   blockedReason: z.string().nullable(),
@@ -269,7 +278,7 @@ export function createNeoTodoOperations(
     )
     .pipe(
       async (ask: NeoAsk, input: z.infer<typeof Add>): Promise<TodoReceipt | Rejection> =>
-        ran(await addNeoTodo(todos, sessions, controls.start, ask.id, input)),
+        ran(await addNeoTodo(todos, sessions, controls.start, ask, input, packs())),
       ['outcome', 'input'],
       'outcome'
     )
