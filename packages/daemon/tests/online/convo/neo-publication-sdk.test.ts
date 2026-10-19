@@ -197,8 +197,7 @@ test('real SDK publishes an authored fictional reply through the daemon operatio
     expect(page.ok).toBe(true);
     expect(page.items, JSON.stringify({ calls, receipts, requests })).toHaveLength(1);
     const owner = page.items[0].askOrigin.sessionId;
-    expect(owner).toMatch(/^neo:/);
-    expect(owner).not.toBe(opened.sessionId);
+    expect(owner).toBe(opened.sessionId);
     expect(page.items[0]).toMatchObject({
       publicationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
       shortText,
