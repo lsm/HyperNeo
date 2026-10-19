@@ -47,7 +47,6 @@ import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
 import { Database as SQLite } from '../../../../src/storage/sqlite-compat.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
-import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consultations.ts';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { QueryLike } from '../../../../src/lib/agent/query-like';
 import { QueryAttemptRegistry } from '../../../../src/lib/agent/query-attempt-token';
@@ -302,14 +301,8 @@ describe('QueryRunner startup gate', () => {
   it('runs isolated holder inputs sequentially with fresh MCP identity and no post-start overwrite', async () => {
     const sql = new SQLite(':memory:');
     createNeoTables(sql);
-    runMigration279(sql);
     sql.exec(`INSERT INTO neo_concerns (id, title, summary, context, revision, created_at, updated_at) VALUES ('club','Club','','Six',1,1,1);
       INSERT INTO neo_session_bindings VALUES ('neo:holder','club','project')`);
-    sql
-      .prepare(`INSERT INTO neo_consultations
-      (id,request_key,concern_id,origin_session_id,session_id,question,status,created_at)
-      VALUES ('a','a','club','root','neo:holder','Next?','pending',?)`)
-      .run(Date.now());
     const queue = new MessageQueue();
     const base = createRunner('base');
     const identities: Array<() => OperationCaller['neoTurn']> = [];
@@ -341,15 +334,17 @@ describe('QueryRunner startup gate', () => {
         >[string];
       },
     });
-    const first = queue.enqueueWithId('neo-consult:a:request', 'First', false, { durable: true });
+    const first = queue.enqueueWithId('neo-project-event:club:event-1', 'First', false, {
+      durable: true,
+    });
     const second = queue.enqueueWithId('human-input', 'Second', false, { durable: true });
     try {
       await runner.start();
       await waitFor(() => spawned.length === 1);
-      expect((await inputs[0].next()).value?.uuid).toBe('neo-consult:a:request');
+      expect((await inputs[0].next()).value?.uuid).toBe('neo-project-event:club:event-1');
       const firstEnd = inputs[0].next();
       await first;
-      expect(identities[0]()?.consultationId).toBe('a');
+      expect(identities[0]()?.messageId).toBe('neo-project-event:club:event-1');
       expect(queue.size()).toBe(1);
       deliverFirstMessage(spawned[0]);
       await completeQuery(spawned[0], waitFor);
@@ -368,17 +363,6 @@ describe('QueryRunner startup gate', () => {
       await ctx.queryPromise;
       expect((await secondEnd).done).toBe(true);
       expect(identities[1]()?.isLive()).toBe(false);
-      sql.prepare("UPDATE neo_consultations SET status = 'failed' WHERE id = 'a'").run();
-      const stale = queue.enqueueWithId('neo-consult:a:request', 'Stale', false, {
-        durable: true,
-      });
-      await runner.start();
-      await waitFor(() => spawned.length === 3);
-      expect(await inputs[2].next()).toMatchObject({ done: true });
-      await stale;
-      expect(identities[2]()).toBeUndefined();
-      await completeQuery(spawned[2], waitFor);
-      await ctx.queryPromise;
       expect(spawned.every((query) => query.closeCount > 0)).toBe(true);
       expect(getSdkStartupGate().getStats().active).toBe(0);
     } finally {

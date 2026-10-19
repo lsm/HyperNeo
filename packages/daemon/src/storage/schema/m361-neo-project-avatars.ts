@@ -25,7 +25,8 @@ export function runMigration361(db: Database): void {
     alias TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES neo_concerns(id)
   )`);
-  db.exec(`UPDATE neo_consultation_publications SET payload_json = replace(payload_json, '"kind":"concern"', '"kind":"project"')
+  if (db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'neo_consultation_publications'").get())
+    db.exec(`UPDATE neo_consultation_publications SET payload_json = replace(payload_json, '"kind":"concern"', '"kind":"project"')
     WHERE payload_json LIKE '%"kind":"concern"%'`);
   db.exec(`UPDATE neo_publications SET payload_json = replace(payload_json, '"kind":"concern"', '"kind":"project"')
     WHERE payload_json LIKE '%"kind":"concern"%'`);

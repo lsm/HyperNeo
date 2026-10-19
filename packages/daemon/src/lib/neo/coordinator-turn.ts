@@ -25,7 +25,7 @@ export class NeoCoordinatorTurn {
 
   bind(messageId: string): boolean {
     this.claim();
-    return this.open(messageId, this.humanOrigin(messageId), false);
+    return this.open(messageId, this.humanOrigin(messageId));
   }
 
   protected claim(): void {
@@ -48,17 +48,11 @@ export class NeoCoordinatorTurn {
     );
   }
 
-  protected open(
-    messageId: string,
-    origin: string | null,
-    owned: boolean,
-    consultationId?: string
-  ): true {
+  protected open(messageId: string, origin: string | null): true {
     this.turn = {
       messageId,
       ...(origin && origin !== messageId ? { origin } : {}),
-      consultationId,
-      human: origin !== null || owned,
+      human: origin !== null,
       isLive: () => !this.closed && this.attempt.isLive(),
       yield: () => {
         if (!this.turn?.isLive()) return;

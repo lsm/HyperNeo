@@ -249,17 +249,11 @@
 13	packages/daemon/tests/unit/1-core/operations/neo-card-wake.test.ts
 8	packages/daemon/tests/unit/1-core/operations/neo-check-registry.test.ts
 344	packages/daemon/tests/unit/1-core/operations/neo-coding-preparation.test.ts
-7	packages/daemon/tests/unit/1-core/operations/neo-consultation-origin.test.ts
-8	packages/daemon/tests/unit/1-core/operations/neo-consultation-receipt.test.ts
 12	packages/daemon/tests/unit/1-core/operations/neo-consultation-recovery.test.ts
-13	packages/daemon/tests/unit/1-core/operations/neo-consultation-reply-content.test.ts
-324	packages/daemon/tests/unit/1-core/operations/neo-consultation-reply.test.ts
-321	packages/daemon/tests/unit/1-core/operations/neo-consultation-request-content.test.ts
 124	packages/daemon/tests/unit/1-core/operations/neo-conversation-ask-read.test.ts
 36	packages/daemon/tests/unit/1-core/operations/neo-conversation-images.test.ts
 8	packages/daemon/tests/unit/1-core/operations/neo-coordinator-cwd.test.ts
 1152	packages/daemon/tests/unit/1-core/operations/neo-daemon-ticks.test.ts
-4937	packages/daemon/tests/unit/1-core/operations/neo-direct-consultation-return.test.ts
 8	packages/daemon/tests/unit/1-core/operations/neo-done-check.test.ts
 491	packages/daemon/tests/unit/1-core/operations/neo-draft-recover.test.ts
 9	packages/daemon/tests/unit/1-core/operations/neo-driver-refresh.test.ts
@@ -267,7 +261,7 @@
 7	packages/daemon/tests/unit/1-core/operations/neo-evidence.test.ts
 12	packages/daemon/tests/unit/1-core/operations/neo-file-packs.test.ts
 1107	packages/daemon/tests/unit/1-core/operations/neo-holder-parent.test.ts
-59	packages/daemon/tests/unit/1-core/operations/neo-holder-turn.test.ts
+59	packages/daemon/tests/unit/1-core/operations/neo-coordinator-turn.test.ts
 13	packages/daemon/tests/unit/1-core/operations/neo-human-work-prompt.test.ts
 3419	packages/daemon/tests/unit/1-core/operations/neo-intake-notification.test.ts
 92	packages/daemon/tests/unit/1-core/operations/neo-intake.test.ts
@@ -287,8 +281,6 @@
 166	packages/daemon/tests/unit/1-core/operations/neo-publication-operation.test.ts
 25	packages/daemon/tests/unit/1-core/operations/neo-publication-prompt.test.ts
 96	packages/daemon/tests/unit/1-core/operations/neo-publication-read.test.ts
-12	packages/daemon/tests/unit/1-core/operations/neo-published-consultation-instructions.test.ts
-6568	packages/daemon/tests/unit/1-core/operations/neo-published-consultation-runtime.test.ts
 13	packages/daemon/tests/unit/1-core/operations/neo-reorganize-nightly.test.ts
 326	packages/daemon/tests/unit/1-core/operations/neo-reorganize.test.ts
 6	packages/daemon/tests/unit/1-core/operations/neo-reply-language.test.ts
@@ -315,7 +307,6 @@
 59	packages/daemon/tests/unit/1-core/operations/neo-work-prs.test.ts
 367	packages/daemon/tests/unit/1-core/operations/neo-work-report-resources.test.ts
 361	packages/daemon/tests/unit/1-core/operations/neo-work-report.test.ts
-5	packages/daemon/tests/unit/1-core/operations/neo-work-return.test.ts
 333	packages/daemon/tests/unit/1-core/operations/neo-work-target.test.ts
 14794	packages/daemon/tests/unit/1-core/operations/neo.test.ts
 5	packages/daemon/tests/unit/1-core/operations/operation-name-families.test.ts
@@ -742,12 +733,9 @@
 3	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-275-link-agent-owned-sessions.test.ts
 7	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-277-archive-orphaned-agent-sessions.test.ts
 4	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-278-neo-contexts.test.ts
-60	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-279-neo-consultations.test.ts
 7155	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-28_test.ts
-8	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-282-neo-consultation-origins.test.ts
 6	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-283-neo-work-origins.test.ts
 339	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-284-neo-work-targets.test.ts
-10	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-285-neo-consultation-waiters.test.ts
 407	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-286-neo-agent-work-targets.test.ts
 2244	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-29_test.ts
 3	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-292-retire-space-task-agent-sessions.test.ts
@@ -779,9 +767,6 @@
 13437	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-spaces-autonomy-level_test.ts
 32	packages/daemon/tests/unit/4-space-storage/storage/migrations/sentinel-replacement_test.ts
 263	packages/daemon/tests/unit/4-space-storage/storage/neo-atomic-intake.test.ts
-35	packages/daemon/tests/unit/4-space-storage/storage/neo-consultation-repository.test.ts
-681	packages/daemon/tests/unit/4-space-storage/storage/neo-consultation-waiter-repository.test.ts
-260	packages/daemon/tests/unit/4-space-storage/storage/neo-context-write-grants.test.ts
 328	packages/daemon/tests/unit/4-space-storage/storage/neo-conversation-asks.test.ts
 304	packages/daemon/tests/unit/4-space-storage/storage/neo-publications.test.ts
 31	packages/daemon/tests/unit/4-space-storage/storage/neo-repository.test.ts

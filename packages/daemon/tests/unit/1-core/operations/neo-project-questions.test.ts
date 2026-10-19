@@ -245,23 +245,6 @@ describe('reorganize merge questions on a real store', () => {
     if (answerWith) answer(answerWith);
   };
 
-  const waiter = (status: 'queued' | 'admitted') =>
-    db
-      .prepare(
-        `INSERT INTO neo_consultation_waiters (id, request_key, concern_id, origin_session_id, origin_message_id, session_id, question, status, created_at)
-        VALUES (?, ?, 'web', ?, 'm', ?, 'q', ?, 1)`
-      )
-      .run(crypto.randomUUID(), crypto.randomUUID(), root, root, status);
-
-  test('a queued consultation keeps a project busy, an admitted one from before does not', async () => {
-    waiter('queued');
-    expect((await runtime().mergeProjects()).merged).toEqual([]);
-    db.prepare("UPDATE neo_consultation_waiters SET status = 'admitted'").run();
-    expect((await runtime().mergeProjects()).merged).toEqual([
-      { sourceId: 'web-shallow', targetId: 'web' },
-    ]);
-  });
-
   test('merges siblings sharing a repository without asking', async () => {
     expect(await runtime().mergeProjects()).toEqual({
       merged: [{ sourceId: 'web-shallow', targetId: 'web' }],

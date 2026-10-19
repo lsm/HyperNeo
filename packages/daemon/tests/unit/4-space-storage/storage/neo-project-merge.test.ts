@@ -6,8 +6,6 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
-import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consultations.ts';
-import { runMigration285 } from '../../../../src/storage/schema/m285-neo-consultation-waiters.ts';
 import { runMigration313 } from '../../../../src/storage/schema/m313-neo-asks.ts';
 import { runMigration361 } from '../../../../src/storage/schema/m361-neo-project-avatars.ts';
 import { runMigration370 } from '../../../../src/storage/schema/m370-neo-project-merges.ts';
@@ -147,8 +145,6 @@ beforeEach(() => {
     'PRAGMA foreign_keys = ON; CREATE TABLE sessions(id TEXT PRIMARY KEY, processing_state TEXT)'
   );
   createNeoTables(db);
-  runMigration279(db);
-  runMigration285(db);
   runMigration313(db);
   runMigration361(db);
   runMigration387(db);
@@ -271,20 +267,6 @@ describe('Neo project merge storage', () => {
       reason: 'identity_conflict',
     });
     expect(db.prepare('SELECT * FROM neo_project_merges').all()).toEqual([]);
-  });
-  test('pending consultations and queued consultation waiters prevent retirement', () => {
-    db.exec(`INSERT INTO neo_consultations(id, request_key, concern_id, origin_session_id, session_id, question, status, created_at)
-      VALUES ('consult', 'consult', 'target', 'human', 'avatar', 'question', 'pending', 1)`);
-    expect(repo.projectMerges.merge(input)).toEqual({ ok: false, reason: 'project_busy' });
-    db.exec("UPDATE neo_consultations SET status = 'reported'");
-    db.exec(`INSERT INTO neo_consultation_waiters(id, request_key, concern_id, origin_session_id, origin_message_id, session_id, question, status, created_at)
-      VALUES ('waiter', 'waiter', 'source', 'human', 'message', 'avatar', 'question', 'queued', 1)`);
-    expect(repo.projectMerges.merge(input)).toEqual({ ok: false, reason: 'project_busy' });
-    db.exec("UPDATE neo_consultation_waiters SET status = 'cancelled'");
-    expect(repo.projectMerges.merge(input).ok).toBe(true);
-    expect(db.prepare('SELECT concern_id FROM neo_consultation_waiters').get()).toEqual({
-      concern_id: 'target',
-    });
   });
   test('notifies once after a successful commit, never on admission rejection or rollback', () => {
     const committed: string[] = [];
