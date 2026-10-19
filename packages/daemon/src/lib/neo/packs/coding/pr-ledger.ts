@@ -103,6 +103,7 @@ export type CodingLedgerRow = {
   head: string;
   state: CodingPrState;
   closedAt: number | null;
+  ci?: string | null;
 };
 
 export function planCodingLedgerRead(
@@ -122,6 +123,7 @@ export function planCodingLedgerRead(
       branch: pr.headRefName,
       head: pr.headRefOid,
       state: codingPrState(pr),
+      ci: pr.commits.nodes[0]?.commit.statusCheckRollup?.state ?? null,
       closedAt: pr.closedAt ? Date.parse(pr.closedAt) : null,
     }))
     .filter((row) => row.closedAt === null || now - row.closedAt < CODING_LEDGER_KEEP_MS);

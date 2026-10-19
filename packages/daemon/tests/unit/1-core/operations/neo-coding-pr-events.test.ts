@@ -138,6 +138,24 @@ describe('planCodingPrEvent', () => {
     expect(row('changes_requested')).toContain('Address the review');
     expect(row('closed')).toBeUndefined();
     expect(row('merged', 'failing')).toBeUndefined();
+    const fromFailing = (state: string, ci: string | null) =>
+      planCodingPrEvent({
+        repo: 'lsm/a',
+        number: 3,
+        title: 'T',
+        branch: 'b',
+        head: 'abcdef123',
+        state: state as never,
+        closedAt: null,
+        ci,
+        from: 'failing',
+      })?.text;
+    expect(fromFailing('waiting_review', 'SUCCESS')).toBe(
+      'lsm/a#3 "T" has green CI again on head abcdef1.'
+    );
+    expect(fromFailing('waiting_review', 'PENDING')).toBeUndefined();
+    expect(fromFailing('approved_pending', 'PENDING')).toBeUndefined();
+    expect(fromFailing('draft', 'FAILURE')).toBeUndefined();
     expect(row('approved_pending')).toBeUndefined();
   });
 });

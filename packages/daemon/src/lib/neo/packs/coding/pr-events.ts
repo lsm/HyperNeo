@@ -21,7 +21,7 @@ export function planCodingPrEvent(row: CodingPrTransition): { key: string; text:
     return owner(
       `is approved and green on head ${head(row)}. Merge it now with a manual squash on this head.`
     );
-  if (row.from === 'failing' && row.state !== 'merged' && row.state !== 'closed')
+  if (row.from === 'failing' && row.ci === 'SUCCESS' && row.state === 'waiting_review')
     return owner(`has green CI again on head ${head(row)}.`);
   return null;
 }
