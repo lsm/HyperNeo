@@ -14,7 +14,11 @@ import {
   withNeoPublicationAnswer,
 } from './publication.ts';
 import { isMainNeoBinding } from './binding-roles.ts';
-import { requirePublicationTrigger } from './notification-triggers.ts';
+import {
+  NEO_HUMAN_TRIGGER_PREFIX,
+  neoHumanTrigger,
+  requirePublicationTrigger,
+} from './notification-triggers.ts';
 import { neoDerivedId } from './derived-id.ts';
 
 const Draft = NeoPublicationSchema.omit({
@@ -39,8 +43,9 @@ type Producer = {
   input: NeoAskOrigin;
   turn: NonNullable<OperationCaller['neoTurn']>;
 };
-type Proof = Producer & { ask: NeoAskOrigin };
+type Proof = Producer & { ask: NeoAskOrigin; answer?: NeoAskOrigin };
 type Triggered = Proof & { triggerId?: string };
+type Answering = { messageId: string; delivered: boolean; publishedId: string | null };
 type LinkEvidence = {
   link: NeoPublicationLink;
   exists: boolean;
@@ -58,6 +63,8 @@ interface NeoPublicationRuntime {
   resolveHumanAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
   append(input: NeoPublicationInput): Receipt;
   inputTrigger(input: NeoAskOrigin): string | null;
+  isDeliveredHumanInput(input: NeoAskOrigin): boolean;
+  publicationIdFor(triggerId: string): string | null;
   notify(): void;
 }
 
@@ -66,6 +73,52 @@ export function admitPublicationDraft(input: unknown): { value: Draft } | { reas
   return parsed.success
     ? { value: parsed.data }
     : { reason: { accepted: false, reason: 'invalid_publication' } };
+}
+
+function publicationIdFor(input: NeoAskOrigin, requestId: string): string {
+  return neoDerivedId(
+    JSON.stringify(['neo.publication.publish', input.sessionId, input.messageId, requestId])
+  );
+}
+
+function readAnswering(
+  draft: Draft,
+  proof: Proof,
+  runtime: NeoPublicationRuntime
+): Answering | null {
+  const triggerId = draft.triggerId;
+  if (
+    !triggerId?.startsWith(NEO_HUMAN_TRIGGER_PREFIX) ||
+    !isMainNeoBinding(proof.binding) ||
+    proof.binding.sessionId !== proof.root.sessionId ||
+    runtime.inputTrigger(proof.input) === triggerId
+  )
+    return null;
+  const messageId = triggerId.slice(NEO_HUMAN_TRIGGER_PREFIX.length);
+  return {
+    messageId,
+    delivered: runtime.isDeliveredHumanInput({ sessionId: proof.root.sessionId, messageId }),
+    publishedId: runtime.publicationIdFor(triggerId),
+  };
+}
+
+function requireAnswerTarget(
+  proof: Proof,
+  draft: Draft,
+  answering: Answering | null,
+  resolve: (input: NeoAskOrigin) => NeoAskOrigin | null
+): { value: Proof } | { reason: Rejection } {
+  if (!answering?.delivered) return { value: proof };
+  const answer = { sessionId: proof.root.sessionId, messageId: answering.messageId };
+  if (answering.publishedId && answering.publishedId !== publicationIdFor(answer, draft.requestId))
+    return {
+      reason: {
+        accepted: false,
+        reason: 'already_answered',
+        detail: `human:${answering.messageId} is already answered; revise that publication with its publicationId instead.`,
+      },
+    };
+  return { value: { ...proof, ask: resolve(answer) ?? answer, answer } };
 }
 
 export function requirePublicationProducer(
@@ -194,6 +247,17 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
       'publication'
     )
     .pipe(
+      (draft: Draft, proof: Proof) => readAnswering(draft, proof, runtime),
+      ['draft', 'publication'],
+      'answering'
+    )
+    .pipe(
+      (proof: Proof, draft: Draft, answering: Answering | null) =>
+        requireAnswerTarget(proof, draft, answering, runtime.resolveAskOrigin),
+      ['publication', 'draft', 'answering'],
+      'result:publication'
+    )
+    .pipe(
       (draft: Draft) => draft.links.map((link) => readLinkEvidence(link, runtime)),
       'draft',
       'links'
@@ -210,21 +274,19 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
       ['publication', 'caller'],
       'result:publication'
     )
-    .pipe((proof: Proof) => runtime.inputTrigger(proof.input), 'publication', 'trigger')
+    .pipe(
+      (proof: Proof) =>
+        proof.answer ? neoHumanTrigger(proof.answer.messageId) : runtime.inputTrigger(proof.input),
+      'publication',
+      'trigger'
+    )
     .pipe(requirePublicationTrigger, ['publication', 'draft', 'trigger'], 'result:publication')
     .pipe(
       (draft: Draft, proof: Triggered) => {
         const { requestId, ...message } = draft;
         return runtime.append({
           ...message,
-          publicationId: neoDerivedId(
-            JSON.stringify([
-              'neo.publication.publish',
-              proof.input.sessionId,
-              proof.input.messageId,
-              requestId,
-            ])
-          ),
+          publicationId: publicationIdFor(proof.answer ?? proof.input, requestId),
           triggerId: proof.triggerId,
           conversationId: proof.root.sessionId.slice(4),
           askOrigin: proof.ask,

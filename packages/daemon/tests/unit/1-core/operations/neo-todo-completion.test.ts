@@ -17,7 +17,7 @@ import type { OperationCaller } from '../../../../src/lib/operations/registry.ts
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
-import { runMigration395 } from '../../../../src/storage/schema/m395-neo-todo-pr-merged-check.ts';
+import { runMigration396 } from '../../../../src/storage/schema/m396-neo-todo-pr-merged-check.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 const owner: OperationCaller = { source: 'mcp', sessionId: 'neo', role: 'neo' };
@@ -96,7 +96,7 @@ describe('one completion rule for Neo todos', () => {
     ).run(
       JSON.stringify({ pack: 'coding', kind: 'pr_opened', params: { urls: [url(1), url(2)] } })
     );
-    runMigration395(db);
+    runMigration396(db);
     expect(store.getTodo('t')?.check?.kind).toBe('pr_merged');
 
     const unmet = {

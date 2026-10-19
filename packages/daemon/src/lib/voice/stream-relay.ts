@@ -213,7 +213,8 @@ export const planVoiceStream = (superpipe({})('voice-stream-start') as PipelineA
 ) => { voice: VoiceSettings; mode: VoiceMode; url: URL | null } | string;
 
 export class VoiceStream {
-  private readonly chunks: Uint8Array[] = [];
+  private chunks: Uint8Array[] = [];
+  private cancelled = false;
   private bytes = 0;
   private socket: WebSocket | null = null;
   private finals: string[] = [];
@@ -327,6 +328,7 @@ export class VoiceStream {
       offset += chunk.byteLength;
     }
     const outcome = await this.deps.transcribeWav(Buffer.from(pcm16Wav(pcm)).toString('base64'));
+    if (this.cancelled) return { error: 'Voice stream cancelled' };
     if (outcome.action !== 'transcribed')
       return {
         error: outcome.action === 'denied' ? outcome.message : outcome.error,
@@ -334,6 +336,13 @@ export class VoiceStream {
       };
     this.deps.push({ streamId: this.id, text: outcome.text, isFinal: true });
     return { text: outcome.text, via: 'batch' };
+  }
+
+  cancel(): void {
+    this.cancelled = true;
+    this.chunks = [];
+    this.bytes = 0;
+    this.close();
   }
 
   close(): void {

@@ -1,6 +1,6 @@
 import type { Database } from '../sqlite-compat.ts';
 
-export function runMigration395(db: Database): void {
+export function runMigration396(db: Database): void {
   if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'neo_todos'").get())
     return;
   db.exec(`UPDATE neo_todos SET check_json = json_set(check_json, '$.kind', 'pr_merged')

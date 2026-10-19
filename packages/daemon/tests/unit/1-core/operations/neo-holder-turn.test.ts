@@ -12,6 +12,9 @@ import { runMigration339 } from '../../../../src/storage/schema/m339-neo-input-o
 import { runMigration340 } from '../../../../src/storage/schema/m340-neo-session-seen.ts';
 import { runMigration377 } from '../../../../src/storage/schema/m377-neo-input-origin-trigger.ts';
 import { NeoHolderTurn } from '../../../../src/lib/neo/holder-turn.ts';
+import { NeoPublicationRepository } from '../../../../src/storage/repositories/neo-publication-repository.ts';
+import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
+import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
@@ -268,6 +271,23 @@ describe('Neo isolated holder turns', () => {
       expect.objectContaining({ text: expect.stringContaining('"ok":false') }),
     ]);
     expect(() => unknown.bind('human-input')).toThrow('already bound');
+  });
+
+  test('a human message already answered in another turn starts no turn of its own', () => {
+    vi.spyOn(NeoRepository.prototype, 'conversationId').mockReturnValue('conversation');
+    const byTrigger = vi
+      .spyOn(NeoPublicationRepository.prototype, 'byTrigger')
+      .mockReturnValue(null);
+    expect(turn().bind('human-input')).toBe(true);
+    byTrigger.mockImplementation((conversationId, triggerId) =>
+      conversationId === 'conversation' && triggerId === 'human:human-input'
+        ? ({} as NeoPublication)
+        : null
+    );
+    const answered = turn();
+    expect(answered.bind('human-input')).toBe(false);
+    expect(answered.identity()).toBeUndefined();
+    vi.restoreAllMocks();
   });
 
   test('a project event note turn may save what the event changed', async () => {
