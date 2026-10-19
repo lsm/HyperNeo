@@ -60,22 +60,24 @@ describe('Neo intake gates', () => {
     expect(requireNeoIntakeTarget(input, candidate, session)).toHaveProperty('reason.ok', false);
   });
   test('retargets an admitted holder ask to the live root session', () => {
+    type Session = Parameters<typeof requireNeoRootTarget>[2];
+    const root = target as Session;
     const holder = { sessionId: 'neo:holder', projectId: 'c1', kind: 'project' as const };
     const admitted = {
       binding: holder,
-      target: { ...target, id: holder.sessionId },
+      target: { ...root!, id: holder.sessionId },
       conversationId: 'c',
     };
-    expect(requireNeoRootTarget(admitted, binding, target)).toEqual({
-      value: { binding, target, conversationId: 'c' },
+    expect(requireNeoRootTarget(admitted, binding, root)).toEqual({
+      value: { binding, target: root, conversationId: 'c' },
     });
-    for (const [root, session] of [
-      [null, target],
+    for (const [owner, session] of [
+      [null, root],
       [binding, null],
-      [binding, { ...target, id: 'other' }],
-      [binding, { ...target, status: 'archived' as const }],
+      [binding, { ...root!, id: 'other' }],
+      [binding, { ...root!, status: 'archived' as const }],
     ] as const)
-      expect(requireNeoRootTarget(admitted, root, session)).toHaveProperty('reason.ok', false);
+      expect(requireNeoRootTarget(admitted, owner, session)).toHaveProperty('reason.ok', false);
   });
 });
 
