@@ -130,6 +130,7 @@ export interface ClaudeDesktopAdapterDeps {
   sleep: (ms: number) => Promise<void>;
   now: () => number;
   searchChats?: (text: string) => Promise<readonly WorkChatMatch[]>;
+  permissionMode?: () => string;
 }
 
 type Gate<Value> = { value: Value } | { reason: Rejected };
@@ -1101,15 +1102,26 @@ export async function runToExit(
 export function launchInClaudeDesktop(
   cliSessionId: string,
   cwd: string,
-  deps: Pick<ClaudeDesktopAdapterDeps, 'spawn'>
+  deps: Pick<ClaudeDesktopAdapterDeps, 'spawn'>,
+  permissionMode?: string
 ): void {
+  const mode = permissionMode
+    ? [
+        '--permission-mode',
+        permissionMode,
+        ...(permissionMode === 'bypassPermissions' ? ['--allow-dangerously-skip-permissions'] : []),
+      ]
+    : [];
   deps
-    .spawn(['script', '-q', '/dev/null', 'claude', '--desktop', '--resume', cliSessionId], {
-      cwd,
-      stdout: 'ignore',
-      stderr: 'ignore',
-      detached: true,
-    })
+    .spawn(
+      ['script', '-q', '/dev/null', 'claude', '--desktop', '--resume', cliSessionId, ...mode],
+      {
+        cwd,
+        stdout: 'ignore',
+        stderr: 'ignore',
+        detached: true,
+      }
+    )
     .exited.catch(() => undefined);
 }
 
@@ -1194,6 +1206,7 @@ export async function startClaudeSession(
     prepared ? null : await deps.gitCheckout(folder).catch(() => null)
   );
   const worktree = placement.kind === 'worktree' ? `neo-${cliSessionId.slice(0, 8)}` : null;
+  const permissionMode = deps.permissionMode?.() ?? 'bypassPermissions';
   const cwd =
     placement.kind === 'worktree' && worktree
       ? join(placement.repo, '.claude', 'worktrees', worktree)
@@ -1207,7 +1220,7 @@ export async function startClaudeSession(
       '-n',
       request.title,
       '--permission-mode',
-      'bypassPermissions',
+      permissionMode,
       ...(worktree ? ['--worktree', worktree] : []),
       '--',
       request.message,
@@ -1219,7 +1232,7 @@ export async function startClaudeSession(
     BOOTSTRAP_TIMEOUT_MS / DELIVERY_POLL_MS,
     () => {
       try {
-        launchInClaudeDesktop(cliSessionId, cwd, deps);
+        launchInClaudeDesktop(cliSessionId, cwd, deps, permissionMode);
       } catch {}
     }
   );
@@ -1231,7 +1244,7 @@ export async function startClaudeSession(
     title: request.title,
     isArchived: false,
     lastActivityAt: deps.now(),
-    permissionMode: 'bypassPermissions',
+    permissionMode,
   };
   cache.set(`${STARTED_KEY}${sessionId}`, { modifiedAt: 0, records: [record] });
   return {

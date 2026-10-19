@@ -58,9 +58,11 @@ describe('claude-desktop start', () => {
       exit?: number;
       silent?: boolean;
       checkout?: { repo: string; linked: boolean };
+      permissionMode?: string;
     } = {}
   ) {
     return createClaudeDesktopAdapter({
+      ...(options.permissionMode ? { permissionMode: () => options.permissionMode! } : {}),
       sessionsDir: join(dir, 'sessions'),
       prepareExecution: options.prepareExecution,
       projectsDir: join(dir, 'projects'),
@@ -163,9 +165,34 @@ describe('claude-desktop start', () => {
         '--',
         'Raise the body font to 16px.',
       ],
-      ['script', '-q', '/dev/null', 'claude', '--desktop', '--resume', 'u1'],
+      [
+        'script',
+        '-q',
+        '/dev/null',
+        'claude',
+        '--desktop',
+        '--resume',
+        'u1',
+        '--permission-mode',
+        'bypassPermissions',
+        '--allow-dangerously-skip-permissions',
+      ],
     ]);
     expect(effects).not.toContain('liveSessions');
+  });
+
+  test('the worker permission mode setting reaches both the first turn and Desktop', async () => {
+    expect(await adapter({ permissionMode: 'acceptEdits' }).start?.(request, user)).toMatchObject({
+      ok: true,
+    });
+    expect(spawned[0].slice(6, 8)).toEqual(['--permission-mode', 'acceptEdits']);
+    expect(spawned[1].slice(4)).toEqual([
+      '--desktop',
+      '--resume',
+      'u1',
+      '--permission-mode',
+      'acceptEdits',
+    ]);
   });
 
   test('status finds the started session before Desktop registers it', async () => {
@@ -195,7 +222,7 @@ describe('claude-desktop start', () => {
     );
     expect(cwds).toEqual(['/fresh/remote-base', '/fresh/remote-base']);
     expect(spawned[0]).not.toContain('--worktree');
-    expect(spawned[1]).not.toContain('--permission-mode');
+    expect(spawned[1]).not.toContain('--worktree');
   });
 
   test('failed preparation launches no Claude process', async () => {
