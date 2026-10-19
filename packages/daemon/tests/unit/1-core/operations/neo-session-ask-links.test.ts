@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { z } from 'zod';
 import type { MessageHub } from '@hyperneo/shared';
-import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import type { PlaceGroup, WorkStatus } from '../../../../src/lib/drivers/types.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
@@ -34,15 +33,6 @@ const listed = (id: string, overrides: Partial<NeoListedSession> = {}): NeoListe
   link: `codex://threads/${id}`,
   ...overrides,
 });
-const askText = (overrides: Partial<NeoAsk> = {}) => ({
-  ask: 'Ship it',
-  doneWhen: 'merged',
-  outcome: null,
-  evidence: null,
-  doneItems: [],
-  ...overrides,
-});
-const evidence = (key: string) => ({ key, state: 'pending' as const, summary: '', blockers: [] });
 
 describe('planNeoSessionPrReads', () => {
   test('reads sessions with no known PRs, those needing the human first, within a bound', () => {
