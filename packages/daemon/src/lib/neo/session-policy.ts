@@ -42,7 +42,7 @@ export function neoCoordinatorBinding(
   const row = db
     .getDatabase()
     .prepare(
-      "SELECT session_id AS sessionId, concern_id AS projectId, kind FROM neo_session_bindings WHERE session_id = ? AND kind IN ('neo', 'project')"
+      "SELECT session_id AS sessionId, concern_id AS projectId, kind FROM neo_session_bindings WHERE session_id = ? AND kind = 'neo'"
     )
     .get(sessionId) as NeoBinding | null;
   return row ?? null;

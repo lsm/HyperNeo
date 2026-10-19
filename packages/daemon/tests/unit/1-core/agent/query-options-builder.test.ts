@@ -1972,7 +1972,6 @@ describe('QueryOptionsBuilder', () => {
   describe('tools configuration', () => {
     it.each([
       ['neo', null, neoCoordinatorNativeTools()],
-      ['project', 'saas', neoCoordinatorNativeTools()],
       ['worker', 'saas', ['AskUserQuestion']],
     ] as const)(
       'uses the persisted %s binding for resumed prompts and native questions',

@@ -78,16 +78,13 @@ describe('ordinary inspection pure gates', () => {
     { ...binding, sessionId: 'other' },
     { ...binding, kind: 'worker' as const },
     { ...binding, projectId: 'a' },
-    { ...binding, kind: 'project' as const },
   ])('requires actual matching coordinator identity: %j', (candidate) => {
     expect(requireInspectionCaller(input, neo, candidate)).toEqual({
       reason: { accepted: false, reason: 'inspection_forbidden' },
     });
   });
-  test('root and holder are inspect-capable, not execution workers', () => {
+  test('root Neo is inspect-capable, not an execution worker', () => {
     expect(requireInspectionCaller(input, neo, binding)).toEqual({ value: input });
-    const holder = { ...binding, projectId: 'a', kind: 'project' as const };
-    expect(requireInspectionCaller(input, neo, holder)).toEqual({ value: input });
     expect(requireInspectionCaller(input, human, null)).toEqual({ value: input });
   });
   test.each([null, { ...row, id: 'different' }])(

@@ -50,12 +50,10 @@ const routed = (projectId: string | null): NeoRouted => ({
 const neoCaller: OperationCaller = { source: 'mcp', sessionId: root, role: 'neo' };
 
 describe('admitNeoReorganizer', () => {
-  test('lets main Neo, the default session and the human run it, not a project avatar', () => {
+  test('lets main Neo and the human run it, not another session', () => {
     const main = { sessionId: root, kind: 'neo', projectId: null } as NeoBinding;
-    const inbox = { sessionId: 'i', kind: 'project', projectId: 'inbox' } as NeoBinding;
-    const holder = { sessionId: 'h', kind: 'project', projectId: 'c' } as NeoBinding;
+    const holder = { sessionId: 'h', kind: 'worker', projectId: 'inbox' } as NeoBinding;
     expect(admitNeoReorganizer(neoCaller, main)).toEqual({ value: true });
-    expect(admitNeoReorganizer({ ...neoCaller, sessionId: 'i' }, inbox)).toEqual({ value: true });
     expect(admitNeoReorganizer({ source: 'rpc', principal: 'local' }, null)).toEqual({
       value: true,
     });
@@ -106,11 +104,9 @@ describe('neo.projects.reorganize', () => {
           ? ({ sessionId: root, kind: 'neo', projectId: null } as NeoBinding)
           : null,
       rootSessionId: () => root,
-      sessionStatus: (sessionId) => (busy.includes(sessionId) ? 'processing' : 'idle'),
       mergeProjects: async () => ({ merged }),
       projectFacts: () => [],
       machine: () => 'here',
-      retiredHolders: () => [],
       cleanup: async (step) => {
         cleaned.push(step.projectId);
         if (step.projectId === 'stuck') throw new Error('busy');
@@ -158,9 +154,6 @@ describe('neo.projects.reorganize', () => {
         liveAsks: 0,
         work: [],
         liveWork: 0,
-        holderMessages: 0,
-        archived: false,
-        holder: null,
         aliases: [],
       },
     ];
@@ -186,9 +179,6 @@ describe('neo.projects.reorganize', () => {
       liveAsks: 0,
       work: [],
       liveWork: 0,
-      holderMessages: 0,
-      archived: false,
-      holder: null,
       aliases: [],
     });
     deps.projectFacts = () => [empty('empty'), empty('stuck')];

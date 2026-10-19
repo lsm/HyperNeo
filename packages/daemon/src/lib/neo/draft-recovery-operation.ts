@@ -34,7 +34,7 @@ export function requireDraftRecoveryHuman(
 
 export function captureRecoverableDraft(recovery: Recovery, service: Recovers): Gate<Captured> {
   const binding = service.repo.getBindingBySession(recovery.sessionId);
-  if (!binding || binding.kind === 'worker') return refuse('session_not_found');
+  if (binding?.kind !== 'neo') return refuse('session_not_found');
   const snapshot = service.sessions.captureInputDraft(recovery.sessionId);
   return snapshot ? { value: { recovery, snapshot } } : refuse('session_not_found');
 }

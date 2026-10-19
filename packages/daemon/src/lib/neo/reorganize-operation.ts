@@ -6,15 +6,12 @@ import {
   isNeoUnattendedCleanup,
   type NeoProjectCleanup,
   type NeoProjectFacts,
-  type NeoRetiredHolder,
   neoCleanupFolders,
   planNeoProjectCleanup,
 } from './project-cleanup.ts';
 import { NEO_INBOX_ID } from './inbox.ts';
 
-const Input = z
-  .object({ apply: z.boolean().optional(), archive: z.array(z.string()).optional() })
-  .default({});
+const Input = z.object({ apply: z.boolean().optional() }).default({});
 const Stayed = z.object({
   askId: z.string(),
   reason: z.enum([
@@ -34,8 +31,7 @@ const Result = z.union([
     merged: z.array(z.object({ sourceId: z.string(), targetId: z.string() })),
     cleanupPlanned: z.array(
       z.object({
-        action: z.enum(['delete', 'merge', 'archive', 'drop']),
-        sessionId: z.string().optional(),
+        action: z.enum(['delete', 'merge']),
         projectId: z.string(),
         title: z.string(),
         targetId: z.string().optional(),
@@ -53,11 +49,9 @@ type Merged = { sourceId: string; targetId: string };
 export interface NeoReorganizeRuntime {
   getBinding(sessionId: string): NeoBinding | null;
   rootSessionId(): string | null;
-  sessionStatus(sessionId: string): string | null;
   mergeProjects(): Promise<{ merged: Merged[] }>;
   projectFacts(): NeoProjectFacts[];
   machine(): string;
-  retiredHolders(): NeoRetiredHolder[];
   cleanup(step: NeoProjectCleanup): Promise<void>;
   mirroredAliases(folders: readonly string[]): Promise<ReadonlySet<string> | null>;
   log(line: string): void;
@@ -68,7 +62,7 @@ export function admitNeoReorganizer(
   binding: NeoBinding | null
 ): { value: true } | { reason: Outcome } {
   return (caller.source === 'rpc' && caller.principal === 'local') ||
-    (caller.source === 'mcp' && (binding?.kind === 'neo' || binding?.projectId === NEO_INBOX_ID))
+    (caller.source === 'mcp' && binding?.kind === 'neo')
     ? { value: true }
     : { reason: { ok: false, reason: 'main_neo_only' } };
 }
@@ -97,32 +91,14 @@ export type NeoReorganized = {
 
 export function createNeoProjectsReorganizer(
   runtime: NeoReorganizeRuntime
-): (cleanup?: {
-  apply?: boolean | 'unattended';
-  archive?: readonly string[];
-}) => Promise<NeoReorganized> {
-  const planNeoProjectCleanupNow = (
-    mirrored: ReadonlySet<string>,
-    archive: readonly string[]
-  ): NeoProjectCleanup[] => {
-    const projects = runtime.projectFacts();
-    const retired = runtime.retiredHolders();
-    const holders = [
-      ...projects.flatMap((project) => project.holder ?? []),
-      ...retired.map((holder) => holder.sessionId),
-    ];
-    return planNeoProjectCleanup(projects, {
+): (cleanup?: { apply?: boolean | 'unattended' }) => Promise<NeoReorganized> {
+  const planNeoProjectCleanupNow = (mirrored: ReadonlySet<string>): NeoProjectCleanup[] =>
+    planNeoProjectCleanup(runtime.projectFacts(), {
       pinned: new Set([NEO_INBOX_ID]),
       machine: runtime.machine(),
       mirrored,
-      archive: new Set(archive),
-      retired,
-      busy: new Set(
-        holders.filter((id) => !['idle', 'interrupted', null].includes(runtime.sessionStatus(id)))
-      ),
     });
-  };
-  return async ({ apply = false, archive = [] } = {}) => {
+  return async ({ apply = false } = {}) => {
     const mirrored = await runtime.mirroredAliases(
       neoCleanupFolders(runtime.projectFacts(), runtime.machine())
     );
@@ -130,11 +106,11 @@ export function createNeoProjectsReorganizer(
     for (const merge of merged)
       runtime.log(`neo reorganize: merged project ${merge.sourceId} into ${merge.targetId}`);
     if (!mirrored) runtime.log('neo reorganize: no project cleanup, the places could not be read');
-    const cleanupPlanned = mirrored ? planNeoProjectCleanupNow(mirrored, archive) : [];
+    const cleanupPlanned = mirrored ? planNeoProjectCleanupNow(mirrored) : [];
     const cleanupFailed: { projectId: string; reason: string }[] = [];
     let cleanupRan = false;
     for (const step of cleanupPlanned) {
-      const line = `${step.action} project ${step.projectId} (${step.title})${'targetId' in step ? ` into ${step.targetId}` : ''}${'sessionId' in step ? ` holder ${step.sessionId}` : ''}`;
+      const line = `${step.action} project ${step.projectId} (${step.title})${'targetId' in step ? ` into ${step.targetId}` : ''}`;
       if (apply === 'unattended' && !isNeoUnattendedCleanup(step)) {
         runtime.log(`neo reorganize: left for apply: true: ${line}`);
         continue;
@@ -179,7 +155,7 @@ export function createNeoReorganizeOperation(runtime: NeoReorganizeRuntime) {
   return defineOperation({
     name: 'neo.projects.reorganize',
     description:
-      'Merge sibling projects whose code identity matches (the older one stays; old links and conversations of the merged one keep working). Sibling projects that share a repository but whose identity cannot be read stay separate. Nothing is shown to the human; every merge is logged. It also plans project cleanup and returns it in cleanupPlanned; it applies it only with apply: true, and the daily pass applies every step except merges on its own, and leaves merges for a run with apply: true. Repository projects are left to the merge above. A project with no repository is deleted when empty and the mirror would not create it again, merged into the repository project where most of its cards ran (else one with its title), and otherwise kept. Projects named in archive, as the human asked, have their holder session archived; history stays. When a project is merged away, its holder session is deleted if it never spoke and archived if it has history; a holder mid-turn waits for a later pass. A project only on another machine is deleted when empty and otherwise left alone. It also runs on its own about once a day, after the human has been away for three hours. Main Neo, the default session or the human only.',
+      'Merge sibling projects whose code identity matches (the older one stays; old links and conversations of the merged one keep working). Sibling projects that share a repository but whose identity cannot be read stay separate. Nothing is shown to the human; every merge is logged. It also plans project cleanup and returns it in cleanupPlanned; it applies it only with apply: true, and the daily pass applies every step except merges on its own, and leaves merges for a run with apply: true. Repository projects are left to the merge above. A project with no repository is deleted when empty and the mirror would not create it again, merged into the repository project where most of its cards ran (else one with its title), and otherwise kept. A project only on another machine is deleted when empty and otherwise left alone. It also runs on its own about once a day, after the human has been away for three hours. Main Neo, the default session or the human only.',
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'mutate', roles: ['neo'] },

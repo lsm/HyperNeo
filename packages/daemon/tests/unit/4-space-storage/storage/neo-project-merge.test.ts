@@ -151,8 +151,6 @@ beforeEach(() => {
   repo = new NeoRepository(db);
   for (const id of ['source', 'target', 'child', 'next'])
     repo.saveProject({ id, title: id, summary: id, context: id }, 0);
-  repo.reserveBinding({ sessionId: 'avatar', projectId: 'source', kind: 'project' });
-  db.exec("INSERT INTO sessions VALUES ('avatar', NULL)");
 });
 afterEach(() => {
   db.close();
@@ -218,7 +216,6 @@ describe('Neo project merge storage', () => {
         concern_id: 'target',
         origin_session_id: 'human',
       });
-    expect(repo.getBindingForProject('source')).toBeNull();
     expect(repo.getBindingBySession('worker')?.projectId).toBe('target');
     expect(db.prepare('SELECT project_id FROM neo_project_workspaces').get()).toEqual({
       project_id: 'target',
@@ -245,16 +242,7 @@ describe('Neo project merge storage', () => {
     db.exec("UPDATE neo_project_merges SET target_id = 'source' WHERE source_id = 'target'");
     expect(repo.projectMerges.resolve('source')).toBeNull();
   });
-  test('busy and malformed processing states and human questions prevent writes', () => {
-    for (const processing of [
-      '{"status":"processing"}',
-      '{"status":"interrupted"}',
-      'broken json',
-    ]) {
-      db.prepare('UPDATE sessions SET processing_state = ?').run(processing);
-      expect(repo.projectMerges.merge(input)).toEqual({ ok: false, reason: 'project_busy' });
-    }
-    db.exec('UPDATE sessions SET processing_state = \'{"status":"idle"}\'');
+  test('a waiting human question prevents writes', () => {
     askRow('waiting');
     expect(repo.projectMerges.merge(input)).toEqual({ ok: false, reason: 'project_busy' });
     expect(db.prepare('SELECT * FROM neo_project_merges').all()).toEqual([]);
@@ -300,6 +288,5 @@ describe('Neo project merge storage', () => {
     expect(db.prepare('SELECT concern_id FROM legacy_neo_asks').get()).toEqual({
       concern_id: 'source',
     });
-    expect(repo.getBindingForProject('source')?.sessionId).toBe('avatar');
   });
 });

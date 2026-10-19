@@ -21,11 +21,6 @@ import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbo
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
 const root: NeoBinding = { sessionId: `neo:${conversationId}`, kind: 'neo', projectId: null };
-const holder: NeoBinding = {
-  sessionId: 'neo:holder:research',
-  kind: 'project',
-  projectId: 'research',
-};
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
 const input = {
   sessionId: root.sessionId,
@@ -60,12 +55,8 @@ describe('real human intake joint persistence', () => {
     repo = new NeoRepository(mailbox.db);
     ledger = new NeoConversationAskRepository(mailbox.db);
     repo.reserveBinding(root);
-    repo.reserveBinding(holder);
-    for (const binding of [root, holder])
-      mailbox.db.prepare('INSERT INTO sessions(id) VALUES (?)').run(binding.sessionId);
-    sessions = new Map(
-      [root, holder].map((binding) => [binding.sessionId, active(binding.sessionId)])
-    );
+    mailbox.db.prepare('INSERT INTO sessions(id) VALUES (?)').run(root.sessionId);
+    sessions = new Map([[root.sessionId, active(root.sessionId)]]);
     db = {
       getDatabase: () => mailbox.db,
       getSession: (id: string) => sessions.get(id),
@@ -88,7 +79,7 @@ describe('real human intake joint persistence', () => {
     expect(mailbox.rows()).toEqual([]);
   }
 
-  test.each([root, holder])(
+  test.each([root])(
     "records an ask sent to %o as root Neo's, in the root conversation atomically",
     async (binding) => {
       expect(
@@ -118,7 +109,6 @@ describe('real human intake joint persistence', () => {
 
   test.each([
     { source: 'mcp', role: 'neo', sessionId: root.sessionId },
-    { source: 'mcp', role: 'neo', sessionId: holder.sessionId },
     { source: 'rpc' },
     { source: 'rpc', principal: 'remote' },
     { source: 'internal', principal: 'local' },
@@ -126,7 +116,7 @@ describe('real human intake joint persistence', () => {
     'refuses claimed human %o before any target/root/storage access',
     async (caller) => {
       const targets = vi.spyOn(db, 'getSession');
-      const roots = vi.spyOn(repo, 'getBindingForProject');
+      const roots = vi.spyOn(repo, 'defaultBinding');
       const storage = vi.spyOn(db, 'getSDKMessageRepo');
       expect(await invoke({ ...input, human: true, inputKind: 'human' }, caller)).toMatchObject({
         value: { ok: false, reason: 'Only the human can submit a Neo ask.' },
@@ -138,15 +128,11 @@ describe('real human intake joint persistence', () => {
     }
   );
 
-  test.each(['missing', 'invalid', 'holder-root'])(
-    'a valid holder cannot submit without a conversation id (%s root)',
-    async (kind) => {
-      if (kind === 'missing')
-        mailbox.db.exec('DELETE FROM neo_session_bindings WHERE concern_id IS NULL');
-      if (kind === 'invalid')
-        vi.spyOn(repo, 'getBindingForProject').mockReturnValue({ ...root, sessionId: 'neo:root' });
-      if (kind === 'holder-root') vi.spyOn(repo, 'getBindingForProject').mockReturnValue(holder);
-      expect(await invoke({ ...input, sessionId: holder.sessionId })).toMatchObject({
+  test.each(['invalid'])(
+    'a session cannot submit without a conversation id (%s root)',
+    async () => {
+      vi.spyOn(repo, 'defaultBinding').mockReturnValue({ ...root, sessionId: 'neo:root' });
+      expect(await invoke()).toMatchObject({
         value: { ok: false, reason: 'The public Neo conversation is no longer available.' },
       });
       empty();
@@ -154,23 +140,12 @@ describe('real human intake joint persistence', () => {
   );
 
   test('target admission still precedes root and joint storage admission', async () => {
-    const roots = vi.spyOn(repo, 'getBindingForProject');
+    const roots = vi.spyOn(repo, 'defaultBinding');
     expect(await invoke({ ...input, sessionId: 'unbound' })).toMatchObject({
       value: { ok: false, reason: 'Open a Neo conversation before sending.' },
     });
     expect(roots).not.toHaveBeenCalled();
     empty();
-  });
-
-  test('the same request sent again through a holder is a retry of the root ask', async () => {
-    await invoke();
-    const before = ledger.list(conversationId);
-    expect(await invoke({ ...input, sessionId: holder.sessionId })).toMatchObject({
-      value: { ok: true, created: false },
-    });
-    expect(ledger.list(conversationId)).toEqual(before);
-    expect(mailbox.sdkRows()).toHaveLength(1);
-    expect(mailbox.rows()).toHaveLength(1);
   });
 
   test('concurrent retries and SDK transcript removal retain durable acceptance without rerun', async () => {
@@ -197,7 +172,7 @@ describe('real human intake joint persistence', () => {
       { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'aGVsbG8=' } },
       { type: 'text', text: '   ```txt\nfictional attachment\n```' },
     ];
-    expect(await invoke({ ...input, sessionId: holder.sessionId, content })).toMatchObject({
+    expect(await invoke({ ...input, sessionId: root.sessionId, content })).toMatchObject({
       value: { ok: true },
     });
     expect(ledger.list(conversationId)![0].content).toEqual(content);
@@ -206,7 +181,7 @@ describe('real human intake joint persistence', () => {
       sessionId: root.sessionId,
       released: false,
     });
-    expect(await invoke({ ...input, sessionId: holder.sessionId, content })).toMatchObject({
+    expect(await invoke({ ...input, sessionId: root.sessionId, content })).toMatchObject({
       value: { ok: true, created: false },
     });
     expect(mailbox.rows()).toHaveLength(1);
@@ -218,7 +193,7 @@ describe('real human intake joint persistence', () => {
     expect(job.status).toBe('processing');
     const next = {
       ...input,
-      sessionId: holder.sessionId,
+      sessionId: root.sessionId,
       requestId: crypto.randomUUID(),
       content: 'Another fictional ask.',
     };

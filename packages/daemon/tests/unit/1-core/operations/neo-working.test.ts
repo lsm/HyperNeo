@@ -88,39 +88,27 @@ describe('Neo working sessions', () => {
     for (const id of [main, holder, worker]) db.createSession(createTestSession(id));
     service.repo.saveProject({ id: 'p1', title: 'neo-ios', summary: '', context: '' }, 0);
     service.repo.reserveBinding({ sessionId: main, kind: 'neo', projectId: null });
-    service.repo.reserveBinding({ sessionId: holder, kind: 'project', projectId: 'p1' });
     service.repo.reserveBinding({ sessionId: worker, kind: 'worker', projectId: null });
   });
   afterEach(() => service.dispose());
 
-  test('the snapshot list holds main and holders that are working, never workers', async () => {
+  test('the snapshot list holds main when it is working, never workers', async () => {
     await state(main, { status: 'processing', messageId: 'm1', phase: 'thinking' });
-    await state(holder, { status: 'queued', messageId: 'n1' });
     await state(worker, { status: 'processing', messageId: 'w1', phase: 'thinking' });
     expect(readNeoWorking(db.getDatabase())).toEqual([
       { sessionId: main, projectId: null, title: 'Neo', status: 'processing' },
-      { sessionId: holder, projectId: 'p1', title: 'neo-ios', status: 'queued' },
     ]);
   });
 
-  test('neo.working is sent only when the set changes, an archived holder included', async () => {
-    await state(holder, { status: 'processing', messageId: 'n1', phase: 'initializing' });
-    await state(holder, { status: 'processing', messageId: 'n1', phase: 'thinking' });
-    await state(holder, { status: 'processing', messageId: 'n1', phase: 'streaming' });
+  test('neo.working is sent only when the set changes', async () => {
+    await state(main, { status: 'processing', messageId: 'm1', phase: 'initializing' });
+    await state(main, { status: 'processing', messageId: 'm1', phase: 'thinking' });
     await state(worker, { status: 'processing', messageId: 'w1', phase: 'thinking' });
-    await state(main, { status: 'queued', messageId: 'm1' });
+    await state(main, { status: 'queued', messageId: 'm2' });
     await state(main, { status: 'idle' });
-    db.getDatabase().prepare("UPDATE sessions SET status = 'archived' WHERE id = ?").run(holder);
-    await events.publish('session.updated', { sessionId: holder, session: { status: 'archived' } });
     expect(sent()).toEqual([
-      { working: [{ sessionId: holder, projectId: 'p1', title: 'neo-ios', status: 'processing' }] },
-      {
-        working: [
-          { sessionId: main, projectId: null, title: 'Neo', status: 'queued' },
-          { sessionId: holder, projectId: 'p1', title: 'neo-ios', status: 'processing' },
-        ],
-      },
-      { working: [{ sessionId: holder, projectId: 'p1', title: 'neo-ios', status: 'processing' }] },
+      { working: [{ sessionId: main, projectId: null, title: 'Neo', status: 'processing' }] },
+      { working: [{ sessionId: main, projectId: null, title: 'Neo', status: 'queued' }] },
       { working: [] },
     ]);
     expect(readNeoWorking(db.getDatabase())).toEqual([]);

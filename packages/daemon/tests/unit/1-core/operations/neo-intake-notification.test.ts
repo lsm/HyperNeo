@@ -30,11 +30,6 @@ import { runMigration313 } from '../../../../src/storage/schema/m313-neo-asks.ts
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
 const root: NeoBinding = { sessionId: `neo:${conversationId}`, kind: 'neo', projectId: null };
-const holder: NeoBinding = {
-  sessionId: 'neo:holder:research',
-  kind: 'project',
-  projectId: 'research',
-};
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
 const requestId = '20000000-0000-4000-8000-000000000001';
 const content = 'Keep this fictional draft.';
@@ -77,7 +72,7 @@ describe('accepted public ask notification', () => {
         )
       );
     });
-    for (const binding of [root, holder]) {
+    for (const binding of [root]) {
       repo.reserveBinding(binding);
       sessions.createSession({
         id: binding.sessionId,
@@ -120,7 +115,7 @@ describe('accepted public ask notification', () => {
       delivery: { origin: 'chat' },
     });
 
-  test.each([root, holder])(
+  test.each([root])(
     'notifies only after all three committed rows are visible from a second connection for %o',
     async (binding) => {
       expect(await receipt({ ...input, sessionId: binding.sessionId })).toEqual({
@@ -167,12 +162,12 @@ describe('accepted public ask notification', () => {
     expect(kept.id).toBe(previous.dbMessageId);
   });
 
-  test('takes an ask sent to a holder into a manual-mode root and notifies root after its commit', async () => {
+  test('takes an ask into a manual-mode root and notifies root after its commit', async () => {
     writer
       .prepare('UPDATE sessions SET config = ? WHERE id = ?')
       .run(JSON.stringify({ queryMode: 'manual' }), root.sessionId);
     expect(sessions.getSession(root.sessionId)!.config).toMatchObject({ queryMode: 'manual' });
-    expect(await receipt({ ...input, sessionId: holder.sessionId })).toMatchObject({ ok: true });
+    expect(await receipt()).toMatchObject({ ok: true });
     expect(observed).toEqual([[1, 1, 1]]);
     expect(notify).toHaveBeenCalledExactlyOnceWith(root.sessionId);
     const row = writer
