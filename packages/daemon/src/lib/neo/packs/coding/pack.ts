@@ -3,17 +3,10 @@ import { type CodingTodoPrRepository, createCodingTodoPack } from './todo-prs.ts
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { ExternalEvent } from '../../../external-events/types.ts';
 import { githubUrlKey } from '../../../github/parse-pr-url.ts';
 import type { NeoEvidence } from '../../evidence.ts';
 import type { NeoPack, NeoPackBrief, NeoPackCheck } from '../types.ts';
-import {
-  type NeoRefStateReader,
-  neoAskCardRefs,
-  neoAskRefNews,
-  neoAskReportRefs,
-} from './ask-prs.ts';
-import { neoCardPrFacts } from './card-facts.ts';
+import { type NeoRefStateReader } from './ask-prs.ts';
 import {
   keepNeoCardPrReads,
   keepNeoUnbeatenPrs,
@@ -24,7 +17,7 @@ import {
   planNeoPrCedes,
   scoreNeoCardPrs,
 } from './card-pr-claims.ts';
-import { neoCardPrTopics, routeNeoCardPrEvent } from './card-pr-events.ts';
+import { routeNeoCardPrEvent } from './card-pr-events.ts';
 import {
   CODING_CHECK_DEPLOYED,
   type NeoDeployReader,
@@ -47,13 +40,7 @@ import {
 } from './pr-ledger.ts';
 import { type CodingPrEventRepository, deliverCodingPrEvents } from './pr-events.ts';
 import { type CodingPrSweepRepository, type CodingSweepDeps, sweepCodingPrs } from './pr-sweep.ts';
-import { readCodingPrerequisiteBase } from './prerequisite-base.ts';
-import {
-  CODING_CHECK_PR_MERGED,
-  neoWatchTopics,
-  readNeoWatchEventTicks,
-  readNeoWatchTicks,
-} from './watch-checks.ts';
+import { CODING_CHECK_PR_MERGED } from './watch-checks.ts';
 import {
   extractNeoWorkPrUrls,
   isNeoWorkPrEvidenceOpened,
@@ -278,13 +265,8 @@ export const readNeoCardPrs = (superpipe({})('neo-card-pr-read') as PipelineAPI)
 
 export function createCodingPack(
   deps: NeoCardPrDeps & {
-    runningPrUrls: (workIds: readonly string[]) => Promise<string[]>;
-    cardReports: (workIds: readonly string[]) => string[];
     readRefStates: NeoRefStateReader;
     readDeploys: NeoDeployReader;
-    readMergeCommit: (url: string) => Promise<string | null>;
-    cardBase: (workId: string) => string | null;
-    cardStartedAt?: (workId: string) => number | null;
     todoPrs: CodingTodoPrRepository;
     prLedger: CodingPrLedgerRepository;
     prSweep: CodingPrSweepRepository;
@@ -294,9 +276,7 @@ export function createCodingPack(
     readLedgerRepo?: CodingLedgerRead;
   }
 ): NeoPack {
-  const cardPrs = (workId: string) => deps.workPrs.get(workId)?.prs ?? [];
   const ledgerSkips = new Map<string, number>();
-  const { readRefStates, cardBase, cardStartedAt } = deps;
   return {
     ...CODING_PACK_BRIEF,
     prepareExecution: prepareCodingExecution,
@@ -314,12 +294,6 @@ export function createCodingPack(
       await sweepCodingPrs(deps.prSweep, deps.prSweepDeps, now);
     },
     snapshotRows: (repos, now) => deps.prLedger.snapshot(repos, now),
-    prerequisiteParameters: (items) =>
-      readCodingPrerequisiteBase(items, {
-        readRefStates: deps.readRefStates,
-        readMergeCommit: deps.readMergeCommit,
-        cardBase: deps.cardBase,
-      }),
     instructions: () => NEO_PACK_CODING_INSTRUCTIONS,
     workerRules: NEO_PACK_CODING_WORKER_RULES,
     checks: {
@@ -336,11 +310,8 @@ export function createCodingPack(
       CODING_CHECK_ISSUE_CLOSED,
       CODING_CHECK_DEPLOYED,
     ],
-    externalTopics: (work: NeoWork) => neoCardPrTopics(deps.workPrs.get(work.id)?.prs ?? []),
     routeExternalEvent: (event, subscriptions) =>
       routeNeoCardPrEvent(event, subscriptions, (url) => deps.todoPrs.latest(url)),
-    cardFacts: (workId: string, stale: boolean) =>
-      neoCardPrFacts(deps.workPrs.get(workId)?.prs, stale),
     readEvidence: async (work: NeoWork, changedAt?: number | null) => {
       const stored = deps.workPrs.get(work.id);
       const { row, ok } = await readNeoCardPrs(
@@ -369,19 +340,5 @@ export function createCodingPack(
         Date.now()
       )),
     ],
-    readAskWatchTicks: (ask: NeoAsk) =>
-      readNeoWatchTicks(ask, readRefStates, Date.now(), cardBase, cardPrs, cardStartedAt),
-    readAskEventTicks: (ask: NeoAsk, event: ExternalEvent) =>
-      readNeoWatchEventTicks(ask, event, readRefStates, cardBase, cardPrs, cardStartedAt),
-    askTopics: (ask: NeoAsk) => neoWatchTopics(ask, cardPrs),
-    readAskEvidence: async (ask: NeoAsk) => {
-      const tracked = deps.workPrs.list(ask.workIds).flatMap((row) => row.prs.map((pr) => pr.url));
-      const refs = neoAskCardRefs(
-        neoAskReportRefs(ask, deps.cardReports(ask.workIds), tracked),
-        await deps.runningPrUrls(ask.workIds),
-        tracked
-      );
-      return refs.length ? neoAskRefNews(await deps.readRefStates(refs), ask.createdAt) : [];
-    },
   };
 }

@@ -39,17 +39,8 @@ import mdgithubSecuritySystemPrompt from './github/security-system-prompt.md' wi
 import mdneoSessionTrack from './neo/session-track.md' with { type: 'text' };
 import mdneoSystemRoot from './neo/system/root.md' with { type: 'text' };
 import mdneoSystemRootTurnEnd from './neo/system/root-turn-end.md' with { type: 'text' };
-import mdneoWorkDoneCheckPrsLive from './neo/packs/coding/done-check-prs-live.md' with {
-  type: 'text',
-};
 import mdneoPacksCodingInstructions from './neo/packs/coding/instructions.md' with { type: 'text' };
 import mdneoPacksCodingWorkerRules from './neo/packs/coding/worker-rules.md' with { type: 'text' };
-import mdneoWorkDoneCheckPrsMergeable from './neo/packs/coding/done-check-prs-mergeable.md' with {
-  type: 'text',
-};
-import mdneoWorkDoneCheckPrsStale from './neo/packs/coding/done-check-prs-stale.md' with {
-  type: 'text',
-};
 import mdneoWorkGoal from './neo/work/goal.md' with { type: 'text' };
 import mdneoWorkGoalAsked from './neo/work/goal-asked.md' with { type: 'text' };
 import mdneoWorkGoalDoneWhen from './neo/work/goal-done-when.md' with { type: 'text' };
@@ -272,9 +263,6 @@ const registry: Record<string, string> = {
   'neo/session-track.md': mdneoSessionTrack,
   'neo/system/root.md': mdneoSystemRoot,
   'neo/system/root-turn-end.md': mdneoSystemRootTurnEnd,
-  'neo/packs/coding/done-check-prs-live.md': mdneoWorkDoneCheckPrsLive,
-  'neo/packs/coding/done-check-prs-mergeable.md': mdneoWorkDoneCheckPrsMergeable,
-  'neo/packs/coding/done-check-prs-stale.md': mdneoWorkDoneCheckPrsStale,
   'neo/work/goal-asked.md': mdneoWorkGoalAsked,
   'neo/work/goal-done-when.md': mdneoWorkGoalDoneWhen,
   'neo/packs/coding/instructions.md': mdneoPacksCodingInstructions,
@@ -408,9 +396,6 @@ export const {
   NEO_SESSION_TRACK,
   NEO_ROOT_PROMPT,
   NEO_ROOT_TURN_END,
-  NEO_WORK_DONE_CHECK_PRS_LIVE,
-  NEO_WORK_DONE_CHECK_PRS_MERGEABLE,
-  NEO_WORK_DONE_CHECK_PRS_STALE,
   NEO_WORK_GOAL_ASKED,
   NEO_WORK_GOAL_DONE_WHEN,
   NEO_WORK_GOAL_MERGE,
