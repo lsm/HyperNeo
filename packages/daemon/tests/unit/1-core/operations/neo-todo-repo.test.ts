@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import { createNeoAskRecordOperations } from '../../../../src/lib/neo/ask-record-operations.ts';
 import { codingTodoRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
 import type { NeoPack } from '../../../../src/lib/neo/packs/types.ts';
 import { createNeoTodoOperations } from '../../../../src/lib/neo/todo-operations.ts';
@@ -114,6 +115,39 @@ describe('neo.todo.add repo', () => {
     expect(store.getAsk('ask')?.repo).toBe('github.com/lsm/hyperneo');
     const second = await call({ askId: 'ask', ...draft, title: 'Deploy' });
     expect(second.todo.repo).toBe('github.com/lsm/hyperneo');
+    db.close();
+  });
+});
+
+describe('neo.ask.open repo', () => {
+  test('returns the ask with the repo its first todo gave it', async () => {
+    const db = new Database(':memory:');
+    runMigrations(db, () => {});
+    createTables(db);
+    const store = new NeoAskTodoRepository(db);
+    const open = createNeoAskRecordOperations(
+      store,
+      new NeoTodoSessionRepository(db),
+      {
+        start: async () => ({ ok: false as const, reason: 'no' }),
+        proceed: async () => ({ ok: false as const, reason: 'no' }),
+        retry: async () => ({ ok: false as const, reason: 'no' }),
+        stop: async () => null,
+      },
+      () => null,
+      () => true,
+      () => [],
+      () => [coding]
+    ).find((op) => op.name === 'neo.ask.open')!;
+    const receipt = (await open.execute(
+      open.inputSchema.parse({
+        title: 'Fix login',
+        request: 'Fix login',
+        todos: [{ ...draft, named: { repository: 'lsm/HyperNeo' } }],
+      }),
+      { source: 'mcp', sessionId: 'neo', role: 'neo' }
+    )) as { ok: true; ask: { repo: string | null } };
+    expect(receipt.ask.repo).toBe('github.com/lsm/hyperneo');
     db.close();
   });
 });

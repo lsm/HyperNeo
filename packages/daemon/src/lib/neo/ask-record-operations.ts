@@ -130,7 +130,7 @@ export function createNeoAskRecordOperations(
               : { ok: true as const };
           if (!added.ok) return added;
         }
-        return { ok: true, ask, todos: store.listTodos(ask.id) };
+        return { ok: true, ask: store.getAsk(ask.id) ?? ask, todos: store.listTodos(ask.id) };
       },
       ['outcome', 'input', 'caller'],
       'outcome'
