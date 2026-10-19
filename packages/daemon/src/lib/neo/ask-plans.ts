@@ -1,20 +1,8 @@
 import type { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.ts';
 import { isNeoAskSettled } from './done-check.ts';
-import type {
-  NeoAsk,
-  NeoAskItem,
-  NeoAskItemKind,
-  NeoAskQuestionBecause,
-} from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
 import { isPooledNeoAsk } from '@hyperneo/shared/types/neo-snapshot';
-import type { NeoAskItemInput } from '../../storage/repositories/neo-ask-repository.ts';
-import type {
-  Settle,
-  NeoOutcomeCard,
-  NeoAskQuestionItem,
-  NeoAskSettleFacts,
-  Edit,
-} from './ask-inputs.ts';
+import type { Settle, NeoOutcomeCard, NeoAskSettleFacts } from './ask-inputs.ts';
 import type { z } from 'zod';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { isNeoAnswerItem } from './answer-outcome.ts';
@@ -65,34 +53,6 @@ export function neoAskLiveOutcomeCards(
   );
 }
 
-export function planNeoAskQuestion(
-  ask: NeoAsk,
-  input: {
-    question: string;
-    options: readonly string[];
-    kind?: NeoAskItemKind;
-    decides?: string;
-    because?: NeoAskQuestionBecause;
-  }
-): NeoAskQuestionItem {
-  const [slot] = planNeoAskEdit(ask, {
-    askId: ask.id,
-    expectedRevision: ask.revision ?? 0,
-    add: [{ text: input.question, check: null, outcomeKind: 'state' }],
-    remove: [],
-    track: [],
-    bind: [],
-  }).add;
-  return {
-    ...slot,
-    kind: input.kind ?? 'decision',
-    question: input.question,
-    ...(input.decides ? { decides: input.decides } : {}),
-    ...(input.because ? { because: input.because } : {}),
-    options: [...(input.options ?? [])],
-  };
-}
-
 export function neoAskHasHumanAction(ask: NeoAsk, facts: NeoAskSettleFacts, _now: number): boolean {
   return (
     facts.offered ||
@@ -104,30 +64,6 @@ export function neoAskHasHumanAction(ask: NeoAsk, facts: NeoAskSettleFacts, _now
         (item.state === 'needs_you' || (item.state === 'reported' && !isNeoAnswerItem(item)))
     )
   );
-}
-
-export function planNeoAskEdit(
-  ask: NeoAsk,
-  input: z.infer<typeof Edit>
-): {
-  add: (NeoAskItemInput & { id: string; position: number })[];
-  remove: string[];
-  track: z.infer<typeof Edit>['track'];
-  bind: z.infer<typeof Edit>['bind'];
-} {
-  const items = ask.doneItems ?? [];
-  const next = Math.max(0, ...items.map((item) => Number(item.id.slice(1)) || 0));
-  return {
-    add: input.add.map((item, index) => ({
-      ...item,
-      check: item.check ?? null,
-      id: `i${next + index + 1}`,
-      position: items.length + index,
-    })),
-    remove: [...new Set(input.remove)],
-    track: input.track,
-    bind: input.bind,
-  };
 }
 
 export function planNeoAskTickStatus(

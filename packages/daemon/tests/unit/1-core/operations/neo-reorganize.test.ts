@@ -223,11 +223,10 @@ describe('neo.projects.reorganize', () => {
         moves.push({ askId: item.id, projectId: owner.projectId, messageId: owner.messageId });
         return true;
       },
-      mergeProjects: async () => ({ merged, asked: [] }),
+      mergeProjects: async () => ({ merged }),
       projectFacts: () => [],
       machine: () => 'here',
       retiredHolders: () => [],
-      askMerge: async () => 'asked the human',
       cleanup: async (step) => {
         cleaned.push(step.projectId);
         if (step.projectId === 'stuck') throw new Error('busy');
@@ -277,7 +276,6 @@ describe('neo.projects.reorganize', () => {
       cleanupApplied: false,
       cleanupFailed: [],
       merged: [],
-      asked: [],
       moved: [{ askId: 'a', projectId: 'drivers' }],
       stayed: [
         { askId: 'b', reason: 'waiting_on_human' },
@@ -359,13 +357,8 @@ describe('neo.projects.reorganize', () => {
     });
   });
 
-  test('the nightly mode applies every step but a merge, and asks the human about each merge', async () => {
+  test('the nightly mode applies every step but a merge, and leaves each merge for apply: true', async () => {
     const { deps, logged, cleaned } = runtime([], {});
-    const asked: string[] = [];
-    deps.askMerge = async (step) => {
-      asked.push(step.projectId);
-      return 'asked the human';
-    };
     deps.retiredHolders = () => [
       { projectId: 'silent', title: 'Silent', sessionId: 's1', spoke: false },
       { projectId: 'talked', title: 'Talked', sessionId: 's2', spoke: true },
@@ -405,10 +398,9 @@ describe('neo.projects.reorganize', () => {
     const result = await createNeoProjectsReorganizer(deps)({ apply: 'unattended' });
     expect(result.cleanupPlanned.map((step) => step.action)).toEqual(['merge', 'drop', 'archive']);
     expect(cleaned).toEqual(['silent', 'talked']);
-    expect(asked).toEqual(['topic']);
     expect(logged).toEqual(
       expect.arrayContaining([
-        'neo reorganize: asked the human about merge project topic (Topic) into home',
+        'neo reorganize: left for apply: true: merge project topic (Topic) into home',
         'neo reorganize: did archive project talked (Talked) holder s2',
       ])
     );
@@ -454,7 +446,6 @@ describe('neo.projects.reorganize', () => {
       cleanupApplied: false,
       cleanupFailed: [],
       merged: [{ sourceId: 'web-2', targetId: 'web' }],
-      asked: [],
       moved: [],
       stayed: [],
     });
@@ -478,7 +469,6 @@ describe('neo.projects.reorganize', () => {
       cleanupApplied: false,
       cleanupFailed: [],
       merged: [],
-      asked: [],
       moved: [{ askId: 'a', projectId: 'drivers' }],
       stayed: [{ askId: 'b', reason: 'project_busy' }],
     });
@@ -508,7 +498,6 @@ describe('neo.projects.reorganize', () => {
       cleanupApplied: false,
       cleanupFailed: [],
       merged: [],
-      asked: [],
       moved: [],
       stayed: [
         { askId: 'a', reason: 'changed' },
@@ -531,7 +520,6 @@ describe('neo.projects.reorganize', () => {
       cleanupApplied: false,
       cleanupFailed: [],
       merged: [],
-      asked: [],
       moved: [],
       stayed: [{ askId: 'a', reason: 'handoff_failed' }],
     });

@@ -56,20 +56,9 @@ import {
 import { isNeoProjectEventTurn } from './card-events.ts';
 import { createNeoIntakeOperation } from './intake.ts';
 import { createNeoReorganizeOperation, type NeoReorganizeRuntime } from './reorganize-operation.ts';
-import {
-  mergeNeoDuplicateProjects,
-  NEO_PROJECT_SAME,
-  NEO_PROJECT_SEPARATE,
-  type NeoProjectQuestion,
-  neoProjectQuestionKey,
-  NEO_PROJECT_QUESTION_ATTEMPTS,
-  readNeoProjectDecision,
-  readNeoProjectIdentities,
-  settleNeoProjectQuestions,
-} from './project-merge.ts';
+import { mergeNeoDuplicateProjects, readNeoProjectIdentities } from './project-merge.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
 import { neoSessionStatus } from './session-status.ts';
-import { NEO_INBOX_ID } from './inbox.ts';
 import { createNeoPublicationChangeOperations } from './publication-change-operation.ts';
 import { createNeoPublicationOperation } from './publication-operation.ts';
 import { createNeoConversationReadOperation } from './conversation-read-operation.ts';
@@ -114,7 +103,7 @@ import { createNeoTodoOperations, type NeoTodoControls } from './todo-operations
 import { createNeoAskRecordOperations } from './ask-record-operations.ts';
 import { NeoAskEntrySchema, projectNeoAskEntries } from './ask-entries.ts';
 import { NeoAskSchema } from './ask-inputs.ts';
-import { planNeoAskQuestion, projectNeoSnapshotAsks } from './ask-plans.ts';
+import { projectNeoSnapshotAsks } from './ask-plans.ts';
 import { isNeoWorkPrWaiting } from './packs/coding/work-prs.ts';
 import { neoWaitingOnHuman } from './waiting-reminders.ts';
 import { createNeoPreferenceOperation } from './model-preference.ts';
@@ -594,67 +583,6 @@ function admitNeoCaller(
   return { value: caller };
 }
 
-function readNeoProjectQuestionAsks(
-  asks: Pick<NeoService['askRecords'], 'forRequest'>,
-  key: string
-): NeoAsk[] {
-  const found: NeoAsk[] = [];
-  for (let attempt = 1; attempt <= NEO_PROJECT_QUESTION_ATTEMPTS; attempt++) {
-    const ask = asks.forRequest(neoProjectQuestionKey(key, attempt));
-    if (!ask) break;
-    found.push(ask);
-  }
-  return found;
-}
-
-function askNeoProjectQuestion(
-  service: Pick<NeoService, 'repo' | 'askRecords' | 'defaultSessionId'>,
-  question: NeoProjectQuestion,
-  attempt: number
-): boolean {
-  const session = service.defaultSessionId();
-  if (!session) return false;
-  const [source, target] = [question.sourceId, question.targetId].map(
-    (id) => service.repo.getProject(id)?.title ?? id
-  );
-  const text = `Are ${source} and ${target} the same project? ${'why' in question ? question.why : `Both point at ${question.repository.slice(5)}.`}`;
-  const opened = service.askRecords.open({
-    id: crypto.randomUUID(),
-    requestKey: neoProjectQuestionKey(question.key, attempt),
-    projectId: NEO_INBOX_ID,
-    originSessionId: session,
-    originMessageId: null,
-    title: `${source} and ${target}: one project?`,
-    ask: `${text} The daemon asked this while reorganizing projects; after the human answers, run neo.projects.reorganize to apply it.`,
-    doneWhen: 'The human decided whether the two are one project.',
-    doneSource: 'daemon',
-  });
-  if (!opened || opened.doneItems?.length) return false;
-  const item = planNeoAskQuestion(opened, {
-    question: text,
-    options: [NEO_PROJECT_SAME, NEO_PROJECT_SEPARATE],
-    decides: question.key,
-  });
-  return !!service.askRecords.settle(opened, 'waiting', text, text, item.id, item);
-}
-
-function settleNeoQuestions(
-  service: NeoService,
-  questions: () => readonly NeoProjectQuestion[]
-): ReturnType<typeof settleNeoProjectQuestions> {
-  return settleNeoProjectQuestions(
-    questions,
-    (question) =>
-      readNeoProjectDecision(
-        readNeoProjectQuestionAsks(service.askRecords, question.key),
-        question.key
-      ),
-    (input) => service.repo.projectMerges.merge(input),
-    (question, attempt) => askNeoProjectQuestion(service, question, attempt),
-    (line) => service.logReorganize(line)
-  );
-}
-
 export function neoReorganizeRuntime(service: NeoService): NeoReorganizeRuntime {
   return {
     getBinding: (sessionId) => service.repo.getBindingBySession(sessionId),
@@ -685,37 +613,12 @@ export function neoReorganizeRuntime(service: NeoService): NeoReorganizeRuntime 
         (input) => merges.merge(input),
         (line) => service.logReorganize(line)
       );
-      const settled = settleNeoQuestions(service, () => merges.questions(fresh));
-      return { merged: [...backfilled, ...merged, ...settled.merged], asked: settled.asked };
+      return { merged: [...backfilled, ...merged] };
     },
     projectFacts: () => service.repo.projectCleanupFacts(),
     retiredHolders: () => service.repo.retiredHolders(),
     machine: () => hostname(),
     cleanup: createNeoProjectCleanupApply(service),
-    askMerge: async (step) => {
-      const [source, target] =
-        step.action === 'merge'
-          ? [service.repo.getProject(step.projectId), service.repo.getProject(step.targetId)]
-          : [null, null];
-      if (!source || !target) return 'skipped a question';
-      const settled = settleNeoQuestions(service, () => [
-        {
-          key: `neo-project-merge:${[source.id, target.id].sort().join('\u0000')}`,
-          sourceId: source.id,
-          targetId: target.id,
-          sourceRevision: source.revision,
-          targetRevision: target.revision,
-          sourceIdentities: [],
-          targetIdentities: [],
-          why: `${source.title} has no repository, and most of its cards ran in ${target.title}.`,
-        },
-      ]);
-      return settled.merged.length
-        ? 'merged after the human said yes'
-        : settled.asked.length
-          ? 'asked the human'
-          : 'still waiting on the human';
-    },
     mirroredAliases: async (folders) => {
       const caller = {
         source: 'internal' as const,

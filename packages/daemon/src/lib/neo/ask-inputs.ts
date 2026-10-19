@@ -1,18 +1,8 @@
-import type { NeoAskItemKind, NeoAskQuestionBecause } from '@hyperneo/shared/types/neo-snapshot';
 import { z } from 'zod';
 import { NEO_ASK_QUESTION_REASONS } from '@hyperneo/shared/types/neo-snapshot';
-import { GITHUB_REF_PATH } from '../github/parse-pr-url.ts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoAskItemInput } from '../../storage/repositories/neo-ask-repository.ts';
 
 export type Rejection = { ok: false; reason: string };
-
-const CheckKind = z
-  .string()
-  .trim()
-  .min(1)
-  .max(200)
-  .describe('A check kind registered by a loaded pack.');
 
 const NEO_ASK_ITEM_KINDS = ['decision', 'action', 'approval', 'wait'] as const;
 
@@ -81,35 +71,6 @@ export const NeoAskSchema = z.object({
   settledAt: z.number().nullable(),
 });
 
-const WatchUrl = z
-  .string()
-  .trim()
-  .regex(
-    new RegExp(`^https://${GITHUB_REF_PATH.source}$`),
-    'Pass a GitHub pull request or issue URL.'
-  );
-
-const DeliveredBy = z.string().trim().min(1).nullable().optional();
-
-const Item = z.object({
-  deliveredBy: DeliveredBy.describe(
-    'Stable card ID delivering this outcome. On open only an unlinked card from the same owner/project can be claimed; on edit use a card already on this ask.'
-  ),
-  text: z.string().trim().min(1).max(300),
-  check: CheckKind.nullable()
-    .optional()
-    .describe(
-      'A registered check kind the daemon ticks this item from, or null when you tick it yourself. Required.'
-    ),
-  watch: z.array(WatchUrl).min(1).max(10).optional(),
-  outcomeKind: z
-    .enum(NEO_ASK_ITEM_OUTCOME_KINDS)
-    .default('state')
-    .describe(
-      'state: something in the world changes (merged, deployed, fixed, booked); it needs evidence you or the daemon can read. answer: the human asked to know something (a count, a list, an explanation); it is met when you publish the answer to them.'
-    ),
-});
-
 const Options = z
   .array(z.string().trim().min(1).max(80))
   .min(2)
@@ -155,50 +116,6 @@ export const Settle = z.preprocess(
     )
 );
 
-const ExpectedRevision = z
-  .number()
-  .int()
-  .nonnegative()
-  .default(0)
-  .describe('The revision from the current ask view; refresh after stale_revision.');
-
-export const Edit = z
-  .object({
-    expectedRevision: ExpectedRevision,
-    askId: z.string().min(1),
-    add: z.array(Item).default([]),
-    remove: z.array(z.string().min(1)).default([]),
-    humanSaid: z.string().trim().min(1).max(500).optional(),
-    bind: z
-      .array(z.object({ itemId: z.string().min(1), deliveredBy: DeliveredBy.unwrap() }))
-      .default([]),
-    track: z
-      .array(
-        z
-          .object({
-            itemId: z.string().min(1),
-            check: CheckKind.nullable().default(null),
-            watch: z.array(WatchUrl).min(1).max(10).optional(),
-          })
-          .refine((item) => item.check || item.watch, 'Pass check or watch.')
-      )
-      .default([]),
-  })
-  .refine(
-    (input) => input.add.length || input.remove.length || input.track.length || input.bind.length,
-    'Pass items to add, remove, track or bind.'
-  );
-
 export type NeoOutcomeCard = Pick<NeoWork, 'id' | 'status'>;
-
-export type NeoAskQuestionItem = NeoAskItemInput & {
-  id: string;
-  position: number;
-  kind: NeoAskItemKind;
-  question: string;
-  decides?: string;
-  because?: NeoAskQuestionBecause;
-  options: string[];
-};
 
 export type NeoAskSettleFacts = { offered: boolean; stalled: boolean; failed: boolean };

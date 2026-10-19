@@ -6,12 +6,10 @@ import { join } from 'node:path';
 import type { NeoProject } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
 import { neoAskAnswerEvidence } from '../../../../src/lib/neo/ask-answer-evidence.ts';
-import { planNeoAskQuestion } from '../../../../src/lib/neo/ask-plans.ts';
 import { neoReorganizeRuntime } from '../../../../src/lib/neo/operations.ts';
 import {
   NEO_PROJECT_SAME,
   NEO_PROJECT_SEPARATE,
-  planNeoProjectQuestions,
   readNeoProjectDecision,
 } from '../../../../src/lib/neo/project-merge.ts';
 import type { NeoService } from '../../../../src/lib/neo/service.ts';
@@ -21,6 +19,17 @@ import { createTables, runMigrations } from '../../../../src/storage/schema/inde
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 const identity = `git:${'a'.repeat(40)}`;
+const decisionItem = (question: string, decides: string) => ({
+  id: 'i1',
+  position: 0,
+  text: question,
+  check: null,
+  outcomeKind: 'state' as const,
+  kind: 'decision' as const,
+  question,
+  decides,
+  options: [NEO_PROJECT_SAME, NEO_PROJECT_SEPARATE],
+});
 const repository = 'repo:lsm/web';
 const project = (id: string, extra: Partial<NeoProject> = {}): NeoProject => ({
   id,
@@ -33,25 +42,6 @@ const project = (id: string, extra: Partial<NeoProject> = {}): NeoProject => ({
   createdAt: 1,
   updatedAt: 1,
   ...extra,
-});
-
-describe('planNeoProjectQuestions', () => {
-  test('asks only about a pair the repository rule left unmerged, never while either is busy', () => {
-    const state = (unavailable: string[]) => ({
-      projects: [project('web', { createdAt: 1 }), project('web-shallow', { createdAt: 2 })],
-      identities: { web: [identity] },
-      unavailable,
-      retired: [],
-    });
-    const repositories = { web: [repository], 'web-shallow': [repository] };
-    expect(
-      planNeoProjectQuestions(state([]), {}, repositories).map(({ sourceId, targetId }) => [
-        sourceId,
-        targetId,
-      ])
-    ).toEqual([['web-shallow', 'web']]);
-    expect(planNeoProjectQuestions(state(['web']), {}, repositories)).toEqual([]);
-  });
 });
 
 describe('readNeoProjectDecision', () => {
@@ -236,11 +226,7 @@ describe('reorganize merge questions on a real store', () => {
       doneWhen: 'The human decided.',
       doneSource: 'daemon',
     })!;
-    const item = planNeoAskQuestion(opened, {
-      question: 'Are web-shallow and web the same project?',
-      options: [NEO_PROJECT_SAME, NEO_PROJECT_SEPARATE],
-      decides: key,
-    });
+    const item = decisionItem('Are web-shallow and web the same project?', key);
     asks.settle(opened, 'waiting', 'q', 'q', item.id, item);
     if (answerWith) answer(answerWith);
   };
@@ -248,7 +234,6 @@ describe('reorganize merge questions on a real store', () => {
   test('merges siblings sharing a repository without asking', async () => {
     expect(await runtime().mergeProjects()).toEqual({
       merged: [{ sourceId: 'web-shallow', targetId: 'web' }],
-      asked: [],
     });
     expect(asks.forRequest(key)).toBeNull();
     expect(
@@ -270,7 +255,7 @@ describe('reorganize merge questions on a real store', () => {
 
   test('an answer to keep them separate still keeps them apart', async () => {
     question(NEO_PROJECT_SEPARATE);
-    expect(await runtime().mergeProjects()).toEqual({ merged: [], asked: [] });
+    expect(await runtime().mergeProjects()).toEqual({ merged: [] });
     expect(
       repo
         .listProjects()
