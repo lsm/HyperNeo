@@ -849,6 +849,16 @@ export class NeoService {
       resolveAskOrigin: (input) => this.resolveAskOrigin(input),
       resolveHumanAskOrigin: (input) => this.resolveHumanAskOrigin(input),
       inputTrigger: (input) => this.inputTrigger(input),
+      isDeliveredHumanInput: (input) =>
+        this.isHumanInput(input) &&
+        this.db.getSDKMessageRepo().getUserSendStatus(input.sessionId, input.messageId) ===
+          'consumed',
+      publicationIdFor: (triggerId) => {
+        const conversation = this.repo.conversationId();
+        return conversation
+          ? (this.publications.byTrigger(conversation, triggerId)?.publicationId ?? null)
+          : null;
+      },
       append: (input) => this.commitPublication(input),
       notify: notifyPublication,
     });
