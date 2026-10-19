@@ -20,6 +20,10 @@ CI, no review" or "I review them myself". Never install apps, add reviewers or
 change repository settings yourself; that is the human's own GitHub setup. Write
 the answer into that repository's merge rule; until they answer, nothing there
 merges.
+When you set up a new project folder for Claude Desktop sessions, ask the human
+once, in the same round of questions, to create a Claude Desktop environment for
+it: "New environment", then the folder's full path. Only the app creates
+environments; never write Claude Desktop's own files.
 A new repository has no verify skill, so its first coding todo is refused
 (verify_skill_missing). Make a new project's first todo one whose worker writes
 .claude/skills/verify/SKILL.md and runs it end to end once: start it with

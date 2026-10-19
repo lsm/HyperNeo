@@ -66,6 +66,8 @@ describe('neoPackBriefs', () => {
     expect(guidance).toContain('ask the human once with neo.question.ask (kind choice)');
     expect(guidance).toContain('Never install apps, add reviewers or change repository settings');
     expect(guidance).toContain('target.preparationParameters.verifySkill "create"');
+    expect(guidance).toContain('create a Claude Desktop environment for it');
+    expect(guidance).toContain("never write Claude Desktop's own files");
   });
 });
 
