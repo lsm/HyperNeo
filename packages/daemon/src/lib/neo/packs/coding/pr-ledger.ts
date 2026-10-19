@@ -220,6 +220,30 @@ export function planCodingPrOwner(
   return sessions.some((session) => session.ref === row.owner) ? null : row.owner;
 }
 
+type CodingLedgerSnapshotRow = {
+  repo: string;
+  number: number;
+  title: string;
+  state: CodingPrState;
+  since: number;
+  owner: string | null;
+};
+
+function codingLedgerSnapshotRow(row: CodingLedgerSnapshotRow) {
+  const owner = row.owner
+    ? (JSON.parse(row.owner) as { adapter: string; id: string; daemon?: string })
+    : null;
+  return {
+    pr: `${row.repo}#${row.number}`,
+    title: row.title.slice(0, 80),
+    state: row.state,
+    since: new Date(row.since).toISOString(),
+    ownerAdapter: owner?.adapter ?? null,
+    ownerId: owner?.id ?? null,
+    ownerDaemon: owner?.daemon ?? null,
+  };
+}
+
 export class CodingPrLedgerRepository {
   constructor(private readonly db: Database) {}
 
@@ -412,10 +436,44 @@ export class CodingPrLedgerRepository {
     this.db.prepare('DELETE FROM pack_coding_pr_ledger WHERE repo = ?').run(repo);
   }
 
-  snapshot(repos: readonly string[] | null, now: number): Record<string, string | number | null>[] {
+  snapshot(
+    repos: readonly string[] | null,
+    now: number,
+    pinned: readonly { todoId: string; url: string; state: string | null }[] = []
+  ): Record<string, string | number | null>[] {
+    const select =
+      'SELECT repo, number, title, state, state_since AS since, owner FROM pack_coding_pr_ledger';
+    const own = pinned.flatMap((claim) => {
+      const match = /github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/i.exec(claim.url);
+      if (!match) return [];
+      const repo = match[1].toLowerCase();
+      const row = this.db
+        .prepare(
+          `${select} WHERE number = ?2 AND (repo = ?1
+            OR repo IN (SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?1))`
+        )
+        .get(repo, Number(match[2])) as CodingLedgerSnapshotRow | null;
+      return [
+        {
+          todoId: claim.todoId,
+          ...(row
+            ? codingLedgerSnapshotRow(row)
+            : {
+                pr: `${repo}#${match[2]}`,
+                title: null,
+                state: claim.state?.toLowerCase() ?? null,
+                since: null,
+                ownerAdapter: null,
+                ownerId: null,
+                ownerDaemon: null,
+              }),
+        },
+      ];
+    });
+    const owned = new Set(own.map((row) => row.pr));
     const rows = this.db
       .prepare(
-        `SELECT repo, number, title, state, state_since AS since, owner FROM pack_coding_pr_ledger
+        `${select}
           WHERE (closed_at IS NULL OR closed_at > ?)
             AND (? IS NULL OR repo IN (SELECT value FROM json_each(?))
               OR repo IN (SELECT canonical FROM pack_coding_repo_aliases
@@ -427,28 +485,8 @@ export class CodingPrLedgerRepository {
         repos ? 1 : null,
         JSON.stringify(repos ?? []),
         JSON.stringify(repos ?? [])
-      ) as {
-      repo: string;
-      number: number;
-      title: string;
-      state: CodingPrState;
-      since: number;
-      owner: string | null;
-    }[];
-    return rows.map((row) => {
-      const owner = row.owner
-        ? (JSON.parse(row.owner) as { adapter: string; id: string; daemon?: string })
-        : null;
-      return {
-        pr: `${row.repo}#${row.number}`,
-        title: row.title.slice(0, 80),
-        state: row.state,
-        since: new Date(row.since).toISOString(),
-        ownerAdapter: owner?.adapter ?? null,
-        ownerId: owner?.id ?? null,
-        ownerDaemon: owner?.daemon ?? null,
-      };
-    });
+      ) as CodingLedgerSnapshotRow[];
+    return [...own, ...rows.map(codingLedgerSnapshotRow).filter((row) => !owned.has(row.pr))];
   }
 
   prune(repos: readonly string[], now: number): void {

@@ -46,7 +46,18 @@ export function createCodingPack(deps: {
       await deliverCodingPrEvents(deps.prEvents, transitions, deps.prSweepDeps);
       await sweepCodingPrs(deps.prSweep, deps.prSweepDeps, now);
     },
-    snapshotRows: (repos, now) => deps.prLedger.snapshot(repos, now),
+    snapshotRows: (repos, now, openTodoIds) =>
+      deps.prLedger.snapshot(
+        repos,
+        now,
+        openTodoIds.flatMap((todoId) =>
+          deps.todoPrs.urls(todoId).map((url) => ({
+            todoId,
+            url,
+            state: deps.todoPrs.latest(url)?.pr.state ?? null,
+          }))
+        )
+      ),
     instructions: () => NEO_PACK_CODING_INSTRUCTIONS,
     workerRules: NEO_PACK_CODING_WORKER_RULES,
     routeExternalEvent: (event, subscriptions) =>

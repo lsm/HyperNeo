@@ -69,7 +69,8 @@ export class CodingTodoPrRepository {
     return this.db
       .prepare(
         `SELECT todo_id AS todoId, url, claim, claimed_at AS claimedAt FROM pack_coding_pr_claims
-          WHERE url IN (SELECT value FROM json_each(?))`
+          WHERE url IN (SELECT value FROM json_each(?))
+            AND todo_id NOT IN (SELECT id FROM neo_todos WHERE state = 'removed')`
       )
       .all(JSON.stringify(urls)) as CodingPrClaimRow[];
   }
