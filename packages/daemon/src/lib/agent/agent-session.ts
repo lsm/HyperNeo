@@ -1284,7 +1284,8 @@ export class AgentSession
   }
 
   async startFreshContext(): Promise<void> {
-    await this.resetQuery({ restartQuery: false });
+    const reset = await this.resetQuery({ restartQuery: false });
+    if (!reset.success) await this.lifecycleManager.stop({ catchQueryErrors: true });
     this.retirePastSdkContext();
     this.session.sdkSessionId = undefined;
     this.session.sdkOriginPath = undefined;

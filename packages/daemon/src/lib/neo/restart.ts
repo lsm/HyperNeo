@@ -8,8 +8,10 @@ export type NeoRestartDeps = {
   entries: () => NeoAskEntry[];
 };
 
+const NEO_STATE_NOTE_ASKS = 50;
+
 export function neoStateNote(entries: readonly NeoAskEntry[]): string {
-  const asks = entries.map(({ ask, state, todos, questions }) => ({
+  const asks = entries.slice(0, NEO_STATE_NOTE_ASKS).map(({ ask, state, todos, questions }) => ({
     id: ask.id,
     title: ask.title,
     state,
@@ -30,6 +32,11 @@ export function neoStateNote(entries: readonly NeoAskEntry[]): string {
   return [
     'Your context starts here. The open asks, their todos and the unanswered questions, read from the database:',
     JSON.stringify(asks),
+    ...(entries.length > asks.length
+      ? [
+          `${entries.length - asks.length} more open asks are left out; read them with neo.snapshot.`,
+        ]
+      : []),
     'Anything older is in neo.snapshot and neo.conversation.read.',
   ].join('\n');
 }

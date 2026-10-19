@@ -688,7 +688,7 @@ function admitNeoCaller(
     return { reason: { ok: false, reason: 'This operation belongs to Neo.' } };
   if (name === 'neo.rule.save' && !isNeoHumanTurn(service, caller))
     return { reason: { ok: false, reason: NEO_HUMAN_TURN_REFUSAL } };
-  if (['neo.open', 'neo.project.cancel', 'neo.session.track'].includes(name))
+  if (['neo.open', 'neo.restart', 'neo.project.cancel', 'neo.session.track'].includes(name))
     return { reason: { ok: false, reason: 'This action needs the user.' } };
   return { value: caller };
 }
@@ -1380,6 +1380,7 @@ export function createNeoOperations(service: NeoService) {
     input: z.infer<typeof Respond>,
     caller: OperationCaller
   ) => Promise<z.infer<typeof ConsultationResult>>;
+  const restart = path('neo.restart', () => service.restart());
   const open = path('neo.open', async (input: z.infer<typeof Scope>, caller) => {
     const projectId = input.projectId
       ? (service.repo.projectMerges.resolve(input.projectId) ?? input.projectId)
@@ -1690,9 +1691,9 @@ export function createNeoOperations(service: NeoService) {
       description:
         'Give root Neo a fresh context in the same session and conversation. Its first input is a visible note with the open asks, their todos and the unanswered questions.',
       inputSchema: z.object({}).strict(),
-      resultSchema: z.object({ ok: z.literal(true), sessionId: z.string() }),
+      resultSchema: z.union([Failure, z.object({ ok: z.literal(true), sessionId: z.string() })]),
       policy: { safetyClass: 'human_only' },
-      execute: () => service.restart(),
+      execute: restart,
     }),
     defineOperation({
       name: 'neo.receipt.read',
