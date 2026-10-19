@@ -281,34 +281,6 @@ describe('Neo todo pull request events', () => {
     expect(sent[0].message).toContain('7.closed');
     expect(service.cardEvents.listActive()).toEqual([]);
   });
-  test('poll evidence relays a new CI problem once and again after it clears', async () => {
-    const row = todo();
-    service.todoPrs.record(row.id, [{ ...open, checks: 'failing' }], 3);
-    await service['relayCardPr'](row.id);
-    await service['relayCardPr'](row.id);
-    expect(sent).toHaveLength(1);
-    service.todoPrs.record(row.id, [open], 4);
-    await service['relayCardPr'](row.id);
-    service.todoPrs.record(row.id, [{ ...open, checks: 'failing' }], 5);
-    await service['relayCardPr'](row.id);
-    expect(sent).toHaveLength(2);
-  });
-  test('an event already relayed is not repeated by the next evidence sweep', async () => {
-    const row = todo();
-    prs = [{ ...open, checks: 'failing' }];
-    await event('check_failed', { name: 'Lint' });
-    await service['relayCardPr'](row.id);
-    expect(sent).toHaveLength(1);
-  });
-  test('an unreachable todo target reports the PR problem to its owning Neo', async () => {
-    const row = todo();
-    sendFails = true;
-    service.todoPrs.record(row.id, [{ ...open, checks: 'failing' }], 3);
-    await service['relayCardPr'](row.id);
-    await service['relayCardPr'](row.id);
-    expect(jobs()).toHaveLength(1);
-    expect(JSON.stringify(jobs()[0].payload)).toContain('CI checks are failing');
-  });
   test('removed todos and disabled packs retire subscriptions without falling back to old work', () => {
     const row = todo();
     service.todos.updateTodo(row, { state: 'removed' }, 3);

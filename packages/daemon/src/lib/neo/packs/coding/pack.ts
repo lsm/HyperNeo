@@ -13,7 +13,7 @@ import {
   neoAskRefNews,
   neoAskReportRefs,
 } from './ask-prs.ts';
-import { neoCardPrAttention, neoCardPrFacts } from './card-facts.ts';
+import { neoCardPrFacts } from './card-facts.ts';
 import {
   keepNeoCardPrReads,
   keepNeoUnbeatenPrs,
@@ -341,7 +341,6 @@ export function createCodingPack(
       routeNeoCardPrEvent(event, subscriptions, (url) => deps.todoPrs.latest(url)),
     cardFacts: (workId: string, stale: boolean) =>
       neoCardPrFacts(deps.workPrs.get(workId)?.prs, stale),
-    cardAttention: (workId: string) => neoCardPrAttention(deps.workPrs.get(workId)?.prs ?? []),
     readEvidence: async (work: NeoWork, changedAt?: number | null) => {
       const stored = deps.workPrs.get(work.id);
       const { row, ok } = await readNeoCardPrs(

@@ -53,12 +53,10 @@ import { CodingPrLedgerRepository } from './packs/coding/pr-ledger.ts';
 import { CodingPrEventRepository } from './packs/coding/pr-events.ts';
 import { CodingPrSweepRepository } from './packs/coding/pr-sweep.ts';
 import { CodingTodoPrRepository } from './packs/coding/todo-prs.ts';
-import { neoCardPrAttention } from './packs/coding/card-facts.ts';
 import { neoDerivedId } from './derived-id.ts';
 import { NeoCardEventSubscriptionRepository } from '../../storage/repositories/neo-card-event-subscription-repository.ts';
 import { SessionEventSubscriptionRepository } from '../../storage/repositories/session-event-subscription-repository.ts';
 import { pullRequestUrlOfTopic } from '../github/parse-pr-url.ts';
-import { NeoCardPrRelayRepository } from '../../storage/repositories/neo-card-pr-relay-repository.ts';
 import { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
 import { NeoDependencyRepository } from '../../storage/repositories/neo-dependency-repository.ts';
 import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-origin-repository.ts';
@@ -94,7 +92,6 @@ import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
 import { invokeOperation, type OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import { remoteDaemons } from '../remote-daemons/registry.ts';
-import { hashString32 } from '../runtime-hash.ts';
 import type { SessionManager } from '../session/session-manager.ts';
 import { planNeoAvailabilityWakes, scheduleNeoAdmissionWake } from './admission-wake.ts';
 import { isNeoAskAnswerReady, planNeoAnswerPublished } from './answer-outcome.ts';
@@ -127,7 +124,6 @@ import {
 } from './ask-origin.ts';
 import { requireNeoAskStalled, requireNeoAskStallUntold } from './ask-stall.ts';
 import { neoAskProgressNote } from './ask-progress.ts';
-import { neoCardAttentionNeoNote, requireNeoCardAttentionRelay } from './card-attention.ts';
 import { planNeoCardCheck } from './card-check.ts';
 import {
   planNeoCardEventRoute,
@@ -307,7 +303,6 @@ import type {
   NeoCardEventSubscription,
   NeoPack,
   NeoPackBrief,
-  NeoPackCardAttention,
   NeoPackEventRoute,
   NeoPackFragment,
 } from './packs/types.ts';
@@ -435,7 +430,6 @@ export class NeoService {
   readonly workChecks: NeoWorkCheckRepository;
   readonly askChecks: NeoAskCheckRepository;
   private readonly askEvidenceReads = new Map<string, number>();
-  private readonly cardPrRelays: NeoCardPrRelayRepository;
   private askIdleSeen: NeoAskIdleSeen = new Map();
   private settledReports = new Map<string, number>();
   get sessionNotices(): NeoSessionNotice[] {
@@ -740,7 +734,6 @@ export class NeoService {
     this.cardEvents = new NeoCardEventSubscriptionRepository(db.getDatabase());
     this.sessionSubscriptions = new SessionEventSubscriptionRepository(db.getDatabase());
     this.sessionEvents = new SessionExternalEventStore(db.getDatabase());
-    this.cardPrRelays = new NeoCardPrRelayRepository(db.getDatabase());
     this.workPrClaims = new NeoWorkPrClaimRepository(db.getDatabase());
     this.workChecks = new NeoWorkCheckRepository(db.getDatabase());
     this.askChecks = new NeoAskCheckRepository(db.getDatabase());
@@ -2059,12 +2052,7 @@ export class NeoService {
       this.log.warn('Card event subscription sweep pending', error);
     }
     await this.todoRunner.refresh((message, error) => this.log.warn(message, error));
-    for (const workId of this.packEvidenceWorkIds()) {
-      this.followCardTopics(workId);
-      await this.relayCardPr(workId).catch((error) =>
-        this.log.warn('Card pull request relay pending', error)
-      );
-    }
+    for (const workId of this.packEvidenceWorkIds()) this.followCardTopics(workId);
     this.forgetUnfollowedAskTopics();
     for (const ask of this.askRecords.listLive()) {
       this.writeAskStatus(ask);
@@ -2179,49 +2167,6 @@ export class NeoService {
   followedCardRefs(_now: number): WorkRef[] {
     return this.packEvidenceWorkIds().flatMap((id) => this.todoSessions.readRef(id) ?? []);
   }
-
-  private readonly relayCardPr = (superpipe({})('neo-card-pr-relay') as PipelineAPI)
-    .input(['workId'])
-    .pipe((workId: string) => this.followedTodo(workId), 'workId', 'work')
-    .pipe((workId: string) => neoCardPrAttention(this.todoPrs.prs(workId)), 'workId', 'read')
-    .pipe(
-      (workId: string, read: NeoPackCardAttention) => {
-        if (!read.attention && !read.pending) this.cardPrRelays.clear(workId);
-        return read.attention ? this.cardPrRelays.get(workId) : null;
-      },
-      ['workId', 'read'],
-      'told'
-    )
-    .pipe(
-      (work: NeoWork | null, read: NeoPackCardAttention, told: string | null) =>
-        requireNeoCardAttentionRelay(work, read.attention, told),
-      ['work', 'read', 'told'],
-      'result:relay'
-    )
-    .pipe(
-      async (work: NeoWork, relay: { signature: string; message: string }) => {
-        const sent = await this.todoRunner.proceed(work.id, relay.message);
-        if (sent.ok) {
-          this.cardPrRelays.markTold(work.id, relay.signature, Date.now());
-          return sent;
-        }
-        const note = neoCardAttentionNeoNote(work, relay.message, sent.reason);
-        if (!note || !this.db.getSession(work.originSessionId)) return sent;
-        await this.deliverForward(
-          work.originSessionId,
-          `neo-card-pr:${work.id}:${hashString32(relay.signature).toString(36)}`,
-          note,
-          work.originSessionId,
-          neoWorkParent(work),
-          'continues'
-        );
-        this.cardPrRelays.markTold(work.id, relay.signature, Date.now());
-        return sent;
-      },
-      ['work', 'relay'],
-      'relay'
-    )
-    .endAsync('relay') as (workId: string) => Promise<unknown>;
 
   private readonly noteAskStall = (superpipe({})('neo-ask-stall-note') as PipelineAPI)
     .input(['ask', 'now'])
@@ -2728,12 +2673,8 @@ export class NeoService {
       ['event', 'route'],
       'delivered'
     )
-    .pipe(async (delivered: string[]) => {
+    .pipe(async () => {
       await this.todoRunner.refresh((message, error) => this.log.warn(message, error));
-      for (const workId of delivered) {
-        const told = neoCardPrAttention(this.todoPrs.prs(workId), false).attention;
-        if (told) this.cardPrRelays.markTold(workId, told.signature, Date.now());
-      }
     }, 'delivered')
     .pipe((route: NeoPackEventRoute) => {
       for (const row of route.ending) this.cardEvents.end(row.workId, row.topic, Date.now());
