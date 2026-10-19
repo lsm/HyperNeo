@@ -252,7 +252,7 @@ export default function MessageInput({
     switching: modelSwitching,
     loading: modelLoading,
     switchModel,
-  } = useModelSwitcher(sessionId);
+  } = useModelSwitcher(sessionId, store?.sessionInfo.value?.metadata?.pendingModelSwitch ?? null);
   const actionsMenu = useModal();
   const {
     attachments,

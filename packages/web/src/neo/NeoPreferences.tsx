@@ -94,13 +94,13 @@ export function NeoPreferences({
     ? (options.find((option) => option.value === level)?.label ?? 'Off')
     : 'Off';
 
-  async function save(next: NeoModelPreference) {
+  async function save(next: NeoModelPreference, picked = false) {
     setSaving(true);
     try {
       const hub = connectionManager.getHubIfConnected();
       if (!hub) throw new Error('Reconnect before changing the model.');
       if (forSession) {
-        if (pending || next.model !== currentId || next.provider !== info?.provider) {
+        if ((picked && pending) || next.model !== currentId || next.provider !== info?.provider) {
           const switched = await hub.request<{ success: boolean; error?: string }>(
             'session.model.switch',
             { sessionId, model: next.model, provider: next.provider }
@@ -141,7 +141,7 @@ export function NeoPreferences({
       )
     )
       return;
-    await save({ model: next.id, provider: next.provider, thinkingLevel: level });
+    await save({ model: next.id, provider: next.provider, thinkingLevel: level }, true);
   }
 
   async function changeThinking(next: ThinkingLevel) {

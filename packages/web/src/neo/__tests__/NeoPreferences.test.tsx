@@ -186,6 +186,24 @@ describe('Neo preferences', () => {
       })
     );
   });
+  it('keeps a pending switch when only thinking changes', async () => {
+    const store = makeStore(true);
+    (store.sessionInfo as unknown as { value: unknown }).value = {
+      config: { thinkingLevel: 'off' },
+      metadata: { pendingModelSwitch: { model: 'haiku', provider: 'anthropic', requestedAt: 1 } },
+    };
+    api.request.mockResolvedValue({ providers: [] });
+    render(<NeoPreferences sessionId="s1" store={store} onError={vi.fn()} forSession />);
+    fireEvent.click(screen.getByRole('button', { name: 'Model and thinking' }));
+    fireEvent.change(screen.getByRole('slider', { name: 'Thinking' }), { target: { value: '2' } });
+    await waitFor(() =>
+      expect(api.request).toHaveBeenCalledWith('session.thinking.set', {
+        sessionId: 's1',
+        level: 'think16k',
+      })
+    );
+    expect(api.request).not.toHaveBeenCalledWith('session.model.switch', expect.anything());
+  });
   it('lets Neo’s preference change while it works, applying from its next reply', () => {
     render(<NeoPreferences sessionId="neo:root" store={makeStore(true)} onError={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Model and thinking' }));
