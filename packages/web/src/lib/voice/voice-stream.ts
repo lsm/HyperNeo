@@ -108,9 +108,7 @@ export function openVoiceStream(hub: MessageHub, onText: (text: string) => void)
         if (!streamId || stopped) return;
         stopped = true;
         live = false;
-        return hub
-          .request('voice.stream.stop', { streamId }, { timeout: VOICE_STREAM_STOP_TIMEOUT_MS })
-          .catch(() => undefined);
+        return hub.request('voice.stream.cancel', { streamId }).catch(() => undefined);
       });
     },
   };

@@ -178,7 +178,7 @@ export const planVoiceStream = (superpipe({})('voice-stream-start') as PipelineA
 ) => { voice: VoiceSettings; mode: VoiceMode; url: URL | null } | string;
 
 export class VoiceStream {
-  private readonly chunks: Uint8Array[] = [];
+  private chunks: Uint8Array[] = [];
   private bytes = 0;
   private socket: WebSocket | null = null;
   private finals: string[] = [];
@@ -299,6 +299,12 @@ export class VoiceStream {
       };
     this.deps.push({ streamId: this.id, text: outcome.text, isFinal: true });
     return { text: outcome.text, via: 'batch' };
+  }
+
+  cancel(): void {
+    this.chunks = [];
+    this.bytes = 0;
+    this.close();
   }
 
   close(): void {
