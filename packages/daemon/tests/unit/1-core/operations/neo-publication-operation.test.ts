@@ -24,7 +24,6 @@ import {
   type NeoDeliveryTrigger,
   neoDeliveryTrigger,
   neoHumanTrigger,
-  neoTriggerMessageId,
   requirePublicationTrigger,
 } from '../../../../src/lib/neo/notification-triggers.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
