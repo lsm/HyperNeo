@@ -9,6 +9,7 @@ import {
   pullRequestUrlOfTopic,
 } from '../../../github/parse-pr-url.ts';
 import type { NeoTodoCheckResult, NeoTodoPack } from '../types.ts';
+import type { CodingPrState } from './pr-ledger.ts';
 import { neoStatusLine, type NeoStatusLine } from '../../status-codes.ts';
 import { CODING_TODO_PR_REFS, createCodingPackTables } from './schema/coding-tables.ts';
 import { extractNeoWorkPrUrls, type NeoWorkPrReader } from './work-prs.ts';
@@ -252,6 +253,10 @@ const CODING_TODO_STATUS_EN = {
   'todo.pr.waitingCi': '{pr} open, waiting on CI',
   'todo.pr.approved': '{pr} approved, waiting to merge',
   'todo.pr.waitingReview': '{pr} open, waiting on review',
+  'todo.pr.approvedGreen': '{pr} approved and green',
+  'todo.pr.approvedPending': '{pr} approved, CI still pending',
+  'todo.pr.dirty': '{pr} in conflict with its base',
+  'todo.pr.draft': '{pr} draft',
   'todo.reportedNoPr': 'Session says it is done; no PR found',
 } as const;
 
@@ -263,7 +268,23 @@ const PR_CODES = {
   pending: 'todo.pr.waitingReview',
 } as const;
 
-function prCode(pr: NeoWorkPr): keyof typeof CODING_TODO_STATUS_EN {
+const LEDGER_CODES: Record<CodingPrState, keyof typeof CODING_TODO_STATUS_EN> = {
+  merged: 'todo.pr.merged',
+  closed: 'todo.pr.closed',
+  failing: 'todo.pr.ciFailing',
+  changes_requested: 'todo.pr.changesRequested',
+  waiting_review: 'todo.pr.waitingReview',
+  approved_green: 'todo.pr.approvedGreen',
+  approved_pending: 'todo.pr.approvedPending',
+  dirty: 'todo.pr.dirty',
+  draft: 'todo.pr.draft',
+};
+
+export type CodingLedgerState = (url: string) => CodingPrState | null;
+
+function prCode(pr: NeoWorkPr, ledger?: CodingLedgerState): keyof typeof CODING_TODO_STATUS_EN {
+  const state = ledger?.(pr.url);
+  if (state) return LEDGER_CODES[state];
   if (pr.state === 'CLOSED') return 'todo.pr.closed';
   if (pr.state === 'OPEN' && pr.checks === 'failing') return 'todo.pr.ciFailing';
   if (pr.state === 'OPEN' && pr.review === 'changes_requested') return 'todo.pr.changesRequested';
@@ -272,12 +293,13 @@ function prCode(pr: NeoWorkPr): keyof typeof CODING_TODO_STATUS_EN {
 
 export function codingTodoStatusLine(
   todo: Pick<NeoTodo, 'state' | 'report' | 'evidence'>,
-  prs: readonly NeoWorkPr[]
+  prs: readonly NeoWorkPr[],
+  ledger?: CodingLedgerState
 ): NeoStatusLine | null {
   if (prs.length)
     return neoStatusLine(
       CODING_TODO_STATUS_EN,
-      prs.map((pr) => ({ code: prCode(pr), params: { pr: prNumber(pr) } }))
+      prs.map((pr) => ({ code: prCode(pr, ledger), params: { pr: prNumber(pr) } }))
     );
   return todo.state === 'done' && todo.report && !todo.evidence
     ? neoStatusLine(CODING_TODO_STATUS_EN, [{ code: 'todo.reportedNoPr', params: {} }])
@@ -286,7 +308,8 @@ export function codingTodoStatusLine(
 
 export function createCodingTodoPack(
   repo: CodingTodoPrRepository,
-  readPrs: NeoWorkPrReader
+  readPrs: NeoWorkPrReader,
+  ledger?: CodingLedgerState
 ): NeoTodoPack {
   const claimsOf = (todo: NeoTodo) => {
     const recorded = new Set(repo.prs(todo.id).flatMap((pr) => codingPrKey(pr.url) ?? []));
@@ -315,7 +338,7 @@ export function createCodingTodoPack(
       repo.record(todo.id, prs, Date.now());
       return todo.check ? codingTodoCheck(todo.check.kind, prs) : null;
     },
-    statusLine: (todo) => codingTodoStatusLine(todo, repo.prs(todo.id)),
+    statusLine: (todo) => codingTodoStatusLine(todo, repo.prs(todo.id), ledger),
     waiting: (todo) => repo.prs(todo.id).some((pr) => pr.state === 'OPEN'),
     topics: (todo) =>
       repo.urls(todo.id).flatMap((url) => {
