@@ -599,3 +599,14 @@ describe('codingPrState without CI', () => {
     expect(codingPrState(approved(0))).toBe('approved_green');
   });
 });
+
+describe('CodingPrLedgerRepository.stateOf', () => {
+  test('finds a PR by its URL, in any case', async () => {
+    const { db, ledger } = setup();
+    await reconcile(ledger, ['lsm/a'], async () => response([node(5, { isDraft: true })]), 100);
+    expect(ledger.stateOf('https://github.com/LSM/A/pull/5')).toBe('draft');
+    expect(ledger.stateOf('https://github.com/lsm/a/pull/6')).toBeNull();
+    expect(ledger.stateOf('not a url')).toBeNull();
+    db.close();
+  });
+});

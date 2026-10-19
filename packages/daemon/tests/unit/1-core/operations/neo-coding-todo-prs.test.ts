@@ -484,3 +484,26 @@ describe('coding todo pack waiting', () => {
     db.close();
   });
 });
+
+describe('codingTodoStatusLine from the ledger', () => {
+  const doing = { state: 'doing' as const, report: null, evidence: null };
+
+  test('reads each PR state from the ledger when it has the PR, and falls back otherwise', () => {
+    const ledger = (url: string) =>
+      url.endsWith('/7426')
+        ? ('approved_green' as const)
+        : url.endsWith('/7427')
+          ? ('dirty' as const)
+          : null;
+    expect(
+      codingTodoStatusLine(doing, [pr(7426, 'OPEN'), pr(7427, 'OPEN'), pr(7428, 'MERGED')], ledger)
+    ).toEqual({
+      status: '#7426 approved and green; #7427 in conflict with its base; #7428 merged',
+      statusCodes: [
+        { code: 'todo.pr.approvedGreen', params: { pr: '#7426' } },
+        { code: 'todo.pr.dirty', params: { pr: '#7427' } },
+        { code: 'todo.pr.merged', params: { pr: '#7428' } },
+      ],
+    });
+  });
+});

@@ -267,6 +267,15 @@ export class CodingPrLedgerRepository {
     );
   }
 
+  stateOf(url: string): CodingPrState | null {
+    const match = /github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/i.exec(url);
+    if (!match) return null;
+    const row = this.db
+      .prepare('SELECT state FROM pack_coding_pr_ledger WHERE repo = ? AND number = ?')
+      .get(match[1].toLowerCase(), Number(match[2])) as { state: CodingPrState } | null;
+    return row?.state ?? null;
+  }
+
   dropRepo(repo: string): void {
     this.db.prepare('DELETE FROM pack_coding_pr_ledger WHERE repo = ?').run(repo);
   }

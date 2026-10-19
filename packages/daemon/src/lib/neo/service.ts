@@ -2082,6 +2082,7 @@ export class NeoService {
       await pack
         .sweep?.(Date.now())
         .catch((error) => this.log.warn(`Neo ${pack.id} sweep failed`, error));
+    this.notifyChanged();
   }
 
   async refreshDriverWork(): Promise<void> {

@@ -300,7 +300,7 @@ export function createCodingPack(
   return {
     ...CODING_PACK_BRIEF,
     prepareExecution: prepareCodingExecution,
-    todos: createCodingTodoPack(deps.todoPrs, deps.readPrs),
+    todos: createCodingTodoPack(deps.todoPrs, deps.readPrs, (url) => deps.prLedger.stateOf(url)),
     observeSessionLinks: (links, now) => deps.prLedger.recordSessionPrs(links, now),
     sweep: async (now) => {
       const transitions = await reconcileCodingPrLedger(
