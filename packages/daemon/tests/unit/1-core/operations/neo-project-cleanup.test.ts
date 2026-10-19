@@ -56,6 +56,14 @@ describe('project cleanup plan', () => {
     expect(plan([project('alone', { aliases: [repo] })])).toEqual([]);
   });
 
+  test('an empty project that names a repository is never deleted, so the PR ledger keeps reading it', () => {
+    const named = project('named', { aliases: ['repo:lsm/app\u0000folder'] });
+    expect(plan([named])).toEqual([]);
+    expect(
+      neoCleanupFolders([{ ...named, aliases: [...named.aliases, 'folder:here\u0000/e'] }], 'here')
+    ).toEqual([]);
+  });
+
   test('a project with no repository merges into the repository project with its title', () => {
     const home = project('home', { title: 'App', createdAt: 5, aliases: [repo] });
     expect(plan([home, project('titled', { title: ' app ', ...oneOff })])).toEqual([
