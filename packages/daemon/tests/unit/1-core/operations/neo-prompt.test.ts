@@ -53,7 +53,7 @@ describe('root Neo system prompt', () => {
     });
     expect(neoPrompt(null, [])).toBe(`${NEO_ROOT_PROMPT}\n\n${NEO_ROOT_TURN_END}`);
     expect(NEO_ROOT_TURN_END.trim()).toBe(
-      'End every turn with exactly one line: Done. No summary.'
+      'End every turn with one or two short sentences saying what you did, then: Done.'
     );
     expect(NEO_ROOT_PROMPT.split(/\s+/).length).toBeLessThan(160);
     for (const fact of [
@@ -62,7 +62,7 @@ describe('root Neo system prompt', () => {
       'neo.publication.publish',
       'neo.question.ask',
       'neo.rule.save',
-      'Plain assistant text is never shown to the human.',
+      "Plain assistant text shows only in your session view, not in the human's chat.",
     ])
       expect(NEO_ROOT_PROMPT).toContain(fact);
   });
