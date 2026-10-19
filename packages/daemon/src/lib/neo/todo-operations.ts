@@ -75,6 +75,11 @@ export async function addNeoTodo(
 ): Promise<{ ok: true; todo: NeoTodo } | Rejection> {
   const repo = neoTodoRepo(input, packs, ask);
   const home = neoTodoHome(todos, ask, repo, split);
+  if (home.status !== 'open')
+    return {
+      ok: false,
+      reason: `ask_settled: ${home.title} is settled; open a new ask for this todo.`,
+    };
   const added = todos.addTodo(crypto.randomUUID(), home.id, input, Date.now(), repo);
   if (input.target) sessions.create(added.id, input.target);
   if (input.start) return start(added.id);

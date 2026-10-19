@@ -234,6 +234,10 @@ describe('repo child cards', () => {
     expect(
       store.listChildAsks(receipt.ask.id).map((child) => store.listTodos(child.id).length)
     ).toEqual([2, 1]);
+    expect(
+      await open({ ...request, todos: [...request.todos, { ...draft, title: 'Write notes' }] })
+    ).toMatchObject({ ok: false, reason: expect.stringContaining('ask_settled') });
+    expect(store.listTodos(receipt.ask.id)).toEqual([]);
     db.close();
   });
 
@@ -260,6 +264,27 @@ describe('repo child cards', () => {
     expect(() => store.addTodo('x', receipt.ask.id, draft, 1, 'github.com/lsm/ops')).toThrow(
       'todo_repo_mismatch'
     );
+    db.close();
+  });
+
+  test('a retry that adds other repos keeps the card’s own repo on the card', async () => {
+    const { db, store, open } = setup();
+    const first = (await open({ title: 'T', request: 'T', todos: [pr('HyperNeo', 1)] })) as {
+      ask: { id: string };
+    };
+    await open({
+      title: 'T',
+      request: 'T',
+      todos: [pr('HyperNeo', 1), pr('HyperNeo', 2), pr('ops', 3)],
+    });
+    expect(store.listTodos(first.ask.id).map((todo) => todo.title)).toEqual([
+      'PR HyperNeo 1',
+      'PR HyperNeo 2',
+    ]);
+    expect(store.listChildAsks(first.ask.id).map((child) => child.repo)).toEqual([
+      'github.com/lsm/ops',
+    ]);
+    expect(store.getAsk(first.ask.id)?.status).toBe('open');
     db.close();
   });
 });

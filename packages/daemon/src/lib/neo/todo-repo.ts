@@ -34,7 +34,7 @@ export function neoTodoHome(
   repo: string | null,
   split: boolean
 ): NeoAsk {
-  if (!repo || (!split && (!ask.repo || ask.repo === repo))) return ask;
+  if (!repo || ask.repo === repo || (!split && !ask.repo)) return ask;
   return (
     store.childAsk(ask.id, repo) ??
     store.openAsk({
