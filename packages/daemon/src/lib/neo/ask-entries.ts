@@ -114,6 +114,7 @@ export const NeoAskEntrySchema = z.object({
   ask: z.object({
     id: z.string(),
     projectId: Nullable,
+    repo: Nullable,
     sessionId: z.string(),
     originMessageId: Nullable,
     title: z.string(),

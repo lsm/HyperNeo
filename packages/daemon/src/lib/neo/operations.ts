@@ -1041,7 +1041,8 @@ export function createNeoOperations(service: NeoService) {
         const binding = service.repo.getBindingBySession(sessionId);
         return binding?.kind === 'neo';
       },
-      () => service.repo.listProjects()
+      () => service.repo.listProjects(),
+      () => service.installedPacks()
     ),
     ...createNeoQuestionOperations(
       service.todos,

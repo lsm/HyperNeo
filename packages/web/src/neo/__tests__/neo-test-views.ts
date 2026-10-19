@@ -10,6 +10,7 @@ export function testTodo(id: string, patch: Partial<NeoTodoEntry> = {}): NeoTodo
     check: null,
     instruction: 'Do it',
     named: null,
+    repo: null,
     state: 'todo',
     reason: null,
     blockedReason: null,
@@ -39,6 +40,7 @@ export function testAskEntry(
     ask: {
       id,
       projectId: null,
+      repo: null,
       sessionId: 'neo',
       originMessageId: null,
       title,

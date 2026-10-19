@@ -12,6 +12,7 @@ import type { NeoTodoCheckResult, NeoTodoPack } from '../types.ts';
 import type { CodingPrState } from './pr-ledger.ts';
 import { neoStatusLine, type NeoStatusLine } from '../../status-codes.ts';
 import { createCodingPackTables } from './schema/coding-tables.ts';
+import { neoGitRepo } from '../../todo-repo.ts';
 import { extractNeoWorkPrUrls, type NeoWorkPrReader } from './work-prs.ts';
 
 export type CodingPrClaim = 'named' | 'reported' | 'branch';
@@ -300,6 +301,17 @@ export function codingTodoStatusLine(
     : null;
 }
 
+export function codingTodoRepository(todo: Pick<NeoTodo, 'check' | 'named'>): string | null {
+  const urls = todo.check?.pack === 'coding' ? todo.check.params.urls : null;
+  const pr = (Array.isArray(urls) ? urls : [])
+    .map((url) => (typeof url === 'string' ? parsePrUrl(url) : null))
+    .find(Boolean);
+  if (pr) return neoGitRepo(`${pr.host}/${pr.owner}/${pr.repo}`);
+  const named = todo.named?.repository;
+  if (typeof named !== 'string') return null;
+  return neoGitRepo(/^[\w.-]+\/[\w.-]+$/.test(named.trim()) ? `github.com/${named.trim()}` : named);
+}
+
 export function createCodingTodoPack(
   repo: CodingTodoPrRepository,
   readPrs: NeoWorkPrReader,
@@ -314,6 +326,7 @@ export function createCodingTodoPack(
   };
   return {
     schema: createCodingPackTables,
+    repository: codingTodoRepository,
     openedPrs: (todo, urls) =>
       repo.claim(
         todo.id,

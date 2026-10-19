@@ -42,12 +42,12 @@ const TODO_COLUMNS: Record<keyof NeoTodoPatch, string> = {
   blockedBy: 'blocked_by',
 };
 
-const ASK_SELECT = `SELECT id, project_id AS projectId, session_id AS sessionId,
+const ASK_SELECT = `SELECT id, project_id AS projectId, repo, session_id AS sessionId,
   origin_message_id AS originMessageId, title, request, status, outcome,
   created_at AS createdAt, updated_at AS updatedAt, settled_at AS settledAt FROM neo_asks`;
 
 const TODO_SELECT = `SELECT id, ask_id AS askId, position, title, done_when AS doneWhen,
-  check_json AS checkJson, instruction, named, state, reason, blocked_reason AS blockedReason,
+  check_json AS checkJson, instruction, named, repo, state, reason, blocked_reason AS blockedReason,
   next_action AS nextAction, blocked_by AS blockedBy, replaced_by AS replacedBy,
   added_after_start AS addedAfterStart, report, evidence, created_at AS createdAt,
   updated_at AS updatedAt, started_at AS startedAt, finished_at AS finishedAt FROM neo_todos`;
@@ -98,7 +98,7 @@ export class NeoAskTodoRepository {
     private readonly changed: () => void = () => {}
   ) {}
 
-  openAsk(ask: Omit<NeoAsk, 'status' | 'outcome' | 'updatedAt' | 'settledAt'>): NeoAsk {
+  openAsk(ask: Omit<NeoAsk, 'repo' | 'status' | 'outcome' | 'updatedAt' | 'settledAt'>): NeoAsk {
     this.db
       .prepare(
         `INSERT INTO neo_asks (id, project_id, session_id, origin_message_id, title, request, created_at, updated_at)
@@ -175,12 +175,18 @@ export class NeoAskTodoRepository {
     ).map(toTodo);
   }
 
-  addTodo(id: string, askId: string, draft: NeoTodoDraft, now: number): NeoTodo {
+  addTodo(
+    id: string,
+    askId: string,
+    draft: NeoTodoDraft,
+    now: number,
+    repo: string | null = null
+  ): NeoTodo {
     this.db
       .prepare(
         `INSERT INTO neo_todos (id, ask_id, position, title, done_when, check_json, instruction, named,
-           added_after_start, created_at, updated_at)
-         VALUES (?, ?, (SELECT COALESCE(MAX(position) + 1, 0) FROM neo_todos WHERE ask_id = ?), ?, ?, ?, ?, ?,
+           repo, added_after_start, created_at, updated_at)
+         VALUES (?, ?, (SELECT COALESCE(MAX(position) + 1, 0) FROM neo_todos WHERE ask_id = ?), ?, ?, ?, ?, ?, ?,
            EXISTS (SELECT 1 FROM neo_todos WHERE ask_id = ? AND started_at IS NOT NULL), ?, ?)`
       )
       .run(
@@ -192,10 +198,15 @@ export class NeoAskTodoRepository {
         draft.check ? JSON.stringify(draft.check) : null,
         draft.instruction,
         draft.named ? JSON.stringify(draft.named) : null,
+        repo,
         askId,
         now,
         now
       );
+    if (repo)
+      this.db
+        .prepare('UPDATE neo_asks SET repo = ? WHERE id = ? AND repo IS NULL')
+        .run(repo, askId);
     this.touchAsk(askId, now);
     return this.getTodo(id)!;
   }
