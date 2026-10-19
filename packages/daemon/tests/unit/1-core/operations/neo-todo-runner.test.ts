@@ -647,4 +647,12 @@ describe('blocked todos', () => {
     await runner.proceed(todo.id, 'Try another approach.');
     expect(store.getTodo(todo.id)).toMatchObject({ state: 'doing', blockedBy: null });
   });
+
+  test('settling the ask removes a blocked todo with the rest', () => {
+    const { store, add } = setup();
+    const todo = add();
+    store.updateTodo(todo, { state: 'blocked', blockedBy: 'worker', blockedReason: 'Stopped' }, 2);
+    store.settleAsk(store.getAsk('ask')!, 'dropped', 'Not needed', 3);
+    expect(store.getTodo(todo.id)).toMatchObject({ state: 'removed' });
+  });
 });

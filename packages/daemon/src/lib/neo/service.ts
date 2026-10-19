@@ -2187,7 +2187,7 @@ export class NeoService {
     return todo &&
       ask &&
       ask.status !== 'dropped' &&
-      ((ask.status === 'open' && (todo.state === 'todo' || todo.state === 'doing')) ||
+      ((ask.status === 'open' && ['todo', 'doing', 'blocked'].includes(todo.state)) ||
         (todo.state === 'done' && this.todoPrs.prs(workId).some((pr) => pr.state === 'MERGED')))
       ? neoTodoCard(todo, ask)
       : null;
