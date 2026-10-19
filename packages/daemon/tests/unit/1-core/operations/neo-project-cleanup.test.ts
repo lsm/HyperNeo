@@ -162,6 +162,22 @@ describe('NeoRepository.projectCleanupFacts', () => {
     ).toEqual([{ action: 'delete', projectId: 'child', title: 'Child' }]);
   });
 
+  test('a project that holds asks is never empty, even when they are all settled', () => {
+    repo.saveProject({ id: 'asked', title: 'Asked', summary: '', context: '' }, 0);
+    db.getDatabase()
+      .prepare(
+        `INSERT INTO neo_asks (id, project_id, session_id, title, request, status, created_at, updated_at)
+         VALUES ('ask-1', 'asked', 'neo:root', 'Fix it', 'Fix it', 'done', 1, 1)`
+      )
+      .run();
+    const facts = repo.projectCleanupFacts();
+    expect(facts.find((item) => item.id === 'asked')).toMatchObject({ asks: 1, liveAsks: 0 });
+    expect(
+      planNeoProjectCleanup(facts, { pinned: new Set(), machine: 'here', mirrored: new Set() })
+    ).toEqual([]);
+    expect(() => repo.deleteEmptyProject('asked')).toThrow('the project is no longer empty');
+  });
+
   test('deleteEmptyProject removes an empty project with its aliases, and refuses one with content', () => {
     repo.saveProject({ id: 'empty', title: 'Empty', summary: '', context: '' }, 0);
     repo.saveProject({ id: 'full', title: 'Full', summary: '', context: 'notes' }, 0);
