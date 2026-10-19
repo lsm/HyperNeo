@@ -316,6 +316,17 @@ describe('codingTodoCheck', () => {
 });
 
 describe('codingTodoCheck replacement grace', () => {
+  test('matches replacements by creation time, not claim order', () => {
+    expect(
+      codingTodoCheck('pr_merged', [
+        pr(50, 'CLOSED', { createdAt: 10 }),
+        pr(60, 'CLOSED', { createdAt: 20 }),
+        pr(70, 'MERGED', { createdAt: 30 }),
+        pr(55, 'MERGED', { createdAt: 15 }),
+      ])
+    ).toEqual({ done: true, evidence: '#70 #55 merged' });
+  });
+
   test('a PR closed unmerged fails the todo only after 15 minutes without a replacement', () => {
     const closedAt = 1_000_000;
     const prs = [pr(1, 'MERGED', { createdAt: 10 }), pr(2, 'CLOSED', { createdAt: 20, closedAt })];

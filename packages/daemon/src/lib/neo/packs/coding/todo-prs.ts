@@ -219,8 +219,8 @@ export function codingTodoCheck(
   now = Date.now()
 ): NeoTodoCheckResult | null {
   if (kind !== 'pr_merged') return null;
-  const spare = prs.filter((pr) => pr.state !== 'CLOSED');
-  const live = [...spare];
+  const live = prs.filter((pr) => pr.state !== 'CLOSED');
+  const spare = [...live].sort((a, b) => createdAt(a) - createdAt(b));
   const unreplaced = prs
     .filter((pr) => pr.state === 'CLOSED')
     .sort((a, b) => createdAt(a) - createdAt(b))
