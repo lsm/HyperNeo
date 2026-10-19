@@ -104,6 +104,7 @@ import mdneoWorkDoneCheckPrsLive from './neo/packs/coding/done-check-prs-live.md
   type: 'text',
 };
 import mdneoPacksCodingInstructions from './neo/packs/coding/instructions.md' with { type: 'text' };
+import mdneoPacksCodingWorkerRules from './neo/packs/coding/worker-rules.md' with { type: 'text' };
 import mdneoWorkDoneCheckPrsMergeable from './neo/packs/coding/done-check-prs-mergeable.md' with {
   type: 'text',
 };
@@ -391,6 +392,7 @@ const registry: Record<string, string> = {
   'neo/work/goal-asked.md': mdneoWorkGoalAsked,
   'neo/work/goal-done-when.md': mdneoWorkGoalDoneWhen,
   'neo/packs/coding/instructions.md': mdneoPacksCodingInstructions,
+  'neo/packs/coding/worker-rules.md': mdneoPacksCodingWorkerRules,
   'neo/packs/coding/goal-merge.md': mdneoWorkGoalMerge,
   'neo/packs/coding/goal-pr-events.md': mdneoPacksCodingGoalPrEvents,
   'neo/packs/coding/goal-pr-subscribe.md': mdneoPacksCodingGoalPrSubscribe,
@@ -539,6 +541,7 @@ export const {
   NEO_CONSULTATION_SETTLED_STOPPED,
   NEO_CONSULTATION_SETTLED,
   NEO_PACK_CODING_INSTRUCTIONS,
+  NEO_PACK_CODING_WORKER_RULES,
   NEO_PACK_LIFE_ADMIN_INSTRUCTIONS,
   NEO_ASK_FORWARDED,
   NEO_WAITING_REMINDER,

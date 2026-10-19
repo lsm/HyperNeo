@@ -1,4 +1,4 @@
-import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
+import { NEO_PACK_CODING_INSTRUCTIONS, NEO_PACK_CODING_WORKER_RULES } from '@hyperneo/prompts';
 import { type CodingTodoPrRepository, createCodingTodoPack } from './todo-prs.ts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
@@ -293,6 +293,7 @@ export function createCodingPack(
         cardBase: deps.cardBase,
       }),
     instructions: () => NEO_PACK_CODING_INSTRUCTIONS,
+    workerRules: NEO_PACK_CODING_WORKER_RULES,
     checks: {
       [CODING_CHECK_PR_MERGED]: codingPrMergedCheck,
       [CODING_CHECK_PR_OPENED]: codingPrOpenedCheck,

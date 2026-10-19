@@ -17,6 +17,7 @@ const GhPrSchema = z.object({
   url: z.string(),
   createdAt: z.string().optional(),
   mergedAt: z.string().nullish(),
+  closedAt: z.string().nullish(),
   title: z.string().optional(),
   body: z.string().optional(),
   closingIssuesReferences: z.array(z.object({ number: z.number() })).optional(),
@@ -90,6 +91,7 @@ export function summarizeNeoWorkPr(raw: unknown): NeoWorkPr | null {
   const review = verdict === 'APPROVED' ? 'approved' : verdict ? 'changes_requested' : 'none';
   const created = Date.parse(createdAt ?? '');
   const merged = Date.parse(parsed.data.mergedAt ?? '');
+  const closed = Date.parse(parsed.data.closedAt ?? '');
   return {
     url,
     state,
@@ -97,6 +99,7 @@ export function summarizeNeoWorkPr(raw: unknown): NeoWorkPr | null {
     review,
     ...(Number.isFinite(created) ? { createdAt: created } : {}),
     ...(Number.isFinite(merged) ? { mergedAt: merged } : {}),
+    ...(Number.isFinite(closed) ? { closedAt: closed } : {}),
     ...(title ? { title } : {}),
     ...(headRefName ? { branch: headRefName } : {}),
     head: headRefOid,
@@ -364,7 +367,7 @@ const readGithubPr = (superpipe({})('neo-work-pr-read') as PipelineAPI)
           'view',
           url,
           '--json',
-          'url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,title,headRefName,body,closingIssuesReferences',
+          'url,state,headRefOid,reviews,statusCheckRollup,mergeStateStatus,baseRefName,createdAt,mergedAt,closedAt,title,headRefName,body,closingIssuesReferences',
         ],
         spawnImpl,
         'graphql'

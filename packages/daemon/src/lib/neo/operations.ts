@@ -1599,7 +1599,9 @@ export function createNeoOperations(service: NeoService) {
     createNeoConversationImageReadOperation(service.repo, service.asks),
     createNeoDraftRecoveryOperation(service),
     createNeoPreferenceOperation(service),
-    ...createNeoTodoOperations(service.todos, service.todoSessions, todoControls),
+    ...createNeoTodoOperations(service.todos, service.todoSessions, todoControls, () =>
+      service.installedPacks()
+    ),
     ...createNeoAskRecordOperations(
       service.todos,
       service.todoSessions,
