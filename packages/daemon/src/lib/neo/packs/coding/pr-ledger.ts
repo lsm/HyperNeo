@@ -33,6 +33,11 @@ const Node = z.object({
   isDraft: z.boolean(),
   mergeable: z.string(),
   reviewDecision: z.string().nullable(),
+  reviews: z.object({
+    nodes: z.array(
+      z.object({ state: z.string(), commit: z.object({ oid: z.string() }).nullable() })
+    ),
+  }),
   closedAt: z.string().nullable(),
   commits: z.object({
     nodes: z.array(
@@ -48,6 +53,7 @@ const Response = z.object({
   data: z.object({
     rateLimit: z.object({ remaining: z.number() }),
     repository: z.object({
+      nameWithOwner: z.string(),
       open: z.object({ pageInfo: z.object({ hasNextPage: z.boolean() }), nodes: z.array(Node) }),
       done: z.object({ nodes: z.array(Node) }),
     }),
@@ -56,11 +62,13 @@ const Response = z.object({
 });
 
 const FIELDS = `number title headRefName headRefOid state isDraft mergeable reviewDecision closedAt
+  reviews(last: 30, states: [APPROVED, CHANGES_REQUESTED]) { nodes { state commit { oid } } }
   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }`;
 
 export const CODING_LEDGER_QUERY = `query($o: String!, $n: String!) {
   rateLimit { remaining }
   repository(owner: $o, name: $n) {
+    nameWithOwner
     open: pullRequests(states: OPEN, first: 100) { pageInfo { hasNextPage } nodes { ${FIELDS} } }
     done: pullRequests(states: [MERGED, CLOSED], first: 50, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { ${FIELDS} } }
   }
@@ -73,8 +81,11 @@ export function codingPrState(pr: Node): CodingPrState {
   if (pr.mergeable === 'CONFLICTING') return 'dirty';
   const ci = pr.commits.nodes[0]?.commit.statusCheckRollup?.state ?? null;
   if (ci === 'FAILURE' || ci === 'ERROR') return 'failing';
-  if (pr.reviewDecision === 'CHANGES_REQUESTED') return 'changes_requested';
-  if (pr.reviewDecision === 'APPROVED')
+  const review =
+    pr.reviews.nodes.filter((item) => item.commit?.oid === pr.headRefOid).at(-1)?.state ??
+    pr.reviewDecision;
+  if (review === 'CHANGES_REQUESTED') return 'changes_requested';
+  if (review === 'APPROVED')
     return ci === null || ci === 'SUCCESS' ? 'approved_green' : 'approved_pending';
   return 'waiting_review';
 }
@@ -90,17 +101,17 @@ export type CodingLedgerRow = {
 };
 
 export function planCodingLedgerRead(
-  repo: string,
   raw: unknown,
   now: number
-): { rows: CodingLedgerRow[]; remaining: number } | null {
+): { repo: string; rows: CodingLedgerRow[]; remaining: number } | null {
   const parsed = Response.safeParse(raw);
   if (!parsed.success || parsed.data.errors?.length) return null;
-  const { open, done } = parsed.data.data.repository;
+  const { open, done, nameWithOwner } = parsed.data.data.repository;
   if (open.pageInfo.hasNextPage) return null;
+  const canonical = nameWithOwner.toLowerCase();
   const rows = [...open.nodes, ...done.nodes]
     .map((pr) => ({
-      repo,
+      repo: canonical,
       number: pr.number,
       title: pr.title,
       branch: pr.headRefName,
@@ -109,7 +120,7 @@ export function planCodingLedgerRead(
       closedAt: pr.closedAt ? Date.parse(pr.closedAt) : null,
     }))
     .filter((row) => row.closedAt === null || now - row.closedAt < CODING_LEDGER_KEEP_MS);
-  return { rows, remaining: parsed.data.data.rateLimit.remaining };
+  return { repo: canonical, rows, remaining: parsed.data.data.rateLimit.remaining };
 }
 
 export class CodingPrLedgerRepository {
@@ -201,14 +212,16 @@ export async function reconcileCodingPrLedger(
   now: number,
   skips: Map<string, number> = new Map()
 ): Promise<void> {
+  const seen = new Set<string>();
   for (const repo of repos) {
-    const planned = planCodingLedgerRead(repo, await read(repo), now);
+    const planned = planCodingLedgerRead(await read(repo), now);
     const skipped = planned ? 0 : (skips.get(repo) ?? 0) + 1;
     skips.set(repo, skipped);
     if (skipped === CODING_LEDGER_WARN_SKIPS)
       log.warn(`PR ledger read for ${repo} failed or was partial ${skipped} times in a row`);
-    if (planned) ledger.replace(repo, planned.rows, now);
+    if (planned && !seen.has(planned.repo)) ledger.replace(planned.repo, planned.rows, now);
+    if (planned) seen.add(planned.repo);
     if (planned && planned.remaining < CODING_LEDGER_MIN_RATE) break;
   }
-  ledger.prune(repos, now);
+  ledger.prune([...repos, ...seen], now);
 }

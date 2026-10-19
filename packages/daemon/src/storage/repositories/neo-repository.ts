@@ -239,6 +239,21 @@ export class NeoRepository {
     return row as NeoProject | null;
   }
 
+  allRepositories(): string[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT DISTINCT lower(CASE WHEN alias LIKE 'repository:github.com/%'
+              THEN substr(alias, length('repository:github.com/') + 1)
+              ELSE substr(alias, 6, instr(alias || char(0), char(0)) - 6) END) AS repo
+             FROM neo_project_workspaces
+            WHERE alias LIKE 'repository:github.com/%' OR alias LIKE 'repo:%'
+            ORDER BY repo`
+        )
+        .all() as { repo: string }[]
+    ).map((row) => row.repo);
+  }
+
   repositories(): Map<string, string> {
     const canonical = new Map<string, string>();
     const legacy = new Map<string, Set<string>>();
