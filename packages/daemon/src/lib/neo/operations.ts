@@ -34,12 +34,7 @@ import type { OperationCaller } from '../operations/registry.ts';
 import { defineOperation } from '../operations/registry.ts';
 import { hashString32 } from '../runtime-hash.ts';
 import type { NeoService } from './service.ts';
-import type {
-  NeoProject,
-  NeoConsultation,
-  NeoConsultationWaiter,
-  NeoWork,
-} from '@hyperneo/shared/types/neo-context';
+import type { NeoProject, NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
   type NeoAsk,
   type NeoReceiptAskOrigin,
@@ -151,29 +146,6 @@ const Work = z.object({
   updatedAt: z.number(),
 } satisfies ZodShape<NeoWork>);
 const Failure = z.object({ ok: z.literal(false), reason: z.string() });
-const Consultation = z.object({
-  id: z.string(),
-  requestKey: z.string(),
-  projectId: z.string(),
-  originSessionId: z.string(),
-  originMessageId: z.string().nullable(),
-  sessionId: z.string(),
-  question: z.string(),
-  status: z.enum(['pending', 'reported', 'failed']),
-  answer: z.string().nullable(),
-  createdAt: z.number(),
-} satisfies ZodShape<NeoConsultation>);
-const ConsultationWaiter = z.object({
-  id: z.string(),
-  requestKey: z.string(),
-  projectId: z.string(),
-  originSessionId: z.string(),
-  originMessageId: z.string(),
-  sessionId: z.string(),
-  question: z.string(),
-  status: z.enum(['queued', 'admitted', 'cancelled']),
-  createdAt: z.number(),
-} satisfies ZodShape<NeoConsultationWaiter>);
 const NEO_ASK_TOLD_LIMIT = 20;
 const NEO_ASK_TOLD_TEXT = 300;
 const SnapshotOk = z.object({
@@ -207,8 +179,6 @@ const SnapshotOk = z.object({
     })
   ),
   standingRules: z.array(z.string()).optional(),
-  consultations: z.array(Consultation.extend({ summarized: z.literal(true).optional() })),
-  consultationWaiters: z.array(ConsultationWaiter).optional(),
   workResources: z
     .array(
       z.object({
@@ -288,7 +258,7 @@ const SnapshotOk = z.object({
   askOrigins: z
     .array(
       z.object({
-        kind: z.enum(['work', 'consultation']),
+        kind: z.literal('work'),
         id: z.string(),
         origin: z.object({ sessionId: z.string(), messageId: z.string() }).nullable(),
       } satisfies ZodShape<NeoReceiptAskOrigin>)
@@ -831,8 +801,6 @@ export function createNeoOperations(service: NeoService) {
           context: detailed ? item.context : '',
         };
       }),
-      consultations: [],
-      consultationWaiters: [],
       ...(caller.source === 'rpc' && !focus ? { sessionNotices: service.sessionNotices } : {}),
       sessionNoticeGroups: focus ? [] : latestNeoSessionNoticeGroups(service.sessionNoticeGroups),
       mutedSessions: service.db.getGlobalSettings?.().neo?.mutedSessions ?? [],
@@ -883,7 +851,7 @@ export function createNeoOperations(service: NeoService) {
         workId: item.id,
         refs: service.db?.neoWorkResources?.get(item.id) ?? null,
       })),
-      askOrigins: projectNeoSnapshotAskOrigins(visibleWork, [], service.resolveAskOrigin),
+      askOrigins: projectNeoSnapshotAskOrigins(visibleWork, service.resolveAskOrigin),
       work: visibleWork.map((item) =>
         caller.source === 'rpc'
           ? item

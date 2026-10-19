@@ -1,6 +1,4 @@
-import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
 import { describe, expect, it } from 'vitest';
-import { neoActivityItems } from '../NeoActivity.tsx';
 import { findNeoProject, resolveNeoProjectId } from '../project-redirects.ts';
 
 const redirects = [
@@ -25,15 +23,5 @@ describe('findNeoProject', () => {
   it('finds the kept project from a merged-away id', () => {
     expect(findNeoProject([kept], redirects, 'a')).toBe(kept);
     expect(findNeoProject([kept], undefined, 'a')).toBeUndefined();
-  });
-});
-
-describe('neoActivityItems', () => {
-  it('names a context holder by its kept project', () => {
-    const snapshot = {
-      projectRedirects: redirects,
-      consultations: [{ id: 'c1', projectId: 'a', status: 'pending' }],
-    } as unknown as NeoSnapshot;
-    expect(neoActivityItems(snapshot, [kept])[0]?.text).toBe('Checking context · Kept');
   });
 });

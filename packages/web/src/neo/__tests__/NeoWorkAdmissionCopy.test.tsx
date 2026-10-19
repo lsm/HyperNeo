@@ -44,7 +44,6 @@ describe('Neo empty-conversation admission guidance', () => {
         },
       ],
       work: [],
-      consultations: [],
     };
     const act = vi.fn();
     useNeoMock.mockReturnValue({

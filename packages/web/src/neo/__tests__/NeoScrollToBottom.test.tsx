@@ -41,7 +41,6 @@ const project = (id: string) => ({
 const snapshot: NeoSnapshot = {
   ok: true,
   cards: [],
-  consultations: [],
   askViews: [],
   sessionId: 'root',
   projects: [project('a'), project('b')],

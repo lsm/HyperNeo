@@ -108,7 +108,6 @@ function mount() {
     sessionId: root,
     projects: [],
     work: [],
-    consultations: [],
   };
   const model = signal({
     sessionId: root,

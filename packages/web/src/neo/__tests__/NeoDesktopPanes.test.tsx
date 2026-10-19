@@ -77,7 +77,6 @@ function mount(publicMode = true, status = 'ready') {
       testAskEntry('failure', 'Fictional failure', { state: 'dropped' }),
       testAskEntry('result', 'Fictional result', { state: 'done' }),
     ],
-    consultations: [],
   };
   const publicView = {
     conversationId: root.slice(4),

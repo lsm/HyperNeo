@@ -50,7 +50,6 @@ const snapshot: NeoSnapshot = {
   ok: true,
   cards: [],
   askViews: [],
-  consultations: [],
   sessionId: 'root',
   projects: [project('a'), project('b')],
   work: [],
