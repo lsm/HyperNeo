@@ -101,7 +101,7 @@ export function mergeAsrWindow(previous: string, next: string): string {
   const key = (word: string) => word.toLowerCase().replace(/[^\p{L}\p{N}']/gu, '');
   const oldKeys = old.map(key);
   const freshKeys = fresh.map(key);
-  for (let skip = 0; skip <= 2 && skip < fresh.length; skip++) {
+  for (let skip = 0; skip < fresh.length; skip++) {
     if (!freshKeys[skip]) continue;
     let best: { at: number; run: number } | null = null;
     for (let at = 0; at < oldKeys.length; at++) {

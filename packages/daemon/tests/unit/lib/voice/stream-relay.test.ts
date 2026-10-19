@@ -89,6 +89,10 @@ describe('voice stream settings', () => {
     ).toBe('alpha bravo ok deploy it charlie delta ok deploy it echo');
   });
 
+  test('mergeAsrWindow lines up past a word the window revised inside the overlap', () => {
+    expect(mergeAsrWindow('a b c d e f g h', 'c d x f g h i')).toBe('a b c d e f g h i');
+  });
+
   test('mergeAsrWindow lowercases only a title-case window head, never an acronym', () => {
     expect(mergeAsrWindow('we call the api now', 'The api now works')).toBe(
       'we call the api now works'
