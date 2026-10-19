@@ -87,7 +87,11 @@ export interface VoiceSettings {
   apiKeyEndpoint?: string;
   allowInsecureTls?: boolean;
   allowPrivateNetwork?: boolean;
+  mode?: VoiceMode;
+  tlsCaPem?: string;
 }
+
+export type VoiceMode = 'batch' | 'streaming' | 'auto';
 
 export const DEFAULT_NEO_ROUTE_TIMEOUT_MS = 15_000;
 
@@ -189,6 +193,7 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
     model: '',
     allowInsecureTls: false,
     allowPrivateNetwork: false,
+    mode: 'auto',
   },
   exa: {
     enabled: false,

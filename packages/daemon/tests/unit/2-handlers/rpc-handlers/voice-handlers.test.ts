@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { vi } from 'vitest';
 import type { CallContext, GlobalSettings, MessageHub } from '@hyperneo/shared';
 import {
+  admitVoiceStreamStart,
+  expireIdleVoiceStreams,
   registerVoiceHandlers,
   resetVoiceTranscriptionLimitsForTests,
 } from '../../../../src/lib/rpc-handlers/voice-handlers';
@@ -1100,5 +1102,206 @@ describe('voice RPC handlers', () => {
     await expect(
       handlers.get('voice.transcribe')?.({ audioBase64: wavBase64(), mimeType: 'audio/wav' })
     ).rejects.toThrow(new Error('Voice transcription response exceeds the 256 KB limit'));
+  });
+});
+
+describe('admitVoiceStreamStart', () => {
+  it('allows 10 starts a minute per client and 8 open streams in total', () => {
+    const now = 100_000;
+    const nine = Array.from({ length: 9 }, (_, index) => now - index * 1_000);
+    expect(admitVoiceStreamStart(nine, 0, now)).toEqual({ value: [...nine, now] });
+    expect(admitVoiceStreamStart([...nine, now - 59_000], 0, now)).toEqual({
+      reason: 'Voice stream rate limit exceeded; please wait before trying again',
+    });
+    expect(admitVoiceStreamStart([now - 61_000], 0, now)).toEqual({ value: [now] });
+    expect(admitVoiceStreamStart([], 8, now)).toEqual({
+      reason: 'Too many voice streams are already open',
+    });
+  });
+});
+
+describe('voice stream RPC handlers', () => {
+  const voice = {
+    enabled: true,
+    endpoint: 'https://example.com/v1/audio/transcriptions',
+    model: 'whisper-1',
+    mode: 'batch' as const,
+  };
+
+  it('voice.stream.start takes only pcm16 at 16 kHz', async () => {
+    const { hub, handlers } = createMockMessageHub();
+    registerVoiceHandlers(hub, createSettings({ voice }));
+    await expect(
+      handlers.get('voice.stream.start')?.({ encoding: 'opus', sampleRate: 48_000 })
+    ).rejects.toThrow('Voice streams take pcm16 audio at 16000 Hz');
+  });
+
+  it('the pinned CA also reaches the batch fetch for the configured host', async () => {
+    let tls: { ca?: string; rejectUnauthorized?: boolean } | undefined;
+    globalThis.fetch = mock(async (_url: string | URL | Request, init?: RequestInit) => {
+      tls = (init as RequestInit & { tls?: typeof tls }).tls;
+      return new Response(JSON.stringify({ text: 'pinned' }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const { hub, handlers } = createMockMessageHub();
+    registerVoiceHandlers(
+      hub,
+      createSettings({
+        voice: {
+          enabled: true,
+          endpoint: 'https://ai0.example.com/v1/audio/transcriptions',
+          model: 'asr',
+          tlsCaPem: ' PEM ',
+        },
+      })
+    );
+    expect(
+      await handlers.get('voice.transcribe')?.({ audioBase64: wavBase64(), mimeType: 'audio/wav' })
+    ).toEqual({ text: 'pinned' });
+    expect(tls).toMatchObject({ ca: 'PEM', rejectUnauthorized: true });
+  });
+
+  it('closes a stream whose client disconnected while it was starting', async () => {
+    const { hub, handlers } = createMockMessageHub();
+    (hub as unknown as { getRouter: () => unknown }).getRouter = () => ({
+      getClientById: () => undefined,
+    });
+    registerVoiceHandlers(hub, createSettings({ voice }));
+    await expect(
+      handlers.get('voice.stream.start')?.({ encoding: 'pcm16', sampleRate: 16_000 })
+    ).rejects.toThrow('The client disconnected while the voice stream was starting');
+  });
+
+  it('a refused start leaves the existing stream of the caller in place', async () => {
+    const { hub, handlers } = createMockMessageHub();
+    registerVoiceHandlers(hub, createSettings({ voice }));
+    const start = () =>
+      handlers.get('voice.stream.start')?.({ encoding: 'pcm16', sampleRate: 16_000 }) as Promise<{
+        streamId: string;
+      }>;
+    let last = { streamId: '' };
+    for (let index = 0; index < 10; index++) last = await start();
+    await expect(start()).rejects.toThrow('Voice stream rate limit exceeded');
+    await expect(
+      handlers.get('voice.stream.chunk')?.({ streamId: last.streamId, audioBase64: 'AAA=' })
+    ).resolves.toEqual({ ok: true });
+  });
+
+  it("a start that fails after admission leaves the caller's existing stream in place", async () => {
+    const settings = { voice: { ...voice } as GlobalSettings['voice'] };
+    const { hub, handlers } = createMockMessageHub();
+    registerVoiceHandlers(hub, createSettings(settings));
+    const start = () =>
+      handlers.get('voice.stream.start')?.({ encoding: 'pcm16', sampleRate: 16_000 }) as Promise<{
+        streamId: string;
+      }>;
+    const { streamId } = await start();
+    settings.voice = {
+      enabled: true,
+      endpoint: 'http://127.0.0.1:1/v1/audio/transcriptions',
+      model: 'm',
+      mode: 'streaming',
+      allowPrivateNetwork: true,
+    };
+    await expect(start()).rejects.toThrow('Streaming transcription is unavailable');
+    await expect(
+      handlers.get('voice.stream.chunk')?.({ streamId, audioBase64: 'AAA=' })
+    ).resolves.toEqual({ ok: true });
+  });
+
+  it('two starts at once from one client leave only one stream', async () => {
+    const { hub, handlers } = createMockMessageHub();
+    registerVoiceHandlers(hub, createSettings({ voice }));
+    const start = () =>
+      handlers.get('voice.stream.start')?.({ encoding: 'pcm16', sampleRate: 16_000 }) as Promise<{
+        streamId: string;
+      }>;
+    const started = await Promise.all([start(), start()]);
+    const alive = await Promise.all(
+      started.map(({ streamId }) =>
+        (
+          handlers.get('voice.stream.chunk')?.({
+            streamId,
+            audioBase64: 'AAA=',
+          }) as Promise<unknown>
+        ).then(
+          () => true,
+          () => false
+        )
+      )
+    );
+    expect(alive.filter(Boolean)).toHaveLength(1);
+  });
+
+  it('refuses an oversized chunk before decoding it', async () => {
+    const { hub, handlers } = createMockMessageHub();
+    registerVoiceHandlers(hub, createSettings({ voice }));
+    const { streamId } = (await handlers.get('voice.stream.start')?.({
+      encoding: 'pcm16',
+      sampleRate: 16_000,
+    })) as { streamId: string };
+    const from = vi.spyOn(Buffer, 'from');
+    await expect(
+      handlers.get('voice.stream.chunk')?.({ streamId, audioBase64: 'A'.repeat(14_000_000) })
+    ).rejects.toThrow('Audio data exceeds the 10 MB voice input limit');
+    expect(from).not.toHaveBeenCalled();
+    from.mockRestore();
+  });
+
+  it('an abandoned stream expires after three idle minutes', async () => {
+    const { hub, handlers } = createMockMessageHub();
+    registerVoiceHandlers(hub, createSettings({ voice }));
+    const { streamId } = (await handlers.get('voice.stream.start')?.({
+      encoding: 'pcm16',
+      sampleRate: 16_000,
+    })) as { streamId: string };
+    expireIdleVoiceStreams(Date.now() + 60_000);
+    await expect(
+      handlers.get('voice.stream.chunk')?.({ streamId, audioBase64: 'AAA=' })
+    ).resolves.toEqual({ ok: true });
+    expireIdleVoiceStreams(Date.now() + 3 * 60_000 + 1);
+    await expect(
+      handlers.get('voice.stream.chunk')?.({ streamId, audioBase64: 'AAA=' })
+    ).rejects.toThrow('Unknown voice stream');
+  });
+
+  it('a stop with no audio frees the stream instead of keeping it for a retry', async () => {
+    const { hub, handlers } = createMockMessageHub();
+    registerVoiceHandlers(hub, createSettings({ voice }));
+    const { streamId } = (await handlers.get('voice.stream.start')?.({
+      encoding: 'pcm16',
+      sampleRate: 16_000,
+    })) as { streamId: string };
+    await expect(handlers.get('voice.stream.stop')?.({ streamId })).rejects.toThrow(
+      'Audio data is empty'
+    );
+    await expect(handlers.get('voice.stream.stop')?.({ streamId })).rejects.toThrow(
+      'Unknown voice stream'
+    );
+  });
+
+  it('voice.stream.chunk and stop refuse a stream the caller does not own', async () => {
+    const { hub, handlers } = createMockMessageHub();
+    registerVoiceHandlers(hub, createSettings({ voice }));
+    const started = (await handlers.get('voice.stream.start')?.({
+      encoding: 'pcm16',
+      sampleRate: 16_000,
+    })) as { streamId: string; via: string };
+    expect(started.via).toBe('batch');
+    const other = {
+      clientId: 'other-client',
+      sessionId: 'session-2',
+      messageId: 'm',
+      method: 'voice.stream.chunk',
+      timestamp: new Date().toISOString(),
+    };
+    await expect(
+      handlers.get('voice.stream.chunk')?.(
+        { streamId: started.streamId, audioBase64: 'AAA=' },
+        other
+      )
+    ).rejects.toThrow('Unknown voice stream');
+    await expect(handlers.get('voice.stream.stop')?.({ streamId: 'missing' })).rejects.toThrow(
+      'Unknown voice stream'
+    );
   });
 });
