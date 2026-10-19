@@ -46,7 +46,7 @@ import {
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
 import { reservedMcpRenameSource } from '../mcp/built-in-servers.ts';
-import { neoCoordinatorBinding, readNeoProjectSnapshot } from '../neo/session-policy.ts';
+import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import { createNeoAskOriginResolver, isNeoFoldableNote } from '../neo/ask-origin.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-origin-repository.ts';
@@ -361,12 +361,6 @@ export class AgentSession
   private readonly recordOperationRefusal = (
     refusal: Parameters<OperationRefusalRepository['record']>[0]
   ) => new OperationRefusalRepository(this.db.getDatabase()).record(refusal, this.session.id);
-
-  async getNeoFreshContext(): Promise<string> {
-    const binding = neoCoordinatorBinding(this.db, this.session.id);
-    if (binding?.kind !== 'project') return '';
-    return readNeoProjectSnapshot(this.resolveOperationRegistry(), this.session.id);
-  }
 
   createNeoTurnMcpServer(
     getTurn: () => import('../operations/registry.ts').OperationCaller['neoTurn']
