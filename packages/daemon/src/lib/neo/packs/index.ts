@@ -10,7 +10,6 @@ import { LIFE_ADMIN_PACK_BRIEF } from './life-admin/pack.ts';
 import type {
   NeoPack,
   NeoPackBrief,
-  NeoPackCardAttention,
   NeoPackCardFacts,
   NeoPackCheck,
   NeoPackFragment,
@@ -142,23 +141,6 @@ export function neoPackCardFacts(
         data: Object.assign({}, ...facts.map((fact) => fact.data)),
       }
     : null;
-}
-
-export function neoPackCardAttention(
-  packs: readonly NeoPack[],
-  workId: string
-): NeoPackCardAttention {
-  const reads = packs.flatMap((pack) => pack.cardAttention?.(workId) ?? []);
-  const told = reads.flatMap((read) => read.attention ?? []);
-  return {
-    attention: told.length
-      ? {
-          signature: told.map((item) => item.signature).join('\n'),
-          facts: told.map((item) => item.facts).join('\n'),
-        }
-      : null,
-    pending: reads.some((read) => read.pending),
-  };
 }
 
 export function neoPacks(input: {
