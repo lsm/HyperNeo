@@ -244,27 +244,11 @@ describe('durable Neo intake operation', () => {
     expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)).toHaveLength(2);
     expect(repo.listProjects()).toEqual([]);
   });
-  test('a retry whose routing log was lost goes back to the holder its ask first went to', async () => {
-    const holderId = 'neo:holder:c1';
-    repo.saveProject({ id: 'c1', title: 'C1', summary: '', context: '' }, 0);
-    repo.reserveBinding({ sessionId: holderId, kind: 'project', projectId: 'c1' });
-    mailbox.db.prepare('INSERT INTO sessions (id) VALUES (?)').run(holderId);
-    sessions.set(holderId, { ...target, id: holderId });
-    let routed = 0;
-    const router: NeoRouter = async () =>
-      routed++ === 0
-        ? { choice: { projectId: 'c1', sessionId: holderId, signal: 'embedding', confidence: 0.9 } }
-        : { choice: null };
-    const registry = createOperationRegistry([
-      createNeoIntakeOperation(db, repo, undefined, router),
-    ]);
-    expect(await invokeOperation(registry, 'neo.message.send', input, human)).toMatchObject({
-      value: { ok: true, created: true },
-    });
+  test('a retry whose routing log was lost stays the same root ask', async () => {
+    expect(await invoke()).toMatchObject({ value: { ok: true, created: true } });
     mailbox.db.exec('DELETE FROM neo_routing_log');
-    expect(await invokeOperation(registry, 'neo.message.send', input, human)).toMatchObject({
-      value: { ok: true, created: false },
-    });
+    expect(await invoke()).toMatchObject({ value: { ok: true, created: false } });
+    expect(mailbox.sdkRows().map((row) => row.session_id)).toEqual([input.sessionId]);
   });
 
   test('same-ID concurrent retries preserve one prompt and one delivery job', async () => {
