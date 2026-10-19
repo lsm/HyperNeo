@@ -362,6 +362,12 @@ export interface SessionProgress {
   pendingTaskIds?: Record<string, string>;
 }
 
+export interface PendingModelSwitch {
+  model: string;
+  provider: string;
+  requestedAt: number;
+}
+
 export interface SessionMetadata {
   messageCount: number;
   progress?: SessionProgress;
@@ -387,6 +393,7 @@ export interface SessionMetadata {
   acpCommandIdentity?: string;
   acpSessionCommand?: string;
   pastSdkSessionIds?: string[];
+  pendingModelSwitch?: PendingModelSwitch | null;
   acpContextUsageEstimate?: number;
   worktreeChoice?: {
     status: 'pending' | 'completed';

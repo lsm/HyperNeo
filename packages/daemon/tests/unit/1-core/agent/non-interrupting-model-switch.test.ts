@@ -210,6 +210,7 @@ describe('non-interrupting model switch admission', () => {
       success: false,
       model: 'old-model',
       error: 'write failed',
+      reported: true,
     });
     expect(ctx.session.config.model).toBe('old-model');
     expect(ctx.db.updateSession).toHaveBeenCalledTimes(2);

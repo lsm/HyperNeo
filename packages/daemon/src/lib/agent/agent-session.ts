@@ -22,6 +22,7 @@ import type {
   SessionContext,
   SessionFeatures,
   SessionMetadata,
+  PendingModelSwitch,
   SessionType,
   SkillEnablementOverride,
   SystemPromptConfig,
@@ -238,7 +239,9 @@ import { MessageQueue } from './message-queue.ts';
 import { runMidTurnBudgetPipeline } from './mid-turn-budget-pipeline.ts';
 import {
   ModelSwitchHandler,
+  modelSwitchTiming,
   type ModelSwitchHandlerContext,
+  type ModelSwitchResult,
   type RuntimeSettingsCommit,
 } from './model-switch-handler.ts';
 import { ProcessingStateManager } from './processing-state-manager.ts';
@@ -731,7 +734,11 @@ export class AgentSession
     this.eventSubscriptionSetup = new EventSubscriptionSetup(this);
 
     this.stateManager.setOnIdleCallback(async (owner) => {
-      const restarted = await this.lifecycleManager.executeDeferredRestartIfPending();
+      const restartedForSettings = await this.lifecycleManager.executeDeferredRestartIfPending();
+      const switched =
+        !this.modelSwitchBusy &&
+        (await this.queueModelSwitch(() => this.applyPendingModelSwitch()));
+      const restarted = restartedForSettings || switched;
       this.flushPendingTaskNotificationRequery();
       const reconcileOwner = restarted ? this.stateManager.getCurrentIdleOwner() : owner;
       void this.reconcileStrandedDeliveries(reconcileOwner).catch((error) => {
@@ -744,6 +751,10 @@ export class AgentSession
       void this.reevaluateContextBudgetAfterModelSwitch();
     }
     this.stateManager.restoreFromDatabase();
+    if (session.metadata?.pendingModelSwitch)
+      void this.setPendingModelSwitch(undefined).catch((error) => {
+        this.logger.warn('Clearing a stale pending model switch failed:', error);
+      });
     this.armPersistedRateLimitCooldown();
 
     this.eventSubscriptionSetup.setup();
@@ -1566,12 +1577,95 @@ export class AgentSession
     newProvider: string,
     nonInterrupting = false,
     commit?: RuntimeSettingsCommit
-  ): Promise<{ success: boolean; model: string; error?: string }> {
+  ): Promise<ModelSwitchResult> {
     if (commit)
       return this.modelSwitchHandler.switchModel(newModel, newProvider, nonInterrupting, commit);
     return nonInterrupting
       ? this.modelSwitchHandler.switchModel(newModel, newProvider, true)
       : this.modelSwitchHandler.switchModel(newModel, newProvider);
+  }
+
+  private modelSwitchBusy = false;
+  private modelSwitchChain: Promise<unknown> = Promise.resolve();
+
+  private queueModelSwitch<T>(run: () => Promise<T>): Promise<T> {
+    const next = this.modelSwitchChain.then(async () => {
+      this.modelSwitchBusy = true;
+      try {
+        return await run();
+      } finally {
+        this.modelSwitchBusy = false;
+      }
+    });
+    this.modelSwitchChain = next.catch(() => undefined);
+    return next;
+  }
+
+  requestModelSwitch(
+    model: string,
+    provider: string
+  ): Promise<{ success: boolean; model: string; error?: string; pending?: PendingModelSwitch }> {
+    return this.queueModelSwitch(() => this.runModelSwitchRequest(model, provider));
+  }
+
+  private async runModelSwitchRequest(
+    model: string,
+    provider: string
+  ): Promise<{ success: boolean; model: string; error?: string; pending?: PendingModelSwitch }> {
+    const invalid = await this.modelSwitchHandler.invalidModel(model, provider);
+    if (invalid) {
+      await this.applyPendingModelSwitch();
+      return { success: false, model: this.session.config.model, error: invalid };
+    }
+    if (modelSwitchTiming(this.stateManager.getState().status) === 'now') {
+      await this.setPendingModelSwitch(undefined);
+      return this.handleModelSwitch(model, provider);
+    }
+    const pending = { model, provider, requestedAt: Date.now() };
+    await this.setPendingModelSwitch(pending);
+    const applied =
+      modelSwitchTiming(this.stateManager.getState().status) === 'now' &&
+      (await this.applyPendingModelSwitch());
+    if (this.session.metadata?.pendingModelSwitch) return { success: true, model, pending };
+    return applied
+      ? { success: true, model }
+      : { success: false, model: this.session.config.model, error: 'The model switch failed' };
+  }
+
+  private async applyPendingModelSwitch(): Promise<boolean> {
+    const pending = this.session.metadata?.pendingModelSwitch;
+    if (!pending || modelSwitchTiming(this.stateManager.getState().status) !== 'now') return false;
+    await this.setPendingModelSwitch(undefined);
+    const result = await this.handleModelSwitch(pending.model, pending.provider);
+    if (!result.success && !result.reported) {
+      const message = `The switch to ${pending.model} requested during the last turn failed: ${result.error ?? 'unknown error'}`;
+      this.logger.warn(message);
+      await this.errorManager
+        .handleError(
+          this.session.id,
+          new Error(message),
+          ErrorCategory.MODEL,
+          message,
+          this.stateManager.getState(),
+          { requestedModel: pending.model, currentModel: this.session.config.model }
+        )
+        .catch(() => undefined);
+    }
+    return result.success;
+  }
+
+  private async setPendingModelSwitch(pending: PendingModelSwitch | undefined): Promise<void> {
+    if (!pending && !this.session.metadata?.pendingModelSwitch) return;
+    this.session.metadata = {
+      ...this.session.metadata,
+      pendingModelSwitch: pending ?? null,
+    } as SessionMetadata;
+    this.db.updateSession(this.session.id, { metadata: this.session.metadata });
+    await this.internalEventBus.publish('session.updated', {
+      sessionId: this.session.id,
+      source: 'model-switch',
+      session: { metadata: this.session.metadata },
+    });
   }
 
   getCurrentModel(): CurrentModelInfo {

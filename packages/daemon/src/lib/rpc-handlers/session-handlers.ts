@@ -653,7 +653,7 @@ export function setupSessionHandlers(
       throw new Error('Session not found');
     }
 
-    const result = await agentSession.handleModelSwitch(model, provider);
+    const result = await agentSession.requestModelSwitch(model, provider);
 
     return result;
   });

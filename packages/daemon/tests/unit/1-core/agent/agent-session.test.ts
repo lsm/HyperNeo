@@ -2222,6 +2222,190 @@ describe('AgentSession', () => {
       expect(result).toEqual(mockResult);
     });
 
+    describe('requestModelSwitch', () => {
+      let switchModel: ReturnType<typeof mock>;
+      beforeEach(() => {
+        switchModel = mock(async (model: string) => ({ success: true, model }));
+        // biome-ignore lint: test mock access
+        (agentSession as unknown as Record<string, unknown>).modelSwitchHandler = {
+          switchModel,
+          invalidModel: async (model: string) =>
+            model === 'typo' ? 'Invalid model: typo. Use a valid model ID or alias.' : null,
+        };
+      });
+
+      it('switches at once while the session is idle', async () => {
+        await agentSession.stateManager.setIdle();
+        expect(await agentSession.requestModelSwitch('opus', 'anthropic')).toEqual({
+          success: true,
+          model: 'opus',
+        });
+        expect(switchModel).toHaveBeenCalledWith('opus', 'anthropic');
+        expect(mockSession.metadata.pendingModelSwitch).toBeFalsy();
+      });
+
+      it('holds a switch during a turn and applies it when the turn ends', async () => {
+        await agentSession.stateManager.setProcessing('turn-1');
+        const result = await agentSession.requestModelSwitch('opus', 'anthropic');
+        expect(result).toMatchObject({
+          success: true,
+          model: 'opus',
+          pending: { model: 'opus', provider: 'anthropic' },
+        });
+        expect(switchModel).not.toHaveBeenCalled();
+        expect(mockSession.metadata.pendingModelSwitch).toMatchObject({ model: 'opus' });
+        await agentSession.stateManager.setIdle();
+        expect(switchModel).toHaveBeenCalledTimes(1);
+        expect(switchModel).toHaveBeenCalledWith('opus', 'anthropic');
+        expect(mockSession.metadata.pendingModelSwitch).toBeFalsy();
+      });
+
+      it('applies a switch at once right after Stop ends the turn', async () => {
+        await agentSession.stateManager.setProcessing('turn-1');
+        // biome-ignore lint: test mock access
+        (agentSession as unknown as Record<string, unknown>).interruptHandler = {
+          handleInterrupt: async () => {
+            await agentSession.stateManager.setInterrupted();
+            await agentSession.stateManager.setIdle();
+          },
+        };
+        await agentSession.handleInterrupt();
+        expect(await agentSession.requestModelSwitch('opus', 'anthropic')).toEqual({
+          success: true,
+          model: 'opus',
+        });
+        expect(switchModel).toHaveBeenCalledTimes(1);
+      });
+
+      it('refuses an invalid model during a turn instead of storing it', async () => {
+        await agentSession.stateManager.setProcessing('turn-1');
+        expect(await agentSession.requestModelSwitch('typo', 'anthropic')).toEqual({
+          success: false,
+          model: 'claude-sonnet-4-20250514',
+          error: 'Invalid model: typo. Use a valid model ID or alias.',
+        });
+        expect(mockSession.metadata.pendingModelSwitch).toBeFalsy();
+      });
+
+      it('applies a stored pending switch when an idle request names an invalid model', async () => {
+        await agentSession.stateManager.setProcessing('turn-1');
+        await agentSession.requestModelSwitch('opus', 'anthropic');
+        // biome-ignore lint: test mock access
+        const manager = agentSession.stateManager as unknown as Record<string, unknown>;
+        manager.getState = () => ({ status: 'idle' });
+        expect(await agentSession.requestModelSwitch('typo', 'anthropic')).toEqual({
+          success: false,
+          model: 'claude-sonnet-4-20250514',
+          error: 'Invalid model: typo. Use a valid model ID or alias.',
+        });
+        expect(switchModel).toHaveBeenCalledTimes(1);
+        expect(switchModel).toHaveBeenCalledWith('opus', 'anthropic');
+        expect(mockSession.metadata.pendingModelSwitch).toBeFalsy();
+      });
+
+      it('keeps the pending switch when a new turn has already started at the idle callback', async () => {
+        await agentSession.stateManager.setProcessing('turn-1');
+        await agentSession.requestModelSwitch('opus', 'anthropic');
+        // biome-ignore lint: test mock access
+        const manager = agentSession.stateManager as unknown as Record<string, unknown>;
+        const realGetState = agentSession.stateManager.getState.bind(agentSession.stateManager);
+        manager.getState = () => ({
+          status: 'processing',
+          messageId: 'turn-2',
+          phase: 'initializing',
+        });
+        await agentSession.stateManager.setIdle();
+        expect(switchModel).not.toHaveBeenCalled();
+        expect(mockSession.metadata.pendingModelSwitch).toMatchObject({ model: 'opus' });
+        manager.getState = realGetState;
+        await agentSession.stateManager.setIdle();
+        expect(switchModel).toHaveBeenCalledWith('opus', 'anthropic');
+      });
+
+      it('applies the pending switch even when a deferred settings restart runs first', async () => {
+        await agentSession.stateManager.setProcessing('turn-1');
+        await agentSession.requestModelSwitch('opus', 'anthropic');
+        // biome-ignore lint: test mock access
+        const lifecycle = (agentSession as unknown as Record<string, Record<string, unknown>>)
+          .lifecycleManager;
+        lifecycle.executeDeferredRestartIfPending = async () => true;
+        await agentSession.stateManager.setIdle();
+        expect(switchModel).toHaveBeenCalledWith('opus', 'anthropic');
+        expect(mockSession.metadata.pendingModelSwitch).toBeFalsy();
+      });
+
+      it('clearing writes null so the stored row drops the pending switch', async () => {
+        await agentSession.stateManager.setProcessing('turn-1');
+        await agentSession.requestModelSwitch('opus', 'anthropic');
+        await agentSession.stateManager.setIdle();
+        expect(mockDb.updateSession).toHaveBeenLastCalledWith(
+          'test-session-id',
+          expect.objectContaining({
+            metadata: expect.objectContaining({ pendingModelSwitch: null }),
+          })
+        );
+      });
+
+      it('applies at once when the turn ends while the model is being validated', async () => {
+        await agentSession.stateManager.setProcessing('turn-1');
+        // biome-ignore lint: test mock access
+        const handler = (agentSession as unknown as Record<string, Record<string, unknown>>)
+          .modelSwitchHandler;
+        handler.invalidModel = async () => {
+          await agentSession.stateManager.setIdle();
+          return null;
+        };
+        expect(await agentSession.requestModelSwitch('opus', 'anthropic')).toEqual({
+          success: true,
+          model: 'opus',
+        });
+        expect(switchModel).toHaveBeenCalledWith('opus', 'anthropic');
+        expect(mockSession.metadata.pendingModelSwitch).toBeFalsy();
+      });
+
+      it('reports a deferred switch that fails when the turn ends', async () => {
+        const handleError = mock(async () => {});
+        // biome-ignore lint: test mock access
+        (agentSession as unknown as Record<string, unknown>).errorManager = { handleError };
+        switchModel.mockImplementation(async () => ({
+          success: false,
+          model: 'claude-sonnet-4-20250514',
+          error: 'provider gone',
+        }));
+        await agentSession.stateManager.setProcessing('turn-1');
+        await agentSession.requestModelSwitch('opus', 'anthropic');
+        await agentSession.stateManager.setIdle();
+        expect(handleError).toHaveBeenCalledTimes(1);
+        expect(mockSession.metadata.pendingModelSwitch).toBeFalsy();
+      });
+
+      it('does not report a deferred switch failure the handler already reported', async () => {
+        const handleError = mock(async () => {});
+        // biome-ignore lint: test mock access
+        (agentSession as unknown as Record<string, unknown>).errorManager = { handleError };
+        switchModel.mockImplementation(async () => ({
+          success: false,
+          model: 'claude-sonnet-4-20250514',
+          error: 'provider gone',
+          reported: true,
+        }));
+        await agentSession.stateManager.setProcessing('turn-1');
+        await agentSession.requestModelSwitch('opus', 'anthropic');
+        await agentSession.stateManager.setIdle();
+        expect(switchModel).toHaveBeenCalledTimes(1);
+        expect(handleError).not.toHaveBeenCalled();
+      });
+
+      it('a later request replaces the pending one', async () => {
+        await agentSession.stateManager.setProcessing('turn-1');
+        await agentSession.requestModelSwitch('opus', 'anthropic');
+        await agentSession.requestModelSwitch('haiku', 'anthropic');
+        await agentSession.stateManager.setIdle();
+        expect(switchModel).toHaveBeenCalledTimes(1);
+        expect(switchModel).toHaveBeenCalledWith('haiku', 'anthropic');
+      });
+    });
+
     it('handleQuestionResponse should delegate to askUserQuestionHandler', async () => {
       const handleQuestionResponseSpy = mock(async () => {});
       // biome-ignore lint: test mock access
