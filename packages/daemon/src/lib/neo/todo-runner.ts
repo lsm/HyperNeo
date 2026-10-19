@@ -106,13 +106,26 @@ export function requireNeoTodoContinuable(read: {
   todo: NeoTodo | null;
   ask: NeoAsk | null;
   ref: WorkRef | null;
+  needsYouSince: number | null;
 }): Gate<{ todo: NeoTodo; ask: NeoAsk; ref: WorkRef }> {
   const { todo, ask, ref } = read;
   if (!todo || !ask) return fail('not_found: no such todo.');
   if (ask.status !== 'open') return fail(`ask_settled: this ask is ${ask.status}.`);
   if (todo.state === 'todo' || todo.state === 'removed' || !ref)
     return fail(`not_started: this todo is ${todo.state} and has no session to continue.`);
+  if (read.needsYouSince !== null)
+    return fail(
+      'needs_you: its session is waiting on the human; ask them to answer it there, then continue.'
+    );
   return { value: { todo, ask, ref } };
+}
+
+export function neoTodoNeedsYouNote(
+  todo: Pick<NeoTodo, 'title'>,
+  live: { waitingFor?: string; link?: string; remoteLink?: string }
+): string {
+  const link = live.remoteLink ?? live.link;
+  return `Todo "${todo.title}": its session is waiting on the human (${live.waitingFor ?? 'a prompt or question'}). Ask the human once to answer it there${link ? `: ${link}` : ''}. Do not send to it until it runs again.`;
 }
 
 export function requireNeoTodoRetryable(read: {
@@ -375,13 +388,24 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       return outcome;
     },
     recordStartedAt: (id, at) => sessions.recordStartedAt(id, at),
-    recordLive: (id, status, live) => sessions.recordLive(id, status, live.link, live.remoteLink),
+    recordLive: (id, status, live) => {
+      if (status !== 'needs_you' && sessions.readNeedsYouSince(id) !== null)
+        sessions.recordNeedsYouSince(id, null);
+      return sessions.recordLive(id, status, live.link, live.remoteLink);
+    },
     recordCheck: (id, read, now) => {
       sessions.recordCardCheck(id, { checkedAt: now, unchecked: !read });
       return false;
     },
     notifyChanged: () => deps.changed(),
-    noteUnsettled: async () => {},
+    noteUnsettled: async (card, _ref, outcome) => {
+      const live = readDriverLive(outcome);
+      const todo = store.getTodo(card.id);
+      if (live?.status !== 'needs_you' || todo?.state !== 'doing') return;
+      if (sessions.readNeedsYouSince(card.id) !== null) return;
+      sessions.recordNeedsYouSince(card.id, Date.now());
+      await deps.tell(ask, todo, neoTodoNeedsYouNote(todo, live));
+    },
     forgetActivity: () => {},
     transition: (card, settled) => {
       const todo = store.getTodo(card.id);
@@ -543,6 +567,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       todo,
       ask: todo ? store.getAsk(todo.askId) : null,
       ref: todo ? sessions.readRef(todo.id) : null,
+      needsYouSince: todo ? sessions.readNeedsYouSince(todo.id) : null,
       target: todo ? sessions.get(todo.id) : null,
       interrupted: todo ? sessions.readStartInterrupted(todo.id) : false,
     };

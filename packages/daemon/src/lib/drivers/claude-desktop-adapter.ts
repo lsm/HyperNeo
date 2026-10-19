@@ -96,6 +96,10 @@ const LiveSessionSchema = z.object({
     .string()
     .nullish()
     .transform((name) => name ?? undefined),
+  waitingFor: z
+    .string()
+    .nullish()
+    .transform((waitingFor) => waitingFor?.slice(0, 200) || undefined),
 });
 
 export type ClaudeDesktopRecord = z.infer<typeof RecordSchema>;
@@ -106,6 +110,7 @@ export interface ClaudeLiveSession {
   owner?: ClaudeSessionOwner;
   status: string;
   name?: string;
+  waitingFor?: string;
 }
 
 export interface ClaudeDesktopAdapterDeps {
@@ -548,9 +553,13 @@ export function describeClaudeSession(
   deps: ClaudeDesktopAdapterDeps
 ): Result<WorkDetail> {
   const live = new Map(liveSessions.map((session) => [session.sessionId, session.status]));
+  const waitingFor = liveSessions.find(
+    (session) => session.sessionId === record.cliSessionId && session.status === 'waiting'
+  )?.waitingFor;
   const work = {
     ...toClaudeWork(record, live, deps.machine),
     ...workExecutionLocation(record.cwd, deps.machine),
+    ...(waitingFor ? { waitingFor } : {}),
   };
   if (!transcript) return { ok: true, value: { ...work, ...claudeLinkedPrs(record) } };
   return {
