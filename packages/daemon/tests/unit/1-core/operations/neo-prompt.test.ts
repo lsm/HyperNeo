@@ -189,9 +189,7 @@ describe('Neo world briefing delivery', () => {
       expect(options.settingSources).toEqual([]);
       expect(options.model).toBe('fixture-model');
       expect(options.maxTurns).toBeUndefined();
-      expect(prompt).toContain(
-        projectId ? 'neo.project.respond {id,answer}' : 'Its receipt contains the current status'
-      );
+      expect(prompt).toContain('neo.project.respond {id,answer}');
     }
   );
 
