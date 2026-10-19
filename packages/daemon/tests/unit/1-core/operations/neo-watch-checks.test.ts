@@ -6,7 +6,6 @@ import type { NeoRefState } from '../../../../src/lib/neo/packs/coding/ask-prs.t
 import { keepNeoCardPrReads } from '../../../../src/lib/neo/packs/coding/card-pr-claims.ts';
 import { readNeoGithubRef } from '../../../../src/lib/neo/packs/coding/github-read.ts';
 import type { NeoPack } from '../../../../src/lib/neo/packs/types.ts';
-import { codingPrMergedCheck } from '../../../../src/lib/neo/packs/coding/pack.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import {
   InternalEventBus,
@@ -65,16 +64,6 @@ const issueState = (n: number, extra: Partial<NeoRefState> = {}): NeoRefState =>
   createdAt: 2_000,
   parent: null,
   ...extra,
-});
-
-describe('codingPrMergedCheck', () => {
-  test('a bound outcome is never met from the ask-wide card PRs, only from its watch', () => {
-    const done = [{ key: pull(1), state: 'done' as const, summary: 'merged', blockers: [] }];
-    expect(codingPrMergedCheck(item('i1', [], { deliveredBy: 'card-a' }), done)).toEqual({
-      reason: 'watch_required',
-    });
-    expect(codingPrMergedCheck(item('i1', []), done)).toEqual({ reason: 'watch_required' });
-  });
 });
 
 describe('readNeoGithubRef', () => {

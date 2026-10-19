@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { type NeoWorkPr, neoWorkPrVerdict } from '@hyperneo/shared/types/neo-snapshot';
 import { neoEvidenceSignature } from '../../../../src/lib/neo/evidence';
-import { NeoWorkCheckRepository } from '../../../../src/storage/repositories/neo-work-check-repository';
 import { runMigration314 } from '../../../../src/storage/schema/m314-neo-work-prs';
 import { runMigration317 } from '../../../../src/storage/schema/m317-neo-work-pr-reminders';
 import { runMigration320 } from '../../../../src/storage/schema/m320-neo-work-checks';
@@ -34,6 +33,21 @@ const pr: NeoWorkPr = {
   review: 'approved',
 };
 
+const workChecks = (db: Database) => ({
+  get: (workId: string) =>
+    db
+      .prepare(
+        'SELECT work_id AS workId, signature, told_at AS toldAt, reminded FROM neo_work_checks WHERE work_id = ?'
+      )
+      .get(workId) as { signature: string } | null,
+  markTold: (workId: string, signature: string, at: number, reminded = false) =>
+    db
+      .prepare(
+        'INSERT INTO neo_work_checks(work_id, signature, told_at, reminded) VALUES (?, ?, ?, ?)'
+      )
+      .run(workId, signature, at, reminded ? signature : null),
+});
+
 describe('runMigration323', () => {
   test('moves what Neo was told to evidence signatures, and leaves stale rows unseen', () => {
     const db = new Database(':memory:');
@@ -51,7 +65,7 @@ describe('runMigration323', () => {
       `INSERT INTO neo_work_prs(work_id, prs_json, open, revision, read_at, read_ok_at)
          VALUES (?, ?, 1, 2, 0, 0)`
     ).run('w2', JSON.stringify([{ ...pr, checks: 'failing' }]));
-    const checks = new NeoWorkCheckRepository(db);
+    const checks = workChecks(db);
     checks.markTold('w1', legacy, 10, true);
     checks.markTold('w2', legacy, 20);
     checks.markTold('w3', 'no pull requests', 30);
@@ -100,7 +114,7 @@ describe('runMigration323 against the evidence signature it shipped with', () =>
         `INSERT INTO neo_work_prs(work_id, prs_json, open, revision, read_at, read_ok_at)
            VALUES ('w1', ?, 1, 1, 0, 0)`
       ).run(JSON.stringify(prs));
-      const checks = new NeoWorkCheckRepository(db);
+      const checks = workChecks(db);
       checks.markTold('w1', legacySignature(prs as NeoWorkPr[]), 1);
       runMigration323(db);
       expect(checks.get('w1')?.signature).toBe(

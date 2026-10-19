@@ -7,14 +7,13 @@ import type { GlobalSettings, MessageHub, Provider } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { MailboxMessageContent } from '../mailbox/entry.ts';
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
-import { type NeoWorkPr, type NeoWorkingEvent } from '@hyperneo/shared/types/neo-snapshot';
+import { type NeoWorkingEvent } from '@hyperneo/shared/types/neo-snapshot';
 import { type NeoModelPreference, neoStandingRules } from '@hyperneo/shared/types/settings';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inventory-repository.ts';
 import { NeoAgentWorkTargetRepository } from '../../storage/repositories/neo-agent-work-target-repository.ts';
 import { NeoAskCheckRepository } from '../../storage/repositories/neo-ask-check-repository.ts';
-import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.ts';
 import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { createNeoTodoRunner, neoTodoCard, type NeoTodoRunner } from './todo-runner.ts';
@@ -24,15 +23,11 @@ import { CodingPrSweepRepository } from './packs/coding/pr-sweep.ts';
 import { CodingTodoPrRepository } from './packs/coding/todo-prs.ts';
 import { NeoCardEventSubscriptionRepository } from '../../storage/repositories/neo-card-event-subscription-repository.ts';
 import { SessionEventSubscriptionRepository } from '../../storage/repositories/session-event-subscription-repository.ts';
-import { pullRequestUrlOfTopic } from '../github/parse-pr-url.ts';
 import { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
-import { NeoDependencyRepository } from '../../storage/repositories/neo-dependency-repository.ts';
 import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-origin-repository.ts';
 import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
-import { NeoWorkCheckRepository } from '../../storage/repositories/neo-work-check-repository.ts';
-import { NeoWorkDriverTargetRepository } from '../../storage/repositories/neo-work-driver-target-repository.ts';
 import { BUILD_METADATA } from '../build-metadata.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
@@ -47,7 +42,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import { Logger } from '../logger.ts';
 import { renderAddress } from '../mailbox/address.ts';
 import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
-import { invokeOperation, type OperationOutcome } from '../operations/invoke.ts';
+import { invokeOperation } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import { remoteDaemons } from '../remote-daemons/registry.ts';
 import type { SessionManager } from '../session/session-manager.ts';
@@ -61,12 +56,7 @@ import {
 } from './card-events.ts';
 import { readNeoDaemonCommits } from './daemon-commits.ts';
 import { neoNoteDeliveryMode, neoSessionStatus } from './session-status.ts';
-import {
-  driverWorkCaller,
-  neoCardSent,
-  readDriverCardExchange,
-  readDriverOpenedPrs,
-} from './driver-work.ts';
+import { driverWorkCaller } from './driver-work.ts';
 import { neoFolderPath } from './folder.ts';
 import { effectiveNeoPreference, planNeoAlignment } from './model-preference.ts';
 import {
@@ -74,32 +64,16 @@ import {
   neoDeliveryTrigger,
   neoHumanTrigger,
 } from './notification-triggers.ts';
+import { type NeoRefStateReader, readGithubRefStates } from './packs/coding/ask-prs.ts';
 import {
-  type NeoRefStateReader,
-  readCodingCardRefs,
-  readGithubRefStates,
-} from './packs/coding/ask-prs.ts';
-import {
-  currentCodingExecutionDirectory,
-  localCodingExecutionDirectory,
   localCodingSessionId,
   type NeoBranchPrReader,
-  type NeoWorkRepoReader,
   neoWorkBranch,
-  neoWorkRepoCwd,
   readGithubBranchPrs,
-  readGithubWorkRepo,
 } from './packs/coding/branch-prs.ts';
-import {
-  type NeoCardPrCandidate,
-  planNeoCardPrCandidates,
-  neoCardPrWindow,
-} from './packs/coding/card-pr-claims.ts';
 import { type NeoDeployReader, readGithubDeploys } from './packs/coding/deploy-checks.ts';
 import { listNeoGithub, type NeoGithubLister } from './packs/coding/github-query.ts';
-import { NeoWorkPrClaimRepository } from './packs/coding/neo-work-pr-claim-repository.ts';
-import { NeoWorkPrRepository, type NeoWorkPrRow } from './packs/coding/neo-work-pr-repository.ts';
-import { createCodingPack, type NeoCardPrDeps } from './packs/coding/pack.ts';
+import { createCodingPack } from './packs/coding/pack.ts';
 import { type NeoWorkPrReader, readGithubPrs } from './packs/coding/work-prs.ts';
 import { neoEnabledPacks, neoPackBriefs, neoPacks } from './packs/index.ts';
 import { createLifeAdminPack } from './packs/life-admin/pack.ts';
@@ -134,22 +108,15 @@ export class NeoService {
   readonly asks: NeoConversationAskRepository;
   readonly publish: ReturnType<typeof createNeoPublisher>;
   readonly agentTargets: NeoAgentWorkTargetRepository;
-  readonly driverTargets: NeoWorkDriverTargetRepository;
-  readonly askRecords: NeoAskRepository;
   readonly todos: NeoAskTodoRepository;
   readonly todoSessions: NeoTodoSessionRepository;
   readonly todoRunner: NeoTodoRunner;
   readonly todoPrs: CodingTodoPrRepository;
-  readonly dependencies: NeoDependencyRepository;
-  readonly workPrs: NeoWorkPrRepository;
   readonly cardEvents: NeoCardEventSubscriptionRepository;
   private readonly sessionSubscriptions: SessionEventSubscriptionRepository;
   private readonly sessionEvents: SessionExternalEventStore;
   watchExternalTopic: ((topic: string) => Promise<void>) | null = null;
-  readonly workPrClaims: NeoWorkPrClaimRepository;
-  readonly workChecks: NeoWorkCheckRepository;
   readonly askChecks: NeoAskCheckRepository;
-  private readonly askEvidenceReads = new Map<string, number>();
   get sessionNotices(): NeoSessionNotice[] {
     return this.sessionWatcher.sessionNotices;
   }
@@ -172,8 +139,6 @@ export class NeoService {
   private readonly builtinPacks: NeoPack[];
   readPrs: NeoWorkPrReader = readGithubPrs;
   readBranchPrs: NeoBranchPrReader = readGithubBranchPrs;
-  readCheckoutPrs = (cwd: string): Promise<string[]> => readGithubBranchPrs({ cwd });
-  readWorkRepo: NeoWorkRepoReader = readGithubWorkRepo;
   readRefStates: NeoRefStateReader = readGithubRefStates;
   listGithub: NeoGithubLister = (args) => listNeoGithub(args);
   readDeploys: NeoDeployReader = (urls) =>
@@ -192,7 +157,6 @@ export class NeoService {
   private opening: Promise<string> | null = null;
   private readonly deliveries = new Map<string, Promise<void>>();
   private readonly processingStatus = new Map<string, string>();
-  private readonly cardOpenedPrs = new Map<string, string[]>();
   private readonly savedRules = new Map<string, NeoSavedRulesNote>();
   private readonly log = new Logger('Neo');
   private readonly unsubscribe: () => void;
@@ -231,7 +195,6 @@ export class NeoService {
     this.publications = new NeoPublicationRepository(db.getDatabase());
     this.asks = new NeoConversationAskRepository(db.getDatabase());
     this.agentTargets = new NeoAgentWorkTargetRepository(db.getDatabase());
-    this.driverTargets = new NeoWorkDriverTargetRepository(db.getDatabase());
     this.todos = new NeoAskTodoRepository(db.getDatabase(), this.notifyChanged);
     this.todoSessions = new NeoTodoSessionRepository(db.getDatabase());
     this.todoPrs = new CodingTodoPrRepository(db.getDatabase());
@@ -272,24 +235,13 @@ export class NeoService {
       },
       changed: this.notifyChanged,
     });
-    this.askRecords = new NeoAskRepository(db.getDatabase(), this.notifyChanged);
-    this.dependencies = new NeoDependencyRepository(
-      db.getDatabase(),
-      this.askRecords,
-      this.notifyChanged
-    );
-    this.workPrs = new NeoWorkPrRepository(db.getDatabase());
     this.cardEvents = new NeoCardEventSubscriptionRepository(db.getDatabase());
     this.sessionSubscriptions = new SessionEventSubscriptionRepository(db.getDatabase());
     this.sessionEvents = new SessionExternalEventStore(db.getDatabase());
-    this.workPrClaims = new NeoWorkPrClaimRepository(db.getDatabase());
-    this.workChecks = new NeoWorkCheckRepository(db.getDatabase());
     this.askChecks = new NeoAskCheckRepository(db.getDatabase());
     this.builtinPacks = [
       createCodingPack({
-        ...this.cardPrDeps,
-        readRefStates: (refs) => this.readRefStates(refs),
-        readDeploys: (urls) => this.readDeploys(urls),
+        readPrs: (urls) => this.readPrs(urls),
         todoPrs: this.todoPrs,
         prLedger: new CodingPrLedgerRepository(db.getDatabase()),
         prSweep: new CodingPrSweepRepository(db.getDatabase()),
@@ -416,12 +368,6 @@ export class NeoService {
       offCompacted();
       offExternal();
     };
-  }
-
-  private pruneReadThrottles(_now: number): void {
-    const live = new Set(this.askRecords.listLive().map((ask) => ask.id));
-    for (const askId of this.askEvidenceReads.keys())
-      if (!live.has(askId)) this.askEvidenceReads.delete(askId);
   }
 
   noteSavedRules(caller: OperationCaller, saved: readonly string[]): void {
@@ -633,7 +579,6 @@ export class NeoService {
     }
     await this.todoRunner.refresh((message, error) => this.log.warn(message, error));
     for (const workId of this.packEvidenceWorkIds()) this.followCardTopics(workId);
-    this.pruneReadThrottles(Date.now());
     if (this.watching || this.disposed) return;
     this.watching = this.sessionWatcher
       .watchSessions(Date.now())
@@ -720,30 +665,6 @@ export class NeoService {
 
   packBriefs(): NeoPackBrief[] {
     return neoPackBriefs(neoEnabledPacks(this.db.getGlobalSettings?.().neo), this.installedPacks());
-  }
-
-  private get cardPrDeps(): NeoCardPrDeps {
-    return {
-      readPrs: (urls) => this.readPrs(urls),
-      prCandidates: (work, stored) => this.cardPrCandidates(work, stored),
-      claims: this.workPrClaims,
-      workPrs: this.workPrs,
-      record: (workId, prs, before, read) => this.recordWorkPrs(workId, prs, before, read),
-    };
-  }
-
-  private recordWorkPrs(
-    workId: string,
-    prs: readonly NeoWorkPr[],
-    before: NeoWorkPrRow | null,
-    read = true
-  ): NeoWorkPrRow | null {
-    const row = read
-      ? this.workPrs.record(workId, prs, Date.now())
-      : this.workPrs.replacePrs(workId, prs);
-    if (row && row.revision !== before?.revision) this.notifyChanged();
-    if (row) this.followCardTopics(workId);
-    return row;
   }
 
   followCardTopics(workId: string): void {
@@ -894,60 +815,6 @@ export class NeoService {
     return sent.kind === 'completed' && (sent.value as { ok?: unknown } | null)?.ok === true;
   }
 
-  private async cardPrCandidates(
-    work: NeoWork,
-    stored: { prs: readonly NeoWorkPr[] } | null
-  ): Promise<NeoCardPrCandidate[]> {
-    const ref = this.driverTargets.readRef(work.id);
-    const sent = neoCardSent(this.driverTargets.readSent(work.id), work);
-    const outcome =
-      ref && sent
-        ? await this.invokeAsCard(work, 'work.status', { ref, since: sent.inputBefore })
-        : null;
-    const exchange = outcome ? readDriverCardExchange(outcome, sent) : null;
-    const cwd = currentCodingExecutionDirectory(
-      ref,
-      outcome,
-      hostname(),
-      exchange?.current === true
-    );
-    const worker = neoCardWorkerSession(planNeoCardSend({ work, ref }));
-    const window = neoCardPrWindow(work, this.repo.workStartedAt(work.id));
-    return planNeoCardPrCandidates({
-      window,
-      report: work.report,
-      follows: work.follows,
-      subscribed: worker
-        ? this.sessionSubscriptions
-            .listBySession(worker)
-            .filter((row) => row.createdAt >= window.start)
-            .flatMap((row) => pullRequestUrlOfTopic(row.topic) ?? [])
-        : [],
-      branch: cwd ? await this.readCheckoutPrs(cwd) : await this.branchPrUrls(work.id),
-      opened: this.cardOpenedPrs.get(work.id) ?? [],
-      stored: stored?.prs ?? [],
-      rejected: this.workPrClaims.rejectedUrls(work.id),
-      mentioned: await this.cardPrRefs(work, outcome),
-    });
-  }
-
-  private async cardPrRefs(work: NeoWork, outcome: OperationOutcome | null): Promise<string[]> {
-    const ref = this.driverTargets.readRef(work.id);
-    const localId = localCodingSessionId(ref);
-    const cwd =
-      neoWorkRepoCwd(localId ? this.db.getSession(localId) : null) ??
-      localCodingExecutionDirectory(ref, outcome, hostname());
-    return readCodingCardRefs(
-      work.report,
-      () => (cwd ? this.readWorkRepo(cwd) : Promise.resolve(null)),
-      (refs) => this.readRefStates(refs)
-    );
-  }
-
-  private async branchPrUrls(workId: string): Promise<string[]> {
-    return this.sessionBranchPrs(this.driverTargets.readRef(workId));
-  }
-
   private async sessionBranchPrs(ref: WorkRef | null): Promise<string[]> {
     const localId = localCodingSessionId(ref);
     const branch = neoWorkBranch(localId ? this.db.getSession(localId) : null);
@@ -972,10 +839,6 @@ export class NeoService {
       input,
       driverWorkCaller(work)
     );
-    if (name === 'work.status') {
-      const opened = readDriverOpenedPrs(outcome);
-      if (opened.length) this.cardOpenedPrs.set(work.id, opened);
-    }
     return outcome;
   }
 

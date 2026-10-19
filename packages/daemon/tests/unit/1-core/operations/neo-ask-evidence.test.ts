@@ -5,7 +5,6 @@ import {
   extractNeoAskRefs,
   extractNeoCardRefs,
   readGithubRefStates,
-  readNeoPrRefUrls,
   type NeoRef,
   type NeoRefState,
 } from '../../../../src/lib/neo/packs/coding/ask-prs.ts';
@@ -96,73 +95,6 @@ describe('extractNeoCardRefs', () => {
     expect(
       extractNeoCardRefs(text, known).map((ref) => `${ref.owner}/${ref.repo}#${ref.number}`)
     ).toEqual(refs);
-  });
-});
-
-describe('readNeoPrRefUrls', () => {
-  test('keeps pull requests, drops issues, and reads each ref once', async () => {
-    const asked: string[] = [];
-    const read = async (refs: readonly NeoRef[]): Promise<NeoRefState[]> => {
-      asked.push(...refs.map((ref) => String(ref.number)));
-      return refs.map((ref) => ({
-        url: `https://github.com/lsm/HyperNeo/${ref.number === 7001 ? 'issues' : 'pull'}/${ref.number}`,
-        kind: ref.number === 7001 ? ('issue' as const) : ('pr' as const),
-        state: 'OPEN' as const,
-        at: null,
-        done: false,
-        closedBy: null,
-      }));
-    };
-    const refs = [7001, 7002].map((number) => ({ owner: 'lsm', repo: 'hyperneo', number }));
-    expect(await readNeoPrRefUrls(refs, read)).toEqual([
-      'https://github.com/lsm/HyperNeo/pull/7002',
-    ]);
-    expect(await readNeoPrRefUrls(refs, read)).toEqual([
-      'https://github.com/lsm/HyperNeo/pull/7002',
-    ]);
-    expect(asked).toEqual(['7001', '7002']);
-  });
-
-  test('waits ten minutes before asking again about a ref GitHub gave no answer for', async () => {
-    let reads = 0;
-    const read = async (): Promise<NeoRefState[]> => {
-      reads++;
-      return [];
-    };
-    const refs = [{ owner: 'lsm', repo: 'HyperNeo', number: 7201 }];
-    let now = 1_000_000;
-    const clock = spyOn(Date, 'now').mockImplementation(() => now);
-    try {
-      expect(await readNeoPrRefUrls(refs, read)).toEqual([]);
-      expect(await readNeoPrRefUrls(refs, read)).toEqual([]);
-      expect(reads).toBe(1);
-      now += 10 * 60_000;
-      await readNeoPrRefUrls(refs, read);
-      expect(reads).toBe(2);
-    } finally {
-      clock.mockRestore();
-    }
-  });
-
-  test('keeps the answer under the cited ref when the repository was renamed', async () => {
-    let reads = 0;
-    const read = async (): Promise<NeoRefState[]> => {
-      reads++;
-      return [
-        {
-          url: 'https://github.com/lsm/neokai/pull/7101',
-          kind: 'pr',
-          state: 'MERGED',
-          at: 1,
-          done: true,
-          closedBy: null,
-        },
-      ];
-    };
-    const refs = [{ owner: 'lsm', repo: 'HyperNeo', number: 7101 }];
-    expect(await readNeoPrRefUrls(refs, read)).toEqual(['https://github.com/lsm/neokai/pull/7101']);
-    expect(await readNeoPrRefUrls(refs, read)).toEqual(['https://github.com/lsm/neokai/pull/7101']);
-    expect(reads).toBe(1);
   });
 });
 

@@ -33,7 +33,6 @@ import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import type { NeoSessionFacts } from './packs/types.ts';
 import { NeoReadWorkTarget } from './read-work.ts';
-import { awaitingNeoWorker } from './work-reroute.ts';
 
 const NeoStartWorkTarget = z.object({
   verb: z.literal('start'),
@@ -274,35 +273,6 @@ export function isNeoCardUnconfirmed(
   now: number
 ): boolean {
   return now - Math.max(work.createdAt, sent?.inputBefore ?? 0) >= NEO_CARD_CONFIRM_MS;
-}
-
-export type NeoWorkRetryCard = { target: boolean; ref: boolean; interrupted: boolean };
-
-export function requireNeoWorkRetryable<T>(
-  work: Pick<NeoWork, 'status'> & Partial<Pick<NeoWork, 'report'>>,
-  card: NeoWorkRetryCard,
-  admitted: T
-): { value: T } | { reason: { ok: false; reason: string } } {
-  if (card.interrupted)
-    return {
-      reason: {
-        ok: false,
-        reason:
-          'Starting was interrupted and it may have started anyway; check work.find before proposing it again.',
-      },
-    };
-  return (work.status === 'failed' ||
-    awaitingNeoWorker({ ...work, report: work.report ?? null })) &&
-    card.target &&
-    !card.ref
-    ? { value: admitted }
-    : {
-        reason: {
-          ok: false,
-          reason:
-            'Only a hand-off that failed before it started can be retried; use work.send for started work.',
-        },
-      };
 }
 
 export function isNeoReceiptUnconfirmed(

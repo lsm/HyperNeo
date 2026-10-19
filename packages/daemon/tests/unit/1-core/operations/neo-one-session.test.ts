@@ -22,6 +22,15 @@ const holder = 'neo:holder:web';
 
 describe('Neo as one session', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
+  const legacyAsk = (originSessionId: string) =>
+    db
+      .getDatabase()
+      .prepare(
+        `INSERT INTO legacy_neo_asks (id, request_key, concern_id, origin_session_id,
+          origin_message_id, title, ask, done_when, done_source, status, created_at, updated_at)
+          VALUES ('legacy', 'legacy', 'web', ?, 'm1', 'Legacy', 'Legacy', 'Done', 'human', 'open', 1, 1)`
+      )
+      .run(originSessionId);
   let service: NeoService;
   const told: { sessionId: string; messageId: string }[] = [];
   const createSession = vi.fn();
@@ -96,17 +105,7 @@ describe('Neo as one session', () => {
     });
     const ended = service.repo.proposeWork({ ...live, id: 'ended', requestKey: 'ended' });
     service.repo.transitionWork(ended.id, ended, { status: 'cancelled' });
-    service.askRecords.open({
-      id: 'legacy',
-      requestKey: 'legacy',
-      projectId: 'web',
-      originSessionId: holder,
-      originMessageId: 'm1',
-      title: 'Legacy',
-      ask: 'Legacy',
-      doneWhen: 'Done',
-      doneSource: 'human',
-    });
+    legacyAsk(holder);
 
     runMigration393(db.getDatabase());
     runMigration393(db.getDatabase());
@@ -169,17 +168,7 @@ describe('Neo as one session', () => {
         message: { role: 'user', content: 'note' },
       } as never);
     db.getDatabase().exec("UPDATE sdk_messages SET send_status = 'deferred'");
-    service.askRecords.open({
-      id: 'legacy',
-      requestKey: 'legacy',
-      projectId: 'web',
-      originSessionId: root,
-      originMessageId: 'm1',
-      title: 'Legacy',
-      ask: 'Legacy',
-      doneWhen: 'Done',
-      doneSource: 'human',
-    });
+    legacyAsk(root);
     const card = (id: string) =>
       service.repo.proposeWork({
         id,
@@ -214,7 +203,9 @@ describe('Neo as one session', () => {
       { sdk_uuid: 'held', send_status: 'failed' },
       { sdk_uuid: 'kept', send_status: 'deferred' },
     ]);
-    expect(service.askRecords.get('legacy')).toMatchObject({ status: 'abandoned' });
+    expect(
+      db.getDatabase().prepare("SELECT status FROM legacy_neo_asks WHERE id = 'legacy'").get()
+    ).toEqual({ status: 'abandoned' });
     expect(service.repo.getWork('reported')?.report).toBe(
       'Closed as done by the move to one Neo session.\n\nDone'
     );

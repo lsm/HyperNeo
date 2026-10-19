@@ -243,7 +243,6 @@
 1107	packages/daemon/tests/unit/1-core/operations/neo-card-pr-claims.test.ts
 2735	packages/daemon/tests/unit/1-core/operations/neo-card-pr-events.test.ts
 13	packages/daemon/tests/unit/1-core/operations/neo-card-wake.test.ts
-8	packages/daemon/tests/unit/1-core/operations/neo-check-registry.test.ts
 344	packages/daemon/tests/unit/1-core/operations/neo-coding-preparation.test.ts
 124	packages/daemon/tests/unit/1-core/operations/neo-conversation-ask-read.test.ts
 36	packages/daemon/tests/unit/1-core/operations/neo-conversation-images.test.ts
@@ -263,7 +262,6 @@
 78	packages/daemon/tests/unit/1-core/operations/neo-look-up-guard.test.ts
 863	packages/daemon/tests/unit/1-core/operations/neo-model-preference.test.ts
 603	packages/daemon/tests/unit/1-core/operations/neo-note-delivery-mode.test.ts
-6	packages/daemon/tests/unit/1-core/operations/neo-owned-lookup.test.ts
 22	packages/daemon/tests/unit/1-core/operations/neo-packs.test.ts
 65	packages/daemon/tests/unit/1-core/operations/neo-prompt.test.ts
 97	packages/daemon/tests/unit/1-core/operations/neo-public-intake-wire.test.ts

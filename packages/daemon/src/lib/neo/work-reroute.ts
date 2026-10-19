@@ -1,15 +1,7 @@
-import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { WorkRef, WorkSummary } from '../drivers/types.ts';
 
 export const NEO_WORK_AWAITING_WORKER = 'Waiting for an open worker in the same project.';
 export const NEO_WORK_RESERVED_WORKER = 'An open worker is reserved for this card.';
-
-export function awaitingNeoWorker(work: Pick<NeoWork, 'status' | 'report'>): boolean {
-  return (
-    work.status === 'proposed' &&
-    (work.report === NEO_WORK_AWAITING_WORKER || work.report === NEO_WORK_RESERVED_WORKER)
-  );
-}
 
 export function neoWorkerRefKey(ref: WorkRef): string {
   return JSON.stringify([ref.adapter, ref.daemon ?? null, ref.id]);

@@ -34,7 +34,6 @@ import { invokeOperation, isOperationAdmitted } from '../../../../src/lib/operat
 import { listOperationSummaries } from '../../../../src/lib/operations/discovery.ts';
 import { QueryAttemptRegistry } from '../../../../src/lib/agent/query-attempt-token.ts';
 import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter.ts';
-import { withNeoProposalAsk } from '../../helpers/neo-proposal-ask.ts';
 
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
 const project = {
@@ -144,7 +143,7 @@ describe('Neo MVP', () => {
     return invokeOperation(
       createOperationRegistry(createNeoOperations(service)),
       name,
-      withNeoProposalAsk(service, name, input, caller),
+      input,
       caller
     );
   }

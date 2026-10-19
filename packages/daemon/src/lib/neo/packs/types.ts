@@ -1,17 +1,9 @@
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
-import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
 import type { WorkExecutionPreparation } from '../../drivers/start-preparation.ts';
 import type { WorkRef, WorkStatus } from '../../drivers/types.ts';
 import type { Database } from '../../../storage/sqlite-compat.ts';
 import type { ExternalEvent } from '../../external-events/types.ts';
-import type { NeoEvidence, NeoEvidenceRead } from '../evidence.ts';
 import type { NeoStatusLine } from '../status-codes.ts';
-
-export type NeoPackCheck = (
-  item: NeoAskItem,
-  evidence: readonly NeoEvidence[]
-) => { value: string } | { reason: string };
 
 export interface NeoCardEventSubscription {
   workId: string;
@@ -27,11 +19,6 @@ export interface NeoPackBrief {
   id: string;
   describe: string;
   guidance?: string;
-}
-
-export interface NeoPackFragment {
-  id: string;
-  instructions: string;
 }
 
 export interface NeoSessionFacts {
@@ -75,17 +62,7 @@ export interface NeoPack extends NeoPackBrief {
   ): Record<string, string | number | null>[];
   workerRules?: string;
   prepareExecution?: NeoExecutionPreparation;
-  instructions(ask: NeoAsk | null): string | null;
-  readEvidence?(work: NeoWork, changedAt?: number | null): Promise<NeoEvidenceRead | null>;
-  reportEvidence?(work: NeoWork): NeoEvidence[];
-  askCardEvidence?(ask: NeoAsk, works: readonly NeoWork[]): NeoEvidence[];
-  readAskTicks?(
-    ask: NeoAsk,
-    works: readonly NeoWork[]
-  ): Promise<{ id: string; evidence: string }[]>;
-  checks?: Record<string, NeoPackCheck>;
-  askTickChecks?: readonly string[];
-  checkEvidence?: Record<string, { independent: boolean }>;
+  instructions(): string | null;
   routeExternalEvent?(
     event: ExternalEvent,
     subscriptions: readonly NeoCardEventSubscription[]

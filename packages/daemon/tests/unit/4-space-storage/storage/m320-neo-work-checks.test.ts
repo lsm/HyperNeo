@@ -1,5 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import { NeoWorkCheckRepository } from '../../../../src/storage/repositories/neo-work-check-repository';
 import { runMigration314 } from '../../../../src/storage/schema/m314-neo-work-prs';
 import { runMigration317 } from '../../../../src/storage/schema/m317-neo-work-pr-reminders';
 import { runMigration320 } from '../../../../src/storage/schema/m320-neo-work-checks';
@@ -11,6 +10,21 @@ function withWork() {
   db.exec("INSERT INTO neo_work VALUES ('w1'), ('w2'), ('w3')");
   return db;
 }
+
+const workChecks = (db: Database) => ({
+  get: (workId: string) =>
+    db
+      .prepare(
+        'SELECT work_id AS workId, signature, told_at AS toldAt, reminded FROM neo_work_checks WHERE work_id = ?'
+      )
+      .get(workId) ?? null,
+  markTold: (workId: string, signature: string, at: number, reminded = false) =>
+    db
+      .prepare(
+        'INSERT INTO neo_work_checks(work_id, signature, told_at, reminded) VALUES (?, ?, ?, ?)'
+      )
+      .run(workId, signature, at, reminded ? signature : null),
+});
 
 describe('runMigration320', () => {
   test('copies what Neo was told from work pull requests, once', () => {
@@ -26,7 +40,7 @@ describe('runMigration320', () => {
     insert.run('w3', null, null, null);
     runMigration320(db);
     runMigration320(db);
-    const checks = new NeoWorkCheckRepository(db);
+    const checks = workChecks(db);
     expect(['w1', 'w2', 'w3'].map((id) => checks.get(id))).toEqual([
       { workId: 'w1', signature: 'sig-1', toldAt: 50, reminded: 'sig-1' },
       { workId: 'w2', signature: 'sig-2', toldAt: null, reminded: null },
@@ -37,7 +51,7 @@ describe('runMigration320', () => {
   test('creates the table without work pull requests, and skips databases without Neo work', () => {
     const db = withWork();
     runMigration320(db);
-    expect(new NeoWorkCheckRepository(db).get('w1')).toBe(null);
+    expect(workChecks(db).get('w1')).toBe(null);
     expect(
       db.prepare("SELECT name FROM sqlite_master WHERE name = 'neo_work_checks'").get()
     ).toEqual({ name: 'neo_work_checks' });
@@ -46,22 +60,5 @@ describe('runMigration320', () => {
     expect(
       bare.prepare("SELECT name FROM sqlite_master WHERE name = 'neo_work_checks'").get()
     ).toBe(null);
-  });
-});
-
-describe('NeoWorkCheckRepository', () => {
-  test('keeps the reminder signature until another reminder goes out', () => {
-    const db = withWork();
-    runMigration320(db);
-    const checks = new NeoWorkCheckRepository(db);
-
-    checks.markTold('w1', 'a', 10);
-    expect(checks.get('w1')).toEqual({ workId: 'w1', signature: 'a', toldAt: 10, reminded: null });
-    checks.markTold('w1', 'a', 20, true);
-    expect(checks.get('w1')).toMatchObject({ toldAt: 20, reminded: 'a' });
-    checks.markTold('w1', 'b', 30);
-    expect(checks.get('w1')).toMatchObject({ signature: 'b', toldAt: 30, reminded: 'a' });
-    checks.markTold('w1', 'b', 40, true);
-    expect(checks.get('w1')).toMatchObject({ toldAt: 40, reminded: 'b' });
   });
 });
