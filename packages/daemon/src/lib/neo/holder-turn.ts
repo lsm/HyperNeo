@@ -73,7 +73,12 @@ export class NeoHolderTurn {
     return true;
   }
 
-  private answered(messageId: string): boolean {
+  steers(): boolean {
+    const repo = new NeoRepository(this.db.getDatabase());
+    return repo.defaultBinding()?.sessionId === this.sessionId;
+  }
+
+  answered(messageId: string): boolean {
     const conversationId = new NeoRepository(this.db.getDatabase()).conversationId();
     return (
       !!conversationId &&

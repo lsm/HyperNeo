@@ -257,7 +257,6 @@ import {
   noteNeoAskTrigger,
   planNeoAskTrigger,
   planNeoSettledReports,
-  shouldPreemptNeoTurn,
 } from './notification-triggers.ts';
 import { neoOutcomeCheckPolicy } from './outcome-check-policy.ts';
 import { buildNeoCheckRegistry } from './packs/check-registry.ts';
@@ -909,7 +908,10 @@ export class NeoService {
       'session.updated',
       async ({ sessionId, processingState, session }) => {
         const status = processingState?.status;
+        const previous = this.processingStatus.get(sessionId);
         if (status) this.processingStatus.set(sessionId, status);
+        if (status === 'processing' && previous !== 'processing')
+          void this.steerHumanMessages(sessionId);
         const bound = status || session?.status ? this.repo.getBindingBySession(sessionId) : null;
         if (bound && bound.kind !== 'worker') this.noteWorking();
         if (status !== 'idle') return;
@@ -3754,22 +3756,19 @@ export class NeoService {
     );
   }
 
-  async preemptForHumanMessage(sessionId: string): Promise<void> {
-    const conversationId = this.repo.conversationId();
-    if (!conversationId || !this.repo.getBindingBySession(sessionId)) return;
-    if (
-      !shouldPreemptNeoTurn(
-        this.db.getSession(sessionId)?.processingState,
-        (messageId) => this.inputTrigger({ sessionId, messageId }),
-        (trigger) => !!this.publications.byTrigger(conversationId, trigger)
-      )
-    )
-      return;
+  async steerHumanMessages(sessionId: string): Promise<void> {
+    if (this.repo.defaultBinding()?.sessionId !== sessionId) return;
+    const status =
+      this.processingStatus.get(sessionId) ??
+      neoSessionStatus(this.db.getSession(sessionId)?.processingState);
+    if (status !== 'processing') return;
+    const queued = this.db.getSDKMessageRepo().listQueuedInputs(sessionId, 'human');
+    if (!queued.length) return;
     try {
       const live = await this.sessions.getSessionForControl(sessionId);
-      await live?.handleInterrupt({ preserveDeliveryJobs: true });
+      for (const { uuid } of queued) live?.steerNeoInput(uuid);
     } catch (error) {
-      this.log.warn('Neo turn not preempted for a human message', error);
+      this.log.warn('Human message not steered into the running Neo turn', error);
     }
   }
 

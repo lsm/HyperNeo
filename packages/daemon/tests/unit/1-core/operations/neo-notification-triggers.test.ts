@@ -25,7 +25,6 @@ import {
   noteNeoAskTrigger,
   planNeoAskTrigger,
   planNeoSettledReports,
-  shouldPreemptNeoTurn,
 } from '../../../../src/lib/neo/notification-triggers.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
@@ -101,27 +100,6 @@ describe('neoAskTriggerConcern', () => {
   test('an ask whose opener is no coordinator falls back to its project holder', () => {
     expect(neoAskTriggerConcern(projectAsk, null)).toBe('labs');
     expect(neoAskTriggerConcern(projectAsk, { kind: 'worker', projectId: 'w' })).toBe('labs');
-  });
-});
-
-describe('shouldPreemptNeoTurn', () => {
-  const state = (status: string, messageId?: string) => JSON.stringify({ status, messageId });
-  const trigger = (id: string) =>
-    id === 'system' ? null : id.startsWith('note') ? `idle:a1:${id}` : `human:${id}`;
-  const answered = (value: string) => value === 'human:old';
-
-  test('preempts a human-triggered turn only once its answer is out', () => {
-    expect(shouldPreemptNeoTurn(state('processing', 'old'), trigger, answered)).toBe(true);
-    expect(shouldPreemptNeoTurn(state('processing', 'fresh'), trigger, answered)).toBe(false);
-    expect(shouldPreemptNeoTurn(state('processing', 'system'), trigger, answered)).toBe(false);
-  });
-
-  test('preempts a turn answering a daemon note, which a waiting human message outranks', () => {
-    expect(shouldPreemptNeoTurn(state('processing', 'note-1'), trigger, answered)).toBe(true);
-    expect(shouldPreemptNeoTurn(state('idle', 'note-1'), trigger, answered)).toBe(false);
-    expect(shouldPreemptNeoTurn(state('idle'), trigger, answered)).toBe(false);
-    expect(shouldPreemptNeoTurn(undefined, trigger, answered)).toBe(false);
-    expect(shouldPreemptNeoTurn('not json', trigger, answered)).toBe(false);
   });
 });
 

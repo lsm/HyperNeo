@@ -400,6 +400,7 @@ export interface QueryRunnerContext {
     queryGeneration?: number
   ): Promise<boolean>;
   markHolderInputConsumed?(messageUuid: string): void;
+  requeueNeoInput?(messageUuid: string): void;
 }
 
 export class QueryRunner {
@@ -2253,8 +2254,33 @@ export class QueryRunner {
       yield message;
       this.streamSilence = noteStreamFed(this.streamSilence, Date.now());
       onSent();
-      if (holderTurn) return await holderTurn.ended;
+      if (holderTurn) {
+        if (holderTurn.steers()) yield* this.feedNeoSteers(queryGeneration, holderTurn);
+        return await holderTurn.ended;
+      }
     }
+  }
+
+  private async *feedNeoSteers(queryGeneration: number, turn: NeoHolderTurn) {
+    const { session, messageQueue } = this.ctx;
+    const fed: string[] = [];
+    for await (const { message, onSent } of messageQueue.messageGenerator(session.id, {
+      suppressPreYieldCallback: true,
+      queryGeneration,
+      steersUntil: turn.ended,
+    })) {
+      if (!message.uuid || !turn.identity()?.isLive()) {
+        if (message.uuid) messageQueue.requeueYielded(message.uuid, { durable: true });
+        break;
+      }
+      this.ctx.markHolderInputConsumed?.(message.uuid);
+      fed.push(message.uuid);
+      yield message;
+      this.streamSilence = noteStreamFed(this.streamSilence, Date.now());
+      onSent();
+    }
+    await turn.ended;
+    for (const uuid of fed) if (!turn.answered(uuid)) this.ctx.requeueNeoInput?.(uuid);
   }
 
   async handleSDKMessage(message: SDKMessage, queryGeneration?: number): Promise<void> {
