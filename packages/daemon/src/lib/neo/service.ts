@@ -1,4 +1,4 @@
-import { restartNeo } from './restart.ts';
+import { neoStateNote, restartNeo } from './restart.ts';
 import { projectNeoAskEntries } from './ask-entries.ts';
 import { NeoWorkControlFailureRepository } from '../../storage/repositories/neo-work-control-failure-repository.ts';
 import { neoControlFailure, neoControlFailureForRef } from './control-failure.ts';
@@ -947,6 +947,19 @@ export class NeoService {
       },
       { subscriberName: 'neo-session-forget' }
     );
+    const offCompacted = events.subscribe(
+      'session.compacted',
+      async ({ sessionId }) => {
+        if (this.repo.defaultBinding()?.sessionId !== sessionId) return;
+        await this.deliver(
+          sessionId,
+          crypto.randomUUID(),
+          neoStateNote(this.openAskEntries()),
+          sessionId
+        ).catch((error) => this.log.warn('Neo state note after compaction pending', error));
+      },
+      { subscriberName: 'neo-compact-state-note' }
+    );
     const offExternal = events.subscribe(
       'externalEvent.published',
       async (payload: ExternalEventPublishedPayload) => {
@@ -964,6 +977,7 @@ export class NeoService {
       offUpdated();
       offStatus();
       offDeleted();
+      offCompacted();
       offExternal();
     };
   }
@@ -1329,14 +1343,17 @@ export class NeoService {
         await live.startFreshContext();
       },
       note: (sessionId, text) => this.deliver(sessionId, crypto.randomUUID(), text, sessionId),
-      entries: () =>
-        projectNeoAskEntries(
-          this.todos.listOpenAsks(),
-          this.todos,
-          this.todoSessions,
-          this.installedPacks()
-        ),
+      entries: () => this.openAskEntries(),
     });
+  }
+
+  private openAskEntries() {
+    return projectNeoAskEntries(
+      this.todos.listOpenAsks(),
+      this.todos,
+      this.todoSessions,
+      this.installedPacks()
+    );
   }
 
   open(): Promise<string> {

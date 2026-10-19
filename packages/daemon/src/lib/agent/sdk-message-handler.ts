@@ -1989,6 +1989,7 @@ export class SDKMessageHandler {
         : contextBudgetThreshold(boundaryCapacity, boundaryInfo?.autoCompactPercent)
     );
     await stateManager.setCompacting(false);
+    this.ctx.internalEventBus.publishAsync('session.compacted', { sessionId: session.id });
     this.ctx.resumePendingWorkAfterCompaction?.();
     this.ctx.messageQueue.clearNonCompactionSentSinceBoundary();
 
