@@ -4,14 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Session } from '@hyperneo/shared';
 import type { NeoBinding, NeoProject } from '@hyperneo/shared/types/neo-context';
-import { createNeoIntakeOperation } from '../../../../src/lib/neo/intake.ts';
 import {
   mergeNeoDuplicateProjects,
   planNeoProjectMerges,
   readNeoProjectIdentities,
 } from '../../../../src/lib/neo/project-merge.ts';
-import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
-import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import type { Database } from '../../../../src/storage/database.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
@@ -110,12 +107,6 @@ describe('readNeoProjectIdentities', () => {
 describe('a merged project in a real store', () => {
   const conversationId = '10000000-0000-4000-8000-000000000001';
   const root: NeoBinding = { sessionId: `neo:${conversationId}`, kind: 'neo', projectId: null };
-  const kept: NeoBinding = { sessionId: 'neo:holder:web', kind: 'project', projectId: 'web' };
-  const merged: NeoBinding = {
-    sessionId: 'neo:holder:web-copy',
-    kind: 'project',
-    projectId: 'web-copy',
-  };
   let directory: string;
   let writer: Sqlite;
   let db: Database;
@@ -136,7 +127,7 @@ describe('a merged project in a real store', () => {
     writer
       .prepare('INSERT INTO neo_project_workspaces VALUES (?, ?)')
       .run('folder:laptop\u0000/w/web-copy', 'web-copy');
-    for (const binding of [root, kept, merged]) {
+    for (const binding of [root]) {
       repo.reserveBinding(binding);
       sessions.createSession({
         id: binding.sessionId,
@@ -170,28 +161,9 @@ describe('a merged project in a real store', () => {
       targetIdentities: [],
     });
 
-  test('answering an old conversation after its project merged reaches root Neo', async () => {
-    expect(mergeCopyIntoWeb()).toMatchObject({ ok: true });
-    const requestId = '20000000-0000-4000-8000-000000000001';
-    const sent = await invokeOperation(
-      createOperationRegistry([createNeoIntakeOperation(db, repo, () => {})]),
-      'neo.message.send',
-      { sessionId: merged.sessionId, requestId, content: 'Yes, ship the header fix.' },
-      { source: 'rpc', principal: 'local' }
-    );
-    expect(sent).toMatchObject({ kind: 'completed', value: { ok: true, requestId } });
-    expect(
-      writer.prepare('SELECT session_id FROM sdk_messages WHERE sdk_uuid = ?').get(requestId)
-    ).toEqual({ session_id: root.sessionId });
-  });
-
-  test('merges every duplicate in one run and logs a merge the gates refuse', () => {
-    for (const id of ['web-third', 'web-busy'])
-      repo.saveProject({ id, title: id, summary: id, context: id }, 0);
-    repo.reserveBinding({ sessionId: 'neo:holder:busy', kind: 'project', projectId: 'web-busy' });
-    writer.exec(`INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, processing_state)
-      VALUES ('neo:holder:busy', 'Busy', '', '', 'active', '{}', '{}', '{"status":"processing"}')`);
-    const fresh = { 'web-copy': [identity], 'web-third': [identity], 'web-busy': [identity] };
+  test('merges every duplicate in one run', () => {
+    repo.saveProject({ id: 'web-third', title: 'web-third', summary: '', context: '' }, 0);
+    const fresh = { 'web-copy': [identity], 'web-third': [identity] };
     const logged: string[] = [];
     expect(
       mergeNeoDuplicateProjects(
@@ -203,13 +175,8 @@ describe('a merged project in a real store', () => {
       { sourceId: 'web-copy', targetId: 'web' },
       { sourceId: 'web-third', targetId: 'web' },
     ]);
-    expect(logged).toEqual(['neo reorganize: did not merge web-busy into web: project_busy']);
-    expect(
-      repo
-        .listProjects()
-        .map((item) => item.id)
-        .sort()
-    ).toEqual(['web', 'web-busy']);
+    expect(logged).toEqual([]);
+    expect(repo.listProjects().map((item) => item.id)).toEqual(['web']);
   });
 
   test('the merged project leaves the project list but its old links still resolve', () => {
@@ -223,7 +190,5 @@ describe('a merged project in a real store', () => {
     expect(repo.listProjects().map((item) => item.id)).toEqual(['web']);
     expect(repo.getProject('web-copy')?.id).toBe('web-copy');
     expect(repo.projectMerges.redirects()).toEqual([{ sourceId: 'web-copy', targetId: 'web' }]);
-    expect(repo.projectMerges.redirectSession(merged.sessionId)).toBe(kept.sessionId);
-    expect(repo.projectMerges.redirectSession(kept.sessionId)).toBeNull();
   });
 });

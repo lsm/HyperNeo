@@ -45,7 +45,6 @@ import { createNeoIntakeOperation } from './intake.ts';
 import { createNeoReorganizeOperation, type NeoReorganizeRuntime } from './reorganize-operation.ts';
 import { mergeNeoDuplicateProjects, readNeoProjectIdentities } from './project-merge.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
-import { neoSessionStatus } from './session-status.ts';
 import { createNeoPublicationChangeOperations } from './publication-change-operation.ts';
 import { createNeoPublicationOperation } from './publication-operation.ts';
 import { createNeoConversationReadOperation } from './conversation-read-operation.ts';
@@ -369,8 +368,6 @@ export function neoReorganizeRuntime(service: NeoService): NeoReorganizeRuntime 
   return {
     getBinding: (sessionId) => service.repo.getBindingBySession(sessionId),
     rootSessionId: () => service.repo.defaultBinding()?.sessionId ?? null,
-    sessionStatus: (sessionId) =>
-      neoSessionStatus(service.db.getSession(sessionId)?.processingState),
     mergeProjects: async () => {
       const merges = service.repo.projectMerges;
       const before = new Set(merges.redirects().map((entry) => entry.sourceId));
@@ -390,7 +387,6 @@ export function neoReorganizeRuntime(service: NeoService): NeoReorganizeRuntime 
       return { merged: [...backfilled, ...merged] };
     },
     projectFacts: () => service.repo.projectCleanupFacts(),
-    retiredHolders: () => [],
     machine: () => hostname(),
     cleanup: createNeoProjectCleanupApply(service),
     mirroredAliases: async (folders) => {

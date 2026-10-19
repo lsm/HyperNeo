@@ -112,7 +112,6 @@ describe('reorganize merge questions on a real store', () => {
     logged = [];
     repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
     repo.saveProject({ id: 'inbox', title: 'Inbox', summary: 'Inbox', context: '' }, 0);
-    repo.reserveBinding({ sessionId: inbox, kind: 'project', projectId: 'inbox' });
     for (const id of ['web', 'web-shallow'])
       repo.saveProject({ id, title: id, summary: id, context: id }, 0);
     db.prepare('INSERT INTO neo_project_workspaces VALUES (?, ?)').run(identity, 'web');

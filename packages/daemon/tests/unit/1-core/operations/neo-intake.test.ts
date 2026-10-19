@@ -55,10 +55,10 @@ describe('Neo intake gates', () => {
   ])('rejects unavailable or noncoordinator targets: %j', ({ candidate, session }) => {
     expect(requireNeoIntakeTarget(input, candidate, session)).toHaveProperty('reason.ok', false);
   });
-  test('retargets an admitted holder ask to the live root session', () => {
+  test('retargets an admitted ask to the live root session', () => {
     type Session = Parameters<typeof requireNeoRootTarget>[2];
     const root = target as Session;
-    const holder = { sessionId: 'neo:holder', projectId: 'c1', kind: 'project' as const };
+    const holder = { sessionId: 'neo:old-root', projectId: null, kind: 'neo' as const };
     const admitted = {
       binding: holder,
       target: { ...root!, id: holder.sessionId },

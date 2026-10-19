@@ -81,7 +81,7 @@ describe('authored publication reads', () => {
   ] as OperationCaller[])(
     'refuses non-human caller %o before any ledger or binding read',
     async (caller) => {
-      const bindings = vi.spyOn(repo, 'getBindingForProject');
+      const bindings = vi.spyOn(repo, 'defaultBinding');
       const reads = vi.spyOn(ledger, 'list');
       expect(await invoke({ conversationId }, caller)).toEqual({
         kind: 'completed',

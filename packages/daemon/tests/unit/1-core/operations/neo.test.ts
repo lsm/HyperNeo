@@ -314,7 +314,6 @@ describe('Neo MVP', () => {
     expect(await invoke('neo.open', { projectId: project.id })).toMatchObject({
       value: { sessionId: root, conversationId: root.slice(4) },
     });
-    expect(service.repo.getBindingForProject('inbox')).toBeNull();
   });
 
   test('trusts bindings, not a claimed role; a project session reads another project', async () => {

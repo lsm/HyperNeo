@@ -372,19 +372,13 @@ describe('runMigration361', () => {
       runMigration361(db);
       runMigration361(db);
       const repo = new NeoRepository(db);
-      expect(repo.getBindingForProject('old')).toEqual({
-        sessionId: 'holder',
-        projectId: 'old',
-        kind: 'project',
-      });
+      expect(
+        db.prepare("SELECT kind FROM neo_session_bindings WHERE session_id = 'holder'").get()
+      ).toEqual({ kind: 'project' });
       expect(repo.getProject('old')?.context).toBe('Keep');
       expect(db.prepare('SELECT payload_json FROM neo_publications').get()).toEqual({
         payload_json: payload.replace('concern', 'project'),
       });
-      expect(() =>
-        repo.reserveBinding({ sessionId: 'duplicate', projectId: 'old', kind: 'project' })
-      ).not.toThrow();
-      expect(repo.getBindingForProject('old')?.sessionId).toBe('holder');
     } finally {
       db.close();
     }

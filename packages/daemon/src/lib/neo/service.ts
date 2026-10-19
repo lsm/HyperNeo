@@ -390,10 +390,10 @@ export class NeoService {
         if (status === 'processing' && previous !== 'processing')
           void this.steerHumanMessages(sessionId);
         const bound = status || session?.status ? this.repo.getBindingBySession(sessionId) : null;
-        if (bound && bound.kind !== 'worker') this.noteWorking();
+        if (bound?.kind === 'neo') this.noteWorking();
         if (status !== 'idle') return;
         const binding = this.repo.getBindingBySession(sessionId);
-        if (binding && binding.kind !== 'worker')
+        if (binding?.kind === 'neo')
           await this.alignModelPreference(sessionId).catch((error) =>
             this.log.warn('Neo model preference not applied', error)
           );

@@ -76,7 +76,7 @@ const root: NeoBinding = {
   projectId: null,
   kind: 'neo',
 };
-const holder: NeoBinding = { sessionId: 'holder:a', projectId: 'a', kind: 'project' };
+const holder: NeoBinding = { sessionId: 'holder:a', projectId: 'a', kind: 'worker' };
 const ask: NeoAskOrigin = { sessionId: root.sessionId, messageId: 'human:1' };
 const work: NeoWork = {
   id: 'work:opaque:id',
@@ -194,9 +194,9 @@ describe('recorded ask lineage gates', () => {
   ])('rejects invalid coordinator: %j', (binding) => {
     expect(requireNeoAskCoordinator(ask, binding)).toEqual({ reason: { kind: 'unknown' } });
   });
-  test('admits root and matching holder bindings', () => {
+  test('admits only the root binding', () => {
     expect(requireNeoAskCoordinator(ask, root)).toEqual({ value: ask });
-    expect(requireNeoAskCoordinator(request(), holder)).toEqual({ value: request() });
+    expect(requireNeoAskCoordinator(request(), holder)).toEqual({ reason: { kind: 'unknown' } });
   });
   test.each(
     [

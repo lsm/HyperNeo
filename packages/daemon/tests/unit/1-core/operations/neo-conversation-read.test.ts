@@ -158,22 +158,6 @@ describe('neo.conversation.read', () => {
     });
   });
 
-  test('a legacy project session cannot read the public conversation', async () => {
-    const project = repo.saveProject(
-      { id: 'research', title: 'Research', summary: '', context: '' },
-      0
-    )!;
-    const binding = { sessionId: 'neo:research', kind: 'project' as const, projectId: project.id };
-    repo.reserveBinding(binding);
-    expect(
-      requireNeoConversationReader(
-        { conversationId, limit: 7 },
-        { ...neo, sessionId: binding.sessionId },
-        binding
-      )
-    ).toHaveProperty('reason');
-  });
-
   test.each([
     { source: 'rpc' },
     { source: 'internal', role: 'neo' },

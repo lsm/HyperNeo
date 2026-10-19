@@ -24,7 +24,7 @@ describe('neoHealthDigest', () => {
       },
       {
         cleanupPlanned: [
-          { action: 'drop', projectId: 'p', title: 'P', sessionId: 's' },
+          { action: 'delete', projectId: 'p', title: 'P' },
           { action: 'delete', projectId: 'x', title: 'X' },
           { action: 'merge', projectId: 'q', title: 'Q', targetId: 'r' },
         ],
@@ -35,7 +35,7 @@ describe('neoHealthDigest', () => {
     expect(digest.split('\n')).toEqual([
       'Nightly health digest since 2026-10-15T00:00:00.000Z. Facts only.',
       'Projects: 14 now, 2 created, 1 merged away.',
-      'Cleanup done tonight: drop P (p).',
+      'Cleanup done tonight: delete P (p).',
       'Cleanup failed tonight: x: busy.',
       'Merges asked of the human, not applied: merge Q (q) into r.',
       'Card refusals by what was refused: none.',

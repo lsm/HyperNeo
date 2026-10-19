@@ -58,7 +58,6 @@ describe('root Neo inputs', () => {
     );
     service.repo.saveProject({ id: 'fictional', title: 'Sources', summary: '', context: '' }, 0);
     service.repo.reserveBinding({ sessionId: root, projectId: null, kind: 'neo' });
-    service.repo.reserveBinding({ sessionId: holder, projectId: 'fictional', kind: 'project' });
     prompt(root, ask.messageId, 'human');
   });
   afterEach(() => {
