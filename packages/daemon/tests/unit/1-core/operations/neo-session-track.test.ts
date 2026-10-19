@@ -5,8 +5,6 @@ import { requireNeoDriverVerb } from '../../../../src/lib/neo/driver-work.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import {
   findNeoSessionNotice,
-  keepNeoTrackedSessions,
-  NEO_SESSION_TRACK_MS,
   requireNeoTrackRoot,
   requireNeoTrackableSession,
   requireNeoTrackedAdoption,
@@ -69,17 +67,6 @@ describe('requireNeoTrackableSession', () => {
     expect(requireNeoTrackableSession(notice(), [ref])).toEqual({
       reason: { ok: false, reason: 'A Neo card already follows this session.' },
     });
-  });
-});
-
-describe('keepNeoTrackedSessions', () => {
-  test('records the tap and drops taps older than the track window', () => {
-    const kept = keepNeoTrackedSessions(new Map([['old', 0]]), key, NEO_SESSION_TRACK_MS);
-    expect([...kept]).toEqual([[key, NEO_SESSION_TRACK_MS]]);
-  });
-
-  test('a repeated tap keeps the window its first tap opened', () => {
-    expect([...keepNeoTrackedSessions(new Map([[key, 5]]), key, 9)]).toEqual([[key, 5]]);
   });
 });
 

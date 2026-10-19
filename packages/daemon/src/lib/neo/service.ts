@@ -324,7 +324,6 @@ import {
   neoCoordinatorBinding,
   neoCoordinatorNativeTools,
 } from './session-policy.ts';
-import { keepNeoTrackedSessions } from './session-track.ts';
 import type { NeoSessionNotice, NeoSessionNoticeGroup } from './session-watch.ts';
 import { NeoSessionWatcher } from './session-watcher.ts';
 import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
@@ -449,17 +448,6 @@ export class NeoService {
       ...this.sessionWatcher.sessionNoticeGroups.flatMap((group) => group.notices),
       ...this.sessionWatcher.sessionNotices,
     ];
-  }
-
-  get trackedSessions(): Map<string, number> {
-    return new Map(Object.entries(this.db.getGlobalSettings?.().neo?.trackedSessions ?? {}));
-  }
-
-  set trackedSessions(tracked: ReadonlyMap<string, number>) {
-    const neo = this.db.getGlobalSettings().neo;
-    this.db.updateGlobalSettings({
-      neo: { ...neo, trackedSessions: Object.fromEntries(tracked) },
-    });
   }
 
   readonly sessionWatcher: NeoSessionWatcher;
@@ -2137,7 +2125,6 @@ export class NeoService {
   }
 
   async trackSession(root: string, notice: NeoSessionNotice, now: number): Promise<{ ok: true }> {
-    this.trackedSessions = keepNeoTrackedSessions(this.trackedSessions, notice.key, now);
     const askId = crypto.randomUUID();
     const messageId = `neo-track:${notice.key}:${askId}`;
     const done = 'The session finishes its work';

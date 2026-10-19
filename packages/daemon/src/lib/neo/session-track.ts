@@ -2,8 +2,6 @@ import type { NeoDriverTarget } from './driver-work.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import { neoSessionKey, type NeoSessionNotice } from './session-watch.ts';
 
-export const NEO_SESSION_TRACK_MS = 60 * 60_000;
-
 type Rejection = { ok: false; reason: string };
 
 export function requireNeoTrackRoot(
@@ -31,16 +29,6 @@ export function requireNeoTrackableSession(
   return followed.some((item) => neoSessionKey(item) === notice.key)
     ? { reason: { ok: false, reason: 'A Neo card already follows this session.' } }
     : { value: notice };
-}
-
-export function keepNeoTrackedSessions(
-  tracked: ReadonlyMap<string, number>,
-  key: string,
-  now: number
-): Map<string, number> {
-  const kept = new Map([...tracked].filter(([, at]) => now - at < NEO_SESSION_TRACK_MS));
-  kept.set(key, kept.get(key) ?? now);
-  return kept;
 }
 
 export function reserveNeoAdoption(
