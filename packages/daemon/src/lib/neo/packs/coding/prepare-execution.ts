@@ -53,7 +53,7 @@ function planPreparation(request: Request): Gate<Plan> {
 
 const VERIFY_SKILL = /^\.claude\/skills\/verify[^/]*\/SKILL\.md$/m;
 const VERIFY_SECTION = /^#{1,6}\s*Verify\b/m;
-const FENCED = /^(```|~~~)[^\n]*\n[\s\S]*?^\1[^\n]*$/gm;
+const FENCED = /^ {0,3}(```|~~~)[^\n]*(?:\n[\s\S]*?^ {0,3}\1[^\n]*$|[\s\S]*)/gm;
 
 export function requireVerifySkill(
   mode: unknown,

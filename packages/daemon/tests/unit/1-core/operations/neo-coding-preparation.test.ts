@@ -5,7 +5,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { prepareCodingExecution } from '../../../../src/lib/neo/packs/coding/prepare-execution';
+import {
+  prepareCodingExecution,
+  requireVerifySkill,
+} from '../../../../src/lib/neo/packs/coding/prepare-execution';
 
 const roots: string[] = [];
 function git(directory: string, ...args: string[]) {
@@ -161,6 +164,17 @@ describe('prepareCodingExecution', () => {
     const sectioned = await prepareCodingExecution(f.request, f.effects);
     expect(sectioned.ok).toBe(true);
     if (sectioned.ok) await sectioned.value.release();
+  });
+
+  test.each([
+    ['a column-0 fence', '```md\n## Verify\n```\n', false],
+    ['an indented fence', '   ~~~\n## Verify\n   ~~~\n', false],
+    ['an unclosed fence', '```\n## Verify\nrun it\n', false],
+    ['a heading after a closed fence', '```\nx\n```\n\n## Verify\n', true],
+  ])('a Verify heading in %s counts only outside code', (_case, doc, passes) => {
+    const listed = { code: 0, stdout: 'AGENTS.md\n', stderr: '' };
+    const agents = { code: 0, stdout: `# Repo\n\n${doc}`, stderr: '' };
+    expect('value' in requireVerifySkill(undefined, listed, agents)).toBe(passes);
   });
 
   test('an omitted target uses the advertised remote default, never local HEAD', async () => {
