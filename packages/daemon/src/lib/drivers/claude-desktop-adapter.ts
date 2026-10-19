@@ -932,7 +932,8 @@ export async function resumeIdleClaudeSession(
     record.cwd ?? record.originCwd ?? deps.homeDir,
     record,
     message,
-    deps
+    deps,
+    DELIVERY_POLLS
   );
   return {
     reason: turn.ok
@@ -1102,6 +1103,7 @@ async function runClaudeTurn(
   location: ClaudeTranscriptLocation,
   message: string,
   deps: ClaudeDesktopAdapterDeps,
+  polls: number,
   afterTurn?: () => void
 ): Promise<Result<ClaudeConfirmed>> {
   const before = await transcriptSize(await locateClaudeTranscript(deps.projectsDir, location));
@@ -1130,7 +1132,7 @@ async function runClaudeTurn(
     }
     if (exit !== undefined && exit !== 0)
       return claudeCliFailure({ stderr: await stderr }, `claude -p exited with ${exit}.`);
-    if (poll >= DELIVERY_POLLS) {
+    if (poll >= polls) {
       proc.kill('SIGKILL');
       return reject('not_delivered', 'the message did not appear in the session transcript');
     }
@@ -1179,6 +1181,7 @@ export async function startClaudeSession(
     { cliSessionId, cwd, originCwd: folder },
     request.message,
     deps,
+    BOOTSTRAP_TIMEOUT_MS / DELIVERY_POLL_MS,
     () => {
       try {
         launchInClaudeDesktop(cliSessionId, cwd, deps);
@@ -1193,6 +1196,7 @@ export async function startClaudeSession(
     title: request.title,
     isArchived: false,
     lastActivityAt: deps.now(),
+    permissionMode: 'bypassPermissions',
   };
   cache.set(`${STARTED_KEY}${sessionId}`, { modifiedAt: 0, records: [record] });
   return {
