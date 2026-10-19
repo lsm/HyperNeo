@@ -21,6 +21,7 @@ export function openVoiceStream(hub: MessageHub, onText: (text: string) => void)
   let streamId: string | null = null;
   let live = true;
   let closed = false;
+  let stopped = false;
   let pending: Float32Array[] = [];
   let pendingSamples = 0;
   let rate = STREAM_SAMPLE_RATE;
@@ -88,9 +89,11 @@ export function openVoiceStream(hub: MessageHub, onText: (text: string) => void)
           { streamId },
           { timeout: VOICE_STREAM_STOP_TIMEOUT_MS }
         );
+        stopped = true;
         return result.text ?? '';
       } catch (error) {
         if (error instanceof Error && error.message.includes('Unknown voice stream')) {
+          stopped = true;
           live = false;
           return null;
         }
@@ -98,8 +101,17 @@ export function openVoiceStream(hub: MessageHub, onText: (text: string) => void)
       }
     },
     close() {
+      if (closed) return;
       closed = true;
       unsubscribe();
+      void ready.then(() => {
+        if (!streamId || stopped) return;
+        stopped = true;
+        live = false;
+        return hub
+          .request('voice.stream.stop', { streamId }, { timeout: VOICE_STREAM_STOP_TIMEOUT_MS })
+          .catch(() => undefined);
+      });
     },
   };
 }
