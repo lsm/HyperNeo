@@ -598,6 +598,19 @@ describe('codingPrState without CI', () => {
   test('a repo with no CI at all reads green', () => {
     expect(codingPrState(approved(0))).toBe('approved_green');
   });
+
+  test('a repo whose CI posts commit statuses reads pending while one PR has no result yet', () => {
+    expect(codingPrState(approved(0), true)).toBe('approved_pending');
+    const fresh = {
+      ...(approved(0) as object),
+      number: 2,
+    };
+    const planned = planCodingLedgerRead(response([node(1), fresh]), 0);
+    expect(planned?.rows.map((row) => [row.number, row.state])).toEqual([
+      [1, 'waiting_review'],
+      [2, 'approved_pending'],
+    ]);
+  });
 });
 
 describe('CodingPrLedgerRepository.stateOf', () => {
