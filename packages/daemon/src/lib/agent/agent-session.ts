@@ -3195,6 +3195,27 @@ export class AgentSession
     });
   }
 
+  steerNeoInput(messageUuid: string): boolean {
+    if (this.messageQueue.steer(messageUuid)) return true;
+    const loaded = this.db.getSDKMessageRepo().getDeliveryContent(this.session.id, messageUuid);
+    if (loaded?.sendStatus !== 'enqueued' || loaded.inputKind !== 'human') return false;
+    void this.messageQueue
+      .admitWithId(messageUuid, loaded.content, false, { durable: true, steer: true })
+      .catch(() => undefined);
+    return true;
+  }
+
+  requeueNeoInput(messageUuid: string): void {
+    const repo = this.db.getSDKMessageRepo();
+    const loaded = repo.getDeliveryContent(this.session.id, messageUuid);
+    const dbId = repo.findMessageIdByUuid(this.session.id, messageUuid);
+    if (!loaded || !dbId) return;
+    repo.updateMessageStatus([dbId], 'enqueued');
+    void this.messageQueue
+      .admitWithId(messageUuid, loaded.content, false, { durable: true, prepend: true })
+      .catch(() => undefined);
+  }
+
   markHolderInputConsumed(messageUuid: string): void {
     const fold = this.neoNoteFolds.get(messageUuid) ?? [messageUuid];
     this.neoNoteFolds.delete(messageUuid);

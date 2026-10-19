@@ -59,6 +59,7 @@ interface QueuedMessage {
   onRejected?: (error: Error) => void;
   yieldAttempt?: unknown;
   yieldQueryGeneration?: number;
+  steer?: boolean;
 }
 
 export interface MidTurnBudgetInterruptOptions {
@@ -437,7 +438,7 @@ export class MessageQueue {
     messageId: string,
     content: string | MessageContent[],
     internal: boolean = false,
-    options?: { durable?: boolean; prepend?: boolean }
+    options?: { durable?: boolean; prepend?: boolean; steer?: boolean }
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       const queuedMessage: QueuedMessage = {
@@ -461,6 +462,7 @@ export class MessageQueue {
           reject(error);
         },
         internal,
+        steer: options?.steer,
       };
 
       if (!options?.durable) {
@@ -604,6 +606,14 @@ export class MessageQueue {
 
   hasQueuedMessages(): boolean {
     return this.queue.length > 0;
+  }
+
+  steer(messageId: string): boolean {
+    const message = this.queue.find((queued) => queued.id === messageId);
+    if (!message) return false;
+    message.steer = true;
+    this.wakeWaiters();
+    return true;
   }
 
   hasPendingOrClaimed(messageId: string): boolean {
@@ -805,7 +815,11 @@ export class MessageQueue {
 
   async *messageGenerator(
     sessionId: string,
-    options?: { suppressPreYieldCallback?: boolean; queryGeneration?: number }
+    options?: {
+      suppressPreYieldCallback?: boolean;
+      queryGeneration?: number;
+      steersUntil?: Promise<void>;
+    }
   ): AsyncGenerator<{ message: SDKUserMessage; onSent: () => void }> {
     const myGeneration = this.generation;
 
@@ -814,7 +828,9 @@ export class MessageQueue {
         break;
       }
 
-      const queuedMessage = await this.waitForNextMessage();
+      const queuedMessage = options?.steersUntil
+        ? await this.waitForSteer(options.steersUntil)
+        : await this.waitForNextMessage();
 
       if (!queuedMessage) {
         break;
@@ -935,6 +951,26 @@ export class MessageQueue {
     if (toolResultIndex !== -1) return toolResultIndex;
     if (compactionsHeld) return -1;
     return this.queue.findIndex((message) => this.isInternalCompaction(message));
+  }
+
+  private async waitForSteer(until: Promise<void>): Promise<QueuedMessage | null> {
+    let ended = false;
+    void until.then(() => {
+      ended = true;
+      this.wakeWaiters();
+    });
+    while (this.running && !ended) {
+      const index = this.queue.findIndex((message) => message.steer);
+      if (index !== -1) {
+        const message = this.queue.splice(index, 1)[0];
+        this.claimed.add(message);
+        return message;
+      }
+      await new Promise<void>((resolve) => {
+        this.waiters.push(resolve);
+      });
+    }
+    return null;
   }
 
   private async waitForNextMessage(): Promise<QueuedMessage | null> {

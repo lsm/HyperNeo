@@ -1544,7 +1544,7 @@ export function createNeoOperations(service: NeoService) {
     createNeoCrossProjectOperation(service),
     createNeoIntakeOperation(service.db, service.repo, (sessionId) => {
       service.notifyChanged();
-      void service.preemptForHumanMessage(sessionId);
+      void service.steerHumanMessages(sessionId);
     }),
     createNeoReorganizeOperation(neoReorganizeRuntime(service)),
     createNeoPublicationOperation(service.publish),
