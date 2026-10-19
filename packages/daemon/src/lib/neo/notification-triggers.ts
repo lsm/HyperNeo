@@ -51,13 +51,6 @@ export interface NeoTriggerSweepDeps {
   wake(ask: NeoAsk, trigger: NeoAskTrigger): Promise<boolean>;
 }
 
-export function neoAskTriggerConcern(
-  ask: Pick<NeoAsk, 'projectId'>,
-  opener: { kind: string; projectId: string | null } | null
-): string | null {
-  return opener && opener.kind !== 'worker' ? opener.projectId : ask.projectId;
-}
-
 export function neoTriggerMessageId(triggerId: string): string {
   return `${NEO_TRIGGER_PREFIX}${triggerId}`;
 }

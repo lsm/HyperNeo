@@ -27,7 +27,7 @@ export function requireNeoConversationReader(
       !!caller.neoTurn?.isLive() &&
       !!binding &&
       binding.sessionId === caller.sessionId &&
-      ['neo', 'project'].includes(binding.kind))
+      binding.kind === 'neo')
     ? { value: page }
     : { reason: { ok: false, reason: 'reader_not_authorized' } };
 }

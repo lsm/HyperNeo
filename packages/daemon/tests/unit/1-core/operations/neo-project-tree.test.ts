@@ -75,7 +75,6 @@ describe('Neo project hierarchy', () => {
     save('inbox');
     expect(repo.moveProject('child', 'root', 1)).toEqual({ ok: true });
     expect(repo.moveProject('leaf', 'child', 1)).toEqual({ ok: true });
-    expect(repo.discardUnopenedProject('root')).toBe(false);
     const before = repo.listProjects();
     expect(repo.moveProject('root', 'leaf', 1)).toEqual({ ok: false, reason: 'project_cycle' });
     expect(repo.moveProject('child', null, 1)).toEqual({ ok: false, reason: 'superseded' });

@@ -47,7 +47,6 @@ describe('Neo holder sessions', () => {
     expect(await service.open()).toBe(root);
     expect(createSession).toHaveBeenCalledTimes(1);
     expect(createSession.mock.calls[0][0]).not.toHaveProperty('parentSessionId');
-    expect(service.repo.listProjectBindings('garden')).toEqual([]);
   });
 
   test('new coordinators have no turn cap; opening a legacy coordinator removes only its stored cap', async () => {

@@ -32,7 +32,7 @@ describe('planNeoSessionFiling', () => {
 });
 
 describe('fileNeoSessions', () => {
-  test('files the root and every holder missing a project, and nothing else', () => {
+  test('files the root Neo session when it has no project', () => {
     const sessions = new Map<string, { id: string; workspacePath: string | null }>([
       ['neo:root', { id: 'neo:root', workspacePath: null }],
       ['neo:inbox', { id: 'neo:inbox', workspacePath: null }],
@@ -46,18 +46,9 @@ describe('fileNeoSessions', () => {
       },
       {
         defaultBinding: () => ({ sessionId: 'neo:root', kind: 'neo', projectId: null }),
-        listProjectBindings: () =>
-          ['neo:inbox', 'neo:plans', 'neo:gone'].map((sessionId) => ({
-            sessionId,
-            kind: 'project' as const,
-            projectId: sessionId,
-          })),
       },
       '/data/Neo'
     );
-    expect(updates).toEqual([
-      ['neo:root', { workspacePath: '/data/Neo' }],
-      ['neo:inbox', { workspacePath: '/data/Neo' }],
-    ]);
+    expect(updates).toEqual([['neo:root', { workspacePath: '/data/Neo' }]]);
   });
 });
