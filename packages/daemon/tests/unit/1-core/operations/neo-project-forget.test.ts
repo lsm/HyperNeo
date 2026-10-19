@@ -75,4 +75,18 @@ describe('neo.project.forget', () => {
     });
     expect(repo.getProject(atlas)?.title).toBe('atlas');
   });
+
+  test('refuses the Inbox and a project a worker is still bound to', async () => {
+    repo.saveProject({ id: 'inbox', title: 'Inbox', summary: '', context: '' }, 0);
+    expect(await forget('inbox')).toEqual({ ok: false, reason: 'protected' });
+    expect(repo.getProject('inbox')?.title).toBe('Inbox');
+    db.createSession(createTestSession('session:worker'));
+    db.getDatabase()
+      .prepare(
+        "INSERT INTO neo_session_bindings (session_id, concern_id, kind) VALUES (?, ?, 'worker')"
+      )
+      .run('session:worker', atlas);
+    expect(await forget(atlas)).toEqual({ ok: false, reason: 'in_use' });
+    expect(repo.getProject(atlas)?.title).toBe('atlas');
+  });
 });

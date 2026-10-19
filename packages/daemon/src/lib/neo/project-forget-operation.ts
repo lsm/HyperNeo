@@ -1,18 +1,22 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import { NEO_INBOX_ID } from './inbox.ts';
 import { requireNeoTreeAuthor } from './project-tree-operations.ts';
 import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 
 type ForgetRepo = Pick<NeoRepository, 'allRepositories' | 'forgetProject' | 'getBindingBySession'>;
-type Refusal = 'missing' | 'in_use' | 'root_or_human_only';
+type Refusal = 'missing' | 'in_use' | 'protected' | 'root_or_human_only';
 type Forgotten = { ok: true; repos: string[] } | { ok: false; reason: Refusal };
 
 const Input = z.object({ projectId: z.string().min(1).max(100) });
 
 const Result = z.union([
   z.object({ ok: z.literal(true), repos: z.array(z.string()) }),
-  z.object({ ok: z.literal(false), reason: z.enum(['missing', 'in_use', 'root_or_human_only']) }),
+  z.object({
+    ok: z.literal(false),
+    reason: z.enum(['missing', 'in_use', 'protected', 'root_or_human_only']),
+  }),
 ]);
 
 const runForget = (superpipe({})('neo.project.forget') as PipelineAPI)
@@ -24,6 +28,14 @@ const runForget = (superpipe({})('neo.project.forget') as PipelineAPI)
         caller.sessionId ? repo.getBindingBySession(caller.sessionId) : null
       ),
     ['caller', 'repo'],
+    'result:outcome'
+  )
+  .pipe(
+    (projectId: string) =>
+      projectId === NEO_INBOX_ID
+        ? { reason: { ok: false as const, reason: 'protected' as const } }
+        : { value: true },
+    'projectId',
     'result:outcome'
   )
   .pipe(
@@ -48,7 +60,7 @@ export function createNeoProjectForgetOperation(repo: ForgetRepo) {
   return defineOperation({
     name: 'neo.project.forget',
     description:
-      'Delete a project at the human’s request: its workspace aliases, holder binding and row go, so its repositories leave the PR ledger. The holder session itself is kept. The repository and local folders are untouched; new work in one of its folders creates a project again. Root Neo or the local human only (root_or_human_only). Refuses a project that still has child sections, cards, asks or merges (in_use).',
+      'Delete a project at the human’s request: its workspace aliases, holder binding and row go, so its repositories leave the PR ledger. The holder session itself is kept. The repository and local folders are untouched; new work in one of its folders creates a project again. Root Neo or the local human only (root_or_human_only). Refuses the Inbox (protected) and a project that still has child sections, cards, asks, merges or worker bindings (in_use).',
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'mutate', roles: ['neo'] },

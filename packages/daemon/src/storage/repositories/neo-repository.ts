@@ -119,6 +119,7 @@ export class NeoRepository {
           OR EXISTS (SELECT 1 FROM neo_work WHERE concern_id = ?1)
           OR EXISTS (SELECT 1 FROM legacy_neo_asks WHERE concern_id = ?1)
           OR EXISTS (SELECT 1 FROM neo_asks WHERE project_id = ?1)
+          OR EXISTS (SELECT 1 FROM neo_session_bindings WHERE concern_id = ?1 AND kind != 'project')
           OR EXISTS (SELECT 1 FROM neo_project_merges WHERE source_id = ?1 OR target_id = ?1)`)
         .get(projectId);
       if (used) return { reason: 'in_use' as const };
