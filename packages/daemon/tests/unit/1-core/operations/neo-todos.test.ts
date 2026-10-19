@@ -248,6 +248,11 @@ describe('neo.todo operations', () => {
     expect(repo.listQuestions('ask')).toMatchObject([
       { kind: 'start', text: 'Start these 2?', startTodos: [fix.todo.id, deploy.todo.id] },
     ]);
+    expect(repo.listTodos('ask').map((todo) => [todo.title, todo.state, todo.blockedBy])).toEqual([
+      ['Fix', 'blocked', 'question'],
+      ['Note', 'todo', null],
+      ['Deploy', 'blocked', 'question'],
+    ]);
   });
 
   test('extending the start question drops a todo that can no longer start', async () => {

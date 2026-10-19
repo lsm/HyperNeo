@@ -94,6 +94,33 @@ describe('neo.question operations', () => {
     });
   });
 
+  test('a start question holds its todos blocked until it is answered or retired', async () => {
+    const { store, call, asked, started, fix, rows } = setup();
+    const held = {
+      state: 'blocked',
+      blockedBy: 'question',
+      blockedReason: 'Waiting for the human to start it.',
+    } as const;
+    store.updateTodo(fix, held, 2);
+    store.updateTodo(rows, held, 2);
+    const start = await asked({ kind: 'start', text: 'Start these?', todos: [fix.id, rows.id] });
+    await call('neo.question.answer', { questionId: start.id, answer: [fix.id] }, human);
+    expect(started).toEqual([fix.id]);
+    expect(store.getTodo(rows.id)).toMatchObject({
+      state: 'todo',
+      blockedBy: null,
+      blockedReason: null,
+    });
+    store.updateTodo(store.getTodo(rows.id)!, held, 3);
+    const chat = await asked({ kind: 'start', text: 'Start this?', todos: [rows.id] });
+    store.answerQuestion(chat, 'later', 'chat', 4);
+    expect(store.getTodo(rows.id)).toMatchObject({ state: 'todo', blockedBy: null });
+    store.updateTodo(store.getTodo(rows.id)!, held, 5);
+    const moot = await asked({ kind: 'start', text: 'Start this?', todos: [rows.id] });
+    store.retireQuestion(moot, 'not needed', null, 6);
+    expect(store.getTodo(rows.id)).toMatchObject({ state: 'todo', blockedBy: null });
+  });
+
   test('tells Neo which ticked todos did not start', async () => {
     const { call, asked, told, refused, fix, rows } = setup();
     refused.add(rows.id);

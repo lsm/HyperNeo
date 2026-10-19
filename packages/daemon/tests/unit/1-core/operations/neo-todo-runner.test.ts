@@ -691,6 +691,25 @@ describe('blocked todos', () => {
     expect(told.filter((note) => note.includes('is blocked'))).toHaveLength(2);
   });
 
+  test('a todo held by its start question still starts, and starting clears the hold', async () => {
+    const { store, runner, add } = setup();
+    const todo = store.updateTodo(
+      add(),
+      {
+        state: 'blocked',
+        blockedBy: 'question',
+        blockedReason: 'Waiting for the human to start it.',
+      },
+      2
+    );
+    expect(await runner.start(todo.id)).toMatchObject({ ok: true });
+    expect(store.getTodo(todo.id)).toMatchObject({
+      state: 'doing',
+      blockedBy: null,
+      blockedReason: null,
+    });
+  });
+
   test('settling the ask removes a blocked todo with the rest', () => {
     const { store, add } = setup();
     const todo = add();

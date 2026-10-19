@@ -12,6 +12,7 @@ import {
   NeoTodoDraftSchema,
   requireNeoAskOwner,
 } from './todo-operations.ts';
+import { isNeoTodoStartable } from './todo-runner.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -125,7 +126,7 @@ export function createNeoAskRecordOperations(
           const row = recorded.find((item) => item.title === todo.title);
           const added = !row
             ? await addNeoTodo(store, sessions, controls.start, ask.id, todo)
-            : todo.start && row.state === 'todo'
+            : todo.start && isNeoTodoStartable(row)
               ? await controls.start(row.id)
               : { ok: true as const };
           if (!added.ok) return added;
