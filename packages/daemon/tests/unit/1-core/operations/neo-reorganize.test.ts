@@ -98,8 +98,6 @@ describe('neo.projects.reorganize', () => {
     current: Record<string, NeoAsk | null> = {},
     merged: { sourceId: string; targetId: string }[] = []
   ) {
-    const delivered: { sessionId: string; messageId: string; parent: unknown }[] = [];
-    const moves: { askId: string; projectId: string; messageId: string }[] = [];
     const logged: string[] = [];
     const cleaned: string[] = [];
     const deps: NeoReorganizeRuntime = {
@@ -108,6 +106,7 @@ describe('neo.projects.reorganize', () => {
           ? ({ sessionId: root, kind: 'neo', projectId: null } as NeoBinding)
           : null,
       rootSessionId: () => root,
+      sessionStatus: (sessionId) => (busy.includes(sessionId) ? 'processing' : 'idle'),
       mergeProjects: async () => ({ merged }),
       projectFacts: () => [],
       machine: () => 'here',
@@ -121,7 +120,7 @@ describe('neo.projects.reorganize', () => {
         logged.push(line);
       },
     };
-    return { deps, delivered, moves, logged, cleaned };
+    return { deps, logged, cleaned };
   }
   const invoke = (
     deps: NeoReorganizeRuntime,
@@ -135,8 +134,8 @@ describe('neo.projects.reorganize', () => {
       caller
     ).then((outcome) => (outcome as { value?: unknown }).value);
 
-  test('without a main session it still merges projects and moves no asks', async () => {
-    const { deps, moves } = runtime([ask('a')], { a: 'drivers' }, [], {}, [
+  test('without a main session it still merges projects', async () => {
+    const { deps } = runtime([ask('a')], { a: 'drivers' }, [], {}, [
       { sourceId: 'web-shallow', targetId: 'web' },
     ]);
     deps.rootSessionId = () => null;
@@ -144,7 +143,6 @@ describe('neo.projects.reorganize', () => {
       ok: true,
       merged: [{ sourceId: 'web-shallow', targetId: 'web' }],
     });
-    expect(moves).toEqual([]);
   });
 
   test('plans the project cleanup as a dry run: it logs and reports, and applies nothing', async () => {

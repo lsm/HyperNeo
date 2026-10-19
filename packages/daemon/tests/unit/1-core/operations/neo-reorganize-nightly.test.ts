@@ -65,8 +65,6 @@ describe('runNeoNightlyReorganize', () => {
           runs++;
           return {
             merged: [],
-            moved: [],
-            stayed: [],
             cleanupPlanned: [],
             cleanupApplied: false,
             cleanupFailed: [],
