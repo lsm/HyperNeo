@@ -144,6 +144,7 @@ export const WorkDetailSchema = WorkSummarySchema.extend({
   execution: z.object({ directory: z.string().min(1), machine: z.string().min(1) }).optional(),
   lastReply: z.string().optional(),
   lastReplyAt: z.number().optional(),
+  waitingFor: z.string().max(200).optional(),
   recentInputs: z.array(WorkInputSchema).optional(),
   exchange: z.array(WorkExchangeEntrySchema).optional(),
   exchangeCut: z.boolean().optional(),

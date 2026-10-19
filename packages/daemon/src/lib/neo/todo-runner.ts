@@ -115,6 +115,14 @@ export function requireNeoTodoContinuable(read: {
   return { value: { todo, ask, ref } };
 }
 
+export function neoTodoNeedsYouNote(
+  todo: Pick<NeoTodo, 'title'>,
+  live: { waitingFor?: string; link?: string; remoteLink?: string }
+): string {
+  const link = live.remoteLink ?? live.link;
+  return `Todo "${todo.title}": its session is waiting on the human (${live.waitingFor ?? 'a prompt or question'}). Ask the human once to answer it there${link ? `: ${link}` : ''}. Do not send to it until it runs again.`;
+}
+
 export function requireNeoTodoRetryable(read: {
   todo: NeoTodo | null;
   ref: WorkRef | null;
@@ -356,6 +364,25 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     )
     .endAsync('outcome') as (todoId: string) => Promise<{ ok: true; todo: NeoTodo } | Rejection>;
 
+  const noteNeedsYou = async (
+    todoId: string,
+    ask: NeoAsk,
+    live: ReturnType<typeof readDriverLive>
+  ) => {
+    if (!live) return;
+    const since = sessions.readNeedsYouSince(todoId);
+    if (live.status !== 'needs_you') {
+      if (since !== null) sessions.recordNeedsYouSince(todoId, null);
+      return;
+    }
+    const todo = store.getTodo(todoId);
+    const followed =
+      todo?.state === 'doing' || (todo?.state === 'blocked' && todo.blockedBy === 'worker');
+    if (since !== null || !todo || !followed) return;
+    sessions.recordNeedsYouSince(todoId, Date.now());
+    await deps.tell(ask, todo, neoTodoNeedsYouNote(todo, live));
+  };
+
   const settleDeps = (ask: NeoAsk): NeoDriverSettleDeps => ({
     readStartedAt: (id) => sessions.readStartedAt(id),
     readSent: (id) => {
@@ -375,13 +402,17 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       return outcome;
     },
     recordStartedAt: (id, at) => sessions.recordStartedAt(id, at),
-    recordLive: (id, status, live) => sessions.recordLive(id, status, live.link, live.remoteLink),
+    recordLive: (id, status, live) => {
+      if (status !== 'needs_you' && sessions.readNeedsYouSince(id) !== null)
+        sessions.recordNeedsYouSince(id, null);
+      return sessions.recordLive(id, status, live.link, live.remoteLink);
+    },
     recordCheck: (id, read, now) => {
       sessions.recordCardCheck(id, { checkedAt: now, unchecked: !read });
       return false;
     },
     notifyChanged: () => deps.changed(),
-    noteUnsettled: async () => {},
+    noteUnsettled: (card, _ref, outcome) => noteNeedsYou(card.id, ask, readDriverLive(outcome)),
     forgetActivity: () => {},
     transition: (card, settled) => {
       const todo = store.getTodo(card.id);
@@ -463,6 +494,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         observe(todo.id, outcome);
         const live = readDriverLive(outcome);
         if (live) sessions.recordLive(todo.id, live.status, live.link, live.remoteLink);
+        await noteNeedsYou(todo.id, target.ask, live);
         sessions.recordCardCheck(todo.id, { checkedAt: now, unchecked: !live });
         deps.changed();
         const report = readDriverFollowUp(outcome, since, sent);
@@ -554,6 +586,10 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     const { todo, ask, ref } = gate.value;
     const text = withWorkGoal(message, { workId: todo.id, goal: null, doneWhen: todo.doneWhen });
     const status = await deps.invoke(caller(ask), 'work.status', { ref });
+    if (readDriverLive(status)?.status === 'needs_you')
+      return fail(
+        'needs_you: its session is waiting on the human; ask them to answer it there, then continue.'
+      ).reason;
     const baseline = readDriverSendBaseline(status, Date.now(), !!ref.daemon);
     const sent = readDriverSent(status, text, todo.createdAt);
     const delivered = readDriverOutcome(
