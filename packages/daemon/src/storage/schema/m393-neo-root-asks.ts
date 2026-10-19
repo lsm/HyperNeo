@@ -19,14 +19,7 @@ const MOVES = [
 const hasTable = (db: Database, name: string): boolean =>
   !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name);
 
-export function runMigration393(db: Database, now = Date.now()): void {
-  db.exec(`CREATE TABLE IF NOT EXISTS neo_root_moves (
-    source TEXT NOT NULL,
-    row_id TEXT NOT NULL,
-    from_session_id TEXT NOT NULL,
-    moved_at INTEGER NOT NULL,
-    PRIMARY KEY (source, row_id)
-  )`);
+export function runMigration393(db: Database): void {
   if (!hasTable(db, 'neo_session_bindings')) return;
   const root = db
     .prepare(
@@ -34,25 +27,9 @@ export function runMigration393(db: Database, now = Date.now()): void {
     )
     .get() as { sessionId: string } | null;
   if (!root) return;
-  for (const { table, column, live } of MOVES) {
-    if (!hasTable(db, table)) continue;
-    const moving = `${live} AND ${column} IN (${HOLDERS})`;
-    db.prepare(
-      `INSERT OR IGNORE INTO neo_root_moves (source, row_id, from_session_id, moved_at)
-       SELECT '${table}', id, ${column}, ? FROM ${table} WHERE ${moving}`
-    ).run(now);
-    db.prepare(`UPDATE ${table} SET ${column} = ? WHERE ${moving}`).run(root.sessionId);
-  }
-}
-
-export function revertMigration393(db: Database): void {
-  if (!hasTable(db, 'neo_root_moves')) return;
-  for (const { table, column } of MOVES)
+  for (const { table, column, live } of MOVES)
     if (hasTable(db, table))
       db.prepare(
-        `UPDATE ${table} SET ${column} = (SELECT from_session_id FROM neo_root_moves
-           WHERE source = '${table}' AND row_id = ${table}.id)
-         WHERE id IN (SELECT row_id FROM neo_root_moves WHERE source = '${table}')`
-      ).run();
-  db.exec('DELETE FROM neo_root_moves');
+        `UPDATE ${table} SET ${column} = ? WHERE ${live} AND ${column} IN (${HOLDERS})`
+      ).run(root.sessionId);
 }

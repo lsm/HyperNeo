@@ -13,10 +13,7 @@ import {
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
-import {
-  revertMigration393,
-  runMigration393,
-} from '../../../../src/storage/schema/m393-neo-root-asks.ts';
+import { runMigration393 } from '../../../../src/storage/schema/m393-neo-root-asks.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
 const root = 'neo:root';
@@ -77,7 +74,7 @@ describe('Neo as one session', () => {
     role: 'neo',
   });
 
-  test('m393 moves what holders own and is live to root, once, and reverts exactly', () => {
+  test('m393 moves what holders own and is live to root, and a rerun changes nothing', () => {
     openAsk('open', holder);
     service.todos.settleAsk(openAsk('settled', holder), 'done', 'Shipped', 2);
     openAsk('mine', root);
@@ -104,26 +101,16 @@ describe('Neo as one session', () => {
       doneSource: 'human',
     });
 
-    runMigration393(db.getDatabase(), 5);
-    runMigration393(db.getDatabase(), 6);
+    runMigration393(db.getDatabase());
+    runMigration393(db.getDatabase());
     expect(owners('neo_asks', 'session_id')).toEqual({ mine: root, open: root, settled: holder });
     expect(owners('neo_work', 'origin_session_id')).toEqual({ ended: holder, live: root });
     expect(owners('legacy_neo_asks', 'origin_session_id')).toEqual({ legacy: root });
-    expect(db.getDatabase().prepare('SELECT * FROM neo_root_moves ORDER BY source').all()).toEqual([
-      { source: 'legacy_neo_asks', row_id: 'legacy', from_session_id: holder, moved_at: 5 },
-      { source: 'neo_asks', row_id: 'open', from_session_id: holder, moved_at: 5 },
-      { source: 'neo_work', row_id: 'live', from_session_id: holder, moved_at: 5 },
-    ]);
-
-    revertMigration393(db.getDatabase());
-    expect(owners('neo_asks', 'session_id')).toEqual({ mine: root, open: holder, settled: holder });
-    expect(owners('neo_work', 'origin_session_id')).toEqual({ ended: holder, live: holder });
-    expect(owners('legacy_neo_asks', 'origin_session_id')).toEqual({ legacy: holder });
   });
 
   test('root works a moved ask, its old holder cannot, and the todo note reaches root', async () => {
     openAsk('open', holder);
-    runMigration393(db.getDatabase(), 5);
+    runMigration393(db.getDatabase());
     const invoke = (name: string, input: unknown, as: OperationCaller) =>
       invokeOperation(createOperationRegistry(createNeoOperations(service)), name, input, as);
     const todo = { title: 'Fix header', doneWhen: 'Merged' };
