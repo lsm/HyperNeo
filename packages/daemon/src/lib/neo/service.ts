@@ -146,12 +146,10 @@ import { neoAskProgressNote } from './ask-progress.ts';
 import { neoCardAttentionNeoNote, requireNeoCardAttentionRelay } from './card-attention.ts';
 import { planNeoCardCheck } from './card-check.ts';
 import {
-  neoProjectEventMessageId,
   planNeoCardEventRoute,
   planNeoCardEventSends,
   planNeoCardSend,
   planNeoCardTopicsEnded,
-  planNeoProjectEventHolders,
   neoCardWorkerSession,
 } from './card-events.ts';
 import { planNeoDaemonCardSettle, requireNeoCardTurn } from './card-settle.ts';
@@ -409,8 +407,6 @@ const dispatchNeoConsultationWaiter = (
   )
   .endAsync('admission');
 
-const NEO_PROJECT_EVENT_NOTE =
-  'An event on one of this project’s cards. Its ask belongs to another Neo session, which acts on it.';
 const NEO_WORK_REVIEWED = 'The context holder reviewed the returned work.';
 
 type NeoWorkPrCard = {
@@ -2802,42 +2798,6 @@ export class NeoService {
       },
       ['event', 'route'],
       'delivered'
-    )
-    .pipe(
-      (route: NeoPackEventRoute) =>
-        planNeoProjectEventHolders(
-          route.workIds.flatMap((id) => {
-            const todo = this.todos.getTodo(id);
-            const work = this.followedTodo(id);
-            const ask = todo ? this.todos.getAsk(todo.askId) : null;
-            return work
-              ? [
-                  {
-                    projectId: work.projectId,
-                    owner: ask?.projectId ?? null,
-                  },
-                ]
-              : [];
-          })
-        ),
-      'route',
-      'holders'
-    )
-    .pipe(
-      async (event: ExternalEvent, holders: string[]) => {
-        for (const projectId of holders)
-          await this.open()
-            .then((holder) =>
-              this.deliver(
-                holder,
-                neoProjectEventMessageId(projectId, event.id),
-                `${NEO_PROJECT_EVENT_NOTE}\n${sessionEventText(event)}`,
-                holder
-              )
-            )
-            .catch((error) => this.log.warn('Project event not delivered', error));
-      },
-      ['event', 'holders']
     )
     .pipe(async (delivered: string[]) => {
       await this.todoRunner.refresh((message, error) => this.log.warn(message, error));
