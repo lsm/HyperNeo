@@ -668,6 +668,7 @@ describe('Neo MVP', () => {
       'neo.project.consult',
       'neo.project.respond',
       'neo.open',
+      'neo.restart',
       'neo.receipt.read',
       'neo.rule.save',
       'neo.session.mute',

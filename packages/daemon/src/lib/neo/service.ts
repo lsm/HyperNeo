@@ -1,3 +1,5 @@
+import { restartNeo } from './restart.ts';
+import { projectNeoAskEntries } from './ask-entries.ts';
 import { NeoWorkControlFailureRepository } from '../../storage/repositories/neo-work-control-failure-repository.ts';
 import { neoControlFailure, neoControlFailureForRef } from './control-failure.ts';
 import { planNeoHolderTitles } from './holder-title.ts';
@@ -1333,6 +1335,25 @@ export class NeoService {
     this.processingStatus.clear();
     if (this.watching) await this.watching;
     this.sessionWatcher.flushSessionNoticeGroup();
+  }
+
+  restart() {
+    return restartNeo({
+      open: () => this.open(),
+      clear: async (sessionId) => {
+        const live = await this.sessions.getSessionForControl(sessionId);
+        if (!live) throw new Error(`Neo session ${sessionId} is not available.`);
+        await live.startFreshContext();
+      },
+      note: (sessionId, text) => this.deliver(sessionId, crypto.randomUUID(), text, sessionId),
+      entries: () =>
+        projectNeoAskEntries(
+          this.todos.listOpenAsks(),
+          this.todos,
+          this.todoSessions,
+          this.installedPacks()
+        ),
+    });
   }
 
   open(): Promise<string> {
