@@ -48,6 +48,7 @@ export interface NeoTodoCheckResult {
   done: boolean;
   evidence: string | null;
   failed?: string;
+  blocked?: { reason: string; nextAction: string };
 }
 
 export interface NeoTodoPack {

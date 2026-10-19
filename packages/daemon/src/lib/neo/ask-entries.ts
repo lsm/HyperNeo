@@ -26,6 +26,7 @@ const NEO_TODO_STATUS_EN = {
   'todo.failed': 'Not done',
   'todo.notStarted': 'Not started',
   'todo.doing': 'In progress',
+  'todo.blocked': 'Blocked: {reason}',
   'todo.checking': 'Session reported; checking',
   'todo.awaitingNeo': 'Session stopped; waiting for Neo to check',
   'todo.reportedDone': 'Session says it is done',
@@ -50,6 +51,7 @@ export function neoTodoStatusLine(
   }
   if (todo.state === 'failed')
     return todo.reason ? neoTextStatus(todo.reason) : coded('todo.failed');
+  if (todo.state === 'blocked') return coded('todo.blocked', { reason: todo.blockedReason ?? '' });
   if (packLine) return packLine;
   if (todo.state === 'todo') return coded('todo.notStarted');
   if (todo.state === 'doing')
@@ -66,6 +68,7 @@ export function neoAskEntryState(
   if (ask.status === 'dropped') return 'dropped';
   if (ask.status === 'done') return 'done';
   if (questions.some((question) => question.state === 'open')) return 'waiting';
+  if (todos.some((todo) => todo.state === 'blocked')) return 'waiting';
   if (todos.some((todo) => todo.state === 'doing')) return 'doing';
   const live = todos.filter((todo) => todo.state !== 'removed');
   return live.length && live.every((todo) => todo.state === 'done') ? 'done' : 'todo';

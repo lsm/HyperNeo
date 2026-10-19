@@ -35,6 +35,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'todo.failed': '没做成',
   'todo.notStarted': '没开始',
   'todo.doing': '在做',
+  'todo.blocked': '卡住了：{reason}',
   'todo.checking': '会话回报了，正在检查',
   'todo.awaitingNeo': '会话停了，等 Neo 核对',
   'todo.reportedDone': '会话说做完了',

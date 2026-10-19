@@ -20,7 +20,9 @@ export interface NeoTodoCheck {
   params: Record<string, unknown>;
 }
 
-export type NeoTodoState = 'todo' | 'doing' | 'done' | 'failed' | 'removed';
+export type NeoTodoState = 'todo' | 'doing' | 'blocked' | 'done' | 'failed' | 'removed';
+
+export type NeoTodoBlocker = 'check' | 'worker' | 'failure' | 'question';
 
 export interface NeoTodo {
   id: string;
@@ -33,6 +35,9 @@ export interface NeoTodo {
   named: Record<string, unknown> | null;
   state: NeoTodoState;
   reason: string | null;
+  blockedReason: string | null;
+  nextAction: string | null;
+  blockedBy: NeoTodoBlocker | null;
   replacedBy: string | null;
   addedAfterStart: boolean;
   report: string | null;

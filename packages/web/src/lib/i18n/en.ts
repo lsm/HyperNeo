@@ -33,6 +33,7 @@ export const en = {
   'todo.failed': 'Not done',
   'todo.notStarted': 'Not started',
   'todo.doing': 'In progress',
+  'todo.blocked': 'Blocked: {reason}',
   'todo.checking': 'Session reported; checking',
   'todo.awaitingNeo': 'Session stopped; waiting for Neo to check',
   'todo.reportedDone': 'Session says it is done',

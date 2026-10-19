@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
-import type { NeoPack } from '../../../../src/lib/neo/packs/types.ts';
+import type { NeoPack, NeoTodoCheckResult } from '../../../../src/lib/neo/packs/types.ts';
 import {
   createNeoTodoRunner,
   neoAskIdleNote,
@@ -39,6 +39,7 @@ function setup(packDone: boolean | null = null) {
   const askNotes: string[] = [];
   const checkedTodos: string[] = [];
   let status: unknown = null;
+  let result: NeoTodoCheckResult | null | undefined;
   const pack = {
     id: 'coding',
     describe: 'coding',
@@ -48,6 +49,7 @@ function setup(packDone: boolean | null = null) {
       schema: () => {},
       check: async (todo: NeoTodo) => {
         checkedTodos.push(todo.id);
+        if (result !== undefined) return result;
         return packDone === null ? null : { done: packDone, evidence: '#1 已合并' };
       },
       statusLine: () => null,
@@ -99,6 +101,9 @@ function setup(packDone: boolean | null = null) {
     add,
     setStatus: (value: unknown) => {
       status = value;
+    },
+    setResult: (value: NeoTodoCheckResult | null) => {
+      result = value;
     },
   };
 }
@@ -209,7 +214,9 @@ describe('neo todo runner', () => {
       evidence: '#1 已合并',
     });
     expect(told).toEqual([
-      expect.stringContaining('Todo "Rows": its session stopped'),
+      expect.stringContaining(
+        'Todo "Rows" is blocked: Its session stopped before the todo was done.'
+      ),
       'Todo "Rows" is done: #1 已合并',
     ]);
   });
@@ -432,32 +439,78 @@ describe('requireNeoTodoStartable', () => {
 });
 
 describe('planNeoTodoSettled', () => {
-  test('a stopped session records its report and never finishes the todo; a failure fails it', () => {
-    expect(
-      planNeoTodoSettled({ status: 'reported', report: 'Opened #12, waiting on CI' }, 5)
-    ).toEqual({ report: 'Opened #12, waiting on CI' });
-    expect(planNeoTodoSettled({ status: 'failed', report: 'It stopped.' }, 5)).toEqual({
+  test('a stopped session blocks the todo with its report; a failure fails it, and the same failure twice blocks it', () => {
+    const doing = { state: 'doing', check: { pack: 'coding' }, reason: null } as NeoTodo;
+    expect(planNeoTodoSettled(doing, { status: 'reported', report: 'Opened #12' }, 5)).toEqual({
+      report: 'Opened #12',
+      state: 'blocked',
+      blockedBy: 'worker',
+      blockedReason: 'Its session stopped before the todo was done.',
+      nextAction: 'Continue the session with neo.todo.continue, or close the todo.',
+    });
+    expect(planNeoTodoSettled(doing, { status: 'failed', report: 'It stopped.' }, 5)).toEqual({
       state: 'failed',
       reason: 'It stopped.',
       finishedAt: 5,
+      blockedReason: null,
+      nextAction: null,
+      blockedBy: null,
+    });
+    expect(
+      planNeoTodoSettled(
+        { ...doing, reason: 'It stopped.' },
+        { status: 'failed', report: 'It stopped.' },
+        5
+      )
+    ).toMatchObject({
+      state: 'blocked',
+      blockedBy: 'failure',
+      blockedReason: 'Failed twice: It stopped.',
     });
   });
 });
 
 describe('planNeoTodoCheck', () => {
-  test('only a passing check on an unfinished todo changes it', () => {
-    const doing = { state: 'doing' } as NeoTodo;
-    expect(planNeoTodoCheck(doing, { done: true, evidence: 'ok' }, 1)).toEqual({
+  const blocked = {
+    reason: 'No progress for 2 hours',
+    nextAction: 'Ask the worker what is stuck.',
+  };
+  test('a passing check finishes an unfinished todo; a failing one fails it', () => {
+    const doing = { state: 'doing', reason: null } as NeoTodo;
+    expect(planNeoTodoCheck(doing, { done: true, evidence: 'ok' }, 1)).toMatchObject({
       state: 'done',
       evidence: 'ok',
       finishedAt: 1,
+      blockedBy: null,
     });
     expect(planNeoTodoCheck(doing, { done: false, evidence: null }, 1)).toBeNull();
     expect(
       planNeoTodoCheck(doing, { done: false, evidence: null, failed: '#2 closed' }, 1)
-    ).toEqual({ state: 'failed', reason: '#2 closed', finishedAt: 1 });
+    ).toMatchObject({ state: 'failed', reason: '#2 closed', finishedAt: 1 });
     expect(
       planNeoTodoCheck({ state: 'done' } as NeoTodo, { done: true, evidence: 'ok' }, 1)
+    ).toBeNull();
+  });
+
+  test('a pack block blocks once and its clearing unblocks; other blockers stay', () => {
+    const doing = { state: 'doing', reason: null } as NeoTodo;
+    const patch = planNeoTodoCheck(doing, { done: false, evidence: null, blocked }, 1);
+    expect(patch).toEqual({
+      state: 'blocked',
+      blockedBy: 'check',
+      blockedReason: blocked.reason,
+      nextAction: blocked.nextAction,
+    });
+    const held = { ...doing, ...patch } as NeoTodo;
+    expect(planNeoTodoCheck(held, { done: false, evidence: null, blocked }, 2)).toBeNull();
+    expect(planNeoTodoCheck(held, { done: false, evidence: null }, 2)).toEqual({
+      state: 'doing',
+      blockedReason: null,
+      nextAction: null,
+      blockedBy: null,
+    });
+    expect(
+      planNeoTodoCheck({ ...held, blockedBy: 'worker' }, { done: false, evidence: null }, 2)
     ).toBeNull();
   });
 });
@@ -469,11 +522,17 @@ describe('neoTodoNote', () => {
     );
   });
 
-  test('says a stopped session is not completion', () => {
+  test('says a blocked todo with its reason, next action and last report', () => {
     expect(
-      neoTodoNote({ title: 'T', state: 'doing', check: null, report: 'Waiting on CI' } as NeoTodo)
+      neoTodoNote({
+        title: 'T',
+        state: 'blocked',
+        blockedReason: 'Its session stopped before the todo was done.',
+        nextAction: 'Close it.',
+        report: 'Waiting on CI',
+      } as NeoTodo)
     ).toBe(
-      'Todo "T": its session stopped, which is not completion; the todo stays doing until it is ticked with evidence. Its last report:\nWaiting on CI'
+      'Todo "T" is blocked: Its session stopped before the todo was done.\nNext: Close it.\nIts last report:\nWaiting on CI'
     );
   });
 });
@@ -537,5 +596,55 @@ describe('a todo sent to an existing session', () => {
     confirmedAt = Date.parse('2026-10-17T21:40:00Z');
     expect(await runner.proceed('second', 'Next step')).toMatchObject({ ok: true });
     expect(sessions.readStartedAt('second')).toBe(confirmedAt);
+  });
+});
+
+describe('blocked todos', () => {
+  const blocked = {
+    reason: 'No progress for 2 hours',
+    nextAction: 'Ask the worker what is stuck.',
+  };
+  const warn = () => {};
+
+  test('a pack block is stored once, survives a restart and clears on progress', async () => {
+    const { db, store, runner, told, add, setResult } = setup();
+    const todo = add({ pack: 'coding', kind: 'pr_merged', params: {} });
+    store.updateTodo(todo, { state: 'doing' }, 2);
+    setResult({ done: false, evidence: null, blocked });
+    await runner.checkNow([todo.id], warn);
+    await runner.checkNow([todo.id], warn);
+    expect(told).toEqual([
+      expect.stringContaining('Todo "Rows" is blocked: No progress for 2 hours'),
+    ]);
+    expect(new NeoAskTodoRepository(db).getTodo(todo.id)).toMatchObject({
+      state: 'blocked',
+      blockedBy: 'check',
+      blockedReason: blocked.reason,
+      nextAction: blocked.nextAction,
+    });
+    setResult({ done: false, evidence: null });
+    await runner.checkNow([todo.id], warn);
+    expect(store.getTodo(todo.id)).toMatchObject({ state: 'doing', blockedReason: null });
+    expect(told).toHaveLength(1);
+  });
+
+  test('the same failure twice blocks instead of failing, and continuing unblocks it', async () => {
+    const { store, runner, told, add, setResult, setStatus } = setup();
+    const todo = add({ pack: 'coding', kind: 'pr_merged', params: {} });
+    await runner.start(todo.id);
+    setResult({ done: false, evidence: null, failed: 'CI keeps failing' });
+    await runner.checkNow([todo.id], warn);
+    expect(store.getTodo(todo.id)).toMatchObject({ state: 'failed', reason: 'CI keeps failing' });
+    setStatus({ ok: true, value: { delivered: true } });
+    expect(await runner.proceed(todo.id, 'Fix the test.')).toMatchObject({ ok: true });
+    await runner.checkNow([todo.id], warn);
+    expect(store.getTodo(todo.id)).toMatchObject({
+      state: 'blocked',
+      blockedBy: 'failure',
+      blockedReason: 'Failed twice: CI keeps failing',
+    });
+    expect(told.at(-1)).toContain('Todo "Rows" is blocked: Failed twice: CI keeps failing');
+    await runner.proceed(todo.id, 'Try another approach.');
+    expect(store.getTodo(todo.id)).toMatchObject({ state: 'doing', blockedBy: null });
   });
 });
