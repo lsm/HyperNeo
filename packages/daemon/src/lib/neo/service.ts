@@ -712,6 +712,9 @@ export class NeoService {
       mutedSessions: () => this.db.getGlobalSettings?.().neo?.mutedSessions,
       liveAskPrs: () => this.askRecords.listLive().map((ask) => this.askPrs(ask)),
       sessionBranchPrs: (ref) => this.sessionBranchPrs(ref),
+      observeSessionPrs: (links) => {
+        for (const pack of this.packs()) pack.observeSessionLinks?.(links, Date.now());
+      },
       notifyChanged: () => this.notifyChanged(),
     });
     this.workRefusals = new NeoWorkRefusalRepository(db.getDatabase());

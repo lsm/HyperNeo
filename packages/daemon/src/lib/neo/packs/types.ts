@@ -2,6 +2,7 @@ import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
 import type { WorkExecutionPreparation } from '../../drivers/start-preparation.ts';
+import type { WorkRef } from '../../drivers/types.ts';
 import type { Database } from '../../../storage/sqlite-compat.ts';
 import type { ExternalEvent } from '../../external-events/types.ts';
 import type { NeoEvidence, NeoEvidenceRead } from '../evidence.ts';
@@ -61,6 +62,10 @@ export interface NeoTodoPack {
 export interface NeoPack extends NeoPackBrief {
   todos?: NeoTodoPack;
   sweep?(now: number): Promise<void>;
+  observeSessionLinks?(
+    links: readonly { ref: WorkRef; urls: readonly string[] }[],
+    now: number
+  ): void;
   snapshotRows?(
     repos: readonly string[] | null,
     now: number

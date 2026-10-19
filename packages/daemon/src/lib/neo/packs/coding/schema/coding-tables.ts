@@ -28,6 +28,11 @@ export function createCodingPackTables(db: Database): void {
     told_at INTEGER,
     read_at INTEGER NOT NULL,
     PRIMARY KEY (repo, number)
+  );
+  CREATE TABLE IF NOT EXISTS pack_coding_session_prs (
+    url TEXT PRIMARY KEY,
+    ref TEXT NOT NULL CHECK (json_valid(ref)),
+    seen_at INTEGER NOT NULL
   )`);
   if (db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'neo_todo_pr_refs'").get())
     db.exec(

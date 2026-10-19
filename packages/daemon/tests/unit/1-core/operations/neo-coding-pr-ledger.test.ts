@@ -378,3 +378,68 @@ describe('codingLedgerArgs', () => {
     expect(args).not.toContain('-F');
   });
 });
+
+describe('CodingPrLedgerRepository.recordSessionPrs', () => {
+  test('the first session seen with a PR owns it, also when the PR reaches the ledger later', async () => {
+    const { db, ledger } = setup();
+    const opener = { adapter: 'claude-desktop', id: 'opener' };
+    ledger.recordSessionPrs([{ ref: opener, urls: ['https://github.com/LSM/a/pull/1'] }], 1);
+    ledger.recordSessionPrs(
+      [{ ref: { adapter: 'hyperneo', id: 'later' }, urls: ['https://github.com/lsm/a/pull/1'] }],
+      2
+    );
+    await reconcile(ledger, ['lsm/a'], async () => response([node(1), node(2)]), 100);
+    expect(
+      db.prepare('SELECT number, owner FROM pack_coding_pr_ledger ORDER BY number').all()
+    ).toEqual([
+      { number: 1, owner: JSON.stringify(opener) },
+      { number: 2, owner: null },
+    ]);
+    db.close();
+  });
+});
+
+describe('reconcileCodingPrLedger renamed repos', () => {
+  test('rows kept under a repo alias are dropped once GitHub answers with another name', async () => {
+    const { db, ledger } = setup();
+    await reconcile(ledger, ['lsm/neokai'], async () => response([node(7563)]), 100);
+    expect(ledger.list().map((row) => row.repo)).toEqual(['lsm/neokai']);
+    await reconcileCodingPrLedger(
+      ledger,
+      ['lsm/hyperneo', 'lsm/neokai'],
+      async () => {
+        const raw = response([node(7577)]);
+        raw.data.repository.nameWithOwner = 'lsm/HyperNeo';
+        return raw;
+      },
+      200
+    );
+    expect(ledger.list().map((row) => [row.repo, row.number])).toEqual([['lsm/hyperneo', 7577]]);
+    db.close();
+  });
+});
+
+describe('CodingPrLedgerRepository.pruneSessionPrs', () => {
+  test('forgets old session links whose PR left the ledger and ignores non-github.com hosts', async () => {
+    const { db, ledger } = setup();
+    const ref = { adapter: 'hyperneo', id: 's' };
+    ledger.recordSessionPrs(
+      [
+        {
+          ref,
+          urls: [
+            'https://github.com/lsm/a/pull/1',
+            'https://github.com/lsm/a/pull/2',
+            'https://ghe.example.com/lsm/a/pull/3',
+          ],
+        },
+      ],
+      1
+    );
+    await reconcile(ledger, ['lsm/a'], async () => response([node(1)]), CODING_LEDGER_KEEP_MS + 2);
+    expect(db.prepare('SELECT url FROM pack_coding_session_prs ORDER BY url').all()).toEqual([
+      { url: 'https://github.com/lsm/a/pull/1' },
+    ]);
+    db.close();
+  });
+});

@@ -299,6 +299,7 @@ export function createCodingPack(
     ...CODING_PACK_BRIEF,
     prepareExecution: prepareCodingExecution,
     todos: createCodingTodoPack(deps.todoPrs, deps.readPrs),
+    observeSessionLinks: (links, now) => deps.prLedger.recordSessionPrs(links, now),
     sweep: async (now) => {
       await reconcileCodingPrLedger(
         deps.prLedger,

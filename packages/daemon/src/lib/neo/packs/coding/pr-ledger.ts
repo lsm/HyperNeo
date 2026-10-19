@@ -4,6 +4,7 @@ import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { Logger } from '../../../logger.ts';
 import { spawnProcess } from '../../../runtime-spawn/index.ts';
+import { codingPrKey } from './todo-prs.ts';
 
 export type CodingPrState =
   | 'draft'
@@ -164,6 +165,35 @@ export class CodingPrLedgerRepository {
       );
   }
 
+  recordSessionPrs(links: readonly { ref: unknown; urls: readonly string[] }[], now: number): void {
+    const insert = this.db.prepare(
+      'INSERT INTO pack_coding_session_prs (url, ref, seen_at) VALUES (?, ?, ?) ON CONFLICT(url) DO NOTHING'
+    );
+    for (const link of links)
+      for (const url of link.urls) {
+        const key = codingPrKey(url);
+        if (key?.startsWith('https://github.com/')) insert.run(key, JSON.stringify(link.ref), now);
+      }
+    this.db.exec(`UPDATE pack_coding_pr_ledger SET owner = (
+        SELECT s.ref FROM pack_coding_session_prs s
+         WHERE s.url = 'https://github.com/' || pack_coding_pr_ledger.repo || '/pull/'
+                 || pack_coding_pr_ledger.number)
+      WHERE owner IS NULL`);
+  }
+
+  pruneSessionPrs(now: number): void {
+    this.db
+      .prepare(
+        `DELETE FROM pack_coding_session_prs WHERE seen_at < ? AND url NOT IN
+           (SELECT 'https://github.com/' || repo || '/pull/' || number FROM pack_coding_pr_ledger)`
+      )
+      .run(now - CODING_LEDGER_KEEP_MS);
+  }
+
+  dropRepo(repo: string): void {
+    this.db.prepare('DELETE FROM pack_coding_pr_ledger WHERE repo = ?').run(repo);
+  }
+
   linkOwners(): void {
     this.db.exec(`UPDATE pack_coding_pr_ledger SET owner = COALESCE((
         SELECT s.ref FROM pack_coding_pr_claims c
@@ -268,10 +298,13 @@ export async function reconcileCodingPrLedger(
     skips.set(repo, skipped);
     if (skipped === CODING_LEDGER_WARN_SKIPS)
       log.warn(`PR ledger read for ${repo} failed or was partial ${skipped} times in a row`);
+    if (planned && planned.repo !== repo.toLowerCase()) ledger.dropRepo(repo.toLowerCase());
     if (planned && !seen.has(planned.repo)) ledger.replace(planned.repo, planned.rows, now);
     if (planned) seen.add(planned.repo);
     if (planned && planned.remaining < CODING_LEDGER_MIN_RATE) break;
   }
   ledger.prune([...repos, ...seen], now);
   ledger.linkOwners();
+  ledger.recordSessionPrs([], now);
+  ledger.pruneSessionPrs(now);
 }
