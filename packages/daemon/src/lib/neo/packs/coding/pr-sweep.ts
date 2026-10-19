@@ -122,7 +122,8 @@ export async function sweepCodingPrs(
     const told =
       nudge.kind === 'remind' &&
       (await deps.tell(row.owner!, key, codingPrNudgeText(row, now)).catch(() => false));
-    log.info(`PR sweep ${key} to ${owned(row.owner!)}: ${told ? 'told' : 'not told'}`);
+    if (nudge.kind === 'remind')
+      log.info(`PR sweep ${key} to ${owned(row.owner!)}: ${told ? 'told' : 'not told'}`);
     if (told) {
       repo.mark(row, nudge.nudges, now);
       continue;
