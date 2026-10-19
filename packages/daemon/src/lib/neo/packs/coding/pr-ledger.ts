@@ -190,6 +190,16 @@ export class CodingPrLedgerRepository {
       .run(now - CODING_LEDGER_KEEP_MS);
   }
 
+  lastReads(): Map<string, number> {
+    return new Map(
+      (
+        this.db
+          .prepare('SELECT repo, MAX(read_at) AS readAt FROM pack_coding_pr_ledger GROUP BY repo')
+          .all() as { repo: string; readAt: number }[]
+      ).map((row) => [row.repo, row.readAt])
+    );
+  }
+
   dropRepo(repo: string): void {
     this.db.prepare('DELETE FROM pack_coding_pr_ledger WHERE repo = ?').run(repo);
   }
@@ -281,7 +291,7 @@ export const readCodingLedgerRepo: CodingLedgerRead = async (repo) => {
   const outcome = await runGhJson(codingLedgerArgs(repo), homedir(), spawnProcess, {
     resourceHint: 'graphql',
   });
-  return outcome.ok ? outcome.data : null;
+  return outcome.ok ? outcome.data : { error: outcome.error };
 };
 
 export async function reconcileCodingPrLedger(
@@ -292,12 +302,19 @@ export async function reconcileCodingPrLedger(
   skips: Map<string, number> = new Map()
 ): Promise<void> {
   const seen = new Set<string>();
-  for (const repo of repos) {
-    const planned = planCodingLedgerRead(await read(repo), now);
+  const last = ledger.lastReads();
+  const order = [...repos].sort((a, b) => (last.get(a) ?? 0) - (last.get(b) ?? 0));
+  for (const repo of order) {
+    const raw = await read(repo);
+    const planned = planCodingLedgerRead(raw, now);
+    const error = (raw as { error?: unknown } | null)?.error;
     const skipped = planned ? 0 : (skips.get(repo) ?? 0) + 1;
     skips.set(repo, skipped);
     if (skipped === CODING_LEDGER_WARN_SKIPS)
-      log.warn(`PR ledger read for ${repo} failed or was partial ${skipped} times in a row`);
+      log.warn(
+        `PR ledger read for ${repo} failed or was partial ${skipped} times in a row${typeof error === 'string' ? `: ${error.slice(0, 200)}` : ''}`
+      );
+    if (typeof error === 'string' && /rate limit/i.test(error)) break;
     if (planned && planned.repo !== repo.toLowerCase()) ledger.dropRepo(repo.toLowerCase());
     if (planned && !seen.has(planned.repo)) ledger.replace(planned.repo, planned.rows, now);
     if (planned) seen.add(planned.repo);
