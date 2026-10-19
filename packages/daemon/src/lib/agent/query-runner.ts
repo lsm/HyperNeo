@@ -403,6 +403,8 @@ export interface QueryRunnerContext {
   requeueNeoInput?(messageUuid: string): void;
 }
 
+const SETTLES_ALL = '*';
+
 export class QueryRunner {
   private promptSpentGeneration: number | null = null;
   private turnEndedGeneration: number | null = null;
@@ -2284,12 +2286,16 @@ export class QueryRunner {
       onSent();
     }
     await turn.ended;
-    for (const uuid of fed) if (!this.settledInputs.has(uuid)) this.ctx.requeueNeoInput?.(uuid);
+    if (this.settledInputs.has(SETTLES_ALL)) return;
+    for (const uuid of fed)
+      if (!this.settledInputs.has(uuid) && !turn.published(uuid)) this.ctx.requeueNeoInput?.(uuid);
   }
 
   noteSettledInputs(message: SDKMessage): void {
-    if (message.type === 'result' && message.subtype === 'success')
-      for (const uuid of message.user_message_uuids ?? []) this.settledInputs.add(uuid);
+    const succeeded = message.type === 'result' && message.subtype === 'success';
+    if (!succeeded && message.type !== 'assistant') return;
+    if (succeeded && !message.user_message_uuids) this.settledInputs.add(SETTLES_ALL);
+    for (const uuid of message.user_message_uuids ?? []) this.settledInputs.add(uuid);
   }
 
   async handleSDKMessage(message: SDKMessage, queryGeneration?: number): Promise<void> {
