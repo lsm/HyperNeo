@@ -298,11 +298,7 @@ export function createCodingPack(
         repos,
         now,
         openTodoIds.flatMap((todoId) =>
-          deps.todoPrs.urls(todoId).map((url) => ({
-            todoId,
-            url,
-            state: deps.todoPrs.latest(url)?.pr.state ?? null,
-          }))
+          deps.todoPrs.prs(todoId).map((pr) => ({ todoId, url: pr.url, state: pr.state }))
         )
       ),
     instructions: () => NEO_PACK_CODING_INSTRUCTIONS,
