@@ -624,7 +624,6 @@ export function createSpaceTables(db: BunDatabase): void {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_room_id
 		ON sessions(room_id) WHERE room_id IS NOT NULL`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_id)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_route_id ON sessions(id COLLATE NOCASE)`);
   createSessionCounters(db);
   createSessionIncarnationTable(db);
 
