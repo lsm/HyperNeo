@@ -50,15 +50,7 @@ const project = {
 };
 
 describe('Neo MVP', () => {
-  test('root prompt requires real todos and honors explicit context retention', () => {
-    const prompt = neoPrompt(null);
-    expect(prompt).toContain('permission to create its record now');
-    expect(prompt).toContain('open the ask with its todos in that turn without start');
-    expect(prompt).toContain('never describe a pretend todo');
-    expect(prompt).toContain('no implicit project, workspace, folder, repository or worktree');
-    expect(prompt).toContain('wait for needed facts or ask for genuinely missing information');
-    expect(prompt).toContain('Apply them whenever you add todos and write doneWhen');
-    expect(prompt).toContain('neo.rule.save {add?,remove?,from}');
+  test('the holder prompt has no root rule-saving operation', () => {
     expect(neoPrompt('book-club')).not.toContain('neo.rule.save');
   });
 

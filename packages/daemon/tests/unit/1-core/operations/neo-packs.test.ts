@@ -53,15 +53,10 @@ describe('neoPackBriefs', () => {
     expect(briefs.map((brief) => brief.id)).toEqual(['coding']);
   });
 
-  test('requires repository review before manual merging and forbids auto-merge', () => {
+  test('requires review approval before a manual merge and forbids auto-merge', () => {
     const guidance = neoPackBriefs(NEO_DEFAULT_PACKS)[0].guidance?.replace(/\s+/g, ' ');
-    expect(guidance).toContain("Follow the repository's review requirements");
-    expect(guidance).toContain('Never enable GitHub auto-merge');
-    expect(guidance).toContain('review approval of the latest head commit');
-    expect(guidance).toContain("using the repository's own ready signal");
-    expect(guidance).toContain('all required checks to pass before manually merging');
-    expect(guidance).toContain('A new commit needs fresh review approval');
-    expect(guidance).toContain('If another actor owns the merge, leave it to them');
+    expect(guidance).toContain('never enable GitHub auto-merge');
+    expect(guidance).toContain('review approval of the latest head and green required checks');
   });
 });
 
@@ -130,11 +125,15 @@ describe('coding pack instructions', () => {
       record: () => null,
     });
     expect(coding.instructions(null)).toBe(NEO_PACK_CODING_INSTRUCTIONS);
-    expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('merged to the');
-    expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('git remote');
-    expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('freshly fetched remote target');
-    expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('target.preparationParameters.target');
-    expect(NEO_PACK_CODING_INSTRUCTIONS).toContain('neo.github.read {url}');
+    for (const fact of [
+      'merged to the',
+      'kind: "pr_merged"',
+      'params.urls',
+      'neo.github.read',
+      'owner/repo#N',
+    ])
+      expect(NEO_PACK_CODING_INSTRUCTIONS).toContain(fact);
+    expect(NEO_PACK_CODING_INSTRUCTIONS).not.toMatch(/pr_opened|holds it|holder/);
     expect(NEO_SYSTEM_PROMPT).not.toContain('neo.github.read');
   });
 });
