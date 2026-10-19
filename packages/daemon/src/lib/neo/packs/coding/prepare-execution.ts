@@ -52,22 +52,23 @@ function planPreparation(request: Request): Gate<Plan> {
 }
 
 const VERIFY_SKILL = /^\.claude\/skills\/verify[^/]*\/SKILL\.md$/m;
-const VERIFY_SECTION = /^#{1,6}\s*Verify\b/im;
+const VERIFY_SECTION = /^#{1,6}\s*Verify\b/m;
+const FENCED = /^(```|~~~)[^\n]*\n[\s\S]*?^\1[^\n]*$/gm;
 
 export function requireVerifySkill(
   mode: unknown,
   listed: CommandResult,
   agents: CommandResult | null
 ): Gate<true> {
-  if (mode === 'create' || mode === 'skip') return { value: true };
+  if (mode === 'create') return { value: true };
   if (listed.code !== 0) return refuse(`verify_skill_unreadable: ${listed.stderr.trim()}`);
   if (
     VERIFY_SKILL.test(listed.stdout) ||
-    (agents?.code === 0 && VERIFY_SECTION.test(agents.stdout))
+    (agents?.code === 0 && VERIFY_SECTION.test(agents.stdout.replace(FENCED, '')))
   )
     return { value: true };
   return refuse(
-    'verify_skill_missing: this repository has no verify skill (.claude/skills/verify/SKILL.md or a Verify section in AGENTS.md). Add a todo before this one whose worker writes it and runs it end to end once, start that todo with target.preparationParameters.verifySkill "create", and ask the human to approve it before its pull request merges; then retry this todo. Use verifySkill "skip" only when the human waives it.'
+    'verify_skill_missing: this repository has no verify skill (.claude/skills/verify/SKILL.md or a Verify section in AGENTS.md). Add a todo before this one whose worker writes it and runs it end to end once, start that todo with target.preparationParameters.verifySkill "create", and ask the human to approve it before its pull request merges; then retry this todo.'
   );
 }
 
