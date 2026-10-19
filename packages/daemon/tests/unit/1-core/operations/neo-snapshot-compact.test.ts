@@ -148,7 +148,6 @@ describe('fitNeoSnapshotBudget', () => {
       ok: true,
       sessionId: 'neo:root',
       projects: [],
-      consultations: [],
       work: ids.map(work),
       asks,
       cards: ids.map((id) => ({ ...card, workId: id, phase: 'reported' as const })),
@@ -202,11 +201,6 @@ describe('fitNeoSnapshotBudget', () => {
       const fitted = fitNeoSnapshotBudget(big, budget);
       expect(Buffer.byteLength(JSON.stringify(fitted), 'utf8')).toBeLessThanOrEqual(budget);
     }
-  });
-
-  test('the last-resort fallbacks still carry the required consultations list', () => {
-    expect(fitNeoSnapshotBudget(snapshot(5, 5), 10).consultations).toEqual([]);
-    expect(fitNeoSnapshotBudget(snapshot(5, 5), 10, { focused: true }).consultations).toEqual([]);
   });
 
   test('a focused read keeps what the human was told even in its last-resort fallbacks', () => {
@@ -299,7 +293,6 @@ describe('summarizeNeoSnapshot', () => {
     ok: true,
     sessionId: 'neo:root',
     projects: [],
-    consultations: [],
     work: [
       item('lw', 'reported'),
       item('dw', 'reported'),
@@ -352,30 +345,6 @@ describe('summarizeNeoSnapshot', () => {
     expect('askId' in loose).toBe(false);
     expect(waiting.summarized).toBeUndefined();
     expect(result.cards[0].goal).toBe(card.goal);
-  });
-
-  test('summarizes settled consultations and leaves a pending one whole', () => {
-    const consultation = {
-      id: 'c1',
-      requestKey: 'c1',
-      projectId: 'p',
-      originSessionId: 'root',
-      originMessageId: null,
-      sessionId: 'holder',
-      question: 'q'.repeat(1000),
-      status: 'reported' as const,
-      answer: 'a'.repeat(1000),
-      createdAt: 1,
-    };
-    const pending = { ...consultation, id: 'c2', status: 'pending' as const, answer: null };
-    const result = summarizeNeoSnapshot(
-      { ...snapshot([]), consultations: [consultation, pending] },
-      []
-    );
-    expect(result.consultations[0]).toMatchObject({ id: 'c1', summarized: true });
-    expect(result.consultations[0].question).toHaveLength(300);
-    expect(result.consultations[0].answer).toHaveLength(300);
-    expect(result.consultations[1]).toBe(pending);
   });
 
   test('never cuts a summary inside a surrogate pair', () => {

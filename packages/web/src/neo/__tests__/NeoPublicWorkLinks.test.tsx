@@ -62,7 +62,6 @@ const snapshot = (items: NeoWork[]): NeoSnapshot => ({
   ],
   publicAuthorBindings: [{ kind: 'project', projectId: 'garden', sessionId: 'holder' }],
   work: items,
-  consultations: [],
 });
 const publication: NeoPublication = {
   conversationId,
