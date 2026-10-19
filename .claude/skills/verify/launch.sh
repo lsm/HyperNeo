@@ -12,7 +12,7 @@ cp "$REPO/.claude/skills/verify/gh-stub.sh" "$RUN/bin/gh"
 clean_env=(env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin"
   TMPDIR="${TMPDIR:-/tmp}" NODE_ENV=test HYPERNEO_USE_DEV_PROXY=1)
 cd "$REPO"
-"${clean_env[@]}" bun .claude/skills/verify/mock-api.ts < /dev/null > "$RUN/mock-api.log" 2>&1 &
+"${clean_env[@]}" bun ".claude/skills/verify/${VERIFY_MOCK:-mock-api.ts}" < /dev/null > "$RUN/mock-api.log" 2>&1 &
 echo $! > "$RUN/mock-api.pid"
 low=(nice -n 19)
 [ -x /usr/sbin/taskpolicy ] && low=(/usr/sbin/taskpolicy -b nice -n 19)
