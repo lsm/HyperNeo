@@ -233,6 +233,35 @@ describe('neo todo runner', () => {
     expect(told).toEqual(['Todo "Rows" is done: #1 已合并']);
   });
 
+  test('a todo that starts in another repo moves to that repo’s child card first', async () => {
+    const { store, sessions, runner } = setup();
+    const todo = store.addTodo(
+      'moving',
+      'ask',
+      { title: 'Rows', doneWhen: 'PR merged', check: null, instruction: 'Go.', named: null },
+      1,
+      'github.com/lsm/hyperneo'
+    );
+    sessions.create(todo.id, {
+      verb: 'start',
+      adapter: 'hyperneo',
+      place: {
+        machine: 'laptop',
+        name: 'ops',
+        folder: '/ops',
+        remotes: ['git@github.com:lsm/ops.git'],
+      },
+    });
+    const started = await runner.start(todo.id);
+    const child = store.getAsk(started.ok ? started.todo.askId : '')!;
+    expect(child).toMatchObject({
+      title: 'iOS card · ops',
+      parentId: 'ask',
+      repo: 'github.com/lsm/ops',
+    });
+    expect(store.getTodo('moving')).toMatchObject({ state: 'doing', repo: 'github.com/lsm/ops' });
+  });
+
   test("a todo checked by a pack sends that pack's worker rules after its instruction", async () => {
     const { runner, calls, add } = setup();
     await runner.start(add({ pack: 'coding', kind: 'pr_merged', params: {} }).id);

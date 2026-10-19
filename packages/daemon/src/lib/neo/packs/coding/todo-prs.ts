@@ -304,9 +304,12 @@ export function codingTodoStatusLine(
     : null;
 }
 
-export function codingTodoRepository(todo: Pick<NeoTodo, 'check' | 'named'>): string | null {
+export function codingTodoRepository(
+  todo: Pick<NeoTodo, 'check' | 'named'>,
+  claimed: readonly string[] = []
+): string | null {
   const urls = todo.check?.pack === 'coding' ? todo.check.params.urls : null;
-  const pr = (Array.isArray(urls) ? urls : [])
+  const pr = [...(Array.isArray(urls) ? urls : []), ...claimed]
     .map((url) => (typeof url === 'string' ? parsePrUrl(url) : null))
     .find(Boolean);
   if (pr) return neoGitRepo(`${pr.host}/${pr.owner}/${pr.repo}`);
@@ -329,7 +332,7 @@ export function createCodingTodoPack(
   };
   return {
     schema: createCodingPackTables,
-    repository: codingTodoRepository,
+    repository: (todo) => codingTodoRepository(todo, todo.id ? repo.urls(todo.id) : []),
     openedPrs: (todo, urls) =>
       repo.claim(
         todo.id,

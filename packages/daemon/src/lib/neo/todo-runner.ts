@@ -27,6 +27,7 @@ import {
 import type { NeoPack, NeoTodoCheckResult } from './packs/types.ts';
 import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
 import { readNeoTodoCompletion } from './todo-completion.ts';
+import { neoMoveTodo, neoTodoRepo } from './todo-repo.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -269,6 +270,13 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     return next;
   };
 
+  const relocate = (id: string) => {
+    const todo = store.getTodo(id);
+    const repo = todo && neoTodoRepo({ ...todo, target: sessions.get(id) }, deps.packs(), todo);
+    if (todo && neoMoveTodo(store, todo, repo)) deps.changed();
+    return store.getTodo(id) ?? todo;
+  };
+
   const dispatch = async ({ todo, ask, target }: Startable) => {
     const prepare = deps.packs().find((pack) => pack.id === todo.check?.pack);
     const card = neoTodoCard(todo, ask, prepare?.workerRules);
@@ -343,8 +351,9 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     .pipe(
       (plan: Startable): Gate<Startable> => {
         const claimed = store.claimStart(plan.todo, Date.now());
-        return claimed
-          ? { value: { ...plan, todo: claimed } }
+        const todo = claimed && relocate(claimed.id);
+        return todo
+          ? { value: { ...plan, todo, ask: store.getAsk(todo.askId) ?? plan.ask } }
           : fail('already_started: this todo started.');
       },
       'outcome',
@@ -455,6 +464,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           now
         );
     }
+    relocate(todo.id);
     deps.changed();
   };
 
@@ -462,6 +472,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     const todo = store.getTodo(id);
     if (todo)
       for (const pack of deps.packs()) pack.todos?.openedPrs?.(todo, readDriverOpenedPrs(outcome));
+    if (todo) relocate(id);
   };
 
   const follow = (superpipe({})('neo-todo-follow') as PipelineAPI)

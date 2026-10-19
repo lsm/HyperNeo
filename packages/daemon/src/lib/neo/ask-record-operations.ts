@@ -143,10 +143,14 @@ export function createNeoAskRecordOperations(
             1;
         const recordedRow = (todo: (typeof input.todos)[number]) => {
           const repo = neoTodoRepo(todo, packs(), ask);
-          const own = neoTodoRepo(todo, packs(), { repo: null });
+          const filed = (item: NeoTodo) =>
+            neoTodoRepo(
+              { check: item.check, named: item.named, target: sessions.get(item.id) },
+              packs(),
+              ask
+            );
           return recorded.find(
-            (item) =>
-              item.title === todo.title && (item.repo === repo || (item.repo === null && !own))
+            (item) => item.title === todo.title && (item.repo === repo || filed(item) === repo)
           );
         };
         const homeless =

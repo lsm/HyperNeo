@@ -60,7 +60,7 @@ export interface NeoTodoPack {
   topics(todo: NeoTodo): string[];
   event(event: ExternalEvent): string[];
   openedPrs?(todo: NeoTodo, urls: readonly string[]): void;
-  repository?(draft: Pick<NeoTodo, 'check' | 'named'>): string | null;
+  repository?(draft: Pick<NeoTodo, 'check' | 'named'> & { id?: string }): string | null;
   waiting?(todo: NeoTodo): boolean;
 }
 

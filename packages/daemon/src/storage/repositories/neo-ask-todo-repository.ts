@@ -243,6 +243,20 @@ export class NeoAskTodoRepository {
     return this.getTodo(id)!;
   }
 
+  moveTodo(todo: NeoTodo, askId: string, repo: string, now: number): NeoTodo {
+    this.db
+      .prepare(
+        `UPDATE neo_todos SET repo = ?2, position = CASE WHEN ask_id = ?1 THEN position
+           ELSE (SELECT COALESCE(MAX(position) + 1, 0) FROM neo_todos WHERE ask_id = ?1) END, ask_id = ?1
+         WHERE id = ?3`
+      )
+      .run(askId, repo, todo.id);
+    this.db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ? AND repo IS NULL').run(repo, askId);
+    this.touchAsk(todo.askId, now);
+    if (askId !== todo.askId) this.touchAsk(askId, now);
+    return this.getTodo(todo.id)!;
+  }
+
   updateTodo(todo: NeoTodo, change: NeoTodoPatch, now: number): NeoTodo {
     const patch: NeoTodoPatch =
       change.state && change.state !== 'blocked'
