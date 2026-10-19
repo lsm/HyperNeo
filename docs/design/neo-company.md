@@ -512,7 +512,7 @@ Goals (fs2):
 
 | Change | Migration | Notes |
 | --- | --- | --- |
-| `space_goals.space_id` nullable; `owner_session_id`; CHECK exactly one of the two | table rebuild | Keeps the foreign keys into it from `space_goal_outcome_notifications`, `goal_automation_cursors`, `evolution_scopes` and `space_long_horizon_agent_goals`. Update `space-test-db.ts` for parity. |
+| `space_goals.space_id` nullable; `owner_session_id`; CHECK exactly one of the two | table rebuild | Keeps all six inbound foreign keys: `space_goal_events` (rebuilt in the next row), `space_goal_outcome_notifications`, `goal_automation_cursors`, `evolution_scopes` (`ON DELETE SET NULL`), `space_long_horizon_agent_goals` and `space_agent_goal_assignments`. Run `pragma_foreign_key_check` on all six inside the rebuild. Update `space-test-db.ts` for parity. |
 | `space_goals.done_test`, `mandate_ref`, `mandate_rev`, `works_note`, `works_note_through`, `facts_lines` | same rebuild | All nullable. |
 | `space_goal_events.space_id` nullable; event type `journal_compacted`; sources `neo` and `human` | table rebuild | Its CHECKs change, so a rebuild is needed anyway. |
 | `goal_journal` | new table | FK `goal_id` with cascade; index on (`goal_id`, `created_at`); unique (`goal_id`, `run_id`) where `run_id` is not null. |
@@ -669,7 +669,7 @@ Scheduler and home repo (fs3):
 
 Goals and UI (fs2):
 
-- **The goal table rebuilds touch a table with four inbound foreign keys and live
+- **The goal table rebuilds touch a table with six inbound foreign keys and live
   Space data.** Rebuild migrations have broken here before, so test on a copy of the
   schema, never a real DB, and keep Space goal behaviour pinned by its existing tests.
 - **Additions attribution relies on the wake's message id reaching every row the turn
