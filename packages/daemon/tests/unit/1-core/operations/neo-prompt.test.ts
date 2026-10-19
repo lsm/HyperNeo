@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import type { HookInput, Options } from '@anthropic-ai/claude-agent-sdk';
-import { NEO_CAPABILITIES_BRIEFING, NEO_ROOT_PROMPT, NEO_SPEAKING_POLICY } from '@hyperneo/prompts';
+import {
+  NEO_CAPABILITIES_BRIEFING,
+  NEO_PACK_CODING_INSTRUCTIONS,
+  NEO_ROOT_PROMPT,
+  NEO_SPEAKING_POLICY,
+} from '@hyperneo/prompts';
 import { OPERATION_NAMES } from '@hyperneo/shared/types/operation-names';
 import { FindWorkResultSchema } from '../../../../src/lib/drivers/find-operation.ts';
 import { ReadWorkInputSchema } from '../../../../src/lib/drivers/read-operation.ts';
@@ -28,16 +33,30 @@ const NEO_TOOLS = [
 describe('root Neo system prompt', () => {
   test('is the short coordinator text alone, replacing the Claude Code preset', () => {
     const options: Options = {};
-    restrictNeoQuery(options, null);
+    restrictNeoQuery(options, null, undefined, []);
     expect(options.systemPrompt).toEqual({
       type: 'custom',
       prompt: NEO_ROOT_PROMPT,
       snapshot: false,
     });
-    expect(neoPrompt(null)).toBe(NEO_ROOT_PROMPT);
-    expect(NEO_ROOT_PROMPT.split(/\s+/).length).toBeLessThan(120);
-    for (const fact of ['work.find', 'work.send', 'neo.publication.publish', 'neo.question.ask'])
+    expect(neoPrompt(null, [])).toBe(NEO_ROOT_PROMPT);
+    expect(NEO_ROOT_PROMPT.split(/\s+/).length).toBeLessThan(130);
+    for (const fact of [
+      'work.find',
+      'work.send',
+      'neo.publication.publish',
+      'neo.question.ask',
+      'neo.rule.save',
+    ])
       expect(NEO_ROOT_PROMPT).toContain(fact);
+  });
+
+  test('appends the pack briefing only when packs are enabled', () => {
+    const coding = neoPrompt(null);
+    expect(coding.startsWith(`${NEO_ROOT_PROMPT}\n\nDomain packs carry the field`)).toBe(true);
+    expect(coding).toContain(NEO_PACK_CODING_INSTRUCTIONS);
+    expect(neoPrompt(null, [])).not.toContain('Domain packs');
+    expect(coding).not.toMatch(/holder|consult|forward|dispatch/i);
   });
 
   test('teaches no holder, consultation, forwarding or dispatch', () => {

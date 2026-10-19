@@ -31,7 +31,7 @@ export function neoPrompt(
   projectId: string | null,
   packs: readonly NeoPackBrief[] = neoSettingsPackBriefs()
 ): string {
-  if (!projectId) return NEO_ROOT_PROMPT;
+  if (!projectId) return [NEO_ROOT_PROMPT, neoPackBriefing(packs)].filter(Boolean).join('\n\n');
   return fillPrompt(NEO_SYSTEM_PROMPT, {
     capabilities: NEO_CAPABILITIES_BRIEFING,
     root_clarify: '',
