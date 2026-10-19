@@ -245,7 +245,7 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
     await new Promise((resolve) => setTimeout(resolve, 3000));
     expect(nudged, 'ending with Done. keeps the CLI from nudging for visible output').toEqual([]);
     const { neoPrompt } = await import('../../../src/lib/neo/prompt.ts');
-    expect(sent[0].system).toContain(neoPrompt(null));
+    expect(sent[0].system).toContain(neoPrompt());
     const human = (sent[0].human as { type: string; text?: string }[]).filter(
       (part) => part.type === 'text'
     );

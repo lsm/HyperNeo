@@ -23,8 +23,8 @@ describe('fillPrompt', () => {
     expect(fillPrompt('Hi {{name}}', values)).toBe(`Hi ${undefined}`);
   });
 
-  test('leaves no placeholder in either Neo system prompt', () => {
-    expect(neoPrompt(null)).not.toContain('{{');
-    expect(neoPrompt('concern-1')).not.toContain('{{');
+  test('leaves no placeholder in the Neo system prompt', () => {
+    expect(neoPrompt()).not.toContain('{{');
+    expect(neoPrompt([])).not.toContain('{{');
   });
 });
