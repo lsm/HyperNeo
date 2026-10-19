@@ -39,9 +39,12 @@ export class NeoRepository {
       .prepare(`SELECT c.id, c.title, c.created_at AS createdAt,
           (c.epic_url IS NOT NULL OR EXISTS (SELECT 1 FROM neo_concerns k WHERE k.parent_id = c.id)) AS section,
           length(c.context) AS context,
-          (SELECT count(*) FROM legacy_neo_asks a WHERE a.concern_id = c.id) AS asks,
+          (SELECT count(*) FROM legacy_neo_asks a WHERE a.concern_id = c.id)
+            + (SELECT count(*) FROM neo_asks n WHERE n.project_id = c.id) AS asks,
           (SELECT count(*) FROM legacy_neo_asks a WHERE a.concern_id = c.id
-            AND a.status IN ('open', 'waiting', 'blocked')) AS liveAsks,
+            AND a.status IN ('open', 'waiting', 'blocked'))
+            + (SELECT count(*) FROM neo_asks n WHERE n.project_id = c.id
+              AND n.status = 'open') AS liveAsks,
           (SELECT count(*) FROM neo_work w WHERE w.concern_id = c.id
             AND w.status IN ('proposed', 'queued')) AS liveWork
         FROM neo_concerns c
@@ -70,6 +73,7 @@ export class NeoRepository {
           AND c.epic_url IS NULL
           AND NOT EXISTS (SELECT 1 FROM neo_concerns k WHERE k.parent_id = c.id)
           AND NOT EXISTS (SELECT 1 FROM legacy_neo_asks a WHERE a.concern_id = c.id)
+          AND NOT EXISTS (SELECT 1 FROM neo_asks n WHERE n.project_id = c.id)
           AND NOT EXISTS (SELECT 1 FROM neo_work w WHERE w.concern_id = c.id)`)
         .get(projectId);
       if (!empty) throw new Error('the project is no longer empty');
