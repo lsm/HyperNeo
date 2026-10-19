@@ -21,7 +21,7 @@ const conversationId = '10000000-0000-4000-8000-000000000001';
 const root = `neo:${conversationId}`;
 
 describe('durable public author snapshot bindings', () => {
-  test('covers 500 retained publications beyond the bounded consultation display and transports scoped bindings', async () => {
+  test('covers 500 retained publications and transports scoped bindings', async () => {
     const db = new Database(':memory:', { messageSearchIndexFlushIntervalMs: 0 });
     await db.initialize(createReactiveDatabase(db));
     const createSession = mock(async () => {
@@ -43,18 +43,6 @@ describe('durable public author snapshot bindings', () => {
           projectId: id,
           kind: 'project',
         });
-        const consultation = service.consultations.reserve({
-          id: `consult-${index}`,
-          requestKey: `request-${index}`,
-          projectId: id,
-          originSessionId: root,
-          originMessageId: `ask-${index}`,
-          sessionId: `holder-${index}`,
-          question: 'Fictional comparison',
-        });
-        expect(consultation).not.toBeNull();
-        if (index === 0)
-          service.consultations.finish(consultation!.id, 'reported', 'Authored answer');
       }
       service.repo.reserveBinding({ sessionId: 'worker', projectId: 'context-0', kind: 'worker' });
       for (let index = 0; index < 500; index++) {
@@ -75,8 +63,6 @@ describe('durable public author snapshot bindings', () => {
       const result = operation.resultSchema.parse(
         await operation.execute({}, { source: 'rpc', principal: 'local' })
       ) as NeoSnapshot;
-      expect(result.consultations).toHaveLength(20);
-      expect(result.consultations?.some((row) => row.sessionId === 'holder-0')).toBe(false);
       expect(result.publicAuthorBindings).toHaveLength(21);
       expect(result.publicAuthorBindings).toContainEqual({
         sessionId: 'holder-0',

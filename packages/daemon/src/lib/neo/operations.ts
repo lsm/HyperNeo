@@ -13,15 +13,9 @@ import { neoMirroredAliases } from './project-cleanup.ts';
 import { createNeoProjectCleanupApply } from './project-cleanup-apply.ts';
 import type { PlaceGroup } from '../drivers/types.ts';
 import { readNeoProjectFacts } from './project-route-facts.ts';
-import { createNeoCrossProjectOperation } from './cross-project-operation.ts';
 import { existsSync } from 'node:fs';
 import { neoPromptText } from './reply-language.ts';
 import { readNeoSessionLoad } from './session-load.ts';
-import {
-  NEO_CONSULTATION_RECEIPT_CLOSED,
-  NEO_CONSULTATION_RECEIPT_PENDING,
-  NEO_CONSULTATION_RECEIPT_RETURNED,
-} from '@hyperneo/prompts';
 import {
   NEO_SNAPSHOT_UNCHANGED_GUIDANCE,
   planNeoSnapshotRead,
@@ -59,7 +53,6 @@ import {
   neoStandingRules,
   type NeoSettings,
 } from '@hyperneo/shared/types/settings';
-import { CONSULTATION_STOPPED } from './consultation-policy.ts';
 import { isNeoProjectEventTurn } from './card-events.ts';
 import { createNeoIntakeOperation } from './intake.ts';
 import { createNeoReorganizeOperation, type NeoReorganizeRuntime } from './reorganize-operation.ts';
@@ -99,12 +92,6 @@ import {
 import { isNeoAskSettled } from './done-check.ts';
 import { projectNeoSnapshotAskOrigins } from './snapshot-origins.ts';
 import { hasNeoHumanWorkInput, neoTurnOrigin } from './work-origin.ts';
-import {
-  admitNeoConsultationOrigin,
-  requireNeoOtherSession,
-  requireLiveNeoConsultationOrigin,
-  type NeoConsultationOrigin,
-} from './consultation-origin.ts';
 import { type NeoDriverTarget } from './driver-work.ts';
 import { invokeOperation, type OperationOutcome } from '../operations/invoke.ts';
 import type { WorkRef } from '../drivers/types.ts';
@@ -198,27 +185,6 @@ const ConsultationWaiter = z.object({
   status: z.enum(['queued', 'admitted', 'cancelled']),
   createdAt: z.number(),
 } satisfies ZodShape<NeoConsultationWaiter>);
-const Consult = z.object({
-  projectId: z.string().min(1),
-  question: z.string().trim().min(1).max(8000),
-});
-const Respond = z.object({ id: z.string().min(1), answer: z.string().trim().min(1).max(4000) });
-type ConsultRequest = z.infer<typeof Consult> & { requestKey: string };
-const NEO_CONSULTATION_SETTLED =
-  'Already settled: Neo already received the recorded answer shown here, and this new answer was not recorded.';
-const ConsultationResult = z.union([
-  Failure,
-  z.object({
-    ok: z.literal(true),
-    consultation: Consultation,
-    replyGuidance: z.string().optional(),
-  }),
-  z.object({
-    ok: z.literal(true),
-    waiter: ConsultationWaiter,
-    replyGuidance: z.string().optional(),
-  }),
-]);
 const NEO_ASK_TOLD_LIMIT = 20;
 const NEO_ASK_TOLD_TEXT = 300;
 const SnapshotOk = z.object({
@@ -384,16 +350,6 @@ export function requireNeoProjectSaveId(
     return { reason: { ok: false, reason: 'Pass the id of the project you are updating.' } };
   return { value: caller };
 }
-const WorkId = z.object({ id: z.string().min(1) });
-const ReceiptRead = z.union([
-  z.object({ workId: z.string().min(1) }),
-  z.object({ consultationId: z.string().min(1) }),
-]);
-const ReceiptResult = z.union([
-  Failure,
-  z.object({ ok: z.literal(true), work: Work }),
-  z.object({ ok: z.literal(true), consultation: Consultation }),
-]);
 const SessionMute = z.object({ key: z.string().trim().min(1).max(400), muted: z.boolean() });
 const SessionMuteResult = z.union([
   Failure,
@@ -424,45 +380,6 @@ const PackReadResult = z.union([
   }),
 ]);
 type Rejection = { ok: false; reason: string };
-
-export function presentNeoConsultationReply(
-  receipt: { ok: true; consultation: NeoConsultation } | { ok: true; waiter: NeoConsultationWaiter }
-) {
-  const status = 'consultation' in receipt ? receipt.consultation.status : receipt.waiter.status;
-  const replyGuidance =
-    status === 'pending' || status === 'queued'
-      ? NEO_CONSULTATION_RECEIPT_PENDING
-      : status === 'reported'
-        ? NEO_CONSULTATION_RECEIPT_RETURNED
-        : NEO_CONSULTATION_RECEIPT_CLOSED;
-  return { ...receipt, replyGuidance };
-}
-
-export function requireNeoConsultationReceipt(
-  input: ConsultRequest,
-  item: NeoConsultation | NeoConsultationWaiter | null,
-  origin: NeoConsultationOrigin,
-  sessionId: string
-): { value: NeoConsultation | NeoConsultationWaiter } | { reason: Rejection } {
-  if (
-    !item ||
-    item.requestKey !== input.requestKey ||
-    item.question !== input.question ||
-    item.projectId !== input.projectId ||
-    item.originSessionId !== origin.originSessionId ||
-    item.originMessageId !== origin.originMessageId ||
-    item.sessionId !== sessionId
-  )
-    return {
-      reason: {
-        ok: false,
-        reason: 'Request key already belongs to another consultation or input.',
-      },
-    };
-  return item.status === 'cancelled' || item.status === 'admitted'
-    ? { reason: { ok: false, reason: 'This queued consultation is no longer available.' } }
-    : { value: item };
-}
 
 export function requireNeoProposalAsk(
   input: { askId?: string },
@@ -939,8 +856,6 @@ export function createNeoOperations(service: NeoService) {
           .filter((item) => item.status === 'proposed' || item.status === 'queued')
           .slice(0, limit);
     const visibleWork = [...recentWork, ...olderActiveWork];
-    const consultations = focus ? [] : service.consultations.list(scope ?? undefined);
-    const waiters = focus ? [] : service.consultationWaiters.queued(scope ?? undefined);
     const listed = focus
       ? [focus]
       : service.askRecords.list(scope === undefined ? undefined : scope);
@@ -1013,10 +928,8 @@ export function createNeoOperations(service: NeoService) {
           context: detailed ? item.context : '',
         };
       }),
-      consultations: consultations.map((item) =>
-        detailed ? item : { ...item, question: '', answer: null }
-      ),
-      consultationWaiters: waiters.map((item) => (detailed ? item : { ...item, question: '' })),
+      consultations: [],
+      consultationWaiters: [],
       ...(caller.source === 'rpc' && !focus ? { sessionNotices: service.sessionNotices } : {}),
       sessionNoticeGroups: focus ? [] : latestNeoSessionNoticeGroups(service.sessionNoticeGroups),
       mutedSessions: service.db.getGlobalSettings?.().neo?.mutedSessions ?? [],
@@ -1067,11 +980,7 @@ export function createNeoOperations(service: NeoService) {
         workId: item.id,
         refs: service.db?.neoWorkResources?.get(item.id) ?? null,
       })),
-      askOrigins: projectNeoSnapshotAskOrigins(
-        visibleWork,
-        [...consultations, ...waiters],
-        service.resolveAskOrigin
-      ),
+      askOrigins: projectNeoSnapshotAskOrigins(visibleWork, [], service.resolveAskOrigin),
       work: visibleWork.map((item) =>
         caller.source === 'rpc'
           ? item
@@ -1230,130 +1139,6 @@ export function createNeoOperations(service: NeoService) {
     if (planned.remember) rememberNeoSnapshotRead(service.snapshotReads, key, planned.remember);
     return planned.result;
   });
-  const consult = (superpipe({})('neo.project.consult') as PipelineAPI)
-    .input(['input', 'caller'])
-    .pipe(
-      (caller: OperationCaller) =>
-        admitNeoConsultationOrigin(
-          caller,
-          caller.sessionId ? service.repo.getBindingBySession(caller.sessionId) : null
-        ),
-      'caller',
-      'result:admission'
-    )
-    .pipe(
-      (input: ConsultRequest, root: NeoConsultationOrigin) =>
-        service.repo.getProject(input.projectId)
-          ? { value: root }
-          : { reason: { ok: false, reason: 'Project not found.' } },
-      ['input', 'admission'],
-      'result:admission'
-    )
-    .pipe(
-      (input: ConsultRequest, origin: NeoConsultationOrigin) => {
-        const item = service.consultationFor(
-          { sessionId: origin.originSessionId, messageId: origin.originMessageId },
-          input.projectId
-        );
-        return item
-          ? { reason: presentNeoConsultationReply({ ok: true as const, consultation: item }) }
-          : { value: origin };
-      },
-      ['input', 'admission'],
-      'result:admission'
-    )
-    .pipe(() => service.open(), 'input', 'sessionId')
-    .pipe(
-      (origin: NeoConsultationOrigin, sessionId: string) =>
-        requireNeoOtherSession(origin, [sessionId]),
-      ['admission', 'sessionId'],
-      'result:admission'
-    )
-    .pipe(
-      (origin: NeoConsultationOrigin, caller: OperationCaller) =>
-        requireLiveNeoConsultationOrigin(origin, caller.neoTurn),
-      ['admission', 'caller'],
-      'result:admission'
-    )
-    .pipe(
-      (input: ConsultRequest, root: NeoConsultationOrigin, sessionId: string) =>
-        service.consultations.find(root.originSessionId, input.requestKey) ??
-        service.consultationWaiters.find(root.originSessionId, input.requestKey) ??
-        service.consultationWaiters.enqueue({
-          ...input,
-          id: crypto.randomUUID(),
-          ...root,
-          sessionId,
-        }),
-      ['input', 'admission', 'sessionId'],
-      'item'
-    )
-    .pipe(
-      requireNeoConsultationReceipt,
-      ['input', 'item', 'admission', 'sessionId'],
-      'result:admission'
-    )
-    .pipe(
-      async (item: NeoConsultation | NeoConsultationWaiter) => {
-        if (item.status === 'queued') await service.dispatchConsultationWaiter(item.projectId);
-        const consultation = service.consultations.get(item.id);
-        if (consultation) {
-          await service.syncConsultation(item.id);
-          return { ok: true as const, consultation: service.consultations.get(item.id)! };
-        }
-        return { ok: true as const, waiter: service.consultationWaiters.get(item.id)! };
-      },
-      'admission',
-      'admission'
-    )
-    .pipe(presentNeoConsultationReply, 'admission', 'admission')
-    .endAsync('admission') as (
-    input: ConsultRequest,
-    caller: OperationCaller
-  ) => Promise<z.infer<typeof ConsultationResult>>;
-  const respond = (superpipe({})('neo.project.respond') as PipelineAPI)
-    .input(['input', 'caller'])
-    .pipe(
-      (input: z.infer<typeof Respond>, caller: OperationCaller) => {
-        const item = service.consultations.get(input.id);
-        const holder = caller.sessionId && service.repo.getBindingBySession(caller.sessionId);
-        return caller.source === 'mcp' &&
-          item &&
-          holder &&
-          holder.kind === 'project' &&
-          holder.sessionId === item.sessionId &&
-          holder.projectId === item.projectId
-          ? { value: item }
-          : {
-              reason: { ok: false, reason: 'This consultation belongs to another context holder.' },
-            };
-      },
-      ['input', 'caller'],
-      'result:admission'
-    )
-    .pipe(
-      (input: z.infer<typeof Respond>, item: z.infer<typeof Consultation>) =>
-        item.status === 'pending' || (item.status === 'reported' && item.answer === input.answer)
-          ? { value: item }
-          : { reason: { ok: true, consultation: item, replyGuidance: NEO_CONSULTATION_SETTLED } },
-      ['input', 'admission'],
-      'result:admission'
-    )
-    .pipe(
-      async (input: z.infer<typeof Respond>, item: z.infer<typeof Consultation>) => {
-        const saved = service.consultations.finish(item.id, 'reported', input.answer)!;
-        await service.syncConsultation(saved.id);
-        return saved.status !== 'reported' || saved.answer !== input.answer
-          ? { ok: true as const, consultation: saved, replyGuidance: NEO_CONSULTATION_SETTLED }
-          : { ok: true as const, consultation: saved };
-      },
-      ['input', 'admission'],
-      'admission'
-    )
-    .endAsync('admission') as (
-    input: z.infer<typeof Respond>,
-    caller: OperationCaller
-  ) => Promise<z.infer<typeof ConsultationResult>>;
   const restart = path('neo.restart', () => service.restart());
   const open = path('neo.open', async (input: z.infer<typeof Scope>, caller) => {
     const projectId = input.projectId
@@ -1373,37 +1158,6 @@ export function createNeoOperations(service: NeoService) {
     );
     const sessionId = await service.open();
     return { ...snapshot(caller, undefined, undefined, input.summaries), sessionId };
-  });
-  const readReceipt = path('neo.receipt.read', (input: z.infer<typeof ReceiptRead>, caller) => {
-    const work = 'workId' in input ? service.repo.getWork(input.workId) : null;
-    const consultation =
-      'consultationId' in input ? service.consultations.get(input.consultationId) : null;
-    if (caller.source !== 'rpc' || caller.principal !== 'local') {
-      const binding = caller.sessionId ? service.repo.getBindingBySession(caller.sessionId) : null;
-      if (
-        !consultation ||
-        !binding ||
-        binding.kind === 'worker' ||
-        consultation.originSessionId !== caller.sessionId ||
-        !caller.neoTurn?.isLive()
-      )
-        return { ok: false as const, reason: 'This action needs the user.' };
-    }
-    if (work) return { ok: true as const, work };
-    if (consultation) return { ok: true as const, consultation };
-    return { ok: false as const, reason: 'Receipt not found.' };
-  });
-  const cancelConsultation = path('neo.project.cancel', async ({ id }: z.infer<typeof WorkId>) => {
-    const waiter = service.consultationWaiters.get(id);
-    if (waiter?.status === 'queued' || waiter?.status === 'cancelled') {
-      const cancelled = service.consultationWaiters.cancel(id)!;
-      await service.dispatchConsultationWaiter(cancelled.projectId);
-      return { ok: true as const, waiter: cancelled };
-    }
-    const item = service.consultations.finish(id, 'failed', CONSULTATION_STOPPED);
-    if (!item) return { ok: false as const, reason: 'Consultation not found.' };
-    await service.syncConsultation(id);
-    return { ok: true as const, consultation: service.consultations.get(id)! };
   });
   const isHolder = (caller: OperationCaller) =>
     caller.source === 'mcp' &&
@@ -1430,8 +1184,7 @@ export function createNeoOperations(service: NeoService) {
             ? service.resolveAskOrigin({ sessionId: caller.sessionId, messageId: turn.messageId })
             : null;
         return isHolder(caller) &&
-          (!turn?.isLive() ||
-            (!turn.human && !turn.consultationId && !isNeoProjectEventTurn(origin ?? turn)))
+          (!turn?.isLive() || (!turn.human && !isNeoProjectEventTurn(origin ?? turn)))
           ? {
               reason: {
                 ok: false as const,
@@ -1460,27 +1213,16 @@ export function createNeoOperations(service: NeoService) {
       'result:admission'
     )
     .pipe(
-      (input: SaveRequest & { id: string }, caller: OperationCaller) => {
-        const turn = caller.neoTurn;
-        const consultation = isHolder(caller) && turn?.consultationId;
-        const project = consultation
-          ? service.repo.saveConsultationContext(
-              input,
-              input.expectedRevision,
-              consultation,
-              caller.sessionId!
-            )
-          : service.repo.saveProject(input, input.expectedRevision);
+      (input: SaveRequest & { id: string }) => {
+        const project = service.repo.saveProject(input, input.expectedRevision);
         return project
           ? { ok: true as const, project }
           : {
               ok: false as const,
-              reason: consultation
-                ? 'superseded: this request cannot save context. Return the uncertainty to Neo; a fresh consultation is required.'
-                : 'superseded: read the current project before saving again',
+              reason: 'superseded: read the current project before saving again',
             };
       },
-      ['request', 'admission'],
+      'request',
       'admission'
     )
     .endAsync('admission') as (
@@ -1522,7 +1264,6 @@ export function createNeoOperations(service: NeoService) {
   };
   return [
     ...createNeoProjectTreeOperations(service.repo),
-    createNeoCrossProjectOperation(service),
     createNeoIntakeOperation(service.db, service.repo, (sessionId) => {
       service.notifyChanged();
       void service.steerHumanMessages(sessionId);
@@ -1533,8 +1274,6 @@ export function createNeoOperations(service: NeoService) {
       getBinding: (id) => service.repo.getBindingBySession(id),
       getRootBinding: () => service.repo.defaultBinding(),
       publications: service.publications,
-      isConsultationReturn: (conversationId, publicationId) =>
-        service.consultations.returnsPublication(conversationId, publicationId),
       resolveAskOrigin: (input) => service.resolveAskOrigin(input),
       resolveHumanAskOrigin: (input) => service.resolveHumanAskOrigin(input),
       notify: (conversationId) => {
@@ -1582,40 +1321,6 @@ export function createNeoOperations(service: NeoService) {
       (todoId) => service.todoRunner.start(todoId)
     ),
     defineOperation({
-      name: 'neo.project.cancel',
-      description:
-        'Stop waiting for a context check. Rejects later answers without interrupting the holder session or undoing saved context.',
-      inputSchema: WorkId,
-      resultSchema: ConsultationResult,
-      policy: { safetyClass: 'human_only' },
-      execute: cancelConsultation,
-    }),
-    defineOperation({
-      name: 'neo.project.consult',
-      description:
-        'Retired: there is one Neo session now, so this refuses with single_session. Ask a context holder a question from the current root input. Returns a durable receipt; its answer arrives asynchronously. Repeating a completed consultation for the same human request returns its recorded receipt and full answer. Identical in-flight retries reuse their receipt.',
-      inputSchema: Consult,
-      resultSchema: ConsultationResult,
-      policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) =>
-        consult(
-          {
-            ...input,
-            requestKey: neoTurnRequestKey(caller, 'neo.project.consult', input),
-          },
-          caller
-        ),
-    }),
-    defineOperation({
-      name: 'neo.project.respond',
-      description:
-        'Record an answer to the root Neo for a consultation assigned to this context holder. A consultation that is already settled returns its recorded answer with replyGuidance; the new answer is not recorded and nothing more is sent.',
-      inputSchema: Respond,
-      resultSchema: ConsultationResult,
-      policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: respond,
-    }),
-    defineOperation({
       name: 'neo.open',
       description:
         'Open the one Neo conversation; a projectId is checked and opens the same session.',
@@ -1632,15 +1337,6 @@ export function createNeoOperations(service: NeoService) {
       resultSchema: z.union([Failure, z.object({ ok: z.literal(true), sessionId: z.string() })]),
       policy: { safetyClass: 'human_only' },
       execute: restart,
-    }),
-    defineOperation({
-      name: 'neo.receipt.read',
-      description:
-        'Read a receipt in full by workId or consultationId. Root Neo can read consultations it started; the human can read any receipt.',
-      inputSchema: ReceiptRead,
-      resultSchema: ReceiptResult,
-      policy: { safetyClass: 'read', roles: ['neo'] },
-      execute: readReceipt,
     }),
     defineOperation({
       name: 'neo.rule.save',

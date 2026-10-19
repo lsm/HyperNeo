@@ -6,7 +6,7 @@ import {
   selectNeoResponseInput,
   stampNeoResponseInput,
 } from '../../../../src/lib/neo/response-input';
-import { NeoHolderTurn } from '../../../../src/lib/neo/holder-turn';
+import { NeoCoordinatorTurn } from '../../../../src/lib/neo/coordinator-turn';
 import { QueryAttemptRegistry } from '../../../../src/lib/agent/query-attempt-token';
 import { createTestDb, createTestSession } from '../../../helpers/database';
 
@@ -208,12 +208,12 @@ describe('stampNeoResponseInput', () => {
   test('an obsolete turn retains only its own input, not a newer input or authorization', async () => {
     const db = await createTestDb();
     const attempts = new QueryAttemptRegistry();
-    const first = new NeoHolderTurn(db, 'neo:root', attempts.allocate());
-    let second: NeoHolderTurn | undefined;
+    const first = new NeoCoordinatorTurn(db, 'neo:root', attempts.allocate());
+    let second: NeoCoordinatorTurn | undefined;
     try {
       first.bind('ask-A');
       expect(first.identity()?.isLive()).toBe(true);
-      second = new NeoHolderTurn(db, 'neo:root', attempts.allocate());
+      second = new NeoCoordinatorTurn(db, 'neo:root', attempts.allocate());
       second.bind('ask-B');
       first.dispose();
       expect(first.identity()?.isLive()).toBe(false);

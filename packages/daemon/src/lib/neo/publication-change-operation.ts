@@ -15,11 +15,7 @@ import {
   NeoPublicationResultSchema,
   withNeoPublicationAnswer,
 } from './publication.ts';
-import {
-  requirePublicationLifetime,
-  requirePublicationProducer,
-  requirePublicationNotConsulted,
-} from './publication-operation.ts';
+import { requirePublicationLifetime, requirePublicationProducer } from './publication-operation.ts';
 
 type Producer = Extract<ReturnType<typeof requirePublicationProducer>, { value: unknown }>['value'];
 type Rejection = { accepted: false; reason: string; detail?: string };
@@ -41,7 +37,6 @@ export interface NeoPublicationChangeRuntime {
   getBinding(id: string): NeoBinding | null;
   getRootBinding(): NeoBinding | null;
   publications: Pick<NeoPublicationRepository, 'get' | 'edit' | 'listRecent'>;
-  isConsultationReturn(conversationId: string, publicationId: string): boolean;
   resolveAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
   resolveHumanAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
   notify(conversationId: string): void;
@@ -64,15 +59,6 @@ export function requireConversationPublication(
           )}`,
         },
       };
-}
-
-export function requireChangeable(
-  owned: Owned,
-  consultationReturn: boolean
-): { value: Owned } | { reason: Rejection } {
-  return consultationReturn
-    ? { reason: { accepted: false, reason: 'consultation_return' } }
-    : { value: owned };
 }
 
 function changePipeline(
@@ -104,7 +90,6 @@ function changePipeline(
       'caller',
       'result:change'
     )
-    .pipe(requirePublicationNotConsulted, 'change', 'result:change')
     .pipe(
       (producer: Producer, request: { publicationId: string }) =>
         requireConversationPublication(
@@ -113,18 +98,6 @@ function changePipeline(
           runtime.publications.listRecent(producer.root.sessionId.slice(4), 8)
         ),
       ['change', 'request'],
-      'result:change'
-    )
-    .pipe(
-      (owned: Owned) =>
-        requireChangeable(
-          owned,
-          runtime.isConsultationReturn(
-            owned.publication.conversationId,
-            owned.publication.publicationId
-          )
-        ),
-      'change',
       'result:change'
     )
     .pipe(

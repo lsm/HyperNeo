@@ -244,7 +244,7 @@ describe('runMigration366', () => {
     const db = await createTestDb();
     try {
       db.getDatabase().exec(
-        "DROP TABLE neo_work_dependencies; DROP TABLE neo_cross_project_dispatch_members; DROP TABLE neo_cross_project_dispatches; DELETE FROM migration_markers WHERE key = 'migration_366'"
+        "DROP TABLE neo_work_dependencies; DELETE FROM migration_markers WHERE key = 'migration_366'"
       );
       const backup = mock(() => {});
       runMigrations(db.getDatabase(), backup);

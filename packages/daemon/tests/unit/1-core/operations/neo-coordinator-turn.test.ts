@@ -4,14 +4,10 @@ import type { MessageHub } from '@hyperneo/shared';
 import { Database as SQLite } from '../../../../src/storage/sqlite-compat.ts';
 import type { Database } from '../../../../src/storage/database.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
-import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consultations.ts';
-import { runMigration280 } from '../../../../src/storage/schema/m280-neo-context-write-grants.ts';
-import { runMigration282 } from '../../../../src/storage/schema/m282-neo-consultation-origins.ts';
 import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins.ts';
 import { runMigration339 } from '../../../../src/storage/schema/m339-neo-input-origins.ts';
 import { runMigration340 } from '../../../../src/storage/schema/m340-neo-session-seen.ts';
 import { runMigration377 } from '../../../../src/storage/schema/m377-neo-input-origin-trigger.ts';
-import { NeoHolderTurn } from '../../../../src/lib/neo/holder-turn.ts';
 import { NeoCoordinatorTurn } from '../../../../src/lib/neo/coordinator-turn.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
@@ -24,21 +20,18 @@ import { QueryRunner, type QueryRunnerContext } from '../../../../src/lib/agent/
 import { MessageQueue } from '../../../../src/lib/agent/message-queue.ts';
 import type { QueryLike } from '../../../../src/lib/agent/query-like.ts';
 
-describe('Neo isolated holder turns', () => {
+describe('Neo coordinator turns', () => {
   let sqlite: SQLite;
   let db: Database;
   let service: NeoService;
   let queue: MessageQueue;
   let runner: QueryRunner;
   let attempts: QueryAttemptRegistry;
-  let turns: NeoHolderTurn[];
+  let turns: NeoCoordinatorTurn[];
   const concern = { id: 'club', title: 'Club', summary: 'Sunday', context: 'Six people' };
   beforeEach(() => {
     sqlite = new SQLite(':memory:');
     createNeoTables(sqlite);
-    runMigration279(sqlite);
-    runMigration280(sqlite);
-    runMigration282(sqlite);
     runMigration283(sqlite);
     runMigration339(sqlite);
     runMigration340(sqlite);
@@ -58,14 +51,6 @@ describe('Neo isolated holder turns', () => {
     );
     service.repo.saveProject(concern, 0);
     service.repo.reserveBinding({ sessionId: 'neo:holder', projectId: 'club', kind: 'project' });
-    service.consultations.reserve({
-      id: 'a',
-      requestKey: 'a',
-      projectId: 'club',
-      originSessionId: 'root',
-      sessionId: 'neo:holder',
-      question: 'Next?',
-    });
     attempts = new QueryAttemptRegistry();
     turns = [];
     queue = new MessageQueue();
@@ -88,11 +73,11 @@ describe('Neo isolated holder turns', () => {
     vi.useRealTimers();
   });
   function turn() {
-    const result = new NeoHolderTurn(db, 'neo:holder', attempts.allocate());
+    const result = new NeoCoordinatorTurn(db, 'neo:holder', attempts.allocate());
     turns.push(result);
     return result;
   }
-  function save(active: NeoHolderTurn, input: Record<string, unknown> = {}) {
+  function save(active: NeoCoordinatorTurn, input: Record<string, unknown> = {}) {
     const handler = createOperationMcpHandler(
       createOperationRegistry(createNeoOperations(service)),
       () => ({ sessionId: 'neo:holder', role: 'neo', neoTurn: active.identity() })
@@ -104,31 +89,27 @@ describe('Neo isolated holder turns', () => {
     });
   }
 
-  test('restart recovery preserves human, consultation and event identities across repeated interruptions', () => {
+  test('restart recovery preserves human and event identities across repeated interruptions', () => {
     const human = turn();
     human.bind('restart-recovery:restart-recovery:human-input');
     expect(human.identity()).toMatchObject({ human: true, origin: 'human-input' });
     human.dispose();
-    const consultation = turn();
-    consultation.bind('restart-recovery:neo-consult:a:request');
-    expect(consultation.identity()).toMatchObject({ human: false, consultationId: 'a' });
-    consultation.dispose();
     const event = turn();
     event.bind('restart-recovery:neo-project-event:club:event-1');
     expect(event.identity()?.human).toBe(false);
   });
 
   test('consumes one input without waiting for a successor and preserves the next queued input', async () => {
-    const firstSent = queue.enqueueWithId('neo-consult:a:request', 'First', false, {
+    const firstSent = queue.enqueueWithId('neo-project-event:club:event-1', 'First', false, {
       durable: true,
     });
     const nextSent = queue.enqueueWithId('human-input', 'Next', false, { durable: true });
     const first = turn();
     const input = runner.createMessageGeneratorWrapper(1, undefined, first);
     expect(runner.acceptsPrompt(1)).toBe(true);
-    expect((await input.next()).value?.uuid).toBe('neo-consult:a:request');
+    expect((await input.next()).value?.uuid).toBe('neo-project-event:club:event-1');
     expect(runner.acceptsPrompt(1)).toBe(false);
-    expect(first.identity()?.consultationId).toBe('a');
+    expect(first.identity()?.human).toBe(false);
     first.dispose();
     expect((await input.next()).done).toBe(true);
     await firstSent;
@@ -273,51 +254,18 @@ describe('Neo isolated holder turns', () => {
     await sent;
   });
 
-  test('drains a settled queued consultation once and leaves the next input runnable', async () => {
-    service.consultations.finish('a', 'failed', 'Stopped');
-    const firstSent = queue.enqueueWithId('neo-consult:a:request', 'Stale', false, {
-      durable: true,
-    });
-    const nextSent = queue.enqueueWithId('human-input', 'Current', false, { durable: true });
-    const stale = turn();
-    const input = runner.createMessageGeneratorWrapper(1, undefined, stale);
-    expect(await input.next()).toMatchObject({ done: true });
-    await firstSent;
-    expect(stale.identity()).toBeUndefined();
-    expect(queue.size()).toBe(1);
-    queue.stop();
-    queue.start();
-    const successor = turn();
-    const next = runner.createMessageGeneratorWrapper(2, undefined, successor);
-    expect((await next.next()).value?.uuid).toBe('human-input');
-    expect(successor.identity()?.human).toBe(true);
-    successor.dispose();
-    expect((await next.next()).done).toBe(true);
-    await nextSent;
-    expect(queue.size()).toBe(0);
-  });
-
-  test('MCP writes use the server-bound request, ignoring forged input provenance', async () => {
+  test('MCP writes use the server-bound turn, ignoring forged input provenance', async () => {
     const current = turn();
-    current.bind('neo-consult:a:request');
+    current.bind('human-input');
     expect((await save(current, { context: 'Eight people' })).content).toEqual([
       expect.objectContaining({ text: expect.stringContaining('"ok":true') }),
     ]);
-    service.consultations.finish('a', 'failed', 'Stopped');
-    service.consultations.reserve({
-      id: 'b',
-      requestKey: 'b',
-      projectId: 'club',
-      originSessionId: 'root',
-      sessionId: 'neo:holder',
-      question: 'New question',
-    });
+    current.dispose();
     expect(
       (
         await save(current, {
           expectedRevision: 2,
           context: 'Stale overwrite',
-          consultationId: 'b',
           neoTurn: { human: true },
         })
       ).content
@@ -325,11 +273,6 @@ describe('Neo isolated holder turns', () => {
       expect.objectContaining({ text: expect.stringMatching(/"ok":false|"code":"forbidden"/) }),
     ]);
     expect(service.repo.getProject('club')?.context).toBe('Eight people');
-    const next = turn();
-    next.bind('neo-consult:b:request');
-    expect((await save(next, { expectedRevision: 2, context: 'New answer' })).content).toEqual([
-      expect.objectContaining({ text: expect.stringContaining('"ok":true') }),
-    ]);
   });
 
   test('missing, unbound, closed and superseded identities cannot write; human turns still can', async () => {
@@ -337,7 +280,7 @@ describe('Neo isolated holder turns', () => {
     expect((await save(old)).content).toEqual([
       expect.objectContaining({ text: expect.stringMatching(/"ok":false|"code":"forbidden"/) }),
     ]);
-    old.bind('neo-consult:a:request');
+    old.bind('neo-project-event:club:event-0');
     const human = turn();
     human.bind('human-input');
     expect((await save(old)).content).toEqual([
@@ -385,7 +328,10 @@ describe('Neo isolated holder turns', () => {
   test('yield closes only the bound sender turn and aborts its SDK stream', async () => {
     const abort = new AbortController();
     const yieldTurn = mock(() => abort.abort());
-    const current = new NeoHolderTurn(db, 'neo:holder', { isLive: () => true, yield: yieldTurn });
+    const current = new NeoCoordinatorTurn(db, 'neo:holder', {
+      isLive: () => true,
+      yield: yieldTurn,
+    });
     turns.push(current);
     current.bind('human-input');
     const never = new Promise<IteratorResult<unknown>>(() => {});
@@ -402,21 +348,6 @@ describe('Neo isolated holder turns', () => {
     const successor = turn();
     expect(successor.bind('human-input')).toBe(true);
     expect(successor.identity()?.isLive()).toBe(true);
-  });
-
-  test('slow consultation turns remain live without a deadline timer', async () => {
-    vi.useFakeTimers();
-    sqlite.prepare('UPDATE neo_consultations SET created_at = 0 WHERE id = ?').run('a');
-    const active = turn();
-    expect(active.bind('neo-consult:a:request')).toBe(true);
-    await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
-    expect(active.identity()?.isLive()).toBe(true);
-    expect(vi.getTimerCount()).toBe(0);
-    expect((await save(active, { context: 'A slow but useful answer' })).content).toEqual([
-      expect.objectContaining({ text: expect.stringContaining('"ok":true') }),
-    ]);
-    active.dispose();
-    expect(active.identity()?.isLive()).toBe(false);
   });
 
   test('explicit abort releases a stuck SDK iterator without waiting for its cleanup', async () => {

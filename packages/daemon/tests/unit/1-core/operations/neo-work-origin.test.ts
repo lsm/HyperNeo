@@ -43,7 +43,6 @@ describe('Neo work input origins', () => {
           sessionId: 'holder',
           neoTurn: {
             messageId: 'neo-consult:one:request',
-            consultationId: 'one',
             human: false,
             isLive: () => true,
           },

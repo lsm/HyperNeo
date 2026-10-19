@@ -13,12 +13,7 @@ import {
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
-import {
-  NEO_SINGLE_SESSION,
-  requireNeoOtherSession,
-} from '../../../../src/lib/neo/consultation-origin.ts';
 import { runMigration393 } from '../../../../src/storage/schema/m393-neo-root-asks.ts';
-import { runMigration394 } from '../../../../src/storage/schema/m394-neo-end-consultations.ts';
 import { runMigration395 } from '../../../../src/storage/schema/m395-neo-archive-holders.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
@@ -148,54 +143,6 @@ describe('Neo as one session', () => {
     expect(service.repo.listProjectBindings().map((binding) => binding.sessionId)).toEqual([
       holder,
     ]);
-  });
-
-  test('consult and dispatch refuse with guidance when the target is this session', () => {
-    const origin = { originSessionId: root, originMessageId: 'm1' };
-    expect(requireNeoOtherSession(origin, [root])).toEqual({
-      reason: { ok: false, reason: NEO_SINGLE_SESSION },
-    });
-    expect(NEO_SINGLE_SESSION).toContain('work.send');
-    expect(requireNeoOtherSession(origin, [holder])).toEqual({ value: origin });
-  });
-
-  test('m394 ends open consultations: root hears once, a holder hears nothing, queued waiters cancel', async () => {
-    service.repo.saveProject({ id: 'app', title: 'App', summary: '', context: '' }, 0);
-    const consult = (id: string, projectId: string, originSessionId: string) =>
-      service.consultations.reserve({
-        id,
-        requestKey: id,
-        projectId,
-        originSessionId,
-        sessionId: holder,
-        question: 'What changed?',
-      });
-    consult('from-root', 'web', root);
-    consult('from-holder', 'app', holder);
-    service.consultationWaiters.enqueue({
-      id: 'waiting',
-      requestKey: 'waiting',
-      projectId: 'web',
-      originSessionId: root,
-      originMessageId: 'm1',
-      sessionId: holder,
-      question: 'Next?',
-    });
-    runMigration394(db.getDatabase());
-    expect(service.consultations.get('from-root')).toMatchObject({
-      status: 'failed',
-      answer: expect.stringContaining('work.send'),
-    });
-    expect(service.consultationWaiters.get('waiting')?.status).toBe('cancelled');
-    const delivered: string[] = [];
-    Object.assign(service, {
-      deliver: async (sessionId: string, messageId: string) => {
-        delivered.push(`${sessionId} ${messageId}`);
-      },
-    });
-    await service.recoverConsultations();
-    await service.recoverConsultations();
-    expect(delivered).toEqual([`${root} neo-consult:from-root:reply`]);
   });
 
   test('m395 ends what holders still hold, closes dead legacy items and archives holders, waking no one', async () => {

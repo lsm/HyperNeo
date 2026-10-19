@@ -19,7 +19,6 @@ export interface OperationCaller {
   readonly neoTurn?: {
     readonly messageId: string;
     readonly origin?: string;
-    readonly consultationId?: string;
     readonly human: boolean;
     readonly isLive: () => boolean;
     readonly yield?: () => void;
