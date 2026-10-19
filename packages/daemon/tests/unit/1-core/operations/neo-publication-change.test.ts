@@ -3,7 +3,6 @@ import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import {
   createNeoPublicationChangeOperations,
   requireConversationPublication,
-  requireChangeable,
 } from '../../../../src/lib/neo/publication-change-operation.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
@@ -39,7 +38,6 @@ let db: Database;
 let publications: NeoPublicationRepository;
 let notified: number;
 let registry: ReturnType<typeof createOperationRegistry>;
-let consultationReturn: boolean;
 const call = async (name: 'edit' | 'recent', change: unknown, who = caller()) => {
   const result = await invokeOperation(registry, `neo.publication.${name}`, change, who);
   return result.kind === 'completed' ? result.value : result;
@@ -50,14 +48,12 @@ beforeEach(() => {
   publications = new NeoPublicationRepository(db);
   publications.append(input);
   notified = 0;
-  consultationReturn = false;
   registry = createOperationRegistry(
     createNeoPublicationChangeOperations(
       {
         getBinding: (id) => [root, holder].find((item) => item.sessionId === id) ?? null,
         getRootBinding: () => root,
         publications,
-        isConsultationReturn: () => consultationReturn,
         resolveAskOrigin: () => ({ sessionId: root.sessionId, messageId: 'new-human-question' }),
         resolveHumanAskOrigin: () => ({
           sessionId: root.sessionId,
@@ -234,18 +230,6 @@ describe('neo.publication.edit', () => {
     expect(publications.get(conversation, original)?.shortText).toBe(input.shortText);
   });
 
-  test('a consultation-only turn cannot revise the public conversation', async () => {
-    const who = caller(holder.sessionId);
-    expect(
-      await call(
-        'edit',
-        { publicationId: original, requestId: 'r1', shortText: 'Private.', fullText: 'Private.' },
-        { ...who, neoTurn: { ...who.neoTurn!, consultationId: 'consult-1' } }
-      )
-    ).toMatchObject({ accepted: false, reason: 'consultation_answer' });
-    expect(publications.get(conversation, original)?.shortText).toBe(input.shortText);
-  });
-
   test.each([
     { publicationId: original, requestId: 'r1' },
     { publicationId: original, shortText: 'No identity.' },
@@ -309,24 +293,6 @@ describe('requireConversationPublication', () => {
       'reason.reason',
       'not_found'
     );
-  });
-});
-
-describe('requireChangeable', () => {
-  test('a consultation-return record remains protected until returned', async () => {
-    consultationReturn = true;
-    expect(requireChangeable({} as never, true)).toHaveProperty(
-      'reason.reason',
-      'consultation_return'
-    );
-    expect(
-      await call('edit', {
-        publicationId: original,
-        requestId: 'c1',
-        shortText: 'Wrong.',
-        fullText: 'Wrong.',
-      })
-    ).toMatchObject({ accepted: false, reason: 'consultation_return' });
   });
 });
 

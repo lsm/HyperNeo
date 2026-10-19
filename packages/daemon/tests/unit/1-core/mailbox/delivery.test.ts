@@ -5,7 +5,7 @@ import {
   persistAndEnqueueDelivery,
 } from '../../../../src/lib/agent/message-delivery-outbox';
 import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
-import { NeoHolderTurn } from '../../../../src/lib/neo/holder-turn';
+import { NeoCoordinatorTurn } from '../../../../src/lib/neo/coordinator-turn';
 import { materializeMailboxFailuresForSession } from '../../../../src/lib/mailbox/cancellation';
 import { createMailboxDeliveryHandler } from '../../../../src/lib/mailbox/delivery';
 import { enqueueMailboxEntry, MAILBOX_LANE } from '../../../../src/lib/mailbox/enqueue';
@@ -123,8 +123,8 @@ describe('createMailboxDeliveryHandler', () => {
       getDatabase: () => mailbox.db,
       getSDKMessageRepo: () => mailbox.sdkMessageRepo,
     } as unknown as Database;
-    const directTurn = new NeoHolderTurn(db, SESSION_ID, { isLive: () => true });
-    const injectedTurn = new NeoHolderTurn(db, SESSION_ID, { isLive: () => true });
+    const directTurn = new NeoCoordinatorTurn(db, SESSION_ID, { isLive: () => true });
+    const injectedTurn = new NeoCoordinatorTurn(db, SESSION_ID, { isLive: () => true });
     try {
       directTurn.bind('direct-chat');
       injectedTurn.bind('agent-inject');

@@ -4,13 +4,6 @@ import { runMigration365 } from '../../../../src/storage/schema/m365-neo-cross-p
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 import type { Database } from '../../../../src/storage/database.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
-import { NeoConsultationWaiterRepository } from '../../../../src/storage/repositories/neo-consultation-waiter-repository.ts';
-import { NeoConsultationRepository } from '../../../../src/storage/repositories/neo-consultation-repository.ts';
-import { NeoPublicationRepository } from '../../../../src/storage/repositories/neo-publication-repository.ts';
-import {
-  NeoCrossProjectRepository,
-  neoCrossProjectReplyId,
-} from '../../../../src/storage/repositories/neo-cross-project-repository.ts';
 import {
   readNeoProjectFacts,
   neoFactOwners,
@@ -145,110 +138,5 @@ describe('neoRepoAlias', () => {
     expect(neoRepoAlias('git@github.com:LSM/HyperNeo.git')).toBe('repo:lsm/hyperneo\u0000');
     expect(neoRepoAlias('https://github.com/lsm/HyperNeo.git')).toBe('repo:lsm/hyperneo\u0000');
     expect(neoRepoAlias('/local/repo')).toBeNull();
-  });
-});
-
-describe('NeoCrossProjectRepository', () => {
-  test('binds every waiter atomically and retries aggregate publications by identity', () => {
-    const sql = db.getDatabase();
-    const groups = new NeoCrossProjectRepository(sql);
-    const waiters = new NeoConsultationWaiterRepository(sql, () => {});
-    const consultations = new NeoConsultationRepository(sql, () => {});
-    const parts = ['alpha', 'beta'].map((projectId) => ({
-      projectId,
-      quote: projectId,
-      question: 'Review',
-    }));
-    const ask = { sessionId: 'root', messageId: 'human' };
-    const sessions = new Map([
-      ['alpha', 'holder-alpha'],
-      ['beta', 'holder-beta'],
-    ]);
-    const bound = groups.bind('root', 'human', ask, parts, sessions, waiters);
-    expect('value' in bound).toBe(true);
-    if (!('value' in bound)) throw new Error(bound.reason);
-    const group = bound.value;
-    expect(groups.members(group)).toHaveLength(2);
-    expect(groups.bind('root', 'human', ask, [...parts].reverse(), sessions, waiters)).toEqual({
-      value: group,
-    });
-    expect(
-      groups.bind(
-        'root',
-        'human',
-        ask,
-        [{ ...parts[0], question: 'Changed' }, parts[1]],
-        sessions,
-        waiters
-      )
-    ).toEqual({ reason: 'cross_project_conflict' });
-    const input = {
-      conversationId: crypto.randomUUID(),
-      publicationId: crypto.randomUUID(),
-      askOrigin: ask,
-      producerInput: { sessionId: 'root', messageId: neoCrossProjectReplyId(group) },
-      shortText: 'Both finished',
-      fullText: 'Both finished',
-      links: [],
-      triggerId: `human:${ask.messageId}`,
-    };
-    expect(groups.ready(group)).toBe(false);
-    expect(groups.publicationProblem(input)).toBeNull();
-    for (const member of groups.members(group)) {
-      expect(waiters.admitNext(member.projectId)?.id).toBe(member.id);
-      consultations.finish(member.id, 'reported', `${member.projectId} done`);
-    }
-    const reopened = new NeoCrossProjectRepository(sql);
-    expect(reopened.ready(group)).toBe(true);
-    const ledger = new NeoPublicationRepository(sql);
-    expect(reopened.append(input, () => ledger.append(input))).toMatchObject({
-      accepted: true,
-      created: true,
-    });
-    expect(reopened.append(input, () => ledger.append(input))).toMatchObject({
-      accepted: true,
-      created: false,
-    });
-    const sameText = { ...input, publicationId: crypto.randomUUID() };
-    expect(reopened.publicationProblem(sameText)).toBeNull();
-    expect(reopened.append(sameText, () => ledger.append(sameText))).toMatchObject({
-      accepted: true,
-      created: true,
-      publication: { publicationId: sameText.publicationId },
-    });
-    const changed = {
-      ...sameText,
-      publicationId: crypto.randomUUID(),
-      shortText: 'A different aggregate.',
-    };
-    expect(reopened.append(changed, () => ledger.append(changed))).toMatchObject({
-      accepted: true,
-      created: true,
-    });
-    expect(reopened.forAsk(input.askOrigin)?.publicationId).toBe(changed.publicationId);
-  });
-  test('rolls back the group and all queued parts when a membership write fails', () => {
-    const sql = db.getDatabase();
-    const groups = new NeoCrossProjectRepository(sql);
-    sql.exec(
-      `CREATE TRIGGER fail_cross_part BEFORE INSERT ON neo_cross_project_dispatch_members WHEN NEW.project_id = 'beta' BEGIN SELECT RAISE(ABORT, 'injected'); END`
-    );
-    expect(() =>
-      groups.bind(
-        'root',
-        'human',
-        { sessionId: 'root', messageId: 'human' },
-        ['alpha', 'beta'].map((projectId) => ({ projectId, quote: projectId, question: 'Review' })),
-        new Map([
-          ['alpha', 'a'],
-          ['beta', 'b'],
-        ]),
-        new NeoConsultationWaiterRepository(sql, () => {})
-      )
-    ).toThrow('injected');
-    expect(groups.pending()).toEqual([]);
-    expect(sql.prepare('SELECT COUNT(*) AS n FROM neo_consultation_waiters').get()).toEqual({
-      n: 0,
-    });
   });
 });

@@ -31,7 +31,6 @@ import { runMigration282 } from '../../../../src/storage/schema/m282-neo-consult
 import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins';
 import { NeoInputOriginRepository } from '../../../../src/storage/repositories/neo-input-origin-repository.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository';
-import { NeoConsultationRepository } from '../../../../src/storage/repositories/neo-consultation-repository';
 import { createTestDb, createTestSession } from '../../../helpers/database';
 import type { OperationCaller } from '../../../../src/lib/operations/registry';
 import type { QueryLike } from '../../../../src/lib/agent/query-like';
@@ -340,23 +339,12 @@ describe('QueryRunner', () => {
       }));
     });
 
-    it.each([
-      'neo',
-      'project',
-      'worker',
-      'ordinary',
-      'neo-return',
-      'holder-request',
-      'work-return',
-      'unknown-system',
-    ] as const)(
+    it.each(['neo', 'project', 'worker', 'ordinary', 'work-return', 'unknown-system'] as const)(
       'keeps %s inputs and human attribution on their intended boundary',
       async (variant) => {
-        const delayed = ['neo-return', 'holder-request', 'work-return', 'unknown-system'].includes(
-          variant
-        );
+        const delayed = ['work-return', 'unknown-system'].includes(variant);
         const kind =
-          variant === 'project' || variant === 'holder-request'
+          variant === 'project'
             ? 'project'
             : variant === 'worker'
               ? 'worker'
@@ -372,9 +360,7 @@ describe('QueryRunner', () => {
             ? 'work-A'
             : variant === 'unknown-system'
               ? 'unknown-system'
-              : delayed
-                ? `neo-consult:check-A:${kind === 'project' ? 'request' : 'reply'}`
-                : 'ask-B';
+              : 'ask-B';
         const askA = { sessionId: rootId, messageId: 'ask-A' };
         const repo = new NeoRepository(sqlite);
         if (kind === 'project')
@@ -383,24 +369,6 @@ describe('QueryRunner', () => {
           repo.reserveBinding({ sessionId, projectId: kind === 'project' ? 'club' : null, kind });
         if (kind === 'project' && delayed)
           repo.reserveBinding({ sessionId: rootId, projectId: null, kind: 'neo' });
-        if (variant === 'neo-return' || variant === 'holder-request') {
-          const holderId = kind === 'project' ? sessionId : 'neo:holder';
-          if (kind === 'neo') {
-            repo.saveProject({ id: 'club', title: 'Club', summary: '', context: '' }, 0);
-            repo.reserveBinding({ sessionId: holderId, projectId: 'club', kind: 'project' });
-          }
-          const consultations = new NeoConsultationRepository(sqlite, () => {});
-          consultations.reserve({
-            id: 'check-A',
-            requestKey: 'check-A',
-            projectId: 'club',
-            originSessionId: rootId,
-            originMessageId: askA.messageId,
-            sessionId: holderId,
-            question: 'Project A status',
-          });
-          if (kind === 'neo') consultations.finish('check-A', 'reported', 'Reported A evidence');
-        }
         if (variant === 'work-return') {
           const work = repo.proposeWork({
             id: nextId,

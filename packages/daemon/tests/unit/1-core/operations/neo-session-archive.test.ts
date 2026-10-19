@@ -113,32 +113,25 @@ describe('neo.session.archive', () => {
     expect(archive).toHaveBeenCalledTimes(2);
   });
 
-  test.each([
-    'stale',
-    'system',
-    'consultation',
-    'unbound',
-    'missing_prompt',
-    'internal',
-    'untrusted_rpc',
-  ])('refuses %s callers before driver or remote effects', async (kind) => {
-    if (kind === 'stale') live = false;
-    if (kind === 'system') caller = { ...caller, neoTurn: { ...caller.neoTurn!, human: false } };
-    if (kind === 'consultation')
-      caller = { ...caller, neoTurn: { ...caller.neoTurn!, consultationId: 'consult' } };
-    if (kind === 'unbound') caller = { ...caller, sessionId: 'worker' };
-    if (kind === 'missing_prompt')
-      caller = { ...caller, neoTurn: { ...caller.neoTurn!, messageId: 'absent' } };
-    if (kind === 'internal') caller = { ...caller, source: 'internal' };
-    if (kind === 'untrusted_rpc') caller = { source: 'rpc' };
-    expect(await invoke()).toMatchObject(
-      kind === 'stale'
-        ? { kind: 'failed', code: 'forbidden' }
-        : { value: { ok: false, reason: 'human_only' } }
-    );
-    expect(archive).not.toHaveBeenCalled();
-    expect(remote.invoke).not.toHaveBeenCalled();
-  });
+  test.each(['stale', 'system', 'unbound', 'missing_prompt', 'internal', 'untrusted_rpc'])(
+    'refuses %s callers before driver or remote effects',
+    async (kind) => {
+      if (kind === 'stale') live = false;
+      if (kind === 'system') caller = { ...caller, neoTurn: { ...caller.neoTurn!, human: false } };
+      if (kind === 'unbound') caller = { ...caller, sessionId: 'worker' };
+      if (kind === 'missing_prompt')
+        caller = { ...caller, neoTurn: { ...caller.neoTurn!, messageId: 'absent' } };
+      if (kind === 'internal') caller = { ...caller, source: 'internal' };
+      if (kind === 'untrusted_rpc') caller = { source: 'rpc' };
+      expect(await invoke()).toMatchObject(
+        kind === 'stale'
+          ? { kind: 'failed', code: 'forbidden' }
+          : { value: { ok: false, reason: 'human_only' } }
+      );
+      expect(archive).not.toHaveBeenCalled();
+      expect(remote.invoke).not.toHaveBeenCalled();
+    }
+  );
 
   test.each(['proposed', 'queued', 'reported'] as const)(
     'refuses a %s card, including before its driver ref lands',

@@ -19,7 +19,6 @@ export const recoverNeoConsultations = (superpipe({})('neo-consultation-recovery
   .pipe(scheduleConsultationRecovery, 'queue')
   .pipe(
     async (service: NeoService) => {
-      await service.recoverConsultations();
       await service.clearStaleNeedsYou();
       return { recovered: true };
     },
