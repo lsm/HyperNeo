@@ -3,13 +3,9 @@ import type { Session } from '@hyperneo/shared';
 import {
   admitNeoIntake,
   createNeoIntakeOperation,
-  loggedNeoRoute,
-  replayedNeoRoute,
   requireNeoIntakeTarget,
   requireNeoRootTarget,
-  wantsNeoRoute,
 } from '../../../../src/lib/neo/intake.ts';
-import type { NeoRouter } from '../../../../src/lib/neo/router.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import type { NeoService } from '../../../../src/lib/neo/service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -78,76 +74,6 @@ describe('Neo intake gates', () => {
       [binding, { ...root!, status: 'archived' as const }],
     ] as const)
       expect(requireNeoRootTarget(admitted, owner, session)).toHaveProperty('reason.ok', false);
-  });
-});
-
-describe('wantsNeoRoute', () => {
-  const router: NeoRouter = async () => ({ choice: null });
-  test('routes only asks to the main Neo conversation when a router exists', () => {
-    expect(wantsNeoRoute(binding, router)).toEqual({ value: router });
-    expect(wantsNeoRoute(binding, null)).toEqual({ reason: { choice: null } });
-    expect(wantsNeoRoute({ ...binding, kind: 'project', projectId: 'c1' }, router)).toEqual({
-      reason: { choice: null },
-    });
-  });
-});
-
-describe('loggedNeoRoute', () => {
-  const earlier = {
-    destination: 'holder',
-    projectId: 'c1',
-    targetSessionId: 's1',
-    signal: 'classifier',
-    confidence: 0.8,
-  } as unknown as Parameters<typeof loggedNeoRoute>[0];
-  test('a retried ask reuses its logged route instead of routing again', () => {
-    expect(loggedNeoRoute(null)).toEqual({ value: null });
-    expect(loggedNeoRoute(earlier)).toEqual({
-      reason: {
-        choice: { projectId: 'c1', sessionId: 's1', signal: 'classifier', confidence: 0.8 },
-      },
-    });
-    expect(
-      loggedNeoRoute({ ...earlier!, destination: 'main' } as Parameters<typeof loggedNeoRoute>[0])
-    ).toEqual({ reason: { choice: null } });
-  });
-});
-
-describe('replayedNeoRoute', () => {
-  const logged = {
-    destination: 'holder',
-    projectId: 'c1',
-    targetSessionId: 's1',
-    signal: 'classifier',
-    confidence: 0.8,
-  } as unknown as Parameters<typeof replayedNeoRoute>[1];
-  const holder = { sessionId: 's1', kind: 'project' as const, projectId: 'c1' };
-  test('a first ask has nothing to replay', () => {
-    expect(replayedNeoRoute(null, null)).toEqual({ value: null });
-  });
-  test('a retry with only a log entry reuses the logged route', () => {
-    expect(replayedNeoRoute(null, logged)).toEqual(loggedNeoRoute(logged));
-  });
-  test('the log keeps its signal when it agrees with where the ask went', () => {
-    expect(replayedNeoRoute({ sessionId: 's1', holder }, logged)).toEqual(loggedNeoRoute(logged));
-  });
-  test('the ask ledger wins when the log is missing or points elsewhere', () => {
-    const replayed = {
-      reason: {
-        choice: { projectId: 'c1', sessionId: 's1', signal: 'embedding', confidence: 1 },
-        fallback: 'replayed',
-      },
-    };
-    expect(replayedNeoRoute({ sessionId: 's1', holder }, null)).toEqual(replayed);
-    expect(
-      replayedNeoRoute({ sessionId: 's1', holder }, {
-        ...logged!,
-        targetSessionId: 'root',
-      } as Parameters<typeof replayedNeoRoute>[1])
-    ).toEqual(replayed);
-    expect(replayedNeoRoute({ sessionId: 'root', holder: null }, logged)).toEqual({
-      reason: { choice: null, fallback: 'replayed' },
-    });
   });
 });
 

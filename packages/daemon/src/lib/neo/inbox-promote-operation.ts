@@ -4,7 +4,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { handOffNeoAsk, type NeoReorganizeRuntime } from './reorganize-operation.ts';
-import { NEO_INBOX_ID, type NeoHolder } from './router.ts';
+import { NEO_INBOX_ID, type NeoHolder } from './inbox.ts';
 
 const Input = z.object({
   title: z.string().trim().min(1).max(120),

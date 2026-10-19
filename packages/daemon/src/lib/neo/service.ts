@@ -333,7 +333,7 @@ import { neoPrompt } from './prompt.ts';
 import { createNeoPublicationCommit } from './publication-commit.ts';
 import { createNeoPublisher } from './publication-operation.ts';
 import { runNeoReadWork } from './read-work.ts';
-import { NEO_INBOX_ID, openNeoDefaultSession } from './router.ts';
+import { NEO_INBOX_ID, openNeoDefaultSession } from './inbox.ts';
 import {
   type NeoSavedRulesNote,
   planNeoSavedRulesAppend,

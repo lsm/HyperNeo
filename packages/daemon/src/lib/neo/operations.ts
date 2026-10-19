@@ -63,7 +63,6 @@ import {
 import { CONSULTATION_STOPPED } from './consultation-policy.ts';
 import { isNeoProjectEventTurn } from './card-events.ts';
 import { createNeoIntakeOperation } from './intake.ts';
-import { createNeoRouteCorrectOperation } from './route-correct-operation.ts';
 import {
   createNeoRouteFailureOperation,
   NeoRouteFailureSchema,
@@ -83,7 +82,7 @@ import {
 } from './project-merge.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
 import { neoSessionStatus } from './session-status.ts';
-import { NEO_INBOX_ID, neoNewProject, openNeoNewProject } from './router.ts';
+import { NEO_INBOX_ID, neoNewProject, openNeoNewProject } from './inbox.ts';
 import { createNeoInboxPromoteOperation } from './inbox-promote-operation.ts';
 import { createNeoPublicationChangeOperations } from './publication-change-operation.ts';
 import { createNeoPublicationOperation } from './publication-operation.ts';
@@ -1561,7 +1560,6 @@ export function createNeoOperations(service: NeoService) {
         service.notifyPublicationsChanged(conversationId);
       },
     }),
-    createNeoRouteCorrectOperation(service.db, service.repo),
     createNeoRouteFailureOperation(service.db),
     createNeoInboxPromoteOperation({
       ...neoReorganizeRuntime(service),

@@ -23,7 +23,7 @@ import {
   requireNeoSourceIdle,
   selectNeoReorganizableAsks,
 } from '../../../../src/lib/neo/reorganize-operation.ts';
-import type { NeoRouted } from '../../../../src/lib/neo/router.ts';
+import type { NeoRouted } from '../../../../src/lib/neo/reorganize-operation.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {

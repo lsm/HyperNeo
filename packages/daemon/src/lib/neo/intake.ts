@@ -21,7 +21,6 @@ import { NeoPublicationRepository } from '../../storage/repositories/neo-publica
 import { toMailboxMessage } from '../mailbox/entry.ts';
 import { MessageSessionIdSchema, SendMessageInputSchema } from '../messaging/message-send.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import type { NeoRouted, NeoRouter, NeoRouteSignal } from './router.ts';
 import { NeoReplyRefSchema } from './conversation-ask.ts';
 
 const Input = z
@@ -205,28 +204,6 @@ export function neoReplyAuthor(
   );
 }
 
-export function repliedNeoRoute(
-  author: string | null,
-  repo: NeoRepository
-): { value: null } | { reason: NeoRouted } {
-  if (!author) return { value: null };
-  const holder = repo.getBindingBySession(author);
-  return {
-    reason: {
-      choice:
-        holder?.kind === 'project' && holder.projectId
-          ? {
-              projectId: holder.projectId,
-              sessionId: holder.sessionId,
-              signal: 'facts',
-              confidence: 1,
-            }
-          : null,
-      fallback: 'reply',
-    },
-  };
-}
-
 export function recordNeoReplyAnswer(
   receipt: IntakeResult,
   reply: NeoReply | null,
@@ -366,60 +343,6 @@ function notifyNeoIntakeAcceptance(
     } catch {}
   }
   return receipt;
-}
-
-export function wantsNeoRoute(
-  binding: NeoBinding,
-  router: NeoRouter | null
-): { value: NeoRouter } | { reason: NeoRouted } {
-  return binding.kind === 'neo' && router ? { value: router } : { reason: { choice: null } };
-}
-
-export function loggedNeoRoute(
-  earlier: ReturnType<NeoRoutingLogRepository['find']>
-): { value: null } | { reason: NeoRouted } {
-  if (!earlier) return { value: null };
-  return {
-    reason: {
-      choice:
-        earlier.destination === 'holder' && earlier.projectId && earlier.targetSessionId
-          ? {
-              projectId: earlier.projectId,
-              sessionId: earlier.targetSessionId,
-              signal:
-                earlier.signal === 'facts'
-                  ? 'facts'
-                  : earlier.signal.startsWith('classifier')
-                    ? (earlier.signal as NeoRouteSignal)
-                    : 'embedding',
-              confidence: earlier.confidence ?? 0,
-            }
-          : null,
-    },
-  };
-}
-
-export function replayedNeoRoute(
-  asked: { sessionId: string; holder: NeoBinding | null } | null,
-  earlier: ReturnType<NeoRoutingLogRepository['find']>
-): { value: null } | { reason: NeoRouted } {
-  if (!asked) return loggedNeoRoute(earlier);
-  if (earlier && earlier.targetSessionId === asked.sessionId) return loggedNeoRoute(earlier);
-  const holder = asked.holder;
-  return {
-    reason: {
-      choice:
-        holder?.kind === 'project' && holder.projectId
-          ? {
-              projectId: holder.projectId,
-              sessionId: asked.sessionId,
-              signal: 'embedding',
-              confidence: 1,
-            }
-          : null,
-      fallback: 'replayed',
-    },
-  };
 }
 
 type IntakeTarget = { binding: NeoBinding; target: Target; conversationId: string };
