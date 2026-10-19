@@ -36,7 +36,6 @@ import type { MessageQueue } from './message-queue.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
 import { QueryAttemptRegistry, type QueryAttemptToken } from './query-attempt-token.ts';
 import { NeoHolderTurn } from '../neo/holder-turn.ts';
-import { readNeoPublicationView, withNeoPublicationView } from '../neo/publication-view.ts';
 import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import { stampNeoResponseInput } from '../neo/response-input.ts';
 import { createNeoAskOriginResolver } from '../neo/ask-origin.ts';
@@ -341,7 +340,6 @@ export interface QueryRunnerContext {
   createNeoTurnMcpServer?: (
     getTurn: () => OperationCaller['neoTurn']
   ) => NonNullable<Options['mcpServers']>[string];
-  getNeoFreshContext?(): Promise<string>;
   readonly session: Session;
   readonly db: Database;
   readonly messageHub: MessageHub;
@@ -1036,8 +1034,7 @@ export class QueryRunner {
           queryGeneration,
           recoveryState.startGuard,
           holderTurn,
-          questionInputs,
-          !queryOptions.resume
+          questionInputs
         ),
         options: queryOptions,
       });
@@ -2167,11 +2164,9 @@ export class QueryRunner {
     queryGeneration: number,
     startGuard?: () => void,
     holderTurn?: NeoHolderTurn,
-    questionInputs?: QuestionInputScope,
-    freshContext = false
+    questionInputs?: QuestionInputScope
   ) {
     const { session, messageQueue, stateManager, logger } = this.ctx;
-    let fresh = freshContext;
 
     for await (const { message, onSent } of messageQueue.messageGenerator(session.id, {
       suppressPreYieldCallback: true,
@@ -2254,13 +2249,7 @@ export class QueryRunner {
           content: (message.message?.content ?? '') as unknown as string | MessageContent[],
           internal: isInternal,
         });
-      const viewed = !!holderTurn && !isInternal;
-      const view = viewed ? readNeoPublicationView(this.ctx.db, session.id, fresh) : null;
-      const state = view?.reset ? await this.ctx.getNeoFreshContext?.() : '';
-      yield view
-        ? withNeoPublicationView(message, [state, view.note].filter(Boolean).join('\n\n') || null)
-        : message;
-      if (viewed) fresh = false;
+      yield message;
       this.streamSilence = noteStreamFed(this.streamSilence, Date.now());
       onSent();
       if (holderTurn) return await holderTurn.ended;
