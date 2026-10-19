@@ -4,6 +4,7 @@ export interface NeoAsk {
   id: string;
   projectId: string | null;
   repo: string | null;
+  parentId: string | null;
   sessionId: string;
   originMessageId: string | null;
   title: string;

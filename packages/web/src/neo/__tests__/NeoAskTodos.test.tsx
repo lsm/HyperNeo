@@ -68,6 +68,7 @@ const entry = (patch: Partial<NeoAskEntry>): NeoAskEntry => ({
     id: 'ask',
     projectId: null,
     repo: null,
+    parentId: null,
     sessionId: 'neo',
     originMessageId: null,
     title: 'iOS 卡片照网页第二版改',

@@ -42,7 +42,7 @@ const TODO_COLUMNS: Record<keyof NeoTodoPatch, string> = {
   blockedBy: 'blocked_by',
 };
 
-const ASK_SELECT = `SELECT id, project_id AS projectId, repo, session_id AS sessionId,
+const ASK_SELECT = `SELECT id, project_id AS projectId, repo, parent_id AS parentId, session_id AS sessionId,
   origin_message_id AS originMessageId, title, request, status, outcome,
   created_at AS createdAt, updated_at AS updatedAt, settled_at AS settledAt FROM neo_asks`;
 
@@ -98,15 +98,20 @@ export class NeoAskTodoRepository {
     private readonly changed: () => void = () => {}
   ) {}
 
-  openAsk(ask: Omit<NeoAsk, 'repo' | 'status' | 'outcome' | 'updatedAt' | 'settledAt'>): NeoAsk {
+  openAsk(
+    ask: Omit<NeoAsk, 'repo' | 'parentId' | 'status' | 'outcome' | 'updatedAt' | 'settledAt'> &
+      Partial<Pick<NeoAsk, 'repo' | 'parentId'>>
+  ): NeoAsk {
     this.db
       .prepare(
-        `INSERT INTO neo_asks (id, project_id, session_id, origin_message_id, title, request, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO neo_asks (id, project_id, repo, parent_id, session_id, origin_message_id, title, request, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         ask.id,
         ask.projectId,
+        ask.repo ?? null,
+        ask.parentId ?? null,
         ask.sessionId,
         ask.originMessageId,
         ask.title,
@@ -122,10 +127,26 @@ export class NeoAskTodoRepository {
     return (
       (this.db
         .prepare(
-          `${ASK_SELECT} WHERE session_id = ? AND origin_message_id IS ? AND title = ? AND status = 'open'`
+          `${ASK_SELECT} WHERE session_id = ? AND origin_message_id IS ? AND title = ?
+           AND (status = 'open' OR (status = 'done'
+             AND EXISTS (SELECT 1 FROM neo_asks c WHERE c.parent_id = neo_asks.id)))`
         )
         .get(sessionId, originMessageId, title) as NeoAsk | null) ?? null
     );
+  }
+
+  childAsk(parentId: string, repo: string): NeoAsk | null {
+    return (
+      (this.db
+        .prepare(`${ASK_SELECT} WHERE parent_id = ? AND repo = ? AND status = 'open'`)
+        .get(parentId, repo) as NeoAsk | null) ?? null
+    );
+  }
+
+  listChildAsks(parentId: string): NeoAsk[] {
+    return this.db
+      .prepare(`${ASK_SELECT} WHERE parent_id = ? ORDER BY created_at, rowid`)
+      .all(parentId) as NeoAsk[];
   }
 
   settleAsk(ask: NeoAsk, status: 'done' | 'dropped', outcome: string, now: number): NeoAsk {
@@ -182,6 +203,9 @@ export class NeoAskTodoRepository {
     now: number,
     repo: string | null = null
   ): NeoTodo {
+    const home = this.getAsk(askId)?.repo;
+    if (repo && home && home !== repo)
+      throw new Error(`todo_repo_mismatch: a ${repo} todo cannot join a ${home} card.`);
     this.db
       .prepare(
         `INSERT INTO neo_todos (id, ask_id, position, title, done_when, check_json, instruction, named,
