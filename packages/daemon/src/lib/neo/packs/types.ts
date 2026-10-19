@@ -59,6 +59,7 @@ export interface NeoTodoPack {
 
 export interface NeoPack extends NeoPackBrief {
   todos?: NeoTodoPack;
+  workerRules?: string;
   prepareExecution?: NeoExecutionPreparation;
   prerequisiteParameters?(
     items: readonly NeoAskItem[]

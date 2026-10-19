@@ -61,7 +61,7 @@ const CARD_STATUS: Record<NeoTodo['state'], NeoWork['status']> = {
   removed: 'cancelled',
 };
 
-export function neoTodoCard(todo: NeoTodo, ask: NeoAsk): NeoWork {
+export function neoTodoCard(todo: NeoTodo, ask: NeoAsk, workerRules?: string): NeoWork {
   return {
     id: todo.id,
     requestKey: todo.id,
@@ -69,7 +69,7 @@ export function neoTodoCard(todo: NeoTodo, ask: NeoAsk): NeoWork {
     originSessionId: ask.sessionId,
     originMessageId: ask.originMessageId,
     title: todo.title,
-    instruction: todo.instruction ?? '',
+    instruction: [todo.instruction ?? '', workerRules].filter(Boolean).join('\n\n'),
     sessionId: null,
     status: todo.state === 'doing' && todo.report ? 'reported' : CARD_STATUS[todo.state],
     report: todo.report,
@@ -179,13 +179,13 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   };
 
   const dispatch = async ({ todo, ask, target }: Startable) => {
-    const card = neoTodoCard(todo, ask);
+    const prepare = deps.packs().find((pack) => pack.id === todo.check?.pack);
+    const card = neoTodoCard(todo, ask, prepare?.workerRules);
     const call = driverWorkCall(target, card, {
       workId: todo.id,
       goal: null,
       doneWhen: todo.doneWhen,
     });
-    const prepare = deps.packs().find((pack) => pack.id === todo.check?.pack);
     if (target.verb === 'start' && prepare?.prepareExecution)
       call.input.preparation = {
         pack: prepare.id,
