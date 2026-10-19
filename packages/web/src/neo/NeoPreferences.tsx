@@ -41,6 +41,14 @@ export function NeoPreferences({
   const ref = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const connected = connectionState.value === 'connected';
+  const pending = store.sessionInfo.value?.metadata?.pendingModelSwitch ?? null;
+  const pendingInfo = pending
+    ? model.availableModels.find(
+        (item) =>
+          (item.id === pending.model || item.alias === pending.model) &&
+          item.provider === pending.provider
+      )
+    : undefined;
   const chosen =
     preference && !forSession
       ? model.availableModels.find(
@@ -162,7 +170,18 @@ export function NeoPreferences({
         <span class="flex shrink-0" style={{ color: providerLogoColor(info?.provider) }}>
           <ProviderLogo provider={info?.provider ?? 'anthropic'} class="h-3.5 w-3.5" />
         </span>
-        <span class="max-w-32 truncate">{saving ? 'Switching…' : name}</span>
+        <span class="max-w-32 truncate">
+          {saving
+            ? 'Switching…'
+            : pending
+              ? shortenModelName(pendingInfo?.name || pending.model)
+              : name}
+        </span>
+        {pending && !saving && (
+          <span data-pending-model-switch class="shrink-0 text-[11px] text-accent">
+            {t('composer.switchesNextTurn')}
+          </span>
+        )}
         <span aria-hidden="true" class="text-fg-faint">
           ·
         </span>

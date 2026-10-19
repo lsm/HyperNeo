@@ -41,13 +41,6 @@ export function useChatComposerController({
 
   const handleModelSwitchWithConfirmation = useCallback(
     async (model: ModelInfo) => {
-      if (isProcessing) {
-        const confirmed = confirm(
-          'The agent is currently processing. Switching the model will interrupt the current operation. Continue?'
-        );
-        if (!confirmed) return;
-      }
-
       const currentProvider = currentModelInfo?.provider ?? '';
       const targetProvider = model.provider ?? '';
       const isCrossProviderToAnthropic =
@@ -61,7 +54,7 @@ export function useChatComposerController({
 
       await switchModel(model);
     },
-    [switchModel, isProcessing, currentModelInfo]
+    [switchModel, currentModelInfo]
   );
 
   const handleCoordinatorModeChange = useCallback(

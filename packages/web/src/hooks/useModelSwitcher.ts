@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'preact/hooks';
 import type { ModelInfo } from '@hyperneo/shared';
 import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
+import { t } from '../lib/i18n/index.ts';
 import { connectionManager } from '../lib/connection-manager';
 import { connectionState } from '../lib/state';
 import { toast } from '../lib/toast';
@@ -354,9 +355,12 @@ export function useModelSwitcher(sessionId: string | null): UseModelSwitcherResu
           success: boolean;
           model: string;
           error?: string;
+          pending?: { model: string; provider: string };
         };
 
-        if (result.success) {
+        if (result.success && result.pending) {
+          toast.info(`${model.name || result.pending.model}: ${t('composer.switchesNextTurn')}`);
+        } else if (result.success) {
           setCurrentModel(result.model);
           const newModelInfo =
             availableModels.find((m) => m.id === result.model && m.provider === model.provider) ??
