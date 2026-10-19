@@ -1,6 +1,6 @@
 import { NeoWorkControlFailureRepository } from '../../storage/repositories/neo-work-control-failure-repository.ts';
 import { neoControlFailure, neoControlFailureForRef } from './control-failure.ts';
-import { neoHolderTitle, planNeoHolderTitles } from './holder-title.ts';
+import { planNeoHolderTitles } from './holder-title.ts';
 import { hostname } from 'node:os';
 import { neoWorkingKey, readNeoWorking } from './working.ts';
 import {
@@ -544,7 +544,7 @@ export class NeoService {
   private readonly triggerDeps: NeoTriggerSweepDeps;
   private triggerTimer?: ReturnType<typeof setTimeout>;
   private readonly triggerDeliveryRetryAt = new Map<string, number>();
-  private readonly pending = new Map<string | null, Promise<string>>();
+  private opening: Promise<string> | null = null;
   private readonly workPending = new Map<string, Promise<void>>();
   private readonly bootedAt = Date.now();
   private readonly deliveries = new Map<string, Promise<void>>();
@@ -1077,7 +1077,7 @@ export class NeoService {
     }
     this.triggerDeliveryRetryAt.delete(trigger.triggerId);
     try {
-      const target = await this.open(this.triggerConcern(ask));
+      const target = await this.open();
       await this.deliver(
         target,
         neoTriggerMessageId(trigger.triggerId),
@@ -1329,40 +1329,33 @@ export class NeoService {
     this.sessionWatcher.flushSessionNoticeGroup();
   }
 
-  open(projectId: string | null): Promise<string> {
-    const key = projectId;
-    const existing = this.pending.get(key);
-    if (existing) return existing;
-    const operation = this.ensureCoordinator(projectId).finally(() => this.pending.delete(key));
-    this.pending.set(key, operation);
-    return operation;
+  open(): Promise<string> {
+    this.opening ??= this.ensureCoordinator().finally(() => {
+      this.opening = null;
+    });
+    return this.opening;
   }
 
-  private async ensureCoordinator(projectId: string | null): Promise<string> {
-    const project = projectId ? this.repo.getProject(projectId) : null;
-    if (projectId && !project) throw new Error('This project no longer exists.');
-    let binding = this.repo.getBindingForProject(projectId);
+  private async ensureCoordinator(): Promise<string> {
+    let binding = this.repo.defaultBinding();
     if (!binding) {
       this.repo.reserveBinding({
         sessionId: `neo:${crypto.randomUUID()}`,
-        projectId,
-        kind: projectId ? 'project' : 'neo',
+        projectId: null,
+        kind: 'neo',
       });
-      binding = this.repo.getBindingForProject(projectId);
+      binding = this.repo.defaultBinding();
     }
     if (!binding) throw new Error('Could not reserve Neo context.');
     if (!this.db.getSession(binding.sessionId)) {
-      const root = projectId ? this.repo.defaultBinding()?.sessionId : undefined;
-      const rootSession = root ? this.db.getSession(root) : null;
       const preference = this.modelPreference();
       await this.sessions.createSession({
         sessionId: binding.sessionId,
-        parentSessionId: rootSession ? root : undefined,
-        title: project ? neoHolderTitle(project.title) : 'Neo',
+        title: 'Neo',
         workspacePath: neoFolderPath(),
         detectGit: false,
         config: {
-          systemPrompt: neoPrompt(projectId, this.packBriefs()),
+          systemPrompt: neoPrompt(null, this.packBriefs()),
           sdkToolsPreset: neoCoordinatorNativeTools(),
           permissionMode: 'dontAsk',
           allowedTools: neoCoordinatorAllowedTools(),
@@ -1372,9 +1365,7 @@ export class NeoService {
                 provider: preference.provider as Provider,
                 thinkingLevel: preference.thinkingLevel,
               }
-            : rootSession?.config?.model
-              ? { model: rootSession.config.model, provider: rootSession.config.provider }
-              : {}),
+            : {}),
         },
       });
     }
@@ -2043,7 +2034,7 @@ export class NeoService {
   }
 
   async openDefault(): Promise<string> {
-    return (await openNeoDefaultSession(this.repo, () => this.open(null))).sessionId;
+    return (await openNeoDefaultSession(this.repo, () => this.open())).sessionId;
   }
 
   async recover(): Promise<void> {
@@ -2799,7 +2790,7 @@ export class NeoService {
     .pipe(
       async (event: ExternalEvent, holders: string[]) => {
         for (const projectId of holders)
-          await this.open(projectId)
+          await this.open()
             .then((holder) =>
               this.deliver(
                 holder,
@@ -3210,7 +3201,7 @@ export class NeoService {
               : 'The context holder ended without returning an answer.'
         );
       } else {
-        await this.open(item.projectId);
+        await this.open();
         const content = neoConsultationRequestContent(
           item,
           !!this.crossProjects.forReceipt(item.id),

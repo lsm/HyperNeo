@@ -230,14 +230,14 @@ describe('neo.preferences.set', () => {
     ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('invalid_model') } });
   });
 
-  test('a new topic session starts on the preference, thinking included', async () => {
+  test('a new Neo session starts on the preference, thinking included', async () => {
     await invoke('neo.preferences.set', {
       model: 'claude-opus',
       provider: 'anthropic',
       thinkingLevel: 'think8k',
     });
-    service.repo.saveProject({ id: 'garden', title: 'Garden', summary: '', context: '' }, 0);
-    await service.open('garden');
+    db.getDatabase().exec('DELETE FROM neo_session_bindings');
+    await service.open();
     expect(created).toEqual([
       expect.objectContaining({
         config: expect.objectContaining({
