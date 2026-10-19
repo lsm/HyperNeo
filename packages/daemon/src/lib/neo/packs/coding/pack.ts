@@ -290,6 +290,7 @@ export function createCodingPack(
   }
 ): NeoPack {
   const cardPrs = (workId: string) => deps.workPrs.get(workId)?.prs ?? [];
+  const ledgerSkips = new Map<string, number>();
   const { readRefStates, cardBase, cardStartedAt } = deps;
   return {
     ...CODING_PACK_BRIEF,
@@ -300,7 +301,8 @@ export function createCodingPack(
         deps.prLedger,
         deps.projectRepos(),
         deps.readLedgerRepo ?? readCodingLedgerRepo,
-        now
+        now,
+        ledgerSkips
       ),
     prerequisiteParameters: (items) =>
       readCodingPrerequisiteBase(items, {

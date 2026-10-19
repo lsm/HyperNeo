@@ -172,6 +172,49 @@ describe('reconcileCodingPrLedger', () => {
   });
 });
 
+describe('reconcileCodingPrLedger cleanup', () => {
+  test('drops an open row the next full read no longer lists, rows of repos no project names, and rows unread for 7 days', async () => {
+    const { db, ledger } = setup();
+    await reconcileCodingPrLedger(
+      ledger,
+      ['a/a', 'b/b', 'c/c'],
+      async (repo) => response(repo === 'a/a' ? [node(1), node(2)] : [node(3)]),
+      100
+    );
+    await reconcileCodingPrLedger(
+      ledger,
+      ['a/a', 'b/b'],
+      async (repo) => (repo === 'a/a' ? response([node(1)]) : null),
+      200
+    );
+    expect(ledger.list().map((row) => [row.repo, row.number])).toEqual([
+      ['a/a', 1],
+      ['b/b', 3],
+    ]);
+    await reconcileCodingPrLedger(
+      ledger,
+      ['a/a', 'b/b'],
+      async (repo) => (repo === 'a/a' ? response([node(1)]) : null),
+      101 + CODING_LEDGER_KEEP_MS
+    );
+    expect(ledger.list().map((row) => [row.repo, row.number])).toEqual([['a/a', 1]]);
+    db.close();
+  });
+
+  test('counts consecutive failed reads per repo and clears the count on a good read', async () => {
+    const { db, ledger } = setup();
+    const skips = new Map<string, number>();
+    let good = false;
+    const read = async () => (good ? response([node(1)]) : null);
+    for (const at of [1, 2, 3]) await reconcileCodingPrLedger(ledger, ['a/a'], read, at, skips);
+    expect(skips.get('a/a')).toBe(3);
+    good = true;
+    await reconcileCodingPrLedger(ledger, ['a/a'], read, 4, skips);
+    expect(skips.get('a/a')).toBe(0);
+    db.close();
+  });
+});
+
 describe('codingLedgerArgs', () => {
   test('passes owner and name as strings, so an all-digit repo is not sent as an Int', () => {
     const args = codingLedgerArgs('gabrielecirulli/2048');

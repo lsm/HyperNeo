@@ -2,6 +2,7 @@ import { homedir } from 'node:os';
 import { z } from 'zod';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
+import { Logger } from '../../../logger.ts';
 import { spawnProcess } from '../../../runtime-spawn/index.ts';
 
 export type CodingPrState =
@@ -19,6 +20,9 @@ export type CodingLedgerRead = (repo: string) => Promise<unknown | null>;
 
 export const CODING_LEDGER_MIN_RATE = 500;
 export const CODING_LEDGER_KEEP_MS = 7 * 24 * 60 * 60_000;
+export const CODING_LEDGER_WARN_SKIPS = 3;
+
+const log = new Logger('NeoCodingLedger');
 
 const Node = z.object({
   number: z.number().int(),
@@ -111,7 +115,17 @@ export function planCodingLedgerRead(
 export class CodingPrLedgerRepository {
   constructor(private readonly db: Database) {}
 
-  upsert(rows: readonly CodingLedgerRow[], now: number): void {
+  replace(repo: string, rows: readonly CodingLedgerRow[], now: number): void {
+    this.upsert(rows, now);
+    this.db
+      .prepare(
+        `DELETE FROM pack_coding_pr_ledger WHERE repo = ? AND closed_at IS NULL
+           AND number NOT IN (SELECT value FROM json_each(?))`
+      )
+      .run(repo, JSON.stringify(rows.map((row) => row.number)));
+  }
+
+  private upsert(rows: readonly CodingLedgerRow[], now: number): void {
     const insert = this.db.prepare(
       `INSERT INTO pack_coding_pr_ledger
          (repo, number, title, branch, head, state, state_since, closed_at, read_at)
@@ -138,10 +152,13 @@ export class CodingPrLedgerRepository {
       );
   }
 
-  prune(now: number): void {
+  prune(repos: readonly string[], now: number): void {
     this.db
-      .prepare('DELETE FROM pack_coding_pr_ledger WHERE closed_at IS NOT NULL AND closed_at < ?')
-      .run(now - CODING_LEDGER_KEEP_MS);
+      .prepare(
+        `DELETE FROM pack_coding_pr_ledger WHERE closed_at < ? OR read_at < ?
+           OR repo NOT IN (SELECT value FROM json_each(?))`
+      )
+      .run(now - CODING_LEDGER_KEEP_MS, now - CODING_LEDGER_KEEP_MS, JSON.stringify(repos));
   }
 
   list(): (CodingLedgerRow & { stateSince: number; readAt: number })[] {
@@ -181,12 +198,17 @@ export async function reconcileCodingPrLedger(
   ledger: CodingPrLedgerRepository,
   repos: readonly string[],
   read: CodingLedgerRead,
-  now: number
+  now: number,
+  skips: Map<string, number> = new Map()
 ): Promise<void> {
   for (const repo of repos) {
     const planned = planCodingLedgerRead(repo, await read(repo), now);
-    if (planned) ledger.upsert(planned.rows, now);
+    const skipped = planned ? 0 : (skips.get(repo) ?? 0) + 1;
+    skips.set(repo, skipped);
+    if (skipped === CODING_LEDGER_WARN_SKIPS)
+      log.warn(`PR ledger read for ${repo} failed or was partial ${skipped} times in a row`);
+    if (planned) ledger.replace(repo, planned.rows, now);
     if (planned && planned.remaining < CODING_LEDGER_MIN_RATE) break;
   }
-  ledger.prune(now);
+  ledger.prune(repos, now);
 }
