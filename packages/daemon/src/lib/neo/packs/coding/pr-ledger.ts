@@ -66,7 +66,10 @@ const Node = z.object({
     .object({
       nodes: z.array(
         z.object({
-          commit: z.object({ statusCheckRollup: z.object({ state: z.string() }).nullable() }),
+          commit: z.object({
+            statusCheckRollup: z.object({ state: z.string() }).nullable(),
+            checkSuites: z.object({ totalCount: z.number() }).optional(),
+          }),
         })
       ),
     })
@@ -94,7 +97,7 @@ const FIELDS = `${DONE_FIELDS}
   author { login }
   comments(last: 10) { nodes { author { login } createdAt } }
   replies: reviews(last: 10, states: [COMMENTED]) { nodes { author { login } submittedAt } }
-  commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }`;
+  commits(last: 1) { nodes { commit { statusCheckRollup { state } checkSuites(first: 1) { totalCount } } } }`;
 
 export const CODING_LEDGER_QUERY = `query($o: String!, $n: String!) {
   rateLimit { remaining }
@@ -114,19 +117,21 @@ export function codingPrReplyAt(pr: Node): number | null {
   return times.length ? Math.max(...times) : null;
 }
 
-export function codingPrState(pr: Node): CodingPrState {
+export function codingPrState(pr: Node, repoHasCi = false): CodingPrState {
   if (pr.state === 'MERGED') return 'merged';
   if (pr.state === 'CLOSED') return 'closed';
   if (pr.isDraft) return 'draft';
   if (pr.mergeable === 'CONFLICTING') return 'dirty';
-  const ci = pr.commits.nodes[0]?.commit.statusCheckRollup?.state ?? null;
+  const head = pr.commits.nodes[0]?.commit;
+  const ci = head?.statusCheckRollup?.state ?? null;
+  const noCi = ci === null && !repoHasCi && (head?.checkSuites?.totalCount ?? 0) === 0;
   if (ci === 'FAILURE' || ci === 'ERROR') return 'failing';
   const review =
     pr.reviews.nodes.filter((item) => item.commit?.oid === pr.headRefOid).at(-1)?.state ??
     pr.reviewDecision;
   if (review === 'CHANGES_REQUESTED') return 'changes_requested';
   if (review === 'APPROVED')
-    return ci === null || ci === 'SUCCESS' ? 'approved_green' : 'approved_pending';
+    return noCi || ci === 'SUCCESS' ? 'approved_green' : 'approved_pending';
   return 'waiting_review';
 }
 
@@ -153,6 +158,11 @@ export function planCodingLedgerRead(
   const { open, done, nameWithOwner } = parsed.data.data.repository;
   if (open.pageInfo.hasNextPage) return null;
   const canonical = nameWithOwner.toLowerCase();
+  const repoHasCi = open.nodes.some(
+    (pr) =>
+      !!pr.commits.nodes[0]?.commit.statusCheckRollup ||
+      (pr.commits.nodes[0]?.commit.checkSuites?.totalCount ?? 0) > 0
+  );
   const rows = [...open.nodes, ...done.nodes]
     .map((pr) => ({
       repo: canonical,
@@ -160,7 +170,7 @@ export function planCodingLedgerRead(
       title: pr.title,
       branch: pr.headRefName,
       head: pr.headRefOid,
-      state: codingPrState(pr),
+      state: codingPrState(pr, repoHasCi),
       ci: pr.commits.nodes[0]?.commit.statusCheckRollup?.state ?? null,
       replyAt: codingPrReplyAt(pr),
       closedAt: pr.closedAt ? Date.parse(pr.closedAt) : null,
