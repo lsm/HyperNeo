@@ -249,7 +249,6 @@
 13	packages/daemon/tests/unit/1-core/operations/neo-card-wake.test.ts
 8	packages/daemon/tests/unit/1-core/operations/neo-check-registry.test.ts
 344	packages/daemon/tests/unit/1-core/operations/neo-coding-preparation.test.ts
-12	packages/daemon/tests/unit/1-core/operations/neo-consultation-recovery.test.ts
 124	packages/daemon/tests/unit/1-core/operations/neo-conversation-ask-read.test.ts
 36	packages/daemon/tests/unit/1-core/operations/neo-conversation-images.test.ts
 8	packages/daemon/tests/unit/1-core/operations/neo-coordinator-cwd.test.ts

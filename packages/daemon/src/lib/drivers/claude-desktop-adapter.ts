@@ -79,9 +79,13 @@ const RecordSchema = z.object({
   remoteControlUserEnabled: z.boolean().optional(),
   bridgeSessionIds: z.array(z.string()).optional(),
   prs: z
-    .array(z.object({ url: z.string(), dismissed: z.boolean().optional() }))
+    .array(
+      z.object({ url: z.string(), dismissed: z.boolean().optional(), own: z.boolean().optional() })
+    )
     .optional()
     .catch(undefined),
+  branch: z.string().optional().catch(undefined),
+  writtenBranches: z.array(z.string()).optional().catch(undefined),
 });
 
 const LiveSessionSchema = z.object({
@@ -566,14 +570,30 @@ export function describeClaudeSession(
   };
 }
 
-function claudeLinkedPrs(record: Pick<ClaudeDesktopRecord, 'prs'>): {
-  linkedPrs?: { url: string; dismissed?: true }[];
+function claudeLinkedPrs(record: Pick<ClaudeDesktopRecord, 'prs' | 'branch' | 'writtenBranches'>): {
+  linkedPrs?: { url: string; dismissed?: true; own?: true }[];
+  linkedPrsWindow?: true;
+  branches?: string[];
 } {
-  const linked = (record.prs ?? []).map((pr) => ({
-    url: pr.url,
-    ...(pr.dismissed ? { dismissed: true as const } : {}),
-  }));
-  return linked.length ? { linkedPrs: linked } : {};
+  const branches = [
+    ...new Set([
+      ...(record.writtenBranches ?? []).map((entry) => entry.split('\u0000').at(-1) ?? ''),
+      ...(record.branch ? [record.branch] : []),
+    ]),
+  ].filter(Boolean);
+  return {
+    ...(record.prs
+      ? {
+          linkedPrs: record.prs.map((pr) => ({
+            url: pr.url,
+            ...(pr.dismissed ? { dismissed: true as const } : {}),
+            ...(pr.own ? { own: true as const } : {}),
+          })),
+          linkedPrsWindow: true as const,
+        }
+      : {}),
+    ...(branches.length ? { branches } : {}),
+  };
 }
 
 const runClaudeDesktopStatus = (superpipe({})('claude-desktop-work-status') as PipelineAPI)

@@ -2,7 +2,7 @@ import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
 import type { WorkExecutionPreparation } from '../../drivers/start-preparation.ts';
-import type { WorkRef } from '../../drivers/types.ts';
+import type { WorkRef, WorkStatus } from '../../drivers/types.ts';
 import type { Database } from '../../../storage/sqlite-compat.ts';
 import type { ExternalEvent } from '../../external-events/types.ts';
 import type { NeoEvidence, NeoEvidenceRead } from '../evidence.ts';
@@ -39,6 +39,18 @@ export interface NeoPackCardFacts {
   data: Record<string, unknown>;
 }
 
+export interface NeoSessionFacts {
+  ref: WorkRef;
+  status: WorkStatus;
+  lastActivityAt: number;
+  folder?: string;
+  remotes: string[];
+  branches: string[];
+  linkedPrs?: { url: string; dismissed?: true; own?: true }[];
+  linkedPrsWindow?: true;
+  openedPrs: string[];
+}
+
 export interface NeoTodoCheckResult {
   done: boolean;
   evidence: string | null;
@@ -53,16 +65,14 @@ export interface NeoTodoPack {
   topics(todo: NeoTodo): string[];
   event(event: ExternalEvent): string[];
   openedPrs?(todo: NeoTodo, urls: readonly string[]): void;
+  repository?(draft: Pick<NeoTodo, 'check' | 'named'>): string | null;
   waiting?(todo: NeoTodo): boolean;
 }
 
 export interface NeoPack extends NeoPackBrief {
   todos?: NeoTodoPack;
   sweep?(now: number): Promise<void>;
-  observeSessionLinks?(
-    links: readonly { ref: WorkRef; urls: readonly string[] }[],
-    now: number
-  ): void;
+  observeSessions?(sessions: readonly NeoSessionFacts[], now: number): void;
   snapshotRows?(
     repos: readonly string[] | null,
     now: number

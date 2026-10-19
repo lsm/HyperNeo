@@ -13,6 +13,7 @@ import {
   requireNeoOpenAsk,
 } from './todo-operations.ts';
 import { isNeoTodoStartable } from './todo-runner.ts';
+import type { NeoPack } from './packs/types.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -76,7 +77,8 @@ export function createNeoAskRecordOperations(
   controls: NeoTodoControls,
   resolveProject: (projectId: string) => string | null,
   isNeoSession: (sessionId: string) => boolean,
-  knownProjects: () => readonly { id: string; title: string }[]
+  knownProjects: () => readonly { id: string; title: string }[],
+  packs: () => readonly NeoPack[] = () => []
 ) {
   const open = (superpipe({})('neo.ask.open') as PipelineAPI)
     .input(['input', 'caller'])
@@ -115,13 +117,20 @@ export function createNeoAskRecordOperations(
         for (const todo of input.todos) {
           const row = recorded.find((item) => item.title === todo.title);
           const added = !row
-            ? await addNeoTodo(store, sessions, controls.start, ask.id, todo)
+            ? await addNeoTodo(
+                store,
+                sessions,
+                controls.start,
+                store.getAsk(ask.id)!,
+                todo,
+                packs()
+              )
             : todo.start && isNeoTodoStartable(row)
               ? await controls.start(row.id)
               : { ok: true as const };
           if (!added.ok) return added;
         }
-        return { ok: true, ask, todos: store.listTodos(ask.id) };
+        return { ok: true, ask: store.getAsk(ask.id) ?? ask, todos: store.listTodos(ask.id) };
       },
       ['outcome', 'input', 'caller'],
       'outcome'

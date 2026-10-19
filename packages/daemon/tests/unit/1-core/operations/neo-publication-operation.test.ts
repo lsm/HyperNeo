@@ -20,12 +20,10 @@ import {
   createOperationRegistry,
   type OperationCaller,
 } from '../../../../src/lib/operations/registry.ts';
-import { createNeoPublicationCommit } from '../../../../src/lib/neo/publication-commit.ts';
 import {
   type NeoDeliveryTrigger,
   neoDeliveryTrigger,
   neoHumanTrigger,
-  neoTriggerMessageId,
   requirePublicationTrigger,
 } from '../../../../src/lib/neo/notification-triggers.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
@@ -142,10 +140,7 @@ describe('runtime-bound publication operation', () => {
         const origin = resolve(input);
         return origin && isHuman(origin) ? origin : null;
       },
-      append: createNeoPublicationCommit({
-        commit: (input) => ledger.append(input),
-        published: () => {},
-      }),
+      append: (input) => ledger.append(input),
       inputTrigger,
       isDeliveredHumanInput: (input) =>
         isHuman(input) &&

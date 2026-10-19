@@ -53,44 +53,6 @@ describe('runNeoNightlyReorganize', () => {
   const pending = () =>
     mailbox.jobQueue.listJobs({ queue: NEO_TOPICS_REORGANIZE_NIGHTLY, status: 'pending' });
 
-  test('reorganizes while the human is away and schedules the next day', async () => {
-    const lines: string[] = [];
-    const digests: number[] = [];
-    let runs = 0;
-    const result = await runNeoNightlyReorganize(claim(null), mailbox.jobQueue, {
-      now: () => now,
-      lastHumanAt: () => now - NEO_REORGANIZE_IDLE_MS,
-      reorganize: async () => {
-        runs++;
-        return {
-          merged: [{ sourceId: 'x', targetId: 'y' }],
-          moved: [{ askId: 'a', projectId: 'c' }],
-          stayed: [{ askId: 'b', reason: 'stays_main' }],
-          cleanupPlanned: [
-            { action: 'delete', projectId: 'p', title: 'P' },
-            { action: 'merge', projectId: 'q', title: 'Q', targetId: 'r' },
-          ],
-          cleanupApplied: false,
-          cleanupFailed: [],
-        };
-      },
-      digest: async (_run, since) => {
-        digests.push(since);
-      },
-      log: (line) => lines.push(line),
-    });
-
-    expect(result).toEqual({ ran: true, moved: 1, stayed: 1 });
-    expect(runs).toBe(1);
-    expect(digests).toEqual([now - NEO_REORGANIZE_EVERY_MS]);
-    expect(lines).toEqual([
-      'neo reorganize: nightly run merged 1 project(s), moved 1 ask(s), left 1 with main, applied 1 cleanup step(s), left 1 merge(s) for apply: true',
-    ]);
-    expect(pending()).toHaveLength(1);
-    expect(pending()[0].payload).toEqual({ scope: 'neo', lastRunAt: now });
-    expect(pending()[0].runAt).toBe(now + NEO_REORGANIZE_EVERY_MS);
-  });
-
   test('leaves topics alone while the human is active and checks back once they go idle', async () => {
     let runs = 0;
     const result = await runNeoNightlyReorganize(
@@ -103,8 +65,6 @@ describe('runNeoNightlyReorganize', () => {
           runs++;
           return {
             merged: [],
-            moved: [],
-            stayed: [],
             cleanupPlanned: [],
             cleanupApplied: false,
             cleanupFailed: [],

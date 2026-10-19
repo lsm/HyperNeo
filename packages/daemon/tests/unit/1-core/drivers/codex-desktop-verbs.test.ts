@@ -326,10 +326,12 @@ describe('codex-desktop adapter status and send', () => {
     db.exec(`CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, updated_at_ms INTEGER)`);
     db.exec(`CREATE TABLE project_roots (project_id TEXT, position INTEGER, path TEXT)`);
     db.exec(`CREATE TABLE threads (id TEXT PRIMARY KEY, name TEXT, title TEXT, first_user_message TEXT,
-      cwd TEXT, source TEXT, archived INTEGER, updated_at_ms INTEGER, rollout_path TEXT)`);
+      cwd TEXT, source TEXT, archived INTEGER, updated_at_ms INTEGER, rollout_path TEXT, git_branch TEXT)`);
     db.exec(`INSERT INTO projects VALUES ('p1', 'dolmen', 1)`);
     db.exec(`INSERT INTO project_roots VALUES ('p1', 0, '/focus/dolmen')`);
-    const insert = db.prepare(`INSERT INTO threads VALUES (?, ?, '', '', ?, 'vscode', ?, ?, ?)`);
+    const insert = db.prepare(
+      `INSERT INTO threads VALUES (?, ?, '', '', ?, 'vscode', ?, ?, ?, NULL)`
+    );
     insert.run('busy', 'loader', '/codex/worktrees/1/dolmen', 0, NOW - 600_000, running);
     insert.run('idle', 'parser', '/focus/dolmen', 0, NOW - 600_000, finished);
     insert.run('old', 'archived one', '/focus/dolmen', 1, NOW - 900_000, finished);

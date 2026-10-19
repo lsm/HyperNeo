@@ -3,6 +3,7 @@ export type NeoAskStatus = 'open' | 'done' | 'dropped';
 export interface NeoAsk {
   id: string;
   projectId: string | null;
+  repo: string | null;
   sessionId: string;
   originMessageId: string | null;
   title: string;
@@ -33,6 +34,7 @@ export interface NeoTodo {
   check: NeoTodoCheck | null;
   instruction: string | null;
   named: Record<string, unknown> | null;
+  repo: string | null;
   state: NeoTodoState;
   reason: string | null;
   blockedReason: string | null;

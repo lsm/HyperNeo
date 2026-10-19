@@ -33,9 +33,17 @@ export function createCodingPackTables(db: Database): void {
     alias TEXT PRIMARY KEY,
     canonical TEXT NOT NULL
   );
-  CREATE TABLE IF NOT EXISTS pack_coding_session_prs (
-    url TEXT PRIMARY KEY,
-    ref TEXT NOT NULL CHECK (json_valid(ref)),
+  DROP TABLE IF EXISTS pack_coding_session_prs;
+  CREATE TABLE IF NOT EXISTS pack_coding_session_facts (
+    ref TEXT PRIMARY KEY CHECK (json_valid(ref)),
+    repos TEXT NOT NULL CHECK (json_valid(repos)),
+    branches TEXT NOT NULL CHECK (json_valid(branches)),
+    linked TEXT CHECK (linked IS NULL OR json_valid(linked)),
+    linked_window INTEGER NOT NULL DEFAULT 0,
+    owned TEXT NOT NULL CHECK (json_valid(owned)),
+    opened TEXT NOT NULL CHECK (json_valid(opened)),
+    dismissed TEXT NOT NULL CHECK (json_valid(dismissed)),
+    active_at INTEGER NOT NULL,
     seen_at INTEGER NOT NULL
   )`);
   const ledger = db.prepare('PRAGMA table_info(pack_coding_pr_ledger)').all() as { name: string }[];
