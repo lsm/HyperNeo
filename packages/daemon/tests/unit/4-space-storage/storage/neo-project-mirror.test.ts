@@ -22,7 +22,6 @@ import { mergePlaceGroups } from '../../../../src/lib/drivers/places.ts';
 import type { PlaceGroup } from '../../../../src/lib/drivers/types.ts';
 import { isTempCwd } from '../../../../src/lib/drivers/claude-feed.ts';
 import { createTestDb } from '../../../helpers/database.ts';
-import { NeoAskRepository } from '../../../../src/storage/repositories/neo-ask-repository.ts';
 
 const elsewhere = `not-${hostname()}`;
 
