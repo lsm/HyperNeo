@@ -174,7 +174,120 @@ outcome and skip reason, and pause/resume. The web and iOS rendering is in secti
 
 ## 3. Goals subsystem (fs2)
 
-_fs2 to write._
+### What we keep, what changes
+
+We keep the existing goal system: `space_goals`, `space_goal_events`, `lib/goals/`
+and the `goal.*` operations. Its model is already the brief's: one_shot, measurable and
+recurring types, metrics, progress, summary, next steps and check-ins. Two things tie it
+to Spaces today:
+
+- **Scope.** `space_id` is `NOT NULL` with a cascade foreign key, every operation input
+  carries a `spaceId` (`goal-operation-scope.ts`), and `service.ts:149` throws without
+  one.
+- **Work.** Goals work through `space_tasks` (`task-pointers.ts`) and check in through
+  Space `task_schedules`.
+
+A goal gains an owner session instead: root Neo for now. It works through that session's
+asks and todos, not Space tasks, and its cadence is a `session_schedules` row
+(section 2). Space goals keep working unchanged; they are goals whose scope is a Space.
+
+### Model
+
+- `space_goals` (table rebuild, details in section 8):
+  - `space_id` becomes nullable.
+  - New `owner_session_id`. Exactly one of the two is set.
+  - New `done_test` text. A goal needs a metric target or a done-test.
+  - New `mandate_ref`: the mandate section that defines the goal (`mandate.md#<goal
+    slug>`).
+  - New `mandate_rev`: the home-repo commit the goal last reconciled with.
+  - New `works_note`, `works_note_through` and `facts_lines`.
+  - The name stays. A rename touches about 30 files and many foreign keys for no
+    behaviour change.
+- `space_goal_events` stays the audit trail, with the same nullable `space_id`. It
+  gains event type `journal_compacted` and sources `neo` and `human`.
+- New `goal_journal`: one row per work cycle with `goal_id`, `run_id` (the scheduler
+  run; null for a cycle the human started), `done`, `effect`, `evidence` (JSON
+  `{kind: pr|todo|metric|url|commit|text, ref, note}[]`), `worked`, `failed`,
+  `session_id` and `created_at`.
+- `neo_asks.goal_id` (nullable): the asks Neo files in a goal's cycle carry it. Their
+  todos, PRs and questions are the goal's facts.
+
+### Operations
+
+- `goal.create | get | list | update | event.list` take `spaceId` or `ownerSessionId`.
+  - The scope gate resolves an owner-session goal only for its own session.
+    `space_mismatch` becomes `scope_mismatch`.
+  - Space-only operations refuse it with `space_goal_only`: `goal.task.*`,
+    `goal.owner.*` and `goal.outcome.*`.
+  - `goal.create` for an owner session creates its schedule through the scheduler
+    service. `goal.update` to `paused` pauses it, and `completed` or `archived` deletes
+    it.
+- `goal.journal.append {goalId, runId?, done, effect, evidence[], worked, failed?}` is
+  for the owner session only. A second append with the same `runId` replaces the first,
+  so a retried turn leaves one entry.
+- `goal.journal.list {goalId, before?, limit}`.
+- `goal.facts {goalId}` is a read: the same facts the scheduler sees, so Neo and the UI
+  agree with it.
+- `neo.ask.open` takes an optional `goalId`, and its gate checks that the caller owns
+  the goal.
+
+### Goals as a schedule source
+
+Goals registers `ScheduleSource` kind `goal` (section 2).
+
+`facts(goalId)` returns `null` once the goal is completed or archived, which marks the
+schedule done. Otherwise it returns the facts below. Each becomes one sorted line, and
+the digest is their hash:
+
+- the metric values and progress;
+- the states of the goal's asks and todos;
+- the coding pack's PR rows for those todos, through its existing `statusLine` and `prs`
+  hooks (no new pack API);
+- the questions answered since the last cycle;
+- `mandate changed` when the home repo's HEAD for `mandate.md` is past `mandate_rev`.
+
+The goal stores its last lines (`facts_lines`), so the summary names only the lines that
+changed.
+
+`message(goalId, {summary, nudge})` builds the wake: `Goal "<title>": <summary, or
+"nothing moved since <time>" on a nudge>. Read <mandate_ref> and the note below, act,
+then append a journal entry for run <runId>.` The goal's "what works" note is inlined,
+so Neo needs no extra read.
+
+### The cycle
+
+1. The scheduler fires (section 2).
+2. Neo acts with its usual tools. Asks it opens carry `goalId`.
+3. Neo calls `goal.journal.append` with the run id and updates `progress`, `summary`
+   and `next_steps` with `goal.update`.
+4. Neo ends with its one-line summary, which labels the chat row (section 5).
+
+A nudge cycle that finds nothing to do still appends an entry ("nothing moved; waiting
+on X"). The run then shows on the goal, and a goal stuck for N nudges becomes a reason to
+propose a mandate change (section 4).
+
+### What works
+
+When 10 entries are past `works_note_through`, or on a nudge, the wake message also asks
+Neo to rewrite the note:
+- Neo folds the new entries into it and calls `goal.update {worksNote}`.
+- That records `journal_compacted` and moves `works_note_through`.
+
+Compaction is a summarizing model step; goals only decides when to ask for it. Journal
+rows are kept, so a poor note can be rebuilt from them.
+
+### Mandate and milestones
+
+- The mandate defines a goal (section 4); HyperNeo holds its refinement (metrics,
+  done-test, progress, journal).
+- Neo creates a goal from a mandate section with `mandate_ref` and `mandate_rev`, and
+  reconciles when the `mandate changed` fact appears.
+- A milestone (completed, metric target crossed, done-test met) that changes the goal's
+  definition, or that belongs in a progress digest, goes through section 4's flow:
+  - On yes, the commit sha goes into the journal as evidence and becomes the new
+    `mandate_rev`.
+  - On no, a journal entry records the refusal, and the next cycle reads it.
+- Goals never writes git itself.
 
 ## 4. Human-confirmed mandate changes (fs3)
 
@@ -197,11 +310,74 @@ _fs2 to write._
 Delivery side (fs3): a scheduled wake is delivered to root Neo's session with a
 `scheduled_wake` origin carrying `scheduleId` and `sourceKind/sourceId`, the same way
 input origins are recorded today. The UI collapses the wake and Neo's turn into one row
-whose label is Neo's closing one-line summary. Rendering: fs2.
+whose label is Neo's closing one-line summary.
+
+Rendering side (fs2). Today `NeoConversation.tsx` drops every `inputKind: 'system'`
+input, and `neo.conversation.read` returns only human asks and Neo publications. A wake
+would be invisible, and the raw transcript would flood the chat. The rule is "show the
+visible additions": one row per fired wake.
+
+`neo.conversation.read` items gain a third role:
+
+```ts
+{ role: 'wake', cursor, wake: {
+    scheduleId, sourceKind, sourceId,    // e.g. 'goal', goalId
+    title,                               // goal title, or the source's label
+    firedAt, settledAt: number | null,   // null while Neo's turn runs
+    summary: string | null,              // Neo's closing line for that turn
+    additions: { kind: 'ask' | 'todo' | 'question' | 'publication' | 'journal';
+                 id: string; label: string }[] } }
+```
+
+- **Additions.** The daemon gathers the rows the turn created that carry the wake's
+  delivered message id: asks by `origin_message_id`, their todos and questions, the
+  publications with that origin, and the journal entry with that run id.
+- **Edge cases.**
+  - A wake that added nothing still gets a row, with its summary only.
+  - Skipped runs get no row; they show on the session page (section 6).
+  - A question Neo asks during a wake also shows as its own ask card. It needs an
+    answer, so it is never folded away.
 
 ## 6. UI: web and iOS (fs2)
 
-_fs2 to write._
+Web and iOS read the same operations. There is no logic only one client has; Neo iOS
+owns the Swift side against these contracts.
+
+### Wake rows
+
+- **Web.** `NeoPublicConversation` renders the `wake` item as one collapsed row: a clock
+  icon, title, summary and time.
+  - Expanding it lists the additions as links into "Your work".
+  - While `settledAt` is null the row reads "working…".
+  - It reuses `SyntheticMessageBlock`'s chevron pattern and theme tokens.
+- **iOS.** The same item as a disclosure row. The additions carry their labels, so no
+  extra reads are needed.
+
+### Goals
+
+- **Web.** A "Goals" section in Neo's side panel, beside "Your work" (`NeoLive.tsx`,
+  next to `NeoAskTodos`), listing root's active goals.
+  - Each row shows the title, type, a progress bar or "done-test" chip, the next wake,
+    and the last journal `effect`.
+  - Opening a goal shows its metrics, done-test, `mandate_ref` (linked to the home
+    repo's remote when it has one), next steps, the "what works" note, and the journal,
+    newest first with evidence as links and paged by `goal.journal.list`.
+- **Why a new component.** `GoalDetailPanel` stays the Space view. It reads
+  `spaceStore` tasks and agents that owner-session goals do not have, so the Neo panel
+  is a new, smaller component.
+- **iOS.** `goal.list {ownerSessionId}`, `goal.get` and `goal.journal.list`. Layout is
+  Neo iOS's call.
+
+### Schedules on the session page
+
+The session view (`/session/<id>`) and Neo's page get a "Schedules" strip, from
+`schedule.session.list` filtered to that session as the target. Per schedule it shows:
+- the source label (for a goal, its title linking to the goal), cadence and next run;
+- the last run with its outcome and skip reason;
+- "nudge in k", from `nudge_every - due_count`;
+- pause and resume.
+
+The same list feeds iOS.
 
 ## 7. Boundaries (fs3)
 
@@ -209,8 +385,50 @@ _After sections 3 and 6._
 
 ## 8. Data model and migrations (fs3 + fs2)
 
+Goals (fs2):
+
+| Change | Migration | Notes |
+| --- | --- | --- |
+| `space_goals.space_id` nullable; `owner_session_id`; CHECK exactly one of the two | table rebuild | Keeps the foreign keys into it from `space_goal_outcome_notifications`, `goal_automation_cursors`, `evolution_scopes` and `space_long_horizon_agent_goals`. Update `space-test-db.ts` for parity. |
+| `space_goals.done_test`, `mandate_ref`, `mandate_rev`, `works_note`, `works_note_through`, `facts_lines` | same rebuild | All nullable. |
+| `space_goal_events.space_id` nullable; event type `journal_compacted`; sources `neo` and `human` | table rebuild | Its CHECKs change, so a rebuild is needed anyway. |
+| `goal_journal` | new table | FK `goal_id` with cascade; index on (`goal_id`, `created_at`); unique (`goal_id`, `run_id`) where `run_id` is not null. |
+| `neo_asks.goal_id` | `ADD COLUMN` | Nullable, with an index. |
+
 ## 9. Reused vs new
 
 ## 10. Slices in order, with sizes
 
+Goals and UI (fs2), each one PR from dev; sizes are production lines:
+
+1. **Goals scope migration** (~120): the two rebuilds, the new columns, parity and the
+   migration test.
+2. **Owner-session goals in the operations** (~150): the scope gate, Space-only
+   refusals and done-test validation.
+3. **Journal** (~150): `goal_journal`, `goal.journal.append` and `list`, run-id
+   idempotence.
+4. **Goals as a schedule source** (~150): `facts`/`message`, `goal.facts`,
+   `neo_asks.goal_id` and the `neo.ask.open` gate, and the schedule lifecycle on
+   create/pause/close. Needs the scheduler service.
+5. **Wake rows** (~200): the `wake` item in `neo.conversation.read` and the web row.
+   Needs the `scheduled_wake` origin.
+6. **Neo goals panel** (web, ~200).
+7. **Schedules strip** (web, ~100). Needs `schedule.session.list`.
+8. **What works and mandate reconcile** (~100): the compaction trigger and the
+   `mandate changed` fact. Needs the home repo.
+
+iOS work for 5 to 7 is Neo iOS's, against the contracts in sections 5 and 6.
+
 ## 11. Risks
+
+Goals and UI (fs2):
+
+- **The goal table rebuilds touch a table with four inbound foreign keys and live
+  Space data.** Rebuild migrations have broken here before, so test on a copy of the
+  schema, never a real DB, and keep Space goal behaviour pinned by its existing tests.
+- **Additions attribution relies on the wake's message id reaching every row the turn
+  creates.** If another message lands mid-turn, a row may carry the other origin. The
+  wake row then lists only what carries its own id; nothing is lost, it shows under the
+  other turn.
+- **Compaction quality is a model judgment.** Journal rows are kept, so the note can be
+  rebuilt.
