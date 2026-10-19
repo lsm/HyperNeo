@@ -92,10 +92,14 @@ for (const { id } of codex
   });
 }
 const old = new Map<string, string[]>();
-for (const row of live.prepare('SELECT url, ref FROM pack_coding_session_prs').all() as {
-  url: string;
-  ref: string;
-}[])
+const table = (name: string) =>
+  live.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name);
+const opened = table('pack_coding_session_facts')
+  ? 'SELECT value AS url, ref FROM pack_coding_session_facts, json_each(opened)'
+  : table('pack_coding_session_prs')
+    ? 'SELECT url, ref FROM pack_coding_session_prs'
+    : null;
+for (const row of opened ? (live.prepare(opened).all() as { url: string; ref: string }[]) : [])
   old.set(row.ref, [...(old.get(row.ref) ?? []), row.url]);
 for (const row of live
   .prepare(
