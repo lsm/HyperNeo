@@ -36,11 +36,13 @@ const Node = z.object({
   isDraft: z.boolean(),
   mergeable: z.string(),
   reviewDecision: z.string().nullable(),
-  reviews: z.object({
-    nodes: z.array(
-      z.object({ state: z.string(), commit: z.object({ oid: z.string() }).nullable() })
-    ),
-  }),
+  reviews: z
+    .object({
+      nodes: z.array(
+        z.object({ state: z.string(), commit: z.object({ oid: z.string() }).nullable() })
+      ),
+    })
+    .default({ nodes: [] }),
   closedAt: z.string().nullable(),
   author: z.object({ login: z.string() }).nullable().default(null),
   comments: z
@@ -60,13 +62,15 @@ const Node = z.object({
       ),
     })
     .default({ nodes: [] }),
-  commits: z.object({
-    nodes: z.array(
-      z.object({
-        commit: z.object({ statusCheckRollup: z.object({ state: z.string() }).nullable() }),
-      })
-    ),
-  }),
+  commits: z
+    .object({
+      nodes: z.array(
+        z.object({
+          commit: z.object({ statusCheckRollup: z.object({ state: z.string() }).nullable() }),
+        })
+      ),
+    })
+    .default({ nodes: [] }),
 });
 type Node = z.infer<typeof Node>;
 
@@ -82,7 +86,10 @@ const Response = z.object({
   errors: z.array(z.unknown()).optional(),
 });
 
-const FIELDS = `number title headRefName headRefOid state isDraft mergeable reviewDecision closedAt
+const DONE_FIELDS =
+  'number title headRefName headRefOid state isDraft mergeable reviewDecision closedAt';
+
+const FIELDS = `${DONE_FIELDS}
   reviews(last: 30, states: [APPROVED, CHANGES_REQUESTED]) { nodes { state commit { oid } } }
   author { login }
   comments(last: 10) { nodes { author { login } createdAt } }
@@ -94,7 +101,7 @@ export const CODING_LEDGER_QUERY = `query($o: String!, $n: String!) {
   repository(owner: $o, name: $n) {
     nameWithOwner
     open: pullRequests(states: OPEN, first: 100) { pageInfo { hasNextPage } nodes { ${FIELDS} } }
-    done: pullRequests(states: [MERGED, CLOSED], first: 50, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { ${FIELDS} } }
+    done: pullRequests(states: [MERGED, CLOSED], first: 50, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { ${DONE_FIELDS} } }
   }
 }`;
 
