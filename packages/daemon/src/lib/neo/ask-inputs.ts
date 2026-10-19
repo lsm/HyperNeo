@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { NEO_ASK_QUESTION_REASONS } from '@hyperneo/shared/types/neo-snapshot';
-import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 
 export type Rejection = { ok: false; reason: string };
 
@@ -70,52 +69,5 @@ export const NeoAskSchema = z.object({
   updatedAt: z.number(),
   settledAt: z.number().nullable(),
 });
-
-const Options = z
-  .array(z.string().trim().min(1).max(80))
-  .min(2)
-  .max(4)
-  .refine((options) => new Set(options).size === options.length, 'Options must differ.');
-
-const Decides = z
-  .string()
-  .trim()
-  .toLowerCase()
-  .min(1)
-  .max(80)
-  .describe(
-    'A short stable name for the decision this question asks (e.g. "release date", "slice 6 target"). Asking the same decision again, however worded, restates its open question instead of adding another.'
-  );
-
-const Because = z
-  .object({ card: z.string().min(1), reason: z.enum(NEO_ASK_QUESTION_REASONS) })
-  .describe(
-    "Why this question exists, when a card under this ask is the reason: target_unavailable (the card can't start because its target is gone), card_waits (the card waits on the human), card_failed (the card failed). The daemon withdraws the question as no longer needed once that reason is gone: the card's target resolves, the card stops waiting on the human, or the card is no longer failed."
-  );
-
-export const Settle = z.preprocess(
-  (input) =>
-    input && typeof input === 'object' && !('id' in input) && 'askId' in input
-      ? { ...input, id: (input as { askId: unknown }).askId }
-      : input,
-  z
-    .object({
-      id: z.string().min(1),
-      outcome: z.enum(['achieved', 'abandoned', 'blocked', 'waiting']),
-      summary: z.string().trim().min(1).max(200).optional(),
-      evidence: z.string().trim().min(1).max(4000),
-      kind: z.enum(NEO_ASK_ITEM_KINDS).optional(),
-      question: z.string().trim().min(1).max(200).optional(),
-      decides: Decides.optional(),
-      because: Because.optional(),
-      options: Options.optional(),
-    })
-    .refine(
-      (input) => !input.question === !input.options && !input.question === !input.decides,
-      'Pass question, decides and options together: one question, the decision it asks, and 2-4 short answers.'
-    )
-);
-
-export type NeoOutcomeCard = Pick<NeoWork, 'id' | 'status'>;
 
 export type NeoAskSettleFacts = { offered: boolean; stalled: boolean; failed: boolean };

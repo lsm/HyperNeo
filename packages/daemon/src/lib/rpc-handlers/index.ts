@@ -22,11 +22,6 @@ import { collectFamilyOperations, type FamilyOperationContext } from './family-o
 import { NeoService } from '../neo/service.ts';
 import { githubRepoOfTopic } from '../external-events/subscription-operations.ts';
 import {
-  NEO_CONSULTATION_RECOVERY,
-  recoverNeoConsultations,
-  scheduleConsultationRecovery,
-} from '../neo/consultation-recovery.ts';
-import {
   NEO_DRIVER_REFRESH,
   refreshNeoDriverWork,
   scheduleDriverRefresh,
@@ -1712,10 +1707,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       .catch((error) => log.warn('Neo default session not opened', error));
   }
   void neoService.recover();
-  deps.jobProcessor.register(NEO_CONSULTATION_RECOVERY, () =>
-    recoverNeoConsultations(deps.jobQueue, neoService)
-  );
-  scheduleConsultationRecovery(deps.jobQueue);
   deps.jobProcessor.register(NEO_DRIVER_REFRESH, () =>
     refreshNeoDriverWork(deps.jobQueue, neoService)
   );

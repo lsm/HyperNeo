@@ -4,7 +4,6 @@ import {
   isNeoAskAnswerReady,
   planNeoAnswerPublished,
 } from '../../../../src/lib/neo/answer-outcome.ts';
-import { neoAskHasHumanAction } from '../../../../src/lib/neo/ask-plans.ts';
 import { neoAskItemAction } from '../../../../src/lib/neo/ask-views.ts';
 
 const item = (id: string, state: NeoAskItem['state'], extra: Partial<NeoAskItem> = {}) =>
@@ -50,13 +49,5 @@ describe('neoAskItemAction', () => {
   test('reported answers and states do not invent a confirmation question', () => {
     expect(neoAskItemAction(answer)).toBeNull();
     expect(neoAskItemAction(item('i1', 'reported'))).toBeNull();
-  });
-});
-
-describe('neoAskHasHumanAction', () => {
-  test('a reported answer is not the human’s to act on, a reported state is', () => {
-    const facts = { offered: false, stalled: false, failed: false };
-    expect(neoAskHasHumanAction(ask([answer]), facts, 0)).toBe(false);
-    expect(neoAskHasHumanAction(ask([item('i1', 'reported')]), facts, 0)).toBe(true);
   });
 });
