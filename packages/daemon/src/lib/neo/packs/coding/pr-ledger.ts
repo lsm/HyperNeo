@@ -4,6 +4,7 @@ import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { Logger } from '../../../logger.ts';
 import { spawnProcess } from '../../../runtime-spawn/index.ts';
+import { isRateLimitError } from '../../../session/rate-limit-detector.ts';
 import { codingPrKey } from './todo-prs.ts';
 
 export type CodingPrState =
@@ -314,7 +315,7 @@ export async function reconcileCodingPrLedger(
       log.warn(
         `PR ledger read for ${repo} failed or was partial ${skipped} times in a row${typeof error === 'string' ? `: ${error.slice(0, 200)}` : ''}`
       );
-    if (typeof error === 'string' && /rate limit/i.test(error)) break;
+    if (typeof error === 'string' && isRateLimitError(error)) break;
     if (planned && planned.repo !== repo.toLowerCase()) ledger.dropRepo(repo.toLowerCase());
     if (planned && !seen.has(planned.repo)) ledger.replace(planned.repo, planned.rows, now);
     if (planned) seen.add(planned.repo);

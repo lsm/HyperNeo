@@ -478,7 +478,7 @@ describe('PR ledger read order', () => {
       ['a/a', 'b/b', 'c/c', 'new/new'],
       async (repo) => {
         reads.push(repo);
-        return repo === 'c/c' ? { error: 'GraphQL: API rate limit exceeded' } : response([node(1)]);
+        return repo === 'c/c' ? { error: 'HTTP 429: Too Many Requests' } : response([node(1)]);
       },
       300
     );
