@@ -37,7 +37,6 @@ import {
   NeoAskCheckRepository,
   type NeoAskCheckRow,
 } from '../../storage/repositories/neo-ask-check-repository.ts';
-import { NeoAskForwardRepository } from '../../storage/repositories/neo-ask-forward-repository.ts';
 import {
   neoQuestionStartTargets,
   neoStartDecision,
@@ -104,11 +103,6 @@ import type { SessionManager } from '../session/session-manager.ts';
 import { planNeoAvailabilityWakes, scheduleNeoAdmissionWake } from './admission-wake.ts';
 import { isNeoAskAnswerReady, planNeoAnswerPublished } from './answer-outcome.ts';
 import { planNeoAskEvidenceNote, requireNeoAskEvidenceDue } from './ask-evidence.ts';
-import {
-  neoForwardedText,
-  neoForwardMessageId,
-  neoTurnOwnsMessage,
-} from './ask-forward-operation.ts';
 import {
   type NeoAskIdleSeen,
   neoAskIdleSignature,
@@ -533,7 +527,6 @@ export class NeoService {
   readonly resolveAskOrigin: ReturnType<typeof createNeoAskOriginResolver>;
   private readonly commitPublication: ReturnType<typeof createNeoPublicationCommit>;
   readonly inputOrigins: NeoInputOriginRepository;
-  readonly askForwards: NeoAskForwardRepository;
   readonly resolveWorkTarget: ReturnType<typeof createNeoWorkTargetResolver>;
   readonly notifyChanged: () => void;
   private readonly noteWorking: () => void;
@@ -821,7 +814,6 @@ export class NeoService {
     });
     const inputOrigins = new NeoInputOriginRepository(db.getDatabase());
     this.inputOrigins = inputOrigins;
-    this.askForwards = new NeoAskForwardRepository(db.getDatabase());
     this.resolveAskOrigin = createNeoAskOriginResolver({
       getBinding: (id) => this.repo.getBindingBySession(id),
       getPrompts: (sessionId, messageId) =>
@@ -3139,7 +3131,19 @@ export class NeoService {
 
   humanAskText(ask: NeoAskOrigin): string | null {
     const conversation = this.repo.conversationId();
-    return conversation ? neoForwardedText(this.asks.find(conversation, ask.messageId), ask) : null;
+    const stored = conversation ? this.asks.find(conversation, ask.messageId) : null;
+    if (
+      !stored ||
+      stored.askOrigin.sessionId !== ask.sessionId ||
+      stored.askOrigin.messageId !== ask.messageId
+    )
+      return null;
+    if (typeof stored.content === 'string') return stored.content.trim() || null;
+    const text = (stored.content as { type: string; text?: string }[])
+      .flatMap((block) => (block.type === 'text' && block.text ? [block.text] : []))
+      .join('\n')
+      .trim();
+    return text || null;
   }
 
   private readonly returnCrossProjectGroup = (
@@ -3730,13 +3734,7 @@ export class NeoService {
 
   ownsHumanMessage(caller: OperationCaller): boolean {
     const turn = caller.neoTurn;
-    if (!turn || !caller.sessionId) return false;
-    const ask = this.resolveAskOrigin({ sessionId: caller.sessionId, messageId: turn.messageId });
-    const delivered = (ask ? this.askForwards.list(ask) : []).filter(
-      (forward) =>
-        !!ask && this.hasDelivery(forward.toSessionId, neoForwardMessageId(ask, forward.hop))
-    );
-    return neoTurnOwnsMessage(caller.sessionId, turn, delivered);
+    return !!turn && !!caller.sessionId && turn.human && !turn.consultationId;
   }
 
   stampContinuation(input: NeoAskOrigin, parent: NeoAskOrigin): void {

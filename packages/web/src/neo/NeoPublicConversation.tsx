@@ -5,7 +5,7 @@ import type {
 } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoReplyTo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoPublicationLink } from '@hyperneo/shared/types/neo-publication';
-import { neoForwardKey, type NeoSessionNoticeGroup } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoSessionNoticeGroup } from '@hyperneo/shared/types/neo-snapshot';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { CopyButton } from '../components/ui/CopyButton.tsx';
 import { connectionManager } from '../lib/connection-manager.ts';
@@ -362,7 +362,6 @@ function PublicEntry({
   canOpenScene,
   onEditUndelivered,
   projects,
-  forwarders,
   replyLabels,
   onQuote,
   onSeek,
@@ -372,7 +371,6 @@ function PublicEntry({
   status?: NeoMessageStatus;
   onSeek?: (messageId: string) => void;
   projects?: ReadonlyMap<string, string>;
-  forwarders?: ReadonlyMap<string, string>;
   replyLabels?: ReadonlyMap<string, { label: string; askId: string }>;
   onQuote?: (quote: NeoQuote) => void;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
@@ -402,12 +400,7 @@ function PublicEntry({
   const time = messageTime((ask ?? publication)!.createdAt);
   const author = publication?.producerInput.sessionId ? 'Neo' : t('chat.you');
   const replier = publication ? projects?.get(publication.producerInput.sessionId) : undefined;
-  const forwarder = publication
-    ? forwarders?.get(neoForwardKey(publication.askOrigin, publication.producerInput.sessionId))
-    : undefined;
-  const project = forwarder
-    ? t('chat.forwarded', { name: replier ?? 'Neo', from: forwarder })
-    : replier;
+  const project = replier;
   const notDelivered = t('chat.notDelivered');
   const links = publication?.links.filter((link) => link.kind === 'work') ?? [];
   const anchor = ask
@@ -805,7 +798,6 @@ export function NeoPublicConversation({
   onLoadEarlier,
   onEditUndelivered,
   projects,
-  forwarders,
   replyLabels,
   mute,
   onQuote,
@@ -816,7 +808,6 @@ export function NeoPublicConversation({
   onQuote?: (quote: NeoQuote) => void;
   mute?: NeoSessionMute;
   projects?: ReadonlyMap<string, string>;
-  forwarders?: ReadonlyMap<string, string>;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
   canOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => boolean;
   onEditUndelivered?: NeoEditUndelivered;
@@ -881,7 +872,6 @@ export function NeoPublicConversation({
             canOpenScene={canOpenScene}
             onEditUndelivered={onEditUndelivered}
             projects={projects}
-            forwarders={forwarders}
             replyLabels={labels}
             onSeek={seek}
             onQuote={onQuote}

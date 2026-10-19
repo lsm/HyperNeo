@@ -86,7 +86,6 @@ export const zhHans: Record<keyof typeof en, string> = {
   'chat.muteNamed': '静音 {name}',
   'chat.unmuteNamed': '取消静音 {name}',
   'chat.more': '还有 {count} 条',
-  'chat.forwarded': '{name}（转自 {from}）',
   'chat.editedHistory': '已编辑：查看修订历史',
   'chat.edited': '已编辑',
   'chat.accepted': '消息已接收',

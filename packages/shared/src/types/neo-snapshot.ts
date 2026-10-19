@@ -30,21 +30,6 @@ export interface NeoWorkGoal {
   doneWhen: string | null;
 }
 
-export interface NeoAskForwardView {
-  askSessionId: string;
-  askMessageId: string;
-  hop: number;
-  fromSessionId: string;
-  toSessionId: string;
-}
-
-export function neoForwardKey(
-  ask: { sessionId: string; messageId: string },
-  toSessionId: string
-): string {
-  return `${ask.sessionId}|${ask.messageId}|${toSessionId}`;
-}
-
 export const NEO_WORK_CLOSED_DONE_PREFIX = 'Closed as done by ';
 export const NEO_WORK_CLOSED_DONE = `${NEO_WORK_CLOSED_DONE_PREFIX}the user.`;
 
@@ -384,7 +369,6 @@ export interface NeoSnapshot {
   projectRedirects?: { sourceId: string; targetId: string }[];
   projectFacts?: { reference: string; projectId?: string | null }[];
   publicAuthorBindings?: { sessionId: string; projectId: string; kind: 'project' }[];
-  askForwards?: NeoAskForwardView[];
   work: NeoSnapshotWork[];
   consultations: NeoSnapshotConsultation[];
   consultationWaiters?: NeoConsultationWaiter[];
