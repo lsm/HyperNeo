@@ -582,7 +582,7 @@ Combined order (who, and what each needs):
 | 1 | S1 scheduler model | G3 journal |
 | 2 | S2 fire and delivery | |
 | 3 | H1 home repo | G4 goals as a source (needs S1, S2) |
-| 4 | H2 confirm gate | G5 wake rows (needs S2), G7 schedules strip (needs S1) |
+| 4 | H2 confirm gate | G5 wake rows (needs S2, W5), G7 schedules strip (needs S1) |
 | 5 | P1 Neo prompt (needs G4, H2) | G6 goals panel |
 | 6 | H3 remote and sync | G8 what works and mandate reconcile (needs H1, G4) |
 
@@ -605,8 +605,9 @@ Goals and UI (fs2), each one PR from dev; sizes are production lines:
 4. **Goals as a schedule source** (~150): `facts`/`message`, `goal.facts`,
    `neo_asks.goal_id` and the `neo.ask.open` gate, and the schedule lifecycle on
    create/pause/close. Needs the scheduler service.
-5. **Wake rows** (~200): the `wake` item in `neo.conversation.read` and the web row.
-   Needs the `scheduled_wake` origin.
+5. **Wake rows** (~150): the `wake` item in `neo.conversation.read` and the web row.
+   Needs the `scheduled_wake` origin. Reuses W5's collapsible row and its extra item
+   role in `neo.conversation.read`, so only the wake data and its additions are new.
 6. **Neo goals panel** (web, ~200).
 7. **Schedules strip** (web, ~100). Needs `schedule.session.list`.
 8. **What works and mandate reconcile** (~100): the compaction trigger and the
