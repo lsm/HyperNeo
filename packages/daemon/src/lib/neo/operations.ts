@@ -9,6 +9,7 @@ import {
 import { neoFolderPath } from './folder.ts';
 import { isTempCwd } from '../drivers/claude-feed.ts';
 import { createNeoProjectTreeOperations } from './project-tree-operations.ts';
+import { createNeoProjectForgetOperation } from './project-forget-operation.ts';
 import { neoMirroredAliases } from './project-cleanup.ts';
 import { createNeoProjectCleanupApply } from './project-cleanup-apply.ts';
 import type { PlaceGroup } from '../drivers/types.ts';
@@ -1041,6 +1042,7 @@ export function createNeoOperations(service: NeoService) {
   };
   return [
     ...createNeoProjectTreeOperations(service.repo),
+    createNeoProjectForgetOperation(service.repo),
     createNeoIntakeOperation(service.db, service.repo, (sessionId) => {
       service.notifyChanged();
       void service.steerHumanMessages(sessionId);

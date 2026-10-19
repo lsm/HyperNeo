@@ -110,6 +110,29 @@ export class NeoRepository {
     return holder;
   }
 
+  forgetProject(projectId: string): { forgotten: true } | { reason: 'missing' | 'in_use' } {
+    const result = this.db.transaction(() => {
+      if (!this.db.prepare('SELECT 1 FROM neo_concerns WHERE id = ?').get(projectId))
+        return { reason: 'missing' as const };
+      const used = this.db
+        .prepare(`SELECT 1 WHERE EXISTS (SELECT 1 FROM neo_concerns WHERE parent_id = ?1)
+          OR EXISTS (SELECT 1 FROM neo_work WHERE concern_id = ?1)
+          OR EXISTS (SELECT 1 FROM legacy_neo_asks WHERE concern_id = ?1)
+          OR EXISTS (SELECT 1 FROM neo_asks WHERE project_id = ?1)
+          OR EXISTS (SELECT 1 FROM neo_project_merges WHERE source_id = ?1 OR target_id = ?1)`)
+        .get(projectId);
+      if (used) return { reason: 'in_use' as const };
+      this.db.prepare('DELETE FROM neo_project_workspaces WHERE project_id = ?').run(projectId);
+      this.db
+        .prepare("DELETE FROM neo_session_bindings WHERE concern_id = ? AND kind = 'project'")
+        .run(projectId);
+      this.db.prepare('DELETE FROM neo_concerns WHERE id = ?').run(projectId);
+      return { forgotten: true as const };
+    })();
+    if ('forgotten' in result) this.notify();
+    return result;
+  }
+
   retiredHolders(): NeoRetiredHolder[] {
     return (
       this.db
