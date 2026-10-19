@@ -38,7 +38,6 @@ import {
   type NeoAsk,
   type NeoReceiptAskOrigin,
   type NeoSnapshot,
-  type NeoWaitingOnHuman,
   type NeoWorkResourceReceipt,
 } from '@hyperneo/shared/types/neo-snapshot';
 import {
@@ -99,7 +98,6 @@ import { NeoAskEntrySchema, projectNeoAskEntries } from './ask-entries.ts';
 import { NeoAskSchema } from './ask-inputs.ts';
 import { projectNeoSnapshotAsks } from './ask-plans.ts';
 import { isNeoWorkPrWaiting } from './packs/coding/work-prs.ts';
-import { neoWaitingOnHuman } from './waiting-reminders.ts';
 import { createNeoPreferenceOperation } from './model-preference.ts';
 import { planNeoRuleEdit, planNeoSavedRules, requireNeoRuleCitation } from './saved-rules.ts';
 import { projectNeoCardViews } from './card-views.ts';
@@ -152,10 +150,6 @@ const SnapshotOk = z.object({
   sessionId: z.string().nullable(),
   projects: z.array(Project),
   conversationId: z.string().nullable().optional(),
-  defaultSessionId: z.string().nullable().optional(),
-  neoSessions: z
-    .array(z.object({ sessionId: z.string(), projectId: z.string().nullable() }))
-    .optional(),
   projectRedirects: z.array(z.object({ sourceId: z.string(), targetId: z.string() })).optional(),
   publicAuthorBindings: z
     .array(
@@ -229,19 +223,6 @@ const SnapshotOk = z.object({
     .max(100)
     .optional(),
   askViews: z.array(NeoAskViewSchema),
-  waitingOnHuman: z
-    .object({
-      note: z.string(),
-      asks: z.array(
-        z.object({
-          id: z.string(),
-          title: z.string(),
-          status: NeoAskSchema.shape.status,
-          question: z.string(),
-        } satisfies ZodShape<NeoWaitingOnHuman['asks'][number]>)
-      ),
-    } satisfies ZodShape<NeoWaitingOnHuman>)
-    .optional(),
   preferences: z
     .object({
       model: z.string(),
@@ -415,38 +396,6 @@ export function isNeoWorkMissingHere(outcome: OperationOutcome | null): boolean 
   if (outcome?.kind !== 'completed') return false;
   const value = outcome.value as { ok?: boolean; reason?: string } | null;
   return value?.ok === false && value.reason === 'not_found';
-}
-
-function requireNeoWorkProposer(
-  work: NeoWork,
-  caller: OperationCaller,
-  verb: 'continue' | 'retry' | 'record a refusal on',
-  humanTurn: boolean
-): { value: NeoWork } | { reason: Rejection } {
-  if (caller.source === 'mcp' && caller.sessionId !== work.originSessionId && !humanTurn)
-    return {
-      reason: {
-        ok: false,
-        reason: `Only the Neo session that proposed this work, Neo answering the human’s own chat message, or the user can ${verb} it.`,
-      },
-    };
-  return { value: work };
-}
-
-export function requireNeoWorkContinuation(
-  work: NeoWork,
-  caller: OperationCaller,
-  humanTurn = false
-) {
-  return requireNeoWorkProposer(work, caller, 'continue', humanTurn);
-}
-
-export function requireNeoWorkRetryCaller(
-  work: NeoWork,
-  caller: OperationCaller,
-  humanTurn = false
-) {
-  return requireNeoWorkProposer(work, caller, 'retry', humanTurn);
 }
 
 export function isNeoTurnAskReadable(
@@ -749,26 +698,10 @@ export function createNeoOperations(service: NeoService) {
     const built = {
       ok: true as const,
       sessionId: service.repo.getBindingForProject(scope ?? null)?.sessionId ?? null,
-      waitingOnHuman:
-        caller.neoTurn && caller.sessionId
-          ? neoWaitingOnHuman(
-              service.listWaitingReminders({
-                sessionId: caller.sessionId,
-                messageId: caller.neoTurn.messageId,
-              }).asks
-            )
-          : undefined,
       standingRules: neoStandingRules(service.db.getGlobalSettings?.().neo),
       ...(caller.source === 'rpc'
         ? {
             conversationId: service.repo.conversationId(),
-            defaultSessionId: service.defaultSessionId() ?? null,
-            neoSessions: [
-              service.repo.defaultBinding(),
-              ...service.repo.listProjectBindings(),
-            ].flatMap((binding) =>
-              binding ? [{ sessionId: binding.sessionId, projectId: binding.projectId }] : []
-            ),
             projectRedirects: service.repo.projectMerges.redirects(),
           }
         : {}),
@@ -1154,7 +1087,6 @@ export function createNeoOperations(service: NeoService) {
       service.todos,
       service.todoSessions,
       todoControls,
-      (sessionId) => service.repo.getBindingBySession(sessionId)?.projectId ?? null,
       (projectId) => service.repo.resolveProjectRef(projectId),
       (sessionId) => {
         const binding = service.repo.getBindingBySession(sessionId);

@@ -794,14 +794,6 @@ export class NeoAskRepository {
       .run(`Ask ended: ${reason}`, at, askId);
   }
 
-  waitingFor(sessionId: string): (NeoAsk & { remindedAt: number | null })[] {
-    const rows = this.db
-      .prepare(`SELECT ${askColumns}, reminded_at AS remindedAt FROM legacy_neo_asks
-        WHERE origin_session_id = ? AND status IN ('waiting', 'blocked') ORDER BY updated_at, id`)
-      .all(sessionId) as (NeoAskRow & { remindedAt: number | null })[];
-    return this.withWork(rows) as (NeoAsk & { remindedAt: number | null })[];
-  }
-
   needingHuman(): NeoAsk[] {
     const rows = this.db
       .prepare(`SELECT ${askColumns} FROM legacy_neo_asks a
@@ -818,15 +810,6 @@ export class NeoAskRepository {
         'UPDATE legacy_neo_asks SET refused = ?, refused_count = CASE WHEN ? IS NULL THEN 0 ELSE refused_count + 1 END WHERE id = ?'
       )
       .run(refused, refused, id);
-  }
-
-  markReminded(ids: readonly string[], at: number): void {
-    if (!ids.length) return;
-    this.db
-      .prepare(
-        'UPDATE legacy_neo_asks SET reminded_at = ? WHERE id IN (SELECT value FROM json_each(?))'
-      )
-      .run(at, JSON.stringify(ids));
   }
 
   private withWork(rows: NeoAskRow[]): NeoAsk[] {

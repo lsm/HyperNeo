@@ -341,11 +341,6 @@ export interface NeoSessionNoticeGroup {
   notices: NeoSessionNotice[];
 }
 
-export interface NeoWaitingOnHuman {
-  note: string;
-  asks: { id: string; title: string; status: NeoAskStatus; question: string }[];
-}
-
 export interface NeoSnapshotWork extends NeoWork {
   summarized?: true;
   askId?: string;
@@ -359,8 +354,6 @@ export interface NeoSnapshot {
   scopedTo?: string;
   sessionId: string | null;
   conversationId?: string | null;
-  defaultSessionId?: string | null;
-  neoSessions?: { sessionId: string; projectId: string | null }[];
   projects: NeoProject[];
   projectRedirects?: { sourceId: string; targetId: string }[];
   publicAuthorBindings?: { sessionId: string; projectId: string; kind: 'project' }[];
@@ -381,7 +374,6 @@ export interface NeoSnapshot {
   askViews: NeoAskView[];
   todoAsks?: NeoAskEntry[];
   packRows?: NeoPackRows[];
-  waitingOnHuman?: NeoWaitingOnHuman;
   preferences?: (NeoModelPreference & { saved: boolean }) | null;
   trimmed?: string;
 }

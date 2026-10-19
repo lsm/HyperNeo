@@ -361,7 +361,6 @@ function PublicEntry({
   onOpenScene,
   canOpenScene,
   onEditUndelivered,
-  projects,
   replyLabels,
   onQuote,
   onSeek,
@@ -370,7 +369,6 @@ function PublicEntry({
   entry: NeoPublicEntry;
   status?: NeoMessageStatus;
   onSeek?: (messageId: string) => void;
-  projects?: ReadonlyMap<string, string>;
   replyLabels?: ReadonlyMap<string, { label: string; askId: string }>;
   onQuote?: (quote: NeoQuote) => void;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
@@ -399,8 +397,6 @@ function PublicEntry({
   const photos = ask ? publicAskPhotos(ask.content) : [];
   const time = messageTime((ask ?? publication)!.createdAt);
   const author = publication?.producerInput.sessionId ? 'Neo' : t('chat.you');
-  const replier = publication ? projects?.get(publication.producerInput.sessionId) : undefined;
-  const project = replier;
   const notDelivered = t('chat.notDelivered');
   const links = publication?.links.filter((link) => link.kind === 'work') ?? [];
   const anchor = ask
@@ -424,11 +420,6 @@ function PublicEntry({
         class={`mb-2 flex flex-wrap items-baseline gap-x-2 px-1 text-xs ${ask ? 'justify-end' : ''}`}
       >
         <span class="neo-message-name font-medium">{author}</span>
-        {project && (
-          <span class="neo-message-project max-w-[16rem] truncate text-fg-faint" title={project}>
-            {project}
-          </span>
-        )}
         {time && (
           <time dateTime={time.iso} title={time.full} class="neo-message-time text-[11px]">
             {time.label}
@@ -797,7 +788,6 @@ export function NeoPublicConversation({
   onRetry,
   onLoadEarlier,
   onEditUndelivered,
-  projects,
   replyLabels,
   mute,
   onQuote,
@@ -807,7 +797,6 @@ export function NeoPublicConversation({
   statuses?: ReadonlyMap<string, NeoMessageStatus>;
   onQuote?: (quote: NeoQuote) => void;
   mute?: NeoSessionMute;
-  projects?: ReadonlyMap<string, string>;
   onOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => void;
   canOpenScene?: (ref: Pick<NeoPublicationLink, 'kind' | 'id'>) => boolean;
   onEditUndelivered?: NeoEditUndelivered;
@@ -871,7 +860,6 @@ export function NeoPublicConversation({
             onOpenScene={onOpenScene}
             canOpenScene={canOpenScene}
             onEditUndelivered={onEditUndelivered}
-            projects={projects}
             replyLabels={labels}
             onSeek={seek}
             onQuote={onQuote}
