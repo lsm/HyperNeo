@@ -60,9 +60,9 @@ describe('neo.project.forget', () => {
          VALUES ('w1', 'k1', 'neo:root', ?, 'Card', 'Do it', 'cancelled', 1, 1)`
       )
       .run(atlas);
-    expect(await forget(atlas)).toEqual({ ok: false, reason: 'in_use' });
+    expect(await forget(atlas)).toEqual({ ok: false, reason: 'project_in_use' });
     expect(repo.getProject(atlas)?.title).toBe('atlas');
-    expect(await forget('project:nope')).toEqual({ ok: false, reason: 'missing' });
+    expect(await forget('project:nope')).toEqual({ ok: false, reason: 'project_missing' });
     expect(repo.getBindingForProject(atlas)?.sessionId).toBe(holder);
   });
 
@@ -78,7 +78,7 @@ describe('neo.project.forget', () => {
 
   test('refuses the Inbox and a project a worker is still bound to', async () => {
     repo.saveProject({ id: 'inbox', title: 'Inbox', summary: '', context: '' }, 0);
-    expect(await forget('inbox')).toEqual({ ok: false, reason: 'protected' });
+    expect(await forget('inbox')).toEqual({ ok: false, reason: 'project_protected' });
     expect(repo.getProject('inbox')?.title).toBe('Inbox');
     db.createSession(createTestSession('session:worker'));
     db.getDatabase()
@@ -86,7 +86,7 @@ describe('neo.project.forget', () => {
         "INSERT INTO neo_session_bindings (session_id, concern_id, kind) VALUES (?, ?, 'worker')"
       )
       .run('session:worker', atlas);
-    expect(await forget(atlas)).toEqual({ ok: false, reason: 'in_use' });
+    expect(await forget(atlas)).toEqual({ ok: false, reason: 'project_in_use' });
     expect(repo.getProject(atlas)?.title).toBe('atlas');
   });
 });
