@@ -19,6 +19,7 @@ import {
 } from '../../../../src/lib/neo/consultation-origin.ts';
 import { runMigration393 } from '../../../../src/storage/schema/m393-neo-root-asks.ts';
 import { runMigration394 } from '../../../../src/storage/schema/m394-neo-end-consultations.ts';
+import { runMigration395 } from '../../../../src/storage/schema/m395-neo-root-failed-work.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
 const root = 'neo:root';
@@ -113,6 +114,24 @@ describe('Neo as one session', () => {
     expect(owners('neo_asks', 'session_id')).toEqual({ mine: root, open: root, settled: holder });
     expect(owners('neo_work', 'origin_session_id')).toEqual({ ended: holder, live: root });
     expect(owners('legacy_neo_asks', 'origin_session_id')).toEqual({ legacy: root });
+  });
+
+  test('m395 moves failed cards a holder started to root, and leaves ended ones', () => {
+    const failed = service.repo.proposeWork({
+      id: 'failed',
+      requestKey: 'failed',
+      projectId: 'web',
+      originSessionId: holder,
+      originMessageId: 'm1',
+      title: 'Failed',
+      instruction: 'Failed',
+    });
+    service.repo.transitionWork(failed.id, failed, { status: 'failed', report: 'Broke' });
+    const ended = service.repo.proposeWork({ ...failed, id: 'ended', requestKey: 'ended' });
+    service.repo.transitionWork(ended.id, ended, { status: 'cancelled' });
+    runMigration395(db.getDatabase());
+    runMigration395(db.getDatabase());
+    expect(owners('neo_work', 'origin_session_id')).toEqual({ ended: holder, failed: root });
   });
 
   test('root works a moved ask, its old holder cannot, and the todo note reaches root', async () => {

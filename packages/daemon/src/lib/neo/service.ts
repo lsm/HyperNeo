@@ -135,6 +135,7 @@ import {
   neoStallMessageId,
   neoWorkParent,
   neoWorkReturnMessageId,
+  neoWorkReviewId,
   nudgedMessageId,
 } from './ask-origin.ts';
 import { requireNeoAskStalled, requireNeoAskStallUntold } from './ask-stall.ts';
@@ -3307,6 +3308,16 @@ export class NeoService {
 
   private async returnReport(work: NeoWork): Promise<void> {
     if (work.status === 'reported' && isNeoWorkClosedDone(work.report)) return;
+    if (
+      this.consultations.get(
+        neoWorkReviewId(
+          work.id,
+          this.driverTargets.readRetries(work.id),
+          this.workContinues.get(work.id)?.count ?? 0
+        )
+      )
+    )
+      return;
     if (this.deferToDeliveryRetry(work)) return;
     if ((await this.checkDone(work, false)) !== 'not_checked') return;
     if (work.status === 'reported')

@@ -451,7 +451,7 @@ describe('NeoService direct consultation return', () => {
     expect(read.value.told.every((item) => item.shortText.length <= 300)).toBe(true);
   });
 
-  test('a work review is acted on quietly: its publication is refused, and the work returns to its origin directly', async () => {
+  test('a work review is acted on quietly: its publication is refused, and the reviewed work is not returned again', async () => {
     db.getDatabase().prepare('DELETE FROM neo_consultations').run();
     prompt(holder, 'holder-human', 'human');
     const work = service.repo.proposeWork({
@@ -487,9 +487,11 @@ describe('NeoService direct consultation return', () => {
       answer: 'The context holder reviewed the returned work.',
     });
     expect(returned(id)).toEqual({ returned: 1 });
-    expect(
-      (mailbox() as { payload: string }[]).map((job) => JSON.parse(job.payload).messageUuid)
-    ).toEqual(['work']);
+    db.getDatabase()
+      .prepare('UPDATE neo_work SET origin_session_id = ?, session_id = ? WHERE id = ?')
+      .run(root, 'worker-session', work.id);
+    await service.reconcile(work.id);
+    expect(mailbox()).toEqual([]);
     expect(service.publications.list(conversationId)).toEqual([]);
   });
   test.each(['reported', 'failed'] as const)(

@@ -1,9 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { vi } from 'vitest';
+import type { NeoQuestion } from '@hyperneo/shared/types/neo-ask';
+import type { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import type { Session } from '@hyperneo/shared';
 import {
   admitNeoIntake,
   createNeoIntakeOperation,
   loggedNeoRoute,
+  type NeoReply,
+  recordNeoReplyAnswer,
   replayedNeoRoute,
   requireNeoIntakeTarget,
   requireNeoRootTarget,
@@ -78,6 +83,27 @@ describe('Neo intake gates', () => {
       [binding, { ...root!, status: 'archived' as const }],
     ] as const)
       expect(requireNeoRootTarget(admitted, owner, session)).toHaveProperty('reason.ok', false);
+  });
+});
+
+describe('recordNeoReplyAnswer', () => {
+  test('answers an open question on an ask its owner check accepts, such as an old holder', () => {
+    const answerQuestion = vi.fn();
+    const store = { answerQuestion } as unknown as NeoAskTodoRepository;
+    const question = { id: 'q1', state: 'open' } as NeoQuestion;
+    const reply = { question, ask: { sessionId: 'neo:holder:old' } } as unknown as NeoReply;
+    const receipt = { ok: true as const, requestId: 'r', messageId: 'r', created: true };
+    const answer = (owns: (sessionId: string) => boolean) =>
+      recordNeoReplyAnswer(receipt, reply, { ...input, content: 'Yes' }, store, owns);
+    answer((sessionId) => sessionId === input.sessionId);
+    expect(answerQuestion).not.toHaveBeenCalled();
+    answer((sessionId) => sessionId === 'neo:holder:old');
+    expect(answerQuestion).toHaveBeenCalledExactlyOnceWith(
+      question,
+      'Yes',
+      'chat',
+      expect.any(Number)
+    );
   });
 });
 
@@ -282,6 +308,20 @@ describe('durable Neo intake operation', () => {
     expect(mailbox.sdkRows()).toHaveLength(1);
     expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)).toHaveLength(1);
     expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)[0].status).toBe('completed');
+  });
+  test('a retry of a message a holder accepted before the upgrade is the same delivered ask', async () => {
+    await invoke();
+    mailbox.db
+      .prepare(
+        "UPDATE neo_conversation_asks SET payload_json = json_set(payload_json, '$.askOrigin.sessionId', 'neo:holder:old')"
+      )
+      .run();
+    expect(await invoke()).toEqual({
+      kind: 'completed',
+      value: { ok: true, requestId: input.requestId, messageId: input.requestId, created: false },
+    });
+    expect(mailbox.sdkRows()).toHaveLength(1);
+    expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)).toHaveLength(1);
   });
   test('changed-content retries reject without replacing the original ask', async () => {
     await invoke();

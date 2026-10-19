@@ -232,17 +232,34 @@ export function recordNeoReplyAnswer(
   reply: NeoReply | null,
   input: IntakeInput,
   store: NeoAskTodoRepository,
-  sessionId: string
+  owns: (sessionId: string) => boolean
 ): IntakeResult {
   const words = neoAskText(input.content).trim();
   if (
     receipt.ok &&
     words &&
     reply?.question?.state === 'open' &&
-    reply.ask?.sessionId === sessionId
+    reply.ask &&
+    owns(reply.ask.sessionId)
   )
     store.answerQuestion(reply.question, words, 'chat', Date.now());
   return receipt;
+}
+
+export function requireNeoIntakeUndelivered(
+  stored: NeoConversationAsk | null,
+  rootId: string
+): { value: true } | { reason: Extract<IntakeResult, { ok: true }> } {
+  return stored && stored.askOrigin.sessionId !== rootId
+    ? {
+        reason: {
+          ok: true,
+          requestId: stored.requestId,
+          messageId: stored.askOrigin.messageId,
+          created: false,
+        },
+      }
+    : { value: true };
 }
 
 export function requireNeoIntakeConversation(conversation: string | null): Gate<string> {
@@ -517,6 +534,18 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
   )
   .pipe((root: IntakeTarget) => root, 'receipt', 'root')
   .pipe(
+    (input: IntakeInput, root: IntakeTarget, db: Database) =>
+      requireNeoIntakeUndelivered(
+        new NeoConversationAskRepository(db.getDatabase()).find(
+          root.conversationId,
+          input.requestId
+        ),
+        root.target.id
+      ),
+    ['input', 'root', 'db'],
+    'result:receipt'
+  )
+  .pipe(
     (input: IntakeInput, root: IntakeTarget, reply: NeoReply | null, db: Database) =>
       neoIntakeMessage(
         input,
@@ -542,9 +571,18 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
       reply: NeoReply | null,
       input: IntakeInput,
       store: NeoAskTodoRepository,
-      root: IntakeTarget
-    ) => recordNeoReplyAnswer(receipt, reply, input, store, root.target.id),
-    ['receipt', 'reply', 'input', 'store', 'root'],
+      root: IntakeTarget,
+      repo: NeoRepository
+    ) =>
+      recordNeoReplyAnswer(
+        receipt,
+        reply,
+        input,
+        store,
+        (sessionId) =>
+          sessionId === root.target.id || repo.getBindingBySession(sessionId)?.kind === 'project'
+      ),
+    ['receipt', 'reply', 'input', 'store', 'root', 'repo'],
     'receipt'
   )
   .pipe(
