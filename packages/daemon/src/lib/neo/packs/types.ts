@@ -58,6 +58,7 @@ export interface NeoTodoPack {
   topics(todo: NeoTodo): string[];
   event(event: ExternalEvent): string[];
   openedPrs?(todo: NeoTodo, urls: readonly string[]): void;
+  waiting?(todo: NeoTodo): boolean;
 }
 
 export interface NeoPack extends NeoPackBrief {
