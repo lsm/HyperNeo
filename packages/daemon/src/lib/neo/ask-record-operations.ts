@@ -125,11 +125,13 @@ export function createNeoAskRecordOperations(
             1;
         const recordedRow = (todo: (typeof input.todos)[number]) => {
           const repo = neoTodoRepo(todo, packs(), ask);
-          const own = neoTodoRepo(todo, packs(), { repo: null });
-          return recorded.find(
-            (item) =>
-              item.title === todo.title && (item.repo === repo || (item.repo === null && !own))
-          );
+          const filed = (item: NeoTodo) =>
+            neoTodoRepo(
+              { check: item.check, named: item.named, target: sessions.get(item.id) },
+              packs(),
+              ask
+            );
+          return recorded.find((item) => item.title === todo.title && filed(item) === repo);
         };
         const homeless =
           ask.status !== 'open' &&

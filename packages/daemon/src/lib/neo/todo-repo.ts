@@ -65,7 +65,11 @@ export function neoMoveTodo(
     root.repo === repo
       ? root
       : (store.childAsk(root.id, repo) ??
-        (ask.repo || store.listChildAsks(root.id).length ? neoChildAsk(store, root, repo) : ask));
+        (!ask.repo && !store.listChildAsks(root.id).length
+          ? ask
+          : root.status === 'open'
+            ? neoChildAsk(store, root, repo)
+            : root));
   return home.status === 'open' ? store.moveTodo(todo, home.id, repo, Date.now()) : null;
 }
 

@@ -309,6 +309,30 @@ describe('repo child cards', () => {
     db.close();
   });
 
+  test('a retry does not re-file a todo that moved to another repo', async () => {
+    const { db, store, open } = setup();
+    const first = (await open({
+      title: 'T',
+      request: 'T',
+      todos: [pr('HyperNeo', 1)],
+    })) as {
+      ask: { id: string };
+      todos: NeoTodo[];
+    };
+    neoMoveTodo(store, first.todos[0], 'github.com/lsm/ops');
+    const again = (await open({
+      title: 'T',
+      request: 'T',
+      todos: [pr('HyperNeo', 1)],
+    })) as {
+      todos: NeoTodo[];
+    };
+    expect(again.todos.map((todo) => [todo.title, todo.repo])).toEqual([
+      ['PR HyperNeo 1', 'github.com/lsm/ops'],
+    ]);
+    db.close();
+  });
+
   test('a retry that adds other repos keeps the card’s own repo on the card', async () => {
     const { db, store, open } = setup();
     const first = (await open({ title: 'T', request: 'T', todos: [pr('HyperNeo', 1)] })) as {
@@ -431,6 +455,17 @@ describe('neoMoveTodo', () => {
     });
     expect(store.getAsk('card')?.repo).toBe('github.com/lsm/ops');
     expect(store.listChildAsks('card')).toEqual([]);
+    db.close();
+  });
+
+  test('opens no new card under a settled parent', () => {
+    const { db, store, ask } = setup();
+    const parent = ask('parent', null);
+    ask('ops', 'github.com/lsm/ops', 'parent');
+    store.settleAsk(parent, 'done', 'Filed 1 todo across ops cards.', 2);
+    const todo = store.addTodo('t', 'ops', draft, 3, 'github.com/lsm/ops');
+    expect(neoMoveTodo(store, todo, 'github.com/lsm/web')).toBeNull();
+    expect(store.listChildAsks('parent').map((child) => child.id)).toEqual(['ops']);
     db.close();
   });
 
