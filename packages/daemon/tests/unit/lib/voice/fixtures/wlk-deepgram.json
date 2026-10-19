@@ -1,0 +1,824 @@
+{
+  "three": [
+    {
+      "type": "Metadata"
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 2.4,
+      "duration": 0,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "Please check the build status."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 0.1,
+      "duration": 3,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "Please check the build status of the voice pull request."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": true,
+      "speech_final": true,
+      "start": 0.1,
+      "duration": 3,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "Please check the build status of the voice pull request."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 3.1,
+      "duration": 0,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "Then merge it if the review."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 5.602,
+      "duration": 2.598,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "Then merge it if the review bot approved."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": true,
+      "speech_final": true,
+      "start": 5.602,
+      "duration": 2.598,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "Then merge it if the review bot approved."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 8.2,
+      "duration": 0,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "Finally, install the app on my."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 11,
+      "duration": 2.3,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "Finally, install the app on my phone tonight."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": true,
+      "speech_final": true,
+      "start": 11,
+      "duration": 2.3,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "Finally, install the app on my phone tonight."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Metadata"
+    }
+  ],
+  "mono": [
+    {
+      "type": "Metadata"
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 2.5,
+      "duration": 0,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "Yesterday, I spent most."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 4.7,
+      "duration": 0,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "Yesterday, I spent most of the afternoon going through the voice pipe."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 0.2,
+      "duration": 4.8,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "Yesterday, I spent most of the afternoon going through the voice pipeline from end to end."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 0.2,
+      "duration": 4.8,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "Yesterday, I spent most of the afternoon going through the voice pipeline from end to end.The phone records sixteen."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 0.2,
+      "duration": 4.8,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "Yesterday, I spent most of the afternoon going through the voice pipeline from end to end.The phone records sixteen kilohertz audio and sends it to the."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": true,
+      "speech_final": false,
+      "start": 0.2,
+      "duration": 4.8,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "Yesterday, I spent most of the afternoon going through the voice pipeline from end to end."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 5.41,
+      "duration": 4.99,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "The phone records sixteen kilohertz audio and sends it to the demon in small chunks."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 5.41,
+      "duration": 4.99,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "The phone records sixteen kilohertz audio and sends it to the demon in small chunks.The demon relays every."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 5.41,
+      "duration": 4.99,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "The phone records sixteen kilohertz audio and sends it to the demon in small chunks.The demon relays every chunk to the speech recognizer and pushes."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": true,
+      "speech_final": false,
+      "start": 5.41,
+      "duration": 4.99,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "The phone records sixteen kilohertz audio and sends it to the demon in small chunks."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 11,
+      "duration": 5.3,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "The demon relays every chunk to the speech recognizer and pushes the text back as it arrives."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 11,
+      "duration": 5.3,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "The demon relays every chunk to the speech recognizer and pushes the text back as it arrives.When the recording stops."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": true,
+      "speech_final": false,
+      "start": 11,
+      "duration": 5.3,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "The demon relays every chunk to the speech recognizer and pushes the text back as it arrives."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 16.5,
+      "duration": 3.5,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "When the recording stops, the demon waits for the last words."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": true,
+      "speech_final": false,
+      "start": 16.5,
+      "duration": 3.5,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "When the recording stops, the demon waits for the last words."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 20.13,
+      "duration": 1.17,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "Closes the stream."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 20.13,
+      "duration": 1.17,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "Closes the stream.Enhance the full."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": true,
+      "speech_final": false,
+      "start": 20.13,
+      "duration": 1.17,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "Closes the stream."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 21.4,
+      "duration": 2.6,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "Enhance the full transcript to the composer."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": true,
+      "speech_final": false,
+      "start": 21.4,
+      "duration": 2.6,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "Enhance the full transcript to the composer."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 24.3,
+      "duration": 1.8,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "If anything goes wrong on the way."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 24.3,
+      "duration": 1.8,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "If anything goes wrong on the way.The saved recording is trans."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": true,
+      "speech_final": false,
+      "start": 24.3,
+      "duration": 1.8,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "If anything goes wrong on the way."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 26.2,
+      "duration": 3.1,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "The saved recording is transcribed in one piece instead."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 26.2,
+      "duration": 3.1,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "The saved recording is transcribed in one piece instead.So, nothing that was."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": true,
+      "speech_final": false,
+      "start": 26.2,
+      "duration": 3.1,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "The saved recording is transcribed in one piece instead."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 29.5,
+      "duration": 2.6,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "So nothing that was said is ever lost."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 29.5,
+      "duration": 2.6,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "So nothing that was said is ever lost.Tomorrow, I want to measure."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 29.5,
+      "duration": 2.6,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "So nothing that was said is ever lost.Tomorrow, I want to measure how long the first words take to."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": true,
+      "speech_final": false,
+      "start": 29.5,
+      "duration": 2.6,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "So nothing that was said is ever lost."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 32.6,
+      "duration": 4.6,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "Tomorrow, I want to measure how long the first words take to show up on screen."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 32.6,
+      "duration": 4.6,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "Tomorrow, I want to measure how long the first words take to show up on screen.And whether a shorter decoding."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": true,
+      "speech_final": false,
+      "start": 32.6,
+      "duration": 4.6,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "Tomorrow, I want to measure how long the first words take to show up on screen."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 37.634,
+      "duration": 2.066,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "And whether a shorter decoding step."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 37.634,
+      "duration": 2.066,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "And whether a shorter decoding step.Makes the live text feel."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": true,
+      "speech_final": false,
+      "start": 37.634,
+      "duration": 2.066,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "And whether a shorter decoding step."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 39.81,
+      "duration": 3.39,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "Makes the live text feel faster without hurting accuracy."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": true,
+      "speech_final": false,
+      "start": 39.81,
+      "duration": 3.39,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "Makes the live text feel faster without hurting accuracy."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Metadata"
+    }
+  ],
+  "zh": [
+    {
+      "type": "Metadata"
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 2.3,
+      "duration": 0,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "请帮我检查一下。"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 0.1,
+      "duration": 3.9,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "请帮我检查一下座椅扶手的锁置状态。"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 0.1,
+      "duration": 3.9,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "请帮我检查一下座椅扶手的锁置状态。如果这个月播已经。"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": true,
+      "speech_final": false,
+      "start": 0.1,
+      "duration": 3.9,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "请帮我检查一下座椅扶手的锁置状态。"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 4.4,
+      "duration": 2.1,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "如果这个文件已经批准了。"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": true,
+      "speech_final": false,
+      "start": 4.4,
+      "duration": 2.1,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "如果这个文件已经批准了。"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 6.7,
+      "duration": 1.1,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "就到擦和溜。"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 6.7,
+      "duration": 1.1,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "就到擦和溜。然后今晚把新房。"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": false,
+      "speech_final": false,
+      "start": 6.7,
+      "duration": 4.8,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "就到擦和溜。 然后今晚把新版本装在我的iPhone上。"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Results",
+      "is_final": true,
+      "speech_final": true,
+      "start": 6.7,
+      "duration": 4.8,
+      "channel": {
+        "alternatives": [
+          {
+            "transcript": "就到擦和溜。 然后今晚把新版本装在我的iPhone上。"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Metadata"
+    }
+  ]
+}

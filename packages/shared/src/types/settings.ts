@@ -89,9 +89,13 @@ export interface VoiceSettings {
   allowPrivateNetwork?: boolean;
   mode?: VoiceMode;
   tlsCaPem?: string;
+  streamEndpoint?: string;
+  streamProtocol?: VoiceStreamProtocol;
 }
 
 export type VoiceMode = 'batch' | 'streaming' | 'auto';
+
+export type VoiceStreamProtocol = 'deepgram' | 'openai-realtime';
 
 export const DEFAULT_NEO_ROUTE_TIMEOUT_MS = 15_000;
 
