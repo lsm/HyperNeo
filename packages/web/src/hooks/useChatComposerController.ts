@@ -1,4 +1,9 @@
-import type { AgentProcessingState, ModelInfo, ChatMessage } from '@hyperneo/shared';
+import type {
+  AgentProcessingState,
+  ModelInfo,
+  ChatMessage,
+  PendingModelSwitch,
+} from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import { useCallback, useMemo, useState } from 'preact/hooks';
 import { switchCoordinatorMode, switchSandboxMode } from '../lib/api-helpers.ts';
@@ -15,6 +20,7 @@ interface UseChatComposerControllerOptions {
   setCoordinatorMode: (value: boolean) => void;
   sandboxEnabled: boolean;
   setSandboxEnabled: (value: boolean) => void;
+  pendingModelSwitch?: PendingModelSwitch | null;
 }
 
 export function useChatComposerController({
@@ -26,6 +32,7 @@ export function useChatComposerController({
   setCoordinatorMode,
   sandboxEnabled,
   setSandboxEnabled,
+  pendingModelSwitch = null,
 }: UseChatComposerControllerOptions) {
   const [coordinatorSwitching, setCoordinatorSwitching] = useState(false);
   const [sandboxSwitching, setSandboxSwitching] = useState(false);
@@ -37,7 +44,7 @@ export function useChatComposerController({
     switching: modelSwitching,
     loading: modelLoading,
     switchModel,
-  } = useModelSwitcher(sessionId);
+  } = useModelSwitcher(sessionId, pendingModelSwitch);
 
   const handleModelSwitchWithConfirmation = useCallback(
     async (model: ModelInfo) => {

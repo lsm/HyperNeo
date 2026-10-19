@@ -34,14 +34,14 @@ export function NeoPreferences({
   onSaved?: () => void;
   forSession?: boolean;
 }) {
-  const model = useModelSwitcher(sessionId);
+  const pending = store.sessionInfo.value?.metadata?.pendingModelSwitch ?? null;
+  const model = useModelSwitcher(sessionId, pending);
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [auth, setAuth] = useState(new Map<string, ProviderAuthStatus>());
   const ref = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const connected = connectionState.value === 'connected';
-  const pending = store.sessionInfo.value?.metadata?.pendingModelSwitch ?? null;
   const pendingInfo = pending
     ? model.availableModels.find(
         (item) =>
@@ -87,7 +87,9 @@ export function NeoPreferences({
     (item) =>
       (item.id === currentId || item.alias === currentId) && item.provider === info?.provider
   );
-  const name = shortenModelName(info?.name || currentId || 'Model');
+  const name = pending
+    ? shortenModelName(pendingInfo?.name || pending.model)
+    : shortenModelName(info?.name || currentId || 'Model');
   const thinking = options.length
     ? (options.find((option) => option.value === level)?.label ?? 'Off')
     : 'Off';
@@ -98,7 +100,7 @@ export function NeoPreferences({
       const hub = connectionManager.getHubIfConnected();
       if (!hub) throw new Error('Reconnect before changing the model.');
       if (forSession) {
-        if (next.model !== currentId || next.provider !== info?.provider) {
+        if (pending || next.model !== currentId || next.provider !== info?.provider) {
           const switched = await hub.request<{ success: boolean; error?: string }>(
             'session.model.switch',
             { sessionId, model: next.model, provider: next.provider }

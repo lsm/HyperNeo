@@ -944,6 +944,25 @@ describe('useModelSwitcher', () => {
       expect(mockToastSuccess).not.toHaveBeenCalled();
     });
 
+    it('reloads the shown model once a pending switch is applied', async () => {
+      const request = vi.fn(async (method: string) =>
+        method === 'session.model.get'
+          ? { currentModel: 'claude-sonnet-4-20250514', modelInfo: null }
+          : { models: [] }
+      );
+      mockGetHubIfConnected.mockReturnValue({ onEvent: vi.fn(() => () => {}), request });
+      const pending = { model: 'opus', provider: 'anthropic', requestedAt: 1 };
+      const { result, rerender } = renderHook(
+        ({ waiting }: { waiting: typeof pending | null }) => useModelSwitcher('session-1', waiting),
+        { initialProps: { waiting: pending as typeof pending | null } }
+      );
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      const loads = () => request.mock.calls.filter(([m]) => m === 'session.model.get').length;
+      const before = loads();
+      rerender({ waiting: null });
+      await waitFor(() => expect(loads()).toBe(before + 1));
+    });
+
     it('should handle switch failure from server', async () => {
       const mockHub = {
         onEvent: vi.fn(() => () => {}),
