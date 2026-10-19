@@ -99,6 +99,17 @@ adds its journey here.
    mocked replies and the todo note. The session view takes a few seconds to
    load; wait for the transcript before the screenshot.
 
+5. **Session PR links come from the desktop apps' own stores.** Read-only, on the
+   human's machine: `bun .claude/skills/verify/linked-prs.ts claude <local_id>`
+   prints the `linkedPrs` that `work.status` reports for a Claude Desktop session
+   (its `prs[]`, with `dismissed`); `... codex <thread_id>` prints a Codex
+   thread's `pull_request` attachments from `~/.codex/state_5.sqlite`. It never
+   reads credential files. End state: the list matches the app's sidebar.
+   `bun .claude/skills/verify/pr-owners.ts` replays the coding pack's owner
+   choice over every local Claude, Codex and HyperNeo session against the live
+   ledger (opened `?mode=ro`) and prints owned-before/after counts plus each
+   owner change; check every change names the session that created the PR.
+
 6. **A cross-repo request becomes one card per repo.** Launch with
    `VERIFY_MOCK=neo-script-api.ts .claude/skills/verify/launch.sh 9311 "$RUN"`.
    That mock plays root's model: when the human's message contains
@@ -111,17 +122,6 @@ adds its journey here.
    with only its repo's todos (`neo_todos.repo`). On `/neo`, "Your work" lists
    the two child cards, and Recent outcomes shows the request as Done with that
    outcome under Details.
-
-5. **Session PR links come from the desktop apps' own stores.** Read-only, on the
-   human's machine: `bun .claude/skills/verify/linked-prs.ts claude <local_id>`
-   prints the `linkedPrs` that `work.status` reports for a Claude Desktop session
-   (its `prs[]`, with `dismissed`); `... codex <thread_id>` prints a Codex
-   thread's `pull_request` attachments from `~/.codex/state_5.sqlite`. It never
-   reads credential files. End state: the list matches the app's sidebar.
-   `bun .claude/skills/verify/pr-owners.ts` replays the coding pack's owner
-   choice over every local Claude, Codex and HyperNeo session against the live
-   ledger (opened `?mode=ro`) and prints owned-before/after counts plus each
-   owner change; check every change names the session that created the PR.
 
 ## Evidence
 

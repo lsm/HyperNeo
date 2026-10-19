@@ -320,4 +320,18 @@ describe('repo child cards', () => {
     ).toEqual([['Write tests'], ['PR ops 2', 'Write tests']]);
     db.close();
   });
+
+  test('a retry that gives a repo-less todo a repo files it, not absorbs it', async () => {
+    const { db, store, open } = setup();
+    const notes = { ...draft, title: 'Notes' };
+    const first = (await open({ title: 'N', request: 'N', todos: [notes] })) as {
+      ask: { id: string };
+    };
+    await open({ title: 'N', request: 'N', todos: [notes, { ...pr('ops', 7), title: 'Notes' }] });
+    expect(store.listTodos(first.ask.id).map((todo) => [todo.title, todo.repo])).toEqual([
+      ['Notes', null],
+      ['Notes', 'github.com/lsm/ops'],
+    ]);
+    db.close();
+  });
 });

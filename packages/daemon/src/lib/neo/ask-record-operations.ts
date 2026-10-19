@@ -125,8 +125,10 @@ export function createNeoAskRecordOperations(
             1;
         const recordedRow = (todo: (typeof input.todos)[number]) => {
           const repo = neoTodoRepo(todo, packs(), ask);
+          const own = neoTodoRepo(todo, packs(), { repo: null });
           return recorded.find(
-            (item) => item.title === todo.title && (item.repo === repo || item.repo === null)
+            (item) =>
+              item.title === todo.title && (item.repo === repo || (item.repo === null && !own))
           );
         };
         const homeless =
@@ -138,7 +140,7 @@ export function createNeoAskRecordOperations(
         if (homeless)
           return {
             ok: false,
-            reason: `ask_settled: ${ask.title} is settled and "${homeless.title}" has no open card in it; nothing was added. Open a new ask for it.`,
+            reason: `ask_settled: ${ask.title} is settled and "${homeless.title}" has no open card in it; nothing was added. Open a new ask for it with a different title, since this title in this turn reaches the settled request.`,
           };
         for (const todo of input.todos) {
           const row = recordedRow(todo);
