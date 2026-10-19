@@ -1,5 +1,5 @@
 const PR_URL = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/g;
-const PR_CREATE = /\bgh\s+pr\s+create\b/;
+const PR_CREATE = /(?:^|\\n|[^\w-])gh\s+pr\s+create\b/;
 const PR_ARTIFACT =
   /attach_artifact[^)]*?pull_request[^)]*?(https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+)/g;
 export const WORK_OPENED_PRS_MAX = 10;

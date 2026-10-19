@@ -26,8 +26,7 @@ export function planNeoSessionPrReads(
   const read = new Set(reading.map((session) => session.key));
   const rank = (session: NeoListedSession) => (needsHuman(session.status) ? 0 : 1);
   const due = (key: string) =>
-    !known.has(key) ||
-    (!known.get(key)?.length && now - (checkedAt.get(key) ?? 0) >= NEO_SESSION_PR_RECHECK_MS);
+    !known.has(key) || now - (checkedAt.get(key) ?? 0) >= NEO_SESSION_PR_RECHECK_MS;
   return listed
     .filter((session) => due(session.key) && !read.has(session.key))
     .sort((a, b) => rank(a) - rank(b) || b.lastActivityAt - a.lastActivityAt)

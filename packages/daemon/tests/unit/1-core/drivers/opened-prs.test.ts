@@ -29,6 +29,25 @@ describe('claudeOpenedPrs', () => {
     ).toEqual([pr(2), pr(4)]);
   });
 
+  test('finds gh pr create on its own line after a heredoc body, and after ; && or |', () => {
+    const heredoc =
+      "S=/tmp/x; cat > $S/body.md <<'EOF'\nDrafts trace the models.\nEOF\ngh pr create --base main --title 'drafts: trace' --body-file $S/body.md";
+    expect(
+      claudeOpenedPrs([
+        use('a', heredoc),
+        result('a', `${pr(1299)}\n`),
+        use('b', 'git push -q; gh pr create --fill'),
+        result('b', pr(10)),
+        use('c', 'git push && gh  pr create --fill'),
+        result('c', pr(11)),
+        use('d', 'echo body | gh pr create --body-file -'),
+        result('d', pr(12)),
+        use('e', 'not-gh pr create --fill'),
+        result('e', pr(13)),
+      ])
+    ).toEqual([pr(1299), pr(10), pr(11), pr(12)]);
+  });
+
   test('a transcript that never created a PR has none', () => {
     expect(claudeOpenedPrs([use('a', 'gh pr view 3'), result('a', pr(3))])).toEqual([]);
   });
