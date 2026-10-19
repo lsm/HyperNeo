@@ -165,7 +165,7 @@ describe('Neo isolated holder turns', () => {
     expect(finished).toBe(true);
   });
 
-  test('a root turn takes steered human messages mid-turn, leaves notes queued, and requeues only one no request carried', async () => {
+  test('a root turn takes steered human messages mid-turn, leaves notes queued, and requeues any no successful result carried', async () => {
     service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', projectId: null });
     const consumed: string[] = [];
     const requeued: string[] = [];
@@ -195,15 +195,20 @@ describe('Neo isolated holder turns', () => {
     void rootQueue.admitWithId('human-b', 'Second', false, { durable: true }).catch(() => {});
     expect(rootQueue.steer('human-b')).toBe(true);
     expect((await input.next()).value?.uuid).toBe('human-b');
-    rootRunner.noteRequestedInputs({
-      type: 'system',
-      subtype: 'status',
-      user_message_uuids: [note, 'human-a', 'human-b'],
-    } as never);
     void rootQueue
       .admitWithId('human-c', 'Third', false, { durable: true, steer: true })
       .catch(() => {});
     expect((await input.next()).value?.uuid).toBe('human-c');
+    rootRunner.noteSettledInputs({
+      type: 'result',
+      subtype: 'error_during_execution',
+      user_message_uuids: [note, 'human-a', 'human-b', 'human-c'],
+    } as never);
+    rootRunner.noteSettledInputs({
+      type: 'result',
+      subtype: 'success',
+      user_message_uuids: [note, 'human-a', 'human-b'],
+    } as never);
     const end = input.next();
     active.dispose();
     expect((await end).done).toBe(true);
