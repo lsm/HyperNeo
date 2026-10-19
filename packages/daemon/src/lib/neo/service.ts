@@ -213,7 +213,6 @@ export class NeoService {
   readonly workChecks: NeoWorkCheckRepository;
   readonly askChecks: NeoAskCheckRepository;
   private readonly askEvidenceReads = new Map<string, number>();
-  private settledReports = new Map<string, number>();
   get sessionNotices(): NeoSessionNotice[] {
     return this.sessionWatcher.sessionNotices;
   }
@@ -292,7 +291,6 @@ export class NeoService {
       read: (ask) => readNeoAskTriggerView(this, ask),
       work: (id) => this.repo.getWork(id),
       deliveryRetryPending: () => false,
-      reportSettled: (id, updatedAt) => this.settledReports.get(id) === updatedAt,
       recorded: (askId, id) => this.triggers.recorded(askId, id),
       record: (askId, keys, triggerId) => this.triggers.record(askId, keys, triggerId, Date.now()),
       wake: (ask, trigger) => this.deliverAskTrigger(ask, trigger),
@@ -587,13 +585,7 @@ export class NeoService {
         if (!read) continue;
         const plan = planNeoAskTrigger(
           ask,
-          neoAskTriggerKeys(
-            ask,
-            read,
-            this.triggerDeps.work,
-            this.triggerDeps.deliveryRetryPending,
-            this.triggerDeps.reportSettled
-          )
+          neoAskTriggerKeys(ask, read, this.triggerDeps.work, this.triggerDeps.deliveryRetryPending)
         );
         if ('value' in plan) this.triggerDeps.record(ask.id, plan.value.keys, plan.value.triggerId);
       }
