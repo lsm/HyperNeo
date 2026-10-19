@@ -1686,6 +1686,15 @@ export function createNeoOperations(service: NeoService) {
       execute: open,
     }),
     defineOperation({
+      name: 'neo.restart',
+      description:
+        'Give root Neo a fresh context in the same session and conversation. Its first input is a visible note with the open asks, their todos and the unanswered questions.',
+      inputSchema: z.object({}).strict(),
+      resultSchema: z.object({ ok: z.literal(true), sessionId: z.string() }),
+      policy: { safetyClass: 'human_only' },
+      execute: () => service.restart(),
+    }),
+    defineOperation({
       name: 'neo.receipt.read',
       description:
         'Read a receipt in full by workId or consultationId. Root Neo can read consultations it started; the human can read any receipt.',

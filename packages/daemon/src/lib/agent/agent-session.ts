@@ -1283,7 +1283,15 @@ export class AgentSession
     }
   }
 
-  private async runClearConversationFlow(): Promise<void> {
+  async startFreshContext(): Promise<void> {
+    await this.resetQuery({ restartQuery: false });
+    this.retirePastSdkContext();
+    this.session.sdkSessionId = undefined;
+    this.session.sdkOriginPath = undefined;
+    this.db.updateSession(this.session.id, { sdkSessionId: undefined, sdkOriginPath: undefined });
+  }
+
+  private retirePastSdkContext(): void {
     const pastSdkSessionIds = this.nextPastSdkSessionIds();
     const lastSdkCost = this.session.metadata?.lastSdkCost || 0;
     if (lastSdkCost > 0 || pastSdkSessionIds) {
@@ -1296,6 +1304,10 @@ export class AgentSession
       };
       this.db.updateSession(this.session.id, { metadata: this.session.metadata });
     }
+  }
+
+  private async runClearConversationFlow(): Promise<void> {
+    this.retirePastSdkContext();
 
     await this.lifecycleManager.ensureQueryStarted();
     this.messageHandler.suppressIdleForNextTurnEnd();
