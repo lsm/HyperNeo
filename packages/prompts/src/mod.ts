@@ -59,7 +59,6 @@ import mdneoConsultationSettledReported from './neo/consultation/settled-reporte
 import mdneoConsultationSettledStopped from './neo/consultation/settled-stopped.md' with {
   type: 'text',
 };
-import mdneoAskForwarded from './neo/ask-forwarded.md' with { type: 'text' };
 import mdneoWaitingReminder from './neo/waiting-reminder.md' with { type: 'text' };
 import mdneoSessionTrack from './neo/session-track.md' with { type: 'text' };
 import mdneoAskEvidence from './neo/ask-evidence.md' with { type: 'text' };
@@ -346,7 +345,6 @@ const registry: Record<string, string> = {
   'neo/consultation/settled-reported.md': mdneoConsultationSettledReported,
   'neo/consultation/settled-stopped.md': mdneoConsultationSettledStopped,
   'neo/consultation/settled.md': mdneoConsultationSettled,
-  'neo/ask-forwarded.md': mdneoAskForwarded,
   'neo/waiting-reminder.md': mdneoWaitingReminder,
   'neo/session-track.md': mdneoSessionTrack,
   'neo/ask-evidence.md': mdneoAskEvidence,
@@ -529,7 +527,6 @@ export const {
   NEO_PACK_CODING_INSTRUCTIONS,
   NEO_PACK_CODING_WORKER_RULES,
   NEO_PACK_LIFE_ADMIN_INSTRUCTIONS,
-  NEO_ASK_FORWARDED,
   NEO_WAITING_REMINDER,
   NEO_SESSION_TRACK,
   NEO_ASK_EVIDENCE,

@@ -62,7 +62,6 @@ import {
 import { CONSULTATION_STOPPED } from './consultation-policy.ts';
 import { isNeoProjectEventTurn } from './card-events.ts';
 import { createNeoIntakeOperation } from './intake.ts';
-import { createNeoAskForwardOperation, neoForwardHop } from './ask-forward-operation.ts';
 import { createNeoReorganizeOperation, type NeoReorganizeRuntime } from './reorganize-operation.ts';
 import {
   mergeNeoDuplicateProjects,
@@ -77,8 +76,7 @@ import {
 } from './project-merge.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
 import { neoSessionStatus } from './session-status.ts';
-import { NEO_INBOX_ID, neoNewProject, openNeoNewProject } from './inbox.ts';
-import { createNeoInboxPromoteOperation } from './inbox-promote-operation.ts';
+import { NEO_INBOX_ID } from './inbox.ts';
 import { createNeoPublicationChangeOperations } from './publication-change-operation.ts';
 import { createNeoPublicationOperation } from './publication-operation.ts';
 import { createNeoConversationReadOperation } from './conversation-read-operation.ts';
@@ -141,7 +139,6 @@ import { busyNeoAskSessions, unmutedNeoAskSessions } from './session-ask-links.t
 
 type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
 
-const NEO_SNAPSHOT_FORWARDS = 100;
 const Project = z.object({
   id: z.string(),
   title: z.string(),
@@ -245,18 +242,6 @@ const SnapshotOk = z.object({
         kind: z.literal('project'),
       } satisfies ZodShape<NonNullable<NeoSnapshot['publicAuthorBindings']>[number]>)
     )
-    .optional(),
-  askForwards: z
-    .array(
-      z.object({
-        askSessionId: z.string(),
-        askMessageId: z.string(),
-        hop: z.number().int(),
-        fromSessionId: z.string(),
-        toSessionId: z.string(),
-      } satisfies ZodShape<NonNullable<NeoSnapshot['askForwards']>[number]>)
-    )
-    .max(NEO_SNAPSHOT_FORWARDS)
     .optional(),
   work: z.array(
     Work.extend({
@@ -669,11 +654,10 @@ function isNeoHumanTurn(service: NeoService, caller: OperationCaller): boolean {
   return (
     service.db.getSession(caller.sessionId)?.status === 'active' &&
     service.ownsHumanMessage(caller) &&
-    (neoForwardHop(turn.messageId) !== null ||
-      hasNeoHumanWorkInput(
-        caller,
-        service.db.getSDKMessageRepo().getStoredPromptsByUuid(caller.sessionId, neoTurnOrigin(turn))
-      ))
+    hasNeoHumanWorkInput(
+      caller,
+      service.db.getSDKMessageRepo().getStoredPromptsByUuid(caller.sessionId, neoTurnOrigin(turn))
+    )
   );
 }
 
@@ -1006,16 +990,6 @@ export function createNeoOperations(service: NeoService) {
         : {}),
       publicAuthorBindings:
         caller.source === 'rpc' ? service.repo.listProjectBindings(scope ?? undefined) : [],
-      askForwards:
-        caller.source === 'rpc'
-          ? service.askForwards.listRecent(NEO_SNAPSHOT_FORWARDS).map((forward) => ({
-              askSessionId: forward.ask.sessionId,
-              askMessageId: forward.ask.messageId,
-              hop: forward.hop,
-              fromSessionId: forward.fromSessionId,
-              toSessionId: forward.toSessionId,
-            }))
-          : [],
       projectFacts:
         binding?.kind === 'neo' && caller.sessionId && caller.neoTurn
           ? readNeoProjectFacts(
@@ -1567,42 +1541,6 @@ export function createNeoOperations(service: NeoService) {
         service.notifyChanged();
         service.notifyPublicationsChanged(conversationId);
       },
-    }),
-    createNeoInboxPromoteOperation({
-      ...neoReorganizeRuntime(service),
-      createProject: (title) =>
-        openNeoNewProject(
-          service.repo,
-          () => service.open(),
-          neoNewProject(title, crypto.randomUUID())
-        ),
-    }),
-    createNeoAskForwardOperation({
-      getBinding: (sessionId) => service.repo.getBindingBySession(sessionId),
-      resolveAskOrigin: (input) => service.resolveAskOrigin(input),
-      forwards: (ask) => service.askForwards.list(ask),
-      getProject: (id) => {
-        const resolved = service.repo.resolveProjectRef(id);
-        return resolved ? service.repo.getProject(resolved) : null;
-      },
-      listProjects: () => service.repo.listProjects(),
-      openDefault: () => service.open(),
-      askContent: (ask) => {
-        const conversation = service.repo.conversationId();
-        const stored = conversation ? service.asks.find(conversation, ask.messageId) : null;
-        return stored?.askOrigin.sessionId === ask.sessionId &&
-          stored.askOrigin.messageId === ask.messageId
-          ? stored.content
-          : null;
-      },
-      open: () => service.open(),
-      record: (ask, forward) => service.askForwards.record(ask, forward),
-      moveAsks: (from, to) => service.todos.moveAsks(from, to),
-      unrecord: (ask, hop) => service.askForwards.remove(ask, hop),
-      delivered: (sessionId, messageId) => service.hasDelivery(sessionId, messageId),
-      delivering: (sessionId, messageId) => service.isDelivering(sessionId, messageId),
-      deliver: (sessionId, messageId, content, from, ask) =>
-        service.deliverForward(sessionId, messageId, content, from, ask, 'continues'),
     }),
     createNeoPublicationReadOperation(service.repo, service.publications),
     createNeoConversationReadOperation(

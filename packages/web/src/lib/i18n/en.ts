@@ -88,7 +88,6 @@ export const en = {
   'chat.muteNamed': 'Mute {name}',
   'chat.unmuteNamed': 'Unmute {name}',
   'chat.more': '{count} more',
-  'chat.forwarded': '{name} (forwarded from {from})',
   'chat.editedHistory': 'Edited: show revision history',
   'chat.edited': 'Edited',
   'chat.accepted': 'Message accepted',

@@ -239,7 +239,6 @@
 97	packages/daemon/tests/unit/1-core/operations/metadata-standalone.test.ts
 328	packages/daemon/tests/unit/1-core/operations/neo-agent-work-target.test.ts
 630	packages/daemon/tests/unit/1-core/operations/neo-ask-evidence.test.ts
-872	packages/daemon/tests/unit/1-core/operations/neo-ask-forward.test.ts
 606	packages/daemon/tests/unit/1-core/operations/neo-ask-idle.test.ts
 282	packages/daemon/tests/unit/1-core/operations/neo-ask-origin.test.ts
 6	packages/daemon/tests/unit/1-core/operations/neo-ask-stall.test.ts
