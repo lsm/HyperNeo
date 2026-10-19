@@ -17,7 +17,8 @@ describe('workStartPreparation', () => {
       {
         run: async (command, directory) => {
           calls.push({ command, directory });
-          return { code: 0, stdout: command[1] === 'rev-parse' ? commit : '', stderr: '' };
+          const listed = command[1] === 'ls-tree' ? '.claude/skills/verify/SKILL.md\n' : '';
+          return { code: 0, stdout: command[1] === 'rev-parse' ? commit : listed, stderr: '' };
         },
       }
     );
@@ -31,6 +32,19 @@ describe('workStartPreparation', () => {
       },
       {
         command: ['git', 'rev-parse', '--verify', 'refs/remotes/origin/dev^{commit}'],
+        directory: '/repo',
+      },
+      {
+        command: [
+          'git',
+          'ls-tree',
+          '-r',
+          '--name-only',
+          commit,
+          '--',
+          '.claude/skills',
+          'AGENTS.md',
+        ],
         directory: '/repo',
       },
       {

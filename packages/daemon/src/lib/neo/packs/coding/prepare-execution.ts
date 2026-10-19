@@ -51,6 +51,26 @@ function planPreparation(request: Request): Gate<Plan> {
   };
 }
 
+const VERIFY_SKILL = /^\.claude\/skills\/verify[^/]*\/SKILL\.md$/m;
+const VERIFY_SECTION = /^#{1,6}\s*Verify\b/im;
+
+export function requireVerifySkill(
+  mode: unknown,
+  listed: CommandResult,
+  agents: CommandResult | null
+): Gate<true> {
+  if (mode === 'create' || mode === 'skip') return { value: true };
+  if (listed.code !== 0) return refuse(`verify_skill_unreadable: ${listed.stderr.trim()}`);
+  if (
+    VERIFY_SKILL.test(listed.stdout) ||
+    (agents?.code === 0 && VERIFY_SECTION.test(agents.stdout))
+  )
+    return { value: true };
+  return refuse(
+    'verify_skill_missing: this repository has no verify skill (.claude/skills/verify/SKILL.md or a Verify section in AGENTS.md). Add a todo before this one whose worker writes it and runs it end to end once, start that todo with target.preparationParameters.verifySkill "create", and ask the human to approve it before its pull request merges; then retry this todo. Use verifySkill "skip" only when the human waives it.'
+  );
+}
+
 function requireCommand(result: CommandResult, phase: string): Gate<CommandResult> {
   return result.code === 0 ? { value: result } : refuse(`${phase}: ${result.stderr.trim()}`);
 }
@@ -134,6 +154,29 @@ export const prepareCodingExecution = (superpipe({})('neo-coding-prepare-executi
       return { value: commit };
     },
     ['plan', 'commit', 'effects'],
+    'result:prepared'
+  )
+  .pipe(
+    async (plan: Plan, commit: string, effects: Effects) =>
+      effects.run(
+        ['git', 'ls-tree', '-r', '--name-only', commit, '--', '.claude/skills', 'AGENTS.md'],
+        plan.directory
+      ),
+    ['plan', 'commit', 'effects'],
+    'listed'
+  )
+  .pipe(
+    async (plan: Plan, commit: string, listed: CommandResult, effects: Effects) =>
+      /^AGENTS\.md$/m.test(listed.stdout)
+        ? effects.run(['git', 'show', `${commit}:AGENTS.md`], plan.directory)
+        : null,
+    ['plan', 'commit', 'listed', 'effects'],
+    'agents'
+  )
+  .pipe(
+    (request: Request, listed: CommandResult, agents: CommandResult | null) =>
+      requireVerifySkill(request.parameters.verifySkill, listed, agents),
+    ['request', 'listed', 'agents'],
     'result:prepared'
   )
   .pipe(

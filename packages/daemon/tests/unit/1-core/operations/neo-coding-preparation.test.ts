@@ -1,7 +1,7 @@
 import { createCodexDesktopAdapter } from '../../../../src/lib/drivers/codex-desktop-adapter';
 import { workStartPreparation } from '../../../../src/lib/drivers/start-preparation';
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -23,6 +23,8 @@ function fixture() {
   git(remote, 'config', 'user.name', 'Test');
   git(remote, 'config', 'user.email', 'test@example.com');
   writeFileSync(join(remote, 'file'), 'old');
+  mkdirSync(join(remote, '.claude/skills/verify'), { recursive: true });
+  writeFileSync(join(remote, '.claude/skills/verify/SKILL.md'), '# Verify');
   git(remote, 'add', '.');
   git(remote, 'commit', '-m', 'initial');
   git(root, 'clone', remote, directory);
@@ -125,6 +127,32 @@ describe('prepareCodingExecution', () => {
     expect(f.calls.find((call) => call[1] === 'worktree')?.at(-1)).toBe(f.latest);
     await result.value.release();
     expect(existsSync(f.destination)).toBe(false);
+  });
+
+  test('a base without a verify skill refuses the start, unless the todo creates or waives one', async () => {
+    const f = fixture();
+    git(f.remote, 'rm', '-r', '-q', '.claude');
+    git(f.remote, 'commit', '-m', 'drop the verify skill');
+    const refused = await prepareCodingExecution(f.request, f.effects);
+    expect(refused).toMatchObject({
+      ok: false,
+      reason: expect.stringMatching(/^verify_skill_missing: .*verifySkill "create"/),
+    });
+    expect(existsSync(f.destination)).toBe(false);
+    for (const verifySkill of ['create', 'skip']) {
+      const prepared = await prepareCodingExecution(
+        { ...f.request, parameters: { ...f.request.parameters, verifySkill } },
+        f.effects
+      );
+      expect(prepared.ok).toBe(true);
+      if (prepared.ok) await prepared.value.release();
+    }
+    writeFileSync(join(f.remote, 'AGENTS.md'), '# Repo\n\n## Verify\n\nRun `make dev`.\n');
+    git(f.remote, 'add', 'AGENTS.md');
+    git(f.remote, 'commit', '-m', 'verify section');
+    const sectioned = await prepareCodingExecution(f.request, f.effects);
+    expect(sectioned.ok).toBe(true);
+    if (sectioned.ok) await sectioned.value.release();
   });
 
   test('an omitted target uses the advertised remote default, never local HEAD', async () => {
