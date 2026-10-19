@@ -171,13 +171,22 @@ export class CodingPrLedgerRepository {
     for (const link of links)
       for (const url of link.urls) {
         const key = codingPrKey(url);
-        if (key) insert.run(key, JSON.stringify(link.ref), now);
+        if (key?.startsWith('https://github.com/')) insert.run(key, JSON.stringify(link.ref), now);
       }
     this.db.exec(`UPDATE pack_coding_pr_ledger SET owner = (
         SELECT s.ref FROM pack_coding_session_prs s
          WHERE s.url = 'https://github.com/' || pack_coding_pr_ledger.repo || '/pull/'
                  || pack_coding_pr_ledger.number)
       WHERE owner IS NULL`);
+  }
+
+  pruneSessionPrs(now: number): void {
+    this.db
+      .prepare(
+        `DELETE FROM pack_coding_session_prs WHERE seen_at < ? AND url NOT IN
+           (SELECT 'https://github.com/' || repo || '/pull/' || number FROM pack_coding_pr_ledger)`
+      )
+      .run(now - CODING_LEDGER_KEEP_MS);
   }
 
   dropRepo(repo: string): void {
@@ -247,4 +256,5 @@ export async function reconcileCodingPrLedger(
   }
   ledger.prune([...repos, ...seen], now);
   ledger.recordSessionPrs([], now);
+  ledger.pruneSessionPrs(now);
 }

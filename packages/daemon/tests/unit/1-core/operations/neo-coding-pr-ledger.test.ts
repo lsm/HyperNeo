@@ -338,3 +338,28 @@ describe('reconcileCodingPrLedger renamed repos', () => {
     db.close();
   });
 });
+
+describe('CodingPrLedgerRepository.pruneSessionPrs', () => {
+  test('forgets old session links whose PR left the ledger and ignores non-github.com hosts', async () => {
+    const { db, ledger } = setup();
+    const ref = { adapter: 'hyperneo', id: 's' };
+    ledger.recordSessionPrs(
+      [
+        {
+          ref,
+          urls: [
+            'https://github.com/lsm/a/pull/1',
+            'https://github.com/lsm/a/pull/2',
+            'https://ghe.example.com/lsm/a/pull/3',
+          ],
+        },
+      ],
+      1
+    );
+    await reconcile(ledger, ['lsm/a'], async () => response([node(1)]), CODING_LEDGER_KEEP_MS + 2);
+    expect(db.prepare('SELECT url FROM pack_coding_session_prs ORDER BY url').all()).toEqual([
+      { url: 'https://github.com/lsm/a/pull/1' },
+    ]);
+    db.close();
+  });
+});
