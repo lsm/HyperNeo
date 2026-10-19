@@ -7,6 +7,7 @@ import type { NeoAskForward } from '../../storage/repositories/neo-ask-forward-r
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { NeoAskOrigin } from './ask-origin.ts';
 import { isNeoCoordinatorBinding } from './binding-roles.ts';
+import { NEO_SINGLE_SESSION } from './consultation-origin.ts';
 import { NEO_INBOX_ID } from './router.ts';
 import type { MailboxMessageContent } from '../mailbox/entry.ts';
 
@@ -25,7 +26,9 @@ const Rejection = z.object({
     'not_your_ask',
     'same_project',
     'unknown_project',
+    'single_session',
   ]),
+  detail: z.string().optional(),
   projects: z
     .array(z.object({ id: z.string(), title: z.string() }))
     .max(50)
@@ -315,7 +318,9 @@ function createForward(runtime: NeoAskForwardRuntime) {
         const sessionId =
           target.to === NEO_INBOX_ID ? await runtime.openDefault() : await runtime.open(target.to);
         if (!sessionId) return refuse('unknown_project');
-        return sessionId === holder.sessionId ? refuse('same_project') : { value: sessionId };
+        return sessionId === holder.sessionId
+          ? { reason: { ok: false, reason: 'single_session', detail: NEO_SINGLE_SESSION } }
+          : { value: sessionId };
       },
       ['target', 'holder'],
       'result:outcome'
@@ -373,7 +378,7 @@ export function createNeoAskForwardOperation(runtime: NeoAskForwardRuntime) {
   return defineOperation({
     name: 'neo.ask.forward',
     description:
-      'Hand the human message you are answering to the project that owns it, when it is clearly not your subject; the receiver then owns the message, answers it and may start its work. to is the project id (with or without the project: prefix) or title, or "inbox" for the default session; an unknown id is refused with the list of projects, so call again with the right one. The original request and attachments follow each transfer. A successful delivery yields your turn; the current owner can forward again when another project owns the request.',
+      'Retired: there is one Neo session now, so this refuses with single_session. Hand the human message you are answering to the project that owns it, when it is clearly not your subject; the receiver then owns the message, answers it and may start its work. to is the project id (with or without the project: prefix) or title, or "inbox" for the default session; an unknown id is refused with the list of projects, so call again with the right one. The original request and attachments follow each transfer. A successful delivery yields your turn; the current owner can forward again when another project owns the request.',
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'mutate', roles: ['neo'] },

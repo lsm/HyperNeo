@@ -94,6 +94,41 @@ export function asrText(raw: string): { text: string; isFinal: boolean } | null 
   }
 }
 
+export function mergeAsrWindow(previous: string, next: string): string {
+  const old = previous.split(/\s+/).filter(Boolean);
+  const fresh = next.split(/\s+/).filter(Boolean);
+  if (!old.length || !fresh.length) return (fresh.length ? fresh : old).join(' ');
+  const key = (word: string) => word.toLowerCase().replace(/[^\p{L}\p{N}']/gu, '');
+  const oldKeys = old.map(key);
+  const freshKeys = fresh.map(key);
+  for (let skip = 0; skip < fresh.length; skip++) {
+    if (!freshKeys[skip]) continue;
+    let best: { at: number; run: number } | null = null;
+    for (let at = 0; at < oldKeys.length; at++) {
+      let run = 0;
+      while (
+        at + run < oldKeys.length &&
+        skip + run < freshKeys.length &&
+        oldKeys[at + run] === freshKeys[skip + run]
+      )
+        run++;
+      const toEnd = at + run === oldKeys.length;
+      const wholeWindow = skip === 0 && run === freshKeys.length;
+      const revised = at === 0 && skip === 0 && run >= 1 && freshKeys.length >= oldKeys.length;
+      const fits = run >= 3 || revised || (toEnd && (run >= 2 || wholeWindow));
+      if (fits && (!best || run >= best.run)) best = { at, run };
+    }
+    if (best) {
+      const head = fresh[skip];
+      const titleCase = /^\p{Lu}[^\p{Lu}]*$/u.test(head);
+      const kept =
+        best.at > 0 && titleCase && /^\p{Ll}/u.test(old[best.at]) ? head.toLowerCase() : head;
+      return [...old.slice(0, best.at), kept, ...fresh.slice(skip + 1)].join(' ');
+    }
+  }
+  return [...old, ...fresh].join(' ');
+}
+
 async function openAsrSocket(
   voice: VoiceSettings,
   url: URL,
@@ -230,7 +265,7 @@ export class VoiceStream {
       if (parsed.isFinal) {
         if (parsed.text.trim()) this.finals.push(parsed.text.trim());
         this.partial = '';
-      } else this.partial = parsed.text.trim();
+      } else this.partial = mergeAsrWindow(this.partial, parsed.text.trim());
       this.deps.push({ streamId: this.id, text: this.text(), isFinal: false });
     });
     socket.on('close', () => {

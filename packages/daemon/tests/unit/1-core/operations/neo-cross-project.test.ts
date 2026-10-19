@@ -12,14 +12,13 @@ import {
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { requireNeoCrossProjectParts } from '../../../../src/lib/neo/cross-project-operation.ts';
-import { NEO_INBOX_ID } from '../../../../src/lib/neo/router.ts';
+import { NEO_SINGLE_SESSION } from '../../../../src/lib/neo/consultation-origin.ts';
 import {
   createOperationRegistry,
   type OperationCaller,
   type OperationRegistry,
 } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
-import { neoCrossProjectReplyId } from '../../../../src/storage/repositories/neo-cross-project-repository.ts';
 
 let db: Database;
 let service: NeoService;
@@ -78,12 +77,7 @@ beforeEach(async () => {
   service = new NeoService(db, manager, hub, events);
   for (const id of ['alpha', 'beta'])
     service.repo.saveProject({ id, title: id, summary: '', context: '' }, 0);
-  root = await service.open(null);
-  const open = service.open.bind(service);
-  service.open = async (projectId) => {
-    if (projectId === NEO_INBOX_ID) throw new Error('main Neo keeps the cross-project ask here');
-    return open(projectId);
-  };
+  root = await service.open();
   registry = createOperationRegistry(createNeoOperations(service));
   workA = crypto.randomUUID();
   workB = crypto.randomUUID();
@@ -114,141 +108,13 @@ afterEach(() => {
 });
 
 describe('Cross-project runtime', () => {
-  test('quotes each part privately and delivers exactly one aggregate after service restart', async () => {
-    const result = await invoke('neo.projects.dispatch', { parts: parts() });
-    expect(result).toMatchObject({ kind: 'completed', value: { ok: true } });
-    const group = service.crossProjects.forAsk({ sessionId: root, messageId })!;
-    expect(group).not.toBeNull();
-    const members = service.crossProjects.members(group);
-    const [first, second] = members;
-    const request = service.consultations.get(first.id)!;
-    expect(request.originMessageId).toBe(messageId);
-    expect(request.question).toContain(
-      parts().find((part) => part.projectId === first.projectId)!.quote
-    );
-    expect(request.question).not.toContain('humanMessageId');
-    const draft = {
-      publicationId: crypto.randomUUID(),
-      shortText: 'Here are both findings.',
-      fullText: 'Both findings are available.',
-      links: [],
-    };
-    expect(await invoke('neo.publication.publish', draft)).toMatchObject({
+  test('refuses with single_session and starts no group or consultation', async () => {
+    expect(await invoke('neo.projects.dispatch', { parts: parts() })).toMatchObject({
       kind: 'completed',
-      value: { accepted: true, created: true },
+      value: { ok: false, reason: NEO_SINGLE_SESSION },
     });
-    savePrompt(request.sessionId, `neo-consult:${first.id}:request`);
-    const holder: OperationCaller = {
-      source: 'mcp',
-      role: 'neo',
-      sessionId: request.sessionId,
-      neoTurn: {
-        messageId: `neo-consult:${first.id}:request`,
-        consultationId: first.id,
-        human: false,
-        isLive: () => true,
-      },
-    };
-    expect(await invoke('neo.publication.publish', draft, holder)).toMatchObject({
-      kind: 'completed',
-      value: { accepted: false, reason: 'consultation_answer' },
-    });
-    expect(
-      await invoke('neo.project.respond', { id: first.id, answer: 'Alpha finding' }, holder)
-    ).toMatchObject({ kind: 'completed', value: { ok: true } });
-    const replyId = neoCrossProjectReplyId(group);
-    const queued = () =>
-      db.getJobQueueRepo().listActiveByPayload('mailbox', { messageUuid: replyId });
-    expect(queued()).toHaveLength(0);
-    service.dispose();
-    service = new NeoService(db, manager, hub, events);
-    registry = createOperationRegistry(createNeoOperations(service));
-    await service.recoverConsultations();
-    expect(queued()).toHaveLength(0);
-    const next = service.consultations.get(second.id)!;
-    savePrompt(next.sessionId, `neo-consult:${second.id}:request`);
-    expect(
-      await invoke(
-        'neo.project.respond',
-        { id: second.id, answer: 'Beta finding' },
-        {
-          source: 'mcp',
-          role: 'neo',
-          sessionId: next.sessionId,
-          neoTurn: {
-            messageId: `neo-consult:${second.id}:request`,
-            consultationId: second.id,
-            human: false,
-            isLive: () => true,
-          },
-        }
-      )
-    ).toMatchObject({ kind: 'completed', value: { ok: true } });
-    await service.recoverConsultations();
-    await service.recoverConsultations();
-    expect(queued()).toHaveLength(1);
-    savePrompt(root, replyId);
-    expect(await invoke('neo.publication.publish', draft, rootCaller(replyId))).toMatchObject({
-      kind: 'completed',
-      value: { accepted: true },
-    });
-    expect(service.crossProjects.forAsk({ sessionId: root, messageId })?.publicationId).toBe(
-      service.publications.list(root.slice(4))?.at(-1)?.publicationId
-    );
-    expect(
-      await invoke(
-        'neo.publication.publish',
-        {
-          ...draft,
-          publicationId: crypto.randomUUID(),
-          shortText: 'A second final answer.',
-          fullText: 'A different second final answer.',
-        },
-        rootCaller(replyId)
-      )
-    ).toMatchObject({
-      kind: 'completed',
-      value: { accepted: true, created: true },
-    });
-  });
-  test('reuses the same group on retry and refuses changed or incomplete parts', async () => {
-    const first = await invoke('neo.projects.dispatch', { parts: parts() });
-    expect(await invoke('neo.projects.dispatch', { parts: [...parts()].reverse() })).toEqual(first);
-    expect(service.crossProjects.pending()).toHaveLength(1);
-    expect(await invoke('neo.projects.dispatch', { parts: [parts()[0]] })).toMatchObject({
-      value: { ok: false, reason: expect.stringContaining('parts_must_cover_owners') },
-    });
-    expect(
-      await invoke('neo.projects.dispatch', {
-        parts: [{ ...parts()[0], question: 'Changed' }, parts()[1]],
-      })
-    ).toMatchObject({ value: { ok: false, reason: 'cross_project_conflict' } });
-    expect(
-      await invoke('neo.projects.dispatch', {
-        parts: [{ ...parts()[0], question: `Review ${workB}` }, parts()[1]],
-      })
-    ).toMatchObject({ value: { ok: false, reason: 'part_references_another_owner' } });
-  });
-  test('returns failed parts once every owner is terminal', async () => {
-    await invoke('neo.projects.dispatch', { parts: parts() });
-    const group = service.crossProjects.forAsk({ sessionId: root, messageId })!;
-    const [first, second] = service.crossProjects.members(group);
-    const queued = () =>
-      db.getJobQueueRepo().listActiveByPayload('mailbox', {
-        messageUuid: neoCrossProjectReplyId(group),
-      });
-    service.consultations.finish(first.id, 'failed', 'Owner unavailable');
-    await service.syncConsultation(first.id);
-    expect(queued()).toHaveLength(0);
-    service.consultations.finish(second.id, 'failed', 'Owner timed out');
-    await service.recoverConsultations();
-    await service.recoverConsultations();
-    expect(queued()).toHaveLength(1);
-    expect(service.crossProjects.ready(group)).toBe(true);
-    expect(service.crossProjects.members(group).map((member) => member.answer)).toEqual([
-      'Owner unavailable',
-      'Owner timed out',
-    ]);
+    expect(service.crossProjects.pending()).toEqual([]);
+    expect(service.consultations.unsettled()).toEqual([]);
   });
   test('refuses a stale input before creating a group', async () => {
     live = false;

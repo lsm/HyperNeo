@@ -5,6 +5,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import {
   VoiceStream,
   asrText,
+  mergeAsrWindow,
   pcm16Wav,
   voiceMode,
   voiceStreamTls,
@@ -48,6 +49,57 @@ describe('voice stream settings', () => {
     expect(asrText('{"text":"hi","is_final":false}')).toEqual({ text: 'hi', isFinal: false });
     expect(asrText('{"text":"hi","is_final":true}')).toEqual({ text: 'hi', isFinal: true });
     expect(asrText('nope')).toBeNull();
+  });
+
+  test('mergeAsrWindow keeps the head a sliding window drops (ai0, three sentences, 4 s pauses)', () => {
+    const windows = [
+      'Please check the bill.',
+      'Please check the build status of the voice pull request.',
+      'Please check the build status of the voice pull request. Then merge it if the review bot.',
+      'Please check the build status of the voice pull request. Then merge it if the review bot approved.',
+      'The build status of the voice pull request. Then merge it if the review bot approved.',
+      'Then merge it if the review bot approved. Finally install.',
+      'Then merge it if the review bot approved. Finally, install the app on my phone tonight.',
+      'The review bot approved. Finally, install the app on my phone tonight.',
+    ];
+    expect(windows.reduce(mergeAsrWindow, '')).toBe(
+      'Please check the build status of the voice pull request. Then merge it if the review bot approved. Finally, install the app on my phone tonight.'
+    );
+  });
+
+  test('mergeAsrWindow revises the tail, skips a cut-off first word, and appends a window with nothing in common', () => {
+    expect(mergeAsrWindow('Please check the bill.', 'Please check the build')).toBe(
+      'Please check the build'
+    );
+    expect(mergeAsrWindow('we ship the build today', 'e build today and merge')).toBe(
+      'we ship the build today and merge'
+    );
+    expect(mergeAsrWindow('first part.', 'second part')).toBe('first part. second part');
+    expect(mergeAsrWindow('', 'hello')).toBe('hello');
+    expect(mergeAsrWindow('hello', '')).toBe('hello');
+    expect(mergeAsrWindow('hello', 'hello')).toBe('hello');
+  });
+
+  test('mergeAsrWindow lines up on the longest overlap when a phrase repeats inside the window', () => {
+    expect(
+      mergeAsrWindow(
+        'alpha bravo ok deploy it charlie delta ok deploy it echo',
+        'ok deploy it charlie delta ok deploy it echo'
+      )
+    ).toBe('alpha bravo ok deploy it charlie delta ok deploy it echo');
+  });
+
+  test('mergeAsrWindow lines up past a word the window revised inside the overlap', () => {
+    expect(mergeAsrWindow('a b c d e f g h', 'c d x f g h i')).toBe('a b c d e f g h i');
+  });
+
+  test('mergeAsrWindow lowercases only a title-case window head, never an acronym', () => {
+    expect(mergeAsrWindow('we call the api now', 'The api now works')).toBe(
+      'we call the api now works'
+    );
+    expect(mergeAsrWindow('we call the api now', 'API now works')).toBe(
+      'we call the API now works'
+    );
   });
 
   test('pcm16Wav wraps PCM in a 16 kHz mono WAV header', () => {
@@ -151,6 +203,21 @@ describe('VoiceStream against a stub ASR server', () => {
       vi.useRealTimers();
       release(null);
     }
+  });
+
+  test('a sliding-window gateway keeps every sentence in the stop text', async () => {
+    const windows = ['one two three four', 'three four five six', 'five six seven eight'];
+    onAudio = (socket, bytes) =>
+      socket.send(JSON.stringify({ text: windows[bytes / 2 - 1], is_final: false }));
+    const { stream } = await start();
+    for (let i = 0; i < windows.length; i++) {
+      stream.write(new Uint8Array(2));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(await stream.stop()).toEqual({
+      text: 'one two three four five six seven eight',
+      via: 'streaming',
+    });
   });
 
   test('joins final segments with the trailing partial', async () => {
