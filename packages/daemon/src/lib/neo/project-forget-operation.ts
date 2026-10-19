@@ -65,7 +65,7 @@ export function createNeoProjectForgetOperation(repo: ForgetRepo) {
   return defineOperation({
     name: 'neo.project.forget',
     description:
-      'Delete a project at the human’s request: its workspace aliases, holder binding and row go, so its repositories leave the PR ledger. The holder session itself is kept. The repository and local folders are untouched; new work in one of its folders creates a project again. Root Neo or the local human only (root_or_human_only). Settled asks move to the root. Refuses the Inbox (project_protected) and a project that still has child sections, cards, open asks, merges or worker bindings (project_in_use); an unknown id is project_missing.',
+      'Delete a project at the human’s request: its workspace aliases and row go, so its repositories leave the PR ledger. The repository and local folders are untouched; new work in one of its folders creates a project again. Root Neo or the local human only (root_or_human_only). Settled asks move to the root. Refuses the Inbox (project_protected) and a project that still has child sections, cards, open asks, merges or worker bindings (project_in_use); an unknown id is project_missing.',
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'mutate', roles: ['neo'] },
