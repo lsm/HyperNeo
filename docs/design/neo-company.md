@@ -381,9 +381,30 @@ The same list feeds iOS.
 
 ## 7. Boundaries (fs3)
 
-_After sections 3 and 6._
+- **Scheduler** (`lib/scheduler/`, new top-level subsystem): sessions, cadence, the skip
+  rule and delivery. It knows no domain. Anything that wants wakes registers a
+  `ScheduleSource`.
+- **Goals** (`lib/goals/`, existing subsystem): goal state, the journal and the facts.
+  It is a schedule source and an operations owner. It never writes git and never
+  delivers messages itself.
+- **Neo core** (`lib/neo/`): the home repo (`lib/neo/home/`: `neo.home.init | save |
+  read`), the mandate confirm gate, and the prompt that tells Neo how a goal cycle runs.
+  Neo is the only goal owner for now, but goals take any owner session.
+- **Packs**: the coding pack contributes to a goal's facts through its existing
+  `statusLine` and `prs` hooks. Packs never call the scheduler or the home repo directly.
+- **Adapters**: unchanged. The scheduler reads `work.status` and delivers through the same
+  routing as `sendToRef`.
 
 ## 8. Data model and migrations (fs3 + fs2)
+
+Scheduler and home repo (fs3):
+
+| Change | Migration | Notes |
+| --- | --- | --- |
+| `session_schedules` | new table | Columns as in section 2. Unique (`source_kind`, `source_id`); index on (`status`, `next_run_at`) and on `target`. No foreign keys: targets may be on other adapters. |
+| `neo_concerns.home_path` | `ADD COLUMN` | Nullable. The project's folder under `projects/` in the home repo, set once. |
+| `neo_questions.confirm_json` | `ADD COLUMN` | Nullable `{path, sha256}` that the home-save gate checks. |
+| Input origin kind `scheduled_wake` | none | Stored in the existing input-origin row with `scheduleId` and the source. |
 
 Goals (fs2):
 
@@ -397,7 +418,57 @@ Goals (fs2):
 
 ## 9. Reused vs new
 
+Reused as is:
+- `lib/schedule/cron-utils.ts`, the trigger validation and next-run math in
+  `schedule-trigger.ts`, and the `pending_job_id` CAS pattern.
+- The job queue's one-shot `runAt` with handler self-re-enqueue (ADR 0002).
+- `work.status` for busy checks; `sendToRef` routing for delivery; input origins.
+- `neo.question.ask` for confirmations; Neo's tool guard for write denial.
+- The goal model, `lib/goals`, the `goal.*` operations and `space_goal_events`.
+- The coding pack's ledger and status hooks for facts.
+
+New:
+- `lib/scheduler/` with `session_schedules`, the fire handler, sources and five operations.
+- `lib/neo/home/` with `neo.home.init | save | read` and the confirm gate.
+- Owner-session goals, `goal_journal`, `goal.journal.*` and `goal.facts`.
+- The `wake` conversation item, the goals panel and the schedules strip.
+
 ## 10. Slices in order, with sizes
+
+Scheduler and home repo (fs3), each one PR from dev; sizes are production lines:
+
+- **S1. Scheduler model and operations** (~180): `session_schedules`, the service with
+  CAS pause/resume/delete, startup recovery, the source registry and
+  `schedule.session.*`. No source registers yet; tests use a fake source.
+- **S2. Fire and delivery** (~150): the `sessionSchedule.fire` handler with the skip rule
+  and nudge counter, delivery through the `sendToRef` routing, and the `scheduled_wake`
+  origin.
+- **H1. Home repo** (~200): `neo.home.init | save | read`, the layout and `.gitignore`,
+  `neo_concerns.home_path`, and the guard rule that denies direct writes. Local git only.
+- **H2. Mandate confirm gate** (~100): `neo_questions.confirm_json`, the save gate for
+  `direction.md` and `mandate.md`, the decision-log append and the commit trailer.
+- **H3. Remote and sync** (~120): the GitHub proposal, `gh repo create --private`, the
+  clone on the second machine, and pull-rebase with conflict refusal.
+- **P1. Neo prompt** (prompt only): how a goal cycle runs, reading the mandate, the
+  journal entry, the closing one-line summary, and proposing mandate changes.
+
+Combined order (who, and what each needs):
+
+| Step | fs3 | fs2 |
+| --- | --- | --- |
+| 1 | S1 scheduler model | G1 goals scope migration |
+| 2 | S2 fire and delivery | G2 owner-session goals |
+| 3 | H1 home repo | G3 journal |
+| 4 | H2 confirm gate | G4 goals as a source (needs S1, S2) |
+| 5 | P1 Neo prompt (needs G4, H2) | G5 wake rows (needs S2), G7 schedules strip (needs S1) |
+| 6 | H3 remote and sync | G6 goals panel |
+| 7 | | G8 what works and mandate reconcile (needs H1, G4) |
+
+After step 5 the loop works end to end on one machine: a goal wakes Neo, Neo acts and
+journals, and mandate changes need a yes. Step 6 adds the second machine and the goals
+panel. Then the OAP and review-bot mandates and handoffs get written (not code).
+
+Total: about 750 fs3 lines and 1,170 fs2 lines over 14 PRs.
 
 Goals and UI (fs2), each one PR from dev; sizes are production lines:
 
@@ -420,6 +491,24 @@ Goals and UI (fs2), each one PR from dev; sizes are production lines:
 iOS work for 5 to 7 is Neo iOS's, against the contracts in sections 5 and 6.
 
 ## 11. Risks
+
+Scheduler and home repo (fs3):
+
+- **Cost without a budget.** Each fire is a Neo turn. The busy skip, the unchanged skip
+  and `nudge_every` bound it, and pausing a goal pauses its schedule. A per-schedule cap
+  can come later.
+- **Starvation.** If Neo is always busy in the human's chat, wakes keep skipping. The
+  session page shows `skipped_busy`, and the nudge fires on the first idle due run.
+- **Noisy facts.** A fact line that changes on every read (a timestamp, an unordered
+  list) fires every time. Facts must be sorted and stable; the fire tests cover it.
+- **Guard bypass.** Neo has Bash, so a script could reach git. The guard already blocks
+  `git push` and inline code that pushes, and the new rule denies writes under the home
+  repo. A direct commit would skip the decision log but still show as a diff in git.
+- **Two machines.** Each daemon has its own schedules, so only the machine that owns a
+  goal wakes for it. The home repo is shared; a conflict is refused, not merged.
+- **Private data in git.** Only curated text goes in; transcripts stay in the ignored
+  `.coordinators/`. The save gate refuses content that matches the secret patterns
+  Neo's guard already knows.
 
 Goals and UI (fs2):
 
