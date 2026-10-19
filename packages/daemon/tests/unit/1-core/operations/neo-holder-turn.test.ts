@@ -12,6 +12,7 @@ import { runMigration339 } from '../../../../src/storage/schema/m339-neo-input-o
 import { runMigration340 } from '../../../../src/storage/schema/m340-neo-session-seen.ts';
 import { runMigration377 } from '../../../../src/storage/schema/m377-neo-input-origin-trigger.ts';
 import { NeoHolderTurn } from '../../../../src/lib/neo/holder-turn.ts';
+import { NeoCoordinatorTurn } from '../../../../src/lib/neo/coordinator-turn.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
@@ -183,7 +184,7 @@ describe('Neo isolated holder turns', () => {
     } as unknown as QueryRunnerContext);
     const note = 'neo-project-event:club:event-1';
     void rootQueue.enqueueWithId(note, 'Note', false, { durable: true }).catch(() => {});
-    const active = new NeoHolderTurn(db, 'neo:root', attempts.allocate());
+    const active = new NeoCoordinatorTurn(db, 'neo:root', attempts.allocate());
     turns.push(active);
     const input = rootRunner.createMessageGeneratorWrapper(1, undefined, active);
     expect((await input.next()).value?.uuid).toBe(note);
@@ -199,12 +200,12 @@ describe('Neo isolated holder turns', () => {
       .admitWithId('human-c', 'Third', false, { durable: true, steer: true })
       .catch(() => {});
     expect((await input.next()).value?.uuid).toBe('human-c');
-    rootRunner.noteRequestedInputs({
+    active.noteCarried({
       type: 'system',
       subtype: 'status',
       user_message_uuids: [note, 'human-a'],
     } as never);
-    rootRunner.noteRequestedInputs({
+    active.noteCarried({
       type: 'result',
       subtype: 'error_during_execution',
       user_message_uuids: [note, 'human-a', 'human-b'],
@@ -217,6 +218,38 @@ describe('Neo isolated holder turns', () => {
     expect(rootQueue.hasPendingOrClaimed('later-note')).toBe(true);
     rootQueue.clear();
     rootQueue.stop();
+  });
+
+  test('a root turn that ended or was superseded gets no further state-changing operation', async () => {
+    service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', projectId: null });
+    const saveAs = (active: NeoCoordinatorTurn, context: string, expectedRevision = 2) =>
+      createOperationMcpHandler(createOperationRegistry(createNeoOperations(service)), () => ({
+        sessionId: 'neo:root',
+        role: 'neo',
+        neoTurn: active.identity(),
+      }))({
+        name: 'neo.project.save',
+        input: { ...concern, context, expectedRevision },
+      });
+    const live = new NeoCoordinatorTurn(db, 'neo:root', attempts.allocate());
+    turns.push(live);
+    expect(live.bind('human-input')).toBe(true);
+    expect(live.identity()?.human).toBe(true);
+    expect((await saveAs(live, 'Root edit', 1)).content).toEqual([
+      expect.objectContaining({ text: expect.stringContaining('"ok":true') }),
+    ]);
+    live.dispose();
+    expect((await saveAs(live, 'After the turn')).content).toEqual([
+      expect.objectContaining({ text: expect.stringMatching(/"ok":false|"code":"forbidden"/) }),
+    ]);
+    const superseded = new NeoCoordinatorTurn(db, 'neo:root', { isLive: () => false });
+    turns.push(superseded);
+    superseded.bind('human-input');
+    expect((await saveAs(superseded, 'Stale attempt')).content).toEqual([
+      expect.objectContaining({ text: expect.stringMatching(/"ok":false|"code":"forbidden"/) }),
+    ]);
+    expect(service.repo.getProject('club')?.context).toBe('Root edit');
+    expect(() => live.bind('human-input')).toThrow('already bound');
   });
 
   test('a bound input is recorded consumed the moment its turn takes it', async () => {
@@ -288,7 +321,9 @@ describe('Neo isolated holder turns', () => {
           neoTurn: { human: true },
         })
       ).content
-    ).toEqual([expect.objectContaining({ text: expect.stringContaining('"ok":false') })]);
+    ).toEqual([
+      expect.objectContaining({ text: expect.stringMatching(/"ok":false|"code":"forbidden"/) }),
+    ]);
     expect(service.repo.getProject('club')?.context).toBe('Eight people');
     const next = turn();
     next.bind('neo-consult:b:request');
@@ -300,26 +335,26 @@ describe('Neo isolated holder turns', () => {
   test('missing, unbound, closed and superseded identities cannot write; human turns still can', async () => {
     const old = turn();
     expect((await save(old)).content).toEqual([
-      expect.objectContaining({ text: expect.stringContaining('"ok":false') }),
+      expect.objectContaining({ text: expect.stringMatching(/"ok":false|"code":"forbidden"/) }),
     ]);
     old.bind('neo-consult:a:request');
     const human = turn();
     human.bind('human-input');
     expect((await save(old)).content).toEqual([
-      expect.objectContaining({ text: expect.stringContaining('"ok":false') }),
+      expect.objectContaining({ text: expect.stringMatching(/"ok":false|"code":"forbidden"/) }),
     ]);
     expect((await save(human, { context: 'Direct correction' })).content).toEqual([
       expect.objectContaining({ text: expect.stringContaining('"ok":true') }),
     ]);
     human.dispose();
     expect((await save(human, { expectedRevision: 2 })).content).toEqual([
-      expect.objectContaining({ text: expect.stringContaining('"ok":false') }),
+      expect.objectContaining({ text: expect.stringMatching(/"ok":false|"code":"forbidden"/) }),
     ]);
     expect(service.repo.getProject('club')?.context).toBe('Direct correction');
     const unknown = turn();
     unknown.bind('untrusted-input');
     expect((await save(unknown, { expectedRevision: 2 })).content).toEqual([
-      expect.objectContaining({ text: expect.stringContaining('"ok":false') }),
+      expect.objectContaining({ text: expect.stringMatching(/"ok":false|"code":"forbidden"/) }),
     ]);
     expect(() => unknown.bind('human-input')).toThrow('already bound');
   });
@@ -333,7 +368,7 @@ describe('Neo isolated holder turns', () => {
     expect(service.repo.getProject('club')?.context).toBe('PR #93 merged');
     note.dispose();
     expect((await save(note, { expectedRevision: 2 })).content).toEqual([
-      expect.objectContaining({ text: expect.stringContaining('"ok":false') }),
+      expect.objectContaining({ text: expect.stringMatching(/"ok":false|"code":"forbidden"/) }),
     ]);
     service.inputOrigins.record(
       { sessionId: 'neo:holder', messageId: 'neo-turn-limit:r1' },

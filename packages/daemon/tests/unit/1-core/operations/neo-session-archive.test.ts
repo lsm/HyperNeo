@@ -131,7 +131,11 @@ describe('neo.session.archive', () => {
       caller = { ...caller, neoTurn: { ...caller.neoTurn!, messageId: 'absent' } };
     if (kind === 'internal') caller = { ...caller, source: 'internal' };
     if (kind === 'untrusted_rpc') caller = { source: 'rpc' };
-    expect(await invoke()).toMatchObject({ value: { ok: false, reason: 'human_only' } });
+    expect(await invoke()).toMatchObject(
+      kind === 'stale'
+        ? { kind: 'failed', code: 'forbidden' }
+        : { value: { ok: false, reason: 'human_only' } }
+    );
     expect(archive).not.toHaveBeenCalled();
     expect(remote.invoke).not.toHaveBeenCalled();
   });

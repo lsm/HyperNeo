@@ -36,6 +36,7 @@ import type { MessageQueue } from './message-queue.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
 import { QueryAttemptRegistry, type QueryAttemptToken } from './query-attempt-token.ts';
 import { NeoHolderTurn } from '../neo/holder-turn.ts';
+import { NeoCoordinatorTurn } from '../neo/coordinator-turn.ts';
 import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import { stampNeoResponseInput } from '../neo/response-input.ts';
 import { createNeoAskOriginResolver } from '../neo/ask-origin.ts';
@@ -434,8 +435,6 @@ export class QueryRunner {
 
   private redeliveredFedPrompts: string[] = [];
 
-  private readonly requestedInputs = new Set<string>();
-
   private turnEndedState(queryGeneration: number): { turnEnded: boolean; hasFedPrompt: boolean } {
     if (this.turnEndedGeneration !== queryGeneration)
       return { turnEnded: false, hasFedPrompt: false };
@@ -730,12 +729,11 @@ export class QueryRunner {
     };
 
     let runAbortController: AbortController | null = null;
-    let holderTurn: NeoHolderTurn | undefined;
+    let holderTurn: NeoCoordinatorTurn | undefined;
     let resolveAskOrigin: ReturnType<typeof createNeoAskOriginResolver> | undefined;
     let isAbortError = false;
     this.turnEndedGeneration = null;
     this.fedAfterTurnEnd = [];
-    this.requestedInputs.clear();
 
     const inactivityBackstopMs = getSdkStartInactivityBackstopMs();
     const nudgeThresholdMs = DEFAULT_SDK_STARTUP_NUDGE_THRESHOLD_MS;
@@ -870,9 +868,11 @@ export class QueryRunner {
       });
 
       queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
-      if (neoCoordinatorBinding(this.ctx.db, session.id)) {
+      const coordinator = neoCoordinatorBinding(this.ctx.db, session.id);
+      if (coordinator) {
         if (!this.ctx.createNeoTurnMcpServer) throw new Error('Neo turn isolation unavailable.');
-        holderTurn = new NeoHolderTurn(this.ctx.db, session.id, {
+        const Turn = coordinator.kind === 'neo' ? NeoCoordinatorTurn : NeoHolderTurn;
+        holderTurn = new Turn(this.ctx.db, session.id, {
           yield: () => runAbortController?.abort(),
           isLive: () =>
             attemptToken.isLive() &&
@@ -1382,7 +1382,7 @@ export class QueryRunner {
             }
           }
 
-          if (holderTurn) this.noteRequestedInputs(message);
+          holderTurn?.noteCarried(message);
           if (holderTurn && (message.type === 'assistant' || message.type === 'result'))
             message = stampNeoResponseInput(
               message,
@@ -2168,7 +2168,7 @@ export class QueryRunner {
   async *createMessageGeneratorWrapper(
     queryGeneration: number,
     startGuard?: () => void,
-    holderTurn?: NeoHolderTurn,
+    holderTurn?: NeoCoordinatorTurn,
     questionInputs?: QuestionInputScope
   ) {
     const { session, messageQueue, stateManager, logger } = this.ctx;
@@ -2265,7 +2265,7 @@ export class QueryRunner {
     }
   }
 
-  private async *feedNeoSteers(queryGeneration: number, turn: NeoHolderTurn) {
+  private async *feedNeoSteers(queryGeneration: number, turn: NeoCoordinatorTurn) {
     const { session, messageQueue } = this.ctx;
     const fed: string[] = [];
     for await (const { message, onSent } of messageQueue.messageGenerator(session.id, {
@@ -2284,15 +2284,7 @@ export class QueryRunner {
       onSent();
     }
     await turn.ended;
-    for (const uuid of fed) if (!this.requestedInputs.has(uuid)) this.ctx.requeueNeoInput?.(uuid);
-  }
-
-  noteRequestedInputs(message: SDKMessage): void {
-    if (message.type !== 'result' && (message.type !== 'system' || message.subtype !== 'status'))
-      return;
-    const uuids = (message as { user_message_uuids?: unknown }).user_message_uuids;
-    if (Array.isArray(uuids))
-      for (const uuid of uuids) if (typeof uuid === 'string') this.requestedInputs.add(uuid);
+    for (const uuid of fed) if (!turn.carried(uuid)) this.ctx.requeueNeoInput?.(uuid);
   }
 
   async handleSDKMessage(message: SDKMessage, queryGeneration?: number): Promise<void> {

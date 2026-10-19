@@ -1,0 +1,96 @@
+import type { SDKMessage } from '@hyperneo/shared/sdk';
+import type { Database } from '../../storage/database.ts';
+import type { OperationCaller } from '../operations/registry.ts';
+import { neoHumanTurnOrigin } from './notification-triggers.ts';
+import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
+import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-origin-repository.ts';
+
+export type NeoTurnAttempt = { isLive(): boolean; yield?(): void };
+
+export class NeoCoordinatorTurn {
+  protected bound = false;
+  protected closed = false;
+  private turn?: OperationCaller['neoTurn'];
+  private readonly carriedInputs = new Set<string>();
+  private end: () => void = () => {};
+  readonly ended = new Promise<void>((resolve) => {
+    this.end = resolve;
+  });
+
+  constructor(
+    protected readonly db: Database,
+    protected readonly sessionId: string,
+    private readonly attempt: NeoTurnAttempt
+  ) {}
+
+  bind(messageId: string): boolean {
+    this.claim();
+    return this.open(messageId, this.humanOrigin(messageId), false);
+  }
+
+  protected claim(): void {
+    if (this.bound || this.closed) throw new Error('Neo turn already bound or closed.');
+    this.bound = true;
+  }
+
+  protected humanOrigin(messageId: string): string | null {
+    return neoHumanTurnOrigin(
+      messageId,
+      new NeoInputOriginRepository(this.db.getDatabase()).trigger(this.sessionId, messageId),
+      (id) =>
+        this.db
+          .getSDKMessageRepo()
+          .getStoredPromptsByUuid(this.sessionId, id)
+          .some(
+            (message) =>
+              message.type === 'user' && 'inputKind' in message && message.inputKind === 'human'
+          )
+    );
+  }
+
+  protected open(
+    messageId: string,
+    origin: string | null,
+    owned: boolean,
+    consultationId?: string
+  ): true {
+    this.turn = {
+      messageId,
+      ...(origin && origin !== messageId ? { origin } : {}),
+      consultationId,
+      human: origin !== null || owned,
+      isLive: () => !this.closed && this.attempt.isLive(),
+      yield: () => {
+        if (!this.turn?.isLive()) return;
+        this.dispose();
+        this.attempt.yield?.();
+      },
+    };
+    return true;
+  }
+
+  steers(): boolean {
+    return new NeoRepository(this.db.getDatabase()).defaultBinding()?.sessionId === this.sessionId;
+  }
+
+  noteCarried(message: SDKMessage): void {
+    if (message.type !== 'result' && (message.type !== 'system' || message.subtype !== 'status'))
+      return;
+    const uuids = (message as { user_message_uuids?: unknown }).user_message_uuids;
+    if (Array.isArray(uuids))
+      for (const uuid of uuids) if (typeof uuid === 'string') this.carriedInputs.add(uuid);
+  }
+
+  carried(messageId: string): boolean {
+    return this.carriedInputs.has(messageId);
+  }
+
+  identity(): OperationCaller['neoTurn'] {
+    return this.turn;
+  }
+
+  dispose(): void {
+    this.closed = true;
+    this.end();
+  }
+}
