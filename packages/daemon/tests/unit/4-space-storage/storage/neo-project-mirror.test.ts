@@ -24,7 +24,6 @@ import type { PlaceGroup } from '../../../../src/lib/drivers/types.ts';
 import { isTempCwd } from '../../../../src/lib/drivers/claude-feed.ts';
 import { createTestDb } from '../../../helpers/database.ts';
 import { NeoAskRepository } from '../../../../src/storage/repositories/neo-ask-repository.ts';
-import { planNeoAskQuestion } from '../../../../src/lib/neo/ask-plans.ts';
 import { NEO_PROJECT_SAME, NEO_PROJECT_SEPARATE } from '../../../../src/lib/neo/project-merge.ts';
 
 const elsewhere = `not-${hostname()}`;
@@ -573,11 +572,17 @@ describe('planNeoWorkspaceProjects with a gone primary', () => {
         doneWhen: 'The human decided.',
         doneSource: 'daemon',
       })!;
-      const item = planNeoAskQuestion(opened, {
+      const item = {
+        id: 'i1',
+        position: 0,
+        text: 'Are a and b the same project?',
+        check: null,
+        outcomeKind: 'state' as const,
+        kind: 'decision' as const,
         question: 'Are a and b the same project?',
-        options: [NEO_PROJECT_SAME, NEO_PROJECT_SEPARATE],
         decides: key,
-      });
+        options: [NEO_PROJECT_SAME, NEO_PROJECT_SEPARATE],
+      };
       const waiting = asks.settle(opened, 'waiting', 'q', 'q', item.id, item)!;
       if (!answer) return;
       const question = waiting.doneItems!.find((entry) => entry.decides === key)!;

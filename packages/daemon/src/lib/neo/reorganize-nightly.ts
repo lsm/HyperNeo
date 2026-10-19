@@ -78,7 +78,7 @@ export const runNeoNightlyReorganize = (
       const { merged, moved, stayed, cleanupPlanned, cleanupFailed } = run;
       const cleaned = cleanupPlanned.filter(isNeoUnattendedCleanup).length - cleanupFailed.length;
       deps.log(
-        `neo reorganize: nightly run merged ${merged.length} project(s), moved ${moved.length} ask(s), left ${stayed.length} with main, applied ${cleaned} cleanup step(s), asked the human about ${cleanupPlanned.length - cleaned - cleanupFailed.length} merge(s)`
+        `neo reorganize: nightly run merged ${merged.length} project(s), moved ${moved.length} ask(s), left ${stayed.length} with main, applied ${cleaned} cleanup step(s), left ${cleanupPlanned.length - cleaned - cleanupFailed.length} merge(s) for apply: true`
       );
       await deps.digest(run, readLastRunAt(job) ?? deps.now() - NEO_REORGANIZE_EVERY_MS);
       return { ran: true, moved: moved.length, stayed: stayed.length };
