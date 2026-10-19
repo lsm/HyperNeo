@@ -1,6 +1,6 @@
 import type { NeoAskEntry, NeoStatusCode } from './neo-ask.ts';
 import type { DaemonInventoryLink } from './daemon-snapshot.ts';
-import type { NeoProject, NeoConsultation, NeoConsultationWaiter, NeoWork } from './neo-context.ts';
+import type { NeoProject, NeoWork } from './neo-context.ts';
 import type { NeoModelPreference } from './settings.ts';
 
 export interface NeoWorkResourceReceipt {
@@ -318,7 +318,7 @@ export interface NeoAskHumanAction {
 }
 
 export interface NeoReceiptAskOrigin {
-  kind: 'work' | 'consultation';
+  kind: 'work';
   id: string;
   origin: { sessionId: string; messageId: string } | null;
 }
@@ -341,10 +341,6 @@ export interface NeoSessionNoticeGroup {
   notices: NeoSessionNotice[];
 }
 
-export interface NeoSnapshotConsultation extends NeoConsultation {
-  summarized?: true;
-}
-
 export interface NeoSnapshotWork extends NeoWork {
   summarized?: true;
   askId?: string;
@@ -365,8 +361,6 @@ export interface NeoSnapshot {
   projectFacts?: { reference: string; projectId?: string | null }[];
   publicAuthorBindings?: { sessionId: string; projectId: string; kind: 'project' }[];
   work: NeoSnapshotWork[];
-  consultations: NeoSnapshotConsultation[];
-  consultationWaiters?: NeoConsultationWaiter[];
   askOrigins?: NeoReceiptAskOrigin[];
   workResources?: NeoWorkResourceReceipt[];
   sessionNotices?: NeoSessionNotice[];

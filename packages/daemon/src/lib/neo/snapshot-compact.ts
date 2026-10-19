@@ -90,16 +90,6 @@ export function summarizeNeoSnapshot<T extends NeoSnapshot>(
         ? { ...card, goal: null, doneWhen: null, continuedMessage: null }
         : card
     ),
-    consultations: snapshot.consultations.map((item) =>
-      item.status === 'pending'
-        ? item
-        : {
-            ...item,
-            question: clip(item.question),
-            answer: item.answer === null ? null : clip(item.answer),
-            summarized: true as const,
-          }
-    ),
   };
 }
 
@@ -214,15 +204,6 @@ function withShortText(snapshot: NeoSnapshot): NeoSnapshot {
       doneWhen: card.doneWhen?.slice(0, TRIMMED_TEXT_LIMIT) ?? null,
       continuedMessage: card.continuedMessage?.slice(0, TRIMMED_TEXT_LIMIT) ?? null,
     })),
-    consultations: snapshot.consultations?.map((item) => ({
-      ...item,
-      question: item.question.slice(0, TRIMMED_TEXT_LIMIT),
-      answer: item.answer?.slice(0, TRIMMED_TEXT_LIMIT) ?? null,
-    })),
-    consultationWaiters: snapshot.consultationWaiters?.map((item) => ({
-      ...item,
-      question: item.question.slice(0, TRIMMED_TEXT_LIMIT),
-    })),
     askViews: snapshot.askViews.map((view) => ({
       ...view,
       ...(view.sessions ? { sessions: view.sessions.slice(0, 3) } : {}),
@@ -253,12 +234,6 @@ function withBareText(snapshot: NeoSnapshot): NeoSnapshot {
       doneWhen: null,
       continuedMessage: null,
     })),
-    consultations: snapshot.consultations?.map((item) => ({
-      ...item,
-      question: '',
-      answer: null,
-    })),
-    consultationWaiters: snapshot.consultationWaiters?.map((item) => ({ ...item, question: '' })),
     askViews: snapshot.askViews.map((view) => ({ ...view, summary: null, sessions: [] })),
   };
 }
@@ -292,8 +267,6 @@ function withSkeleton(snapshot: NeoSnapshot): NeoSnapshot {
     workResources: [],
     askOrigins: [],
     sessionNoticeGroups: [],
-    consultations: [],
-    consultationWaiters: [],
     projects: snapshot.projects.slice(0, SKELETON_LIST_LIMIT),
     asks: snapshot.asks?.map((ask) => ({
       ...ask,
@@ -319,7 +292,6 @@ function bareMinimum(snapshot: NeoSnapshot): NeoSnapshot {
     ok: true,
     sessionId: snapshot.sessionId,
     projects: [],
-    consultations: [],
     work: snapshot.work.map((item) => ({ ...item, instruction: '', report: null })),
     asks: snapshot.asks?.map((ask) => ({
       ...ask,
@@ -385,7 +357,6 @@ export function fitNeoSnapshotBudget<T extends NeoSnapshot>(
       ok: true,
       sessionId: fitted.sessionId,
       projects: [],
-      consultations: [],
       work: [],
       cards: [],
       askViews: [],

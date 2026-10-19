@@ -646,7 +646,6 @@ export function NeoLive() {
                 <NeoActivity
                   key={sceneScope}
                   snapshot={view ?? null}
-                  projects={projects}
                   enabled={connected && conversationReady}
                 />
               }

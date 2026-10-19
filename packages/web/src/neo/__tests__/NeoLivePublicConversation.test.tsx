@@ -86,7 +86,6 @@ const snapshot = (): NeoSnapshot => ({
     { kind: 'project', projectId: 'b', sessionId: otherHolder },
   ],
   work: [],
-  consultations: [],
   askOrigins: [],
 });
 const nativeState = (sessionId: string): SessionState =>
@@ -551,41 +550,6 @@ describe('NeoLive durable conversation activation', () => {
       )
     );
     await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
-  });
-
-  it('keeps context checks and boards out of the ask bubbles', async () => {
-    source.value = {
-      ...source.value,
-      consultations: ['root-ask', 'holder-ask'].map((id) => ({
-        id,
-        requestKey: id,
-        projectId: 'a',
-        originSessionId: root,
-        originMessageId: id,
-        sessionId: holder,
-        question: `Checking ${id}`,
-        status: 'pending',
-        answer: null,
-        createdAt: 1,
-      })),
-      askOrigins: [
-        {
-          kind: 'consultation',
-          id: 'root-ask',
-          origin: { sessionId: root, messageId: 'root-ask' },
-        },
-        {
-          kind: 'consultation',
-          id: 'holder-ask',
-          origin: { sessionId: holder, messageId: 'holder-ask' },
-        },
-      ],
-    };
-    render(<NeoLive />);
-    for (const id of ['root-ask', 'holder-ask']) {
-      expect(within(askArticle(id)).queryByRole('status')).toBeNull();
-      expect(within(askArticle(id)).queryByText('How this is being handled')).toBeNull();
-    }
   });
 
   it('bases empty-state and scrolling on public entries, retaining manual reading position', async () => {

@@ -77,7 +77,6 @@ const snapshot = (sessionId = 'neo:root') => ({
     },
   ],
   work: [],
-  consultations: [],
 });
 
 beforeEach(() => {

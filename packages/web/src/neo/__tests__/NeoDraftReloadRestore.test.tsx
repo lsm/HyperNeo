@@ -97,7 +97,7 @@ function mount() {
     sessionInfo: { id: root, config: { model: 'haiku' }, metadata: {} },
     agentState: { status: 'idle' },
   } as never;
-  const snapshot = { ok: true, sessionId: root, projects: [], work: [], consultations: [] };
+  const snapshot = { ok: true, sessionId: root, projects: [], work: [] };
   const model = signal({
     sessionId: root,
     snapshot,

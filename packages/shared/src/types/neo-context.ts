@@ -19,19 +19,6 @@ export interface NeoBinding {
   kind: 'neo' | 'project' | 'worker';
 }
 
-export interface NeoConsultation {
-  id: string;
-  requestKey: string;
-  projectId: string;
-  originSessionId: string;
-  originMessageId: string | null;
-  sessionId: string;
-  question: string;
-  status: 'pending' | 'reported' | 'failed';
-  answer: string | null;
-  createdAt: number;
-}
-
 export interface NeoWork {
   id: string;
   requestKey: string;
@@ -48,11 +35,3 @@ export interface NeoWork {
   createdAt: number;
   updatedAt: number;
 }
-
-export type NeoConsultationWaiter = Omit<
-  NeoConsultation,
-  'status' | 'answer' | 'originMessageId'
-> & {
-  originMessageId: string;
-  status: 'queued' | 'admitted' | 'cancelled';
-};

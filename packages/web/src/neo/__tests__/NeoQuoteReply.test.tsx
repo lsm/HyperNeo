@@ -130,7 +130,6 @@ beforeEach(async () => {
       cards: [],
       askViews: [],
       work: [],
-      consultations: [],
       askOrigins: [],
     } as NeoSnapshot,
     viewPublicConversation: conversation,
