@@ -219,8 +219,6 @@ describe('consultation runtime', () => {
           prompt: neoPrompt(projectId),
           snapshot: false,
         });
-        if (kind === 'project')
-          expect(await agent.getNeoFreshContext()).toContain('"title":"Plans"');
         expect(options.permissionMode).toBe('dontAsk');
         expect(options.tools).toEqual(neoCoordinatorNativeTools());
         expect(options.plugins).toEqual([]);

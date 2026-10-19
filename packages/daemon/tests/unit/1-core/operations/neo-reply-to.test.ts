@@ -97,14 +97,18 @@ describe('neo.message.send replyTo', () => {
       { sessionId: root, requestId, content, replyTo },
       human
     );
-  const prompt = (requestId: string) =>
-    JSON.parse(
+  const prompt = (requestId: string) => {
+    const stored = JSON.parse(
       (
         mailbox.db
           .prepare('SELECT session_id, sdk_message FROM sdk_messages WHERE sdk_uuid = ?')
           .get(requestId) as { sdk_message: string }
       ).sdk_message
     );
+    const [time, ...content] = stored.message.content;
+    expect(time.text).toMatch(/^\(local time: \w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+\)$/);
+    return { ...stored, message: { ...stored.message, content } };
+  };
   const ledger = (requestId: string) =>
     JSON.parse(
       (
