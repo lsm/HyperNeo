@@ -56,7 +56,16 @@ describe('neoPackBriefs', () => {
   test('requires review approval before a manual merge and forbids auto-merge', () => {
     const guidance = neoPackBriefs(NEO_DEFAULT_PACKS)[0].guidance?.replace(/\s+/g, ' ');
     expect(guidance).toContain('never enable GitHub auto-merge');
-    expect(guidance).toContain('review approval of the latest head and green required checks');
+    expect(guidance).toContain(
+      'after the review it uses approves the latest head and required checks are green'
+    );
+  });
+
+  test('asks the human how a new repository is reviewed and creates its verify skill first', () => {
+    const guidance = neoPackBriefs(NEO_DEFAULT_PACKS)[0].guidance?.replace(/\s+/g, ' ');
+    expect(guidance).toContain('ask the human once with neo.question.ask (kind choice)');
+    expect(guidance).toContain('Never install apps, add reviewers or change repository settings');
+    expect(guidance).toContain('target.preparationParameters.verifySkill "create"');
   });
 });
 
