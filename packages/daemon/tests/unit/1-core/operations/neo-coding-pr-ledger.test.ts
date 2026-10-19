@@ -583,29 +583,19 @@ describe('PR ledger worker replies', () => {
 });
 
 describe('codingPrState without CI', () => {
-  const approved = (committedAt: number) =>
+  const approved = (suites: number) =>
     node(1, {
       reviewDecision: 'APPROVED',
       commits: {
-        nodes: [
-          {
-            commit: {
-              committedDate: new Date(committedAt).toISOString(),
-              statusCheckRollup: null,
-            },
-          },
-        ],
+        nodes: [{ commit: { statusCheckRollup: null, checkSuites: { totalCount: suites } } }],
       },
     }) as never;
 
-  test('a CI repo just after a push reads pending until checks register', () => {
-    const now = Date.parse('2026-10-19T10:00:00Z');
-    expect(codingPrState(approved(now - 2 * 60_000), now)).toBe('approved_pending');
+  test('a CI repo just after a push, or with its run still queued, reads pending', () => {
+    expect(codingPrState(approved(1))).toBe('approved_pending');
   });
 
-  test('a repo with no CI reads green once its head is ten minutes old', () => {
-    const now = Date.parse('2026-10-19T10:00:00Z');
-    expect(codingPrState(approved(now - 10 * 60_000), now)).toBe('approved_green');
-    expect(codingPrState(approved(now - 3 * 60 * 60_000), now)).toBe('approved_green');
+  test('a repo with no CI at all reads green', () => {
+    expect(codingPrState(approved(0))).toBe('approved_green');
   });
 });
