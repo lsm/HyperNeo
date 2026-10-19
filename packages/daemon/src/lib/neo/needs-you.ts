@@ -1,25 +1,6 @@
 import { type NeoAsk, type NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
 import { isNeoAskSettled } from './done-check.ts';
 
-const NEO_ASK_ANSWER_LINE = 'Their answer: ';
-
-const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim();
-
-export function neoAskAnswerNote(
-  ask: Pick<NeoAsk, 'id' | 'title'>,
-  item: Pick<NeoAskItem, 'id' | 'text'>,
-  choice: string,
-  met = true
-): string {
-  return [
-    `The human answered ${met ? 'a decision' : 'how a step went'} on ask ${ask.id} ("${oneLine(ask.title)}"), item ${item.id}: "${oneLine(item.text)}".`,
-    `${NEO_ASK_ANSWER_LINE}${oneLine(choice)}`,
-    met
-      ? 'The daemon ticked that item met with their answer.'
-      : 'The item stays open: it did not work, or the result is not what they wanted.',
-  ].join('\n');
-}
-
 type NeoAskResume = { ask: NeoAsk; items: string[]; reopen: boolean };
 
 export function planNeoAskResume(

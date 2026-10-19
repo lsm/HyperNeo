@@ -12,11 +12,7 @@ import {
   NEO_WORK_GOAL_PR_EVENTS,
   NEO_WORK_GOAL_PR_SUBSCRIBE,
   NEO_WORK_GOAL_REMAINING,
-  NEO_WORK_NEEDS_YOU,
   NEO_WORK_PACK_NOTE,
-  NEO_WORK_STALL,
-  NEO_WORK_STUCK,
-  NEO_WORK_STUCK_ABANDONED,
 } from '@hyperneo/prompts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
@@ -42,7 +38,7 @@ import {
   type WorkStatus,
   WorkStatusSchema,
 } from '../drivers/types.ts';
-import { WORK_MESSAGE_MAX, WorkAdaptersResultSchema } from '../drivers/work-operations.ts';
+import { WORK_MESSAGE_MAX } from '../drivers/work-operations.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import { hashString32 } from '../runtime-hash.ts';
@@ -79,28 +75,6 @@ export const NeoDriverTargetSchema = z.discriminatedUnion('verb', [
 
 export type NeoDriverTarget = z.infer<typeof NeoDriverTargetSchema>;
 type NeoDriverAdapter = { id: string; capabilities: readonly string[] };
-
-export function driverTargetDaemon(target: NeoDriverTarget): string | undefined {
-  return target.verb === 'read'
-    ? undefined
-    : target.verb === 'start'
-      ? target.place.daemon
-      : target.ref.daemon;
-}
-
-export async function readNeoDriverAdapters(
-  invoke: () => Promise<OperationOutcome>
-): Promise<NeoDriverAdapter[] | null> {
-  try {
-    const outcome = await invoke();
-    const reply = WorkAdaptersResultSchema.safeParse(
-      outcome.kind === 'completed' ? outcome.value : null
-    );
-    return reply.success && reply.data.ok ? reply.data.value : null;
-  } catch {
-    return null;
-  }
-}
 
 export function readNeoStartFolder(
   target: NeoDriverTarget | null | undefined,
@@ -221,11 +195,6 @@ export function driverStartedReport(ref: WorkRef, link?: string, model?: string)
   const where = link ? ` It opens at ${link}.` : '';
   const runs = model ? ` It runs on ${model}.` : '';
   return `Handed to ${ref.adapter}${ref.daemon ? ` on ${ref.daemon}` : ''}.${runs}${where} Follow up with work.status ${JSON.stringify({ ref })}.`;
-}
-
-export function driverAdoptedReport(ref: WorkRef, status: WorkStatus, link?: string): string {
-  const where = link ? ` It opens at ${link}.` : '';
-  return `Tracking the ${ref.adapter} session${ref.daemon ? ` on ${ref.daemon}` : ''} the human started; adopting it sent it nothing. It was ${status} when adopted; the card settles only on what it does next, so judge a session that already finished, failed or stopped against doneWhen now and continue it with work.send.${where} Follow up with work.status ${JSON.stringify({ ref })}.`;
 }
 
 export function driverWorkCaller(work: Pick<NeoWork, 'originSessionId'>): OperationCaller {
@@ -368,8 +337,6 @@ export function isNeoCardUnconfirmed(
 ): boolean {
   return now - Math.max(work.createdAt, sent?.inputBefore ?? 0) >= NEO_CARD_CONFIRM_MS;
 }
-
-export const NEO_DRIVER_START_INTERRUPTED = 'Starting was interrupted before';
 
 export type NeoWorkRetryCard = { target: boolean; ref: boolean; interrupted: boolean };
 
@@ -537,28 +504,6 @@ export interface NeoAskCard {
   prs?: NeoWorkPr[];
 }
 
-const NEO_ASK_CARDS_MAX = 10;
-
-export function projectNeoAskCards(
-  workId: string,
-  works: readonly Pick<NeoWork, 'id' | 'title' | 'status'>[],
-  prRows: readonly { workId: string; prs: NeoWorkPr[] }[]
-): NeoAskCard[] {
-  const prs = new Map(prRows.map((row) => [row.workId, row.prs]));
-  return works
-    .filter((work) => work.id !== workId)
-    .slice(-NEO_ASK_CARDS_MAX)
-    .map((work) => {
-      const linked = prs.get(work.id);
-      return {
-        id: work.id,
-        title: work.title,
-        status: work.status,
-        ...(linked ? { prs: linked } : {}),
-      };
-    });
-}
-
 export function isNeoDoneWhenRestated(doneWhen: string, ask: NeoAsk): boolean {
   const texts = new Set(
     (ask.doneItems ?? []).filter((item) => !item.removed).map((item) => item.text.trim())
@@ -634,17 +579,6 @@ export function driverDoneCheckNote(
   );
 }
 
-export function neoWorkDoneGoal(
-  workId: string,
-  goal: NeoWorkGoal | null,
-  ask: NeoAsk | null
-): NeoWorkGoal | null {
-  const doneWhen = goal?.doneWhen ?? ask?.doneWhen ?? null;
-  return doneWhen ? { workId, goal: goal?.goal ?? ask?.ask ?? null, doneWhen } : null;
-}
-
-export const NEO_WORK_STALL_MS = 20 * 60_000;
-
 export function readDriverActivity(
   outcome: OperationOutcome
 ): { status: string; lastActivityAt: number; lastReply?: string } | null {
@@ -652,28 +586,6 @@ export function readDriverActivity(
   if (!value) return null;
   const { status, lastActivityAt, lastReply } = value;
   return { status, lastActivityAt, lastReply };
-}
-
-export function driverStallNote(
-  work: Pick<NeoWork, 'id' | 'title'>,
-  ask: NeoAsk | null,
-  goal: NeoWorkGoal | null,
-  lastReply: string | undefined
-): string {
-  const next = '';
-  return neoAskProgressNote(
-    ask,
-    fillPrompt(NEO_WORK_STALL, { work_id: work.id, title: work.title, next }),
-    {
-      card: {
-        id: work.id,
-        title: work.title,
-        goal: goal?.goal ?? null,
-        doneWhen: goal?.doneWhen ?? null,
-        lastReply: lastReply?.slice(0, 2000) ?? null,
-      },
-    }
-  );
 }
 
 const HOUR_MS = 60 * 60_000;
@@ -701,43 +613,6 @@ export function isNeoReceiptAbandoned(
     workStatus === 'queued' &&
     queuedSince !== null &&
     !!decideStuckReminder(queuedSince, now)?.abandoned
-  );
-}
-
-export function driverStuckNote(
-  work: Pick<NeoWork, 'id' | 'title'>,
-  ask: NeoAsk | null,
-  goal: NeoWorkGoal | null,
-  queuedSince: number,
-  now: number,
-  abandoned: boolean
-): string {
-  const hours = Math.floor((now - queuedSince) / HOUR_MS);
-  const next = abandoned ? NEO_WORK_STUCK_ABANDONED : '';
-  return neoAskProgressNote(
-    ask,
-    fillPrompt(NEO_WORK_STUCK, { work_id: work.id, title: work.title, hours: String(hours), next }),
-    {
-      card: {
-        id: work.id,
-        title: work.title,
-        goal: goal?.goal ?? null,
-        doneWhen: goal?.doneWhen ?? null,
-      },
-    }
-  );
-}
-
-export function driverNeedsYouNote(
-  work: Pick<NeoWork, 'id' | 'title'>,
-  ask: NeoAsk | null,
-  ref: WorkRef,
-  lastReply: string | undefined
-): string {
-  return neoAskProgressNote(
-    ask,
-    fillPrompt(NEO_WORK_NEEDS_YOU, { work_id: work.id, title: work.title }),
-    { card: { id: work.id, title: work.title, ref, lastReply: lastReply?.slice(0, 2000) ?? null } }
   );
 }
 

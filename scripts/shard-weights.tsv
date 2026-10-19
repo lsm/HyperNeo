@@ -290,7 +290,6 @@
 1174	packages/daemon/tests/unit/1-core/operations/neo-session-track.test.ts
 3555	packages/daemon/tests/unit/1-core/operations/neo-session-watch.test.ts
 14	packages/daemon/tests/unit/1-core/operations/neo-settle-driver-work.test.ts
-4558	packages/daemon/tests/unit/1-core/operations/neo-shared-recipient-lifecycle.test.ts
 501	packages/daemon/tests/unit/1-core/operations/neo-snapshot-compact.test.ts
 10	packages/daemon/tests/unit/1-core/operations/neo-snapshot-origins.test.ts
 6	packages/daemon/tests/unit/1-core/operations/neo-snapshot-read.test.ts

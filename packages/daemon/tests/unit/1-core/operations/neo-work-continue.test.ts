@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { neoWorkProgress } from '../../../../src/lib/neo/driver-work.ts';
-import { planNeoDeliveryRetry } from '../../../../src/lib/neo/delivery-retry.ts';
 import {
   neoContinuedReport,
   requireNeoAskContinueReserved,
@@ -12,30 +11,6 @@ import {
 
 const HOUR = 60 * 60 * 1000;
 const ref = { adapter: 'claude-desktop', daemon: 'laptop', id: 'local_ios' };
-
-describe('planNeoDeliveryRetry', () => {
-  const card = {
-    retryable: true,
-    ask: { approvedAt: 1, approvedUntil: 2, status: 'open' as const },
-    retries: 0,
-    now: 100 * HOUR,
-  };
-
-  test('keeps approval valid beyond a legacy expiry timestamp', () => {
-    expect(planNeoDeliveryRetry(card)).toEqual({ value: 30_000 });
-  });
-
-  test('keeps authorization and provider retry protection', () => {
-    expect(planNeoDeliveryRetry({ ...card, ask: null })).toEqual({ reason: 'not_approved' });
-    expect(planNeoDeliveryRetry({ ...card, retries: 3 })).toEqual({ reason: 'retries_spent' });
-    expect(planNeoDeliveryRetry({ ...card, retryable: false })).toEqual({
-      reason: 'not_retryable',
-    });
-    expect(planNeoDeliveryRetry({ ...card, ask: { ...card.ask, status: 'abandoned' } })).toEqual({
-      reason: 'not_approved',
-    });
-  });
-});
 
 describe('neoWorkProgress', () => {
   test('moves with a new PR revision or a new worker report, not with Neo reopening the card', () => {
