@@ -1,7 +1,8 @@
+import { neoLocalTimeLine } from './local-time.ts';
 import type { UUID } from 'node:crypto';
 import type { Session } from '@hyperneo/shared';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
-import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { NeoAsk, NeoQuestion, NeoReplyTo, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
@@ -92,7 +93,8 @@ export function requireNeoIntakeTarget(
 export function neoIntakeMessage(
   input: IntakeInput,
   sessionId: string = input.sessionId,
-  reply: NeoReply | null = null
+  reply: NeoReply | null = null,
+  localTime: string | null = null
 ): SDKUserMessage & {
   uuid: UUID;
   inputKind: 'human';
@@ -106,6 +108,9 @@ export function neoIntakeMessage(
   const fact =
     (reply?.ask?.sessionId === sessionId ? neoReplyFact(reply) : null) ??
     neoQuoteFact(input.replyTo);
+  const facts = [localTime, fact].flatMap((text) =>
+    text ? [{ type: 'text' as const, text }] : []
+  );
   return {
     type: 'user',
     uuid: input.requestId as UUID,
@@ -113,12 +118,19 @@ export function neoIntakeMessage(
     parent_tool_use_id: null,
     message: {
       role: 'user',
-      content: fact ? [{ type: 'text', text: fact }, ...content] : content,
+      content: facts.length ? [...facts, ...content] : content,
     },
     inputKind: 'human',
     ...(input.replyTo ? { replyTo: input.replyTo } : {}),
-    ...(fact ? { humanContent: content } : {}),
+    ...(facts.length ? { humanContent: content } : {}),
   };
+}
+
+export function neoRetryLocalTime(stored: SDKMessage | undefined, fresh: string): string | null {
+  if (!stored) return fresh;
+  const content = stored.type === 'user' ? stored.message.content : null;
+  const first = Array.isArray(content) ? content[0] : null;
+  return first?.type === 'text' && first.text.startsWith('(local time: ') ? first.text : null;
 }
 
 export type NeoReply = {
@@ -365,7 +377,7 @@ function logNeoRoute(
       messageId: message.uuid,
       conversationId,
       askedAt: Date.now(),
-      ask: neoAskText(message.message.content) || '(attachment)',
+      ask: neoAskText(message.humanContent ?? message.message.content) || '(attachment)',
       destination: routed.binding.kind === 'project' ? 'holder' : 'main',
       targetSessionId: routed.binding.sessionId,
       projectId: routed.binding.projectId,
@@ -624,9 +636,17 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
     'routed'
   )
   .pipe(
-    (input: IntakeInput, routed: Routed, reply: NeoReply | null) =>
-      neoIntakeMessage(input, routed.target.id, reply),
-    ['input', 'routed', 'reply'],
+    (input: IntakeInput, routed: Routed, reply: NeoReply | null, db: Database) =>
+      neoIntakeMessage(
+        input,
+        routed.target.id,
+        reply,
+        neoRetryLocalTime(
+          db.getSDKMessageRepo().getStoredPromptsByUuid(routed.target.id, input.requestId)[0],
+          neoLocalTimeLine(new Date(), Intl.DateTimeFormat().resolvedOptions().timeZone)
+        )
+      ),
+    ['input', 'routed', 'reply', 'db'],
     'message'
   )
   .pipe((fresh: IntakeTarget) => fresh.conversationId, 'receipt', 'conversationId')

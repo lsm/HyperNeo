@@ -211,7 +211,13 @@ describe('durable Neo intake operation', () => {
     });
     expect(JSON.parse(rows[0].sdk_message)).toMatchObject({
       inputKind: 'human',
-      message: { content: [{ type: 'text', text: input.content }] },
+      message: {
+        content: [
+          { type: 'text', text: expect.stringMatching(/^\(local time: /) },
+          { type: 'text', text: input.content },
+        ],
+      },
+      humanContent: [{ type: 'text', text: input.content }],
     });
     const jobs = mailbox.jobsByQueue(MESSAGE_DELIVERY);
     expect(jobs).toHaveLength(1);
@@ -300,9 +306,7 @@ describe('durable Neo intake operation', () => {
     });
     expect(mailbox.sdkRows()).toHaveLength(1);
     expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)).toHaveLength(1);
-    expect(JSON.parse(mailbox.sdkRows()[0].sdk_message).message.content[0].text).toBe(
-      input.content
-    );
+    expect(JSON.parse(mailbox.sdkRows()[0].sdk_message).humanContent[0].text).toBe(input.content);
   });
   test('preserves photos and attached text; photos alone are accepted', async () => {
     const photo = {
@@ -311,7 +315,7 @@ describe('durable Neo intake operation', () => {
     };
     const content = [photo, { type: 'text', text: '```txt\nnotes from a file\n```' }];
     expect(await invoke({ ...input, content })).toMatchObject({ value: { ok: true } });
-    expect(JSON.parse(mailbox.sdkRows()[0].sdk_message).message.content).toEqual(content);
+    expect(JSON.parse(mailbox.sdkRows()[0].sdk_message).message.content.slice(1)).toEqual(content);
     expect(
       await invoke({ ...input, requestId: crypto.randomUUID(), content: [photo] })
     ).toMatchObject({ value: { ok: true } });
