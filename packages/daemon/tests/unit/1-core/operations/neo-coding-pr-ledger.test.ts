@@ -592,3 +592,42 @@ describe('CodingPrLedgerRepository.stateOf', () => {
     db.close();
   });
 });
+
+describe('PR ledger snapshot for a renamed repo', () => {
+  test('a project registered under the old name still lists the rows kept under the new one', async () => {
+    const { db, ledger } = setup();
+    await reconcileCodingPrLedger(
+      ledger,
+      ['lsm/neokai'],
+      async () => {
+        const raw = response([node(7614)]);
+        raw.data.repository.nameWithOwner = 'lsm/HyperNeo';
+        return raw;
+      },
+      100
+    );
+    expect(ledger.snapshot(['lsm/neokai'], 100).map((row) => row.pr)).toEqual([
+      'lsm/hyperneo#7614',
+    ]);
+    expect(ledger.snapshot(['lsm/other'], 100)).toEqual([]);
+    db.close();
+  });
+
+  test('lists the repos of one project, or of all projects', () => {
+    const { db } = setup();
+    for (const id of ['project:a', 'project:b'])
+      db.prepare(
+        "INSERT INTO neo_concerns (id, title, summary, context, revision, created_at, updated_at) VALUES (?, 't', '', '', 1, 1, 1)"
+      ).run(id);
+    const alias = db.prepare(
+      'INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)'
+    );
+    alias.run('repository:github.com/lsm/neokai', 'project:a');
+    alias.run('repository:github.com/lsm/hyperneo-review', 'project:a');
+    alias.run('repository:github.com/lsm/ops', 'project:b');
+    const repo = new NeoRepository(db);
+    expect(repo.allRepositories('project:a')).toEqual(['lsm/hyperneo-review', 'lsm/neokai']);
+    expect(repo.allRepositories()).toEqual(['lsm/hyperneo-review', 'lsm/neokai', 'lsm/ops']);
+    db.close();
+  });
+});

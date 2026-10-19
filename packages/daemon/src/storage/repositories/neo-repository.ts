@@ -239,7 +239,7 @@ export class NeoRepository {
     return row as NeoProject | null;
   }
 
-  allRepositories(): string[] {
+  allRepositories(projectId?: string): string[] {
     return (
       this.db
         .prepare(
@@ -247,10 +247,11 @@ export class NeoRepository {
               THEN substr(alias, length('repository:github.com/') + 1)
               ELSE substr(alias, 6, instr(alias || char(0), char(0)) - 6) END) AS repo
              FROM neo_project_workspaces
-            WHERE alias LIKE 'repository:github.com/%' OR alias LIKE 'repo:%'
+            WHERE (alias LIKE 'repository:github.com/%' OR alias LIKE 'repo:%')
+              AND (?1 IS NULL OR project_id = ?1)
             ORDER BY repo`
         )
-        .all() as { repo: string }[]
+        .all(projectId ?? null) as { repo: string }[]
     ).map((row) => row.repo);
   }
 
