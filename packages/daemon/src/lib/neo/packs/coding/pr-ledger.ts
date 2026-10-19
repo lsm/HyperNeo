@@ -42,6 +42,24 @@ const Node = z.object({
     ),
   }),
   closedAt: z.string().nullable(),
+  author: z.object({ login: z.string() }).nullable().default(null),
+  comments: z
+    .object({
+      nodes: z.array(
+        z.object({ author: z.object({ login: z.string() }).nullable(), createdAt: z.string() })
+      ),
+    })
+    .default({ nodes: [] }),
+  replies: z
+    .object({
+      nodes: z.array(
+        z.object({
+          author: z.object({ login: z.string() }).nullable(),
+          submittedAt: z.string().nullable(),
+        })
+      ),
+    })
+    .default({ nodes: [] }),
   commits: z.object({
     nodes: z.array(
       z.object({
@@ -66,6 +84,9 @@ const Response = z.object({
 
 const FIELDS = `number title headRefName headRefOid state isDraft mergeable reviewDecision closedAt
   reviews(last: 30, states: [APPROVED, CHANGES_REQUESTED]) { nodes { state commit { oid } } }
+  author { login }
+  comments(last: 10) { nodes { author { login } createdAt } }
+  replies: reviews(last: 10, states: [COMMENTED]) { nodes { author { login } submittedAt } }
   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }`;
 
 export const CODING_LEDGER_QUERY = `query($o: String!, $n: String!) {
@@ -76,6 +97,15 @@ export const CODING_LEDGER_QUERY = `query($o: String!, $n: String!) {
     done: pullRequests(states: [MERGED, CLOSED], first: 50, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { ${FIELDS} } }
   }
 }`;
+
+export function codingPrReplyAt(pr: Node): number | null {
+  const by = pr.author?.login;
+  const times = [
+    ...pr.comments.nodes.map((item) => ({ login: item.author?.login, at: item.createdAt })),
+    ...pr.replies.nodes.map((item) => ({ login: item.author?.login, at: item.submittedAt })),
+  ].flatMap((item) => (by && item.login === by && item.at ? [Date.parse(item.at)] : []));
+  return times.length ? Math.max(...times) : null;
+}
 
 export function codingPrState(pr: Node): CodingPrState {
   if (pr.state === 'MERGED') return 'merged';
@@ -104,6 +134,7 @@ export type CodingLedgerRow = {
   state: CodingPrState;
   closedAt: number | null;
   ci?: string | null;
+  replyAt?: number | null;
 };
 
 export function planCodingLedgerRead(
@@ -124,6 +155,7 @@ export function planCodingLedgerRead(
       head: pr.headRefOid,
       state: codingPrState(pr),
       ci: pr.commits.nodes[0]?.commit.statusCheckRollup?.state ?? null,
+      replyAt: codingPrReplyAt(pr),
       closedAt: pr.closedAt ? Date.parse(pr.closedAt) : null,
     }))
     .filter((row) => row.closedAt === null || now - row.closedAt < CODING_LEDGER_KEEP_MS);
@@ -157,14 +189,20 @@ export class CodingPrLedgerRepository {
   private upsert(rows: readonly CodingLedgerRow[], now: number): void {
     const insert = this.db.prepare(
       `INSERT INTO pack_coding_pr_ledger
-         (repo, number, title, branch, head, state, state_since, closed_at, read_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         (repo, number, title, branch, head, state, state_since, closed_at, read_at, reply_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(repo, number) DO UPDATE SET
          title = excluded.title, branch = excluded.branch, closed_at = excluded.closed_at,
          read_at = excluded.read_at,
-         nudges = CASE WHEN head = excluded.head AND state = excluded.state THEN nudges ELSE 0 END,
-         state_since = CASE WHEN head = excluded.head AND state = excluded.state
-           THEN state_since ELSE excluded.read_at END,
+         nudges = CASE WHEN head = excluded.head AND state = excluded.state
+             AND NOT (reply_at IS NOT NULL AND COALESCE(excluded.reply_at, 0) > reply_at)
+           THEN nudges ELSE 0 END,
+         state_since = CASE WHEN head <> excluded.head OR state <> excluded.state
+             THEN excluded.read_at
+           WHEN reply_at IS NOT NULL AND COALESCE(excluded.reply_at, 0) > reply_at
+             THEN MAX(state_since, excluded.reply_at)
+           ELSE state_since END,
+         reply_at = COALESCE(excluded.reply_at, reply_at),
          head = excluded.head, state = excluded.state`
     );
     for (const row of rows)
@@ -177,7 +215,8 @@ export class CodingPrLedgerRepository {
         row.state,
         now,
         row.closedAt,
-        now
+        now,
+        row.replyAt ?? null
       );
   }
 

@@ -34,6 +34,9 @@ export function createCodingPackTables(db: Database): void {
     ref TEXT NOT NULL CHECK (json_valid(ref)),
     seen_at INTEGER NOT NULL
   )`);
+  const ledger = db.prepare('PRAGMA table_info(pack_coding_pr_ledger)').all() as { name: string }[];
+  if (!ledger.some((column) => column.name === 'reply_at'))
+    db.exec('ALTER TABLE pack_coding_pr_ledger ADD COLUMN reply_at INTEGER');
   if (db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'neo_todo_pr_refs'").get())
     db.exec(
       `INSERT OR IGNORE INTO neo_todo_pr_refs (reference, number, todo_id) ${CODING_TODO_PR_REFS}`

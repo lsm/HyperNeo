@@ -3,6 +3,7 @@ import {
   CODING_LEDGER_KEEP_MS,
   CodingPrLedgerRepository,
   codingLedgerArgs,
+  codingPrReplyAt,
   codingPrState,
   planCodingLedgerRead,
   reconcileCodingPrLedger,
@@ -483,6 +484,100 @@ describe('PR ledger read order', () => {
       300
     );
     expect(reads).toEqual(['c/c']);
+    db.close();
+  });
+});
+
+describe('codingPrReplyAt', () => {
+  test("takes the PR author's latest comment or review comment, never someone else's", () => {
+    const at = (iso: string) => Date.parse(iso);
+    expect(
+      codingPrReplyAt(
+        node(1, {
+          author: { login: 'lsm' },
+          comments: {
+            nodes: [
+              { author: { login: 'lsm' }, createdAt: '2026-10-19T08:00:00Z' },
+              { author: { login: 'hyperneo-ai-test' }, createdAt: '2026-10-19T09:00:00Z' },
+            ],
+          },
+          replies: { nodes: [{ author: { login: 'lsm' }, submittedAt: '2026-10-19T08:30:00Z' }] },
+        }) as never
+      )
+    ).toBe(at('2026-10-19T08:30:00Z'));
+    expect(
+      codingPrReplyAt(
+        node(1, { author: null, comments: { nodes: [] }, replies: { nodes: [] } }) as never
+      )
+    ).toBeNull();
+  });
+});
+
+describe('PR ledger worker replies', () => {
+  const replied = (iso: string | null, by = 'lsm') =>
+    node(1, {
+      author: { login: 'lsm' },
+      comments: { nodes: iso ? [{ author: { login: by }, createdAt: iso }] : [] },
+    });
+
+  test('a new reply by the PR author restarts the clock and the nudges; a bot comment does not', async () => {
+    const { db, ledger } = setup();
+    const t = Date.parse('2026-10-19T08:00:00Z');
+    const rows = () =>
+      db.prepare('SELECT state_since AS since, nudges FROM pack_coding_pr_ledger').get();
+    await reconcile(ledger, ['a/a'], async () => response([replied('2026-10-19T07:00:00Z')]), t);
+    db.exec('UPDATE pack_coding_pr_ledger SET nudges = 2');
+    await reconcile(
+      ledger,
+      ['a/a'],
+      async () => response([replied('2026-10-19T07:00:00Z')]),
+      t + 1
+    );
+    expect(rows()).toEqual({ since: t, nudges: 2 });
+    await reconcile(
+      ledger,
+      ['a/a'],
+      async () => response([replied('2026-10-19T08:10:00Z', 'hyperneo-ai-test')]),
+      t + 2
+    );
+    expect(rows()).toEqual({ since: t, nudges: 2 });
+    await reconcile(
+      ledger,
+      ['a/a'],
+      async () => response([replied('2026-10-19T08:20:00Z')]),
+      t + 3
+    );
+    expect(rows()).toEqual({ since: Date.parse('2026-10-19T08:20:00Z'), nudges: 0 });
+    db.close();
+  });
+
+  test('a row from before replies were read takes its first reply without a reset', async () => {
+    const { db, ledger } = setup();
+    await reconcile(ledger, ['a/a'], async () => response([node(1)]), 100);
+    db.exec('UPDATE pack_coding_pr_ledger SET nudges = 1, reply_at = NULL');
+    await reconcile(ledger, ['a/a'], async () => response([replied('2026-10-19T08:20:00Z')]), 200);
+    expect(
+      db
+        .prepare(
+          'SELECT state_since AS since, nudges, reply_at AS replyAt FROM pack_coding_pr_ledger'
+        )
+        .get()
+    ).toEqual({ since: 100, nudges: 1, replyAt: Date.parse('2026-10-19T08:20:00Z') });
+    db.close();
+  });
+
+  test('an existing ledger table gains the reply column', () => {
+    const db = new Database(':memory:');
+    db.exec(`CREATE TABLE pack_coding_pr_ledger (repo TEXT, number INTEGER, title TEXT, branch TEXT,
+      head TEXT, state TEXT, state_since INTEGER, closed_at INTEGER, owner TEXT,
+      nudges INTEGER NOT NULL DEFAULT 0, told_at INTEGER, read_at INTEGER, PRIMARY KEY (repo, number))`);
+    createCodingPackTables(db);
+    createCodingPackTables(db);
+    expect(
+      (db.prepare('PRAGMA table_info(pack_coding_pr_ledger)').all() as { name: string }[]).some(
+        (column) => column.name === 'reply_at'
+      )
+    ).toBe(true);
     db.close();
   });
 });
