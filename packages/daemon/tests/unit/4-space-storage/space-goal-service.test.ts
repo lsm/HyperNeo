@@ -828,7 +828,7 @@ describe('SpaceGoalService', () => {
       checkInCronExpression: '0 9 * * 1',
     });
 
-    service.updateGoal(goal.id, { checkInCronExpression: '0 * * * *' });
+    service.updateGoal(goal.id, { checkInCronExpression: '30 * * * *' });
 
     const events = service.listGoalEvents(goal.id);
     const last = events.find((event) => event.eventType === 'updated');
