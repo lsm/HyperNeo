@@ -62,8 +62,14 @@ unless `todoId` names another todo of the same ask.
 - Every message is stored in `neo_worker_messages` (sender ref, todo, kind, text,
   forHuman, created, delivered, dedupe hash), then delivered to root Neo as input kind
   `worker`, attributed: `From "<session title>" (<adapter>) on todo "<title>", <kind>: …`.
-- **Neo mid-turn:** the message steers into the running turn, the same path as human
-  steering (`steerHumanMessages`), widened from `human` to `human | worker`.
+- **Neo mid-turn, in a non-human turn** (a scheduled wake, a note, another worker
+  message): the message steers into the running turn, the same path as human steering
+  (`steerHumanMessages`), widened to `worker` inputs for those turns only.
+- **Neo mid-turn, in a human turn:** the message is held until that turn ends, then
+  delivered as its own turn. A human turn's authority comes from its human prompt
+  (`hasNeoHumanWorkInput`, `work-origin.ts:11`; `isNeoHumanTurn`, `operations.ts:255`), so
+  a worker steer there would inherit it. A human message steered into a worker turn is
+  unaffected.
 - **Neo idle:** it wakes Neo, as todo notes do (`continues`).
 - **Batching:** messages that arrive while a steer or wake is pending merge into one input
   ("3 worker messages"), oldest first, so a chatty worker costs one interruption.
@@ -91,10 +97,14 @@ unless `todoId` names another todo of the same ask.
   but delivered as one "N more messages from <worker>" line per batch.
 - **Dedupe:** the same sender, kind and text hash within 10 minutes is dropped, and the
   sender gets `{accepted: true, duplicate: true}`.
-- **No human authority:** input kind `worker` is never `human`. Operations that need the
-  human's word (archive, standing rules, mandate changes, start answers) already check
-  human input origins and refuse it. Neo's prompt treats worker text as data from that
-  worker, never as the human's instruction.
+- **No human authority:** input kind `worker` is never `human`, and worker messages never
+  steer into a human turn (above). As defence in depth, the human-authority checks
+  (`hasNeoHumanWorkInput`, `isNeoHumanTurn`) also refuse when the turn has carried any
+  `worker` input (`coordinator-turn.ts` records what each turn carried). So
+  `neo.session.archive`, `neo.rule.save`, mandate saves and start answers stay human-only
+  even if a steer slips in. W2 tests both: a worker message during a human turn is held,
+  and a turn that carried a worker input cannot archive. Neo's prompt treats worker text
+  as data from that worker, never as the human's instruction.
 - **Scope:** a worker can message only about its own todos, and only while its todo is
   open.
 
@@ -241,9 +251,11 @@ rows for the goal's repos, and answered questions.
 1. Load the row; stop if it is not `active` or the `pending_job_id` no longer matches.
    Then `due_count += 1`: every due run counts, skipped or not.
 2. Read the target with `work.status`. If it is `running` or `queued`, record
-   `skipped_busy`, re-enqueue for `next_run_at`, stop. `needs_you` also skips
-   (`skipped_needs_you`): the human owes it an answer first. Because busy runs count,
-   the first idle run after a busy stretch past `nudge_every` fires.
+   `skipped_busy`, compute the next run from the cadence (as step 6 does), re-enqueue
+   for that time, and stop. Re-enqueueing the already-due `next_run_at` would hot-loop
+   while the target stays busy; a stuck-busy test covers this. `needs_you` also skips
+   the same way (`skipped_needs_you`): the human owes it an answer first. Because busy
+   runs count, the first idle run after a busy stretch past `nudge_every` fires.
 3. Ask the source for facts. If the source answers `null`, mark the schedule `done`.
 4. Fire when `digest != facts_digest`, or when `due_count >= nudge_every` (a "nothing
    moved" nudge). Otherwise record `skipped_unchanged`.
@@ -549,8 +561,9 @@ lines:
 - **W1. `neo.worker.message` for HyperNeo workers** (~200): `neo_worker_messages`, the
   operation with sender resolution, scope, rate limit and dedupe, and delivery to root Neo
   as attributed `worker` input with batching (wake when idle).
-- **W2. Steering** (~60): `worker` inputs steer a running Neo turn, the same way as
-  human steering.
+- **W2. Steering** (~90): `worker` inputs steer a running non-human Neo turn and are held
+  through a human turn; the human-authority checks refuse a turn that carried a `worker`
+  input.
 - **W3. Replies** (~120): `neo.worker.reply`, `work.send`'s `replyTo` and `steer`, Codex
   `turn/steer`, Claude inbox at `next`, HyperNeo queue.
 - **W4. Claude workers** (~120): the intro inbox note after a start, and inbox replies
@@ -600,7 +613,7 @@ loop works end to end on one machine: a goal wakes Neo, Neo acts and journals, a
 mandate changes need a yes. Step 6 adds the second machine. Then the OAP and review-bot
 mandates and handoffs get written (not code).
 
-Total: about 1,480 fs3 lines and 1,270 fs2 lines over 20 PRs.
+Total: about 1,510 fs3 lines and 1,270 fs2 lines over 20 PRs.
 
 Goals and UI (fs2), each one PR from dev; sizes are production lines:
 
@@ -627,10 +640,10 @@ iOS work for 5 to 7 is Neo iOS's, against the contracts in sections 5 and 6.
 
 Worker messages (fs3):
 
-- **Interrupting Neo.** Steering worker messages into Neo's turn while it talks to the
-  human could derail the human's request. Batching and the rate limit bound it. If it
-  still hurts, steer only `blocked` and `question` messages and defer `progress` to the
-  turn's end; that switch is one line.
+- **Latency during human turns.** Worker messages wait while Neo works on a human
+  request, so a worker's question can sit for that turn's length. That is the price of
+  keeping human authority clean. The worker keeps working meanwhile, and a long human
+  turn is visible in the chat.
 - **Claude sender proof is a same-user file check**, not authentication: the reply socket
   is matched to `~/.claude/sessions/<pid>.json`. Any process running as the user could
   forge it. That is today's trust level for the inbox, and acceptable on a single-user
