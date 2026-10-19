@@ -508,6 +508,13 @@ describe('planNeoTodoCheck', () => {
     expect(
       planNeoTodoCheck({ ...held, blockedBy: 'worker' }, { done: false, evidence: null }, 2)
     ).toBeNull();
+    expect(
+      planNeoTodoCheck(
+        { ...held, blockedBy: 'worker' },
+        { done: false, evidence: null, blocked },
+        2
+      )
+    ).toBeNull();
   });
 });
 
@@ -690,5 +697,16 @@ describe('blocked todos', () => {
       blockedReason: null,
       nextAction: null,
     });
+  });
+
+  test('unblocking a todo that never started sends no note', async () => {
+    const { store, runner, told, add, setResult } = setup();
+    const todo = add({ pack: 'coding', kind: 'pr_merged', params: {} });
+    setResult({ done: false, evidence: null, blocked });
+    await runner.checkNow([todo.id], warn);
+    setResult({ done: false, evidence: null });
+    await runner.checkNow([todo.id], warn);
+    expect(store.getTodo(todo.id)).toMatchObject({ state: 'todo', blockedBy: null });
+    expect(told).toEqual([expect.stringContaining('is blocked: No progress for 2 hours')]);
   });
 });

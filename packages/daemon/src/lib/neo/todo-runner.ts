@@ -184,7 +184,9 @@ export function planNeoTodoCheck(
   if (result.failed) return planNeoTodoFailure(todo, result.failed, now);
   if (result.done) return { state: 'done', evidence: result.evidence, finishedAt: now };
   if (result.blocked)
-    return planNeoTodoBlocked(todo, 'check', result.blocked.reason, result.blocked.nextAction);
+    return todo.state === 'blocked' && todo.blockedBy !== 'check'
+      ? null
+      : planNeoTodoBlocked(todo, 'check', result.blocked.reason, result.blocked.nextAction);
   return todo.state === 'blocked' && todo.blockedBy === 'check'
     ? { state: todo.startedAt === null ? 'todo' : 'doing' }
     : null;
@@ -222,7 +224,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   const finish = async (todo: NeoTodo, ask: NeoAsk, patch: NeoTodoPatch | null, now: number) => {
     if (!patch) return todo;
     const next = store.updateTodo(todo, patch, now);
-    if (next.state !== 'doing') await deps.tell(ask, next, neoTodoNote(next));
+    if (next.state === 'done' || next.state === 'failed' || next.state === 'blocked')
+      await deps.tell(ask, next, neoTodoNote(next));
     return next;
   };
 
