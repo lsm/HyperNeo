@@ -213,7 +213,11 @@ export class NeoAskTodoRepository {
     return this.getTodo(id)!;
   }
 
-  updateTodo(todo: NeoTodo, patch: NeoTodoPatch, now: number): NeoTodo {
+  updateTodo(todo: NeoTodo, change: NeoTodoPatch, now: number): NeoTodo {
+    const patch: NeoTodoPatch =
+      change.state && change.state !== 'blocked'
+        ? { ...change, blockedReason: null, nextAction: null, blockedBy: null }
+        : change;
     const keys = Object.keys(patch) as (keyof NeoTodoPatch)[];
     this.db
       .prepare(

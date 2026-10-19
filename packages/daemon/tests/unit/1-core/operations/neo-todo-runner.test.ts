@@ -452,9 +452,6 @@ describe('planNeoTodoSettled', () => {
       state: 'failed',
       reason: 'It stopped.',
       finishedAt: 5,
-      blockedReason: null,
-      nextAction: null,
-      blockedBy: null,
     });
     expect(
       planNeoTodoSettled(
@@ -481,7 +478,6 @@ describe('planNeoTodoCheck', () => {
       state: 'done',
       evidence: 'ok',
       finishedAt: 1,
-      blockedBy: null,
     });
     expect(planNeoTodoCheck(doing, { done: false, evidence: null }, 1)).toBeNull();
     expect(
@@ -505,12 +501,9 @@ describe('planNeoTodoCheck', () => {
     expect(planNeoTodoCheck(held, { done: false, evidence: null, blocked }, 2)).toBeNull();
     expect(
       planNeoTodoCheck({ ...held, startedAt: null }, { done: false, evidence: null }, 2)
-    ).toMatchObject({ state: 'todo', blockedBy: null });
+    ).toEqual({ state: 'todo' });
     expect(planNeoTodoCheck(held, { done: false, evidence: null }, 2)).toEqual({
       state: 'doing',
-      blockedReason: null,
-      nextAction: null,
-      blockedBy: null,
     });
     expect(
       planNeoTodoCheck({ ...held, blockedBy: 'worker' }, { done: false, evidence: null }, 2)
@@ -682,5 +675,20 @@ describe('blocked todos', () => {
     });
     expect(await runner.retry(todo.id)).toMatchObject({ ok: true });
     expect(store.getTodo(todo.id)).toMatchObject({ state: 'doing', blockedBy: null });
+  });
+
+  test('a blocked todo closed or ticked done keeps no block', () => {
+    const { store, add } = setup();
+    const todo = store.updateTodo(
+      add(),
+      { state: 'blocked', blockedBy: 'worker', blockedReason: 'Stopped', nextAction: 'Close it' },
+      2
+    );
+    expect(store.updateTodo(todo, { state: 'done', evidence: 'Closed' }, 3)).toMatchObject({
+      state: 'done',
+      blockedBy: null,
+      blockedReason: null,
+      nextAction: null,
+    });
   });
 });

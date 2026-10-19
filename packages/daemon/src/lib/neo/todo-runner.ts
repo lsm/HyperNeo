@@ -128,8 +128,6 @@ export function requireNeoTodoRetryable(read: {
   return { value: todo };
 }
 
-const UNBLOCKED = { blockedReason: null, nextAction: null, blockedBy: null } as const;
-
 function planNeoTodoBlocked(
   todo: NeoTodo,
   blockedBy: NonNullable<NeoTodo['blockedBy']>,
@@ -155,7 +153,7 @@ export function planNeoTodoFailure(
         `Failed twice: ${reason}`,
         'Ask the human how to go on, or take another approach.'
       )
-    : { state: 'failed', reason, finishedAt: now, ...UNBLOCKED };
+    : { state: 'failed', reason, finishedAt: now };
 }
 
 export function planNeoTodoSettled(
@@ -184,12 +182,11 @@ export function planNeoTodoCheck(
 ): NeoTodoPatch | null {
   if (!result || todo.state === 'done' || todo.state === 'failed') return null;
   if (result.failed) return planNeoTodoFailure(todo, result.failed, now);
-  if (result.done)
-    return { state: 'done', evidence: result.evidence, finishedAt: now, ...UNBLOCKED };
+  if (result.done) return { state: 'done', evidence: result.evidence, finishedAt: now };
   if (result.blocked)
     return planNeoTodoBlocked(todo, 'check', result.blocked.reason, result.blocked.nextAction);
   return todo.state === 'blocked' && todo.blockedBy === 'check'
-    ? { state: todo.startedAt === null ? 'todo' : 'doing', ...UNBLOCKED }
+    ? { state: todo.startedAt === null ? 'todo' : 'doing' }
     : null;
 }
 
@@ -436,7 +433,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
             todo,
             {
               report: `${report}\n\n${todo.report}`.slice(0, 12_000),
-              ...(todo.state === 'blocked' ? { state: 'doing', ...UNBLOCKED } : {}),
+              ...(todo.state === 'blocked' ? { state: 'doing' } : {}),
             },
             now
           );
@@ -479,7 +476,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     sessions.recordSent(todo.id, sent && { ...sent, receipt: delivered.receipt });
     const next = store.updateTodo(
       todo,
-      { state: 'doing', report: null, evidence: null, finishedAt: null, ...UNBLOCKED },
+      { state: 'doing', report: null, evidence: null, finishedAt: null },
       Date.now()
     );
     checked.delete(todo.id);
@@ -513,7 +510,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       sessions.recordRetry(todoId);
       store.updateTodo(
         gate.value,
-        { state: 'todo', startedAt: null, finishedAt: null, ...UNBLOCKED },
+        { state: 'todo', startedAt: null, finishedAt: null },
         Date.now()
       );
       return start(todoId);
