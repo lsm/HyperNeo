@@ -93,6 +93,8 @@ export function codingPrState(pr: Node): CodingPrState {
   return 'waiting_review';
 }
 
+export type CodingPrTransition = CodingLedgerRow & { from: CodingPrState };
+
 export type CodingLedgerRow = {
   repo: string;
   number: number;
@@ -101,6 +103,7 @@ export type CodingLedgerRow = {
   head: string;
   state: CodingPrState;
   closedAt: number | null;
+  ci?: string | null;
 };
 
 export function planCodingLedgerRead(
@@ -120,6 +123,7 @@ export function planCodingLedgerRead(
       branch: pr.headRefName,
       head: pr.headRefOid,
       state: codingPrState(pr),
+      ci: pr.commits.nodes[0]?.commit.statusCheckRollup?.state ?? null,
       closedAt: pr.closedAt ? Date.parse(pr.closedAt) : null,
     }))
     .filter((row) => row.closedAt === null || now - row.closedAt < CODING_LEDGER_KEEP_MS);
@@ -129,7 +133,14 @@ export function planCodingLedgerRead(
 export class CodingPrLedgerRepository {
   constructor(private readonly db: Database) {}
 
-  replace(repo: string, rows: readonly CodingLedgerRow[], now: number): void {
+  replace(repo: string, rows: readonly CodingLedgerRow[], now: number): CodingPrTransition[] {
+    const before = new Map(
+      (
+        this.db
+          .prepare('SELECT number, state FROM pack_coding_pr_ledger WHERE repo = ?')
+          .all(repo) as { number: number; state: CodingPrState }[]
+      ).map((row) => [row.number, row.state])
+    );
     this.upsert(rows, now);
     this.db
       .prepare(
@@ -137,6 +148,10 @@ export class CodingPrLedgerRepository {
            AND number NOT IN (SELECT value FROM json_each(?))`
       )
       .run(repo, JSON.stringify(rows.map((row) => row.number)));
+    return rows.flatMap((row) => {
+      const from = before.get(row.number);
+      return from && from !== row.state ? [{ ...row, from }] : [];
+    });
   }
 
   private upsert(rows: readonly CodingLedgerRow[], now: number): void {
@@ -301,8 +316,9 @@ export async function reconcileCodingPrLedger(
   read: CodingLedgerRead,
   now: number,
   skips: Map<string, number> = new Map()
-): Promise<void> {
+): Promise<CodingPrTransition[]> {
   const seen = new Set<string>();
+  const transitions: CodingPrTransition[] = [];
   const last = ledger.lastReads();
   const order = [...repos].sort((a, b) => (last.get(a) ?? 0) - (last.get(b) ?? 0));
   for (const repo of order) {
@@ -317,7 +333,8 @@ export async function reconcileCodingPrLedger(
       );
     if (typeof error === 'string' && isRateLimitError(error)) break;
     if (planned && planned.repo !== repo.toLowerCase()) ledger.dropRepo(repo.toLowerCase());
-    if (planned && !seen.has(planned.repo)) ledger.replace(planned.repo, planned.rows, now);
+    if (planned && !seen.has(planned.repo))
+      transitions.push(...ledger.replace(planned.repo, planned.rows, now));
     if (planned) seen.add(planned.repo);
     if (planned && planned.remaining < CODING_LEDGER_MIN_RATE) break;
   }
@@ -325,4 +342,5 @@ export async function reconcileCodingPrLedger(
   ledger.linkOwners();
   ledger.recordSessionPrs([], now);
   ledger.pruneSessionPrs(now);
+  return transitions;
 }
