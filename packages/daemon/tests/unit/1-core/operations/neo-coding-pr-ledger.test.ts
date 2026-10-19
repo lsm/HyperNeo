@@ -149,11 +149,11 @@ describe('PR ledger reconcile', () => {
 
   test('a failed or partial read leaves the rows untouched, and a low rate limit ends the cycle', async () => {
     const { db, ledger } = setup();
-    await reconcile(ledger, ['a/a'], async () => response([node(1)]), 100);
+    await reconcile(ledger, ['a/a', 'b/b'], async () => response([node(1)]), 100);
     const reads: string[] = [];
     await reconcile(
       ledger,
-      ['a/a', 'b/b', 'c/c'],
+      ['a/a', 'b/b', 'c/c', 'd/d'],
       async (repo) => {
         reads.push(repo);
         if (repo === 'a/a') return null;
@@ -161,10 +161,22 @@ describe('PR ledger reconcile', () => {
       },
       200
     );
+    db.prepare("UPDATE pack_coding_pr_ledger SET read_at = 10 WHERE repo = 'a/a'").run();
+    expect(reads).toEqual(['c/c']);
+    reads.length = 0;
+    await reconcile(
+      ledger,
+      ['a/a', 'b/b'],
+      async (repo) => {
+        reads.push(repo);
+        return repo === 'a/a' ? null : response([node(2)], [], { remaining: 499, next: false });
+      },
+      300
+    );
     expect(reads).toEqual(['a/a', 'b/b']);
     expect(ledger.list().map((row) => [row.repo, row.number, row.readAt])).toEqual([
-      ['a/a', 1, 100],
-      ['b/b', 2, 200],
+      ['a/a', 1, 10],
+      ['b/b', 2, 300],
     ]);
     db.close();
   });
@@ -440,6 +452,37 @@ describe('CodingPrLedgerRepository.pruneSessionPrs', () => {
     expect(db.prepare('SELECT url FROM pack_coding_session_prs ORDER BY url').all()).toEqual([
       { url: 'https://github.com/lsm/a/pull/1' },
     ]);
+    db.close();
+  });
+});
+
+describe('PR ledger read order', () => {
+  test('reads the least recently read repos first, so a low budget does not starve the same repos', async () => {
+    const { db, ledger } = setup();
+    await reconcile(ledger, ['a/a', 'b/b', 'c/c'], async () => response([node(1)]), 100);
+    db.prepare("UPDATE pack_coding_pr_ledger SET read_at = 50 WHERE repo = 'c/c'").run();
+    const reads: string[] = [];
+    await reconcile(
+      ledger,
+      ['a/a', 'b/b', 'c/c', 'new/new'],
+      async (repo) => {
+        reads.push(repo);
+        return response([node(1)], [], { remaining: 100, next: false });
+      },
+      200
+    );
+    expect(reads).toEqual(['new/new']);
+    reads.length = 0;
+    await reconcile(
+      ledger,
+      ['a/a', 'b/b', 'c/c', 'new/new'],
+      async (repo) => {
+        reads.push(repo);
+        return repo === 'c/c' ? { error: 'HTTP 429: Too Many Requests' } : response([node(1)]);
+      },
+      300
+    );
+    expect(reads).toEqual(['c/c']);
     db.close();
   });
 });
