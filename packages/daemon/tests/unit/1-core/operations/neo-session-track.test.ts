@@ -5,8 +5,6 @@ import { requireNeoDriverVerb } from '../../../../src/lib/neo/driver-work.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import {
   findNeoSessionNotice,
-  keepNeoTrackedSessions,
-  NEO_SESSION_TRACK_MS,
   requireNeoTrackRoot,
   requireNeoTrackableSession,
   requireNeoTrackedAdoption,
@@ -69,17 +67,6 @@ describe('requireNeoTrackableSession', () => {
     expect(requireNeoTrackableSession(notice(), [ref])).toEqual({
       reason: { ok: false, reason: 'A Neo card already follows this session.' },
     });
-  });
-});
-
-describe('keepNeoTrackedSessions', () => {
-  test('records the tap and drops taps older than the track window', () => {
-    const kept = keepNeoTrackedSessions(new Map([['old', 0]]), key, NEO_SESSION_TRACK_MS);
-    expect([...kept]).toEqual([[key, NEO_SESSION_TRACK_MS]]);
-  });
-
-  test('a repeated tap keeps the window its first tap opened', () => {
-    expect([...keepNeoTrackedSessions(new Map([[key, 5]]), key, 9)]).toEqual([[key, 5]]);
   });
 });
 
@@ -171,6 +158,43 @@ describe('neo.session.track', () => {
   afterEach(() => {
     service.dispose();
     db.close();
+  });
+
+  test('a tap opens an ask whose todo follows the session and blocks when it stops', async () => {
+    Object.assign(service, { deliver: async () => {} });
+    const tapped = Date.now();
+    await service.trackSession('neo:root', notice({ link: 'codex://threads/t1' }), tapped);
+    const [ask] = service.todos.listOpenAsks();
+    expect(ask).toMatchObject({ sessionId: 'neo:root', title: 'Quiet-model research' });
+    const [todo] = service.todos.listTodos(ask.id);
+    expect(todo).toMatchObject({ state: 'doing', instruction: null, startedAt: tapped });
+    expect(service.todoSessions.readRef(todo.id)).toEqual(ref);
+    expect(service.followedCardRefs(tapped)).toEqual([ref]);
+    status = { status: 'done', lastActivityAt: tapped - 1 };
+    await service.todoRunner.refresh(() => {});
+    expect(service.todos.getTodo(todo.id)?.state).toBe('doing');
+    status = { status: 'done', lastActivityAt: tapped + 10_000 };
+    await service.todoRunner.refresh(() => {});
+    expect(service.todos.getTodo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'worker' });
+    expect(service.askRecords.list()).toEqual([]);
+  });
+
+  test('every tap tells Neo its own ask, and closing the todo never stops the human session', async () => {
+    const told: string[] = [];
+    Object.assign(service, {
+      deliver: async (_root: string, messageId: string) => {
+        told.push(messageId);
+      },
+    });
+    await service.trackSession('neo:root', notice(), 1_000);
+    const [first] = service.todos.listOpenAsks();
+    const [todo] = service.todos.listTodos(first.id);
+    expect(await service.todoRunner.stop(todo)).toBeNull();
+    expect(stopped).not.toHaveBeenCalled();
+    service.todos.settleAsk(first, 'dropped', 'Not needed', 2_000);
+    await service.trackSession('neo:root', notice(), 3_000);
+    expect(told).toHaveLength(2);
+    expect(new Set(told).size).toBe(2);
   });
 
   test('a restart mid-adoption finishes adopting instead of failing the card', async () => {

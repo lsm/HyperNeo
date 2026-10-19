@@ -1359,7 +1359,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.session.track',
       description:
-        'Track a session the human started themselves, from its notice: key is the notice key from snapshot.sessionNoticeGroups or sessionNotices. The daemon opens and approves one ask for the tap (a repeated tap within the track window reuses it), and Neo is asked to propose under that askId a card that adopts the session as its driver target ({verb:"adopt", ref}) without sending it anything; the tap counts as the human’s Start for that card, so it starts on its own.',
+        'Track a session the human started themselves, from its notice: key is the notice key from snapshot.sessionNoticeGroups or sessionNotices. The tap is the human’s approval: the daemon opens an ask with one todo that follows the session from the tap on, without sending it anything, and tells Neo the askId and todoId. Neo hears when the session stops before the todo is done.',
       inputSchema: SessionTrack,
       resultSchema: SessionTrackResult,
       policy: { safetyClass: 'human_only' },

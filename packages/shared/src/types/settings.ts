@@ -108,7 +108,6 @@ export interface NeoSettings {
   preferences?: NeoModelPreference;
   packs?: string[];
   mutedSessions?: string[];
-  trackedSessions?: Record<string, number>;
   autoDispatch?: boolean;
 }
 

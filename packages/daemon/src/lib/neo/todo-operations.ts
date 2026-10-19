@@ -360,7 +360,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.remove',
       description:
-        'Remove a todo from an open ask you own, with the reason; its session stops if it is running. replacedBy names the todo that replaces it. A removed todo stays listed, struck through.',
+        'Remove a todo from an open ask you own, with the reason; its session stops if it is running, unless the todo only follows a session the human tracked. replacedBy names the todo that replaces it. A removed todo stays listed, struck through.',
       inputSchema: Remove,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -387,7 +387,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.close',
       description:
-        'Mark a todo done with the reason you judged it done; its session stops if it is running.',
+        'Mark a todo done with the reason you judged it done; its session stops if it is running, unless the todo only follows a session the human tracked.',
       inputSchema: Close,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

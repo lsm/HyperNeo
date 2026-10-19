@@ -300,7 +300,7 @@ import { neoPrompt } from './prompt.ts';
 import { createNeoPublicationCommit } from './publication-commit.ts';
 import { createNeoPublisher } from './publication-operation.ts';
 import { runNeoReadWork } from './read-work.ts';
-import { NEO_INBOX_ID, openNeoDefaultSession } from './inbox.ts';
+import { openNeoDefaultSession } from './inbox.ts';
 import {
   type NeoSavedRulesNote,
   planNeoSavedRulesAppend,
@@ -314,7 +314,6 @@ import {
   neoCoordinatorBinding,
   neoCoordinatorNativeTools,
 } from './session-policy.ts';
-import { keepNeoTrackedSessions } from './session-track.ts';
 import type { NeoSessionNotice, NeoSessionNoticeGroup } from './session-watch.ts';
 import { NeoSessionWatcher } from './session-watcher.ts';
 import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
@@ -438,17 +437,6 @@ export class NeoService {
       ...this.sessionWatcher.sessionNoticeGroups.flatMap((group) => group.notices),
       ...this.sessionWatcher.sessionNotices,
     ];
-  }
-
-  get trackedSessions(): Map<string, number> {
-    return new Map(Object.entries(this.db.getGlobalSettings?.().neo?.trackedSessions ?? {}));
-  }
-
-  set trackedSessions(tracked: ReadonlyMap<string, number>) {
-    const neo = this.db.getGlobalSettings().neo;
-    this.db.updateGlobalSettings({
-      neo: { ...neo, trackedSessions: Object.fromEntries(tracked) },
-    });
   }
 
   readonly sessionWatcher: NeoSessionWatcher;
@@ -2126,29 +2114,33 @@ export class NeoService {
   }
 
   async trackSession(root: string, notice: NeoSessionNotice, now: number): Promise<{ ok: true }> {
-    const tracked = keepNeoTrackedSessions(this.trackedSessions, notice.key, now);
-    this.trackedSessions = tracked;
-    const messageId = `neo-track:${notice.key}:${tracked.get(notice.key)}`;
+    const askId = crypto.randomUUID();
+    const messageId = `neo-track:${notice.key}:${askId}`;
     const done = 'The session finishes its work';
-    const ask = this.askRecords.open(
-      {
-        id: crypto.randomUUID(),
-        requestKey: messageId,
-        projectId: NEO_INBOX_ID,
-        originSessionId: root,
-        originMessageId: messageId,
-        title: notice.title,
-        ask: `See ${notice.title} through.`,
-        doneWhen: `- ${done}`,
-        doneSource: 'human',
-      },
-      [{ text: done, check: null }]
+    const ask = this.todos.openAsk({
+      id: askId,
+      projectId: null,
+      sessionId: root,
+      originMessageId: messageId,
+      title: notice.title,
+      request: `See ${notice.title} through.`,
+      createdAt: now,
+    });
+    const todo = this.todos.addTodo(
+      crypto.randomUUID(),
+      ask.id,
+      { title: done, doneWhen: done, check: null, instruction: null, named: null },
+      now
     );
-    if (ask) this.askRecords.approve(ask.id, now, ask.revision ?? 0);
+    this.todoSessions.create(todo.id, { verb: 'adopt', ref: notice.ref });
+    this.todoSessions.recordRef(todo.id, notice.ref, now, notice.link);
+    this.todoSessions.recordFollowAnchor(todo.id, now);
+    this.todos.updateTodo(todo, { state: 'doing', startedAt: now }, now);
     const content = fillPrompt(NEO_SESSION_TRACK, {
       title: JSON.stringify(notice.title),
       ref: JSON.stringify(notice.ref),
-      askId: JSON.stringify(ask?.id ?? null),
+      askId: JSON.stringify(ask.id),
+      todoId: JSON.stringify(todo.id),
     });
     await this.deliver(root, messageId, content, root);
     return { ok: true };
