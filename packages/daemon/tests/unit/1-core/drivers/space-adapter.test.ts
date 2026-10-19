@@ -1,4 +1,4 @@
-import { readDriverAdoptedSent, readDriverSettlement } from '../../../../src/lib/neo/driver-work';
+import { readDriverSettlement } from '../../../../src/lib/neo/driver-work';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   buildSpaceGroups,
@@ -239,13 +239,8 @@ describe('space adapter against the space tables', () => {
         INSERT INTO space_long_horizon_agents VALUES ('a1', 'sp1', 'coder', 'Coder', 'active', 's1', 1)`);
     });
 
-    test('adopts actual input and isolates its result from event turns and other sessions', async () => {
+    test('isolates its result from event turns and other sessions', async () => {
       write('s1', 1, 'user', user('Fix parser'));
-      const adopted = await adapter().status!(ref);
-      expect(readDriverAdoptedSent({ kind: 'completed', value: adopted })).toEqual({
-        inputBefore: base,
-        opening: 'Fix parser',
-      });
       write('s1', 2, 'result', { result: 'Parser fixed' });
       write('s1', 3, 'user', user('Unrelated PR event', 'system'));
       write('s1', 4, 'result', { result: 'Other PR result' });

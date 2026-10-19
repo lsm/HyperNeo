@@ -4,8 +4,6 @@ import type { NeoAsk, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import {
   isNeoCardDoneWhenMet,
   isNeoCardPrRoutine,
-  isNeoHumanInputSince,
-  neoCardWakeProgress,
   neoContinueFacts,
 } from '../../../../src/lib/neo/card-wake.ts';
 import { NeoWorkWakeRepository } from '../../../../src/storage/repositories/neo-work-wake-repository.ts';
@@ -23,22 +21,6 @@ const items = (...states: ('met' | 'pending')[]) =>
   ({
     doneItems: states.map((state, index) => ({ id: `i${index}`, text: 't', state })),
   }) as unknown as Pick<NeoAsk, 'doneItems'>;
-
-describe('neoCardWakeProgress', () => {
-  test('moves when an item is ticked met, not only with the card', () => {
-    expect(neoCardWakeProgress('0|a', items('pending'))).toBe('0|a|0');
-    expect(neoCardWakeProgress('0|a', items('met'))).toBe('0|a|1');
-    expect(neoCardWakeProgress('0|a', null)).toBe('0|a|0');
-  });
-});
-
-describe('isNeoHumanInputSince', () => {
-  test('counts only a human message after the last continue', () => {
-    expect(isNeoHumanInputSince(null, 10)).toBe(false);
-    expect(isNeoHumanInputSince(10, 10)).toBe(false);
-    expect(isNeoHumanInputSince(11, 10)).toBe(true);
-  });
-});
 
 describe('isNeoCardPrAwaited', () => {
   test.each<[string, Partial<NeoWorkPr>, boolean]>([

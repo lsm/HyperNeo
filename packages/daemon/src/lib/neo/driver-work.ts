@@ -1,10 +1,6 @@
-import type { neoContinueFacts } from './card-wake.ts';
 import {
   fillPrompt,
   NEO_WORK_BLOCKER,
-  NEO_WORK_DONE_CHECK,
-  NEO_WORK_DONE_CHECK_ASK_FOREIGN,
-  NEO_WORK_DONE_CHECK_ASK_OWNED,
   NEO_WORK_GOAL,
   NEO_WORK_GOAL_ASKED,
   NEO_WORK_GOAL_DONE_WHEN,
@@ -12,15 +8,9 @@ import {
   NEO_WORK_GOAL_PR_EVENTS,
   NEO_WORK_GOAL_PR_SUBSCRIBE,
   NEO_WORK_GOAL_REMAINING,
-  NEO_WORK_PACK_NOTE,
 } from '@hyperneo/prompts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import {
-  type NeoAsk,
-  type NeoWorkGoal,
-  type NeoWorkPr,
-  neoWorkPrVerdict,
-} from '@hyperneo/shared/types/neo-snapshot';
+import { type NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
 import { z } from 'zod';
 import { workStartConfiguration } from '../drivers/start-configuration.ts';
 import {
@@ -41,9 +31,7 @@ import {
 import { WORK_MESSAGE_MAX } from '../drivers/work-operations.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
-import { hashString32 } from '../runtime-hash.ts';
-import type { NeoPackCardFacts, NeoPackFragment, NeoSessionFacts } from './packs/types.ts';
-import { neoAskProgressNote, neoNoteChecklist } from './ask-progress.ts';
+import type { NeoSessionFacts } from './packs/types.ts';
 import { NeoReadWorkTarget } from './read-work.ts';
 import { awaitingNeoWorker } from './work-reroute.ts';
 
@@ -74,53 +62,6 @@ export const NeoDriverTargetSchema = z.discriminatedUnion('verb', [
 ]);
 
 export type NeoDriverTarget = z.infer<typeof NeoDriverTargetSchema>;
-type NeoDriverAdapter = { id: string; capabilities: readonly string[] };
-
-export function readNeoStartFolder(
-  target: NeoDriverTarget | null | undefined,
-  exists: (folder: string) => boolean
-): { exists: boolean | null } {
-  return target?.verb === 'start' &&
-    target.place.folder &&
-    !target.place.daemon &&
-    !target.createFolder
-    ? { exists: exists(target.place.folder) }
-    : { exists: null };
-}
-
-export function requireNeoStartFolder<T>(
-  target: NeoDriverTarget | null | undefined,
-  found: { exists: boolean | null },
-  value: T
-): { value: T } | { reason: { ok: false; reason: string } } {
-  return target?.verb === 'start' && found.exists === false
-    ? {
-        reason: {
-          ok: false,
-          reason: `The folder ${target.place.folder} does not exist on ${target.place.machine}. Start work in a place from work.find, such as the repository's own checkout; the session makes its own worktree there. Never invent a folder.`,
-        },
-      }
-    : { value };
-}
-
-export function requireNeoDriverVerb<T>(
-  target: NeoDriverTarget | undefined,
-  adapters: readonly NeoDriverAdapter[] | null,
-  value: T
-): { value: T } | { reason: { ok: false; reason: string } } {
-  if (!target || target.verb === 'read' || !adapters) return { value };
-  const id = target.verb === 'start' ? target.adapter : target.ref.adapter;
-  const verb = target.verb === 'adopt' ? 'status' : target.verb;
-  if (adapters.some((item) => item.id === id && item.capabilities.includes(verb))) return { value };
-  const able = adapters.filter((item) => item.capabilities.includes(verb));
-  return {
-    reason: {
-      ok: false,
-      reason: `The ${id} adapter cannot ${target.verb} work. Adapters that can: ${able.map((item) => item.id).join(', ') || 'none'}.`,
-    },
-  };
-}
-
 const DriverReplySchema = z.discriminatedUnion('ok', [
   z.object({
     ok: z.literal(true),
@@ -128,18 +69,6 @@ const DriverReplySchema = z.discriminatedUnion('ok', [
   }),
   z.object({ ok: z.literal(false), reason: z.string(), detail: z.string() }),
 ]);
-
-export function neoWorkProgress(
-  work: Pick<NeoWork, 'status' | 'report'>,
-  prRevision: number | null,
-  prior: string | null
-): string {
-  const report =
-    work.status === 'reported'
-      ? hashString32(work.report ?? '').toString(36)
-      : (prior?.split('|')[1] ?? '-');
-  return `${prRevision ?? 0}|${report}`;
-}
 
 export function withWorkGoal(
   instruction: string,
@@ -189,12 +118,6 @@ export function driverWorkCall(
         },
       }
     : { name: 'work.send', input: { ref: target.ref, message } };
-}
-
-export function driverStartedReport(ref: WorkRef, link?: string, model?: string): string {
-  const where = link ? ` It opens at ${link}.` : '';
-  const runs = model ? ` It runs on ${model}.` : '';
-  return `Handed to ${ref.adapter}${ref.daemon ? ` on ${ref.daemon}` : ''}.${runs}${where} Follow up with work.status ${JSON.stringify({ ref })}.`;
 }
 
 export function driverWorkCaller(work: Pick<NeoWork, 'originSessionId'>): OperationCaller {
@@ -423,37 +346,12 @@ export interface DriverSent {
   receipt?: WorkDelivery['receipt'];
 }
 
-export function readDriverStartReceipt(outcome: OperationOutcome): WorkDelivery['receipt'] | null {
-  const value = parseDriverStatus(outcome) as { startReceipt?: unknown } | null;
-  const parsed = WorkInputReceiptSchema.safeParse(value?.startReceipt);
-  return parsed.success ? parsed.data : null;
-}
-
-export function planNeoStartReceiptAdoption(
-  outcome: OperationOutcome,
-  sent: DriverSent | null,
-  verb: string | undefined
-): DriverSent | null {
-  if (verb !== 'start' || !sent || sent.receipt) return null;
-  const receipt = readDriverStartReceipt(outcome);
-  return receipt ? { ...sent, receipt } : null;
-}
-
 export function messageOpening(message: string): string {
   return message.trim().split('\n')[0].replace(/\s+/g, ' ').trim().slice(0, 80);
 }
 
-export function readDriverInputs(outcome: OperationOutcome): WorkInput[] | null {
+function readDriverInputs(outcome: OperationOutcome): WorkInput[] | null {
   return parseDriverStatus(outcome)?.recentInputs ?? null;
-}
-
-export function readDriverAdoptedSent(outcome: OperationOutcome): DriverSent | null {
-  const value = parseDriverStatus(outcome);
-  const input = (
-    value?.recentInputs ?? value?.exchange?.filter((entry) => entry.role === 'user')
-  )?.at(-1);
-  const opening = input ? messageOpening(input.text) : '';
-  return input && opening ? { inputBefore: input.at - 1, opening } : null;
 }
 
 export function readDriverSessionFacts(
@@ -513,98 +411,7 @@ export function readDriverLanded(
   return landed?.at ?? null;
 }
 
-export function readDriverNeedsYou(
-  outcome: OperationOutcome
-): { needsYou: boolean; since: number; lastReply?: string } | null {
-  const value = parseDriverStatus(outcome);
-  if (!value) return null;
-  const { status, lastActivityAt, lastReply } = value;
-  return { needsYou: status === 'needs_you', since: lastActivityAt, lastReply };
-}
-
 const NEO_DRIVER_NO_REPLY = 'It finished without a written reply.';
-
-export interface NeoAskCard {
-  id: string;
-  title: string;
-  status: NeoWork['status'];
-  prs?: NeoWorkPr[];
-}
-
-export function isNeoDoneWhenRestated(doneWhen: string, ask: NeoAsk): boolean {
-  const texts = new Set(
-    (ask.doneItems ?? []).filter((item) => !item.removed).map((item) => item.text.trim())
-  );
-  const lines = doneWhen
-    .split('\n')
-    .map((line) => line.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim())
-    .filter(Boolean);
-  return lines.length > 0 && lines.every((line) => texts.has(line));
-}
-
-export function neoNotePrVerdict(prs: readonly NeoWorkPr[]) {
-  const verdicts = prs.map(neoWorkPrVerdict);
-  return verdicts.find((verdict) => verdict !== 'done') ?? verdicts[0];
-}
-
-export function neoNoteCards(cards: readonly NeoAskCard[]) {
-  return cards.map(({ id, title, status, prs }) => {
-    const pr = neoNotePrVerdict(prs ?? []);
-    return { id, title, status, ...(pr ? { pr } : {}) };
-  });
-}
-
-export function driverDoneCheckNote(
-  work: Pick<NeoWork, 'id' | 'title' | 'report' | 'originSessionId'>,
-  goal: NeoWorkGoal,
-  continued: number,
-  {
-    facts = null,
-    continuation,
-    ask,
-    pack = null,
-    cards = [],
-    move = '',
-  }: {
-    stalled?: number;
-    continuation?: ReturnType<typeof neoContinueFacts>;
-    facts?: NeoPackCardFacts | null;
-    ask?: NeoAsk | null;
-    pack?: NeoPackFragment | null;
-    cards?: readonly NeoAskCard[];
-    move?: string;
-  } = {}
-): string {
-  const owned = !!ask && ask.originSessionId === work.originSessionId;
-  const next = '';
-  const owner = !ask
-    ? ''
-    : owned
-      ? ` ${fillPrompt(NEO_WORK_DONE_CHECK_ASK_OWNED, { ask_id: ask.id })}`
-      : ` ${fillPrompt(NEO_WORK_DONE_CHECK_ASK_FOREIGN, { ask_id: ask.id })}`;
-  const packNote = pack ? `\n${fillPrompt(NEO_WORK_PACK_NOTE, { pack: pack.id })}` : '';
-  const items = owned && ask ? neoNoteChecklist(ask) : [];
-  const restates = (doneWhen: string | null | undefined) =>
-    !!ask && items.length > 0 && isNeoDoneWhenRestated(doneWhen ?? '', ask);
-  return neoAskProgressNote(
-    ask ?? null,
-    `${fillPrompt(NEO_WORK_DONE_CHECK, { work_id: work.id, title: work.title, facts: facts ? ` ${facts.text}` : '', ask: owner, next })}${move}${packNote}`,
-    {
-      card: {
-        id: work.id,
-        title: work.title,
-        goal: goal.goal,
-        ...(restates(goal.doneWhen) ? {} : { doneWhen: goal.doneWhen }),
-        continued,
-        continuation,
-        report: work.report?.slice(0, 12000) ?? null,
-        ...facts?.data,
-      },
-      ...(ask && !restates(ask.doneWhen) ? { askDoneWhen: ask.doneWhen } : {}),
-      ...(owned ? { cards: neoNoteCards(cards) } : { items: undefined }),
-    }
-  );
-}
 
 export function readDriverActivity(
   outcome: OperationOutcome
@@ -667,7 +474,7 @@ export function readDriverCardExchange(outcome: OperationOutcome, sent: DriverSe
   };
 }
 
-export function isDriverCardCurrent(outcome: OperationOutcome, sent: DriverSent | null): boolean {
+function isDriverCardCurrent(outcome: OperationOutcome, sent: DriverSent | null): boolean {
   const value = parseDriverStatus(outcome);
   if (!value) return false;
   if (value.exchange !== undefined) return readDriverCardExchange(outcome, sent)?.current ?? false;

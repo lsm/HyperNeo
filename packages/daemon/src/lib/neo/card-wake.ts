@@ -15,18 +15,6 @@ export interface NeoContinueTurn {
   wake: Pick<NeoWorkWake, 'wakes' | 'continuedWake' | 'stalled'> | null;
 }
 
-export function neoCardWakeProgress(
-  progress: string,
-  ask: Pick<NeoAsk, 'doneItems'> | null
-): string {
-  const met = (ask?.doneItems ?? []).filter((item) => !item.removed && item.state === 'met');
-  return `${progress}|${met.length}`;
-}
-
-export function isNeoHumanInputSince(lastAskedAt: number | null, since: number): boolean {
-  return lastAskedAt !== null && lastAskedAt > since;
-}
-
 const APPROVAL_ONLY = /^needs \d+ approving reviews?, has \d+$/;
 
 export function isNeoCardPrRoutine(pr: NeoWorkPr): boolean {
