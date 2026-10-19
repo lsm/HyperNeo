@@ -10,34 +10,6 @@ import type { Place, PlaceGroup } from '../drivers/types.ts';
 import { placeKey } from '../drivers/places.ts';
 import { neoFolderPath } from './folder.ts';
 import { repoNameFromRemote } from '../drivers/code-identity.ts';
-import {
-  mergeNeoDuplicateProjects,
-  NEO_PROJECT_QUESTION_ATTEMPTS,
-  neoProjectQuestionKey,
-  readNeoProjectDecision,
-  type NeoProjectMergeInput,
-} from './project-merge.ts';
-import { NeoAskRepository } from '../../storage/repositories/neo-ask-repository.ts';
-
-export function neoProjectMergeAllowed(
-  db: Database
-): (a: string, b: string, sameRepository?: boolean) => boolean {
-  const asks = new NeoAskRepository(db);
-  return (a, b, sameRepository = false) => {
-    const key = `neo-project-merge:${[a, b].sort().join('\u0000')}`;
-    const found = [];
-    for (let attempt = 1; attempt <= NEO_PROJECT_QUESTION_ATTEMPTS; attempt++) {
-      const ask = asks.forRequest(neoProjectQuestionKey(key, attempt));
-      if (!ask) break;
-      found.push(ask);
-    }
-    if (!found.length) return true;
-    const decision = readNeoProjectDecision(found, key);
-    if ('decision' in decision && decision.decision !== 'pending')
-      return decision.decision === 'same';
-    return sameRepository;
-  };
-}
 
 export function neoIdentityOwner(
   held: string | null,
@@ -57,22 +29,6 @@ function neoToolProjects(db: Database): (projectId: string) => boolean {
     ).map((row) => row.project_id)
   );
   return (projectId) => ids.has(projectId);
-}
-
-export function withdrawNeoProjectQuestions(db: Database, a: string, b: string): void {
-  const asks = new NeoAskRepository(db);
-  const key = `neo-project-merge:${[a, b].sort().join('\u0000')}`;
-  for (let attempt = 1; attempt <= NEO_PROJECT_QUESTION_ATTEMPTS; attempt++) {
-    const ask = asks.forRequest(neoProjectQuestionKey(key, attempt));
-    if (!ask) break;
-    if (ask.status === 'waiting' || ask.status === 'blocked' || ask.status === 'open')
-      asks.settle(
-        ask,
-        'abandoned',
-        'No longer needed: they share a repository, so they are one project.',
-        'Merged by the repository rule.'
-      );
-  }
 }
 
 export interface NeoWorkspaceProject {
@@ -100,10 +56,6 @@ export function neoRepositoryIdentity(remote: string | undefined): string | null
     .replace(/\.git$/i, '')
     .toLowerCase();
   return path && /^[^/\s]+\/[^\s]+$/.test(path) ? `repository:${path}` : null;
-}
-
-export function isNeoIdentityAlias(alias: string): boolean {
-  return alias.startsWith('git:') || alias.startsWith('repository:');
 }
 
 export function canNeoMirrorCreateProject(project: Pick<NeoWorkspaceProject, 'aliases'>): boolean {
@@ -193,80 +145,13 @@ export function planNeoWorkspaceProjects(
     });
 }
 
-export function planNeoMirrorMerges(
-  projects: readonly NeoWorkspaceProject[],
-  owner: (alias: string) => string | null,
-  revision: (projectId: string) => number | null
-): NeoProjectMergeInput[] {
-  return projects.flatMap((project) => {
-    const identities = project.aliases
-      .filter(isNeoIdentityAlias)
-      .sort((a, b) => Number(b.startsWith('repository:')) - Number(a.startsWith('repository:')));
-    if (!identities.length) return [];
-    const [target, ...sources] = [
-      ...new Set([...identities, ...project.aliases].flatMap((alias) => owner(alias) ?? [])),
-    ];
-    const targetRevision = target ? revision(target) : null;
-    if (!target || targetRevision === null) return [];
-    return sources.flatMap((sourceId) => {
-      const sourceRevision = revision(sourceId);
-      return sourceRevision === null
-        ? []
-        : [
-            {
-              sourceId,
-              targetId: target,
-              sourceRevision,
-              targetRevision,
-              sourceIdentities: identities,
-              targetIdentities: identities,
-            },
-          ];
-    });
-  });
-}
-
-export function mergeNeoMirroredDuplicates(
-  db: Database,
-  projects: readonly NeoWorkspaceProject[]
-): boolean {
-  const repo = new NeoRepository(db);
-  const allowed = neoProjectMergeAllowed(db);
-  const tool = neoToolProjects(db);
-  const owner = (alias: string) =>
-    (
-      db.prepare('SELECT project_id FROM neo_project_workspaces WHERE alias = ?').get(alias) as {
-        project_id: string;
-      } | null
-    )?.project_id ?? null;
-  return (
-    mergeNeoDuplicateProjects(
-      () =>
-        planNeoMirrorMerges(projects, owner, (id) => repo.getProject(id)?.revision ?? null).filter(
-          (input) =>
-            !tool(input.sourceId) &&
-            !tool(input.targetId) &&
-            allowed(
-              input.sourceId,
-              input.targetId,
-              input.sourceIdentities.some((identity) => identity.startsWith('repository:'))
-            )
-        ),
-      (input) => repo.projectMerges.merge(input),
-      () => {}
-    ).map((merged) => withdrawNeoProjectQuestions(db, merged.sourceId, merged.targetId)).length > 0
-  );
-}
-
 export function planNeoRepositoryBackfill(
   carriers: ReadonlyMap<string, readonly string[]>,
   owner: (alias: string) => string | null,
   project: (id: string) => { revision: number; createdAt: number; generated: boolean } | null,
-  allowed: (a: string, b: string, sameRepository?: boolean) => boolean = () => true,
   tool: (projectId: string) => boolean = () => false
-): { claims: { alias: string; projectId: string }[]; merges: NeoProjectMergeInput[] } {
+): { alias: string; projectId: string }[] {
   const claims: { alias: string; projectId: string }[] = [];
-  const merges: NeoProjectMergeInput[] = [];
   for (const [alias, ids] of carriers) {
     const live = [...new Set(ids)].flatMap((id) => {
       const found = project(id);
@@ -289,28 +174,12 @@ export function planNeoRepositoryBackfill(
       : null;
     if (!target) continue;
     if (held !== target.id) claims.push({ alias, projectId: target.id });
-    for (const source of live)
-      if (
-        source.id !== target.id &&
-        !tool(source.id) &&
-        !tool(target.id) &&
-        allowed(source.id, target.id, true)
-      )
-        merges.push({
-          sourceId: source.id,
-          targetId: target.id,
-          sourceRevision: source.revision,
-          targetRevision: target.revision,
-          sourceIdentities: [alias],
-          targetIdentities: [alias],
-        });
   }
-  return { claims, merges };
+  return claims;
 }
 
 export function backfillNeoRepositoryIdentities(db: Database): boolean {
   const repo = new NeoRepository(db);
-  const allowed = neoProjectMergeAllowed(db);
   const owner = (alias: string) =>
     (
       db.prepare('SELECT project_id FROM neo_project_workspaces WHERE alias = ?').get(alias) as {
@@ -340,26 +209,19 @@ export function backfillNeoRepositoryIdentities(db: Database): boolean {
   };
   const tool = neoToolProjects(db);
   let changed = false;
-  for (const claim of planNeoRepositoryBackfill(carriers(), owner, project, allowed, tool).claims) {
+  for (const claim of planNeoRepositoryBackfill(carriers(), owner, project, tool)) {
     db.prepare(
       `INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)
       ON CONFLICT(alias) DO UPDATE SET project_id = excluded.project_id`
     ).run(claim.alias, claim.projectId);
     changed = true;
   }
-  const merged = mergeNeoDuplicateProjects(
-    () => planNeoRepositoryBackfill(carriers(), owner, project, allowed, tool).merges,
-    (input) => repo.projectMerges.merge(input),
-    () => {}
-  );
-  for (const pair of merged) withdrawNeoProjectQuestions(db, pair.sourceId, pair.targetId);
-  return changed || merged.length > 0;
+  return changed;
 }
 
 export function persistNeoWorkspaceProjects(
   db: Database,
-  projects: readonly NeoWorkspaceProject[],
-  allowed: (a: string, b: string) => boolean = () => true
+  projects: readonly NeoWorkspaceProject[]
 ): boolean {
   const repo = new NeoRepository(db);
   return db.transaction(() => {
@@ -387,14 +249,6 @@ export function persistNeoWorkspaceProjects(
         );
       }
       for (const alias of project.aliases) {
-        const held = (
-          db
-            .prepare('SELECT project_id FROM neo_project_workspaces WHERE alias = ?')
-            .get(alias) as {
-            project_id: string;
-          } | null
-        )?.project_id;
-        if (held && held !== id && !allowed(held, id)) continue;
         db.prepare(
           `INSERT INTO neo_project_workspaces (alias, project_id) VALUES (?, ?)
           ON CONFLICT(alias) DO UPDATE SET project_id = excluded.project_id
@@ -423,9 +277,8 @@ export const mirrorNeoWorkspaceProjects = (superpipe({})('neo-project-mirror') a
   )
   .pipe(
     (db: Database, projects: readonly NeoWorkspaceProject[]) => {
-      const merged = mergeNeoMirroredDuplicates(db, projects);
-      const persisted = persistNeoWorkspaceProjects(db, projects, neoProjectMergeAllowed(db));
-      return backfillNeoRepositoryIdentities(db) || persisted || merged;
+      const persisted = persistNeoWorkspaceProjects(db, projects);
+      return backfillNeoRepositoryIdentities(db) || persisted;
     },
     ['db', 'projects'],
     'changed'

@@ -74,10 +74,10 @@ export const runNeoNightlyReorganize = (
   .pipe(
     async (job: Job, deps: NeoNightlyReorganizeDeps): Promise<NightlyResult> => {
       const run = await deps.reorganize();
-      const { merged, cleanupPlanned, cleanupFailed } = run;
+      const { cleanupPlanned, cleanupFailed } = run;
       const cleaned = cleanupPlanned.filter(isNeoUnattendedCleanup).length - cleanupFailed.length;
       deps.log(
-        `neo reorganize: nightly run merged ${merged.length} project(s), applied ${cleaned} cleanup step(s), left ${cleanupPlanned.length - cleaned - cleanupFailed.length} merge(s) for apply: true`
+        `neo reorganize: nightly run applied ${cleaned} cleanup step(s), left ${cleanupPlanned.length - cleaned - cleanupFailed.length} merge(s) for apply: true`
       );
       return { ran: true };
     },

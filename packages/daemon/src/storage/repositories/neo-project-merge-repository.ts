@@ -2,7 +2,6 @@ import type { Database } from '../sqlite-compat.ts';
 import type { NeoProject } from '@hyperneo/shared/types/neo-context';
 import {
   createNeoProjectMergePipeline,
-  planNeoProjectMerges,
   type NeoProjectMergeInput,
   type NeoProjectMergeResult,
   type NeoProjectMergeState,
@@ -56,10 +55,6 @@ export class NeoProjectMergeRepository {
     );
     for (const [projectId, identities] of Object.entries(fresh))
       for (const identity of identities) insert.run(identity, projectId);
-  }
-
-  plan(fresh: Readonly<Record<string, readonly string[]>>): NeoProjectMergeInput[] {
-    return planNeoProjectMerges(this.state(), fresh);
   }
 
   private state(): NeoProjectMergeState {

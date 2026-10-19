@@ -122,6 +122,15 @@ adds its journey here.
    with only its repo's todos (`neo_todos.repo`). On `/neo`, "Your work" lists
    the two child cards, and Recent outcomes shows the request as Done with that
    outcome under Details.
+7. **Projects never merge on their own.** After journey 1 opened root, insert two
+   `neo_concerns` rows whose `repo:` aliases in `neo_project_workspaces` name the
+   same repository, then call `rpc.ts neo.projects.reorganize '{}'`. End state:
+   the reply has no `merged` field, both projects remain, `neo_project_merges` is
+   empty, and the `repository:` identity belongs to the older project. To see what
+   the cleanup would do on a real daemon without touching it, run
+   `bun .claude/skills/verify/cleanup-dry-run.ts [db]` (read-only; defaults to
+   `~/.hyperneo/data/daemon.db`): it prints the planned deletes, and any merge it
+   lists runs only with `apply: true`.
 
 ## Evidence
 

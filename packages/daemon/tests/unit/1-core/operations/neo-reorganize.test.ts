@@ -93,8 +93,7 @@ describe('neo.projects.reorganize', () => {
     asks: NeoAsk[],
     routes: Record<string, string | null>,
     busy: string[] = [],
-    current: Record<string, NeoAsk | null> = {},
-    merged: { sourceId: string; targetId: string }[] = []
+    current: Record<string, NeoAsk | null> = {}
   ) {
     const logged: string[] = [];
     const cleaned: string[] = [];
@@ -104,7 +103,7 @@ describe('neo.projects.reorganize', () => {
           ? ({ sessionId: root, kind: 'neo', projectId: null } as NeoBinding)
           : null,
       rootSessionId: () => root,
-      mergeProjects: async () => ({ merged }),
+      recordIdentities: async () => {},
       projectFacts: () => [],
       machine: () => 'here',
       cleanup: async (step) => {
@@ -130,14 +129,14 @@ describe('neo.projects.reorganize', () => {
       caller
     ).then((outcome) => (outcome as { value?: unknown }).value);
 
-  test('without a main session it still merges projects', async () => {
-    const { deps } = runtime([ask('a')], { a: 'drivers' }, [], {}, [
-      { sourceId: 'web-shallow', targetId: 'web' },
-    ]);
+  test('without a main session it still plans the cleanup', async () => {
+    const { deps } = runtime([ask('a')], { a: 'drivers' });
     deps.rootSessionId = () => null;
-    expect(await invoke(deps, { source: 'rpc', principal: 'local' })).toMatchObject({
+    expect(await invoke(deps, { source: 'rpc', principal: 'local' })).toEqual({
       ok: true,
-      merged: [{ sourceId: 'web-shallow', targetId: 'web' }],
+      cleanupPlanned: [],
+      cleanupApplied: false,
+      cleanupFailed: [],
     });
   });
 
@@ -194,18 +193,6 @@ describe('neo.projects.reorganize', () => {
         'neo reorganize: could not delete project stuck (stuck): Error: busy',
       ])
     );
-  });
-
-  test('merges matching projects first and logs each merge', async () => {
-    const { deps, logged } = runtime([], {}, [], {}, [{ sourceId: 'web-2', targetId: 'web' }]);
-    expect(await invoke(deps)).toEqual({
-      ok: true,
-      cleanupPlanned: [],
-      cleanupApplied: false,
-      cleanupFailed: [],
-      merged: [{ sourceId: 'web-2', targetId: 'web' }],
-    });
-    expect(logged).toEqual(['neo reorganize: merged project web-2 into web']);
   });
 });
 

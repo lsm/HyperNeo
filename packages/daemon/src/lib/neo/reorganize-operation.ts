@@ -28,7 +28,6 @@ const Result = z.union([
   z.object({ ok: z.literal(false), reason: z.literal('main_neo_only') }),
   z.object({
     ok: z.literal(true),
-    merged: z.array(z.object({ sourceId: z.string(), targetId: z.string() })),
     cleanupPlanned: z.array(
       z.object({
         action: z.enum(['delete', 'merge']),
@@ -44,12 +43,11 @@ const Result = z.union([
 type Stay = z.infer<typeof Stayed>;
 type Outcome = z.infer<typeof Result>;
 type Project = { projectId: string; sessionId: string };
-type Merged = { sourceId: string; targetId: string };
 
 export interface NeoReorganizeRuntime {
   getBinding(sessionId: string): NeoBinding | null;
   rootSessionId(): string | null;
-  mergeProjects(): Promise<{ merged: Merged[] }>;
+  recordIdentities(): Promise<void>;
   projectFacts(): NeoProjectFacts[];
   machine(): string;
   cleanup(step: NeoProjectCleanup): Promise<void>;
@@ -83,7 +81,6 @@ export function requireNeoAskProject(
 }
 
 export type NeoReorganized = {
-  merged: Merged[];
   cleanupPlanned: NeoProjectCleanup[];
   cleanupApplied: boolean;
   cleanupFailed: { projectId: string; reason: string }[];
@@ -102,9 +99,7 @@ export function createNeoProjectsReorganizer(
     const mirrored = await runtime.mirroredAliases(
       neoCleanupFolders(runtime.projectFacts(), runtime.machine())
     );
-    const { merged } = await runtime.mergeProjects();
-    for (const merge of merged)
-      runtime.log(`neo reorganize: merged project ${merge.sourceId} into ${merge.targetId}`);
+    await runtime.recordIdentities();
     if (!mirrored) runtime.log('neo reorganize: no project cleanup, the places could not be read');
     const cleanupPlanned = mirrored ? planNeoProjectCleanupNow(mirrored) : [];
     const cleanupFailed: { projectId: string; reason: string }[] = [];
@@ -130,7 +125,6 @@ export function createNeoProjectsReorganizer(
       );
     }
     return {
-      merged,
       cleanupPlanned,
       cleanupApplied: apply === true || cleanupRan,
       cleanupFailed,
