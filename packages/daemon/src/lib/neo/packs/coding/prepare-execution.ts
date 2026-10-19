@@ -52,7 +52,7 @@ function planPreparation(request: Request): Gate<Plan> {
 }
 
 const VERIFY_SKILL = /^\.claude\/skills\/verify[^/]*\/SKILL\.md$/m;
-const VERIFY_SECTION = /^#{1,6}\s*Verify\b/m;
+const VERIFY_SECTION = /^ {0,3}#{1,6}[ \t]+Verify\b/m;
 const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 
 function withoutFencedCode(markdown: string): string {

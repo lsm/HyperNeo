@@ -174,6 +174,9 @@ describe('prepareCodingExecution', () => {
     ['a 4-backtick fence around a 3-backtick line', '````\n```\n## Verify\n````\n', false],
     ['a heading after a 4-backtick fence with an inner line', '````\n```\n````\n## Verify\n', true],
     ['a closer with trailing text', '```\n``` not a closer\n## Verify\n```\n', false],
+    ['a bare hash before a Verify paragraph', '#\n\nVerify changes with make check.\n', false],
+    ['a hash with no space', '#Verify\n', false],
+    ['an indented heading', '  ## Verify\n', true],
   ])('a Verify heading in %s counts only outside code', (_case, doc, passes) => {
     const listed = { code: 0, stdout: 'AGENTS.md\n', stderr: '' };
     const agents = { code: 0, stdout: `# Repo\n\n${doc}`, stderr: '' };
