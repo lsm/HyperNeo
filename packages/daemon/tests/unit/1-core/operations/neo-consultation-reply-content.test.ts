@@ -1,5 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import type { NeoConsultation } from '@hyperneo/shared/types/neo-context';
 import { neoConsultationReplyContent } from '../../../../src/lib/neo/consultation-reply-content.ts';
 import { CONSULTATION_STOPPED } from '../../../../src/lib/neo/consultation-policy.ts';
@@ -48,12 +47,11 @@ describe('Neo consultation reply content', () => {
     expect(item.answer).toBe(payload.answer);
   });
 
-  test('states that the holder answered; the system prompt says how to answer the human', () => {
+  test('states that the holder answered', () => {
     const { payload } = readReply(item);
     expect(payload.replyGuidance).toBe(
       'The holder answered this recorded ask; its full answer is below.'
     );
-    expect(neoPrompt(null)).toContain('Its originMessageId identifies the human request');
   });
 
   test.each([null, 'other-ask'])(

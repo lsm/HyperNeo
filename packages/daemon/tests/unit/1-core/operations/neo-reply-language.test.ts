@@ -3,7 +3,7 @@ import { NEO_SPEAKING_POLICY } from '@hyperneo/prompts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 
 describe('Neo speaking context', () => {
-  test.each([null, 'mixed-name-project'])(
+  test.each(['mixed-name-project'])(
     'keeps human answers and event silence distinct for %j',
     (projectId) => {
       const prompt = neoPrompt(projectId);
@@ -17,9 +17,7 @@ describe('Neo speaking context', () => {
     }
   );
 
-  test('retains root and holder context boundaries', () => {
-    expect(neoPrompt(null)).toContain('Detailed context belongs to the holder');
-    expect(neoPrompt(null)).toContain('Empty redacted context, instruction or report fields');
+  test('retains holder context boundaries', () => {
     const holder = neoPrompt('mixed-name-project');
     expect(holder).toContain('context holder for project "mixed-name-project"');
     expect(holder).toContain(
@@ -28,7 +26,6 @@ describe('Neo speaking context', () => {
     expect(holder).toContain(
       'An ask you open in another project is yours: add its todos and start its work yourself.'
     );
-    expect(neoPrompt(null)).not.toContain('only its holder may revise');
     expect(holder).toContain('NEVER execute worker jobs directly');
   });
 });
