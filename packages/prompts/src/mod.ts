@@ -39,8 +39,6 @@ import mdgithubSecuritySystemPrompt from './github/security-system-prompt.md' wi
 import mdneoSessionTrack from './neo/session-track.md' with { type: 'text' };
 import mdneoAskProgress from './neo/ask-progress.md' with { type: 'text' };
 import mdneoCardProgress from './neo/card-progress.md' with { type: 'text' };
-import mdneoAskMoved from './neo/ask-moved.md' with { type: 'text' };
-import mdneoTriggerNote from './neo/trigger-note.md' with { type: 'text' };
 import mdneoSystemRoot from './neo/system/root.md' with { type: 'text' };
 import mdneoSystemRootTurnEnd from './neo/system/root-turn-end.md' with { type: 'text' };
 import mdneoWorkDoneCheck from './neo/work/done-check.md' with { type: 'text' };
@@ -48,8 +46,6 @@ import mdneoWorkDoneCheckAskForeign from './neo/work/done-check-ask-foreign.md' 
   type: 'text',
 };
 import mdneoWorkDoneCheckAskOwned from './neo/work/done-check-ask-owned.md' with { type: 'text' };
-import mdneoWorkDoneCheckBudget from './neo/work/done-check-budget.md' with { type: 'text' };
-import mdneoWorkDoneCheckContinue from './neo/work/done-check-continue.md' with { type: 'text' };
 import mdneoWorkDoneCheckPrsLive from './neo/packs/coding/done-check-prs-live.md' with {
   type: 'text',
 };
@@ -75,18 +71,9 @@ import mdneoPacksLifeAdminInstructions from './neo/packs/life-admin/instructions
   type: 'text',
 };
 import mdneoWorkGoalRemaining from './neo/work/goal-remaining.md' with { type: 'text' };
-import mdneoWorkNeedsYou from './neo/work/needs-you.md' with { type: 'text' };
 import mdneoWorkPackNote from './neo/work/pack-note.md' with { type: 'text' };
-import mdneoWorkReturned from './neo/work/returned.md' with { type: 'text' };
-import mdneoWorkReturnedRetried from './neo/work/returned-retried.md' with { type: 'text' };
 import mdneoWorkEnvironmentMove from './neo/work/environment-move.md' with { type: 'text' };
 import mdneoWorkBlocker from './neo/work/blocker.md' with { type: 'text' };
-import mdneoWorkReturnedRetry from './neo/work/returned-retry.md' with { type: 'text' };
-import mdneoWorkStall from './neo/work/stall.md' with { type: 'text' };
-import mdneoWorkStallBudget from './neo/work/stall-budget.md' with { type: 'text' };
-import mdneoWorkStuck from './neo/work/stuck.md' with { type: 'text' };
-import mdneoWorkStuckAbandoned from './neo/work/stuck-abandoned.md' with { type: 'text' };
-import mdneoWorkStuckBudget from './neo/work/stuck-budget.md' with { type: 'text' };
 
 export { fillPrompt } from './loader.ts';
 
@@ -294,14 +281,10 @@ const registry: Record<string, string> = {
   'neo/session-track.md': mdneoSessionTrack,
   'neo/ask-progress.md': mdneoAskProgress,
   'neo/card-progress.md': mdneoCardProgress,
-  'neo/ask-moved.md': mdneoAskMoved,
-  'neo/trigger-note.md': mdneoTriggerNote,
   'neo/system/root.md': mdneoSystemRoot,
   'neo/system/root-turn-end.md': mdneoSystemRootTurnEnd,
   'neo/work/done-check-ask-foreign.md': mdneoWorkDoneCheckAskForeign,
   'neo/work/done-check-ask-owned.md': mdneoWorkDoneCheckAskOwned,
-  'neo/work/done-check-budget.md': mdneoWorkDoneCheckBudget,
-  'neo/work/done-check-continue.md': mdneoWorkDoneCheckContinue,
   'neo/packs/coding/done-check-prs-live.md': mdneoWorkDoneCheckPrsLive,
   'neo/packs/coding/done-check-prs-mergeable.md': mdneoWorkDoneCheckPrsMergeable,
   'neo/packs/coding/done-check-prs-stale.md': mdneoWorkDoneCheckPrsStale,
@@ -316,18 +299,9 @@ const registry: Record<string, string> = {
   'neo/packs/life-admin/instructions.md': mdneoPacksLifeAdminInstructions,
   'neo/work/goal-remaining.md': mdneoWorkGoalRemaining,
   'neo/work/goal.md': mdneoWorkGoal,
-  'neo/work/needs-you.md': mdneoWorkNeedsYou,
   'neo/work/pack-note.md': mdneoWorkPackNote,
-  'neo/work/returned-retried.md': mdneoWorkReturnedRetried,
   'neo/work/environment-move.md': mdneoWorkEnvironmentMove,
   'neo/work/blocker.md': mdneoWorkBlocker,
-  'neo/work/returned-retry.md': mdneoWorkReturnedRetry,
-  'neo/work/returned.md': mdneoWorkReturned,
-  'neo/work/stall-budget.md': mdneoWorkStallBudget,
-  'neo/work/stall.md': mdneoWorkStall,
-  'neo/work/stuck-abandoned.md': mdneoWorkStuckAbandoned,
-  'neo/work/stuck-budget.md': mdneoWorkStuckBudget,
-  'neo/work/stuck.md': mdneoWorkStuck,
   'agents/default-instructions.md': mdagentsDefaultInstructions,
   'evolution/episode-judge.md': mdevolutionEpisodeJudge,
   'providers/codex-probe-instructions.md': mdprovidersCodexProbeInstructions,
@@ -450,14 +424,10 @@ export const {
   NEO_SESSION_TRACK,
   NEO_ASK_PROGRESS,
   NEO_CARD_PROGRESS,
-  NEO_TRIGGER_NOTE,
-  NEO_ASK_MOVED,
   NEO_ROOT_PROMPT,
   NEO_ROOT_TURN_END,
   NEO_WORK_DONE_CHECK_ASK_FOREIGN,
   NEO_WORK_DONE_CHECK_ASK_OWNED,
-  NEO_WORK_DONE_CHECK_BUDGET,
-  NEO_WORK_DONE_CHECK_CONTINUE,
   NEO_WORK_DONE_CHECK_PRS_LIVE,
   NEO_WORK_DONE_CHECK_PRS_MERGEABLE,
   NEO_WORK_DONE_CHECK_PRS_STALE,
@@ -469,18 +439,9 @@ export const {
   NEO_WORK_GOAL_PR_SUBSCRIBE,
   NEO_WORK_GOAL_REMAINING,
   NEO_WORK_GOAL,
-  NEO_WORK_NEEDS_YOU,
   NEO_WORK_PACK_NOTE,
-  NEO_WORK_RETURNED_RETRIED,
   NEO_WORK_ENVIRONMENT_MOVE,
   NEO_WORK_BLOCKER,
-  NEO_WORK_RETURNED_RETRY,
-  NEO_WORK_RETURNED,
-  NEO_WORK_STALL_BUDGET,
-  NEO_WORK_STALL,
-  NEO_WORK_STUCK_ABANDONED,
-  NEO_WORK_STUCK_BUDGET,
-  NEO_WORK_STUCK,
   AGENT_DEFAULT_INSTRUCTIONS,
   EVOLUTION_EPISODE_JUDGE_PROMPT,
   CODEX_PROBE_INSTRUCTIONS,
