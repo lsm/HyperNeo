@@ -242,7 +242,7 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
     const { neoPrompt } = await import('../../../src/lib/neo/prompt.ts');
     expect(sent[0].system).toContain(neoPrompt(null));
     const human = (sent[0].human as { type: string; text?: string }[]).filter(
-      (part) => part.type === 'text' && !part.text?.startsWith('<system-reminder>')
+      (part) => part.type === 'text'
     );
     expect(human.map((part) => part.text)).toEqual([
       expect.stringMatching(/^\(local time: \w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+\)$/),

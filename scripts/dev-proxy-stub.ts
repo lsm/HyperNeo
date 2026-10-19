@@ -30,8 +30,10 @@ interface ParsedArgs {
   mocksFilePath?: string;
 }
 
+const MOCK_PORT = 8000;
+
 function parseArgs(argv: string[]): ParsedArgs {
-  let port = 8000;
+  let port = Number(process.env.HYPERNEO_DEV_PROXY_PORT || MOCK_PORT);
   let apiPort: number | undefined;
   let configFilePath: string | undefined;
   let mocksFilePath: string | undefined;
@@ -53,7 +55,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     fail(`invalid --port value: ${port}`);
   }
   if (apiPort === undefined) {
-    apiPort = 8897 + (port - 8000);
+    apiPort = 8897 + (port - MOCK_PORT);
   }
   if (!Number.isInteger(apiPort) || apiPort < 1 || apiPort > 65535) {
     fail(`invalid --api-port value: ${apiPort}`);
@@ -201,7 +203,12 @@ try {
       const method = request.method.toUpperCase();
       const url = request.url;
       const bodyText = method === 'GET' ? '' : await request.text();
-      const mock = findMock(mocks, method, url, bodyText);
+      const mock = findMock(
+        mocks,
+        method,
+        url.replace(/^(http:\/\/[^/:]+):\d+/, `$1:${MOCK_PORT}`),
+        bodyText
+      );
       if (!mock) {
         console.error(`[dev-proxy-stub] no mock matched ${method} ${url}`);
         return unmockedResponse(method, url);

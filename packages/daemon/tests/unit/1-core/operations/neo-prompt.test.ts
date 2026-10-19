@@ -30,6 +30,17 @@ const NEO_TOOLS = [
   'Bash',
 ];
 
+describe('restrictNeoQuery attribution', () => {
+  test('gives Neo empty commit and PR attribution, so the CLI adds no attribution reminder', () => {
+    const options: Options = { settings: { cleanupPeriodDays: 30 } };
+    restrictNeoQuery(options, null);
+    expect(options.settings).toEqual({
+      cleanupPeriodDays: 30,
+      attribution: { commit: '', pr: '' },
+    });
+  });
+});
+
 describe('root Neo system prompt', () => {
   test('is the short coordinator text alone, replacing the Claude Code preset', () => {
     const options: Options = {};
