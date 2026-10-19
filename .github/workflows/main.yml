@@ -201,9 +201,10 @@ jobs:
 
   # ============================================
   # PATH FILTERS
-  # PR-only. Tree-diffs the PR merge commit against the dev tip and emits two
-  # booleans so daemon-only PRs skip web tests, web-only PRs skip daemon
-  # unit+online, and docs-only PRs run check alone. Everything outside
+  # PR-only. Tree-diffs the PR merge commit against the dev tip and emits three
+  # booleans (daemon unit, online, web) so daemon-only PRs skip web tests,
+  # web-only PRs skip daemon unit+online, prompt or daemon-unit-test PRs skip
+  # online, and docs-only PRs run check alone. Everything outside
   # packages/web (resp. the daemon-side packages) counts as daemon (resp.
   # web) work, so unknown/infra paths (scripts/, .github/, lockfiles) run
   # BOTH suites — the safe default. Push/workflow_dispatch events skip this
@@ -225,7 +226,7 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Compute daemon/web path filters
+      - name: Compute daemon/online/web path filters
         id: filter
         run: |
           set -euo pipefail
