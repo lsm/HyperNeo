@@ -9,7 +9,7 @@ import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-to
 import { NeoTodoTargetSchema } from './driver-work.ts';
 import type { NeoPack } from './packs/types.ts';
 import { neoStartQuestionTitle } from './start-question.ts';
-import { neoTodoRepo } from './todo-repo.ts';
+import { neoTodoHome, neoTodoRepo } from './todo-repo.ts';
 import { readNeoTodoCompletion, requireNeoTodoMayFinish } from './todo-completion.ts';
 import { isNeoTodoStartable, planNeoTodoAwaitingStart } from './todo-runner.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
@@ -70,15 +70,12 @@ export async function addNeoTodo(
   start: NeoTodoControls['start'],
   ask: NeoAsk,
   input: z.infer<typeof NeoTodoDraftSchema>,
-  packs: readonly NeoPack[]
+  packs: readonly NeoPack[],
+  split = false
 ): Promise<{ ok: true; todo: NeoTodo } | Rejection> {
-  const added = todos.addTodo(
-    crypto.randomUUID(),
-    ask.id,
-    input,
-    Date.now(),
-    neoTodoRepo(input, packs, ask)
-  );
+  const repo = neoTodoRepo(input, packs, ask);
+  const home = neoTodoHome(todos, ask, repo, split);
+  const added = todos.addTodo(crypto.randomUUID(), home.id, input, Date.now(), repo);
   if (input.target) sessions.create(added.id, input.target);
   if (input.start) return start(added.id);
   if (added.instruction) joinNeoStartQuestion(todos, added);

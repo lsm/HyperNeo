@@ -23,6 +23,7 @@ export function runMigration387(db: Database): void {
     id TEXT PRIMARY KEY,
     project_id TEXT REFERENCES neo_concerns(id),
     repo TEXT,
+    parent_id TEXT REFERENCES neo_asks(id),
     session_id TEXT NOT NULL,
     origin_message_id TEXT,
     title TEXT NOT NULL,

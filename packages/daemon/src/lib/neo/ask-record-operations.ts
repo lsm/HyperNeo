@@ -14,6 +14,7 @@ import {
 } from './todo-operations.ts';
 import { isNeoTodoStartable } from './todo-runner.ts';
 import type { NeoPack } from './packs/types.ts';
+import { neoSplitOutcome, neoTodoRepo } from './todo-repo.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -113,7 +114,15 @@ export function createNeoAskRecordOperations(
             request: input.request,
             createdAt: Date.now(),
           });
-        const recorded = store.listTodos(ask.id);
+        const family = () => [
+          ...store.listTodos(ask.id),
+          ...store.listChildAsks(ask.id).flatMap((child) => store.listTodos(child.id)),
+        ];
+        const recorded = family();
+        const split =
+          store.listChildAsks(ask.id).length > 0 ||
+          new Set(input.todos.map((todo) => neoTodoRepo(todo, packs(), ask)).filter(Boolean)).size >
+            1;
         for (const todo of input.todos) {
           const row = recorded.find((item) => item.title === todo.title);
           const added = !row
@@ -123,14 +132,19 @@ export function createNeoAskRecordOperations(
                 controls.start,
                 store.getAsk(ask.id)!,
                 todo,
-                packs()
+                packs(),
+                split
               )
             : todo.start && isNeoTodoStartable(row)
               ? await controls.start(row.id)
               : { ok: true as const };
           if (!added.ok) return added;
         }
-        return { ok: true, ask: store.getAsk(ask.id) ?? ask, todos: store.listTodos(ask.id) };
+        const parent = store.getAsk(ask.id) ?? ask;
+        const children = store.listChildAsks(ask.id);
+        if (split && parent.status === 'open' && !store.listTodos(ask.id).length && children.length)
+          store.settleAsk(parent, 'done', neoSplitOutcome(children, family().length), Date.now());
+        return { ok: true, ask: store.getAsk(ask.id) ?? ask, todos: family() };
       },
       ['outcome', 'input', 'caller'],
       'outcome'
