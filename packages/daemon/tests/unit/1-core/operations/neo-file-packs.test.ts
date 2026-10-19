@@ -115,7 +115,7 @@ describe('loadNeoFilePacks', () => {
       warn: (id, error) => warned.push([id, error]),
     });
     expect(packs.map((pack) => pack.id)).toEqual(['inbox-triage', 'pack-2']);
-    expect(packs[0].instructions(null)).toBe('File the inbox daily.');
+    expect(packs[0].instructions()).toBe('File the inbox daily.');
     expect(warned.map(([id]) => id)).toEqual(['broken']);
   });
 

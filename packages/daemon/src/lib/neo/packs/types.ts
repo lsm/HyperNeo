@@ -1,16 +1,9 @@
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
-import type { NeoAskItem } from '@hyperneo/shared/types/neo-snapshot';
 import type { WorkExecutionPreparation } from '../../drivers/start-preparation.ts';
 import type { WorkRef, WorkStatus } from '../../drivers/types.ts';
 import type { Database } from '../../../storage/sqlite-compat.ts';
 import type { ExternalEvent } from '../../external-events/types.ts';
-import type { NeoEvidence } from '../evidence.ts';
 import type { NeoStatusLine } from '../status-codes.ts';
-
-export type NeoPackCheck = (
-  item: NeoAskItem,
-  evidence: readonly NeoEvidence[]
-) => { value: string } | { reason: string };
 
 export interface NeoCardEventSubscription {
   workId: string;
