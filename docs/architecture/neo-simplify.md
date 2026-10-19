@@ -1,4 +1,4 @@
-# Neo simplify: one Neo session, the ledger, and a visible model input
+# Neo simplify: one Neo session and the ledger
 
 Status: the human's decision of 2026-10-18. Docs only; each code change ships as its own small PR in §7. There is no trial run first.
 
@@ -21,7 +21,7 @@ This replaces the earlier version of this doc (one session per project, the rout
 - **Workers do the real work.** Worker sessions (HyperNeo, Claude Desktop, Codex) do the coding. Neo dispatches to them and follows the ledger.
 - **The human comes first.** A human message preempts a running Neo turn, as it already does (`service.ts:3774` `preemptForHumanMessage`). A "restart Neo" control starts a fresh session on the same database.
 - **Compaction works, and caching keeps the cost down.** See §4.
-- **Nothing is hidden from the human.** Nothing reaches the Neo model that the human can't see in the chat (§3).
+- **No send-time injection.** The daemon never changes what goes to the model at send time. Anything it adds is written into the stored message, so the transcript shows exactly what the model got (§3).
 - **These earlier decisions still hold:**
   - A todo with a PR is done only when the ledger reads `merged`.
   - Every PR has a merge owner.
@@ -48,34 +48,21 @@ This replaces the earlier version of this doc (one session per project, the rout
 
 In both cases the project's own session had done the work and Neo had never heard of it. With one Neo session that sees the ledger, there is no route to get wrong.
 
-## 3. Everything the model sees is in the chat
+## 3. No send-time injection
 
-This is a first-class rule. The daemon may add context to a human message (quoted facts, local time, a snapshot) and may send Neo its own notes, but every addition is visible in the conversation:
+The daemon never changes what goes to the model at send time. Nothing is injected in `query-runner.ts` before the SDK call.
 
-- **Additions to a human message.** Under the human's message there is a collapsed "added by the daemon" line. It expands to the exact text that was sent.
-- **Daemon notes.** Each daemon note to Neo (a PR merged, a worker is stuck, an event passed its deadline) is its own visible row in the chat, marked as from the daemon, not the human.
-- **Other senders.** Coordinator and worker messages sent on the human's behalf are labelled with their real sender. They are never shown as the human.
-- **The system prompt.** It can be viewed from settings, by version.
-
-**How it is built.** The daemon records the exact model input of every Neo turn in a new table, `neo_turn_inputs`:
-- the turn id and the session;
-- each content block sent, in order, with its source (`human`, `daemon_addition`, `daemon_note`, `worker`, `coordinator`);
-- the system prompt's version hash;
-- the usage the SDK reported (input, cache read and cache write tokens).
-
-The web and iOS chats render each turn from that record, so what they show is what the model got.
-
-**Interaction with removed and kept parts:**
-- **The catch-up view is deleted.** The "Recorded conversation since your last input" view (`publication-view.ts`) silently prepended conversation records to Neo's input. With one session there is nothing to catch up on. Since the daemon now adds nothing hidden to the human's message, the view and the snapshot injection both go (§6).
-- **Prompt caching doesn't change what is recorded.** Caching reuses a prefix of what was sent; it doesn't send something else. The per-turn record holds the full input and the cache tokens, so the chat shows the whole input and the record shows what the cache saved.
+- **Additions are stored.** Anything the daemon must add (a quote fact, the local time) is written into the stored message itself. The session's own transcript and UI then show exactly what the model got.
+- **Daemon messages are stored messages.** A milestone or a snapshot after a restart is a message the daemon writes into the Neo session, so it is in the transcript like any other.
+- **The existing injections go.** The "Recorded conversation since your last input" view (`publication-view.ts`) and the project snapshot are added at send time today. With one session there is nothing to catch up on, so D1 deletes both (§6).
 
 ## 4. The finished Neo
 
 ### One session
 
 - `neo.open` returns the single Neo session. `neo.message.send` always targets it.
-- A restart archives that session before it opens a fresh one on the same database, so there is never more than one. The new session's first input is a visible daemon note with the snapshot.
-- After a compaction, the same visible note carries the snapshot, so Neo re-reads its state from the database, not from memory.
+- A restart archives that session before it opens a fresh one on the same database, so there is never more than one. The new session's first input is a stored daemon message with the snapshot.
+- After a compaction, the same stored message carries the snapshot, so Neo re-reads its state from the database, not from memory.
 - Labels: `neo.ask.open` and `neo.todo.add` take an optional project or domain label. `neo.snapshot` can filter by label.
 
 ### Tools
@@ -114,7 +101,7 @@ Waiting is code, not Neo turns. The ledger reconcile and the sweep run in the da
 | Approved and green | Ready to merge: merge now, manual squash |
 | `dirty` | Merge the base in, resolve conflicts, push |
 
-**To Neo, as a visible daemon note, only for milestones:**
+**To Neo, as a stored daemon message, only for milestones:**
 
 | Milestone | Why Neo is woken |
 |---|---|
@@ -163,7 +150,7 @@ There is one coordinator prompt for the one session:
   - Reply snapshots: #7487, #7489, and `replyTo` kind `ask` (#7504).
   - Human-message preemption.
   - The todo and question operations.
-- **Still to build:** the ledger (L1), the sweep (L2), the todo gate (L3), the visible model input (V1–V3), restart, and labels.
+- **Still to build:** the ledger (L1), the sweep (L2), the todo gate (L3), restart, and labels.
 - **Made moot by this decision:**
   - The router-profile item (L1b).
   - Plan items R4–R21: reroute, environment-move, consultations, dispatch, `inbox.promote`, root-Neo migration and router-created projects.
@@ -212,7 +199,7 @@ Everything that exists only because there were several Neo sessions goes. Sizes 
 
 **7. The fresh-context project snapshot injection (D1):**
 - `readNeoProjectSnapshot` in `lib/neo/session-policy.ts:68`, called from `lib/agent/agent-session.ts:365` and folded into the turn by `query-runner.ts` beside the catch-up view.
-- After a compaction or restart, the snapshot becomes a visible daemon note (S2) instead.
+- After a compaction or restart, the snapshot becomes a stored daemon message (S2) instead.
 
 **8. Notes that exist only to tell one Neo session what another did (D3):**
 - `neo/ask-moved.md` and `neo/ask-forwarded.md` (also in item 4).
@@ -248,13 +235,10 @@ Each PR is opened from fresh `dev` and ships and verifies on its own. Deletions 
 
 | # | PR | Accept |
 |---|---|---|
-| V1 | Daemon records the exact model input per Neo turn in `neo_turn_inputs` (blocks with their source, prompt hash, cache usage); read by `neo.turn.input.read` | For any Neo turn, the record matches the SDK request byte for byte; a human message, a daemon addition and a daemon note are each tagged with their source |
-| V2 | Web renders each turn from the record: the "added by the daemon" fold under a human message, daemon-note rows, real sender labels, and the system prompt in settings | For a turn with an addition and two notes, the web shows all three; the text in the fold equals the recorded block; nothing shown as the human came from elsewhere |
-| V3 | iOS, the same as V2 | The same checks on iOS |
 | S1 | One session: `neo.open` and `neo.message.send` always use the single Neo session; new projects are labels; the existing holder sessions are archived, with their open asks re-labelled | A message about any project lands in the one session; no new holder session is created; open asks keep their todos |
-| S2 | Restart control: archive the session and open a fresh one on the same database, with the snapshot sent as a visible daemon note; the same note after compaction | After a restart Neo lists the same open asks and todos; the note is visible in the chat |
-| S3 | Coordinator prompt on Opus 5.5 by default; prompt version hash shown in settings | `neo.snapshot` reports the model; the settings page shows the prompt for the hash in V1's record |
-| D1 | Delete the catch-up view and the hidden snapshot injection | V1's record for a human turn holds only the human's text plus visible additions |
+| S2 | Restart control: archive the session and open a fresh one on the same database, with the snapshot as a stored daemon message; the same message after compaction | After a restart Neo lists the same open asks and todos; the message is in the session transcript |
+| S3 | Coordinator prompt on Opus 5.5 by default | `neo.snapshot` reports the model |
+| D1 | Delete the send-time injections: the catch-up view and the snapshot | The SDK request for a human turn equals the stored message; `query-runner.ts` adds nothing before the SDK call |
 | D2 | Delete the router, route facts, routing log, route operations and prompts, and the route settings | No route classification runs; `neo.route.*` isn't in the catalog |
 | D3 | Delete holders, consultations, forwards, cross-project dispatch and `inbox.promote`, with their tables, operations and prompts | None of the operations in §6 is in the catalog; their migrations reverse cleanly |
 | L1 | PR ledger and reconcile, feeding the snapshot | `neo.snapshot` lists every open PR in the project repos, including PRs no todo opened |
@@ -265,16 +249,14 @@ Each PR is opened from fresh `dev` and ships and verifies on its own. Deletions 
 | L6 | Prompts: merge owner, ledger-only done | A new coding todo names its session as the merge owner |
 | L7 | Follow-ups join the existing ask (`ask_open`, `pr_linked`, `pr_merged`, push notice) | A change to covered work adds a todo to the open ask |
 | L9 | Push PR events to the owning worker: CI failed or green, changes requested, review comments, approved-and-green, `dirty`, each once per event, from the ledger to `merge_owner` | A failing check on a worker's PR reaches that worker once and never Neo; the same event replayed doesn't re-send; a PR with no owner goes to the sweep instead |
-| L10 | Milestone wakes for Neo: PR merged or closed, worker stopped, stuck or repeating a failure, needs the human, SLA passed; each as a visible daemon note | Neo's turn log for a day of PR traffic has only milestone notes; each is a visible row in the chat |
+| L10 | Milestone wakes for Neo: PR merged or closed, worker stopped, stuck or repeating a failure, needs the human, SLA passed; each as a stored daemon message | Neo's transcript for a day of PR traffic has only milestone messages |
 | L11 | Card status line from the ledger on web and iOS (split into two PRs, one per client) | A PR's state changes on GitHub and the card line shows it within one reconcile, with no Neo turn |
 | L8 | Titles in the human's language | With `zh-Hans`, an English instruction still produces Chinese titles; an English title is refused |
 
 **Order:**
-- V1 comes first. S1 needs V1, so that the move to one session is visible from day one.
-- V2 and V3 follow V1 and can run in parallel.
-- S2 and S3 follow S1.
-- D1 follows V2 and V3. D2 and D3 follow S1.
-- L1 → L2 → L3 → L4, and L5–L7 as before. They can run alongside the V, S and D lanes, since they touch the coding pack, not routing.
+- S1 comes first. S2 and S3 follow it.
+- D1 can run any time. D2 and D3 follow S1.
+- L1 → L2 → L3 → L4, and L5–L7 as before. They can run alongside the S and D lanes, since they touch the coding pack, not routing.
 - L9 needs L1. L10 needs L9 and replaces the card relays that L4 deletes. L11 needs L1.
 - L8 is independent.
 
@@ -308,7 +290,7 @@ The first seven cases were seen on 2026-10-18. Each line can be ticked by readin
 | 5 | Titles mixed Chinese and English | Titles follow `GlobalSettings.language` | L8 |
 | 6 | A follow-up was pushed to the merged #7492 branch and reached nothing | `neo.todo.continue` is refused with `pr_merged`; the push is reported | L1, L3, L7 |
 | 7 | Two of 5 unlabelled messages went to the wrong project session | There are no project sessions; Neo answers both from the ledger's PR titles for hyperneo-review and dolmen | S1, L1 |
-| 8 | The daemon prepended a hidden conversation record and snapshot to Neo's input | The web and iOS chats show 100% of what was sent to the model for a turn; the system prompt is viewable from settings | V1–V3, D1 |
+| 8 | The daemon prepended a hidden conversation record and snapshot to Neo's input at send time | Nothing is added at send time; what the model gets for a turn is the stored message, so the transcript shows it | D1 |
 | 9 | Neo's context was split across holder sessions | Neo alone has every open ask, todo and PR in its snapshot, and a restart keeps them | S1, S2 |
 | 10 | PR state changes went through Neo, or were relayed once and lost | CI failed or green, changes requested, review comments and approved-and-green each reach the owning worker once per event, and none of them wakes Neo | L9 |
 | 11 | Neo was woken for routine PR churn | Neo is woken only for: PR merged, PR closed unmerged, worker stopped, stuck or repeating a failure, needs the human, and an event past its deadline with no action | L2, L10 |
