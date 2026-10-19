@@ -31,7 +31,7 @@ Some tests run their own scripted model server in-process and need no proxy. `co
 cd packages/daemon && env -i HOME="$(mktemp -d)" PATH="$PATH" TERM=dumb NODE_ENV=test HYPERNEO_USE_DEV_PROXY=0 node_modules/.bin/vitest run --config vitest.online.config.ts tests/online/convo/neo-publication-sdk.test.ts
 ```
 
-The CLI adds its own `<system-reminder>` blocks to a human turn, for example commit-attribution guidance. The daemon doesn't add them, so the test ignores them.
+Neo sessions run with empty commit and PR attribution, so the CLI adds no `<system-reminder>` of its own, and the test checks the human turn with nothing ignored.
 
 ## A test daemon in dev-proxy mode
 
@@ -41,4 +41,4 @@ With the mock from above running, start a daemon on a fresh data dir and DB and 
 T="$(mktemp -d)" && env -i HOME="$T/home" PATH="$PATH" TERM=dumb NODE_ENV=test HYPERNEO_DATA_DIR="$T/data" ANTHROPIC_BASE_URL=http://127.0.0.1:8000 ANTHROPIC_API_KEY=sk-devproxy-test-key bun packages/cli/main.ts --host 127.0.0.1 --port 8650 --db-path "$T/daemon.db"
 ```
 
-Drive it over RPC (`neo.open`, `neo.message.send`). The stub logs only requests that matched no mock, with their method and URL (for example `no mock matched POST …/v1/messages`). It doesn't log bodies, and its canned replies won't match a real Neo prompt, so use the scripted pattern above to check content. The mock files name port 8000. If another session already holds 8000, the stub on another port matches nothing, so pick a time when 8000 is free. Stop the daemon and delete `$T` when you're done.
+Drive it over RPC (`neo.open`, `neo.message.send`). The stub logs only requests that matched no mock, with their method and URL (for example `no mock matched POST …/v1/messages`). It doesn't log bodies, and its canned replies won't match a real Neo prompt, so use the scripted pattern above to check content. If another session already holds port 8000, start the stub with `HYPERNEO_DEV_PROXY_PORT=<free port>` and point `ANTHROPIC_BASE_URL` at that port; it matches its mocks on any port. Stop the daemon and delete `$T` when you're done.
