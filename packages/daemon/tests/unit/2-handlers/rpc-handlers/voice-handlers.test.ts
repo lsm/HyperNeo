@@ -1200,6 +1200,7 @@ describe('voice stream RPC handlers', () => {
       endpoint: 'http://127.0.0.1:1/v1/audio/transcriptions',
       model: 'm',
       mode: 'streaming',
+      streamEndpoint: 'ws://127.0.0.1:1/v1/listen',
       allowPrivateNetwork: true,
     };
     await expect(start()).rejects.toThrow('Streaming transcription is unavailable');
