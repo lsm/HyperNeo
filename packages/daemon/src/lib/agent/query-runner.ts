@@ -2288,7 +2288,8 @@ export class QueryRunner {
   }
 
   noteRequestedInputs(message: SDKMessage): void {
-    if (message.type !== 'system' || message.subtype !== 'status') return;
+    if (message.type !== 'result' && (message.type !== 'system' || message.subtype !== 'status'))
+      return;
     const uuids = (message as { user_message_uuids?: unknown }).user_message_uuids;
     if (Array.isArray(uuids))
       for (const uuid of uuids) if (typeof uuid === 'string') this.requestedInputs.add(uuid);

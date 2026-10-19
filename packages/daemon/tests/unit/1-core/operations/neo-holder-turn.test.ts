@@ -202,6 +202,11 @@ describe('Neo isolated holder turns', () => {
     rootRunner.noteRequestedInputs({
       type: 'system',
       subtype: 'status',
+      user_message_uuids: [note, 'human-a'],
+    } as never);
+    rootRunner.noteRequestedInputs({
+      type: 'result',
+      subtype: 'error_during_execution',
       user_message_uuids: [note, 'human-a', 'human-b'],
     } as never);
     const aborted = input.next();
