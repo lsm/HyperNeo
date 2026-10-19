@@ -80,6 +80,24 @@ describe('voice stream settings', () => {
     expect(mergeAsrWindow('hello', 'hello')).toBe('hello');
   });
 
+  test('mergeAsrWindow lines up on the longest overlap when a phrase repeats inside the window', () => {
+    expect(
+      mergeAsrWindow(
+        'alpha bravo ok deploy it charlie delta ok deploy it echo',
+        'ok deploy it charlie delta ok deploy it echo'
+      )
+    ).toBe('alpha bravo ok deploy it charlie delta ok deploy it echo');
+  });
+
+  test('mergeAsrWindow lowercases only a title-case window head, never an acronym', () => {
+    expect(mergeAsrWindow('we call the api now', 'The api now works')).toBe(
+      'we call the api now works'
+    );
+    expect(mergeAsrWindow('we call the api now', 'API now works')).toBe(
+      'we call the API now works'
+    );
+  });
+
   test('pcm16Wav wraps PCM in a 16 kHz mono WAV header', () => {
     const wav = pcm16Wav(new Uint8Array([1, 2, 3, 4]));
     expect(Buffer.from(wav.subarray(0, 4)).toString()).toBe('RIFF');

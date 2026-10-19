@@ -103,7 +103,8 @@ export function mergeAsrWindow(previous: string, next: string): string {
   const freshKeys = fresh.map(key);
   for (let skip = 0; skip <= 2 && skip < fresh.length; skip++) {
     if (!freshKeys[skip]) continue;
-    for (let at = oldKeys.length - 1; at >= 0; at--) {
+    let best: { at: number; run: number } | null = null;
+    for (let at = 0; at < oldKeys.length; at++) {
       let run = 0;
       while (
         at + run < oldKeys.length &&
@@ -114,12 +115,15 @@ export function mergeAsrWindow(previous: string, next: string): string {
       const toEnd = at + run === oldKeys.length;
       const wholeWindow = skip === 0 && run === freshKeys.length;
       const revised = at === 0 && skip === 0 && run >= 1 && freshKeys.length >= oldKeys.length;
-      if (run >= 3 || revised || (toEnd && (run >= 2 || wholeWindow))) {
-        const head = fresh[skip];
-        const kept =
-          at > 0 && /^\p{Ll}/u.test(old[at]) ? head[0].toLowerCase() + head.slice(1) : head;
-        return [...old.slice(0, at), kept, ...fresh.slice(skip + 1)].join(' ');
-      }
+      const fits = run >= 3 || revised || (toEnd && (run >= 2 || wholeWindow));
+      if (fits && (!best || run >= best.run)) best = { at, run };
+    }
+    if (best) {
+      const head = fresh[skip];
+      const titleCase = /^\p{Lu}[^\p{Lu}]*$/u.test(head);
+      const kept =
+        best.at > 0 && titleCase && /^\p{Ll}/u.test(old[best.at]) ? head.toLowerCase() : head;
+      return [...old.slice(0, best.at), kept, ...fresh.slice(skip + 1)].join(' ');
     }
   }
   return [...old, ...fresh].join(' ');
