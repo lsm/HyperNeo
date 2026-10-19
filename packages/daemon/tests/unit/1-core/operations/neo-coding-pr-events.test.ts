@@ -73,7 +73,7 @@ function setup() {
 }
 
 describe('PR ledger events', () => {
-  test('a CI failure reaches the owner once and never Neo; the merge wakes Neo once', async () => {
+  test('a CI failure reaches the owner once and never Neo, and a merge wakes no one', async () => {
     const { db, told, woken, cycle, own } = setup();
     await cycle(response([node(1)]), 100);
     own(1);
@@ -90,9 +90,7 @@ describe('PR ledger events', () => {
     ]);
     expect(told[0]).toMatchObject({ ref: owner });
     expect(told[1].text).toBe('lsm/a#1 "PR 1" has green CI again on head head1ab.');
-    expect(woken).toEqual([
-      { key: 'neo-pr-milestone:lsm/a#1:merged', text: 'PR merged: lsm/a#1 "PR 1".' },
-    ]);
+    expect(woken).toEqual([]);
     db.close();
   });
 
@@ -138,9 +136,8 @@ describe('planCodingPrEvent', () => {
     );
     expect(row('dirty')).toContain('Merge the base branch in');
     expect(row('changes_requested')).toContain('Address the review');
-    expect(row('closed')).toBe(
-      'PR closed without merging; decide whether to redo it: lsm/a#3 "T".'
-    );
+    expect(row('closed')).toBeUndefined();
+    expect(row('merged', 'failing')).toBeUndefined();
     expect(row('approved_pending')).toBeUndefined();
   });
 });

@@ -6,21 +6,11 @@ import type { CodingSweepDeps } from './pr-sweep.ts';
 const head = (row: CodingPrTransition) => row.head.slice(0, 7);
 const pr = (row: CodingPrTransition) => `${row.repo}#${row.number} "${row.title}"`;
 
-export function planCodingPrEvent(
-  row: CodingPrTransition
-): { to: 'owner' | 'neo'; key: string; text: string } | null {
+export function planCodingPrEvent(row: CodingPrTransition): { key: string; text: string } | null {
   const owner = (text: string) => ({
-    to: 'owner' as const,
     key: `neo-pr-event:${row.repo}#${row.number}:${row.head}:${row.state}`,
     text: `${pr(row)} ${text}`,
   });
-  const neo = (text: string) => ({
-    to: 'neo' as const,
-    key: `neo-pr-milestone:${row.repo}#${row.number}:${row.state}`,
-    text: `PR ${text}: ${pr(row)}.`,
-  });
-  if (row.state === 'merged') return neo('merged');
-  if (row.state === 'closed') return neo('closed without merging; decide whether to redo it');
   if (row.state === 'failing')
     return owner(`has failing CI on head ${head(row)}. Fix it and push.`);
   if (row.state === 'changes_requested')
@@ -31,7 +21,8 @@ export function planCodingPrEvent(
     return owner(
       `is approved and green on head ${head(row)}. Merge it now with a manual squash on this head.`
     );
-  if (row.from === 'failing') return owner(`has green CI again on head ${head(row)}.`);
+  if (row.from === 'failing' && row.state !== 'merged' && row.state !== 'closed')
+    return owner(`has green CI again on head ${head(row)}.`);
   return null;
 }
 
@@ -62,7 +53,6 @@ export async function deliverCodingPrEvents(
     const event = planCodingPrEvent(row);
     const route = event ? repo.route(row) : null;
     if (!event || !route?.owner || route.claimed) continue;
-    if (event.to === 'neo') await deps.wake(event.key, event.text).catch(() => false);
-    else await deps.tell(route.owner, event.key, event.text).catch(() => false);
+    await deps.tell(route.owner, event.key, event.text).catch(() => false);
   }
 }
