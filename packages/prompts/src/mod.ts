@@ -38,7 +38,6 @@ import mdgithubRouterSystemPrompt from './github/router-system-prompt.md' with {
 import mdgithubSecuritySystemPrompt from './github/security-system-prompt.md' with { type: 'text' };
 import mdneoWaitingReminder from './neo/waiting-reminder.md' with { type: 'text' };
 import mdneoSessionTrack from './neo/session-track.md' with { type: 'text' };
-import mdneoAskEvidence from './neo/ask-evidence.md' with { type: 'text' };
 import mdneoAskProgress from './neo/ask-progress.md' with { type: 'text' };
 import mdneoCardProgress from './neo/card-progress.md' with { type: 'text' };
 import mdneoAskMoved from './neo/ask-moved.md' with { type: 'text' };
@@ -307,7 +306,6 @@ const registry: Record<string, string> = {
   'neo/speaking-policy.md': mdneoSpeakingPolicy,
   'neo/waiting-reminder.md': mdneoWaitingReminder,
   'neo/session-track.md': mdneoSessionTrack,
-  'neo/ask-evidence.md': mdneoAskEvidence,
   'neo/ask-progress.md': mdneoAskProgress,
   'neo/card-progress.md': mdneoCardProgress,
   'neo/ask-moved.md': mdneoAskMoved,
@@ -474,7 +472,6 @@ export const {
   NEO_PACK_LIFE_ADMIN_INSTRUCTIONS,
   NEO_WAITING_REMINDER,
   NEO_SESSION_TRACK,
-  NEO_ASK_EVIDENCE,
   NEO_ASK_PROGRESS,
   NEO_CARD_PROGRESS,
   NEO_TRIGGER_NOTE,

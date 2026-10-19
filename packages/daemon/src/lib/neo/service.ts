@@ -7,7 +7,6 @@ import { hostname } from 'node:os';
 import { neoWorkingKey, readNeoWorking } from './working.ts';
 import {
   fillPrompt,
-  NEO_ASK_EVIDENCE,
   NEO_SESSION_TRACK,
   NEO_WORK_PACK_NOTE,
   NEO_WORK_RETURNED,
@@ -33,10 +32,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inventory-repository.ts';
 import { NeoAgentWorkTargetRepository } from '../../storage/repositories/neo-agent-work-target-repository.ts';
-import {
-  NeoAskCheckRepository,
-  type NeoAskCheckRow,
-} from '../../storage/repositories/neo-ask-check-repository.ts';
+import { NeoAskCheckRepository } from '../../storage/repositories/neo-ask-check-repository.ts';
 import {
   neoQuestionStartTargets,
   neoStartDecision,
@@ -93,7 +89,6 @@ import { remoteDaemons } from '../remote-daemons/registry.ts';
 import type { SessionManager } from '../session/session-manager.ts';
 import { planNeoAvailabilityWakes, scheduleNeoAdmissionWake } from './admission-wake.ts';
 import { isNeoAskAnswerReady, planNeoAnswerPublished } from './answer-outcome.ts';
-import { planNeoAskEvidenceNote, requireNeoAskEvidenceDue } from './ask-evidence.ts';
 import {
   neoAskLiveOutcomeCards,
   planNeoAskTickStatus,
@@ -104,7 +99,6 @@ import {
   createNeoAskOriginResolver,
   type NeoAskOrigin,
   neoAskAnswerMessageId,
-  neoAskEvidenceMessageId,
   neoAskParent,
   neoAskTickedMessageId,
   neoDoneCheckMessageId,
@@ -114,7 +108,6 @@ import {
   neoWorkReturnMessageId,
   nudgedMessageId,
 } from './ask-origin.ts';
-import { neoAskProgressNote } from './ask-progress.ts';
 import { planNeoCardCheck } from './card-check.ts';
 import {
   planNeoCardEventRoute,
@@ -190,12 +183,7 @@ import {
   requireNeoWorkRetryable,
   withWorkGoal,
 } from './driver-work.ts';
-import {
-  type NeoEvidence,
-  type NeoEvidenceRead,
-  neoEvidenceSignature,
-  planNeoDoneCheck,
-} from './evidence.ts';
+import { type NeoEvidenceRead, neoEvidenceSignature, planNeoDoneCheck } from './evidence.ts';
 import { neoFolderPath } from './folder.ts';
 import { reconcileNeoHandoff } from './handoff-reconcile.ts';
 import { effectiveNeoPreference, planNeoAlignment } from './model-preference.ts';
@@ -272,7 +260,6 @@ import {
 import {
   neoEnabledPacks,
   neoPackAskCardEvidence,
-  neoPackAskTopics,
   neoPackBriefs,
   neoPackCardFacts,
   neoPackChecks,
@@ -281,9 +268,6 @@ import {
   neoPacks,
   neoPackTickWrite,
   planNeoPackTicks,
-  readNeoAskEventTicks,
-  readNeoAskPackEvidence,
-  readNeoAskPackTicks,
   readNeoPackEvidence,
   requireNeoEvidenceRefresh,
   requireNeoPackTickable,
@@ -455,7 +439,6 @@ export class NeoService {
     readGithubDeploys(urls, () =>
       readNeoDaemonCommits({ name: hostname(), commit: BUILD_METADATA.commit }, remoteDaemons)
     );
-  private readonly watchedAskTopics = new Set<string>();
   readonly reportWork: ReturnType<typeof createNeoWorkReporter>;
   readonly resolveAskOrigin: ReturnType<typeof createNeoAskOriginResolver>;
   private readonly commitPublication: ReturnType<typeof createNeoPublicationCommit>;
@@ -882,9 +865,6 @@ export class NeoService {
       async (payload: ExternalEventPublishedPayload) => {
         await this.routeCardEvent(payload).catch((error) =>
           this.log.warn('Card event delivery pending', error)
-        );
-        await this.runAskEventTicks(payload).catch((error) =>
-          this.log.warn('Neo ask event ticks pending', error)
         );
       },
       { subscriberName: 'neo-card-events', namespaceId: SESSION_EVENT_SCOPE }
@@ -2048,24 +2028,6 @@ export class NeoService {
     }
     await this.todoRunner.refresh((message, error) => this.log.warn(message, error));
     for (const workId of this.packEvidenceWorkIds()) this.followCardTopics(workId);
-    this.forgetUnfollowedAskTopics();
-    for (const ask of this.askRecords.listLive()) {
-      this.writeAskStatus(ask);
-      this.followAskTopics(ask);
-      try {
-        this.runAskPackTicks(ask.id);
-      } catch (error) {
-        for (const id of ask.workIds) unprocessed.add(id);
-        this.log.warn('Neo ask ticks pending', error);
-      }
-      await this.runAskReadTicks(this.askRecords.get(ask.id) ?? ask).catch((error) => {
-        for (const id of ask.workIds) unprocessed.add(id);
-        this.log.warn('Neo ask read ticks pending', error);
-      });
-      await this.checkAskEvidence(ask, Date.now()).catch((error) =>
-        this.log.warn('Ask evidence check pending', error)
-      );
-    }
     this.settledReports = planNeoSettledReports(
       this.askRecords
         .listLive()
@@ -2149,60 +2111,6 @@ export class NeoService {
   followedCardRefs(_now: number): WorkRef[] {
     return this.packEvidenceWorkIds().flatMap((id) => this.todoSessions.readRef(id) ?? []);
   }
-
-  private readonly checkAskEvidence = (superpipe({})('neo-ask-evidence-check') as PipelineAPI)
-    .input(['ask', 'now'])
-    .pipe(
-      (ask: NeoAsk, now: number) =>
-        requireNeoAskEvidenceDue(
-          ask,
-          {
-            readAt: this.askEvidenceReads.get(ask.id),
-            session: !!this.db.getSession(ask.originSessionId),
-          },
-          now
-        ),
-      ['ask', 'now'],
-      'result:check'
-    )
-    .pipe(
-      (check: NeoAsk, now: number) => {
-        this.askEvidenceReads.set(check.id, now);
-      },
-      ['check', 'now']
-    )
-    .pipe(
-      async (check: NeoAsk) => ({
-        evidence: await readNeoAskPackEvidence(this.packs(), check, (id, error) =>
-          this.log.warn(`Neo pack ${id} ask evidence read failed`, error)
-        ),
-        told: this.askChecks.get(check.id),
-      }),
-      'check',
-      'read'
-    )
-    .pipe(
-      (read: { evidence: NeoEvidence[]; told: NeoAskCheckRow | null }) =>
-        planNeoAskEvidenceNote(read.evidence, read.told),
-      'read',
-      'result:note'
-    )
-    .pipe(
-      async (check: NeoAsk, note: { signature: string; evidence: NeoEvidence[] }) => {
-        await this.deliverToOrigin(
-          check.originSessionId,
-          neoAskEvidenceMessageId(check.id, note.signature),
-          neoAskProgressNote(check, NEO_ASK_EVIDENCE, {
-            summary: check.outcome,
-            changed: note.evidence.map(({ key, summary }) => ({ key, summary })),
-          }),
-          neoAskParent(check)
-        );
-        this.askChecks.markTold(check.id, note.signature, Date.now());
-      },
-      ['check', 'note']
-    )
-    .endAsync('note') as (ask: NeoAsk, now: number) => Promise<unknown>;
 
   private readonly refreshWorkPrs = (superpipe({})('neo-work-pr-refresh') as PipelineAPI)
     .input(['workId', 'now', 'changedAt'])
@@ -2444,53 +2352,8 @@ export class NeoService {
           })
         ),
       })),
-      ...neoPackAskTopics(this.packs(), this.askRecords.listLive()).map((topic) => ({
-        topic,
-        session: null,
-      })),
     ];
   }
-
-  private forgetUnfollowedAskTopics(): void {
-    const followed = new Set(neoPackAskTopics(this.packs(), this.askRecords.listLive()));
-    for (const topic of this.watchedAskTopics)
-      if (!followed.has(topic)) this.watchedAskTopics.delete(topic);
-  }
-
-  private followAskTopics(ask: NeoAsk): void {
-    for (const topic of neoPackAskTopics(this.packs(), [ask])) {
-      if (this.watchedAskTopics.has(topic)) continue;
-      this.watchedAskTopics.add(topic);
-      void this.watchExternalTopic?.(topic).catch((error) => {
-        this.watchedAskTopics.delete(topic);
-        this.log.warn('Ask event source watch pending', error);
-      });
-    }
-  }
-
-  private readonly runAskEventTicks = (superpipe({})('neo-ask-event-ticks') as PipelineAPI)
-    .input(['payload'])
-    .pipe(
-      (payload: ExternalEventPublishedPayload) => {
-        const event = this.sessionEvents.getById(payload.eventId)?.event;
-        return event ? { value: event } : { reason: 'event_missing' };
-      },
-      'payload',
-      'result:event'
-    )
-    .pipe(
-      async (event: ExternalEvent) => {
-        for (const ask of this.askRecords.listLive()) {
-          const ticks = await readNeoAskEventTicks(this.packs(), ask, event, (id, error) =>
-            this.log.warn(`Neo pack ${id} event ticks pending`, error)
-          );
-          if (ticks.length) this.writeAskTicks(ask, ticks);
-        }
-      },
-      'event',
-      'ticked'
-    )
-    .endAsync('ticked') as (payload: ExternalEventPublishedPayload) => Promise<unknown>;
 
   private readonly routeCardEvent = (superpipe({})('neo-card-event') as PipelineAPI)
     .input(['payload'])
@@ -3117,31 +2980,6 @@ export class NeoService {
         );
     return written ?? ask;
   }
-
-  private readonly runAskReadTicks = (superpipe({})('neo-ask-read-ticks') as PipelineAPI)
-    .input(['ask'])
-    .pipe((ask: NeoAsk) => ({ ask }), 'ask', 'read')
-    .pipe(requireNeoPackTickable, 'read', 'result:ticks')
-    .pipe(
-      async (ask: NeoAsk) => ({
-        ticks: await readNeoAskPackTicks(
-          this.packs(),
-          ask,
-          ask.workIds.flatMap((id) => this.repo.getWork(id) ?? []),
-          (id, error) => this.log.warn(`Neo pack ${id} ask ticks pending`, error)
-        ),
-      }),
-      'ticks',
-      'plan'
-    )
-    .pipe(
-      (ask: NeoAsk, plan: { ticks: { id: string; evidence: string }[] }) => ({
-        value: this.writeAskTicks(ask, plan.ticks),
-      }),
-      ['ticks', 'plan'],
-      'result:ticks'
-    )
-    .endAsync('ticks') as (ask: NeoAsk) => Promise<NeoAsk | null>;
 
   private readonly runAskPackTicks = (superpipe({})('neo-ask-pack-ticks') as PipelineAPI)
     .input(['askId'])
