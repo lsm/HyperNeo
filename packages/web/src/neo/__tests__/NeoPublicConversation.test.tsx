@@ -1,7 +1,6 @@
 import type { AgentProcessingState, ChatMessage, SessionState } from '@hyperneo/shared';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
-import { neoForwardKey } from '@hyperneo/shared/types/neo-snapshot';
 import { signal } from '@preact/signals';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -637,33 +636,6 @@ describe('durable public conversation presentation', () => {
 
 describe('NeoPublicConversation project labels', () => {
   afterEach(cleanup);
-
-  it('names the project that replied and the project that forwarded the message to it', () => {
-    const forwardedToMain = publication({
-      publicationId: '20000000-0000-4000-8000-000000000003',
-      producerInput: { sessionId: root, messageId: 'neo-forward:original:1' },
-      fullText: 'Main Neo took it.',
-      links: [],
-      sequence: 2,
-    });
-    render(
-      <NeoPublicConversation
-        conversation={conversation([ask()], [publication(), forwardedToMain])}
-        projects={new Map([[holder, 'Neo iOS']])}
-        forwarders={
-          new Map([
-            [neoForwardKey(original, holder), 'HyperNeo'],
-            [neoForwardKey(original, root), 'Neo iOS'],
-          ])
-        }
-      />
-    );
-    const replies = screen
-      .getAllByRole('article')
-      .filter((item) => item.classList.contains('neo-message-assistant'));
-    expect(within(replies[0]).getByText('Neo iOS (forwarded from HyperNeo)')).toBeTruthy();
-    expect(within(replies[1]).getByText('Neo (forwarded from Neo iOS)')).toBeTruthy();
-  });
 
   it('labels a holder reply with its project and leaves main Neo replies plain', () => {
     const mainReply = publication({

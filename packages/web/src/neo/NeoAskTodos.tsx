@@ -99,11 +99,18 @@ function TodoRow({
             {t('todo.new')}
           </span>
         )}
-        <span class="block break-words text-xs text-fg-muted">
+        <span
+          class={`block break-words text-xs ${number === undefined && todo.state === 'blocked' ? 'text-warning' : 'text-fg-muted'}`}
+        >
           {number === undefined
             ? neoTodoStatus(todo)
             : t('todo.doneWhen', { doneWhen: todo.doneWhen })}
         </span>
+        {number === undefined && todo.state === 'blocked' && todo.nextAction && (
+          <span data-todo-next-action class="block break-words text-xs text-fg-muted">
+            {t('todo.nextAction', { action: todo.nextAction })}
+          </span>
+        )}
       </div>
       {todo.link && todo.state !== 'removed' && onOpen && (
         <button

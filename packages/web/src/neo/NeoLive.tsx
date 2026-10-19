@@ -29,7 +29,6 @@ import { useNeoSheetSwipe } from './useNeoSheetSwipe.ts';
 import { useNeoVoiceRecovery } from './useNeoVoiceRecovery.ts';
 import '../../../../docs/branding/hyperneo-visual-identity/brand-tokens.css';
 import './neo.css';
-import { neoForwardKey } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoQuote } from './neo-intake.ts';
 import { t } from '../lib/i18n/index.ts';
 import { neoQuestionText } from './todo-status.ts';
@@ -75,21 +74,6 @@ export function NeoLive() {
         : '';
       return title ? [[binding.sessionId, title] as const] : [];
     })
-  );
-  const forwarders = new Map(
-    (view?.askForwards ?? []).map(
-      (forward) =>
-        [
-          neoForwardKey(
-            {
-              sessionId: forward.askSessionId,
-              messageId: forward.askMessageId,
-            },
-            forward.toSessionId
-          ),
-          projectTitles.get(forward.fromSessionId) ?? 'Neo',
-        ] as const
-    )
   );
   const publicConversation =
     neo.viewPublicConversation?.conversationId || publicationConversationId(neo.sessionId)
@@ -454,7 +438,6 @@ export function NeoLive() {
               sessionId={neo.sessionId}
               works={relevant.filter((work) => work.sessionId)}
               projects={projectTitles}
-              forwarders={forwarders}
               replyLabels={replyLabels}
               publicConversation={publicConversation}
               onOpenPublicWork={openWork}
