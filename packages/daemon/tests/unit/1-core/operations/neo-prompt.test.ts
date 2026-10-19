@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { HookInput, Options } from '@anthropic-ai/claude-agent-sdk';
-import { NEO_CAPABILITIES_BRIEFING, NEO_SPEAKING_POLICY } from '@hyperneo/prompts';
+import { NEO_CAPABILITIES_BRIEFING, NEO_ROOT_PROMPT, NEO_SPEAKING_POLICY } from '@hyperneo/prompts';
 import { OPERATION_NAMES } from '@hyperneo/shared/types/operation-names';
 import { FindWorkResultSchema } from '../../../../src/lib/drivers/find-operation.ts';
 import { ReadWorkInputSchema } from '../../../../src/lib/drivers/read-operation.ts';
@@ -24,6 +24,27 @@ const NEO_TOOLS = [
   'WebFetch',
   'Bash',
 ];
+
+describe('root Neo system prompt', () => {
+  test('is the short coordinator text alone, replacing the Claude Code preset', () => {
+    const options: Options = {};
+    restrictNeoQuery(options, null);
+    expect(options.systemPrompt).toEqual({
+      type: 'custom',
+      prompt: NEO_ROOT_PROMPT,
+      snapshot: false,
+    });
+    expect(neoPrompt(null)).toBe(NEO_ROOT_PROMPT);
+    expect(NEO_ROOT_PROMPT.split(/\s+/).length).toBeLessThan(120);
+    for (const fact of ['work.find', 'work.send', 'neo.publication.publish', 'neo.question.ask'])
+      expect(NEO_ROOT_PROMPT).toContain(fact);
+  });
+
+  test('teaches no holder, consultation, forwarding or dispatch', () => {
+    expect(NEO_ROOT_PROMPT).not.toMatch(/holder|consult|forward|dispatch/i);
+    expect(NEO_ROOT_PROMPT).not.toMatch(/neo\.project\.(consult|respond)|neo\.projects\.dispatch/);
+  });
+});
 
 describe('neoCoordinatorNativeTools', () => {
   test('gives every Neo session the same tools and no SDK question tool', () => {
@@ -100,7 +121,7 @@ describe('Neo world briefing delivery', () => {
     expect(NEO_SPEAKING_POLICY).not.toContain('<p>');
   });
 
-  test.each([null, 'research', 'family'])(
+  test.each(['research', 'family'])(
     'includes the same speaking policy once for %s',
     (projectId) => {
       const prompt = neoPrompt(projectId);
@@ -109,7 +130,7 @@ describe('Neo world briefing delivery', () => {
     }
   );
 
-  test.each([null, 'research'])('teaches the worker-staffing method for %s', (projectId) => {
+  test.each(['research'])('teaches the worker-staffing method for %s', (projectId) => {
     const prompt = neoPrompt(projectId).replace(/\s+/g, ' ');
     for (const text of [
       'small pool of two or three long-lived workers',
@@ -122,7 +143,7 @@ describe('Neo world briefing delivery', () => {
     expect(prompt).not.toContain('each card keeps its own session');
   });
 
-  test.each([null, 'research'])(
+  test.each(['research'])(
     'refreshes response guidance through the existing runtime policy for %s',
     (projectId) => {
       const options: Options = {
@@ -155,7 +176,7 @@ describe('Neo world briefing delivery', () => {
     }
   );
 
-  test.each([null, 'saas'])('briefs the local world for project %s', (projectId) => {
+  test.each(['saas'])('briefs the local world for project %s', (projectId) => {
     const prompt = neoPrompt(projectId);
     expect(prompt).toContain(NEO_CAPABILITIES_BRIEFING);
     for (const text of [
@@ -200,7 +221,7 @@ describe('Neo world briefing delivery', () => {
     expect(Object.keys(FindWorkResultSchema.shape)).toContain('more');
   });
 
-  test.each([null, 'saas'])('delivers a refreshed custom Neo prompt for %s', (projectId) => {
+  test.each(['saas'])('delivers a refreshed custom Neo prompt for %s', (projectId) => {
     const options: Options = {
       systemPrompt: { type: 'preset', preset: 'claude_code', append: 'Ambient project' },
     };
@@ -216,16 +237,13 @@ describe('Neo world briefing delivery', () => {
     expect(options.tools).toEqual(neoCoordinatorNativeTools());
   });
 
-  test.each([null, 'saas'])('finds where a todo belongs before adding it for %s', (projectId) => {
+  test.each(['saas'])('finds where a todo belongs before adding it for %s', (projectId) => {
     const prompt = neoPrompt(projectId);
     expect(prompt).toContain('Before adding a todo, find where it belongs: call work.find');
   });
 
   test('keeps holder context, consultation correlation and supersession distinct from world metadata', () => {
-    const root = neoPrompt(null);
     const holder = neoPrompt('saas');
-    expect(root).toContain('Detailed context belongs to the holder');
-    expect(root).toContain('neo.project.consult {projectId,question} obtains that context');
     expect(holder).toContain('context holder for project "saas"');
     expect(holder).toContain('id is the consultationId, not a work id');
     expect(holder).toContain(
@@ -233,45 +251,30 @@ describe('Neo world briefing delivery', () => {
     );
     expect(holder).toContain('If a save is rejected as superseded, do not reread and retry it');
   });
-
-  test('keeps clarification input identity without forcing a turn end', () => {
-    const root = neoPrompt(null);
-    const holder = neoPrompt('saas');
-    expect(root).toContain("A human's reply is a new input with its own identity");
-    expect(root).toContain('unrelated asks may arrive first');
-    expect(root).not.toContain('then end this input turn without waiting');
-    expect(holder).not.toContain('AskUserQuestion');
-  });
 });
 
 describe('Neo look-up guidance', () => {
-  test.each([null, 'saas'])(
-    'tells %s to check facts itself and change nothing shared',
-    (projectId) => {
-      const prompt = neoPrompt(projectId);
-      expect(prompt).toContain('never change shared state yourselves');
-      expect(prompt).toContain('A check that one or two commands answer, you do yourself');
-      expect(prompt).toContain(
-        'anything that needs to run code (a build, tests, a server) goes to a todo'
-      );
-      expect(prompt).toContain('A refused command records what that tool could not check');
-      expect(prompt).toContain('never put file contents or secrets into a fetched URL');
-      expect(prompt).not.toContain('You cannot read, search or browse files');
-    }
-  );
+  test.each(['saas'])('tells %s to check facts itself and change nothing shared', (projectId) => {
+    const prompt = neoPrompt(projectId);
+    expect(prompt).toContain('never change shared state yourselves');
+    expect(prompt).toContain('A check that one or two commands answer, you do yourself');
+    expect(prompt).toContain(
+      'anything that needs to run code (a build, tests, a server) goes to a todo'
+    );
+    expect(prompt).toContain('A refused command records what that tool could not check');
+    expect(prompt).toContain('never put file contents or secrets into a fetched URL');
+    expect(prompt).not.toContain('You cannot read, search or browse files');
+  });
 
-  test.each([null, 'saas'])(
-    'tells %s how to repair a session the human asks about',
-    (projectId) => {
-      const prompt = neoPrompt(projectId);
-      for (const text of [
-        'when the human asks you to fix a session',
-        'session.runtimeSettings.update',
-        'session.interrupt {spaceId,sessionId}',
-        'work.stop {ref} from work.find for a chat',
-        'then resume it with work.send',
-      ])
-        expect(prompt).toContain(text);
-    }
-  );
+  test.each(['saas'])('tells %s how to repair a session the human asks about', (projectId) => {
+    const prompt = neoPrompt(projectId);
+    for (const text of [
+      'when the human asks you to fix a session',
+      'session.runtimeSettings.update',
+      'session.interrupt {spaceId,sessionId}',
+      'work.stop {ref} from work.find for a chat',
+      'then resume it with work.send',
+    ])
+      expect(prompt).toContain(text);
+  });
 });

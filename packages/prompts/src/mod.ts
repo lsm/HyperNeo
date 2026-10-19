@@ -84,17 +84,8 @@ import mdneoSystemHolderSnapshotScope from './neo/system/holder-snapshot-scope.m
 };
 import mdneoSystemDoneCheckSteps from './neo/system/done-check-steps.md' with { type: 'text' };
 import mdneoSystemPrompt from './neo/system/prompt.md' with { type: 'text' };
-import mdneoSystemRootClarify from './neo/system/root-clarify.md' with { type: 'text' };
+import mdneoSystemRoot from './neo/system/root.md' with { type: 'text' };
 import mdneoSystemLookUp from './neo/system/look-up.md' with { type: 'text' };
-import mdneoSystemRootConsultationReturn from './neo/system/root-consultation-return.md' with {
-  type: 'text',
-};
-import mdneoSystemRootOperations from './neo/system/root-operations.md' with { type: 'text' };
-import mdneoSystemRootRole from './neo/system/root-role.md' with { type: 'text' };
-import mdneoSystemRootRuleSave from './neo/system/root-rule-save.md' with { type: 'text' };
-import mdneoSystemRootSnapshotScope from './neo/system/root-snapshot-scope.md' with {
-  type: 'text',
-};
 import mdneoWorkDoneCheck from './neo/work/done-check.md' with { type: 'text' };
 import mdneoWorkDoneCheckAskForeign from './neo/work/done-check-ask-foreign.md' with {
   type: 'text',
@@ -376,13 +367,8 @@ const registry: Record<string, string> = {
   'neo/system/holder-snapshot-scope.md': mdneoSystemHolderSnapshotScope,
   'neo/system/done-check-steps.md': mdneoSystemDoneCheckSteps,
   'neo/system/prompt.md': mdneoSystemPrompt,
-  'neo/system/root-clarify.md': mdneoSystemRootClarify,
+  'neo/system/root.md': mdneoSystemRoot,
   'neo/system/look-up.md': mdneoSystemLookUp,
-  'neo/system/root-consultation-return.md': mdneoSystemRootConsultationReturn,
-  'neo/system/root-operations.md': mdneoSystemRootOperations,
-  'neo/system/root-role.md': mdneoSystemRootRole,
-  'neo/system/root-rule-save.md': mdneoSystemRootRuleSave,
-  'neo/system/root-snapshot-scope.md': mdneoSystemRootSnapshotScope,
   'neo/work/done-check-ask-foreign.md': mdneoWorkDoneCheckAskForeign,
   'neo/work/done-check-ask-owned.md': mdneoWorkDoneCheckAskOwned,
   'neo/work/done-check-budget.md': mdneoWorkDoneCheckBudget,
@@ -564,13 +550,8 @@ export const {
   NEO_HOLDER_ROLE,
   NEO_HOLDER_SNAPSHOT_SCOPE,
   NEO_SYSTEM_PROMPT,
-  NEO_ROOT_CLARIFY,
+  NEO_ROOT_PROMPT,
   NEO_LOOK_UP,
-  NEO_ROOT_CONSULTATION_RETURN,
-  NEO_ROOT_OPERATIONS,
-  NEO_ROOT_ROLE,
-  NEO_ROOT_RULE_SAVE,
-  NEO_ROOT_SNAPSHOT_SCOPE,
   NEO_WORK_DONE_CHECK_ASK_FOREIGN,
   NEO_WORK_DONE_CHECK_ASK_OWNED,
   NEO_WORK_DONE_CHECK_BUDGET,

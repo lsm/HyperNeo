@@ -19,7 +19,7 @@ describe('Neo speaking policy delivery', () => {
     expect(NEO_SPEAKING_POLICY).toBe(policy);
   });
 
-  test.each([null, 'research'])(
+  test.each(['research'])(
     'reaches the actual %s coordinator query without a second speaking protocol',
     (projectId) => {
       const options: Options = {
@@ -43,7 +43,7 @@ describe('Neo speaking policy delivery', () => {
     }
   );
 
-  test.each([null, 'research'])(
+  test.each(['research'])(
     'documents message delivery and revisions with request identity for %s',
     (projectId) => {
       const prompt = neoPrompt(projectId);

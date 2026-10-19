@@ -8,12 +8,7 @@ import {
   NEO_HOLDER_ROLE,
   NEO_HOLDER_SNAPSHOT_SCOPE,
   NEO_SPEAKING_POLICY,
-  NEO_ROOT_CLARIFY,
-  NEO_ROOT_CONSULTATION_RETURN,
-  NEO_ROOT_OPERATIONS,
-  NEO_ROOT_ROLE,
-  NEO_ROOT_RULE_SAVE,
-  NEO_ROOT_SNAPSHOT_SCOPE,
+  NEO_ROOT_PROMPT,
   NEO_SYSTEM_PROMPT,
 } from '@hyperneo/prompts';
 import type { NeoPackBrief } from './packs/types.ts';
@@ -36,18 +31,17 @@ export function neoPrompt(
   projectId: string | null,
   packs: readonly NeoPackBrief[] = neoSettingsPackBriefs()
 ): string {
+  if (!projectId) return NEO_ROOT_PROMPT;
   return fillPrompt(NEO_SYSTEM_PROMPT, {
     capabilities: NEO_CAPABILITIES_BRIEFING,
-    root_clarify: projectId ? '' : NEO_ROOT_CLARIFY,
-    role: projectId
-      ? fillPrompt(NEO_HOLDER_ROLE, { project_id: JSON.stringify(projectId) })
-      : NEO_ROOT_ROLE,
-    snapshot_scope: projectId ? NEO_HOLDER_SNAPSHOT_SCOPE : NEO_ROOT_SNAPSHOT_SCOPE,
-    rule_save: projectId ? '' : ` ${NEO_ROOT_RULE_SAVE}`,
+    root_clarify: '',
+    role: fillPrompt(NEO_HOLDER_ROLE, { project_id: JSON.stringify(projectId) }),
+    snapshot_scope: NEO_HOLDER_SNAPSHOT_SCOPE,
+    rule_save: '',
     packs: neoPackBriefing(packs),
     done_check_steps: NEO_DONE_CHECK_STEPS,
-    operations: projectId ? NEO_HOLDER_OPERATIONS : NEO_ROOT_OPERATIONS,
-    consultation_return: projectId ? NEO_HOLDER_CONSULTATION_RETURN : NEO_ROOT_CONSULTATION_RETURN,
+    operations: NEO_HOLDER_OPERATIONS,
+    consultation_return: NEO_HOLDER_CONSULTATION_RETURN,
     speaking_policy: NEO_SPEAKING_POLICY,
     look_up: NEO_LOOK_UP,
   });
