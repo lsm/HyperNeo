@@ -46,6 +46,7 @@ export interface NeoPackCardAttention {
 export interface NeoTodoCheckResult {
   done: boolean;
   evidence: string | null;
+  failed?: string;
 }
 
 export interface NeoTodoPack {
@@ -59,6 +60,7 @@ export interface NeoTodoPack {
 
 export interface NeoPack extends NeoPackBrief {
   todos?: NeoTodoPack;
+  workerRules?: string;
   prepareExecution?: NeoExecutionPreparation;
   prerequisiteParameters?(
     items: readonly NeoAskItem[]

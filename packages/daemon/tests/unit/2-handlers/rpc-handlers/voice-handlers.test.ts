@@ -1200,6 +1200,7 @@ describe('voice stream RPC handlers', () => {
       endpoint: 'http://127.0.0.1:1/v1/audio/transcriptions',
       model: 'm',
       mode: 'streaming',
+      streamEndpoint: 'ws://127.0.0.1:1/v1/listen',
       allowPrivateNetwork: true,
     };
     await expect(start()).rejects.toThrow('Streaming transcription is unavailable');
@@ -1303,5 +1304,43 @@ describe('voice stream RPC handlers', () => {
     await expect(handlers.get('voice.stream.stop')?.({ streamId: 'missing' })).rejects.toThrow(
       'Unknown voice stream'
     );
+  });
+
+  it('voice.stream.cancel drops the audio without transcribing it, and is a no-op for unknown or foreign streams', async () => {
+    const { hub, handlers } = createMockMessageHub();
+    registerVoiceHandlers(hub, createSettings({ voice }));
+    const { streamId } = (await handlers.get('voice.stream.start')?.({
+      encoding: 'pcm16',
+      sampleRate: 16_000,
+    })) as { streamId: string };
+    await handlers.get('voice.stream.chunk')?.({ streamId, audioBase64: 'AAAAAA==' });
+    const fetch = vi.spyOn(globalThis, 'fetch');
+    const other = {
+      clientId: 'other-client',
+      sessionId: 'session-2',
+      messageId: 'm',
+      method: 'voice.stream.cancel',
+      timestamp: new Date().toISOString(),
+    };
+    await expect(handlers.get('voice.stream.cancel')?.({ streamId }, other)).resolves.toEqual({
+      ok: true,
+    });
+    await expect(
+      handlers.get('voice.stream.chunk')?.({ streamId, audioBase64: 'AAA=' })
+    ).resolves.toEqual({ ok: true });
+    await expect(handlers.get('voice.stream.cancel')?.({ streamId })).resolves.toEqual({
+      ok: true,
+    });
+    await expect(handlers.get('voice.stream.stop')?.({ streamId })).rejects.toThrow(
+      'Unknown voice stream'
+    );
+    await expect(handlers.get('voice.stream.cancel')?.({ streamId })).resolves.toEqual({
+      ok: true,
+    });
+    await expect(handlers.get('voice.stream.cancel')?.({ streamId: 'missing' })).resolves.toEqual({
+      ok: true,
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    fetch.mockRestore();
   });
 });

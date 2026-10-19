@@ -170,7 +170,7 @@ describe('coding todo pack', () => {
         JSON.stringify({ adapter: 'claude-desktop', id: session })
       );
     };
-    const check = { pack: 'coding', kind: 'pr_opened', params: {} };
+    const check = { pack: 'coding', kind: 'pr_merged', params: {} };
     const gpt = { ...todo(check), state: 'doing' as const, startedAt: 100 };
     const ids = { ...todo(check), state: 'doing' as const, startedAt: 200 };
     const elsewhere = todo(check);
@@ -198,7 +198,7 @@ describe('coding todo pack', () => {
   test('records the PRs a todo owns as route references for its ask project', async () => {
     const { db, pack, todo } = setup(async () => [pr(41, 'OPEN')]);
     const row = todo(
-      { pack: 'coding', kind: 'pr_opened', params: {} },
+      { pack: 'coding', kind: 'pr_merged', params: {} },
       `Opened ${pr(41, 'OPEN').url}`
     );
     const owned = [{ reference: '#41', projectId: null }];
@@ -213,7 +213,7 @@ describe('coding todo pack', () => {
     db.close();
   });
 
-  test('leaves todos of other packs and unreadable PRs to the core', async () => {
+  test('leaves todos of other packs to the core and holds a coding todo whose PRs are unread', async () => {
     const { pack, todo } = setup(async () => null);
     expect(await pack.check(todo(null))).toBeNull();
     expect(
@@ -229,12 +229,12 @@ describe('coding todo pack', () => {
           'https://github.com/lsm/neo-ios/pull/9'
         )
       )
-    ).toBeNull();
+    ).toEqual({ done: false, evidence: null });
   });
 });
 
 describe('coding todo claims', () => {
-  test('canonical claims, re-derived reports, and no verdict from a partial read', async () => {
+  test('canonical claims, re-derived reports, and not done from a partial read', async () => {
     let read: NeoWorkPr[] = [pr(102, 'MERGED')];
     const { pack, repo, todo } = setup(async () => read);
     const row = todo(
@@ -245,7 +245,7 @@ describe('coding todo claims', () => {
       },
       'Opened https://github.com/lsm/neo-ios/pull/103'
     );
-    expect(await pack.check(row)).toBeNull();
+    expect(await pack.check(row)).toEqual({ done: false, evidence: null });
     expect(repo.urls(row.id)).toEqual([
       'https://github.com/lsm/neo-ios/pull/102',
       'https://github.com/lsm/neo-ios/pull/103',
@@ -263,17 +263,89 @@ describe('coding todo claims', () => {
 });
 
 describe('codingTodoCheck', () => {
-  test('pr_merged needs every PR merged and pr_opened any live PR', () => {
+  test('pr_merged needs every PR merged, and pr_opened is gone', () => {
     expect(codingTodoCheck('pr_merged', [pr(1, 'MERGED'), pr(2, 'MERGED')])).toEqual({
       done: true,
       evidence: '#1 #2 merged',
     });
-    expect(codingTodoCheck('pr_merged', [])).toEqual({ done: false, evidence: null });
-    expect(codingTodoCheck('pr_opened', [pr(1, 'CLOSED'), pr(2, 'OPEN')])).toEqual({
-      done: true,
-      evidence: '#2 opened',
+    expect(codingTodoCheck('pr_merged', [pr(1, 'MERGED'), pr(2, 'OPEN')])).toEqual({
+      done: false,
+      evidence: null,
     });
+    expect(codingTodoCheck('pr_merged', [])).toEqual({ done: false, evidence: null });
+    expect(codingTodoCheck('pr_opened', [pr(1, 'OPEN')])).toBeNull();
     expect(codingTodoCheck('deployed', [])).toBeNull();
+  });
+
+  test("a newer PR takes a closed one's place, and an unreplaced closed PR fails the todo", () => {
+    const closed = pr(2, 'CLOSED', { createdAt: 20 });
+    expect(
+      codingTodoCheck('pr_merged', [
+        pr(1, 'MERGED', { createdAt: 10 }),
+        closed,
+        pr(3, 'MERGED', { createdAt: 30 }),
+      ])
+    ).toEqual({ done: true, evidence: '#1 #3 merged' });
+    expect(
+      codingTodoCheck('pr_merged', [
+        pr(1, 'MERGED', { createdAt: 10 }),
+        closed,
+        pr(3, 'OPEN', { createdAt: 30 }),
+      ])
+    ).toEqual({ done: false, evidence: null });
+    const failed = {
+      done: false,
+      evidence: null,
+      failed: '#2 closed without merging and no pull request replaced it',
+    };
+    expect(codingTodoCheck('pr_merged', [pr(1, 'MERGED', { createdAt: 30 }), closed])).toEqual({
+      done: true,
+      evidence: '#1 merged',
+    });
+    expect(codingTodoCheck('pr_merged', [pr(1, 'MERGED', { createdAt: 10 }), closed])).toEqual(
+      failed
+    );
+    expect(
+      codingTodoCheck('pr_merged', [
+        closed,
+        pr(4, 'CLOSED', { createdAt: 25 }),
+        pr(5, 'MERGED', { createdAt: 40 }),
+      ])
+    ).toEqual({ ...failed, failed: '#4 closed without merging and no pull request replaced it' });
+  });
+});
+
+describe('codingTodoCheck replacement grace', () => {
+  test('matches replacements by creation time, not claim order', () => {
+    expect(
+      codingTodoCheck('pr_merged', [
+        pr(50, 'CLOSED', { createdAt: 10 }),
+        pr(60, 'CLOSED', { createdAt: 20 }),
+        pr(70, 'MERGED', { createdAt: 30 }),
+        pr(55, 'MERGED', { createdAt: 15 }),
+      ])
+    ).toEqual({ done: true, evidence: '#70 #55 merged' });
+  });
+
+  test('a PR closed unmerged fails the todo only after 15 minutes without a replacement', () => {
+    const closedAt = 1_000_000;
+    const prs = [pr(1, 'MERGED', { createdAt: 10 }), pr(2, 'CLOSED', { createdAt: 20, closedAt })];
+    expect(codingTodoCheck('pr_merged', prs, closedAt + 14 * 60_000)).toEqual({
+      done: false,
+      evidence: null,
+    });
+    expect(codingTodoCheck('pr_merged', prs, closedAt + 15 * 60_000)).toEqual({
+      done: false,
+      evidence: null,
+      failed: '#2 closed without merging and no pull request replaced it',
+    });
+    expect(
+      codingTodoCheck(
+        'pr_merged',
+        [...prs, pr(3, 'MERGED', { createdAt: closedAt + 60_000 })],
+        closedAt + 60 * 60_000
+      )
+    ).toEqual({ done: true, evidence: '#1 #3 merged' });
   });
 });
 

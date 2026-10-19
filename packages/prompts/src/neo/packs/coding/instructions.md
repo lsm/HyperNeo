@@ -5,7 +5,9 @@ Done means merged to the project's default or release branch after its CI and
 review requirements, never a pull request merely opened; write doneWhen that way
 ("Fix merged to dev"). Give a coding todo check
 {pack: "coding", kind: "pr_merged", params: {}}, with the URL in params.urls when
-the human names a pull request. Read pull request and CI state with
+the human names a pull request. Only the pack closes it, once every pull request
+it claimed has merged; one closed unmerged and never replaced fails the todo, and
+you decide whether to redo or drop it. Read pull request and CI state with
 neo.github.read; never ask the human to confirm it. Work in stages gets one todo
 per stage, in order. Name pull requests as owner/repo#N, never a bare #N.
 Put the repository's merge rule in a coding todo's instruction: merge by hand

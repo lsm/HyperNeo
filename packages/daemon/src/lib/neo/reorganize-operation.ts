@@ -14,7 +14,7 @@ import {
   neoCleanupFolders,
   planNeoProjectCleanup,
 } from './project-cleanup.ts';
-import { NEO_INBOX_ID, type NeoRouted } from './router.ts';
+import { NEO_INBOX_ID } from './inbox.ts';
 
 const Input = z
   .object({ apply: z.boolean().optional(), archive: z.array(z.string()).optional() })
@@ -122,6 +122,8 @@ export function requireNeoAskUnchanged(
     ? { value: current }
     : { reason: { askId: ask.id, reason: 'changed' } };
 }
+
+export type NeoRouted = { choice: { projectId: string; sessionId: string } | null };
 
 export function requireNeoAskProject(
   ask: NeoAsk,

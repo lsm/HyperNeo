@@ -200,28 +200,48 @@ export function codingTodoOwnPrs(
     .filter((row) => row.claim === 'branch')
     .flatMap(read)
     .filter((pr) => inWindow(window, pr))
-    .sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))
+    .sort(
+      (a, b) =>
+        Number(a.state === 'CLOSED') - Number(b.state === 'CLOSED') || createdAt(a) - createdAt(b)
+    )
     .slice(0, 1);
 }
 
 const prNumber = (pr: NeoWorkPr) => `#${pr.url.replace(/\/+$/, '').split('/').pop()}`;
 
+const createdAt = (pr: NeoWorkPr) => pr.createdAt ?? 0;
+
+export const CODING_PR_REPLACEMENT_GRACE_MS = 15 * 60_000;
+
 export function codingTodoCheck(
   kind: string,
-  prs: readonly NeoWorkPr[]
+  prs: readonly NeoWorkPr[],
+  now = Date.now()
 ): NeoTodoCheckResult | null {
-  const merged = prs.filter((pr) => pr.state === 'MERGED');
-  if (kind === 'pr_merged')
-    return prs.length && merged.length === prs.length
-      ? { done: true, evidence: `${merged.map(prNumber).join(' ')} merged` }
-      : { done: false, evidence: null };
-  if (kind === 'pr_opened') {
-    const opened = prs.filter((pr) => pr.state !== 'CLOSED');
-    return opened.length
-      ? { done: true, evidence: `${opened.map(prNumber).join(' ')} opened` }
-      : { done: false, evidence: null };
-  }
-  return null;
+  if (kind !== 'pr_merged') return null;
+  const live = prs.filter((pr) => pr.state !== 'CLOSED');
+  const spare = [...live].sort((a, b) => createdAt(a) - createdAt(b));
+  const unreplaced = prs
+    .filter((pr) => pr.state === 'CLOSED')
+    .sort((a, b) => createdAt(a) - createdAt(b))
+    .filter((closed) => {
+      const at = spare.findIndex((pr) => createdAt(pr) > createdAt(closed));
+      return at < 0 || !spare.splice(at, 1);
+    });
+  const expired = unreplaced.filter(
+    (pr) => now - (pr.closedAt ?? 0) >= CODING_PR_REPLACEMENT_GRACE_MS
+  );
+  if (expired.length)
+    return {
+      done: false,
+      evidence: null,
+      failed: `${expired.map(prNumber).join(' ')} closed without merging and no pull request replaced it`,
+    };
+  if (unreplaced.length) return { done: false, evidence: null };
+  const merged = live.filter((pr) => pr.state === 'MERGED');
+  return live.length && merged.length === live.length
+    ? { done: true, evidence: `${merged.map(prNumber).join(' ')} merged` }
+    : { done: false, evidence: null };
 }
 
 const CODING_TODO_STATUS_EN = {
@@ -289,7 +309,8 @@ export function createCodingTodoPack(
       const urls = repo.urls(todo.id);
       if (!urls.length) return todo.check ? codingTodoCheck(todo.check.kind, []) : null;
       const read = await readPrs(urls);
-      if (!read || urls.some((url) => !read.some((pr) => codingPrKey(pr.url) === url))) return null;
+      if (!read || urls.some((url) => !read.some((pr) => codingPrKey(pr.url) === url)))
+        return todo.check ? { done: false, evidence: null } : null;
       const prs = codingTodoOwnPrs(todo, repo.claimsOn(urls), read, repo.window(todo.id));
       repo.record(todo.id, prs, Date.now());
       return todo.check ? codingTodoCheck(todo.check.kind, prs) : null;

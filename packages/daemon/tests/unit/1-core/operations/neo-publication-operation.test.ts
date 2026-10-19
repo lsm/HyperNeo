@@ -188,6 +188,11 @@ describe('runtime-bound publication operation', () => {
         published: () => {},
       }),
       inputTrigger,
+      isDeliveredHumanInput: (input) =>
+        isHuman(input) &&
+        mailbox.sdkMessageRepo.getUserSendStatus(input.sessionId, input.messageId) === 'consumed',
+      publicationIdFor: (triggerId) =>
+        ledger.byTrigger(conversationId, triggerId)?.publicationId ?? null,
       notify,
     };
     const publishRaw = createNeoPublisher(runtime);
@@ -218,6 +223,41 @@ describe('runtime-bound publication operation', () => {
     expect(result).toHaveProperty('value.answered.revisionId', publication.publicationId);
     expect(yieldTurn).not.toHaveBeenCalled();
     expect(who.neoTurn.isLive()).toBe(true);
+  });
+
+  test('a root turn answers another delivered human message once, under its trigger', async () => {
+    prompt(root.sessionId, 'event', 'system');
+    prompt(root.sessionId, 'steered');
+    const turn = caller(root.sessionId, 'event', false);
+    const answer = async (requestId: string) => ({
+      value: await publish(
+        { ...draft, publicationId: requestId, triggerId: 'human:steered' },
+        turn
+      ),
+    });
+    expect(await answer('first')).toMatchObject({
+      value: {
+        accepted: true,
+        publication: { triggerId: 'human:steered' },
+        answered: { message: { sessionId: root.sessionId, messageId: 'steered' } },
+      },
+    });
+    expect(await answer('first')).toMatchObject({ value: { accepted: true, created: false } });
+    expect(await answer('second')).toMatchObject({
+      value: { accepted: false, reason: 'already_answered' },
+    });
+  });
+
+  test('a human message not yet delivered to the root cannot be answered by reference', async () => {
+    prompt(root.sessionId, 'event', 'system');
+    prompt(root.sessionId, 'waiting');
+    mailbox.sdkMessageRepo.updateMessageStatus(
+      [mailbox.sdkMessageRepo.findMessageIdByUuid(root.sessionId, 'waiting')!],
+      'enqueued'
+    );
+    expect(
+      await invoke({ ...draft, triggerId: 'human:waiting' }, caller(root.sessionId, 'event', false))
+    ).toMatchObject({ value: { accepted: false, reason: 'wrong_trigger' } });
   });
 
   test('an unbound event delivery does not invent an answered human question', async () => {

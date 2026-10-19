@@ -60,8 +60,6 @@ import mdneoConsultationSettledStopped from './neo/consultation/settled-stopped.
   type: 'text',
 };
 import mdneoAskForwarded from './neo/ask-forwarded.md' with { type: 'text' };
-import mdneoRouteClassifier from './neo/route-classifier.md' with { type: 'text' };
-import mdneoRouteRequest from './neo/route-request.md' with { type: 'text' };
 import mdneoWaitingReminder from './neo/waiting-reminder.md' with { type: 'text' };
 import mdneoSessionTrack from './neo/session-track.md' with { type: 'text' };
 import mdneoAskEvidence from './neo/ask-evidence.md' with { type: 'text' };
@@ -97,6 +95,7 @@ import mdneoWorkDoneCheckPrsLive from './neo/packs/coding/done-check-prs-live.md
   type: 'text',
 };
 import mdneoPacksCodingInstructions from './neo/packs/coding/instructions.md' with { type: 'text' };
+import mdneoPacksCodingWorkerRules from './neo/packs/coding/worker-rules.md' with { type: 'text' };
 import mdneoWorkDoneCheckPrsMergeable from './neo/packs/coding/done-check-prs-mergeable.md' with {
   type: 'text',
 };
@@ -348,8 +347,6 @@ const registry: Record<string, string> = {
   'neo/consultation/settled-stopped.md': mdneoConsultationSettledStopped,
   'neo/consultation/settled.md': mdneoConsultationSettled,
   'neo/ask-forwarded.md': mdneoAskForwarded,
-  'neo/route-classifier.md': mdneoRouteClassifier,
-  'neo/route-request.md': mdneoRouteRequest,
   'neo/waiting-reminder.md': mdneoWaitingReminder,
   'neo/session-track.md': mdneoSessionTrack,
   'neo/ask-evidence.md': mdneoAskEvidence,
@@ -381,6 +378,7 @@ const registry: Record<string, string> = {
   'neo/work/goal-asked.md': mdneoWorkGoalAsked,
   'neo/work/goal-done-when.md': mdneoWorkGoalDoneWhen,
   'neo/packs/coding/instructions.md': mdneoPacksCodingInstructions,
+  'neo/packs/coding/worker-rules.md': mdneoPacksCodingWorkerRules,
   'neo/packs/coding/goal-merge.md': mdneoWorkGoalMerge,
   'neo/packs/coding/goal-pr-events.md': mdneoPacksCodingGoalPrEvents,
   'neo/packs/coding/goal-pr-subscribe.md': mdneoPacksCodingGoalPrSubscribe,
@@ -529,10 +527,9 @@ export const {
   NEO_CONSULTATION_SETTLED_STOPPED,
   NEO_CONSULTATION_SETTLED,
   NEO_PACK_CODING_INSTRUCTIONS,
+  NEO_PACK_CODING_WORKER_RULES,
   NEO_PACK_LIFE_ADMIN_INSTRUCTIONS,
   NEO_ASK_FORWARDED,
-  NEO_ROUTE_PROMPT,
-  NEO_ROUTE_REQUEST,
   NEO_WAITING_REMINDER,
   NEO_SESSION_TRACK,
   NEO_ASK_EVIDENCE,

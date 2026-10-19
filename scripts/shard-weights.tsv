@@ -270,7 +270,6 @@
 22994	packages/daemon/tests/unit/1-core/operations/neo-driver-work.test.ts
 7	packages/daemon/tests/unit/1-core/operations/neo-evidence.test.ts
 12	packages/daemon/tests/unit/1-core/operations/neo-file-packs.test.ts
-4	packages/daemon/tests/unit/1-core/operations/neo-fit-lines.test.ts
 1107	packages/daemon/tests/unit/1-core/operations/neo-holder-parent.test.ts
 59	packages/daemon/tests/unit/1-core/operations/neo-holder-turn.test.ts
 13	packages/daemon/tests/unit/1-core/operations/neo-human-work-prompt.test.ts
@@ -298,9 +297,6 @@
 326	packages/daemon/tests/unit/1-core/operations/neo-reorganize.test.ts
 6	packages/daemon/tests/unit/1-core/operations/neo-reply-language.test.ts
 1100	packages/daemon/tests/unit/1-core/operations/neo-response-input.test.ts
-54	packages/daemon/tests/unit/1-core/operations/neo-route-classifier.test.ts
-15	packages/daemon/tests/unit/1-core/operations/neo-route-correct.test.ts
-1407	packages/daemon/tests/unit/1-core/operations/neo-router.test.ts
 970	packages/daemon/tests/unit/1-core/operations/neo-routing-log.test.ts
 1438	packages/daemon/tests/unit/1-core/operations/neo-saved-rules.test.ts
 1721	packages/daemon/tests/unit/1-core/operations/neo-session-ask-links.test.ts

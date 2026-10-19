@@ -645,7 +645,6 @@ describe('Neo MVP', () => {
       'neo.projects.reorganize',
       'neo.publication.publish',
       'neo.publication.edit',
-      'neo.route.correct',
       'neo.route.failure',
       'neo.inbox.promote',
       'neo.ask.forward',

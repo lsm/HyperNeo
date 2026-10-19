@@ -31,15 +31,20 @@ function setup() {
   });
   const stopFails = { value: false };
   const ops = Object.fromEntries(
-    createNeoTodoOperations(repo, new NeoTodoSessionRepository(db), {
-      start: async () => ({ ok: false as const, reason: 'not started' }),
-      proceed: async () => ({ ok: false as const, reason: 'no session' }),
-      retry: async () => ({ ok: false as const, reason: 'not failed' }),
-      stop: async (todo) => {
-        stopped.push(todo.id);
-        return stopFails.value ? 'stop_failed: driver offline' : null;
+    createNeoTodoOperations(
+      repo,
+      new NeoTodoSessionRepository(db),
+      {
+        start: async () => ({ ok: false as const, reason: 'not started' }),
+        proceed: async () => ({ ok: false as const, reason: 'no session' }),
+        retry: async () => ({ ok: false as const, reason: 'not failed' }),
+        stop: async (todo) => {
+          stopped.push(todo.id);
+          return stopFails.value ? 'stop_failed: driver offline' : null;
+        },
       },
-    }).map((op) => [op.name, op])
+      () => []
+    ).map((op) => [op.name, op])
   );
   const call = async (name: string, input: unknown, caller = owner) =>
     (await ops[name].execute(ops[name].inputSchema.parse(input), caller)) as
@@ -82,7 +87,8 @@ describe('neo.todo operations', () => {
     const add = createNeoTodoOperations(
       {} as NeoAskTodoRepository,
       {} as NeoTodoSessionRepository,
-      {} as NeoTodoControls
+      {} as NeoTodoControls,
+      () => []
     ).find((op) => op.name === 'neo.todo.add')!;
     const input = { askId: 'ask', title: 'T', doneWhen: 'D', instruction: 'Do' };
     const ref = { adapter: 'hyperneo', id: 'dev-1' };

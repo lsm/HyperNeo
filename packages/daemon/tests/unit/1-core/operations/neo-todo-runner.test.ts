@@ -43,6 +43,7 @@ function setup(packDone: boolean | null = null) {
     id: 'coding',
     describe: 'coding',
     instructions: () => null,
+    workerRules: 'Rules for this work: prove it by running it.',
     todos: {
       schema: () => {},
       check: async (todo: NeoTodo) => {
@@ -210,6 +211,18 @@ describe('neo todo runner', () => {
     expect(told).toEqual([
       expect.stringContaining('Todo "Rows": its session stopped'),
       'Todo "Rows" is done: #1 已合并',
+    ]);
+  });
+
+  test("a todo checked by a pack sends that pack's worker rules after its instruction", async () => {
+    const { runner, calls, add } = setup();
+    await runner.start(add({ pack: 'coding', kind: 'pr_merged', params: {} }).id);
+    await runner.start(add().id);
+    expect(
+      calls.filter((call) => call.name === 'work.start').map((call) => call.input.message)
+    ).toEqual([
+      expect.stringMatching(/Build the rows\.[\s\S]*Rules for this work: prove it by running it\./),
+      expect.not.stringContaining('Rules for this work'),
     ]);
   });
 
@@ -440,6 +453,9 @@ describe('planNeoTodoCheck', () => {
       finishedAt: 1,
     });
     expect(planNeoTodoCheck(doing, { done: false, evidence: null }, 1)).toBeNull();
+    expect(
+      planNeoTodoCheck(doing, { done: false, evidence: null, failed: '#2 closed' }, 1)
+    ).toEqual({ state: 'failed', reason: '#2 closed', finishedAt: 1 });
     expect(
       planNeoTodoCheck({ state: 'done' } as NeoTodo, { done: true, evidence: 'ok' }, 1)
     ).toBeNull();

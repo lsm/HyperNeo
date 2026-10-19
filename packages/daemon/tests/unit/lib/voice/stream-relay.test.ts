@@ -4,21 +4,37 @@ import type { VoiceSettings } from '@hyperneo/shared';
 import { WebSocketServer, type WebSocket } from 'ws';
 import {
   VoiceStream,
-  asrText,
-  mergeAsrWindow,
   pcm16Wav,
   voiceMode,
+  voiceStreamRoute,
   voiceStreamTls,
-  voiceStreamUrl,
   type VoiceStreamText,
 } from '../../../../src/lib/voice/stream-relay';
+import { deepgram, joinFinals } from '../../../../src/lib/voice/stream-protocols';
 import type { VoiceTranscribeOutcome } from '../../../../src/lib/voice/transcribe-pipeline';
+import recorded from './fixtures/wlk-deepgram.json';
+
+const results = (transcript: string, isFinal: boolean) =>
+  JSON.stringify({
+    type: 'Results',
+    is_final: isFinal,
+    channel: { alternatives: [{ transcript }] },
+  });
+
+const finalsOf = (messages: readonly unknown[]) =>
+  joinFinals(
+    messages
+      .map((message) => deepgram.parse(JSON.stringify(message)))
+      .filter((parsed) => parsed?.isFinal && parsed.text)
+      .map((parsed) => parsed!.text)
+  );
 
 describe('voice stream settings', () => {
   const voice: VoiceSettings = {
     enabled: true,
-    endpoint: 'https://ai0:8090/v1/audio/transcriptions',
+    endpoint: 'https://ai0:8011/v1/audio/transcriptions',
     model: 'qwen3-asr-06b',
+    streamEndpoint: 'wss://ai0:8011/v1/listen?language=zh',
   };
 
   test('voiceMode defaults to auto', () => {
@@ -27,14 +43,22 @@ describe('voice stream settings', () => {
     expect(voiceMode({ ...voice, mode: 'streaming' })).toBe('streaming');
   });
 
-  test('voiceStreamUrl derives the streaming route beside the batch endpoint', () => {
-    expect(voiceStreamUrl(voice)?.toString()).toBe(
-      'wss://ai0:8090/v1/audio/streaming_transcriptions?model=qwen3-asr-06b'
+  test('voiceStreamRoute adds the Deepgram parameters and keeps the ones configured', () => {
+    expect(voiceStreamRoute(voice)?.url.toString()).toBe(
+      'wss://ai0:8011/v1/listen?language=zh&encoding=linear16&sample_rate=16000&channels=1&interim_results=true&endpointing=700'
     );
     expect(
-      voiceStreamUrl({ ...voice, endpoint: 'http://h/v1/audio/transcriptions' })?.protocol
-    ).toBe('ws:');
-    expect(voiceStreamUrl({ ...voice, endpoint: 'https://h/v1/other' })).toBeNull();
+      voiceStreamRoute({
+        ...voice,
+        streamEndpoint: 'ws://h/v1/listen?endpointing=300',
+      })?.url.searchParams.get('endpointing')
+    ).toBe('300');
+  });
+
+  test('voiceStreamRoute needs a ws or wss endpoint and a supported protocol', () => {
+    expect(voiceStreamRoute({ ...voice, streamEndpoint: undefined })).toBeNull();
+    expect(voiceStreamRoute({ ...voice, streamEndpoint: 'https://ai0:8011/v1/listen' })).toBeNull();
+    expect(voiceStreamRoute({ ...voice, streamProtocol: 'openai-realtime' })).toBeNull();
   });
 
   test('voiceStreamTls pins a configured CA and never turns verification off by default', () => {
@@ -45,61 +69,30 @@ describe('voice stream settings', () => {
     });
   });
 
-  test('asrText reads gateway messages and ignores anything else', () => {
-    expect(asrText('{"text":"hi","is_final":false}')).toEqual({ text: 'hi', isFinal: false });
-    expect(asrText('{"text":"hi","is_final":true}')).toEqual({ text: 'hi', isFinal: true });
-    expect(asrText('nope')).toBeNull();
+  test('deepgram reads Results and ignores other frames', () => {
+    expect(deepgram.parse(results(' hi ', false))).toEqual({ text: 'hi', isFinal: false });
+    expect(deepgram.parse(results('hi', true))).toEqual({ text: 'hi', isFinal: true });
+    expect(deepgram.parse('{"type":"Metadata"}')).toBeNull();
+    expect(deepgram.parse('nope')).toBeNull();
+    expect(deepgram.finish()).toBe('{"type":"CloseStream"}');
+    expect(deepgram.authorization('k')).toBe('Token k');
   });
 
-  test('mergeAsrWindow keeps the head a sliding window drops (ai0, three sentences, 4 s pauses)', () => {
-    const windows = [
-      'Please check the bill.',
-      'Please check the build status of the voice pull request.',
-      'Please check the build status of the voice pull request. Then merge it if the review bot.',
-      'Please check the build status of the voice pull request. Then merge it if the review bot approved.',
-      'The build status of the voice pull request. Then merge it if the review bot approved.',
-      'Then merge it if the review bot approved. Finally install.',
-      'Then merge it if the review bot approved. Finally, install the app on my phone tonight.',
-      'The review bot approved. Finally, install the app on my phone tonight.',
-    ];
-    expect(windows.reduce(mergeAsrWindow, '')).toBe(
+  test('joinFinals spaces Latin text and runs CJK text together', () => {
+    expect(joinFinals(['First.', 'Second.', ''])).toBe('First. Second.');
+    expect(joinFinals(['请帮我检查。', '如果批准了。'])).toBe('请帮我检查。如果批准了。');
+  });
+
+  test('WLK finals, as recorded, hold every sentence once', () => {
+    expect(finalsOf(recorded.three)).toBe(
       'Please check the build status of the voice pull request. Then merge it if the review bot approved. Finally, install the app on my phone tonight.'
     );
-  });
-
-  test('mergeAsrWindow revises the tail, skips a cut-off first word, and appends a window with nothing in common', () => {
-    expect(mergeAsrWindow('Please check the bill.', 'Please check the build')).toBe(
-      'Please check the build'
-    );
-    expect(mergeAsrWindow('we ship the build today', 'e build today and merge')).toBe(
-      'we ship the build today and merge'
-    );
-    expect(mergeAsrWindow('first part.', 'second part')).toBe('first part. second part');
-    expect(mergeAsrWindow('', 'hello')).toBe('hello');
-    expect(mergeAsrWindow('hello', '')).toBe('hello');
-    expect(mergeAsrWindow('hello', 'hello')).toBe('hello');
-  });
-
-  test('mergeAsrWindow lines up on the longest overlap when a phrase repeats inside the window', () => {
-    expect(
-      mergeAsrWindow(
-        'alpha bravo ok deploy it charlie delta ok deploy it echo',
-        'ok deploy it charlie delta ok deploy it echo'
-      )
-    ).toBe('alpha bravo ok deploy it charlie delta ok deploy it echo');
-  });
-
-  test('mergeAsrWindow lines up past a word the window revised inside the overlap', () => {
-    expect(mergeAsrWindow('a b c d e f g h', 'c d x f g h i')).toBe('a b c d e f g h i');
-  });
-
-  test('mergeAsrWindow lowercases only a title-case window head, never an acronym', () => {
-    expect(mergeAsrWindow('we call the api now', 'The api now works')).toBe(
-      'we call the api now works'
-    );
-    expect(mergeAsrWindow('we call the api now', 'API now works')).toBe(
-      'we call the API now works'
-    );
+    const monologue = finalsOf(recorded.mono);
+    expect(monologue.startsWith('Yesterday, I spent most of the afternoon')).toBe(true);
+    expect(monologue.endsWith('without hurting accuracy.')).toBe(true);
+    expect(monologue.match(/Tomorrow/g)).toHaveLength(1);
+    expect(finalsOf(recorded.zh).startsWith('请帮我检查一下')).toBe(true);
+    expect(finalsOf(recorded.zh).endsWith('iPhone上。')).toBe(true);
   });
 
   test('pcm16Wav wraps PCM in a 16 kHz mono WAV header', () => {
@@ -110,11 +103,12 @@ describe('voice stream settings', () => {
   });
 });
 
-describe('VoiceStream against a stub ASR server', () => {
+describe('VoiceStream against a stub Deepgram server', () => {
   let server: WebSocketServer;
   let port: number;
   let received: number;
   let onAudio: (socket: WebSocket, bytes: number) => void;
+  let onCloseStream: (socket: WebSocket) => void;
   let pushed: VoiceStreamText[];
   let batches: string[];
 
@@ -122,14 +116,22 @@ describe('VoiceStream against a stub ASR server', () => {
     received = 0;
     pushed = [];
     batches = [];
-    onAudio = (socket, bytes) =>
-      socket.send(JSON.stringify({ text: `heard ${bytes}`, is_final: false }));
+    onAudio = (socket, bytes) => socket.send(results(`heard ${bytes}`, false));
+    onCloseStream = (socket) => {
+      socket.send(results(`heard ${received}`, true));
+      socket.send('{"type":"Metadata"}');
+      socket.close(1000);
+    };
     server = new WebSocketServer({ port: 0 });
     await new Promise((resolve) => server.once('listening', resolve));
     port = (server.address() as { port: number }).port;
     server.on('connection', (socket, request) => {
-      expect(request.url).toBe('/v1/audio/streaming_transcriptions?model=m');
-      socket.on('message', (data: Buffer) => {
+      expect(request.url).toStartWith('/v1/listen?encoding=linear16&sample_rate=16000');
+      socket.on('message', (data: Buffer, isBinary: boolean) => {
+        if (!isBinary) {
+          if (JSON.parse(data.toString()).type === 'CloseStream') onCloseStream(socket);
+          return;
+        }
         received += data.length;
         onAudio(socket, received);
       });
@@ -143,6 +145,7 @@ describe('VoiceStream against a stub ASR server', () => {
       enabled: true,
       endpoint: `http://127.0.0.1:${port}/v1/audio/transcriptions`,
       model: 'm',
+      streamEndpoint: `ws://127.0.0.1:${port}/v1/listen`,
       allowPrivateNetwork: true,
       ...overrides,
     }),
@@ -159,7 +162,7 @@ describe('VoiceStream against a stub ASR server', () => {
     return started;
   };
 
-  test('relays chunks and pushes partial then final text', async () => {
+  test('relays chunks, pushes interim text, and returns the finals the server flushes on CloseStream', async () => {
     const { stream, via } = await start();
     expect(via).toBe('streaming');
     expect(stream.write(new Uint8Array(3200))).toBeNull();
@@ -168,6 +171,29 @@ describe('VoiceStream against a stub ASR server', () => {
     expect(pushed.at(-1)).toEqual({ streamId: 's1', text: 'heard 6400', isFinal: true });
     expect(pushed.some((text) => !text.isFinal)).toBe(true);
     expect(batches).toEqual([]);
+  });
+
+  test('a recorded WLK session arrives whole after stop', async () => {
+    onAudio = () => {};
+    onCloseStream = (socket) => {
+      for (const message of recorded.three) socket.send(JSON.stringify(message));
+      socket.close(1000);
+    };
+    const { stream } = await start();
+    stream.write(new Uint8Array(3200));
+    expect(await stream.stop()).toEqual({ text: finalsOf(recorded.three), via: 'streaming' });
+  });
+
+  test('interim text covers only the tail after the last final', async () => {
+    onAudio = (socket, bytes) =>
+      socket.send(bytes === 2 ? results('First.', true) : results('second', false));
+    const { stream } = await start();
+    stream.write(new Uint8Array(2));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    stream.write(new Uint8Array(2));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(pushed.at(-1)?.text).toBe('First. second');
+    stream.close();
   });
 
   test('a second stop while one is running joins it instead of finishing twice', async () => {
@@ -179,6 +205,13 @@ describe('VoiceStream against a stub ASR server', () => {
     expect(pushed.filter((text) => text.isFinal)).toHaveLength(1);
     expect(batches).toEqual([]);
   });
+
+  test('a server that never closes after CloseStream falls back to batch', async () => {
+    onCloseStream = (socket) => socket.send(results('partial only', true));
+    const { stream } = await start();
+    stream.write(new Uint8Array([1, 0, 2, 0]));
+    expect(await stream.stop()).toEqual({ text: 'batch text', via: 'batch' });
+  }, 8_000);
 
   test('a start whose connection takes too long falls back to batch in auto mode', async () => {
     let release: (value: null) => void = () => {};
@@ -205,37 +238,13 @@ describe('VoiceStream against a stub ASR server', () => {
     }
   });
 
-  test('a sliding-window gateway keeps every sentence in the stop text', async () => {
-    const windows = ['one two three four', 'three four five six', 'five six seven eight'];
-    onAudio = (socket, bytes) =>
-      socket.send(JSON.stringify({ text: windows[bytes / 2 - 1], is_final: false }));
-    const { stream } = await start();
-    for (let i = 0; i < windows.length; i++) {
-      stream.write(new Uint8Array(2));
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-    expect(await stream.stop()).toEqual({
-      text: 'one two three four five six seven eight',
-      via: 'streaming',
-    });
-  });
-
-  test('joins final segments with the trailing partial', async () => {
-    onAudio = (socket, bytes) =>
-      socket.send(
-        JSON.stringify(
-          bytes === 2 ? { text: 'first.', is_final: true } : { text: 'second', is_final: false }
-        )
-      );
-    const { stream } = await start();
-    stream.write(new Uint8Array(2));
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    stream.write(new Uint8Array(2));
-    expect(await stream.stop()).toEqual({ text: 'first. second', via: 'streaming' });
+  test('without a streaming endpoint auto mode goes to batch', async () => {
+    const { via } = await start({ streamEndpoint: undefined });
+    expect(via).toBe('batch');
   });
 
   test('auto falls back to batch with the whole buffered audio when the ASR is unreachable', async () => {
-    const { stream, via } = await start({ endpoint: 'http://127.0.0.1:1/v1/audio/transcriptions' });
+    const { stream, via } = await start({ streamEndpoint: 'ws://127.0.0.1:1/v1/listen' });
     expect(via).toBe('batch');
     stream.write(new Uint8Array([1, 0, 2, 0]));
     expect(await stream.stop()).toEqual({ text: 'batch text', via: 'batch' });
@@ -245,11 +254,33 @@ describe('VoiceStream against a stub ASR server', () => {
 
   test('a stream that never heard any text falls back to batch with the buffered audio', async () => {
     onAudio = () => {};
+    onCloseStream = (socket) => socket.close(1000);
     const { stream, via } = await start();
     expect(via).toBe('streaming');
     stream.write(new Uint8Array([1, 0, 2, 0]));
     expect(await stream.stop()).toEqual({ text: 'batch text', via: 'batch' });
     expect([...Buffer.from(batches[0], 'base64').subarray(44)]).toEqual([1, 0, 2, 0]);
+  });
+
+  test('a cancel during a stop that heard no text ends it without the batch fallback', async () => {
+    onAudio = () => {};
+    const { stream } = await start();
+    stream.write(new Uint8Array([1, 0, 2, 0]));
+    const stopping = stream.stop();
+    stream.cancel();
+    expect(await stopping).toEqual({ error: 'Audio data is empty' });
+    expect(batches).toEqual([]);
+    expect(pushed.some((text) => text.isFinal)).toBe(false);
+  });
+
+  test('a cancel during a batch transcription already running drops its result', async () => {
+    const { stream } = await start({ mode: 'batch' });
+    stream.write(new Uint8Array([1, 0]));
+    const stopping = stream.stop();
+    stream.cancel();
+    expect(await stopping).toEqual({ error: 'Voice stream cancelled' });
+    expect(batches).toHaveLength(1);
+    expect(pushed).toEqual([]);
   });
 
   test('a mid-stream drop falls back to batch without losing audio sent before or after it', async () => {
@@ -296,7 +327,7 @@ describe('VoiceStream against a stub ASR server', () => {
   test('streaming mode refuses to start when the ASR is unreachable', async () => {
     const started = await VoiceStream.start(
       's1',
-      deps({ mode: 'streaming', endpoint: 'http://127.0.0.1:1/v1/audio/transcriptions' })
+      deps({ mode: 'streaming', streamEndpoint: 'ws://127.0.0.1:1/v1/listen' })
     );
     expect(started).toMatchObject({ error: expect.stringContaining('unavailable') });
   });

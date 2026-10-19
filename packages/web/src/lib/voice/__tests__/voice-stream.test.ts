@@ -106,13 +106,18 @@ describe('openVoiceStream', () => {
     expect(calls(lossy.request, 'voice.stream.stop')).toHaveLength(0);
   });
 
-  it('stops an abandoned stream on close, but not one already stopped', async () => {
+  it('cancels an abandoned stream on close without stopping it, but not one already stopped', async () => {
     const abandoned = fakeHub(streaming);
     const live = openVoiceStream(abandoned.hub, vi.fn());
     live.push(new Float32Array(1_600), 16_000);
     live.close();
     live.close();
-    await vi.waitFor(() => expect(calls(abandoned.request, 'voice.stream.stop')).toHaveLength(1));
+    await vi.waitFor(() =>
+      expect(calls(abandoned.request, 'voice.stream.cancel')).toEqual([
+        ['voice.stream.cancel', { streamId: 'stream-1' }],
+      ])
+    );
+    expect(calls(abandoned.request, 'voice.stream.stop')).toHaveLength(0);
 
     const finished = fakeHub(streaming);
     const done = openVoiceStream(finished.hub, vi.fn());
@@ -121,6 +126,7 @@ describe('openVoiceStream', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(calls(finished.request, 'voice.stream.stop')).toHaveLength(1);
+    expect(calls(finished.request, 'voice.stream.cancel')).toHaveLength(0);
   });
 
   it('retries stop without resending audio, and falls back once the stream is gone', async () => {

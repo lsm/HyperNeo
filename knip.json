@@ -56,7 +56,6 @@
     "packages/shared/src/sdk/sdk-tools.d.ts": ["unlisted"],
     "package.json": ["devDependencies"],
     "packages/ui/package.json": ["devDependencies"],
-    "packages/web/package.json": ["devDependencies"],
-    "scripts/neo-route-eval/backends.ts": ["unlisted"]
+    "packages/web/package.json": ["devDependencies"]
   }
 }
