@@ -151,15 +151,6 @@ const SnapshotOk = z.object({
   projects: z.array(Project),
   conversationId: z.string().nullable().optional(),
   projectRedirects: z.array(z.object({ sourceId: z.string(), targetId: z.string() })).optional(),
-  publicAuthorBindings: z
-    .array(
-      z.object({
-        sessionId: z.string(),
-        projectId: z.string(),
-        kind: z.literal('project'),
-      } satisfies ZodShape<NonNullable<NeoSnapshot['publicAuthorBindings']>[number]>)
-    )
-    .optional(),
   work: z.array(
     Work.extend({
       summarized: z.literal(true).optional(),
@@ -705,8 +696,6 @@ export function createNeoOperations(service: NeoService) {
             projectRedirects: service.repo.projectMerges.redirects(),
           }
         : {}),
-      publicAuthorBindings:
-        caller.source === 'rpc' ? service.repo.listProjectBindings(scope ?? undefined) : [],
       projects: projects.map((item) => {
         const aliases = service.repo.workspaceAliases(item.id, all);
         const folders = neoProjectFolders(aliases);
