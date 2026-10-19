@@ -8,7 +8,6 @@ import {
   parseGitHubRefUrl,
 } from '../../../github/parse-pr-url.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
-import type { NeoEvidence } from '../../evidence.ts';
 
 export type NeoRef = { owner: string; repo: string; number: number };
 export type NeoRefState = {
@@ -124,22 +123,6 @@ export function extractNeoAskRefs(
   return [...refs.values()].slice(0, NEO_ASK_REF_MAX);
 }
 
-export function neoAskReportRefs(
-  ask: Pick<NeoAsk, 'ask' | 'doneWhen' | 'outcome' | 'evidence' | 'doneItems'>,
-  reports: readonly string[],
-  tracked: readonly string[]
-): NeoRef[] {
-  const named = extractNeoAskRefs(ask, tracked);
-  const reported = extractNeoAskRefs(
-    { ask: reports.join('\n'), doneWhen: '', outcome: null },
-    tracked
-  );
-  return [...new Map([...named, ...reported].map((ref) => [refKey(ref), ref])).values()].slice(
-    0,
-    NEO_ASK_REF_MAX * 2
-  );
-}
-
 export function extractNeoCardRefs(
   text: string,
   repo: Pick<NeoRef, 'owner' | 'repo'> | null
@@ -174,57 +157,6 @@ export async function readNeoPrRefUrls(
     else unanswered.set(refKey(ref), now);
   }
   return refs.flatMap((ref) => kinds.get(refKey(ref)) ?? []);
-}
-
-export function neoAskCardRefs(
-  named: readonly NeoRef[],
-  running: readonly string[],
-  tracked: readonly string[]
-): NeoRef[] {
-  const refs = new Map(named.map((ref) => [refKey(ref), ref]));
-  for (const url of running.filter((item) => !tracked.includes(item))) {
-    const ref = neoRefFromUrl(url);
-    if (ref && !refs.has(refKey(ref))) refs.set(refKey(ref), ref);
-  }
-  return [...refs.values()];
-}
-
-const after = (at: number | null | undefined, since: number) =>
-  at !== null && at !== undefined && at > since;
-
-function neoOpenIssueNews(ref: NeoRefState, since: number): NeoEvidence[] {
-  const summary =
-    ref.parent && after(ref.parent.at, since)
-      ? `linked as a sub-issue of ${ref.parent.url}`
-      : after(ref.createdAt, since)
-        ? 'created'
-        : null;
-  return summary ? [{ key: ref.url, state: 'pending', summary, blockers: [] }] : [];
-}
-
-export function neoAskRefNews(states: readonly NeoRefState[], since: number): NeoEvidence[] {
-  return states.flatMap((ref) => {
-    if (ref.kind === 'issue' && ref.state === 'OPEN') return neoOpenIssueNews(ref, since);
-    if (ref.state === 'OPEN' || ref.at === null || ref.at <= since) return [];
-    const summary =
-      ref.kind === 'pr'
-        ? ref.done
-          ? 'merged'
-          : 'closed unmerged'
-        : ref.done
-          ? `closed as completed${ref.closedBy ? ` by ${ref.closedBy}` : ''}`
-          : ref.duplicate
-            ? 'closed as a duplicate'
-            : 'closed as not planned';
-    return [
-      {
-        key: ref.url,
-        state: ref.done ? ('done' as const) : ('failed' as const),
-        summary,
-        blockers: [],
-      },
-    ];
-  });
 }
 
 async function readGithubRefState(ref: NeoRef, spawnImpl: SpawnFn): Promise<NeoRefState | null> {

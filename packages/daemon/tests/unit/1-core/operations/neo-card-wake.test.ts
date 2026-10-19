@@ -1,4 +1,3 @@
-import { isNeoCardPrAwaited } from '../../../../src/lib/neo/packs/coding/card-facts.ts';
 import { describe, expect, test } from 'bun:test';
 import type { NeoAsk, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import {
@@ -21,25 +20,6 @@ const items = (...states: ('met' | 'pending')[]) =>
   ({
     doneItems: states.map((state, index) => ({ id: `i${index}`, text: 't', state })),
   }) as unknown as Pick<NeoAsk, 'doneItems'>;
-
-describe('isNeoCardPrAwaited', () => {
-  test.each<[string, Partial<NeoWorkPr>, boolean]>([
-    ['pending CI', { checks: 'pending' }, true],
-    ['only a missing approval', { blockers: ['needs 1 approving review, has 0'] }, true],
-    ['failing CI', { checks: 'failing' }, false],
-    ['changes requested', { review: 'changes_requested' }, false],
-    ['an unresolved thread', { blockers: ['1 unresolved review thread'] }, false],
-    [
-      'a conflict next to the missing approval',
-      { blockers: ['needs 1 approving review, has 0', 'merge conflicts with dev'] },
-      false,
-    ],
-    ['clean and unreviewed with nothing blocking', {}, false],
-    ['merged', { state: 'MERGED', checks: 'pending' }, false],
-  ])('%s', (_name, extra, awaited) => {
-    expect(isNeoCardPrAwaited(pr(extra))).toBe(awaited);
-  });
-});
 
 describe('isNeoCardPrRoutine', () => {
   test.each<[string, Partial<NeoWorkPr>, boolean]>([

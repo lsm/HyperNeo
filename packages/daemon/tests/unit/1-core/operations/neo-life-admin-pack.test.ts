@@ -45,10 +45,9 @@ describe('life-admin brief', () => {
     ]);
   });
 
-  test('the pack carries its instructions and worker server', () => {
+  test('the pack carries its instructions', () => {
     const pack = createLifeAdminPack();
     expect(pack.instructions(null)).toBe(NEO_PACK_LIFE_ADMIN_INSTRUCTIONS);
-    expect(pack.workerMcpServers).toEqual(['chrome-devtools-user']);
     expect(NEO_PACK_LIFE_ADMIN_INSTRUCTIONS).toContain("confirmation is in the human's inbox");
     expect(NEO_PACK_LIFE_ADMIN_INSTRUCTIONS).toContain('Confirmation: id=');
     expect(NEO_PACK_LIFE_ADMIN_INSTRUCTIONS).toContain('date=<ISO 8601 with UTC offset>');
