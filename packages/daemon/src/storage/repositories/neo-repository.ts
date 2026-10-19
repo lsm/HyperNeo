@@ -56,19 +56,10 @@ export class NeoRepository {
           (SELECT count(*) FROM legacy_neo_asks a WHERE a.concern_id = c.id
             AND a.status IN ('open', 'waiting', 'blocked')) AS liveAsks,
           (SELECT count(*) FROM neo_work w WHERE w.concern_id = c.id
-            AND w.status IN ('proposed', 'queued')) AS liveWork,
-          (SELECT count(*) FROM neo_session_bindings b JOIN sdk_messages m ON m.session_id = b.session_id
-            WHERE b.kind = 'project' AND b.concern_id = c.id) AS holderMessages,
-          EXISTS (SELECT 1 FROM neo_session_bindings b JOIN sessions s ON s.id = b.session_id
-            WHERE b.kind = 'project' AND b.concern_id = c.id AND s.status = 'archived') AS archived,
-          (SELECT b.session_id FROM neo_session_bindings b
-            WHERE b.kind = 'project' AND b.concern_id = c.id) AS holder
+            AND w.status IN ('proposed', 'queued')) AS liveWork
         FROM neo_concerns c
         WHERE c.id NOT IN (SELECT source_id FROM neo_project_merges)`)
-      .all() as (Omit<NeoProjectFacts, 'section' | 'archived' | 'work' | 'aliases'> & {
-      section: number;
-      archived: number;
-    })[];
+      .all() as (Omit<NeoProjectFacts, 'section' | 'work' | 'aliases'> & { section: number })[];
     const work = this.db
       .prepare(`SELECT w.concern_id AS projectId,
           json_extract(t.ref, '$.adapter') || char(0) || json_extract(t.ref, '$.id') AS ref
@@ -80,47 +71,25 @@ export class NeoRepository {
     return rows.map((row) => ({
       ...row,
       section: !!row.section,
-      archived: !!row.archived,
       work: work.filter((entry) => entry.projectId === row.id).map((entry) => ({ ref: entry.ref })),
       aliases: aliases.filter((entry) => entry.projectId === row.id).map((entry) => entry.alias),
     }));
   }
 
-  deleteEmptyProject(projectId: string): string | null {
-    const holder = this.db.transaction(() => {
+  deleteEmptyProject(projectId: string): void {
+    this.db.transaction(() => {
       const empty = this.db
         .prepare(`SELECT 1 FROM neo_concerns c WHERE c.id = ? AND length(c.context) = 0
           AND c.epic_url IS NULL
           AND NOT EXISTS (SELECT 1 FROM neo_concerns k WHERE k.parent_id = c.id)
           AND NOT EXISTS (SELECT 1 FROM legacy_neo_asks a WHERE a.concern_id = c.id)
-          AND NOT EXISTS (SELECT 1 FROM neo_work w WHERE w.concern_id = c.id)
-          AND NOT EXISTS (SELECT 1 FROM neo_session_bindings b JOIN sdk_messages m
-            ON m.session_id = b.session_id WHERE b.kind = 'project' AND b.concern_id = c.id)`)
+          AND NOT EXISTS (SELECT 1 FROM neo_work w WHERE w.concern_id = c.id)`)
         .get(projectId);
       if (!empty) throw new Error('the project is no longer empty');
-      const session = this.getBindingForProject(projectId)?.sessionId ?? null;
       this.db.prepare('DELETE FROM neo_project_workspaces WHERE project_id = ?').run(projectId);
-      this.db
-        .prepare("DELETE FROM neo_session_bindings WHERE concern_id = ? AND kind = 'project'")
-        .run(projectId);
       this.db.prepare('DELETE FROM neo_concerns WHERE id = ?').run(projectId);
-      return session;
     })();
     this.notify();
-    return holder;
-  }
-
-  unbindHolder(sessionId: string): void {
-    const unbound = this.db
-      .prepare("DELETE FROM neo_session_bindings WHERE session_id = ? AND kind = 'project'")
-      .run(sessionId);
-    if (unbound.changes) this.notify();
-  }
-
-  sessionSpoke(sessionId: string): boolean {
-    return !!this.db
-      .prepare('SELECT 1 FROM sdk_messages WHERE session_id = ? LIMIT 1')
-      .get(sessionId);
   }
 
   healthFacts(since: number): NeoHealthFacts {
@@ -358,15 +327,10 @@ export class NeoRepository {
       .get(sessionId) as NeoBinding | null;
   }
 
-  getBindingForProject(projectId: string | null): NeoBinding | null {
-    return this.db
-      .prepare(`SELECT ${bindingColumns} FROM neo_session_bindings
-        WHERE concern_id IS ? AND kind IN ('neo', 'project')`)
-      .get(projectId) as NeoBinding | null;
-  }
-
   defaultBinding(): NeoBinding | null {
-    return this.getBindingForProject(null);
+    return this.db
+      .prepare(`SELECT ${bindingColumns} FROM neo_session_bindings WHERE kind = 'neo'`)
+      .get() as NeoBinding | null;
   }
 
   conversationId(): string | null {

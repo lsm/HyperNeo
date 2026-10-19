@@ -31,7 +31,7 @@ function deferred() {
 }
 
 describe('coordinator handoff admission', () => {
-  const binding: NeoBinding = { sessionId: 'neo:test', projectId: 'club', kind: 'project' };
+  const binding: NeoBinding = { sessionId: 'neo:test', projectId: null, kind: 'neo' };
   const ownership = {
     generation: 1,
     currentGeneration: 1,
@@ -48,7 +48,7 @@ describe('coordinator handoff admission', () => {
     waiting: false,
     recovering: false,
   };
-  it.each(['neo', 'project', 'worker'] as const)('checks the %s binding', (kind) => {
+  it.each(['neo', 'worker'] as const)('checks the %s binding', (kind) => {
     const candidate = { ...binding, kind };
     expect(gateHandoffBinding(candidate)).toEqual(
       kind === 'worker' ? { reason: 'not_coordinator' } : { value: candidate }
@@ -100,7 +100,7 @@ describe('coordinator handoff admission', () => {
   });
 });
 
-describe.each(['neo', 'project'] as const)('AgentSession %s coordinator handoff', (kind) => {
+describe.each(['neo'] as const)('AgentSession %s coordinator handoff', (kind) => {
   const providerId = 'custom:neo-handoff-unit';
   let db: Database;
   let agent: AgentSession;
@@ -120,13 +120,7 @@ describe.each(['neo', 'project'] as const)('AgentSession %s coordinator handoff'
     session.config = { model: 'unit', provider: providerId };
     db.createSession(session);
     const neo = new NeoRepository(db.getDatabase());
-    if (kind === 'project')
-      neo.saveProject({ id: 'club', title: 'Club', summary: '', context: '' }, 0);
-    neo.reserveBinding({
-      sessionId: session.id,
-      projectId: kind === 'project' ? 'club' : null,
-      kind,
-    });
+    neo.reserveBinding({ sessionId: session.id, projectId: null, kind });
     initializeProviders().register({
       id: providerId,
       displayName: 'Neo handoff unit',

@@ -176,7 +176,7 @@ describe('Neo report resource pipeline ports', () => {
     const f = ports();
     const report = createNeoWorkReporter({
       ...f.deps,
-      readBinding: () => ({ sessionId: 'recipient', kind: 'project', projectId: 'A' }),
+      readBinding: () => ({ sessionId: 'recipient', kind: 'neo', projectId: null }),
     });
     expect(await report(input, caller)).toEqual(rejected('recipient_is_coordinator'));
     expect(f.resourceReports.settle).not.toHaveBeenCalled();

@@ -50,7 +50,6 @@ describe('Neo coordinator turns', () => {
       new InternalEventBus()
     );
     service.repo.saveProject(concern, 0);
-    service.repo.reserveBinding({ sessionId: 'neo:holder', projectId: 'club', kind: 'project' });
     attempts = new QueryAttemptRegistry();
     turns = [];
     queue = new MessageQueue();

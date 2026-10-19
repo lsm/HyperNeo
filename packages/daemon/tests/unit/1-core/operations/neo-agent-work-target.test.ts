@@ -90,7 +90,7 @@ describe('Neo managed work target gates', () => {
     expect(requireNeoAgentWorkSession(target, { ...session, neoBound: 1 }, owner)).toEqual(
       denied('target_owned_context')
     );
-    for (const kind of ['neo', 'project', 'worker'] as const)
+    for (const kind of ['neo', 'worker'] as const)
       expect(
         requireNeoAgentWorkBinding(target, { sessionId: session.id, kind, projectId: 'research' })
       ).toEqual(denied('target_owned_context'));
