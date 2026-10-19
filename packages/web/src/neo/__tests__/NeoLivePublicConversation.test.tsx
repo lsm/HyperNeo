@@ -81,10 +81,6 @@ const snapshot = (): NeoSnapshot => ({
     createdAt: 1,
     updatedAt: 1,
   })),
-  publicAuthorBindings: [
-    { kind: 'project', projectId: 'a', sessionId: holder },
-    { kind: 'project', projectId: 'b', sessionId: otherHolder },
-  ],
   work: [],
   askOrigins: [],
 });

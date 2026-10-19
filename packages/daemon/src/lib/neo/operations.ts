@@ -151,22 +151,9 @@ const SnapshotOk = z.object({
   sessionId: z.string().nullable(),
   projects: z.array(Project),
   conversationId: z.string().nullable().optional(),
-  defaultSessionId: z.string().nullable().optional(),
-  neoSessions: z
-    .array(z.object({ sessionId: z.string(), projectId: z.string().nullable() }))
-    .optional(),
   projectRedirects: z.array(z.object({ sourceId: z.string(), targetId: z.string() })).optional(),
   projectFacts: z
     .array(z.object({ reference: z.string(), projectId: z.string().nullable().optional() }))
-    .optional(),
-  publicAuthorBindings: z
-    .array(
-      z.object({
-        sessionId: z.string(),
-        projectId: z.string(),
-        kind: z.literal('project'),
-      } satisfies ZodShape<NonNullable<NeoSnapshot['publicAuthorBindings']>[number]>)
-    )
     .optional(),
   work: z.array(
     Work.extend({
@@ -742,18 +729,9 @@ export function createNeoOperations(service: NeoService) {
       ...(caller.source === 'rpc'
         ? {
             conversationId: service.repo.conversationId(),
-            defaultSessionId: service.defaultSessionId() ?? null,
-            neoSessions: [
-              service.repo.defaultBinding(),
-              ...service.repo.listProjectBindings(),
-            ].flatMap((binding) =>
-              binding ? [{ sessionId: binding.sessionId, projectId: binding.projectId }] : []
-            ),
             projectRedirects: service.repo.projectMerges.redirects(),
           }
         : {}),
-      publicAuthorBindings:
-        caller.source === 'rpc' ? service.repo.listProjectBindings(scope ?? undefined) : [],
       projectFacts:
         binding?.kind === 'neo' && caller.sessionId && caller.neoTurn
           ? readNeoProjectFacts(

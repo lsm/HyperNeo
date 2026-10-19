@@ -276,7 +276,6 @@
 22	packages/daemon/tests/unit/1-core/operations/neo-packs.test.ts
 11	packages/daemon/tests/unit/1-core/operations/neo-pr-question-withdrawal-policy.test.ts
 65	packages/daemon/tests/unit/1-core/operations/neo-prompt.test.ts
-455	packages/daemon/tests/unit/1-core/operations/neo-public-author-bindings.test.ts
 97	packages/daemon/tests/unit/1-core/operations/neo-public-intake-wire.test.ts
 166	packages/daemon/tests/unit/1-core/operations/neo-publication-operation.test.ts
 25	packages/daemon/tests/unit/1-core/operations/neo-publication-prompt.test.ts
