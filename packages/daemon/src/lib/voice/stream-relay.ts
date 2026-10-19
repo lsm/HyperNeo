@@ -94,14 +94,6 @@ export function asrText(raw: string): { text: string; isFinal: boolean } | null 
   }
 }
 
-/**
- * The ai0 gateway never sends `is_final`: each partial is the transcript of a trailing window
- * of the audio (about 12 s), so once a recording outgrows it the head drops off. This keeps the
- * whole transcript: the new window replaces the text from where it lines up with what was heard
- * (three words in a row, or the last words heard), and text it no longer covers stays. Words
- * match case- and punctuation-blind; the window's first word may be cut mid-word, so up to two
- * leading words can be skipped to line it up.
- */
 export function mergeAsrWindow(previous: string, next: string): string {
   const old = previous.split(/\s+/).filter(Boolean);
   const fresh = next.split(/\s+/).filter(Boolean);
@@ -121,19 +113,15 @@ export function mergeAsrWindow(previous: string, next: string): string {
         run++;
       const toEnd = at + run === oldKeys.length;
       const wholeWindow = skip === 0 && run === freshKeys.length;
-      // Still the whole recording, its tail revised ("heard 3200" then "heard 6400").
       const revised = at === 0 && skip === 0 && run >= 1 && freshKeys.length >= oldKeys.length;
       if (run >= 3 || revised || (toEnd && (run >= 2 || wholeWindow))) {
-        // A window opening mid-sentence starts with a capital the sentence doesn't have.
         const head = fresh[skip];
         const kept =
           at > 0 && /^\p{Ll}/u.test(old[at]) ? head[0].toLowerCase() + head.slice(1) : head;
-        // Skipped words are a cut-off copy of what was already heard.
         return [...old.slice(0, at), kept, ...fresh.slice(skip + 1)].join(' ');
       }
     }
   }
-  // Nothing in common: the window has moved past everything heard so far.
   return [...old, ...fresh].join(' ');
 }
 

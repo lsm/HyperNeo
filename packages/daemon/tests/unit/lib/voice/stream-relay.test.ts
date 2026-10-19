@@ -52,7 +52,6 @@ describe('voice stream settings', () => {
   });
 
   test('mergeAsrWindow keeps the head a sliding window drops (ai0, three sentences, 4 s pauses)', () => {
-    // The messages ai0 sent, in order, for one recording.
     const windows = [
       'Please check the bill.',
       'Please check the build status of the voice pull request.',
