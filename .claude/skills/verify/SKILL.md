@@ -95,8 +95,9 @@ adds its journey here.
    `evidence/gh.log` shows the `gh pr view`, and root's transcript holds the note
    `Todo "Fix the loader" is done: #8 merged`.
 4. **An open todo's PR leads the PR ledger in the snapshot.** After journey 1
-   opened root, run `.claude/skills/verify/seed-ledger.sh "$RUN"`. It writes an
-   open ask with a `doing` todo that claims `verify-test/demo#8`, plus 120 older
+   opened root, run `.claude/skills/verify/seed-ledger.sh "$RUN"`. It writes a
+   project for `verify-test/demo` (so the pack sweep keeps its ledger rows), an
+   open ask with a `doing` todo that claims `verify-test/demo#8`, and 120 older
    open ledger rows in the same repo. End state: `rpc.ts neo.snapshot '{}'`
    returns `packRows` whose first coding row is `verify-test/demo#8` with
    `todoId: "todo-ledger"`, its state and its owner, even though the ledger

@@ -386,6 +386,23 @@ describe('CodingPrLedgerRepository owners and snapshot', () => {
     db.close();
   });
 
+  test("finds an open todo's PR under its repo's new name when the todo names the old one", async () => {
+    const { ledger, db } = setup();
+    await reconcile(ledger, ['lsm/hyperneo'], async () => response([node(1), node(2)]), 100);
+    ledger.recordAlias('lsm/neokai', 'lsm/hyperneo');
+    expect(
+      ledger
+        .snapshot(null, 100, [
+          { todoId: 'live', url: 'https://github.com/lsm/neokai/pull/2', state: 'OPEN' },
+        ])
+        .map((row) => [row.todoId ?? null, row.pr])
+    ).toEqual([
+      ['live', 'lsm/hyperneo#2'],
+      [null, 'lsm/hyperneo#1'],
+    ]);
+    db.close();
+  });
+
   test('lists open PRs and ones closed in the last day, for the requested repos', async () => {
     const { ledger, db } = setup();
     const now = 10 * CODING_LEDGER_KEEP_MS;

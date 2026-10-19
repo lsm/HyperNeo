@@ -10,7 +10,11 @@ for n in $(seq 100 219); do
   ROWS="$ROWS INSERT INTO pack_coding_pr_ledger (repo, number, title, branch, head, state, state_since, read_at)
     VALUES ('verify-test/demo', $n, 'Older PR $n', 'b$n', 'h$n', 'waiting_review', $((NOW_MS - 1000000 + n)), $NOW_MS);"
 done
-sqlite3 "$DB" "INSERT INTO neo_asks (id, session_id, title, request, status, created_at, updated_at)
+sqlite3 "$DB" "INSERT INTO neo_concerns (id, title, summary, context, revision, created_at, updated_at)
+  VALUES ('project:demo', 'demo', 'Project: demo', '', 1, $NOW_MS, $NOW_MS);
+INSERT INTO neo_project_workspaces (alias, project_id)
+  VALUES ('repository:github.com/verify-test/demo', 'project:demo');
+INSERT INTO neo_asks (id, session_id, title, request, status, created_at, updated_at)
   VALUES ('ask-ledger', '$ROOT', 'Ship the loader fix', 'Ship the loader fix', 'open', $NOW_MS, $NOW_MS);
 INSERT INTO neo_todos (id, ask_id, position, title, done_when, state, created_at, updated_at, started_at)
   VALUES ('todo-ledger', 'ask-ledger', 1, 'Fix the loader', 'PR merged', 'doing', $NOW_MS, $NOW_MS, $NOW_MS);

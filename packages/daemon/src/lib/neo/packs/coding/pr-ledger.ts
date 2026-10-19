@@ -446,16 +446,20 @@ export class CodingPrLedgerRepository {
     const own = pinned.flatMap((claim) => {
       const match = /github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/i.exec(claim.url);
       if (!match) return [];
+      const repo = match[1].toLowerCase();
       const row = this.db
-        .prepare(`${select} WHERE repo = ? AND number = ?`)
-        .get(match[1].toLowerCase(), Number(match[2])) as CodingLedgerSnapshotRow | null;
+        .prepare(
+          `${select} WHERE number = ?2 AND (repo = ?1
+            OR repo IN (SELECT canonical FROM pack_coding_repo_aliases WHERE alias = ?1))`
+        )
+        .get(repo, Number(match[2])) as CodingLedgerSnapshotRow | null;
       return [
         {
           todoId: claim.todoId,
           ...(row
             ? codingLedgerSnapshotRow(row)
             : {
-                pr: `${match[1].toLowerCase()}#${match[2]}`,
+                pr: `${repo}#${match[2]}`,
                 title: null,
                 state: claim.state?.toLowerCase() ?? null,
                 since: null,
