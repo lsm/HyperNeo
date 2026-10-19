@@ -144,6 +144,31 @@ export function NeoPreferences({
     await save({ model: next.id, provider: next.provider, thinkingLevel: level }, true);
   }
 
+  async function restart() {
+    if (
+      busy ||
+      !confirm('Restart Neo with a fresh context? Open asks, todos and questions carry over.')
+    )
+      return;
+    setSaving(true);
+    try {
+      const hub = connectionManager.getHubIfConnected();
+      if (!hub) throw new Error('Reconnect before restarting Neo.');
+      const result = await invokeOperation<{ ok: boolean; reason?: string }>(
+        hub,
+        'neo.restart',
+        {}
+      );
+      if (!result.ok) throw new Error(result.reason || 'Could not restart Neo.');
+      setOpen(false);
+      await store.refresh();
+    } catch (error) {
+      onError(error instanceof Error ? error.message : 'Could not restart Neo.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function changeThinking(next: ThinkingLevel) {
     if (busy) return;
     if (!info || !currentId) {
@@ -218,6 +243,7 @@ export function NeoPreferences({
           onModel={(next) => void changeModel(next)}
           onThinking={(next) => void changeThinking(next)}
           onReload={() => void model.reload()}
+          onRestart={forSession ? undefined : () => void restart()}
           onClose={() => {
             setOpen(false);
             trigger.current?.focus();
