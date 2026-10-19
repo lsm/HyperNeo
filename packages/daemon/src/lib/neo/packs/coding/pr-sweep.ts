@@ -107,12 +107,15 @@ export async function sweepCodingPrs(
     if (!nudge) continue;
     const key = `neo-pr-sweep:${row.repo}#${row.number}:${row.head}:${row.state}:${nudge.nudges}`;
     const told =
-      nudge.kind === 'remind' && (await deps.tell(row.owner!, key, codingPrNudgeText(row, now)));
+      nudge.kind === 'remind' &&
+      (await deps.tell(row.owner!, key, codingPrNudgeText(row, now)).catch(() => false));
     if (told) {
       repo.mark(row, nudge.nudges, now);
       continue;
     }
-    const woken = await deps.wake(key, codingPrEscalationText(row, now, nudge.kind === 'remind'));
+    const woken = await deps
+      .wake(key, codingPrEscalationText(row, now, nudge.kind === 'remind'))
+      .catch(() => false);
     if (woken) repo.mark(row, CODING_PR_REMINDERS + 1, now);
   }
 }

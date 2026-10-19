@@ -121,6 +121,35 @@ describe('PR sweep ladder', () => {
   });
 });
 
+describe('sweepCodingPrs', () => {
+  test('a throwing delivery counts as unreachable and the next rows still get their reminders', async () => {
+    const { insert, told, woken, db } = setup();
+    insert(1, 'approved_green', { adapter: 'hyperneo', id: 'broken' });
+    insert(2, 'approved_green');
+    db.prepare('UPDATE pack_coding_pr_ledger SET read_at = ?').run(20 * MIN);
+    await sweepCodingPrs(
+      new CodingPrSweepRepository(db),
+      {
+        tell: async (ref, key, text) => {
+          if ((ref as { id: string }).id === 'broken') throw new Error('mailbox rejected');
+          told.push({ ref, key, text });
+          return true;
+        },
+        wake: async (key, text) => {
+          woken.push({ key, text });
+          return true;
+        },
+      },
+      20 * MIN
+    );
+    expect(told.map((item) => item.key)).toEqual([
+      'neo-pr-sweep:lsm/hyperneo#2:abc1234def:approved_green:1',
+    ]);
+    expect(woken.map((item) => item.text)).toEqual([expect.stringContaining('lsm/hyperneo#1')]);
+    db.close();
+  });
+});
+
 describe('planCodingPrNudge', () => {
   test('uses each state deadline', () => {
     const row = (state: string, minutes: number) =>
