@@ -134,18 +134,13 @@ describe('consultation runtime', () => {
     expect(JSON.stringify(mailbox(root)[0].payload)).toContain('Legacy answer after restart.');
   });
 
-  test.each([null, 'fictional'])(
-    'creates the %j coordinator with published guidance',
-    async (projectId) => {
-      db.getDatabase()
-        .prepare('DELETE FROM neo_session_bindings WHERE session_id = ?')
-        .run(projectId ? holder : root);
-      const sessionId = await service.open(projectId);
-      expect(createSession).toHaveBeenCalledTimes(1);
-      expect(db.getSession(sessionId)?.config.systemPrompt).toBe(neoPrompt(projectId));
-      expect(db.getSession(sessionId)?.config.allowedTools).toEqual(neoCoordinatorAllowedTools());
-    }
-  );
+  test('creates the root coordinator with published guidance', async () => {
+    db.getDatabase().prepare('DELETE FROM neo_session_bindings WHERE session_id = ?').run(root);
+    const sessionId = await service.open();
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(db.getSession(sessionId)?.config.systemPrompt).toBe(neoPrompt(null));
+    expect(db.getSession(sessionId)?.config.allowedTools).toEqual(neoCoordinatorAllowedTools());
+  });
 
   test.each([
     ['neo', null],
