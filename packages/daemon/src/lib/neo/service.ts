@@ -2,7 +2,6 @@ import { neoStateNote, restartNeo } from './restart.ts';
 import { projectNeoAskEntries } from './ask-entries.ts';
 import { NeoWorkControlFailureRepository } from '../../storage/repositories/neo-work-control-failure-repository.ts';
 import { neoControlFailure, neoControlFailureForRef } from './control-failure.ts';
-import { planNeoHolderTitles } from './holder-title.ts';
 import { hostname } from 'node:os';
 import { neoWorkingKey, readNeoWorking } from './working.ts';
 import { fillPrompt, NEO_SESSION_TRACK } from '@hyperneo/prompts';
@@ -278,9 +277,6 @@ export class NeoService {
     this.notifyChanged = () => {
       hub.event('neo.changed', {});
       this.scheduleTriggerSweep();
-      void Promise.resolve()
-        .then(() => this.alignHolderTitles())
-        .catch((error) => this.log.warn(`Neo holder titles not aligned: ${error}`));
     };
     this.notifyPublicationsChanged = (conversationId) => {
       hub.event('neo.publications.changed', { conversationId });
@@ -734,27 +730,6 @@ export class NeoService {
       );
   }
 
-  private async alignHolderTitles(): Promise<void> {
-    if (!this.repo) return;
-    const fixes = planNeoHolderTitles(
-      this.repo.listProjectTitles().flatMap((project) => {
-        const binding = this.repo.getBindingForProject(project.id);
-        const session = binding ? this.db.getSession(binding.sessionId) : null;
-        return binding
-          ? [
-              {
-                sessionId: binding.sessionId,
-                projectTitle: project.title,
-                sessionTitle: session?.title,
-                titleSetBy: session?.metadata?.titleSetBy,
-              },
-            ]
-          : [];
-      })
-    );
-    for (const fix of fixes) await this.sessions.updateSession(fix.sessionId, { title: fix.title });
-  }
-
   private async alignModelPreference(sessionId: string): Promise<void> {
     const preference = this.modelPreference();
     const config = this.db.getSession(sessionId)?.config;
@@ -840,7 +815,7 @@ export class NeoService {
         workspacePath: neoFolderPath(),
         detectGit: false,
         config: {
-          systemPrompt: neoPrompt(null, this.packBriefs()),
+          systemPrompt: neoPrompt(this.packBriefs()),
           sdkToolsPreset: neoCoordinatorNativeTools(),
           permissionMode: 'dontAsk',
           allowedTools: neoCoordinatorAllowedTools(),
@@ -990,7 +965,7 @@ export class NeoService {
   }
 
   async openDefault(): Promise<string> {
-    return (await openNeoDefaultSession(this.repo, () => this.open())).sessionId;
+    return openNeoDefaultSession(this.repo, () => this.open());
   }
 
   async recover(): Promise<void> {

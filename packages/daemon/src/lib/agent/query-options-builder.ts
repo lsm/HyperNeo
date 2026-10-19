@@ -570,7 +570,6 @@ export class QueryOptionsBuilder {
     if (neoBinding) {
       restrictNeoQuery(
         queryOptions,
-        neoBinding.projectId,
         this.ctx.session.id,
         neoSettingsPackBriefs(this.ctx.settingsManager.getGlobalSettings().neo)
       );

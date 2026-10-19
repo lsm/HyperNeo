@@ -21,14 +21,8 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
     'The card named in deliveredBy does not belong to this ask. Bind items only to this ask’s own cards.',
   card_not_active:
     'The card is no longer proposed or queued, so it cannot start. Read its status with neo.snapshot; propose a new card if work is still needed.',
-  consultation_return:
-    'A project holder’s consultation answer cannot change until Neo has received it. Wait for the answer to reach Neo, then change it as a Neo reply.',
   conversation_not_found:
     'No Neo conversation has that conversationId. Pass the id of an existing Neo conversation.',
-  coordinator_only:
-    'Only the Neo session that holds the human’s message, during its own live turn, can forward it. Answer it here, or forward it from the session that holds it.',
-  cross_project_required:
-    'A cross-project ask needs parts for at least two projects. Open a normal ask when the message concerns one project.',
   dependency_already_dispatched:
     'The card has already started, so its dependencies can no longer change in a way that voids approval. Change dependencies only on a proposed card that has not started.',
   dependency_ask_not_live:
@@ -60,8 +54,6 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
     'The two projects belong to different repositories, so they cannot merge. Merge only projects with the same repository identity.',
   image_not_found:
     'No image with that imageId is in this conversation. Use an imageId from the conversation’s messages.',
-  inbox_only:
-    'Only the Inbox holder, during its own live turn, can promote a topic. Promote it from the Inbox.',
   invalid_agent_reference:
     'The agent reference does not match the target session. Pass the agent and session ids exactly as work.find returned them.',
   invalid_epic_url:
@@ -77,8 +69,6 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
     'Preparing the workspace did not produce a valid commit id. Check the repository and try again.',
   invalid_prerequisite_commits:
     'Prerequisite commits must be full 40- or 64-character commit ids. Pass full commit ids.',
-  invalid_project_owners:
-    'Each part must name a different, existing project. Use project ids from neo.snapshot, once each.',
   invalid_publication:
     'The reply does not match the publication schema. Fix the fields and publish again.',
   invalid_recipient_binding:
@@ -91,7 +81,7 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
     'targetSessionId must be a non-empty session id or null. Pass a real session id, or null for a new session.',
   invalid_work_id: 'The card id is empty. Pass a card id from neo.snapshot.',
   live_avatar_required:
-    'Only a live turn of main Neo or a project holder, in its own session of this conversation, can publish. Publish while answering, not from a finished turn.',
+    'Only a live turn of Neo, in its own session of this conversation, can publish. Publish while answering, not from a finished turn.',
   main_neo_only:
     'Only main Neo or the human can do this. Ask main Neo to do it, or do it from main.',
   needs_human:
@@ -100,24 +90,16 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
     'The card has no place to run its work. Propose it with a work target, such as a repository or a session.',
   not_approved:
     'The human has not approved this ask yet. Ask the human to approve it before starting work.',
-  not_your_ask:
-    'This turn is not answering that message, so it cannot forward it. Forward only the message this turn is answering.',
   opened_check_unbound:
     'A PR-opened check is met when the PR opens; no card delivers it. Leave it out of delivers.',
-  part_references_another_owner:
-    'A part’s quote names another part’s project. Give each project the part of the message that is about it.',
   prerequisite_ref_missing:
     'A prerequisite has no PR to watch yet. Wait until the prerequisite card opens its PR.',
   prerequisite_ref_unreadable: 'A prerequisite PR could not be read right now. Try again shortly.',
   prerequisites_unmet:
     'The card’s prerequisites are not done yet. It starts by itself once they are met.',
   project_busy: 'One of these projects has work running. Wait until both are idle, then merge.',
-  project_unavailable:
-    'The new project or its holder could not be opened. Try again; the asks stay in the Inbox meanwhile.',
   publication_superseded:
     'This turn’s session or conversation changed after the reply was prepared, so it cannot publish. Publish from the current live turn.',
-  quote_must_match_human:
-    'Each part’s quote must be copied exactly from the human’s message. Quote the human’s words verbatim.',
   recipient_is_coordinator:
     'Neo sessions do not report on cards; working sessions do. Report from the card’s working session.',
   recipient_mismatch:
@@ -130,8 +112,6 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
     'This card already has a different report. Read it with neo.snapshot; a card is reported once.',
   root_or_human_only:
     'Only main Neo or the human can change the project tree. Ask main Neo to do it.',
-  same_project:
-    'The message is already in that project. Answer it here, or forward it to a different project.',
   self_dependency: 'A card cannot depend on itself. Remove its own id from dependsOn.',
   session_not_found: 'No Neo session has that sessionId. Pass the id of an existing Neo session.',
   stale_ask_revision:

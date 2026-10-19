@@ -74,7 +74,6 @@ export function neoCoordinatorAllowedTools(): string[] {
 
 export function restrictNeoQuery(
   options: Options,
-  projectId: string | null = null,
   sessionId?: string,
   packs: readonly NeoPackBrief[] = neoSettingsPackBriefs()
 ): void {
@@ -82,7 +81,7 @@ export function restrictNeoQuery(
     options.cwd = neoCoordinatorRuntimePath(sessionId);
     mkdirSync(options.cwd, { recursive: true });
   }
-  const prompt = neoPrompt(projectId, packs);
+  const prompt = neoPrompt(packs);
   options.systemPrompt = {
     type: 'custom',
     prompt,

@@ -25,7 +25,7 @@ cd packages/daemon && env -i HOME="$(mktemp -d)" PATH="$PATH" TERM=dumb NODE_ENV
 
 ## Scripted model turns
 
-Some tests run their own scripted model server in-process and need no proxy. `convo/neo-publication-sdk.test.ts` is the Neo example. Its server records every request and answers with a `neo.publication.publish` tool call. The test then checks three things: the publication is stored, root Neo's system prompt is `neoPrompt(null)`, and the human turn holds exactly the stored message, including its `(local time: …)` line. Copy that pattern to assert what a change sends the model. Run it like any online test, without the proxy step:
+Some tests run their own scripted model server in-process and need no proxy. `convo/neo-publication-sdk.test.ts` is the Neo example. Its server records every request and answers with a `neo.publication.publish` tool call. The test then checks three things: the publication is stored, root Neo's system prompt is `neoPrompt()`, and the human turn holds exactly the stored message, including its `(local time: …)` line. Copy that pattern to assert what a change sends the model. Run it like any online test, without the proxy step:
 
 ```bash
 cd packages/daemon && env -i HOME="$(mktemp -d)" PATH="$PATH" TERM=dumb NODE_ENV=test HYPERNEO_USE_DEV_PROXY=0 node_modules/.bin/vitest run --config vitest.online.config.ts tests/online/convo/neo-publication-sdk.test.ts
