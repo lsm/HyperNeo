@@ -30,7 +30,46 @@ export class NeoHomeRepository {
       child.exited,
     ]);
     if (code && !allowFailure) throw new Error(`home git ${args[0]}: ${error.trim()}`);
-    return { code, text: text.trim() };
+    return { code, text: text.trim(), error: error.trim() };
+  }
+
+  private async synchronize(): Promise<
+    { value: string | null } | { reason: { ok: false; reason: string } }
+  > {
+    if ((await this.git(['remote', 'get-url', 'origin'], true)).code) return { value: null };
+    const upstream = await this.git(['rev-parse', '--symbolic-full-name', '@{upstream}'], true);
+    const prefix = 'refs/remotes/origin/';
+    if (upstream.code || !upstream.text.startsWith(prefix))
+      return {
+        reason: {
+          ok: false,
+          reason: 'sync_failed: configure this branch to track origin before saving.',
+        },
+      };
+    const branch = `refs/heads/${upstream.text.slice(prefix.length)}`;
+    for (const state of ['rebase-merge', 'rebase-apply']) {
+      const existing = await lstat(join(this.root, '.git', state)).catch((error) => {
+        if (error.code !== 'ENOENT') throw error;
+        return null;
+      });
+      if (existing)
+        return {
+          reason: { ok: false, reason: 'sync_failed: finish the existing rebase before saving.' },
+        };
+    }
+    const pulled = await this.git(['pull', '--rebase', 'origin', branch], true);
+    if (pulled.code) {
+      const aborted = await this.git(['rebase', '--abort'], true);
+      return {
+        reason: {
+          ok: false,
+          reason: aborted.code
+            ? `sync_failed: ${pulled.error}; ${aborted.error}`
+            : `conflict: rebase aborted; local files preserved. ${pulled.error}`,
+        },
+      };
+    }
+    return { value: branch };
   }
 
   private sequence<T>(run: () => Promise<T>): Promise<T> {
@@ -113,6 +152,12 @@ export class NeoHomeRepository {
     if (dirty) return { ok: false, reason: 'dirty: review existing home changes before saving.' };
     const initialized = await this.initialize();
     if (!initialized.ok) return initialized;
+    const synced = await this.synchronize();
+    if ('reason' in synced) return synced.reason;
+    if (synced.value)
+      for (const path of paths)
+        if (await this.hasSymbolicLink(path))
+          return { ok: false, reason: 'invalid_path: symbolic link.' };
     const originals = new Map<string, Buffer | null>();
     for (const path of paths) {
       if (!(await this.git(['check-ignore', '-q', '--', path], true)).code)
@@ -156,7 +201,16 @@ export class NeoHomeRepository {
         throw error;
       }
     }
-    return { ok: true, path: input.path, commit: (await this.git(['rev-parse', 'HEAD'])).text };
+    const commit = (await this.git(['rev-parse', 'HEAD'])).text;
+    if (synced.value) {
+      const pushed = await this.git(['push', 'origin', `HEAD:${synced.value}`], true);
+      if (pushed.code)
+        return {
+          ok: false,
+          reason: `push_failed: local commit ${commit} is saved. ${pushed.error}`,
+        };
+    }
+    return { ok: true, path: input.path, commit };
   }
 
   private async initialize(): Promise<HomeResult> {
