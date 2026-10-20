@@ -173,7 +173,6 @@ describe('Neo todo pull request events', () => {
     service.todoPrs.claim(row.id, [{ url: PR, claim: 'named' }], 1);
     service.todoPrs.record(row.id, prs, 2);
     service.followCardTopics(row.id);
-    expect(service.repo.listWork()).toEqual([]);
     return doing;
   }
   const jobs = () =>

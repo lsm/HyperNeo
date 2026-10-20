@@ -18,8 +18,6 @@ const project = (id: string, overrides: Partial<NeoProjectFacts> = {}): NeoProje
   context: 0,
   asks: 0,
   liveAsks: 0,
-  work: [],
-  liveWork: 0,
   aliases: [],
   ...overrides,
 });
@@ -30,7 +28,7 @@ const plan = (projects: NeoProjectFacts[], pinned: string[] = [], mirrored: stri
     mirrored: new Set(mirrored),
   });
 const repo = 'repository:github.com/lsm/app';
-const oneOff = { asks: 1, work: [{ ref: null }] };
+const oneOff = { asks: 1 };
 
 describe('project cleanup plan', () => {
   test('an empty project is deleted unless the mirror would create it again', () => {
@@ -63,30 +61,6 @@ describe('project cleanup plan', () => {
     expect(plan([home, project('titled', { title: ' app ', ...oneOff })])).toEqual([
       { action: 'merge', projectId: 'titled', title: ' app ', targetId: 'home' },
     ]);
-  });
-
-  test('a project with no repository merges where most of its cards ran, before any title match', () => {
-    const card = (ref: string) => ({ ref });
-    const ios = project('ios', { createdAt: 2, aliases: [repo, 'work:here\u0000claude\u0000s1'] });
-    const web = project('web', {
-      title: 'Topic',
-      aliases: [
-        'repository:github.com/lsm/web',
-        'work:here\u0000claude\u0000s2',
-        'work:here\u0000claude\u0000s3',
-      ],
-    });
-    expect(
-      plan([
-        ios,
-        web,
-        project('topic', {
-          title: 'Topic',
-          asks: 1,
-          work: [card('claude\u0000s1'), card('claude\u0000s1')],
-        }),
-      ])
-    ).toEqual([{ action: 'merge', projectId: 'topic', title: 'Topic', targetId: 'ios' }]);
   });
 
   test('a project with no repository, content and no home is kept however little it was used', () => {
@@ -150,7 +124,6 @@ describe('NeoRepository.projectCleanupFacts', () => {
       section: false,
       context: 0,
       asks: 0,
-      work: [],
       aliases: [],
     });
     expect(

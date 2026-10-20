@@ -282,9 +282,9 @@ describe('hyperneo adapter send and status', () => {
     let admitted = 0;
     expect(
       await adapter().archive!(ref('idle'), () =>
-        ++admitted === 1 ? null : { ok: false, reason: 'live_card', detail: 'new' }
+        ++admitted === 1 ? null : { ok: false, reason: 'busy', detail: 'new' }
       )
-    ).toMatchObject({ ok: false, reason: 'live_card' });
+    ).toMatchObject({ ok: false, reason: 'busy' });
     expect(events).toEqual([]);
     expect(await adapter().status!(ref('idle'))).toMatchObject({ value: { status: 'done' } });
   });

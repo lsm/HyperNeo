@@ -20,7 +20,6 @@ const Stayed = z.object({
     'stays_main',
     'in_place',
     'one_off',
-    'project_busy',
     'handoff_failed',
   ]),
 });

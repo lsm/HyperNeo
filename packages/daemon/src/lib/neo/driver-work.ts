@@ -275,32 +275,6 @@ export function isNeoCardUnconfirmed(
   return now - Math.max(work.createdAt, sent?.inputBefore ?? 0) >= NEO_CARD_CONFIRM_MS;
 }
 
-export function isNeoReceiptUnconfirmed(
-  card: {
-    ref: boolean;
-    workStatus: string | null;
-    workCreatedAt: number | null;
-    startedAt: number | null;
-    inputBefore: number | null;
-    status: WorkStatus | null;
-  },
-  now: number
-): boolean {
-  return (
-    card.ref &&
-    card.workStatus === 'queued' &&
-    card.workCreatedAt !== null &&
-    card.startedAt === null &&
-    card.status !== null &&
-    card.status !== 'queued' &&
-    isNeoCardUnconfirmed(
-      { createdAt: card.workCreatedAt },
-      card.inputBefore === null ? null : { inputBefore: card.inputBefore },
-      now
-    )
-  );
-}
-
 export function readDriverSendBaseline(
   outcome: OperationOutcome,
   sentAt: number,
@@ -393,34 +367,6 @@ export function readDriverActivity(
   if (!value) return null;
   const { status, lastActivityAt, lastReply } = value;
   return { status, lastActivityAt, lastReply };
-}
-
-const HOUR_MS = 60 * 60_000;
-
-export const NEO_WORK_STUCK_STEPS_MS = [2 * HOUR_MS, 24 * HOUR_MS, 48 * HOUR_MS, 72 * HOUR_MS];
-
-export function decideStuckReminder(
-  queuedSince: number,
-  now: number
-): { due: number; abandoned: boolean } | null {
-  const reached = NEO_WORK_STUCK_STEPS_MS.filter((ms) => now - queuedSince >= ms);
-  if (reached.length === 0) return null;
-  return {
-    due: queuedSince + reached[reached.length - 1],
-    abandoned: reached.length === NEO_WORK_STUCK_STEPS_MS.length,
-  };
-}
-
-export function isNeoReceiptAbandoned(
-  workStatus: string | null,
-  queuedSince: number | null,
-  now: number
-): boolean {
-  return (
-    workStatus === 'queued' &&
-    queuedSince !== null &&
-    !!decideStuckReminder(queuedSince, now)?.abandoned
-  );
 }
 
 export function readDriverCardExchange(outcome: OperationOutcome, sent: DriverSent | null) {

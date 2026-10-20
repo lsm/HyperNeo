@@ -20,8 +20,7 @@ export function runMigration365(db: Database): void {
   for (const table of ['neo_asks', 'neo_work', 'neo_consultations', 'neo_concerns', 'sessions'])
     if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table))
       db.exec(`CREATE INDEX IF NOT EXISTS idx_${table}_route_id ON ${table}(id COLLATE NOCASE)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_neo_work_target_session ON neo_work(target_session_id);
-    CREATE INDEX IF NOT EXISTS idx_neo_route_folder ON neo_project_workspaces(CAST(substr(CAST(alias AS BLOB), instr(CAST(alias AS BLOB), x'00') + 1) AS TEXT) COLLATE NOCASE) WHERE alias LIKE 'folder:%';
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_neo_route_folder ON neo_project_workspaces(CAST(substr(CAST(alias AS BLOB), instr(CAST(alias AS BLOB), x'00') + 1) AS TEXT) COLLATE NOCASE) WHERE alias LIKE 'folder:%';
     CREATE INDEX IF NOT EXISTS idx_neo_route_work ON neo_project_workspaces(CAST(substr(CAST(alias AS BLOB), instr(CAST(alias AS BLOB), x'00') + instr(substr(CAST(alias AS BLOB), instr(CAST(alias AS BLOB), x'00') + 1), x'00') + 1) AS TEXT) COLLATE NOCASE) WHERE alias LIKE 'work:%';
     CREATE INDEX IF NOT EXISTS idx_neo_route_repo ON neo_project_workspaces(substr(alias, 6, instr(alias, char(0)) - 6)) WHERE alias LIKE 'repo:%';
     CREATE TABLE IF NOT EXISTS neo_route_pr_refs (

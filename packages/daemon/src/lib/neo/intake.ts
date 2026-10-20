@@ -148,6 +148,8 @@ export function readNeoReply(
 }
 
 export function neoReplyFact(reply: NeoReply | null): string | null {
+  if (reply?.question?.kind === 'start')
+    return `The human replied about your start question "${reply.question.text}" (it stays open; only its Start button starts todos):`;
   if (reply?.question) return `The human answered your question "${reply.question.text}":`;
   if (reply?.todo) return `The human replied about todo ${reply.todo.id}:`;
   return reply?.replyTo.kind === 'ask' && reply.ask
@@ -215,6 +217,7 @@ export function recordNeoReplyAnswer(
     receipt.ok &&
     words &&
     reply?.question?.state === 'open' &&
+    reply.question.kind !== 'start' &&
     reply.ask?.sessionId === sessionId
   )
     store.answerQuestion(reply.question, words, 'chat', Date.now());
@@ -470,7 +473,7 @@ export function createNeoIntakeOperation(
   return defineOperation({
     name: 'neo.message.send',
     description:
-      'Durably accept a human ask into an open Neo conversation without waiting for its coordinator. Supply a new requestId UUID per ask and reuse it only for retries of identical content. Acceptance does not mean the ask has been processed or answered. replyTo {kind, id} quotes a question, todo, ask (work card) or message: every message and reply goes to the one Neo session, and a reply to a question is recorded as its answer. For each photo, thumbnails may carry a small preview { index, mediaType, data, width?, height? } keyed by the photo’s content index; it is stored for conversation pages and never sent to the model.',
+      'Durably accept a human ask into an open Neo conversation without waiting for its coordinator. Supply a new requestId UUID per ask and reuse it only for retries of identical content. Acceptance does not mean the ask has been processed or answered. replyTo {kind, id} quotes a question, todo, ask (work card) or message: every message and reply goes to the one Neo session, and a reply to a question is recorded as its answer, except a start question, where a reply is only a remark and the question stays open. For each photo, thumbnails may carry a small preview { index, mediaType, data, width?, height? } keyed by the photo’s content index; it is stored for conversation pages and never sent to the model.',
     inputSchema: Input,
     resultSchema: Result,
     policy: { safetyClass: 'human_only' },

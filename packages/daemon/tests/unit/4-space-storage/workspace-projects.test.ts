@@ -162,7 +162,6 @@ describe('workspace project folders', () => {
       { text: 'Product', includeClosed: false, limit: 20 },
       { machine: 'local' },
       new Map(),
-      new Map(),
       repo.projects()
     );
     expect(groups.map((group) => group.place.folder)).toEqual(['/code', '/docs']);

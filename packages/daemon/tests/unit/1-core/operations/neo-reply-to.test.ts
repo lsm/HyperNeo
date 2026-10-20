@@ -147,6 +147,30 @@ describe('neo.message.send replyTo', () => {
     });
   });
 
+  test('a reply to a start question is a remark: it stays open and starts nothing', async () => {
+    store.askQuestion(
+      'q2',
+      'ask',
+      {
+        text: 'Start "Todo rows"?',
+        kind: 'start',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos: ['t1'],
+      },
+      1
+    );
+    const id = crypto.randomUUID();
+    await send(id, 'yes, but use the new session', { kind: 'question', id: 'q2' });
+    expect(prompt(id).message.content[0].text).toBe(
+      'The human replied about your start question "Start "Todo rows"?" (it stays open; only its Start button starts todos):'
+    );
+    expect(store.getQuestion('q2')).toMatchObject({ state: 'open', answer: null });
+    expect(store.getTodo('t1')?.state).toBe('todo');
+  });
+
   test('a retry records an answer the first send missed, and a reply without words answers nothing', async () => {
     const id = crypto.randomUUID();
     await send(id, '在做', { kind: 'question', id: 'q1' });

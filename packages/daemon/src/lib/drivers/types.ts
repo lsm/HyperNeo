@@ -52,7 +52,6 @@ export const WorkSummarySchema = z.object({
   hits: z.number().int().nonnegative().optional(),
   lastHitAt: z.number().optional(),
   snippets: z.array(WorkSnippetSchema).optional(),
-  liveCards: z.number().int().positive().optional(),
   busy: z.literal(true).optional(),
 });
 
@@ -80,7 +79,6 @@ export const WorkRejectionSchema = z.enum([
   'invalid_place',
   'busy',
   'human_only',
-  'live_card',
 ]);
 
 export function workResultSchema<Value extends z.ZodType>(value: Value) {

@@ -1,19 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
-import {
-  revertMigration387,
-  runMigration387,
-} from '../../../../src/storage/schema/m387-neo-ask-todo-tables';
-
-const tables = (db: Database) =>
-  (
-    db
-      .prepare(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND (name LIKE '%neo_asks' OR name IN ('neo_todos', 'neo_todo_sessions', 'neo_questions', 'pack_facts')) ORDER BY name"
-      )
-      .all() as { name: string }[]
-  ).map(({ name }) => name);
 
 function migrated() {
   const db = new Database(':memory:');
@@ -23,53 +10,7 @@ function migrated() {
   return db;
 }
 
-describe('runMigration387', () => {
-  test('keeps old asks as legacy_neo_asks and starts the new tables empty', () => {
-    const db = migrated();
-    expect(revertMigration387(db)).toBe('restored');
-    expect(revertMigration387(db)).toBe('nothing');
-    expect(tables(db)).toEqual(['neo_asks']);
-    db.prepare(
-      `INSERT INTO neo_asks (id, request_key, origin_session_id, title, ask, done_when, done_source, status, created_at, updated_at)
-       VALUES ('old', 'k', 'root', 'Old', 'Old', '-', 'human', 'open', 1, 1)`
-    ).run();
-    db.prepare(
-      "INSERT INTO neo_ask_items (ask_id, id, position, text, state, updated_at) VALUES ('old', 'i1', 0, 'Old item', 'pending', 1)"
-    ).run();
-
-    runMigrations(db, () => {});
-    runMigration387(db);
-
-    expect(tables(db)).toEqual([
-      'legacy_neo_asks',
-      'neo_asks',
-      'neo_questions',
-      'neo_todo_sessions',
-      'neo_todos',
-      'pack_facts',
-    ]);
-    expect(db.prepare('SELECT id FROM legacy_neo_asks').all()).toEqual([{ id: 'old' }]);
-    expect(db.prepare('SELECT COUNT(*) AS n FROM neo_asks').get()).toEqual({ n: 0 });
-    expect(
-      db.prepare('SELECT "table" FROM pragma_foreign_key_list(\'neo_ask_items\')').all()
-    ).toContainEqual({ table: 'legacy_neo_asks' });
-  });
-});
-
-describe('runMigration387 with foreign keys off', () => {
-  test('still points the old ask tables at legacy_neo_asks', () => {
-    const db = migrated();
-    revertMigration387(db);
-    db.exec('PRAGMA foreign_keys = OFF; PRAGMA legacy_alter_table = ON');
-    runMigration387(db);
-    expect(
-      db.prepare('SELECT "table" FROM pragma_foreign_key_list(\'neo_ask_items\')').all()
-    ).toContainEqual({ table: 'legacy_neo_asks' });
-    expect(db.prepare('PRAGMA legacy_alter_table').get()).toEqual({ legacy_alter_table: 1 });
-  });
-});
-
-describe('revertMigration387', () => {
+describe('the ask and todo tables', () => {
   test('stores asks, todos, sessions, questions and pack facts', () => {
     const db = migrated();
     db.prepare(
@@ -97,9 +38,6 @@ describe('revertMigration387', () => {
     expect(() => db.exec("UPDATE neo_todos SET state = 'met'")).toThrow();
     expect(() => db.exec("UPDATE neo_questions SET kind = 'decision'")).toThrow();
     expect(() => db.exec("UPDATE neo_questions SET answered_by = 'neo'")).toThrow();
-
-    expect(revertMigration387(db)).toBe('has_rows');
-    expect(db.prepare('SELECT COUNT(*) AS n FROM neo_todos').get()).toEqual({ n: 1 });
 
     db.exec("DELETE FROM neo_asks WHERE id = 'a'");
     for (const table of ['neo_todos', 'neo_todo_sessions', 'neo_questions', 'pack_facts'])

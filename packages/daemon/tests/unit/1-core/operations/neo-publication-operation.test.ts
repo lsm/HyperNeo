@@ -84,17 +84,6 @@ describe('runtime-bound publication operation', () => {
       neoDeliveryTrigger(trigger, () => inputTrigger(parent))
     );
   }
-  function work(id = 'work:1', messageId = ask.messageId, projectId = 'a') {
-    return repo.proposeWork({
-      id,
-      requestKey: id,
-      projectId,
-      originSessionId: root.sessionId,
-      originMessageId: messageId,
-      title: 'Comparison',
-      instruction: 'Keep it as a draft',
-    });
-  }
   function invoke(input: unknown = draft, who: OperationCaller = caller()) {
     const { publicationId, ...authored } = input as { publicationId?: string };
     return invokeOperation(
@@ -134,7 +123,6 @@ describe('runtime-bound publication operation', () => {
       getBinding: (id) => repo.getBindingBySession(id),
       getRootBinding: () => repo.defaultBinding(),
       hasProject: (id) => !!repo.getProject(id),
-      getWork: (id) => repo.getWork(id),
       resolveAskOrigin: resolve,
       resolveHumanAskOrigin: (input) => {
         const origin = resolve(input);
@@ -532,10 +520,9 @@ describe('runtime-bound publication operation', () => {
     ).toMatchObject({ accepted: false, reason: 'wrong_trigger' });
   });
 
-  test('preserves arbitrary authored labels and validates actual work ownership', async () => {
-    work();
+  test('preserves arbitrary authored labels', async () => {
     const links = [
-      { label: '看看对比', kind: 'work', id: 'work:1' },
+      { label: '看看对比', kind: 'project', id: 'a' },
       { label: 'More about A', kind: 'project', id: 'a' },
     ];
     expect(await invoke({ ...draft, links })).toMatchObject({
@@ -544,53 +531,43 @@ describe('runtime-bound publication operation', () => {
     expect(ledger.list(conversationId)![0].links).toEqual(links);
   });
 
-  test.each(['unknown', 'foreign-ask', 'unsafe-kind'])(
-    'rejects %s scene refs, without partial publication',
-    async (kind) => {
-      const input = 'neo-note:1';
-      prompt(root.sessionId, input, 'system');
-      stamp({ sessionId: root.sessionId, messageId: input }, ask, 'continues');
-      work('work:1', kind === 'foreign-ask' ? 'other-ask' : ask.messageId);
-      prompt(root.sessionId, 'other-ask');
-      const link = {
-        label: 'Open',
-        kind: kind === 'unsafe-kind' ? 'url' : 'work',
-        id: kind === 'unknown' ? 'missing' : 'work:1',
-      };
-      const result = await invoke(
-        { ...draft, links: [link] },
-        caller(root.sessionId, input, false)
-      );
-      const detail = {
-        unknown:
-          'work link "missing" does not exist; link only Neo project or work ids, never work.find refs or session ids',
-        'foreign-ask':
-          'work link "work:1" was not started for this ask; link only work this ask created',
-      }[kind];
-      expect(result).toMatchObject(
-        kind === 'unsafe-kind'
-          ? { kind: 'failed', code: 'invalid_input' }
-          : { value: { accepted: false, reason: 'invalid_scene_reference', detail } }
-      );
-      expect(ledger.list(conversationId)).toEqual([]);
-      expect(notify).not.toHaveBeenCalled();
-    }
-  );
+  test.each([
+    [
+      'a missing project',
+      'project',
+      'project link "missing" does not exist; link only Neo project ids, never work.find refs or session ids',
+    ],
+    ['a work', 'work', 'work links are no longer supported; link only Neo project ids'],
+    ['an unsafe-kind', 'url', null],
+  ])('rejects %s scene ref, without partial publication', async (_label, kind, detail) => {
+    const input = 'neo-note:1';
+    prompt(root.sessionId, input, 'system');
+    stamp({ sessionId: root.sessionId, messageId: input }, ask, 'continues');
+    prompt(root.sessionId, 'other-ask');
+    const result = await invoke(
+      { ...draft, links: [{ label: 'Open', kind, id: 'missing' }] },
+      caller(root.sessionId, input, false)
+    );
+    expect(result).toMatchObject(
+      detail === null
+        ? { kind: 'failed', code: 'invalid_input' }
+        : { value: { accepted: false, reason: 'invalid_scene_reference', detail } }
+    );
+    expect(ledger.list(conversationId)).toEqual([]);
+    expect(notify).not.toHaveBeenCalled();
+  });
 
-  test('pure link/lifetime gates refuse foreign evidence and superseded turns', () => {
+  test('pure link/lifetime gates refuse missing links and superseded turns', () => {
     const who = caller();
     const producer = requirePublicationProducer(who, root, root);
     if (!('value' in producer)) throw new Error('Expected producer');
     const proof = { ...producer.value, ask };
-    const link = { label: 'Open', kind: 'work' as const, id: 'work:1' };
-    expect(requirePublicationLinks(proof, [{ link, exists: true, origin: ask }])).toEqual({
-      value: proof,
-    });
-    expect(
-      requirePublicationLinks(proof, [
-        { link, exists: true, origin: { ...ask, messageId: 'foreign' } },
-      ])
-    ).toHaveProperty('reason.reason', 'invalid_scene_reference');
+    const link = { label: 'Open', kind: 'project' as const, id: 'project:web' };
+    expect(requirePublicationLinks(proof, [{ link, exists: true }])).toEqual({ value: proof });
+    expect(requirePublicationLinks(proof, [{ link, exists: false }])).toHaveProperty(
+      'reason.reason',
+      'invalid_scene_reference'
+    );
     expect(requirePublicationLifetime(proof, who, root, root)).toEqual({ value: proof });
     expect(
       requirePublicationLifetime(proof, { ...who, neoTurn: undefined }, root, root)

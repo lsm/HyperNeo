@@ -184,19 +184,6 @@ describe('NeoService session ask links', () => {
     db.close();
   });
 
-  const openAsk = (ask: string) =>
-    service.askRecords.open({
-      id: 'a1',
-      requestKey: 'k1',
-      projectId: null,
-      originSessionId: 'neo:root',
-      originMessageId: 'm0',
-      title: 'Ship the fix',
-      ask,
-      doneWhen: 'merged',
-      doneSource: 'human',
-    })!;
-
   test('a PR a session without a todo opened gets that session as its ledger owner', async () => {
     const raw = db.getDatabase();
     raw

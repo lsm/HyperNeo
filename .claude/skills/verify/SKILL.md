@@ -153,13 +153,22 @@ adds its journey here.
    `github.com/verify-test/demo`) and `todo-verify` sits on it with that repo
    (then completes as in journey 3); `ask-verify` keeps its repo and is left
    without todos.
-9. **Root Neo owns goals outside any Space.** After journey 1 opened root, run
-   `VERIFY_PORT=9311 .claude/skills/verify/session-goal.sh "$RUN"`. It creates a goal
-   for root through `goal.session.create`, first without metrics or a done-test, then
-   with one, updates it, and lists it. End state: `evidence/goal-refused.json` holds
-   `done_test_required`; `goal-list.json` lists "Grow OAP" at progress 40 with its
-   done-test, mandate link and next step; `goal-events.txt` reads `created|human`
-   then `updated|human`.
+9. **A schema change upgrades an existing database.** For a PR that adds a
+   migration, check out `origin/dev` in its own worktree (`bun install
+   --frozen-lockfile` there), then run
+   `.claude/skills/verify/upgrade-check.sh <dev-checkout> <port> [run-dir]`. It
+   starts the dev daemon on a fresh run dir, then this branch twice on the same
+   database, waiting for each to release the DB lock, and prints the legacy Neo
+   table count and newest migration marker after each start. End state: the
+   branch's marker is applied on the first upgraded start, and a restart changes
+   nothing.
+10. **Root Neo owns goals outside any Space.** After journey 1 opened root, run
+    `VERIFY_PORT=9311 .claude/skills/verify/session-goal.sh "$RUN"`. It creates a goal
+    for root through `goal.session.create`, first without metrics or a done-test, then
+    with one, updates it, and lists it. End state: `evidence/goal-refused.json` holds
+    `done_test_required`; `goal-list.json` lists "Grow OAP" at progress 40 with its
+    done-test, mandate link and next step; `goal-events.txt` reads `created|human`
+    then `updated|human`.
 
 ## Evidence
 

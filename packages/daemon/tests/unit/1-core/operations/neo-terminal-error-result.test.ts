@@ -35,21 +35,7 @@ describe('Neo terminal error results', () => {
   });
 
   function queue() {
-    const proposed = service.repo.proposeWork({
-      id: crypto.randomUUID(),
-      requestKey: crypto.randomUUID(),
-      projectId: null,
-      originSessionId: 'root',
-      originMessageId: 'original-ask',
-      targetSessionId: null,
-      title: 'Fictional review',
-      instruction: 'Only review fictional flowers.',
-    });
-    const work = service.repo.transitionWork(proposed.id, proposed, {
-      status: 'queued',
-      sessionId: 'worker',
-    });
-    if (!work) throw new Error('Fixture queue failed');
+    const work = { id: crypto.randomUUID(), instruction: 'Only review fictional flowers.' };
     const sdk = db.getSDKMessageRepo();
     sdk.saveUserMessage(
       'worker',

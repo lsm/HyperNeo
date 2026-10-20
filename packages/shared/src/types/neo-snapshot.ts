@@ -170,7 +170,6 @@ export interface NeoSnapshot {
   mutedSessions?: string[];
   standingRules?: string[];
   omitted?: { asks?: number };
-  sessionLoad?: NeoSessionLoad[];
   working?: NeoWorkingSession[];
   todoAsks?: NeoAskEntry[];
   packRows?: NeoPackRows[];
@@ -189,12 +188,6 @@ export interface NeoWorkingSession {
 
 export interface NeoWorkingEvent {
   working: NeoWorkingSession[];
-}
-
-export interface NeoSessionLoad {
-  sessionId: string;
-  liveCards: number;
-  busy: boolean;
 }
 
 export type NeoResult<T> = T | { ok: false; reason: string };

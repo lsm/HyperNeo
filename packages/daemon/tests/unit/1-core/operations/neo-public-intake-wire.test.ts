@@ -103,7 +103,6 @@ describe('real human intake joint persistence', () => {
       expect(mailbox.sdkRows()[0].session_id).toBe(root.sessionId);
       expect(JSON.parse(mailbox.sdkRows()[0].sdk_message).inputKind).toBe('human');
       expect(mailbox.rows()).toHaveLength(1);
-      expect(repo.listWork()).toEqual([]);
     }
   );
 

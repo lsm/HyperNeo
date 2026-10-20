@@ -15,7 +15,6 @@ import { createNeoProjectCleanupApply } from './project-cleanup-apply.ts';
 import type { PlaceGroup } from '../drivers/types.ts';
 import { existsSync } from 'node:fs';
 import { neoPromptText } from './reply-language.ts';
-import { readNeoSessionLoad } from './session-load.ts';
 import {
   NEO_SNAPSHOT_UNCHANGED_GUIDANCE,
   planNeoSnapshotRead,
@@ -125,10 +124,6 @@ const SnapshotOk = z.object({
     )
     .optional(),
   omitted: z.object({ asks: z.number().int().optional() }).optional(),
-  sessionLoad: z
-    .array(z.object({ sessionId: z.string(), liveCards: z.number().int(), busy: z.boolean() }))
-    .max(50)
-    .optional(),
   working: z
     .array(
       z.object({
@@ -404,7 +399,6 @@ export function createNeoOperations(service: NeoService) {
         );
         return rows?.length ? [{ pack: pack.id, rows }] : [];
       }),
-      sessionLoad: readNeoSessionLoad(service.db.getDatabase()).slice(0, 50),
       working: readNeoWorking(service.db.getDatabase()).slice(0, 100),
     };
   }

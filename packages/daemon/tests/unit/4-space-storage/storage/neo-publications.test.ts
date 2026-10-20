@@ -50,7 +50,6 @@ describe('Neo publication ledger', () => {
     expect(db.prepare('SELECT COUNT(*) AS count FROM neo_publications').get()).toEqual({
       count: 1,
     });
-    expect(db.prepare('SELECT * FROM neo_work').all()).toEqual([]);
   });
 
   test('identical retries preserve original sequence and timestamp despite object key order', () => {
