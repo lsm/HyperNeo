@@ -75,7 +75,7 @@ describe('redeliverPrompt', () => {
         messageUuid: 'steered',
       })
     ).not.toBeNull();
-    expect(plans.join('\n')).toContain('USING INDEX idx_message_delivery_session_message ');
+    expect(plans.join('\n')).toContain('USING INDEX idx_message_delivery_message ');
     expect(
       db
         .prepare(
