@@ -38,6 +38,10 @@ const warnings: string[] = [];
 const off = subscribeToStructuredLogs((event) => {
   if (event.message === 'event_loop.lag_activity') diagnostics.push(event.metadata);
 });
+function lagProfileSyntheticHotspot(): void {
+  const until = performance.now() + 1350;
+  while (performance.now() < until) {}
+}
 const stop = startDaemonLagDiagnostics(app.messageHub, (line) => warnings.push(line));
 const pause = (ms: number) => new Promise((done) => setTimeout(done, ms));
 try {
@@ -59,8 +63,7 @@ try {
         args: ['NEVER_RECORD_THIS_BODY'],
         metadata: { event: 'phase' },
       });
-      const until = performance.now() + 1350;
-      while (performance.now() < until) {}
+      lagProfileSyntheticHotspot();
       return { accepted: true };
     })
   );
@@ -104,6 +107,11 @@ try {
   );
   assert(diagnostic, 'blocking RPC must produce activity metadata');
   assert((diagnostic.lagMs as number) >= 1000);
+  if (process.env.HYPERNEO_LAG_PROFILE === '1') {
+    const profile = diagnostic.samplingProfile as { status: string; stacks: { frames: { name: string; file: string; line: number }[] }[] };
+    assert(profile?.status === 'captured', 'enabled profiler must produce a stalled-tick profile');
+    assert(profile.stacks.some((stack) => stack.frames.some((frame) => frame.name === 'lagProfileSyntheticHotspot' && frame.file.endsWith('lag-activity-check.ts') && frame.line > 0)), 'profile must identify real synthetic hot function with file:line');
+  } else assert(!('samplingProfile' in diagnostic), 'default-off profiler must be absent');
   const names = (diagnostic.activities as { name: string }[]).map((phase) => phase.name);
   assert(names.includes('rpc.in:verify.lag'));
   assert(names.includes('rpc.out:verify.lag'));
