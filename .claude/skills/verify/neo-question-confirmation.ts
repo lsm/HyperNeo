@@ -2,7 +2,7 @@ import { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 const [port, run, phase = 'after'] = process.argv.slice(2);
-if (!port || !run || port === '8399') throw new Error('usage: neo-question-confirmation.ts <test-port> <run-dir> [before|after]');
+if (!port || !run || port === '8399') throw new Error('usage: neo-question-confirmation.ts <test-port> <run-dir> [before|after|boundaries]');
 const log = await readFile(`${run}/daemon.log`, 'utf8');
 if (!log.includes('HyperNeo Test Server') || !log.includes(`Database: ${run}/data/daemon.db`)) throw new Error('Not an isolated test daemon');
 async function rpc(name: string, input: unknown = {}) {
@@ -35,6 +35,21 @@ if (!legacy) {
 const legacyRead = await rpc('neo.question.get', { questionId: legacy.id });
 const confirm = { path: 'projects/verify/mandate.md', sha256: createHash('sha256').update('Synthetic new mandate.\n').digest('hex') };
 const input = { askId, kind: 'yesno', text: `Old mandate: old text. New mandate: Synthetic new mandate.\nPath: ${confirm.path}\nSHA-256: ${confirm.sha256}`, noLabel: 'Keep old text', yesLabel: 'Use proposed text', confirm };
+if (phase === 'boundaries') {
+  const cases = [
+    `${confirm.path}.bak ${confirm.sha256}`,
+    `archive/${confirm.path} ${confirm.sha256}`,
+    `${confirm.path} ${confirm.sha256}a`,
+    `${confirm.path} 0${confirm.sha256}`,
+  ];
+  const observed = [];
+  for (const text of cases) observed.push({ text, result: await rpc('neo.question.ask', { ...input, text }) });
+  const exact = await rpc('neo.question.ask', { ...input, text: `Approve \`${confirm.path}\` (SHA-256: ${confirm.sha256})?` });
+  await writeFile(`${run}/evidence/neo-question-confirmation-boundaries.json`, JSON.stringify({ observed, exact }, null, 2));
+  if (observed.some(({ result }) => result.ok || !result.reason?.includes('confirmation_body')) || !exact.ok) throw new Error('Near-miss proposal tokens accepted or exact tokens refused');
+  console.log('PASS: near-miss path/hash tokens refused; exact Markdown/prose tokens accepted.');
+  process.exit(0);
+}
 const created = await rpc('neo.question.ask', input);
 const read = await rpc('neo.question.get', { questionId: created.question?.id });
 const evidence: Record<string, unknown> = { phase, legacy, legacyRead, confirm, created, read };

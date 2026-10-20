@@ -113,6 +113,26 @@ describe('Neo question confirmation binding', () => {
       expect(store.listQuestions('ask-proof')).toHaveLength(0);
     }
   );
+  test.each([
+    `${confirm.path}.bak ${confirm.sha256}`,
+    `archive/${confirm.path} ${confirm.sha256}`,
+    `é${confirm.path} ${confirm.sha256}`,
+    `${confirm.path} ${confirm.sha256}a`,
+    `${confirm.path} 0${confirm.sha256}`,
+  ])('refuses a path/hash shown only inside a longer token', async (text) => {
+    expect(await ask({ text })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('confirmation_body'),
+    });
+    expect(store.listQuestions('ask-proof')).toHaveLength(0);
+  });
+  test.each([
+    `Approve \`${confirm.path}\` (SHA-256: ${confirm.sha256})?`,
+    `Approve "${confirm.path}"? Hash: '${confirm.sha256}'.`,
+    `${confirm.path}.bak ${confirm.sha256}a; exact: ${confirm.path} ${confirm.sha256}`,
+  ])('accepts exact visible tokens with prose punctuation', async (text) => {
+    expect(await ask({ text })).toMatchObject({ ok: true, question: { confirm } });
+  });
   test.each(['reply', 'choice', 'start'])(
     'refuses confirmation binding on %s questions',
     async (kind) => {
