@@ -9,7 +9,11 @@ import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-to
 import { NeoTodoTargetSchema } from './driver-work.ts';
 import type { NeoPack } from './packs/types.ts';
 import { neoTodoHome, neoTodoRepo } from './todo-repo.ts';
-import { readNeoTodoCompletion, requireNeoTodoMayFinish } from './todo-completion.ts';
+import {
+  readNeoTodoCompletion,
+  requireNeoTodoMayFinish,
+  sameNeoTodoCheck,
+} from './todo-completion.ts';
 import { planNeoTodoAwaitingStart } from './todo-runner.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 
@@ -270,6 +274,7 @@ export function createNeoTodoOperations(
     plan: { todo: NeoTodo; patch: NeoTodoPatch },
     input?: z.infer<typeof Edit>
   ): TodoReceipt | Rejection => {
+    const checked = plan.todo;
     if (input?.addUrls) {
       const latest = requireNeoOpenTodo(todos.getTodo(plan.todo.id), todos.getAsk(plan.todo.askId));
       if ('reason' in latest) return latest.reason;
@@ -277,15 +282,16 @@ export function createNeoTodoOperations(
       if ('reason' in edited) return edited.reason;
       const rebased = withUrls(edited.value, input);
       if ('reason' in rebased) return rebased.reason;
-      if (
-        input.done &&
-        JSON.stringify(rebased.value.todo.check) !== JSON.stringify(plan.todo.check)
-      )
+      plan = rebased.value;
+    }
+    if (plan.patch.state === 'done') {
+      const latest = requireNeoOpenTodo(todos.getTodo(plan.todo.id), todos.getAsk(plan.todo.askId));
+      if ('reason' in latest) return latest.reason;
+      if (!sameNeoTodoCheck(checked, input?.addUrls ? plan.todo : latest.value))
         return {
           ok: false,
           reason: 'todo_changed: PR URLs changed during completion; retry with the current check.',
         };
-      plan = rebased.value;
     }
     if (plan.patch.check) {
       const accepted = planNeoTodoDraft(plan.todo, packs(), todos.listTodos(plan.todo.askId));

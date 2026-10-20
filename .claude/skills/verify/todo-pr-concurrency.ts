@@ -52,11 +52,20 @@ while (await readFile(`${run}/evidence/pr-started`, 'utf8').then(() => false, ()
 const replies = await Promise.all(urls.map((url) => rpc('neo.todo.edit', { todoId: 'concurrent-todo', addUrls: [url] })));
 await writeFile(`${run}/pr-release`, 'release');
 const completion = await completing;
-if (mode === 'sweep') await Bun.sleep(2000);
+let observedCheck: unknown = null;
+if (mode === 'sweep') {
+  const checkedBy = Date.now() + 20000;
+  while (!observedCheck) {
+    observedCheck = db.query('SELECT prs_json,read_at FROM pack_coding_todo_prs WHERE todo_id = ?').get('concurrent-todo');
+    if (Date.now() > checkedBy) throw new Error('Background GitHub result was not recorded');
+    if (!observedCheck) await Bun.sleep(50);
+  }
+  await rpc('neo.snapshot', {});
+}
 clearTimeout(watchdog);
 const row = db.query('SELECT check_json,done_when,state FROM neo_todos WHERE id = ?').get('concurrent-todo') as { check_json: string; done_when: string; state: string };
 const stored = JSON.parse(row.check_json).params.urls ?? [];
-const evidence = { mode, completion, urls, stored, missing: urls.filter((url) => !stored.includes(url)), row, replies };
+const evidence = { mode, completion, observedCheck, urls, stored, missing: urls.filter((url) => !stored.includes(url)), row, replies };
 await writeFile(`${run}/evidence/todo-pr-concurrency.json`, JSON.stringify(evidence, null, 2));
 ws.close(); db.close();
 if (replies.some((reply) => !JSON.stringify(reply).includes('"ok":true')) || evidence.missing.length || row.state === 'done') throw new Error(`${mode}: lost ${evidence.missing.length} PR URLs; final state ${row.state}`);

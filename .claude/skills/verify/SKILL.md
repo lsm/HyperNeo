@@ -304,7 +304,12 @@ adds its journey here.
    `bun .claude/skills/verify/todo-pr-concurrency.ts <port> "$RUN"`.
    It overlaps a completion check awaiting GitHub with 20 URL additions on that
    same todo. Every URL must remain in its check; the stale completion is refused
-   and the todo remains open. Evidence: `evidence/todo-pr-concurrency.json`.
+   and the todo remains open. Repeat in fresh run directories with a final
+   argument `edit`, `close`, and `sweep` to cover plain completion, closure and the
+   real periodic background check. Each mode pauses the local gh stub after its
+   check starts, adds 20 URLs through RPC, then releases the old result. None may
+   finish the todo. The sweep mode can take up to 3 minutes to begin.
+   Evidence: `evidence/todo-pr-concurrency.json`.
 
 4. **An open todo's PR leads the PR ledger in the snapshot.** After journey 1
    opened root, run `.claude/skills/verify/seed-ledger.sh "$RUN"`. It writes a

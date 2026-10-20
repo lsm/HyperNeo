@@ -3,6 +3,10 @@ import type { NeoPack, NeoTodoCheckResult } from './packs/types.ts';
 
 type Gate<T> = { value: T } | { reason: { ok: false; reason: string } };
 
+export function sameNeoTodoCheck(expected: NeoTodo, current: NeoTodo | null): boolean {
+  return !!current && JSON.stringify(expected.check) === JSON.stringify(current.check);
+}
+
 export async function readNeoTodoCompletion(
   packs: readonly NeoPack[],
   todo: NeoTodo
