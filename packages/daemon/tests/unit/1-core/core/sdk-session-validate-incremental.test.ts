@@ -67,6 +67,20 @@ describe('validateSDKSessionFile', () => {
     ]);
   });
 
+  test('keeps state for the 64 most recently validated transcripts and rereads an evicted one in full', async () => {
+    writeFileSync(file, use('a') + result('a'));
+    await validateSDKSessionFile(workspace, 's1');
+    for (let i = 0; i < 64; i++) {
+      const other = getSDKSessionFilePath(workspace, `o${i}`);
+      writeFileSync(other, use('x'));
+      await validateSDKSessionFile(workspace, `o${i}`);
+    }
+    writeFileSync(file, use('b') + result('a') + result('b'));
+    expect((await validateSDKSessionFile(workspace, 's1')).orphanedToolResults).toEqual([
+      { toolUseId: 'a', messageUuid: 'u-a', lineIndex: 1 },
+    ]);
+  });
+
   test('an unterminated last line counts now and is not counted twice once it ends', async () => {
     writeFileSync(file, use('a') + result('z').trimEnd());
     expect((await validateSDKSessionFile(workspace, 's1')).valid).toBe(false);

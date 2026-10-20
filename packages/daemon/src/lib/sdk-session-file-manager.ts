@@ -303,6 +303,7 @@ export function sanitizeAssistantUsageInSDKSessionFile(
 }
 
 const VALIDATE_CHUNK_BYTES = 8 * 1024 * 1024;
+const VALIDATED_SESSION_FILES_MAX = 64;
 
 interface ValidatedSessionFile {
   ino: number;
@@ -405,6 +406,10 @@ export async function validateSDKSessionFile(
       await handle.read(state.tail, 0, state.tail.length, state.offset - state.tail.length);
       state.pending = state.pending.filter((ref) => !state.toolUseIds.has(ref.toolUseId));
       validatedSessionFiles.set(sessionFile, state);
+      for (const stale of validatedSessionFiles.keys()) {
+        if (validatedSessionFiles.size <= VALIDATED_SESSION_FILES_MAX) break;
+        validatedSessionFiles.delete(stale);
+      }
       const view = partial
         ? { ...state, toolUseIds: new Set(state.toolUseIds), pending: [...state.pending] }
         : state;
