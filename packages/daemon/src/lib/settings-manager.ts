@@ -1,11 +1,16 @@
-import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { readFileSync, existsSync } from 'node:fs';
+import { readFile, mkdir, realpath, readlink, stat, open, rename, unlink } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { join, dirname, basename, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import type { GlobalSettings } from '@hyperneo/shared';
 import type { McpServerConfig } from '@hyperneo/shared/types/sdk-config';
 
 import type { Database } from '../storage/database.ts';
 import { Logger } from './logger.ts';
+import { runLagPhase } from './event-loop-activity.ts';
+
+const settingsWrites = new Map<string, Promise<void>>();
 
 export class SettingsManager {
   private logger = new Logger('SettingsManager');
@@ -28,18 +33,48 @@ export class SettingsManager {
   }
 
   async prepareSDKOptions(): Promise<void> {
-    await this.writeFileOnlySettings(this.getGlobalSettings());
+    await runLagPhase('sdk:settings_prepare', async () => {
+      if (!this.workspacePath) return;
+      const directory = join(this.workspacePath, '.claude');
+      await mkdir(directory, { recursive: true });
+      const path = await this.resolveSettingsTarget(join(directory, 'settings.local.json'));
+      const write = (settingsWrites.get(path) ?? Promise.resolve())
+        .catch(() => {})
+        .then(() => this.writeFileOnlySettings(path, this.getGlobalSettings()));
+      settingsWrites.set(path, write);
+      try {
+        await write;
+      } finally {
+        if (settingsWrites.get(path) === write) settingsWrites.delete(path);
+      }
+    });
   }
 
-  private readUserAttribution(): { commit?: string; pr?: string } | undefined {
+  private async resolveSettingsTarget(candidate: string): Promise<string> {
+    const directory = await realpath(dirname(candidate));
+    const path = join(directory, basename(candidate));
+    try {
+      return await realpath(path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    let target: string;
+    try {
+      target = await readlink(path);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT' || code === 'EINVAL') return path;
+      throw error;
+    }
+    return this.resolveSettingsTarget(resolve(directory, target));
+  }
+
+  private async readUserAttribution(): Promise<{ commit?: string; pr?: string } | undefined> {
     const baseDir = process.env.TEST_USER_SETTINGS_DIR || join(homedir(), '.claude');
     const userSettingsPath = join(baseDir, 'settings.json');
 
     try {
-      if (!existsSync(userSettingsPath)) {
-        return undefined;
-      }
-      const content = readFileSync(userSettingsPath, 'utf-8');
+      const content = await readFile(userSettingsPath, 'utf-8');
       const userSettings = JSON.parse(content) as Record<string, unknown>;
       return userSettings.attribution as { commit?: string; pr?: string } | undefined;
     } catch {
@@ -47,20 +82,32 @@ export class SettingsManager {
     }
   }
 
-  private async writeFileOnlySettings(settings: GlobalSettings): Promise<void> {
-    if (!this.workspacePath) {
-      return;
-    }
-
-    const settingsLocalPath = join(this.workspacePath, '.claude/settings.local.json');
-
-    let localSettings: Record<string, unknown> = {};
+  private async readLocalSettings(path: string): Promise<Record<string, unknown>> {
+    let content: string;
     try {
-      if (existsSync(settingsLocalPath)) {
-        const content = readFileSync(settingsLocalPath, 'utf-8');
-        localSettings = JSON.parse(content) as Record<string, unknown>;
-      }
-    } catch {}
+      content = await readFile(path, 'utf-8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {};
+      throw error;
+    }
+    try {
+      const parsed: unknown = JSON.parse(content);
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error();
+      return parsed as Record<string, unknown>;
+    } catch {
+      const message = `Invalid SDK settings JSON; left untouched: ${path}`;
+      this.logger.error(message);
+      throw new Error(message);
+    }
+  }
+
+  private async writeFileOnlySettings(path: string, settings: GlobalSettings): Promise<void> {
+    let localSettings = await this.readLocalSettings(path);
+    let userAttribution: { commit?: string; pr?: string } | undefined;
+    if (settings.attribution === undefined && localSettings.attribution === undefined) {
+      userAttribution = await this.readUserAttribution();
+      localSettings = await this.readLocalSettings(path);
+    }
 
     if (settings.askPermissions !== undefined) {
       localSettings.permissions = {
@@ -92,16 +139,26 @@ export class SettingsManager {
 
     if (settings.attribution !== undefined) {
       localSettings.attribution = settings.attribution;
-    } else if (localSettings.attribution === undefined) {
-      const userAttribution = this.readUserAttribution();
-      if (userAttribution !== undefined) {
-        localSettings.attribution = userAttribution;
-      }
+    } else if (localSettings.attribution === undefined && userAttribution !== undefined) {
+      localSettings.attribution = userAttribution;
     }
 
-    mkdirSync(dirname(settingsLocalPath), { recursive: true });
-
-    writeFileSync(settingsLocalPath, JSON.stringify(localSettings, null, 2));
+    const existing = await stat(path).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return undefined;
+      throw error;
+    });
+    const temporary = join(dirname(path), `.settings-${randomUUID()}.tmp`);
+    const file = await open(temporary, 'wx', existing?.mode);
+    try {
+      await file.writeFile(JSON.stringify(localSettings, null, 2));
+      if (existing) await file.chmod(existing.mode);
+      await file.close();
+      await rename(temporary, path);
+    } catch (error) {
+      await file.close().catch(() => {});
+      await unlink(temporary).catch(() => {});
+      throw error;
+    }
   }
 
   getEnabledMcpServersConfig(): Record<string, McpServerConfig> {
