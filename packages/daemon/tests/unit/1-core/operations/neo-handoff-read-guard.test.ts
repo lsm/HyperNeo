@@ -1,3 +1,5 @@
+import type { HookInput } from '@anthropic-ai/claude-agent-sdk';
+import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   chmodSync,
@@ -11,14 +13,14 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { decideNeoTool } from '../../../../src/lib/neo/look-up-guard.ts';
+import { decideNeoTool, neoToolGuard } from '../../../../src/lib/neo/look-up-guard.ts';
 
 describe('Neo reads only published worker handoffs', () => {
   let home: string;
   let dataDir: string;
   let published: string;
   let report: string;
-  const digest = 'a'.repeat(64);
+  const digest = createHash('sha256').update('Synthetic worker report').digest('hex');
   const scope = () => ({ home, dataDir, cwd: home });
   const read = (file_path: string) => decideNeoTool('Read', { file_path }, scope()).kind;
 
@@ -29,6 +31,7 @@ describe('Neo reads only published worker handoffs', () => {
     mkdirSync(published, { recursive: true, mode: 0o700 });
     report = join(published, 'report.md');
     writeFileSync(report, 'Synthetic worker report');
+    writeFileSync(join(dataDir, 'handoffs', '.daemon-id'), 'e8b70c20-0620-4ab4-963f-80f0a1d07d5c');
     chmodSync(report, 0o444);
   });
 
@@ -36,6 +39,33 @@ describe('Neo reads only published worker handoffs', () => {
 
   test('admits the published report through the same Read decision used by the SDK hook', () => {
     expect(read(report)).toBe('allow');
+  });
+
+  test('the actual Read hook verifies a report and refuses tampered bytes', async () => {
+    const hook = neoToolGuard({ home, dataDir });
+    const call = () =>
+      hook(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'Read',
+          tool_input: { file_path: report },
+          cwd: home,
+          session_id: 'sdk-neo',
+          tool_use_id: 'read-1',
+          transcript_path: join(home, 'synthetic.jsonl'),
+        } as HookInput,
+        'read-1',
+        { signal: new AbortController().signal }
+      );
+    expect(await call()).toEqual({});
+    chmodSync(report, 0o600);
+    writeFileSync(report, 'tampered');
+    expect(await call()).toMatchObject({
+      hookSpecificOutput: {
+        permissionDecision: 'deny',
+        permissionDecisionReason: expect.stringContaining('tampered'),
+      },
+    });
   });
 
   test('keeps drafts, worker workspaces, sibling data and the outbox parent private', () => {
@@ -92,5 +122,15 @@ describe('Neo reads only published worker handoffs', () => {
     mkdirSync(draft);
     symlinkSync(report, join(draft, 'report.md'));
     expect(read(join(draft, 'report.md'))).toBe('deny');
+  });
+
+  test('keeps canonical sibling data private when the configured data directory is an alias', () => {
+    const alias = join(home, 'data-alias');
+    symlinkSync(dataDir, alias);
+    const privateFile = join(dataDir, 'private.md');
+    writeFileSync(privateFile, 'synthetic private');
+    expect(
+      decideNeoTool('Read', { file_path: privateFile }, { ...scope(), dataDir: alias }).kind
+    ).toBe('deny');
   });
 });
