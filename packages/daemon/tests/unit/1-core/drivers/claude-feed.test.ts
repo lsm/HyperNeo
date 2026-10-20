@@ -233,7 +233,7 @@ describe('Claude transcript feed', () => {
     const queue = { enqueueUniquePending: () => {} } as never;
     await runClaudeFeed(queue, db, root, Date.now());
     unlinkSync(resumed);
-    pruneVanishedFeeds(db, root, claudeFeedSource(new Set()));
+    await pruneVanishedFeeds(db, root, claudeFeedSource(new Set()));
     const longAgo = new Date(Date.now() - 120 * 24 * 60 * 60_000);
     utimesSync(original, longAgo, longAgo);
     expect(pendingFeedPaths(root, readWorkFeedOffsets(db))).toEqual([original]);
@@ -258,7 +258,7 @@ describe('Claude transcript feed', () => {
     const queue = { enqueueUniquePending: () => {} } as never;
     await runClaudeFeed(queue, db, root, Date.now());
     unlinkSync(probe);
-    expect(pruneVanishedFeeds(db, root, claudeFeedSource(new Set()))).toEqual([]);
+    expect(await pruneVanishedFeeds(db, root, claudeFeedSource(new Set()))).toEqual([]);
     expect(pendingFeedPaths(root, readWorkFeedOffsets(db))).toEqual([]);
   });
 });
