@@ -146,6 +146,29 @@ describe('policy-aware merge readiness', () => {
     expect(messages.length).toBe(3);
     expect(messages.every((text) => !/merge/i.test(text))).toBe(true);
   });
+  test.each(['review_bot', 'ci_only', 'human'])(
+    'fix-it/terminal states survive %s, and no-CI is green when policy permits',
+    async (policy) => {
+      const { save, cycle } = fixture();
+      save('mergePolicy', policy);
+      save('reviewBot', 'hyperneo-ai-test');
+      const review = [
+        {
+          state: 'CHANGES_REQUESTED',
+          commit: { oid: 'head' },
+          author: { login: 'hyperneo-ai-test' },
+        },
+      ];
+      expect(await cycle(0, 'FAILURE')).toBe('failing');
+      expect(await cycle(1, 'SUCCESS', review)).toBe('changes_requested');
+      expect(await cycle(2, 'SUCCESS', [], { isDraft: true })).toBe('draft');
+      expect(await cycle(3, 'SUCCESS', [], { mergeable: 'CONFLICTING' })).toBe('dirty');
+      expect(await cycle(4, 'SUCCESS', [], { state: 'MERGED' })).toBe('merged');
+      expect(await cycle(5, 'SUCCESS', [], { state: 'CLOSED' })).toBe('closed');
+      expect(await cycle(6, null)).toBe(policy === 'human' ? 'waiting_human' : 'approved_green');
+    }
+  );
+
   test('repository case and same-pack global fallback preserve human answers', async () => {
     const { save, cycle } = fixture();
     save('mergePolicy', 'ci_only', 'LSM/Qlark');

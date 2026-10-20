@@ -46,7 +46,9 @@ try {
   for (const at of [0, 1, 21, 41, 61]) {
     minute = at; approved = at > 0;
     await pack.sweep!(Date.parse('2026-10-20T16:45:51Z') + at * 60000);
-    const snapshot = await rpc('neo.snapshot', {}); snapshots.push({ minute, rows: snapshot.packRows, ledger: ledger.list() });
+    const snapshot = await rpc('neo.snapshot', {});
+    if (mode === 'verify' && at > 0) assert(snapshot.packRows.some((pack: any) => pack.rows.some((row: any) => row.pr === 'synthetic/qlark-replay#19' && row.state === 'waiting_human')));
+    snapshots.push({ minute, rows: snapshot.packRows, ledger: ledger.list() });
   }
   const mergeNudges = output.filter((item) => /merge/i.test(item.text));
   const report = { surface: 'real coding pack sweep/events + real daemon snapshot, synthetic GraphQL/model-free delivery sinks', output, snapshots, mergeNudges };

@@ -344,6 +344,15 @@ describe('codingTodoCheck replacement grace', () => {
 describe('codingTodoStatusLine', () => {
   const doing = { state: 'doing' as const, report: null, evidence: null };
 
+  test('policy states show human or CI waits without claiming approval', () => {
+    expect(codingTodoStatusLine(doing, [pr(19, 'OPEN')], () => 'waiting_human')?.status).toBe(
+      '#19 waiting on the human'
+    );
+    expect(codingTodoStatusLine(doing, [pr(19, 'OPEN')], () => 'waiting_ci')?.status).toBe(
+      '#19 open, waiting on CI'
+    );
+  });
+
   test('a merged PR', () => {
     expect(codingTodoStatusLine(doing, [pr(7426, 'MERGED')])).toEqual({
       status: '#7426 merged',

@@ -33,7 +33,7 @@ export function planCodingPrEvent(row: CodingPrTransition): { key: string; text:
   if (
     row.from === 'failing' &&
     row.ci === 'SUCCESS' &&
-    (row.state === 'waiting_review' || row.state === 'unreviewed')
+    ['waiting_review', 'waiting_ci', 'waiting_human'].includes(row.state)
   )
     return owner(`has green CI again on head ${head(row)}.`);
   return null;
