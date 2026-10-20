@@ -795,6 +795,71 @@ performance are not verified. Unit contracts and unchanged historical pins run
 in CI. Historical schema SQL and the dual-write copy are intentional legacy
 readers until the later migration/removal slices.
 
+### Online SDK body copy (slice 10)
+
+Run only on a new synthetic database, larger than the read-only live file-size
+observation; never seed from or copy a live DB:
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-sdk-body-copy-XXXXXX)
+mkdir -p "$RUN/home"
+env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
+  bun .claude/skills/verify/sdk-body-copy.ts seed 9338 "$RUN"
+env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
+  bun .claude/skills/verify/sdk-body-copy.ts verify 9338 "$RUN"
+env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
+  bun .claude/skills/verify/sdk-body-copy.ts backup-reject 9338 "$RUN"
+```
+
+The 90,000-row seed uses production derivation, dual writes and normalized
+replacement metadata, including 735 KB complete tool results. It removes half
+the duplicate side copies to model historical legacy-only rows. The parent
+probes real `system.health` and `message.sdkMessages` over WebSocket while the
+real daemon migrates. There is no daemon HTTP `/health` route; an HTTP 404 is
+not responsiveness evidence. Transcript replies use `sdkMessages`, not `messages`.
+The parent closes its WebSocket when the child publishes completion so daemon
+cleanup can finish; unexpected RPC errors fail the journey.
+
+The first child SIGKILLs itself after its first committed chunk; the second
+starts against the same synthetic DB and requires the original verified backup.
+`observed.json` must show zero remaining legacy bodies, an empty suppression
+table, the same full ordered logical-body hash, per-chunk transactions <250 ms,
+maximum heartbeat lag <1,000 ms and successful health/transcript RPCs. Lag and
+transaction maxima include both children. `crash.json`, `child.json` and logs
+retain both phases. Peak logical and allocated disk bytes are sampled across
+the data tree every probe cycle, including the permanent backup and WAL; this
+is a sampled peak, not a physical worst-case bound. Startup and overall runtime
+are recorded separately. Seed and final offline hashing are outside daemon lag
+measurement. A backup manifest mismatch or missing original backup must reject
+verification without altering source bodies; `backup-rejection.json` records it.
+
+Exercise the offline reverse tool only after both children stop:
+
+```bash
+env -i PATH="$PATH" NODE_ENV=test bun packages/daemon/scripts/restore-sdk-message-bodies.ts \
+  "$RUN/data/daemon.db" --restore-legacy > "$RUN/evidence/reverse.log"
+env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
+  bun .claude/skills/verify/sdk-body-copy.ts inspect 9338 "$RUN" > "$RUN/evidence/reverse-after.json"
+```
+
+The reverse hash must match `before.json`. Side bodies and the pinned backup
+remain; the reversed marker disables automatic copying. All children, workers
+and sockets must stop; delete only this run's synthetic data after retaining
+evidence. Unit suites run in CI, including insufficient/unknown disk refusal,
+verification failure, rollback, restart, authoritative-side conflicts, malformed
+bytes and concurrent normal writers. No GUI, model or credentials are used.
+
+Before merging, require Neo's explicit go-ahead, latest-head bot approval and
+green CI. Read-only stat/free-space checks must show room for 2× the live DB
+plus the permanent backup; the production admission itself requires 2× DB+WAL.
+After automatic deployment, read live logs only: `disk_check_passed`,
+`backup_verified` (path, bytes, `quickCheck: ok`, hashes), per-chunk progress,
+`complete` (matching copy audit chains, runtime) and `run_finished` (max lag).
+The copy hashes cover the full versions actually moved, transaction by
+transaction, across resumes. Normal writes can change two whole-DB snapshots
+online, so do not call that a static global-hash comparison. Report any missing
+or failed evidence to Neo; do not restart, write to, or restore the live DB.
+
 ### Task body projection triggers (slice 7)
 
 First reproduce the body-source boundary with a fresh isolated run directory:

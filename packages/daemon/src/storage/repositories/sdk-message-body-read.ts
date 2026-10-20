@@ -2,6 +2,10 @@ export function joinedSdkMessageBody(body: string, original: string): string {
   return `COALESCE(${body}.sdk_message, ${original}.sdk_message)`;
 }
 
+export function joinedSdkMessageBodyBytes(body: string, original: string): string {
+  return `COALESCE(octet_length(${body}.sdk_message), octet_length(${original}.sdk_message))`;
+}
+
 export function hydrateSdkMessageBodies(selection: string, orderBy = ''): string {
   return `WITH body_selection AS MATERIALIZED (${selection})
     SELECT body_selection.*, ${joinedSdkMessageBody('body', 'original')} AS sdk_message

@@ -497,6 +497,10 @@ export class Database {
     this.core.startMessageSearchMerges();
   }
 
+  startSdkMessageBodyCopy(): void {
+    this.core.startSdkMessageBodyCopy();
+  }
+
   getJobQueueRepo(): JobQueueRepository {
     return this.jobQueueRepo;
   }

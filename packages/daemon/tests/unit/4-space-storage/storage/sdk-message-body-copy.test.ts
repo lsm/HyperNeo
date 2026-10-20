@@ -5,6 +5,7 @@ import { migrateSdkMessageBodies } from '../../../../src/storage/sdk-message-bod
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import { writeSdkMessageBody } from '../../../../src/storage/repositories/sdk-message-body-write';
 
 let db: Database;
 let repo: SDKMessageRepository;
@@ -56,6 +57,59 @@ function options() {
 }
 
 describe('SDK body live migration', () => {
+  test('keeps malformed bytes in full and records NULL derived columns', async () => {
+    db.exec('DROP INDEX IF EXISTS idx_sdk_messages_uuid_status');
+    db.exec(
+      "DELETE FROM sdk_message_bodies WHERE seq=1; UPDATE sdk_messages SET sdk_message='{invalid historical body' WHERE seq=1"
+    );
+    const before = hash(),
+      logs: string[] = [];
+    await migrateSdkMessageBodies(db, { ...options(), log: (line) => logs.push(line) });
+    expect(hash()).toBe(before);
+    expect(logs.some((line) => line.includes('"malformed":1'))).toBe(true);
+    expect(
+      db
+        .prepare('SELECT input_kind,info_level,user_status_eligible FROM sdk_messages WHERE seq=1')
+        .get()
+    ).toEqual({ input_kind: null, info_level: null, user_status_eligible: null });
+  });
+  test('preserves authoritative side bytes when the legacy copy disagrees', async () => {
+    const before = hash();
+    db.exec(
+      `UPDATE sdk_messages SET sdk_message='{"type":"user","message":{"content":"stale legacy copy"}}'`
+    );
+    expect((await migrateSdkMessageBodies(db, options())).status).toBe('complete');
+    expect(hash()).toBe(before);
+    expect(pending()).toBe(0);
+  });
+
+  test('normal writers after a chunk keep the new full body and are not suppressed', async () => {
+    const updated = JSON.stringify({
+      type: 'user',
+      uuid: 'tool-0',
+      message: { role: 'user', content: 'new user content' },
+    });
+    let written = false;
+    await migrateSdkMessageBodies(db, {
+      ...options(),
+      log: (line) => {
+        if (written || !line.includes('"phase":"chunk"')) return;
+        written = true;
+        writeSdkMessageBody(
+          db,
+          () =>
+            db
+              .prepare('UPDATE sdk_messages SET sdk_message=? WHERE sdk_uuid=?')
+              .run(updated, 'tool-0'),
+          'sdk_uuid=?',
+          ['tool-0']
+        );
+      },
+    });
+    expect(JSON.stringify(repo.getMessageByUuid('s', 'tool-0'))).toBe(updated);
+    expect(db.prepare('SELECT * FROM sdk_message_body_copy_active').all()).toEqual([]);
+  });
+
   test('refuses insufficient or unknown disk without backup or body changes', async () => {
     const before = hash();
     let backups = 0;
@@ -106,6 +160,9 @@ describe('SDK body live migration', () => {
       expect(result.status).toBe('complete');
       expect(interleaved).toBe(true);
       expect(logs.filter((line) => line.includes('"phase":"chunk"'))).toHaveLength(5);
+      const audit = JSON.parse(logs.find((line) => line.includes('"phase":"complete"'))!);
+      expect(audit.beforeHash).toMatch(/^[a-f0-9]{64}$/);
+      expect(audit.afterHash).toBe(audit.beforeHash);
       expect(pending()).toBe(0);
       expect(hash()).toBe(before);
       expect(JSON.stringify(repo.getMessageByUuid('s', 'tool-4'))).toContain(
