@@ -233,6 +233,26 @@ describe('Neo home save remote sync', () => {
       `Neo-Confirmed-By: question ${question.question.id}`
     );
   });
+  test('uses origin despite a different configured push default', async () => {
+    const elsewhere = join(fixture, 'elsewhere.git');
+    await git(fixture, 'init', '--bare', '--quiet', '--initial-branch=main', elsewhere);
+    await git(root, 'remote', 'add', 'elsewhere', elsewhere);
+    await git(root, 'config', 'remote.pushDefault', 'elsewhere');
+    const saved = await call('neo.home.save', input);
+    expect(saved.ok).toBe(true);
+    expect(await git(remote, 'rev-parse', 'main')).toBe(saved.commit);
+    expect((await runGit(elsewhere, ['show-ref', '--heads'])).text).toBe('');
+  });
+  test('refuses an origin without an upstream before writing', async () => {
+    await git(root, 'branch', '--unset-upstream');
+    const head = await git(root, 'rev-parse', 'HEAD');
+    expect(await call('neo.home.save', input)).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('sync_failed'),
+    });
+    expect(await git(root, 'rev-parse', 'HEAD')).toBe(head);
+    expect(await readFile(join(root, input.path)).catch(() => null)).toBeNull();
+  });
   test('keeps homes without an origin local', async () => {
     await git(root, 'remote', 'remove', 'origin');
     const saved = await call('neo.home.save', input);

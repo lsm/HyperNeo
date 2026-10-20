@@ -33,7 +33,16 @@ const saveEvidence = () => writeFile(`${run}/evidence/neo-home-sync-${phase}.jso
 await saveEvidence();
 if (phase === 'before') throw new Error('Observed baseline: local save neither pulled peer changes nor pushed its commit');
 if (!saved.ok || evidence.localHead !== evidence.remoteHead || evidence.peerContent !== 'Peer progress.\n' || evidence.remoteContent !== input.content.trim()) throw new Error('Configured remote save did not synchronize');
-await commit(root, 'contested.md', 'Base.\n'); await git(root, 'push'); await git(peer, 'pull', '--rebase');
+const elsewhere = `${run}/elsewhere.git`;
+await git(run, 'init', '--bare', '--quiet', '--initial-branch=main', elsewhere);
+await git(root, 'remote', 'add', 'elsewhere', elsewhere);
+await git(root, 'config', 'remote.pushDefault', 'elsewhere');
+const routed = await rpc({ ...input, path: 'routed.md' });
+const routedOrigin = await git(remote, 'rev-parse', 'main');
+const unrelatedHeads = await git(elsewhere, 'show-ref', '--heads').catch(() => '');
+Object.assign(evidence, { routed, routedOrigin, unrelatedHeads }); await saveEvidence();
+if (!routed.ok || routed.commit !== routedOrigin || unrelatedHeads) throw new Error('Save used the unrelated push default instead of origin');
+await commit(root, 'contested.md', 'Base.\n'); await git(root, 'push', 'origin', 'main'); await git(peer, 'pull', '--rebase');
 await commit(root, 'contested.md', 'Local choice.\n'); const beforeConflict = await git(root, 'rev-parse', 'HEAD');
 await commit(peer, 'contested.md', 'Remote choice.\n'); await git(peer, 'push');
 const conflict = await rpc({ ...input, path: 'waiting.md' });
@@ -44,7 +53,7 @@ const pendingFileAbsent = await readFile(`${root}/waiting.md`).then(() => false,
 const conflictStatus = await git(root, 'status', '--porcelain');
 Object.assign(evidence, { conflict, beforeConflict, afterConflict, localChoice, remoteChoice, pendingFileAbsent, conflictStatus }); await saveEvidence();
 if (conflict.ok || !conflict.reason?.includes('conflict') || beforeConflict !== afterConflict || localChoice !== 'Local choice.\n' || remoteChoice !== 'Remote choice.' || !pendingFileAbsent || conflictStatus) throw new Error('Conflict changed the local file or left the rebase dirty');
-await git(root, 'merge', '-s', 'ours', 'origin/main', '-m', 'Synthetic human resolution keeps local choice'); await git(root, 'push');
+await git(root, 'merge', '-s', 'ours', 'origin/main', '-m', 'Synthetic human resolution keeps local choice'); await git(root, 'push', 'origin', 'main');
 await git(root, 'config', 'remote.origin.receivepack', '/usr/bin/false');
 const next = { ...input, path: 'later.md' }; const pushFailed = await rpc(next);
 const retainedCommit = await git(root, 'rev-parse', 'HEAD'); const retainedCount = await git(root, 'rev-list', '--count', 'HEAD');
