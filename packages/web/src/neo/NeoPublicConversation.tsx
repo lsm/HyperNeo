@@ -886,7 +886,7 @@ export function NeoPublicConversation({
             key={entry.key}
             entryKey={entry.key}
             wake={entry.wake}
-            sessionId={`neo:${conversation.conversationId}`}
+            conversationId={conversation.conversationId!}
             onOpenWork={onOpenWork}
           >
             {conversation.entries

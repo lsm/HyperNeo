@@ -845,7 +845,8 @@ adds its journey here.
     `NODE_PATH=<directory containing playwright> node .claude/skills/verify/neo-wake-web.mjs <port> "$RUN"`.
     Like journey 18, `VERIFY_BROWSER` can select a headless Chrome executable.
     `/neo` must show closed clock/title/summary/time rows; the active one reads
-    Working. Attributed publication detail appears once, inside its wake. Opening
+    Working. Attributed publication detail appears once, inside its wake. The publication link must resolve to its rendered article (recorded in
+    `neo-wake-{desktop,mobile}-publication-link.json`). Opening
     the row exposes labelled additions; following its question link reveals the
     original question in Your work on desktop and in the mobile sheet. A removed
     todo link opens its owning ask’s Details before scrolling to the retained row. Questions

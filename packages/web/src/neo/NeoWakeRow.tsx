@@ -8,13 +8,13 @@ import { neoMessageAnchor } from './reply-context.ts';
 export function NeoWakeRow({
   entryKey,
   wake,
-  sessionId,
+  conversationId,
   onOpenWork,
   children,
 }: {
   entryKey: string;
   wake: NeoConversationWake;
-  sessionId: string;
+  conversationId: string;
   onOpenWork?: (anchor: string) => void;
   children?: ComponentChildren;
 }) {
@@ -48,7 +48,7 @@ export function NeoWakeRow({
               item.kind === 'journal'
                 ? null
                 : item.kind === 'publication'
-                  ? neoMessageAnchor(sessionId, item.id)
+                  ? neoMessageAnchor(conversationId, `publication-${item.id}`)
                   : `neo-ref-${item.kind}-${item.id}`;
             return (
               <li key={`${item.kind}:${item.id}`}>
