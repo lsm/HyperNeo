@@ -1,5 +1,6 @@
 import type { MessageHub, MessageImage } from '@hyperneo/shared';
 import type { NeoReplyTo } from '@hyperneo/shared/types/neo-ask';
+import { neoReplyExcerpt } from '@hyperneo/shared/types/neo-ask';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import { generateUUID } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -135,7 +136,7 @@ export function neoQuoteExcerpt(text: string): string {
 }
 
 export function neoPublicationQuoteExcerpt(publication: Pick<NeoPublication, 'shortText'>): string {
-  return neoQuoteExcerpt(publication.shortText);
+  return neoReplyExcerpt(publication.shortText);
 }
 
 export function neoDraftPayload(submission: Submission, thumbnails: readonly NeoThumbnail[] = []) {

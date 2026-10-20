@@ -503,13 +503,13 @@ describe('Neo quote reply through live chat and durable intake', () => {
     expect(calls()).toHaveLength(0);
   });
 
-  it('renders a two-line quote preview as literal text, capped like iOS', async () => {
+  it('renders a two-line summary preview as literal text within the stored excerpt limit', async () => {
     const publication = conversation.entries[1];
     if (publication.kind !== 'publication') throw new Error('Expected publication fixture');
     const previous = publication.publication;
     publication.publication = {
       ...previous,
-      shortText: '<img src=x onerror=alert(1)> **literal**\r' + 'a'.repeat(4500),
+      shortText: '<img src=x onerror=alert(1)> **literal**\r' + 'a'.repeat(1500),
     };
     try {
       await open();
@@ -518,7 +518,7 @@ describe('Neo quote reply through live chat and durable intake', () => {
       const region = screen.getByRole('region', { name: /^回复Neo/ });
       expect(region.textContent).toContain('Neo');
       const preview = region.querySelector('.line-clamp-2')!;
-      expect(Array.from(preview.textContent!)).toHaveLength(501);
+      expect(Array.from(preview.textContent!)).toHaveLength(301);
       expect(preview.textContent).toContain('<img src=x onerror=alert(1)> **literal**\n');
       expect(preview.textContent!.endsWith('…')).toBe(true);
       expect(preview.querySelector('img')).toBeNull();

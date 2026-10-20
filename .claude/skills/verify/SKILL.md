@@ -246,6 +246,10 @@ adds its journey here.
     pass an evidence name as the third argument. Keep the launch shell alive
     while driving the UI if your command executor stops background children
     when the launching command exits.
+    Repeat with `VERIFY_QUOTE_LONG=1` to seed a 350-character summary: composer
+    and durable quote must both show the stored 300-character excerpt plus an
+    ellipsis. The daemon and web share this excerpt rule; detailed message text
+    remains available through Details and Copy.
 
 ## Evidence
 
@@ -264,5 +268,6 @@ kill "$(cat "$RUN/asr-stub.pid")"   # only if journey 2 started it
 .claude/skills/verify/stop.sh "$RUN"
 ```
 
-`stop.sh` stops only the daemon and mock it started, by their pid files. Close
+`stop.sh` stops only the daemon and mock it started, by their pid files, and
+waits for both to exit before the run directory can be reused. Close
 the browser tab you opened. Delete `$RUN` once the evidence is in the PR.

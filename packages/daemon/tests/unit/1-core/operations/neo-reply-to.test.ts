@@ -304,6 +304,20 @@ describe('neo.message.send replyTo', () => {
 describe('neoReplySnapshot', () => {
   const ref = { kind: 'message' as const, id: 'm' };
   const ask = (content: unknown) => ({ content }) as never;
+  test.each([300, 301, 500])(
+    'keeps the stored excerpt limit for a %s-character publication summary',
+    (length) => {
+      const expected = length === 300 ? 'a'.repeat(300) : `${'a'.repeat(300)}…`;
+      expect(
+        neoReplySnapshot(
+          ref,
+          { shortText: 'a'.repeat(length), fullText: 'Detailed reply' } as never,
+          null,
+          null
+        )
+      ).toEqual({ ...ref, author: 'neo', excerpt: expected });
+    }
+  );
   test('quotes the first 300 characters of the original and keeps what a retry stored', () => {
     const long = `${'a'.repeat(299)} tail`;
     expect(neoReplySnapshot(ref, null, ask([{ type: 'text', text: long }]), null)).toEqual({
