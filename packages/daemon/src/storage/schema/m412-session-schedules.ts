@@ -26,5 +26,8 @@ export function runMigration412(db: Database): void {
     updated_at INTEGER NOT NULL,
     UNIQUE (source_kind, source_id)
   );
-  CREATE INDEX IF NOT EXISTS idx_session_schedules_status ON session_schedules(status)`);
+  CREATE INDEX IF NOT EXISTS idx_session_schedules_due
+    ON session_schedules(status, next_run_at);
+  CREATE INDEX IF NOT EXISTS idx_session_schedules_target
+    ON session_schedules(json_extract(target, '$.adapter'), json_extract(target, '$.id'))`);
 }
