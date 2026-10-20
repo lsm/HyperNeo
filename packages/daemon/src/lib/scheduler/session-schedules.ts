@@ -50,6 +50,14 @@ export class SessionScheduler {
     private readonly jobQueue: JobQueueRepository
   ) {
     this.repo = new SessionScheduleRepository(db);
+    this.registerSource({
+      kind: 'reminder',
+      facts: async (id) => {
+        const row = this.repo.getBySource('reminder', id);
+        return row ? { digest: 'reminder', summary: row.note ?? '' } : null;
+      },
+      message: (_id, change) => change.summary,
+    });
   }
 
   registerSource(source: ScheduleSource): void {
@@ -95,6 +103,25 @@ export class SessionScheduler {
   delete(schedule: SessionSchedule): boolean {
     if (schedule.pendingJobId) this.jobQueue.deleteJob(schedule.pendingJobId);
     return this.repo.delete(schedule.id, schedule.pendingJobId);
+  }
+
+  finishRun(
+    schedule: SessionSchedule,
+    outcome: string,
+    digest = schedule.factsDigest,
+    messageId = schedule.lastMessageId,
+    now = Date.now()
+  ): boolean {
+    return this.db.transaction(() => {
+      if (!this.repo.recordOutcome(schedule, outcome, digest, messageId)) return false;
+      const next = outcome === 'source_gone' ? null : nextScheduleRun(schedule.cadence, now);
+      if (next === null)
+        return this.repo.setStatus(schedule.id, 'active', 'done', schedule.pendingJobId, null);
+      const jobId = this.enqueue(schedule.id, next);
+      if (this.repo.setPending(schedule.id, schedule.pendingJobId, jobId, next)) return true;
+      this.jobQueue.deleteJob(jobId);
+      return false;
+    })();
   }
 
   recover(now = Date.now()): number {

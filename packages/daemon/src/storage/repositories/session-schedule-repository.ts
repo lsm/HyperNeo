@@ -139,6 +139,40 @@ export class SessionScheduleRepository {
     ).map(toSchedule);
   }
 
+  countDue(id: string, jobId: string, dueAt: number, now: number): SessionSchedule | null {
+    this.db
+      .prepare(`UPDATE session_schedules SET due_count = due_count + 1,
+      last_run_at = ?, updated_at = ? WHERE id = ? AND status = 'active'
+      AND pending_job_id = ? AND (last_run_at IS NULL OR last_run_at < ?)`)
+      .run(now, now, id, jobId, dueAt);
+    const row = this.get(id);
+    return row?.status === 'active' && row.pendingJobId === jobId ? row : null;
+  }
+
+  recordOutcome(
+    schedule: SessionSchedule,
+    outcome: string,
+    digest: string | null,
+    messageId: string | null
+  ): boolean {
+    return (
+      this.db
+        .prepare(`UPDATE session_schedules SET last_outcome = ?,
+      last_skip_reason = ?, facts_digest = ?, last_message_id = ?,
+      due_count = ?, updated_at = ? WHERE id = ? AND status = 'active' AND pending_job_id = ?`)
+        .run(
+          outcome,
+          outcome.startsWith('skipped_') ? outcome.slice(8) : null,
+          digest,
+          messageId,
+          outcome === 'fired' ? 0 : schedule.dueCount,
+          Date.now(),
+          schedule.id,
+          schedule.pendingJobId
+        ).changes > 0
+    );
+  }
+
   setPending(id: string, expectedJobId: string | null, jobId: string, nextRunAt: number): boolean {
     return (
       this.db
