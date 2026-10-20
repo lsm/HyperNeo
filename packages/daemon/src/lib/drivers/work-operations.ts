@@ -30,7 +30,7 @@ import {
   type WorkRejection,
 } from './types.ts';
 
-type RoutedVerb = 'start' | 'send' | 'queue' | 'withdraw' | 'status' | 'stop' | 'archive';
+type RoutedVerb = 'start' | 'send' | 'steer' | 'queue' | 'withdraw' | 'status' | 'stop' | 'archive';
 type Route<Verb extends RoutedVerb> =
   | { daemon: string }
   | {
@@ -78,6 +78,7 @@ export const StartWorkInputSchema = z.object({
 export const SendWorkInputSchema = z.object({
   ref: WorkRefSchema,
   message: MessageSchema,
+  mode: z.enum(['auto', 'steer', 'queue']).optional(),
   from: ForwardedOriginSchema,
 });
 export const WorkRefInputSchema = z.object({ ref: WorkRefSchema });
@@ -281,7 +282,11 @@ export async function startWork(
 }
 
 export function routeSend(input: SendInput, deps: WorkVerbDeps): Gate<Route<'send'>> {
-  return pickRoute('send', input.ref, deps.adapters());
+  return pickRoute(
+    input.mode && input.mode !== 'auto' ? input.mode : 'send',
+    input.ref,
+    deps.adapters()
+  );
 }
 
 export async function sendWork(
@@ -298,6 +303,7 @@ export async function sendWork(
     {
       ref: localRef(input.ref),
       message: input.message,
+      ...(input.mode ? { mode: input.mode } : {}),
       from: qualifyRemoteOrigin(from, deps.daemonName),
     },
     SendWorkResultSchema,
@@ -518,7 +524,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.send',
       description:
-        'Send a message to existing work by the ref from work.find, work.start or work.status. Codex first steers into the running turn via its Desktop owner, or app-server when Desktop does not own it; steeredIntoTurnId confirms that turn. When steering is unavailable, it queues instead and returns queuedSubmissionId. Use work.queue to explicitly wait for the next turn. An uncertain steer is not retried or also queued. delivered false normally means accepted and queued behind the current turn; with unconfirmed true, only the transport write succeeded and peer acceptance is unknown. Optional receipt contains opaque executionId and inputId for that submission, scoped to the requested work ref and its daemon; it is not proof of completion or result attribution. ok false names why it was not accepted: not_found, not_open (archived or ended work), not_delivered, claude_cli_login_expired (tell the user to run `claude auth login`; retrying will not help), unsupported or unreachable. Only Neo or the user can change work on another daemon; other agents get unsupported.',
+        'Send a message to existing work by the ref from work.find, work.start or work.status. For Codex, choose mode steer for instant feedback or a change of direction; it returns not_delivered with a reason if steering is unavailable, never queues. Choose mode queue for the next task after the current turn. Default mode auto preserves each adapter’s normal send behavior; on Codex it steers first and queues only when unavailable. Explicit steer and queue require those capabilities on the target adapter; otherwise they return unsupported without sending. HyperNeo sessions and Space agents support auto, not explicit steer; use auto for those targets. Other adapters retain their own steer and queue delivery semantics. Codex first steers into the running turn via its Desktop owner, or app-server when Desktop does not own it; steeredIntoTurnId confirms that turn. In Codex auto mode, when steering is unavailable, it queues instead and returns queuedSubmissionId. Use work.queue to explicitly wait for the next turn. An uncertain steer is not retried or also queued. delivered false normally means accepted and queued behind the current turn; with unconfirmed true, only the transport write succeeded and peer acceptance is unknown. Optional receipt contains opaque executionId and inputId for that submission, scoped to the requested work ref and its daemon; it is not proof of completion or result attribution. ok false names why it was not accepted: not_found, not_open (archived or ended work), not_delivered, claude_cli_login_expired (tell the user to run `claude auth login`; retrying will not help), unsupported or unreachable. Only Neo or the user can change work on another daemon; other agents get unsupported.',
       inputSchema: SendWorkInputSchema,
       resultSchema: SendWorkResultSchema,
       policy: { safetyClass: 'mutate' },

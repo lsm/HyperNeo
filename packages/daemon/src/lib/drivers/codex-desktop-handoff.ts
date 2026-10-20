@@ -1,7 +1,10 @@
+import { Logger } from '../logger.ts';
 import type { SpawnFn } from '../runtime-spawn/index.ts';
 import { type CodexDesktopIpc, withCodexDesktopIpc } from './codex-desktop-ipc.ts';
 import type { Result, WorkDelivery } from './types.ts';
 import { reject } from './work-operations.ts';
+
+const log = new Logger('codex-send');
 
 const TIMEOUT_MS = 30_000;
 
@@ -11,9 +14,18 @@ export async function steerCodexDesktopTurn(
   socketPath: string | undefined,
   threadId: string,
   text: string,
-  messageId: string
+  messageId: string,
+  mode: 'auto' | 'steer' = 'auto'
 ): Promise<CodexSendGate<'app-server' | 'queue'>> {
-  if (!socketPath) return { value: 'app-server' };
+  if (!socketPath) {
+    log.warn('work.send route', {
+      threadId,
+      messageId,
+      path: 'app-server',
+      reason: 'no_desktop_socket',
+    });
+    return { value: 'app-server' };
+  }
   let dispatched = false;
   try {
     return await withCodexDesktopIpc(socketPath, async ({ call }) => {
@@ -22,9 +34,16 @@ export async function steerCodexDesktopTurn(
         { hostId: 'local', conversationId: threadId },
         1
       );
-      if (owner.resultType === 'error' && owner.error === 'no-client-found')
+      log.warn('work.send owner discovery', {
+        threadId,
+        messageId,
+        result: owner.resultType,
+        ownerClientId: owner.handledByClientId,
+        reason: owner.error,
+      });
+      if (owner.resultType !== 'success' || !owner.handledByClientId)
         return { value: 'app-server' };
-      if (owner.resultType !== 'success' || !owner.handledByClientId) return { value: 'queue' };
+      log.warn('work.send route', { threadId, messageId, path: 'desktop-steer' });
       dispatched = true;
       const response = await call(
         'thread-follower-steer-turn',
@@ -47,9 +66,25 @@ export async function steerCodexDesktopTurn(
         /no-client-found|active turn already ended|NoActiveTurn|activeTurnNotSteerable/.test(
           response.error ?? ''
         )
-      )
-        return { value: 'queue' };
+      ) {
+        log.warn('work.send route', {
+          threadId,
+          messageId,
+          path: mode === 'steer' ? 'not_delivered' : 'queue',
+          reason: response.error,
+        });
+        return mode === 'steer'
+          ? { reason: reject('not_delivered', response.error ?? 'Desktop refused steering.') }
+          : { value: 'queue' };
+      }
       const turnId = response.result?.result?.turnId;
+      log.warn('work.send desktop result', {
+        threadId,
+        messageId,
+        result: response.resultType,
+        turnId,
+        reason: response.error,
+      });
       return response.resultType === 'success' && turnId
         ? { reason: { ok: true, value: { delivered: true, steeredIntoTurnId: turnId } } }
         : {
@@ -61,8 +96,13 @@ export async function steerCodexDesktopTurn(
           };
     });
   } catch (error) {
-    if (!dispatched)
-      return { value: /ENOENT|ECONNREFUSED/.test(String(error)) ? 'app-server' : 'queue' };
+    log.warn('work.send desktop transport failed', {
+      threadId,
+      messageId,
+      dispatched,
+      reason: String(error),
+    });
+    if (!dispatched) return { value: 'app-server' };
     return {
       reason: reject(
         'not_delivered',
