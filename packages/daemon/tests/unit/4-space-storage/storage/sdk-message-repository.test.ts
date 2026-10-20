@@ -624,6 +624,7 @@ describe('SDKMessageRepository', () => {
         taskId,
         options.consumedSeq ?? null
       );
+      fillSdkMessageFixtureColumns(db);
     }
 
     it('requires consumed_seq for matching task input evidence', () => {
@@ -694,6 +695,7 @@ describe('SDKMessageRepository', () => {
         JSON.stringify({ type: 'hyperneo_action', action: 'sdk_resume_choice', resolved }),
         new Date().toISOString()
       );
+      fillSdkMessageFixtureColumns(db);
     }
 
     it('returns false when no card exists (bun:sqlite .get() yields null, not undefined)', () => {
