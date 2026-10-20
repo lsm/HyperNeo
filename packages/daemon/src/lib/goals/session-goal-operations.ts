@@ -101,6 +101,12 @@ export function resolveGoalOwner(
     : refuse('owner_denied: a session acts only on its own goals.');
 }
 
+export function requireGoalChange(goal: SessionGoal, patch: SessionGoalPatch): Gate<SessionGoal> {
+  return Object.keys(patch).length
+    ? { value: goal }
+    : refuse('nothing_to_update: name at least one field to change.');
+}
+
 export function requireKnownOwner(owner: string, known: boolean): Gate<string> {
   return known ? { value: owner } : refuse(`owner_unknown: no session ${owner}.`);
 }
@@ -185,6 +191,11 @@ export function createSessionGoalOperations({
     .endAsync('outcome');
 
   const update = owned(superpipe({})('goal.session.update') as PipelineAPI)
+    .pipe(
+      (goal: SessionGoal, input: z.infer<typeof Update>) => requireGoalChange(goal, patchOf(input)),
+      ['outcome', 'input'],
+      'result:outcome'
+    )
     .pipe(
       (goal: SessionGoal, input: z.infer<typeof Update>) =>
         requireGoalDoneTest(goal, { ...goal, ...patchOf(input) }),

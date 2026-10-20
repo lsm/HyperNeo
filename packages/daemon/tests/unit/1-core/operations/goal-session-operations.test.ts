@@ -95,6 +95,10 @@ describe('session-owned goals', () => {
   test('completing a goal records it, closes it from the default list, and keeps the done-test rule', async () => {
     const { db, call, audited } = setup();
     const created = await call('goal.session.create', { title: 'Ship', doneTest: 'Released' });
+    expect(await call('goal.session.update', { goalId: created.goal.id })).toEqual({
+      accepted: false,
+      reason: 'nothing_to_update: name at least one field to change.',
+    });
     expect(
       await call('goal.session.update', { goalId: created.goal.id, doneTest: null })
     ).toMatchObject({ reason: expect.stringContaining('done_test_required') });
