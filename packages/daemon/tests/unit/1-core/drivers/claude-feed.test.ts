@@ -13,7 +13,7 @@ import {
 } from '../../../../src/lib/drivers/claude-feed';
 import {
   feedWorkFiles,
-  listFeedFiles,
+  listFeedFilesAsync,
   pendingFeedPaths,
   pruneVanishedFeeds,
 } from '../../../../src/lib/drivers/work-feed';
@@ -152,7 +152,7 @@ describe('Claude transcript feed', () => {
       join(project, 'cli-1', 'subagents', 'agent-1.jsonl'),
       `${line({ type: 'user', uuid: 's1', message: { content: 'sub' } })}\n`
     );
-    const files = listFeedFiles(root, 0, 2);
+    const files = await listFeedFilesAsync(root, 0, 2);
     expect(files.map((file) => file.path.split('/').pop()).sort()).toEqual([
       'cli-1.jsonl',
       'cli-2.jsonl',
@@ -182,7 +182,7 @@ describe('Claude transcript feed', () => {
     const deactivate = activity.activate();
     let recorded: ReturnType<EventLoopActivity['drain']>;
     try {
-      await feedWorkFiles(db, listFeedFiles(root, 0, 2), claudeFeedSource(new Set()));
+      await feedWorkFiles(db, await listFeedFilesAsync(root, 0, 2), claudeFeedSource(new Set()));
       recorded = activity.drain();
     } finally {
       deactivate();
