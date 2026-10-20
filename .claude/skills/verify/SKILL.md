@@ -524,6 +524,15 @@ adds its journey here.
     created branch. Broad searches that could include ignored home documents are
     refused; narrow the path or glob to curated documents. Own coordinator notes
     retain their existing access.
+    Native reads outside the own coordinator folder stay closed while `.git` is
+    absent, including after a refused init. On a separate fresh isolated daemon
+    with `neo-home-api.ts`, run
+    `bun .claude/skills/verify/neo-home-uninitialized.ts <port> "$RUN"` without
+    running the initialization helpers above first. It seeds a direction file and
+    ignored private draft, observes `confirmation_required`, then drives native
+    Read/Grep/Glob through a real SDK turn. End state: all three calls denied,
+    `.git` still absent, direction and ignore files unchanged. Evidence:
+    `evidence/neo-home-uninitialized.json`. Own coordinator notes retain access.
     This observes real SDK tool execution with a mocked model; GUI rendering is
     not covered. Stop the isolated daemon and mock as in Cleanup.
 

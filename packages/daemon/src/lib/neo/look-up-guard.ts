@@ -109,7 +109,7 @@ interface LookUpScope {
 }
 
 interface LookUpPathFacts {
-  ignoredHome?: boolean;
+  privateHome?: boolean;
   realPath(path: string): string;
   exists(path: string): boolean;
   readText?(path: string): string | null;
@@ -155,7 +155,7 @@ function readLookUpPathFacts(): LookUpPathFacts {
   };
 }
 
-async function readHomeIgnoreFacts(
+async function readHomePrivacyFacts(
   tool: string,
   input: Record<string, unknown>,
   scope: LookUpScope,
@@ -167,8 +167,8 @@ async function readHomeIgnoreFacts(
   const target = facts.realPath(
     resolvePath(text(tool === 'Read' ? 'file_path' : 'path') || scope.cwd, scope)
   );
-  if (!within(target, home) || ownPath(target, scope, facts) || !facts.exists(join(home, '.git')))
-    return false;
+  if (!within(target, home) || ownPath(target, scope, facts)) return false;
+  if (!facts.exists(join(home, '.git'))) return true;
   const git = async (...args: string[]) => {
     const child = spawnProcess(['git', '--no-optional-locks', '-C', home, ...args], {
       stdout: 'pipe',
@@ -1080,8 +1080,8 @@ function readDenial(
   scope: LookUpScope,
   facts: LookUpPathFacts
 ): string | null {
-  if (facts.ignoredHome)
-    return 'that path or search includes git-ignored home documents; narrow the search';
+  if (facts.privateHome)
+    return 'that path or search is private or the home repository is not initialized; initialize it or narrow the search';
   scope = { ...scope, readHome: true };
   const text = (key: string) => (typeof input[key] === 'string' ? (input[key] as string) : '');
   if (tool === 'Read')
@@ -1190,7 +1190,7 @@ export function neoToolGuard(scope: Omit<LookUpScope, 'cwd'>): HookCallback {
     const toolInput = (pre.tool_input ?? {}) as Record<string, unknown>;
     const here = { ...scope, cwd: pre.cwd };
     const facts = readLookUpPathFacts();
-    facts.ignoredHome = await readHomeIgnoreFacts(pre.tool_name, toolInput, here, facts);
+    facts.privateHome = await readHomePrivacyFacts(pre.tool_name, toolInput, here, facts);
     const verdict = decideNeoTool(pre.tool_name, toolInput, here, facts);
     if (verdict.kind === 'deny')
       return {

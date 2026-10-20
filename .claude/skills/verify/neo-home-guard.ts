@@ -12,6 +12,9 @@ const root = join(dataDir, 'Neo');
 const cwd = join(root, '.coordinators', 'verify');
 await mkdir(cwd, { recursive: true });
 await writeFile(join(root, 'README.md'), 'Curated direction\n');
+const initialized = Bun.spawn(['git', 'init', '--quiet', root], { env: { HOME: home, PATH: '/usr/bin:/bin', NODE_ENV: 'test' }, stdout: 'pipe', stderr: 'inherit' });
+if (await initialized.exited) throw new Error('Synthetic home git init failed');
+
 const guard = neoToolGuard({ home, dataDir, own: [cwd] });
 const call = async (tool_name: string, tool_input: Record<string, unknown>) => guard({ hook_event_name: 'PreToolUse', tool_name, tool_input, cwd, session_id: 'verify', tool_use_id: 'verify', transcript_path: join(cwd, 'transcript') } as HookInput, 'verify', { signal: new AbortController().signal });
 const read = await call('Read', { file_path: join(root, 'README.md') });
