@@ -35,6 +35,16 @@ const direction = await readFile(`${root}/direction.md`, 'utf8');
 const author = await git('log', '-1', '--format=%an <%ae>');
 await git('update-ref', '-d', 'HEAD');
 await git('read-tree', '--empty');
+if (mode === 'interrupted') {
+  await git('add', '--', 'README.md', '.gitignore', 'direction.md');
+  const staged = await git('diff', '--cached', '--name-only');
+  const recovered = await rpc('neo.home.init');
+  const evidence = { mode, staged, recovered, status: await git('status', '--porcelain') };
+  await writeFile(`${run}/evidence/neo-home-setup.json`, JSON.stringify(evidence, null, 2));
+  if (!recovered.ok || evidence.status || await git('rev-list', '--count', 'HEAD') !== '1') throw new Error('Interrupted bootstrap did not recover');
+  console.log('PASS: RPC recovers an unborn repository with exactly the staged bootstrap paths, preserving its files.');
+  process.exit(0);
+}
 await git('config', 'user.name', '');
 await git('config', 'user.email', '');
 if (mode === 'cleanup-failure') await writeFile(`${run}/bin/git`, `#!/bin/bash

@@ -117,6 +117,17 @@ describe('Neo home setup', () => {
       expect(await git('rev-list', '--count', 'HEAD')).toBe('1');
     }
   );
+  test('recovers the staged bootstrap after service interruption', async () => {
+    await writeFile(join(root, 'README.md'), 'Preserved home introduction.');
+    await writeFile(join(root, 'direction.md'), '');
+    await writeFile(join(root, '.gitignore'), '.coordinators/\n');
+    await git('add', '--', 'README.md', '.gitignore', 'direction.md');
+    home = new NeoHomeRepository(root, repo);
+    expect(await init()).toMatchObject({ ok: true });
+    expect(await git('rev-list', '--count', 'HEAD')).toBe('1');
+    expect(await git('status', '--porcelain')).toBe('');
+    expect(await readFile(join(root, 'README.md'), 'utf8')).toBe('Preserved home introduction.');
+  });
   test('refuses bootstrap when pre-existing changes are staged', async () => {
     await git('init', '--quiet');
     await writeFile(join(root, 'human.md'), 'Human draft.');
