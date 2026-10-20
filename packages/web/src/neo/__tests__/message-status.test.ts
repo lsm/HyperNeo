@@ -128,7 +128,37 @@ describe('projectNeoMessageStatuses', () => {
   });
 });
 
-describe('neoRepliedAsks', () => {
+describe('Neo answer attribution', () => {
+  it('an explicit human trigger answers its chosen input, not the turn producer as well', () => {
+    const selected = {
+      ...reply('B'),
+      publication: {
+        askOrigin: { sessionId: 'neo', messageId: 'B' },
+        producerInput: { sessionId: 'neo', messageId: 'A' },
+        triggerId: 'human:B',
+      },
+    } as unknown as NeoPublicEntry;
+    expect(
+      read(projectNeoMessageStatuses([ask('A'), ask('B'), selected], 'inactive', idle, live))
+    ).toEqual({ A: 'received', B: 'answered' });
+  });
+  it('a saved selected-answer revision does not answer its different original producer', () => {
+    const selected = {
+      ...reply('B'),
+      publication: {
+        askOrigin: { sessionId: 'neo', messageId: 'B' },
+        producerInput: { sessionId: 'neo', messageId: 'A' },
+        triggerId: 'human:B',
+        revisions: [
+          {
+            producerInput: { sessionId: 'neo', messageId: 'A' },
+            askOrigin: { sessionId: 'neo', messageId: 'B' },
+          },
+        ],
+      },
+    } as unknown as NeoPublicEntry;
+    expect([...neoRepliedAsks([ask('A'), ask('B'), selected])]).toEqual(['B']);
+  });
   it('recognizes every attributed reply', () => {
     expect([...neoRepliedAsks([ask('A'), reply('A'), ask('B'), reply('B')])]).toEqual(['A', 'B']);
   });

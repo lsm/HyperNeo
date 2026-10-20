@@ -2275,7 +2275,7 @@ export class QueryRunner {
           content: (message.message?.content ?? '') as unknown as string | MessageContent[],
           internal: isInternal,
         });
-      yield message;
+      yield holderTurn?.inputEnvelope(message) ?? message;
       this.streamSilence = noteStreamFed(this.streamSilence, Date.now());
       onSent();
       if (holderTurn) {
@@ -2300,7 +2300,7 @@ export class QueryRunner {
       this.ctx.markHolderInputConsumed?.(message.uuid);
       turn.noteSteered(message.uuid);
       fed.push(message.uuid);
-      yield message;
+      yield turn.inputEnvelope(message);
       this.streamSilence = noteStreamFed(this.streamSilence, Date.now());
       onSent();
     }
