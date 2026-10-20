@@ -356,7 +356,8 @@ export class NeoAskTodoRepository {
         )
         .run(JSON.stringify(answer), by, now, question.id).changes;
       if (answered) this.releaseStartTodos(question.id, now);
-      if (answered && question.kind === 'start') this.retireCoveredStartQuestions(question);
+      if (answered && question.kind === 'start' && Array.isArray(answer))
+        this.retireCoveredStartQuestions(question);
       return answered;
     })();
     if (!changed) return null;

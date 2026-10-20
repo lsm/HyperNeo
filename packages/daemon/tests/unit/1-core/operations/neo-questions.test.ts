@@ -135,6 +135,14 @@ describe('neo.question operations', () => {
     expect(store.getQuestion(other.id)).toMatchObject({ state: 'retired', replacedBy: second.id });
   });
 
+  test('a chat reply to a start question starts nothing, so its duplicate stays open', async () => {
+    const { store, asked, fix, rows } = setup();
+    const first = await asked({ kind: 'start', text: 'Start these 2?', todos: [fix.id, rows.id] });
+    const second = await asked({ kind: 'start', text: 'Build it?', todos: [fix.id, rows.id] });
+    store.answerQuestion(second, 'not yet', 'chat', 3);
+    expect(store.getQuestion(first.id)?.state).toBe('open');
+  });
+
   test('a start question that covers todos the answer did not is left open', async () => {
     const { store, call, asked, fix, rows } = setup();
     const wider = await asked({ kind: 'start', text: 'Start these 2?', todos: [fix.id, rows.id] });
