@@ -15,12 +15,12 @@ const deadline = Date.now() + 45000;
 let results: { tool_use_id: string; is_error?: boolean; content: unknown }[] = [];
 while (Date.now() < deadline) {
   results = JSON.parse(await readFile(`${run}/evidence/sdk-tool-results.json`, 'utf8').catch(() => '[]'));
-  if (results.length >= 3) break;
+  if (results.length >= 7) break;
   await Bun.sleep(500);
 }
 const root = `${run}/data/Neo`;
 const fileExists = await access(`${root}/sdk-should-not-exist.md`).then(() => true, () => false);
-const git = Bun.spawn(['git', 'branch', '--list', 'sdk-should-not-exist'], { cwd: root, env: { HOME: `${run}/home`, PATH: '/usr/bin:/bin', NODE_ENV: 'test' }, stdout: 'pipe', stderr: 'inherit' });
+const git = Bun.spawn(['git', 'branch', '--list', 'sdk-should-not-exist', 'sdk-absolute-should-not-exist', 'sdk-env-should-not-exist'], { cwd: root, env: { HOME: `${run}/home`, PATH: '/usr/bin:/bin', NODE_ENV: 'test' }, stdout: 'pipe', stderr: 'inherit' });
 const branch = (await new Response(git.stdout).text()).trim();
 if (await git.exited) throw new Error('git branch check failed');
 const evidence = { sessionId: opened.sessionId, results, fileExists, branch };
@@ -29,5 +29,6 @@ console.log(JSON.stringify(evidence, null, 2));
 const read = results.find((r) => r.tool_use_id === 'toolu_home_read');
 const redirect = results.find((r) => r.tool_use_id === 'toolu_home_redirect');
 const mutation = results.find((r) => r.tool_use_id === 'toolu_home_git');
-if (!read || read.is_error || !JSON.stringify(read.content).includes('Curated direction') || !redirect?.is_error || !mutation?.is_error || fileExists || branch) throw new Error('SDK home guard journey failed');
-console.log('PASS: real Neo SDK turn read the home document and refused redirect/git mutation.');
+const additionalDenials = ['toolu_home_git_absolute', 'toolu_home_git_env', 'toolu_home_grep_git', 'toolu_home_grep_coordinators'];
+if (!read || read.is_error || !JSON.stringify(read.content).includes('Curated direction') || !redirect?.is_error || !mutation?.is_error || additionalDenials.some((id) => !results.find((result) => result.tool_use_id === id)?.is_error) || fileExists || branch) throw new Error('SDK home guard journey failed');
+console.log('PASS: real Neo SDK turn read the home document and refused private Grep globs, redirects and plain/absolute/env git mutations.');

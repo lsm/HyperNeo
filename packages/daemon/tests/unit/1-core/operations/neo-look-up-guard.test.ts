@@ -509,9 +509,34 @@ describe('Neo home repository boundaries', () => {
     'git clean -fd',
     'git pull',
     'git branch new-direction',
+    '/usr/bin/git branch new-direction',
+    'env /usr/bin/git branch new-direction',
+    `cd /scratch/task && GIT_DIR=${root}/.git git branch new-direction`,
+    `cd /scratch/task && env GIT_DIR=${root}/.git git branch new-direction`,
     'git worktree add /scratch/other',
   ])('denies %s from the coordinator folder', (command) => {
     expect(decideNeoTool('Bash', { command }, home).kind).toBe('deny');
+  });
+  test.each(['**/.git/**', '**/.g?t/**', '.coordinators/**', '**/.coordinators/**'])(
+    'refuses Grep private glob %s even when listing filenames',
+    (glob) => {
+      expect(
+        decideNeoTool(
+          'Grep',
+          { path: root, pattern: '.', glob, output_mode: 'files_with_matches' },
+          home
+        ).kind
+      ).toBe('deny');
+    }
+  );
+  test('allows filename Grep of ordinary home documents mentioning git', () => {
+    expect(
+      decideNeoTool(
+        'Grep',
+        { path: root, pattern: '.git/config', glob: '**/*.md', output_mode: 'files_with_matches' },
+        home
+      ).kind
+    ).toBe('allow');
   });
   test.each([`${root}/.git/config`, `${root}/.coordinators/other/transcript.md`])(
     'keeps %s private',

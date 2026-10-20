@@ -17,6 +17,10 @@ createServer(async (req, res) => {
       { type: 'tool_use', id: 'toolu_home_read', name: 'Read', input: { file_path: '../../README.md' } },
       { type: 'tool_use', id: 'toolu_home_redirect', name: 'Bash', input: { command: 'echo changed > ../../sdk-should-not-exist.md' } },
       { type: 'tool_use', id: 'toolu_home_git', name: 'Bash', input: { command: 'git branch sdk-should-not-exist' } },
+      { type: 'tool_use', id: 'toolu_home_git_absolute', name: 'Bash', input: { command: '/usr/bin/git branch sdk-absolute-should-not-exist' } },
+      { type: 'tool_use', id: 'toolu_home_git_env', name: 'Bash', input: { command: `cd / && GIT_DIR=${join(process.env.HOME!, '..', 'data', 'Neo', '.git')} git branch sdk-env-should-not-exist` } },
+      { type: 'tool_use', id: 'toolu_home_grep_git', name: 'Grep', input: { path: '../..', pattern: '.', glob: '**/.git/**', output_mode: 'files_with_matches' } },
+      { type: 'tool_use', id: 'toolu_home_grep_coordinators', name: 'Grep', input: { path: '../..', pattern: '.', glob: '.coordinators/**', output_mode: 'files_with_matches' } },
     ];
   }
   const message = { id: `msg_${Date.now()}`, type: 'message', role: 'assistant', model: 'claude-sonnet-4-20250514', content, stop_reason: content[0].type === 'tool_use' ? 'tool_use' : 'end_turn', stop_sequence: null, usage: { input_tokens: 100, output_tokens: 30 } };
