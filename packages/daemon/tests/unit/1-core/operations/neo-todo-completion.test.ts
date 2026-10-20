@@ -299,6 +299,33 @@ describe('coding todo PR ownership through add and edit', () => {
       db.close();
     }
   });
+  test('concurrent URL additions to the same todo preserve every required PR', async () => {
+    const { db, store, call, runner, states } = setup();
+    try {
+      store.addTodo('same', 'ask', draft(), 1);
+      const results = await Promise.all([
+        call('neo.todo.edit', {
+          todoId: 'same',
+          addUrls: [url(1)],
+          done: 'met',
+          evidence: 'First merged',
+        }),
+        call('neo.todo.edit', { todoId: 'same', addUrls: [url(2)] }),
+      ]);
+      expect(results[1].ok).toBe(true);
+      expect(store.getTodo('same')?.check?.params.urls).toEqual([
+        url(1).toLowerCase(),
+        url(2).toLowerCase(),
+      ]);
+      await runner.checkNow(['same'], () => {});
+      expect(store.getTodo('same')?.state).not.toBe('done');
+      states.set(2, 'MERGED');
+      await runner.checkNow(['same'], () => {});
+      expect(store.getTodo('same')).toMatchObject({ state: 'done', evidence: '#1 #2 merged' });
+    } finally {
+      db.close();
+    }
+  });
   test('URL ownership is scoped to the ask', async () => {
     const { db, store, call } = setup();
     try {

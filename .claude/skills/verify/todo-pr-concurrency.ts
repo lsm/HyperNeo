@@ -1,0 +1,41 @@
+import { Database } from 'bun:sqlite';
+import { readFile, writeFile } from 'node:fs/promises';
+const [port, run] = process.argv.slice(2);
+if (!port || !run || port === '8399') throw new Error('usage: todo-pr-concurrency.ts <test-port> <run-dir>');
+const log = await readFile(`${run}/daemon.log`, 'utf8');
+if (!log.includes('HyperNeo Test Server') || !log.includes(`Database: ${run}/data/daemon.db`)) throw new Error('Not an isolated test daemon');
+const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+await new Promise<void>((resolve, reject) => { ws.onopen = () => resolve(); ws.onerror = reject; });
+const watchdog = setTimeout(() => { ws.close(); throw new Error('Concurrent RPC timeout'); }, 20000);
+const pending = new Map<string, (value: Record<string, unknown>) => void>();
+ws.onmessage = (event) => { const reply = JSON.parse(String(event.data)); const id = reply.requestId ?? reply.id; if (pending.has(id)) { pending.get(id)!(reply); pending.delete(id); } };
+function rpc(name: string, input: unknown) {
+  const id = crypto.randomUUID();
+  return new Promise<Record<string, unknown>>((resolve) => {
+    pending.set(id, resolve);
+    ws.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name, input }, timestamp: new Date().toISOString(), version: '1.0.0' }));
+  });
+}
+const opened = await rpc('neo.open', {});
+const data = opened.data as { value?: { sessionId?: string }; sessionId?: string };
+const sessionId = data.value?.sessionId ?? data.sessionId;
+if (!sessionId) throw new Error(JSON.stringify(opened));
+const db = new Database(`${run}/data/daemon.db`);
+const now = Date.now();
+const original = 'https://github.com/verify-test/demo/pull/14';
+await writeFile(`${run}/pr.json`, JSON.stringify({ url: original, number: 14, state: 'MERGED', createdAt: new Date(now).toISOString(), mergedAt: new Date(now).toISOString(), headRefOid: 'test', reviews: [], statusCheckRollup: [] }));
+db.query(`INSERT INTO neo_asks (id,session_id,title,request,status,created_at,updated_at) VALUES ('concurrent-ask',?,'Concurrent URLs','Keep every required PR','open',?,?)`).run(sessionId, now, now);
+db.query(`INSERT INTO neo_todos (id,ask_id,position,title,done_when,check_json,instruction,state,created_at,updated_at) VALUES ('concurrent-todo','concurrent-ask',0,'Land every PR','Merged',?,'Land every PR','todo',?,?)`).run(JSON.stringify({ pack: 'coding', kind: 'pr_merged', params: { urls: [original] } }), now, now);
+const urls = Array.from({ length: 20 }, (_, i) => `https://github.com/verify-test/demo/pull/${1000+i}`);
+const timeout = setTimeout(() => { ws.close(); throw new Error('Concurrent RPC timeout'); }, 20000);
+const completing = rpc('neo.todo.edit', { todoId: 'concurrent-todo', addUrls: [original], done: 'met', evidence: 'Original merged' });
+const replies = await Promise.all(urls.map((url) => rpc('neo.todo.edit', { todoId: 'concurrent-todo', addUrls: [url] })));
+const completion = await completing;
+clearTimeout(timeout); clearTimeout(watchdog);
+const row = db.query('SELECT check_json,done_when,state FROM neo_todos WHERE id = ?').get('concurrent-todo') as { check_json: string; done_when: string; state: string };
+const stored = JSON.parse(row.check_json).params.urls ?? [];
+const evidence = { completion, urls, stored, missing: urls.filter((url) => !stored.includes(url)), row, replies };
+await writeFile(`${run}/evidence/todo-pr-concurrency.json`, JSON.stringify(evidence, null, 2));
+ws.close(); db.close();
+if (replies.some((reply) => !JSON.stringify(reply).includes('"ok":true')) || evidence.missing.length || row.state === 'done') throw new Error(`Concurrent edits lost ${evidence.missing.length} PR URLs`);
+console.log('PASS: 20 concurrent RPC addUrls edits preserve every required PR while an overlapping completion waits on GitHub.');
