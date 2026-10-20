@@ -58,13 +58,15 @@ describe('SDK message derived metadata writes', () => {
       first_block_type: 'tool_result',
       has_tool_result: 1,
       tool_result_only: 1,
+      user_status_eligible: 0,
+      task_input_eligible: 0,
     });
     expect(deriveSdkMessageColumns({}, 'fallback').bg_task_id).toBe('fallback');
     expect(deriveSdkMessageColumns({ message: { content: 'plain string' } }).has_tool_result).toBe(
       0
     );
   });
-  test('all fifteen columns are available without moving the stored body', () => {
+  test('all seventeen columns are available without moving the stored body', () => {
     const names = (
       db.prepare("PRAGMA table_xinfo('sdk_messages')").all() as { name: string }[]
     ).map((row) => row.name);
@@ -86,6 +88,8 @@ describe('SDK message derived metadata writes', () => {
         'first_block_type',
         'has_tool_result',
         'tool_result_only',
+        'user_status_eligible',
+        'task_input_eligible',
       ])
     );
   });
@@ -301,7 +305,7 @@ describe('SDK message column backfill', () => {
     expect(
       db
         .prepare(
-          "SELECT COUNT(*) AS n FROM migration_markers WHERE key GLOB 'sdk_message_columns_backfill:*'"
+          "SELECT COUNT(*) AS n FROM migration_markers WHERE key GLOB 'sdk_message_columns_backfill_v2:*'"
         )
         .get()
     ).toEqual({ n: 0 });

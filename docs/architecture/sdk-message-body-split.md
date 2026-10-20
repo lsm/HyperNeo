@@ -46,6 +46,20 @@ BEGIN DELETE FROM sdk_message_bodies WHERE seq = old.seq; END;
 | `first_block_type TEXT` | `$.message.content[0].type` | 55, 56, 61, 64, 65, 66 (via fragments #53, #62) |
 | `has_tool_result INTEGER` | any content block of type `tool_result` | 32 |
 | `tool_result_only INTEGER` | has a `tool_result` block and no non-empty text block (the roster drops these rows but keeps tool result plus text) | 52 |
+| `user_status_eligible INTEGER` | JSON type is `user` and `isReplay` is absent or exactly boolean `false` | 4, 16, 21 |
+| `task_input_eligible INTEGER` | JSON type is `user` and `inputKind` is `task`, or absent with `CAST(isSynthetic AS INTEGER) = 1` | 39, 67 |
+
+Slice 3 adds these two eligibility columns beyond the original fifteen. Raw scalar
+columns lose the distinction between a missing property and explicit JSON null,
+or boolean false and numeric zero; the existing status and task predicates depend
+on those distinctions. Both new columns come from `deriveSdkMessageColumns`, the
+same writers, and the same chunked backfill. Migration 414 adds them safely; the
+backfill's v2 completion/cursor markers ensure already-upgraded slice-2 databases
+are re-derived before the new filters become reachable. Missing/false/0/null and
+mismatched JSON message types retain their old selection behavior. String flag
+values are stored as quoted JSON text so INTEGER affinity cannot turn a JSON
+string such as `"1"` into numeric one. The task eligibility projection applies
+SQLite's integer-prefix conversion directly to the source value.
 
 `$.type`, `$.subtype` and `$.uuid` already have columns (`message_type`, `message_subtype`, `sdk_uuid`), so those filters switch to the columns. Bodies are written by the daemon through `JSON.stringify`, so they should always be valid JSON. That's an assumption, not a guarantee, so it gets a policy. The backfill derives columns only `WHEN json_valid(sdk_message)`. A malformed historical row keeps NULL derived columns, has its body copied unchanged, and is counted in the per-chunk log; it never fails the migration. Filters treat NULL columns the way today's guards treat invalid JSON: `messages.ts` keeps such rows visible through `OR NOT json_valid`, and the column filters keep them via `IS NULL` where today's do. With that in place, `json_valid` guards in read paths go away.
 
@@ -125,7 +139,7 @@ Same synthetic DB:
 
 1. **Pin.** Characterization tests for the filter results of #1–4, 12, 21–23, 30, 32, 38, 39, 42, 46, 55, 61, 67 and the `task_message_rows` projection. For #12/#46, that includes a row whose JSON lacks `task_id` and resolves through the column.
 2. **Build columns.** `deriveSdkMessageColumns`, migration adds and backfills the 15 columns (chunked), all writers set them.
-3. **Wire repository filters** to the columns (#1–4, 16, 21–23, 30, 32, 38, 39, 42).
+3. **Wire repository filters** to the columns (#1–4, 16, 21–23, 30, 32, 38, 39, 42), adding the two typed eligibility projections above so the original predicates remain exact.
 4. **Wire adapter and runtime filters** (#55, 56, 61–67) and the indexes from the scan table.
 5. **Wire live-query filters** (#9, 12, 46, 47 with the TypeScript tool_use join, 48, 52).
 6. **Build the bodies table** with dual write; reads unchanged.

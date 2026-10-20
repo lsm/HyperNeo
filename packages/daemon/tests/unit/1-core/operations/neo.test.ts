@@ -118,6 +118,7 @@ describe('Neo MVP', () => {
       }),
     } as unknown as Database;
     sessions = {
+      getOperationRegistry: () => createOperationRegistry([]),
       createSession: async (params: CreateSessionParams) => {
         created.push(params);
         active.add(params.sessionId!);

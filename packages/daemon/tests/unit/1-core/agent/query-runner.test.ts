@@ -398,7 +398,10 @@ describe('QueryRunner', () => {
                   human: identity.human,
                   live: identity.isLive(),
                 });
-              const pending = feed.next();
+              const pending = feed.next().then((next) => {
+                endings.push(!!next.done);
+                return next;
+              });
               yield emit({
                 type: 'assistant',
                 uuid: `answer-${first.value!.uuid}`,
@@ -415,7 +418,6 @@ describe('QueryRunner', () => {
                 neoAskOrigin: { sessionId: 'forged', messageId: 'ask-B' },
               } as unknown as SDKMessage);
               const next = await pending;
-              endings.push(!!next.done);
               if (!next.done) received.push(next.value.uuid);
               if (!next.done) await feed.return?.();
             },
@@ -449,7 +451,7 @@ describe('QueryRunner', () => {
         expect(handleErrorSpy).not.toHaveBeenCalled();
         if (isolated) {
           expect(received).toEqual([firstId]);
-          expect(endings).toEqual([true]);
+          await expect.poll(() => endings).toEqual([true]);
           expect(queue.size()).toBe(1);
           expect(identities).toEqual([{ messageId: firstId, human: true, live: true }]);
           expect(getTurns[0]()?.isLive()).toBe(false);
@@ -466,7 +468,7 @@ describe('QueryRunner', () => {
           await ctx.queryPromise;
           await nextSent;
           expect(received).toEqual([firstId, nextId]);
-          expect(endings).toEqual([true, true]);
+          await expect.poll(() => endings).toEqual([true, true]);
           expect(identities[1]).toEqual({ messageId: nextId, human: !delayed, live: true });
           expect(createServer).toHaveBeenCalledTimes(2);
           expect(getTurns[1]()?.isLive()).toBe(false);

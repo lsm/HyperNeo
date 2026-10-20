@@ -16,11 +16,11 @@ export async function backfillSdkMessageColumns(
   db: Database,
   log: (progress: string) => void
 ): Promise<void> {
-  const done = 'sdk_message_columns_backfilled';
-  const cursorPrefix = 'sdk_message_columns_backfill:';
+  const done = 'sdk_message_columns_backfilled_v2';
+  const cursorPrefix = 'sdk_message_columns_backfill_v2:';
   if (db.prepare('SELECT 1 FROM migration_markers WHERE key = ?').get(done)) return;
   const cursor = db
-    .prepare("SELECT key FROM migration_markers WHERE key GLOB 'sdk_message_columns_backfill:*'")
+    .prepare("SELECT key FROM migration_markers WHERE key GLOB 'sdk_message_columns_backfill_v2:*'")
     .get() as { key: string } | undefined;
   let after = cursor ? Number(cursor.key.slice(cursorPrefix.length)) : 0;
   const names = Object.keys(SDK_MESSAGE_COLUMN_TYPES) as (keyof typeof SDK_MESSAGE_COLUMN_TYPES)[];
@@ -60,7 +60,7 @@ export async function backfillSdkMessageColumns(
         const derived = deriveSdkMessageColumns(message, row.task_id);
         update.run(...names.map((name) => derived[name]), row.seq);
       }
-      db.exec("DELETE FROM migration_markers WHERE key GLOB 'sdk_message_columns_backfill:*'");
+      db.exec("DELETE FROM migration_markers WHERE key GLOB 'sdk_message_columns_backfill_v2:*'");
       db.prepare('INSERT INTO migration_markers (key, applied_at) VALUES (?, ?)').run(
         `${cursorPrefix}${through}`,
         Date.now()
@@ -77,6 +77,6 @@ export async function backfillSdkMessageColumns(
       done,
       Date.now()
     );
-    db.exec("DELETE FROM migration_markers WHERE key GLOB 'sdk_message_columns_backfill:*'");
+    db.exec("DELETE FROM migration_markers WHERE key GLOB 'sdk_message_columns_backfill_v2:*'");
   })();
 }

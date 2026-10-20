@@ -6,6 +6,7 @@ import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-m
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { createTables } from '../../../../src/storage/schema';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { fillSdkMessageFixtureColumns } from '../../helpers/sdk-message-fixture-columns';
 
 const SPACE_ID = 'space-id';
 const RUN_ID = 'run-1';
@@ -142,6 +143,7 @@ function insertTaskInput(
     options.consumedSeq === undefined ? (status === 'consumed' ? 1 : null) : options.consumedSeq,
     id
   );
+  fillSdkMessageFixtureColumns(db);
 }
 
 function insertTask(
