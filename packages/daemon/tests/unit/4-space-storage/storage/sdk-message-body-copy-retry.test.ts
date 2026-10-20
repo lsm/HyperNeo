@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { DatabaseCore } from '../../../../src/storage/database-core';
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { reserveSdkBodyBackupPath } from '../../../../src/storage/sdk-message-body-backup';
 import * as backupCopy from '../../../../src/storage/backup-copy';
 import { configureLogger, LogLevel, subscribeToStructuredLogs } from '../../../../src/lib/logger';
@@ -25,6 +26,79 @@ function location() {
 }
 
 describe('SDK body copy retry safety', () => {
+  for (const fault of ['audit', 'path', 'reservation', 'json', 'shape']) {
+    test(`invalid ${fault} resume state stops once at error level before opening a backup`, async () => {
+      const path = location(),
+        core = new DatabaseCore(path);
+      await core.initialize();
+      const db = core.getDb();
+      db.exec('PRAGMA foreign_keys=OFF');
+      const repository = new SDKMessageRepository(db);
+      const body = {
+        type: 'user',
+        uuid: 'retained',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 't', content: 'complete-result-'.repeat(1000) },
+          ],
+        },
+      };
+      repository.saveSDKMessage('s', JSON.parse(JSON.stringify(body)));
+      const backupPath =
+        fault === 'path' || fault === 'reservation'
+          ? '/invalid-location/backup.db'
+          : join(dirname(path), 'backups', 'sdk-message-bodies-v1', 'pinned.db');
+      const state = {
+        through: 0,
+        ceiling: 1,
+        backupPath,
+        beforeHash: fault === 'audit' ? 'a' : '',
+        afterHash: '',
+      };
+      const marker =
+        fault === 'reservation'
+          ? `sdk_message_bodies_copy_v1:backup:${backupPath}`
+          : `sdk_message_bodies_copy_v1:state:${fault === 'json' ? '{bad' : fault === 'shape' ? 'null' : JSON.stringify(state)}`;
+      db.prepare('INSERT INTO migration_markers(key,applied_at) VALUES (?,?)').run(
+        marker,
+        Date.now()
+      );
+      configureLogger({ level: LogLevel.INFO });
+      const logs: { message: string; level: string }[] = [];
+      const unsubscribe = subscribeToStructuredLogs((event) =>
+        logs.push({ message: event.message, level: String(event.level) })
+      );
+      let workers = 0;
+      vi.stubGlobal(
+        'Worker',
+        class {
+          constructor() {
+            workers++;
+          }
+        }
+      );
+      vi.useFakeTimers();
+      try {
+        core.startSdkMessageBodyCopy();
+        await vi.advanceTimersByTimeAsync(180000);
+        const terminal = logs.filter((event) => event.message.includes('operator action'));
+        expect(terminal).toHaveLength(1);
+        expect(terminal[0].level).toBe('error');
+        expect(logs.some((event) => event.message.includes('deferred'))).toBe(false);
+        expect(workers).toBe(0);
+        expect(vi.getTimerCount()).toBe(0);
+        expect(repository.getMessageByUuid('s', 'retained')).toEqual(body);
+        expect(db.prepare('SELECT key FROM migration_markers WHERE key=?').get(marker)).toEqual({
+          key: marker,
+        });
+      } finally {
+        unsubscribe();
+        core.close();
+      }
+    });
+  }
+
   test('a delayed Space-ready callback after close starts no copy or retry timer', async () => {
     const core = new DatabaseCore(location());
     await core.initialize();
