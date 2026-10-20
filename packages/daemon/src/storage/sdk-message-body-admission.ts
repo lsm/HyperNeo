@@ -1,6 +1,10 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from './sqlite-compat.ts';
 
+const modes = new WeakMap<Database, boolean>();
+
+export const sdkSideOnlyWrites = (db: Database): boolean => modes.get(db) === true;
+
 const decide = (superpipe({})('sdkSideBodyStartup') as PipelineAPI)
   .input(['facts'])
   .pipe(
@@ -23,30 +27,41 @@ const decide = (superpipe({})('sdkSideBodyStartup') as PipelineAPI)
   missing: boolean;
 }) => string | null;
 
-export function assertSdkSideBodiesReady(db: Database): void {
-  if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE name='sdk_messages' AND type='table'").get())
-    return;
-  if (!db.prepare('SELECT 1 FROM sdk_messages LIMIT 1').get()) return;
+export async function selectSdkBodyWriteMode(db: Database) {
   const markers = db
     .prepare(
       "SELECT key FROM migration_markers WHERE key IN ('sdk_message_bodies_copy_v1:complete','sdk_message_bodies_copy_v1:reversed')"
     )
     .all() as { key: string }[];
   const complete = markers.some(({ key }) => key.endsWith(':complete'));
-  const reason = decide({
-    complete,
-    reversed: markers.some(({ key }) => key.endsWith(':reversed')),
-    missing:
-      complete &&
-      Boolean(
+  const reversed = markers.some(({ key }) => key.endsWith(':reversed'));
+  let missing = false;
+  if (complete && !reversed) {
+    let through = 0;
+    for (;;) {
+      const rows = db
+        .prepare('SELECT seq FROM sdk_messages WHERE seq>? ORDER BY seq LIMIT 1000')
+        .all(through) as { seq: number }[];
+      if (!rows.length) break;
+      const ceiling = rows[rows.length - 1].seq;
+      missing = Boolean(
         db
           .prepare(`SELECT m.seq FROM sdk_messages m
-      LEFT JOIN sdk_message_bodies b ON b.seq=m.seq WHERE b.seq IS NULL LIMIT 1`)
-          .get()
-      ),
-  });
-  if (reason)
-    throw new Error(
-      `SDK side-only startup refused: ${reason}; run the slice-10 build (#7843) until its copy completes with every side body present before upgrading. No data was changed.`
-    );
+        LEFT JOIN sdk_message_bodies b ON b.seq=m.seq
+        WHERE m.seq>? AND m.seq<=? AND b.seq IS NULL LIMIT 1`)
+          .get(through, ceiling)
+      );
+      if (missing) break;
+      through = ceiling;
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+  }
+  const reason =
+    decide({
+      complete,
+      reversed,
+      missing,
+    }) ?? null;
+  modes.set(db, reason === null);
+  return { mode: reason === null ? 'side-only' : 'dual-write', reason };
 }

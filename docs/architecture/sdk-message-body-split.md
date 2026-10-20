@@ -215,7 +215,7 @@ Same synthetic DB:
 8. **Switch body outputs**, part 1: repository (#5–45), with the `LEFT JOIN … COALESCE` fallback.
 9. **Switch body outputs**, part 2: live queries, adapters, runtime, the db-query view, same fallback.
 10. **Migration.** Guarded columns at startup. The chunked copy and blank runs as an online background job, with the body trigger skipping copied rows through the transaction-local flag described above, a free-disk check (refuse under 2× the DB size) and per-chunk progress logging. Malformed JSON gets NULL columns and is counted. Plus the reverse script. The blanked column stays.
-11. **Retire.** Online precursor: side-only writes and reads with completion/integrity startup admission; keep empty legacy INSERT values. Scheduled downtime PR: verified stop-point backup, column removal and the last compatibility references, preserving all schema objects and bodies (step 4).
+11. **Retire.** Online precursor: after migrations/backfill, choose dual-write while the copy is incomplete, reversed or missing any side body; choose side-only writes on the next start only after completion with zero gaps. Log the fixed startup mode at WARN; retain side-first COALESCE reads until column removal. Every write keeps its complete side body. Scheduled downtime PR: verified stop-point backup, column removal and the last compatibility references, preserving all schema objects and bodies (step 4). Nonempty legacy copies left by concurrent dual-writes are legitimate: validate side completeness and full logical hashes rather than requiring empty legacy text.
 12. **Session-length fixes outside the split:** #48/#49 paging and #50 targeted search rebuild.
 
 Slices 2–5 also speed up today's daemon on their own, before any body moves.

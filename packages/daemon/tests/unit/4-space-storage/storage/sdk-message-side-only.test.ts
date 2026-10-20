@@ -53,20 +53,27 @@ test('result flags patch the complete side body without rehydrating the retired 
   expect(db.prepare('SELECT sdk_message FROM sdk_messages').get()).toEqual({ sdk_message: '' });
 });
 
-test('a side-body failure rolls back the metadata insert', () => {
-  db.exec(
-    "CREATE TRIGGER reject_synthetic_body BEFORE INSERT ON sdk_message_bodies BEGIN SELECT RAISE(ABORT,'synthetic failure'); END"
-  );
-  expect(() =>
-    repo.saveUserMessage(
-      's',
-      { type: 'user', uuid: 'failed', message: { role: 'user', content: result } } as SDKMessage,
-      'enqueued'
-    )
-  ).toThrow('synthetic failure');
-  expect(db.prepare('SELECT COUNT(*) AS n FROM sdk_messages').get()).toEqual({ n: 0 });
-  expect(db.prepare('SELECT COUNT(*) AS n FROM sdk_message_bodies').get()).toEqual({ n: 0 });
-});
+test.each(['side-only', 'dual-write'])(
+  'a side-body failure rolls back metadata in %s mode',
+  async (mode) => {
+    if (mode === 'dual-write') {
+      db.exec("DELETE FROM migration_markers WHERE key='sdk_message_bodies_copy_v1:complete'");
+      await selectSdkBodyWriteMode(db);
+    }
+    db.exec(
+      "CREATE TRIGGER reject_synthetic_body BEFORE INSERT ON sdk_message_bodies BEGIN SELECT RAISE(ABORT,'synthetic failure'); END"
+    );
+    expect(() =>
+      repo.saveUserMessage(
+        's',
+        { type: 'user', uuid: 'failed', message: { role: 'user', content: result } } as SDKMessage,
+        'enqueued'
+      )
+    ).toThrow('synthetic failure');
+    expect(db.prepare('SELECT COUNT(*) AS n FROM sdk_messages').get()).toEqual({ n: 0 });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM sdk_message_bodies').get()).toEqual({ n: 0 });
+  }
+);
 
 test.each(['unfinished', 'missing', 'reversed'])(
   'daemon serves dual-write on %s data, preserving complete tool results',

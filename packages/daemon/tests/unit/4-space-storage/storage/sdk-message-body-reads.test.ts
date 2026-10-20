@@ -116,28 +116,31 @@ function reads() {
 }
 
 describe('SDKMessageRepository body reads', () => {
-  test('complete side bodies retain every read result and stored tool result', () => {
-    const before = reads();
-    expect(before.human?.text).toBe(text);
-    expect(before.typeTail).toMatchObject([{ uuid: 'progress', description: 'latest' }]);
-    const originals = db
-      .prepare('SELECT seq,sdk_message FROM sdk_message_bodies ORDER BY seq')
-      .all();
-    db.exec(
-      "UPDATE sdk_messages SET sdk_message='' WHERE rowid IN (SELECT seq FROM sdk_message_bodies)"
-    );
-    expect(reads()).toEqual(before);
-    expect(
-      db
-        .prepare(`SELECT m.seq,COALESCE(b.sdk_message,m.sdk_message) AS sdk_message
+  test.each(['side-only', 'legacy-only', 'mixed'])(
+    '%s retains every read result and stored tool result',
+    (mode) => {
+      const before = reads();
+      expect(before.human?.text).toBe(text);
+      expect(before.typeTail).toMatchObject([{ uuid: 'progress', description: 'latest' }]);
+      const originals = db.prepare('SELECT seq,sdk_message FROM sdk_messages ORDER BY seq').all();
+      if (mode !== 'side-only')
+        db.exec(`DELETE FROM sdk_message_bodies ${mode === 'mixed' ? 'WHERE seq % 2 = 0' : ''}`);
+      db.exec(
+        "UPDATE sdk_messages SET sdk_message='' WHERE rowid IN (SELECT seq FROM sdk_message_bodies)"
+      );
+      expect(reads()).toEqual(before);
+      expect(
+        db
+          .prepare(`SELECT m.seq,COALESCE(b.sdk_message,m.sdk_message) AS sdk_message
       FROM sdk_messages m LEFT JOIN sdk_message_bodies b ON b.seq=m.rowid ORDER BY m.seq`)
-        .all()
-    ).toEqual(originals);
-    const tool = repo.getMessageByUuid('s', 'tool-result') as {
-      message: { content: { content: string }[] };
-    };
-    expect(tool.message.content[0].content).toBe(result);
-  });
+          .all()
+      ).toEqual(originals);
+      const tool = repo.getMessageByUuid('s', 'tool-result') as {
+        message: { content: { content: string }[] };
+      };
+      expect(tool.message.content[0].content).toBe(result);
+    }
+  );
 
   test('a side body takes precedence over a stale legacy body', () => {
     const before = reads();

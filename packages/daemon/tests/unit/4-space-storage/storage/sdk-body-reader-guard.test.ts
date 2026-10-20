@@ -47,6 +47,7 @@ describe('SDK body reader guard', () => {
       const path = relative(root, file);
       if (path.startsWith('storage/schema/')) return [];
       return directReads(readFileSync(file, 'utf8')).flatMap((sql) => {
+        if (path === 'storage/repositories/sdk-message-body-read.ts') return [];
         if (
           (path === 'storage/sdk-message-body-copy.ts' ||
             path === 'storage/sdk-message-body-backup-worker.ts') &&
@@ -57,8 +58,8 @@ describe('SDK body reader guard', () => {
           return [];
         if (
           path === 'storage/repositories/sdk-message-body-write.ts' &&
-          /INSERT INTO sdk_message_bodies/.test(sql) &&
-          /LEFT JOIN sdk_message_bodies previous ON previous.seq=m.rowid/.test(sql)
+          (/INSERT INTO sdk_message_bodies/.test(sql) ||
+            /UPDATE sdk_messages SET sdk_message=\(SELECT b.sdk_message/.test(sql))
         )
           return [];
         return [`${path}: ${sql.slice(0, 180)}`];

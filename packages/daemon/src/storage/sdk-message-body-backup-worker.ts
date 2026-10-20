@@ -16,6 +16,7 @@ import {
 import { dirname } from 'node:path';
 import { Database } from './sqlite-compat.ts';
 import type { BodyBackupRequest, BodyBackupReply } from './sdk-message-body-backup.ts';
+import { joinedSdkMessageBody } from './repositories/sdk-message-body-read.ts';
 
 const worker = globalThis as unknown as {
   onmessage: ((event: MessageEvent<BodyBackupRequest>) => void) | null;
@@ -61,7 +62,7 @@ worker.onmessage = ({ data }) => {
     const digest = createHash('sha256');
     let rows = 0;
     for (const row of db
-      .prepare(`SELECT m.seq,COALESCE(b.sdk_message,m.sdk_message) AS body
+      .prepare(`SELECT m.seq,${joinedSdkMessageBody('b', 'm')} AS body
       FROM sdk_messages m LEFT JOIN sdk_message_bodies b ON b.seq=m.seq ORDER BY m.seq`)
       .iterate() as Iterable<{ seq: number; body: string }>) {
       digest.update(`${row.seq}:${Buffer.byteLength(row.body)}:`);

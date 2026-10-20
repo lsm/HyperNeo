@@ -1,5 +1,9 @@
-export function joinedSdkMessageBody(body: string, _original: string): string {
-  return `${body}.sdk_message`;
+export function joinedSdkMessageBody(body: string, original: string): string {
+  return `COALESCE(${body}.sdk_message, ${original}.sdk_message)`;
+}
+
+export function joinedSdkMessageBodyBytes(body: string, original: string): string {
+  return `COALESCE(octet_length(${body}.sdk_message), octet_length(${original}.sdk_message))`;
 }
 
 export function hydrateSdkMessageBodies(selection: string, orderBy = ''): string {
@@ -12,6 +16,7 @@ export function hydrateSdkMessageBodies(selection: string, orderBy = ''): string
 }
 
 export function sdkMessageBodyAt(rowid: string): string {
-  return `(SELECT split_body.sdk_message FROM sdk_message_bodies split_body
-    WHERE split_body.seq=${rowid})`;
+  return `(SELECT ${joinedSdkMessageBody('split_body', 'split_legacy')}
+    FROM sdk_messages split_legacy LEFT JOIN sdk_message_bodies split_body ON split_body.seq=split_legacy.rowid
+    WHERE split_legacy.rowid=${rowid})`;
 }

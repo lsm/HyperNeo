@@ -952,7 +952,7 @@ readers until the later migration/removal slices.
 
 ### Online SDK body copy (slice 10)
 
-### Side-only SDK body writes (online precursor to slice 11)
+### SDK body next-start mode (online precursor to slice 11)
 
 Use a fresh isolated HOME/data directory and a free port; no GUI, provider or
 credentials are needed. The helper seeds consumed inputs, so no model turn is
@@ -962,31 +962,43 @@ scheduled. Do not use a live DB or port 8399.
 RUN=$(mktemp -d /private/tmp/hn-sdk-side-only-XXXXXX)
 mkdir -p "$RUN/home"
 env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
-  bun .claude/skills/verify/sdk-side-only.ts verify 9372 "$RUN"
+  bun .claude/skills/verify/sdk-body-mode.ts laptop 9372 "$RUN"
 ```
 
-It boots a real daemon, waits for its empty initial copy, seeds 5,004 synthetic
-messages through the production writers (including complete tool results), and
-exercises all eight body-writing call sites. Fifty real health/transcript RPCs
-must return complete bodies and result flags; every legacy body remains empty.
-It then stops the daemon, removes only its synthetic completion marker and
-requires restart to refuse the side-only path with an error-level event while
-logging is at the production WARN threshold. Evidence is `evidence/observed.json`:
-full ordered side-body hash/count, legacy row count, startup/lag/RPC timings and
-the refusal. `reproduce` accepts a baseline checkout as its fourth argument and
-must observe nonempty legacy bodies and no startup refusal. Use the same fixed
-synthetic action timestamp; the complete body hash/count must match between runs.
-The helper closes its WebSocket and daemon in `finally`. Unit contracts run in CI.
+Repeat with `mixed` and another fresh run/port. Both seed 5,000 synthetic messages,
+derive columns through the production chunked backfill, and retain complete tool
+results. The mixed fixture deliberately removes half its side copies, retaining
+their legacy bodies; startup must serve in dual-write mode. Its own synthetic
+missing copies are restored before the next restart. The completed laptop fixture
+must choose side-only immediately. All eight production writers are exercised in
+both runs; side bodies remain complete and the logical hash survives restart.
+Fifty real health/transcript RPCs return full tool results. This is not a GUI test.
 
-Do not deploy side-only readers to an existing nonempty database before the
-slice-10 copy completes without a reversed marker and with no missing side body.
-The guard runs before migrations or SQL writes, emits an ERROR and refuses
-startup; it never runs a repair, silently falls back or starts a historical copy.
-Fresh empty DBs remain supported. The column and compatibility empty INSERT
-values stay until the separately scheduled downtime PR. The historical slice-10
-copy/backup keeps its own legacy fallback; its old full-daemon journey requires
-the slice-10 build because this newer build deliberately refuses incomplete data.
-Retain every permanent backup. Do not infer iMac readiness from laptop evidence.
+For the single-step old-schema upgrade, create a detached worktree at the observed
+iMac build `258b731c` under `~/focus/worktrees/`, install frozen dependencies, and
+run `old` in a fresh isolated directory, adding that worktree as the fourth
+argument. It creates 60,000 synthetic old-schema rows with consumed inputs and
+`replacement_metadata_normalized=1`, never copying the live DB. On the old #7865
+head `2014efa`, the same old-schema startup refused before serving (reproduction:
+`/private/tmp/sdk-side-old-schema-proof/evidence/observed.json`). Fixed code must
+run migrations, bind, serve health/transcript, finish the real background copy,
+continue dual-writing in that process, then choose side-only on the next start.
+
+Evidence is `evidence/observed.json`: complete logical hashes/counts, WARN-level
+chosen modes, startup/copy/query/lag/RPC timings and missing count. Initial legacy
+hash equals the migrated logical hash before new writes; the post-write logical
+hash remains identical across restart. Seeding and deliberate full-digest reads
+are measurement probes, not production RPC workloads. The helper closes its
+WebSocket and daemon in `finally`; unit suites run only in CI.
+
+Mode selection runs after numbered migrations/backfill and checks gaps in bounded
+yielding batches. No live mode switch occurs. Unified reads retain side-first
+COALESCE until slice 11; all writes always keep a complete side body, and pending,
+reversed or incomplete copies also update the legacy body atomically. Startup
+mode is logged at production WARN. Permanent backups are retained. Slice 11 must
+accept legitimate nonempty legacy copies from writes during background copying:
+side completeness, verified backup and hashes establish authority, not empty
+legacy text. Column removal still needs its separately scheduled downtime PR.
 
 ### Historical slice-10 copy journey
 
