@@ -346,6 +346,34 @@ adds its journey here.
    Claude sidebar reference alone is not an owner. The default live read-only
    helper now uses that same reader/policy. Never read auth or credential files.
 
+   For PR-ledger c, run the unowned-PR wake door in a new synthetic database:
+
+   ```bash
+   RUN=$(mktemp -d /private/tmp/hn-pr-unowned-XXXXXX)
+   env -i PATH="$PATH" NODE_ENV=test HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" \
+     HYPERNEO_USE_DEV_PROXY=1 VERIFY_PORT=9355 \
+     bun .claude/skills/verify/pr-owners.ts --synthetic-unowned "$RUN"
+   ```
+
+   Ports 9355 and 8000 must be free. The helper starts its own isolated daemon
+   and local mock provider, and uses synthetic GitHub responses through the real
+   coding-pack reconcile. It observes the result at the actual Neo mailbox input
+   via WebSocket `session.messages.byStatus`, not just a mocked wake callback.
+   End state: one consumed Neo input lists 90 newly unowned human PRs, excluding
+   drafts, bots, known owners, closed PRs, unknown metadata, and creation at/before
+   the persisted first-activation cutoff. A later new PR survives a lost handoff acknowledgement
+   and pack recreation with the same batch identity and reaches Neo once.
+   Unchanged reconciles send nothing. Each PR has one `neo-pr-unowned:repo#N`
+   record; one pending batch preserves retry identity. New arrivals while a
+   batch retries wait until the next reconcile. The notice describes discovery
+   facts and tells Neo to check current ownership before assigning anyone.
+   `observed.json` records elapsed time and max 10 ms heartbeat lag for each
+   reconcile against a 1,000 ms budget; `delivered.json` and `accepted.json`
+   prove both batches reached Neo as consumed input. GitHub and existing Claude
+   owner reads are synthetic; no deployed or GUI behavior is claimed. The helper
+   disposes its service, daemon, SDK processes and local provider in `finally`.
+   Retain evidence, confirm both ports are closed, then remove only this run.
+
 7. **A cross-repo request becomes one card per repo.** Launch with
    `VERIFY_MOCK=neo-script-api.ts .claude/skills/verify/launch.sh 9311 "$RUN"`.
    That mock plays root's model: when the human's message contains
