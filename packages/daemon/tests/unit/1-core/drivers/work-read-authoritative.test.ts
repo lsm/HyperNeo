@@ -5,7 +5,7 @@ import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { createTables } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
-import { readWorkTurns } from '../../../../src/storage/work-turns.ts';
+import { readWorkTurnPage } from '../../../../src/storage/work-turn-page.ts';
 
 type Page = {
   sessionId: string;
@@ -57,7 +57,8 @@ describe('authoritative work.read', () => {
     invokeOperation(
       createOperationRegistry([
         createReadWorkOperation({
-          readTurns: (id, around, before, after) => readWorkTurns(db, id, around, before, after),
+          readTurns: (id, around, before, after, cursor) =>
+            readWorkTurnPage(db, id, around, before, after, cursor),
           remote: {
             list: () => [],
             invoke: async () => {
@@ -189,6 +190,53 @@ describe('authoritative work.read', () => {
     expect(parts.length).toBeGreaterThan(1);
     expect(parts.join('')).toBe(large);
     expect(digest()).toBe(before);
+  });
+
+  test('published file references survive alongside visible text without reading paths', async () => {
+    const reference = {
+      artifactId: 'a'.repeat(64),
+      daemonId: '00000000-0000-4000-8000-000000000001',
+      sessionId: 'worker',
+      name: 'report.txt',
+      byteLength: 8192,
+      sha256: 'a'.repeat(64),
+      path: '/synthetic-not-opened/handoffs/worker/published/report.txt',
+    };
+    put('files', 'assistant', [
+      { type: 'text', text: 'Complete report attached' },
+      { type: 'text', text: JSON.stringify({ handoffFiles: [reference] }) },
+    ]);
+    expect((await page({})).turns[0].files).toEqual([reference]);
+  });
+
+  test('an anchor on hidden material cannot substitute the next visible reply', async () => {
+    put('child', 'assistant', [{ type: 'text', text: 'HIDDEN' }], { parent: 'tool' });
+    put('next', 'assistant', [{ type: 'text', text: 'An unrelated visible reply' }]);
+    expect(await page({ around: 'child', before: 0, after: 0 })).toMatchObject({
+      turns: [],
+      availability: 'reply_unavailable',
+    });
+  });
+
+  test('a smaller continuation page cannot skip the rest of its original window', async () => {
+    const first = 'A'.repeat(20_000);
+    put('large-window', 'assistant', [{ type: 'text', text: first }]);
+    put('following', 'user', 'Following message');
+    let value = await page({ around: 'large-window', before: 0, after: 1 });
+    const turns = [...value.turns];
+    for (let n = 0; value.nextCursor && n < 10; n++) {
+      value = await page({ cursor: value.nextCursor, before: 0, after: 0 });
+      turns.push(...value.turns);
+    }
+    expect(
+      turns
+        .filter((t) => t.messageId === 'large-window')
+        .map((t) => t.text)
+        .join('')
+    ).toBe(first);
+    expect(turns.filter((t) => t.messageId === 'following').map((t) => t.text)).toEqual([
+      'Following message',
+    ]);
   });
 
   test('an unlocated reply says unavailable and a cursor cannot cross session scope', async () => {
