@@ -37,6 +37,7 @@ import mdcoordinatorVerifier from './coordinator/verifier.md' with { type: 'text
 import mdgithubRouterSystemPrompt from './github/router-system-prompt.md' with { type: 'text' };
 import mdgithubSecuritySystemPrompt from './github/security-system-prompt.md' with { type: 'text' };
 import mdneoSessionTrack from './neo/session-track.md' with { type: 'text' };
+import mdneoSystemGoalCycle from './neo/system/goal-cycle.md' with { type: 'text' };
 import mdneoSystemRoot from './neo/system/root.md' with { type: 'text' };
 import mdneoSystemRootTurnEnd from './neo/system/root-turn-end.md' with { type: 'text' };
 import mdneoPacksCodingInstructions from './neo/packs/coding/instructions.md' with { type: 'text' };
@@ -261,6 +262,7 @@ const registry: Record<string, string> = {
   'github/router-system-prompt.md': mdgithubRouterSystemPrompt,
   'github/security-system-prompt.md': mdgithubSecuritySystemPrompt,
   'neo/session-track.md': mdneoSessionTrack,
+  'neo/system/goal-cycle.md': mdneoSystemGoalCycle,
   'neo/system/root.md': mdneoSystemRoot,
   'neo/system/root-turn-end.md': mdneoSystemRootTurnEnd,
   'neo/work/goal-asked.md': mdneoWorkGoalAsked,
@@ -394,6 +396,7 @@ export const {
   NEO_PACK_CODING_WORKER_RULES,
   NEO_PACK_LIFE_ADMIN_INSTRUCTIONS,
   NEO_SESSION_TRACK,
+  NEO_GOAL_CYCLE,
   NEO_ROOT_PROMPT,
   NEO_ROOT_TURN_END,
   NEO_WORK_GOAL_ASKED,
