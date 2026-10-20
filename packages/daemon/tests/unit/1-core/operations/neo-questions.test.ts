@@ -56,7 +56,22 @@ function setup() {
     if (!receipt.ok) throw new Error(receipt.reason);
     return receipt.question;
   };
-  return { db, store, call, asked, told, started, refused, fix, rows };
+  const daemonStart = (startTodos: string[], text = 'Start these?') =>
+    store.askQuestion(
+      crypto.randomUUID(),
+      'ask',
+      {
+        text,
+        kind: 'start',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos,
+      },
+      1
+    );
+  return { db, store, call, asked, daemonStart, told, started, refused, fix, rows };
 }
 
 describe('neo.question operations', () => {
@@ -204,6 +219,31 @@ describe('neo.question operations', () => {
       ok: false,
       reason: 'This action needs the user.',
     });
+  });
+});
+
+describe("Neo's start question", () => {
+  test("rewords the daemon's start question instead of opening a second one", async () => {
+    const { store, asked, daemonStart, fix, rows } = setup();
+    const start = daemonStart([fix.id, rows.id], 'Start these 2?');
+    const reworded = await asked({ kind: 'start', text: 'Start building the design?' });
+    expect(reworded).toMatchObject({
+      id: start.id,
+      text: 'Start building the design?',
+      startTodos: [fix.id, rows.id],
+      state: 'open',
+    });
+    expect(store.listQuestions('ask')).toHaveLength(1);
+  });
+
+  test('is refused when no start question is open, and opens none', async () => {
+    const { store, call } = setup();
+    expect(await call('neo.question.ask', { askId: 'ask', kind: 'start', text: 'Go?' })).toEqual({
+      ok: false,
+      reason:
+        'no_start_question: no todo on this ask is waiting to start; add todos with an instruction and the daemon asks.',
+    });
+    expect(store.listQuestions('ask')).toEqual([]);
   });
 });
 
