@@ -26,7 +26,7 @@ import {
 } from './driver-work.ts';
 import type { NeoPack, NeoTodoCheckResult } from './packs/types.ts';
 import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
-import { readNeoTodoCompletion } from './todo-completion.ts';
+import { readNeoTodoCompletion, sameNeoTodoCheck } from './todo-completion.ts';
 import { neoMoveTodo, neoTodoRepo } from './todo-repo.ts';
 
 type Rejection = { ok: false; reason: string };
@@ -455,7 +455,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         ? await readNeoTodoCompletion(deps.packs(), todo)
         : await pack.check(todo);
       const live = store.listCheckable().find((item) => item.id === todo.id);
-      if (live?.check)
+      if (live?.check && sameNeoTodoCheck(todo, live))
         await finish(
           live,
           ask,
