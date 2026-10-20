@@ -876,9 +876,11 @@ describe('blocked todos', () => {
 describe('stopped worker ladder', () => {
   const MIN = 60_000;
 
-  async function stopped() {
+  async function stopped(
+    check: NeoTodo['check'] = { pack: 'coding', kind: 'pr_merged', params: {} }
+  ) {
     const harness = setup();
-    const todo = harness.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+    const todo = harness.add(check);
     await harness.runner.start(todo.id);
     harness.setStatus({
       ok: true,
@@ -924,6 +926,28 @@ describe('stopped worker ladder', () => {
       blockedReason: 'Its session stopped 90 min ago and did not continue after 2 reminders.',
     });
     expect(h.told).toEqual([expect.stringContaining('did not continue after 2 reminders')]);
+    h.clock.mockRestore();
+    h.db.close();
+  });
+
+  test('a todo nothing checks reminds Neo, not the worker, at 30 and 60 minutes, then blocks', async () => {
+    const h = await stopped(null);
+    expect(h.told).toEqual([expect.stringContaining('nothing checks it')]);
+    for (const minutes of [29, 30, 45, 60, 75]) await h.at(minutes);
+    expect(h.sends()).toEqual([]);
+    expect(h.told.slice(1)).toEqual([
+      'Todo "Rows" stopped 30 min ago and nobody ticked it (done when: PR merged). Tick it done with evidence, continue it with neo.todo.continue, or close it.',
+      'Todo "Rows" stopped 60 min ago and nobody ticked it (done when: PR merged). Tick it done with evidence, continue it with neo.todo.continue, or close it.',
+    ]);
+    expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
+    await h.at(90);
+    await h.at(120);
+    expect(h.store.getTodo(h.todo.id)).toMatchObject({
+      state: 'blocked',
+      blockedBy: 'worker',
+      blockedReason: 'Its session stopped 90 min ago and nobody ticked it after 2 reminders.',
+    });
+    expect(h.told).toHaveLength(4);
     h.clock.mockRestore();
     h.db.close();
   });
