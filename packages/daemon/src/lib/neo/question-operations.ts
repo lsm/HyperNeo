@@ -13,7 +13,6 @@ import type {
 import { requireLocalUser } from '../operations/caller.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { requireNeoOpenAsk } from './todo-operations.ts';
-import { isNeoTodoStartable } from './todo-runner.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -34,7 +33,7 @@ const Ask = z.discriminatedUnion('kind', [
     multiple: z.boolean().default(false),
   }),
   z.object({ ...Asked, kind: z.literal('reply') }),
-  z.object({ ...Asked, kind: z.literal('start'), todos: z.array(Text).min(1) }),
+  z.object({ askId: Text, text: Text, kind: z.literal('start') }),
 ]);
 
 const Retire = z.object({ questionId: Text, reason: Text });
@@ -68,11 +67,13 @@ const QuestionResult = z.union([
   }),
 ]);
 
+type QuestionPlan = { ask: NeoAsk; draft: NeoQuestionDraft; reworded: NeoQuestion | null };
+
 export function planNeoQuestion(
   ask: NeoAsk,
-  todos: NeoTodo[],
+  questions: readonly NeoQuestion[],
   input: z.infer<typeof Ask>
-): Gate<{ ask: NeoAsk; draft: NeoQuestionDraft }> {
+): Gate<QuestionPlan> {
   const draft: NeoQuestionDraft = {
     text: input.text,
     kind: input.kind,
@@ -80,16 +81,15 @@ export function planNeoQuestion(
     multiple: input.kind === 'choice' && input.multiple,
     noLabel: input.kind === 'yesno' ? input.noLabel : null,
     yesLabel: input.kind === 'yesno' ? input.yesLabel : null,
-    startTodos: input.kind === 'start' ? [...new Set(input.todos)] : null,
+    startTodos: null,
   };
-  const unstartable = draft.startTodos?.filter(
-    (id) => !todos.some((todo) => todo.id === id && isNeoTodoStartable(todo) && todo.instruction)
-  );
-  return unstartable?.length
-    ? fail(
-        `not_startable: ${unstartable.join(', ')} is not a not-started todo with a session on this ask.`
-      )
-    : { value: { ask, draft } };
+  if (input.kind !== 'start') return { value: { ask, draft, reworded: null } };
+  const open = questions.find((question) => question.kind === 'start' && question.state === 'open');
+  return open
+    ? { value: { ask, draft: { ...draft, startTodos: open.startTodos }, reworded: open } }
+    : fail(
+        'no_start_question: no todo on this ask is waiting to start; add todos with an instruction and the daemon asks.'
+      );
 }
 
 const START_QUESTION =
@@ -184,16 +184,17 @@ export function createNeoQuestionOperations(
     )
     .pipe(
       (owned: NeoAsk, input: z.infer<typeof Ask>) =>
-        planNeoQuestion(owned, store.listTodos(owned.id), input),
+        planNeoQuestion(owned, store.listQuestions(owned.id), input),
       ['outcome', 'input'],
       'result:outcome'
     )
     .pipe(
-      (plan: { ask: NeoAsk; draft: NeoQuestionDraft }, input: z.infer<typeof Ask>) => {
+      (plan: QuestionPlan, input: z.infer<typeof Ask>) => {
+        const replaces = input.kind === 'start' ? undefined : input.replaces;
         const replaced = requireNeoQuestionReplaceable(
-          input.replaces ? store.getQuestion(input.replaces) : null,
+          replaces ? store.getQuestion(replaces) : null,
           plan.ask,
-          input.replaces
+          replaces
         );
         return 'reason' in replaced ? replaced : { value: { ...plan, replaced: replaced.value } };
       },
@@ -201,11 +202,15 @@ export function createNeoQuestionOperations(
       'result:outcome'
     )
     .pipe(
-      (plan: {
-        ask: NeoAsk;
-        draft: NeoQuestionDraft;
-        replaced: NeoQuestion | null;
-      }): QuestionReceipt | Rejection => {
+      (plan: QuestionPlan & { replaced: NeoQuestion | null }): QuestionReceipt | Rejection => {
+        if (plan.reworded) {
+          const { id, startTodos } = plan.reworded;
+          store.extendStartQuestion(id, startTodos ?? [], plan.draft.text, Date.now());
+          const question = store.getQuestion(id);
+          return question?.state === 'open'
+            ? { ok: true, question }
+            : { ok: false, reason: 'question_closed: the start question is no longer open.' };
+        }
         const id = crypto.randomUUID();
         const question = plan.replaced
           ? store.replaceQuestion(plan.replaced, id, plan.draft, Date.now())
@@ -302,7 +307,7 @@ export function createNeoQuestionOperations(
     defineOperation({
       name: 'neo.question.ask',
       description:
-        'Ask the human one question on an open ask you own. kind yesno: noLabel (left, keep things as they are) and yesLabel (right, the change it names). choice: 2-6 options, multiple for pick-any. reply: answered in chat. start: todos lists not-started todos; the human unticks any they do not want, and answering starts the ticked ones. Ask only what you cannot read yourself; never a bookkeeping question. replaces names an open question on the same ask: it is retired as replaced by this one in the same step.',
+        'Ask the human one question on an open ask you own. kind yesno: noLabel (left, keep things as they are) and yesLabel (right, the change it names). choice: 2-6 options, multiple for pick-any. reply: answered in chat. start: rewords the start question the daemon opens on this ask for todos waiting to start; the human unticks any they do not want, and answering starts the ticked ones. It never opens a second one. Ask only what you cannot read yourself; never a bookkeeping question. replaces names an open question on the same ask: it is retired as replaced by this one in the same step.',
       inputSchema: Ask,
       resultSchema: QuestionResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
