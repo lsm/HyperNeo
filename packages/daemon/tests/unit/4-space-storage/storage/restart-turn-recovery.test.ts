@@ -9,6 +9,7 @@ import { SessionRepository } from '../../../../src/storage/repositories/session-
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createTestSession } from '../../../helpers/database';
+import { fillSdkMessageFixtureColumns } from '../../helpers/sdk-message-fixture-columns';
 
 describe('planRestartRecovery', () => {
   test.each([
@@ -77,21 +78,21 @@ describe('restart recovery reads', () => {
     at: string,
     message: unknown,
     extra: { uuid?: string; status?: string } = {}
-  ) =>
-    db
-      .prepare(
-        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
+  ) => {
+    db.prepare(
+      `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
          VALUES (?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        `m${++id}`,
-        sessionId,
-        type,
-        JSON.stringify(message),
-        at,
-        extra.status ?? null,
-        extra.uuid ?? null
-      );
+    ).run(
+      `m${++id}`,
+      sessionId,
+      type,
+      JSON.stringify(message),
+      at,
+      extra.status ?? null,
+      extra.uuid ?? null
+    );
+    fillSdkMessageFixtureColumns(db);
+  };
   const prompt = (text: string) => ({ type: 'user', message: { role: 'user', content: text } });
   const toolResult = {
     type: 'user',

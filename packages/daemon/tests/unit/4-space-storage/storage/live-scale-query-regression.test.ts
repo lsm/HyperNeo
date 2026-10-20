@@ -3,6 +3,8 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import { runMigration413 } from '../../../../src/storage/schema/m413-sdk-message-columns';
+import { fillSdkMessageFixtureColumns } from '../../helpers/sdk-message-fixture-columns';
 import {
   LIVE_SCALE_QUERY_PROFILES,
   assertReadOnlyQuerySql,
@@ -117,6 +119,7 @@ function createFixture(path: string, withRows: boolean): void {
       );
       INSERT INTO delivery_consumed_seq (singleton, next_seq) VALUES (1, 10);
     `);
+    runMigration413(db);
     if (!withRows) return;
 
     db.prepare(
@@ -227,6 +230,7 @@ function createFixture(path: string, withRows: boolean): void {
     insertNode.run('node-1', 'wf-1', 'node one');
     insertNode.run('node-2', 'wf-1', 'node two');
     insertNode.run('node-3', 'wf-2', 'node three');
+    fillSdkMessageFixtureColumns(db);
   } finally {
     db.close();
   }

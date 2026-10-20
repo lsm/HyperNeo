@@ -4,6 +4,10 @@ import { readSpaceStartReceipt } from '../../../../src/lib/drivers/space-adapter
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import {
+  SDK_MESSAGE_COLUMN_TYPES,
+  deriveSdkMessageColumns,
+} from '../../../../src/storage/sdk-message-columns';
 
 type Row = {
   id: string;
@@ -22,21 +26,25 @@ let db: Database;
 let repo: SDKMessageRepository;
 
 function insert(row: Row): void {
+  const body = { type: row.type, ...row.body };
+  const derived = deriveSdkMessageColumns(body, row.taskId ?? null);
+  const names = Object.keys(SDK_MESSAGE_COLUMN_TYPES) as (keyof typeof SDK_MESSAGE_COLUMN_TYPES)[];
   db.prepare(
     `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp,
-       send_status, sdk_uuid, consumed_seq, is_terminal, task_id)
-     VALUES (?, 's1', ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       send_status, sdk_uuid, consumed_seq, is_terminal, task_id, ${names.join(',')})
+     VALUES (?, 's1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ${names.map(() => '?').join(',')})`
   ).run(
     row.id,
     row.type,
     row.subtype ?? null,
-    JSON.stringify({ type: row.type, ...row.body }),
+    JSON.stringify(body),
     new Date(Date.UTC(2026, 9, 20, 0, 0, row.at)).toISOString(),
     row.status ?? 'consumed',
     row.uuid ?? null,
     row.consumedSeq ?? null,
     row.terminal ? 1 : 0,
-    row.taskId ?? null
+    row.taskId ?? null,
+    ...names.map((key) => derived[key])
   );
 }
 

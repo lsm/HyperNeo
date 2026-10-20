@@ -4,6 +4,7 @@ import type { McpServerConfig } from '@hyperneo/shared';
 import type { AgentSession as AgentSessionType } from '../../../../src/lib/agent/agent-session.ts';
 import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import { createOutboxTestDb } from '../../../helpers/outbox-test-db';
+import { fillSdkMessageFixtureColumns } from '../../helpers/sdk-message-fixture-columns';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
@@ -797,6 +798,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
           sendStatus ?? null,
           uuid
         );
+      fillSdkMessageFixtureColumns(outbox.db);
       return dbId;
     };
     config.db.getUserMessageIdsByStatus = () => [];
@@ -862,6 +864,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
           sendStatus ?? null,
           uuid
         );
+      fillSdkMessageFixtureColumns(outbox.db);
       return dbId;
     };
     config.db.getUserMessageIdsByStatus = () => [];
@@ -931,6 +934,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
           sendStatus ?? null,
           uuid
         );
+      fillSdkMessageFixtureColumns(outbox.db);
       return dbId;
     };
     config.db.getUserMessageIdsByStatus = () => [];
@@ -999,6 +1003,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
           sendStatus ?? null,
           uuid
         );
+      fillSdkMessageFixtureColumns(outbox.db);
       return dbId;
     };
     config.db.getUserMessageIdsByStatus = () => [];

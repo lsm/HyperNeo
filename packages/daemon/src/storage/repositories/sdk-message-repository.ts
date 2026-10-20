@@ -93,12 +93,7 @@ export {
 } from './sdk-message-admission.ts';
 
 const USER_STATUS_MESSAGE_SQL = `message_type = 'user'
-  AND json_valid(sdk_message)
-  AND json_extract(sdk_message, '$.type') = 'user'
-  AND (
-    json_type(sdk_message, '$.isReplay') IS NULL
-    OR json_type(sdk_message, '$.isReplay') = 'false'
-  )`;
+  AND user_status_eligible = 1`;
 
 const LAST_MESSAGE_PROGRESS_SUBTYPES = new Set(['task_started', 'task_progress', 'task_updated']);
 const BACKGROUND_TASK_METADATA_SUBTYPES = ['task_started', 'task_updated', 'task_notification'];
@@ -130,11 +125,11 @@ export const HAS_TERMINAL_RESULT_AFTER_SQL = `SELECT 1
                WHERE m.session_id = ? AND m.sdk_uuid = ?
                ORDER BY m.consumed_seq IS NULL, m.consumed_seq DESC LIMIT 1
             )
-            AND COALESCE(json_extract(r.sdk_message, '$.internal_compaction_turn'), 0) = 0
+            AND COALESCE(r.internal_compaction_turn, 0) = 0
             AND NOT (
-              COALESCE(json_extract(r.sdk_message, '$.is_error'), 0) = 1
-              AND COALESCE(json_extract(r.sdk_message, '$.recovery_intercepted'), 0) = 1
-              AND COALESCE(json_extract(r.sdk_message, '$.recovery_billing_terminal'), 0) = 0
+              COALESCE(r.is_error, 0) = 1
+              AND COALESCE(r.recovery_intercepted, 0) = 1
+              AND COALESCE(r.recovery_billing_terminal, 0) = 0
             )
           LIMIT 1`;
 
@@ -151,7 +146,7 @@ const GET_TURN_ERROR_RESULT_SUBTYPE_SQL = `WITH brief AS (
           )
           SELECT CASE
             WHEN r.message_subtype != 'success' THEN r.message_subtype
-            WHEN COALESCE(json_extract(r.sdk_message, '$.is_error'), 0) = 1 THEN 'error'
+            WHEN COALESCE(r.is_error, 0) = 1 THEN 'error'
             ELSE NULL END AS subtype
            FROM sdk_messages r, brief, next_input
           WHERE r.session_id = ?1
@@ -161,10 +156,10 @@ const GET_TURN_ERROR_RESULT_SUBTYPE_SQL = `WITH brief AS (
             AND r.parent_tool_use_id IS NULL
             AND r.consumed_seq > brief.seq
             AND (next_input.seq IS NULL OR r.consumed_seq < next_input.seq)
-            AND COALESCE(json_extract(r.sdk_message, '$.internal_compaction_turn'), 0) = 0
+            AND COALESCE(r.internal_compaction_turn, 0) = 0
             AND NOT (
-              COALESCE(json_extract(r.sdk_message, '$.recovery_intercepted'), 0) = 1
-              AND COALESCE(json_extract(r.sdk_message, '$.recovery_billing_terminal'), 0) = 0
+              COALESCE(r.recovery_intercepted, 0) = 1
+              AND COALESCE(r.recovery_billing_terminal, 0) = 0
             )
           ORDER BY r.consumed_seq DESC
           LIMIT 1`;
@@ -181,8 +176,8 @@ export const HAS_RECOVERY_INTERCEPTED_RESULT_AFTER_SQL = `SELECT 1
                WHERE m.session_id = ? AND m.sdk_uuid = ?
                ORDER BY m.consumed_seq IS NULL, m.consumed_seq DESC LIMIT 1
             )
-            AND COALESCE(json_extract(r.sdk_message, '$.recovery_intercepted'), 0) = 1
-            AND COALESCE(json_extract(r.sdk_message, '$.recovery_billing_terminal'), 0) = 0
+            AND COALESCE(r.recovery_intercepted, 0) = 1
+            AND COALESCE(r.recovery_billing_terminal, 0) = 0
           LIMIT 1`;
 
 export const MESSAGE_SUPERSEDED_PROBE_SQL = `SELECT 1
@@ -1685,7 +1680,7 @@ export class SDKMessageRepository {
         `SELECT sdk_uuid AS uuid, seq FROM sdk_messages
            INDEXED BY idx_sdk_messages_send_status_timestamp
          WHERE session_id = ? AND send_status = 'enqueued' AND message_type = 'user'
-           AND sdk_uuid IS NOT NULL AND json_extract(sdk_message, '$.inputKind') = ?
+           AND sdk_uuid IS NOT NULL AND input_kind = ?
          ORDER BY seq ASC`
       )
       .all(sessionId, kind) as { uuid: string; seq: number }[];
@@ -1696,7 +1691,7 @@ export class SDKMessageRepository {
       .prepare(
         `SELECT seq FROM sdk_messages
          WHERE session_id = ? AND send_status = 'consumed' AND message_type = 'user'
-           AND json_extract(sdk_message, '$.inputKind') IS NOT NULL
+           AND input_kind IS NOT NULL
          ORDER BY timestamp DESC, seq DESC LIMIT 1`
       )
       .get(sessionId) as { seq: number } | undefined;
@@ -2001,7 +1996,7 @@ export class SDKMessageRepository {
       .prepare(
         `SELECT timestamp FROM sdk_messages
           WHERE session_id = ? AND message_type = 'user'
-            AND json_extract(sdk_message, '$.inputKind') = 'human'
+            AND input_kind = 'human'
           ORDER BY timestamp DESC, rowid DESC LIMIT 1`
       )
       .get(sessionId) as { timestamp: string } | undefined;
@@ -2036,11 +2031,7 @@ export class SDKMessageRepository {
         `SELECT sdk_uuid AS uuid, timestamp FROM sdk_messages
           WHERE session_id = ? AND send_status = 'consumed' AND message_type = 'user'
             AND sdk_uuid IS NOT NULL AND parent_tool_use_id IS NULL
-            AND NOT (json_valid(sdk_message)
-              AND json_type(sdk_message, '$.message.content') = 'array'
-              AND EXISTS (
-                SELECT 1 FROM json_each(sdk_message, '$.message.content')
-                 WHERE json_extract(value, '$.type') = 'tool_result'))
+            AND COALESCE(has_tool_result, 0) = 0
           ORDER BY timestamp DESC, id DESC LIMIT 1`
       )
       .get(sessionId) as { uuid: string; timestamp: string } | undefined;
@@ -2287,7 +2278,7 @@ export class SDKMessageRepository {
              WHERE session_id = ? AND message_type = 'result' AND sdk_uuid = ?
                AND message_subtype = 'success' AND is_terminal = 1
                AND parent_tool_use_id IS NULL AND consumed_seq IS NOT NULL
-               AND COALESCE(json_extract(sdk_message, '$.internal_compaction_turn'), 0) = 0
+               AND COALESCE(internal_compaction_turn, 0) = 0
              LIMIT 1`
         )
         .get(sessionId, resultUuid) as { consumed_seq: number } | undefined;
@@ -2394,16 +2385,7 @@ export class SDKMessageRepository {
            AND task_id = ?
            AND message_type = 'user'
            AND consumed_seq IS NOT NULL
-           AND CASE WHEN json_valid(sdk_message) THEN
-             json_extract(sdk_message, '$.type') = 'user'
-             AND (
-               json_extract(sdk_message, '$.inputKind') = 'task'
-               OR (
-                 json_type(sdk_message, '$.inputKind') IS NULL
-                 AND COALESCE(CAST(json_extract(sdk_message, '$.isSynthetic') AS INTEGER), 0) = 1
-               )
-             )
-           ELSE 0 END
+           AND task_input_eligible = 1
          LIMIT 1`
       )
       .get(sessionId, taskId);
@@ -2555,7 +2537,7 @@ export class SDKMessageRepository {
            WHERE session_id = ?
              AND message_type = 'hyperneo_action'
              AND message_subtype = ?
-             AND json_extract(sdk_message, '$.resolved') = 0
+             AND resolved = 0
            LIMIT 1`
       )
       .get(sessionId, action);
