@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from 'node:fs';
-import { readFile, mkdir, realpath, stat, open, rename, unlink } from 'node:fs/promises';
+import { readFile, mkdir, realpath, readlink, stat, open, rename, unlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { join, dirname } from 'node:path';
+import { join, dirname, basename, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import type { GlobalSettings } from '@hyperneo/shared';
 import type { McpServerConfig } from '@hyperneo/shared/types/sdk-config';
@@ -37,8 +37,7 @@ export class SettingsManager {
       if (!this.workspacePath) return;
       const directory = join(this.workspacePath, '.claude');
       await mkdir(directory, { recursive: true });
-      const candidate = join(await realpath(directory), 'settings.local.json');
-      const path = await realpath(candidate).catch(() => candidate);
+      const path = await this.resolveSettingsTarget(join(directory, 'settings.local.json'));
       const write = (settingsWrites.get(path) ?? Promise.resolve())
         .catch(() => {})
         .then(() => this.writeFileOnlySettings(path, this.getGlobalSettings()));
@@ -49,6 +48,25 @@ export class SettingsManager {
         if (settingsWrites.get(path) === write) settingsWrites.delete(path);
       }
     });
+  }
+
+  private async resolveSettingsTarget(candidate: string): Promise<string> {
+    const directory = await realpath(dirname(candidate));
+    const path = join(directory, basename(candidate));
+    try {
+      return await realpath(path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    let target: string;
+    try {
+      target = await readlink(path);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT' || code === 'EINVAL') return path;
+      throw error;
+    }
+    return this.resolveSettingsTarget(resolve(directory, target));
   }
 
   private async readUserAttribution(): Promise<{ commit?: string; pr?: string } | undefined> {

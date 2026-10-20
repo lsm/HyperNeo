@@ -1190,6 +1190,16 @@ below 1 s and health below 250 ms while settings preparation still takes 1.4 s.
 This proves a synchronous settings I/O hazard; attribution of the historical
 2026-10-20 17:48:36Z production stall remains unproven.
 
+Repeat `verify` in a fresh run with `dangling` instead of `workspace`. This puts
+a relative settings symlink in the synthetic workspace whose target does not
+yet exist and delays the synthetic user attribution through the FIFO. The
+receipt must show `settingsSymlinkPreserved: true`, and the new target must
+contain the inherited synthetic attribution. Before the target-resolution fix,
+this journey records `false` and fails because rename replaced the link.
+Absolute/relative/chained missing targets and a missing parent directory are
+also pinned in the focused settings suite. Missing parents and native symlink
+resolution errors fail without replacing the original link.
+
 Settings preparations share a promise chain keyed by the resolved target path,
 including across SettingsManager instances and workspace aliases. They re-read
 local settings after awaiting inherited attribution, then commit complete JSON
