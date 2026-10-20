@@ -309,6 +309,56 @@ describe('Neo home operations', () => {
       root = dataDir;
     }
   });
+  test('native home reads stay closed after initialization is refused', async () => {
+    const dataDir = root;
+    root = join(dataDir, 'Neo');
+    await mkdir(root);
+    home = new NeoHomeRepository(root, repo);
+    const cwd = join(root, '.coordinators', 'test');
+    await mkdir(cwd, { recursive: true });
+    await mkdir(join(root, 'human-private'));
+    await writeFile(join(root, 'direction.md'), 'Human direction.');
+    await writeFile(join(root, '.gitignore'), 'human-private/\n');
+    await writeFile(join(root, 'human-private', 'draft.md'), 'Private draft.');
+    await writeFile(join(cwd, 'own.md'), 'Own working note.');
+    const guard = neoToolGuard({ home: dataDir, dataDir, own: [cwd] });
+    const hook = (tool_name: string, tool_input: Record<string, unknown>) =>
+      guard(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name,
+          tool_input,
+          cwd,
+          session_id: 'test',
+          tool_use_id: 'test',
+          transcript_path: join(cwd, 'transcript'),
+        } as HookInput,
+        'test',
+        { signal: new AbortController().signal }
+      );
+    try {
+      expect(await call('neo.home.init', {})).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('confirmation_required'),
+      });
+      await expect(readFile(join(root, '.git', 'HEAD'), 'utf8')).rejects.toThrow();
+      for (const [tool, input] of [
+        ['Read', { file_path: join(root, 'human-private', 'draft.md') }],
+        ['Read', { file_path: join(root, 'direction.md') }],
+        [
+          'Grep',
+          { path: join(root, 'human-private'), pattern: '.', output_mode: 'files_with_matches' },
+        ],
+        ['Glob', { path: root, pattern: '**/draft.md' }],
+      ] as const)
+        expect(await hook(tool, input)).toMatchObject({
+          hookSpecificOutput: { permissionDecision: 'deny' },
+        });
+      expect(await hook('Read', { file_path: join(cwd, 'own.md') })).toEqual({});
+    } finally {
+      root = dataDir;
+    }
+  });
   test('only root Neo and the local human can use the home operations', async () => {
     for (const source of ['mcp', 'internal']) {
       expect(await call('neo.home.init', {}, { source, principal: 'worker' })).toMatchObject({

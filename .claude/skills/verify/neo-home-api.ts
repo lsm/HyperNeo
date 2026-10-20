@@ -29,6 +29,13 @@ createServer(async (req, res) => {
       { type: 'tool_use', id: 'toolu_home_public_glob', name: 'Glob', input: { path: '../..', pattern: 'projects/**/*.md' } },
     ];
   }
+  if (JSON.stringify(body.messages ?? []).includes('verify-home-uninitialized-sdk') && !results.length) {
+    content = [
+      { type: 'tool_use', id: 'toolu_uninitialized_read', name: 'Read', input: { file_path: '../../human-private/draft.md' } },
+      { type: 'tool_use', id: 'toolu_uninitialized_grep', name: 'Grep', input: { path: '../../human-private', pattern: '.', output_mode: 'files_with_matches' } },
+      { type: 'tool_use', id: 'toolu_uninitialized_glob', name: 'Glob', input: { path: '../..', pattern: '**/draft.md' } },
+    ];
+  }
   const message = { id: `msg_${Date.now()}`, type: 'message', role: 'assistant', model: 'claude-sonnet-4-20250514', content, stop_reason: content[0].type === 'tool_use' ? 'tool_use' : 'end_turn', stop_sequence: null, usage: { input_tokens: 100, output_tokens: 30 } };
   if (!body.stream) { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(message)); return; }
   res.setHeader('content-type', 'text/event-stream');
