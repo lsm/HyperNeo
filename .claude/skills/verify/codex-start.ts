@@ -1,3 +1,4 @@
+import { codexDesktopProject } from '../../../packages/daemon/src/lib/drivers/codex-desktop-project.ts';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -29,6 +30,12 @@ if (action === 'prepare') {
     appServer: () =>
       connectCodexAppServer(join(home, 'app-server-control/app-server-control.sock')),
     bootstrapServer: () => startCodexBootstrapServer(),
+    prepareDesktopProject: async (folder) => {
+      const state = JSON.parse(readFileSync(join(home, '.codex-global-state.json'), 'utf8'));
+      const id = codexDesktopProject(state, folder, home);
+      if (!id) throw new Error(`Manually register codex://threads/new?${new URLSearchParams({ path: folder })} first`);
+      return id;
+    },
     startDesktopTurn: async (threadId, request) => {
       save('opening', { threadId, request });
       throw new Error('Paused before Desktop handoff for manual opening');

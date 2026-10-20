@@ -254,6 +254,9 @@ describe('withCodexDesktopIpc', () => {
         bootstrapServer: async () => {
           throw new Error('Must not resume the thread');
         },
+        prepareDesktopProject: async () => {
+          throw new Error('Must not register a project while steering');
+        },
         startDesktopTurn: async () => {
           throw new Error('Must not start a new turn');
         },
