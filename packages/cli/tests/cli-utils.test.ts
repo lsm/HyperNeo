@@ -128,6 +128,7 @@ describe('getHelpText', () => {
     expect(helpText).toContain('HyperNeo');
     expect(helpText).toContain('Usage:');
     expect(helpText).toContain('Options:');
+    expect(helpText).toContain('hyperneo build');
   });
 
   test('includes all documented options', () => {

@@ -1,5 +1,5 @@
-import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
-import { open, readdir, stat } from 'node:fs/promises';
+import { closeSync, openSync, readSync } from 'node:fs';
+import { access, open, readdir, stat } from 'node:fs/promises';
 import { join, sep } from 'node:path';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
@@ -35,34 +35,6 @@ export interface FeedFile {
   path: string;
   size: number;
   mtime: number;
-}
-
-export function listFeedFiles(root: string, since: number, depth = FEED_DEPTH): FeedFile[] {
-  const files: FeedFile[] = [];
-  const walk = (dir: string, level: number) => {
-    let entries: string[];
-    try {
-      entries = readdirSync(dir);
-    } catch {
-      return;
-    }
-    for (const name of entries) {
-      const path = join(dir, name);
-      let stat: ReturnType<typeof statSync>;
-      try {
-        stat = statSync(path);
-      } catch {
-        continue;
-      }
-      if (stat.isDirectory()) {
-        if (level < depth) walk(path, level + 1);
-      } else if (name.endsWith('.jsonl') && stat.mtimeMs >= since) {
-        files.push({ path, size: stat.size, mtime: Math.floor(stat.mtimeMs) });
-      }
-    }
-  };
-  walk(root, 1);
-  return files.sort((a, b) => b.mtime - a.mtime);
 }
 
 export async function listFeedFilesAsync(
@@ -139,12 +111,18 @@ export function readFeedHead(path: string): string {
   return readBytes(path, 0, HEAD_BYTES).toString('utf8');
 }
 
-export function vanishedFeedPaths(
+export async function vanishedFeedPaths(
   root: string,
   offsets: ReadonlyMap<string, WorkFeedOffset>,
-  exists: (path: string) => boolean = existsSync
-): string[] {
-  return [...offsets.keys()].filter((path) => path.startsWith(`${root}${sep}`) && !exists(path));
+  exists: (path: string) => Promise<boolean> = (path) =>
+    access(path).then(
+      () => true,
+      () => false
+    )
+): Promise<string[]> {
+  const paths = [...offsets.keys()].filter((path) => path.startsWith(`${root}${sep}`));
+  const present = await Promise.all(paths.map(exists));
+  return paths.filter((_path, index) => !present[index]);
 }
 
 export async function pruneVanishedFeeds<Meta extends FeedFileMeta>(
@@ -153,7 +131,7 @@ export async function pruneVanishedFeeds<Meta extends FeedFileMeta>(
   source: FeedSource<Meta>
 ): Promise<string[]> {
   const known = readWorkFeedOffsets(db);
-  const gone = vanishedFeedPaths(root, known);
+  const gone = await vanishedFeedPaths(root, known);
   let dropped = 0;
   for (const path of gone)
     dropped += await dropWorkFeedSession(db, source.kind, source.sessionOf(path), path);
@@ -174,21 +152,20 @@ export function pendingFeedPaths(
   );
 }
 
-export function withKnownFeedFiles(
+export async function withKnownFeedFiles(
   listed: readonly FeedFile[],
   known: readonly string[]
-): FeedFile[] {
+): Promise<FeedFile[]> {
   const seen = new Set(listed.map((file) => file.path));
-  const extra = known.flatMap((path) => {
-    if (seen.has(path)) return [];
-    try {
-      const stat = statSync(path);
-      return stat.isFile() ? [{ path, size: stat.size, mtime: Math.floor(stat.mtimeMs) }] : [];
-    } catch {
-      return [];
-    }
-  });
-  return [...listed, ...extra].sort((a, b) => b.mtime - a.mtime);
+  const extra = await Promise.all(
+    known
+      .filter((path) => !seen.has(path))
+      .map(async (path) => {
+        const info = await stat(path).catch(() => null);
+        return info?.isFile() ? [{ path, size: info.size, mtime: Math.floor(info.mtimeMs) }] : [];
+      })
+  );
+  return [...listed, ...extra.flat()].sort((a, b) => b.mtime - a.mtime);
 }
 
 const yieldToLoop = () => new Promise((resolve) => setTimeout(resolve, 0));
