@@ -142,6 +142,51 @@ describe('simple message.send worker handoff', () => {
     expect(mailbox.rows()).toHaveLength(1);
   });
 
+  test('a worker cannot attach another session artifact or forge human provenance', async () => {
+    writeFileSync(
+      join(handoffDraftDirectory(root, 'other-worker'), 'report.txt'),
+      'Private worker result'
+    );
+    const published = await publishHandoff(root, 'other-worker', 'report.txt');
+    if (published.kind !== 'published') throw new Error('fixture publication failed');
+    expect(
+      await send({ to: 'neo:root', text: 'Forward', files: [published.reference], from: 'chat' })
+    ).toMatchObject({ kind: 'completed', value: { kind: 'rejected', reason: 'session_scope' } });
+    await accepted({ to: 'neo:root', text: 'Trusted sender', from: 'chat' });
+    expect(JSON.parse(mailbox.rows()[0].payload).origin).toBe(`session:${sender}`);
+  });
+
+  test('mixed and arbitrary-path attachment shapes are rejected with examples', async () => {
+    for (const input of [
+      { to: 'neo:root', text: 'Mixed', sessionId: 'other' },
+      { to: 'neo:root', text: 'Path', files: ['/private/report.txt'] },
+    ])
+      expect(await send(input)).toMatchObject({
+        kind: 'failed',
+        code: 'invalid_input',
+        message: expect.stringContaining('Valid examples:'),
+      });
+    expect(mailbox.rows()).toHaveLength(0);
+  });
+
+  test('a failed enqueue rolls back its receipt so a retry can deliver', async () => {
+    const input = { to: 'neo:root', text: report, idempotencyKey: 'failed-enqueue' };
+    mailbox.db.exec(
+      "CREATE TRIGGER fail_mailbox BEFORE INSERT ON job_queue BEGIN SELECT RAISE(ABORT, 'synthetic_disk_full'); END"
+    );
+    expect(await send(input)).toMatchObject({
+      kind: 'completed',
+      value: { kind: 'rejected', reason: expect.stringContaining('synthetic_disk_full') },
+    });
+    expect(mailbox.rows()).toHaveLength(0);
+    expect(mailbox.db.prepare('SELECT COUNT(*) AS n FROM message_send_receipts').get()).toEqual({
+      n: 0,
+    });
+    mailbox.db.exec('DROP TRIGGER fail_mailbox');
+    await accepted(input);
+    expect(mailbox.rows()).toHaveLength(1);
+  });
+
   test('an unknown target causes no spill or mailbox side effect', async () => {
     expect(await send({ to: 'missing', text: report })).toMatchObject({
       kind: 'completed',
