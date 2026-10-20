@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { writeSdkMessageBody } from '../../../../src/storage/repositories/sdk-message-body-write';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
+import { runMigration419 } from '../../../../src/storage/schema/m419-task-message-body-triggers';
+import { createTaskMessageRows } from '../../../../src/storage/schema/task-message-rows';
 import { TASK_MESSAGE_FLAG as F } from '../../../../src/storage/schema/task-message-rows';
 import {
   deriveSdkMessageColumns,
@@ -57,6 +59,95 @@ function projection(id: string) {
 }
 
 describe('task message body projection', () => {
+  test('matches legacy flags and artifact keys for malformed, mistyped and mutating-tool bodies', () => {
+    for (const name of [
+      'task_message_rows_ai',
+      'task_message_rows_au',
+      'task_message_bodies_ai',
+      'task_message_bodies_au',
+      'task_message_rows_unassigned',
+      'task_message_rows_reassigned',
+    ])
+      db.exec(`DROP TRIGGER ${name}`);
+    createTaskMessageRows(db);
+    const cases = [
+      assistant('a.ts'),
+      {
+        type: 'assistant',
+        message: { content: [{ type: 'thinking', thinking: 'hmm' }, 'stray', 0, null, false] },
+      },
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'text', text: '   ' },
+            { type: 'tool_use', id: 'read', name: 'Read', input: {} },
+          ],
+        },
+      },
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: 'edit',
+              name: 'Edit',
+              input: { file_path: 'b.ts', old_string: 'a', new_string: 'b' },
+            },
+            { type: 'tool_use', id: 'bad', name: 'Write', input: {} },
+          ],
+        },
+      },
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: 'multi',
+              name: 'MultiEdit',
+              input: { file_path: 'c.ts', edits: [{ old_string: 'a', new_string: 'b' }] },
+            },
+            {
+              type: 'tool_use',
+              id: 'todo',
+              name: 'TodoWrite',
+              input: { todos: [{ content: 'do', status: 'pending' }] },
+            },
+          ],
+        },
+      },
+      ...[undefined, null, false, 0, true, 1, '0'].map((resolved) => ({
+        type: 'hyperneo_action',
+        resolved,
+      })),
+      ...[undefined, null, false, 0, 'info', 'warn'].map((level) => ({
+        type: 'system',
+        subtype: 'informational',
+        level,
+      })),
+    ];
+    for (const [i, body] of cases.entries()) put(`case-${i}`, body);
+    for (const [i, raw] of ['{broken', 'null', 'false', '0', '[]', '"text"'].entries())
+      writeSdkMessageBody(
+        db,
+        () =>
+          db
+            .prepare(`INSERT INTO sdk_messages(id,session_id,task_id,message_type,sdk_message,timestamp,replacement_metadata_normalized)
+        VALUES (?,'s','task','assistant',?,'2026-10-20T00:00:00Z',1)`)
+            .run(`raw-${i}`, raw),
+        'id=?',
+        [`raw-${i}`]
+      );
+    const before = db.prepare('SELECT * FROM task_message_rows ORDER BY id').all();
+    runMigration419(db);
+    runMigration419(db);
+    db.exec('UPDATE sdk_message_bodies SET sdk_message=sdk_message');
+    db.exec('UPDATE sdk_messages SET send_status=send_status');
+    expect(db.prepare('SELECT * FROM task_message_rows ORDER BY id').all()).toEqual(before);
+  });
+
   test('body upserts refresh flags, artifact keys and JSON subtype without replacing row metadata', () => {
     put('m', assistant('a.ts'));
     const before = projection('m');

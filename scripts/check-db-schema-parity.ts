@@ -67,6 +67,7 @@ export const HELPER_SCHEMA_TABLES = [
   'node_executions',
   'sdk_message_replacements',
   'sdk_message_bodies',
+  'sdk_message_body_copy_active',
   'sdk_messages',
   'session_counters',
   'task_message_rows',
