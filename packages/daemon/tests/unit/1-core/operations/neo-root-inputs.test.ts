@@ -27,7 +27,7 @@ describe('root Neo inputs', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   let service: NeoService;
   let events: InternalEventBus<DaemonInternalEventMap>;
-  const prompt = (sessionId: string, messageId: string, inputKind: 'human' | 'system') => {
+  const prompt = (sessionId: string, messageId: string, inputKind: 'human' | 'system' | 'task') => {
     expect(
       db.getSDKMessageRepo().saveSDKMessage(sessionId, {
         type: 'user',
@@ -81,15 +81,43 @@ describe('root Neo inputs', () => {
       sessionId: root,
       processingState: { status: 'idle' },
     });
-    await service.steerHumanMessages(root);
+    await service.steerQueuedInputs(root);
     expect(steerNeoInput).not.toHaveBeenCalled();
     await events.publish('session.updated', {
       sessionId: root,
       processingState: { status: 'processing', messageId: 'note', phase: 'initializing' },
     });
     await vi.waitFor(() => expect(steerNeoInput).toHaveBeenCalledWith('waiting-human'));
-    await service.steerHumanMessages(holder);
+    await service.steerQueuedInputs(holder);
     expect(steerNeoInput).toHaveBeenCalledTimes(1);
     expect(handleInterrupt).not.toHaveBeenCalled();
+  });
+
+  test('a message from another session reaches the running turn as soon as it is enqueued, and a daemon note waits', async () => {
+    const steerNeoInput = vi.fn(() => true);
+    Object.assign(service.sessions, {
+      getSessionForControl: vi.fn(async () => ({ steerNeoInput })),
+    });
+    await events.publish('session.updated', {
+      sessionId: root,
+      processingState: { status: 'processing', messageId: 'note', phase: 'initializing' },
+    });
+    for (const [id, kind] of [
+      ['worker-says', 'task'],
+      ['daemon-note', 'system'],
+    ] as const) {
+      prompt(root, id, kind);
+      db.getSDKMessageRepo().updateMessageStatus(
+        [db.getSDKMessageRepo().findMessageIdByUuid(root, id)!],
+        'enqueued'
+      );
+    }
+    await events.publish('messages.statusChanged', {
+      sessionId: root,
+      messageIds: ['worker-says'],
+      status: 'enqueued',
+    });
+    await vi.waitFor(() => expect(steerNeoInput).toHaveBeenCalledWith('worker-says'));
+    expect(steerNeoInput).not.toHaveBeenCalledWith('daemon-note');
   });
 });
