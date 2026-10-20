@@ -587,6 +587,14 @@ adds its journey here.
     rechecks closure after facts load, so a closing target receives no wake.
     No real model, external PR or desktop GUI is exercised. Mandate reconciliation
     and what-works compaction belong to G8.
+    To check close/reopen settings without a model turn, run
+    `bun .claude/skills/verify/goal-reopen.ts <port> "$RUN"`. It creates a daily
+    09:00 UTC cron with nudge interval 7, closes and reopens it as both completed
+    and archived, and asserts that the configured schedule returns each time.
+    Evidence: `evidence/goal-reopen.json`. Restart the isolated daemon and repeat
+    with the saved goal id as the third argument to prove persistence across
+    process restart. Wake preferences are stored on the goal; closing still
+    deletes its schedule row.
 
 ## Evidence
 

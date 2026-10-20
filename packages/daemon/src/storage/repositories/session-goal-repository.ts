@@ -9,6 +9,9 @@ import type {
 import type { SpaceGoalEventSource } from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../reactive-database.ts';
 import type { Database } from '../sqlite-compat.ts';
+import type { SessionSchedule } from './session-schedule-repository.ts';
+
+type WakeSchedule = Pick<SessionSchedule, 'cadence' | 'nudgeEvery'>;
 
 const COLUMNS: Record<keyof SessionGoalPatch, string> = {
   title: 'title',
@@ -183,6 +186,19 @@ export class SessionGoalRepository {
       .prepare('SELECT facts_lines AS lines, works_note AS note FROM space_goals WHERE id = ?')
       .get(id) as { lines: string | null; note: string | null };
     return { lines: JSON.parse(row.lines ?? '[]'), note: row.note };
+  }
+
+  wakeSchedule(id: string): WakeSchedule | null {
+    const row = this.db
+      .prepare('SELECT wake_schedule AS config FROM space_goals WHERE id = ?')
+      .get(id) as { config: string | null };
+    return row.config ? (JSON.parse(row.config) as WakeSchedule) : null;
+  }
+
+  saveWakeSchedule(id: string, config: WakeSchedule): void {
+    this.db
+      .prepare('UPDATE space_goals SET wake_schedule = ? WHERE id = ?')
+      .run(JSON.stringify(config), id);
   }
 
   recordFacts(id: string, lines: readonly string[]): void {

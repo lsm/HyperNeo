@@ -25,6 +25,9 @@ describe('ask goal-link upgrade', () => {
     );
     runMigration420(db);
     runMigration420(db);
+    expect(db.prepare('SELECT wake_schedule FROM space_goals').get()).toEqual({
+      wake_schedule: null,
+    });
     expect(db.prepare('SELECT * FROM neo_asks').all()).toEqual([{ id: 'old', goal_id: null }]);
     db.exec("UPDATE neo_asks SET goal_id = 'goal'; DELETE FROM space_goals WHERE id = 'goal'");
     expect(db.prepare('SELECT goal_id FROM neo_asks').get()).toEqual({ goal_id: null });

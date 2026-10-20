@@ -16,12 +16,15 @@ export class SessionGoalSchedules implements ScheduleSource {
     private readonly packs: () => readonly NeoPack[]
   ) {}
 
-  sync(
-    goal: SessionGoal,
-    cadence: SessionScheduleCadence = { kind: 'every', everyMs: 3_600_000 },
-    nudgeEvery = 4
-  ): void {
+  sync(goal: SessionGoal, cadence?: SessionScheduleCadence, nudgeEvery = 4): void {
     const known = this.scheduler.repo.getBySource(this.kind, goal.id);
+    const config = known
+      ? { cadence: known.cadence, nudgeEvery: known.nudgeEvery }
+      : ((cadence ? { cadence, nudgeEvery } : this.goals.wakeSchedule(goal.id)) ?? {
+          cadence: { kind: 'every' as const, everyMs: 3_600_000 },
+          nudgeEvery: 4,
+        });
+    this.goals.saveWakeSchedule(goal.id, config);
     if (goal.status === 'completed' || goal.status === 'archived') {
       if (known) this.scheduler.delete(known);
       return;
@@ -33,8 +36,8 @@ export class SessionGoalSchedules implements ScheduleSource {
         sourceKind: this.kind,
         sourceId: goal.id,
         note: null,
-        cadence,
-        nudgeEvery,
+        cadence: config.cadence,
+        nudgeEvery: config.nudgeEvery,
         createdBySession: goal.ownerSessionId,
       });
     if (goal.status === 'paused' && row.status === 'active') this.scheduler.pause(row);

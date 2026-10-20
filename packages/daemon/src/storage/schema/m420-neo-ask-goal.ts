@@ -1,6 +1,9 @@
 import type { Database } from '../sqlite-compat.ts';
 
 export function runMigration420(db: Database): void {
+  const goals = db.prepare('PRAGMA table_info(space_goals)').all() as { name: string }[];
+  if (goals.length && !goals.some((column) => column.name === 'wake_schedule'))
+    db.exec('ALTER TABLE space_goals ADD COLUMN wake_schedule TEXT');
   const columns = db.prepare('PRAGMA table_info(neo_asks)').all() as { name: string }[];
   if (!columns.length) return;
   if (!columns.some((column) => column.name === 'goal_id'))

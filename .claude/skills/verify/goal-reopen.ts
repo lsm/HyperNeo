@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 
-const [port, run] = process.argv.slice(2);
+const [port, run, existingGoalId] = process.argv.slice(2);
 assert(port && run && port !== '8399');
 const log = readFileSync(`${run}/daemon.log`, 'utf8');
 assert(log.includes('HyperNeo Test Server') && log.includes(`Database: ${run}/`));
@@ -16,7 +16,7 @@ async function rpc(name: string, input: unknown) {
 }
 const ownerSessionId = (await rpc('neo.open', {})).sessionId;
 const cadence = { kind: 'cron', cron: '0 9 * * *', timezone: 'UTC' };
-const created = await rpc('goal.session.create', { ownerSessionId, title: 'Daily guide', doneTest: 'Published', cadence, nudgeEvery: 7 });
+const created = existingGoalId ? { accepted: true, goal: { id: existingGoalId } } : await rpc('goal.session.create', { ownerSessionId, title: 'Daily guide', doneTest: 'Published', cadence, nudgeEvery: 7 });
 assert(created.accepted, JSON.stringify(created));
 const goalId = created.goal.id;
 const evidence: unknown[] = [];
