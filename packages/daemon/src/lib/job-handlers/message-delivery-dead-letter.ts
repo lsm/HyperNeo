@@ -9,7 +9,7 @@ export interface MessageDeliveryDeadLetterSettlement {
 }
 
 export const DEAD_LETTER_SESSION_ERROR =
-  'Task-agent kickoff delivery exhausted its retries (dead-lettered).';
+  'Task-agent kickoff delivery failed and was dead-lettered.';
 
 export async function settleMessageDeliveryDeadLetter(
   payload: MessageDeliveryPayload,

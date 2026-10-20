@@ -6,6 +6,7 @@ import {
   isValidAddress,
   parseAddress,
   parseRemoteAddress,
+  renderRemoteAddress,
   renderAddress,
   type RemoteSessionAddress,
 } from '../mailbox/address.ts';
@@ -130,6 +131,38 @@ function sessionSender(origin: string): string | null {
   const local = parseAddress(origin);
   if (local?.kind === 'session') return local.sessionId;
   return parseRemoteAddress(origin) === null ? null : origin;
+}
+
+export type SessionSent = {
+  messageId: string;
+  fromSession: string;
+  toSession: string;
+  text: string;
+  at: number;
+};
+export type SessionSentObserver = (sent: SessionSent) => void;
+
+function plainText(content: SendInput['message']['message']['content']): string {
+  return typeof content === 'string'
+    ? content
+    : content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('\n');
+}
+
+export function reportSessionSend(
+  receipt: SendResult,
+  admitted: SendInput,
+  origin: string,
+  sent: SessionSentObserver
+): void {
+  const fromSession = sessionSender(origin);
+  if (receipt.kind === 'accepted' && fromSession)
+    sent({
+      messageId: receipt.messageId,
+      fromSession,
+      toSession: admitted.sessionId,
+      text: plainText(admitted.message.message.content),
+      at: Date.now(),
+    });
 }
 
 export type RemoteSendForwarder = (
@@ -282,6 +315,7 @@ const runSendMessage = (superpipe({})('send-operation-message') as PipelineAPI)
     'resolveAgent',
     'sessionTitle',
     'limit',
+    'sent',
   ])
   .pipe(admitOperationMessage, ['input', 'caller'], 'result:receipt')
   .pipe(resolveMessageTarget, ['receipt', 'resolveAgent'], 'result:receipt')
@@ -295,6 +329,7 @@ const runSendMessage = (superpipe({})('send-operation-message') as PipelineAPI)
   .pipe(persistOperationMessage, ['outgoing', 'origin', 'messageId', 'jobQueue'], 'handoff')
   .pipe(mapMessageReceipt, ['handoff', 'messageId'], 'receipt')
   .pipe(releaseUnsentSend, ['receipt', 'admitted', 'origin', 'limit'], 'receipt')
+  .pipe(reportSessionSend, ['receipt', 'admitted', 'origin', 'sent'], 'reported')
   .endAsync('receipt') as (
   input: SendRequest,
   caller: OperationCaller,
@@ -303,7 +338,8 @@ const runSendMessage = (superpipe({})('send-operation-message') as PipelineAPI)
   forwardRemote: RemoteSendForwarder,
   resolveAgent: AgentTargetResolver,
   sessionTitle: SessionTitleRead,
-  limit: SessionSendLimiter
+  limit: SessionSendLimiter,
+  sent: SessionSentObserver
 ) => Promise<SendResult>;
 
 export function createSendMessageOperation(
@@ -311,9 +347,20 @@ export function createSendMessageOperation(
   sessionStatus: SessionStatusRead,
   forwardRemote: RemoteSendForwarder = rejectUnattachedDaemon,
   resolveAgent: AgentTargetResolver = rejectAgentTargets,
-  sessionTitle: SessionTitleRead = () => null
+  sessionTitle: SessionTitleRead = () => null,
+  sent: SessionSentObserver = () => {}
 ) {
   const limit = createSessionSendLimiter();
+  const forwardAndReport: RemoteSendForwarder = async (target, input, origin) => {
+    const forwarded = await forwardRemote(target, input, origin);
+    reportSessionSend(
+      forwarded,
+      { ...input, sessionId: renderRemoteAddress(target) },
+      origin,
+      sent
+    );
+    return forwarded;
+  };
   return defineOperation({
     name: 'message.send',
     description:
@@ -326,10 +373,11 @@ export function createSendMessageOperation(
         caller,
         jobQueue,
         sessionStatus,
-        forwardRemote,
+        forwardAndReport,
         resolveAgent,
         sessionTitle,
-        limit
+        limit,
+        sent
       ),
   });
 }

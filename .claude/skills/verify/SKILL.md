@@ -37,6 +37,8 @@ cd packages/web && bun run build && cd ../..
   (DB), `home/`, `bin/gh`, the logs, the pid files and `evidence/`.
 - Ready signal: `ready: http://127.0.0.1:<port>  run dir: <run>`. The daemon log
   shows `HyperNeo Test Server` and `Database: <run>/data/daemon.db`.
+- The daemon logs nothing in test mode. Set `VERIFY_LOG_LEVEL=error` (or `info`,
+  `debug`) on `launch.sh` to see its errors in `daemon.log`.
 
 Give it a model, once per run (stored in the run's DB only):
 
@@ -190,8 +192,16 @@ adds its journey here.
    its turn ends. A `work.send '{"ref":{"adapter":"hyperneo","id":"<B>"},"message":"…","from":"session:<A>"}'`
    lands in B ending `Reply with mcp__hyperneo-operations__invoke {"name":"message.send","input":{"sessionId":"<A>",…}}, not SendMessage.`, and
    `neo.question.get '{"questionId":"made-up"}'` replies `not_found: no such question.`
+12. **A worker outside HyperNeo messages a session from Bash.** `session-cli.sh <port> "$RUN"`
+   runs `bun packages/cli/main.ts send <B> "Tests pass."` with only
+   `CODEX_THREAD_ID` set, then with no sender variable, then `question made-up`,
+   all against `<run>/data/session-door.sock` (owner-only). End state: the first
+   send is accepted and B's row is `task` input wrapped as
+   `from-session="codex-desktop:verify-thread"`; the second exits 1 with
+   `hyperneo send: no sender…` and sends nothing; the question replies
+   `not_found`. Stopping the daemon removes the socket.
 
-11. **Root Neo owns goals outside any Space.** After journey 1 opened root, run
+13. **Root Neo owns goals outside any Space.** After journey 1 opened root, run
     `VERIFY_PORT=9311 .claude/skills/verify/session-goal.sh "$RUN"`. It creates a goal
     for root through `goal.session.create`, first without metrics or a done-test, then
     with one, updates it, and lists it. End state: `evidence/goal-refused.json` holds
@@ -205,6 +215,22 @@ adds its journey here.
     (no check), and one open start question `q-start` listing both. End state
     within ~3 min: `todo-a` is `done` with `started_at` empty, and `q-start`
     is still `open` with `start_todos` `["todo-b"]`.
+13. **A session with no registered provider fails once and says why.** A fresh run
+    dir has no provider records, so Anthropic is not registered there. Launch with
+    `VERIFY_LOG_LEVEL=error`, then run
+    `VERIFY_PORT=<port> .claude/skills/verify/missing-provider-check.sh "$RUN"`. It
+    sends one message to root Neo and waits for its delivery job to settle. End
+    state: the job is `dead` with `retry_count` 0 and the error `Provider
+    'anthropic' is not registered. Log in or add an API key for it under Providers,
+    or switch this session to another provider.`, the message is `failed`, and
+    `daemon.log` has that one `[ErrorManager] model` entry.
+
+12. **Messages between root Neo and its workers show in Neo's conversation.** Run
+    `.claude/skills/verify/neo-session-rows.sh <port> "$RUN"`. It opens root, creates
+    a worker session "Fix the loader", and sends one message each way. End state: it
+    prints `Neo -> Fix the loader: Rebase on dev, then tell me.` then
+    `Fix the loader -> Neo: Rebased.`; on `/neo` each shows as one collapsed row
+    "Neo → Fix the loader" with its first line, expanding to the full text.
 
 13. **Codex work.send steers a Desktop-owned running turn.** This journey uses
     the real native IPC and the `invokeOperation` door used by Neo; it does not

@@ -24,6 +24,7 @@ export function startEventLoopLagLog(
   const now = deps.now ?? (() => performance.now());
   const takeSlowest = deps.takeSlowest ?? takeSlowestQuery;
   const tickMs = deps.tickMs ?? EVENT_LOOP_LAG_TICK_MS;
+  takeSlowest();
   let last = now();
   const timer = setInterval(() => {
     const at = now();
