@@ -1,5 +1,12 @@
 import { strict as assert } from 'node:assert';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  writeFileSync,
+  symlinkSync,
+  lstatSync,
+  readFileSync,
+} from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
@@ -10,7 +17,7 @@ const [mode, portText, runText, source = 'workspace'] = process.argv.slice(2);
 const port = Number(portText);
 assert(['reproduce', 'verify'].includes(mode));
 assert(port > 0 && port !== 8399 && runText);
-assert(['workspace', 'user'].includes(source));
+assert(['workspace', 'user', 'dangling'].includes(source));
 const run = resolve(runText);
 assert(process.env.NODE_ENV === 'test');
 assert(process.env.HOME === join(run, 'home'));
@@ -76,6 +83,8 @@ try {
     await app.settingsManager.prepareSDKOptions();
     return { prepared: true };
   });
+  if (source === 'dangling')
+    symlinkSync('../linked-settings.json', join(workspace, '.claude/settings.local.json'));
   writer = await delayedSettings(
     source === 'workspace'
       ? join(workspace, '.claude/settings.local.json')
@@ -95,6 +104,13 @@ try {
   await new Promise((done) => setTimeout(done, 300));
   const report = {
     source,
+    ...(source === 'dangling'
+      ? {
+          settingsSymlinkPreserved: lstatSync(
+            join(workspace, '.claude/settings.local.json')
+          ).isSymbolicLink(),
+        }
+      : {}),
     prepare: result,
     health,
     maxLagMs,
@@ -103,6 +119,16 @@ try {
   };
   writeFileSync(join(run, 'observed.json'), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
+  if (source === 'dangling') {
+    assert(
+      report.settingsSymlinkPreserved,
+      'must preserve the dangling link and create its target'
+    );
+    assert.deepEqual(
+      JSON.parse(readFileSync(join(workspace, 'linked-settings.json'), 'utf8')).attribution,
+      { commit: 'synthetic' }
+    );
+  }
   if (mode === 'verify') {
     assert(maxLagMs < 1000, 'settings I/O must not block the main thread for 1 s');
     assert(health.ms < 250, 'health must remain responsive during settings I/O');

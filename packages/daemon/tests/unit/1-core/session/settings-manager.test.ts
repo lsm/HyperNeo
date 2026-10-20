@@ -11,6 +11,7 @@ import {
   lstatSync,
   statSync,
   readdirSync,
+  readlinkSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -181,6 +182,44 @@ describe('SettingsManager', () => {
       expect(lstatSync(path).isSymbolicLink()).toBe(true);
       expect(statSync(target).mode & 0o777).toBe(0o600);
       expect(JSON.parse(readFileSync(target, 'utf8')).custom).toBe('linked');
+    });
+
+    it.each(['absolute', 'relative', 'chained'])(
+      'creates a missing target through a %s settings symlink',
+      async (kind) => {
+        const directory = join(workspacePath, '.claude');
+        const target = join(tempDir, 'missing-settings.json');
+        const path = join(directory, 'settings.local.json');
+        mkdirSync(directory);
+        const link = kind === 'relative' ? '../../missing-settings.json' : target;
+        if (kind === 'chained') symlinkSync('missing-settings.json', join(tempDir, 'intermediate'));
+        const destination = kind === 'chained' ? join(tempDir, 'intermediate') : link;
+        symlinkSync(destination, path);
+        (mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
+          outputStyle: 'concise',
+          attribution: { commit: 'synthetic' },
+        });
+        await settingsManager.prepareSDKOptions();
+        expect(lstatSync(path).isSymbolicLink()).toBe(true);
+        expect(readlinkSync(path)).toBe(destination);
+        expect(JSON.parse(readFileSync(target, 'utf8'))).toMatchObject({
+          outputStyle: 'concise',
+          attribution: { commit: 'synthetic' },
+        });
+      }
+    );
+
+    it('keeps a dangling settings symlink when its target parent is missing', async () => {
+      const directory = join(workspacePath, '.claude');
+      const path = join(directory, 'settings.local.json');
+      const target = join(tempDir, 'missing-parent/settings.json');
+      mkdirSync(directory);
+      symlinkSync(target, path);
+      await expect(settingsManager.prepareSDKOptions()).rejects.toThrow();
+      expect(lstatSync(path).isSymbolicLink()).toBe(true);
+      expect(readlinkSync(path)).toBe(target);
+      expect(existsSync(target)).toBe(false);
+      expect(readdirSync(directory)).toEqual(['settings.local.json']);
     });
 
     it('removes only its own staging file when writing fails after creation', async () => {
