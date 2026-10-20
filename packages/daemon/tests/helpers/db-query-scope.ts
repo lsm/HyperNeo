@@ -104,6 +104,7 @@ export const EXCLUDED_TABLE_NAMES: string[] = [
   'space_agent_memory_fts_data',
   'space_agent_memory_fts_docsize',
   'space_agent_memory_fts_idx',
+  'message_send_receipts',
   'migration_markers',
   'migration_space_reclaims',
   'space_session_groups',

@@ -1,3 +1,4 @@
+import { runMigration425 } from './m425-message-send-receipts.ts';
 import { runMigration388 } from './m388-claude-desktop-bridge-events.ts';
 import { createNeoProjectSchema } from './m361-neo-project-avatars.ts';
 import { runMigration260 } from './m260-direct-start-requests.ts';
@@ -1145,4 +1146,5 @@ function createIndexes(db: BunDatabase): void {
 		 ON tool_continuation_inbox(tool_use_id, status, expires_at)`
   );
   runMigration422(db);
+  runMigration425(db);
 }

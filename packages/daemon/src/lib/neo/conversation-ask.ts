@@ -1,7 +1,7 @@
 import type { NeoConversationAskInput } from '@hyperneo/shared/types/neo-conversation-ask';
 import { z } from 'zod';
 import { toMailboxMessage } from '../mailbox/entry.ts';
-import { SendMessageInputSchema } from '../messaging/message-send.ts';
+import { SessionContentSchema } from '../messaging/message-send.ts';
 
 export const NeoReplyRefSchema = z
   .object({
@@ -29,7 +29,7 @@ export const NeoConversationAskSchema = z
         messageId: z.uuid(),
       })
       .strict(),
-    content: SendMessageInputSchema.shape.message.shape.message.shape.content,
+    content: SessionContentSchema,
     replyTo: NeoReplyToSchema.optional(),
   })
   .strict()

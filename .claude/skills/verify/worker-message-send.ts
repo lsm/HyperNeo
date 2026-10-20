@@ -30,6 +30,7 @@ const input = {to: 'neo:verify-handoff', text, idempotencyKey: 'synthetic-one-ca
 const drafts = handoffDraftDirectory(join(run, 'data'), worker);
 const privateFile = join(run, 'data', 'private.md');
 writeFileSync(privateFile, 'SYNTHETIC_PRIVATE_MUST_NOT_BE_READ');
+assert(!existsSync(join(run, 'data/daemon.db')), 'requires a fresh synthetic DB');
 let core = new DatabaseCore(join(run, 'data/daemon.db'));
 await core.initialize();
 const catalog = () => createOperationRegistry([createSendMessageOperation(new JobQueueRepository(core.getDb()), () => 'active'), ...createHandoffOperations(() => 'active')]);
@@ -95,6 +96,9 @@ const execute = async (neo: boolean) => {
   try { for await (const event of stream) writeFileSync(join(run, `${mode}-events.jsonl`), `${JSON.stringify(event)}\n`, { flag: 'a' }); }
   finally { stream.close(); }
 };
+let lastTick = performance.now();
+let maxLagMs = 0;
+const lagTimer = setInterval(() => { const now = performance.now(); maxLagMs = Math.max(maxLagMs, now-lastTick-10); lastTick=now; },10);
 try {
   await execute(false);
   assert(reference!, results['worker-0'] ?? 'worker must receive a real MCP send receipt');
@@ -130,6 +134,7 @@ try {
   const read = object(results['neo-0']);
   assert.equal(Buffer.from(read.data, 'base64').toString(), text);
   assert(results['neo-1'].includes('SYNTHETIC_HANDOFF_REPORT'));
-  writeFileSync(join(run, 'evidence.json'), JSON.stringify({ reference, receipt, cliReceipt, reportBytes: Buffer.byteLength(text), actualWorkerMcpSend: true, actualNeoMcpRead: true, actualNeoNativeRead: true, actualCliUnixDoor:true, replayAfterDatabaseReopenAndJobCleanup:true, automaticSdkMailboxConsumptionVerified:false, results }, null, 2));
+  writeFileSync(join(run, 'evidence.json'), JSON.stringify({ reference, receipt, cliReceipt, reportBytes: Buffer.byteLength(text), maxLagMs, actualWorkerMcpSend: true, actualNeoMcpRead: true, actualNeoNativeRead: true, actualCliUnixDoor:true, replayAfterDatabaseReopenAndJobCleanup:true, automaticSdkMailboxConsumptionVerified:false, results }, null, 2));
+  assert(maxLagMs < 1000, `Synthetic send/read event-loop lag ${maxLagMs} ms`);
   console.log(join(run, 'evidence.json'));
-} finally { child?.kill(); await door?.close(); await server.stop(true); core.close(); }
+} finally { clearInterval(lagTimer); child?.kill(); await door?.close(); await server.stop(true); core.close(); }

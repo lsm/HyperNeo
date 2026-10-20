@@ -82,7 +82,17 @@ export async function parseOperationInput(
     const parsed = await operation.inputSchema.safeParseAsync(input);
     return parsed.success
       ? { value: { operation, input: parsed.data } }
-      : { reason: { kind: 'failed', code: 'invalid_input', message: parsed.error.message } };
+      : {
+          reason: {
+            kind: 'failed',
+            code: 'invalid_input',
+            message:
+              parsed.error.message +
+              (operation.inputSchema.meta()?.examples
+                ? `\nValid examples: ${JSON.stringify(operation.inputSchema.meta()?.examples)}`
+                : ''),
+          },
+        };
   } catch (error) {
     return {
       reason: {

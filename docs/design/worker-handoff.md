@@ -65,7 +65,22 @@ reads of private daemon data and secret filenames remain outside its exception.
 The native SDK Read tool still owns its subsequent filesystem open; the verified
 operation returns only bytes captured from the descriptor it hashed. Neither
 interface claims protection against a same-user process changing the SDK itself.
-Message-send normalization/spill and structured transport wiring remain PR2.
+PR2 accepts `message.send {to, text, files?, idempotencyKey?}` as well as the
+legacy nested SDK envelope. `files` contains complete published references, not
+source paths. Workers may attach their own artifacts; Neo and the human may
+forward existing published artifacts. New simple text over 4 KiB UTF-8 is
+published through the same outbox path and replaced by a descriptor plus structured
+references in the mailbox. Legacy envelope content stays unchanged. Local
+references on a remote send report unavailable until explicit artifact transfer
+exists; plain remote routing stays intact.
+
+An optional sender-scoped `idempotencyKey` binds to the normalized request. Its
+accepted receipt is stored atomically with mailbox enqueueing and survives job
+cleanup and daemon restart; a different request with the same key is rejected.
+Calls without a key keep the existing rate/content-duplicate behavior. CLI sends
+use the simple shape. Schema errors include both complete input examples; the
+Unix door's 256 KiB request limit explains publication and reference delivery for
+larger files. No artifacts or receipts expire automatically.
 
 **Reads and reports.** Keep existing `work.read` response compatibility; add
 explicit continuation/availability metadata for complete text and file references.
