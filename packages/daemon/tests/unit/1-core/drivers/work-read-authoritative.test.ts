@@ -136,6 +136,34 @@ describe('authoritative work.read', () => {
     ]);
   });
 
+  test('malformed legacy and split bodies do not hide healthy turns or change stored bytes', async () => {
+    put('healthy-before', 'user', 'Please report');
+    put('broken-legacy', 'assistant', []);
+    db.prepare('UPDATE sdk_messages SET sdk_message=? WHERE id=?').run('{broken', 'broken-legacy');
+    put('broken-split', 'result', '', { split: true });
+    db.prepare(
+      'UPDATE sdk_message_bodies SET sdk_message=? WHERE seq=(SELECT seq FROM sdk_messages WHERE id=?)'
+    ).run('{broken', 'broken-split');
+    put('healthy-after', 'assistant', [{ type: 'text', text: report }]);
+    const original = digest();
+    const value = await page({ before: 10, after: 0 });
+    expect(value.turns.map((turn) => turn.text)).toEqual(['Please report', report]);
+    expect(value.availability).toBe('complete');
+    expect(digest()).toBe(original);
+  });
+
+  test('a malformed predecessor does not prevent reading a healthy result anchor', async () => {
+    put('healthy', 'assistant', [{ type: 'text', text: report }]);
+    put('broken-context', 'assistant', []);
+    db.prepare('UPDATE sdk_messages SET sdk_message=? WHERE id=?').run('{broken', 'broken-context');
+    put('echo', 'result', report.trim());
+    const original = digest();
+    expect((await page({ around: 'echo', before: 0, after: 0 })).turns).toMatchObject([
+      { messageId: 'healthy', text: report },
+    ]);
+    expect(digest()).toBe(original);
+  });
+
   test('tool results, tool calls, thinking, subagents, compaction and deferred input stay hidden', async () => {
     put('human', 'user', 'Visible human');
     put('tool-result', 'user', [
