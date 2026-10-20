@@ -378,7 +378,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
   let startupLogCaptureCleanup: (() => void) | null = null;
   let unsubscribeProviderFailureChanges: (() => void) | null = null;
   let eventLoopWatchdog: EventLoopWatchdogHandle | null = null;
-  let stopEventLoopLagLog = (): void => {};
+  let eventLoopLagLogStopped = false;
+  let stopEventLoopLagLog = (): void => {
+    eventLoopLagLogStopped = true;
+  };
   await releaseStartupFileLogCapture().catch(() => {});
   const structuredLogSink = config.structuredLogFilePath
     ? new StructuredLogFileSink({
@@ -1652,7 +1655,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     armStallDetectionWhenStartupSettles(eventLoopWatchdog, spaceRuntimeReadyPromise, {
       onArm: (reason) => {
         logInfo(`[Daemon] Event-loop stall detection armed (${reason})`);
-        stopEventLoopLagLog = startEventLoopLagLog((line) => console.error(line));
+        if (eventLoopLagLogStopped) return;
+        const stop = startEventLoopLagLog((line) => console.error(line));
+        stopEventLoopLagLog = () => {
+          eventLoopLagLogStopped = true;
+          stop();
+        };
       },
     });
 
