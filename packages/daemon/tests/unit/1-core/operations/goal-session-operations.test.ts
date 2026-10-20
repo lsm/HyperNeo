@@ -61,6 +61,29 @@ function setup(packs: NeoPack[] = []) {
 }
 
 describe('goal-owned schedules', () => {
+  test.each(['completed', 'archived'] as const)(
+    'reopening a %s goal preserves its configured cadence and nudge interval',
+    async (status) => {
+      const { db, call, scheduler } = setup();
+      const cadence = { kind: 'cron', cron: '0 9 * * *', timezone: 'UTC' };
+      const goal = (
+        await call('goal.session.create', {
+          title: 'Daily guide',
+          doneTest: 'Published',
+          cadence,
+          nudgeEvery: 7,
+        })
+      ).goal;
+      const before = scheduler.repo.getBySource('goal', goal.id)!;
+      await call('goal.session.update', { goalId: goal.id, status });
+      expect(scheduler.repo.get(before.id)).toBeNull();
+      await call('goal.session.update', { goalId: goal.id, status: 'active' });
+      const after = scheduler.repo.getBySource('goal', goal.id)!;
+      expect(after.id).not.toBe(before.id);
+      expect(after).toMatchObject({ cadence, nudgeEvery: 7, status: 'active' });
+      db.close();
+    }
+  );
   test('reads, busy skips and failed delivery preserve facts_lines until a confirmed wake', async () => {
     const { db, call, scheduler } = setup();
     const jobs = new JobQueueRepository(db);
