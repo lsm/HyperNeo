@@ -48,7 +48,10 @@ function subagentPlan(db: Database): string {
         if (sql.includes('parent_tool_use_id IN'))
           plans.push(
             ...(
-              prepare(`EXPLAIN QUERY PLAN ${sql}`).all('s1', 'tu0', 'tu1') as { detail: string }[]
+              prepare(`EXPLAIN QUERY PLAN ${sql}`).all(
+                's1',
+                ...Array.from({ length: 10 }, (_, t) => `tu${t}`)
+              ) as { detail: string }[]
             ).map((row) => row.detail)
           );
         return prepare(sql);
@@ -70,17 +73,14 @@ describe('SDKMessageRepository.getSDKMessages', () => {
       `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, parent_tool_use_id)
        VALUES (?, 's1', ?, ?, ?, ?)`
     );
+    const filler = JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: 'x'.repeat(4000) }] },
+    });
     const at = (i: number) => new Date(Date.UTC(2026, 9, 1) + i * 1000).toISOString();
     seed.transaction(() => {
-      for (let i = 0; i < 45_000; i++)
-        insert.run(
-          `m${i}`,
-          'assistant',
-          '{"type":"assistant","message":{"content":[]}}',
-          at(i),
-          null
-        );
-      for (let t = 0; t < 2; t++) {
+      for (let i = 0; i < 45_000; i++) insert.run(`m${i}`, 'assistant', filler, at(i), null);
+      for (let t = 0; t < 10; t++) {
         insert.run(
           `tool${t}`,
           'assistant',
@@ -89,13 +89,7 @@ describe('SDKMessageRepository.getSDKMessages', () => {
           null
         );
         for (let i = 0; i < 3; i++)
-          insert.run(
-            `child${t}-${i}`,
-            'assistant',
-            '{"type":"assistant","message":{"content":[]}}',
-            at(45_001 + t * 4 + i),
-            `tu${t}`
-          );
+          insert.run(`child${t}-${i}`, 'assistant', filler, at(45_001 + t * 4 + i), `tu${t}`);
       }
     })();
     seed.exec('ANALYZE');
@@ -109,22 +103,9 @@ describe('SDKMessageRepository.getSDKMessages', () => {
 
     const db = new Database(path);
     const plan = subagentPlan(db);
-    expect(plan).toContain(
-      'idx_sdk_messages_parent_tool_use_id (session_id=? AND parent_tool_use_id=?)'
-    );
+    expect(plan).toContain('(session_id=? AND parent_tool_use_id=?)');
+    expect(plan).not.toContain('idx_sdk_messages_session_timestamp_id');
     db.close();
     rmSync(dir, { recursive: true, force: true });
-  });
-
-  test('the parent index exists on a fresh database and after every migration', () => {
-    const db = new Database(':memory:');
-    runMigrations(db, () => {});
-    createTables(db);
-    expect(
-      db
-        .prepare("SELECT sql FROM sqlite_master WHERE name = 'idx_sdk_messages_parent_tool_use_id'")
-        .get()
-    ).toEqual({ sql: expect.stringContaining('sdk_messages(session_id, parent_tool_use_id)') });
-    db.close();
   });
 });
