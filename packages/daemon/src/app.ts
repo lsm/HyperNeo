@@ -112,6 +112,7 @@ import {
   startEventLoopWatchdog,
   type EventLoopWatchdogHandle,
 } from './lib/event-loop-watchdog.ts';
+import { startEventLoopLagLog } from './lib/event-loop-lag.ts';
 import {
   describeEventLoopStallMarker,
   eventLoopStallMarkerPath,
@@ -377,6 +378,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
   let startupLogCaptureCleanup: (() => void) | null = null;
   let unsubscribeProviderFailureChanges: (() => void) | null = null;
   let eventLoopWatchdog: EventLoopWatchdogHandle | null = null;
+  let stopEventLoopLagLog = (): void => {};
   await releaseStartupFileLogCapture().catch(() => {});
   const structuredLogSink = config.structuredLogFilePath
     ? new StructuredLogFileSink({
@@ -1640,6 +1642,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         try {
           await closeFileLogCapture();
         } finally {
+          stopEventLoopLagLog();
           eventLoopWatchdog?.stop();
         }
       }
@@ -1647,7 +1650,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     startupTimer.finish();
     armStallDetectionWhenStartupSettles(eventLoopWatchdog, spaceRuntimeReadyPromise, {
-      onArm: (reason) => logInfo(`[Daemon] Event-loop stall detection armed (${reason})`),
+      onArm: (reason) => {
+        logInfo(`[Daemon] Event-loop stall detection armed (${reason})`);
+        stopEventLoopLagLog = startEventLoopLagLog((line) => console.error(line));
+      },
     });
 
     return {
@@ -1686,6 +1692,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     };
   } catch (error) {
     startupTimer.finish();
+    stopEventLoopLagLog();
     eventLoopWatchdog?.stop();
     startupLogCaptureCleanup?.();
     unsubscribeProviderFailureChanges?.();
