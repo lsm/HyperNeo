@@ -264,7 +264,14 @@
   color: var(--prose-fg);
 }
 
+.neo-progress-slot {
+  height: 24px;
+  overflow: hidden;
+}
+
 .neo-progress {
+  height: 100%;
+  white-space: nowrap;
   display: flex;
   align-items: center;
   gap: 9px;
