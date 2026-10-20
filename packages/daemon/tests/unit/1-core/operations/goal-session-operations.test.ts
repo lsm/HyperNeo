@@ -64,6 +64,55 @@ function setup(packs: NeoPack[] = []) {
 }
 
 describe('goal-owned schedules', () => {
+  test.each(['completed', 'archived', 'schedule_deleted', 'goal_deleted'] as const)(
+    '%s during fact collection retires the wake without a failed delivery',
+    async (change) => {
+      const { db, call, scheduler, schedules } = setup();
+      const goal = (await call('goal.session.create', { title: 'Ship', doneTest: 'Released' }))
+        .goal;
+      const row = scheduler.repo.getBySource('goal', goal.id)!;
+      const jobs = new JobQueueRepository(db);
+      const job = jobs.getJob(row.pendingJobId!)!;
+      const clock = spyOn(Date, 'now').mockReturnValue(row.nextRunAt!);
+      const deliveries: string[] = [];
+      scheduler.registerSource({
+        kind: 'goal',
+        facts: async (id) => {
+          const facts = await schedules.facts(id);
+          if (change === 'schedule_deleted') scheduler.delete(scheduler.repo.get(row.id)!);
+          else if (change === 'goal_deleted')
+            db.prepare('DELETE FROM space_goals WHERE id = ?').run(id);
+          else await call('goal.session.update', { goalId: id, status: change });
+          return facts;
+        },
+        message: (id, change) => schedules.message(id, change),
+      });
+      try {
+        const handler = createSessionScheduleFire({
+          scheduler,
+          status: async () => 'done',
+          deliver: async (_schedule, _messageId, text) => {
+            deliveries.push(text);
+          },
+        });
+        expect(await handler(job)).toEqual({ outcome: 'source_gone' });
+        expect(deliveries).toEqual([]);
+        if (change === 'goal_deleted')
+          expect(scheduler.repo.get(row.id)).toMatchObject({ status: 'done', pendingJobId: null });
+        else {
+          expect(scheduler.repo.get(row.id)).toBeNull();
+          expect(
+            db.prepare('SELECT facts_lines FROM space_goals WHERE id = ?').get(goal.id)
+          ).toEqual({
+            facts_lines: null,
+          });
+        }
+      } finally {
+        clock.mockRestore();
+        db.close();
+      }
+    }
+  );
   test.each([false, true])(
     'reactivating after target_gone restores wakes (pause first: %s)',
     async (pauseFirst) => {

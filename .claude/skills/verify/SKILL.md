@@ -727,6 +727,12 @@ adds its journey here.
     and waits for the real goal cadence. The schedule must record `fired`, deliver
     its wake and enqueue the next cadence without a job error. The fixture is
     restored in `finally`. Evidence: `evidence/goal-unreadable-state.json`.
+    To check completion during fact collection, create a fresh `$RUN` and run
+    `env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test bun .claude/skills/verify/goal-close-race.ts <free-port> "$RUN"`.
+    This helper owns its daemon and needs no mock model. A test-only source wrapper
+    completes its goal through real RPC between the fact snapshot and rendering.
+    The renderer must return source-gone, with no exception or wake delivered.
+    Evidence: `evidence/goal-close-race.json`. Its daemon stops in `finally`.
 
 ## Evidence
 
