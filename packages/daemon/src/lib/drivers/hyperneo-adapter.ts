@@ -82,6 +82,7 @@ export interface HyperneoSessionRow {
 }
 
 export interface HyperneoSessionControl {
+  rename?: WorkAdapter['rename'];
   archive?: WorkAdapter['archive'];
   withdraw?: (
     sessionId: string,
@@ -701,6 +702,28 @@ const runHyperneoWithdraw = (superpipe({})('hyperneo-withdraw-work') as Pipeline
   deps: HyperneoAdapterDeps
 ) => Promise<Result<WorkWithdrawal>>;
 
+const runHyperneoRename = (superpipe({})('hyperneo-rename-work') as PipelineAPI)
+  .input(['ref', 'title', 'context', 'deps'])
+  .pipe(requireHyperneoSession, ['ref', 'deps'], 'result:outcome')
+  .pipe(requireOpenHyperneoSession, 'outcome', 'result:outcome')
+  .pipe(
+    (
+      _row: HyperneoSessionRow,
+      ref: WorkRef,
+      title: string,
+      context: WorkCallContext,
+      deps: HyperneoAdapterDeps
+    ) => deps.sessions.rename!(ref, title, context),
+    ['outcome', 'ref', 'title', 'context', 'deps'],
+    'outcome'
+  )
+  .endAsync('outcome') as (
+  ref: WorkRef,
+  title: string,
+  context: WorkCallContext,
+  deps: HyperneoAdapterDeps
+) => ReturnType<NonNullable<WorkAdapter['rename']>>;
+
 export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
   return {
     id: 'hyperneo',
@@ -713,6 +736,7 @@ export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
       'status',
       'stop',
       ...(deps.sessions.withdraw ? ['withdraw' as const] : []),
+      ...(deps.sessions.rename ? ['rename' as const] : []),
       ...(deps.sessions.archive ? ['archive' as const] : []),
     ],
     find: async (query) =>
@@ -721,6 +745,9 @@ export function createHyperneoAdapter(deps: HyperneoAdapterDeps): WorkAdapter {
         deps,
         query.text && !query.spaceId ? await deps.searchChats(query.text) : []
       ),
+    rename: deps.sessions.rename
+      ? (ref, title, context) => runHyperneoRename(ref, title, context, deps)
+      : undefined,
     start: (request, context) => runHyperneoStart(request, context, deps),
     send: (ref, message, context) => runHyperneoSend(ref, message, context, deps),
     queue: (ref, message, context) => runHyperneoSend(ref, message, context, deps, 'defer'),

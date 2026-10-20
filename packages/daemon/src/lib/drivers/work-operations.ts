@@ -30,7 +30,16 @@ import {
   type WorkRejection,
 } from './types.ts';
 
-type RoutedVerb = 'start' | 'send' | 'steer' | 'queue' | 'withdraw' | 'status' | 'stop' | 'archive';
+type RoutedVerb =
+  | 'start'
+  | 'rename'
+  | 'send'
+  | 'steer'
+  | 'queue'
+  | 'withdraw'
+  | 'status'
+  | 'stop'
+  | 'archive';
 type Route<Verb extends RoutedVerb> =
   | { daemon: string }
   | {
@@ -104,7 +113,22 @@ export const StartWorkResultSchema = workResultSchema(WorkStartedSchema);
 export const SendWorkResultSchema = workResultSchema(WorkDeliverySchema);
 export const WorkStatusResultSchema = workResultSchema(WorkDetailSchema);
 export const StopWorkResultSchema = workResultSchema(z.object({ stopped: z.boolean() }));
+const RenameWorkInputSchema = z.object({
+  ref: WorkRefSchema,
+  title: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .regex(/^[^\p{Cc}\p{Zl}\p{Zp}]+$/u, 'Use a single-line plain text title.'),
+});
+const RenameWorkResultSchema = workResultSchema(
+  z.object({ renamed: z.literal(true), title: z.string() })
+);
+type RenameInput = z.infer<typeof RenameWorkInputSchema>;
+
 const RoutedCapabilitySchema = z.enum([
+  'rename',
   'find',
   'start',
   'send',
@@ -174,7 +198,14 @@ export function pickRoute<Verb extends RoutedVerb>(
   }
   const local = adapter[verb];
   if (!local || !adapter.capabilities.includes(verb)) {
-    return { reason: reject('unsupported', `The ${adapter.id} adapter cannot ${verb} work.`) };
+    return {
+      reason: reject(
+        verb === 'rename' ? 'not_supported' : 'unsupported',
+        verb === 'rename'
+          ? `The ${adapter.id} adapter has no supported rename API.`
+          : `The ${adapter.id} adapter cannot ${verb} work.`
+      ),
+    };
   }
   return {
     value: {
@@ -471,6 +502,39 @@ const runQueuedInput = (superpipe({})('change-queued-work-input') as PipelineAPI
   deps: WorkVerbDeps
 ) => Promise<QueuedResult>;
 
+const runRenameWork = (superpipe({})('rename-work') as PipelineAPI)
+  .input(['input', 'caller', 'deps'])
+  .pipe(
+    (input: RenameInput, deps: WorkVerbDeps) => pickRoute('rename', input.ref, deps.adapters()),
+    ['input', 'deps'],
+    'result:outcome'
+  )
+  .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
+  .pipe(
+    async (
+      route: Route<'rename'>,
+      input: RenameInput,
+      caller: OperationCaller,
+      deps: WorkVerbDeps
+    ) =>
+      'local' in route
+        ? route.local(input.ref, input.title, { from: selectMessageOrigin(caller), caller })
+        : forwardWork(
+            route.daemon,
+            'work.rename',
+            { ...input, ref: localRef(input.ref) },
+            RenameWorkResultSchema,
+            deps.remote
+          ),
+    ['outcome', 'input', 'caller', 'deps'],
+    'outcome'
+  )
+  .endAsync('outcome') as (
+  input: RenameInput,
+  caller: OperationCaller,
+  deps: WorkVerbDeps
+) => Promise<z.infer<typeof RenameWorkResultSchema>>;
+
 const runStopWork = (superpipe({})('stop-work') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
   .pipe(routeStop, ['input', 'deps'], 'result:outcome')
@@ -505,9 +569,18 @@ async function listWorkAdapters(
 export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinition[] {
   return [
     defineOperation({
+      name: 'work.rename',
+      description:
+        'Rename existing work using a supported harness API. Use a long-lived work-type title such as HyperNeo backend, ops, qlark or iOS. title is single-line plain text, trimmed, 1–200 characters. Codex uses thread/name/set so connected Desktop clients receive the name update without a restart; HyperNeo uses its session lifecycle API; Space uses task.update or agent.update. No other app private files or databases are written. Unsupported adapters return not_supported; API failures return not_delivered or unreachable with a reason. Only Neo or the user can rename work on another daemon.',
+      inputSchema: RenameWorkInputSchema,
+      resultSchema: RenameWorkResultSchema,
+      policy: { safetyClass: 'mutate' },
+      execute: (input, caller) => runRenameWork(input, caller, deps),
+    }),
+    defineOperation({
       name: 'work.adapters',
       description:
-        'List work adapters on this daemon, or the attached daemon named by daemon, with their available capabilities: find, start, send, steer, queue, withdraw, status, stop, archive. steer means work.send accepts mode steer on that adapter; it is listed only when declared and implemented. Archive uses neo.session.archive and requires a human request in a live turn. Use only capabilities listed for the chosen adapter.',
+        'List work adapters on this daemon, or the attached daemon named by daemon, with their available capabilities: find, start, rename, send, steer, queue, withdraw, status, stop, archive. steer means work.send accepts mode steer on that adapter; it is listed only when declared and implemented. Archive uses neo.session.archive and requires a human request in a live turn. Use only capabilities listed for the chosen adapter.',
       inputSchema: z.object({ daemon: z.string().min(1).optional() }),
       resultSchema: WorkAdaptersResultSchema,
       policy: { safetyClass: 'read' },

@@ -632,6 +632,48 @@ describe('codex-desktop adapter status and send', () => {
 
   const user = { from: 'chat', caller: { source: 'rpc' as const, principal: 'local' } };
 
+  test('rename updates a busy thread through Codex without starting or interrupting a turn', async () => {
+    const calls: unknown[] = [];
+    const driver = adapter(0, '', async () => ({
+      call: async (method, params) => {
+        calls.push([method, params]);
+        return {};
+      },
+      close: () => {},
+    }));
+    expect(await driver.rename!(ref('busy'), 'HyperNeo backend', user)).toEqual({
+      ok: true,
+      value: { renamed: true, title: 'HyperNeo backend' },
+    });
+    expect(calls).toEqual([['thread/name/set', { threadId: 'busy', name: 'HyperNeo backend' }]]);
+    expect(spawned).toEqual([]);
+  });
+
+  test('rename refuses archived and missing Codex threads and reports API failure', async () => {
+    const calls: string[] = [];
+    const driver = adapter(0, '', async () => ({
+      call: async (method) => {
+        calls.push(method);
+        throw new Error('rename refused');
+      },
+      close: () => {},
+    }));
+    expect(await driver.rename!(ref('missing'), 'ops', user)).toMatchObject({
+      ok: false,
+      reason: 'not_found',
+    });
+    expect(await driver.rename!(ref('old'), 'ops', user)).toMatchObject({
+      ok: false,
+      reason: 'not_open',
+    });
+    expect(calls).toEqual([]);
+    expect(await driver.rename!(ref('busy'), 'ops', user)).toMatchObject({
+      ok: false,
+      reason: 'not_delivered',
+      detail: 'rename refused',
+    });
+  });
+
   test('advertises separate messaging capabilities and queues natively without spawning', async () => {
     const calls: Array<[string, Record<string, unknown>]> = [];
     let closed = 0;

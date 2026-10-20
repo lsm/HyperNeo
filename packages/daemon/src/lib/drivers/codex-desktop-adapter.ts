@@ -987,6 +987,25 @@ const runCodexSend = (superpipe({})('codex-send-work') as PipelineAPI)
   mode: 'auto' | 'steer'
 ) => Promise<Result<WorkDelivery>>;
 
+const runCodexRename = (superpipe({})('codex-rename-work') as PipelineAPI)
+  .input(['ref', 'title', 'deps'])
+  .pipe(requireCodexThread, ['ref', 'deps'], 'result:outcome')
+  .pipe(requireOpenCodexThread, 'outcome', 'result:outcome')
+  .pipe(
+    (detail: CodexThreadDetail, title: string, deps: CodexDesktopAdapterDeps) =>
+      withCodexMessageServer(deps, async (server) => {
+        await server.call('thread/name/set', { threadId: detail.thread.id, name: title });
+        return { ok: true, value: { renamed: true as const, title } };
+      }),
+    ['outcome', 'title', 'deps'],
+    'outcome'
+  )
+  .endAsync('outcome') as (
+  ref: WorkRef,
+  title: string,
+  deps: CodexDesktopAdapterDeps
+) => Promise<Result<{ renamed: true; title: string }>>;
+
 const runCodexQueue = (superpipe({})('codex-queue-work') as PipelineAPI)
   .input(['ref', 'message', 'deps'])
   .pipe(requireCodexThread, ['ref', 'deps'], 'result:outcome')
@@ -1232,6 +1251,7 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
     capabilities: [
       'find',
       'start',
+      'rename',
       'send',
       'steer',
       'queue',
@@ -1247,6 +1267,7 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
         query.text && !query.spaceId && deps.searchChats ? await deps.searchChats(query.text) : []
       ),
     start: (request) => runCodexStart(request, deps),
+    rename: (ref, title) => runCodexRename(ref, title, deps),
     send: (ref, message, context) =>
       runCodexSend(
         ref,
