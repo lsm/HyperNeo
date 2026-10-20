@@ -213,8 +213,10 @@ describe('coding todo PR ownership through add and edit', () => {
             params: { urls: [url(2).replace('lsm/HyperNeo', 'LSM/HYPERNEO') + '/'] },
           },
         });
-        expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('original') });
-        expect(result).toMatchObject({ reason: expect.stringContaining('Original fix') });
+        expect(result).toMatchObject({
+          ok: false,
+          reason: expect.stringMatching(/todo original "Original fix"/),
+        });
         expect(store.listTodos('ask')).toHaveLength(1);
       } finally {
         db.close();

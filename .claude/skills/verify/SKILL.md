@@ -226,7 +226,8 @@ UI is served, that RPC answers, and that the mock model API is up. It ends with
   arrived.
 - State: read the run's DB read-only, e.g.
   `sqlite3 -readonly "$RUN/data/daemon.db" "SELECT ..."`. Only the seed and
-  check scripts write to it: `seed-todo.sh` and `seed-ledger.sh` (journeys 3 and 4),
+  check scripts write to it: `seed-todo.sh`, `todo-pr-claims.ts` (journey 3) and
+  `seed-ledger.sh` (journey 4),
   `merge-check.sh` (journey 24), `archive-guard-check.sh` (journey 10) and
   `seed-start-question.sh` (journey 14), `quote-summary-check.mjs` (journey 18),
   `seed-schedule-interrupt.ts` (journey 22), and `external-reply-check.ts` (journey 23).
@@ -264,6 +265,17 @@ adds its journey here.
    `rpc.ts neo.ask.settle '{"askId":"ask-verify","status":"done","outcome":"Shipped."}'`
    replies `todos_unfinished: … "Fix the loader" (todo-verify, doing).` and the ask
    stays `open`; the same call after the todo is `done` settles the ask `done`.
+   To verify PR ownership and URL edits, run
+   `bun .claude/skills/verify/todo-pr-claims.ts <port> "$RUN"` on a fresh isolated
+   daemon. It seeds only this run's ask, URL-less session todo and coding ledger
+   claim, then uses the real `neo.todo.add/edit/remove` RPC door. End state: adding
+   a duplicate refuses with the existing todo id/title; `addUrls` pins the PR on
+   that original; a competing edit refuses it. The helper marks the stub PR merged
+   and waits up to 210 seconds for the coding pack to finish the original without
+   a manual close. Evidence: `evidence/todo-pr-claims.json` includes RPC receipts,
+   stored merged evidence and the Neo snapshot; `gh.log` shows stub-only lookups.
+   No real PR, provider, credentials or GUI is used; model notifications use the
+   local mock and this run's dev-proxy provider row. GUI rendering is not verified.
 4. **An open todo's PR leads the PR ledger in the snapshot.** After journey 1
    opened root, run `.claude/skills/verify/seed-ledger.sh "$RUN"`. It writes a
    project for `verify-test/demo` (so the pack sweep keeps its ledger rows), an
