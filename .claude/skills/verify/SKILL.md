@@ -1167,3 +1167,25 @@ The contract suite also seeds an interrupted partial draft and sends the same
 report concurrently to different recipients; every accepted report must retain
 all bytes. Explicit file arrays accept 20 references; 21 must return a schema error
 that names the limit and the option of sending additional references separately.
+
+## SDK settings preparation responsiveness
+
+Use a fresh synthetic HOME, workspace and DB. The helper creates a FIFO only in
+that workspace (or the synthetic user's `.claude/settings.json`) and starts an
+owned writer that supplies JSON after 1.4 s. It calls the real SettingsManager
+through an isolated daemon RPC while requesting `system.health` on the same
+WebSocket. It records health latency, preparation duration and maximum 10 ms
+heartbeat lag, then stops its writer and daemon. No model or credentials are used.
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-settings-proof-XXXXXX)
+env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/settings-admission-lag.ts verify 9364 "$RUN" workspace
+```
+
+Repeat in another fresh directory with `user` instead of `workspace`. On the
+regression commit use `reproduce` instead of `verify`: `observed.json` must show a
+block over 1 s and a delayed health reply. Fixed code must keep heartbeat lag
+below 1 s and health below 250 ms while settings preparation still takes 1.4 s.
+This proves a synchronous settings I/O hazard; attribution of the historical
+2026-10-20 17:48:36Z production stall remains unproven.
