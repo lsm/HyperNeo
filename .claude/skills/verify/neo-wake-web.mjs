@@ -35,6 +35,13 @@ try {
     assert.equal(await message.isVisible(),true);
     assert((await row.innerText()).includes('Guide ready.'));
     await page.screenshot({path:`${run}/evidence/neo-wake-${name}-expanded.png`,fullPage:true});
+    const publicationLink = row.getByRole('link',{name:publication.label,exact:true});
+    await publicationLink.click();
+    const anchor = await page.evaluate(() => location.hash.slice(1));
+    const articleId = await message.getAttribute('id');
+    const linked = await message.evaluate((element,id) => document.getElementById(id) === element,anchor);
+    writeFileSync(`${run}/evidence/neo-wake-${name}-publication-link.json`,JSON.stringify({anchor,articleId,linked,url:page.url()},null,2));
+    assert.equal(linked,true,'Publication link must resolve to its rendered article');
     const box = await row.boundingBox();
     assert(box && box.x >= 0 && box.x + box.width <= width + 1);
     const todo = seed.additions.find(item => item.kind === 'todo');

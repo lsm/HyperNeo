@@ -81,6 +81,13 @@ describe('scheduled wake disclosures in the public conversation', () => {
     );
     expect(within(row).getByText('Guide reviewed.').closest('a')).toBeNull();
   });
+  it('links the publication addition to its actual rendered article', () => {
+    const { container } = render(<NeoPublicConversation conversation={conversation()} />);
+    const link = screen.getByRole('link', { name: 'Guide ready.' });
+    const article = container.querySelector('[data-message-ref="publication-one"]')!;
+    const anchor = link.getAttribute('href')!.slice(1);
+    expect(document.getElementById(anchor)).toBe(article);
+  });
   it('navigates work additions without changing their labels or asking extra questions', () => {
     const open = vi.fn();
     const props = { conversation: conversation(), onOpenWork: open };
