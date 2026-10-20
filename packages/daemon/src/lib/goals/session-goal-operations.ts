@@ -265,6 +265,7 @@ export function createSessionGoalOperations({
     .pipe(
       (goal: SessionGoal, input: z.infer<typeof Append>, caller: OperationCaller) => {
         const { goalId: _goalId, ownerSessionId: _owner, ...draft } = input;
+        audit(caller, 'goal.journal.append', { goalId: goal.id, runId: input.runId ?? null });
         return {
           accepted: true as const,
           entry: goals.appendJournal(

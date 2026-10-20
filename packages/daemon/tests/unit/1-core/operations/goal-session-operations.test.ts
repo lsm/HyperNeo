@@ -170,7 +170,7 @@ describe('deleting the owner session', () => {
 
 describe('goal journal', () => {
   test('a cycle appends one entry per run, newest first, and only the owner reaches it', async () => {
-    const { db, call } = setup();
+    const { db, call, audited } = setup();
     const goal = (await call('goal.session.create', { title: 'Grow', doneTest: 'Ten adopters' }))
       .goal;
     const entry = {
@@ -207,6 +207,7 @@ describe('goal journal', () => {
     expect(await call('goal.journal.list', { goalId: goal.id, limit: 1 })).toMatchObject({
       entries: [{ runId: 'run-2' }],
     });
+    expect(audited.filter((name) => name === 'goal.journal.append')).toHaveLength(3);
     db.close();
   });
 });
