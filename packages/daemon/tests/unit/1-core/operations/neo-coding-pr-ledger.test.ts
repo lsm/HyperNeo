@@ -496,6 +496,25 @@ describe('CodingPrLedgerRepository.observeSessions', () => {
   const owners = (db: Database) =>
     db.prepare('SELECT number, owner FROM pack_coding_pr_ledger ORDER BY number').all();
 
+  test('a Claude commenter link does not claim a PR it did not create', async () => {
+    const { db, ledger } = setup();
+    await reconcile(ledger, ['lsm/a'], async () => response([node(4)]), 100);
+    ledger.observeSessions(
+      [
+        facts(
+          { adapter: 'claude-desktop', id: 'commenter' },
+          {
+            linkedPrs: [{ url: 'https://github.com/lsm/a/pull/4' }],
+            linkedPrsWindow: true,
+          }
+        ),
+      ],
+      101
+    );
+    expect(owners(db)).toEqual([{ number: 4, owner: null }]);
+    db.close();
+  });
+
   test('an app link owns its PR before a branch match, and the first owner keeps it', async () => {
     const { db, ledger } = setup();
     const opener = { adapter: 'claude-desktop', id: 'opener' };
