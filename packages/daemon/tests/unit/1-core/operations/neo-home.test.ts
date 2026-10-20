@@ -154,6 +154,7 @@ describe('Neo home operations', () => {
     'xoxb-fakevalue',
     'AKIAFAKEVALUE',
     'API_TOKEN=abcdefghijklmnop',
+    'PASSWORD="a long fake password value"',
   ])('refuses secret-like content %s', async (content) => {
     expect(await save('digest.md', content)).toMatchObject({
       ok: false,

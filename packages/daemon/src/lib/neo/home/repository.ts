@@ -38,7 +38,7 @@ export function requireHomeContent<T extends { path: string; content: string }>(
         'confirmation_required: direction and mandate saves require human confirmation (H2).'
       ),
     };
-  return /-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:sk-[a-zA-Z0-9_-]+|ghp_[a-zA-Z0-9]+|github_pat_[a-zA-Z0-9_]+|xox[a-zA-Z0-9-]+|AKIA[A-Z0-9]+)|\b[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)\s*=\s*["']?[^\s"']{16,}/i.test(
+  return /-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:sk-[a-zA-Z0-9_-]+|ghp_[a-zA-Z0-9]+|github_pat_[a-zA-Z0-9_]+|xox[a-zA-Z0-9-]+|AKIA[A-Z0-9]+)|\b[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)\s*=\s*(?:"[^"\r\n]{16,}"|'[^'\r\n]{16,}'|[^\s"']{16,})/i.test(
     input.content
   )
     ? {

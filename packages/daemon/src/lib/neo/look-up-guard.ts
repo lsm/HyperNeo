@@ -245,7 +245,7 @@ const SECRET_SAMPLES = [
   'credentials.yaml',
 ];
 
-function globCouldMatchSecret(segment: string): boolean {
+function globCouldMatchSecret(segment: string, samples = SECRET_SAMPLES): boolean {
   if (!/[*?[{]/.test(segment) || /^[*?]+$/.test(segment)) return false;
   const source = segment
     .replace(/[.+^$()|\\]/g, '\\$&')
@@ -254,7 +254,7 @@ function globCouldMatchSecret(segment: string): boolean {
     .replace(/\?/g, '.');
   try {
     const glob = new RegExp(`^${source}$`);
-    return SECRET_SAMPLES.some((name) => glob.test(name));
+    return samples.some((name) => glob.test(name));
   } catch {
     return true;
   }
@@ -974,6 +974,7 @@ function analyzeBash(
     const here = { ...scope, cwd: dir };
     const outside = (target: string) => !ownPath(resolvePath(target, here), scope, facts);
     const change = localChange(words, dir);
+    found.secret ??= change?.targets.find((target) => isSecretPath(target, here, facts)) ?? null;
     if (
       words[0] === 'git' &&
       change?.targets.some((target) =>
@@ -1024,7 +1025,13 @@ function readDenial(
   if (tool === 'Grep') return grepDenial(input);
   if (
     within(resolvePath(root, scope), join(scope.dataDir, 'Neo')) &&
-    /(^|\/)(\.git|\.coordinators)(\/|$)/.test(text('pattern'))
+    text('pattern')
+      .split('/')
+      .some(
+        (part) =>
+          ['.git', '.coordinators'].includes(part) ||
+          globCouldMatchSecret(part, ['.git', '.coordinators'])
+      )
   )
     return 'that pattern points at secrets';
   return patternNamesSecret(text('pattern')) ||

@@ -501,6 +501,9 @@ describe('Neo home repository boundaries', () => {
   });
   test.each([
     'echo changed > ../../new-direction.md',
+    'touch ../../new-direction.md',
+    'cp notes.md ../../new-direction.md',
+    'tee ../../new-direction.md',
     'echo changed >> "../../new direction.md"',
     'git commit -am changed',
     'git clean -fd',
@@ -542,6 +545,7 @@ describe('Neo home paths through new files and glob patterns', () => {
     const cwd = `${root}/.coordinators/root`;
     const home = { ...scope, cwd, own: [cwd] };
     expect(decideNeoTool('Glob', { path: root, pattern: '**/.git/**' }, home).kind).toBe('deny');
+    expect(decideNeoTool('Glob', { path: root, pattern: '**/.g?t/**' }, home).kind).toBe('deny');
     expect(decideNeoTool('Glob', { path: root, pattern: '**/.coordinators/**' }, home).kind).toBe(
       'deny'
     );
