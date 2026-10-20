@@ -56,6 +56,17 @@ describe('validateSDKSessionFile', () => {
     ]);
   });
 
+  test('a deleted transcript is forgotten, so a new file at the same path is validated from the start', async () => {
+    writeFileSync(file, use('a') + result('a'));
+    expect((await validateSDKSessionFile(workspace, 's1')).valid).toBe(true);
+    rmSync(file);
+    expect((await validateSDKSessionFile(workspace, 's1')).valid).toBe(true);
+    writeFileSync(file, use('a') + result('a') + result('b'));
+    expect((await validateSDKSessionFile(workspace, 's1')).orphanedToolResults).toEqual([
+      { toolUseId: 'b', messageUuid: 'u-b', lineIndex: 2 },
+    ]);
+  });
+
   test('an unterminated last line counts now and is not counted twice once it ends', async () => {
     writeFileSync(file, use('a') + result('z').trimEnd());
     expect((await validateSDKSessionFile(workspace, 's1')).valid).toBe(false);

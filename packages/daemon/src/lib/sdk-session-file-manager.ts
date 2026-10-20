@@ -349,7 +349,10 @@ export async function validateSDKSessionFile(
   const result: SDKSessionValidationResult = { valid: true, orphanedToolResults: [], errors: [] };
   const sessionFile = getSDKSessionFilePath(workspacePath, sdkSessionId);
   try {
-    if (!existsSync(sessionFile)) return result;
+    if (!existsSync(sessionFile)) {
+      validatedSessionFiles.delete(sessionFile);
+      return result;
+    }
     const { ino, size } = statSync(sessionFile);
     const known = validatedSessionFiles.get(sessionFile);
     validatedSessionFiles.delete(sessionFile);
@@ -675,6 +678,7 @@ export function deleteSDKSessionFiles(
     for (const file of files) {
       try {
         unlinkSync(file.path);
+        validatedSessionFiles.delete(file.path);
         result.deletedFiles.push(file.path);
         result.deletedSize += file.size;
       } catch (error) {
@@ -729,6 +733,7 @@ export function archiveSDKSessionFiles(
           copyFileSync(file.path, archivePath);
           unlinkSync(file.path);
         }
+        validatedSessionFiles.delete(file.path);
 
         result.archivedFiles.push(archivePath);
         result.totalSize += file.size;
