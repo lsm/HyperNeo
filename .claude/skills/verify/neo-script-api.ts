@@ -40,10 +40,19 @@ createServer(async (req, res) => {
     return;
   }
   const invoke = body.tools?.find((tool) => tool.name.endsWith('hyperneo-operations__invoke'));
-  const last = JSON.stringify(body.messages?.at(-1)?.content ?? '');
+  const afterAssistant = (body.messages?.findLastIndex((message) => message.role === 'assistant') ?? -1) + 1;
+  const content = body.messages?.slice(afterAssistant).flatMap((message) => message.content) ?? [];
+  const toolResult = content.some((block) => typeof block === 'object' && block !== null && 'type' in block && block.type === 'tool_result');
+  const last = JSON.stringify(content ?? '');
+  const goalId = /verify-goal-ask:([a-zA-Z0-9-]+)/.exec(last)?.[1];
+  const ask = goalId ? {
+    name: 'neo.ask.open',
+    input: { title: 'Ship the goal guide', request: 'Publish the adapter guide', goalId,
+      todos: [{ title: 'Publish guide', doneWhen: 'Guide published' }] },
+  } : ASK;
   const block =
-    invoke && last.includes(MARKER) && !last.includes('tool_result')
-      ? { type: 'tool_use', id: `toolu_${Date.now()}`, name: invoke.name, input: ASK }
+    invoke && (goalId || last.includes(MARKER)) && !toolResult
+      ? { type: 'tool_use', id: `toolu_${Date.now()}`, name: invoke.name, input: ask }
       : { type: 'text', text: 'Filed the request. Done.' };
   console.log(`${new Date().toISOString()} ${req.url} -> ${block.type}`);
   const message = {

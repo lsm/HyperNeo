@@ -16,6 +16,7 @@ import {
 import { isNeoTodoStartable } from './todo-runner.ts';
 import type { NeoPack } from './packs/types.ts';
 import { neoSplitOutcome, neoTodoRepo } from './todo-repo.ts';
+import type { SessionGoal } from '@hyperneo/shared/types/session-goal';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -27,6 +28,7 @@ const Open = z.object({
   title: Text.max(200),
   request: Text.max(4000),
   projectId: Text.nullable().optional(),
+  goalId: Text.nullable().optional(),
   todos: z.array(NeoTodoDraftSchema).max(20).default([]),
 });
 
@@ -54,6 +56,21 @@ export function requireNeoAskSession(
   return caller.sessionId && isNeoSession(caller.sessionId)
     ? { value: caller.sessionId }
     : { reason: { ok: false, reason: 'no_session: only a Neo session opens an ask.' } };
+}
+
+export function requireNeoAskGoal(
+  goalId: string | null,
+  sessionId: string,
+  goal: SessionGoal | null
+): Gate<string | null> {
+  return !goalId || goal?.ownerSessionId === sessionId
+    ? { value: goalId }
+    : {
+        reason: {
+          ok: false,
+          reason: 'goal_not_found: asks can only name a goal owned by their Neo session.',
+        },
+      };
 }
 
 function requireNeoAskTodosFinished(
@@ -98,7 +115,8 @@ export function createNeoAskRecordOperations(
   resolveProject: (projectId: string) => string | null,
   isNeoSession: (sessionId: string) => boolean,
   knownProjects: () => readonly { id: string; title: string }[],
-  packs: () => readonly NeoPack[] = () => []
+  packs: () => readonly NeoPack[] = () => [],
+  readGoal: (id: string) => SessionGoal | null = () => null
 ) {
   const open = (superpipe({})('neo.ask.open') as PipelineAPI)
     .input(['input', 'caller'])
@@ -116,17 +134,34 @@ export function createNeoAskRecordOperations(
       'result:outcome'
     )
     .pipe(
-      async (
+      (
         { sessionId, projectId }: { sessionId: string; projectId: string | null },
+        input: z.infer<typeof Open>
+      ) => {
+        const id = input.goalId ?? null;
+        const goal = requireNeoAskGoal(id, sessionId, id ? readGoal(id) : null);
+        return 'value' in goal ? { value: { sessionId, projectId, goalId: goal.value } } : goal;
+      },
+      ['outcome', 'input'],
+      'result:outcome'
+    )
+    .pipe(
+      async (
+        {
+          sessionId,
+          projectId,
+          goalId,
+        }: { sessionId: string; projectId: string | null; goalId: string | null },
         input: z.infer<typeof Open>,
         caller: OperationCaller
       ): Promise<AskReceipt | Rejection> => {
         const origin = caller.neoTurn ? resumedPromptUuid(caller.neoTurn.messageId) : null;
         const ask =
-          store.findAsk(sessionId, origin, input.title) ??
+          store.findAsk(sessionId, origin, input.title, goalId) ??
           store.openAsk({
             id: crypto.randomUUID(),
             projectId,
+            goalId,
             sessionId,
             originMessageId: origin,
             title: input.title,
@@ -249,7 +284,7 @@ export function createNeoAskRecordOperations(
     defineOperation({
       name: 'neo.ask.open',
       description:
-        "Record a human request as an ask: a short title, request in the human's words, and optionally its todos (as in neo.todo.add). projectId names the project by its id (with or without the project: prefix) or its title; an unknown one is refused with the list of projects. A retry in the same turn returns the same ask. Reuse an open ask for the same request instead of opening another.",
+        "Record a human request as an ask: a short title, request in the human's words, and optionally its todos (as in neo.todo.add). goalId links work in a goal cycle to a goal owned by this Neo session. projectId names the project by its id (with or without the project: prefix) or its title; an unknown one is refused with the list of projects. A retry in the same turn returns the same ask. Reuse an open ask for the same request instead of opening another.",
       inputSchema: Open,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

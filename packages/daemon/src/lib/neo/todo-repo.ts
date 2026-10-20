@@ -50,6 +50,7 @@ function neoChildAsk(store: NeoAskTodoRepository, ask: NeoAsk, repo: string): Ne
     createdAt: Date.now(),
     repo,
     parentId: ask.id,
+    goalId: ask.goalId ?? null,
   });
 }
 

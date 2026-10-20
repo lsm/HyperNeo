@@ -12,6 +12,8 @@ function fakeContext(): FamilyOperationContext {
     longHorizonAgentRepo: {},
     nodeExecutionRepo: {},
     spaceTaskRepo: {},
+    sessionScheduler: { registerSource: () => {} },
+    neoPacks: () => [],
   } as unknown as FamilyOperationContext;
 }
 

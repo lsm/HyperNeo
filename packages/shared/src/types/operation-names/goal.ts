@@ -1,6 +1,7 @@
 export const GOAL_OPERATION_NAMES = [
   'goal.create',
   'goal.event.list',
+  'goal.facts',
   'goal.get',
   'goal.journal.append',
   'goal.journal.list',
