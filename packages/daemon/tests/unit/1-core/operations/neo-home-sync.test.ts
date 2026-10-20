@@ -253,6 +253,84 @@ describe('Neo home save remote sync', () => {
     expect(await git(root, 'rev-parse', 'HEAD')).toBe(head);
     expect(await readFile(join(root, input.path)).catch(() => null)).toBeNull();
   });
+  test('does not abort a human rebase started while pull is fetching', async () => {
+    await commit(root, 'local.md', 'Local commit.');
+    const ready = join(fixture, 'fetch-ready'),
+      release = join(fixture, 'fetch-release');
+    const upload = join(fixture, 'delayed-upload');
+    await writeFile(
+      upload,
+      `#!/bin/sh\n: > "${ready}"\nwhile [ ! -f "${release}" ]; do sleep 0.02; done\nexec /usr/bin/git-upload-pack "$@"\n`,
+      { mode: 0o755 }
+    );
+    await git(root, 'config', 'remote.origin.uploadpack', upload);
+    const pending = call('neo.home.save', input);
+    try {
+      for (let i = 0; i < 300; i++) {
+        if (
+          await readFile(ready).then(
+            () => true,
+            () => false
+          )
+        )
+          break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(await readFile(ready, 'utf8')).toBe('');
+      const editor = join(fixture, 'edit-during-fetch');
+      await writeFile(
+        editor,
+        '#!/bin/sh\nsed "1s/^pick /edit /" "$1" > "$1.new"\nmv "$1.new" "$1"\n',
+        { mode: 0o755 }
+      );
+      expect(
+        (
+          await runGit(root, ['rebase', '-i', 'HEAD~1'], {
+            ...process.env,
+            GIT_SEQUENCE_EDITOR: editor,
+            GIT_REFLOG_ACTION: 'human-race-rebase',
+          })
+        ).code
+      ).toBe(0);
+      await writeFile(join(root, 'local.md'), 'Human edits at the stop.');
+      const status = await git(root, 'status');
+      const head = await git(root, 'rev-parse', 'HEAD');
+      await writeFile(release, 'go');
+      expect(await pending).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('sync_failed'),
+      });
+      expect(await git(root, 'status')).toBe(status);
+      expect(await git(root, 'rev-parse', 'HEAD')).toBe(head);
+      expect(await readFile(join(root, 'local.md'), 'utf8')).toBe('Human edits at the stop.');
+    } finally {
+      await writeFile(release, 'go');
+      await pending;
+    }
+  });
+  test.each(['uploadpack', 'receivepack'])(
+    'bounds stalled %s and releases queued reads without prompting',
+    async (transport) => {
+      const executable = join(fixture, transport),
+        observed = join(fixture, 'network-env');
+      await writeFile(
+        executable,
+        `#!/bin/sh\nprintf '%s|%s|%s' "$GIT_TERMINAL_PROMPT" "$GIT_ASKPASS" "$GIT_SSH_COMMAND" > "${observed}"\nsleep 2\nexit 42\n`,
+        { mode: 0o755 }
+      );
+      await git(root, 'config', `remote.origin.${transport}`, executable);
+      home = new NeoHomeRepository(root, repo, 500);
+      const start = Date.now();
+      const pending = call('neo.home.save', input);
+      const queuedRead = call('neo.home.read', { path: 'README.md' });
+      const failed = await pending;
+      expect(await queuedRead).toMatchObject({ ok: true });
+      expect(Date.now() - start).toBeLessThan(1500);
+      expect(failed).toMatchObject({ ok: false, reason: expect.stringContaining('timed out') });
+      expect(await readFile(observed, 'utf8')).toBe('0|/usr/bin/false|ssh -oBatchMode=yes');
+      expect(await git(root, 'status', '--porcelain')).toBe('');
+    }
+  );
   test('keeps homes without an origin local', async () => {
     await git(root, 'remote', 'remove', 'origin');
     const saved = await call('neo.home.save', input);
