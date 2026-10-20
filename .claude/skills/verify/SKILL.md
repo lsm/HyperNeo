@@ -200,7 +200,6 @@ adds its journey here.
    `from-session="codex-desktop:verify-thread"`; the second exits 1 with
    `hyperneo send: no sender…` and sends nothing; the question replies
    `not_found`. Stopping the daemon removes the socket.
-
 13. **Root Neo owns goals outside any Space.** After journey 1 opened root, run
     `VERIFY_PORT=9311 .claude/skills/verify/session-goal.sh "$RUN"`. It creates a goal
     for root through `goal.session.create`, first without metrics or a done-test, then
@@ -210,14 +209,14 @@ adds its journey here.
     then `updated|human`. The script then appends a journal entry twice for the same
     run: `goal-journal.json` holds one entry for `run-1`, with the second effect
     ("Three projects asked for it") and the PR as evidence.
-12. **A start question lists only todos that can still start.** After journey 1
+14. **A start question lists only todos that can still start.** After journey 1
     opened root, run `.claude/skills/verify/seed-start-question.sh "$RUN"`. It
     writes `ask-prune` with two todos awaiting start, `todo-a` (check
     `pr_merged` on `verify-test/demo#8`, which reads as `MERGED`) and `todo-b`
     (no check), and one open start question `q-start` listing both. End state
     within ~3 min: `todo-a` is `done` with `started_at` empty, and `q-start`
     is still `open` with `start_todos` `["todo-b"]`.
-13. **A session with no registered provider fails once and says why.** A fresh run
+15. **A session with no registered provider fails once and says why.** A fresh run
     dir has no provider records, so Anthropic is not registered there. Launch with
     `VERIFY_LOG_LEVEL=error`, then run
     `VERIFY_PORT=<port> .claude/skills/verify/missing-provider-check.sh "$RUN"`. It
@@ -226,15 +225,19 @@ adds its journey here.
     'anthropic' is not registered. Log in or add an API key for it under Providers,
     or switch this session to another provider.`, the message is `failed`, and
     `daemon.log` has that one `[ErrorManager] model` entry.
-
-12. **Messages between root Neo and its workers show in Neo's conversation.** Run
+16. **Messages between root Neo and its workers show in Neo's conversation.** Run
     `.claude/skills/verify/neo-session-rows.sh <port> "$RUN"`. It opens root, creates
     a worker session "Fix the loader", and sends one message each way. End state: it
     prints `Neo -> Fix the loader: Rebase on dev, then tell me.` then
     `Fix the loader -> Neo: Rebased.`; on `/neo` each shows as one collapsed row
     "Neo → Fix the loader" with its first line, expanding to the full text.
-
-14. **Reply quotes show the same summary in the composer and after sending.**
+17. **Neo or the user schedules a session wake.** `session-schedules.sh <port> "$RUN"`
+    creates a session and calls `schedule.session.*` as the local user. End state: a
+    1-second cadence replies `invalid_cadence`; an hourly reminder is `active` with
+    one pending `sessionSchedule.fire` job an hour out and appears in `list` for that
+    target; `pause` makes it `paused` and drops the job; `resume` makes it `active`
+    with a new job; `delete` removes the row and its job. Nothing fires yet (S2).
+18. **Reply quotes show the same summary in the composer and after sending.**
     After opening root and configuring the mock provider, run
     `NODE_PATH=<directory containing playwright> node .claude/skills/verify/quote-summary-check.mjs <port> "$RUN"`.
     If Playwright's browser is not installed, set `VERIFY_BROWSER` to a Chrome

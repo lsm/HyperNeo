@@ -1,4 +1,6 @@
 import { homedir } from 'node:os';
+import { SessionScheduler } from '../scheduler/session-schedules.ts';
+import { createSessionScheduleOperations } from '../scheduler/operations.ts';
 import { claudeInboxName } from '../drivers/claude-inbox.ts';
 import { createClaudeInboxDriver } from '../drivers/claude-inbox-driver.ts';
 import { ClaudeInboxRouteRepository } from '../../storage/repositories/claude-inbox-route-repository.ts';
@@ -1487,12 +1489,15 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       warn: (id, error) => log.warn(`Neo file pack ${id} was not loaded`, error),
     })
   );
+  const sessionScheduler = new SessionScheduler(deps.db.getDatabase(), deps.jobQueue);
+  sessionScheduler.recover();
   const familyOperations = [
     ...collectFamilyOperations({
       ...familyContext,
       executionPreparations: () => neoService.packs(),
     }),
     ...createNeoOperations(neoService),
+    ...createSessionScheduleOperations(sessionScheduler),
   ];
 
   const spaceOperationRegistryProvider = createSpaceOperationRegistryProvider(

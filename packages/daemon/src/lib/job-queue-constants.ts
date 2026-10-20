@@ -10,5 +10,6 @@ export const SPACE_CONVERSATION_FRICTION_ANALYZE = 'space.conversationFriction.a
 export const GOAL_AUTOMATION_EXECUTE = 'goalAutomation.execute';
 
 export const TASK_SCHEDULE_FIRE = 'taskSchedule.fire';
+export const SESSION_SCHEDULE_FIRE = 'sessionSchedule.fire';
 
 export const LONG_HORIZON_AGENT_REMINDER_FIRE = 'longHorizonAgentReminder.fire';
