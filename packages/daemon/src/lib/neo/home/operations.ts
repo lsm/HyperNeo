@@ -5,11 +5,12 @@ import { defineOperation, type OperationCaller } from '../../operations/registry
 import { neoFolderPath } from '../folder.ts';
 import type { NeoService } from '../service.ts';
 import { NeoHomeRepository, type HomeResult } from './repository.ts';
+import { requireHomeConfirmation } from './confirmation.ts';
 import { HomeReadInput, HomeReadResult } from './read.ts';
 import { HomeSaveInput, HomeSaveResult, requireHomePath, requireHomeSave } from './save.ts';
 
 export function createNeoHomeOperations(
-  service: Pick<NeoService, 'repo' | 'defaultSessionId'>,
+  service: Pick<NeoService, 'repo' | 'todos' | 'defaultSessionId'>,
   home = new NeoHomeRepository(neoFolderPath(), service.repo)
 ) {
   const owner = (caller: OperationCaller) =>
@@ -29,7 +30,13 @@ export function createNeoHomeOperations(
     .pipe(owner, 'caller', 'result:outcome')
     .pipe(requireHomePath, 'input', 'result:outcome')
     .pipe(requireHomeSave, 'outcome', 'result:outcome')
-    .pipe((input: HomeSaveInput) => home.save(input), 'outcome', 'outcome')
+    .pipe(
+      (input: HomeSaveInput) =>
+        requireHomeConfirmation(input, service.todos, service.defaultSessionId()),
+      'outcome',
+      'result:outcome'
+    )
+    .pipe((input) => home.save(input), 'outcome', 'outcome')
     .endAsync('outcome') as (
     input: HomeSaveInput,
     caller: OperationCaller
@@ -56,7 +63,7 @@ export function createNeoHomeOperations(
     defineOperation({
       name: 'neo.home.save',
       description:
-        'Save one curated document and commit locally. Refuses credential-like content, internal/ignored paths and dirty home changes. Direction and mandate require later confirmation support. Root Neo or the local user only; direct filesystem access requires an environment boundary.',
+        'Save one curated document and commit locally. Refuses credential-like content, internal/ignored paths and dirty home changes. Direction and mandate require questionId: a matching human yes on a root-Neo question bound to the exact path and content SHA-256. Appends the confirmed decision and commits both files with Neo-Confirmed-By. Root Neo or the local user only; direct filesystem access requires an environment boundary.',
       inputSchema: HomeSaveInput,
       resultSchema: HomeSaveResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
