@@ -24,6 +24,7 @@ import { createSpaceAgentTemplatesTable } from './space-agent-templates.ts';
 import { createWorkflowEventSubscriptionTables } from './workflow-event-subscriptions.ts';
 import { backfillSessionCounters, createSessionCounters } from './session-counters.ts';
 import { createTaskMessageRows } from './task-message-rows.ts';
+import { SDK_MESSAGE_COLUMN_TYPES } from '../sdk-message-columns.ts';
 import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
 
 // knip-ignore-next-line
@@ -215,6 +216,9 @@ export function createTables(db: BunDatabase): void {
         -- this consumption sequence, not rowid, to avoid matching turn A's result.
         consumed_seq INTEGER,
         replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0,
+        ${Object.entries(SDK_MESSAGE_COLUMN_TYPES)
+          .map(([name, type]) => `${name} ${type}`)
+          .join(',\n')},
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
       )
     `);

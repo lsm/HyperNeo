@@ -30,6 +30,7 @@ import {
 } from './schema/index.ts';
 import { Database as BunDatabase } from './sqlite-compat.ts';
 import { assertSupportedDatabaseVersion } from './schema/upgrade-floor.ts';
+import { backfillSdkMessageColumns } from './schema/m413-sdk-message-columns.ts';
 
 const MIGRATION_BACKUP_RETENTION = 3;
 const MIGRATION_BACKUP_TEMP_STALE_MS = 60 * 60 * 1000;
@@ -108,6 +109,7 @@ export class DatabaseCore {
       this.db.exec('PRAGMA mmap_size = 0');
 
       createTables(this.db);
+      await backfillSdkMessageColumns(this.db, (progress) => this.logger.info(progress));
 
       configureMessageSearchFts(this.db);
     } catch (error) {

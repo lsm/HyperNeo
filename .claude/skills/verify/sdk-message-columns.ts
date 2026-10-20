@@ -50,7 +50,14 @@ if (mode === 'seed') {
     db.close();
   }
 } else if (mode === 'upgrade') {
-  const core = new DatabaseCore(path);
+  const core = new DatabaseCore(path, {
+    queryObservability: {
+      slowThresholdMs: 100,
+      summaryIntervalMs: 300_000,
+      maxQueryGroups: 500,
+      summaryQueryLimit: 5,
+    },
+  });
   let last = performance.now();
   let maxLagMs = 0;
   const heartbeat = setInterval(() => {

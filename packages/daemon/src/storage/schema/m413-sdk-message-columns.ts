@@ -1,0 +1,81 @@
+import type { Database } from '../sqlite-compat.ts';
+import { SDK_MESSAGE_COLUMN_TYPES, deriveSdkMessageColumns } from '../sdk-message-columns.ts';
+
+export function runMigration413(db: Database): void {
+  const columns = new Set(
+    (db.prepare("PRAGMA table_xinfo('sdk_messages')").all() as { name: string }[]).map(
+      (row) => row.name
+    )
+  );
+  if (!columns.size) return;
+  for (const [name, type] of Object.entries(SDK_MESSAGE_COLUMN_TYPES))
+    if (!columns.has(name)) db.exec(`ALTER TABLE sdk_messages ADD COLUMN ${name} ${type}`);
+}
+
+export async function backfillSdkMessageColumns(
+  db: Database,
+  log: (progress: string) => void
+): Promise<void> {
+  const done = 'sdk_message_columns_backfilled';
+  const cursorPrefix = 'sdk_message_columns_backfill:';
+  if (db.prepare('SELECT 1 FROM migration_markers WHERE key = ?').get(done)) return;
+  const cursor = db
+    .prepare("SELECT key FROM migration_markers WHERE key GLOB 'sdk_message_columns_backfill:*'")
+    .get() as { key: string } | undefined;
+  let after = cursor ? Number(cursor.key.slice(cursorPrefix.length)) : 0;
+  const names = Object.keys(SDK_MESSAGE_COLUMN_TYPES);
+  const update = db.prepare(
+    `UPDATE sdk_messages SET ${names.map((name) => `${name} = ?`).join(', ')} WHERE seq = ?`
+  );
+  for (;;) {
+    const startedAt = performance.now();
+    const sizes = db
+      .prepare(
+        'SELECT seq, length(CAST(sdk_message AS BLOB)) AS bytes FROM sdk_messages WHERE seq > ? ORDER BY seq LIMIT 512'
+      )
+      .all(after) as { seq: number; bytes: number }[];
+    if (!sizes.length) break;
+    let bytes = 0;
+    let through = after;
+    for (const row of sizes) {
+      if (through > after && bytes + row.bytes > 4 * 1024 * 1024) break;
+      bytes += row.bytes;
+      through = row.seq;
+    }
+    const rows = db
+      .prepare(
+        'SELECT seq, sdk_message, task_id FROM sdk_messages WHERE seq > ? AND seq <= ? ORDER BY seq'
+      )
+      .all(after, through) as { seq: number; sdk_message: string; task_id: string | null }[];
+    let malformed = 0;
+    db.transaction(() => {
+      for (const row of rows) {
+        let message: unknown;
+        try {
+          message = JSON.parse(row.sdk_message);
+        } catch {
+          malformed++;
+          continue;
+        }
+        update.run(...Object.values(deriveSdkMessageColumns(message, row.task_id)), row.seq);
+      }
+      db.exec("DELETE FROM migration_markers WHERE key GLOB 'sdk_message_columns_backfill:*'");
+      db.prepare('INSERT INTO migration_markers (key, applied_at) VALUES (?, ?)').run(
+        `${cursorPrefix}${through}`,
+        Date.now()
+      );
+    })();
+    after = through;
+    log(
+      `SDK message columns: ${JSON.stringify({ through, rows: rows.length, bytes, malformed, elapsedMs: performance.now() - startedAt })}`
+    );
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+  db.transaction(() => {
+    db.prepare('INSERT OR IGNORE INTO migration_markers (key, applied_at) VALUES (?, ?)').run(
+      done,
+      Date.now()
+    );
+    db.exec("DELETE FROM migration_markers WHERE key GLOB 'sdk_message_columns_backfill:*'");
+  })();
+}
