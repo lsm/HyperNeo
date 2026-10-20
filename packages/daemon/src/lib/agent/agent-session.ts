@@ -370,7 +370,7 @@ export class AgentSession
       source: 'mcp' as const,
       neoTurn: turn.identity(),
     };
-    return replyAtNeoTurnEnd(caller.neoTurn, text, {
+    return replyAtNeoTurnEnd(caller.neoTurn, turn.latestHumanInput(), text, {
       db: this.db.getDatabase(),
       since: turn.openedAt,
       publish: (reply) =>

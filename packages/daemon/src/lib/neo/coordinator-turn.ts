@@ -89,6 +89,13 @@ export class NeoCoordinatorTurn {
     return this.carriedInputs.has(messageId);
   }
 
+  latestHumanInput(): string | undefined {
+    const bound = this.turn && (this.turn.origin ?? this.turn.messageId);
+    return [...(bound ? [bound] : []), ...this.carriedInputs]
+      .filter((id) => this.isHumanInput(id))
+      .at(-1);
+  }
+
   identity(): OperationCaller['neoTurn'] {
     return this.turn;
   }
