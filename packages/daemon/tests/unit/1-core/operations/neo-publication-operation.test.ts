@@ -31,6 +31,8 @@ import { NeoPublicationRepository } from '../../../../src/storage/repositories/n
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins.ts';
 import { runMigration288 } from '../../../../src/storage/schema/m288-neo-publications.ts';
+import { runMigration387 } from '../../../../src/storage/schema/m387-neo-ask-todo-tables.ts';
+import { replyAtNeoTurnEnd } from '../../../../src/lib/neo/turn-end-reply.ts';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
@@ -588,6 +590,55 @@ describe('runtime-bound publication operation', () => {
         links: Array.from({ length: 17 }, () => ({ label: 'Open', kind: 'project', id: 'a' })),
       })
     ).toHaveProperty('reason.reason', 'invalid_publication');
+  });
+
+  describe('replyAtNeoTurnEnd', () => {
+    const since = Date.now() - 1000;
+    const deps = (who: OperationCaller) => ({
+      db: mailbox.db,
+      since,
+      publish: (reply: unknown) => invoke(reply, who),
+    });
+    beforeEach(() => runMigration387(mailbox.db));
+
+    test('publishes the final text of a human turn that ended without a reply', async () => {
+      await replyAtNeoTurnEnd(caller().neoTurn, '  I saved your rule.  ', deps(caller()));
+      expect(ledger.list(conversationId)).toEqual([
+        expect.objectContaining({
+          shortText: 'I saved your rule.',
+          fullText: 'I saved your rule.',
+          producerInput: ask,
+        }),
+      ]);
+    });
+
+    test('adds nothing when the turn already published or asked the human', async () => {
+      await invoke(draft);
+      await replyAtNeoTurnEnd(caller().neoTurn, 'Also this.', deps(caller()));
+      expect(ledger.list(conversationId)!.map((item) => item.fullText)).toEqual([draft.fullText]);
+      mailbox.db.exec('DELETE FROM neo_publications');
+      mailbox.db
+        .prepare(
+          `INSERT INTO neo_asks (id, session_id, title, request, created_at, updated_at)
+           VALUES ('ask-q', ?, 'Pick', 'Pick', ?, ?)`
+        )
+        .run(root.sessionId, Date.now(), Date.now());
+      mailbox.db
+        .prepare(
+          `INSERT INTO neo_questions (id, ask_id, text, kind, created_at)
+           VALUES ('q1', 'ask-q', 'Which one?', 'reply', ?)`
+        )
+        .run(Date.now());
+      await replyAtNeoTurnEnd(caller().neoTurn, 'Which one?', deps(caller()));
+      expect(ledger.list(conversationId)).toEqual([]);
+    });
+
+    test('adds nothing for a turn a note, schedule or session message started', async () => {
+      prompt(root.sessionId, 'event', 'system');
+      const note = caller(root.sessionId, 'event', false);
+      await replyAtNeoTurnEnd(note.neoTurn, 'Noted.', deps(note));
+      expect(ledger.list(conversationId)).toEqual([]);
+    });
   });
 });
 
