@@ -358,6 +358,7 @@ export async function validateSDKSessionFile(
   try {
     if (!existsSync(sessionFile)) {
       validatedSessionFiles.delete(sessionFile);
+      sessionFileRewrites.delete(sessionFile);
       return result;
     }
     const { ino, size } = statSync(sessionFile);
@@ -711,6 +712,7 @@ export function deleteSDKSessionFiles(
       try {
         unlinkSync(file.path);
         validatedSessionFiles.delete(file.path);
+        sessionFileRewrites.delete(file.path);
         result.deletedFiles.push(file.path);
         result.deletedSize += file.size;
       } catch (error) {
@@ -766,6 +768,7 @@ export function archiveSDKSessionFiles(
           unlinkSync(file.path);
         }
         validatedSessionFiles.delete(file.path);
+        sessionFileRewrites.delete(file.path);
 
         result.archivedFiles.push(archivePath);
         result.totalSize += file.size;
