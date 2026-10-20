@@ -122,9 +122,9 @@ UI is served, that RPC answers, and that the mock model API is up. It ends with
 - State: read the run's DB read-only, e.g.
   `sqlite3 -readonly "$RUN/data/daemon.db" "SELECT ..."`. Only the seed and
   check scripts write to it: `seed-todo.sh` and `seed-ledger.sh` (journeys 3 and 4),
-  `merge-check.sh` (journey 7), `archive-guard-check.sh` (journey 10) and
-  `seed-start-question.sh` (journey 12), `quote-summary-check.mjs` (journey 14), and
-  `external-reply-check.ts` (journey 16).
+  `merge-check.sh` (journey 24), `archive-guard-check.sh` (journey 10) and
+  `seed-start-question.sh` (journey 14), `quote-summary-check.mjs` (journey 18),
+  `seed-schedule-interrupt.ts` (journey 22), and `external-reply-check.ts` (journey 23).
 - Web UI: open `http://127.0.0.1:<port>/neo` (Neo) or
   `/session/<sessionId>` (a session) in the browser; read the page text and take
   a screenshot.
@@ -196,21 +196,6 @@ adds its journey here.
    with only its repo's todos (`neo_todos.repo`). On `/neo`, "Your work" lists
    the two child cards, and Recent outcomes shows the request as Done with that
    outcome under Details.
-7. **Projects never merge on their own.** After journey 1 opened root, insert two
-   `neo_concerns` rows whose `repo:` aliases in `neo_project_workspaces` name the
-   same repository, then call `rpc.ts neo.projects.reorganize '{}'`. End state:
-   the reply has no `merged` field, both projects remain, `neo_project_merges` is
-   empty, and the `repository:` identity belongs to the older project. To see what
-   the cleanup would do on a real daemon without touching it, run
-   `bun .claude/skills/verify/cleanup-dry-run.ts [db]` (read-only; defaults to
-   `~/.hyperneo/data/daemon.db`): it prints the planned deletes, and any merge it
-   lists runs only with `apply: true`. To see an explicit merge carry its asks,
-   run `VERIFY_PORT=<port> .claude/skills/verify/merge-check.sh "$RUN"`: it seeds a
-   `Web` home with a `repository:` alias and a same-titled copy holding a done ask
-   whose todo names another repo, then calls `neo.projects.reorganize {"apply":true}`.
-   End state: `neo_project_merges` has `project:web-copy → project:web`, `ask-merge`
-   now has `project_id` `project:web`, and `todo-merge` keeps
-   `github.com/verify-test/other`.
 8. **A todo whose PR lands in another repo moves to that repo's card.** After
    journey 1 opened root, run
    `VERIFY_CARD_REPO=github.com/verify-test/app .claude/skills/verify/seed-todo.sh "$RUN"`.
@@ -313,7 +298,7 @@ adds its journey here.
     ellipsis. The daemon and web share this excerpt rule; detailed message text
     remains available through Details and Copy.
 
-15. **Daemon performance has a repeatable read-only tally.** Run
+19. **Daemon performance has a repeatable read-only tally.** Run
     `bun scripts/daemon-lag-tally.ts <log> [--timestamps <jsonl>] [--since <ISO>] [--until <ISO>]`.
     It accepts timestamped console lines or JSONL directly. The laptop console
     log has no timestamps, so use its structured mirror to date the matching
@@ -345,7 +330,48 @@ adds its journey here.
     Synthetic CI coverage lives in `tests/unit/lib/daemon-lag-tally.test.ts` in
     the daemon package; run just that file locally.
 
-16. **An external worker can report progress to its sending Neo mid-work.**
+20. **A due session reminder wakes its recipient as a daemon note.** Register the
+    mock provider from Launch, then run `bun .claude/skills/verify/session-schedule-fire.ts <port> "$RUN"`.
+    It creates a session and a one-minute reminder through RPC and waits up to 80 s.
+    End state: the session transcript contains one `<daemon-note kind="scheduled_wake">`
+    with the reminder text and system input, without a
+    session-message envelope. `neo_input_origins.trigger_id` stores `scheduled_wake:`
+    followed by JSON with `scheduleId`, `sourceKind`, and `sourceId`; the mailbox
+    keeps that origin while SDK storage normalizes synthetic input to `system`.
+    The schedule reports `fired`, a message id, zero due
+    count, a facts digest and its next cadence; the helper pauses it after capturing
+    `evidence/session-schedule-fire.json`. Open that session's transcript and capture
+    a screenshot. Busy/needs-you/unchanged skips, nudge counting, source removal and
+    pause races are covered by the focused session-schedule-fire unit suite.
+
+21. **Closed schedule targets complete without a false fire.** Run
+    `bun .claude/skills/verify/session-schedule-targets.ts <port> "$RUN"` against an
+    isolated daemon. No model turn is needed. It creates one target and two
+    one-minute reminders, archives that target through RPC, and points the other
+    reminder at a missing session. End state: both schedules are `done` with
+    `last_outcome = target_gone`, no pending job and no message delivery; the fire
+    jobs complete without retries. Evidence: `evidence/session-schedule-targets.json`.
+    The helper deletes its schedules after capturing evidence. The focused delivery
+    suite also checks a target archived during source lookup and an interrupted
+    external send: that occurrence is durably reserved before `work.send`; retry
+    skips it as `skipped_delivery_unconfirmed`, retaining its due count and digest.
+    This gives external adapters at-most-once submission per occurrence: a crash
+    before submission may miss that occurrence, and a later cadence can try again.
+    Real external-adapter delivery is not verified by this journey.
+
+22. **Interrupting an open session preserves its schedule.** Run
+    `bun .claude/skills/verify/seed-schedule-interrupt.ts <port> "$RUN"` against an
+    isolated daemon. The helper checks the test-mode log and database path before
+    seeding a user-interrupted processing state on its newly created session.
+    `work.status` reads `stopped`, but the due reminder must read `active` with
+    `skipped_busy`, due count 1 and a future cadence through `schedule.session.list`.
+    No message is delivered. Evidence: `evidence/session-schedule-interrupt.json`.
+    The helper deletes its schedule after capturing evidence. The focused delivery
+    test also returns the target to idle and observes a fired reminder on its next
+    cadence. Stopped adapters with unknown lifecycle skip busy; local ended/archived
+    targets are recognized from their session row and still complete as target_gone.
+
+23. **An external worker can report progress to its sending Neo mid-work.**
     Run `RUN=$(mktemp -d /tmp/hn-reply-XXXXXX)` then
     `bun .claude/skills/verify/external-reply-check.ts <free-port> "$RUN"`.
     It refuses 8399 and a busy port, starts a real isolated daemon in test mode
@@ -367,7 +393,24 @@ adds its journey here.
     Claude Desktop or Codex Desktop GUI rendering; those routes and direct
     `work.send`/`work.start` are covered by the daemon unit tests.
 
-17. **A blocked daemon tick identifies recent work without logging message bodies.**
+
+24. **Projects never merge on their own.** After journey 1 opened root, insert two
+   `neo_concerns` rows whose `repo:` aliases in `neo_project_workspaces` name the
+   same repository, then call `rpc.ts neo.projects.reorganize '{}'`. End state:
+   the reply has no `merged` field, both projects remain, `neo_project_merges` is
+   empty, and the `repository:` identity belongs to the older project. To see what
+   the cleanup would do on a real daemon without touching it, run
+   `bun .claude/skills/verify/cleanup-dry-run.ts [db]` (read-only; defaults to
+   `~/.hyperneo/data/daemon.db`): it prints the planned deletes, and any merge it
+   lists runs only with `apply: true`. To see an explicit merge carry its asks,
+   run `VERIFY_PORT=<port> .claude/skills/verify/merge-check.sh "$RUN"`: it seeds a
+   `Web` home with a `repository:` alias and a same-titled copy holding a done ask
+   whose todo names another repo, then calls `neo.projects.reorganize {"apply":true}`.
+   End state: `neo_project_merges` has `project:web-copy → project:web`, `ask-merge`
+   now has `project_id` `project:web`, and `todo-merge` keeps
+   `github.com/verify-test/other`.
+
+25. **A blocked daemon tick identifies recent work without logging message bodies.**
     Run the same production diagnostic attachment on an isolated test daemon:
 
     ```bash
@@ -390,6 +433,7 @@ adds its journey here.
     diagnostic limits. A recent activity is correlation, not proof of cause;
     asynchronous phase duration includes awaits. This journey proves diagnostic
     output, not the cause of any real laptop block. Live logs remain read-only.
+
 
 ## Evidence
 

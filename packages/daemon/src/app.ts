@@ -1,3 +1,5 @@
+import { createSessionScheduleFire } from './lib/scheduler/session-schedule-fire.ts';
+import { createScheduleDelivery } from './lib/scheduler/session-schedule-delivery.ts';
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
 import { startSessionDoor } from './lib/messaging/session-door.ts';
 import { stampActiveAttempt } from './lib/tasks/direct-attempt-flag.ts';
@@ -145,6 +147,7 @@ import {
   MESSAGE_DELIVERY,
   SKILL_VALIDATE,
   TASK_SCHEDULE_FIRE,
+  SESSION_SCHEDULE_FIRE,
 } from './lib/job-queue-constants.ts';
 import { createMessageDeliveryHandler } from './lib/job-handlers/message-delivery.handler.ts';
 import { registerMailboxJobs } from './lib/mailbox/registration.ts';
@@ -1295,6 +1298,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           }).catch(() => {});
         },
       }
+    );
+
+    jobProcessor.register(
+      SESSION_SCHEDULE_FIRE,
+      createSessionScheduleFire({
+        scheduler: rpcHandlers.sessionScheduler,
+        ...createScheduleDelivery(db, () => sessionManager.getOperationRegistry()),
+      })
     );
 
     const taskScheduleRepo = new TaskScheduleRepository(db.getDatabase());
