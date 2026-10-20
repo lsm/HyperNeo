@@ -469,7 +469,10 @@ adds its journey here.
     survive a refused save; secret-like content, hidden paths, direction and mandate
     saves are refused. H1 returns `confirmation_required` for protected saves until
     H2 adds human-answer verification. Evidence: `evidence/neo-home.json`.
-    `neo.home.read` does not initialize or commit a repository.
+    `neo.home.read` does not initialize or commit a repository. The helper first
+    seeds an existing direction and ignore file, retries refused init/save calls,
+    and checks that no files or git metadata were created and both originals are
+    unchanged. Evidence: `evidence/neo-home-bootstrap.json`.
 
     Run `bun .claude/skills/verify/neo-home-guard.ts <fresh-run-dir>` to exercise
     the actual SDK PreToolUse hook on a synthetic home. Before H1 it records a denied

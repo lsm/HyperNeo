@@ -101,7 +101,6 @@ export class NeoHomeRepository {
   }
 
   private async initialize(): Promise<HomeResult> {
-    await mkdir(this.root, { recursive: true });
     if (!(await this.safePath('.git')))
       return refused('invalid_path: the home repo cannot use symlinks.');
     const metadata = await lstat(join(this.root, '.git')).catch((error) => {
@@ -110,49 +109,51 @@ export class NeoHomeRepository {
     });
     if (metadata && !metadata.isDirectory())
       return refused('invalid_path: home git metadata must stay inside its own repository.');
-    await this.git(['init', '--quiet']);
-    const hasHead = !(await this.git(['rev-parse', '--verify', 'HEAD'], true)).code;
-    const ignores = !(await this.git(['check-ignore', '-q', '--', '.coordinators/verify'], true))
-      .code;
+    const hasHead = metadata && !(await this.git(['rev-parse', '--verify', 'HEAD'], true)).code;
+    const ignores =
+      hasHead && !(await this.git(['check-ignore', '-q', '--', '.coordinators/verify'], true)).code;
     if (!hasHead || !ignores) {
       if (hasHead && (await this.git(['status', '--porcelain', '--untracked-files=all'])).text)
         return refused('dirty: the home repository has changes outside the operation.');
-      for (const [path, content] of [
+      const documents = new Map<string, string>();
+      for (const [path, fallback] of [
         [
           'README.md',
           '# Neo home\n\nCurated direction and project documents. Activity stays in the daemon database.\n',
         ],
         ['direction.md', ''],
+        ['.gitignore', ''],
       ]) {
         if (!(await this.safePath(path)))
           return refused('invalid_path: the home repo cannot use symlinks.');
-        try {
-          await writeFile(join(this.root, path), content, { flag: 'wx' });
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-        }
-      }
-      if (!(await this.safePath('.gitignore')))
-        return refused('invalid_path: the home repo cannot use symlinks.');
-      const previousIgnore = await readFile(join(this.root, '.gitignore'), 'utf8').catch(
-        (error) => {
+        const content = await readFile(join(this.root, path), 'utf8').catch((error) => {
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-          return '';
-        }
-      );
-      await writeFile(
-        join(this.root, '.gitignore'),
-        `${previousIgnore}${previousIgnore.endsWith('\n') || !previousIgnore ? '' : '\n'}.coordinators/\n`
-      );
-      for (const file of ['README.md', 'direction.md', '.gitignore']) {
-        const content = await readFile(join(this.root, file), 'utf8');
-        if (file === 'direction.md' && content.trim())
+          return fallback;
+        });
+        if (path === 'direction.md' && content.trim())
           return refused('confirmation_required: importing direction requires human confirmation.');
         const gate = requireHomeContent({ path: 'bootstrap.md', content });
         if ('reason' in gate) return gate.reason;
+        documents.set(path, content);
       }
-      if ((await this.git(['diff', '--cached', '--name-only'])).text)
+      if (metadata && (await this.git(['diff', '--cached', '--name-only'])).text)
         return refused('dirty: staged changes must be reviewed by the human first.');
+      await mkdir(this.root, { recursive: true });
+      await this.git(['init', '--quiet']);
+      for (const [path, content] of documents) {
+        if (path === '.gitignore') {
+          await writeFile(
+            join(this.root, path),
+            `${content}${content.endsWith('\n') || !content ? '' : '\n'}.coordinators/\n`
+          );
+        } else {
+          try {
+            await writeFile(join(this.root, path), content, { flag: 'wx' });
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+          }
+        }
+      }
       await this.git(['add', '--', 'README.md', '.gitignore', 'direction.md']);
       await this.git([
         'commit',
