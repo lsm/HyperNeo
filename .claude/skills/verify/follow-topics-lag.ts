@@ -168,6 +168,10 @@ try {
   const initialTotals = Object.fromEntries(
     [...totals].map(([name, value]) => [name, { ...value }])
   );
+  app.db.updateGlobalSettings({ neo: { packs: enabled ? [] : ['coding'] } });
+  await rpc('verify.follow_topics');
+  const nextTopics = service.cardEvents.listActive().length;
+  assert.equal(nextTopics, enabled ? 0 : count);
   const report = {
     surface:
       'isolated daemon WebSocket → actual refreshDriverWork; GitHub reader is synthetic; no root session binding',
@@ -185,6 +189,7 @@ try {
     diagnostics,
     result: result.data,
     remainingTopics,
+    nextRefreshSettingsEffect: { remainingTopics: nextTopics },
   };
   writeFileSync(join(run, 'observed.json'), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
