@@ -48,7 +48,9 @@ function put(id: string, body: Record<string, unknown>, taskId: string | null = 
     VALUES (?,'s',?,?,?,'2026-10-20T00:00:00Z',?,1,${names.map(() => '?').join(',')})`)
         .run(id, taskId, body.type, JSON.stringify(body), id, ...names.map((key) => derived[key])),
     'id=?',
-    [id]
+    [id],
+    '?',
+    [JSON.stringify(body)]
   );
 }
 
@@ -171,7 +173,9 @@ describe('task message body projection', () => {
         VALUES (?,'s','task','assistant',?,'2026-10-20T00:00:00Z',1)`)
             .run(`raw-${i}`, raw),
         'id=?',
-        [`raw-${i}`]
+        [`raw-${i}`],
+        '?',
+        [raw]
       );
     const before = db.prepare('SELECT * FROM task_message_rows ORDER BY id').all();
     runMigration419(db);
@@ -234,7 +238,9 @@ describe('task message body projection', () => {
           )
           .run(JSON.stringify(assistant('b.ts'))),
       "id='m'",
-      []
+      [],
+      '?',
+      [JSON.stringify(assistant('b.ts'))]
     );
     expect(projection('m')).toMatchObject({
       send_status: 'failed',

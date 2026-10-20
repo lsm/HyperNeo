@@ -28,8 +28,8 @@ test('new messages retain every tool-result byte only in the side body', () => {
       role: 'user',
       content: [{ type: 'tool_result', tool_use_id: 't', content: result }],
     },
-  } as unknown as SDKMessage;
-  repo.saveSDKMessage('s', message);
+  };
+  repo.saveSDKMessage('s', message as SDKMessage);
   expect(repo.getMessageByUuid('s', 'tool')).toMatchObject({ message: message.message });
   expect(db.prepare('SELECT sdk_message FROM sdk_messages').get()).toEqual({ sdk_message: '' });
   expect(db.prepare('SELECT sdk_message FROM sdk_message_bodies').get()).toEqual({
@@ -106,7 +106,7 @@ test.each(['unfinished', 'missing', 'reversed'])(
       }
     } finally {
       original.close();
-      restarted.close();
+      if (restarted.getDb()) restarted.close();
       rmSync(directory, { recursive: true, force: true });
     }
   }

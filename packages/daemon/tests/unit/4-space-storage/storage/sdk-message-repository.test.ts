@@ -224,17 +224,24 @@ describe('SDKMessageRepository', () => {
         uuid,
         options.origin ?? null
       );
+      mirrorSdkMessageFixtureBodies(db);
     }
 
     function storedMessage(sessionId: string, uuid: string): Record<string, unknown> {
       const row = db
-        .prepare(`SELECT sdk_message FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ?`)
+        .prepare(
+          `SELECT sdk_message FROM sdk_message_bodies WHERE seq IN (SELECT rowid FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ?)`
+        )
         .get(sessionId, uuid) as { sdk_message: string };
       return JSON.parse(row.sdk_message) as Record<string, unknown>;
     }
 
     function storedMessageByRowId(rowId: string): Record<string, unknown> {
-      const row = db.prepare(`SELECT sdk_message FROM sdk_messages WHERE id = ?`).get(rowId) as {
+      const row = db
+        .prepare(
+          `SELECT sdk_message FROM sdk_message_bodies WHERE seq=(SELECT rowid FROM sdk_messages WHERE id=?)`
+        )
+        .get(rowId) as {
         sdk_message: string;
       };
       return JSON.parse(row.sdk_message) as Record<string, unknown>;
@@ -1024,12 +1031,12 @@ describe('SDKMessageRepository', () => {
       repository.saveSDKMessage('session-1', createUserMessage('b', 'm-b'));
       const Tiso = '2026-01-01T00:00:00.000Z';
       const Tms = new Date(Tiso).getTime();
-      db.prepare(
-        `UPDATE sdk_messages SET timestamp = ? WHERE json_extract(sdk_message, '$.uuid') = 'm-older'`
-      ).run('2025-12-31T00:00:00.000Z');
-      db.prepare(
-        `UPDATE sdk_messages SET timestamp = ? WHERE json_extract(sdk_message, '$.uuid') IN ('m-a', 'm-b')`
-      ).run(Tiso);
+      db.prepare(`UPDATE sdk_messages SET timestamp = ? WHERE sdk_uuid = 'm-older'`).run(
+        '2025-12-31T00:00:00.000Z'
+      );
+      db.prepare(`UPDATE sdk_messages SET timestamp = ? WHERE sdk_uuid IN ('m-a', 'm-b')`).run(
+        Tiso
+      );
 
       const { messages } = repository.getSDKMessages('session-1', 100, Tms);
       const texts = messages.map(
@@ -5165,7 +5172,11 @@ describe('SDKMessageRepository', () => {
       );
       const stored = JSON.parse(
         (
-          db.prepare(`SELECT sdk_message FROM sdk_messages WHERE id = ?`).get(rowId) as {
+          db
+            .prepare(
+              `SELECT sdk_message FROM sdk_message_bodies WHERE seq=(SELECT rowid FROM sdk_messages WHERE id=?)`
+            )
+            .get(rowId) as {
             sdk_message: string;
           }
         ).sdk_message
@@ -5193,7 +5204,11 @@ describe('SDKMessageRepository', () => {
 
       const stored = JSON.parse(
         (
-          db.prepare(`SELECT sdk_message FROM sdk_messages WHERE id = ?`).get(rowId) as {
+          db
+            .prepare(
+              `SELECT sdk_message FROM sdk_message_bodies WHERE seq=(SELECT rowid FROM sdk_messages WHERE id=?)`
+            )
+            .get(rowId) as {
             sdk_message: string;
           }
         ).sdk_message

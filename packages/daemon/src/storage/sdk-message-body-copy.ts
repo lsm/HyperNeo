@@ -4,10 +4,6 @@ import { z } from 'zod';
 import { SdkBodyCopyTerminalError } from './sdk-message-body-backup.ts';
 import type { Database } from './sqlite-compat.ts';
 import { SDK_MESSAGE_COLUMN_TYPES, deriveSdkMessageColumns } from './sdk-message-columns.ts';
-import {
-  joinedSdkMessageBody,
-  joinedSdkMessageBodyBytes,
-} from './repositories/sdk-message-body-read.ts';
 
 const STATE = 'sdk_message_bodies_copy_v1:state:';
 const DONE = 'sdk_message_bodies_copy_v1:complete';
@@ -111,7 +107,7 @@ export async function migrateSdkMessageBodies(db: Database, options: Options) {
   if (options.signal?.aborted) return { status: 'cancelled' as const };
   const names = Object.keys(SDK_MESSAGE_COLUMN_TYPES) as (keyof typeof SDK_MESSAGE_COLUMN_TYPES)[];
   const insert = db.prepare(`INSERT OR IGNORE INTO sdk_message_bodies(seq,sdk_message)
-    SELECT m.seq,${joinedSdkMessageBody('b', 'm')} FROM sdk_messages m
+    SELECT m.seq,COALESCE(b.sdk_message,m.sdk_message) FROM sdk_messages m
     LEFT JOIN sdk_message_bodies b ON b.seq=m.seq WHERE m.seq=?`);
   const update = db.prepare(
     `UPDATE sdk_messages SET sdk_message='',${names.map((key) => `${key}=?`).join(',')} WHERE seq=?`
@@ -128,7 +124,7 @@ export async function migrateSdkMessageBodies(db: Database, options: Options) {
     while (!options.signal?.aborted) {
       const started = performance.now();
       const sizes = db
-        .prepare(`SELECT m.seq, ${joinedSdkMessageBodyBytes('b', 'm')} AS bytes
+        .prepare(`SELECT m.seq, COALESCE(octet_length(b.sdk_message),octet_length(m.sdk_message)) AS bytes
         FROM sdk_messages m LEFT JOIN sdk_message_bodies b ON b.seq=m.seq
         WHERE m.seq>? AND m.seq<=? ORDER BY m.seq LIMIT 128`)
         .all(state.through, state.ceiling) as { seq: number; bytes: number }[];
@@ -185,7 +181,7 @@ export async function migrateSdkMessageBodies(db: Database, options: Options) {
           const after = createHash('sha256').update(state.afterHash ?? '');
           db.exec('INSERT INTO sdk_message_body_copy_active(singleton) VALUES (1)');
           const selected = db
-            .prepare(`SELECT m.seq,m.task_id,${joinedSdkMessageBody('b', 'm')} AS body
+            .prepare(`SELECT m.seq,m.task_id,COALESCE(b.sdk_message,m.sdk_message) AS body
             FROM sdk_messages m LEFT JOIN sdk_message_bodies b ON b.seq=m.seq
             WHERE m.seq>? AND m.seq<=? ORDER BY m.seq`)
             .all(state.through, through) as { seq: number; task_id: string | null; body: string }[];

@@ -952,6 +952,44 @@ readers until the later migration/removal slices.
 
 ### Online SDK body copy (slice 10)
 
+### Side-only SDK body writes (online precursor to slice 11)
+
+Use a fresh isolated HOME/data directory and a free port; no GUI, provider or
+credentials are needed. The helper seeds consumed inputs, so no model turn is
+scheduled. Do not use a live DB or port 8399.
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-sdk-side-only-XXXXXX)
+mkdir -p "$RUN/home"
+env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
+  bun .claude/skills/verify/sdk-side-only.ts verify 9372 "$RUN"
+```
+
+It boots a real daemon, waits for its empty initial copy, seeds 5,004 synthetic
+messages through the production writers (including complete tool results), and
+exercises all eight body-writing call sites. Fifty real health/transcript RPCs
+must return complete bodies and result flags; every legacy body remains empty.
+It then stops the daemon, removes only its synthetic completion marker and
+requires restart to refuse the side-only path with an error-level event while
+logging is at the production WARN threshold. Evidence is `evidence/observed.json`:
+full ordered side-body hash/count, legacy row count, startup/lag/RPC timings and
+the refusal. `reproduce` accepts a baseline checkout as its fourth argument and
+must observe nonempty legacy bodies and no startup refusal. Use the same fixed
+synthetic action timestamp; the complete body hash/count must match between runs.
+The helper closes its WebSocket and daemon in `finally`. Unit contracts run in CI.
+
+Do not deploy side-only readers to an existing nonempty database before the
+slice-10 copy completes without a reversed marker and with no missing side body.
+The guard runs before migrations or SQL writes, emits an ERROR and refuses
+startup; it never runs a repair, silently falls back or starts a historical copy.
+Fresh empty DBs remain supported. The column and compatibility empty INSERT
+values stay until the separately scheduled downtime PR. The historical slice-10
+copy/backup keeps its own legacy fallback; its old full-daemon journey requires
+the slice-10 build because this newer build deliberately refuses incomplete data.
+Retain every permanent backup. Do not infer iMac readiness from laptop evidence.
+
+### Historical slice-10 copy journey
+
 Run only on a new synthetic database, larger than the read-only live file-size
 observation; never seed from or copy a live DB:
 
