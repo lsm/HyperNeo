@@ -1,7 +1,76 @@
 import type { SpawnFn } from '../runtime-spawn/index.ts';
 import { type CodexDesktopIpc, withCodexDesktopIpc } from './codex-desktop-ipc.ts';
+import type { Result, WorkDelivery } from './types.ts';
+import { reject } from './work-operations.ts';
 
 const TIMEOUT_MS = 30_000;
+
+export type CodexSendGate<Value> = { value: Value } | { reason: Result<WorkDelivery> };
+
+export async function steerCodexDesktopTurn(
+  socketPath: string | undefined,
+  threadId: string,
+  text: string,
+  messageId: string
+): Promise<CodexSendGate<'app-server' | 'queue'>> {
+  if (!socketPath) return { value: 'app-server' };
+  let dispatched = false;
+  try {
+    return await withCodexDesktopIpc(socketPath, async ({ call }) => {
+      const owner = await call(
+        'thread-owner-discovery',
+        { hostId: 'local', conversationId: threadId },
+        1
+      );
+      if (owner.resultType === 'error' && owner.error === 'no-client-found')
+        return { value: 'app-server' };
+      if (owner.resultType !== 'success' || !owner.handledByClientId) return { value: 'queue' };
+      dispatched = true;
+      const response = await call(
+        'thread-follower-steer-turn',
+        {
+          conversationId: threadId,
+          clientUserMessageId: messageId,
+          input: [{ type: 'text', text, text_elements: [] }],
+          restoreMessage: {
+            id: messageId,
+            text,
+            context: { workspaceRoots: [], commentAttachments: [] },
+            responsesapiClientMetadata: {},
+          },
+        },
+        1,
+        owner.handledByClientId
+      );
+      if (
+        response.resultType === 'error' &&
+        /no-client-found|active turn already ended|NoActiveTurn|activeTurnNotSteerable/.test(
+          response.error ?? ''
+        )
+      )
+        return { value: 'queue' };
+      const turnId = response.result?.result?.turnId;
+      return response.resultType === 'success' && turnId
+        ? { reason: { ok: true, value: { delivered: true, steeredIntoTurnId: turnId } } }
+        : {
+            reason: reject(
+              'not_delivered',
+              response.error ??
+                'Desktop did not confirm steering; the message may have been accepted. Check work.status before retrying.'
+            ),
+          };
+    });
+  } catch (error) {
+    if (!dispatched)
+      return { value: /ENOENT|ECONNREFUSED/.test(String(error)) ? 'app-server' : 'queue' };
+    return {
+      reason: reject(
+        'not_delivered',
+        `${String(error)} The steer may have been accepted; check work.status before retrying.`
+      ),
+    };
+  }
+}
 
 export async function startCodexDesktopTurn(
   socketPath: string,

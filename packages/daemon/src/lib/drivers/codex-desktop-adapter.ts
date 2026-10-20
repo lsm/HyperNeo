@@ -47,6 +47,7 @@ import {
   workInput,
 } from './work-messages.ts';
 import { reject } from './work-operations.ts';
+import { steerCodexDesktopTurn, type CodexSendGate } from './codex-desktop-handoff.ts';
 import { type GitCheckout, planWorkPlacement } from './work-placement.ts';
 
 const OWN_THREADS = `cwd IS NOT NULL AND COALESCE(source, '') NOT LIKE '%subagent%'`;
@@ -96,6 +97,7 @@ export interface CodexSnapshot {
 export interface CodexDesktopAdapterDeps {
   prepareExecution?: WorkExecutionPreparer;
   statePath: string;
+  desktopSocketPath?: string;
   worktreesDir: string;
   machine: string;
   now: () => number;
@@ -842,6 +844,22 @@ export function admitCodexSteerTurn(read: unknown): Gate<string> {
     : { reason: reject('not_delivered', 'The Codex thread has no running turn to steer.') };
 }
 
+async function callCodexSteer(
+  server: CodexAppServer,
+  threadId: string,
+  turnId: string,
+  message: string
+): Promise<Result<WorkDelivery>> {
+  const steered = z.object({ turnId: z.literal(turnId) }).parse(
+    await server.call('turn/steer', {
+      threadId,
+      expectedTurnId: turnId,
+      input: [{ type: 'text', text: message }],
+    })
+  );
+  return { ok: true, value: { delivered: true, steeredIntoTurnId: steered.turnId } };
+}
+
 export async function steerCodexMessage(
   detail: CodexThreadDetail,
   message: string,
@@ -853,15 +871,41 @@ export async function steerCodexMessage(
       await server.call('thread/turns/list', { threadId, limit: 1 })
     );
     if ('reason' in turn) return turn.reason;
-    const steered = z.object({ turnId: z.literal(turn.value) }).parse(
-      await server.call('turn/steer', {
-        threadId,
-        expectedTurnId: turn.value,
-        input: [{ type: 'text', text: message }],
-      })
-    );
-    return { ok: true, value: { delivered: true, steeredIntoTurnId: steered.turnId } };
+    return callCodexSteer(server, threadId, turn.value, message);
   });
+}
+
+async function tryDesktopCodexSend(
+  detail: CodexThreadDetail,
+  message: string,
+  deps: CodexDesktopAdapterDeps
+): Promise<CodexSendGate<'app-server' | 'queue'>> {
+  return steerCodexDesktopTurn(deps.desktopSocketPath, detail.thread.id, message, deps.newId());
+}
+
+async function tryServerCodexSend(
+  route: 'app-server' | 'queue',
+  detail: CodexThreadDetail,
+  message: string,
+  deps: CodexDesktopAdapterDeps
+): Promise<CodexSendGate<CodexThreadDetail>> {
+  if (route === 'queue') return { value: detail };
+  let dispatched = false;
+  const result = await withCodexMessageServer<WorkDelivery>(deps, async (server) => {
+    const turn = admitCodexSteerTurn(
+      await server.call('thread/turns/list', { threadId: detail.thread.id, limit: 1 })
+    );
+    if ('reason' in turn) return turn.reason;
+    dispatched = true;
+    return callCodexSteer(server, detail.thread.id, turn.value, message);
+  });
+  return !result.ok &&
+    (!dispatched ||
+      /NoActiveTurn|no active turn|expected.*turn.*(?:mismatch|match)|activeTurnNotSteerable|-32601/.test(
+        result.detail
+      ))
+    ? { value: detail }
+    : { reason: result };
 }
 
 export function codexWithdrawal(queuedSubmissionId: string, withdrawn: boolean): WorkWithdrawal {
@@ -910,6 +954,9 @@ const runCodexSend = (superpipe({})('codex-send-work') as PipelineAPI)
   .input(['ref', 'message', 'deps'])
   .pipe(requireCodexThread, ['ref', 'deps'], 'result:outcome')
   .pipe(requireOpenCodexThread, 'outcome', 'result:outcome')
+  .pipe((detail: CodexThreadDetail) => detail, 'outcome', 'detail')
+  .pipe(tryDesktopCodexSend, ['detail', 'message', 'deps'], 'result:outcome')
+  .pipe(tryServerCodexSend, ['outcome', 'detail', 'message', 'deps'], 'result:outcome')
   .pipe(queueCodexMessage, ['outcome', 'message', 'deps'], 'outcome')
   .endAsync('outcome') as (
   ref: WorkRef,
@@ -922,6 +969,13 @@ const runCodexSteer = (superpipe({})('codex-steer-work') as PipelineAPI)
   .pipe(requireCodexThread, ['ref', 'deps'], 'result:outcome')
   .pipe(requireOpenCodexThread, 'outcome', 'result:outcome')
   .pipe(steerCodexMessage, ['outcome', 'message', 'deps'], 'outcome')
+  .endAsync('outcome') as typeof runCodexSend;
+
+const runCodexQueue = (superpipe({})('codex-queue-work') as PipelineAPI)
+  .input(['ref', 'message', 'deps'])
+  .pipe(requireCodexThread, ['ref', 'deps'], 'result:outcome')
+  .pipe(requireOpenCodexThread, 'outcome', 'result:outcome')
+  .pipe(queueCodexMessage, ['outcome', 'message', 'deps'], 'outcome')
   .endAsync('outcome') as typeof runCodexSend;
 
 const runCodexWithdraw = (superpipe({})('codex-withdraw-work') as PipelineAPI)
@@ -1182,7 +1236,7 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
         deps
       ),
     queue: (ref, message, context) =>
-      runCodexSend(
+      runCodexQueue(
         ref,
         context.from === 'chat' ? message : `${message}\n${WORK_AGENT_INPUT}`,
         deps
