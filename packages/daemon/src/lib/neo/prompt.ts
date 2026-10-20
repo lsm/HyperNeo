@@ -1,4 +1,4 @@
-import { NEO_ROOT_PROMPT, NEO_ROOT_TURN_END } from '@hyperneo/prompts';
+import { NEO_GOAL_CYCLE, NEO_ROOT_PROMPT, NEO_ROOT_TURN_END } from '@hyperneo/prompts';
 import type { NeoPackBrief } from './packs/types.ts';
 import { neoSettingsPackBriefs } from './packs/index.ts';
 
@@ -16,5 +16,7 @@ function neoPackBriefing(briefs: readonly NeoPackBrief[]): string {
 }
 
 export function neoPrompt(packs: readonly NeoPackBrief[] = neoSettingsPackBriefs()): string {
-  return [NEO_ROOT_PROMPT, neoPackBriefing(packs), NEO_ROOT_TURN_END].filter(Boolean).join('\n\n');
+  return [NEO_ROOT_PROMPT, neoPackBriefing(packs), NEO_GOAL_CYCLE, NEO_ROOT_TURN_END]
+    .filter(Boolean)
+    .join('\n\n');
 }

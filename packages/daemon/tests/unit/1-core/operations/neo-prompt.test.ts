@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import {
   NEO_PACK_CODING_INSTRUCTIONS,
+  NEO_GOAL_CYCLE,
   NEO_ROOT_PROMPT,
   NEO_ROOT_TURN_END,
 } from '@hyperneo/prompts';
@@ -37,18 +38,18 @@ describe('restrictNeoQuery attribution', () => {
 });
 
 describe('root Neo system prompt', () => {
-  test('is the short coordinator text alone, replacing the Claude Code preset', () => {
+  test('assembles core guidance with the short root, replacing the Claude Code preset', () => {
     const options: Options = {};
     restrictNeoQuery(options, undefined, []);
     expect(options.systemPrompt).toEqual({
       type: 'custom',
-      prompt: `${NEO_ROOT_PROMPT}\n\n${NEO_ROOT_TURN_END}`,
+      prompt: `${NEO_ROOT_PROMPT}\n\n${NEO_GOAL_CYCLE}\n\n${NEO_ROOT_TURN_END}`,
       snapshot: false,
     });
-    expect(neoPrompt([])).toBe(`${NEO_ROOT_PROMPT}\n\n${NEO_ROOT_TURN_END}`);
-    expect(NEO_ROOT_TURN_END.trim()).toBe(
-      'The human sees none of your assistant text: not between tool calls and not at the end of a turn. Work silently; call tools without narrating or explaining them. The human hears you only through neo.publication.publish, or neo.question.ask when you need their answer, so when they should know something, publish it in their language. When there is nothing to tell them, end the turn without text.'
-    );
+    expect(neoPrompt([])).toBe(`${NEO_ROOT_PROMPT}\n\n${NEO_GOAL_CYCLE}\n\n${NEO_ROOT_TURN_END}`);
+    expect(NEO_ROOT_TURN_END).toContain('On a scheduled goal wake');
+    expect(NEO_ROOT_TURN_END).toContain('On other turns');
+    expect(NEO_ROOT_TURN_END).toContain('end the turn without text');
     expect(NEO_ROOT_PROMPT.split(/\s+/).length).toBeLessThan(160);
     for (const fact of ['work.find', 'work.send', 'neo.rule.save'])
       expect(NEO_ROOT_PROMPT).toContain(fact);
