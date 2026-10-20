@@ -279,6 +279,8 @@ import {
   taskNotificationRequeryDelayMs,
 } from './task-notification-requery.ts';
 
+const STEERED_INPUTS = new Set(['human', 'task']);
+
 export class AgentSession
   implements
     RewindHandlerContext,
@@ -3204,7 +3206,8 @@ export class AgentSession
   steerNeoInput(messageUuid: string): boolean {
     if (this.messageQueue.steer(messageUuid)) return true;
     const loaded = this.db.getSDKMessageRepo().getDeliveryContent(this.session.id, messageUuid);
-    if (loaded?.sendStatus !== 'enqueued' || loaded.inputKind !== 'human') return false;
+    if (loaded?.sendStatus !== 'enqueued' || !STEERED_INPUTS.has(loaded.inputKind ?? ''))
+      return false;
     void this.messageQueue
       .admitWithId(messageUuid, loaded.content, false, { durable: true, steer: true })
       .catch(() => undefined);

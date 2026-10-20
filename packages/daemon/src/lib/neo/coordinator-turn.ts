@@ -37,15 +37,23 @@ export class NeoCoordinatorTurn {
     return neoHumanTurnOrigin(
       messageId,
       new NeoInputOriginRepository(this.db.getDatabase()).trigger(this.sessionId, messageId),
-      (id) =>
-        this.db
-          .getSDKMessageRepo()
-          .getStoredPromptsByUuid(this.sessionId, id)
-          .some(
-            (message) =>
-              message.type === 'user' && 'inputKind' in message && message.inputKind === 'human'
-          )
+      (id) => this.isHumanInput(id)
     );
+  }
+
+  private isHumanInput(messageId: string): boolean {
+    return this.db
+      .getSDKMessageRepo()
+      .getStoredPromptsByUuid(this.sessionId, messageId)
+      .some(
+        (message) =>
+          message.type === 'user' && 'inputKind' in message && message.inputKind === 'human'
+      );
+  }
+
+  noteSteered(messageId: string): void {
+    if (this.turn?.human && !this.isHumanInput(messageId))
+      this.turn = { ...this.turn, human: false };
   }
 
   protected open(messageId: string, origin: string | null): true {

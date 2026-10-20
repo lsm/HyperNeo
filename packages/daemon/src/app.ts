@@ -112,6 +112,7 @@ import {
   startEventLoopWatchdog,
   type EventLoopWatchdogHandle,
 } from './lib/event-loop-watchdog.ts';
+import { startEventLoopLagLog } from './lib/event-loop-lag.ts';
 import {
   describeEventLoopStallMarker,
   eventLoopStallMarkerPath,
@@ -377,6 +378,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
   let startupLogCaptureCleanup: (() => void) | null = null;
   let unsubscribeProviderFailureChanges: (() => void) | null = null;
   let eventLoopWatchdog: EventLoopWatchdogHandle | null = null;
+  let eventLoopLagLogStopped = false;
+  let stopEventLoopLagLog = (): void => {
+    eventLoopLagLogStopped = true;
+  };
   await releaseStartupFileLogCapture().catch(() => {});
   const structuredLogSink = config.structuredLogFilePath
     ? new StructuredLogFileSink({
@@ -1640,6 +1645,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         try {
           await closeFileLogCapture();
         } finally {
+          stopEventLoopLagLog();
           eventLoopWatchdog?.stop();
         }
       }
@@ -1647,7 +1653,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     startupTimer.finish();
     armStallDetectionWhenStartupSettles(eventLoopWatchdog, spaceRuntimeReadyPromise, {
-      onArm: (reason) => logInfo(`[Daemon] Event-loop stall detection armed (${reason})`),
+      onArm: (reason) => {
+        logInfo(`[Daemon] Event-loop stall detection armed (${reason})`);
+        if (eventLoopLagLogStopped) return;
+        const stop = startEventLoopLagLog((line) => console.error(line));
+        stopEventLoopLagLog = () => {
+          eventLoopLagLogStopped = true;
+          stop();
+        };
+      },
     });
 
     return {
@@ -1686,6 +1700,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     };
   } catch (error) {
     startupTimer.finish();
+    stopEventLoopLagLog();
     eventLoopWatchdog?.stop();
     startupLogCaptureCleanup?.();
     unsubscribeProviderFailureChanges?.();

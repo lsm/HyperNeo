@@ -196,7 +196,7 @@ export class NeoService {
       invoke: (caller, name, input) =>
         invokeOperation(this.sessions.getOperationRegistry(), name, input, caller),
       packs: () => this.installedPacks(),
-      tell: (ask, todo, note) => {
+      tell: (ask, todo, note, key) => {
         const parent = ask.originMessageId
           ? { sessionId: ask.sessionId, messageId: ask.originMessageId }
           : null;
@@ -204,7 +204,7 @@ export class NeoService {
         const origin = resolved && this.db.getSession(resolved.sessionId) ? resolved : parent;
         return this.deliverForward(
           origin?.sessionId ?? ask.sessionId,
-          `neo-todo:${todo.id}:${todo.updatedAt}`,
+          key ?? `neo-todo:${todo.id}:${todo.updatedAt}`,
           note,
           ask.sessionId,
           origin,
@@ -291,7 +291,7 @@ export class NeoService {
         const previous = this.processingStatus.get(sessionId);
         if (status) this.processingStatus.set(sessionId, status);
         if (status === 'processing' && previous !== 'processing')
-          void this.steerHumanMessages(sessionId);
+          void this.steerQueuedInputs(sessionId);
         const bound = status || session?.status ? this.repo.getBindingBySession(sessionId) : null;
         if (bound?.kind === 'neo') this.noteWorking();
         if (status !== 'idle') return;
@@ -306,6 +306,7 @@ export class NeoService {
     const offStatus = events.subscribe(
       'messages.statusChanged',
       ({ sessionId, status }) => {
+        if (status === 'enqueued' && sessionId) void this.steerQueuedInputs(sessionId);
         if (status === 'failed' && sessionId && this.repo.getBindingBySession(sessionId))
           this.notifyChanged();
       },
@@ -883,19 +884,23 @@ export class NeoService {
     );
   }
 
-  async steerHumanMessages(sessionId: string): Promise<void> {
+  async steerQueuedInputs(sessionId: string): Promise<void> {
     if (this.repo.defaultBinding()?.sessionId !== sessionId) return;
     const status =
       this.processingStatus.get(sessionId) ??
       neoSessionStatus(this.db.getSession(sessionId)?.processingState);
     if (status !== 'processing') return;
-    const queued = this.db.getSDKMessageRepo().listQueuedInputs(sessionId, 'human');
+    const repo = this.db.getSDKMessageRepo();
+    const queued = [
+      ...repo.listQueuedInputs(sessionId, 'human'),
+      ...repo.listQueuedInputs(sessionId, 'task'),
+    ].sort((a, b) => a.seq - b.seq);
     if (!queued.length) return;
     try {
       const live = await this.sessions.getSessionForControl(sessionId);
       for (const { uuid } of queued) live?.steerNeoInput(uuid);
     } catch (error) {
-      this.log.warn('Human message not steered into the running Neo turn', error);
+      this.log.warn('Queued input not steered into the running Neo turn', error);
     }
   }
 

@@ -5,6 +5,7 @@ import type {
   NeoTodo,
   NeoTodoCheck,
 } from '@hyperneo/shared/types/neo-ask';
+import { neoStartQuestionTitle } from '../../lib/neo/start-question.ts';
 import type { Database } from '../sqlite-compat.ts';
 
 export type NeoTodoDraft = Pick<NeoTodo, 'title' | 'doneWhen' | 'check' | 'instruction' | 'named'>;
@@ -91,6 +92,9 @@ const toTodo = ({ checkJson, named, addedAfterStart, ...row }: TodoRow): NeoTodo
   named: parsed<Record<string, unknown>>(named),
   addedAfterStart: addedAfterStart === 1,
 });
+
+const isStartable = (todo: NeoTodo) =>
+  todo.state === 'todo' || (todo.state === 'blocked' && todo.blockedBy === 'question');
 
 export class NeoAskTodoRepository {
   constructor(
@@ -244,13 +248,19 @@ export class NeoAskTodoRepository {
   }
 
   moveTodo(todo: NeoTodo, askId: string, repo: string, now: number): NeoTodo {
-    this.db
-      .prepare(
-        `UPDATE neo_todos SET repo = ?2, position = CASE WHEN ask_id = ?1 THEN position
-           ELSE (SELECT COALESCE(MAX(position) + 1, 0) FROM neo_todos WHERE ask_id = ?1) END, ask_id = ?1
-         WHERE id = ?3`
-      )
-      .run(askId, repo, todo.id);
+    this.db.transaction(() => {
+      this.db
+        .prepare(
+          `UPDATE neo_todos SET repo = ?2, position = CASE WHEN ask_id = ?1 THEN position
+             ELSE (SELECT COALESCE(MAX(position) + 1, 0) FROM neo_todos WHERE ask_id = ?1) END, ask_id = ?1
+           WHERE id = ?3`
+        )
+        .run(askId, repo, todo.id);
+      this.pruneStartQuestions(todo.askId);
+      const moved = this.getTodo(todo.id)!;
+      if (askId !== todo.askId && moved.instruction && isStartable(moved))
+        this.joinStartQuestion(moved, now);
+    })();
     this.db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ? AND repo IS NULL').run(repo, askId);
     this.touchAsk(todo.askId, now);
     if (askId !== todo.askId) this.touchAsk(askId, now);
@@ -263,25 +273,32 @@ export class NeoAskTodoRepository {
         ? { ...change, blockedReason: null, nextAction: null, blockedBy: null }
         : change;
     const keys = Object.keys(patch) as (keyof NeoTodoPatch)[];
-    this.db
-      .prepare(
-        `UPDATE neo_todos SET ${keys.map((key) => `${TODO_COLUMNS[key]} = ?`).join(', ')}${
-          keys.length ? ', ' : ''
-        }updated_at = ? WHERE id = ?`
-      )
-      .run(...keys.map((key) => patch[key] ?? null), now, todo.id);
+    this.db.transaction(() => {
+      this.db
+        .prepare(
+          `UPDATE neo_todos SET ${keys.map((key) => `${TODO_COLUMNS[key]} = ?`).join(', ')}${
+            keys.length ? ', ' : ''
+          }updated_at = ? WHERE id = ?`
+        )
+        .run(...keys.map((key) => patch[key] ?? null), now, todo.id);
+      if (patch.state) this.pruneStartQuestions(todo.askId);
+    })();
     this.touchAsk(todo.askId, now);
     return this.getTodo(todo.id)!;
   }
 
   claimStart(todo: NeoTodo, now: number): NeoTodo | null {
-    const changed = this.db
-      .prepare(
-        `UPDATE neo_todos SET state = 'doing', started_at = ?, updated_at = ?,
-           blocked_reason = NULL, next_action = NULL, blocked_by = NULL
-         WHERE id = ? AND (state = 'todo' OR (state = 'blocked' AND blocked_by = 'question'))`
-      )
-      .run(now, now, todo.id).changes;
+    const changed = this.db.transaction(() => {
+      const claimed = this.db
+        .prepare(
+          `UPDATE neo_todos SET state = 'doing', started_at = ?, updated_at = ?,
+             blocked_reason = NULL, next_action = NULL, blocked_by = NULL
+           WHERE id = ? AND (state = 'todo' OR (state = 'blocked' AND blocked_by = 'question'))`
+        )
+        .run(now, now, todo.id).changes;
+      if (claimed) this.pruneStartQuestions(todo.askId);
+      return claimed;
+    })();
     if (!changed) return null;
     this.touchAsk(todo.askId, now);
     return this.getTodo(todo.id);
@@ -340,6 +357,36 @@ export class NeoAskTodoRepository {
       .prepare("UPDATE neo_questions SET start_todos = ?, text = ? WHERE id = ? AND state = 'open'")
       .run(JSON.stringify(startTodos), text, id);
     this.touchAsk(question.askId, now);
+  }
+
+  joinStartQuestion(todo: NeoTodo, now: number): void {
+    const todos = this.listTodos(todo.askId);
+    const open = this.listQuestions(todo.askId).find(
+      (question) => question.kind === 'start' && question.state === 'open'
+    );
+    const listed = (open?.startTodos ?? []).filter((id) =>
+      todos.some((item) => item.id === id && isStartable(item) && item.instruction)
+    );
+    const startTodos = [...new Set([...listed, todo.id])];
+    const text = neoStartQuestionTitle(
+      startTodos.map((id) => ({ title: todos.find((item) => item.id === id)?.title }))
+    );
+    if (open) this.extendStartQuestion(open.id, startTodos, text, now);
+    else
+      this.askQuestion(
+        crypto.randomUUID(),
+        todo.askId,
+        {
+          text,
+          kind: 'start',
+          options: null,
+          multiple: false,
+          noLabel: null,
+          yesLabel: null,
+          startTodos,
+        },
+        now
+      );
   }
 
   answerQuestion(
@@ -401,6 +448,33 @@ export class NeoAskTodoRepository {
       .prepare("UPDATE neo_questions SET state = 'retired' WHERE ask_id = ? AND state = 'open'")
       .run(askId);
     this.touchAsk(askId, now);
+  }
+
+  private pruneStartQuestions(askId: string): void {
+    const todos = this.listTodos(askId);
+    const startable = new Set(todos.filter(isStartable).map((todo) => todo.id));
+    for (const question of this.listQuestions(askId)) {
+      if (question.kind !== 'start' || question.state !== 'open' || !question.startTodos) continue;
+      const kept = question.startTodos.filter((id) => startable.has(id));
+      if (kept.length === question.startTodos.length) continue;
+      if (!kept.length)
+        this.db
+          .prepare(
+            `UPDATE neo_questions SET start_todos = '[]', state = 'retired',
+               retired_reason = 'nothing left to start' WHERE id = ?`
+          )
+          .run(question.id);
+      else
+        this.db
+          .prepare('UPDATE neo_questions SET start_todos = ?, text = ? WHERE id = ?')
+          .run(
+            JSON.stringify(kept),
+            neoStartQuestionTitle(
+              kept.map((id) => ({ title: todos.find((todo) => todo.id === id)?.title }))
+            ),
+            question.id
+          );
+    }
   }
 
   private releaseStartTodos(questionId: string, now: number): void {

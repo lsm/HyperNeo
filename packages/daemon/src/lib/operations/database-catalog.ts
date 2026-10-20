@@ -29,12 +29,16 @@ const FALLBACK_TASK_READ_ADMISSION = {
   longHorizonAgentRepo: FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
 };
 
-function readSessionStatus(db: Database, sessionId: string): string | null {
-  const row = db.getDatabase().prepare('SELECT status FROM sessions WHERE id = ?').get(sessionId) as
-    | { status: string }
-    | undefined
-    | null;
-  return row?.status ?? null;
+function readSessionField(
+  db: Database,
+  field: 'status' | 'title',
+  sessionId: string
+): string | null {
+  const row = db
+    .getDatabase()
+    .prepare(`SELECT ${field} AS value FROM sessions WHERE id = ?`)
+    .get(sessionId) as { value: string } | undefined | null;
+  return row?.value ?? null;
 }
 
 export function createDatabaseOperationCatalog(
@@ -74,7 +78,8 @@ export function createDatabaseOperationCatalog(
         ),
       transitionTask: (input) =>
         transitionStandaloneTask(db.getDatabase(), input, () => db.notifyChange('space_tasks')),
-      sessionStatus: (sessionId) => readSessionStatus(db, sessionId),
+      sessionStatus: (sessionId) => readSessionField(db, 'status', sessionId),
+      sessionTitle: (sessionId) => readSessionField(db, 'title', sessionId),
       ...(ensureAgentSession
         ? { resolveMessageAgent: createAgentSessionResolver(agentLookups, ensureAgentSession) }
         : {}),

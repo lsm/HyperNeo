@@ -19,6 +19,7 @@ import { WebSocketServerTransport } from '../../../../src/lib/websocket-server-t
 import { createWebSocketHandlers } from '../../../../src/routes/setup-websocket';
 import type { SessionManager } from '../../../../src/lib/session-manager';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db';
+import { SESSION_MESSAGE_NOTE } from '../../../../src/lib/messaging/session-envelope';
 
 const message = {
   type: 'user',
@@ -154,7 +155,13 @@ describe('forwarding message.send to an attached daemon', () => {
 
     const entry = parseMailboxEntry(JSON.parse(remote.mailbox.rows()[0].payload));
     expect(entry?.to).toEqual({ kind: 'session', sessionId: 'session-on-b' });
-    expect(entry?.message).toEqual(message);
+    expect(entry?.message).toEqual({
+      ...message,
+      inputKind: 'task',
+      message: {
+        content: `<session-message from-session="daemon:a::session:agent-on-a" origin="session">\n${SESSION_MESSAGE_NOTE}\nping from daemon A\n</session-message>`,
+      },
+    });
     expect(entry?.origin).toBe('daemon:a::session:agent-on-a');
     expect(outcome).toEqual({
       kind: 'completed',

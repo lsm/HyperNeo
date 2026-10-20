@@ -18,6 +18,22 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     super(db, 'neo_todo_sessions', 'todo_id');
   }
 
+  doingTodoOn(ref: WorkRef): { id: string; title: string } | null {
+    return (
+      (this.db
+        .prepare(
+          `SELECT t.id, t.title FROM neo_todo_sessions s JOIN neo_todos t ON t.id = s.todo_id
+            WHERE t.state = 'doing'
+              AND COALESCE(json_extract(s.ref, '$.adapter'), json_extract(s.target, '$.ref.adapter')) = ?
+              AND COALESCE(json_extract(s.ref, '$.id'), json_extract(s.target, '$.ref.id')) = ?
+              AND COALESCE(json_extract(s.ref, '$.daemon'), json_extract(s.target, '$.ref.daemon')) IS ?
+            LIMIT 1`
+        )
+        .get(ref.adapter, ref.id, ref.daemon ?? null) as { id: string; title: string } | null) ??
+      null
+    );
+  }
+
   create(todoId: string, target: NeoDriverTarget): void {
     this.db
       .prepare('INSERT OR IGNORE INTO neo_todo_sessions (todo_id, target) VALUES (?, ?)')

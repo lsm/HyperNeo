@@ -191,7 +191,7 @@ describe('hyperneo adapter send and status', () => {
       expect(handed).toEqual([
         {
           sessionId: id,
-          message: 'after this turn',
+          message: 'after this turn\n\nReply with message.send to sender.',
           from: 'session:sender',
           messageUuid: expect.any(String),
           deliveryMode: 'defer',
@@ -502,19 +502,29 @@ describe('hyperneo adapter send and status', () => {
     });
   });
 
+  test('a sender on another daemon gets its full address as the reply target', async () => {
+    await adapter().send?.(ref('idle'), 'go on', {
+      from: 'daemon:imac::session:neo-root',
+      caller: { source: 'rpc' },
+    });
+    expect(handed[0].message).toBe(
+      'go on\n\nReply with message.send to daemon:imac::session:neo-root.'
+    );
+  });
+
   test('send hands the message to the mailbox with the caller as origin', async () => {
     const idle = await adapter().send?.(ref('idle'), 'go on', from);
     const busy = await adapter().send?.(ref('busy'), 'next', from);
     expect(handed).toEqual([
       {
         sessionId: 'idle',
-        message: 'go on',
+        message: 'go on\n\nReply with message.send to neo:root.',
         from: 'session:neo:root',
         messageUuid: expect.any(String),
       },
       {
         sessionId: 'busy',
-        message: 'next',
+        message: 'next\n\nReply with message.send to neo:root.',
         from: 'session:neo:root',
         messageUuid: expect.any(String),
       },
@@ -604,7 +614,7 @@ describe('hyperneo adapter start and stop', () => {
       },
     });
     expect(events).toEqual(['create /focus/repo', 'worktree new', 'announce new']);
-    expect(handed).toEqual(['new: make it larger']);
+    expect(handed).toEqual(['new: make it larger\n\nReply with message.send to neo:root.']);
     expect(result).toMatchObject({
       value: { receipt: { executionId: 'new', inputId: uuids[0] } },
     });
@@ -617,7 +627,7 @@ describe('hyperneo adapter start and stop', () => {
     );
     expect(events[0]).toBe('create /focus/notes on glm-5.3');
     expect(result).toMatchObject({ ok: true, value: { model: 'glm-5.3' } });
-    expect(handed).toEqual(['new: write it']);
+    expect(handed).toEqual(['new: write it\n\nReply with message.send to neo:root.']);
   });
 
   test.each([{ model: 'unavailable' }, { effort: 'medium' }])(

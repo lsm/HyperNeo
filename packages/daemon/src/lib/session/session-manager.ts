@@ -757,6 +757,7 @@ export class SessionManager {
     content: string;
     images?: Array<MessageImage | ImageContent>;
     deliveryMode?: MessageDeliveryMode;
+    mailboxOrigin?: 'space_agent';
   }): Promise<void> {
     await this.messagePersistence.persist(data);
   }

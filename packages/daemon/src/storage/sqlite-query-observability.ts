@@ -97,6 +97,14 @@ function roundMs(value: number): number {
   return Math.round(value * 1000) / 1000;
 }
 
+let slowestQuery: { durationMs: number; sql: string } | null = null;
+
+export function takeSlowestQuery(): { durationMs: number; sql: string } | null {
+  const slowest = slowestQuery;
+  slowestQuery = null;
+  return slowest;
+}
+
 export class SQLiteQueryObserver {
   private readonly emitEvent: (params: SQLiteQueryEmitParams) => void;
   private readonly now: () => number;
@@ -156,6 +164,8 @@ export class SQLiteQueryObserver {
     if (durationMs >= this.options.slowThresholdMs) {
       this.slowExecutionCount += 1;
       this.emitSlowQueryEvent(execution, durationMs);
+      if (durationMs > (slowestQuery?.durationMs ?? 0))
+        slowestQuery = { durationMs: roundMs(durationMs), sql: execution.descriptor.normalizedSql };
     }
 
     let group = this.groups.get(execution.descriptor.fingerprint);

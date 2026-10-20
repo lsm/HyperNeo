@@ -8,6 +8,7 @@ import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import type { MailboxHandoffOutcome } from '../mailbox/handoff.ts';
 import type { MailboxDeliveryMode } from '../mailbox/entry.ts';
 import { sessionUnavailable } from '../session-resolution/session-lookup.ts';
+import { parseAddress, parseRemoteAddress } from '../mailbox/address.ts';
 import { ModelUnavailableError } from '../session/session-lifecycle.ts';
 import { matchChatsBy } from './match-chats.ts';
 import { withChatEvidence } from './places.ts';
@@ -478,6 +479,13 @@ export function describeHyperneoWork(
   };
 }
 
+export function withReplyLine(message: string, from: string): string {
+  const sender = parseAddress(from);
+  const replyTo =
+    sender?.kind === 'session' ? sender.sessionId : parseRemoteAddress(from) ? from : null;
+  return replyTo ? `${message}\n\nReply with message.send to ${replyTo}.` : message;
+}
+
 export async function deliverToHyperneo(
   row: HyperneoSessionRow,
   message: string,
@@ -486,7 +494,13 @@ export async function deliverToHyperneo(
   deliveryMode?: MailboxDeliveryMode
 ): Promise<Result<WorkDelivery>> {
   const inputId = crypto.randomUUID();
-  const outcome = await deps.handoff(row.id, message, context.from, inputId, deliveryMode);
+  const outcome = await deps.handoff(
+    row.id,
+    withReplyLine(message, context.from),
+    context.from,
+    inputId,
+    deliveryMode
+  );
   if (outcome.kind === 'rejected') return reject('not_delivered', outcome.reason);
   return {
     ok: true,
@@ -575,7 +589,12 @@ export async function openHyperneoWork(
 ): Promise<Result<WorkStarted>> {
   const { sessionId, model } = confirmed;
   const inputId = crypto.randomUUID();
-  const outcome = await deps.handoff(sessionId, request.message, context.from, inputId);
+  const outcome = await deps.handoff(
+    sessionId,
+    withReplyLine(request.message, context.from),
+    context.from,
+    inputId
+  );
   if (outcome.kind === 'rejected') {
     return reject(
       'not_delivered',

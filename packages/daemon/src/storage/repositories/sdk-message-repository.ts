@@ -1661,11 +1661,12 @@ export class SDKMessageRepository {
 
   listQueuedInputs(
     sessionId: string,
-    kind: 'system' | 'human' = 'system'
+    kind: 'system' | 'human' | 'task' = 'system'
   ): { uuid: string; seq: number }[] {
     return this.db
       .prepare(
         `SELECT sdk_uuid AS uuid, seq FROM sdk_messages
+           INDEXED BY idx_sdk_messages_send_status_timestamp
          WHERE session_id = ? AND send_status = 'enqueued' AND message_type = 'user'
            AND sdk_uuid IS NOT NULL AND json_extract(sdk_message, '$.inputKind') = ?
          ORDER BY seq ASC`
