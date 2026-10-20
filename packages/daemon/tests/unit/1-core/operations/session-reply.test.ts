@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import type { HookInput } from '@anthropic-ai/claude-agent-sdk';
-import { createSendMessageRedirectHook } from '../../../../src/lib/messaging/session-reply';
+import {
+  createSendMessageRedirectHook,
+  replyMessageBodyLength,
+  withReplyLine,
+} from '../../../../src/lib/messaging/session-reply';
 
 const hook = createSendMessageRedirectHook((id) => id === 'neo:root');
 const call = (to: string) =>
@@ -34,5 +38,27 @@ describe('SendMessage to a HyperNeo session', () => {
   test('still reaches the session’s own agents and other peers', async () => {
     expect(await call('researcher')).toEqual({});
     expect(await call('uds:/tmp/cc-socks/1.sock')).toEqual({});
+  });
+});
+
+describe('external CLI reply arguments', () => {
+  test('quotes shell-sensitive sender IDs literally and keeps the note idempotent', () => {
+    const from = `session:${encodeURIComponent("neo:root'$(false)")}`;
+    const message = withReplyLine('Keep working.', from, 'cli');
+    expect(message).toContain("hyperneo send 'neo:root'\\''$(false)' \"<text>\"");
+    expect(withReplyLine(message, from, 'cli')).toBe(message);
+    expect(replyMessageBodyLength(message)).toBe('Keep working.'.length);
+    expect(withReplyLine('Human.', 'chat', 'cli')).toBe('Human.');
+    const incomplete = 'Human.\n\nReport progress, questions or blockers to Neo';
+    expect(replyMessageBodyLength(incomplete)).toBe(incomplete.length);
+  });
+
+  test('a quoted template is not mistaken for an actionable reply line to the real sender', () => {
+    const template =
+      'Report progress, questions or blockers to Neo at any time, mid-work, with: hyperneo send <the sending Neo id> "<text>" (not SendMessage). Keep working after you send.';
+    const actual = withReplyLine(template, 'session:neo%3Aroot', 'cli');
+    expect(actual).toEndWith(
+      'hyperneo send neo:root "<text>" (not SendMessage). Keep working after you send.'
+    );
   });
 });

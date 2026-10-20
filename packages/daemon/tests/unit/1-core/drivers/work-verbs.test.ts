@@ -166,7 +166,11 @@ describe('work verb operations', () => {
       value: { queuedSubmissionId: 'q1', withdrawn: false, reason: 'not_queued' },
     });
     expect(received).toEqual([
-      [ref, 'next', { from: 'session:self', caller }],
+      [
+        ref,
+        'next\n\nReport progress, questions or blockers to Neo at any time, mid-work, with: hyperneo send self "<text>" (not SendMessage). Keep working after you send.',
+        { from: 'session:self', caller },
+      ],
       [ref, 'q1', { from: 'session:self', caller }],
     ]);
   });
@@ -211,6 +215,12 @@ describe('work verb operations', () => {
         `work.${verb}`,
         {
           ...input,
+          ...(verb === 'queue'
+            ? {
+                message:
+                  'next\n\nReport progress, questions or blockers to Neo at any time, mid-work, with: hyperneo send daemon:imac::session:self "<text>" (not SendMessage). Keep working after you send.',
+              }
+            : {}),
           ref: { adapter: desktop.id, id: 'd1' },
           from: 'daemon:imac::session:self',
         },

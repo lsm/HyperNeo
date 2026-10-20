@@ -47,6 +47,62 @@ VERIFY_PORT=9311 bun .claude/skills/verify/rpc.ts rpc:providers.create \
   '{"params":{"providerId":"anthropic","displayName":"Anthropic (dev proxy)","kind":"built_in","authType":"api_key","isEnabled":true,"isDefault":true,"sortOrder":0},"credentials":{"apiKey":"sk-devproxy-test-key"}}'
 ```
 
+## Codex Desktop work.send journey
+
+Codex work.send steers a Desktop-owned running turn. This journey uses
+the real native IPC and the `invokeOperation` door used by Neo; it does not
+automate the GUI or start a HyperNeo daemon. Use only a sacrificial thread
+in a fresh temporary workspace, never a human's working thread. Run helpers
+with `env -i HOME="$HOME" PATH="$(dirname "$(command -v bun)"):/usr/bin:/bin"
+NODE_ENV=test bun .claude/skills/verify/codex-send.ts <action> "$RUN"`.
+`prepare` creates and names the verification thread via the existing
+app-server, archives/unarchives only that new empty thread to release its
+runtime lock, and uses the existing Desktop handoff once. An unsubscribe
+alone can leave the runtime loaded; a handoff failure is not a steer pass.
+`start` starts another turn on that same Desktop-owned verification thread
+via IPC without opening a window. Immediately run `send`, then `observe`
+after the reply. End state: `send-result.json` has `delivered: true`, a
+`steeredIntoTurnId` and no `queuedSubmissionId`; `acceptance.json` confirms
+the matching turn completed with the requested token. On the old code,
+`send` fails with a queue receipt and the token appears in a later turn
+whose trigger is `queue`. `stop` interrupts only the verification thread
+if cleanup is needed. No credentials are read; the installed app handles
+its existing authentication. Keep the JSON evidence and state that GUI
+rendering was not verified. After the turn completes, `fallback` confirms
+an idle Desktop thread returns a queue receipt instead. Unit tests use fake
+sockets and run in CI.
+
+## SDK message derived-column upgrade journey
+
+Use synthetic bodies only. Before applying the column implementation, run
+`NODE_ENV=test bun .claude/skills/verify/sdk-message-columns.ts seed "$RUN"`
+then `inspect "$RUN"` with the same helper. The latter must fail because the
+derived columns are absent. Seed records 11,000 messages, including full large
+tool results and one malformed JSON row, plus a SHA-256 of the valid bodies.
+The seed writes `replacement_metadata_normalized=1`, matching production writers
+so the unrelated one-time legacy replacement reconciliation does not run.
+Use a temporary HOME and `env -i` as in Launch; no real database is read or copied.
+
+With this branch, run `upgrade "$RUN"`, then `inspect "$RUN"`, then `upgrade`
+again. End state: all body bytes and the row count match the seed; metadata
+matches the body, malformed JSON stays unchanged with NULL derived columns,
+and the restart skips completed chunks. Keep the before failure, inspection,
+startup lag and chunk logs. Numbered migration 413 adds the columns; the separate
+`sdk_message_columns_backfilled` marker records completion of the async pass.
+Its cursor commits with each transaction; chunks yield after at most 512 rows
+or 4 MiB, with a larger single message kept whole. No body is moved or trimmed.
+Startup heartbeat covers the entire initialization, so distinguish existing
+startup costs from measured chunk times and report any budget violation.
+
+Then launch an isolated daemon as above and run
+`bash .claude/skills/verify/sdk-message-columns-door.sh <port> "$RUN"`.
+This sends through `message.send`, observes the same `messages.bySession`
+subscription as the web transcript, and checks stored metadata/body agreement
+read-only. Stop and relaunch that isolated daemon, then repeat with a distinct
+third argument for the evidence name. Keep both RPC replies and feed snapshots.
+GUI rendering is not covered; no real provider, credentials or GUI are used.
+Filter characterization tests remain unchanged and run in CI.
+
 ## Doctor
 
 ```bash
@@ -67,7 +123,8 @@ UI is served, that RPC answers, and that the mock model API is up. It ends with
   `sqlite3 -readonly "$RUN/data/daemon.db" "SELECT ..."`. Only the seed and
   check scripts write to it: `seed-todo.sh` and `seed-ledger.sh` (journeys 3 and 4),
   `merge-check.sh` (journey 7), `archive-guard-check.sh` (journey 10) and
-  `seed-start-question.sh` (journey 12), and `quote-summary-check.mjs` (journey 14), and `seed-schedule-interrupt.ts` (journey 22).
+  `seed-start-question.sh` (journey 14), `quote-summary-check.mjs` (journey 18),
+  `seed-schedule-interrupt.ts` (journey 22), and `external-reply-check.ts` (journey 23).
 - Web UI: open `http://127.0.0.1:<port>/neo` (Neo) or
   `/session/<sessionId>` (a session) in the browser; read the page text and take
   a screenshot.
@@ -328,6 +385,29 @@ adds its journey here.
     test also returns the target to idle and observes a fired reminder on its next
     cadence. Stopped adapters with unknown lifecycle skip busy; local ended/archived
     targets are recognized from their session row and still complete as target_gone.
+
+23. **An external worker can report progress to its sending Neo mid-work.**
+    Run `RUN=$(mktemp -d /tmp/hn-reply-XXXXXX)` then
+    `bun .claude/skills/verify/external-reply-check.ts <free-port> "$RUN"`.
+    It refuses 8399 and a busy port, starts a real isolated daemon in test mode
+    with an empty environment and its own HOME/DB, and registers a synthetic
+    Claude Code peer on a private Unix socket. No provider, mock-model port or
+    GUI is needed. The script seeds only this run's ask/todos/start questions,
+    then answers the start questions through real RPC so the todo runner sends
+    its instructions through the native Claude inbox transport.
+
+    End state: `$RUN/observed.json` records the worker's actual incoming frames.
+    The first instruction includes `hyperneo send <the actual root Neo id>
+    "<text>"`; an instruction already containing that line has one copy; a
+    human-origin send has none. The script then runs the real CLI with a
+    the synthetic Claude peer's sender identity and checks read-only that its progress
+    message reached that Neo's transcript. It stops its daemon and closes its
+    peer socket even when an assertion fails. Save `observed.json` and the
+    console output as before/after evidence, then remove the run directory.
+    This proves real RPC/todo/inbox/CLI delivery with a synthetic peer, not
+    Claude Desktop or Codex Desktop GUI rendering; those routes and direct
+    `work.send`/`work.start` are covered by the daemon unit tests.
+
 
 ## Evidence
 

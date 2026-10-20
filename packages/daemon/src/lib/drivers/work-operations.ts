@@ -3,6 +3,11 @@ import { z } from 'zod';
 import { qualifyRemoteOrigin } from '../mailbox/address.ts';
 import { selectMessageOrigin, selectSendOrigin } from '../messaging/message-send.ts';
 import {
+  replyMessageBodyLength,
+  REPLY_ORIGIN_MAX,
+  withReplyLine,
+} from '../messaging/session-reply.ts';
+import {
   defineOperation,
   type OperationCaller,
   type OperationDefinition,
@@ -42,10 +47,22 @@ export interface WorkVerbDeps {
 }
 
 export const WORK_MESSAGE_MAX = 20_000;
-const MessageSchema = z.string().trim().min(1).max(WORK_MESSAGE_MAX);
+const MessageSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .superRefine((message, ctx) => {
+    if (replyMessageBodyLength(message) > WORK_MESSAGE_MAX)
+      ctx.addIssue({
+        code: 'too_big',
+        origin: 'string',
+        maximum: WORK_MESSAGE_MAX,
+        inclusive: true,
+      });
+  });
 const REMOTE_START_TIMEOUT_MS = 360_000;
 const REMOTE_SEND_TIMEOUT_MS = 180_000;
-const ForwardedOriginSchema = z.string().min(1).max(500).optional();
+const ForwardedOriginSchema = z.string().min(1).max(REPLY_ORIGIN_MAX).optional();
 
 export const StartWorkInputSchema = z.object({
   adapter: z.string().min(1),
@@ -114,6 +131,30 @@ type StartResult = z.infer<typeof StartWorkResultSchema>;
 type SendResult = z.infer<typeof SendWorkResultSchema>;
 type StatusResult = z.infer<typeof WorkStatusResultSchema>;
 type StopResult = z.infer<typeof StopWorkResultSchema>;
+
+function workReplyInput<T extends StartInput | SendInput | z.infer<typeof WithdrawWorkInputSchema>>(
+  input: T,
+  from: string,
+  caller: OperationCaller,
+  deps: WorkVerbDeps
+): T {
+  const adapter = 'adapter' in input ? input.adapter : input.ref.adapter;
+  if (
+    !('message' in input) ||
+    caller.role !== 'neo' ||
+    !['claude-code', 'claude-desktop', 'codex-desktop'].includes(adapter)
+  )
+    return input;
+  const remote = 'place' in input ? input.place.daemon : input.ref.daemon;
+  return {
+    ...input,
+    message: withReplyLine(
+      input.message,
+      remote ? qualifyRemoteOrigin(from, deps.daemonName) : from,
+      'cli'
+    ),
+  };
+}
 
 export function reject(reason: WorkRejection, detail: string): Rejected {
   return { ok: false, reason, detail };
@@ -336,7 +377,8 @@ const runStartWork = (superpipe({})('start-work') as PipelineAPI)
     'result:outcome'
   )
   .pipe(selectSendOrigin, ['input', 'caller'], 'from')
-  .pipe(startWork, ['outcome', 'input', 'from', 'caller', 'deps'], 'outcome')
+  .pipe(workReplyInput, ['input', 'from', 'caller', 'deps'], 'deliveryInput')
+  .pipe(startWork, ['outcome', 'deliveryInput', 'from', 'caller', 'deps'], 'outcome')
   .endAsync('outcome') as (
   input: StartInput,
   caller: OperationCaller,
@@ -348,7 +390,8 @@ const runSendWork = (superpipe({})('send-work') as PipelineAPI)
   .pipe(routeSend, ['input', 'deps'], 'result:outcome')
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
   .pipe(selectSendOrigin, ['input', 'caller'], 'from')
-  .pipe(sendWork, ['outcome', 'input', 'from', 'caller', 'deps'], 'outcome')
+  .pipe(workReplyInput, ['input', 'from', 'caller', 'deps'], 'deliveryInput')
+  .pipe(sendWork, ['outcome', 'deliveryInput', 'from', 'caller', 'deps'], 'outcome')
   .endAsync('outcome') as (
   input: SendInput,
   caller: OperationCaller,
@@ -413,7 +456,8 @@ const runQueuedInput = (superpipe({})('change-queued-work-input') as PipelineAPI
   .pipe(routeQueuedInput, ['input', 'deps'], 'result:outcome')
   .pipe(admitRemoteCaller, ['outcome', 'caller'], 'result:outcome')
   .pipe(selectSendOrigin, ['input', 'caller'], 'from')
-  .pipe(changeQueuedInput, ['outcome', 'input', 'from', 'caller', 'deps'], 'outcome')
+  .pipe(workReplyInput, ['input', 'from', 'caller', 'deps'], 'deliveryInput')
+  .pipe(changeQueuedInput, ['outcome', 'deliveryInput', 'from', 'caller', 'deps'], 'outcome')
   .endAsync('outcome') as (
   input: QueuedInput,
   caller: OperationCaller,
@@ -474,7 +518,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.send',
       description:
-        'Send a message to existing work by the ref from work.find, work.start or work.status. delivered false normally means accepted and queued behind the current turn; with unconfirmed true, only the transport write succeeded and peer acceptance is unknown. Optional receipt contains opaque executionId and inputId for that submission, scoped to the requested work ref and its daemon; it is not proof of completion or result attribution. ok false names why it was not accepted: not_found, not_open (archived or ended work), not_delivered, claude_cli_login_expired (tell the user to run `claude auth login`; retrying will not help), unsupported or unreachable. Only Neo or the user can change work on another daemon; other agents get unsupported.',
+        'Send a message to existing work by the ref from work.find, work.start or work.status. Codex first steers into the running turn via its Desktop owner, or app-server when Desktop does not own it; steeredIntoTurnId confirms that turn. When steering is unavailable, it queues instead and returns queuedSubmissionId. Use work.queue to explicitly wait for the next turn. An uncertain steer is not retried or also queued. delivered false normally means accepted and queued behind the current turn; with unconfirmed true, only the transport write succeeded and peer acceptance is unknown. Optional receipt contains opaque executionId and inputId for that submission, scoped to the requested work ref and its daemon; it is not proof of completion or result attribution. ok false names why it was not accepted: not_found, not_open (archived or ended work), not_delivered, claude_cli_login_expired (tell the user to run `claude auth login`; retrying will not help), unsupported or unreachable. Only Neo or the user can change work on another daemon; other agents get unsupported.',
       inputSchema: SendWorkInputSchema,
       resultSchema: SendWorkResultSchema,
       policy: { safetyClass: 'mutate' },

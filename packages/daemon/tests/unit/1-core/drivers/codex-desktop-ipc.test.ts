@@ -4,6 +4,12 @@ import { createServer, type Server, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withCodexDesktopIpc } from '../../../../src/lib/drivers/codex-desktop-ipc';
+import { steerCodexDesktopTurn } from '../../../../src/lib/drivers/codex-desktop-handoff';
+import { createCodexDesktopAdapter } from '../../../../src/lib/drivers/codex-desktop-adapter';
+import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
+import { invokeOperation } from '../../../../src/lib/operations/invoke';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry';
+import { Database } from '../../../../src/storage/sqlite-compat';
 
 interface Message {
   type: string;
@@ -13,6 +19,7 @@ interface Message {
   targetClientId?: string;
   version?: number;
   response?: unknown;
+  params?: Record<string, unknown>;
 }
 
 describe('withCodexDesktopIpc', () => {
@@ -178,5 +185,170 @@ describe('withCodexDesktopIpc', () => {
       })
     ).rejects.toThrow();
     expect(invoked).toBe(false);
+  });
+
+  describe('Desktop-owned message delivery', () => {
+    test('steers through the Desktop owner with restorable agent input', async () => {
+      const f = await fixture((message, _socket, send) =>
+        send({
+          type: 'response',
+          requestId: message.requestId,
+          resultType: 'success',
+          ...(message.method === 'thread-owner-discovery'
+            ? { handledByClientId: 'desktop-owner' }
+            : { result: { result: { turnId: 'desktop-turn' } } }),
+        })
+      );
+      const text = 'use the parser\n[HyperNeo agent input]';
+      expect(await steerCodexDesktopTurn(f.path, 'thread-1', text, 'input-1')).toEqual({
+        reason: { ok: true, value: { delivered: true, steeredIntoTurnId: 'desktop-turn' } },
+      });
+      expect(f.seen.at(-1)).toMatchObject({
+        method: 'thread-follower-steer-turn',
+        version: 1,
+        targetClientId: 'desktop-owner',
+        params: {
+          conversationId: 'thread-1',
+          clientUserMessageId: 'input-1',
+          input: [{ type: 'text', text, text_elements: [] }],
+          restoreMessage: {
+            id: 'input-1',
+            text,
+            context: { workspaceRoots: [], commentAttachments: [] },
+            responsesapiClientMetadata: {},
+          },
+        },
+      });
+    });
+
+    test('work.send returns the Desktop steer receipt through the operation result schema', async () => {
+      const f = await fixture((message, _socket, send) =>
+        send({
+          type: 'response',
+          requestId: message.requestId,
+          resultType: 'success',
+          ...(message.method === 'thread-owner-discovery'
+            ? { handledByClientId: 'desktop-owner' }
+            : { result: { result: { turnId: 'desktop-turn' } } }),
+        })
+      );
+      const statePath = join(directory, 'state.sqlite');
+      const db = new Database(statePath);
+      db.exec(`CREATE TABLE threads (id TEXT, name TEXT, title TEXT, first_user_message TEXT, cwd TEXT, source TEXT, archived INTEGER, updated_at_ms INTEGER, rollout_path TEXT);
+      CREATE TABLE projects (id TEXT, name TEXT);
+      CREATE TABLE project_roots (project_id TEXT, path TEXT);
+      INSERT INTO threads VALUES ('thread-1', 'Verification', '', '', '/tmp/verify', 'desktop', 0, 1, '/missing.jsonl')`);
+      db.close();
+      const driver = createCodexDesktopAdapter({
+        statePath,
+        desktopSocketPath: f.path,
+        worktreesDir: directory,
+        machine: 'test',
+        now: Date.now,
+        spawn: () => {
+          throw new Error('Desktop steering must not spawn');
+        },
+        appServer: async () => {
+          throw new Error('Desktop owns the turn; app-server must not be consulted');
+        },
+        bootstrapServer: async () => {
+          throw new Error('Must not resume the thread');
+        },
+        startDesktopTurn: async () => {
+          throw new Error('Must not start a new turn');
+        },
+        folderExists: () => true,
+        makeFolder: () => {},
+        homeDir: directory,
+        gitCheckout: async () => null,
+        newId: () => 'input-1',
+      });
+      const registry = createOperationRegistry(
+        createWorkVerbOperations({
+          adapters: () => [driver],
+          daemonName: 'test',
+          remote: { list: () => [], invoke: async () => ({}) },
+        })
+      );
+      expect(
+        await invokeOperation(
+          registry,
+          'work.send',
+          { ref: { adapter: driver.id, id: 'thread-1' }, message: 'use the parser' },
+          { source: 'mcp', role: 'neo', sessionId: 'neo' }
+        )
+      ).toEqual({
+        kind: 'completed',
+        value: { ok: true, value: { delivered: true, steeredIntoTurnId: 'desktop-turn' } },
+      });
+      expect(f.seen.at(-1)?.params?.restoreMessage).toMatchObject({
+        text: 'use the parser\n\nReport progress, questions or blockers to Neo at any time, mid-work, with: hyperneo send neo "<text>" (not SendMessage). Keep working after you send.\n[HyperNeo agent input]',
+      });
+    });
+
+    test.each([
+      'no-client-found',
+      'Cannot steer conversation thread-1 because its active turn already ended',
+      'NoActiveTurn',
+      'activeTurnNotSteerable',
+    ])('queues after Desktop explicitly refuses steering: %s', async (error) => {
+      const f = await fixture((message, _socket, send) =>
+        send({
+          type: 'response',
+          requestId: message.requestId,
+          ...(message.method === 'thread-owner-discovery'
+            ? { resultType: 'success', handledByClientId: 'desktop-owner' }
+            : { resultType: 'error', error }),
+        })
+      );
+      expect(await steerCodexDesktopTurn(f.path, 'thread-1', 'later', 'input-1')).toEqual({
+        value: 'queue',
+      });
+    });
+
+    test('uses app-server only when Desktop has no owner', async () => {
+      const f = await fixture((message, _socket, send) =>
+        send({
+          type: 'response',
+          requestId: message.requestId,
+          resultType: 'error',
+          error: 'no-client-found',
+        })
+      );
+      expect(await steerCodexDesktopTurn(f.path, 'thread-1', 'hi', 'input-1')).toEqual({
+        value: 'app-server',
+      });
+      expect(f.seen.map((message) => message.method)).toEqual([
+        'initialize',
+        'thread-owner-discovery',
+      ]);
+    });
+
+    test.each(['disconnect', 'missing-turn-id', 'unknown-error'])(
+      'never queues a possibly accepted Desktop steer: %s',
+      async (failure) => {
+        const f = await fixture((message, socket, send) => {
+          if (message.method === 'thread-owner-discovery')
+            send({
+              type: 'response',
+              requestId: message.requestId,
+              resultType: 'success',
+              handledByClientId: 'desktop-owner',
+            });
+          else if (failure === 'disconnect') socket.destroy();
+          else
+            send({
+              type: 'response',
+              requestId: message.requestId,
+              resultType: failure === 'unknown-error' ? 'error' : 'success',
+              error: failure === 'unknown-error' ? 'request outcome unknown' : undefined,
+              result: {},
+            });
+        });
+        expect(await steerCodexDesktopTurn(f.path, 'thread-1', 'hi', 'input-1')).toMatchObject({
+          reason: { ok: false, reason: 'not_delivered' },
+        });
+      }
+    );
   });
 });
