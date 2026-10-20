@@ -121,6 +121,28 @@ describe('neo.question operations', () => {
     expect(store.getTodo(rows.id)).toMatchObject({ state: 'todo', blockedBy: null });
   });
 
+  test('answering a start question retires a duplicate one covering the same todos', async () => {
+    const { store, call, asked, fix, rows } = setup();
+    const first = await asked({ kind: 'start', text: 'Start these 2?', todos: [fix.id, rows.id] });
+    const other = await asked({ kind: 'start', text: 'Only this?', todos: [rows.id] });
+    const second = await asked({ kind: 'start', text: 'Build it?', todos: [fix.id, rows.id] });
+    await call('neo.question.answer', { questionId: second.id, answer: [fix.id, rows.id] }, human);
+    expect(store.getQuestion(first.id)).toMatchObject({
+      state: 'retired',
+      retiredReason: 'answered by another start question',
+      replacedBy: second.id,
+    });
+    expect(store.getQuestion(other.id)).toMatchObject({ state: 'retired', replacedBy: second.id });
+  });
+
+  test('a start question that covers todos the answer did not is left open', async () => {
+    const { store, call, asked, fix, rows } = setup();
+    const wider = await asked({ kind: 'start', text: 'Start these 2?', todos: [fix.id, rows.id] });
+    const narrow = await asked({ kind: 'start', text: 'Start this?', todos: [fix.id] });
+    await call('neo.question.answer', { questionId: narrow.id, answer: [fix.id] }, human);
+    expect(store.getQuestion(wider.id)?.state).toBe('open');
+  });
+
   test('tells Neo which ticked todos did not start', async () => {
     const { call, asked, told, refused, fix, rows } = setup();
     refused.add(rows.id);
