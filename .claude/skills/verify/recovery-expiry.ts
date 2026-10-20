@@ -86,7 +86,7 @@ db=sqlite3.connect(sys.argv[1]); db.execute('BEGIN IMMEDIATE'); print('locked',f
   const queued=expiry.queueContinuation({toolUseId:'due-tool',sessionId:'synthetic',requestBody:request,reason:'preserve reason',ttlMs:10000});
   assert.equal(expiry.markExpired(),1);
   assert.equal(expiry.getToolUse('due-tool')?.status,'expired');
-  const retained=expiry.getInbox(queued.inbox.id)!;
+  const retained=prepare('SELECT status,recovery_reason AS recoveryReason,request_json AS requestJson FROM tool_continuation_inbox WHERE id=?').get(queued.inbox.id) as {status:string;recoveryReason:string;requestJson:string};
   assert.equal(retained.status,'expired');
   assert.equal(retained.recoveryReason,'preserve reason');
   assert.deepEqual(JSON.parse(retained.requestJson),request);

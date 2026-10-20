@@ -132,11 +132,17 @@ describe('ToolContinuationRecoveryRepository expiry', () => {
   test('an inbox-only expiry still runs when no mapping is due', () => {
     inbox('only', 'pending', 99, 'retained reason');
     expect(repo.markExpired(100)).toBe(0);
-    expect(repo.getInbox('only')).toMatchObject({
+    expect(
+      db
+        .prepare(
+          'SELECT status,recovery_reason,updated_at,request_json FROM tool_continuation_inbox WHERE id=?'
+        )
+        .get('only')
+    ).toEqual({
       status: 'expired',
-      recoveryReason: 'retained reason',
-      updatedAt: 100,
-      requestJson: '完整工具结果'.repeat(10000),
+      recovery_reason: 'retained reason',
+      updated_at: 100,
+      request_json: '完整工具结果'.repeat(10000),
     });
   });
 });
