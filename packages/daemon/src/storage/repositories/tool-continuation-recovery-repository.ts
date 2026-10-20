@@ -1,6 +1,7 @@
 import { isRecord } from '../../lib/record.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { generateUUID } from '@hyperneo/shared';
+import { runMigration422 } from '../schema/m422-tool-continuation-expiry-indexes.ts';
 
 export type ToolContinuationStatus =
   | 'active'
@@ -95,6 +96,7 @@ export class ToolContinuationRecoveryRepository {
       `CREATE INDEX IF NOT EXISTS idx_tool_continuation_inbox_tool
 			 ON tool_continuation_inbox(tool_use_id, status, expires_at)`
     );
+    runMigration422(this.db);
   }
 
   resolveOwnerBySession(sessionId: string): ToolContinuationOwner {
@@ -320,23 +322,27 @@ export class ToolContinuationRecoveryRepository {
   }
 
   markExpired(now = Date.now()): number {
-    const result = this.db
-      .prepare(
-        `UPDATE tool_continuation_recovery
-				 SET status = 'expired', recovery_reason = COALESCE(recovery_reason, 'TTL expired'),
-				     updated_at = ?
-				 WHERE status IN ('active', 'waiting_rebind') AND expires_at < ?`
-      )
-      .run(now, now);
-    this.db
-      .prepare(
-        `UPDATE tool_continuation_inbox
-				 SET status = 'expired', recovery_reason = COALESCE(recovery_reason, 'TTL expired'),
-				     updated_at = ?
-				 WHERE status = 'pending' AND expires_at < ?`
-      )
-      .run(now, now);
-    return result.changes;
+    const expired = this.expireRows(
+      'tool_continuation_recovery',
+      "status IN ('active', 'waiting_rebind')",
+      now
+    );
+    this.expireRows('tool_continuation_inbox', "status = 'pending'", now);
+    return expired;
+  }
+
+  private expireRows(
+    table: 'tool_continuation_recovery' | 'tool_continuation_inbox',
+    status: string,
+    now: number
+  ): number {
+    const where = `${status} AND expires_at < ?`;
+    if (!this.db.prepare(`SELECT 1 FROM ${table} WHERE ${where} LIMIT 1`).get(now)) return 0;
+    return this.db
+      .prepare(`UPDATE ${table}
+      SET status = 'expired', recovery_reason = COALESCE(recovery_reason, 'TTL expired'),
+        updated_at = ? WHERE ${where}`)
+      .run(now, now).changes;
   }
 
   markExecutionWaitingRebind(executionId: string, reason: string): void {

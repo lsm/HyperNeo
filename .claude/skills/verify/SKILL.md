@@ -24,6 +24,42 @@ root of your worktree.
   `<run>/pr.json`, refuses everything else (including `gh auth token`) and logs
   every call to `<run>/evidence/gh.log`. Nothing reaches github.com.
 
+## Recovery expiry responsiveness
+
+Run a fresh isolated daemon without provider keys. The helper seeds 22,287
+synthetic recovery records (22,269 consumed / 18 expired), matching the observed
+production status counts, with no eligible expiry rows. It probes `system.health`
+over the real WebSocket while the maintenance operation runs on the main DB.
+The extra Python connection holds a synthetic WAL writer lock for 1.2 seconds.
+It never opens the real DB. All helper-owned processes and the daemon close in
+`finally`.
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-expiry-proof-XXXXXX)
+mkdir -p "$RUN/home"
+env -i HOME="$RUN/home" PATH="$(dirname "$(command -v bun)"):/usr/bin:/bin" \
+  NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/recovery-expiry.ts verify 9335 "$RUN" expiry
+```
+
+`evidence/verify.json` must show covering-index checks, no expiry UPDATE during
+the empty sweep, a health reply below 250 ms, and event-loop lag below 1 s.
+After releasing the lock, it also expires an actual mapping and inbox request,
+retaining the entire request and its existing reason. Unit boundary/status/
+count/retention/upgrade contracts run only in CI. This proves the focused expiry
+path, not the performance of every other writer in the daemon.
+
+On the contract-test commit before the fix, `reproduce` with scope `full-tick`
+records the recovery UPDATE blocking over 250 ms and the delayed health reply.
+On fixed code, repeat `verify` with scope `full-tick` in another fresh directory:
+its saved report can still fail because the following `space_external_events`
+expiry performs an unrelated empty UPDATE under the same held writer lock.
+Report that remaining failure explicitly; do not treat the focused expiry pass
+as whole-tick acceptance. That wider contention fix is a separate item. A
+controlled synthetic lock reproduces a possible cause; it does not identify the
+writer responsible for an historical production event. No GUI or model turn is
+part of this maintenance journey.
+
 ## Launch
 
 ```bash
@@ -250,7 +286,8 @@ UI is served, that RPC answers, and that the mock model API is up. It ends with
   arrived.
 - State: read the run's DB read-only, e.g.
   `sqlite3 -readonly "$RUN/data/daemon.db" "SELECT ..."`. Only the seed and
-  check scripts write to it: `seed-todo.sh` and `seed-ledger.sh` (journeys 3 and 4),
+  check scripts write to it: `seed-todo.sh`, `todo-pr-claims.ts`, `todo-pr-concurrency.ts` (journey 3) and
+  `seed-ledger.sh` (journey 4),
   `merge-check.sh` (journey 24), `archive-guard-check.sh` (journey 10) and
   `seed-start-question.sh` (journey 14), `quote-summary-check.mjs` (journey 18),
   `seed-schedule-interrupt.ts` (journey 22), and `external-reply-check.ts` (journey 23).
@@ -288,6 +325,28 @@ adds its journey here.
    `rpc.ts neo.ask.settle '{"askId":"ask-verify","status":"done","outcome":"Shipped."}'`
    replies `todos_unfinished: … "Fix the loader" (todo-verify, doing).` and the ask
    stays `open`; the same call after the todo is `done` settles the ask `done`.
+   To verify PR ownership and URL edits, run
+   `bun .claude/skills/verify/todo-pr-claims.ts <port> "$RUN"` on a fresh isolated
+   daemon. It seeds only this run's ask, URL-less session todo and coding ledger
+   claim, then uses the real `neo.todo.add/edit/remove` RPC door. End state: adding
+   a duplicate refuses with the existing todo id/title; `addUrls` pins the PR on
+   that original; a competing edit refuses it. The helper marks the stub PR merged
+   and waits up to 210 seconds for the coding pack to finish the original without
+   a manual close. Evidence: `evidence/todo-pr-claims.json` includes RPC receipts,
+   stored merged evidence and the Neo snapshot; `gh.log` shows stub-only lookups.
+   No real PR, provider, credentials or GUI is used; model notifications use the
+   local mock and this run's dev-proxy provider row. GUI rendering is not verified.
+   In another fresh run, execute
+   `bun .claude/skills/verify/todo-pr-concurrency.ts <port> "$RUN"`.
+   It overlaps a completion check awaiting GitHub with 20 URL additions on that
+   same todo. Every URL must remain in its check; the stale completion is refused
+   and the todo remains open. Repeat in fresh run directories with a final
+   argument `edit`, `close`, and `sweep` to cover plain completion, closure and the
+   real periodic background check. Each mode pauses the local gh stub after its
+   check starts, adds 20 URLs through RPC, then releases the old result. None may
+   finish the todo. The sweep mode can take up to 3 minutes to begin.
+   Evidence: `evidence/todo-pr-concurrency.json`.
+
 4. **An open todo's PR leads the PR ledger in the snapshot.** After journey 1
    opened root, run `.claude/skills/verify/seed-ledger.sh "$RUN"`. It writes a
    project for `verify-test/demo` (so the pack sweep keeps its ledger rows), an
@@ -916,3 +975,25 @@ other feed kinds remain searchable and vanished-feed callers await cleanup.
 Measurements establish the tested synthetic workloads, not a physical upper
 bound on disk I/O or deployed performance. Keep both JSON reports and the exact
 command as PR evidence; stored source data is never deleted.
+
+### Search index insert latency (journey 29)
+
+Index synthetic messages into an isolated daemon that runs its own background
+FTS merges, then keep writing while the space tick's expiry UPDATE runs:
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-fts-merge-XXXXXX)
+env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
+  bun .claude/skills/verify/fts-merge-lag.ts 9349 "$RUN" 500000 256 45
+```
+
+Arguments after the run dir: rows (500,000, about the iMac's index), words per
+body (64 ≈ the live average, 256 for 4x bodies) and seconds of steady writes. The
+helper inserts in 200-row transactions that yield between batches, samples the
+event loop every 10 ms, times 20 search queries, then runs the
+`space_external_events` expiry UPDATE plus a 20-row index write every 100 ms.
+
+End state: `observed.json` shows `index.worstBatchMs` and both `maxLagMs` below
+1,000 ms at 256 words, and the same `searchAfterIndexing.totalMatches` before and
+after a change. With `crisismerge` 64 the 256-word worst batch was 1,859 ms (an
+FTS5 crisis merge inside the insert); with 16 it was 434 ms.
