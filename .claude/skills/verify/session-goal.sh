@@ -10,4 +10,8 @@ rpc goal.session.create "{\"ownerSessionId\":\"$ROOT\",\"title\":\"Grow OAP\",\"
 GOAL=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['reply']['goal']['id'])" "$RUN/evidence/goal-create.json")
 rpc goal.session.update "{\"ownerSessionId\":\"$ROOT\",\"goalId\":\"$GOAL\",\"progress\":40,\"nextSteps\":[\"Publish the adapter guide\"]}" > "$RUN/evidence/goal-update.json"
 rpc goal.session.list "{\"ownerSessionId\":\"$ROOT\"}" > "$RUN/evidence/goal-list.json"
+for effect in "Two projects asked for it" "Three projects asked for it"; do
+  rpc goal.journal.append "{\"ownerSessionId\":\"$ROOT\",\"goalId\":\"$GOAL\",\"runId\":\"run-1\",\"done\":\"Opened the adapter guide PR\",\"effect\":\"$effect\",\"evidence\":[{\"kind\":\"pr\",\"ref\":\"https://github.com/lsm/open-agent-protocol/pull/9\"}],\"worked\":\"Answering adopters in their issues\"}" > /dev/null
+done
+rpc goal.journal.list "{\"ownerSessionId\":\"$ROOT\",\"goalId\":\"$GOAL\"}" > "$RUN/evidence/goal-journal.json"
 sqlite3 -readonly "$RUN/data/daemon.db" "SELECT event_type, source FROM space_goal_events WHERE goal_id = '$GOAL' ORDER BY rowid" | tee "$RUN/evidence/goal-events.txt"

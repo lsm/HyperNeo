@@ -39,3 +39,25 @@ export type SessionGoalDraft = Pick<SessionGoal, 'title'> &
   >;
 
 export type SessionGoalPatch = Partial<SessionGoalDraft & Pick<SessionGoal, 'status'>>;
+
+export interface GoalJournalEvidence {
+  kind: 'pr' | 'todo' | 'metric' | 'url' | 'commit' | 'text';
+  ref: string;
+  note?: string;
+}
+
+export interface GoalJournalEntry {
+  id: string;
+  goalId: string;
+  runId: string | null;
+  sessionId: string | null;
+  done: string;
+  effect: string;
+  evidence: GoalJournalEvidence[];
+  worked: string;
+  failed: string | null;
+  createdAt: number;
+}
+
+export type GoalJournalDraft = Pick<GoalJournalEntry, 'done' | 'effect' | 'evidence' | 'worked'> &
+  Partial<Pick<GoalJournalEntry, 'runId' | 'failed'>>;

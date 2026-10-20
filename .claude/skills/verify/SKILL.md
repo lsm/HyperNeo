@@ -207,7 +207,9 @@ adds its journey here.
     with one, updates it, and lists it. End state: `evidence/goal-refused.json` holds
     `done_test_required`; `goal-list.json` lists "Grow OAP" at progress 40 with its
     done-test, mandate link and next step; `goal-events.txt` reads `created|human`
-    then `updated|human`.
+    then `updated|human`. The script then appends a journal entry twice for the same
+    run: `goal-journal.json` holds one entry for `run-1`, with the second effect
+    ("Three projects asked for it") and the PR as evidence.
 12. **A start question lists only todos that can still start.** After journey 1
     opened root, run `.claude/skills/verify/seed-start-question.sh "$RUN"`. It
     writes `ask-prune` with two todos awaiting start, `todo-a` (check

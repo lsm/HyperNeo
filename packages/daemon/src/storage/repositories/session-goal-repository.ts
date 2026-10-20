@@ -1,5 +1,7 @@
 import { generateUUID } from '@hyperneo/shared';
 import type {
+  GoalJournalDraft,
+  GoalJournalEntry,
   SessionGoal,
   SessionGoalDraft,
   SessionGoalPatch,
@@ -34,6 +36,11 @@ type Row = Omit<SessionGoal, 'metrics' | 'nextSteps'> & { metrics: string; nextS
 function toGoal(row: Row): SessionGoal {
   return { ...row, metrics: JSON.parse(row.metrics), nextSteps: JSON.parse(row.nextSteps) };
 }
+
+const JOURNAL_SELECT = `SELECT id, goal_id AS goalId, run_id AS runId, session_id AS sessionId, done,
+  effect, evidence, worked, failed, created_at AS createdAt FROM goal_journal`;
+
+type JournalRow = Omit<GoalJournalEntry, 'evidence'> & { evidence: string };
 
 export class SessionGoalRepository {
   constructor(
@@ -133,6 +140,57 @@ export class SessionGoalRepository {
     })();
     this.reactiveDb?.notifyChange('space_goals');
     return this.get(goal.id)!;
+  }
+
+  appendJournal(
+    goalId: string,
+    sessionId: string | null,
+    draft: GoalJournalDraft,
+    now: number
+  ): GoalJournalEntry {
+    const runId = draft.runId ?? null;
+    const id = generateUUID();
+    this.db
+      .prepare(
+        `INSERT INTO goal_journal (id, goal_id, run_id, session_id, done, effect, evidence, worked, failed, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (goal_id, run_id) WHERE run_id IS NOT NULL DO UPDATE SET
+           session_id = excluded.session_id, done = excluded.done, effect = excluded.effect,
+           evidence = excluded.evidence, worked = excluded.worked, failed = excluded.failed`
+      )
+      .run(
+        id,
+        goalId,
+        runId,
+        sessionId,
+        draft.done,
+        draft.effect,
+        JSON.stringify(draft.evidence),
+        draft.worked,
+        draft.failed ?? null,
+        now
+      );
+    this.reactiveDb?.notifyChange('goal_journal');
+    return this.journalEntry(goalId, runId === null ? { id } : { runId })!;
+  }
+
+  journalEntry(goalId: string, key: { id: string } | { runId: string }): GoalJournalEntry | null {
+    const row = this.db
+      .prepare(`${JOURNAL_SELECT} WHERE goal_id = ? AND ${'id' in key ? 'id' : 'run_id'} = ?`)
+      .get(goalId, 'id' in key ? key.id : key.runId) as JournalRow | null;
+    return row ? { ...row, evidence: JSON.parse(row.evidence) } : null;
+  }
+
+  listJournal(goalId: string, before: string | null, limit: number): GoalJournalEntry[] {
+    return (
+      this.db
+        .prepare(
+          `${JOURNAL_SELECT} WHERE goal_id = ? AND (? IS NULL OR (created_at, rowid) <
+             (SELECT created_at, rowid FROM goal_journal WHERE id = ?))
+           ORDER BY created_at DESC, rowid DESC LIMIT ?`
+        )
+        .all(goalId, before, before, limit) as JournalRow[]
+    ).map((row) => ({ ...row, evidence: JSON.parse(row.evidence) }));
   }
 
   private recordEvent(

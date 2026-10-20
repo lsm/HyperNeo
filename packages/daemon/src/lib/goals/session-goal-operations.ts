@@ -1,5 +1,9 @@
 import type { SpaceGoalEventSource } from '@hyperneo/shared';
-import type { SessionGoal, SessionGoalPatch } from '@hyperneo/shared/types/session-goal';
+import type {
+  GoalJournalDraft,
+  SessionGoal,
+  SessionGoalPatch,
+} from '@hyperneo/shared/types/session-goal';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { SessionGoalRepository } from '../../storage/repositories/session-goal-repository.ts';
@@ -60,6 +64,54 @@ const Update = z
   })
   .strict();
 
+const Evidence = z.object({
+  kind: z.enum(['pr', 'todo', 'metric', 'url', 'commit', 'text']),
+  ref: z.string().min(1),
+  note: z.string().optional(),
+});
+const Append = z
+  .object({
+    ...Owner,
+    goalId: z.string().min(1),
+    runId: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        'Scheduler run that woke this cycle; a second entry for the same run replaces the first'
+      ),
+    done: z.string().min(1).describe('What this cycle did'),
+    effect: z.string().min(1).describe('What changed because of it'),
+    evidence: z.array(Evidence).default([]),
+    worked: z.string().min(1).describe('What to repeat next cycle'),
+    failed: z.string().min(1).optional().describe('What to stop doing'),
+  })
+  .strict();
+const Journal = z
+  .object({
+    ...Owner,
+    goalId: z.string().min(1),
+    before: z
+      .string()
+      .min(1)
+      .optional()
+      .describe('Entry id: return the entries older than it, for paging'),
+    limit: z.number().int().min(1).max(100).default(20),
+  })
+  .strict();
+const EntrySchema = z.object({
+  id: z.string(),
+  goalId: z.string(),
+  runId: z.string().nullable(),
+  sessionId: z.string().nullable(),
+  done: z.string(),
+  effect: z.string(),
+  evidence: z.array(Evidence),
+  worked: z.string(),
+  failed: z.string().nullable(),
+  createdAt: z.number(),
+});
+
 const GoalSchema = z.object({
   id: z.string(),
   ownerSessionId: z.string(),
@@ -105,6 +157,12 @@ export function requireGoalChange(goal: SessionGoal, patch: SessionGoalPatch): G
   return Object.keys(patch).length
     ? { value: goal }
     : refuse('nothing_to_update: name at least one field to change.');
+}
+
+export function requireJournalCursor(goal: SessionGoal, known: boolean): Gate<SessionGoal> {
+  return known
+    ? { value: goal }
+    : refuse('cursor_not_found: before names no entry of this goal; list again without it.');
 }
 
 export function requireKnownOwner(owner: string, known: boolean): Gate<string> {
@@ -213,6 +271,46 @@ export function createSessionGoalOperations({
     )
     .endAsync('outcome');
 
+  const append = owned(superpipe({})('goal.journal.append') as PipelineAPI)
+    .pipe(
+      (goal: SessionGoal, input: z.infer<typeof Append>, caller: OperationCaller) => {
+        const { goalId: _goalId, ownerSessionId: _owner, ...draft } = input;
+        audit(caller, 'goal.journal.append', { goalId: goal.id, runId: input.runId ?? null });
+        return {
+          accepted: true as const,
+          entry: goals.appendJournal(
+            goal.id,
+            caller.sessionId ?? null,
+            draft as GoalJournalDraft,
+            Date.now()
+          ),
+        };
+      },
+      ['outcome', 'input', 'caller'],
+      'outcome'
+    )
+    .endAsync('outcome');
+
+  const journal = owned(superpipe({})('goal.journal.list') as PipelineAPI)
+    .pipe(
+      (goal: SessionGoal, input: z.infer<typeof Journal>) =>
+        requireJournalCursor(
+          goal,
+          !input.before || goals.journalEntry(goal.id, { id: input.before }) !== null
+        ),
+      ['outcome', 'input'],
+      'result:outcome'
+    )
+    .pipe(
+      (goal: SessionGoal, input: z.infer<typeof Journal>) => ({
+        accepted: true as const,
+        entries: goals.listJournal(goal.id, input.before ?? null, input.limit),
+      }),
+      ['outcome', 'input'],
+      'outcome'
+    )
+    .endAsync('outcome');
+
   type Run = (input: unknown, caller: OperationCaller) => Promise<unknown>;
   return [
     defineOperation({
@@ -251,6 +349,29 @@ export function createSessionGoalOperations({
       inputSchema: Update,
       resultSchema: GoalResult,
       execute: async (input, caller) => (update as Run)(input, caller) as never,
+    }),
+    defineOperation({
+      name: 'goal.journal.append',
+      description:
+        'Append one entry to a session goal’s journal at the end of a work cycle: what was done, its effect with evidence, what worked and what to stop. Pass the runId from the wake message.',
+      policy: GOAL_WRITE_POLICY,
+      inputSchema: Append,
+      resultSchema: z.discriminatedUnion('accepted', [
+        z.object({ accepted: z.literal(true), entry: EntrySchema }),
+        RejectionSchema,
+      ]),
+      execute: async (input, caller) => (append as Run)(input, caller) as never,
+    }),
+    defineOperation({
+      name: 'goal.journal.list',
+      description: 'Read a session goal’s journal, newest first.',
+      policy: GOAL_READ_POLICY,
+      inputSchema: Journal,
+      resultSchema: z.discriminatedUnion('accepted', [
+        z.object({ accepted: z.literal(true), entries: z.array(EntrySchema) }),
+        RejectionSchema,
+      ]),
+      execute: async (input, caller) => (journal as Run)(input, caller) as never,
     }),
   ];
 }
