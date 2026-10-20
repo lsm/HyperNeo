@@ -79,6 +79,8 @@ With a policy, `codingPrState` maps GitHub facts to states per policy. `failing`
 | `reviewBot` approved, CI pending | `approved_pending` | as above | as above |
 | `reviewBot` approved, CI green | `approved_green` | as above | `waiting_human` |
 
+**No CI.** A repo with no CI keeps today's rule (`pr-ledger.ts:133,140`): a head with no status rollup and no check suites counts as "CI green" in every column, so a `ci_only` repo without CI is ready as soon as nothing failed.
+
 A **hold** overrides only merge readiness, under every policy: a held PR that would be `approved_green` or `approved_pending` shows `waiting_human` instead. Every other state stays as it is, so the owner still fixes failing CI, conflicts and review findings on a held PR. The sweep says "merge" only for `approved_green`; `waiting_human` gets no merge text and no deadline. `waiting_ci` is new; it has the existing approved-pending wording without "approved".
 
 ## First use and seeding
