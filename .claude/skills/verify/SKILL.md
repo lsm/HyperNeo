@@ -749,8 +749,10 @@ adds its journey here.
     The helper validates the test DB and seeds synthetic delivered inputs through
     the production repositories, including all five addition kinds. The real
     `neo.conversation.read` and `neo.snapshot` RPCs must expose the same wake.
-    A later unrelated terminal must leave it working; only a terminal sharing its
-    `consumed_seq` settles it and supplies the closing line. The raw daemon note
+    Inputs are enqueued and consumed through the production APIs; no sequence is
+    rewritten. A terminal with a separately allocated `consumed_seq` settles the
+    wake only before the next consumed input. A later turn must neither settle an
+    unfinished earlier wake nor replace its closing line. The raw daemon note
     is absent from the public output. Evidence: `evidence/neo-wake-contract.json`.
     This checks the API with synthetic recorded turns, not model behavior or the
     web disclosure row; G5b adds the rendering journey. Stop with `stop.sh`.
