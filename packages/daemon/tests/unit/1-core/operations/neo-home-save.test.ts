@@ -136,11 +136,24 @@ describe('Neo home save', () => {
       });
     }
   );
-  test.each(['untracked', 'staged', 'modified'])(
+  test('repairs a missing coordinator ignore before saving, preserving transcripts', async () => {
+    await rm(join(root, '.gitignore'));
+    await git('commit', '-am', 'Existing home without coordinator ignore');
+    await mkdir(join(root, '.coordinators', 'verify'), { recursive: true });
+    await writeFile(join(root, '.coordinators', 'verify', 'transcript.md'), 'Private fixture.');
+    expect(await save({ path: 'digest.md', content: 'Curated.' })).toMatchObject({ ok: true });
+    expect(await readFile(join(root, '.coordinators', 'verify', 'transcript.md'), 'utf8')).toBe(
+      'Private fixture.'
+    );
+    expect(await git('ls-files', '.coordinators')).toBe('');
+    expect(await git('status', '--porcelain')).toBe('');
+  });
+  test.each(['untracked', 'staged', 'modified', 'staged transcript'])(
     'refuses %s human changes without altering them',
     async (state) => {
       if (state === 'modified') await writeFile(join(root, 'README.md'), 'Human change.');
-      else await writeFile(join(root, 'human.md'), 'Human draft.');
+      else if (state !== 'staged transcript')
+        await writeFile(join(root, 'human.md'), 'Human draft.');
       if (state === 'staged') await git('add', 'human.md');
       const before = await git('status', '--porcelain', '-z');
       expect(await save({ path: 'digest.md', content: 'Curated.' })).toMatchObject({

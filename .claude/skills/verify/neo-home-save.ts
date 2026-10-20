@@ -24,6 +24,17 @@ const first = await rpc(input);
 await writeFile(`${run}/evidence/neo-home-save.json`, JSON.stringify({ first }, null, 2));
 if (!first.ok) throw new Error(JSON.stringify(first));
 const head = await git('rev-parse', 'HEAD');
+if (mode === 'ignore-repair') {
+  await rm(`${root}/.gitignore`);
+  await git('commit', '-am', 'Existing home without coordinator ignore');
+  const before = await git('rev-parse', 'HEAD');
+  const saved = await rpc({ ...input, content: 'Progress after ignore repair.' });
+  const evidence = { mode, saved, before, after: await git('rev-parse', 'HEAD'), content: await readFile(`${root}/${input.path}`, 'utf8'), transcript: await readFile(`${root}/.coordinators/verify/transcript.md`, 'utf8'), tracked: await git('ls-files', '.coordinators'), status: await git('status', '--porcelain') };
+  await writeFile(`${run}/evidence/neo-home-save.json`, JSON.stringify(evidence, null, 2));
+  if (!saved.ok || evidence.after === before || evidence.content !== 'Progress after ignore repair.' || evidence.transcript !== 'Synthetic private transcript.' || evidence.tracked || evidence.status) throw new Error('Save with ignore repair failed');
+  console.log('PASS: real save RPC repairs the coordinator ignore, preserves private transcripts and commits only curated content.');
+  process.exit(0);
+}
 if (mode === 'unicode') {
   const invalid = { ...input, path: 'surrogate.md', content: '\ud800' };
   const firstInvalid = await rpc(invalid);
