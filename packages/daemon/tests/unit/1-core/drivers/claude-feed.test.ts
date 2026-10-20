@@ -180,14 +180,15 @@ describe('Claude transcript feed', () => {
     );
     const activity = new EventLoopActivity();
     const deactivate = activity.activate();
+    let recorded: ReturnType<EventLoopActivity['drain']>;
     try {
       await feedWorkFiles(db, listFeedFiles(root, 0, 2), claudeFeedSource(new Set()));
+      recorded = activity.drain();
     } finally {
       deactivate();
     }
-    const ended = activity
-      .drain()
-      .entries.filter((entry) => entry.kind === 'end')
+    const ended = recorded.entries
+      .filter((entry) => entry.kind === 'end')
       .map((entry) => entry.name);
     expect(ended).toEqual([
       'feed:claude:head',

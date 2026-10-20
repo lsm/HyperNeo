@@ -96,6 +96,7 @@ import {
 } from './session-policy.ts';
 import type { NeoSessionNotice, NeoSessionNoticeGroup } from './session-watch.ts';
 import { NeoSessionWatcher } from './session-watcher.ts';
+import { runLagPhase } from '../event-loop-activity.ts';
 import type { NeoSnapshotRead } from './snapshot-read.ts';
 
 export class NeoService {
@@ -554,15 +555,20 @@ export class NeoService {
 
   async refreshDriverWork(): Promise<void> {
     try {
-      this.endUnfollowedCardTopics(Date.now());
+      runLagPhase('neo:driver:card_topic_sweep', () => this.endUnfollowedCardTopics(Date.now()));
     } catch (error) {
       this.log.warn('Card event subscription sweep pending', error);
     }
-    await this.todoRunner.refresh((message, error) => this.log.warn(message, error));
-    for (const workId of this.packEvidenceWorkIds()) this.followCardTopics(workId);
+    await runLagPhase('neo:driver:todo_refresh', () =>
+      this.todoRunner.refresh((message, error) => this.log.warn(message, error))
+    );
+    runLagPhase('neo:driver:follow_topics', () => {
+      for (const workId of this.packEvidenceWorkIds()) this.followCardTopics(workId);
+    });
     if (this.watching || this.disposed) return;
-    this.watching = this.sessionWatcher
-      .watchSessions(Date.now())
+    this.watching = runLagPhase('neo:driver:session_watch', () =>
+      this.sessionWatcher.watchSessions(Date.now())
+    )
       .catch((error) => this.log.warn('Session watch pending', error))
       .finally(() => {
         this.watching = null;
