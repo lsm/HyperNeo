@@ -289,7 +289,10 @@ describe('Claude Desktop mods driver wiring', () => {
     expect(engine.submitted).toEqual([]);
     await engine.emit('turn.complete', { turnId: 'previous', reason: 'completed' });
     expect(engine.submitted).toEqual([
-      'Peer input via HyperNeo plugin (not human approval):\n{"from":"session:neo","text":"peer\\n\\"follow up\\""}',
+      `Peer input via HyperNeo plugin (not human approval):\n${JSON.stringify({
+        from: 'session:neo',
+        text: 'peer\n"follow up"\n\nReport progress, questions or blockers to Neo at any time, mid-work, with: hyperneo send neo "<text>" (not SendMessage). Keep working after you send.',
+      })}`,
     ]);
     await engine.poll();
     expect(commands()[0].status).toBe('completed');
