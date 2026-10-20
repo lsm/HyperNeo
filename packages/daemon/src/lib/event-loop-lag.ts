@@ -11,6 +11,7 @@ export const EVENT_LOOP_LAG_WARN_MS = 1_000;
 type SlowestQuery = { durationMs: number; sql: string } | null;
 type ResourceSample = {
   cpuMs: number;
+  cpuSampler: 'thread' | 'process';
   majorFaults: number;
   blockWrites: number;
   voluntarySwitches: number;
@@ -19,11 +20,11 @@ type ResourceSample = {
 function sampleProcessResources(): ResourceSample | undefined {
   try {
     const usage = process.resourceUsage();
-    const cpu =
-      (process as { threadCpuUsage?: () => NodeJS.CpuUsage }).threadCpuUsage?.() ??
-      process.cpuUsage();
+    const thread = (process as { threadCpuUsage?: () => NodeJS.CpuUsage }).threadCpuUsage?.();
+    const cpu = thread ?? process.cpuUsage();
     return {
       cpuMs: (cpu.user + cpu.system) / 1000,
+      cpuSampler: thread ? 'thread' : 'process',
       majorFaults: usage.majorPageFault,
       blockWrites: usage.fsWrite,
       voluntarySwitches: usage.voluntaryContextSwitches,
@@ -36,8 +37,9 @@ function sampleProcessResources(): ResourceSample | undefined {
 function resourceDelta(before: ResourceSample, after: ResourceSample, wallMs: number) {
   const threadCpuMs = Math.round(after.cpuMs - before.cpuMs);
   return {
+    cpuSampler: after.cpuSampler,
     threadCpuMs,
-    offCpuMs: Math.round(wallMs) - threadCpuMs,
+    offCpuMs: Math.max(0, Math.round(wallMs) - threadCpuMs),
     majorPageFaults: after.majorFaults - before.majorFaults,
     blockWrites: after.blockWrites - before.blockWrites,
     voluntaryContextSwitches: after.voluntarySwitches - before.voluntarySwitches,

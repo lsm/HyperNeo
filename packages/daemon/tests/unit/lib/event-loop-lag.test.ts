@@ -97,16 +97,40 @@ describe('Event-loop lag resource breakdown', () => {
     const diagnostics: Record<string, unknown>[] = [];
     const clock = [0, 10, 1510, 1520];
     const samples = [
-      { cpuMs: 0, majorFaults: 0, blockWrites: 0, voluntarySwitches: 0 },
-      { cpuMs: 4, majorFaults: 1, blockWrites: 0, voluntarySwitches: 1 },
-      { cpuMs: 44, majorFaults: 901, blockWrites: 3, voluntarySwitches: 3 },
+      {
+        cpuMs: 0,
+        cpuSampler: 'thread' as const,
+        majorFaults: 0,
+        blockWrites: 0,
+        voluntarySwitches: 0,
+      },
+      {
+        cpuMs: 4,
+        cpuSampler: 'thread' as const,
+        majorFaults: 1,
+        blockWrites: 0,
+        voluntarySwitches: 1,
+      },
+      {
+        cpuMs: 44,
+        cpuSampler: 'thread' as const,
+        majorFaults: 901,
+        blockWrites: 3,
+        voluntarySwitches: 3,
+      },
     ];
     const stop = startEventLoopLagLog(() => {}, {
       now: () => clock.shift() ?? 1520,
       tickMs: 10,
       takeSlowest: () => null,
       sampleResources: () =>
-        samples.shift() ?? { cpuMs: 44, majorFaults: 901, blockWrites: 3, voluntarySwitches: 3 },
+        samples.shift() ?? {
+          cpuMs: 44,
+          cpuSampler: 'thread' as const,
+          majorFaults: 901,
+          blockWrites: 3,
+          voluntarySwitches: 3,
+        },
       onDiagnostic: (report) => diagnostics.push(report),
     });
     await settle();
@@ -115,6 +139,7 @@ describe('Event-loop lag resource breakdown', () => {
     expect(diagnostics[0]).toMatchObject({
       lagMs: 1490,
       resources: {
+        cpuSampler: 'thread',
         threadCpuMs: 40,
         offCpuMs: 1460,
         majorPageFaults: 900,
