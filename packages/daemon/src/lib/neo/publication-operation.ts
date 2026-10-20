@@ -92,7 +92,9 @@ function readAnswer(
     sessionId: proof.root.sessionId,
     messageId: triggerId.slice(NEO_HUMAN_TRIGGER_PREFIX.length),
   };
-  return runtime.isDeliveredHumanInput(answer) ? answer : null;
+  return proof.turn.hasInput?.(answer.messageId) && runtime.isDeliveredHumanInput(answer)
+    ? answer
+    : null;
 }
 
 export function requirePublicationProducer(
@@ -253,7 +255,7 @@ export function createNeoPublicationOperation(publish: ReturnType<typeof createN
   return defineOperation({
     name: 'neo.publication.publish',
     description:
-      'Deliver a message in this conversation. Use a new requestId per message and reuse it only when retrying that send. The runtime derives publication identity, original request and producer. Scene references must exist and belong to the request. The answered field identifies the human message answered by this delivery and its publication/revision; null means no human message was resolved. It does not complete background work or require another post.',
+      'Deliver a message in this conversation. Use a new requestId per message and reuse it only when retrying that send. To answer a human input, copy its triggerId from the daemon human-input envelope, including messages arriving mid-turn. Choose the input this message answers; one publication does not answer every delivered input. The runtime validates this turn and derives publication identity, original request and producer. Scene references must exist and belong to the request. The answered field identifies the human message answered by this delivery and its publication/revision; null means no human message was resolved. It does not complete background work or require another post.',
     policy: { safetyClass: 'mutate', roles: ['neo'] },
     inputSchema: Draft,
     resultSchema: NeoPublicationResultSchema,

@@ -128,7 +128,7 @@ describe('projectNeoMessageStatuses', () => {
   });
 });
 
-describe('neoRepliedAsks', () => {
+describe('Neo answer attribution', () => {
   it('an explicit human trigger answers its chosen input, not the turn producer as well', () => {
     const selected = {
       ...reply('B'),
