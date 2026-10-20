@@ -40,6 +40,16 @@ unchanged, and prevent a selected answer from answering a different producer.
 This proves the real SDK/MCP path and chat status projection, not GUI rendering
 or a killed-process recovery. No real provider, credentials, live DB or 8399.
 
+Also run the focused `neo-prompt.test.ts` unit contract: the root instructions
+must stay under their existing 160-word budget. The online
+`tests/online/convo/neo-publication-sdk.test.ts` checks the actual daemon/SDK
+request: one exact daemon ID envelope, then the unchanged local-time and human
+text blocks. Run that test with CI's Node Vitest runner and
+`vitest.online.config.ts`, from `packages/daemon`, with `env -i`, a fresh test
+HOME/data dir and TMPDIR. The Bun runner aliases `bun:sqlite` back into the
+compatibility module and cannot run this online configuration; the standalone
+mid-turn helper above runs directly under Bun. Both checks retain receipt replay.
+
 ## Rules
 
 - Never start, stop or mutate the human's daemon. Isolated runs never use port
