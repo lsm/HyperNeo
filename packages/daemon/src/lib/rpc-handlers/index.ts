@@ -1477,6 +1477,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.internalEventBus,
     (settings) => publishGlobalSettings(deps.internalEventBus, settings, deps.credentialManager)
   );
+  deps.reactiveDb.on('change:neo_session_messages', () => neoService.notifyChanged());
   neoService.watchExternalTopic = async (topic) => {
     const repo = githubRepoOfTopic(topic);
     if (repo) await deps.watchSessionRepo?.(repo.owner, repo.repo);

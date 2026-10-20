@@ -67,6 +67,10 @@ Options:
   -V, --version             Show version number
   -h, --help                Show this help message
 
+Session commands:
+  hyperneo send <session-id> <text>   Message another session from inside a session
+  hyperneo question <question-id>     Read a Neo question and whether the human answered it
+
 Examples:
   hyperneo                      Start server (database at ~/.hyperneo/data/daemon.db)
   hyperneo -p 8080              Start on port 8080

@@ -89,6 +89,8 @@ export const zhHans: Record<keyof typeof en, string> = {
   'chat.notice.failed': '失败了',
   'chat.notice.finished': '完成了',
   'chat.mute': '静音',
+  'chat.sessionMessage': '{from} → {to}',
+  'chat.sessionMessageLabel': '{from} 发给 {to} 的消息',
   'chat.unmute': '取消静音',
   'chat.muteNamed': '静音 {name}',
   'chat.unmuteNamed': '取消静音 {name}',

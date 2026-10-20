@@ -1,5 +1,5 @@
 #!/bin/bash
-# Journey 14: Neo or the user schedules a session wake. Usage: session-schedules.sh <port> <run-dir>
+# Journey 17: Neo or the user schedules a session wake. Usage: session-schedules.sh <port> <run-dir>
 set -euo pipefail
 PORT=${1:?usage: session-schedules.sh <port> <run-dir>}
 RUN=${2:?usage: session-schedules.sh <port> <run-dir>}
