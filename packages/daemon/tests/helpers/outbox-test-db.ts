@@ -3,6 +3,7 @@ import { SDKMessageRepository } from '../../src/storage/repositories/sdk-message
 import { JobQueueRepository } from '../../src/storage/repositories/job-queue-repository';
 import { MESSAGE_DELIVERY } from '../../src/lib/job-queue-constants';
 import { MAILBOX_LANE } from '../../src/lib/mailbox/enqueue';
+import { runMigration413 } from '../../src/storage/schema/m413-sdk-message-columns';
 
 export interface OutboxTestDb {
   db: Database;
@@ -67,6 +68,7 @@ export function createOutboxTestDb(): OutboxTestDb {
       completed_at INTEGER
     );
   `);
+  runMigration413(db);
   const sdkRepo = new SDKMessageRepository(db as never);
   const jobQueue = new JobQueueRepository(db as never);
   return {
