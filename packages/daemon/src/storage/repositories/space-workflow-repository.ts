@@ -345,7 +345,7 @@ export class SpaceWorkflowRepository {
       | undefined;
     if (!row) return null;
 
-    const now = Date.now();
+    const now = Math.max(Date.now(), row.updated_at + 1);
     const fields: string[] = [];
     const values: (string | number | null)[] = [];
 
