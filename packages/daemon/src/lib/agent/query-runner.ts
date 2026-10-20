@@ -412,6 +412,10 @@ export class QueryRunner {
     return this.promptSpentGeneration !== queryGeneration;
   }
 
+  acceptsSteer(queryGeneration: number): boolean {
+    return this.turnEndedGeneration !== queryGeneration;
+  }
+
   private streamSilence: StreamSilenceState = { lastActivityAt: 0, openTools: [] };
 
   private _lastConsumedUserMessage: {
@@ -1416,6 +1420,9 @@ export class QueryRunner {
               )
               .catch((error) => logger.warn('Neo turn-end reply failed:', error));
             holderTurn.dispose();
+            queryObject.close();
+            await sdkIterator.return(undefined);
+            break;
           }
 
           nextPromise = sdkIterator.next();

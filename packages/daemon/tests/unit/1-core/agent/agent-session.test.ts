@@ -5865,6 +5865,33 @@ describe('AgentSession', () => {
       db.close();
     });
 
+    it.each(['human', 'task', 'system'] as const)(
+      'recovers a stopped durable %s input instead of treating its queued entry as in flight',
+      async (inputKind) => {
+        const uuid = `stopped-${inputKind}`;
+        db.getSDKMessageRepo().saveUserMessage(
+          sessionId,
+          {
+            type: 'user',
+            uuid,
+            inputKind,
+            message: { role: 'user', content: uuid },
+          } as unknown as SDKMessage,
+          'enqueued'
+        );
+        agentSession.messageQueue.start();
+        void agentSession.messageQueue
+          .admitWithId(uuid, uuid, false, { durable: true })
+          .catch(() => {});
+        agentSession.messageQueue.stop();
+        expect(agentSession.messageQueue.hasPendingOrInFlight(uuid)).toBe(true);
+        expect(agentSession.steerNeoInput(uuid)).toBe(false);
+        expect(await agentSession.reconcileStrandedDeliveries()).toBe(1);
+        expect(db.getJobQueueRepo().activeDeliveryMessageUuids(sessionId)).toContain(uuid);
+        expect(await agentSession.reconcileStrandedDeliveries()).toBe(0);
+      }
+    );
+
     it('idle admission re-enqueues a stranded enqueued delivery', async () => {
       const uuid = 'msg-stranded-idle';
       db.getSDKMessageRepo().saveUserMessage(
