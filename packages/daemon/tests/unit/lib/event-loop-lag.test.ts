@@ -91,3 +91,27 @@ describe('Event-loop lag diagnostic report', () => {
     });
   });
 });
+
+describe('Event-loop heap sampler budget', () => {
+  test('uses block-only sampling after a sample exceeds one millisecond', async () => {
+    const clock = [0, 10, 1510, 1520];
+    let samples = 0;
+    const diagnostics: Record<string, unknown>[] = [];
+    const stop = startEventLoopLagLog(() => {}, {
+      now: () => clock.shift() ?? 1520,
+      tickMs: 10,
+      takeSlowest: () => null,
+      sampleHeap: () => {
+        samples++;
+        const until = performance.now() + 3;
+        while (performance.now() < until) {}
+        return 100;
+      },
+      onDiagnostic: (report) => diagnostics.push(report),
+    });
+    await settle();
+    stop();
+    expect(samples).toBe(2);
+    expect(diagnostics[0]).toMatchObject({ heapSampling: 'blocks_only', heapBeforeAgeMs: 1510 });
+  });
+});

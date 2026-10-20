@@ -1,3 +1,4 @@
+import { runLagPhase } from '../event-loop-activity.ts';
 import type { MessageContent, Session, MessageHub, HyperNeoActionMessage } from '@hyperneo/shared';
 import type { QueryLike } from './query-like.ts';
 import { generateUUID } from '@hyperneo/shared';
@@ -178,11 +179,9 @@ export class QueryLifecycleManager {
       return false;
     }
 
-    return validateAndRepairSDKSession(
-      this.getSDKWorkspacePath(),
-      session.sdkSessionId,
-      session.id,
-      db
+    const sdkSessionId = session.sdkSessionId;
+    return runLagPhase('sdk:transcript_validate', () =>
+      validateAndRepairSDKSession(this.getSDKWorkspacePath(), sdkSessionId, session.id, db)
     );
   }
 

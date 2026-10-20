@@ -113,7 +113,7 @@ import {
   startEventLoopWatchdog,
   type EventLoopWatchdogHandle,
 } from './lib/event-loop-watchdog.ts';
-import { startEventLoopLagLog } from './lib/event-loop-lag.ts';
+import { startDaemonLagDiagnostics } from './lib/event-loop-lag.ts';
 import {
   describeEventLoopStallMarker,
   eventLoopStallMarkerPath,
@@ -1667,7 +1667,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       onArm: (reason) => {
         logInfo(`[Daemon] Event-loop stall detection armed (${reason})`);
         if (eventLoopLagLogStopped) return;
-        const stop = startEventLoopLagLog((line) => console.error(line));
+        const stop = startDaemonLagDiagnostics(messageHub, (line) => console.error(line));
         stopEventLoopLagLog = () => {
           eventLoopLagLogStopped = true;
           stop();

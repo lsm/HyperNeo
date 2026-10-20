@@ -1,3 +1,4 @@
+import { runLagPhase } from '../lib/event-loop-activity.ts';
 import { Database as BunDatabase } from './sqlite-compat.ts';
 import { Logger } from '../lib/logger.ts';
 import type {
@@ -159,14 +160,14 @@ export class Database {
     this.providerRepo = new ProviderRepository(db, reactiveDb);
     this.agentMemoryRepo.backfillPendingEmbeddings();
     try {
-      this.sdkMessageRepo.flushMessageSearchIndex();
+      runLagPhase('search:index_flush', () => this.sdkMessageRepo.flushMessageSearchIndex());
     } catch (err) {
       this.logger.warn('startup message search index flush failed:', err);
     }
     if (this.messageSearchIndexFlushIntervalMs > 0) {
       this.messageSearchIndexTimer = setInterval(() => {
         try {
-          this.sdkMessageRepo.flushMessageSearchIndex();
+          runLagPhase('search:index_flush', () => this.sdkMessageRepo.flushMessageSearchIndex());
         } catch (err) {
           this.logger.warn('message search index flush failed:', err);
         }

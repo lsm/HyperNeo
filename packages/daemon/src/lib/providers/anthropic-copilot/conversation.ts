@@ -1,3 +1,4 @@
+import { runLagPhase } from '../../event-loop-activity.ts';
 import { approveAll, type CopilotClient, type CopilotSession } from '@github/copilot-sdk';
 import type { ReasoningEffort } from './reasoning-effort.js';
 import type { AnthropicMessage, AnthropicTool } from './types.js';
@@ -174,7 +175,9 @@ export class ConversationManager {
     const timer = setTimeout(() => {
       this.cleanupTimers.delete(conv);
       logger.warn('Conversation TTL expired — releasing stale session');
-      this.releaseConversation(conv).catch(() => {});
+      runLagPhase('timer:copilot_conversation_expiry', () => this.releaseConversation(conv)).catch(
+        () => {}
+      );
     }, CONVERSATION_TTL_MS);
     timer.unref();
     this.cleanupTimers.set(conv, timer);

@@ -1,3 +1,6 @@
+import { EventLoopActivity, observeLagGc } from './event-loop-activity.ts';
+import { emitStructuredLogEvent, subscribeToStructuredLogs } from './logger.ts';
+import type { MessageHub } from '@hyperneo/shared';
 import { takeSlowestQuery } from '../storage/sqlite-query-observability.ts';
 
 export const EVENT_LOOP_LAG_TICK_MS = 250;
@@ -19,19 +22,104 @@ export function describeEventLoopLag(
 
 export function startEventLoopLagLog(
   warn: (line: string) => void,
-  deps: { now?: () => number; takeSlowest?: () => SlowestQuery; tickMs?: number } = {}
+  deps: {
+    now?: () => number;
+    takeSlowest?: () => SlowestQuery;
+    tickMs?: number;
+    activity?: EventLoopActivity;
+    sampleHeap?: () => number;
+    onDiagnostic?: (report: Record<string, unknown>) => void;
+  } = {}
 ): () => void {
   const now = deps.now ?? (() => performance.now());
   const takeSlowest = deps.takeSlowest ?? takeSlowestQuery;
   const tickMs = deps.tickMs ?? EVENT_LOOP_LAG_TICK_MS;
   takeSlowest();
+  const activity = deps.activity ?? new EventLoopActivity(now);
+  const deactivate = activity.activate();
+  const gc = observeLagGc(activity);
+  const sampleHeap = deps.sampleHeap ?? (() => process.memoryUsage().heapUsed);
+  let normalHeapSampling = true;
+  const heap = (): number | undefined => {
+    const started = performance.now();
+    try {
+      return sampleHeap();
+    } catch {
+      return undefined;
+    } finally {
+      if (performance.now() - started > 1) normalHeapSampling = false;
+    }
+  };
+  let beforeHeap = heap();
   let last = now();
+  let heapAt = last;
   const timer = setInterval(() => {
     const at = now();
-    const line = describeEventLoopLag(at - last - tickMs, takeSlowest());
+    const lagMs = at - last - tickMs;
+    const line = describeEventLoopLag(lagMs, takeSlowest());
+    gc.flush();
+    const recent = activity.drain(last);
+    const afterHeap = line || normalHeapSampling ? heap() : undefined;
+    if (line) {
+      warn(line);
+      const report = {
+        lagMs,
+        tickStartMs: last,
+        tickEndMs: at,
+        activities: recent.entries,
+        droppedActivities: recent.dropped,
+        gcObservation: gc.status,
+        heapBeforeBytes: beforeHeap,
+        heapAfterBytes: afterHeap,
+        heapDeltaBytes:
+          beforeHeap === undefined || afterHeap === undefined ? undefined : afterHeap - beforeHeap,
+        heapBeforeAgeMs: at - heapAt,
+        heapSampling: normalHeapSampling ? 'each_tick' : 'blocks_only',
+      };
+      if (deps.onDiagnostic) deps.onDiagnostic(report);
+      else
+        emitStructuredLogEvent({
+          level: 'warn',
+          args: ['event_loop.lag_activity'],
+          source: 'logger',
+          module: 'hyperneo:daemon:event-loop-lag',
+          metadata: report,
+        });
+    }
+    if (afterHeap !== undefined) {
+      beforeHeap = afterHeap;
+      heapAt = at;
+    }
     last = at;
-    if (line) warn(line);
   }, tickMs);
   timer.unref?.();
-  return () => clearInterval(timer);
+  return () => {
+    clearInterval(timer);
+    gc.stop();
+    deactivate();
+  };
+}
+
+export function startDaemonLagDiagnostics(
+  hub: Pick<MessageHub, 'onMessage'>,
+  warn: (line: string) => void
+): () => void {
+  const activity = new EventLoopActivity();
+  const offRpc = hub.onMessage((message, direction) => {
+    if (message.type === 'REQ' || message.type === 'RSP')
+      activity.record(`rpc.${direction}:${message.method}`);
+  });
+  const offLogs = subscribeToStructuredLogs((event) => {
+    const module = event.module?.match(/^hyperneo:daemon:[a-z0-9_-]+/)?.[0];
+    if (module && module !== 'hyperneo:daemon:event-loop-lag')
+      activity.record(
+        `${module}:${typeof event.metadata.event === 'string' ? event.metadata.event : 'log'}`
+      );
+  });
+  const stop = startEventLoopLagLog(warn, { activity });
+  return () => {
+    offRpc();
+    offLogs();
+    stop();
+  };
 }

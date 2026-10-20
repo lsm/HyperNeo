@@ -1,3 +1,4 @@
+import { runLagPhase } from './event-loop-activity.ts';
 import { join, normalize, relative } from 'node:path';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { existsSync, statSync } from 'node:fs';
@@ -384,7 +385,7 @@ export class FileIndex {
     this.ready = true;
 
     this.pollTimer = setInterval(() => {
-      void this.runRefresh();
+      void runLagPhase('timer:file_index_refresh', () => this.runRefresh());
     }, this.pollInterval);
     this.pollTimer.unref?.();
   }
