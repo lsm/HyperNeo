@@ -80,13 +80,13 @@ The inventory has 73 statements (3 inserts, 6 body updates, 32 body outputs, 16 
 
 | statement | today | after |
 |---|---|---|
-| #4/#16/#21 user messages by status (count, ids, list) | JSON filter over the session | `(session_id, send_status, message_type, is_replay)` index-only; list reads a tail page |
+| #4/#16/#21 user messages by status (count, ids, list) | JSON filter over the session | `(session_id, send_status, message_type, user_status_eligible, timestamp, id, sdk_uuid)` covering index; list reads a tail page |
 | #22 queued inputs | done in #7744 (send-status index) | plus `input_kind` column, no JSON |
-| #23/#30 last consumed/human input | tail LIMIT 1 behind a JSON predicate, scans when nothing matches | `(session_id, input_kind, timestamp)` seek |
-| #32 restart evidence | JSON `json_each` tail | `(session_id, has_tool_result, timestamp)` seek |
-| #39/#67 consumed task input since | EXISTS over the session | `(session_id, task_id, input_kind, timestamp)` seek |
-| #42 unresolved action | EXISTS over action rows | `(session_id, message_subtype_norm, resolved)` seek |
-| #55 input-evidence probe | EXISTS over the session | `(session_id, first_block_type, timestamp)` seek |
+| #23/#30 last consumed/human input | tail LIMIT 1 behind a JSON predicate, scans when nothing matches | partial consumed-input time index and `(session_id, message_type, input_kind, timestamp)` seek |
+| #32 restart evidence | JSON `json_each` tail | partial restart-prompt index ordered by session, status, type, timestamp, id; excludes tool results before scanning |
+| #39/#67 consumed task input since | EXISTS over the session | `(session_id, task_id, task_input_eligible, timestamp, sdk_uuid)` partial consumed-user index |
+| #42 unresolved action | EXISTS over action rows | `(session_id, message_subtype, resolved)` partial action index |
+| #55 input-evidence probe | EXISTS over the session | partial `(session_id, consumed_seq, sdk_uuid)` boundary seeks; missing and equal-watermark ambiguity probes use separate UNION ALL seeks |
 | #12/#46 task starts and latest progress per background task | whole subtype, `json_extract` partitions | `(session_id, message_subtype_norm, bg_task_id, timestamp)` and `(…, bg_tool_use_id, timestamp)`, latest per key via seek |
 | visible count recompute | covered by #7746's `idx_sdk_messages_session_visible` | unchanged, index-only |
 | shutdown boundary (#47) | covered by #7746 | unchanged |
@@ -96,6 +96,12 @@ The inventory has 73 statements (3 inserts, 6 body updates, 32 body outputs, 16 
 | #68, #74 | cross-session or scope copies | unchanged (admin and tooling paths), noted |
 
 #7746's covering indexes stay. They're merged (0ffa0390) and present in `createIndexes` and m409. With the body gone, a non-indexed scan of a session reads small rows (5 ms for 55k rows in the benchmark below), but constraint 3 still requires index-only reads, and those two indexes provide them.
+
+Slice 4 adds the scan-table indexes in migration 416 and the fresh-schema path.
+Partial receipt, terminal-result, last-result and exchange time indexes also bound
+adapter reads; the first-block expression index uses the original COALESCE rule.
+All index keys and predicates use metadata only. Body outputs remain unchanged
+until slices 8–9.
 
 ## Migration
 

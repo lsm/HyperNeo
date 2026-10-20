@@ -10,6 +10,7 @@ import { ModelUnavailableError } from '../../../../src/lib/session/session-lifec
 import type { ArchiveAdmission } from '../../../../src/lib/drivers/types';
 import type { MailboxHandoffOutcome } from '../../../../src/lib/mailbox/handoff';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import { fillSdkMessageFixtureColumns } from '../../helpers/sdk-message-fixture-columns';
 
 function control(db: Database, events: string[], withdraw?: HyperneoSessionControl['withdraw']) {
   let selectedModel = 'gpt-6-luna';
@@ -121,6 +122,7 @@ describe('hyperneo adapter send and status', () => {
     prepareExecution?: WorkExecutionPreparer,
     withdraw?: HyperneoSessionControl['withdraw']
   ) {
+    fillSdkMessageFixtureColumns(db);
     return createHyperneoAdapter({
       prepareExecution,
       db: () => db,

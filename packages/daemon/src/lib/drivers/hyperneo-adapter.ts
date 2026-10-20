@@ -58,8 +58,8 @@ const TAIL_INPUTS = 8;
 const INPUTS_AFTER = 50;
 const LANDED_INPUT = `message_type = 'user' AND parent_tool_use_id IS NULL
   AND COALESCE(send_status, 'consumed') = 'consumed'
-  AND COALESCE(json_extract(sdk_message, '$.inputKind'), '') <> 'system'
-  AND COALESCE(json_extract(sdk_message, '$.message.content[0].type'), 'text') = 'text'`;
+  AND COALESCE(input_kind, '') <> 'system'
+  AND COALESCE(first_block_type, 'text') = 'text'`;
 
 export interface HyperneoPlaceRow {
   folder: string | null;
@@ -356,7 +356,7 @@ export function readHyperneoLastResult(db: BunDatabase, id: string): HyperneoLas
       `SELECT json_extract(sdk_message, '$.result') AS reply, json_extract(sdk_message, '$.is_error') AS failed,
               timestamp AS at
          FROM sdk_messages WHERE session_id = ? AND message_type = 'result' AND parent_tool_use_id IS NULL
-          AND COALESCE(json_extract(sdk_message, '$.internal_compaction_turn'), 0) = 0
+          AND COALESCE(internal_compaction_turn, 0) = 0
         ORDER BY timestamp DESC LIMIT 1`
     )
     .get(id) as HyperneoLastResult | null | undefined;
@@ -424,10 +424,10 @@ export function readHyperneoExchange(db: BunDatabase, id: string, since: number)
     .prepare(
       `SELECT timestamp, sdk_message AS message, message_type FROM sdk_messages
       WHERE session_id = ? AND timestamp > ? AND parent_tool_use_id IS NULL
-        AND COALESCE(json_extract(sdk_message, '$.internal_compaction_turn'), 0) = 0
+        AND COALESCE(internal_compaction_turn, 0) = 0
         AND (message_type = 'result' OR (message_type = 'user'
           AND COALESCE(send_status, 'consumed') = 'consumed'
-          AND COALESCE(json_extract(sdk_message, '$.message.content[0].type'), 'text') <> 'tool_result'))
+          AND COALESCE(first_block_type, 'text') <> 'tool_result'))
       ORDER BY timestamp DESC, rowid DESC LIMIT 41`
     )
     .all(id, new Date(since).toISOString())
