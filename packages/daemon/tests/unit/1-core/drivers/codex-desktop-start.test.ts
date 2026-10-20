@@ -267,7 +267,7 @@ describe('codex-desktop start', () => {
         {
           ...turnAccess,
           threadId: 'th1',
-          input: [{ type: 'text', text: request.message }],
+          input: [{ type: 'text', text: request.message, text_elements: [] }],
           model: model.model,
         },
       ],
@@ -307,7 +307,7 @@ describe('codex-desktop start', () => {
         {
           ...turnAccess,
           threadId: 'th1',
-          input: [{ type: 'text', text: request.message }],
+          input: [{ type: 'text', text: request.message, text_elements: [] }],
           model: model.model,
           effort: 'medium',
         },
@@ -464,11 +464,20 @@ describe('codex-desktop start', () => {
         {
           ...turnAccess,
           threadId: 'th1',
-          input: [{ type: 'text', text: 'Raise the body font to 16px.' }],
+          input: [{ type: 'text', text: 'Raise the body font to 16px.', text_elements: [] }],
         },
       ],
     ]);
     expect(closed()).toBe(true);
+  });
+
+  test('the opening text includes the spans Desktop needs to render its live turn', async () => {
+    const { instance, calls } = adapter({
+      call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}),
+    });
+    expect(await instance.start?.(request, user)).toMatchObject({ ok: true });
+    const opening = calls.find(([method]) => method === 'desktop/start-turn')?.[1];
+    expect(opening?.input).toEqual([{ type: 'text', text: request.message, text_elements: [] }]);
   });
 
   test('starts a thread in a git repo in its own detached worktree', async () => {
