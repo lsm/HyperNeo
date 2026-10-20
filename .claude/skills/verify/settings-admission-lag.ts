@@ -37,15 +37,16 @@ const heartbeat = setInterval(() => {
   maxLagMs = Math.max(maxLagMs, now - previous - 10);
   previous = now;
 }, 10);
-const pending = new Map<string, { done: (data: unknown) => void; started: number }>();
+const pending = new Map<string, (data: unknown) => void>();
 const rpc = (method: string) =>
-  new Promise<{ data: unknown; ms: number }>((done) => {
+  new Promise<{ data: unknown; ms: number }>((done, fail) => {
     const id = crypto.randomUUID();
-    pending.set(id, {
-      done: (data) => done({ data, ms: performance.now() - started }),
-      started: performance.now(),
-    });
     const started = performance.now();
+    const timeout = setTimeout(() => fail(new Error(`${method} timed out`)), 10_000);
+    pending.set(id, (data) => {
+      clearTimeout(timeout);
+      done({ data, ms: performance.now() - started });
+    });
     ws.send(
       JSON.stringify({
         id,
@@ -63,7 +64,7 @@ ws.onmessage = (event) => {
   const request = pending.get(message.requestId);
   if (!request) return;
   pending.delete(message.requestId);
-  request.done(message.data);
+  request(message.data);
 };
 let writer: Awaited<ReturnType<typeof delayedSettings>> | undefined;
 try {
@@ -87,7 +88,10 @@ try {
   const prepare = rpc('verify.settings');
   const health = await rpc('system.health');
   const result = await prepare;
-  await writer.done;
+  const [code] = await writer.done;
+  assert.equal(code, 0);
+  assert.deepEqual(result.data, { prepared: true });
+  assert.equal((health.data as { status: string }).status, 'ok');
   await new Promise((done) => setTimeout(done, 300));
   const report = {
     source,

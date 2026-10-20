@@ -1,4 +1,5 @@
-import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
+import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import type { GlobalSettings } from '@hyperneo/shared';
@@ -6,6 +7,7 @@ import type { McpServerConfig } from '@hyperneo/shared/types/sdk-config';
 
 import type { Database } from '../storage/database.ts';
 import { Logger } from './logger.ts';
+import { runLagPhase } from './event-loop-activity.ts';
 
 export class SettingsManager {
   private logger = new Logger('SettingsManager');
@@ -28,18 +30,17 @@ export class SettingsManager {
   }
 
   async prepareSDKOptions(): Promise<void> {
-    await this.writeFileOnlySettings(this.getGlobalSettings());
+    await runLagPhase('sdk:settings_prepare', () =>
+      this.writeFileOnlySettings(this.getGlobalSettings())
+    );
   }
 
-  private readUserAttribution(): { commit?: string; pr?: string } | undefined {
+  private async readUserAttribution(): Promise<{ commit?: string; pr?: string } | undefined> {
     const baseDir = process.env.TEST_USER_SETTINGS_DIR || join(homedir(), '.claude');
     const userSettingsPath = join(baseDir, 'settings.json');
 
     try {
-      if (!existsSync(userSettingsPath)) {
-        return undefined;
-      }
-      const content = readFileSync(userSettingsPath, 'utf-8');
+      const content = await readFile(userSettingsPath, 'utf-8');
       const userSettings = JSON.parse(content) as Record<string, unknown>;
       return userSettings.attribution as { commit?: string; pr?: string } | undefined;
     } catch {
@@ -56,10 +57,8 @@ export class SettingsManager {
 
     let localSettings: Record<string, unknown> = {};
     try {
-      if (existsSync(settingsLocalPath)) {
-        const content = readFileSync(settingsLocalPath, 'utf-8');
-        localSettings = JSON.parse(content) as Record<string, unknown>;
-      }
+      const content = await readFile(settingsLocalPath, 'utf-8');
+      localSettings = JSON.parse(content) as Record<string, unknown>;
     } catch {}
 
     if (settings.askPermissions !== undefined) {
@@ -93,15 +92,15 @@ export class SettingsManager {
     if (settings.attribution !== undefined) {
       localSettings.attribution = settings.attribution;
     } else if (localSettings.attribution === undefined) {
-      const userAttribution = this.readUserAttribution();
+      const userAttribution = await this.readUserAttribution();
       if (userAttribution !== undefined) {
         localSettings.attribution = userAttribution;
       }
     }
 
-    mkdirSync(dirname(settingsLocalPath), { recursive: true });
+    await mkdir(dirname(settingsLocalPath), { recursive: true });
 
-    writeFileSync(settingsLocalPath, JSON.stringify(localSettings, null, 2));
+    await writeFile(settingsLocalPath, JSON.stringify(localSettings, null, 2));
   }
 
   getEnabledMcpServersConfig(): Record<string, McpServerConfig> {
