@@ -72,21 +72,4 @@ export function createLagSamplingProfiler(read: () => Profile, fromMs: number) {
   };
 }
 
-export async function loadLagSamplingProfiler(isActive: () => boolean) {
-  if (!process.versions.bun) return null;
-  const jsc = (await import('bun:jsc')) as unknown as {
-    startSamplingProfiler(directory?: string, sampleInterval?: number): void;
-    samplingProfilerStackTraces(): Profile;
-  };
-  if (
-    typeof jsc.startSamplingProfiler !== 'function' ||
-    typeof jsc.samplingProfilerStackTraces !== 'function'
-  )
-    return null;
-  if (!isActive()) return null;
-  jsc.startSamplingProfiler(undefined, 10_000);
-  jsc.samplingProfilerStackTraces();
-  return createLagSamplingProfiler(() => jsc.samplingProfilerStackTraces(), performance.now());
-}
-
 export type LagSamplingTick = (blocked: boolean, at: number) => Report | undefined;

@@ -1,4 +1,5 @@
-import { loadLagSamplingProfiler, type LagSamplingTick } from './event-loop-sampling.ts';
+import { createLagSamplingProfiler, type LagSamplingTick } from './event-loop-sampling.ts';
+import { loadRuntimeSamplingProfiler } from './runtime-sampling-profiler.ts';
 import { EventLoopActivity, observeLagGc } from './event-loop-activity.ts';
 import { emitStructuredLogEvent, subscribeToStructuredLogs } from './logger.ts';
 import type { MessageHub } from '@hyperneo/shared';
@@ -124,9 +125,12 @@ export function startDaemonLagDiagnostics(
   let sampleStacks: LagSamplingTick | undefined;
   if (process.env.HYPERNEO_LAG_PROFILE === '1') {
     sampleStacks = () => ({ status: 'starting' });
-    void loadLagSamplingProfiler(() => !stopped).then(
-      (profiler) => {
-        if (!stopped) sampleStacks = profiler?.tick ?? (() => ({ status: 'unsupported' }));
+    void loadRuntimeSamplingProfiler(() => !stopped).then(
+      (read) => {
+        if (!stopped)
+          sampleStacks = read
+            ? createLagSamplingProfiler(read, performance.now()).tick
+            : () => ({ status: 'unsupported' });
       },
       () => {
         if (!stopped) sampleStacks = () => ({ status: 'failed' });
