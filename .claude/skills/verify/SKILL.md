@@ -1356,6 +1356,8 @@ and checks exact UTF-8 byte length and SHA-256, hidden-thinking exclusion and
 unchanged SDK/body rows. A retracted legacy message without an SDK UUID must
 stay hidden when its replacement edge targets the stored message ID. The proof also
 follows textless older pages until `complete`, rather than `reply_unavailable`.
+A malformed stored SDK body is skipped without losing healthy report text or
+rewriting the corrupt bytes; unit coverage also exercises predecessor context.
 `evidence.json` records the page count and maximum
 observed event-loop lag against the 1 s goal. Text pages budget serialized UTF-8
 bytes so the SDK does not replace the tool result with a persisted-output stub.

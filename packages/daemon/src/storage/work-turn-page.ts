@@ -5,7 +5,10 @@ import {
   type MessageSearchEligibilityRow,
 } from './repositories/message-search-admission.ts';
 import { hydrateSdkMessageBodies } from './repositories/sdk-message-body-read.ts';
-import { extractTextBlockContents } from './repositories/sdk-message-projections.ts';
+import {
+  extractTextBlockContents,
+  parseSdkMessageRow,
+} from './repositories/sdk-message-projections.ts';
 import type { Database } from './sqlite-compat.ts';
 import { readWorkTurns, type WorkTurn } from './work-turns.ts';
 
@@ -44,16 +47,19 @@ const SCOPE = `session_id=? AND parent_tool_use_id IS NULL AND COALESCE(internal
     AND r.target_uuid=COALESCE(sdk_messages.sdk_uuid,sdk_messages.id) AND r.source_message_id!=sdk_messages.id)`;
 
 function text(row: Row): string {
-  const body = JSON.parse(row.sdk_message) as Record<string, unknown>;
+  const body = parseSdkMessageRow(row.sdk_message, 'synthesize');
   return row.message_type === 'result'
-    ? typeof body.result === 'string'
+    ? 'result' in body && typeof body.result === 'string'
       ? body.result
       : ''
     : extractTextBlockContents(body, 'join-all').join('\n\n');
 }
 
 function files(row: Row): Turn['files'] {
-  return extractTextBlockContents(JSON.parse(row.sdk_message), 'join-all').flatMap((part) => {
+  return extractTextBlockContents(
+    parseSdkMessageRow(row.sdk_message, 'synthesize'),
+    'join-all'
+  ).flatMap((part) => {
     try {
       return z.object({ handoffFiles: z.array(HandoffReference) }).parse(JSON.parse(part))
         .handoffFiles;
