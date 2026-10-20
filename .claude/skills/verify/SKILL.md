@@ -807,6 +807,8 @@ mkdir -p "$RUN/home"
 env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
   bun .claude/skills/verify/sdk-body-copy.ts seed 9338 "$RUN"
 env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
+  bun .claude/skills/verify/sdk-body-copy.ts reserve-retry 9338 "$RUN"
+env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
   bun .claude/skills/verify/sdk-body-copy.ts verify 9338 "$RUN"
 env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
   bun .claude/skills/verify/sdk-body-copy.ts backup-reject 9338 "$RUN"
@@ -821,13 +823,20 @@ not responsiveness evidence. Transcript replies use `sdkMessages`, not `messages
 The parent closes its WebSocket when the child publishes completion so daemon
 cleanup can finish; unexpected RPC errors fail the journey.
 
-The first child SIGKILLs itself after its first committed chunk; the second
-starts against the same synthetic DB and requires the original verified backup.
+The reservation probe restarts its synthetic DB connection and confirms one
+durable backup destination, leaving an incomplete `.partial` at that owned path.
+The first child SIGKILLs itself after verifying its backup, before any copy cursor
+exists; the second reuses that backup and SIGKILLs after its first committed chunk;
+the third requires the original verified backup and finishes the migration.
+Assert exactly one backup file, no remaining partial, and unchanged backup mtime
+at the reserved destination through both restarts. The reservation probe also
+creates unrelated backup/manifest/partial sentinels and asserts their bytes remain
+unchanged. Never sweep other paths or delete verified backups.
 `observed.json` must show zero remaining legacy bodies, an empty suppression
 table, the same full ordered logical-body hash, per-chunk transactions <250 ms,
 maximum heartbeat lag <1,000 ms and successful health/transcript RPCs. Lag and
-transaction maxima include both children. `crash.json`, `child.json` and logs
-retain both phases. Peak logical and allocated disk bytes are sampled across
+transaction maxima include all children. `reservation-retry.json`, `backup-crash.json`,
+`crash.json`, `child.json` and logs retain all phases. Peak logical and allocated disk bytes are sampled across
 the data tree every probe cycle, including the permanent backup and WAL; this
 is a sampled peak, not a physical worst-case bound. Startup and overall runtime
 are recorded separately. Seed and final offline hashing are outside daemon lag
@@ -847,7 +856,8 @@ The reverse hash must match `before.json`. Side bodies and the pinned backup
 remain; the reversed marker disables automatic copying. All children, workers
 and sockets must stop; delete only this run's synthetic data after retaining
 evidence. Unit suites run in CI, including insufficient/unknown disk refusal,
-verification failure, rollback, restart, authoritative-side conflicts, malformed
+verification failure, runtime-capacity/worker refusal, durable backup reservation,
+rollback, restart, authoritative-side conflicts, malformed
 bytes and concurrent normal writers. No GUI, model or credentials are used.
 
 Before merging, require Neo's explicit go-ahead, latest-head bot approval and

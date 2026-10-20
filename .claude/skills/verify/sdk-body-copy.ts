@@ -11,7 +11,7 @@ import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts'
 import { deriveSdkMessageColumns,SDK_MESSAGE_COLUMN_TYPES } from '../../../packages/daemon/src/storage/sdk-message-columns.ts';
 import { writeSdkMessageBody } from '../../../packages/daemon/src/storage/repositories/sdk-message-body-write.ts';
 import { configureLogger,LogLevel,subscribeToStructuredLogs } from '../../../packages/daemon/src/lib/logger.ts';
-import { sdkBodyBackupChannel } from '../../../packages/daemon/src/storage/sdk-message-body-backup.ts';
+import { reserveSdkBodyBackupPath,sdkBodyBackupChannel } from '../../../packages/daemon/src/storage/sdk-message-body-backup.ts';
 
 const [mode,portText,runText]=process.argv.slice(2);
 const port=Number(portText),run=resolve(runText),dbPath=join(run,'data/daemon.db');
@@ -42,11 +42,24 @@ if(mode==='seed') {
   } finally {core.close();}
   const before=digest();writeFileSync(join(run,'evidence/before.json'),JSON.stringify({...before,dbBytes:statSync(dbPath).size}));
   console.log(JSON.stringify({...before,dbBytes:statSync(dbPath).size}));
+} else if(mode==='reserve-retry') {
+  let db=new Database(dbPath);
+  const signal=new AbortController().signal,first=await reserveSdkBodyBackupPath(db,dbPath,signal);
+  assert(!existsSync(first));mkdirSync(join(run,'data/backups/sdk-message-bodies-v1'),{recursive:true});
+  writeFileSync(`${first}.partial`,'synthetic incomplete backup');
+  for(const [name,contents] of [['protected.db','unrelated verified backup'],['protected.db.verified.json','unrelated verification manifest'],['protected.db.partial','unrelated partial']])
+    writeFileSync(join(run,'data/backups/sdk-message-bodies-v1',name),contents);
+  db.close();db=new Database(dbPath);
+  try {
+    const again=await reserveSdkBodyBackupPath(db,dbPath,signal);assert.equal(again,first);
+    assert.equal(readFileSync(`${again}.partial`,'utf8'),'synthetic incomplete backup');
+    writeFileSync(join(run,'evidence/reservation-retry.json'),JSON.stringify({first,afterRestart:again}));
+  }finally{db.close();}
 } else if(mode==='inspect') {
   console.log(JSON.stringify(digest()));
 } else if(mode==='backup-reject') {
-  const dir=join(run,'data/backups/sdk-message-bodies-v1');
-  const backup=join(dir,readdirSync(dir).find((name)=>name.endsWith('.db'))!);
+  const proof=JSON.parse(readFileSync(join(run,'evidence/child.json'),'utf8'));
+  const backup=proof.logs.find((p:Record<string,unknown>)=>p.phase==='backup_verified').backupPath;
   const manifest=`${backup}.verified.json`,original=readFileSync(manifest,'utf8'),before=digest();
   const abort=new AbortController(),channel=sdkBodyBackupChannel(dbPath,backup,abort.signal);
   let rejected=false;
@@ -61,7 +74,7 @@ if(mode==='seed') {
   }finally{writeFileSync(manifest,original);channel.close();}
   const after=digest();assert.deepEqual(after,before);
   writeFileSync(join(run,'evidence/backup-rejection.json'),JSON.stringify({rejected,before,after}));
-} else if(mode==='crash'||mode==='child') {
+} else if(mode==='backup-crash'||mode==='crash'||mode==='child') {
   configureLogger({level:LogLevel.INFO});
   let app:Awaited<ReturnType<typeof createDaemonApp>>|undefined;
   let maxLagMs=0,last=performance.now(),complete=false,startupMs=0;
@@ -71,8 +84,8 @@ if(mode==='seed') {
     const prefix='SDK body copy: ';
     if(!event.message.startsWith(prefix)) return;
     const progress=JSON.parse(event.message.slice(prefix.length));logs.push(progress);
-    if(progress.phase==='chunk'&&mode==='crash') {
-      writeFileSync(join(run,'evidence/crash.json'),JSON.stringify({progress,logs,maxLagMs,startupMs,elapsedMs:performance.now()-started}));
+    if((progress.phase==='backup_verified'&&mode==='backup-crash')||(progress.phase==='chunk'&&mode==='crash')) {
+      writeFileSync(join(run,`evidence/${mode}.json`),JSON.stringify({progress,logs,maxLagMs,startupMs,elapsedMs:performance.now()-started}));
       process.kill(process.pid,'SIGKILL');
     }
     if(progress.phase==='complete') complete=true;
@@ -131,7 +144,17 @@ if(mode==='seed') {
     return {...result,pid};
   };
   try {
-    const started=performance.now(),crash=await runChild('crash');assert.equal(crash.signal,'SIGKILL');
+    const started=performance.now(),backupCrash=await runChild('backup-crash');assert.equal(backupCrash.signal,'SIGKILL');
+    const preCopy=new Database(dbPath,{readonly:true});
+    try {assert.equal((preCopy.prepare("SELECT count(*) AS n FROM migration_markers WHERE key GLOB 'sdk_message_bodies_copy_v1:state:*'").get() as {n:number}).n,0);}
+    finally{preCopy.close();}
+    const backupBefore=readdirSync(join(run,'data/backups/sdk-message-bodies-v1')).filter((name)=>name.endsWith('.db'));
+    const reservationProbe=existsSync(join(run,'evidence/reservation-retry.json'));
+    assert.equal(backupBefore.length,reservationProbe?2:1);
+    const backupCrashResult=JSON.parse(readFileSync(join(run,'evidence/backup-crash.json'),'utf8'));
+    const backupPath=backupCrashResult.progress.backupPath,backupStat=statSync(backupPath);
+    assert(!existsSync(`${backupPath}.partial`));
+    const crash=await runChild('crash');assert.equal(crash.signal,'SIGKILL');
     const resumed=await runChild('child');assert.equal(resumed.code,0,readFileSync(join(run,'evidence/child.log'),'utf8').slice(-3000));
     const before=JSON.parse(readFileSync(join(run,'evidence/before.json'),'utf8')),after=digest();assert.equal(after.hash,before.hash);assert.equal(after.rows,before.rows);
     const db=new Database(dbPath,{readonly:true});
@@ -139,7 +162,12 @@ if(mode==='seed') {
     const suppression=db.prepare('SELECT * FROM sdk_message_body_copy_active').all();db.close();
     const childResult=JSON.parse(readFileSync(join(run,'evidence/child.json'),'utf8'));
     const crashResult=JSON.parse(readFileSync(join(run,'evidence/crash.json'),'utf8'));
-    const observed={before,after,remaining,suppression,crash,resumed,totalMs:performance.now()-started,peakLogicalBytes,peakAllocatedBytes,healthRequests:health.length,transcriptSamples,maxHealthMs:Math.max(...health.map((h)=>h.elapsedMs)),...childResult,firstStartupMs:crashResult.startupMs,maxLagMs:Math.max(crashResult.maxLagMs,childResult.maxLagMs),maxTransactionMs:Math.max(Number(crashResult.progress.transactionMs),childResult.maxTransactionMs)};
+    assert.deepEqual(readdirSync(join(run,'data/backups/sdk-message-bodies-v1')).filter((name)=>name.endsWith('.db')),backupBefore);
+    assert.equal(statSync(backupPath).mtimeMs,backupStat.mtimeMs);
+    if(reservationProbe) for(const [name,contents] of [['protected.db','unrelated verified backup'],['protected.db.verified.json','unrelated verification manifest'],['protected.db.partial','unrelated partial']])
+      assert.equal(readFileSync(join(run,'data/backups/sdk-message-bodies-v1',name),'utf8'),contents);
+    assert.equal(crashResult.logs.find((p:Record<string,unknown>)=>p.phase==='backup_verified').backupPath,backupPath);
+    const observed={before,after,remaining,suppression,backupCrash,crash,resumed,backupCount:backupBefore.length-(reservationProbe?1:0),protectedFilesUnchanged:reservationProbe,backupReused:true,totalMs:performance.now()-started,peakLogicalBytes,peakAllocatedBytes,healthRequests:health.length,transcriptSamples,maxHealthMs:Math.max(...health.map((h)=>h.elapsedMs)),...childResult,firstStartupMs:backupCrashResult.startupMs,maxLagMs:Math.max(backupCrashResult.maxLagMs,crashResult.maxLagMs,childResult.maxLagMs),maxTransactionMs:Math.max(Number(crashResult.progress.transactionMs),childResult.maxTransactionMs)};
     writeFileSync(join(run,'evidence/observed.json'),JSON.stringify(observed,null,2));
     assert.equal(remaining,0);assert.deepEqual(suppression,[]);assert(health.length>5);assert(observed.maxLagMs<1000);assert(observed.maxTransactionMs<250);assert(observed.maxHealthMs<1000);
     console.log(JSON.stringify({...observed,logs:undefined}));

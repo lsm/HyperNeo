@@ -1,5 +1,4 @@
 import { runLagPhase } from '../lib/event-loop-activity.ts';
-import { randomUUID } from 'node:crypto';
 import {
   copyFileSync,
   existsSync,
@@ -8,7 +7,6 @@ import {
   renameSync,
   rmSync,
   statSync,
-  statfsSync,
   unlinkSync,
 } from 'node:fs';
 import { unlink } from 'node:fs/promises';
@@ -35,7 +33,7 @@ import { Database as BunDatabase } from './sqlite-compat.ts';
 import { assertSupportedDatabaseVersion } from './schema/upgrade-floor.ts';
 import { backfillSdkMessageColumns } from './schema/m413-sdk-message-columns.ts';
 import { migrateSdkMessageBodies } from './sdk-message-body-copy.ts';
-import { sdkBodyBackupChannel } from './sdk-message-body-backup.ts';
+import { reserveSdkBodyBackupPath, sdkBodyBackupChannel } from './sdk-message-body-backup.ts';
 
 const MIGRATION_BACKUP_RETENTION = 3;
 const MIGRATION_BACKUP_TEMP_STALE_MS = 60 * 60 * 1000;
@@ -171,6 +169,10 @@ export class DatabaseCore {
 
   startSdkMessageBodyCopy(): void {
     if (this.bodyCopyAbort || this.dbPath === ':memory:') return;
+    if (typeof Worker === 'undefined') {
+      this.logger.info('SDK body copy: {"phase":"refused","reason":"worker_unavailable"}');
+      return;
+    }
     const abort = (this.bodyCopyAbort = new AbortController());
     const attempt = async () => {
       const started = performance.now();
@@ -184,13 +186,12 @@ export class DatabaseCore {
       let channel: ReturnType<typeof sdkBodyBackupChannel> | undefined;
       let complete = false;
       try {
-        const disk = statfsSync(dirname(this.dbPath));
         const dbBytes =
           statSync(this.dbPath).size +
           (existsSync(`${this.dbPath}-wal`) ? statSync(`${this.dbPath}-wal`).size : 0);
         const result = await migrateSdkMessageBodies(this.db, {
           dbBytes,
-          freeBytes: Number(disk.bavail) * Number(disk.bsize),
+          freeBytes: freeBytesAt(dirname(this.dbPath)),
           signal: abort.signal,
           verifyBackup: async (mustExist, priorPath) => {
             const backupDir = join(dirname(this.dbPath), 'backups', 'sdk-message-bodies-v1');
@@ -198,7 +199,7 @@ export class DatabaseCore {
               throw new Error('SDK body copy original backup location is invalid');
             const backupPath = mustExist
               ? priorPath!
-              : join(backupDir, `${basename(this.dbPath)}-${randomUUID()}.db`);
+              : await reserveSdkBodyBackupPath(this.db, this.dbPath, abort.signal);
             channel = sdkBodyBackupChannel(this.dbPath, backupPath, abort.signal);
             const verified = await channel.verify(mustExist);
             this.logger.info(

@@ -1,3 +1,45 @@
+import { randomUUID } from 'node:crypto';
+import { basename, dirname, join } from 'node:path';
+import type { Database } from './sqlite-compat.ts';
+
+const BACKUP = 'sdk_message_bodies_copy_v1:backup:';
+
+export async function reserveSdkBodyBackupPath(
+  db: Database,
+  dbPath: string,
+  signal: AbortSignal
+): Promise<string> {
+  const directory = join(dirname(dbPath), 'backups', 'sdk-message-bodies-v1');
+  while (!signal.aborted) {
+    const busy = (db.prepare('PRAGMA busy_timeout').get() as { timeout: number }).timeout;
+    try {
+      db.exec('PRAGMA busy_timeout=0');
+      return db.transaction(() => {
+        const prior = db
+          .prepare('SELECT key FROM migration_markers WHERE key GLOB ?')
+          .get(`${BACKUP}*`) as { key: string } | undefined;
+        const path = prior
+          ? prior.key.slice(BACKUP.length)
+          : join(directory, `${basename(dbPath)}-${randomUUID()}.db`);
+        if (dirname(path) !== directory)
+          throw new Error('SDK body backup reservation location is invalid');
+        if (!prior)
+          db.prepare('INSERT INTO migration_markers(key,applied_at) VALUES (?,?)').run(
+            `${BACKUP}${path}`,
+            Date.now()
+          );
+        return path;
+      }, 'immediate')();
+    } catch (error) {
+      if (!/busy|locked/i.test(String(error))) throw error;
+    } finally {
+      db.exec(`PRAGMA busy_timeout=${busy}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error('SDK body backup reservation cancelled');
+}
+
 export type BodyBackupRequest = {
   id: number;
   action: 'backup' | 'checkpoint';
