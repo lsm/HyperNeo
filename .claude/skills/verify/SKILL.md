@@ -562,6 +562,11 @@ env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test
 
 Old code retains flags 17/subtype `before` after the side body changes. The split
 triggers must return flags 18/subtype `after`. Keep the before/after artifact.
+Repeat in a fresh directory with `missing` appended after `"$RUN"`: it removes
+only the synthetic derived projection, blanks its legacy body, then updates
+status. The old split inserts flags 0/subtype null; the corrected update must
+restore flags 17/subtype `before` from its side body. CI also covers historical
+rows without side bodies. Existing projections skip this body initialization.
 For the actual task-feed door and performance proof, use another fresh directory:
 
 ```bash
@@ -575,7 +580,9 @@ env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test
 The 55,014-row synthetic seed now uses the production dual-write helper as well
 as production derivation and `replacement_metadata_normalized=1`. The verifier
 uses the daemon's registered repository, including its reactive notifications,
-and real WebSocket subscriptions to full and compact task feeds. It adds 100
+and real WebSocket subscriptions to full and compact task feeds. It removes a
+synthetic action projection and repairs it through the daemon's actual
+status-update facade before observing its pin. It then adds 100
 ordinary rows so the unresolved action must stay pinned outside the compact
 100-row window; resolving it clears the pin, while the full feed reports the
 chosen option. It waits for the production feed debounce before taking the next

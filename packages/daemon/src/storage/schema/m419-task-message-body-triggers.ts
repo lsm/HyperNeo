@@ -22,6 +22,11 @@ const reclassifiedBodySelect = TASK_MESSAGE_BODY_SELECT.replaceAll(
   'sm.sdk_message',
   'COALESCE(body.sdk_message,sm.sdk_message)'
 );
+const fillMissingProjection = `INSERT INTO task_message_rows (${columns})
+  SELECT ${TASK_MESSAGE_METADATA_SELECT}, ${reclassifiedBodySelect}
+  FROM sdk_messages sm LEFT JOIN sdk_message_bodies body ON body.seq=sm.rowid
+  WHERE sm.rowid=NEW.rowid AND sm.task_id IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM task_message_rows existing WHERE existing.id=sm.id);`;
 
 export function runMigration419(db: Database): void {
   const tables = db
@@ -40,7 +45,7 @@ export function runMigration419(db: Database): void {
   db.exec(`CREATE TRIGGER task_message_rows_au
     AFTER UPDATE OF timestamp,send_status,conversation_turn_index,is_renderable,is_terminal,
       task_id,session_id,parent_tool_use_id ON sdk_messages
-    WHEN NEW.task_id IS NOT NULL BEGIN ${rowUpsert} END`);
+    WHEN NEW.task_id IS NOT NULL BEGIN ${fillMissingProjection} ${rowUpsert} END`);
   for (const [suffix, event] of [
     ['ai', 'INSERT'],
     ['au', 'UPDATE OF sdk_message'],

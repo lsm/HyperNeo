@@ -120,7 +120,10 @@ Slice 7 installs the split projection triggers in migration 419 and the fresh
 schema. Row upserts update metadata columns only; body upserts update flags,
 artifact keys and JSON subtype only. Required insert fields are initialized when
 either upsert creates a projection. Shared SQL expressions preserve the legacy
-JSON/type/artifact semantics. Status updates never parse the body, and blanking
+JSON/type/artifact semantics. Status updates of existing projections never parse
+the body. An UPDATE encountering a missing historical projection first fills it
+from the side body or legacy fallback, only when the projection id is absent;
+this prevents an empty scaffold from defeating the count-based lazy repair. Blanking
 the old column fires neither projection writer. Existing task detachment removes
 only its projection; reattachment restores body fields using the side body or
 the historical body until copying is complete. These rare classification paths

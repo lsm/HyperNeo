@@ -72,6 +72,13 @@ describe('task message body projection', () => {
         VALUES ('old','s','task','assistant',?,'2026-10-20T00:00:00Z',1)`).run(
           JSON.stringify(body)
         );
+        const derived = deriveSdkMessageColumns(body, 'task');
+        const names = Object.keys(
+          SDK_MESSAGE_COLUMN_TYPES
+        ) as (keyof typeof SDK_MESSAGE_COLUMN_TYPES)[];
+        db.prepare(
+          `UPDATE sdk_messages SET ${names.map((key) => `${key}=?`).join(',')} WHERE id='old'`
+        ).run(...names.map((key) => derived[key]));
       }
       db.exec("DELETE FROM task_message_rows WHERE id='old'");
       db.exec("UPDATE sdk_messages SET send_status='failed' WHERE id='old'");
