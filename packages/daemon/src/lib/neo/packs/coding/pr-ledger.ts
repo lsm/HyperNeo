@@ -383,7 +383,10 @@ export class CodingPrLedgerRepository {
       repos: JSON.parse(row.repos) as string[],
       branches: JSON.parse(row.branches) as string[],
       owned: JSON.parse(row.owned) as string[],
-      prs: JSON.parse(row.linked ?? row.opened) as string[],
+      prs:
+        (JSON.parse(row.ref) as { adapter: string }).adapter === 'claude-desktop'
+          ? []
+          : (JSON.parse(row.linked ?? row.opened) as string[]),
       dismissed: JSON.parse(row.dismissed) as string[],
     }));
     const rows = this.db

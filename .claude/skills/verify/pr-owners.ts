@@ -1,11 +1,6 @@
 import { Database } from 'bun:sqlite';
-import { homedir, hostname } from 'node:os';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
-import {
-  type ClaudeDesktopAdapterDeps,
-  describeClaudeSession,
-  loadClaudeDesktopRecords,
-} from '../../../packages/daemon/src/lib/drivers/claude-desktop-adapter.ts';
 import { readCodeIdentity } from '../../../packages/daemon/src/lib/drivers/code-identity.ts';
 import { readCodexThread } from '../../../packages/daemon/src/lib/drivers/codex-desktop-adapter.ts';
 import {
@@ -13,6 +8,12 @@ import {
   planCodingPrOwner,
 } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
 import { codingPrKey } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
+
+if (process.argv.includes('--synthetic')) {
+  const { verifySyntheticPrOwners } = await import('./pr-owners-synthetic.ts');
+  await verifySyntheticPrOwners(process.argv.at(-1)!);
+  process.exit(0);
+}
 
 const live = new Database(`file:${join(homedir(), '.hyperneo/data/daemon.db')}?mode=ro`, {
   readonly: true,
@@ -55,22 +56,18 @@ type Session = {
 };
 const sessions: Session[] = [];
 
-const deps = {
-  sessionsDir: join(homedir(), 'Library/Application Support/Claude/claude-code-sessions'),
-  machine: hostname(),
-} as ClaudeDesktopAdapterDeps;
-for (const record of await loadClaudeDesktopRecords(deps, new Map())) {
-  const detail = describeClaudeSession(record, [], null, deps);
-  if (!detail.ok) continue;
-  const value = detail.value;
+const { createCodingClaudeOwnerReader } = await import(
+  '../../../packages/daemon/src/lib/neo/packs/coding/claude-pr-owners.ts'
+);
+for (const value of await createCodingClaudeOwnerReader()()) {
   const linked = value.linkedPrs ?? [];
   sessions.push({
     ref: JSON.stringify(value.ref),
     active: value.lastActivityAt,
-    repos: await repos(value.execution?.directory),
-    branches: value.branches ?? [],
+    repos: value.remotes.flatMap((remote) => codingRemoteRepo(remote) ?? []),
+    branches: value.branches,
     owned: keys(linked.filter((pr) => pr.own && !pr.dismissed).map((pr) => pr.url)),
-    prs: keys(linked.filter((pr) => !pr.dismissed).map((pr) => pr.url)),
+    prs: [],
     dismissed: keys(linked.filter((pr) => pr.dismissed).map((pr) => pr.url)),
   });
 }
@@ -125,13 +122,19 @@ const changes = rows.flatMap((row) => {
   const next = planCodingPrOwner(row, claims, sessions);
   return next === row.owner ? [] : [{ pr: `${row.repo}#${row.number}`, from: row.owner, to: next }];
 });
-const after = rows.filter(
-  (row) => planCodingPrOwner(row, claims, sessions) !== null
-).length;
-console.log(`open rows ${rows.length}; owned before ${before}; owned after ${after}; sessions ${sessions.length}`);
+const after = rows.filter((row) => planCodingPrOwner(row, claims, sessions) !== null).length;
+console.log(
+  `open rows ${rows.length}; owned before ${before}; owned after ${after}; sessions ${sessions.length}`
+);
 for (const change of changes) console.log(JSON.stringify(change));
 if (process.argv.includes('--debug')) {
   console.log('sessions with prs', sessions.filter((s) => s.prs.length).length);
   console.log('sample prs', sessions.flatMap((s) => s.prs).slice(0, 8));
-  console.log('unowned', rows.filter((r) => !planCodingPrOwner(r, claims, sessions)).map((r) => `${r.repo}#${r.number}:${r.branch}`).join(' '));
+  console.log(
+    'unowned',
+    rows
+      .filter((r) => !planCodingPrOwner(r, claims, sessions))
+      .map((r) => `${r.repo}#${r.number}:${r.branch}`)
+      .join(' ')
+  );
 }

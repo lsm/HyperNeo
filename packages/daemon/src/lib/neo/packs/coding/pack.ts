@@ -1,3 +1,4 @@
+import { createCodingClaudeOwnerReader } from './claude-pr-owners.ts';
 import { NEO_PACK_CODING_INSTRUCTIONS, NEO_PACK_CODING_WORKER_RULES } from '@hyperneo/prompts';
 import { type CodingTodoPrRepository, createCodingTodoPack } from './todo-prs.ts';
 import type { NeoPack, NeoPackBrief } from '../types.ts';
@@ -28,7 +29,9 @@ export function createCodingPack(deps: {
   prSweepDeps: CodingSweepDeps;
   projectRepos: () => string[];
   readLedgerRepo?: CodingLedgerRead;
+  readClaudeOwners?: ReturnType<typeof createCodingClaudeOwnerReader>;
 }): NeoPack {
+  const readClaudeOwners = deps.readClaudeOwners ?? createCodingClaudeOwnerReader();
   const ledgerSkips = new Map<string, number>();
   return {
     ...CODING_PACK_BRIEF,
@@ -36,6 +39,7 @@ export function createCodingPack(deps: {
     todos: createCodingTodoPack(deps.todoPrs, deps.readPrs, (url) => deps.prLedger.stateOf(url)),
     observeSessions: (sessions, now) => deps.prLedger.observeSessions(sessions, now),
     sweep: async (now) => {
+      deps.prLedger.observeSessions(await readClaudeOwners(), now);
       const transitions = await reconcileCodingPrLedger(
         deps.prLedger,
         deps.projectRepos(),

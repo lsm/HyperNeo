@@ -1,0 +1,180 @@
+import { strict as assert } from 'node:assert';
+import { appendFileSync, existsSync, mkdirSync, utimesSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
+import { createTables, runMigrations } from '../../../packages/daemon/src/storage/schema/index.ts';
+import { createCodingPackTables } from '../../../packages/daemon/src/lib/neo/packs/coding/schema/coding-tables.ts';
+import { CodingPrLedgerRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
+import { createCodingClaudeOwnerReader } from '../../../packages/daemon/src/lib/neo/packs/coding/claude-pr-owners.ts';
+import { createCodingPack } from '../../../packages/daemon/src/lib/neo/packs/coding/pack.ts';
+import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
+import { CodingPrEventRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-events.ts';
+import { CodingPrSweepRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-sweep.ts';
+
+export async function verifySyntheticPrOwners(runText: string) {
+  const run = resolve(runText);
+  assert(process.env.NODE_ENV === 'test');
+  assert(process.env.HOME === join(run, 'home'));
+  assert(process.env.HYPERNEO_DATA_DIR === join(run, 'data'));
+  const path = join(run, 'data/owners.db');
+  assert(!existsSync(path));
+  const scope = join(run, 'sessions/account/scope');
+  const project = join(run, 'projects/-synthetic');
+  for (const dir of [scope, project, join(run, 'home'), join(run, 'data')])
+    mkdirSync(dir, { recursive: true });
+  const url = (number: number) => `https://github.com/synthetic/cart-sandbox/pull/${number}`;
+  const operation = (action: string, number: number) =>
+    JSON.stringify({
+      type: 'user',
+      toolUseResult: { gitOperation: { pr: { action, number, url: url(number) } } },
+    }) + '\n';
+  const padding = (
+    JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: 'Synthetic ordinary step. '.repeat(160) }] },
+    }) + '\n'
+  ).repeat(520);
+  let transcriptBytes = 0;
+  for (let i = 0; i < 64; i++) {
+    const data =
+      padding + (i === 0 ? operation('commented', 4) : i === 1 ? operation('created', 6) : '');
+    writeFileSync(join(project, `cli-${i}.jsonl`), data);
+    transcriptBytes += Buffer.byteLength(data);
+    writeFileSync(
+      join(scope, `local_${i}.json`),
+      JSON.stringify({
+        sessionId: `local_${i}`,
+        cliSessionId: `cli-${i}`,
+        cwd: '/synthetic',
+        lastActivityAt: 1000 - i,
+        ...(i === 3 ? { branch: 'b7' } : {}),
+        prs:
+          i === 0
+            ? [{ url: url(4) }]
+            : i === 1
+              ? [{ url: url(6) }]
+              : i === 2
+                ? [{ url: url(5), own: true }]
+                : [],
+      })
+    );
+  }
+  const db = new Database(path);
+  runMigrations(db, () => {});
+  createTables(db);
+  createCodingPackTables(db);
+  const ledger = new CodingPrLedgerRepository(db);
+  const now = Date.now();
+  const pack = createCodingPack({
+    readPrs: async () => [],
+    todoPrs: new CodingTodoPrRepository(db),
+    prLedger: ledger,
+    prEvents: new CodingPrEventRepository(db),
+    prSweep: new CodingPrSweepRepository(db),
+    prSweepDeps: {
+      tell: async () => {
+        throw new Error('unexpected delivery');
+      },
+      wake: async () => {
+        throw new Error('unexpected wake');
+      },
+    },
+    projectRepos: () => ['synthetic/cart-sandbox'],
+    readClaudeOwners: createCodingClaudeOwnerReader(
+      join(run, 'sessions'),
+      join(run, 'projects'),
+      async () => ({ remotes: ['git@github.com:synthetic/cart-sandbox.git'] })
+    ),
+    readLedgerRepo: async () => ({
+      data: {
+        rateLimit: { remaining: 4000 },
+        repository: {
+          nameWithOwner: 'synthetic/cart-sandbox',
+          open: {
+            pageInfo: { hasNextPage: false },
+            nodes: [4, 5, 6, 7].map((number) => ({
+              number,
+              title: `Synthetic ${number}`,
+              headRefName: `b${number}`,
+              headRefOid: `h${number}`,
+              state: 'OPEN',
+              isDraft: false,
+              mergeable: 'MERGEABLE',
+              reviewDecision: null,
+              closedAt: null,
+            })),
+          },
+          done: { nodes: [] },
+        },
+      },
+    }),
+  });
+  const phases: {
+    name: string;
+    elapsedMs: number;
+    maxLagMs: number;
+    owners: Record<string, unknown>[];
+  }[] = [];
+  let last = performance.now();
+  let maxLag = 0;
+  const timer = setInterval(() => {
+    const at = performance.now();
+    maxLag = Math.max(maxLag, at - last - 10);
+    last = at;
+  }, 10);
+  const pause = () => new Promise((resolve) => setTimeout(resolve, 30));
+  const sweep = async (name: string) => {
+    await pause();
+    maxLag = 0;
+    last = performance.now();
+    const start = performance.now();
+    await pack.sweep!(now);
+    const elapsedMs = performance.now() - start;
+    await pause();
+    const owners = ledger.snapshot(null, now).map((row) => ({ pr: row.pr, ownerId: row.ownerId }));
+    phases.push({ name, elapsedMs, maxLagMs: maxLag, owners });
+    const report = {
+      syntheticOnly: true,
+      surface: 'real coding-pack sweep/reconcile and snapshot repositories',
+      sessions: 64,
+      transcriptBytes,
+      gitRemoteLookup: 'synthetic stub',
+      phases,
+    };
+    writeFileSync(join(run, 'observed.json'), JSON.stringify(report, null, 2));
+    process.stdout.write(JSON.stringify(phases.at(-1)) + '\n');
+    assert(maxLag < 1000, `reconcile lag ${maxLag}ms exceeds1s goal`);
+    return owners;
+  };
+  try {
+    const first = await sweep('cold');
+    assert.deepEqual(first, [
+      { pr: 'synthetic/cart-sandbox#4', ownerId: null },
+      { pr: 'synthetic/cart-sandbox#5', ownerId: 'local_2' },
+      { pr: 'synthetic/cart-sandbox#6', ownerId: 'local_1' },
+      { pr: 'synthetic/cart-sandbox#7', ownerId: 'local_3' },
+    ]);
+    assert.deepEqual(await sweep('unchanged'), first);
+    appendFileSync(join(project, 'cli-1.jsonl'), operation('created', 4));
+    const appended = await sweep('appended');
+    assert.equal(appended[0].ownerId, 'local_1');
+    const meta = join(scope, 'local_1.json');
+    writeFileSync(
+      meta,
+      JSON.stringify({
+        sessionId: 'local_1',
+        cliSessionId: 'cli-1',
+        cwd: '/synthetic',
+        lastActivityAt: 999,
+        prs: [{ url: url(6), dismissed: true }],
+      })
+    );
+    utimesSync(meta, new Date(), new Date(Date.now() + 5000));
+    const dismissed = await sweep('dismissed');
+    assert.equal(dismissed[2].ownerId, null);
+    assert.equal(dismissed[0].ownerId, 'local_1');
+  } finally {
+    clearInterval(timer);
+    db.close();
+  }
+}

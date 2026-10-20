@@ -523,7 +523,7 @@ describe('CodingPrLedgerRepository.observeSessions', () => {
     ledger.observeSessions(
       [
         facts(opener, {
-          linkedPrs: [{ url: 'https://github.com/LSM/a/pull/1' }],
+          linkedPrs: [{ url: 'https://github.com/LSM/a/pull/1', own: true }],
           linkedPrsWindow: true,
           branches: ['b1'],
         }),
@@ -578,7 +578,7 @@ describe('CodingPrLedgerRepository.observeSessions', () => {
     const pr = (n: number) => `https://github.com/lsm/a/pull/${n}`;
     ledger.observeSessions(
       [
-        facts(claude, { linkedPrs: [{ url: pr(1) }], linkedPrsWindow: true }),
+        facts(claude, { linkedPrs: [{ url: pr(1), own: true }], linkedPrsWindow: true }),
         facts(codex, { linkedPrs: [{ url: pr(2) }] }),
       ],
       101
