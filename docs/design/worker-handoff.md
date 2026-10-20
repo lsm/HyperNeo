@@ -128,8 +128,8 @@ continuation is `complete` even when its final page contains only textless rows.
 
 Local HyperNeo todo receipts select the first verified billing terminal at or
 after the acknowledged input's consumed watermark. Its preceding terminal and
-SDK sequence bound the authoritative read, so a mid-turn input does not sever
-the reply and a later turn is excluded. Shared input watermarks are valid only
+SDK sequence and the acknowledged input row bound the authoritative read, so a mid-turn input does not sever
+the reply, pre-input assistant progress is excluded, and a later turn is excluded. Shared input watermarks are valid only
 when the matching terminal exists. The reader yields between bounded SDK pages
 and keeps complete visible assistant text and artifact descriptors.
 `inputEvidence.replyAvailability` distinguishes complete/incomplete/unavailable

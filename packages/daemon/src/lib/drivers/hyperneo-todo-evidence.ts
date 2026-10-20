@@ -20,9 +20,9 @@ export async function readHyperneoTodoEvidence(
   };
   if (evidence.state !== 'observed') return unavailable;
   const input = db
-    .prepare(`SELECT consumed_seq FROM sdk_messages
+    .prepare(`SELECT seq,consumed_seq FROM sdk_messages
     WHERE session_id=? AND sdk_uuid=? AND message_type='user'`)
-    .get(sessionId, receipt.inputId) as { consumed_seq: number };
+    .get(sessionId, receipt.inputId) as { seq: number; consumed_seq: number };
   const terminal = db
     .prepare(`SELECT seq,id,consumed_seq,timestamp FROM sdk_messages
     WHERE session_id=? AND ${SESSION_BILLING_TERMINAL} AND consumed_seq>=? ORDER BY consumed_seq,seq LIMIT 1`)
@@ -38,7 +38,7 @@ export async function readHyperneoTodoEvidence(
   let cursor: Parameters<typeof readWorkTurnPage>[5];
   do {
     const page = readWorkTurnPage(db, sessionId, terminal.id, 10, 0, cursor, {
-      afterSeq: prior?.seq ?? 0,
+      afterSeq: Math.max(prior?.seq ?? 0, input.seq),
       throughSeq: terminal.seq,
     });
     if (!page || Array.isArray(page) || page.availability === 'reply_unavailable')
