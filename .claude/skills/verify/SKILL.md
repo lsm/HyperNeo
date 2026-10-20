@@ -595,6 +595,12 @@ adds its journey here.
     with the saved goal id as the third argument to prove persistence across
     process restart. Wake preferences are stored on the goal; closing still
     deletes its schedule row.
+    Run `bun .claude/skills/verify/goal-target-return.ts <port> "$RUN"` against a
+    fresh isolated daemon to check owner recovery. It archives its new session,
+    waits for the real cadence to finish `target_gone`, restores the session
+    through RPC, and pauses/reactivates its goal. The restored schedule must keep
+    its configured cadence/nudge interval and deliver its next wake to that
+    session's transcript. Evidence: `evidence/goal-target-return.json`.
 
 ## Evidence
 

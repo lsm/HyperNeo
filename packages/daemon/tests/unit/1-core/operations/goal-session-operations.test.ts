@@ -64,6 +64,56 @@ function setup(packs: NeoPack[] = []) {
 }
 
 describe('goal-owned schedules', () => {
+  test.each([false, true])(
+    'reactivating after target_gone restores wakes (pause first: %s)',
+    async (pauseFirst) => {
+      const { db, call, scheduler } = setup();
+      const jobs = new JobQueueRepository(db);
+      let now = Date.now();
+      const clock = spyOn(Date, 'now').mockImplementation(() => now);
+      let available = false;
+      const messages: string[] = [];
+      try {
+        const cadence = { kind: 'every', everyMs: 120000 };
+        const goal = (
+          await call('goal.session.create', {
+            title: 'Return to the guide',
+            doneTest: 'Published',
+            cadence,
+            nudgeEvery: 7,
+          })
+        ).goal;
+        const handler = createSessionScheduleFire({
+          scheduler,
+          status: async () => (available ? 'done' : 'not_open'),
+          deliver: async (_schedule, _messageId, text) => {
+            messages.push(text);
+          },
+        });
+        const fire = () => {
+          const schedule = scheduler.repo.getBySource('goal', goal.id)!;
+          now = schedule.nextRunAt!;
+          return handler(jobs.getJob(schedule.pendingJobId!)!);
+        };
+        const before = scheduler.repo.getBySource('goal', goal.id)!;
+        expect(await fire()).toEqual({ outcome: 'target_gone' });
+        expect(scheduler.repo.get(before.id)?.status).toBe('done');
+        expect(messages).toEqual([]);
+        available = true;
+        if (pauseFirst) await call('goal.session.update', { goalId: goal.id, status: 'paused' });
+        await call('goal.session.update', { goalId: goal.id, status: 'active' });
+        const after = scheduler.repo.getBySource('goal', goal.id)!;
+        expect(after).toMatchObject({ status: 'active', cadence, nudgeEvery: 7 });
+        expect(after.pendingJobId).not.toBeNull();
+        expect(await fire()).toEqual({ outcome: 'fired' });
+        expect(messages).toHaveLength(1);
+        expect(messages[0]).toContain('Return to the guide');
+      } finally {
+        clock.mockRestore();
+        db.close();
+      }
+    }
+  );
   test.each(['completed', 'archived'] as const)(
     'reopening a %s goal preserves its configured cadence and nudge interval',
     async (status) => {
