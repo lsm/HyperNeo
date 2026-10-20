@@ -31,6 +31,8 @@ import { NeoPublicationRepository } from '../../../../src/storage/repositories/n
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins.ts';
 import { runMigration288 } from '../../../../src/storage/schema/m288-neo-publications.ts';
+import { runMigration387 } from '../../../../src/storage/schema/m387-neo-ask-todo-tables.ts';
+import { replyAtNeoTurnEnd } from '../../../../src/lib/neo/turn-end-reply.ts';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
@@ -588,6 +590,90 @@ describe('runtime-bound publication operation', () => {
         links: Array.from({ length: 17 }, () => ({ label: 'Open', kind: 'project', id: 'a' })),
       })
     ).toHaveProperty('reason.reason', 'invalid_publication');
+  });
+
+  describe('replyAtNeoTurnEnd', () => {
+    const since = Date.now() - 1000;
+    const deps = (who: OperationCaller) => ({
+      db: mailbox.db,
+      since,
+      publish: (reply: unknown) => invoke(reply, who),
+    });
+    beforeEach(() => runMigration387(mailbox.db));
+
+    test('publishes the final text of a human turn that ended without a reply', async () => {
+      await replyAtNeoTurnEnd(
+        caller().neoTurn,
+        ask.messageId,
+        '  I saved your rule.  ',
+        deps(caller())
+      );
+      expect(ledger.list(conversationId)).toEqual([
+        expect.objectContaining({
+          shortText: 'I saved your rule.',
+          fullText: 'I saved your rule.',
+          producerInput: ask,
+        }),
+      ]);
+    });
+
+    test('adds nothing when the turn already published or has an open question for the human', async () => {
+      await invoke(draft);
+      await replyAtNeoTurnEnd(caller().neoTurn, ask.messageId, 'Also this.', deps(caller()));
+      expect(ledger.list(conversationId)!.map((item) => item.fullText)).toEqual([draft.fullText]);
+      mailbox.db.exec('DELETE FROM neo_publications');
+      mailbox.db
+        .prepare(
+          `INSERT INTO neo_asks (id, session_id, title, request, created_at, updated_at)
+           VALUES ('ask-q', ?, 'Pick', 'Pick', ?, ?)`
+        )
+        .run(root.sessionId, Date.now(), Date.now());
+      mailbox.db
+        .prepare(
+          `INSERT INTO neo_questions (id, ask_id, text, kind, created_at)
+           VALUES ('q1', 'ask-q', 'Which one?', 'reply', ?)`
+        )
+        .run(Date.now());
+      await replyAtNeoTurnEnd(caller().neoTurn, ask.messageId, 'Which one?', deps(caller()));
+      expect(ledger.list(conversationId)).toEqual([]);
+      mailbox.db.exec("UPDATE neo_questions SET state = 'answered'");
+      await replyAtNeoTurnEnd(caller().neoTurn, ask.messageId, 'Got it.', deps(caller()));
+      expect(ledger.list(conversationId)!.map((item) => item.fullText)).toEqual(['Got it.']);
+    });
+
+    test('answers the latest human message steered into the turn', async () => {
+      prompt(root.sessionId, 'steered');
+      await replyAtNeoTurnEnd(caller().neoTurn, 'steered', 'Both done.', deps(caller()));
+      expect(ledger.list(conversationId)).toEqual([
+        expect.objectContaining({
+          fullText: 'Both done.',
+          triggerId: 'human:steered',
+          askOrigin: { sessionId: root.sessionId, messageId: 'steered' },
+        }),
+      ]);
+    });
+
+    test('adds nothing when a publication already answers that message in any field', async () => {
+      prompt(root.sessionId, 'steered');
+      await invoke({ ...draft, triggerId: 'human:steered' });
+      await replyAtNeoTurnEnd(caller().neoTurn, 'steered', 'Again.', deps(caller()));
+      expect(ledger.list(conversationId)!.map((item) => item.fullText)).toEqual([draft.fullText]);
+    });
+
+    test('a note, schedule or session-message turn answers only a human message it carried', async () => {
+      prompt(root.sessionId, 'event', 'system');
+      const note = caller(root.sessionId, 'event', false);
+      await replyAtNeoTurnEnd(note.neoTurn, undefined, 'Noted.', deps(note));
+      expect(ledger.list(conversationId)).toEqual([]);
+      prompt(root.sessionId, 'steered');
+      await replyAtNeoTurnEnd(note.neoTurn, 'steered', 'Seen.', deps(note));
+      expect(ledger.list(conversationId)).toEqual([
+        expect.objectContaining({
+          fullText: 'Seen.',
+          askOrigin: { sessionId: root.sessionId, messageId: 'steered' },
+        }),
+      ]);
+    });
   });
 });
 

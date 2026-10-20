@@ -200,7 +200,8 @@ test('a restart and a /compact each start root Neo from a visible state note in 
       });
     let page = await read();
     const deadline = Date.now() + 45000;
-    while (!page.items?.length && Date.now() < deadline) {
+    const recalled = () => page.items?.some((item) => item.shortText.startsWith('Plant'));
+    while (!recalled() && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 100));
       page = await read();
     }
@@ -208,9 +209,10 @@ test('a restart and a /compact each start root Neo from a visible state note in 
     expect(noted[0]).toContain('Plant the moon garden');
     expect(noted[0]).toContain('Order blue seeds');
     expect(noted[0], 'the note starts a fresh context').not.toContain('An earlier moon question');
-    expect(page.items.map((item) => item.shortText)).toEqual([
-      'Plant the moon garden: Order blue seeds',
-    ]);
+    expect(
+      page.items.map((item) => item.shortText),
+      'the earlier human turn ended in plain text and was still answered; the note turn added only its own publication'
+    ).toEqual(['Done.', 'Plant the moon garden: Order blue seeds']);
     const sent = noted.length;
     await hub.request('message.send', { sessionId: opened.sessionId, content: '/compact' });
     const compacted = () => noted.slice(sent).find((text) => !text.includes('restart-recall'));

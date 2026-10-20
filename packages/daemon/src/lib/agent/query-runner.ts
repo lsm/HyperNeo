@@ -340,6 +340,7 @@ export interface QueryRunnerContext {
   createNeoTurnMcpServer?: (
     getTurn: () => OperationCaller['neoTurn']
   ) => NonNullable<Options['mcpServers']>[string];
+  replyAtNeoTurnEnd?: (turn: NeoCoordinatorTurn, text: string | undefined) => Promise<unknown>;
   readonly session: Session;
   readonly db: Database;
   readonly messageHub: MessageHub;
@@ -1407,8 +1408,15 @@ export class QueryRunner {
             holderTurn &&
             message.type === 'result' &&
             (!message.origin || message.origin.kind === 'human')
-          )
+          ) {
+            await this.ctx
+              .replyAtNeoTurnEnd?.(
+                holderTurn,
+                message.subtype === 'success' ? message.result : undefined
+              )
+              .catch((error) => logger.warn('Neo turn-end reply failed:', error));
             holderTurn.dispose();
+          }
 
           nextPromise = sdkIterator.next();
         }

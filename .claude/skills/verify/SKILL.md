@@ -12,8 +12,8 @@ root of your worktree.
 
 ## Rules
 
-- Never touch the human's daemon: never port 8399, never `~/.hyperneo`, never a
-  copy of a real database.
+- Never start, stop or mutate the human's daemon. Isolated runs never use port
+  8399, `~/.hyperneo` or a copy of a real database. Journey 15 only reads logs.
 - No provider key in the environment, real or fake. `launch.sh` starts from
   `env -i` with `NODE_ENV=test`, a temp `HOME`, and its own data dir and DB, so
   credential discovery is off and keys stay in that DB, never the keychain.
@@ -46,6 +46,31 @@ Give it a model, once per run (stored in the run's DB only):
 VERIFY_PORT=9311 bun .claude/skills/verify/rpc.ts rpc:providers.create \
   '{"params":{"providerId":"anthropic","displayName":"Anthropic (dev proxy)","kind":"built_in","authType":"api_key","isEnabled":true,"isDefault":true,"sortOrder":0},"credentials":{"apiKey":"sk-devproxy-test-key"}}'
 ```
+
+## Codex Desktop work.send journey
+
+Codex work.send steers a Desktop-owned running turn. This journey uses
+the real native IPC and the `invokeOperation` door used by Neo; it does not
+automate the GUI or start a HyperNeo daemon. Use only a sacrificial thread
+in a fresh temporary workspace, never a human's working thread. Run helpers
+with `env -i HOME="$HOME" PATH="$(dirname "$(command -v bun)"):/usr/bin:/bin"
+NODE_ENV=test bun .claude/skills/verify/codex-send.ts <action> "$RUN"`.
+`prepare` creates and names the verification thread via the existing
+app-server, archives/unarchives only that new empty thread to release its
+runtime lock, and uses the existing Desktop handoff once. An unsubscribe
+alone can leave the runtime loaded; a handoff failure is not a steer pass.
+`start` starts another turn on that same Desktop-owned verification thread
+via IPC without opening a window. Immediately run `send`, then `observe`
+after the reply. End state: `send-result.json` has `delivered: true`, a
+`steeredIntoTurnId` and no `queuedSubmissionId`; `acceptance.json` confirms
+the matching turn completed with the requested token. On the old code,
+`send` fails with a queue receipt and the token appears in a later turn
+whose trigger is `queue`. `stop` interrupts only the verification thread
+if cleanup is needed. No credentials are read; the installed app handles
+its existing authentication. Keep the JSON evidence and state that GUI
+rendering was not verified. After the turn completes, `fallback` confirms
+an idle Desktop thread returns a queue receipt instead. Unit tests use fake
+sockets and run in CI.
 
 ## Doctor
 
@@ -200,7 +225,6 @@ adds its journey here.
    `from-session="codex-desktop:verify-thread"`; the second exits 1 with
    `hyperneo send: no sender…` and sends nothing; the question replies
    `not_found`. Stopping the daemon removes the socket.
-
 13. **Root Neo owns goals outside any Space.** After journey 1 opened root, run
     `VERIFY_PORT=9311 .claude/skills/verify/session-goal.sh "$RUN"`. It creates a goal
     for root through `goal.session.create`, first without metrics or a done-test, then
@@ -210,14 +234,14 @@ adds its journey here.
     then `updated|human`. The script then appends a journal entry twice for the same
     run: `goal-journal.json` holds one entry for `run-1`, with the second effect
     ("Three projects asked for it") and the PR as evidence.
-12. **A start question lists only todos that can still start.** After journey 1
+14. **A start question lists only todos that can still start.** After journey 1
     opened root, run `.claude/skills/verify/seed-start-question.sh "$RUN"`. It
     writes `ask-prune` with two todos awaiting start, `todo-a` (check
     `pr_merged` on `verify-test/demo#8`, which reads as `MERGED`) and `todo-b`
     (no check), and one open start question `q-start` listing both. End state
     within ~3 min: `todo-a` is `done` with `started_at` empty, and `q-start`
     is still `open` with `start_todos` `["todo-b"]`.
-13. **A session with no registered provider fails once and says why.** A fresh run
+15. **A session with no registered provider fails once and says why.** A fresh run
     dir has no provider records, so Anthropic is not registered there. Launch with
     `VERIFY_LOG_LEVEL=error`, then run
     `VERIFY_PORT=<port> .claude/skills/verify/missing-provider-check.sh "$RUN"`. It
@@ -226,15 +250,19 @@ adds its journey here.
     'anthropic' is not registered. Log in or add an API key for it under Providers,
     or switch this session to another provider.`, the message is `failed`, and
     `daemon.log` has that one `[ErrorManager] model` entry.
-
-12. **Messages between root Neo and its workers show in Neo's conversation.** Run
+16. **Messages between root Neo and its workers show in Neo's conversation.** Run
     `.claude/skills/verify/neo-session-rows.sh <port> "$RUN"`. It opens root, creates
     a worker session "Fix the loader", and sends one message each way. End state: it
     prints `Neo -> Fix the loader: Rebase on dev, then tell me.` then
     `Fix the loader -> Neo: Rebased.`; on `/neo` each shows as one collapsed row
     "Neo → Fix the loader" with its first line, expanding to the full text.
-
-14. **Reply quotes show the same summary in the composer and after sending.**
+17. **Neo or the user schedules a session wake.** `session-schedules.sh <port> "$RUN"`
+    creates a session and calls `schedule.session.*` as the local user. End state: a
+    1-second cadence replies `invalid_cadence`; an hourly reminder is `active` with
+    one pending `sessionSchedule.fire` job an hour out and appears in `list` for that
+    target; `pause` makes it `paused` and drops the job; `resume` makes it `active`
+    with a new job; `delete` removes the row and its job. Nothing fires yet (S2).
+18. **Reply quotes show the same summary in the composer and after sending.**
     After opening root and configuring the mock provider, run
     `NODE_PATH=<directory containing playwright> node .claude/skills/verify/quote-summary-check.mjs <port> "$RUN"`.
     If Playwright's browser is not installed, set `VERIFY_BROWSER` to a Chrome
@@ -253,28 +281,37 @@ adds its journey here.
     ellipsis. The daemon and web share this excerpt rule; detailed message text
     remains available through Details and Copy.
 
-15. **Codex work.send steers a Desktop-owned running turn.** This journey uses
-    the real native IPC and the `invokeOperation` door used by Neo; it does not
-    automate the GUI or start a HyperNeo daemon. Use only a sacrificial thread
-    in a fresh temporary workspace, never a human's working thread. Run helpers
-    with `env -i HOME="$HOME" PATH="$(dirname "$(command -v bun)"):/usr/bin:/bin"
-    NODE_ENV=test bun .claude/skills/verify/codex-send.ts <action> "$RUN"`.
-    `prepare` creates and names the verification thread via the existing
-    app-server, archives/unarchives only that new empty thread to release its
-    runtime lock, and uses the existing Desktop handoff once. An unsubscribe
-    alone can leave the runtime loaded; a handoff failure is not a steer pass.
-    `start` starts another turn on that same Desktop-owned verification thread
-    via IPC without opening a window. Immediately run `send`, then `observe`
-    after the reply. End state: `send-result.json` has `delivered: true`, a
-    `steeredIntoTurnId` and no `queuedSubmissionId`; `acceptance.json` confirms
-    the matching turn completed with the requested token. On the old code,
-    `send` fails with a queue receipt and the token appears in a later turn
-    whose trigger is `queue`. `stop` interrupts only the verification thread
-    if cleanup is needed. No credentials are read; the installed app handles
-    its existing authentication. Keep the JSON evidence and state that GUI
-    rendering was not verified. After the turn completes, `fallback` confirms
-    an idle Desktop thread returns a queue receipt instead. Unit tests use fake
-    sockets and run in CI.
+15. **Daemon performance has a repeatable read-only tally.** Run
+    `bun scripts/daemon-lag-tally.ts <log> [--timestamps <jsonl>] [--since <ISO>] [--until <ISO>]`.
+    It accepts timestamped console lines or JSONL directly. The laptop console
+    log has no timestamps, so use its structured mirror to date the matching
+    lag-event suffix, never the file's modification time:
+
+    ```bash
+    UNTIL=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    SINCE=$(bun -e 'console.log(new Date(Date.parse(process.argv[1])-86400000).toISOString())' "$UNTIL")
+    bun scripts/daemon-lag-tally.ts ~/.hyperneo/logs/laptop-daemon.log \
+      --timestamps ~/.hyperneo/logs/daemon.jsonl --since "$SINCE" --until "$UNTIL"
+    ```
+
+    End state: Markdown tables show UTC daily block counts, watchdog unresponsive
+    counts, worst block, and each day's SQL groups ranked by total blocked time.
+    SQL literals and bind parameters use the existing storage normalizer.
+    `no SQL` means no slowest statement was logged; it does not prove pure JS.
+    Blocked durations are attributed to the accompanying SQL label, not measured
+    SQL time. Watchdog notices can describe the same incident as a later block;
+    their durations are not added to blocked time. SQL labels may already be
+    truncated by the logger. These records cannot prove every hot query is under
+    250 ms; inspect `sqlite.query.slow` separately for that goal.
+
+    Window bounds are inclusive `since`, exclusive `until`, with timezone required.
+    Undated events are shown separately without bounds, or counted as excluded
+    with bounds. A mismatch between console and JSONL event suffixes fails rather
+    than guessing dates; use matching snapshots or pass JSONL directly. Save the
+    output and exact window as evidence, and disclose missing timestamp coverage.
+    No database or credentials are opened, and no daemon is launched or changed.
+    Synthetic CI coverage lives in `tests/unit/lib/daemon-lag-tally.test.ts` in
+    the daemon package; run just that file locally.
 
 ## Evidence
 

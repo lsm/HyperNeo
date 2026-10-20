@@ -57,6 +57,9 @@ import { createDatabaseOperationCatalog } from '../operations/database-catalog.t
 import { describeOperationSignatures } from '../operations/discovery.ts';
 import { operationsCapabilityContribution } from '../operations/door-briefing.ts';
 import { createOperationMcpServer } from '../operations/mcp-server.ts';
+import { invokeOperation } from '../operations/invoke.ts';
+import type { NeoCoordinatorTurn } from '../neo/coordinator-turn.ts';
+import { replyAtNeoTurnEnd } from '../neo/turn-end-reply.ts';
 import type { OperationRegistry, OperationRegistryProvider } from '../operations/registry.ts';
 import { SettingsManager } from '../settings-manager.ts';
 import { createDirectQueryStartGuard } from '../tasks/direct-query-start-guard.ts';
@@ -361,6 +364,20 @@ export class AgentSession
   private readonly recordOperationRefusal = (
     refusal: Parameters<OperationRefusalRepository['record']>[0]
   ) => new OperationRefusalRepository(this.db.getDatabase()).record(refusal, this.session.id);
+
+  async replyAtNeoTurnEnd(turn: NeoCoordinatorTurn, text: string | undefined): Promise<unknown> {
+    const caller = {
+      ...resolveCallerIdentity(this.callerScopeResolver, this.session.id),
+      source: 'mcp' as const,
+      neoTurn: turn.identity(),
+    };
+    return replyAtNeoTurnEnd(caller.neoTurn, turn.latestHumanInput(), text, {
+      db: this.db.getDatabase(),
+      since: turn.openedAt,
+      publish: (reply) =>
+        invokeOperation(this.resolveOperationRegistry(), 'neo.publication.publish', reply, caller),
+    });
+  }
 
   createNeoTurnMcpServer(
     getTurn: () => import('../operations/registry.ts').OperationCaller['neoTurn']
