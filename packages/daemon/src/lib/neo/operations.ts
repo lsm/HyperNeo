@@ -1,3 +1,4 @@
+import { createNeoRuleQuestions } from './rule-questions.ts';
 import { createPackPreferenceQuestions } from './packs/preference-questions.ts';
 import { NeoSessionMessageRepository } from '../../storage/repositories/neo-session-message-repository.ts';
 import {
@@ -228,6 +229,7 @@ const SaveRules = z.object({
   add: z.array(StandingRule).max(NEO_STANDING_RULES_MAX).optional(),
   remove: z.array(StandingRule).max(NEO_STANDING_RULES_MAX).optional(),
   from: z.string().trim().min(1).max(2000).optional(),
+  triggerId: z.string().startsWith('human:').min(7).optional(),
 });
 const RulesResult = z.union([
   Failure,
@@ -268,23 +270,40 @@ export function neoSnapshotRevision<T extends { ok: boolean }>(
 export const NEO_HUMAN_TURN_REFUSAL =
   'Neo can do this only while answering the human’s own chat message, not from a system note.';
 
-function readNeoRuleSource(service: NeoService, caller: OperationCaller): string | null {
+function readNeoRuleSource(
+  service: NeoService,
+  caller: OperationCaller,
+  messageId?: string
+): string | null {
   if (caller.source === 'rpc' && caller.principal === 'local') return null;
   if (!caller.sessionId || !caller.neoTurn) return '';
   return neoPromptText(
     service.db
       .getSDKMessageRepo()
-      .getStoredPromptsByUuid(caller.sessionId, neoTurnOrigin(caller.neoTurn))
+      .getStoredPromptsByUuid(caller.sessionId, messageId ?? neoTurnOrigin(caller.neoTurn))
       .filter((message) => (message as { inputKind?: unknown }).inputKind === 'human')
   );
 }
 
-function isNeoHumanTurn(service: NeoService, caller: OperationCaller): boolean {
+function isNeoHumanTurn(service: NeoService, caller: OperationCaller, messageId?: string): boolean {
   if (caller.source === 'rpc' && caller.principal === 'local') return true;
   const turn = caller.neoTurn;
   if (!turn?.isLive() || !caller.sessionId) return false;
+  if (service.db.getSession(caller.sessionId)?.status !== 'active') return false;
+  if (messageId)
+    return (
+      !!turn.hasInput?.(messageId) &&
+      service.db.getSDKMessageRepo().getUserSendStatus(caller.sessionId, messageId) ===
+        'consumed' &&
+      service.db
+        .getSDKMessageRepo()
+        .getStoredPromptsByUuid(caller.sessionId, messageId)
+        .some(
+          (message) =>
+            message.type === 'user' && (message as { inputKind?: unknown }).inputKind === 'human'
+        )
+    );
   return (
-    service.db.getSession(caller.sessionId)?.status === 'active' &&
     service.ownsHumanMessage(caller) &&
     hasNeoHumanWorkInput(
       caller,
@@ -296,13 +315,14 @@ function isNeoHumanTurn(service: NeoService, caller: OperationCaller): boolean {
 function admitNeoCaller(
   service: NeoService,
   caller: OperationCaller,
-  name: string
+  name: string,
+  humanMessageId?: string
 ): { value: OperationCaller } | { reason: Rejection } {
   if (caller.source === 'rpc' && caller.principal === 'local') return { value: caller };
   const binding = caller.sessionId ? service.repo.getBindingBySession(caller.sessionId) : null;
   if (caller.source !== 'mcp' || binding?.kind !== 'neo')
     return { reason: { ok: false, reason: 'This operation belongs to Neo.' } };
-  if (name === 'neo.rule.save' && !isNeoHumanTurn(service, caller))
+  if (name === 'neo.rule.save' && !isNeoHumanTurn(service, caller, humanMessageId))
     return { reason: { ok: false, reason: NEO_HUMAN_TURN_REFUSAL } };
   if (['neo.open', 'neo.restart', 'neo.session.track'].includes(name))
     return { reason: { ok: false, reason: 'This action needs the user.' } };
@@ -517,13 +537,18 @@ export function createNeoOperations(service: NeoService) {
   const saveRules = (superpipe({})('neo.rule.save') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
-      (caller: OperationCaller) => admitNeoCaller(service, caller, 'neo.rule.save'),
-      'caller',
+      (input: z.infer<typeof SaveRules>, caller: OperationCaller) =>
+        admitNeoCaller(service, caller, 'neo.rule.save', input.triggerId?.slice('human:'.length)),
+      ['input', 'caller'],
       'result:save'
     )
     .pipe(
       (input: z.infer<typeof SaveRules>, caller: OperationCaller) =>
-        requireNeoRuleCitation(input, input.from, readNeoRuleSource(service, caller)),
+        requireNeoRuleCitation(
+          input,
+          input.from,
+          readNeoRuleSource(service, caller, input.triggerId?.slice('human:'.length))
+        ),
       ['input', 'caller'],
       'result:save'
     )
@@ -695,6 +720,7 @@ export function createNeoOperations(service: NeoService) {
     ),
     createNeoConversationImageReadOperation(service.repo, service.asks),
     createNeoDraftRecoveryOperation(service),
+    ...createNeoRuleQuestions(service),
     ...createPackPreferenceQuestions(service.db.getDatabase(), service.todos, () =>
       service.installedPacks()
     ),
@@ -750,7 +776,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.rule.save',
       description:
-        'Add or remove standing rules (neo.snapshot standingRules); the other rules stay. Only while answering the human’s own message, when they state or correct something lasting about how work should go (what done means, where a project lives, which app to use) or answer your question about it: pass add with the new rule, remove with the exact text of a rule they replaced or withdrew, and from with the words of their message that state it, quoted exactly. Up to 20 rules of up to 500 characters.',
+        'Prefer neo.rule.ask for human confirmation first. Directly add or remove standing rules (neo.snapshot standingRules); the other rules stay. Only while answering the human’s own message, when they state or correct something lasting about how work should go (what done means, where a project lives, which app to use) or answer your question about it: pass add with the new rule, remove with the exact text of a rule they replaced or withdrew, and from with the words of their message that state it, quoted exactly. For a consumed human message arriving mid-turn, pass its human-input triggerId; from must quote that message. Up to 20 rules of up to 500 characters.',
       inputSchema: SaveRules,
       resultSchema: RulesResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

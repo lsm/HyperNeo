@@ -501,7 +501,10 @@ describe('neo.rule.save edits', () => {
   test.each(['old', 'unconsumed', 'system'])(
     'a guessed %s input cannot authorize a direct save',
     async (kind) => {
-      if (kind !== 'unconsumed') db.getSDKMessageRepo().markDeliveryConsumedByUuid(root, 'ask-1');
+      db.getSDKMessageRepo().updateMessageStatus(
+        [db.getSDKMessageRepo().findMessageIdByUuid(root, 'ask-1')!],
+        kind === 'unconsumed' ? 'enqueued' : 'consumed'
+      );
       const turn = new NeoCoordinatorTurn(db, root, { isLive: () => true });
       turn.bind('note-1');
       if (kind !== 'old') turn.noteSteered(kind === 'system' ? 'note-1' : 'ask-1');

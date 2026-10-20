@@ -26,6 +26,8 @@ export const NEO_OPERATION_NAMES = [
   'neo.question.get',
   'neo.question.retire',
   'neo.restart',
+  'neo.rule.applyAnswer',
+  'neo.rule.ask',
   'neo.rule.save',
   'neo.session.archive',
   'neo.session.mute',

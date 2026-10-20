@@ -127,6 +127,52 @@ describe('human-approved standing rules', () => {
     ).toMatchObject({ value: { ok: false, reason: 'question_closed' } });
     expect(await propose('new-request')).not.toBe(id);
   });
+  test('a stale cap cannot discard another rule or record consent for a failed edit', async () => {
+    const id = await propose('cap-change', {
+      add: [...edit.add, 'One more rule.'],
+      remove: edit.remove,
+    });
+    const current = [
+      'Old synthetic rule.',
+      ...Array.from({ length: 19 }, (_, i) => `Other rule ${i}.`),
+    ];
+    db.updateGlobalSettings({ neo: { standingRules: current } });
+    expect(
+      await invoke('neo.question.answer', { questionId: id, answer: 'yes' }, human)
+    ).toMatchObject({ kind: 'failed' });
+    expect(saved()).toEqual(current);
+    expect(service.todos.getQuestion(id)?.state).toBe('open');
+  });
+  test('an unbound human yes and a changed question body cannot authorize rule edits', async () => {
+    const before = saved();
+    const id = await propose();
+    db.getDatabase()
+      .prepare("UPDATE neo_questions SET text='A different change' WHERE id=?")
+      .run(id);
+    expect(
+      await invoke('neo.question.answer', { questionId: id, answer: 'yes' }, human)
+    ).toMatchObject({ kind: 'failed' });
+    expect(service.todos.getQuestion(id)?.state).toBe('open');
+    service.todos.askQuestion(
+      'unbound',
+      'ask',
+      {
+        text: 'Unbound question',
+        kind: 'yesno',
+        options: null,
+        multiple: false,
+        noLabel: 'No',
+        yesLabel: 'Yes',
+        startTodos: null,
+      },
+      1
+    );
+    await invoke('neo.question.answer', { questionId: 'unbound', answer: 'yes' }, human);
+    expect(await invoke('neo.rule.applyAnswer', { questionId: 'unbound' })).toMatchObject({
+      value: { ok: false },
+    });
+    expect(saved()).toEqual(before);
+  });
   test('application failure rolls back consent and all rule edits', async () => {
     const before = saved();
     const id = await propose();
