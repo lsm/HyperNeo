@@ -125,36 +125,6 @@ describe('neo.question operations', () => {
     expect(store.getTodo(rows.id)).toMatchObject({ state: 'todo', blockedBy: null });
   });
 
-  test('answering a start question retires a duplicate one covering the same todos', async () => {
-    const { store, call, daemonStart, fix, rows } = setup();
-    const first = daemonStart([fix.id, rows.id], 'Start these 2?');
-    const other = daemonStart([rows.id], 'Only this?');
-    const second = daemonStart([fix.id, rows.id], 'Build it?');
-    await call('neo.question.answer', { questionId: second.id, answer: [fix.id, rows.id] }, human);
-    expect(store.getQuestion(first.id)).toMatchObject({
-      state: 'retired',
-      retiredReason: 'answered by another start question',
-      replacedBy: second.id,
-    });
-    expect(store.getQuestion(other.id)).toMatchObject({ state: 'retired', replacedBy: second.id });
-  });
-
-  test('a chat reply to a start question starts nothing, so its duplicate stays open', async () => {
-    const { store, daemonStart, fix, rows } = setup();
-    const first = daemonStart([fix.id, rows.id], 'Start these 2?');
-    const second = daemonStart([fix.id, rows.id], 'Build it?');
-    store.answerQuestion(second, 'not yet', 'chat', 3);
-    expect(store.getQuestion(first.id)?.state).toBe('open');
-  });
-
-  test('a start question that covers todos the answer did not is left open', async () => {
-    const { store, call, daemonStart, fix, rows } = setup();
-    const wider = daemonStart([fix.id, rows.id], 'Start these 2?');
-    const narrow = daemonStart([fix.id], 'Start this?');
-    await call('neo.question.answer', { questionId: narrow.id, answer: [fix.id] }, human);
-    expect(store.getQuestion(wider.id)?.state).toBe('open');
-  });
-
   test('tells Neo which ticked todos did not start', async () => {
     const { call, daemonStart, told, refused, fix, rows } = setup();
     refused.add(rows.id);

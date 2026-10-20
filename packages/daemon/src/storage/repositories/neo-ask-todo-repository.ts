@@ -356,8 +356,6 @@ export class NeoAskTodoRepository {
         )
         .run(JSON.stringify(answer), by, now, question.id).changes;
       if (answered) this.releaseStartTodos(question.id, now);
-      if (answered && question.kind === 'start' && Array.isArray(answer))
-        this.retireCoveredStartQuestions(question);
       return answered;
     })();
     if (!changed) return null;
@@ -403,20 +401,6 @@ export class NeoAskTodoRepository {
       .prepare("UPDATE neo_questions SET state = 'retired' WHERE ask_id = ? AND state = 'open'")
       .run(askId);
     this.touchAsk(askId, now);
-  }
-
-  private retireCoveredStartQuestions(answered: NeoQuestion): void {
-    this.db
-      .prepare(
-        `UPDATE neo_questions SET state = 'retired',
-           retired_reason = 'answered by another start question', replaced_by = ?1
-         WHERE ask_id = ?2 AND id != ?1 AND state = 'open' AND kind = 'start'
-           AND start_todos IS NOT NULL AND NOT EXISTS (
-             SELECT 1 FROM json_each(start_todos) AS own
-              WHERE own.value NOT IN (SELECT value FROM json_each(?3))
-           )`
-      )
-      .run(answered.id, answered.askId, JSON.stringify(answered.startTodos ?? []));
   }
 
   private releaseStartTodos(questionId: string, now: number): void {
