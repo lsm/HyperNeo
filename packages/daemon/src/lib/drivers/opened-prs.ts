@@ -1,7 +1,5 @@
 const PR_URL = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/g;
 const PR_CREATE = /(?:^|\\n|[^\w-])gh\s+pr\s+create\b/;
-const PR_ARTIFACT =
-  /attach_artifact[^)]*?pull_request[^)]*?(https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+)/g;
 export const WORK_OPENED_PRS_MAX = 10;
 
 export function keepOpenedPrs(urls: readonly string[]): string[] {
@@ -44,12 +42,37 @@ export function claudeOpenedPrs(lines: readonly string[]): string[] {
   return keepOpenedPrs(urls);
 }
 
+function artifactPrs(line: string): string[] {
+  if (!line.includes('attach_artifact') || !line.includes('pull_request')) return [];
+  const urls: string[] = [];
+  let start = 0;
+  while (start < line.length) {
+    const end = line.indexOf(')', start);
+    const segment = line.slice(start, end < 0 ? undefined : end);
+    let at = 0;
+    while (at < segment.length) {
+      const attach = segment.indexOf('attach_artifact', at);
+      if (attach < 0) break;
+      const kind = segment.indexOf('pull_request', attach + 'attach_artifact'.length);
+      if (kind < 0) break;
+      PR_URL.lastIndex = kind + 'pull_request'.length;
+      const match = PR_URL.exec(segment);
+      if (!match) break;
+      urls.push(match[0]);
+      at = PR_URL.lastIndex;
+    }
+    if (end < 0) break;
+    start = end + 1;
+  }
+  return urls;
+}
+
 export function codexOpenedPrs(lines: readonly string[]): string[] {
   if (!lines.some((line) => PR_CREATE.test(line) || line.includes('attach_artifact'))) return [];
   const creating = new Set<unknown>();
   const urls: string[] = [];
   for (const line of lines.filter(relevant)) {
-    urls.push(...[...line.matchAll(PR_ARTIFACT)].map((match) => match[1]!));
+    urls.push(...artifactPrs(line));
     const entry = parse(line);
     const payload = (entry?.payload ?? {}) as Record<string, unknown>;
     if (entry?.type !== 'response_item' || typeof payload.type !== 'string') continue;
@@ -59,4 +82,15 @@ export function codexOpenedPrs(lines: readonly string[]): string[] {
       urls.push(...urlsIn(payload.output));
   }
   return keepOpenedPrs(urls);
+}
+
+export function createCodexPrReader() {
+  const cache = new Map<string, { version: string; urls: string[] }>();
+  return (path: string, version: string, lines: readonly string[]): string[] => {
+    const cached = cache.get(path);
+    if (cached?.version === version) return [...cached.urls];
+    const urls = codexOpenedPrs(lines);
+    cache.set(path, { version, urls });
+    return [...urls];
+  };
 }
