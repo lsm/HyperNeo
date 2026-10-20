@@ -114,3 +114,49 @@ describe('pack settings operations', () => {
     });
   });
 });
+
+test('validates every declared type and keeps false, zero, empty globs and logins intact', async () => {
+  service.filePacks = [
+    {
+      id: 'synthetic',
+      describe: 'Synthetic',
+      instructions: () => null,
+      preferences: {
+        flag: { scope: 'project', type: { kind: 'boolean' }, default: true, ask: 'Flag?' },
+        count: {
+          scope: 'project',
+          type: { kind: 'number', min: 0, max: 2 },
+          default: 1,
+          ask: 'Count?',
+        },
+      },
+    },
+  ];
+  for (const [pack, key, value, valid] of [
+    ['synthetic', 'flag', false, true],
+    ['synthetic', 'flag', 'false', false],
+    ['synthetic', 'count', 0, true],
+    ['synthetic', 'count', -1, false],
+    ['synthetic', 'count', 3, false],
+    ['synthetic', 'count', Infinity, false],
+    ['coding', 'reviewBot', 'hyperneo-ai-test', true],
+    ['coding', 'reviewBot', 'a'.repeat(40), false],
+    ['coding', 'humanSignoff', [], true],
+    ['coding', 'humanSignoff', ['docs/**', 'label:needs-human'], true],
+  ] as const) {
+    const input = {
+      pack,
+      key,
+      value,
+      scope: { kind: pack === 'synthetic' ? 'project' : 'repo', key: 'synthetic' },
+    };
+    expect(await invoke('pack.preferences.set', input)).toMatchObject({ value: { ok: valid } });
+    if (valid)
+      expect(await invoke('pack.preferences.get', input)).toMatchObject({
+        value: { preference: { value } },
+      });
+  }
+  expect(await invoke('pack.preferences.list', { pack: 'unknown' })).toMatchObject({
+    value: { preferences: [] },
+  });
+});
