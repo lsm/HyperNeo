@@ -63,7 +63,7 @@ export function createNeoHomeOperations(
     defineOperation({
       name: 'neo.home.save',
       description:
-        'Save one curated document and commit locally. With a configured origin/upstream, pulls with rebase before writing and pushes afterward. A conflict aborts the rebase and preserves local files; push_failed retains the named local commit for retry. Refuses credential-like content, internal/ignored paths and dirty home changes. Direction and mandate require questionId: a matching human yes on a root-Neo question bound to the exact path and content SHA-256. Appends the confirmed decision and commits both files with Neo-Confirmed-By. Root Neo or the local user only; direct filesystem access requires an environment boundary.',
+        'Save one curated document and commit locally. With a configured origin/upstream, pulls with rebase before writing and pushes afterward. Network steps are noninteractive and stop after 30 seconds. A conflict aborts the rebase and preserves local files; push_failed retains the named local commit for retry. Refuses credential-like content, internal/ignored paths and dirty home changes. Direction and mandate require questionId: a matching human yes on a root-Neo question bound to the exact path and content SHA-256. Appends the confirmed decision and commits both files with Neo-Confirmed-By. Root Neo or the local user only; direct filesystem access requires an environment boundary.',
       inputSchema: HomeSaveInput,
       resultSchema: HomeSaveResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

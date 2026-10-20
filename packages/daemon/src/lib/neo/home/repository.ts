@@ -15,22 +15,58 @@ export class NeoHomeRepository {
   private pending: Promise<unknown> = Promise.resolve();
   constructor(
     readonly root: string,
-    private readonly projects: NeoRepository
+    private readonly projects: NeoRepository,
+    private readonly networkTimeoutMs = 30_000
   ) {}
 
-  private async git(args: string[], allowFailure = false) {
+  private async git(args: string[], allowFailure = false, network = false, action?: string) {
     const child = spawnProcess(['git', '-c', 'core.hooksPath=/dev/null', ...args], {
       cwd: this.root,
       stdout: 'pipe',
       stderr: 'pipe',
+      detached: network,
+      env: network
+        ? {
+            ...Object.fromEntries(
+              Object.entries(process.env).filter(
+                (entry): entry is [string, string] => entry[1] !== undefined
+              )
+            ),
+            GIT_TERMINAL_PROMPT: '0',
+            GIT_ASKPASS: '/usr/bin/false',
+            SSH_ASKPASS: '/usr/bin/false',
+            SSH_ASKPASS_REQUIRE: 'force',
+            GIT_SSH_COMMAND: 'ssh -oBatchMode=yes',
+            ...(action ? { GIT_REFLOG_ACTION: action } : {}),
+          }
+        : undefined,
     });
-    const [text, error, code] = await Promise.all([
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-      child.exited,
-    ]);
-    if (code && !allowFailure) throw new Error(`home git ${args[0]}: ${error.trim()}`);
-    return { code, text: text.trim(), error: error.trim() };
+    let timedOut = false;
+    const timer = network
+      ? setTimeout(() => {
+          timedOut = true;
+          try {
+            if (child.pid) process.kill(-child.pid, 'SIGKILL');
+            else child.kill('SIGKILL');
+          } catch {
+            child.kill('SIGKILL');
+          }
+        }, this.networkTimeoutMs)
+      : undefined;
+    try {
+      const [text, error, code] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ]);
+      const diagnostic = timedOut
+        ? `network timed out after ${this.networkTimeoutMs}ms`
+        : error.trim();
+      if (code && !allowFailure) throw new Error(`home git ${args[0]}: ${diagnostic}`);
+      return { code, text: text.trim(), error: diagnostic };
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   private async synchronize(): Promise<
@@ -57,8 +93,17 @@ export class NeoHomeRepository {
           reason: { ok: false, reason: 'sync_failed: finish the existing rebase before saving.' },
         };
     }
-    const pulled = await this.git(['pull', '--rebase', 'origin', branch], true);
+    const action = `neo-home-sync:${crypto.randomUUID()}`;
+    const pulled = await this.git(
+      ['-c', 'core.logAllRefUpdates=true', 'pull', '--rebase', 'origin', branch],
+      true,
+      true,
+      action
+    );
     if (pulled.code) {
+      const latest = await this.git(['reflog', 'show', '-1', '--format=%gs', 'HEAD'], true);
+      if (latest.code || !latest.text.startsWith(`${action} (`))
+        return { reason: { ok: false, reason: `sync_failed: ${pulled.error}` } };
       const aborted = await this.git(['rebase', '--abort'], true);
       return {
         reason: {
@@ -203,7 +248,7 @@ export class NeoHomeRepository {
     }
     const commit = (await this.git(['rev-parse', 'HEAD'])).text;
     if (synced.value) {
-      const pushed = await this.git(['push', 'origin', `HEAD:${synced.value}`], true);
+      const pushed = await this.git(['push', 'origin', `HEAD:${synced.value}`], true, true);
       if (pushed.code)
         return {
           ok: false,

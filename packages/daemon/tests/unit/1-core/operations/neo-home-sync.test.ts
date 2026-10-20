@@ -315,21 +315,33 @@ describe('Neo home save remote sync', () => {
         observed = join(fixture, 'network-env');
       await writeFile(
         executable,
-        `#!/bin/sh\nprintf '%s|%s|%s' "$GIT_TERMINAL_PROMPT" "$GIT_ASKPASS" "$GIT_SSH_COMMAND" > "${observed}"\nsleep 2\nexit 42\n`,
+        `#!/bin/sh\nprintf '%s|%s|%s' "$GIT_TERMINAL_PROMPT" "$GIT_ASKPASS" "$GIT_SSH_COMMAND" > "${observed}"\nsleep 4\nexit 42\n`,
         { mode: 0o755 }
       );
       await git(root, 'config', `remote.origin.${transport}`, executable);
-      home = new NeoHomeRepository(root, repo, 500);
-      const start = Date.now();
+      home = new NeoHomeRepository(root, repo, 1000);
       const pending = call('neo.home.save', input);
+      for (let i = 0; i < 300; i++) {
+        if (
+          await readFile(observed).then(
+            () => true,
+            () => false
+          )
+        )
+          break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      await readFile(observed);
+      const start = Date.now();
       const queuedRead = call('neo.home.read', { path: 'README.md' });
       const failed = await pending;
       expect(await queuedRead).toMatchObject({ ok: true });
-      expect(Date.now() - start).toBeLessThan(1500);
+      expect(Date.now() - start).toBeLessThan(3000);
       expect(failed).toMatchObject({ ok: false, reason: expect.stringContaining('timed out') });
       expect(await readFile(observed, 'utf8')).toBe('0|/usr/bin/false|ssh -oBatchMode=yes');
       expect(await git(root, 'status', '--porcelain')).toBe('');
-    }
+    },
+    10000
   );
   test('keeps homes without an origin local', async () => {
     await git(root, 'remote', 'remove', 'origin');
