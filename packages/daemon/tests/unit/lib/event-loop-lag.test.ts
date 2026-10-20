@@ -24,6 +24,24 @@ describe('startEventLoopLagLog', () => {
   });
 });
 
+describe('startEventLoopLagLog startup', () => {
+  test('does not blame a block on SQL that ran before the log started', async () => {
+    const clock = [0, 1_510, 1_520];
+    const slow = [
+      { durationMs: 1_835, sql: 'update neo_publications set payload_json = replace (…)' },
+    ];
+    const lines: string[] = [];
+    const stop = startEventLoopLagLog((line) => lines.push(line), {
+      now: () => clock.shift() ?? 1_520,
+      tickMs: 10,
+      takeSlowest: () => slow.shift() ?? null,
+    });
+    await settle();
+    stop();
+    expect(lines).toEqual(['[Daemon] Event loop blocked for 1500ms']);
+  });
+});
+
 describe('takeSlowestQuery', () => {
   test('returns the slowest statement over the slow threshold once, then forgets it', () => {
     const observer = new SQLiteQueryObserver(
