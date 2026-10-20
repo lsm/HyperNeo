@@ -221,6 +221,64 @@ describe('NeoAskTodoRepository.retireQuestions', () => {
   });
 });
 
+describe('NeoAskTodoRepository start question pruning', () => {
+  const startQuestion = (store: NeoAskTodoRepository, startTodos: string[]) =>
+    store.askQuestion(
+      'q-start',
+      'ask',
+      {
+        text: 'Start these 2?',
+        kind: 'start',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos,
+      },
+      1
+    );
+
+  test('a todo a check closes leaves the open start question', () => {
+    const { store, fix, rows } = setup();
+    startQuestion(store, [fix.id, rows.id]);
+    store.updateTodo(fix, { state: 'done', evidence: '#1 merged', finishedAt: 2 }, 2);
+    expect(store.getQuestion('q-start')).toMatchObject({ state: 'open', startTodos: ['t2'] });
+  });
+
+  test('a todo started elsewhere or moved to another ask leaves it too', () => {
+    const { store, fix, rows } = setup();
+    startQuestion(store, [fix.id, rows.id]);
+    store.claimStart(fix, 2);
+    expect(store.getQuestion('q-start')?.startTodos).toEqual(['t2']);
+    store.openAsk({
+      id: 'other',
+      projectId: null,
+      sessionId: 'neo-a',
+      originMessageId: 'm2',
+      title: 'Other',
+      request: 'Other',
+      createdAt: 1,
+    });
+    store.moveTodo(rows, 'other', 'lsm/other', 3);
+    expect(store.getQuestion('q-start')).toMatchObject({ state: 'retired', startTodos: [] });
+  });
+
+  test('once every todo it lists is done or removed, it is retired and the ask stops waiting', () => {
+    const { store, fix, rows } = setup();
+    startQuestion(store, [fix.id, rows.id]);
+    store.updateTodo(rows, { state: 'blocked', blockedBy: 'question' }, 2);
+    expect(store.getQuestion('q-start')?.startTodos).toEqual(['t1', 't2']);
+    store.updateTodo(fix, { state: 'done', evidence: '#1 merged', finishedAt: 2 }, 2);
+    store.updateTodo(rows, { state: 'removed', reason: 'Replaced' }, 3);
+    expect(store.getQuestion('q-start')).toMatchObject({
+      state: 'retired',
+      retiredReason: 'nothing left to start',
+      startTodos: [],
+    });
+    expect(store.listQuestions('ask').filter((q) => q.state === 'open')).toEqual([]);
+  });
+});
+
 describe('planNeoQuestionAnswer', () => {
   test('refuses a missing question', () => {
     expect(planNeoQuestionAnswer(null, 'yes')).toEqual({
