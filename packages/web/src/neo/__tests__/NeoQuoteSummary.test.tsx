@@ -28,7 +28,13 @@ const publication: NeoPublication = {
   createdAt: '2026-10-19T12:00:00Z',
 };
 
-function Chat() {
+function Chat({
+  summary = publication.shortText,
+  storedExcerpt,
+}: {
+  summary?: string;
+  storedExcerpt?: string;
+}) {
   const [quote, setQuote] = useState<NeoQuote>();
   const [asks, setAsks] = useState<NeoConversationAsk[]>([]);
   const [draft, setDraft] = useState('Looks good.');
@@ -49,7 +55,7 @@ function Chat() {
     {
       conversationId,
       status: 'ready',
-      items: [publication],
+      items: [{ ...publication, shortText: summary }],
       hasMore: false,
       hasEarlier: false,
       nextAfter: 1,
@@ -62,7 +68,12 @@ function Chat() {
         requestId: 'reply',
         askOrigin: { sessionId, messageId: 'reply' },
         content: submission.text,
-        replyTo: submission.quote?.replyTo,
+        replyTo: submission.quote?.replyTo
+          ? {
+              ...submission.quote.replyTo,
+              ...(storedExcerpt ? { author: 'neo' as const, excerpt: storedExcerpt } : {}),
+            }
+          : undefined,
         sequence: 1,
         createdAt: '2026-10-19T12:01:00Z',
       },
@@ -90,6 +101,21 @@ function Chat() {
 afterEach(cleanup);
 
 describe('Neo publication quote preview', () => {
+  it.each([300, 301, 500])(
+    'matches the saved excerpt for a %s-character summary',
+    async (length) => {
+      const expected = length === 300 ? 'a'.repeat(300) : `${'a'.repeat(300)}…`;
+      const { container } = render(<Chat summary={'a'.repeat(length)} storedExcerpt={expected} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Reply to Neo’s message' }));
+      const preview = screen.getByRole('region', { name: /^Replying to Neo/ });
+      expect(preview.querySelector('.line-clamp-2')?.textContent).toBe(expected);
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      await waitFor(() => expect(container.querySelector('.neo-message-user')).toBeTruthy());
+      const sent = container.querySelector<HTMLElement>('.neo-message-user')!;
+      expect(within(sent).getByText(expected)).toBeTruthy();
+    }
+  );
+
   it.each(['button', 'menu'])(
     'uses the same summary before and after sending via %s',
     async (via) => {

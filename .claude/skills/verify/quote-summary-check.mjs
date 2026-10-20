@@ -19,7 +19,8 @@ const root = execFileSync(
 assert(root.startsWith('neo:'), 'Open root with rpc.ts neo.open first');
 const conversationId = root.slice(4);
 const publicationId = crypto.randomUUID();
-const shortText = 'The app is ready for review.';
+const shortText = process.env.VERIFY_QUOTE_LONG === '1' ? 'a'.repeat(350) : 'The app is ready for review.';
+const expected = process.env.VERIFY_QUOTE_LONG === '1' ? `${'a'.repeat(300)}…` : shortText;
 const fullText = '**The app:** Detailed implementation notes that belong in the expanded message.';
 const publication = {
   conversationId,
@@ -67,7 +68,7 @@ try {
     await sent.waitFor();
     const sentQuote = await sent.locator('[data-quote-bar] .line-clamp-2').innerText();
     await page.screenshot({ path: `${evidence}/${name}-${via}-sent.png`, fullPage: true });
-    results.push({ via, preview, sentQuote, expected: shortText, pass: preview === shortText && sentQuote === shortText });
+    results.push({ via, preview, sentQuote, expected, pass: preview === expected && sentQuote === expected });
     await composer.waitFor({ state: 'detached' });
   }
   writeFileSync(`${evidence}/${name}.json`, JSON.stringify(results, null, 2));
