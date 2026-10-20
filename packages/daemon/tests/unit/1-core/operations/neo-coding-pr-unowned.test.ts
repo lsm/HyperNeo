@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { wakeCodingUnownedPrs } from '../../../../src/lib/neo/packs/coding/pr-unowned.ts';
 import { describe, expect, test } from 'bun:test';
 import { createCodingPack } from '../../../../src/lib/neo/packs/coding/pack.ts';
 import { CodingPrEventRepository } from '../../../../src/lib/neo/packs/coding/pr-events.ts';
@@ -32,6 +36,7 @@ function setup() {
   const ledger = new CodingPrLedgerRepository(db);
   const wakes: { key: string; text: string }[] = [];
   let accepted = true;
+  let partial = false;
   let nodes: unknown[] = [];
   const makePack = () =>
     createCodingPack({
@@ -47,7 +52,7 @@ function setup() {
           rateLimit: { remaining: 4000 },
           repository: {
             nameWithOwner: repo,
-            open: { pageInfo: { hasNextPage: false }, nodes },
+            open: { pageInfo: { hasNextPage: partial }, nodes },
             done: { nodes: [] },
           },
         },
@@ -65,6 +70,9 @@ function setup() {
     db,
     ledger,
     wakes,
+    partial: (value: boolean) => {
+      partial = value;
+    },
     accept: (value: boolean) => {
       accepted = value;
     },
@@ -98,6 +106,12 @@ describe('coding pack newly unowned PR notifications', () => {
         expect(wakes[0].text).toContain(`${repo}#2`);
         for (const n of [3, 4, 5, 6, 7]) expect(wakes[0].text).not.toContain(`${repo}#${n}`);
       }
+      expect(db.prepare('SELECT key FROM pack_coding_pr_unowned ORDER BY key').all()).toEqual([
+        { key: 'neo-pr-unowned:synthetic/a#1' },
+        { key: 'neo-pr-unowned:synthetic/a#2' },
+        { key: 'neo-pr-unowned:synthetic/b#1' },
+        { key: 'neo-pr-unowned:synthetic/b#2' },
+      ]);
       await cycle([pr(1), pr(2)], ship + 180_000);
       expect(wakes).toHaveLength(1);
     } finally {
@@ -137,6 +151,27 @@ describe('coding pack newly unowned PR notifications', () => {
     }
   });
 
+  test('a partial read does not turn stale unowned rows into a new notification', async () => {
+    const { db, wakes, cycle, partial } = setup();
+    try {
+      db.prepare(`INSERT INTO pack_coding_pr_ledger
+        (repo,number,title,branch,head,state,state_since,read_at,created_at,author_is_bot)
+        VALUES ('synthetic/a',1,'Stale','b','h','unreviewed',?,?,?,0)`).run(
+        ship,
+        ship,
+        ship + 60_000
+      );
+      partial(true);
+      await cycle([pr(1)]);
+      expect(wakes).toEqual([]);
+      partial(false);
+      await cycle([pr(1)], ship + 180_000);
+      expect(wakes).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
   test('drafts become eligible later, with no repeat on later state changes', async () => {
     const { db, wakes, cycle } = setup();
     try {
@@ -169,6 +204,92 @@ describe('coding pack newly unowned PR notifications', () => {
       expect(wakes[2].text).not.toContain('synthetic/a#1');
       await cycle([pr(1), pr(2)], ship + 300_000);
       expect(wakes).toHaveLength(3);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe('coding pack unowned PR persistence', () => {
+  test('the activation cutoff is strict and does not reset when schema is reapplied', async () => {
+    const { db, wakes, cycle } = setup();
+    try {
+      const { activated_at: cutoff } = db
+        .prepare('SELECT activated_at FROM pack_coding_pr_unowned_state')
+        .get() as { activated_at: number };
+      createCodingPackTables(db, cutoff + 600_000);
+      expect(db.prepare('SELECT activated_at FROM pack_coding_pr_unowned_state').get()).toEqual({
+        activated_at: cutoff,
+      });
+      await cycle([
+        pr(1, { createdAt: new Date(cutoff).toISOString() }),
+        pr(2, { createdAt: new Date(cutoff + 1).toISOString() }),
+      ]);
+      expect(wakes).toHaveLength(1);
+      expect(wakes[0].text).not.toContain('synthetic/a#1 ');
+      expect(wakes[0].text).toContain('synthetic/a#2 ');
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a pending notice and once-only keys survive closing and reopening the database', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'coding-unowned-persistence-'));
+    const path = join(root, 'synthetic.db');
+    let db = new Database(path);
+    try {
+      createCodingPackTables(db, 10);
+      db.prepare(`INSERT INTO pack_coding_pr_ledger (repo,number,title,branch,head,state,state_since,read_at,created_at,author_is_bot)
+        VALUES ('synthetic/a',1,'Synthetic','b','h','unreviewed',20,20,11,0)`).run();
+      const pending = new CodingPrEventRepository(db).pendingUnowned(20);
+      expect(pending?.text).toContain('synthetic/a#1');
+      db.close();
+      db = new Database(path);
+      createCodingPackTables(db, 30);
+      const repo = new CodingPrEventRepository(db);
+      const sent: unknown[] = [];
+      await wakeCodingUnownedPrs(
+        repo,
+        async (key, text) => {
+          sent.push({ key, text });
+          return true;
+        },
+        30
+      );
+      expect(sent).toEqual([pending]);
+      db.prepare('UPDATE pack_coding_pr_ledger SET read_at = 40').run();
+      await wakeCodingUnownedPrs(
+        repo,
+        async (key, text) => {
+          sent.push({ key, text });
+          return true;
+        },
+        40
+      );
+      expect(sent).toHaveLength(1);
+    } finally {
+      db.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('upgrading the prior ledger preserves its rows and excludes unknown historical metadata', () => {
+    const db = new Database(':memory:');
+    try {
+      db.exec(`CREATE TABLE pack_coding_pr_ledger (
+        repo TEXT, number INTEGER, title TEXT, branch TEXT, head TEXT, state TEXT,
+        state_since INTEGER, closed_at INTEGER, owner TEXT, nudges INTEGER DEFAULT 0,
+        told_at INTEGER, read_at INTEGER, PRIMARY KEY(repo,number));
+        INSERT INTO pack_coding_pr_ledger (repo,number,title,read_at) VALUES ('synthetic/a',1,'Keep this row',1)`);
+      createCodingPackTables(db, 2);
+      expect(
+        db.prepare('SELECT title,created_at,author_is_bot FROM pack_coding_pr_ledger').get()
+      ).toEqual({
+        title: 'Keep this row',
+        created_at: null,
+        author_is_bot: 1,
+      });
+      expect(new CodingPrEventRepository(db).pendingUnowned(1)).toBeNull();
     } finally {
       db.close();
     }
