@@ -13,6 +13,11 @@ import type {
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { z } from 'zod';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
+import {
+  initializeProviders,
+  markBuiltInProviderDisabled,
+  markBuiltInProviderEnabled,
+} from '../../../../src/lib/providers/factory';
 import { AgentChildProcessRepository } from '../../../../src/storage/repositories/agent-child-process-repository';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository';
 import { runMigration264 } from '../../../../src/storage/schema/m264-agent-child-processes';
@@ -6350,6 +6355,63 @@ describe('AgentSession', () => {
         await expect(delivery).rejects.toBeInstanceOf(MessageDeliveryTerminalTurnError);
         await expect(delivery).rejects.toThrow("Provider 'custom:removed' is not registered");
       } finally {
+        db.close();
+      }
+    });
+
+    it('fails once and tells the user when an unpinned session has no registered provider', async () => {
+      const db = await createTestDb();
+      const registry = initializeProviders();
+      const anthropic = registry.get('anthropic');
+      markBuiltInProviderDisabled('anthropic');
+      registry.unregister('anthropic');
+      try {
+        const session = createTestSession(sessionId);
+        session.config = { ...session.config, model: 'model-no-provider-owns' };
+        db.createSession(session);
+        db.getSDKMessageRepo().saveUserMessage(
+          sessionId,
+          {
+            type: 'user',
+            uuid: steerUuid,
+            message: { role: 'user', content: steerContent },
+          } as unknown as SDKMessage,
+          'enqueued'
+        );
+        const bus = await createTestInternalEventBus();
+        const shown: string[] = [];
+        bus.subscribe('session.error', (event) => void shown.push(event.error), {
+          subscriberName: 'missing-provider-test',
+        });
+        const agentSession = new AgentSession(
+          db.getSession(sessionId) ?? session,
+          db,
+          { event: mock(async () => {}) } as unknown as MessageHub,
+          bus,
+          mock(async () => 'test-api-key'),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          { autoReplayPendingMessages: false }
+        );
+        agentSession.queryPromise = new Promise<void>(() => {});
+        const delivery = agentSession.driveDeliveryTurn(
+          steerUuid,
+          steerContent,
+          null,
+          false,
+          () => true
+        );
+        await expect(delivery).rejects.toBeInstanceOf(MessageDeliveryTerminalTurnError);
+        await expect(delivery).rejects.toThrow("Provider 'anthropic' is not registered");
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(shown).toEqual([
+          "Provider 'anthropic' is not registered. Log in or add an API key for it under Providers, or switch this session to another provider.",
+        ]);
+      } finally {
+        markBuiltInProviderEnabled('anthropic');
+        if (anthropic) registry.register(anthropic);
         db.close();
       }
     });
