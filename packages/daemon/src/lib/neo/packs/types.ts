@@ -57,7 +57,21 @@ export interface NeoTodoPack {
   ): string | null;
 }
 
+export interface NeoPackPreferenceDeclaration {
+  scope: 'global' | 'repo' | 'project';
+  type:
+    | { kind: 'enum'; values: readonly string[] }
+    | { kind: 'boolean' }
+    | { kind: 'number'; min?: number; max?: number }
+    | { kind: 'globs' }
+    | { kind: 'login' };
+  default: unknown;
+  ask: string;
+  askWhen?: { key: string; equals: unknown };
+}
+
 export interface NeoPack extends NeoPackBrief {
+  preferences?: Record<string, NeoPackPreferenceDeclaration>;
   todos?: NeoTodoPack;
   sweep?(now: number): Promise<void>;
   observeSessions?(sessions: readonly NeoSessionFacts[], now: number): void;
