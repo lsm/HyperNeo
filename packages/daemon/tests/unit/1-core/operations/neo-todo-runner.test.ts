@@ -80,11 +80,11 @@ function setup(packDone: boolean | null = null) {
     },
     changed: () => {},
   });
-  const add = (check: NeoTodo['check'] = null) => {
+  const add = (check: NeoTodo['check'] = null, instruction: string | null = 'Build the rows.') => {
     const todo = store.addTodo(
       crypto.randomUUID(),
       'ask',
-      { title: 'Rows', doneWhen: 'PR merged', check, instruction: 'Build the rows.', named: null },
+      { title: 'Rows', doneWhen: 'PR merged', check, instruction, named: null },
       1
     );
     sessions.create(todo.id, {
@@ -877,10 +877,11 @@ describe('stopped worker ladder', () => {
   const MIN = 60_000;
 
   async function stopped(
-    check: NeoTodo['check'] = { pack: 'coding', kind: 'pr_merged', params: {} }
+    check: NeoTodo['check'] = { pack: 'coding', kind: 'pr_merged', params: {} },
+    instruction: string | null = 'Build the rows.'
   ) {
     const harness = setup();
-    const todo = harness.add(check);
+    const todo = harness.add(check, instruction);
     await harness.runner.start(todo.id);
     harness.setStatus({
       ok: true,
@@ -948,6 +949,17 @@ describe('stopped worker ladder', () => {
       blockedReason: 'Its session stopped 90 min ago and nobody ticked it after 2 reminders.',
     });
     expect(h.told).toHaveLength(4);
+    h.clock.mockRestore();
+    h.db.close();
+  });
+
+  test("a tracked human session is the human's own work: no reminder and no block", async () => {
+    const h = await stopped(null, null);
+    const told = h.told.length;
+    for (const minutes of [30, 60, 90, 120]) await h.at(minutes);
+    expect(h.sends()).toEqual([]);
+    expect(h.told).toHaveLength(told);
+    expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
     h.clock.mockRestore();
     h.db.close();
   });
