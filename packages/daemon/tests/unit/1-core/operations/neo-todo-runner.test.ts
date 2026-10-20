@@ -882,14 +882,18 @@ describe('stopped worker ladder', () => {
   ) {
     const harness = setup();
     const todo = harness.add(check, instruction);
-    await harness.runner.start(todo.id);
+    if (instruction) await harness.runner.start(todo.id);
+    else {
+      harness.sessions.recordRef(todo.id, { adapter: 'hyperneo', id: 'w' }, 1_000);
+      harness.store.updateTodo(todo, { state: 'doing', startedAt: 1_000, report: 'Working.' }, 1);
+    }
     harness.setStatus({
       ok: true,
       value: {
         status: 'done',
         lastActivityAt: 2_000,
         exchange: [
-          { at: 1_500, role: 'user', text: String(harness.calls[0].input.message) },
+          { at: 1_500, role: 'user', text: String(harness.calls[0]?.input.message ?? 'Hi') },
           { at: 2_000, role: 'agent', text: 'Pushed the first half.' },
         ],
       },

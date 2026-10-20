@@ -534,7 +534,14 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     const waiting = deps
       .packs()
       .some((pack) => pack.id === todo.check?.pack && pack.todos?.waiting?.(todo));
-    if (todo.state !== 'doing' || !todo.report || !ref || ask?.status !== 'open' || waiting) {
+    if (
+      todo.state !== 'doing' ||
+      !todo.instruction ||
+      !todo.report ||
+      !ref ||
+      ask?.status !== 'open' ||
+      waiting
+    ) {
       idle.delete(todo.id);
       return;
     }
