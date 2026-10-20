@@ -1,6 +1,6 @@
 # Worker handoff: preserve the report, simplify delivery
 
-Status: human approved (question13e4f9b2); implementation ships in the five PRs below. Scope:
+Status: human approved (question 13e4f9b2); implementation ships in the five PRs below. Scope:
 local HyperNeo worker → Neo handoff, with existing remote routing kept intact.
 
 ## Evidence and diagnosis
@@ -55,10 +55,10 @@ hashing and delivery receipts survive restart and retries without duplicate send
 
 PR1 provides `handoff.publish {name}` and `handoff.read {reference, offset?, length?}`.
 The worker receives `HYPERNEO_HANDOFF_DIR` as its explicit SDK draft write root.
-Names are single non-secret filenames of at most128 ASCII characters; file
+Names are single non-secret filenames of at most 128 ASCII characters; file
 contents may be arbitrary bytes. Content-addressed published paths embed SHA-256
 and retain their originating session and persistent local daemon id. Reads hash
-the entire descriptor stream before returning a base64 chunk (maximum256KiB);
+the entire descriptor stream before returning a base64 chunk (maximum 256 KiB);
 `nextOffset`/`complete` allow complete retrieval without trimming. Neo native Read
 uses the same hash preflight. Drafts, outbox parent directories, searches/shell
 reads of private daemon data and secret filenames remain outside its exception.
