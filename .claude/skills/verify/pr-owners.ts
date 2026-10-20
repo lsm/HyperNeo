@@ -54,14 +54,25 @@ type Session = {
   owned: string[];
   prs: string[];
   dismissed: string[];
+  sidebar?: boolean;
 };
 const sessions: Session[] = [];
 
+const old = new Map<string, string[]>();
+const table = (name: string) =>
+  live.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name);
+const opened = table('pack_coding_session_facts')
+  ? 'SELECT value AS url, ref FROM pack_coding_session_facts, json_each(opened)'
+  : table('pack_coding_session_prs')
+    ? 'SELECT url, ref FROM pack_coding_session_prs'
+    : null;
+for (const row of opened ? (live.prepare(opened).all() as { url: string; ref: string }[]) : [])
+  old.set(row.ref, [...(old.get(row.ref) ?? []), row.url]);
 const { createCodingClaudeOwnerReader } = await import(
   '../../../packages/daemon/src/lib/neo/packs/coding/claude-pr-owners.ts'
 );
 for (const value of await createCodingClaudeOwnerReader()()) {
-  sessions.push(claudeOwnerSession(value));
+  sessions.push(claudeOwnerSession(value, old.get(JSON.stringify(value.ref))));
 }
 const codexPath = join(homedir(), '.codex/state_5.sqlite');
 const codex = new Database(`file:${codexPath}?mode=ro`, { readonly: true });
@@ -80,16 +91,6 @@ for (const { id } of codex
     dismissed: [],
   });
 }
-const old = new Map<string, string[]>();
-const table = (name: string) =>
-  live.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name);
-const opened = table('pack_coding_session_facts')
-  ? 'SELECT value AS url, ref FROM pack_coding_session_facts, json_each(opened)'
-  : table('pack_coding_session_prs')
-    ? 'SELECT url, ref FROM pack_coding_session_prs'
-    : null;
-for (const row of opened ? (live.prepare(opened).all() as { url: string; ref: string }[]) : [])
-  old.set(row.ref, [...(old.get(row.ref) ?? []), row.url]);
 for (const row of live
   .prepare(
     `SELECT id, COALESCE(worktree_branch, git_branch) AS branch, COALESCE(worktree_path, workspace_path) AS folder,

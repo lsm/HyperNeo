@@ -1,3 +1,7 @@
+import { execFileSync } from 'node:child_process';
+import { readCodeIdentity } from '../../../packages/daemon/src/lib/drivers/code-identity.ts';
+import { planCodingPrOwner } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
+import { claudeOwnerSession } from './pr-owner-session.ts';
 import { strict as assert } from 'node:assert';
 import { appendFileSync, existsSync, mkdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -19,9 +23,30 @@ export async function verifySyntheticPrOwners(runText: string) {
   const path = join(run, 'data/owners.db');
   assert(!existsSync(path));
   const scope = join(run, 'sessions/account/scope');
-  const project = join(run, 'projects/-synthetic');
+  const folder = join(run, 'workspace');
+  const project = join(run, 'projects', folder.replace(/[/.]/g, '-'));
   for (const dir of [scope, project, join(run, 'home'), join(run, 'data')])
     mkdirSync(dir, { recursive: true });
+  const git = (args: string[]) =>
+    execFileSync('git', args, {
+      env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
+    });
+  git(['init', '-q', folder]);
+  git(['-C', folder, 'remote', 'add', 'origin', 'git@github.com:synthetic/cart-sandbox.git']);
+  git([
+    '-C',
+    folder,
+    '-c',
+    'core.hooksPath=/dev/null',
+    '-c',
+    'user.name=Synthetic',
+    '-c',
+    'user.email=synthetic@example.invalid',
+    'commit',
+    '--allow-empty',
+    '-qm',
+    'Synthetic root',
+  ]);
   const url = (number: number) => `https://github.com/synthetic/cart-sandbox/pull/${number}`;
   const operation = (action: string, number: number) =>
     JSON.stringify({
@@ -52,7 +77,7 @@ export async function verifySyntheticPrOwners(runText: string) {
       JSON.stringify({
         sessionId: `local_${i}`,
         cliSessionId: `cli-${i}`,
-        cwd: '/synthetic',
+        cwd: folder,
         lastActivityAt: 1000 - i,
         ...(i === 3 ? { branch: 'b7' } : {}),
         ...(i === 4
@@ -86,6 +111,15 @@ export async function verifySyntheticPrOwners(runText: string) {
   };
   ledger.observeSessions([watcher], now);
 
+  let identityReads = 0;
+  const readClaudeOwners = createCodingClaudeOwnerReader(
+    join(run, 'sessions'),
+    join(run, 'projects'),
+    async (folder) => {
+      identityReads++;
+      return readCodeIdentity(folder);
+    }
+  );
   const pack = createCodingPack({
     readPrs: async () => [],
     todoPrs: new CodingTodoPrRepository(db),
@@ -101,11 +135,7 @@ export async function verifySyntheticPrOwners(runText: string) {
       },
     },
     projectRepos: () => ['synthetic/cart-sandbox'],
-    readClaudeOwners: createCodingClaudeOwnerReader(
-      join(run, 'sessions'),
-      join(run, 'projects'),
-      async () => ({ remotes: ['git@github.com:synthetic/cart-sandbox.git'] })
-    ),
+    readClaudeOwners,
     readLedgerRepo: async () => ({
       data: {
         rateLimit: { remaining: 4000 },
@@ -153,13 +183,28 @@ export async function verifySyntheticPrOwners(runText: string) {
     const elapsedMs = performance.now() - start;
     await pause();
     const owners = ledger.snapshot(null, now).map((row) => ({ pr: row.pr, ownerId: row.ownerId }));
+    const replay = (await readClaudeOwners()).map((value) =>
+      claudeOwnerSession(value, value.ref.id === watcher.ref.id ? watcher.openedPrs : [])
+    );
+    const ledgerRows = db
+      .prepare('SELECT repo, number, branch, owner FROM pack_coding_pr_ledger')
+      .all() as { repo: string; number: number; branch: string; owner: string | null }[];
+    for (const row of ledgerRows)
+      assert.equal(planCodingPrOwner({ ...row, owner: null }, new Map(), replay), row.owner);
+    assert.equal(
+      identityReads,
+      1,
+      'one local Git identity read per retained folder, not per sweep'
+    );
     phases.push({ name, elapsedMs, maxLagMs: maxLag, owners });
     const report = {
       syntheticOnly: true,
       surface: 'real coding-pack sweep/reconcile and snapshot repositories',
       sessions: 64,
       transcriptBytes,
-      gitRemoteLookup: 'synthetic stub',
+      gitRemoteLookup: 'real local Git repository, no network',
+      identityReads,
+      verificationReplayMatchesLedger: true,
       phases,
     };
     writeFileSync(join(run, 'observed.json'), JSON.stringify(report, null, 2));
@@ -189,7 +234,7 @@ export async function verifySyntheticPrOwners(runText: string) {
       JSON.stringify({
         sessionId: 'local_1',
         cliSessionId: 'cli-1',
-        cwd: '/synthetic',
+        cwd: folder,
         lastActivityAt: 999,
         prs: [{ url: url(6), dismissed: true }],
       })

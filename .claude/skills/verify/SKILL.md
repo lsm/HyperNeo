@@ -323,8 +323,10 @@ adds its journey here.
 
    The helper creates its own DB and 64 Claude sessions with about 130 MB of
    synthetic transcripts. It runs the real coding-pack sweep/reconcile and reads
-   the ledger snapshot; Git remote lookup and GitHub replies are synthetic, no
-   provider or GUI is involved. End state: a `commented` sidebar link is unowned,
+   the ledger snapshot. Git remote lookup uses a real local synthetic Git repo
+   once per retained folder across sweeps; only GitHub replies are stubbed. No
+   provider or GUI is involved. The live helper's owner projection must match
+   the ledger, including no-sidebar transcript and stored watcher evidence. End state: a `commented` sidebar link is unowned,
    an explicit `own:true` link owns its PR, a transcript `gitOperation.pr` with
    `action:created` corroborates ownership, branch matching still works, an append
    is discovered without metadata changes, and dismissal unlinks its PR. A session
@@ -337,7 +339,8 @@ adds its journey here.
    synthetic run afterward. This does not prove deployed behavior.
 
    The driver reuses the session JSON mtime cache and caches its branch projection
-   per record. Transcript reads resume after the last complete newline, in 64 KiB
+   per record. Git remotes stay cached while a folder remains represented; removing
+   its last session evicts that entry. Transcript reads resume after the last complete newline, in 64 KiB
    chunks that yield; partial UTF-8 lines, truncation and replacement are covered.
    The coding pack alone treats a successful creation as ownership evidence; a
    Claude sidebar reference alone is not an owner. The default live read-only

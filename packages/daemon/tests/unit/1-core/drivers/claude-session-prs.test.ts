@@ -168,6 +168,25 @@ describe('Claude transcript PR creation evidence', () => {
         [session]
       )
     ).toBe(JSON.stringify(ref));
+    expect(
+      planCodingPrOwner(
+        { repo: 'synthetic/cart-sandbox', number: 5, branch: 'other', owner: null },
+        new Map(),
+        [
+          claudeOwnerSession(
+            {
+              ref,
+              status: 'done',
+              lastActivityAt: 1,
+              remotes: [],
+              branches: [],
+              openedPrs: [],
+            },
+            [url(5)]
+          ),
+        ]
+      )
+    ).toBe(JSON.stringify(ref));
   });
 
   test('the coding pack corroborates a sidebar link but honors dismissal and explicit own links', async () => {
