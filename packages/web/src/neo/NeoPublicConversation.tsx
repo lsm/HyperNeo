@@ -1,3 +1,4 @@
+import { NeoWakeRow } from './NeoWakeRow.tsx';
 import type { NeoSessionMessage } from '@hyperneo/shared/types/neo-session-message';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type {
@@ -344,6 +345,8 @@ const FLASH_MS = 1500;
 const SEEK_PAGES = 9;
 
 function flashMessage(target: Element) {
+  const disclosure = target.closest('details');
+  if (disclosure) disclosure.open = true;
   target.scrollIntoView({ block: 'center' });
   target.classList.remove('neo-message-flash');
   void (target as HTMLElement).offsetWidth;
@@ -807,6 +810,7 @@ export function NeoPublicConversation({
   statuses,
   onRetry,
   onLoadEarlier,
+  onOpenWork,
   onEditUndelivered,
   replyLabels,
   mute,
@@ -820,7 +824,14 @@ export function NeoPublicConversation({
   onEditUndelivered?: NeoEditUndelivered;
   onRetry?: () => void;
   onLoadEarlier?: () => void;
+  onOpenWork?: (anchor: string) => void;
 }) {
+  const wakeFor = (id: string) =>
+    conversation.entries.find(
+      (entry) =>
+        entry.kind === 'wake' &&
+        entry.wake.additions.some((item) => item.kind === 'publication' && item.id === id)
+    );
   const labels = new Map([...neoMessageReplyLabels(conversation.entries), ...(replyLabels ?? [])]);
   const [seeking, setSeeking] = useState<string | null>(null);
   const seekPages = useRef(0);
@@ -869,7 +880,34 @@ export function NeoPublicConversation({
         </button>
       )}
       {conversation.entries.map((entry) =>
-        entry.kind === 'notices' ? (
+        entry.kind === 'publication' &&
+        wakeFor(entry.publication.publicationId) ? null : entry.kind === 'wake' ? (
+          <NeoWakeRow
+            key={entry.key}
+            entryKey={entry.key}
+            wake={entry.wake}
+            conversationId={conversation.conversationId!}
+            onOpenWork={onOpenWork}
+          >
+            {conversation.entries
+              .filter(
+                (item) =>
+                  item.kind === 'publication' && wakeFor(item.publication.publicationId) === entry
+              )
+              .map(
+                (item) =>
+                  item.kind === 'publication' && (
+                    <PublicEntry
+                      key={item.key}
+                      entry={item}
+                      replyLabels={labels}
+                      onSeek={seek}
+                      onQuote={onQuote}
+                    />
+                  )
+              )}
+          </NeoWakeRow>
+        ) : entry.kind === 'notices' ? (
           <NoticeRow key={entry.key} entryKey={entry.key} group={entry.group} mute={mute} />
         ) : entry.kind === 'session' ? (
           <SessionMessageRow key={entry.key} entryKey={entry.key} message={entry.message} />

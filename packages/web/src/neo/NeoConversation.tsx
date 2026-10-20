@@ -70,11 +70,13 @@ export function NeoConversation({
   onEditUndelivered,
   mute,
   onQuote,
+  onOpenWork,
   busy,
 }: {
   store: SessionStore;
   busy?: readonly string[] | null;
   onQuote?: (quote: NeoQuote) => void;
+  onOpenWork?: (anchor: string) => void;
   mute?: NeoSessionMute;
   onEditUndelivered?: NeoEditUndelivered;
   pendingAsks?: readonly NeoPendingAsk[];
@@ -155,6 +157,7 @@ export function NeoConversation({
             onEditUndelivered={onEditUndelivered}
             mute={mute}
             onQuote={onQuote}
+            onOpenWork={onOpenWork}
           />
         )}
         {pendingAsks
