@@ -374,6 +374,51 @@ describe('getLatestSDKMessagesByType', () => {
       db.close();
     }
   });
+
+  test('seeks the subtype instead of reading every system row of the session', async () => {
+    const db = await createTestDb();
+    try {
+      db.createSession(createTestSession('neo:root'));
+      const repo = db.getSDKMessageRepo();
+      for (let i = 0; i < 3000; i++)
+        repo.saveSDKMessage('neo:root', {
+          type: 'system',
+          subtype: i % 2 ? 'status' : 'session_state_changed',
+          uuid: `s${i}`,
+          session_id: 'neo:root',
+        } as never);
+      for (const id of ['g1', 'g2', 'g3'])
+        repo.saveSDKMessage('neo:root', {
+          type: 'system',
+          subtype: 'session_notices',
+          uuid: id,
+          session_id: 'neo:root',
+        } as never);
+      const raw = db.getDatabase();
+      const prepare = raw.prepare.bind(raw);
+      let selection = '';
+      raw.prepare = ((sql: string) => {
+        if (sql.includes('body_selection AS MATERIALIZED')) selection = sql;
+        return prepare(sql);
+      }) as typeof raw.prepare;
+      const ids = repo
+        .getLatestSDKMessagesByType('neo:root', 'system', 'session_notices', 2)
+        .map((row) => (row as { uuid?: string }).uuid);
+      raw.prepare = prepare;
+      const plan = (
+        prepare(`EXPLAIN QUERY PLAN ${selection}`).all(
+          'neo:root',
+          'system',
+          'session_notices',
+          2
+        ) as { detail: string }[]
+      ).map((row) => row.detail);
+      expect(ids).toEqual(['g2', 'g3']);
+      expect(plan.some((detail) => /message_subtype_norm=\?/.test(detail))).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
 });
 
 describe('refreshDriverWork', () => {
