@@ -1,5 +1,5 @@
 import { runMigration388 } from './m388-claude-desktop-bridge-events.ts';
-import { runMigration361 } from './m361-neo-project-avatars.ts';
+import { createNeoProjectSchema } from './m361-neo-project-avatars.ts';
 import { runMigration260 } from './m260-direct-start-requests.ts';
 import { runMigration360 } from './m360-workspace-projects.ts';
 import { runMigration258 } from './m258-direct-process-ownership.ts';
@@ -123,7 +123,7 @@ export { runMigration174 } from './migrations.ts';
 
 export function createTables(db: BunDatabase): void {
   createNeoTables(db);
-  runMigration361(db);
+  createNeoProjectSchema(db);
   createNeoPublicationTable(db);
   createNeoConversationAskTable(db);
   db.exec(`
