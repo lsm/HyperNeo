@@ -276,6 +276,89 @@ describe('NeoAskTodoRepository.retireQuestions', () => {
   });
 });
 
+describe('NeoAskTodoRepository start question pruning', () => {
+  const startQuestion = (
+    store: NeoAskTodoRepository,
+    startTodos: string[],
+    text = 'Start these 2?'
+  ) =>
+    store.askQuestion(
+      'q-start',
+      'ask',
+      {
+        text,
+        kind: 'start',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos,
+      },
+      1
+    );
+
+  test("pruning drops Neo's wording for the daemon's, and keeps it while the list holds", () => {
+    const { store, fix, rows } = setup();
+    startQuestion(
+      store,
+      [fix.id, rows.id],
+      'fullstack 3 merges #7709, then fullstack 2 builds G1?'
+    );
+    store.updateTodo(rows, { state: 'blocked', blockedBy: 'question' }, 2);
+    expect(store.getQuestion('q-start')?.text).toBe(
+      'fullstack 3 merges #7709, then fullstack 2 builds G1?'
+    );
+    store.updateTodo(fix, { state: 'done', evidence: '#1 merged', finishedAt: 3 }, 3);
+    expect(store.getQuestion('q-start')).toMatchObject({
+      startTodos: ['t2'],
+      text: 'Start "Todo rows"?',
+    });
+  });
+
+  test('a todo a check closes leaves the open start question', () => {
+    const { store, fix, rows } = setup();
+    startQuestion(store, [fix.id, rows.id]);
+    store.updateTodo(fix, { state: 'done', evidence: '#1 merged', finishedAt: 2 }, 2);
+    expect(store.getQuestion('q-start')).toMatchObject({ state: 'open', startTodos: ['t2'] });
+  });
+
+  test('a todo started elsewhere or moved to another ask leaves it, and a moved one is asked there', () => {
+    const { store, fix, rows } = setup();
+    startQuestion(store, [fix.id, rows.id]);
+    store.claimStart(fix, 2);
+    expect(store.getQuestion('q-start')?.startTodos).toEqual(['t2']);
+    store.openAsk({
+      id: 'other',
+      projectId: null,
+      sessionId: 'neo-a',
+      originMessageId: 'm2',
+      title: 'Other',
+      request: 'Other',
+      createdAt: 1,
+    });
+    store.moveTodo(rows, 'other', 'lsm/other', 3);
+    expect(store.getQuestion('q-start')).toMatchObject({ state: 'retired', startTodos: [] });
+    expect(store.listQuestions('other')).toMatchObject([
+      { kind: 'start', state: 'open', startTodos: ['t2'], text: 'Start "Todo rows"?' },
+    ]);
+  });
+
+  test('once every todo it lists is done or removed, it is retired and the ask stops waiting', () => {
+    const { store, fix, rows } = setup();
+    startQuestion(store, [fix.id, rows.id]);
+    store.updateTodo(rows, { state: 'blocked', blockedBy: 'question' }, 2);
+    expect(store.getQuestion('q-start')?.startTodos).toEqual(['t1', 't2']);
+    store.updateTodo(fix, { state: 'done', evidence: '#1 merged', finishedAt: 2 }, 2);
+    store.updateTodo(rows, { state: 'removed', reason: 'Replaced' }, 3);
+    expect(store.getQuestion('q-start')).toMatchObject({
+      state: 'retired',
+      retiredReason: 'nothing left to start',
+      startTodos: [],
+    });
+    expect(store.listQuestions('ask').filter((q) => q.state === 'open')).toEqual([]);
+  });
+});
+
 describe('planNeoQuestionAnswer', () => {
   test('refuses a missing question', () => {
     expect(planNeoQuestionAnswer(null, 'yes')).toEqual({

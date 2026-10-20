@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
 import { NEO_DEFAULT_PACKS, neoPackBriefs, neoPacks } from '../../../../src/lib/neo/packs/index.ts';
 import type { NeoPack } from '../../../../src/lib/neo/packs/types.ts';
@@ -56,5 +58,25 @@ describe('neoPacks', () => {
     const packs = neoPacks({ builtins: [coding], filePacks, enabled });
     expect(packs.map((item) => item.id)).toEqual(ids);
     expect(packs[0]).toBe(coding);
+  });
+});
+
+describe('core stays pack-agnostic', () => {
+  test('no coding pack literal in lib/neo outside packs/ or in the repositories', () => {
+    const src = join(import.meta.dirname, '../../../../src');
+    const files = [
+      ...readdirSync(join(src, 'lib/neo'), { recursive: true })
+        .map(String)
+        .filter((file) => !file.startsWith('packs/'))
+        .map((file) => join(src, 'lib/neo', file)),
+      ...readdirSync(join(src, 'storage/repositories')).map((file) =>
+        join(src, 'storage/repositories', file)
+      ),
+    ].filter((file) => file.endsWith('.ts'));
+    const offending = files.filter((file) =>
+      /['"`]coding['"`.]|pr_merged/.test(readFileSync(file, 'utf8'))
+    );
+    expect(files.length).toBeGreaterThan(20);
+    expect(offending).toEqual([]);
   });
 });

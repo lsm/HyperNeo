@@ -686,6 +686,11 @@ export function createSpaceTables(db: BunDatabase): void {
 		ON sdk_messages(session_id, is_renderable, is_terminal, timestamp, id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_subtype_parent
 		ON sdk_messages(session_id, message_subtype_norm, parent_tool_use_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_visible
+		ON sdk_messages(session_id, parent_tool_use_id, timestamp, id, message_type, send_status,
+			message_subtype)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_subtype_time
+		ON sdk_messages(session_id, message_subtype_norm, parent_tool_use_id, timestamp)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status_timestamp
 		ON sdk_messages(session_id, send_status, timestamp)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_deferred_uuid

@@ -7,6 +7,8 @@ import {
   type CodingPrClaim,
   CodingTodoPrRepository,
   codingTodoCheck,
+  codingTodoCheckRefusal,
+  codingTodoDoneWhen,
   codingTodoOwnPrs,
   codingTodoStatusLine,
   createCodingTodoPack,
@@ -502,5 +504,48 @@ describe('codingTodoStatusLine from the ledger', () => {
       status: '#1 open, no reviewer yet',
       statusCodes: [{ code: 'todo.pr.noReviewer', params: { pr: '#1' } }],
     });
+  });
+});
+
+describe('coding pr_merged check wording and rules', () => {
+  const merged = (params: Record<string, unknown>) => ({
+    pack: 'coding',
+    kind: 'pr_merged',
+    params,
+  });
+
+  test('done-when names the pull requests, or the one the todo opens', () => {
+    expect(
+      codingTodoDoneWhen(
+        merged({
+          urls: [
+            'https://github.com/lsm/HyperNeo/pull/7709',
+            'https://github.com/lsm/qlark/pull/4',
+          ],
+        })
+      )
+    ).toBe('lsm/HyperNeo#7709, lsm/qlark#4 merged');
+    expect(codingTodoDoneWhen(merged({}))).toBe(
+      "The one pull request this todo's session opens is merged"
+    );
+    expect(codingTodoDoneWhen({ pack: 'coding', kind: 'issue_filed', params: {} })).toBeNull();
+  });
+
+  test('a check without urls needs an instruction, since only its own session can claim one', () => {
+    expect(codingTodoCheckRefusal({ check: merged({}), instruction: 'Fix it' })).toBeNull();
+    expect(codingTodoCheckRefusal({ check: merged({}), instruction: null })).toBe(
+      'pr_merged_needs_urls: a todo with no instruction opens no pull request; name each one in params.urls.'
+    );
+    expect(
+      codingTodoCheckRefusal({
+        check: merged({ urls: ['https://github.com/lsm/HyperNeo/pull/1'] }),
+        instruction: null,
+      })
+    ).toBeNull();
+    expect(
+      codingTodoCheckRefusal({ check: merged({ urls: ['lsm/HyperNeo#7709'] }), instruction: null })
+    ).toBe(
+      'pr_merged_needs_urls: a todo with no instruction opens no pull request; name each one in params.urls.'
+    );
   });
 });

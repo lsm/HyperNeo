@@ -147,7 +147,7 @@ describe('neo.session.track', () => {
     db.close();
   });
 
-  test('a tap opens an ask whose todo follows the session and blocks when it stops', async () => {
+  test('a tap opens an ask whose todo follows the session and stays doing when it stops', async () => {
     Object.assign(service, { deliver: async () => {} });
     const tapped = Date.now();
     await service.trackSession('neo:root', notice({ link: 'codex://threads/t1' }), tapped);
@@ -162,7 +162,7 @@ describe('neo.session.track', () => {
     expect(service.todos.getTodo(todo.id)?.state).toBe('doing');
     status = { status: 'done', lastActivityAt: tapped + 10_000 };
     await service.todoRunner.refresh(() => {});
-    expect(service.todos.getTodo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'worker' });
+    expect(service.todos.getTodo(todo.id)).toMatchObject({ state: 'doing', blockedBy: null });
   });
 
   test('every tap tells Neo its own ask, and closing the todo never stops the human session', async () => {
