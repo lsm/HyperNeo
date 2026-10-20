@@ -52,7 +52,7 @@ export interface NeoTodoRunnerDeps {
     input: Record<string, unknown>
   ): Promise<OperationOutcome>;
   packs(): readonly NeoPack[];
-  tell(ask: NeoAsk, todo: NeoTodo, note: string): Promise<void>;
+  tell(ask: NeoAsk, todo: NeoTodo, note: string, key?: string): Promise<void>;
   tellAsk(ask: NeoAsk, messageId: string, note: string): Promise<void>;
   changed(): void;
 }
@@ -180,6 +180,13 @@ export function neoTodoIdleReminder(todo: Pick<NeoTodo, 'title' | 'doneWhen'>, m
   return `Todo "${todo.title}" is not done yet (done when: ${todo.doneWhen}), and your session has been stopped for ${minutes} min. Continue it, or report what blocks you.`;
 }
 
+export function neoTodoUntickedReminder(
+  todo: Pick<NeoTodo, 'title' | 'doneWhen'>,
+  minutes: number
+) {
+  return `Todo "${todo.title}" stopped ${minutes} min ago and nobody ticked it (done when: ${todo.doneWhen}). Tick it done with evidence, continue it with neo.todo.continue, or close it.`;
+}
+
 export function planNeoTodoFailure(
   todo: NeoTodo,
   reason: string,
@@ -201,18 +208,7 @@ export function planNeoTodoSettled(
   now: number
 ): NeoTodoPatch | null {
   if (settled.status === 'failed') return planNeoTodoFailure(todo, settled.report, now);
-  if (todo.check) return todo.report === settled.report ? null : { report: settled.report };
-  return {
-    report: settled.report,
-    ...planNeoTodoBlocked(
-      todo,
-      'worker',
-      'Its session finished its turn; nothing confirms the todo is done yet.',
-      todo.check
-        ? 'Continue the session with neo.todo.continue, or close the todo.'
-        : 'Tick it done with evidence, continue the session, or close it.'
-    ),
-  };
+  return todo.report === settled.report ? null : { report: settled.report };
 }
 
 export function planNeoTodoCheck(
@@ -239,6 +235,8 @@ export function neoTodoNote(todo: NeoTodo): string {
     return `Todo "${todo.title}" is done: ${todo.evidence}`;
   if (todo.state === 'done')
     return `Todo "${todo.title}" reported and is done:\n${todo.report ?? ''}`;
+  if (todo.state === 'doing')
+    return `Todo "${todo.title}" reported, and nothing checks it: tick it done with evidence once "${todo.doneWhen}" holds, or let it go on.\nIts report:\n${todo.report ?? ''}`;
   return `Todo "${todo.title}" is blocked: ${todo.blockedReason ?? ''}\nNext: ${
     todo.nextAction ?? ''
   }\nIts last report:\n${todo.report ?? '(none)'}`;
@@ -433,7 +431,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     anchorFollow: (id, at) => sessions.recordFollowAnchor(id, at),
     returnReport: async (card) => {
       const todo = store.getTodo(card.id);
-      if (todo && todo.state !== 'doing') await deps.tell(ask, todo, neoTodoNote(todo));
+      if (todo && (todo.state !== 'doing' || !todo.check))
+        await deps.tell(ask, todo, neoTodoNote(todo));
     },
   });
 
@@ -534,10 +533,10 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     const ask = store.getAsk(todo.askId);
     const waiting = deps
       .packs()
-      .some((pack) => pack.id === todo.check?.pack && pack.todos?.waiting?.(todo));
+      .some((pack) => (!todo.check || pack.id === todo.check.pack) && pack.todos?.waiting?.(todo));
     if (
       todo.state !== 'doing' ||
-      !todo.check ||
+      !todo.instruction ||
       !todo.report ||
       !ref ||
       ask?.status !== 'open' ||
@@ -554,6 +553,16 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     const live = readDriverLive(await deps.invoke(caller(ask), 'work.status', { ref }));
     if (!live || !['done', 'stopped'].includes(live.status)) return;
     const minutes = Math.round((now - read.since) / 60_000);
+    if (plan.kind === 'remind' && !todo.check) {
+      await deps.tell(
+        ask,
+        todo,
+        neoTodoUntickedReminder(todo, minutes),
+        `neo-todo-remind:${todo.id}:${read.since}:${plan.nudges}`
+      );
+      idle.set(todo.id, { since: read.since, nudges: plan.nudges });
+      return;
+    }
     if (plan.kind === 'remind') {
       const sent = await deps.invoke(caller(ask), 'work.send', {
         ref,
@@ -573,8 +582,12 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         'worker',
         plan.kind === 'remind'
           ? `Its session stopped ${minutes} min ago and could not be reached.`
-          : `Its session stopped ${minutes} min ago and did not continue after ${NEO_TODO_IDLE_REMINDERS} reminders.`,
-        'Continue the session with neo.todo.continue, or close the todo.'
+          : todo.check
+            ? `Its session stopped ${minutes} min ago and did not continue after ${NEO_TODO_IDLE_REMINDERS} reminders.`
+            : `Its session stopped ${minutes} min ago and nobody ticked it after ${NEO_TODO_IDLE_REMINDERS} reminders.`,
+        todo.check
+          ? 'Continue the session with neo.todo.continue, or close the todo.'
+          : 'Tick it done with evidence, continue the session, or close it.'
       ),
       now
     );

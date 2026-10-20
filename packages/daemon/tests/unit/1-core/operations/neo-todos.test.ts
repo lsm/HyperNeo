@@ -4,6 +4,7 @@ import {
   createNeoTodoOperations,
   type NeoTodoControls,
 } from '../../../../src/lib/neo/todo-operations.ts';
+import type { NeoPack } from '../../../../src/lib/neo/packs/types.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
@@ -13,7 +14,7 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 const owner: OperationCaller = { source: 'mcp', sessionId: 'neo-a', role: 'neo' };
 const other: OperationCaller = { source: 'mcp', sessionId: 'neo-b', role: 'neo' };
 
-function setup() {
+function setup(packs: NeoPack[] = []) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
@@ -43,7 +44,7 @@ function setup() {
           return stopFails.value ? 'stop_failed: driver offline' : null;
         },
       },
-      () => []
+      () => packs
     ).map((op) => [op.name, op])
   );
   const call = async (name: string, input: unknown, caller = owner) =>
@@ -274,5 +275,58 @@ describe('neo.todo operations', () => {
     expect(repo.listQuestions('ask')).toMatchObject([
       { text: 'Start "Deploy"?', startTodos: [deploy.todo.id] },
     ]);
+  });
+});
+
+describe('a pack owns its check', () => {
+  const gauge = {
+    id: 'gauge',
+    describe: 'gauges',
+    instructions: () => null,
+    todos: {
+      doneWhen: (check) => `gauge ${check.kind} reads ${String(check.params.target)}`,
+      refuse: (draft) => (draft.instruction ? null : 'gauge needs an instruction'),
+    },
+  } as NeoPack;
+  const target = { verb: 'send', ref: { adapter: 'hyperneo', id: 'w' } };
+  const check = { pack: 'gauge', kind: 'level', params: { target: 5 } };
+
+  test("writes the todo's done-when, and Neo cannot edit it", async () => {
+    const { call } = setup([gauge]);
+    const added = await call('neo.todo.add', {
+      askId: 'ask',
+      title: 'Fill it',
+      doneWhen: 'Full enough',
+      check,
+      instruction: 'Fill the tank.',
+      target,
+    });
+    if (!added.ok) throw new Error(added.reason);
+    expect(added.todo.doneWhen).toBe('gauge level reads 5');
+    expect(await call('neo.todo.edit', { todoId: added.todo.id, doneWhen: 'Half' })).toEqual({
+      ok: false,
+      reason:
+        "done_when_from_check: this todo's done-when comes from its check; change the check instead.",
+    });
+  });
+
+  test('a todo whose done-when predates its pack wording stays editable', async () => {
+    const { repo, call } = setup([gauge]);
+    const old = repo.addTodo(
+      'old',
+      'ask',
+      { title: 'Fill it', doneWhen: 'Full enough', check, instruction: 'Fill.', named: null },
+      1
+    );
+    const edited = await call('neo.todo.edit', { todoId: old.id, doneWhen: 'Half full' });
+    expect(edited.ok && edited.todo.doneWhen).toBe('Half full');
+  });
+
+  test('refuses a check its pack refuses, and adds nothing', async () => {
+    const { repo, call } = setup([gauge]);
+    expect(
+      await call('neo.todo.add', { askId: 'ask', title: 'Fill it', doneWhen: 'Full', check })
+    ).toEqual({ ok: false, reason: 'check_refused: gauge needs an instruction' });
+    expect(repo.listTodos('ask')).toEqual([]);
   });
 });
