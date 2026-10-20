@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 const PR_URL = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/g;
 const PR_CREATE = /(?:^|\\n|[^\w-])gh\s+pr\s+create\b/;
 export const WORK_OPENED_PRS_MAX = 10;
@@ -85,12 +87,13 @@ export function codexOpenedPrs(lines: readonly string[]): string[] {
 }
 
 export function createCodexPrReader() {
-  const cache = new Map<string, { version: string; urls: string[] }>();
-  return (path: string, version: string, lines: readonly string[]): string[] => {
+  const cache = new Map<string, { digest: string; urls: string[] }>();
+  return (path: string, lines: readonly string[]): string[] => {
+    const digest = createHash('sha256').update(lines.join('\n')).digest('hex');
     const cached = cache.get(path);
-    if (cached?.version === version) return [...cached.urls];
+    if (cached?.digest === digest) return [...cached.urls];
     const urls = codexOpenedPrs(lines);
-    cache.set(path, { version, urls });
+    cache.set(path, { digest, urls });
     return [...urls];
   };
 }

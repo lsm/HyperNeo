@@ -570,9 +570,10 @@ line in a realistic tail size, not a copy or an estimate of the real transcript.
 The helper stops its daemon and timer in `finally`; no GUI, providers or profiling
 flag are involved. This proves the daemon RPC path, not deployed performance.
 
-An unchanged rollout version skips PR extraction, using device/inode/size,
-nanosecond modification/change times and tail size from the existing file stat.
-Only the bounded PR result is cached in the adapter's lifetime; status/reply and
-exchange reads continue. Append, equal-size rewrite, replacement, changed tail
-window and truncation must invalidate it; `codex-pr-cache.test.ts` pins those
+An unchanged transcript tail skips PR extraction, using a SHA-256 digest of the
+already-read lines. File timestamps are not cache identities: coarse timestamps
+can repeat after a same-size rewrite. Only the bounded PR result and digest are
+cached in the adapter's lifetime; status/reply and exchange reads continue. Append,
+equal-size rewrite, replacement, changed tail window and truncation must invalidate
+it; `codex-pr-cache.test.ts` pins those
 observable results. No raw transcript is retained in the cache.

@@ -548,12 +548,9 @@ export async function readCodexTurn(
   readOpenedPrs?: ReturnType<typeof createCodexPrReader>
 ): Promise<CodexTurnState> {
   try {
-    const { lines, truncated, version } = await readTailLines(
-      detail.thread.rolloutPath,
-      ROLLOUT_TAIL_BYTES
-    );
+    const { lines, truncated } = await readTailLines(detail.thread.rolloutPath, ROLLOUT_TAIL_BYTES);
     const openedPrs = readOpenedPrs
-      ? readOpenedPrs(detail.thread.rolloutPath, version, lines)
+      ? readOpenedPrs(detail.thread.rolloutPath, lines)
       : codexOpenedPrs(lines);
     return {
       ...codexTurnState(lines),

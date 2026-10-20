@@ -10,10 +10,10 @@ const line = (number: number) =>
 const pr = (number: number) => `https://github.com/synthetic/repo/pull/${number}`;
 
 describe('Codex PR snapshots', () => {
-  test('refreshes same-size PR evidence even when the file version repeats', () => {
+  test('refreshes same-size PR evidence independently of file timestamps', () => {
     const read = createCodexPrReader();
-    expect(read('rollout.jsonl', 'same-file-version', [line(1)])).toEqual([pr(1)]);
-    expect(read('rollout.jsonl', 'same-file-version', [line(2)])).toEqual([pr(2)]);
+    expect(read('rollout.jsonl', [line(1)])).toEqual([pr(1)]);
+    expect(read('rollout.jsonl', [line(2)])).toEqual([pr(2)]);
   });
 
   test('keeps unchanged attribution but reflects append, equal-size rewrite, replacement and truncation', async () => {
@@ -21,8 +21,8 @@ describe('Codex PR snapshots', () => {
     const path = join(dir, 'rollout.jsonl');
     const read = createCodexPrReader();
     const snapshot = async (path: string, bytes = 4 * 1024 * 1024) => {
-      const { lines, version } = await readTailLines(path, bytes);
-      return read(path, version, lines);
+      const { lines } = await readTailLines(path, bytes);
+      return read(path, lines);
     };
     try {
       writeFileSync(path, line(1));
