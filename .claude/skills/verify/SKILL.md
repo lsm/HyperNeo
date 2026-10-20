@@ -62,8 +62,9 @@ UI is served, that RPC answers, and that the mock model API is up. It ends with
   argument keeps the socket open that many seconds and prints the events that
   arrived.
 - State: read the run's DB read-only, e.g.
-  `sqlite3 -readonly "$RUN/data/daemon.db" "SELECT ..."`. Only `seed-todo.sh`
-  and `seed-ledger.sh` write to it, to set up journeys 3 and 4.
+  `sqlite3 -readonly "$RUN/data/daemon.db" "SELECT ..."`. Only the seed and
+  check scripts write to it: `seed-todo.sh` and `seed-ledger.sh` (journeys 3 and 4),
+  `merge-check.sh` (journey 7) and `archive-guard-check.sh` (journey 10).
 - Web UI: open `http://127.0.0.1:<port>/neo` (Neo) or
   `/session/<sessionId>` (a session) in the browser; read the page text and take
   a screenshot.
@@ -168,6 +169,12 @@ adds its journey here.
    table count and newest migration marker after each start. End state: the
    branch's marker is applied on the first upgraded start, and a restart changes
    nothing.
+10. **Archive refuses a session a doing todo works in.** After journey 1 opened
+    root, run `VERIFY_PORT=<port> .claude/skills/verify/archive-guard-check.sh "$RUN"`.
+    It seeds a doing todo bound to HyperNeo session `verify-archive` and calls
+    `neo.session.archive` twice. End state: while the todo is doing the reply is
+    `live_todo` naming the todo; after it is marked done the guard passes and the
+    adapter answers `not_found` (the session is fictional).
 
 ## Evidence
 
