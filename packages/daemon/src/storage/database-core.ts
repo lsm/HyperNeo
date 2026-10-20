@@ -36,7 +36,7 @@ import { migrateSdkMessageBodies } from './sdk-message-body-copy.ts';
 import {
   reserveSdkBodyBackupPath,
   sdkBodyBackupChannel,
-  SdkBodyBackupVerificationError,
+  SdkBodyCopyTerminalError,
 } from './sdk-message-body-backup.ts';
 
 const MIGRATION_BACKUP_RETENTION = 3;
@@ -203,7 +203,10 @@ export class DatabaseCore {
           verifyBackup: async (mustExist, priorPath) => {
             const backupDir = join(dirname(this.dbPath), 'backups', 'sdk-message-bodies-v1');
             if (mustExist && (!priorPath || dirname(priorPath) !== backupDir))
-              throw new Error('SDK body copy original backup location is invalid');
+              throw new SdkBodyCopyTerminalError(
+                'SDK body copy original backup location is invalid',
+                priorPath ?? '<unknown>'
+              );
             const backupPath = mustExist
               ? priorPath!
               : await reserveSdkBodyBackupPath(this.db, this.dbPath, abort.signal);
@@ -225,11 +228,11 @@ export class DatabaseCore {
           `SDK body copy: ${JSON.stringify({ phase: 'run_finished', status: result.status, elapsedMs: performance.now() - started, maxLagMs })}`
         );
       } catch (error) {
-        if (error instanceof SdkBodyBackupVerificationError) {
+        if (error instanceof SdkBodyCopyTerminalError) {
           terminal = true;
           if (!abort.signal.aborted)
             this.logger.error(
-              `SDK body copy stopped; backup verification requires operator action; backup=${error.backupPath}`,
+              `SDK body copy stopped; requires operator action; backup=${error.backupPath}`,
               error
             );
         } else if (!abort.signal.aborted)

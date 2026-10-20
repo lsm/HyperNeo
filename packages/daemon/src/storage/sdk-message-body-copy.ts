@@ -1,5 +1,7 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { createHash } from 'node:crypto';
+import { z } from 'zod';
+import { SdkBodyCopyTerminalError } from './sdk-message-body-backup.ts';
 import type { Database } from './sqlite-compat.ts';
 import { SDK_MESSAGE_COLUMN_TYPES, deriveSdkMessageColumns } from './sdk-message-columns.ts';
 import {
@@ -10,14 +12,23 @@ import {
 const STATE = 'sdk_message_bodies_copy_v1:state:';
 const DONE = 'sdk_message_bodies_copy_v1:complete';
 const REVERSED = 'sdk_message_bodies_copy_v1:reversed';
-type Progress = {
-  through: number;
-  ceiling: number;
-  backupPath: string;
-  beforeHash?: string;
-  afterHash?: string;
-  startedAt?: number;
-};
+const progressSchema = z
+  .object({
+    through: z.number().int().nonnegative(),
+    ceiling: z.number().int().nonnegative(),
+    backupPath: z.string(),
+    beforeHash: z
+      .string()
+      .regex(/^(?:[a-f0-9]{64})?$/)
+      .optional(),
+    afterHash: z
+      .string()
+      .regex(/^(?:[a-f0-9]{64})?$/)
+      .optional(),
+    startedAt: z.number().nonnegative().optional(),
+  })
+  .refine((state) => state.through <= state.ceiling);
+type Progress = z.infer<typeof progressSchema>;
 type Options = {
   dbBytes: number;
   freeBytes: number;
@@ -70,20 +81,32 @@ export async function migrateSdkMessageBodies(db: Database, options: Options) {
   const prior = db.prepare('SELECT key FROM migration_markers WHERE key GLOB ?').get(`${STATE}*`) as
     | { key: string }
     | undefined;
-  const state: Progress = prior
-    ? JSON.parse(prior.key.slice(STATE.length))
-    : {
-        through: 0,
-        ceiling: (
-          db.prepare('SELECT COALESCE(MAX(seq),0) AS n FROM sdk_messages').get() as { n: number }
-        ).n,
-        backupPath: '',
-      };
+  let state: Progress;
+  if (prior) {
+    try {
+      state = progressSchema.parse(JSON.parse(prior.key.slice(STATE.length)));
+    } catch (error) {
+      throw new SdkBodyCopyTerminalError(
+        `Invalid stored SDK body copy state: ${String(error)}`,
+        '<unknown>'
+      );
+    }
+  } else
+    state = {
+      through: 0,
+      ceiling: (
+        db.prepare('SELECT COALESCE(MAX(seq),0) AS n FROM sdk_messages').get() as { n: number }
+      ).n,
+      backupPath: '',
+    };
   state.startedAt ??= Date.now();
   state.beforeHash ??= '';
   state.afterHash ??= '';
   if (state.beforeHash !== state.afterHash)
-    throw new Error('Stored SDK body copy audit hashes disagree');
+    throw new SdkBodyCopyTerminalError(
+      'Stored SDK body copy audit hashes disagree',
+      state.backupPath
+    );
   state.backupPath = await options.verifyBackup(Boolean(prior), state.backupPath);
   if (options.signal?.aborted) return { status: 'cancelled' as const };
   const names = Object.keys(SDK_MESSAGE_COLUMN_TYPES) as (keyof typeof SDK_MESSAGE_COLUMN_TYPES)[];
@@ -179,7 +202,10 @@ export async function migrateSdkMessageBodies(db: Database, options: Options) {
               .prepare('SELECT sdk_message AS body FROM sdk_message_bodies WHERE seq=?')
               .get(row.seq) as { body: string };
             if (copied.body !== row.body)
-              throw new Error(`SDK body copy byte mismatch at seq ${row.seq}`);
+              throw new SdkBodyCopyTerminalError(
+                `SDK body copy byte mismatch at seq ${row.seq}`,
+                state.backupPath
+              );
             const frame = `${row.seq}:${Buffer.byteLength(row.body)}:`;
             before.update(frame).update(row.body);
             after.update(frame).update(copied.body);
@@ -192,7 +218,10 @@ export async function migrateSdkMessageBodies(db: Database, options: Options) {
           state.beforeHash = before.digest('hex');
           state.afterHash = after.digest('hex');
           if (state.beforeHash !== state.afterHash)
-            throw new Error('SDK body copy logical digest mismatch');
+            throw new SdkBodyCopyTerminalError(
+              'SDK body copy logical digest mismatch',
+              state.backupPath
+            );
           saveCursor();
         }, 'immediate')();
       } catch (error) {

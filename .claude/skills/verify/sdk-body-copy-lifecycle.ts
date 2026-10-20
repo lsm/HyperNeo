@@ -4,8 +4,9 @@ import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const [mode, portText, runText, sourceRoot] = process.argv.slice(2);
+const [mode, portText, runText, sourceRoot, fault = 'manifest'] = process.argv.slice(2);
 assert(mode === 'verify' || mode === 'reproduce');
+assert(['manifest', 'audit', 'path', 'reservation', 'json', 'shape'].includes(fault));
 const port = Number(portText), run = resolve(runText), dbPath = join(run, 'data/daemon.db');
 assert.equal(process.env.NODE_ENV, 'test');
 assert(port > 0 && port !== 8399);
@@ -36,6 +37,14 @@ const backupPath = await reserveSdkBodyBackupPath(db, dbPath, new AbortControlle
 const channel = sdkBodyBackupChannel(dbPath, backupPath, new AbortController().signal);
 try { await channel.verify(false); } finally { channel.close(); }
 const manifestPath = `${backupPath}.verified.json`, manifest = readFileSync(manifestPath, 'utf8');
+if (fault !== 'manifest') {
+  const invalidPath = join(run, 'outside-backup/pinned.db');
+  const state = { through: 0, ceiling: 5, backupPath: fault === 'path' ? invalidPath : backupPath, beforeHash: fault === 'audit' ? 'a'.repeat(64) : '', afterHash: '' };
+  if (fault === 'reservation') {
+    db.prepare("DELETE FROM migration_markers WHERE key GLOB 'sdk_message_bodies_copy_v1:backup:*'").run();
+    db.prepare('INSERT INTO migration_markers(key,applied_at) VALUES (?,?)').run(`sdk_message_bodies_copy_v1:backup:${invalidPath}`, Date.now());
+  } else db.prepare('INSERT INTO migration_markers(key,applied_at) VALUES (?,?)').run(`sdk_message_bodies_copy_v1:state:${fault === 'json' ? '{invalid' : fault === 'shape' ? 'null' : JSON.stringify(state)}`, Date.now());
+}
 let ready!: () => void;
 const delayed = new Promise<void>((done) => { ready = done; }).then(() => core.startSdkMessageBodyCopy());
 core.close();
@@ -55,7 +64,7 @@ const digest = () => {
 };
 const before = digest();
 logs.length = 0;
-writeFileSync(manifestPath, JSON.stringify({ ...JSON.parse(manifest), hash: 'synthetic-invalid-digest' }));
+if (fault === 'manifest') writeFileSync(manifestPath, JSON.stringify({ ...JSON.parse(manifest), hash: 'synthetic-invalid-digest' }));
 let app: { cleanup(): Promise<void> } | undefined, ws: WebSocket | undefined;
 let last = performance.now(), maxLagMs = 0;
 const heartbeat = setInterval(() => { const now = performance.now(); maxLagMs = Math.max(maxLagMs, now - last - 10); last = now; }, 10);
@@ -82,7 +91,7 @@ try {
 const after = digest(), stopped = logs.filter((event) => event.message.includes('operator action'));
 const deferred = logs.filter((event) => event.message.includes('SDK body copy deferred'));
 const diskChecks = logs.filter((event) => event.message.includes('"phase":"disk_check_passed"'));
-const report = { mode, root, before, after, lateLogs, terminalErrors: stopped, deferredAttempts: deferred.length, diskChecks: diskChecks.length, observationMs: 65000, healthReplies: replies.length, maxHealthMs: Math.max(...replies), maxLagMs, backupPath };
+const report = { mode, root, fault, before, after, lateLogs, terminalErrors: stopped, deferredAttempts: deferred.length, diskChecks: diskChecks.length, observationMs: 65000, healthReplies: replies.length, maxHealthMs: Math.max(...replies), maxLagMs, backupPath };
 writeFileSync(join(run, 'evidence/lifecycle.json'), JSON.stringify(report, null, 2));
 writeFileSync(join(run, 'evidence/lifecycle-logs.json'), JSON.stringify(logs));
 assert.deepEqual(after, before);
@@ -90,6 +99,7 @@ assert(replies.length > 100);
 if (mode === 'verify') {
   assert.equal(lateLogs.length, 0); assert.equal(deferred.length, 0); assert.equal(stopped.length, 1); assert.equal(stopped[0].level, 'error'); assert.equal(diskChecks.length, 1); assert(maxLagMs < 1000); assert(report.maxHealthMs < 250);
 } else {
-  assert(lateLogs.some((event) => event.message.includes('deferred'))); assert(deferred.length >= 2); assert(diskChecks.length >= 2); assert.equal(stopped.length, 0);
+  if (fault === 'manifest') assert(lateLogs.some((event) => event.message.includes('deferred')));
+  assert(deferred.length >= 2); assert(diskChecks.length >= 2); assert.equal(stopped.length, 0);
 }
 console.log(JSON.stringify(report));

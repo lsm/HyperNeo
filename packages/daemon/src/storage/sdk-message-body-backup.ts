@@ -22,7 +22,10 @@ export async function reserveSdkBodyBackupPath(
           ? prior.key.slice(BACKUP.length)
           : join(directory, `${basename(dbPath)}-${randomUUID()}.db`);
         if (dirname(path) !== directory)
-          throw new Error('SDK body backup reservation location is invalid');
+          throw new SdkBodyCopyTerminalError(
+            'SDK body backup reservation location is invalid',
+            path
+          );
         if (!prior)
           db.prepare('INSERT INTO migration_markers(key,applied_at) VALUES (?,?)').run(
             `${BACKUP}${path}`,
@@ -60,7 +63,7 @@ export type BodyBackupReply = {
   fileHash?: string;
 };
 
-export class SdkBodyBackupVerificationError extends Error {
+export class SdkBodyCopyTerminalError extends Error {
   constructor(
     message: string,
     readonly backupPath: string
@@ -92,7 +95,7 @@ export function sdkBodyBackupChannel(dbPath: string, backupPath: string, signal:
     if (reply.error)
       call?.reject(
         reply.errorCode === 'verification_failed'
-          ? new SdkBodyBackupVerificationError(reply.error, backupPath)
+          ? new SdkBodyCopyTerminalError(reply.error, backupPath)
           : new Error(reply.error)
       );
     else call?.resolve(reply);

@@ -26,7 +26,7 @@ function location() {
 }
 
 describe('SDK body copy retry safety', () => {
-  for (const fault of ['audit', 'path', 'reservation', 'json', 'shape']) {
+  for (const fault of ['audit', 'path', 'reservation', 'json', 'shape', 'cursor']) {
     test(`invalid ${fault} resume state stops once at error level before opening a backup`, async () => {
       const path = location(),
         core = new DatabaseCore(path);
@@ -50,10 +50,10 @@ describe('SDK body copy retry safety', () => {
           ? '/invalid-location/backup.db'
           : join(dirname(path), 'backups', 'sdk-message-bodies-v1', 'pinned.db');
       const state = {
-        through: 0,
+        through: fault === 'cursor' ? 2 : 0,
         ceiling: 1,
         backupPath,
-        beforeHash: fault === 'audit' ? 'a' : '',
+        beforeHash: fault === 'audit' ? 'a'.repeat(64) : '',
         afterHash: '',
       };
       const marker =

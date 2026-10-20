@@ -882,6 +882,18 @@ Transient creation failures may retry; a verification failure requires operator
 action and has no automatic retry. Never repair, delete or replace a live backup
 to make the check pass.
 
+The lifecycle helper also accepts a source-worktree path and a fault name as
+its final arguments: `verify 9337 "$RUN" "$PWD" audit` or `path` exercises
+disagreeing persisted copy hashes or an invalid original backup location.
+Each fresh synthetic run observes 65 seconds: one error-level operator-action
+log (including the pinned path), one disk admission, no retry, responsive health
+RPCs and unchanged complete-body hash. `reproduce` against an unfixed worktree
+must show two admissions/warnings instead. `reservation`, `json` and `shape`
+faults additionally model a moved reservation, malformed JSON and invalid cursor
+shape; CI also pins a cursor beyond its high-water mark. All stop before any backup worker starts, without changing the
+stored marker or complete tool result. These are terminal state errors, not an
+instruction to repair/delete any live marker or backup.
+
 For slow-chunk handling use another fresh isolated directory and
 `bun .claude/skills/verify/sdk-body-copy-slow.ts verify 9337 "$RUN"` with the same
 cleared environment/own HOME/data-dir setup. It deliberately injects one 300 ms
