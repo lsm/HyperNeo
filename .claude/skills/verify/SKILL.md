@@ -122,7 +122,7 @@ UI is served, that RPC answers, and that the mock model API is up. It ends with
 - State: read the run's DB read-only, e.g.
   `sqlite3 -readonly "$RUN/data/daemon.db" "SELECT ..."`. Only the seed and
   check scripts write to it: `seed-todo.sh` and `seed-ledger.sh` (journeys 3 and 4),
-  `merge-check.sh` (journey 7), `archive-guard-check.sh` (journey 10) and
+  `merge-check.sh` (journey 24), `archive-guard-check.sh` (journey 10) and
   `seed-start-question.sh` (journey 14), `quote-summary-check.mjs` (journey 18),
   `seed-schedule-interrupt.ts` (journey 22), and `external-reply-check.ts` (journey 23).
 - Web UI: open `http://127.0.0.1:<port>/neo` (Neo) or
@@ -196,21 +196,6 @@ adds its journey here.
    with only its repo's todos (`neo_todos.repo`). On `/neo`, "Your work" lists
    the two child cards, and Recent outcomes shows the request as Done with that
    outcome under Details.
-7. **Projects never merge on their own.** After journey 1 opened root, insert two
-   `neo_concerns` rows whose `repo:` aliases in `neo_project_workspaces` name the
-   same repository, then call `rpc.ts neo.projects.reorganize '{}'`. End state:
-   the reply has no `merged` field, both projects remain, `neo_project_merges` is
-   empty, and the `repository:` identity belongs to the older project. To see what
-   the cleanup would do on a real daemon without touching it, run
-   `bun .claude/skills/verify/cleanup-dry-run.ts [db]` (read-only; defaults to
-   `~/.hyperneo/data/daemon.db`): it prints the planned deletes, and any merge it
-   lists runs only with `apply: true`. To see an explicit merge carry its asks,
-   run `VERIFY_PORT=<port> .claude/skills/verify/merge-check.sh "$RUN"`: it seeds a
-   `Web` home with a `repository:` alias and a same-titled copy holding a done ask
-   whose todo names another repo, then calls `neo.projects.reorganize {"apply":true}`.
-   End state: `neo_project_merges` has `project:web-copy → project:web`, `ask-merge`
-   now has `project_id` `project:web`, and `todo-merge` keeps
-   `github.com/verify-test/other`.
 8. **A todo whose PR lands in another repo moves to that repo's card.** After
    journey 1 opened root, run
    `VERIFY_CARD_REPO=github.com/verify-test/app .claude/skills/verify/seed-todo.sh "$RUN"`.
@@ -408,6 +393,22 @@ adds its journey here.
     Claude Desktop or Codex Desktop GUI rendering; those routes and direct
     `work.send`/`work.start` are covered by the daemon unit tests.
 
+
+24. **Projects never merge on their own.** After journey 1 opened root, insert two
+   `neo_concerns` rows whose `repo:` aliases in `neo_project_workspaces` name the
+   same repository, then call `rpc.ts neo.projects.reorganize '{}'`. End state:
+   the reply has no `merged` field, both projects remain, `neo_project_merges` is
+   empty, and the `repository:` identity belongs to the older project. To see what
+   the cleanup would do on a real daemon without touching it, run
+   `bun .claude/skills/verify/cleanup-dry-run.ts [db]` (read-only; defaults to
+   `~/.hyperneo/data/daemon.db`): it prints the planned deletes, and any merge it
+   lists runs only with `apply: true`. To see an explicit merge carry its asks,
+   run `VERIFY_PORT=<port> .claude/skills/verify/merge-check.sh "$RUN"`: it seeds a
+   `Web` home with a `repository:` alias and a same-titled copy holding a done ask
+   whose todo names another repo, then calls `neo.projects.reorganize {"apply":true}`.
+   End state: `neo_project_merges` has `project:web-copy → project:web`, `ask-merge`
+   now has `project_id` `project:web`, and `todo-merge` keeps
+   `github.com/verify-test/other`.
 
 ## Evidence
 
