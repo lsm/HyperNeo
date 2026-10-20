@@ -1,3 +1,4 @@
+import { sdkMessageBodyAt } from '../../storage/repositories/sdk-message-body-read.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { Database } from '../../storage/sqlite-compat.ts';
 import { type DbScopeType, type ScopeTableConfig, getScopeConfig } from './scope-config.ts';
@@ -289,7 +290,13 @@ function materializeScopedTable(
   const filter = buildTableScopeFilter(config, scopeValue);
   const where = filter.whereClause ? ` WHERE ${filter.whereClause}` : '';
   const names = columns.map((c) => c.name);
-  const projection = names.map(quoteIdent).join(', ');
+  const projection = names
+    .map((name) =>
+      config.tableName === 'sdk_messages' && name === 'sdk_message'
+        ? `${sdkMessageBodyAt('sdk_messages.rowid')} AS ${quoteIdent(name)}`
+        : quoteIdent(name)
+    )
+    .join(', ');
   const table = quoteIdent(config.tableName);
 
   let withRowid = true;

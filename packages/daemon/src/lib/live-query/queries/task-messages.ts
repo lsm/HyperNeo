@@ -1,3 +1,4 @@
+import { sdkMessageBodyAt } from '../../../storage/repositories/sdk-message-body-read.ts';
 import { capMessageOutput } from '../../rpc-handlers/message-output-cap.ts';
 import {
   activeDeliveryJobsCtes,
@@ -183,7 +184,7 @@ sdk_rows_raw AS (
     tt.id AS taskId,
     tt.title AS taskTitle,
     sm.message_type AS messageType,
-    sm.sdk_message AS content,
+    ${sdkMessageBodyAt('sm.rowid')} AS content,
     sm.origin AS origin,
     ${SPACE_TASK_DELIVERY_STATE_CASE}
     CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,

@@ -1,10 +1,11 @@
+import { sdkMessageBodyAt } from '../../../storage/repositories/sdk-message-body-read.ts';
 import { spaceTaskFlagRowsBaseCte } from './task-message-window.ts';
 import { HOOK_SUBTYPE_NAMES, HOOK_SUBTYPES } from './task-delivery.ts';
 
 export const SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL = `
 ${spaceTaskFlagRowsBaseCte(false)},
 active_rows AS MATERIALIZED (
-  SELECT r.*, sm.sdk_message AS content, sm.rowid AS rowId, sm.send_status AS sendStatus,
+  SELECT r.*, ${sdkMessageBodyAt('sm.rowid')} AS content, sm.rowid AS rowId, sm.send_status AS sendStatus,
     sm.info_level AS infoLevel, sm.tool_result_only AS toolResultOnly, sm.hook_id AS hookId
   FROM (
     SELECT
