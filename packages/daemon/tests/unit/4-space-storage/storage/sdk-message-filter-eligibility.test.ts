@@ -1,7 +1,33 @@
 import { describe, expect, test } from 'bun:test';
 import { deriveSdkMessageColumns } from '../../../../src/storage/sdk-message-columns';
+import { Database } from '../../../../src/storage/sqlite-compat';
 
 describe('SDK message filter eligibility contracts', () => {
+  test('integer-affinity flags preserve JSON scalar comparisons', () => {
+    const db = new Database(':memory:');
+    try {
+      db.exec('CREATE TABLE flags (value INTEGER)');
+      for (const value of [null, false, true, 0, 1, '0', '1', '1e2']) {
+        const body = { type: 'result', is_error: value };
+        db.exec('DELETE FROM flags');
+        db.prepare('INSERT INTO flags VALUES (?)').run(deriveSdkMessageColumns(body).is_error);
+        const expected = db
+          .prepare(
+            "SELECT COALESCE(json_extract(?, '$.is_error'), 0) = 0 AS zero, COALESCE(json_extract(?, '$.is_error'), 0) = 1 AS one"
+          )
+          .get(JSON.stringify(body), JSON.stringify(body));
+        expect(
+          db
+            .prepare(
+              'SELECT COALESCE(value, 0) = 0 AS zero, COALESCE(value, 0) = 1 AS one FROM flags'
+            )
+            .get()
+        ).toEqual(expected);
+      }
+    } finally {
+      db.close();
+    }
+  });
   test.each([
     ['missing', {}, 1],
     ['false', { isReplay: false }, 1],
