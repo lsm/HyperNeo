@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { createSessionGoalOperations } from '../../../../src/lib/goals/session-goal-operations.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
 import { SessionGoalRepository } from '../../../../src/storage/repositories/session-goal-repository.ts';
+import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
 import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
@@ -145,6 +146,24 @@ describe('session-owned goals', () => {
     const spaceGoals = new SpaceGoalRepository(db);
     expect(spaceGoals.getById(created.goal.id)).toBeNull();
     expect(spaceGoals.listAllActive()).toEqual([]);
+    db.close();
+  });
+});
+
+describe('deleting the owner session', () => {
+  test('removes its goals and their events, and leaves other sessions’ goals', async () => {
+    const { db, call } = setup();
+    db.exec('PRAGMA foreign_keys = ON');
+    const mine = (await call('goal.session.create', { title: 'Mine', doneTest: 'Done' })).goal;
+    const other: OperationCaller = { source: 'mcp', sessionId: 'neo:other', role: 'neo' };
+    const kept = (await call('goal.session.create', { title: 'Kept', doneTest: 'Done' }, other))
+      .goal;
+    new SessionRepository(db).deleteSession('neo:root');
+    expect(new SessionGoalRepository(db).get(mine.id)).toBeNull();
+    expect(new SessionGoalRepository(db).get(kept.id)?.title).toBe('Kept');
+    expect(
+      db.prepare('SELECT COUNT(*) AS n FROM space_goal_events WHERE goal_id = ?').get(mine.id)
+    ).toEqual({ n: 0 });
     db.close();
   });
 });
