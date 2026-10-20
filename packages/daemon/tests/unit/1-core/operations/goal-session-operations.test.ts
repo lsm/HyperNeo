@@ -1,7 +1,8 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { createSessionGoalOperations } from '../../../../src/lib/goals/session-goal-operations.ts';
 import { SessionGoalSchedules } from '../../../../src/lib/goals/session-goal-schedules.ts';
 import { SessionScheduler } from '../../../../src/lib/scheduler/session-schedules.ts';
+import { createSessionScheduleFire } from '../../../../src/lib/scheduler/session-schedule-fire.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoPack } from '../../../../src/lib/neo/packs/types.ts';
@@ -60,6 +61,60 @@ function setup(packs: NeoPack[] = []) {
 }
 
 describe('goal-owned schedules', () => {
+  test('reads, busy skips and failed delivery preserve facts_lines until a confirmed wake', async () => {
+    const { db, call, scheduler } = setup();
+    const jobs = new JobQueueRepository(db);
+    let now = Date.now();
+    const clock = spyOn(Date, 'now').mockImplementation(() => now);
+    let busy = false;
+    let failed = false;
+    try {
+      const goal = (await call('goal.session.create', { title: 'Ship', doneTest: 'Released' }))
+        .goal;
+      const handler = createSessionScheduleFire({
+        scheduler,
+        status: async () => (busy ? 'running' : 'done'),
+        deliver: async () => {
+          if (failed) throw new Error('offline');
+        },
+      });
+      const fire = () => {
+        const schedule = scheduler.repo.getBySource('goal', goal.id)!;
+        now = schedule.nextRunAt!;
+        return handler(jobs.getJob(schedule.pendingJobId!)!);
+      };
+      const stored = () =>
+        (
+          db.prepare('SELECT facts_lines FROM space_goals WHERE id = ?').get(goal.id) as {
+            facts_lines: string | null;
+          }
+        ).facts_lines;
+      await call('goal.facts', { goalId: goal.id });
+      expect(stored()).toBeNull();
+      await fire();
+      const baseline = stored();
+      expect(JSON.parse(baseline!)).toContain('Progress: 0');
+      await call('goal.session.update', { goalId: goal.id, progress: 20 });
+      const delta = (await call('goal.facts', { goalId: goal.id })).facts;
+      expect(delta.summary).toBe('- Progress: 0\n+ Progress: 20');
+      expect(stored()).toBe(baseline);
+      busy = true;
+      expect(await fire()).toEqual({ outcome: 'skipped_busy' });
+      expect(stored()).toBe(baseline);
+      busy = false;
+      failed = true;
+      await expect(fire()).rejects.toThrow('offline');
+      expect(stored()).toBe(baseline);
+      expect((await call('goal.facts', { goalId: goal.id })).facts).toEqual(delta);
+      failed = false;
+      expect(await fire()).toEqual({ outcome: 'fired' });
+      expect(JSON.parse(stored()!)).toContain('Progress: 20');
+      expect((await call('goal.facts', { goalId: goal.id })).facts.summary).toBe('');
+    } finally {
+      clock.mockRestore();
+      db.close();
+    }
+  });
   test('linked asks, todos, pack PRs and answered questions change the same facts Neo reads', async () => {
     let state = 'open';
     const { db, call, schedules } = setup([
