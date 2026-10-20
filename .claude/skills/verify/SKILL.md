@@ -64,7 +64,8 @@ UI is served, that RPC answers, and that the mock model API is up. It ends with
 - State: read the run's DB read-only, e.g.
   `sqlite3 -readonly "$RUN/data/daemon.db" "SELECT ..."`. Only the seed and
   check scripts write to it: `seed-todo.sh` and `seed-ledger.sh` (journeys 3 and 4),
-  `merge-check.sh` (journey 7) and `archive-guard-check.sh` (journey 10).
+  `merge-check.sh` (journey 7), `archive-guard-check.sh` (journey 10) and
+  `seed-start-question.sh` (journey 11).
 - Web UI: open `http://127.0.0.1:<port>/neo` (Neo) or
   `/session/<sessionId>` (a session) in the browser; read the page text and take
   a screenshot.

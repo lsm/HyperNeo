@@ -9,7 +9,7 @@ import { z } from 'zod';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import type { NeoPack } from './packs/types.ts';
-import { isNeoStartQuestionText, neoStartQuestionLine } from './start-question.ts';
+import { neoStartQuestionLine } from './start-question.ts';
 import {
   NeoStatusCodesSchema,
   neoStatusLine,
@@ -100,8 +100,8 @@ export function projectNeoAskEntries(
         const line = neoStartQuestionLine(
           question.startTodos.map((id) => ({ title: todos.find((todo) => todo.id === id)?.title }))
         );
-        return line.status === question.text || isNeoStartQuestionText(question.text)
-          ? { ...question, text: line.status, textCodes: line.statusCodes }
+        return line.status === question.text
+          ? { ...question, textCodes: line.statusCodes }
           : question;
       }),
     };

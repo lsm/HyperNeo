@@ -22,11 +22,3 @@ export function neoStartQuestionLine(steps: readonly { title?: string }[]): NeoS
 export function neoStartQuestionTitle(steps: readonly { title?: string }[]): string {
   return neoStartQuestionLine(steps).status;
 }
-
-export function isNeoStartQuestionText(text: string): boolean {
-  return Object.values(START_QUESTION_EN).some((template) =>
-    new RegExp(
-      `^${template.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\\\{\w+\\\}/g, '.+')}$`
-    ).test(text)
-  );
-}
