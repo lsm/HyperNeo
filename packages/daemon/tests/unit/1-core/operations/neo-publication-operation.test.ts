@@ -617,7 +617,7 @@ describe('runtime-bound publication operation', () => {
       ]);
     });
 
-    test('adds nothing when the turn already published or asked the human', async () => {
+    test('adds nothing when the turn already published or has an open question for the human', async () => {
       await invoke(draft);
       await replyAtNeoTurnEnd(caller().neoTurn, ask.messageId, 'Also this.', deps(caller()));
       expect(ledger.list(conversationId)!.map((item) => item.fullText)).toEqual([draft.fullText]);
@@ -636,6 +636,9 @@ describe('runtime-bound publication operation', () => {
         .run(Date.now());
       await replyAtNeoTurnEnd(caller().neoTurn, ask.messageId, 'Which one?', deps(caller()));
       expect(ledger.list(conversationId)).toEqual([]);
+      mailbox.db.exec("UPDATE neo_questions SET state = 'answered'");
+      await replyAtNeoTurnEnd(caller().neoTurn, ask.messageId, 'Got it.', deps(caller()));
+      expect(ledger.list(conversationId)!.map((item) => item.fullText)).toEqual(['Got it.']);
     });
 
     test('answers the latest human message steered into the turn', async () => {
@@ -657,11 +660,19 @@ describe('runtime-bound publication operation', () => {
       expect(ledger.list(conversationId)!.map((item) => item.fullText)).toEqual([draft.fullText]);
     });
 
-    test('adds nothing for a turn a note, schedule or session message started', async () => {
+    test('a note, schedule or session-message turn answers only a human message it carried', async () => {
       prompt(root.sessionId, 'event', 'system');
       const note = caller(root.sessionId, 'event', false);
       await replyAtNeoTurnEnd(note.neoTurn, undefined, 'Noted.', deps(note));
       expect(ledger.list(conversationId)).toEqual([]);
+      prompt(root.sessionId, 'steered');
+      await replyAtNeoTurnEnd(note.neoTurn, 'steered', 'Seen.', deps(note));
+      expect(ledger.list(conversationId)).toEqual([
+        expect.objectContaining({
+          fullText: 'Seen.',
+          askOrigin: { sessionId: root.sessionId, messageId: 'steered' },
+        }),
+      ]);
     });
   });
 });

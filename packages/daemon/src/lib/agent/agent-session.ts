@@ -364,7 +364,7 @@ export class AgentSession
     refusal: Parameters<OperationRefusalRepository['record']>[0]
   ) => new OperationRefusalRepository(this.db.getDatabase()).record(refusal, this.session.id);
 
-  replyAtNeoTurnEnd(turn: NeoCoordinatorTurn, text: string | undefined): Promise<unknown> {
+  async replyAtNeoTurnEnd(turn: NeoCoordinatorTurn, text: string | undefined): Promise<unknown> {
     const caller = {
       ...resolveCallerIdentity(this.callerScopeResolver, this.session.id),
       source: 'mcp' as const,

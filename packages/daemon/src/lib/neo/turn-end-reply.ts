@@ -27,7 +27,9 @@ function repliedThisTurn(answer: string | undefined, deps: Deps): boolean {
          LIMIT 1`
       )
       .get(root.sessionId.slice(4), JSON.stringify({ messageId: answer }).slice(1, -1)) ||
-    deps.db.prepare('SELECT 1 FROM neo_questions WHERE created_at >= ? LIMIT 1').get(deps.since)
+    deps.db
+      .prepare("SELECT 1 FROM neo_questions WHERE state = 'open' AND created_at >= ? LIMIT 1")
+      .get(deps.since)
   );
 }
 
@@ -38,7 +40,7 @@ function neoTurnEndReply(
   replied: boolean
 ): { value: Reply } | { reason: 'not_needed' } {
   const reply = text?.trim();
-  return turn?.human && turn.isLive() && answer && reply && !replied
+  return turn?.isLive() && answer && reply && !replied
     ? {
         value: {
           requestId: `turn-end:${answer}`,
