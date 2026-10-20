@@ -1,7 +1,8 @@
 import { generateUUID } from '@hyperneo/shared';
 import { z } from 'zod';
 import type { AgentSession } from '../agent/agent-session.ts';
-import { defineOperation } from '../operations/registry.ts';
+import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import { wrapSessionContent } from './session-envelope.ts';
 
 export interface SessionMessageSendRow {
   status: string;
@@ -209,6 +210,18 @@ async function deliverSessionMessage(
   return { success: true, delivered: true, message_id: messageId };
 }
 
+function stampAgentMessage(input: SendInput, caller: OperationCaller): SendInput {
+  return caller.source === 'mcp' && caller.sessionId && !input.answerQuestion
+    ? {
+        ...input,
+        message: wrapSessionContent(input.message, {
+          sessionId: caller.sessionId,
+          name: null,
+        }) as string,
+      }
+    : input;
+}
+
 export function createSendSessionMessageOperation(deps: SendSessionMessageDependencies) {
   return defineOperation({
     name: 'session.message.send',
@@ -216,11 +229,11 @@ export function createSendSessionMessageOperation(deps: SendSessionMessageDepend
       'Send a user message to a session in a Space and optionally clear a pending question; returns the delivery result.',
     inputSchema: SendSessionMessageInputSchema,
     resultSchema: SendSessionMessageResultSchema,
-    execute: async (input) => {
+    execute: async (input, caller) => {
       try {
         return input.answerQuestion
           ? await deliverAnswerQuestion(deps, input)
-          : await deliverSessionMessage(deps, input);
+          : await deliverSessionMessage(deps, stampAgentMessage(input, caller));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return { success: false, error: message };
