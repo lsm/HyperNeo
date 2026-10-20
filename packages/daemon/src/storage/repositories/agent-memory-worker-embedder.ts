@@ -5,6 +5,12 @@ const EMBED_TIMEOUT_MS = 120_000;
 
 type EmbedResponse = { vector: ArrayBuffer } | { error: string };
 
+function createEmbedWorker(): Worker {
+  return new Worker(new URL('./agent-memory-embed-worker.ts', import.meta.url).href, {
+    type: 'module',
+  });
+}
+
 export class WorkerAgentMemoryEmbedder implements AgentMemoryEmbedder {
   model = MODEL_ID;
   dimensions = DIMENSIONS;
@@ -12,7 +18,7 @@ export class WorkerAgentMemoryEmbedder implements AgentMemoryEmbedder {
   private queue: Promise<unknown> = Promise.resolve();
 
   constructor(
-    private readonly workerUrl = new URL('./agent-memory-embed-worker.ts', import.meta.url).href,
+    private readonly createWorker: () => Worker = createEmbedWorker,
     private readonly timeoutMs = EMBED_TIMEOUT_MS
   ) {}
 
@@ -61,7 +67,7 @@ export class WorkerAgentMemoryEmbedder implements AgentMemoryEmbedder {
   }
 
   private spawn(): Worker {
-    const worker = new Worker(this.workerUrl, { type: 'module' });
+    const worker = this.createWorker();
     (worker as Worker & { unref?: () => void }).unref?.();
     return worker;
   }

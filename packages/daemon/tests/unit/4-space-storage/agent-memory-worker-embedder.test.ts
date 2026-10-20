@@ -2,7 +2,10 @@ import { describe, expect, test } from 'bun:test';
 import { WorkerAgentMemoryEmbedder } from '../../../src/storage/repositories/agent-memory-worker-embedder.ts';
 
 const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
-const fakeWorker = new URL('../../helpers/fake-embed-worker.ts', import.meta.url).href;
+const fakeWorker = () =>
+  new Worker(new URL('../../helpers/fake-embed-worker.ts', import.meta.url).href, {
+    type: 'module',
+  });
 
 describe.skipIf(!isBun)('WorkerAgentMemoryEmbedder', () => {
   test('returns the worker’s vector bit for bit, one request at a time', async () => {

@@ -1,6 +1,6 @@
 #!/bin/bash
-# Usage: daemon-embed-lag.sh <checkout> <port>
-# Starts an isolated test daemon from <checkout> on a fresh data dir, seeds synthetic turns,
+# Usage: daemon-embed-lag.sh <checkout | compiled hyperneod binary> <port>
+# Starts an isolated test daemon from <checkout> (or the binary) on a fresh data dir, seeds synthetic turns,
 # queues one work.turns.embed run, and reports the slowest HTTP reply while the job runs.
 set -euo pipefail
 CHECKOUT=${1:?checkout}
@@ -9,10 +9,10 @@ PORT=${2:?port}
 lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1 && { echo "port $PORT is busy"; exit 1; }
 RUN=$(mktemp -d "${TMPDIR:-/tmp}/embed-lag.XXXXXX")
 mkdir -p "$RUN/home" "$RUN/data"
-cd "$CHECKOUT"
+if [ -f "$CHECKOUT" ] && [ -x "$CHECKOUT" ]; then DAEMON=("$CHECKOUT"); else cd "$CHECKOUT"; DAEMON=(bun run packages/cli/main.ts); fi
 env -i HOME="$RUN/home" PATH="$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin" TMPDIR="${TMPDIR:-/tmp}" \
   NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
-  bun run packages/cli/main.ts --port "$PORT" --host 127.0.0.1 --db-path "$RUN/data/daemon.db" \
+  "${DAEMON[@]}" --port "$PORT" --host 127.0.0.1 --db-path "$RUN/data/daemon.db" \
   < /dev/null > "$RUN/daemon.log" 2>&1 &
 PID=$!
 trap 'kill $PID 2>/dev/null || true' EXIT
