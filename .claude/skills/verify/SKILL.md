@@ -191,7 +191,9 @@ env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data"
 
 The helper starts an isolated daemon and synthetic Codex Desktop IPC/app-server
 Unix sockets under its fresh HOME. It uses real WebSocket `operation.invoke`
-with the production Codex adapter. The real `operations.describe` door must scope
+with the production Codex adapter. `work.adapters` must advertise steer for
+Codex and omit it for HyperNeo; the subsequent explicit steer must return the
+active turn receipt. The real `operations.describe` door must scope
 strict steer guidance to Codex and direct HyperNeo/Space targets to auto. Owner discovery rejects with a synthetic
 version mismatch while app-server has a steerable turn: default auto and explicit
 steer must return `steeredIntoTurnId` without queueing. Explicit queue must return
