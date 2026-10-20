@@ -188,6 +188,12 @@ adds its journey here.
    `duplicate: …`; five more distinct sends are accepted and the next replies
    `rate_limited: …`. Messages sent while B is `processing` are `consumed` before
    its turn ends.
+11. **Messages between root Neo and its workers show in Neo's conversation.** Run
+   `.claude/skills/verify/neo-session-rows.sh <port> "$RUN"`. It opens root, creates
+   a worker session "Fix the loader", and sends one message each way. End state: it
+   prints `Neo -> Fix the loader: Rebase on dev, then tell me.` then
+   `Fix the loader -> Neo: Rebased.`; on `/neo` each shows as one collapsed row
+   "Neo → Fix the loader" with its first line, expanding to the full text.
 
 ## Evidence
 

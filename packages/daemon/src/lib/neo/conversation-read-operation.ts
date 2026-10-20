@@ -87,6 +87,21 @@ export function createNeoConversationReadOperation(
             cursor: NeoConversationCursorSchema,
             publication: NeoStoredPublicationSchema,
           }),
+          z.object({
+            role: z.literal('session'),
+            cursor: NeoConversationCursorSchema,
+            message: z.object({
+              messageId: z.string(),
+              conversationId: z.string(),
+              sequence: z.number(),
+              fromSession: z.string(),
+              fromName: z.string().nullable(),
+              toSession: z.string(),
+              toName: z.string().nullable(),
+              text: z.string(),
+              createdAt: z.string(),
+            }),
+          }),
         ])
       ),
       nextAfter: NeoConversationCursorSchema.nullable(),
@@ -96,7 +111,7 @@ export function createNeoConversationReadOperation(
   return defineOperation({
     name: 'neo.conversation.read',
     description:
-      'Read the recorded human and Neo conversation, oldest first within each page. With no cursor, returns the newest page. Use nextBefore as before for older history, or nextAfter as after for newer entries. Human words and attachment references come from the immutable intake record; Neo replies and revision history come from the publication ledger. Only the current public conversation is readable; SDK transcripts and internal notes are excluded.',
+      'Read the recorded human and Neo conversation, with the messages root Neo exchanged with other sessions (role session), oldest first within each page. With no cursor, returns the newest page. Use nextBefore as before for older history, or nextAfter as after for newer entries. Human words and attachment references come from the immutable intake record; Neo replies and revision history come from the publication ledger. Session messages come from the record message.send writes when root Neo sends or receives one. Only the current public conversation is readable; SDK transcripts and internal notes are excluded.',
     policy: { safetyClass: 'read', roles: ['neo'] },
     inputSchema: NeoConversationReadInput,
     resultSchema,

@@ -140,7 +140,9 @@ describe('durable public conversation projection', () => {
           ? entry.ask.requestId
           : entry.kind === 'publication'
             ? entry.publication.publicationId
-            : entry.group.id
+            : entry.kind === 'notices'
+              ? entry.group.id
+              : entry.message.messageId
       )
     ).toEqual(['publication-2', 'ask-1', 'publication-1', 'ask-2']);
     expect(a[0]).toBe(laterAsk);
@@ -272,5 +274,34 @@ describe('session notice groups in the public conversation', () => {
     expect(
       conversation.entries.flatMap((entry) => (entry.kind === 'notices' ? [entry.group.id] : []))
     ).toEqual(['neo-session-notices:15']);
+  });
+});
+
+describe('session message rows', () => {
+  const message = (sequence: number, createdAt: string, text: string) => ({
+    messageId: `message-${sequence}`,
+    conversationId: id,
+    sequence,
+    fromSession: 'worker-1',
+    fromName: 'Fix the loader',
+    toSession: root,
+    toName: 'Neo',
+    text,
+    createdAt,
+  });
+
+  it('places messages between sessions in time order beside the conversation, once loaded history reaches them', () => {
+    const later = '2026-09-30T20:05:00.000Z';
+    const before = '2026-09-30T19:00:00.000Z';
+    const result = projectNeoPublicConversation(
+      root,
+      { ...asks([ask()]), hasEarlier: true },
+      publications([]),
+      [],
+      [message(1, before, 'Too old for this window'), message(2, later, 'PR #9 is up\nCI green')]
+    );
+    expect(
+      result.entries.map((entry) => (entry.kind === 'session' ? entry.message.text : entry.kind))
+    ).toEqual(['ask', 'PR #9 is up\nCI green']);
   });
 });

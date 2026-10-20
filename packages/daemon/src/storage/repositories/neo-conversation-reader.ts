@@ -1,15 +1,17 @@
 import type { NeoConversationAskPageItem } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
+import type { NeoSessionMessage } from '@hyperneo/shared/types/neo-session-message';
 import { z } from 'zod';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoConversationAskRepository } from './neo-conversation-ask-repository.ts';
 import { NeoPublicationRepository } from './neo-publication-repository.ts';
+import { NeoSessionMessageRepository } from './neo-session-message-repository.ts';
 import { presentNeoAskImageRefs } from '../../lib/neo/conversation-ask-read-operation.ts';
 
 export const NeoConversationCursorSchema = z
   .object({
     at: z.iso.datetime(),
-    role: z.enum(['human', 'neo']),
+    role: z.enum(['human', 'neo', 'session']),
     sequence: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   })
   .strict();
@@ -26,7 +28,8 @@ export const NeoConversationReadInput = z
 export type NeoConversationPage = z.infer<typeof NeoConversationReadInput>;
 export type NeoConversationEntry =
   | { cursor: NeoConversationCursor; role: 'human'; ask: NeoConversationAskPageItem }
-  | { cursor: NeoConversationCursor; role: 'neo'; publication: NeoPublication };
+  | { cursor: NeoConversationCursor; role: 'neo'; publication: NeoPublication }
+  | { cursor: NeoConversationCursor; role: 'session'; message: NeoSessionMessage };
 type Row = NeoConversationCursor & { id: string };
 
 export function neoConversationPage(entries: NeoConversationEntry[], page: NeoConversationPage) {
@@ -49,10 +52,14 @@ export class NeoConversationReader {
         FROM neo_conversation_asks WHERE conversation_id = ?
       UNION ALL
       SELECT created_at AS at, 'neo' AS role, sequence, publication_id AS id
-        FROM neo_publications WHERE conversation_id = ?)
+        FROM neo_publications WHERE conversation_id = ?
+      UNION ALL
+      SELECT created_at AS at, 'session' AS role, sequence, message_id AS id
+        FROM neo_session_messages WHERE conversation_id = ?)
       ${cursor ? `WHERE (at, role, sequence) ${page.after ? '>' : '<'} (?, ?, ?)` : ''}
       ORDER BY at ${direction}, role ${direction}, sequence ${direction} LIMIT ?`)
       .all(
+        page.conversationId,
         page.conversationId,
         page.conversationId,
         ...(cursor ? [cursor.at, cursor.role, cursor.sequence] : []),
@@ -61,6 +68,7 @@ export class NeoConversationReader {
     if (!page.after) rows.reverse();
     const asks = new NeoConversationAskRepository(this.db);
     const publications = new NeoPublicationRepository(this.db);
+    const sessionMessages = new NeoSessionMessageRepository(this.db);
     const items = rows.map((row): NeoConversationEntry => {
       const cursor = { at: row.at, role: row.role, sequence: row.sequence };
       if (row.role === 'human') {
@@ -71,6 +79,11 @@ export class NeoConversationReader {
           role: row.role,
           ask: presentNeoAskImageRefs([ask], asks.images(page.conversationId, [ask.requestId]))[0],
         };
+      }
+      if (row.role === 'session') {
+        const message = sessionMessages.get(page.conversationId, row.id);
+        if (!message) throw new Error('Recorded session message disappeared');
+        return { cursor, role: row.role, message };
       }
       const publication = publications.get(page.conversationId, row.id);
       if (!publication) throw new Error('Recorded Neo message disappeared');

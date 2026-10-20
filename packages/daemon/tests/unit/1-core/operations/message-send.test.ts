@@ -92,6 +92,38 @@ describe('shared message.send operation', () => {
     );
   });
 
+  test('an accepted session send is reported with its raw text; a human send is not', async () => {
+    const sent: unknown[] = [];
+    const registry = createOperationRegistry([
+      createSendMessageOperation(
+        mailbox.jobQueue,
+        () => 'active',
+        undefined,
+        undefined,
+        () => null,
+        (item) => sent.push(item)
+      ),
+    ]);
+    await sendFrom(registry, 'PR #9 is up');
+    await invokeOperation(
+      registry,
+      'message.send',
+      { sessionId: 'destination', message },
+      {
+        source: 'rpc',
+      }
+    );
+    expect(sent).toEqual([
+      {
+        messageId: expect.any(String),
+        fromSession: 'worker-1',
+        toSession: 'destination',
+        text: 'PR #9 is up',
+        at: expect.any(Number),
+      },
+    ]);
+  });
+
   test('a human chat message is delivered as typed', async () => {
     const registry = createOperationRegistry([
       createSendMessageOperation(mailbox.jobQueue, () => 'active'),

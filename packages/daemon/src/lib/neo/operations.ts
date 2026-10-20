@@ -1,3 +1,4 @@
+import { NeoSessionMessageRepository } from '../../storage/repositories/neo-session-message-repository.ts';
 import { neoTurnRequestKey } from './request-key.ts';
 import { readNeoWorking } from './working.ts';
 import { hostname } from 'node:os';
@@ -103,6 +104,7 @@ const Project = z.object({
   createdAt: z.number(),
   updatedAt: z.number(),
 } satisfies ZodShape<NeoProject>);
+const NEO_SESSION_MESSAGES_SHOWN = 30;
 const Failure = z.object({ ok: z.literal(false), reason: z.string() });
 const SnapshotOk = z.object({
   ok: z.literal(true),
@@ -113,6 +115,22 @@ const SnapshotOk = z.object({
   standingRules: z.array(z.string()).optional(),
   sessionNotices: z.array(NeoSessionNoticeSchema).max(20).optional(),
   sessionNoticeGroups: z.array(NeoSessionNoticeGroupSchema).max(10).optional(),
+  sessionMessages: z
+    .array(
+      z.object({
+        messageId: z.string(),
+        conversationId: z.string(),
+        sequence: z.number(),
+        fromSession: z.string(),
+        fromName: z.string().nullable(),
+        toSession: z.string(),
+        toName: z.string().nullable(),
+        text: z.string(),
+        createdAt: z.string(),
+      })
+    )
+    .max(NEO_SESSION_MESSAGES_SHOWN)
+    .optional(),
   mutedSessions: z.array(z.string()).max(NEO_SESSION_MUTES_MAX).optional(),
   todoAsks: z.array(NeoAskEntrySchema).optional(),
   packRows: z
@@ -385,6 +403,10 @@ export function createNeoOperations(service: NeoService) {
       }),
       ...(caller.source === 'rpc' ? { sessionNotices: service.sessionNotices } : {}),
       sessionNoticeGroups: latestNeoSessionNoticeGroups(service.sessionNoticeGroups),
+      sessionMessages: new NeoSessionMessageRepository(service.db.getDatabase()).latest(
+        service.repo.conversationId() ?? '',
+        NEO_SESSION_MESSAGES_SHOWN
+      ),
       mutedSessions: service.db.getGlobalSettings?.().neo?.mutedSessions ?? [],
       preferences: service.modelPreference(),
       todoAsks,

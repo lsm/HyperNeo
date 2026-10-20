@@ -189,7 +189,8 @@ export function useNeo() {
     snapshot?.sessionId ?? null,
     asks,
     publications,
-    snapshot?.sessionNoticeGroups
+    snapshot?.sessionNoticeGroups,
+    snapshot?.sessionMessages
   );
   return {
     publicConversation,
