@@ -64,7 +64,8 @@ UI is served, that RPC answers, and that the mock model API is up. It ends with
 - State: read the run's DB read-only, e.g.
   `sqlite3 -readonly "$RUN/data/daemon.db" "SELECT ..."`. Only the seed and
   check scripts write to it: `seed-todo.sh` and `seed-ledger.sh` (journeys 3 and 4),
-  `merge-check.sh` (journey 7) and `archive-guard-check.sh` (journey 10).
+  `merge-check.sh` (journey 7), `archive-guard-check.sh` (journey 10) and
+  `seed-start-question.sh` (journey 12).
 - Web UI: open `http://127.0.0.1:<port>/neo` (Neo) or
   `/session/<sessionId>` (a session) in the browser; read the page text and take
   a screenshot.
@@ -197,6 +198,13 @@ adds its journey here.
     `done_test_required`; `goal-list.json` lists "Grow OAP" at progress 40 with its
     done-test, mandate link and next step; `goal-events.txt` reads `created|human`
     then `updated|human`.
+12. **A start question lists only todos that can still start.** After journey 1
+    opened root, run `.claude/skills/verify/seed-start-question.sh "$RUN"`. It
+    writes `ask-prune` with two todos awaiting start, `todo-a` (check
+    `pr_merged` on `verify-test/demo#8`, which reads as `MERGED`) and `todo-b`
+    (no check), and one open start question `q-start` listing both. End state
+    within ~3 min: `todo-a` is `done` with `started_at` empty, and `q-start`
+    is still `open` with `start_todos` `["todo-b"]`.
 14. **Neo or the user schedules a session wake.** `session-schedules.sh <port> "$RUN"`
     creates a session and calls `schedule.session.*` as the local user. End state: a
     1-second cadence replies `invalid_cadence`; an hourly reminder is `active` with
