@@ -680,24 +680,24 @@ export class NeoService {
     )
     .pipe(
       (rows: NeoCardEventSubscription[]) =>
-        runLagPhase(
-          'neo:card_topics:eligibility',
-          () =>
-            new Map(
-              [...new Set(rows.map((row) => row.workId))].map(
-                (workId) =>
-                  [
-                    workId,
-                    !!runLagPhase(`neo:card_topics:followed_todo:${workId}`, () =>
-                      this.followedTodo(workId)
-                    ) &&
-                      runLagPhase(`neo:card_topics:card_events_delivered:${workId}`, () =>
-                        this.cardEventsDelivered()
-                      ),
-                  ] as const
-              )
+        runLagPhase('neo:card_topics:eligibility', () => {
+          let delivered: boolean | undefined;
+          return new Map(
+            [...new Set(rows.map((row) => row.workId))].map(
+              (workId) =>
+                [
+                  workId,
+                  !!runLagPhase(`neo:card_topics:followed_todo:${workId}`, () =>
+                    this.followedTodo(workId)
+                  ) &&
+                    runLagPhase(
+                      `neo:card_topics:card_events_delivered:${workId}`,
+                      () => (delivered ??= this.cardEventsDelivered())
+                    ),
+                ] as const
             )
-        ),
+          );
+        }),
       'rows',
       'followed'
     )
