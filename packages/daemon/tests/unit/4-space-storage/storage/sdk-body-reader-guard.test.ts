@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = resolve(import.meta.dir, '../../../../src');
+const root = fileURLToPath(new URL('../../../../src', import.meta.url));
 function files(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const path = join(dir, entry.name);

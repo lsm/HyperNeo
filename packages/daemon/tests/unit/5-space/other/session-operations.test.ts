@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import {
   createSessionOperations,
@@ -33,6 +34,7 @@ function createSchema(db: BunDatabase): void {
   db.run(`CREATE TABLE sdk_message_replacements (
     session_id TEXT, target_uuid TEXT
   )`);
+  runMigration418(db);
 }
 
 function insertSession(
