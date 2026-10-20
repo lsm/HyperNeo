@@ -267,7 +267,7 @@ describe('codex-desktop start', () => {
         {
           ...turnAccess,
           threadId: 'th1',
-          input: [{ type: 'text', text: request.message }],
+          input: [{ type: 'text', text: request.message, text_elements: [] }],
           model: model.model,
         },
       ],
@@ -307,7 +307,7 @@ describe('codex-desktop start', () => {
         {
           ...turnAccess,
           threadId: 'th1',
-          input: [{ type: 'text', text: request.message }],
+          input: [{ type: 'text', text: request.message, text_elements: [] }],
           model: model.model,
           effort: 'medium',
         },
@@ -464,7 +464,7 @@ describe('codex-desktop start', () => {
         {
           ...turnAccess,
           threadId: 'th1',
-          input: [{ type: 'text', text: 'Raise the body font to 16px.' }],
+          input: [{ type: 'text', text: 'Raise the body font to 16px.', text_elements: [] }],
         },
       ],
     ]);

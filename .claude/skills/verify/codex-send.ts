@@ -50,6 +50,7 @@ if (action === 'prepare') {
     input: [
       {
         type: 'text',
+        text_elements: [],
         text: 'Isolated driver verification. Do not read files, credentials, or run tests. Run sleep 45 with your shell tool, then reply ORIGINAL_ONLY. If a follow-up requests a token, replace the final reply with that token. Do nothing else.',
       },
     ],
@@ -82,6 +83,7 @@ if (action === 'prepare') {
               input: [
                 {
                   type: 'text',
+        text_elements: [],
                   text: 'Do not read files or credentials. Run sleep 45, then reply ORIGINAL_ONLY unless a follow-up requests a different token. Do nothing else.',
                 },
               ],
