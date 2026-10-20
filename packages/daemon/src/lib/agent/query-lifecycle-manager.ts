@@ -163,7 +163,7 @@ export class QueryLifecycleManager {
     return false;
   }
 
-  private validateAndRepairWithMigration(): boolean {
+  private async validateAndRepairWithMigration(): Promise<boolean> {
     const { session, db } = this.ctx;
     if (!session.sdkSessionId) return false;
 
@@ -305,7 +305,7 @@ export class QueryLifecycleManager {
       }
 
       if (session.config.provider !== 'acp' && session.sdkSessionId) {
-        const isValid = this.validateAndRepairWithMigration();
+        const isValid = await this.validateAndRepairWithMigration();
         if (!isValid) {
           this.logger.warn(
             `SDK session file missing/invalid for ${session.sdkSessionId}. ` +
@@ -379,7 +379,7 @@ export class QueryLifecycleManager {
 
       if (restartAfter) {
         if (session.config.provider !== 'acp' && session.sdkSessionId) {
-          const isValid = this.validateAndRepairWithMigration();
+          const isValid = await this.validateAndRepairWithMigration();
           if (!isValid) {
             this.logger.warn(
               `SDK session file missing/invalid for ${session.sdkSessionId}. ` +
@@ -510,7 +510,7 @@ export class QueryLifecycleManager {
     throwIfDeliveryAborted(signal);
 
     if (session.config.provider !== 'acp' && session.sdkSessionId) {
-      const isValid = this.validateAndRepairWithMigration();
+      const isValid = await this.validateAndRepairWithMigration();
       if (!isValid) {
         this.logger.warn(
           `SDK session file missing for sdkSessionId=${session.sdkSessionId}. ` +
