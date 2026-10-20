@@ -53,7 +53,7 @@ function harness(adapter: string) {
     expect(result.kind).toBe('completed');
     if (result.kind === 'completed') expect(result.value).toMatchObject({ ok: true });
   };
-  return { received, call };
+  return { received, call, registry };
 }
 
 describe('Neo external worker reply instructions', () => {
@@ -121,5 +121,51 @@ describe('Neo external worker reply instructions', () => {
     const { received, call } = harness('codex-desktop');
     await call('work.queue', { ref: { adapter: 'codex-desktop', id: 'worker' }, message: 'Next.' });
     expect(received).toEqual([`Next.\n\n${line('neo:own-root')}`]);
+  });
+
+  test('remote start/send/queue retain their originating Neo and the complete 20,000-character instruction', async () => {
+    const { received, registry: remoteRegistry } = harness('codex-desktop');
+    const registry = createOperationRegistry(
+      createWorkVerbOperations({
+        adapters: () => [],
+        daemonName: 'origin',
+        remote: {
+          list: () => [{ daemonId: 'remote' }],
+          invoke: async (_daemon, name, input) => {
+            const result = await invokeOperation(remoteRegistry, name, input, { source: 'rpc' });
+            if (result.kind !== 'completed') throw new Error(result.message);
+            return result.value;
+          },
+        },
+      })
+    );
+    const message = 'x'.repeat(20_000);
+    for (const name of ['work.start', 'work.send', 'work.queue']) {
+      const input =
+        name === 'work.start'
+          ? {
+              adapter: 'codex-desktop',
+              place: { ...place, daemon: 'remote' },
+              title: 'Build',
+              message,
+            }
+          : { ref: { adapter: 'codex-desktop', daemon: 'remote', id: 'worker' }, message };
+      const result = await invokeOperation(registry, name, input, neo);
+      expect(result).toMatchObject({ kind: 'completed', value: { ok: true } });
+    }
+    expect(received).toEqual(
+      Array(3).fill(`${message}\n\n${line('daemon:origin::session:neo%3Aown-root')}`)
+    );
+    expect(
+      await invokeOperation(
+        registry,
+        'work.send',
+        {
+          ref: { adapter: 'codex-desktop', daemon: 'remote', id: 'worker' },
+          message: `${message}x`,
+        },
+        neo
+      )
+    ).toMatchObject({ kind: 'failed', code: 'invalid_input' });
   });
 });

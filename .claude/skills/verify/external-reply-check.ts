@@ -7,6 +7,11 @@ import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts'
 
 const [port, run] = process.argv.slice(2);
 assert(port && port !== '8399' && run, 'usage: bun external-reply-check.ts <port> <fresh-run-dir>');
+const probe = createServer();
+await new Promise<void>((done, fail) =>
+  probe.listen(Number(port), '127.0.0.1', done).once('error', fail)
+);
+await new Promise<void>((done) => probe.close(() => done()));
 const root = resolve(import.meta.dirname, '../../..');
 const home = join(run, 'home');
 const data = join(run, 'data');
@@ -178,7 +183,7 @@ try {
       cwd: root,
       env: {
         ...env,
-        CODEX_THREAD_ID: 'verify-external-peer',
+        CLAUDE_CODE_SESSION_ID: peer.sessionId,
         HYPERNEO_SESSION_DOOR: join(data, 'session-door.sock'),
       },
       encoding: 'utf8',
@@ -192,9 +197,9 @@ try {
     for (let i = 0; i < 40; i++) {
       persisted = !!db
         .prepare(
-          "SELECT 1 FROM sdk_messages WHERE session_id = ? AND message_type = 'user' AND sdk_message LIKE ? LIMIT 1"
+          "SELECT 1 FROM sdk_messages WHERE session_id = ? AND message_type = 'user' AND sdk_message LIKE ? AND sdk_message LIKE ? LIMIT 1"
         )
-        .get(neo, '%Mid-work progress from the peer.%');
+        .get(neo, '%Mid-work progress from the peer.%', `%claude-code:${peer.sessionId}%`);
       if (persisted) break;
       await pause();
     }

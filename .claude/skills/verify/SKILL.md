@@ -67,7 +67,8 @@ UI is served, that RPC answers, and that the mock model API is up. It ends with
   `sqlite3 -readonly "$RUN/data/daemon.db" "SELECT ..."`. Only the seed and
   check scripts write to it: `seed-todo.sh` and `seed-ledger.sh` (journeys 3 and 4),
   `merge-check.sh` (journey 7), `archive-guard-check.sh` (journey 10) and
-  `seed-start-question.sh` (journey 12), and `quote-summary-check.mjs` (journey 14).
+  `seed-start-question.sh` (journey 12), `quote-summary-check.mjs` (journey 14), and
+  `external-reply-check.ts` (journey 16).
 - Web UI: open `http://127.0.0.1:<port>/neo` (Neo) or
   `/session/<sessionId>` (a session) in the browser; read the page text and take
   a screenshot.
@@ -287,6 +288,28 @@ adds its journey here.
     No database or credentials are opened, and no daemon is launched or changed.
     Synthetic CI coverage lives in `tests/unit/lib/daemon-lag-tally.test.ts` in
     the daemon package; run just that file locally.
+
+16. **An external worker can report progress to its sending Neo mid-work.**
+    Run `RUN=$(mktemp -d /tmp/hn-reply-XXXXXX)` then
+    `bun .claude/skills/verify/external-reply-check.ts <free-port> "$RUN"`.
+    It refuses 8399 and a busy port, starts a real isolated daemon in test mode
+    with an empty environment and its own HOME/DB, and registers a synthetic
+    Claude Code peer on a private Unix socket. No provider, mock-model port or
+    GUI is needed. The script seeds only this run's ask/todos/start questions,
+    then answers the start questions through real RPC so the todo runner sends
+    its instructions through the native Claude inbox transport.
+
+    End state: `$RUN/observed.json` records the worker's actual incoming frames.
+    The first instruction includes `hyperneo send <the actual root Neo id>
+    "<text>"`; an instruction already containing that line has one copy; a
+    human-origin send has none. The script then runs the real CLI with a
+    the synthetic Claude peer's sender identity and checks read-only that its progress
+    message reached that Neo's transcript. It stops its daemon and closes its
+    peer socket even when an assertion fails. Save `observed.json` and the
+    console output as before/after evidence, then remove the run directory.
+    This proves real RPC/todo/inbox/CLI delivery with a synthetic peer, not
+    Claude Desktop or Codex Desktop GUI rendering; those routes and direct
+    `work.send`/`work.start` are covered by the daemon unit tests.
 
 ## Evidence
 
