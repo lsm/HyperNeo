@@ -187,6 +187,16 @@ describe('simple message.send worker handoff', () => {
     expect(mailbox.rows()).toHaveLength(1);
   });
 
+  test('admission rejects a rate-limited large report before publishing it', async () => {
+    const shared = registry();
+    for (let n = 0; n < 6; n++) await accepted({ to: 'neo:root', text: `short-${n}` }, shared);
+    expect(await send({ to: 'neo:root', text: report }, shared)).toMatchObject({
+      kind: 'completed',
+      value: { kind: 'rejected', reason: expect.stringContaining('rate_limited') },
+    });
+    expect(existsSync(join(root, 'handoffs'))).toBe(false);
+  });
+
   test('an unknown target causes no spill or mailbox side effect', async () => {
     expect(await send({ to: 'missing', text: report })).toMatchObject({
       kind: 'completed',
