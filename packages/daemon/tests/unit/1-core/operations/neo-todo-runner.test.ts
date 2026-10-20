@@ -542,20 +542,14 @@ describe('requireNeoTodoStartable', () => {
 });
 
 describe('planNeoTodoSettled', () => {
-  test('a stopped session keeps a checked todo doing and blocks an unchecked one; a failure fails it, and the same failure twice blocks it', () => {
+  test('a stopped session keeps a todo doing with its report; a failure fails it, and the same failure twice blocks it', () => {
     const doing = { state: 'doing', check: { pack: 'coding' }, reason: null } as NeoTodo;
     expect(planNeoTodoSettled(doing, { status: 'reported', report: 'Opened #12' }, 5)).toEqual({
       report: 'Opened #12',
     });
     expect(
       planNeoTodoSettled({ ...doing, check: null }, { status: 'reported', report: 'Done' }, 5)
-    ).toEqual({
-      report: 'Done',
-      state: 'blocked',
-      blockedBy: 'worker',
-      blockedReason: 'Its session finished its turn; nothing confirms the todo is done yet.',
-      nextAction: 'Tick it done with evidence, continue the session, or close it.',
-    });
+    ).toEqual({ report: 'Done' });
     expect(planNeoTodoSettled(doing, { status: 'failed', report: 'It stopped.' }, 5)).toEqual({
       state: 'failed',
       reason: 'It stopped.',
@@ -628,6 +622,20 @@ describe('planNeoTodoCheck', () => {
 });
 
 describe('neoTodoNote', () => {
+  test('passes on the report of a doing todo nothing checks, asking Neo to tick it', () => {
+    expect(
+      neoTodoNote({
+        title: 'T',
+        state: 'doing',
+        doneWhen: 'Lane merged',
+        check: null,
+        report: 'Waiting on CI',
+      } as NeoTodo)
+    ).toBe(
+      'Todo "T" reported, and nothing checks it: tick it done with evidence once "Lane merged" holds, or let it go on.\nIts report:\nWaiting on CI'
+    );
+  });
+
   test('says a failure with its reason', () => {
     expect(neoTodoNote({ title: 'T', state: 'failed', reason: 'gone' } as NeoTodo)).toBe(
       'Todo "T" failed: gone'
