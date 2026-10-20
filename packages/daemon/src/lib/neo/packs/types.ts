@@ -1,4 +1,4 @@
-import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type { NeoTodo, NeoTodoCheck } from '@hyperneo/shared/types/neo-ask';
 import type { WorkExecutionPreparation } from '../../drivers/start-preparation.ts';
 import type { WorkRef, WorkStatus } from '../../drivers/types.ts';
 import type { Database } from '../../../storage/sqlite-compat.ts';
@@ -49,6 +49,8 @@ export interface NeoTodoPack {
   openedPrs?(todo: NeoTodo, urls: readonly string[]): void;
   repository?(draft: Pick<NeoTodo, 'check' | 'named'> & { id?: string }): string | null;
   waiting?(todo: NeoTodo): boolean;
+  doneWhen?(check: NeoTodoCheck): string | null;
+  refuse?(draft: Pick<NeoTodo, 'check' | 'instruction'>): string | null;
 }
 
 export interface NeoPack extends NeoPackBrief {

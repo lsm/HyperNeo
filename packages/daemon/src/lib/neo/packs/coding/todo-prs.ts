@@ -1,4 +1,4 @@
-import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type { NeoTodo, NeoTodoCheck } from '@hyperneo/shared/types/neo-ask';
 import { neoWorkPrVerdict, type NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import type { ExternalEvent } from '../../../external-events/types.ts';
@@ -318,6 +318,32 @@ export function codingTodoRepository(
   return neoGitRepo(/^[\w.-]+\/[\w.-]+$/.test(named.trim()) ? `github.com/${named.trim()}` : named);
 }
 
+function codingCheckRefs(check: NeoTodoCheck | null): string[] {
+  const urls = Array.isArray(check?.params.urls) ? check.params.urls : [];
+  return urls.flatMap((url) => {
+    const pr = typeof url === 'string' ? parsePrUrl(url) : null;
+    return pr ? [`${pr.owner}/${pr.repo}#${pr.number}`] : [];
+  });
+}
+
+export function codingTodoDoneWhen(check: NeoTodoCheck): string | null {
+  if (check.kind !== 'pr_merged') return null;
+  const refs = codingCheckRefs(check);
+  return refs.length
+    ? `${refs.join(', ')} merged`
+    : "The one pull request this todo's session opens is merged";
+}
+
+export function codingTodoCheckRefusal(
+  draft: Pick<NeoTodo, 'check' | 'instruction'>
+): string | null {
+  return draft.check?.kind === 'pr_merged' &&
+    !draft.instruction &&
+    !codingCheckRefs(draft.check).length
+    ? 'pr_merged_needs_urls: a todo with no instruction opens no pull request; name each one in params.urls.'
+    : null;
+}
+
 export function createCodingTodoPack(
   repo: CodingTodoPrRepository,
   readPrs: NeoWorkPrReader,
@@ -353,6 +379,8 @@ export function createCodingTodoPack(
     },
     statusLine: (todo) => codingTodoStatusLine(todo, repo.prs(todo.id), ledger),
     waiting: (todo) => repo.prs(todo.id).some((pr) => pr.state === 'OPEN'),
+    doneWhen: codingTodoDoneWhen,
+    refuse: codingTodoCheckRefusal,
     topics: (todo) =>
       repo.urls(todo.id).flatMap((url) => {
         const parsed = (repo.latest(url)?.pr.state ?? 'OPEN') === 'OPEN' ? parsePrUrl(url) : null;
