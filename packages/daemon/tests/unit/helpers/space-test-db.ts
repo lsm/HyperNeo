@@ -347,7 +347,7 @@ export function createSpaceTables(db: BunDatabase): void {
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_goals (
 			id TEXT PRIMARY KEY,
-			space_id TEXT NOT NULL,
+			space_id TEXT,
 			title TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL DEFAULT 'active'
@@ -374,7 +374,15 @@ export function createSpaceTables(db: BunDatabase): void {
 			completed_at INTEGER,
 			workspace_path TEXT,
 			revision INTEGER NOT NULL DEFAULT 0,
-			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+			owner_session_id TEXT,
+			done_test TEXT,
+			mandate_ref TEXT,
+			mandate_rev TEXT,
+			works_note TEXT,
+			works_note_through INTEGER,
+			facts_lines TEXT,
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+			CHECK ((space_id IS NULL) <> (owner_session_id IS NULL))
 		)
 	`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_space_goals_space ON space_goals(space_id, status)`);
@@ -877,12 +885,12 @@ export function createSpaceTables(db: BunDatabase): void {
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_goal_events (
 			id TEXT PRIMARY KEY,
-			space_id TEXT NOT NULL,
+			space_id TEXT,
 			goal_id TEXT NOT NULL,
 			event_type TEXT NOT NULL
-				CHECK(event_type IN ('created', 'updated', 'status_changed', 'task_triggered', 'task_queued', 'task_terminal', 'schedule_updated')),
+				CHECK(event_type IN ('created', 'updated', 'status_changed', 'task_triggered', 'task_queued', 'task_terminal', 'schedule_updated', 'journal_compacted')),
 			source TEXT NOT NULL
-				CHECK(source IN ('rpc', 'space_agent_tool', 'workflow_node_agent', 'scheduler', 'system')),
+				CHECK(source IN ('rpc', 'space_agent_tool', 'workflow_node_agent', 'scheduler', 'system', 'neo', 'human')),
 			source_task_id TEXT,
 			source_session_id TEXT,
 			previous_state TEXT,
