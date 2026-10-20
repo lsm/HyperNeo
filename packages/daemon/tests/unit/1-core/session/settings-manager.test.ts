@@ -137,9 +137,10 @@ describe('SettingsManager', () => {
       mkdirSync(directory);
       const original = '{"custom":"PRIVATE_SETTINGS_VALUE",';
       writeFileSync(path, original);
-      await expect(settingsManager.prepareSDKOptions()).rejects.toThrow(
-        'Invalid SDK settings JSON'
-      );
+      const error = await settingsManager.prepareSDKOptions().catch((error: unknown) => error);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain('Invalid SDK settings JSON');
+      expect((error as Error).message).not.toContain('PRIVATE_SETTINGS_VALUE');
       expect(readFileSync(path, 'utf8')).toBe(original);
       expect(readdirSync(directory)).toEqual(['settings.local.json']);
       writeFileSync(path, JSON.stringify({ custom: 'repaired' }));
