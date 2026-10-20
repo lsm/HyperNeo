@@ -56,8 +56,9 @@ describe('SDK body reader guard', () => {
           return [];
         if (
           path === 'storage/repositories/sdk-message-body-write.ts' &&
-          /INSERT INTO sdk_message_bodies/.test(sql) &&
-          /SELECT rowid,sdk_message FROM sdk_messages WHERE/.test(sql)
+          ((/INSERT INTO sdk_message_bodies/.test(sql) &&
+            /LEFT JOIN sdk_message_bodies previous ON previous.seq=m.rowid/.test(sql)) ||
+            /UPDATE sdk_messages AS m SET sdk_message=\(SELECT b.sdk_message/.test(sql))
         )
           return [];
         return [`${path}: ${sql.slice(0, 180)}`];

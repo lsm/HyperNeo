@@ -19,7 +19,7 @@ try {
   const body = { type: 'assistant', subtype: 'before', message: { content: [{ type: 'text', text: 'complete' }] } };
   const names = Object.keys(SDK_MESSAGE_COLUMN_TYPES) as (keyof typeof SDK_MESSAGE_COLUMN_TYPES)[];
   const derived = deriveSdkMessageColumns(body, 'task');
-  writeSdkMessageBody(db, () => db.prepare(`INSERT INTO sdk_messages(id,session_id,task_id,message_type,sdk_message,timestamp,replacement_metadata_normalized,${names.join(',')}) VALUES ('probe','synthetic','task','assistant',?,'2026-10-20T00:00:00Z',1,${names.map(() => '?').join(',')})`).run(JSON.stringify(body), ...names.map((key) => derived[key])), "id='probe'", []);
+  writeSdkMessageBody(db, () => db.prepare(`INSERT INTO sdk_messages(id,session_id,task_id,message_type,sdk_message,timestamp,replacement_metadata_normalized,${names.join(',')}) VALUES ('probe','synthetic','task','assistant',?,'2026-10-20T00:00:00Z',1,${names.map(() => '?').join(',')})`).run(JSON.stringify(body), ...names.map((key) => derived[key])), "id='probe'", [], '?', [JSON.stringify(body)]);
   const before = db.prepare("SELECT flags,json_subtype FROM task_message_rows WHERE id='probe'").get();
   if (mode === 'missing') {
     db.exec("DELETE FROM task_message_rows WHERE id='probe'");
