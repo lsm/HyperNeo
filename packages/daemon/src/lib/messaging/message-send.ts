@@ -1,3 +1,15 @@
+import { createHash } from 'node:crypto';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { getDataDir } from '../data-dir.ts';
+import { canonicalJson } from '../agent/prompt-comparison.ts';
+import {
+  HandoffReference,
+  handoffDraftDirectory,
+  publishHandoff,
+  readHandoff,
+} from '../handoffs/outbox.ts';
+import { enqueueMailboxEntry } from '../mailbox/enqueue.ts';
 import { generateUUID } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -10,7 +22,7 @@ import {
   renderAddress,
   type RemoteSessionAddress,
 } from '../mailbox/address.ts';
-import { toMailboxMessage } from '../mailbox/entry.ts';
+import { createMailboxEntry, toMailboxMessage } from '../mailbox/entry.ts';
 import { handoffPromptToMailbox, type MailboxHandoffOutcome } from '../mailbox/handoff.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { AgentReferenceSchema } from '../agents/agent-reference.ts';
@@ -37,6 +49,11 @@ export const MessageSessionIdSchema = z
     'Session ID must be URI-encodable'
   );
 
+export const SessionContentSchema = z.union([
+  z.string().min(1),
+  z.array(ContentBlockSchema).min(1),
+]);
+
 export const SendMessageInputSchema = z
   .object({
     sessionId: MessageSessionIdSchema.optional(),
@@ -46,7 +63,7 @@ export const SendMessageInputSchema = z
         type: z.literal('user'),
         message: z.object({
           role: z.literal('user').optional(),
-          content: z.union([z.string().min(1), z.array(ContentBlockSchema).min(1)]),
+          content: SessionContentSchema,
         }),
         parent_tool_use_id: z.null(),
         priority: z.enum(['now', 'next', 'later']).optional(),
@@ -66,21 +83,71 @@ export const SendMessageInputSchema = z
       .superRefine((message, ctx) => {
         const projected = toMailboxMessage(message);
         if ('reason' in projected) ctx.addIssue({ code: 'custom', message: projected.reason });
-      }),
+      })
+      .optional(),
+    to: z.union([MessageSessionIdSchema, AgentReferenceSchema]).optional(),
+    text: z.string().min(1).optional(),
+    files: z
+      .array(HandoffReference)
+      .max(
+        20,
+        'At most 20 published file references per send; send additional references in another message'
+      )
+      .optional(),
+    idempotencyKey: z.string().min(1).max(200).optional(),
     deliveryMode: z.enum(['immediate', 'defer']).optional(),
     from: z.string().min(1).max(500).optional(),
   })
-  .refine((input) => (input.sessionId === undefined) !== (input.agent === undefined), {
-    message: 'Address the message with exactly one of sessionId or agent',
+  .superRefine((input, ctx) => {
+    const simple = input.to !== undefined || input.text !== undefined || input.files !== undefined;
+    const valid = simple
+      ? input.to !== undefined &&
+        input.text !== undefined &&
+        input.message === undefined &&
+        input.sessionId === undefined &&
+        input.agent === undefined
+      : input.message !== undefined &&
+        (input.sessionId === undefined) !== (input.agent === undefined);
+    if (!valid)
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Use {to, text, files?} or an SDK message with exactly one of sessionId or agent',
+      });
+  })
+  .transform(({ to, text, files, ...input }) => ({
+    ...input,
+    ...(to === undefined ? {} : typeof to === 'string' ? { sessionId: to } : { agent: to }),
+    message: input.message ?? {
+      type: 'user' as const,
+      message: { content: text! },
+      parent_tool_use_id: null,
+    },
+    ...(text === undefined ? {} : { handoff: { text, files: files ?? [] } }),
+  }))
+  .meta({
+    examples: [
+      { to: 'session-id', text: 'Report' },
+      {
+        sessionId: 'session-id',
+        message: { type: 'user', message: { content: 'Report' }, parent_tool_use_id: null },
+      },
+    ],
   });
 
 export const SendMessageResultSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('accepted'), mailboxId: z.string(), messageId: z.string() }),
+  z.object({
+    kind: z.literal('accepted'),
+    mailboxId: z.string(),
+    messageId: z.string(),
+    files: z.array(HandoffReference).optional(),
+  }),
   z.object({ kind: z.literal('rejected'), reason: z.string() }),
 ]);
 
 type SendRequest = z.infer<typeof SendMessageInputSchema>;
 type SendInput = Omit<SendRequest, 'sessionId' | 'agent'> & { sessionId: string };
+type Retry = { key: string; fingerprint: string };
+const digest = (text: string) => createHash('sha256').update(text).digest('hex');
 type SendResult = z.infer<typeof SendMessageResultSchema>;
 
 export type SessionStatusRead = (sessionId: string) => string | null;
@@ -199,6 +266,17 @@ export function forwardRemoteMessage(
   forwardRemote: RemoteSendForwarder
 ): Promise<{ value: SendInput } | { reason: SendResult }> {
   const target = parseRemoteAddress(input.sessionId);
+  if (
+    target &&
+    input.handoff &&
+    (input.handoff.files.length || Buffer.byteLength(input.handoff.text) > 4096)
+  )
+    return Promise.resolve({
+      reason: {
+        kind: 'rejected',
+        reason: 'unavailable: remote artifact transfer is not supported',
+      },
+    });
   return target === null
     ? Promise.resolve({ value: input })
     : forwardRemote(target, input, origin).then((reason) => ({ reason }));
@@ -283,20 +361,128 @@ export function stampSessionMessage(
   };
 }
 
-export function persistOperationMessage(
+function retryIdentity(input: SendRequest, origin: string): Retry | undefined {
+  return input.idempotencyKey
+    ? {
+        key: digest(canonicalJson([origin, input.idempotencyKey])),
+        fingerprint: digest(canonicalJson(input)),
+      }
+    : undefined;
+}
+
+function replaySend(
+  input: SendRequest,
+  retry: Retry | undefined,
+  jobs: JobQueueRepository
+): { value: SendRequest } | { reason: SendResult } {
+  try {
+    const receipt = retry ? jobs.submissionReceipt<SendResult>(retry.key, retry.fingerprint) : null;
+    return receipt ? { reason: receipt } : { value: input };
+  } catch (error) {
+    return { reason: { kind: 'rejected', reason: String(error) } };
+  }
+}
+
+async function prepareHandoff(
+  input: SendInput,
+  caller: OperationCaller,
+  origin: string,
+  limit: SessionSendLimiter
+): Promise<{ value: SendInput } | { reason: SendResult }> {
+  if (!input.handoff) return { value: input };
+  try {
+    const files = [...input.handoff.files];
+    const dataDir = getDataDir();
+    for (const ref of files) {
+      if (caller.source !== 'rpc' && caller.role !== 'neo' && caller.sessionId !== ref.sessionId)
+        throw new Error('session_scope');
+      const checked = await readHandoff(dataDir, ref, 0, 0);
+      if (checked.kind !== 'read') throw new Error(checked.kind);
+    }
+    let text = input.handoff.text;
+    if (Buffer.byteLength(text) > 4096) {
+      if (!caller.sessionId)
+        throw new Error('session_required: publish large reports with handoff.publish');
+      const sha = digest(text);
+      const name = `message-${generateUUID()}.txt`;
+      const path = join(handoffDraftDirectory(dataDir, caller.sessionId), name);
+      await writeFile(path, text, { flag: 'wx', mode: 0o600 });
+      const published = await publishHandoff(dataDir, caller.sessionId, name);
+      if (published.kind !== 'published') throw new Error(published.kind);
+      if (
+        published.reference.sha256 !== sha ||
+        published.reference.byteLength !== Buffer.byteLength(text)
+      )
+        throw new Error('tampered');
+      files.unshift(published.reference);
+      text = 'Complete report attached. Read the hash-checked reference with handoff.read.';
+    }
+    return {
+      value: {
+        ...input,
+        handoff: { ...input.handoff, files },
+        message: {
+          ...input.message,
+          message: {
+            ...input.message.message,
+            content: files.length
+              ? [
+                  { type: 'text', text },
+                  { type: 'text', text: JSON.stringify({ handoffFiles: files }) },
+                ]
+              : text,
+          },
+        },
+      },
+    };
+  } catch (error) {
+    return {
+      reason: releaseUnsentSend(
+        { kind: 'rejected', reason: error instanceof Error ? error.message : String(error) },
+        input,
+        origin,
+        limit
+      ),
+    };
+  }
+}
+
+async function persistOperationMessage(
   input: SendInput,
   origin: string,
   messageId: string,
-  jobQueue: JobQueueRepository
-): Promise<MailboxHandoffOutcome> {
-  return handoffPromptToMailbox({
-    to: renderAddress({ kind: 'session', sessionId: input.sessionId }),
+  jobQueue: JobQueueRepository,
+  retry: Retry | undefined
+): Promise<SendResult> {
+  const args = {
+    to: renderAddress({ kind: 'session' as const, sessionId: input.sessionId }),
     message: input.message,
     origin,
     messageUuid: messageId,
     deliveryMode: input.deliveryMode,
     jobQueue,
-  });
+  };
+  const receipt = (outcome: MailboxHandoffOutcome): SendResult => {
+    const result = mapMessageReceipt(outcome, messageId);
+    return result.kind === 'accepted' && input.handoff?.files.length
+      ? { ...result, files: input.handoff.files }
+      : result;
+  };
+  if (!retry) return receipt(await handoffPromptToMailbox(args));
+  try {
+    return jobQueue.commitSubmissionReceipt(retry.key, retry.fingerprint, () => {
+      const result = receipt(
+        enqueueMailboxEntry(
+          jobQueue,
+          createMailboxEntry({ ...args, to: { kind: 'session', sessionId: input.sessionId } })
+        )
+      );
+      if (result.kind === 'rejected') throw new Error(result.reason);
+      return result;
+    });
+  } catch (error) {
+    return { kind: 'rejected', reason: String(error) };
+  }
 }
 
 export function mapMessageReceipt(outcome: MailboxHandoffOutcome, messageId: string): SendResult {
@@ -318,16 +504,22 @@ const runSendMessage = (superpipe({})('send-operation-message') as PipelineAPI)
     'sent',
   ])
   .pipe(admitOperationMessage, ['input', 'caller'], 'result:receipt')
-  .pipe(resolveMessageTarget, ['receipt', 'resolveAgent'], 'result:receipt')
   .pipe(selectSendOrigin, ['input', 'caller'], 'origin')
+  .pipe(retryIdentity, ['input', 'origin'], 'retry')
+  .pipe(replaySend, ['receipt', 'retry', 'jobQueue'], 'result:receipt')
+  .pipe(resolveMessageTarget, ['receipt', 'resolveAgent'], 'result:receipt')
   .pipe(forwardRemoteMessage, ['receipt', 'origin', 'forwardRemote'], 'result:receipt')
   .pipe(requireTargetSession, ['receipt', 'sessionStatus'], 'result:receipt')
   .pipe(admitSessionSend, ['receipt', 'origin', 'limit'], 'result:receipt')
   .pipe((admitted: SendInput) => admitted, 'receipt', 'admitted')
-  .pipe(stampSessionMessage, ['admitted', 'origin', 'sessionTitle'], 'outgoing')
+  .pipe(prepareHandoff, ['receipt', 'caller', 'origin', 'limit'], 'result:receipt')
+  .pipe(stampSessionMessage, ['receipt', 'origin', 'sessionTitle'], 'outgoing')
   .pipe(generateUUID, undefined, 'messageId')
-  .pipe(persistOperationMessage, ['outgoing', 'origin', 'messageId', 'jobQueue'], 'handoff')
-  .pipe(mapMessageReceipt, ['handoff', 'messageId'], 'receipt')
+  .pipe(
+    persistOperationMessage,
+    ['outgoing', 'origin', 'messageId', 'jobQueue', 'retry'],
+    'receipt'
+  )
   .pipe(releaseUnsentSend, ['receipt', 'admitted', 'origin', 'limit'], 'receipt')
   .pipe(reportSessionSend, ['receipt', 'admitted', 'origin', 'sent'], 'reported')
   .endAsync('receipt') as (
@@ -364,7 +556,7 @@ export function createSendMessageOperation(
   return defineOperation({
     name: 'message.send',
     description:
-      'Persist a message for a session, addressed by session id or by agent {space, agent}, and not restricted to the caller Space. An agent target names the space by id, slug or name and the agent by id, @handle or display name; it finds or starts that agent\'s session, and an unknown or ambiguous name is rejected with the candidates. Rejects an unknown session id and a session that is archived or ended. A session on an attached remote daemon is addressed as "daemon:<daemonId>::session:<sessionId>"; that send is forwarded to the remote daemon, whose mailbox owns the message, and fails if the daemon is unattached or unreachable. Acceptance means the message is queued for that session, not that the session has processed it or replied. A message from a session reaches the recipient as task input inside a daemon-written <session-message from-session=… from-name=…> envelope saying it is not from the human; it is injected into a running turn at the next tool round or wakes an idle session. Sends from a session are limited to 6 a minute to one recipient, and the same text to the same recipient within 10 minutes is refused as a duplicate. from is set by a daemon forwarding a send, as daemon:<sender daemon>::session:<id>; it is honored only from the RPC door, which is trusted as the local user, and only when it is an address.',
+      'Send {to, text, files?}, where files contains published handoff references. Text over 4 KiB UTF-8 is published in full in the bound sender outbox; accepted receipts include files. Optional idempotencyKey replays the same durable receipt, and conflicts if reused for different input. Same-user tampering is detected by hash, not prevented by OS isolation. The legacy SDK envelope also persists a message for a session, addressed by session id or by agent {space, agent}, and not restricted to the caller Space. An agent target names the space by id, slug or name and the agent by id, @handle or display name; it finds or starts that agent\'s session, and an unknown or ambiguous name is rejected with the candidates. Rejects an unknown session id and a session that is archived or ended. A session on an attached remote daemon is addressed as "daemon:<daemonId>::session:<sessionId>"; that send is forwarded to the remote daemon, whose mailbox owns the message, and fails if the daemon is unattached or unreachable. Acceptance means the message is queued for that session, not that the session has processed it or replied. A message from a session reaches the recipient as task input inside a daemon-written <session-message from-session=… from-name=…> envelope saying it is not from the human; it is injected into a running turn at the next tool round or wakes an idle session. Sends from a session are limited to 6 a minute to one recipient, and the same text to the same recipient within 10 minutes is refused as a duplicate. from is set by a daemon forwarding a send, as daemon:<sender daemon>::session:<id>; it is honored only from the RPC door, which is trusted as the local user, and only when it is an address.',
     inputSchema: SendMessageInputSchema,
     resultSchema: SendMessageResultSchema,
     execute: (input, caller) =>

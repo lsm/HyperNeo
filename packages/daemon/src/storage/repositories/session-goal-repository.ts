@@ -9,6 +9,9 @@ import type {
 import type { SpaceGoalEventSource } from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../reactive-database.ts';
 import type { Database } from '../sqlite-compat.ts';
+import type { SessionSchedule } from './session-schedule-repository.ts';
+
+type WakeSchedule = Pick<SessionSchedule, 'cadence' | 'nudgeEvery'>;
 
 const COLUMNS: Record<keyof SessionGoalPatch, string> = {
   title: 'title',
@@ -70,7 +73,8 @@ export class SessionGoalRepository {
     ownerSessionId: string,
     draft: SessionGoalDraft,
     source: SpaceGoalEventSource,
-    now: number
+    now: number,
+    changed?: (goal: SessionGoal) => void
   ): SessionGoal {
     const id = generateUUID();
     this.db.transaction(() => {
@@ -99,6 +103,7 @@ export class SessionGoalRepository {
           now
         );
       this.recordEvent(id, 'created', source, null, this.get(id), now);
+      changed?.(this.get(id)!);
     })();
     this.reactiveDb?.notifyChange('space_goals');
     return this.get(id)!;
@@ -108,7 +113,8 @@ export class SessionGoalRepository {
     goal: SessionGoal,
     patch: SessionGoalPatch,
     source: SpaceGoalEventSource,
-    now: number
+    now: number,
+    changed?: (goal: SessionGoal) => void
   ): SessionGoal {
     const keys = Object.keys(patch) as (keyof SessionGoalPatch)[];
     const completedAt =
@@ -137,6 +143,7 @@ export class SessionGoalRepository {
         this.get(goal.id),
         now
       );
+      changed?.(this.get(goal.id)!);
     })();
     this.reactiveDb?.notifyChange('space_goals');
     return this.get(goal.id)!;
@@ -172,6 +179,32 @@ export class SessionGoalRepository {
       );
     this.reactiveDb?.notifyChange('goal_journal');
     return this.journalEntry(goalId, runId === null ? { id } : { runId })!;
+  }
+
+  factState(id: string): { lines: string[]; note: string | null } {
+    const row = this.db
+      .prepare('SELECT facts_lines AS lines, works_note AS note FROM space_goals WHERE id = ?')
+      .get(id) as { lines: string | null; note: string | null };
+    return { lines: JSON.parse(row.lines ?? '[]'), note: row.note };
+  }
+
+  wakeSchedule(id: string): WakeSchedule | null {
+    const row = this.db
+      .prepare('SELECT wake_schedule AS config FROM space_goals WHERE id = ?')
+      .get(id) as { config: string | null };
+    return row.config ? (JSON.parse(row.config) as WakeSchedule) : null;
+  }
+
+  saveWakeSchedule(id: string, config: WakeSchedule): void {
+    this.db
+      .prepare('UPDATE space_goals SET wake_schedule = ? WHERE id = ?')
+      .run(JSON.stringify(config), id);
+  }
+
+  recordFacts(id: string, lines: readonly string[]): void {
+    this.db
+      .prepare('UPDATE space_goals SET facts_lines = ? WHERE id = ?')
+      .run(JSON.stringify(lines), id);
   }
 
   journalEntry(goalId: string, key: { id: string } | { runId: string }): GoalJournalEntry | null {

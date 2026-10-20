@@ -79,6 +79,7 @@ import {
 import { createNeoQuestionOperations } from './question-operations.ts';
 import { createNeoTodoOperations, type NeoTodoControls } from './todo-operations.ts';
 import { createNeoAskRecordOperations } from './ask-record-operations.ts';
+import { SessionGoalRepository } from '../../storage/repositories/session-goal-repository.ts';
 import { NeoAskEntrySchema, projectNeoAskEntries } from './ask-entries.ts';
 import { createNeoPreferenceOperation } from './model-preference.ts';
 import { planNeoRuleEdit, planNeoSavedRules, requireNeoRuleCitation } from './saved-rules.ts';
@@ -691,7 +692,8 @@ export function createNeoOperations(service: NeoService) {
         return binding?.kind === 'neo';
       },
       () => service.repo.listProjects(),
-      () => service.installedPacks()
+      () => service.installedPacks(),
+      (id) => new SessionGoalRepository(service.db.getDatabase()).get(id)
     ),
     ...createNeoQuestionOperations(
       service.todos,

@@ -2,6 +2,7 @@ export type NeoAskStatus = 'open' | 'done' | 'dropped';
 
 export interface NeoAsk {
   id: string;
+  goalId?: string | null;
   projectId: string | null;
   repo: string | null;
   parentId: string | null;

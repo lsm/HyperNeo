@@ -31,8 +31,8 @@ describe('hyperneo send and question', () => {
       value: {
         name: 'message.send',
         input: {
-          sessionId: 'neo-root',
-          message: { type: 'user', message: { content: 'Tests pass.' }, parent_tool_use_id: null },
+          to: 'neo-root',
+          text: 'Tests pass.',
         },
       },
     });

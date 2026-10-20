@@ -24,8 +24,8 @@ export function planSessionCommand(
       value: {
         name: 'message.send',
         input: {
-          sessionId: target,
-          message: { type: 'user', message: { content: rest.join(' ') }, parent_tool_use_id: null },
+          to: target,
+          text: rest.join(' '),
         },
       },
     };

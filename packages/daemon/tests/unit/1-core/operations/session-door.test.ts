@@ -64,6 +64,17 @@ describe('the session door', () => {
     );
   });
 
+  test('an oversized request explains the transport limit and file path', async () => {
+    expect(
+      await post(door.path, {
+        sender: 'worker-1',
+        name: 'message.send',
+        input: { to: 'neo-root', text: 'x'.repeat(256 * 1024) },
+      })
+    ).toMatchObject({ status: 413, body: { error: expect.stringContaining('256 KiB') } });
+    expect(mailbox.rows()).toHaveLength(0);
+  });
+
   test('a second daemon on the same data dir leaves the live door alone', async () => {
     await expect(startSessionDoor(() => createOperationRegistry([]), door.path)).rejects.toThrow(
       /another daemon already serves/

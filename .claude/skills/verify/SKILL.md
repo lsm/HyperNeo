@@ -537,7 +537,7 @@ adds its journey here.
     1-second cadence replies `invalid_cadence`; an hourly reminder is `active` with
     one pending `sessionSchedule.fire` job an hour out and appears in `list` for that
     target; `pause` makes it `paused` and drops the job; `resume` makes it `active`
-    with a new job; `delete` removes the row and its job. Nothing fires yet (S2).
+    with a new job; `delete` removes the row and its job. Journey 20 verifies delivery.
 18. **Reply quotes show the same summary in the composer and after sending.**
     After opening root and configuring the mock provider, run
     `NODE_PATH=<directory containing playwright> node .claude/skills/verify/quote-summary-check.mjs <port> "$RUN"`.
@@ -693,6 +693,56 @@ adds its journey here.
     asynchronous phase duration includes awaits. This journey proves diagnostic
     output, not the cause of any real laptop block. Live logs remain read-only.
 
+
+27. **A session goal owns a fact-driven wake and its asks.** Launch a fresh run with
+    `VERIFY_MOCK=neo-script-api.ts`, register the synthetic provider from Launch,
+    then run `bun .claude/skills/verify/goal-schedule.ts <port> "$RUN"`. It creates
+    an hourly-capable goal with a one-minute cadence for verification. The mock
+    model calls `neo.ask.open` through the real MCP door with that `goalId`.
+    End state: `evidence/goal-schedule.json` contains the linked ask, a delivered
+    `<daemon-note kind="scheduled_wake">` in root Neo's transcript with mandate
+    and journal run identity, the exact same digest from `goal.facts`, and an
+    empty summary after delivery. Reading facts twice before delivery preserves
+    the delta. Updating progress to 40 produces only `- Progress: 0` and
+    `+ Progress: 40`. Pausing removes the job, resuming restores it, and completing
+    the goal removes its schedule and returns null facts. Run
+    `NODE_PATH=<directory containing playwright> node .claude/skills/verify/goal-schedule-view.mjs <port> "$RUN"`
+    to open the root session transcript headlessly and capture
+    `evidence/goal-schedule-transcript.png`. Keep the `neo:` colon unescaped in
+    the session route; the router does not decode a percent-encoded session id.
+    CI covers foreign-goal rejection, failed/unconfirmed delivery, unchanged
+    nudges, linked question/PR changes, repository splits and migration reruns.
+    Missing and closed Neo targets finish `target_gone`; open interrupted Neo
+    targets remain active with `skipped_busy` and can fire when idle. Delivery
+    rechecks closure after facts load, so a closing target receives no wake.
+    No real model, external PR or desktop GUI is exercised. Mandate reconciliation
+    and what-works compaction belong to G8.
+    To check close/reopen settings without a model turn, run
+    `bun .claude/skills/verify/goal-reopen.ts <port> "$RUN"`. It creates a daily
+    09:00 UTC cron with nudge interval 7, closes and reopens it as both completed
+    and archived, and asserts that the configured schedule returns each time.
+    Evidence: `evidence/goal-reopen.json`. Restart the isolated daemon and repeat
+    with the saved goal id as the third argument to prove persistence across
+    process restart. Wake preferences are stored on the goal; closing still
+    deletes its schedule row.
+    Run `bun .claude/skills/verify/goal-target-return.ts <port> "$RUN"` against a
+    fresh isolated daemon to check owner recovery. It archives its new session,
+    waits for the real cadence to finish `target_gone`, restores the session
+    through RPC, and pauses/reactivates its goal. The restored schedule must keep
+    its configured cadence/nudge interval and deliver its next wake to that
+    session's transcript. Evidence: `evidence/goal-target-return.json`.
+    Run `bun .claude/skills/verify/goal-unreadable-state.ts <port> "$RUN"` in
+    another fresh isolated run to check a malformed processing-state fixture.
+    The helper validates its test DB, seeds unreadable state only on its new Neo,
+    and waits for the real goal cadence. The schedule must record `fired`, deliver
+    its wake and enqueue the next cadence without a job error. The fixture is
+    restored in `finally`. Evidence: `evidence/goal-unreadable-state.json`.
+    To check completion during fact collection, create a fresh `$RUN` and run
+    `env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test bun .claude/skills/verify/goal-close-race.ts <free-port> "$RUN"`.
+    This helper owns its daemon and needs no mock model. A test-only source wrapper
+    completes its goal through real RPC between the fact snapshot and rendering.
+    The renderer must return source-gone, with no exception or wake delivered.
+    Evidence: `evidence/goal-close-race.json`. Its daemon stops in `finally`.
 
 ## Evidence
 
@@ -1084,6 +1134,39 @@ env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test
 
 It writes a 24 MB transcript (text turns plus tool results), runs `work.feed.claude` until every
 turn is indexed and samples the event loop. Baseline on dev: one 1.2 s job, max lag 67 ms.
+
+## Complete worker report in one send (handoff PR2)
+
+Run the real SDK MCP send and Neo read against a loopback scripted model, then
+run the actual `hyperneo send` CLI through an isolated owner-only Unix socket:
+
+```bash
+RUN=$(mktemp -d "$PWD/.verify-message-send.XXXXXX")
+env -i HOME="$RUN/home" PATH="$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin" \
+  NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/worker-message-send.ts "$RUN" 9362
+```
+
+Choose a free non-8399 port and a fresh directory. Only synthetic SDK children
+receive a dev-proxy credential pointing at the loopback mock. End state:
+`evidence.json` records one worker MCP `message.send {to,text}` containing all
+8,192 bytes, an accepted receipt with SHA-256, the same reference in the durable
+mailbox, and identical complete bytes read through Neo's real MCP and native Read
+interfaces. The helper reopens its own SQLite DB after removing the completed
+synthetic mailbox row; retrying with the same `idempotencyKey` must return the
+same receipt without another job. The actual CLI must also deliver all 8,192
+bytes through its Unix HTTP door using the simple shape.
+
+The Neo SDK prompt is taken from the durable mailbox payload. This checks the
+send/receipt/read interfaces; it does not run the daemon's automatic mailbox
+consumer or a GUI. It closes SDK streams, the socket and mock server in `finally`.
+Preserve evidence outside the worktree, then remove only the synthetic run before
+repository checks. Keep the same-user trust boundary from PR1: no OS isolation is
+claimed, and reads detect changed published bytes instead of returning them.
+The contract suite also seeds an interrupted partial draft and sends the same
+report concurrently to different recipients; every accepted report must retain
+all bytes. Explicit file arrays accept 20 references; 21 must return a schema error
+that names the limit and the option of sending additional references separately.
 
 
 ### Neo home setup (journey 33)
