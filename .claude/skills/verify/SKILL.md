@@ -516,12 +516,13 @@ adds its journey here.
     'anthropic' is not registered. Log in or add an API key for it under Providers,
     or switch this session to another provider.`, the message is `failed`, and
     `daemon.log` has that one `[ErrorManager] model` entry.
-16. **Messages between root Neo and its workers show in Neo's conversation.** Run
+16. **Neo's messages to its workers show in Neo's conversation; theirs to Neo do not.** Run
     `.claude/skills/verify/neo-session-rows.sh <port> "$RUN"`. It opens root, creates
     a worker session "Fix the loader", and sends one message each way. End state: it
-    prints `Neo -> Fix the loader: Rebase on dev, then tell me.` then
-    `Fix the loader -> Neo: Rebased.`; on `/neo` each shows as one collapsed row
-    "Neo → Fix the loader" with its first line, expanding to the full text.
+    prints only `Neo -> Fix the loader: Rebase on dev, then tell me.` for both
+    `neo.conversation.read` and the snapshot's `sessionMessages`; the worker's
+    `Rebased.` is still delivered to root but is not a row. On `/neo` Neo's message
+    shows as one collapsed row "Neo → Fix the loader" with its first line.
 17. **Neo or the user schedules a session wake.** `session-schedules.sh <port> "$RUN"`
     creates a session and calls `schedule.session.*` as the local user. End state: a
     1-second cadence replies `invalid_cadence`; an hourly reminder is `active` with
@@ -997,6 +998,16 @@ End state: `observed.json` shows `index.worstBatchMs` and both `maxLagMs` below
 1,000 ms at 256 words, and the same `searchAfterIndexing.totalMatches` before and
 after a change. With `crisismerge` 64 the 256-word worst batch was 1,859 ms (an
 FTS5 crisis merge inside the insert); with 16 it was 434 ms.
+
+### Subagent lookup by tool id (journey 30)
+
+A page's subagent rows must be read by tool id, not by walking the session:
+
+```bash
+bun .claude/skills/verify/subagent-lookup.ts 45000 10
+```
+
+The script builds a synthetic session (45,000 rows by default, with 10 tool uses on the last page) and installs the live laptop's `sqlite_stat1` figures for `sdk_messages`. It then times the subagent lookup inside `getSDKMessages` and prints its plan. It runs on Bun's SQLite, the planner the daemon uses; Vitest's `node:sqlite` plans differently. End state: the plan seeks `(session_id=? AND parent_tool_use_id=?)` (the covering `idx_sdk_messages_session_visible`), and the lookup takes about 0.1 ms. Before the `ORDER BY +timestamp` hint, it walked `idx_sdk_messages_session_timestamp_id` whenever a page had two or more tool uses: about 7.4 ms on warm synthetic rows, and 234–2,734 ms on the live disk.
 
 ### Work-feed offsets read once (journey 31)
 
