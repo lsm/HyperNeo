@@ -382,6 +382,18 @@ describe('TaskAgentManager post-approval worker identity resolution', () => {
     expect(tam.getPostApprovalWorkerSession(TASK_ID, sessionId)?.sessionId).toBe(sessionId);
   });
 
+  it('does not treat an explicit null input kind as legacy synthetic kickoff evidence', () => {
+    const sessionId = postApprovalSessionId('null-kind');
+    insertTask(db, { status: 'approved', postApprovalSessionId: null, approvedAt: 10 });
+    insertWorkerSession(db, { sessionId, createdAt: 10, lastActiveAt: 10 });
+    insertTaskInput(db, sessionId, { timestamp: 10 });
+    db.prepare(
+      "UPDATE sdk_messages SET sdk_message = json_set(sdk_message, '$.inputKind', NULL) WHERE sdk_uuid = ?"
+    ).run(`input-${sessionId}`);
+    fillSdkMessageFixtureColumns(db);
+    expect(tam.getPostApprovalWorkerSession(TASK_ID)).toBeNull();
+  });
+
   it('rejects ambiguous current-cycle evidence from an execution-backed worker', () => {
     const sessionId = 'space:space-id:task:task-1:exec:reused';
     insertTask(db, { status: 'approved', postApprovalSessionId: null, approvedAt: 10 });

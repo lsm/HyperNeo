@@ -25,6 +25,7 @@ import { createWorkflowEventSubscriptionTables } from './workflow-event-subscrip
 import { backfillSessionCounters, createSessionCounters } from './session-counters.ts';
 import { createTaskMessageRows } from './task-message-rows.ts';
 import { SDK_MESSAGE_COLUMN_TYPES } from '../sdk-message-columns.ts';
+import { createSdkMessageFilterIndexes } from './sdk-message-filter-indexes.ts';
 import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
 
 // knip-ignore-next-line
@@ -984,6 +985,7 @@ function createAgentMemoryTables(db: BunDatabase): void {
 }
 
 function createIndexes(db: BunDatabase): void {
+  createSdkMessageFilterIndexes(db);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_timestamp_id
       ON sdk_messages(session_id, timestamp DESC, id DESC)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_parent_tool_use_id
