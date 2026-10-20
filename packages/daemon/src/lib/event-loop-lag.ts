@@ -3,7 +3,7 @@ import { loadRuntimeSamplingProfiler } from './runtime-sampling-profiler.ts';
 import { EventLoopActivity, observeLagGc } from './event-loop-activity.ts';
 import { emitStructuredLogEvent, subscribeToStructuredLogs } from './logger.ts';
 import type { MessageHub } from '@hyperneo/shared';
-import { takeSlowestQuery } from '../storage/sqlite-query-observability.ts';
+import { collectSlowQueryTicks, takeSlowestQuery } from '../storage/sqlite-query-observability.ts';
 
 export const EVENT_LOOP_LAG_TICK_MS = 250;
 export const EVENT_LOOP_LAG_WARN_MS = 1_000;
@@ -46,6 +46,22 @@ function resourceDelta(before: ResourceSample, after: ResourceSample, wallMs: nu
   };
 }
 
+function resourceTick(
+  before: ResourceSample | undefined,
+  after: ResourceSample | undefined,
+  tickStartMs: number,
+  tickEndMs: number
+) {
+  return {
+    resourceScope: 'event_loop_tick' as const,
+    tickStartMs,
+    tickEndMs,
+    ...(before && after
+      ? { resources: resourceDelta(before, after, tickEndMs - tickStartMs) }
+      : {}),
+  };
+}
+
 export function describeEventLoopLag(
   lagMs: number,
   slowest: SlowestQuery,
@@ -77,6 +93,7 @@ export function startEventLoopLagLog(
   takeSlowest();
   const activity = deps.activity ?? new EventLoopActivity(now);
   const deactivate = activity.activate();
+  const slowQueries = collectSlowQueryTicks();
   const gc = observeLagGc(activity);
   const sampleHeap = deps.sampleHeap ?? (() => process.memoryUsage().heapUsed);
   let normalHeapSampling = true;
@@ -104,13 +121,14 @@ export function startEventLoopLagLog(
     const afterHeap = line || normalHeapSampling ? heap() : undefined;
     const samplingProfile = deps.sampleStacks?.(line !== null, at);
     const afterResources = sampleResources();
+    const tick = resourceTick(beforeResources, afterResources, last, at);
+    slowQueries.flush(tick);
     if (line) {
       warn(line);
       const report = {
         lagMs,
         ...(samplingProfile ? { samplingProfile } : {}),
-        tickStartMs: last,
-        tickEndMs: at,
+        ...tick,
         activities: recent.entries,
         droppedActivities: recent.dropped,
         gcObservation: gc.status,
@@ -120,9 +138,6 @@ export function startEventLoopLagLog(
           beforeHeap === undefined || afterHeap === undefined ? undefined : afterHeap - beforeHeap,
         heapBeforeAgeMs: at - heapAt,
         heapSampling: normalHeapSampling ? 'each_tick' : 'blocks_only',
-        ...(beforeResources && afterResources
-          ? { resources: resourceDelta(beforeResources, afterResources, at - last) }
-          : {}),
       };
       if (deps.onDiagnostic) deps.onDiagnostic(report);
       else
@@ -144,6 +159,8 @@ export function startEventLoopLagLog(
   timer.unref?.();
   return () => {
     clearInterval(timer);
+    slowQueries.flush(resourceTick(beforeResources, sampleResources(), last, now()));
+    slowQueries.stop();
     gc.stop();
     deactivate();
   };

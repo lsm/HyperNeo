@@ -128,6 +128,40 @@ checks the committed ignore; failed repair restores its prior ignore contents
 documents after a failed repair. Focused contracts cover both absent
 and existing ignore files.
 
+### Neo home save (journey 35)
+
+On a fresh isolated daemon from Launch, run
+`bun .claude/skills/verify/neo-home-save.ts <port> "$RUN"`.
+The helper seeds synthetic identity and transcript data, then calls the actual
+`neo.home.save` RPC. First save creates the local bootstrap plus one document
+commit, preserving leading spaces and trailing newlines. Repeating identical
+content must return the same commit. Credential-like content, direction changes
+and dirty human files must be refused without changing the document or HEAD.
+
+A synthetic missing identity forces commit failure: the original document must
+remain byte-for-byte intact and retry must succeed after configuring identity.
+A read-only fixture directory forces an actual write-before-file-creation EACCES;
+cleanup must preserve that error. An overlong filename must retain ENAMETOOLONG.
+Evidence: `evidence/neo-home-save.json`. Focused contracts cover the other token
+forms, ignored/internal/outside/symlink paths, concurrent saves and caller ownership.
+No real credentials, remote, provider/model turn or GUI are used. Content checks
+apply only to this operation; environment/filesystem limits must bound general
+writes. Read behavior, human confirmation support and remote sync remain later
+slices. Stop the isolated daemon and mock with `stop.sh`.
+
+Repeat journey 35 in a fresh run with final argument `unicode` to
+`neo-home-save.ts`. Unpaired surrogate input must return a Unicode content
+refusal on both attempts, without a file or new commit. The helper then seeds
+only a synthetic non-UTF-8 document and forces commit failure: rollback must
+preserve every original byte and leave clean status. Valid Unicode is encoded
+and compared as UTF-8 bytes; existing files are never decoded for rollback.
+
+Repeat journey 35 in another fresh run with final argument `ignore-repair`.
+The helper removes its fixture ignore in a local commit, then calls save with
+untracked coordinator transcripts present. Save must repair the ignore and commit
+the curated document while preserving and never tracking the transcripts.
+Staged transcripts and unrelated human changes still cause dirty refusal.
+
 ## Codex Desktop work.send journey
 
 Codex work.send steers a Desktop-owned running turn. This journey uses
@@ -788,6 +822,22 @@ adds its journey here.
     completes its goal through real RPC between the fact snapshot and rendering.
     The renderer must return source-gone, with no exception or wake delivered.
     Evidence: `evidence/goal-close-race.json`. Its daemon stops in `finally`.
+
+29. **Scheduled wakes are part of the conversation contract (G5a).** Launch a fresh
+    isolated daemon, then run `bun .claude/skills/verify/neo-wake-contract.ts <port> "$RUN"`.
+    The helper validates the test DB and seeds synthetic delivered inputs through
+    the production repositories, including all five addition kinds. The real
+    `neo.conversation.read` and `neo.snapshot` RPCs must expose the same wake.
+    Inputs are enqueued and consumed through production APIs and terminal results
+    use the production response-origin stamp; no sequence is rewritten. Only the
+    self-origin scheduler delivery creates a wake; question/recovery continuations
+    inherit metadata without creating duplicates. A recovered or steered turn's
+    terminal settles its recorded wake. A different turn must neither settle an
+    unfinished wake nor replace its closing line. Unstamped legacy results use the
+    next independent consumed input as a boundary. The raw daemon note
+    is absent from the public output. Evidence: `evidence/neo-wake-contract.json`.
+    This checks the API with synthetic recorded turns, not model behavior or the
+    web disclosure row; G5b adds the rendering journey. Stop with `stop.sh`.
 
 ## Evidence
 
@@ -1457,3 +1507,47 @@ reply button before the yesno and choice decisions; iOS
 `Neo/Views/AskEntryCardView.swift` in `~/focus/neo-ios` includes `reply` in every
 `ViewThatFits` layout before the kind-specific `decisions`. Do not automate GUI
 checks unattended.
+
+## Resources on sub-second slow SQL
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-slow-sql-resources-XXXXXX)
+env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/slow-sql-resources.ts "$RUN"
+```
+
+This exercises the real Bun SQLite wrapper and daemon structured diagnostic log
+stream. An owned Python connection holds a writer lock on a fresh synthetic WAL
+DB for 0.6 s, then a calibrated recursive SQL query does CPU work. Neither case
+needs a model, network port, real database or credential. The writer is stopped
+in `finally`; the synthetic DB and `observed.json` remain as evidence.
+
+Both slow records must carry `resourceScope: event_loop_tick`, monotonic tick
+boundaries, and the same resource delta available to the lag monitor. The lock
+wait must show over 400 ms off-CPU; recursive SQL must show over 250 ms CPU. They
+can be below the 1 s event-loop warning threshold and still get resource data.
+These are whole-tick counters, including other work and idle time, not exclusive
+statement costs or proof that an historical query blocked on a lock or fsync.
+
+While diagnostics are armed, slow warnings flush at the next existing 250 ms
+resource sample (or shutdown); no per-statement resource syscall is added.
+Outside the monitor, warnings retain immediate delivery without tick metadata.
+Unavailable resource sampling leaves counters absent rather than fabricating
+zeroes. Fast queries and summary aggregation keep their existing behavior.
+
+Verify shutdown delivery through the actual daemon and its JSONL file sink:
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-slow-sql-shutdown-XXXXXX)
+env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/slow-sql-shutdown.ts "$RUN"
+```
+
+The helper enables query observation on its own synthetic DB and runs a real
+recursive SQLite query immediately before normal cleanup or a synthetic cleanup
+failure. `observed.json` must contain exactly one persisted slow record per case,
+with tick resource context. It explicitly simulates watchdog arming (normally off
+in test mode) and uses a 60 s sampler cadence to keep the query pending until
+shutdown. The SQL execution, app cleanup and file sink are real; this does not
+verify production watchdog activation. Both sinks must still be subscribed when
+cleanup stops the lag monitor, before evidence flushing and sink teardown.

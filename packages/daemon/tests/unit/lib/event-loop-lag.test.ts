@@ -93,6 +93,118 @@ describe('Event-loop lag diagnostic report', () => {
 });
 
 describe('Event-loop lag resource breakdown', () => {
+  test.each([true, false])('shutdown flushes pending SQL; sampler available: %s', (available) => {
+    let time = 0;
+    const events: Record<string, unknown>[] = [];
+    const stop = startEventLoopLagLog(() => {}, {
+      now: () => time,
+      tickMs: 60_000,
+      sampleResources: () =>
+        available
+          ? {
+              cpuMs: time / 100,
+              cpuSampler: 'thread',
+              majorFaults: 0,
+              blockWrites: 0,
+              voluntarySwitches: 0,
+            }
+          : undefined,
+    });
+    const observer = new SQLiteQueryObserver(
+      { slowThresholdMs: 250, summaryIntervalMs: 0, maxQueryGroups: 10, summaryQueryLimit: 5 },
+      { emitEvent: ({ metadata }) => events.push(metadata) }
+    );
+    const record = () =>
+      observer.recordExecution({
+        descriptor: {
+          fingerprint: 'select',
+          normalizedSql: 'select count (*) from sdk_messages',
+          normalizedSqlTruncated: false,
+        },
+        operation: 'get',
+        durationMs: 563,
+        outcome: 'ok',
+      });
+    try {
+      record();
+      expect(events).toEqual([]);
+      time = 600;
+      stop();
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        resourceScope: 'event_loop_tick',
+        tickStartMs: 0,
+        tickEndMs: 600,
+      });
+      if (available) expect(events[0].resources).toMatchObject({ threadCpuMs: 6, offCpuMs: 594 });
+      else expect(events[0]).not.toHaveProperty('resources');
+      record();
+      expect(events).toHaveLength(2);
+      expect(events[1]).not.toHaveProperty('resourceScope');
+    } finally {
+      stop();
+      observer.close();
+    }
+  });
+
+  test('sub-second slow SQL records share their current tick resources without statement sampling', async () => {
+    let time = 0;
+    let samples = 0;
+    const events: Record<string, unknown>[] = [];
+    const lines: string[] = [];
+    const stop = startEventLoopLagLog((line) => lines.push(line), {
+      now: () => time,
+      tickMs: 10,
+      sampleResources: () => ({
+        cpuMs: samples++ === 0 ? 10 : 50,
+        cpuSampler: 'thread',
+        majorFaults: 0,
+        blockWrites: 3,
+        voluntarySwitches: 4,
+      }),
+    });
+    const observer = new SQLiteQueryObserver(
+      { slowThresholdMs: 250, summaryIntervalMs: 0, maxQueryGroups: 10, summaryQueryLimit: 5 },
+      { emitEvent: ({ metadata }) => events.push(metadata) }
+    );
+    try {
+      for (const durationMs of [563, 300])
+        observer.recordExecution({
+          descriptor: {
+            fingerprint: 'insert',
+            normalizedSql: 'insert into sdk_messages values (?)',
+            normalizedSqlTruncated: false,
+          },
+          operation: 'run',
+          durationMs,
+          outcome: 'ok',
+        });
+      expect(samples).toBe(1);
+      time = 900;
+      await settle();
+      expect(lines).toEqual([]);
+      expect(events).toHaveLength(2);
+      for (const event of events)
+        expect(event).toMatchObject({
+          event: 'slow',
+          resourceScope: 'event_loop_tick',
+          tickStartMs: 0,
+          tickEndMs: 900,
+          resources: {
+            cpuSampler: 'thread',
+            threadCpuMs: 40,
+            offCpuMs: 860,
+            majorPageFaults: 0,
+            blockWrites: 0,
+            voluntaryContextSwitches: 0,
+          },
+        });
+    } finally {
+      stop();
+      observer.close();
+    }
+  });
+
   test('a blocked tick reports its own CPU, off-CPU time, page faults, block writes and context switches', async () => {
     const diagnostics: Record<string, unknown>[] = [];
     const clock = [0, 10, 1510, 1520];
