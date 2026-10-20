@@ -69,7 +69,9 @@ export function listPackPreferences(db: Database, pack?: string): NeoPackSetting
 
 export function createPackPreferenceOperations(db: Database, packs: () => readonly NeoPack[]) {
   const validate = (input: Input) => {
-    const declaration = packs().find((pack) => pack.id === input.pack)?.preferences?.[input.key];
+    const declarations = packs().find((pack) => pack.id === input.pack)?.preferences;
+    const declaration =
+      declarations && Object.hasOwn(declarations, input.key) ? declarations[input.key] : undefined;
     const valid =
       declaration &&
       (input.scope.kind === 'global' || declaration.scope === input.scope.kind) &&
