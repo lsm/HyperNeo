@@ -501,6 +501,13 @@ describe('Neo home repository boundaries', () => {
   });
   test.each([
     'echo changed > ../../new-direction.md',
+    'echo changed >| ../../clobber.md',
+    'echo changed >|../../clobber.md',
+    'echo changed 2>| ../../clobber.md',
+    'echo changed 12>| ../../clobber.md',
+    'echo changed >| "../../clobber space.md"',
+    'echo changed >| ../../clobber.md | cat',
+    "bash -c 'echo changed >| ../../clobber.md'",
     'touch ../../new-direction.md',
     'cp notes.md ../../new-direction.md',
     'tee ../../new-direction.md',
@@ -516,6 +523,11 @@ describe('Neo home repository boundaries', () => {
     'git worktree add /scratch/other',
   ])('denies %s from the coordinator folder', (command) => {
     expect(decideNeoTool('Bash', { command }, home).kind).toBe('deny');
+  });
+  test('allows clobber redirects inside its own coordinator folder', () => {
+    expect(decideNeoTool('Bash', { command: 'echo changed >| own-note.md' }, home)).toEqual({
+      kind: 'allow',
+    });
   });
   test.each(['**/.git/**', '**/.g?t/**', '.coordinators/**', '**/.coordinators/**'])(
     'refuses Grep private glob %s even when listing filenames',

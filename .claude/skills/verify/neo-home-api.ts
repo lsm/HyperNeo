@@ -16,6 +16,7 @@ createServer(async (req, res) => {
     content = [
       { type: 'tool_use', id: 'toolu_home_read', name: 'Read', input: { file_path: '../../README.md' } },
       { type: 'tool_use', id: 'toolu_home_redirect', name: 'Bash', input: { command: 'echo changed > ../../sdk-should-not-exist.md' } },
+      { type: 'tool_use', id: 'toolu_home_clobber', name: 'Bash', input: { command: 'echo clobbered >| ../../sdk-clobber-should-not-exist.md' } },
       { type: 'tool_use', id: 'toolu_home_git', name: 'Bash', input: { command: 'git branch sdk-should-not-exist' } },
       { type: 'tool_use', id: 'toolu_home_git_absolute', name: 'Bash', input: { command: '/usr/bin/git branch sdk-absolute-should-not-exist' } },
       { type: 'tool_use', id: 'toolu_home_git_env', name: 'Bash', input: { command: `cd / && GIT_DIR=${join(process.env.HOME!, '..', 'data', 'Neo', '.git')} git branch sdk-env-should-not-exist` } },
