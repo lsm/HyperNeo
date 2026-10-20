@@ -178,16 +178,21 @@ export class NeoHomeRepository {
         }
       }
       await this.git(['add', '--', 'README.md', '.gitignore', 'direction.md']);
-      await this.git([
-        'commit',
-        '--only',
-        '-m',
-        'Initialize Neo home',
-        '--',
-        'README.md',
-        '.gitignore',
-        'direction.md',
-      ]);
+      try {
+        await this.git([
+          'commit',
+          '--only',
+          '-m',
+          'Initialize Neo home',
+          '--',
+          'README.md',
+          '.gitignore',
+          'direction.md',
+        ]);
+      } catch (error) {
+        await this.git(['reset', '--', 'README.md', '.gitignore', 'direction.md']);
+        throw error;
+      }
     }
     const projects = this.projects
       .listProjects()

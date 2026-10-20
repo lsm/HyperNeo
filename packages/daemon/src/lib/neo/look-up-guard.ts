@@ -979,6 +979,8 @@ function analyzeBash(
       continue;
     }
     if (words[0] !== 'ssh') found.secret ??= secretArgument(words.slice(1), dir, scope, facts);
+    if (redirectTargets(segment).some((target) => /[$`]/.test(target)))
+      found.unchecked ??= 'a redirect path with shell variables';
     found.secret ??=
       redirectTargets(segment).find((target) =>
         isSecretPath(target, { ...scope, cwd: dir }, facts)
@@ -1049,7 +1051,7 @@ function analyzeBash(
                 : []
           )
       );
-      if (change.targets.some((target) => /[$`]/.test(target)))
+      if (dir === UNKNOWN_DIR || change.targets.some((target) => /[$`]/.test(target)))
         found.unchecked ??= 'a git repository path with shell variables';
     }
     found.secret ??= change?.targets.find((target) => isSecretPath(target, here, facts)) ?? null;

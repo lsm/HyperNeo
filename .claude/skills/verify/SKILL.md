@@ -512,11 +512,21 @@ adds its journey here.
     It places an untracked note before the first save: refusal must leave exactly
     the same files and no git metadata. It then invokes the production PreToolUse
     guard from a synthetic legacy folder, executing Bash only when allowed.
-    Both `$HOME`-indirected git-dir forms must be denied and no unauthorized
-    branch may exist. The helper then checks that a clean first save initializes
+    `$HOME` redirects, variable-indirected `cd` before git mutation and both git-dir
+    forms must be denied, leaving direction unchanged and no unauthorized branch. The helper then checks that a clean first save initializes
     and commits the digest while private files and transcripts remain ignored.
     Evidence: `evidence/neo-home-bootstrap-guard.json`.
     This legacy-folder check exercises the real hook and shell, not an SDK turn.
+
+    On another fresh daemon run, execute
+    `bun .claude/skills/verify/neo-home-identity.ts <port> "$RUN"` without pre-seeding
+    a git identity. A failed initialization must leave no staged bootstrap files;
+    configuring identity must make a retry succeed. The helper also checks that
+    `.GIT/config` is refused and `GIT/config` is a separate curated document whose
+    save leaves git metadata unchanged. Evidence: `evidence/neo-home-identity.json`.
+    Signing-failure recovery uses a local false executable in focused unit tests;
+    no real signing credentials are accessed.
+
 
     To verify the guard wiring in a real Neo SDK turn, launch with
     `VERIFY_MOCK=neo-home-api.ts .claude/skills/verify/launch.sh <port> "$RUN"`,

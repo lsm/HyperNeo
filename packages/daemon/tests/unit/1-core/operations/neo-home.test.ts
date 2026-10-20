@@ -55,6 +55,7 @@ beforeEach(async () => {
   repo = new NeoRepository(db.getDatabase());
   home = new NeoHomeRepository(root, repo);
   await git('init', '--quiet');
+  await git('config', 'commit.gpgsign', 'false');
   await git('config', 'user.name', 'Verify Neo');
   await git('config', 'user.email', 'verify@example.invalid');
 });
@@ -124,6 +125,7 @@ describe('Neo home operations', () => {
         await git('config', 'user.email', '');
       } else {
         await git('config', 'commit.gpgsign', 'true');
+        await git('config', 'gpg.format', 'openpgp');
         await git('config', 'gpg.program', '/usr/bin/false');
       }
       await expect(call('neo.home.init', {})).rejects.toThrow();
