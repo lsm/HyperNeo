@@ -18,6 +18,7 @@ function directReads(source: string): string[] {
     if (!/^\s*\(?(?:SELECT|WITH|INSERT|UPDATE)\b/i.test(sql)) return false;
     if (!/\b(?:FROM|JOIN|UPDATE)\s+sdk_messages\b/i.test(sql)) return false;
     const reads = sql
+      .replace(/\bINSERT(?:\s+OR\s+IGNORE)?\s+INTO\s+sdk_message_bodies\s*\([^)]*\)/gi, '')
       .replace(/\bAS\s+["`]?sdk_message["`]?/gi, '')
       .replace(/\bSET\s+sdk_message\s*=/gi, 'SET value=');
     return (
@@ -35,6 +36,7 @@ describe('SDK body reader guard', () => {
       "SELECT json_extract(sdk_message, '$.result') FROM sdk_messages",
       'SELECT * FROM sdk_messages WHERE id=?',
       "UPDATE sdk_messages SET sdk_message=json_set(sdk_message,'$.resolved',1) WHERE id=?",
+      'INSERT OR IGNORE INTO sdk_message_bodies(seq,sdk_message) SELECT seq,sdk_message FROM sdk_messages',
     ])
       expect(directReads('const sql = `' + sql + '`;')).toHaveLength(1);
     expect(directReads('const sql = `SELECT id FROM sdk_messages`;')).toEqual([]);

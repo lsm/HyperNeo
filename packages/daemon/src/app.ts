@@ -1186,7 +1186,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     startupTimer.start('post-bind jobs + background services');
     const removeRuntimeDescriptorFile =
       process.env.NODE_ENV === 'test' ? () => {} : writeRuntimeDescriptor(config.host, server.port);
-    const openMessageSearchMergeGate = (): void => db.startMessageSearchMerges();
+    const openMessageSearchMergeGate = (): void => {
+      db.startMessageSearchMerges();
+      db.startSdkMessageBodyCopy();
+    };
     void spaceRuntimeReadyPromise.then(openMessageSearchMergeGate, openMessageSearchMergeGate);
     void spaceRuntimeReadyPromise.then(() => {
       logInfo('[Daemon] Space runtime startup provisioning complete');
