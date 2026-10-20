@@ -172,7 +172,7 @@ UI is served, that RPC answers, and that the mock model API is up. It ends with
   check scripts write to it: `seed-todo.sh` and `seed-ledger.sh` (journeys 3 and 4),
   `merge-check.sh` (journey 24), `archive-guard-check.sh` (journey 10) and
   `seed-start-question.sh` (journey 14), `quote-summary-check.mjs` (journey 18),
-  `seed-schedule-interrupt.ts` (journey 22), and `external-reply-check.ts` (journey 23), and `neo-home.ts` (journey 26).
+  `seed-schedule-interrupt.ts` (journey 22), and `external-reply-check.ts` (journey 23), and `neo-home.ts` (journey 29).
 - Web UI: open `http://127.0.0.1:<port>/neo` (Neo) or
   `/session/<sessionId>` (a session) in the browser; read the page text and take
   a screenshot.
@@ -483,7 +483,7 @@ adds its journey here.
     output, not the cause of any real laptop block. Live logs remain read-only.
 
 
-26. **Neo reads and commits curated home documents without bypassing confirmation.**
+29. **Neo reads and commits curated home documents without bypassing confirmation.**
     Run `bun .claude/skills/verify/neo-home.ts <port> "$RUN"` on a fresh isolated
     daemon from Launch. It seeds only the run's local git identity and a synthetic
     transcript, then uses `neo.project.save` and `neo.home.init/save/read` over RPC.
