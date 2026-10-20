@@ -181,6 +181,58 @@ RPC door, not a GUI or remote pull. It uses no provider/model, real credentials,
 real DB or GitHub requests. H2 confirmation and H3 sync remain later slices.
 Stop the isolated daemon and mock with `stop.sh`.
 
+### Home proposal questions (journey 37)
+
+On a fresh isolated daemon from Launch, run
+`bun .claude/skills/verify/neo-question-confirmation.ts <port> "$RUN" after`.
+The helper opens only a synthetic Neo session and seeds its own ask in its test
+DB, then uses real `neo.question.ask`, `get` and local-human `answer` RPCs.
+A yes/no proposal must retain `confirm:{path,sha256}` through creation and the
+human answer. The visible body must include that exact path/hash; an incomplete
+body is refused. Ordinary questions remain unbound. A protected `neo.home.save` without a question remains `confirmation_required`;
+journey 38 exercises confirmed saves and the paired decision commit.
+
+Evidence: `evidence/neo-question-confirmation-after.json`. Stop the daemon/mock,
+restart only that same synthetic run, and run the helper with `restart`: its
+saved question must retain the exact binding, answered state and human yes.
+No provider/model, real credentials, GitHub requests or GUI are needed; a delivered
+answer note may queue a turn with no provider, which is not model-execution proof.
+
+For the upgrade reproduction, start on the contract-test commit before the
+migration and use `before`. It records the old ask/get dropping metadata and
+saves a legacy question id. After stopping those processes, boot the fixed code
+against only that same owned synthetic DB and run `after`, then `restart`.
+The legacy text/answer stays intact with a null binding; new proposals persist.
+Repeat with `boundaries` to check that a path shown only as a longer filename or
+inside another path, and a hash shown only in a longer hex string, are refused.
+Exact path/hash tokens surrounded by Markdown/prose punctuation must be accepted,
+including balanced italic, bold and strike markers; underscore filename suffixes
+remain near misses.
+`evidence/neo-question-confirmation-boundaries.json` retains every response.
+The additive/idempotent legacy-answer migration contract runs in CI.
+Never copy or alter a real DB for this journey. Stop with `stop.sh` afterwards.
+
+### Confirmed home saves (journey 38)
+
+On a fresh isolated daemon from Launch, run
+`bun .claude/skills/verify/neo-home-confirmed-save.ts <port> "$RUN" after`.
+The helper seeds only a synthetic Git identity/ask/history in its own HOME and
+DB, then uses real question ask/get/answer and home init/save RPCs. Missing,
+open, no, wrong-path and wrong-hash confirmations must refuse without changing
+HEAD or either file. A matching human yes must commit the exact mandate bytes
+and append to its sibling decisions.md in one commit with the question trailer.
+Root direction uses root decisions.md; focused contracts cover that path too.
+
+The helper records question/get's answeredByHuman flag, both committed paths,
+contents and trailer. An unchanged retry adds no decision. Removing only the
+synthetic Git identity forces commit failure: both prior files and HEAD must
+remain identical, the index clean, and configuring identity makes retry succeed.
+Evidence: `evidence/neo-home-confirmed-save-after.json`. On the test-only commit,
+use `before` in a separate fresh run to retain the matching-human-yes refusal.
+No provider/model, real credentials, GitHub request or GUI is exercised. Stop
+with `stop.sh`. Direct filesystem write restrictions still belong to the
+surrounding environment; this verifies the single operation, not a shell sandbox.
+
 ## Codex Desktop work.send journey
 
 Codex work.send steers a Desktop-owned running turn. This journey uses
@@ -857,6 +909,34 @@ adds its journey here.
     is absent from the public output. Evidence: `evidence/neo-wake-contract.json`.
     This checks the API with synthetic recorded turns, not model behavior or the
     web disclosure row; G5b adds the rendering journey. Stop with `stop.sh`.
+
+30. **Scheduled wakes are quiet web disclosures (G5b).** Build the web and launch a
+    fresh isolated daemon. Run `bun .claude/skills/verify/neo-wake-web.ts <port> "$RUN"`
+    to seed synthetic active, settled-with-additions and settled-empty wakes, then
+    `NODE_PATH=<directory containing playwright> node .claude/skills/verify/neo-wake-web.mjs <port> "$RUN"`.
+    Like journey 18, `VERIFY_BROWSER` can select a headless Chrome executable.
+    `/neo` must show closed clock/title/summary/time rows; the active one reads
+    Working. Attributed publication detail appears once, inside its wake. The publication link must resolve to its rendered article (recorded in
+    `neo-wake-{desktop,mobile}-publication-link.json`). Opening
+    the row exposes labelled additions; following its question link reveals the
+    original question in Your work on desktop and in the mobile sheet. A removed
+    todo link opens its owning ask’s Details before scrolling to the retained row. Questions
+    remain independently answerable; journal labels are text until G6 supplies a
+    journal destination. Screenshots `neo-wake-{desktop,mobile}-{collapsed,expanded,question}.png`
+    and observed text `neo-wake-web.json` live in `evidence/`. No model turn, real
+    provider, real data or desktop GUI is exercised. Stop with `stop.sh`.
+
+    For history folding, use another fresh isolated run. Seed with
+    `bun .claude/skills/verify/neo-wake-pagination.ts <port> "$RUN"`, then run
+    `NODE_PATH=<directory containing playwright> node .claude/skills/verify/neo-wake-pagination.mjs <port> "$RUN"`
+    (`VERIFY_BROWSER` works here too). Its 51 retained publications put the wake
+    just outside the initial history window. Clicking Load earlier folds the
+    topmost publication into its newly visible closed wake; that wake must retain
+    the publication's viewport position on desktop and mobile. Closed descendants
+    can report nonzero cached rectangles in Chrome, so visibility is determined
+    by the disclosure, not height alone. Repeated already-rendered text isolates
+    folding from unrelated later Markdown reflow; that reflow is not fixed here. Evidence: `neo-wake-pagination.json`
+    and `neo-wake-pagination-{desktop,mobile}-{before,after}.png`. Stop the run.
 
 ## Evidence
 
@@ -1736,7 +1816,33 @@ The helper closes its own socket and daemon in `finally`. It uses no model or
 credentials and never reads the real session directories. Feed content reads
 remain synchronous in this slice; this journey verifies metadata I/O only.
 
-## Card-topic sweep attribution
+
+## Todo report attribution (handoff PR4)
+
+```bash
+RUN=$(mktemp -d "$PWD/.verify-todo-report.XXXXXX")
+env -i HOME="$RUN/home" PATH="$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin" \
+  NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/worker-todo-report.ts "$RUN" 9364
+```
+
+Use a fresh synthetic directory and free non-8399 port. The actual SDK calls
+`neo.todo.add` with `start:true` through MCP. The real todo runner dispatches
+through `work.send`, stores its receipt and reads `work.status`; the fixture
+models consumption, a mid-turn human input, a full assistant report with an empty
+terminal result, and a separate later turn. The SDK then reads receipt-bound
+status over MCP. The stored todo report and Neo's emitted note must contain all
+8,701 report bytes with identical SHA-256 and exclude the later turn. Repeated
+refreshes must not duplicate or truncate the report; SDK/body rows stay unchanged.
+`evidence.json` records maximum observed event-loop lag against the 1 s goal.
+Unit contracts additionally cover reports larger than the excerpt limits, many
+assistant rows across pages, shared terminal watermarks, pending/missing inputs
+and incomplete terminal history. This proves todo dispatch, settlement and its
+SDK/MCP interface using synthetic runtime evidence, not PR5 answered linking or
+GUI rendering. Stop the isolated SDK/model server and preserve evidence before
+removing only this synthetic run directory.
+
+## Card-topic sweep responsiveness
 
 Run a fresh isolated daemon with synthetic HOME/data/DB and a free non-8399
 port. The helper creates 180 followed todos with two topic subscriptions each,
@@ -1747,17 +1853,23 @@ provider, key, transcript or live DB is involved.
 ```bash
 RUN=$(mktemp -d /private/tmp/hn-card-topic-phases-XXXXXX)
 env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
-  bun .claude/skills/verify/card-topic-phases.ts verify 9375 "$RUN"
+  bun .claude/skills/verify/card-topic-phases.ts verify 9375 "$RUN" enabled
 ```
 
-On the regression commit use `reproduce` in a separate new directory. Both runs
-must reproduce over 1 s max heartbeat lag: this slice adds attribution, not a
-latency fix. `observed.json` includes concurrent health latency, actual sweep
-results and structured lag diagnostics. In `verify`, the phase totals must
-attribute 180 settings reads and at least 1,440 ms to
-`neo:packs:eligibility_read`; listActive, per-todo followedTodo and
-cardEventsDelivered, and per-subscription end phases must also be present.
-Only the removed todo's two topics end; 360 followed topics remain.
+Repeat in another new directory with `disabled` instead of `enabled`. On the
+regression commit use `reproduce`: both modes must show 180 eligibility reads
+and max heartbeat lag over 1 s. Fixed `verify` must show exactly one settings
+read, including when eligibility is false, with heartbeat lag below 1 s and
+health below 250 ms. `observed.json` retains phase totals, actual subscriptions,
+health latency and any structured lag diagnostics.
+
+With delivery enabled, only the removed todo's two topics end and 360 remain.
+With delivery disabled, all 362 topics end. The helper then changes the stored
+pack setting, re-subscribes active topics if needed and sweeps again over the
+same WebSocket. The changed eligibility must take effect immediately on that
+next sweep, in both directions; no value is cached across sweeps. Focused tests
+also keep settings unread when there is no followed todo, including an empty
+sweep. This keeps the snapshot lazy rather than adding an unconditional read.
 
 The existing activity buffer retains 64 entries and reports dropped entries;
 large sweeps expose a suffix of per-todo phases plus the final aggregate. The
@@ -1829,3 +1941,44 @@ migration. A number already reserved in own-pr-number is checked for collisions
 instead. Supply own-pr-number only when updating that same PR. It uses GitHub,
 not the isolated daemon or a live database; do not run it under the stub-gh PATH.
 Unpublished reservations still need coordination with their owner.
+
+## Source-labelled schedule list (G7 contract)
+
+On a fresh isolated daemon from Launch, run
+`bun .claude/skills/verify/session-schedule-labels.ts <port> "$RUN"`.
+It opens a synthetic Neo, creates its goal schedule and another target's reminder,
+then reads the real `schedule.session.list` RPC using the shared result type.
+The goal title must follow a rename; the reminder uses its note. Each target sees
+only its schedules, including cadence, next run, last outcome/skip reason and
+`nudgeEvery - dueCount`. Pause and resume must survive a fresh list read.
+Repeated label reads must leave `facts_lines` unchanged.
+
+Evidence: `evidence/schedule-labels.json`. This proves the shared read contract
+and local-user RPC controls, not the web schedules strip (the next G7 slice),
+actual wake delivery, or an iOS screen. No provider/model, GUI, real DB or GitHub
+requests are used. Stop the isolated daemon and mock with `stop.sh`.
+
+## Conversation wake lookup query
+
+Run the actual isolated daemon with synthetic HOME/data/DB and a free non-8399
+port. The helper seeds 140,000 SDK headers, 1,400 input origins, then zero and two
+scheduled wakes. No model, credentials, live data or GUI is involved.
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-wake-query-XXXXXX)
+env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/wake-query.ts verify 9377 "$RUN"
+```
+
+On the regression commit, `verify` must fail the VM-work budget; `reproduce`
+records the original excessive traversal without failing. Fixed code must return
+exactly zero then two wakes from the real `neo.snapshot` WebSocket door and the
+Bun repository. `observed.json` retains query plans, repository/RPC timings, exact
+SQLite VM steps and SQLite page-cache miss/hit deltas. These counters use public
+SQLite C APIs through Python's linked SQLite library in read-only mode on the
+synthetic DB. Compare its reported SQLite version with Bun's reported version;
+page-cache misses mean SQLite page reads, not physical disk reads. A fresh
+connection does not flush the operating system cache. This is controlled query
+work evidence, not proof of the cause of historical off-CPU waits. The helper
+closes its socket and daemon in `finally`. Focused tests also retain empty and
+populated views, scope, chronological ordering and both pagination directions.

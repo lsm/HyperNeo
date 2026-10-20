@@ -121,6 +121,7 @@ export const WorkInputEvidenceSchema = z.discriminatedUnion('state', [
     .object({
       receipt: WorkInputReceiptSchema,
       state: z.enum(['unavailable', 'pending']),
+      replyAvailability: z.literal('reply_unavailable').optional(),
     })
     .strict(),
   z
@@ -129,6 +130,9 @@ export const WorkInputEvidenceSchema = z.discriminatedUnion('state', [
       state: z.literal('observed'),
       exchange: z.array(WorkExchangeEntrySchema).max(40),
       exchangeCut: z.boolean(),
+      replyAvailability: z.enum(['complete', 'incomplete']).optional(),
+      replyReport: z.string().optional(),
+      replyAt: z.number().optional(),
     })
     .strict(),
 ]);

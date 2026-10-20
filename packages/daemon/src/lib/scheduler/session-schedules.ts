@@ -11,6 +11,7 @@ import { SESSION_SCHEDULE_FIRE } from '../job-queue-constants.ts';
 
 export interface ScheduleSource {
   kind: string;
+  label?(id: string): string | null;
   facts(id: string): Promise<{ digest: string; summary: string; commit?: () => void } | null>;
   message(id: string, change: { summary: string; nudge: boolean }): string | null;
 }
@@ -52,6 +53,7 @@ export class SessionScheduler {
     this.repo = new SessionScheduleRepository(db);
     this.registerSource({
       kind: 'reminder',
+      label: (id) => this.repo.getBySource('reminder', id)?.note ?? null,
       facts: async (id) => {
         const row = this.repo.getBySource('reminder', id);
         return row ? { digest: 'reminder', summary: row.note ?? '' } : null;

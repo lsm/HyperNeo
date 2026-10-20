@@ -508,13 +508,13 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         sessions.recordCardCheck(todo.id, { checkedAt: now, unchecked: !live });
         deps.changed();
         const report = readDriverFollowUp(outcome, since, sent);
-        if (report) {
+        if (report && report !== todo.report) {
           const current = store.getTodo(todo.id);
           if (current?.state !== todo.state || current.updatedAt !== todo.updatedAt) return;
           store.updateTodo(
             todo,
             {
-              report: `${report}\n\n${todo.report}`.slice(0, 12_000),
+              report: `${report}\n\n${todo.report}`,
               ...(todo.state === 'blocked' ? { state: 'doing' } : {}),
             },
             now

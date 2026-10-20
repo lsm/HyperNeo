@@ -80,7 +80,8 @@ export function readWorkTurnPage(
   around: string | undefined,
   before: number,
   after: number,
-  cursor?: Cursor
+  cursor?: Cursor,
+  window?: { afterSeq: number; throughSeq: number }
 ): WorkTurnPage | WorkTurn[] | null {
   const now = Date.now();
   const session = db
@@ -100,11 +101,18 @@ export function readWorkTurnPage(
       .prepare(
         hydrateSdkMessageBodies(
           `SELECT seq AS body_seq,id,message_type,timestamp FROM sdk_messages INDEXED BY idx_sdk_messages_parent_tool_use_id
-      WHERE ${SCOPE} AND ${condition} ORDER BY seq ${descending ? 'DESC' : 'ASC'} LIMIT ?`,
+      WHERE ${SCOPE} AND seq>? AND seq<=? AND ${condition} ORDER BY seq ${descending ? 'DESC' : 'ASC'} LIMIT ?`,
           `body_selection.body_seq ${descending ? 'DESC' : 'ASC'}`
         )
       )
-      .all(sessionId, now - MESSAGE_SEARCH_TERMINAL_SESSION_TTL_MS, ...args, limit) as Row[];
+      .all(
+        sessionId,
+        now - MESSAGE_SEARCH_TERMINAL_SESSION_TTL_MS,
+        window?.afterSeq ?? 0,
+        window?.throughSeq ?? Number.MAX_SAFE_INTEGER,
+        ...args,
+        limit
+      ) as Row[];
   const unavailable: WorkTurnPage = { turns: [], availability: 'reply_unavailable' };
   const size = before + after + 1;
   let rows: Row[];

@@ -32,7 +32,7 @@ import type {
   WorkSummary,
   WorkWithdrawal,
 } from './types.ts';
-import { readSessionInputEvidence } from './space-input-evidence.ts';
+import { readHyperneoTodoEvidence } from './hyperneo-todo-evidence.ts';
 import {
   boundExchange,
   exchangeEntry,
@@ -642,18 +642,18 @@ const runHyperneoStop = (superpipe({})('hyperneo-stop-work') as PipelineAPI)
   deps: HyperneoAdapterDeps
 ) => Promise<Result<{ stopped: boolean }>>;
 
-export function withHyperneoInputEvidence(
+export async function withHyperneoInputEvidence(
   outcome: Result<WorkDetail>,
   row: HyperneoSessionRow,
   deps: HyperneoAdapterDeps,
   receipt: WorkDelivery['receipt']
-): Result<WorkDetail> {
+): Promise<Result<WorkDetail>> {
   return outcome.ok && receipt
     ? {
         ok: true,
         value: {
           ...outcome.value,
-          inputEvidence: readSessionInputEvidence(deps.db(), row.id, receipt),
+          inputEvidence: await readHyperneoTodoEvidence(deps.db(), row.id, receipt),
         },
       }
     : outcome;
@@ -665,12 +665,12 @@ const runHyperneoStatus = (superpipe({})('hyperneo-work-status') as PipelineAPI)
   .pipe((row: HyperneoSessionRow) => row, 'outcome', 'row')
   .pipe(describeHyperneoWork, ['row', 'deps', 'since'], 'outcome')
   .pipe(withHyperneoInputEvidence, ['outcome', 'row', 'deps', 'receipt'], 'outcome')
-  .end('outcome') as (
+  .endAsync('outcome') as (
   ref: WorkRef,
   deps: HyperneoAdapterDeps,
   since?: number,
   receipt?: WorkDelivery['receipt']
-) => Result<WorkDetail>;
+) => Promise<Result<WorkDetail>>;
 
 const runHyperneoSend = (superpipe({})('hyperneo-send-work') as PipelineAPI)
   .input(['ref', 'message', 'context', 'deps', 'deliveryMode'])

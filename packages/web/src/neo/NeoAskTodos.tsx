@@ -294,6 +294,7 @@ export function NeoAskTodos({
   return (
     <article
       aria-label={ask.title}
+      id={`neo-ref-ask-${ask.id}`}
       data-ask={ask.id}
       data-ask-state={entry.state}
       class={neoCardClass}
@@ -408,6 +409,7 @@ export function NeoAskTodos({
           <span class="flex-1" />
           <button
             type="button"
+            data-ask-details-toggle
             aria-expanded={open}
             onClick={() => setOpen(!open)}
             class={neoPlainClass}

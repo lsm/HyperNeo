@@ -169,7 +169,8 @@ export function NeoLive() {
       element,
       (item) => item.getAttribute('data-public-entry') === anchor.key
     );
-    if (entry) element.scrollTop += entry.getBoundingClientRect().top - anchor.top;
+    const visibleEntry = entry?.closest('details[data-public-entry]:not([open])') ?? entry;
+    if (visibleEntry) element.scrollTop += visibleEntry.getBoundingClientRect().top - anchor.top;
     lastScrollTop.current = element.scrollTop;
     if (publicConversation?.status === 'loading') return;
     earlierAnchor.current = null;
@@ -420,6 +421,24 @@ export function NeoLive() {
               sessionId={neo.sessionId}
               replyLabels={replyLabels}
               publicConversation={publicConversation}
+              onOpenWork={(anchor) => {
+                setChat(null);
+                setScenesOpen(true);
+                requestAnimationFrame(() => {
+                  const owner = (view?.todoAsks ?? []).find(
+                    ({ ask, todos, questions }) =>
+                      anchor === `neo-ref-ask-${ask.id}` ||
+                      todos.some((todo) => anchor === `neo-ref-todo-${todo.id}`) ||
+                      questions.some((question) => anchor === `neo-ref-question-${question.id}`)
+                  );
+                  const card = owner && document.getElementById(`neo-ref-ask-${owner.ask.id}`);
+                  if (!document.getElementById(anchor))
+                    card?.querySelector<HTMLButtonElement>('[data-ask-details-toggle]')?.click();
+                  requestAnimationFrame(() =>
+                    (document.getElementById(anchor) ?? card)?.scrollIntoView({ block: 'center' })
+                  );
+                });
+              }}
               onRetryPublic={retryPublicConversation}
               busy={neoBusyWords(
                 neo.snapshot?.working ?? [],
@@ -491,7 +510,12 @@ export function NeoLive() {
                 const top = element?.getBoundingClientRect().top ?? 0;
                 const entry =
                   element &&
-                  publicEntryAt(element, (item) => item.getBoundingClientRect().bottom > top);
+                  publicEntryAt(
+                    element,
+                    (item) =>
+                      !item.parentElement?.closest('details:not([open])') &&
+                      item.getBoundingClientRect().bottom > top
+                  );
                 if (element && entry) {
                   earlierAnchor.current = {
                     key: entry.getAttribute('data-public-entry') ?? '',
