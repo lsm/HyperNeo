@@ -92,6 +92,39 @@ describe('Event-loop lag diagnostic report', () => {
   });
 });
 
+describe('Event-loop lag resource breakdown', () => {
+  test('a blocked tick reports its own CPU, off-CPU time, page faults, block writes and context switches', async () => {
+    const diagnostics: Record<string, unknown>[] = [];
+    const clock = [0, 10, 1510, 1520];
+    const samples = [
+      { cpuMs: 0, majorFaults: 0, blockWrites: 0, voluntarySwitches: 0 },
+      { cpuMs: 4, majorFaults: 1, blockWrites: 0, voluntarySwitches: 1 },
+      { cpuMs: 44, majorFaults: 901, blockWrites: 3, voluntarySwitches: 3 },
+    ];
+    const stop = startEventLoopLagLog(() => {}, {
+      now: () => clock.shift() ?? 1520,
+      tickMs: 10,
+      takeSlowest: () => null,
+      sampleResources: () =>
+        samples.shift() ?? { cpuMs: 44, majorFaults: 901, blockWrites: 3, voluntarySwitches: 3 },
+      onDiagnostic: (report) => diagnostics.push(report),
+    });
+    await settle();
+    stop();
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({
+      lagMs: 1490,
+      resources: {
+        threadCpuMs: 40,
+        offCpuMs: 1460,
+        majorPageFaults: 900,
+        blockWrites: 3,
+        voluntaryContextSwitches: 2,
+      },
+    });
+  });
+});
+
 describe('Event-loop heap sampler budget', () => {
   test('uses block-only sampling after a sample exceeds one millisecond', async () => {
     const clock = [0, 10, 1510, 1520];

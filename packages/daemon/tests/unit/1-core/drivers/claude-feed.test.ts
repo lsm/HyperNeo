@@ -22,6 +22,7 @@ import {
   createWorkFeedOffsetsTable,
 } from '../../../../src/storage/schema/m302-work-index-kinds';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import { EventLoopActivity } from '../../../../src/lib/event-loop-activity';
 import { readWorkFeedOffsets } from '../../../../src/storage/work-feed';
 
 const at = '2026-10-06T05:00:00.000Z';
@@ -167,6 +168,32 @@ describe('Claude transcript feed', () => {
     ).toEqual([
       { id: 'u1', title: 'neokai' },
       { id: 'u2', title: 'neokai' },
+    ]);
+  });
+
+  test('a blocked tick names the head read, chunk read, parse and save of a transcript', async () => {
+    const project = join(root, '-Users-me-focus-neokai');
+    mkdirSync(project, { recursive: true });
+    writeFileSync(
+      join(project, 'cli-1.jsonl'),
+      `${line({ type: 'user', uuid: 'u1', message: { content: 'plan the heron rollout' } })}\n`
+    );
+    const activity = new EventLoopActivity();
+    const deactivate = activity.activate();
+    try {
+      await feedWorkFiles(db, listFeedFiles(root, 0, 2), claudeFeedSource(new Set()));
+    } finally {
+      deactivate();
+    }
+    const ended = activity
+      .drain()
+      .entries.filter((entry) => entry.kind === 'end')
+      .map((entry) => entry.name);
+    expect(ended).toEqual([
+      'feed:claude:head',
+      'feed:claude:read',
+      'feed:claude:parse',
+      'feed:claude:save',
     ]);
   });
 
