@@ -807,6 +807,44 @@ is a pass. Do not reuse that modified fixture for the fixed-code acceptance run.
 GUI rendering, external drivers and the remaining live-query body outputs belong
 to other journeys/slice 9 and are not verified by this repository-read journey.
 
+### Remaining runtime body reads (slice 9)
+
+Run the registered daemon RPC and live subscriptions against split-only bodies:
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-sdk-runtime-bodies-XXXXXX)
+mkdir -p "$RUN/home"
+env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
+  bun .claude/skills/verify/sdk-live-query-filters.ts seed "$RUN"
+env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
+  bun .claude/skills/verify/sdk-body-runtime-door.ts verify 9336 "$RUN"
+```
+
+Use a free non-8399 port and a fresh run directory. The shared 55,014-row synthetic
+seed uses production derivation, dual writes and `replacement_metadata_normalized=1`.
+The helper adds only synthetic prompt, result and scoped group fixtures. It observes
+full/compact transcript and task feeds, the active-turn roster, session groups,
+message RPCs, adapter result/input/exchange reads and a scoped SQL body read. Outbox
+verification accepts the original long prompt and rejects conflicting text.
+
+It then blanks only the synthetic legacy bodies with existing side copies, notifies
+subscriptions, and compares every output before/after and after daemon restart.
+Full logical-body SHA-256 must remain identical, including every complete tool
+result. `evidence/observed.json` records replies, snapshots, SQL times and heartbeat
+lag against the 250 ms / 1,000 ms goals. Hashing, corpus creation and synthetic
+blanking are outside measured hot reads; startup lag is measured separately.
+`evidence/plans.json` records the actual session-feed and background-metadata plans;
+both must hydrate selected rowids with joins and contain no correlated subquery.
+Repeat with `reproduce` on pre-slice-9 code in a separate fresh directory/port:
+`reproduction.json` records missing output or the legacy parser error. A baseline
+RPC/setup failure is inconclusive, not a successful reproduction.
+
+The helper closes both daemon instances and WebSockets in `finally`. It uses no
+model, provider, real DB, credential file or GUI; UI rendering and deployment
+performance are not verified. Unit contracts and unchanged historical pins run
+in CI. Historical schema SQL and the dual-write copy are intentional legacy
+readers until the later migration/removal slices.
+
 ### Task body projection triggers (slice 7)
 
 First reproduce the body-source boundary with a fresh isolated run directory:
@@ -1009,3 +1047,40 @@ End state: `observed.json` shows `index.worstBatchMs` and both `maxLagMs` below
 1,000 ms at 256 words, and the same `searchAfterIndexing.totalMatches` before and
 after a change. With `crisismerge` 64 the 256-word worst batch was 1,859 ms (an
 FTS5 crisis merge inside the insert); with 16 it was 434 ms.
+
+### Work-feed offsets read once (journey 31)
+
+Work-feed polls must not re-read the offsets table:
+
+```bash
+bun .claude/skills/verify/work-feed-offsets.ts 2700 35
+```
+
+The script builds a synthetic temp DB (2,700 rows and 35 polls by default, the live per-5-minute cadence). Each poll calls `readWorkFeedOffsets`, then writes one offset through `saveWorkFeedChunk`. End state: `table reads=1` for any number of polls. Before the in-memory offsets map it printed `table reads=35`. On the live daemon, `select path, offset, size, mtime from work_feed_offsets` then appears in the `sqlite.query` summaries only in the first window after a restart.
+
+## Worker handoff outbox (PR1)
+
+Run the real SDK tools against a loopback-only scripted model. No GUI, daemon
+restart, live DB, real keys or real transcripts are involved. Pick a free port
+other than 8399. The parent environment is empty; only each synthetic SDK child
+receives the dev-proxy credential and loopback base URL.
+
+```bash
+RUN=$(mktemp -d "$PWD/.verify-handoff.XXXXXX")
+env -i HOME="$RUN/home" PATH="$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin" \
+  NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/worker-handoff.ts "$RUN" 9361
+```
+
+`worker-handoff.ts` resolves the repository's installed SDK executable through
+its production resolver (new SDK versions ship a native executable, not cli.js).
+It drives worker native Write → real MCP `handoff.publish`, then a separate Neo
+SDK session through real MCP `handoff.read` and native Read. The report must retain
+all 12,000 UTF-8 bytes and SHA-256. A sibling private file, a published symlink and
+a changed snapshot must return denial without their contents; the changed file
+must report `tampered`. `evidence.json` records receipts and actual tool results.
+The script closes both SDK streams and its mock server. Before repository checks,
+preserve evidence outside the worktree, then remove only this synthetic run
+(the SDK writes unformatted configuration into its temporary HOME). This verifies
+tool behavior,
+not GUI rendering or protection against a malicious same-user OS process.

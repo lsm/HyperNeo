@@ -20,7 +20,7 @@ import {
 } from '../../lib/mailbox/entry.ts';
 import { withBusyRetry } from '../busy-retry.ts';
 import { writeSdkMessageBody } from './sdk-message-body-write.ts';
-import { hydrateSdkMessageBodies } from './sdk-message-body-read.ts';
+import { hydrateSdkMessageBodies, sdkMessageBodyAt } from './sdk-message-body-read.ts';
 import {
   buildFtsQuery,
   extractVisibleSearchText,
@@ -2176,7 +2176,7 @@ export class SDKMessageRepository {
           .prepare(
             `UPDATE sdk_messages
             SET sdk_message = json_set(
-              sdk_message,
+              ${sdkMessageBodyAt('sdk_messages.rowid')},
               '$.recovery_intercepted', 1,
               '$.recovery_billing_terminal', ?
             )${derived.update}
@@ -2199,7 +2199,7 @@ export class SDKMessageRepository {
           this.db
             .prepare(
               `UPDATE sdk_messages
-              SET sdk_message = json_set(sdk_message, '$.internal_compaction_turn', 1)${derived.update}
+              SET sdk_message = json_set(${sdkMessageBodyAt('sdk_messages.rowid')}, '$.internal_compaction_turn', 1)${derived.update}
             WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'result'`
             )
             .run(...derived.values, sessionId, sdkUuid),

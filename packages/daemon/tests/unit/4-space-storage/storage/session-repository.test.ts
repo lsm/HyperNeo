@@ -1,3 +1,4 @@
+import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies.ts';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import type { Session, SessionConfig, SessionMetadata, WorktreeMetadata } from '@hyperneo/shared';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
@@ -336,6 +337,7 @@ describe('SessionRepository', () => {
 					CREATE TRIGGER message_search_content_ad AFTER DELETE ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body); END;
 					CREATE TRIGGER message_search_content_au AFTER UPDATE OF title, body ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body); INSERT INTO message_search_fts(rowid, title, body) VALUES (new.id, new.title, new.body); END
 			`);
+      runMigration418(db);
       repository.createSession(createDefaultSession({ status: 'archived' }));
       db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status)
@@ -397,6 +399,7 @@ describe('SessionRepository', () => {
 					CREATE TRIGGER message_search_content_ad AFTER DELETE ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body); END;
 					CREATE TRIGGER message_search_content_au AFTER UPDATE OF title, body ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body); INSERT INTO message_search_fts(rowid, title, body) VALUES (new.id, new.title, new.body); END
 				`);
+      runMigration418(db);
       repository.createSession(createDefaultSession({ status: 'archived' }));
       const insertMessage = (
         id: string,
@@ -493,6 +496,7 @@ describe('SessionRepository', () => {
 					CREATE TRIGGER message_search_content_ad AFTER DELETE ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body); END;
 					CREATE TRIGGER message_search_content_au AFTER UPDATE OF title, body ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body); INSERT INTO message_search_fts(rowid, title, body) VALUES (new.id, new.title, new.body); END
 			`);
+      runMigration418(db);
       repository.createSession(createDefaultSession());
       db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status)
@@ -565,6 +569,7 @@ describe('SessionRepository', () => {
 					CREATE TRIGGER message_search_content_ad AFTER DELETE ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body); END;
 					CREATE TRIGGER message_search_content_au AFTER UPDATE OF title, body ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body); INSERT INTO message_search_fts(rowid, title, body) VALUES (new.id, new.title, new.body); END
 			`);
+      runMigration418(db);
       repository.createSession(createDefaultSession({ status: 'archived' }));
       db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status)

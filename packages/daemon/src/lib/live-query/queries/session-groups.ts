@@ -1,3 +1,4 @@
+import { sdkMessageBodyAt } from '../../../storage/repositories/sdk-message-body-read.ts';
 export const DEBOUNCE_SESSION_GROUP_MESSAGES_MS = 150;
 
 export function mapSessionGroupMessageRow(row: Record<string, unknown>): Record<string, unknown> {
@@ -63,7 +64,7 @@ sdk_rows_raw AS (
       ELSE gm.role
     END                           AS role,
     sm.message_type               AS messageType,
-    sm.sdk_message                AS content,
+    ${sdkMessageBodyAt('sm.rowid')}                AS content,
     CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
     sm.parent_tool_use_id AS parentToolUseId
   FROM target_group tg

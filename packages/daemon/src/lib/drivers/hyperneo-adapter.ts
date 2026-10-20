@@ -1,3 +1,4 @@
+import { sdkMessageBodyAt } from '../../storage/repositories/sdk-message-body-read.ts';
 import { workStartPreparation, type WorkExecutionPreparer } from './start-preparation.ts';
 import { workExecutionLocation } from './execution-location.ts';
 import { basename, join, sep } from 'node:path';
@@ -353,7 +354,7 @@ export function readHyperneoSession(db: BunDatabase, id: string): HyperneoSessio
 export function readHyperneoLastResult(db: BunDatabase, id: string): HyperneoLastResult | null {
   const row = db
     .prepare(
-      `SELECT json_extract(sdk_message, '$.result') AS reply, json_extract(sdk_message, '$.is_error') AS failed,
+      `SELECT json_extract(${sdkMessageBodyAt('sdk_messages.rowid')}, '$.result') AS reply, json_extract(${sdkMessageBodyAt('sdk_messages.rowid')}, '$.is_error') AS failed,
               timestamp AS at
          FROM sdk_messages WHERE session_id = ? AND message_type = 'result' AND parent_tool_use_id IS NULL
           AND COALESCE(internal_compaction_turn, 0) = 0
@@ -380,14 +381,14 @@ export function readHyperneoInputs(db: BunDatabase, id: string, since?: number):
     since === undefined
       ? db
           .prepare(
-            `SELECT timestamp, sdk_message AS message FROM sdk_messages
+            `SELECT timestamp, ${sdkMessageBodyAt('sdk_messages.rowid')} AS message FROM sdk_messages
               WHERE session_id = ? AND ${LANDED_INPUT} ORDER BY timestamp DESC LIMIT ${TAIL_INPUTS}`
           )
           .all(id)
           .reverse()
       : db
           .prepare(
-            `SELECT timestamp, sdk_message AS message FROM sdk_messages
+            `SELECT timestamp, ${sdkMessageBodyAt('sdk_messages.rowid')} AS message FROM sdk_messages
               WHERE session_id = ? AND timestamp > ? AND ${LANDED_INPUT}
               ORDER BY timestamp ASC LIMIT ${INPUTS_AFTER}`
           )
@@ -422,7 +423,7 @@ function projectHyperneoExchange(rows: HyperneoExchangeRow[], since: number) {
 export function readHyperneoExchange(db: BunDatabase, id: string, since: number) {
   const rows = db
     .prepare(
-      `SELECT timestamp, sdk_message AS message, message_type FROM sdk_messages
+      `SELECT timestamp, ${sdkMessageBodyAt('sdk_messages.rowid')} AS message, message_type FROM sdk_messages
       WHERE session_id = ? AND timestamp > ? AND parent_tool_use_id IS NULL
         AND COALESCE(internal_compaction_turn, 0) = 0
         AND (message_type = 'result' OR (message_type = 'user'

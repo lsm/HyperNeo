@@ -124,6 +124,18 @@ source. Existing legacy-only rows, mixed copy state and side-only bodies preserv
 the read contract. No historical copy, schema migration, trimming or new deletion
 path is introduced. Live-query/adapter outputs remain for slice 9.
 
+Slice 9 routes the remaining live-query, runtime, evolution and adapter body
+outputs through the shared split-body reader. A scalar rowid lookup preserves
+existing SQL output shapes, with the same side-first/legacy fallback as repository
+hydration. Session feeds and background metadata use explicit joins to preserve
+their existing no-correlated-subquery query-plan contracts. Background metadata
+ranking and capped trace selection carry rowids
+until the output projection. Both delivery-outbox reads, scoped SQL copies, lazy
+task projection repair and the two result `json_set` source reads use that path.
+Historical migration SQL and the intentional dual-write copy still read the
+legacy column; runtime readers have a guard contract against direct legacy reads.
+No historical copy, schema migration, body trimming or deletion is added here.
+
 ## Migration
 
 Slice 7 installs the split projection triggers in migration 419 and the fresh

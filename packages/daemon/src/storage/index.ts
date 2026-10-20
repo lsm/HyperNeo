@@ -35,7 +35,7 @@ import { SpaceLongHorizonAgentRepository } from './repositories/space-long-horiz
 import { McpEnablementRepository } from './repositories/mcp-enablement-repository.ts';
 import { SkillRepository } from './repositories/skill-repository.ts';
 import { WorkspaceHistoryRepository } from './repositories/workspace-history-repository.ts';
-import { TransformersAgentMemoryEmbedder } from './repositories/agent-memory-transformers.ts';
+import { WorkerAgentMemoryEmbedder } from './repositories/agent-memory-worker-embedder.ts';
 import {
   type AgentMemoryEmbedder,
   AgentMemoryRepository,
@@ -111,7 +111,7 @@ export class Database {
   private skillRepo!: SkillRepository;
   private workspaceHistoryRepo!: WorkspaceHistoryRepository;
   private agentMemoryRepo!: AgentMemoryRepository;
-  private readonly embedder = new TransformersAgentMemoryEmbedder();
+  private readonly embedder = new WorkerAgentMemoryEmbedder();
   private evolutionRepo!: EvolutionRepository;
   private goalAutomationCursorRepo!: GoalAutomationCursorRepository;
   private providerRepo!: ProviderRepository;
@@ -501,6 +501,10 @@ export class Database {
     return this.jobQueueRepo;
   }
 
+  warmEmbedder(): void {
+    this.embedder.warm();
+  }
+
   getEmbedder(): AgentMemoryEmbedder {
     return this.embedder;
   }
@@ -538,6 +542,7 @@ export class Database {
   }
 
   close(): void {
+    this.embedder.stop();
     if (this.messageSearchIndexTimer) {
       clearInterval(this.messageSearchIndexTimer);
       this.messageSearchIndexTimer = null;

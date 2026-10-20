@@ -1,3 +1,4 @@
+import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies.ts';
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { McpServerConfig, MessageHub, ModelInfo, Session } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
@@ -1070,6 +1071,7 @@ describe('Session RPC Handlers — models.list', () => {
           heartbeat_at INTEGER, completed_at INTEGER
         );
       `);
+      runMigration418(db);
       jobQueue = new JobQueueRepository(db as never);
       db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
@@ -1204,6 +1206,7 @@ describe('Session RPC Handlers — models.list', () => {
           heartbeat_at INTEGER, completed_at INTEGER
         );
       `);
+      runMigration418(db);
       jobQueue = new JobQueueRepository(db as never);
       db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)

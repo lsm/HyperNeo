@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
-import { homedir } from 'os';
+import { homedir, tmpdir } from 'os';
+import { mkdtempSync, mkdirSync, rmSync, statSync, realpathSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import {
   buildProviderSettings,
   ensureAgentTools,
@@ -32,6 +34,23 @@ import { createTables } from '../../../../src/storage/schema';
 import { createNeoTables } from '../../../../src/storage/schema/neo';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { noOpReactiveDb } from '../../../helpers/reactive-database';
+
+let handoffDataDir: string;
+let previousDataDir: string | undefined;
+beforeEach(() => {
+  previousDataDir = process.env.HYPERNEO_DATA_DIR;
+  handoffDataDir = join(
+    realpathSync(mkdtempSync(join(tmpdir(), 'query-options-handoff-'))),
+    '.hyperneo'
+  );
+  mkdirSync(handoffDataDir);
+  process.env.HYPERNEO_DATA_DIR = handoffDataDir;
+});
+afterEach(() => {
+  rmSync(dirname(handoffDataDir), { recursive: true, force: true });
+  if (previousDataDir === undefined) delete process.env.HYPERNEO_DATA_DIR;
+  else process.env.HYPERNEO_DATA_DIR = previousDataDir;
+});
 
 describe('QueryOptionsBuilder', () => {
   let builder: QueryOptionsBuilder;
@@ -2244,15 +2263,19 @@ describe('QueryOptionsBuilder', () => {
       });
       const options = await newBuilder.build();
 
-      const expected = [homedir() + '/.claude', homedir() + '/.hyperneo'];
+      const expected = [homedir() + '/.claude', handoffDataDir];
       expected.push('/tmp', '/tmp/claude', expect.stringContaining('/tmp/zsh-'));
+      expected.push(join(handoffDataDir, 'handoffs', mockSession.id, 'drafts'));
       expect(options.additionalDirectories).toEqual(expected);
     });
 
     it('should include home directories when no worktree', async () => {
       const options = await builder.build();
-      const expected = [homedir() + '/.claude', homedir() + '/.hyperneo'];
+      const expected = [homedir() + '/.claude', handoffDataDir];
+      expected.push(join(handoffDataDir, 'handoffs', mockSession.id, 'drafts'));
       expect(options.additionalDirectories).toEqual(expected);
+      expect(options.env?.HYPERNEO_HANDOFF_DIR).toBe(expected.at(-1));
+      expect(statSync(expected.at(-1)!).mode & 0o777).toBe(0o700);
     });
   });
 

@@ -1,3 +1,4 @@
+import { runMigration418 } from '../../../src/storage/schema/m418-sdk-message-bodies.ts';
 import type { Database } from '../../../src/storage/sqlite-compat';
 
 export function createLegacySpaceAgentTables(db: Database): void {
@@ -209,6 +210,7 @@ export function createSpaceAgentSchema(db: Database): void {
 			replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0
 		)
 	`);
+  runMigration418(db);
   db.exec(`
 		CREATE TABLE sdk_message_replacements (
 			source_message_id TEXT NOT NULL,
