@@ -244,13 +244,16 @@ export class NeoAskTodoRepository {
   }
 
   moveTodo(todo: NeoTodo, askId: string, repo: string, now: number): NeoTodo {
-    this.db
-      .prepare(
-        `UPDATE neo_todos SET repo = ?2, position = CASE WHEN ask_id = ?1 THEN position
-           ELSE (SELECT COALESCE(MAX(position) + 1, 0) FROM neo_todos WHERE ask_id = ?1) END, ask_id = ?1
-         WHERE id = ?3`
-      )
-      .run(askId, repo, todo.id);
+    this.db.transaction(() => {
+      this.db
+        .prepare(
+          `UPDATE neo_todos SET repo = ?2, position = CASE WHEN ask_id = ?1 THEN position
+             ELSE (SELECT COALESCE(MAX(position) + 1, 0) FROM neo_todos WHERE ask_id = ?1) END, ask_id = ?1
+           WHERE id = ?3`
+        )
+        .run(askId, repo, todo.id);
+      this.pruneStartQuestions(todo.askId);
+    })();
     this.db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ? AND repo IS NULL').run(repo, askId);
     this.touchAsk(todo.askId, now);
     if (askId !== todo.askId) this.touchAsk(askId, now);
@@ -263,25 +266,32 @@ export class NeoAskTodoRepository {
         ? { ...change, blockedReason: null, nextAction: null, blockedBy: null }
         : change;
     const keys = Object.keys(patch) as (keyof NeoTodoPatch)[];
-    this.db
-      .prepare(
-        `UPDATE neo_todos SET ${keys.map((key) => `${TODO_COLUMNS[key]} = ?`).join(', ')}${
-          keys.length ? ', ' : ''
-        }updated_at = ? WHERE id = ?`
-      )
-      .run(...keys.map((key) => patch[key] ?? null), now, todo.id);
+    this.db.transaction(() => {
+      this.db
+        .prepare(
+          `UPDATE neo_todos SET ${keys.map((key) => `${TODO_COLUMNS[key]} = ?`).join(', ')}${
+            keys.length ? ', ' : ''
+          }updated_at = ? WHERE id = ?`
+        )
+        .run(...keys.map((key) => patch[key] ?? null), now, todo.id);
+      if (patch.state) this.pruneStartQuestions(todo.askId);
+    })();
     this.touchAsk(todo.askId, now);
     return this.getTodo(todo.id)!;
   }
 
   claimStart(todo: NeoTodo, now: number): NeoTodo | null {
-    const changed = this.db
-      .prepare(
-        `UPDATE neo_todos SET state = 'doing', started_at = ?, updated_at = ?,
-           blocked_reason = NULL, next_action = NULL, blocked_by = NULL
-         WHERE id = ? AND (state = 'todo' OR (state = 'blocked' AND blocked_by = 'question'))`
-      )
-      .run(now, now, todo.id).changes;
+    const changed = this.db.transaction(() => {
+      const claimed = this.db
+        .prepare(
+          `UPDATE neo_todos SET state = 'doing', started_at = ?, updated_at = ?,
+             blocked_reason = NULL, next_action = NULL, blocked_by = NULL
+           WHERE id = ? AND (state = 'todo' OR (state = 'blocked' AND blocked_by = 'question'))`
+        )
+        .run(now, now, todo.id).changes;
+      if (claimed) this.pruneStartQuestions(todo.askId);
+      return claimed;
+    })();
     if (!changed) return null;
     this.touchAsk(todo.askId, now);
     return this.getTodo(todo.id);
@@ -417,6 +427,25 @@ export class NeoAskTodoRepository {
            )`
       )
       .run(answered.id, answered.askId, JSON.stringify(answered.startTodos ?? []));
+  }
+
+  private pruneStartQuestions(askId: string): void {
+    this.db
+      .prepare(
+        `UPDATE neo_questions SET start_todos = (
+           SELECT json_group_array(own.value) FROM json_each(neo_questions.start_todos) AS own
+            WHERE own.value IN (SELECT id FROM neo_todos WHERE ask_id = ?1
+              AND (state = 'todo' OR (state = 'blocked' AND blocked_by = 'question'))))
+         WHERE ask_id = ?1 AND state = 'open' AND kind = 'start' AND start_todos IS NOT NULL`
+      )
+      .run(askId);
+    this.db
+      .prepare(
+        `UPDATE neo_questions SET state = 'retired', retired_reason = 'nothing left to start'
+         WHERE ask_id = ? AND state = 'open' AND kind = 'start'
+           AND json_array_length(start_todos) = 0`
+      )
+      .run(askId);
   }
 
   private releaseStartTodos(questionId: string, now: number): void {

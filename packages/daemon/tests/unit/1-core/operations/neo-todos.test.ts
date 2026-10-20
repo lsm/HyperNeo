@@ -272,7 +272,8 @@ describe('neo.todo operations', () => {
     });
     if (!deploy.ok) throw new Error(deploy.reason);
     expect(repo.listQuestions('ask')).toMatchObject([
-      { text: 'Start "Deploy"?', startTodos: [deploy.todo.id] },
+      { state: 'retired', retiredReason: 'nothing left to start', startTodos: [] },
+      { state: 'open', text: 'Start "Deploy"?', startTodos: [deploy.todo.id] },
     ]);
   });
 });
