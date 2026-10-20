@@ -85,6 +85,7 @@ describe('codex-desktop adapter against a Codex state database', () => {
   function adapter() {
     return createCodexDesktopAdapter({
       bootstrapServer: () => Promise.reject(new Error('not used')),
+      prepareDesktopProject: async () => 'project-1',
       startDesktopTurn: async () => {
         throw new Error('not used');
       },
@@ -122,6 +123,7 @@ describe('codex-desktop adapter against a Codex state database', () => {
     const searched: string[] = [];
     const found = await createCodexDesktopAdapter({
       bootstrapServer: () => Promise.reject(new Error('not used')),
+      prepareDesktopProject: async () => 'project-1',
       startDesktopTurn: async () => {
         throw new Error('not used');
       },
@@ -177,6 +179,7 @@ describe('codex-desktop adapter against a Codex state database', () => {
     try {
       const adapter = createCodexDesktopAdapter({
         bootstrapServer: () => Promise.reject(new Error('not used')),
+        prepareDesktopProject: async () => 'project-1',
         startDesktopTurn: async () => {
           throw new Error('not used');
         },
@@ -320,6 +323,7 @@ describe('codex-desktop adapter against a Codex state database', () => {
   test('answers a Space search without opening the state database', async () => {
     const groups = await createCodexDesktopAdapter({
       bootstrapServer: () => Promise.reject(new Error('not used')),
+      prepareDesktopProject: async () => 'project-1',
       startDesktopTurn: async () => {
         throw new Error('not used');
       },
