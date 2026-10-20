@@ -56,25 +56,29 @@ function setup() {
     if (!receipt.ok) throw new Error(receipt.reason);
     return receipt.question;
   };
-  return { db, store, call, asked, told, started, refused, fix, rows };
+  const daemonStart = (startTodos: string[], text = 'Start these?') =>
+    store.askQuestion(
+      crypto.randomUUID(),
+      'ask',
+      {
+        text,
+        kind: 'start',
+        options: null,
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos,
+      },
+      1
+    );
+  return { db, store, call, asked, daemonStart, told, started, refused, fix, rows };
 }
 
 describe('neo.question operations', () => {
-  test('a start question lists only not-started todos and starts the ticked ones', async () => {
-    const { store, call, asked, told, started, fix, rows } = setup();
+  test('a start question starts the ticked todos', async () => {
+    const { store, call, daemonStart, told, started, fix, rows } = setup();
     store.updateTodo(rows, { state: 'doing', startedAt: 2 }, 2);
-    expect(
-      await call('neo.question.ask', {
-        askId: 'ask',
-        kind: 'start',
-        text: 'Start these?',
-        todos: [fix.id, rows.id],
-      })
-    ).toEqual({
-      ok: false,
-      reason: 'not_startable: t2 is not a not-started todo with a session on this ask.',
-    });
-    const start = await asked({ kind: 'start', text: 'Start this?', todos: [fix.id] });
+    const start = daemonStart([fix.id], 'Start this?');
     expect(start).toMatchObject({ kind: 'start', startTodos: ['t1'], state: 'open' });
     const answered = await call(
       'neo.question.answer',
@@ -95,7 +99,7 @@ describe('neo.question operations', () => {
   });
 
   test('a start question holds its todos blocked until it is answered or retired', async () => {
-    const { store, call, asked, started, fix, rows } = setup();
+    const { store, call, daemonStart, started, fix, rows } = setup();
     const held = {
       state: 'blocked',
       blockedBy: 'question',
@@ -103,7 +107,7 @@ describe('neo.question operations', () => {
     } as const;
     store.updateTodo(fix, held, 2);
     store.updateTodo(rows, held, 2);
-    const start = await asked({ kind: 'start', text: 'Start these?', todos: [fix.id, rows.id] });
+    const start = daemonStart([fix.id, rows.id], 'Start these?');
     await call('neo.question.answer', { questionId: start.id, answer: [fix.id] }, human);
     expect(started).toEqual([fix.id]);
     expect(store.getTodo(rows.id)).toMatchObject({
@@ -112,20 +116,20 @@ describe('neo.question operations', () => {
       blockedReason: null,
     });
     store.updateTodo(store.getTodo(rows.id)!, held, 3);
-    const chat = await asked({ kind: 'start', text: 'Start this?', todos: [rows.id] });
+    const chat = daemonStart([rows.id], 'Start this?');
     store.answerQuestion(chat, 'later', 'chat', 4);
     expect(store.getTodo(rows.id)).toMatchObject({ state: 'todo', blockedBy: null });
     store.updateTodo(store.getTodo(rows.id)!, held, 5);
-    const moot = await asked({ kind: 'start', text: 'Start this?', todos: [rows.id] });
+    const moot = daemonStart([rows.id], 'Start this?');
     store.retireQuestion(moot, 'not needed', null, 6);
     expect(store.getTodo(rows.id)).toMatchObject({ state: 'todo', blockedBy: null });
   });
 
   test('answering a start question retires a duplicate one covering the same todos', async () => {
-    const { store, call, asked, fix, rows } = setup();
-    const first = await asked({ kind: 'start', text: 'Start these 2?', todos: [fix.id, rows.id] });
-    const other = await asked({ kind: 'start', text: 'Only this?', todos: [rows.id] });
-    const second = await asked({ kind: 'start', text: 'Build it?', todos: [fix.id, rows.id] });
+    const { store, call, daemonStart, fix, rows } = setup();
+    const first = daemonStart([fix.id, rows.id], 'Start these 2?');
+    const other = daemonStart([rows.id], 'Only this?');
+    const second = daemonStart([fix.id, rows.id], 'Build it?');
     await call('neo.question.answer', { questionId: second.id, answer: [fix.id, rows.id] }, human);
     expect(store.getQuestion(first.id)).toMatchObject({
       state: 'retired',
@@ -136,25 +140,25 @@ describe('neo.question operations', () => {
   });
 
   test('a chat reply to a start question starts nothing, so its duplicate stays open', async () => {
-    const { store, asked, fix, rows } = setup();
-    const first = await asked({ kind: 'start', text: 'Start these 2?', todos: [fix.id, rows.id] });
-    const second = await asked({ kind: 'start', text: 'Build it?', todos: [fix.id, rows.id] });
+    const { store, daemonStart, fix, rows } = setup();
+    const first = daemonStart([fix.id, rows.id], 'Start these 2?');
+    const second = daemonStart([fix.id, rows.id], 'Build it?');
     store.answerQuestion(second, 'not yet', 'chat', 3);
     expect(store.getQuestion(first.id)?.state).toBe('open');
   });
 
   test('a start question that covers todos the answer did not is left open', async () => {
-    const { store, call, asked, fix, rows } = setup();
-    const wider = await asked({ kind: 'start', text: 'Start these 2?', todos: [fix.id, rows.id] });
-    const narrow = await asked({ kind: 'start', text: 'Start this?', todos: [fix.id] });
+    const { store, call, daemonStart, fix, rows } = setup();
+    const wider = daemonStart([fix.id, rows.id], 'Start these 2?');
+    const narrow = daemonStart([fix.id], 'Start this?');
     await call('neo.question.answer', { questionId: narrow.id, answer: [fix.id] }, human);
     expect(store.getQuestion(wider.id)?.state).toBe('open');
   });
 
   test('tells Neo which ticked todos did not start', async () => {
-    const { call, asked, told, refused, fix, rows } = setup();
+    const { call, daemonStart, told, refused, fix, rows } = setup();
     refused.add(rows.id);
-    const start = await asked({ kind: 'start', text: 'Start these?', todos: [fix.id, rows.id] });
+    const start = daemonStart([fix.id, rows.id], 'Start these?');
     await call('neo.question.answer', { questionId: start.id, answer: [fix.id, rows.id] }, human);
     expect(told).toEqual([
       'The human answered "Start these?": start List steps, Todo rows.\nThese did not start: Todo rows: already_started: this todo is removed.',
@@ -204,6 +208,31 @@ describe('neo.question operations', () => {
       ok: false,
       reason: 'This action needs the user.',
     });
+  });
+});
+
+describe("Neo's start question", () => {
+  test("rewords the daemon's start question instead of opening a second one", async () => {
+    const { store, asked, daemonStart, fix, rows } = setup();
+    const start = daemonStart([fix.id, rows.id], 'Start these 2?');
+    const reworded = await asked({ kind: 'start', text: 'Start building the design?' });
+    expect(reworded).toMatchObject({
+      id: start.id,
+      text: 'Start building the design?',
+      startTodos: [fix.id, rows.id],
+      state: 'open',
+    });
+    expect(store.listQuestions('ask')).toHaveLength(1);
+  });
+
+  test('is refused when no start question is open, and opens none', async () => {
+    const { store, call } = setup();
+    expect(await call('neo.question.ask', { askId: 'ask', kind: 'start', text: 'Go?' })).toEqual({
+      ok: false,
+      reason:
+        'no_start_question: no todo on this ask is waiting to start; add todos with an instruction and the daemon asks.',
+    });
+    expect(store.listQuestions('ask')).toEqual([]);
   });
 });
 
@@ -367,8 +396,8 @@ describe('neo.question.retire and replaces', () => {
   });
 
   test('never retires or replaces the start question that carries the go-ahead', async () => {
-    const { store, call, asked, fix } = setup();
-    const start = await asked({ kind: 'start', text: 'Start this?', todos: [fix.id] });
+    const { store, call, daemonStart, fix } = setup();
+    const start = daemonStart([fix.id], 'Start this?');
     const refusal = {
       ok: false,
       reason:

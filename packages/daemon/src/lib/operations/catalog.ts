@@ -11,6 +11,7 @@ import {
   createSendMessageOperation,
   type AgentTargetResolver,
   type SessionStatusRead,
+  type SessionTitleRead,
 } from '../messaging/message-send.ts';
 import { createAttachDaemonOperation } from '../remote-daemons/attach-operation.ts';
 import {
@@ -45,6 +46,7 @@ export interface TaskOperationDependencies {
     typeof createTransitionTaskOperation<TransitionStandaloneTaskInput>
   >[0];
   sessionStatus: SessionStatusRead;
+  sessionTitle?: SessionTitleRead;
   resolveMessageAgent?: AgentTargetResolver;
 }
 
@@ -58,7 +60,8 @@ export function createDaemonOperationCatalog(
       jobQueue,
       tasks.sessionStatus,
       createRemoteSendForwarder(remoteDaemons),
-      tasks.resolveMessageAgent
+      tasks.resolveMessageAgent,
+      tasks.sessionTitle
     ),
     createAttachDaemonOperation(remoteDaemons),
     createProbeDaemonOperation(remoteDaemons),

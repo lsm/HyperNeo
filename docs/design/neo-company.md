@@ -55,7 +55,7 @@ expanding to the text. The same pattern as wake rows (section 5). Rendering is f
 
 ### Guardrails
 
-- **Rate limit** per sender: 6 a minute. Past that, messages are refused with
+- **Rate limit** per sender and recipient: 6 a minute. Past that, messages are refused with
   `rate_limited` until the minute passes.
 - **Dedupe:** the same sender, recipient and text within 10 minutes is accepted once.
 - **No human authority:** a message from a session is never `human` input. Today
@@ -538,7 +538,7 @@ Session messages, scheduler and home repo (fs3):
 
 | Change | Migration | Notes |
 | --- | --- | --- |
-| Session messages | none | `message.send` already persists them as mailbox rows with a `session:<id>` origin. The rate limit and dedupe read those rows. |
+| Session messages | none | `message.send` already persists them as mailbox rows with a `session:<id>` origin. The rate limit and dedupe are counted in memory per sender and recipient, so a daemon restart resets them; that is accepted, since they guard against loops, not abuse. |
 | `session_schedules` | new table | Columns as in section 2. Unique (`source_kind`, `source_id`); index on (`status`, `next_run_at`) and on `target`. No foreign keys: targets may be on other adapters. |
 | `neo_concerns.home_path` | `ADD COLUMN` | Nullable. The project's folder under `projects/` in the home repo, set once. |
 | `neo_questions.confirm_json` | `ADD COLUMN` | Nullable `{path, sha256}` that the home-save gate checks. |
