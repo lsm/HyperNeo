@@ -68,8 +68,7 @@ export function neoAskEntryState(
   if (ask.status === 'dropped') return 'dropped';
   if (ask.status === 'done') return 'done';
   if (questions.some((question) => question.state === 'open')) return 'waiting';
-  if (todos.some((todo) => todo.state === 'blocked')) return 'waiting';
-  if (todos.some((todo) => todo.state === 'doing')) return 'doing';
+  if (todos.some((todo) => todo.state === 'doing' || todo.state === 'blocked')) return 'doing';
   const live = todos.filter((todo) => todo.state !== 'removed');
   return live.length && live.every((todo) => todo.state === 'done') ? 'done' : 'todo';
 }
