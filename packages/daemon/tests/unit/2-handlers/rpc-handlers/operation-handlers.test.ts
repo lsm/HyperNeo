@@ -75,6 +75,8 @@ describe('operation.invoke RPC registration', () => {
       name: 'operations.list',
     });
     expect(listed.map(({ name }) => name)).toEqual([
+      'handoff.publish',
+      'handoff.read',
       'message.send',
       'daemon.attach',
       'daemon.probe',
