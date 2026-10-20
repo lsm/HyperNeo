@@ -471,6 +471,15 @@ describe('codex-desktop start', () => {
     expect(closed()).toBe(true);
   });
 
+  test('the opening text includes the spans Desktop needs to render its live turn', async () => {
+    const { instance, calls } = adapter({
+      call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}),
+    });
+    expect(await instance.start?.(request, user)).toMatchObject({ ok: true });
+    const opening = calls.find(([method]) => method === 'desktop/start-turn')?.[1];
+    expect(opening?.input).toEqual([{ type: 'text', text: request.message, text_elements: [] }]);
+  });
+
   test('starts a thread in a git repo in its own detached worktree', async () => {
     const { instance, calls, spawned } = adapter(
       { call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}) },
