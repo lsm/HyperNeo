@@ -1,0 +1,116 @@
+import superpipe, { type PipelineAPI } from 'superpipe';
+import type { Job } from '../../storage/repositories/job-queue-repository.ts';
+import type { SessionSchedule } from '../../storage/repositories/session-schedule-repository.ts';
+import type { WorkRef, WorkStatus } from '../drivers/types.ts';
+import type { SessionScheduler } from './session-schedules.ts';
+
+export interface ScheduleFireDeps {
+  scheduler: SessionScheduler;
+  status(target: WorkRef): Promise<WorkStatus | 'not_found' | 'not_open'>;
+  deliver(
+    schedule: SessionSchedule,
+    messageId: string,
+    text: string
+  ): Promise<void | 'target_gone' | 'unconfirmed'>;
+}
+
+type Outcome = { outcome: string };
+type Gate<T> = { value: T } | { reason: Outcome };
+
+export function createSessionScheduleFire(deps: ScheduleFireDeps) {
+  const { scheduler } = deps;
+  const finish = (schedule: SessionSchedule, outcome: string): { reason: Outcome } => {
+    scheduler.finishRun(schedule, outcome);
+    return { reason: { outcome } };
+  };
+  return (superpipe({})('sessionSchedule.fire') as PipelineAPI)
+    .input(['job'])
+    .pipe(
+      (job: Job): Gate<SessionSchedule> => {
+        const { scheduleId } = job.payload as { scheduleId: string };
+        const row = scheduler.repo.get(scheduleId);
+        if (!row || row.status !== 'active' || row.pendingJobId !== job.id)
+          return { reason: { outcome: 'superseded' } };
+        const counted = scheduler.repo.countDue(
+          row.id,
+          job.id,
+          row.nextRunAt ?? job.runAt,
+          Date.now()
+        );
+        return counted ? { value: counted } : { reason: { outcome: 'superseded' } };
+      },
+      'job',
+      'result:run'
+    )
+    .pipe(
+      async (schedule: SessionSchedule): Promise<Gate<SessionSchedule>> => {
+        const status = await deps.status(schedule.target);
+        if (status === 'not_found' || status === 'not_open') return finish(schedule, 'target_gone');
+        if (status === 'running' || status === 'queued' || status === 'stopped')
+          return finish(schedule, 'skipped_busy');
+        if (status === 'needs_you') return finish(schedule, 'skipped_needs_you');
+        return { value: schedule };
+      },
+      'run',
+      'result:run'
+    )
+    .pipe(
+      async (
+        schedule: SessionSchedule
+      ): Promise<Gate<{ schedule: SessionSchedule; digest: string; text: string }>> => {
+        const source = scheduler.source(schedule.sourceKind);
+        if (!source) throw new Error(`Unregistered schedule source: ${schedule.sourceKind}`);
+        const facts = await source.facts(schedule.sourceId);
+        if (!facts) return finish(schedule, 'source_gone');
+        const nudge = facts.digest === schedule.factsDigest;
+        if (nudge && schedule.dueCount < schedule.nudgeEvery)
+          return finish(schedule, 'skipped_unchanged');
+        return {
+          value: {
+            schedule,
+            digest: facts.digest,
+            text: source.message(schedule.sourceId, { summary: facts.summary, nudge }),
+          },
+        };
+      },
+      'run',
+      'result:prepared'
+    )
+    .pipe(
+      async ({
+        schedule,
+        digest,
+        text,
+      }: {
+        schedule: SessionSchedule;
+        digest: string;
+        text: string;
+      }): Promise<Outcome> => {
+        const current = scheduler.repo.get(schedule.id);
+        if (current?.status !== 'active' || current.pendingJobId !== schedule.pendingJobId)
+          return { outcome: 'superseded' };
+        const messageId = `schedule:${schedule.id}:${schedule.nextRunAt}`;
+        const delivery = await deps.deliver(schedule, messageId, text);
+        if (delivery === 'target_gone') return finish(schedule, 'target_gone').reason;
+        if (delivery === 'unconfirmed')
+          return {
+            outcome: scheduler.finishRun(
+              schedule,
+              'skipped_delivery_unconfirmed',
+              schedule.factsDigest,
+              messageId
+            )
+              ? 'skipped_delivery_unconfirmed'
+              : 'superseded',
+          };
+        return {
+          outcome: scheduler.finishRun(schedule, 'fired', digest, messageId)
+            ? 'fired'
+            : 'superseded',
+        };
+      },
+      'prepared',
+      'run'
+    )
+    .endAsync('run') as (job: Job) => Promise<Outcome>;
+}
