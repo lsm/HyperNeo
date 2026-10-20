@@ -79,7 +79,7 @@ export function createSessionScheduleFire(deps: ScheduleFireDeps) {
         };
       },
       'run',
-      'result:prepared'
+      'result:run'
     )
     .pipe(
       async ({
@@ -116,7 +116,7 @@ export function createSessionScheduleFire(deps: ScheduleFireDeps) {
             : 'superseded',
         };
       },
-      'prepared',
+      'run',
       'run'
     )
     .endAsync('run') as (job: Job) => Promise<Outcome>;
