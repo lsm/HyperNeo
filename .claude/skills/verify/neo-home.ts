@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { Database } from 'bun:sqlite';
 const [port, run] = process.argv.slice(2);
 if (!port || !run || port === '8399') throw new Error('usage: neo-home.ts <test-port> <run-dir>');
@@ -13,6 +13,20 @@ async function rpc(name: string, input: unknown) {
   return reply.value ?? reply;
 }
 const root = `${run}/data/Neo`;
+await mkdir(root, { recursive: true });
+await writeFile(`${root}/direction.md`, 'Human company direction.\n');
+await writeFile(`${root}/.gitignore`, 'human-private/\n');
+const refusedBootstrap = [];
+for (const name of ['neo.home.init', 'neo.home.init', 'neo.home.save']) {
+  const result = await rpc(name, name === 'neo.home.save' ? { path: 'digest.md', content: 'Ready.', message: 'Save digest' } : {});
+  refusedBootstrap.push({ result, files: (await readdir(root)).sort(), direction: await readFile(`${root}/direction.md`, 'utf8'), ignore: await readFile(`${root}/.gitignore`, 'utf8') });
+}
+await mkdir(`${run}/evidence`, { recursive: true });
+await writeFile(`${run}/evidence/neo-home-bootstrap.json`, JSON.stringify(refusedBootstrap, null, 2));
+if (refusedBootstrap.some(({ result, files, direction, ignore }) => result.ok || !result.reason?.startsWith('confirmation_required') || JSON.stringify(files) !== JSON.stringify(['.gitignore', 'direction.md']) || direction !== 'Human company direction.\n' || ignore !== 'human-private/\n')) throw new Error('Refused bootstrap mutated the home tree');
+await rm(`${root}/direction.md`);
+await rm(`${root}/.gitignore`);
+console.log('PASS: repeated init/save refusals preserve the existing home tree without creating files.');
 await mkdir(`${root}/.coordinators/verify`, { recursive: true });
 const git = async (...args: string[]) => {
   const child = Bun.spawn(['git', ...args], { cwd: root, env: { HOME: `${run}/home`, PATH: '/usr/bin:/bin', NODE_ENV: 'test' }, stdout: 'pipe', stderr: 'pipe' });

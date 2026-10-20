@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, mkdir, readFile, writeFile, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNeoHomeOperations } from '../../../../src/lib/neo/home/operations';
@@ -87,6 +87,58 @@ describe('Neo home operations', () => {
     expect(await call('neo.home.read', { path: 'README.md' })).toMatchObject({ ok: false });
     expect(await git('ls-files')).toBe('');
     await expect(readFile(join(root, 'README.md'), 'utf8')).rejects.toThrow();
+  });
+  test.each([
+    ['direction.md', 'Human company direction.', 'confirmation_required'],
+    ['README.md', 'API_TOKEN=abcdefghijklmnop', 'secret_content'],
+  ])(
+    'refused bootstrap preserves existing %s without creating files',
+    async (path, content, reason) => {
+      await rm(join(root, '.git'), { recursive: true });
+      await writeFile(join(root, path), content);
+      await writeFile(join(root, '.gitignore'), 'human-private/\n');
+      for (const name of ['neo.home.init', 'neo.home.init', 'neo.home.save']) {
+        expect(
+          await call(
+            name,
+            name === 'neo.home.save'
+              ? { path: 'digest.md', content: 'Ready.', message: 'Save digest' }
+              : {}
+          )
+        ).toMatchObject({
+          ok: false,
+          reason: expect.stringContaining(reason),
+        });
+        expect((await readdir(root)).sort()).toEqual(['.gitignore', path].sort());
+        expect(await readFile(join(root, path), 'utf8')).toBe(content);
+        expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe('human-private/\n');
+      }
+    }
+  );
+  test('uses literal document names when checking git ignores', async () => {
+    await call('neo.home.init', {});
+    await writeFile(
+      join(root, '.gitignore'),
+      '.coordinators/\nprivate-*.md\nprivate[[]draft].md\n'
+    );
+    await git('add', '.gitignore');
+    await git('commit', '-m', 'Ignore literal private document names');
+    for (const path of ['private-*.md', 'private[draft].md']) {
+      await writeFile(join(root, path), 'Private draft.');
+      expect(await call('neo.home.read', { path })).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('ignored'),
+      });
+      expect(await save(path)).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('ignored'),
+      });
+    }
+    expect(await save('release[draft].md')).toMatchObject({ ok: true });
+    expect(await call('neo.home.read', { path: 'release[draft].md' })).toMatchObject({
+      ok: true,
+      content: 'Release is ready.\n',
+    });
   });
   test('an initialized project keeps the same home path after rename and restart', async () => {
     repo.saveProject({ id: 'project-release', title: 'Release', summary: '', context: '' }, 0);
