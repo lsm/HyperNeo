@@ -84,7 +84,7 @@ function setup() {
     (await ops[name].execute(ops[name].inputSchema.parse(input), owner)) as
       | { ok: true; todo: NeoTodo }
       | { ok: false; reason: string };
-  return { db, store, states, runner, call, told, coding };
+  return { db, store, states, runner, call, told, coding, repo };
 }
 
 describe('one completion rule for Neo todos', () => {
@@ -179,6 +179,166 @@ describe('one completion rule for Neo todos', () => {
       const imports = [...source.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((match) => match[1]);
       expect(imports.length).toBeGreaterThan(0);
       expect(imports.filter((path) => path.includes('packs/coding'))).toEqual([]);
+    }
+  });
+});
+
+describe('coding todo PR ownership through add and edit', () => {
+  const draft = (urls: string[] = []) => ({
+    title: 'Original fix',
+    doneWhen: 'Merged',
+    check: { pack: 'coding', kind: 'pr_merged', params: { urls } },
+    instruction: 'Land the fix',
+    named: null,
+  });
+  test.each(['named', 'ledger'])(
+    'refuses a duplicate of a live %s PR claim on the same ask',
+    async (claim) => {
+      const { db, store, call, coding } = setup();
+      try {
+        const original = store.addTodo(
+          'original',
+          'ask',
+          draft(claim === 'named' ? [url(2)] : []),
+          1
+        );
+        if (claim === 'ledger') coding.todos.openedPrs!(original, [url(2)]);
+        const result = await call('neo.todo.add', {
+          askId: 'ask',
+          title: 'Pin PR link',
+          doneWhen: 'Merged',
+          check: {
+            pack: 'coding',
+            kind: 'pr_merged',
+            params: { urls: [url(2).replace('lsm/HyperNeo', 'LSM/HYPERNEO') + '/'] },
+          },
+        });
+        expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('original') });
+        expect(result).toMatchObject({ reason: expect.stringContaining('Original fix') });
+        expect(store.listTodos('ask')).toHaveLength(1);
+      } finally {
+        db.close();
+      }
+    }
+  );
+  test('editing pins URLs on the original check and the pack closes it only when all merge', async () => {
+    const { db, store, call, runner, states, coding } = setup();
+    try {
+      const original = store.addTodo('original', 'ask', draft(), 1);
+      coding.todos.openedPrs!(original, [url(2)]);
+      expect(
+        await call('neo.todo.edit', { todoId: original.id, addUrls: [url(1), url(2), url(2)] })
+      ).toMatchObject({
+        ok: true,
+        todo: {
+          check: { params: { urls: [url(1).toLowerCase(), url(2).toLowerCase()] } },
+          doneWhen: 'lsm/hyperneo#1, lsm/hyperneo#2 merged',
+        },
+      });
+      await runner.checkNow([original.id], () => {});
+      expect(store.getTodo(original.id)?.state).not.toBe('done');
+      states.set(2, 'MERGED');
+      await runner.checkNow([original.id], () => {});
+      expect(store.getTodo(original.id)).toMatchObject({ state: 'done', evidence: '#1 #2 merged' });
+    } finally {
+      db.close();
+    }
+  });
+  test.each(['named', 'ledger'])(
+    'edit refuses URLs claimed by another live todo through %s',
+    async (claim) => {
+      const { db, store, call, coding } = setup();
+      try {
+        const owner = store.addTodo(
+          'owner',
+          'ask',
+          { ...draft(claim === 'named' ? [url(2)] : []), title: 'Existing owner' },
+          1
+        );
+        if (claim === 'ledger') coding.todos.openedPrs!(owner, [url(2)]);
+        const target = store.addTodo('target', 'ask', draft([url(1)]), 2);
+        expect(await call('neo.todo.edit', { todoId: target.id, addUrls: [url(2)] })).toMatchObject(
+          { ok: false, reason: expect.stringContaining('owner') }
+        );
+        expect(store.getTodo(target.id)?.check?.params.urls).toEqual([url(1)]);
+      } finally {
+        db.close();
+      }
+    }
+  );
+  test.each(['done', 'failed', 'removed'] as const)(
+    'a %s todo does not reserve the PR',
+    async (state) => {
+      const { db, store, call, coding } = setup();
+      try {
+        const old = store.addTodo('old', 'ask', draft([url(2)]), 1);
+        coding.todos.openedPrs!(old, [url(2)]);
+        store.updateTodo(old, { state }, 2);
+        expect(
+          await call('neo.todo.add', { askId: 'ask', ...draft([url(2)]), instruction: null })
+        ).toMatchObject({
+          ok: true,
+        });
+      } finally {
+        db.close();
+      }
+    }
+  );
+  test('concurrent edits cannot both claim the same PR', async () => {
+    const { db, store, call } = setup();
+    try {
+      store.addTodo('one', 'ask', draft(), 1);
+      store.addTodo('two', 'ask', draft(), 2);
+      const results = await Promise.all(
+        ['one', 'two'].map((todoId) => call('neo.todo.edit', { todoId, addUrls: [url(2)] }))
+      );
+      expect(results.filter((result) => result.ok)).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+  test('URL ownership is scoped to the ask', async () => {
+    const { db, store, call } = setup();
+    try {
+      store.addTodo('old', 'ask', draft([url(2)]), 1);
+      store.openAsk({
+        id: 'other',
+        projectId: null,
+        sessionId: 'neo',
+        originMessageId: null,
+        title: 'Other',
+        request: 'Other',
+        createdAt: 2,
+      });
+      expect(
+        await call('neo.todo.add', { askId: 'other', ...draft([url(2)]), instruction: null })
+      ).toMatchObject({
+        ok: true,
+      });
+    } finally {
+      db.close();
+    }
+  });
+  test('add and edit refuse invalid PR URLs without changing the check', async () => {
+    const { db, store, call } = setup();
+    try {
+      const original = store.addTodo('original', 'ask', draft([url(1)]), 1);
+      expect(
+        await call('neo.todo.add', {
+          askId: 'ask',
+          ...draft(['https://example.com/not-a-pr']),
+          instruction: null,
+        })
+      ).toMatchObject({ ok: false });
+      expect(
+        await call('neo.todo.edit', {
+          todoId: original.id,
+          addUrls: ['https://example.com/not-a-pr'],
+        })
+      ).toMatchObject({ ok: false });
+      expect(store.getTodo(original.id)?.check?.params.urls).toEqual([url(1)]);
+    } finally {
+      db.close();
     }
   });
 });
