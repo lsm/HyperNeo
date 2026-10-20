@@ -1,3 +1,4 @@
+import { sdkMessageBodyAt } from '../../../storage/repositories/sdk-message-body-read.ts';
 import { spaceTaskFlagRowsBaseCte } from './task-message-window.ts';
 import { TASK_MESSAGE_FLAG } from '../../../storage/schema/task-message-rows.ts';
 import { HOOK_SUBTYPES, HOOK_SUBTYPE_NAMES } from './task-delivery.ts';
@@ -149,7 +150,7 @@ SELECT
   j.taskId,
   j.taskTitle,
   j.messageType,
-  COALESCE(sm.sdk_message, j.githubContent) AS content,
+  COALESCE(${sdkMessageBodyAt('sm.rowid')}, j.githubContent) AS content,
   CASE WHEN j.kind = 'github' THEN 'system' ELSE sm.origin END AS origin,
   j.deliveryState,
   j.createdAt,

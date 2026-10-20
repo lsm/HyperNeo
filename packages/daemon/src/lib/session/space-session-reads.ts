@@ -1,3 +1,4 @@
+import { sdkMessageBodyAt } from '../../storage/repositories/sdk-message-body-read.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 
 export type SpaceSessionStatusFilter =
@@ -218,7 +219,7 @@ export function listSessionMessages(
   params.push(boundedLimit);
   const rows = db
     .prepare(
-      `SELECT id, message_type, message_subtype, is_terminal, timestamp, sdk_message
+      `SELECT id, message_type, message_subtype, is_terminal, timestamp, ${sdkMessageBodyAt('sdk_messages.rowid')} AS sdk_message
            FROM sdk_messages
           WHERE session_id = ? ${beforeClause}
             AND COALESCE(message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed', 'commands_changed')

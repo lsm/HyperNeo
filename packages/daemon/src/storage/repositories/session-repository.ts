@@ -1,3 +1,4 @@
+import { sdkMessageBodyAt } from './sdk-message-body-read.ts';
 import { toSqlStringList } from '../sql-string-list.ts';
 import type { Session, SessionContext, SessionType } from '@hyperneo/shared';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
@@ -510,23 +511,23 @@ export class SessionRepository {
 				FROM (
 					SELECT
 						sm.id,
-						COALESCE(CASE WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.uuid') END, sm.id) AS message_id,
+						COALESCE(CASE WHEN json_valid(${sdkMessageBodyAt('sm.rowid')}) THEN json_extract(${sdkMessageBodyAt('sm.rowid')}, '$.uuid') END, sm.id) AS message_id,
 						sm.session_id,
 						sm.task_id,
 						${spaceTaskColumns},
 						sm.message_type,
 						s.title,
 						CASE
-							WHEN json_type(sm.sdk_message, '$.message.content') = 'array' THEN (
+							WHEN json_type(${sdkMessageBodyAt('sm.rowid')}, '$.message.content') = 'array' THEN (
 								SELECT GROUP_CONCAT(
 									COALESCE(json_extract(value, '$.text'), json_extract(value, '$.thinking')),
 									char(10)
 								)
-								FROM json_each(sm.sdk_message, '$.message.content')
+								FROM json_each(${sdkMessageBodyAt('sm.rowid')}, '$.message.content')
 								WHERE json_extract(value, '$.type') IN ('text', 'thinking')
 							)
-							WHEN json_type(sm.sdk_message, '$.message.content') = 'text' THEN
-								json_extract(sm.sdk_message, '$.message.content')
+							WHEN json_type(${sdkMessageBodyAt('sm.rowid')}, '$.message.content') = 'text' THEN
+								json_extract(${sdkMessageBodyAt('sm.rowid')}, '$.message.content')
 							ELSE NULL
 						END AS body,
 						CAST(strftime('%s', sm.timestamp) AS INTEGER) * 1000
@@ -535,7 +536,7 @@ export class SessionRepository {
 					JOIN sessions s ON s.id = sm.session_id
 					${spaceTaskJoin}
 					WHERE sm.session_id = ?
-					  AND json_valid(sm.sdk_message)
+					  AND json_valid(${sdkMessageBodyAt('sm.rowid')})
 					  AND sm.message_type IN (${toSqlStringList(SEARCHABLE_MESSAGE_TYPES)})
 					  AND NOT EXISTS (
 							SELECT 1

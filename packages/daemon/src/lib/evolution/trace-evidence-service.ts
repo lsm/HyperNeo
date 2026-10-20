@@ -1,3 +1,4 @@
+import { sdkMessageBodyAt } from '../../storage/repositories/sdk-message-body-read.ts';
 import type { EvidenceKind, EvidenceRef } from '@hyperneo/shared';
 import type {
   CaptureTraceEvidenceForTaskParams,
@@ -115,9 +116,9 @@ export class EvolutionTraceEvidenceService {
   private loadTraceRows(taskId: string): TraceRow[] {
     const rows = this.deps.db
       .prepare(
-        `SELECT id, session_id, message_type, sdk_message, timestamp, send_status
+        `SELECT id, session_id, message_type, ${sdkMessageBodyAt('recent_trace_rows.body_seq')} AS sdk_message, timestamp, send_status
 				 FROM (
-					 SELECT id, session_id, message_type, sdk_message, timestamp, send_status
+					 SELECT rowid AS body_seq, id, session_id, message_type, timestamp, send_status
 					 FROM sdk_messages
 					 WHERE task_id = ?
 						   AND COALESCE(message_subtype, '') NOT IN ('thinking_tokens', 'session_state_changed', 'commands_changed')

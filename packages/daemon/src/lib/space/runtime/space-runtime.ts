@@ -1,3 +1,4 @@
+import { sdkMessageBodyAt } from '../../../storage/repositories/sdk-message-body-read.ts';
 import { isRecord } from '../../record.ts';
 import {
   fillPrompt,
@@ -5301,7 +5302,7 @@ export class SpaceRuntime {
     );
     const rows = this.config.db
       .prepare(
-        `SELECT id, session_id, sdk_message, task_id FROM sdk_messages
+        `SELECT id, session_id, ${sdkMessageBodyAt('sdk_messages.rowid')} AS sdk_message, task_id FROM sdk_messages
          WHERE send_status = 'deferred' AND sdk_uuid >= ? AND sdk_uuid < ?`
       )
       .all(lowerBound, upperBound) as Array<{

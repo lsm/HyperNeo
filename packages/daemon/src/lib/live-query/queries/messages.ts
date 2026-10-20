@@ -1,3 +1,4 @@
+import { sdkMessageBodyAt } from '../../../storage/repositories/sdk-message-body-read.ts';
 import { toSqlStringList } from '../../../storage/sql-string-list.ts';
 import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import type { TableChangeScope } from '../../../storage/reactive-database.ts';
@@ -36,7 +37,6 @@ const BACKGROUND_TASK_METADATA_ARMS_SQL = BACKGROUND_TASK_METADATA_SUBTYPES.map(
   (subtype) => `SELECT * FROM (
     SELECT
       id,
-      sdk_message,
       timestamp,
       send_status,
       origin,
@@ -64,7 +64,6 @@ WITH recent_metadata AS (
 recent_progress AS (
   SELECT
     id,
-    sdk_message,
     timestamp,
     send_status,
     origin,
@@ -99,7 +98,6 @@ recent_task_ids AS (
 task_starts AS (
   SELECT
     id,
-    sdk_message,
     timestamp,
     send_status,
     origin,
@@ -115,7 +113,6 @@ task_starts AS (
 latest_progress AS (
   SELECT
     id,
-    sdk_message,
     timestamp,
     send_status,
     origin,
@@ -124,7 +121,6 @@ latest_progress AS (
   FROM (
     SELECT
       id,
-      sdk_message,
       timestamp,
       send_status,
       origin,
@@ -151,7 +147,7 @@ latest_progress AS (
 )
 SELECT
   id,
-  sdk_message                                                     AS content,
+  ${sdkMessageBodyAt('metadata.rowid')} AS content,
   CAST((julianday(timestamp) - 2440587.5) * 86400000 AS INTEGER)  AS timestamp,
   send_status                                                     AS sendStatus,
   origin                                                          AS origin
@@ -161,7 +157,7 @@ FROM (
   SELECT * FROM task_starts
   UNION ALL
   SELECT * FROM latest_progress
-)
+) metadata
 ORDER BY timestamp DESC, rowid DESC
 `.trim();
 
@@ -233,7 +229,7 @@ top_level AS (
 )
 SELECT
   t.id,
-  body.sdk_message AS content,
+  ${sdkMessageBodyAt('body.rowid')} AS content,
   CAST((julianday(t.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS timestamp,
   t.send_status AS sendStatus,
   body.origin AS origin,

@@ -1,3 +1,4 @@
+import { sdkMessageBodyAt } from '../../../storage/repositories/sdk-message-body-read.ts';
 import type { Database } from '../../../storage/sqlite-compat.ts';
 
 export function expandSessionMessages(
@@ -25,7 +26,7 @@ export function expandSessionMessages(
     const batch = keys.slice(offset, offset + 900);
     children.push(
       ...(db
-        .prepare(`SELECT id, sdk_message AS content,
+        .prepare(`SELECT id, ${sdkMessageBodyAt('sdk_messages.rowid')} AS content,
       CAST((julianday(timestamp) - 2440587.5) * 86400000 AS INTEGER) AS timestamp,
       send_status AS sendStatus, origin, rowid AS rowid, message_type AS messageType, NULL AS deliveryRetryInfo
       FROM sdk_messages WHERE session_id = ? AND parent_tool_use_id IN (${batch.map(() => '?').join(',')})

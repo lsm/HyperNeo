@@ -13,11 +13,15 @@ function files(dir: string): string[] {
 function directReads(source: string): string[] {
   const literals = source.match(/`(?:\\[\s\S]|[^`])*`|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"/g) ?? [];
   return literals.filter((literal) => {
-    const sql = literal.slice(1, -1);
-    if (!/^\s*(?:SELECT|WITH|INSERT|UPDATE)\b/i.test(sql)) return false;
+    const sql = literal.slice(1, -1).replace(/--[^\n]*|\/\*[\s\S]*?\*\//g, '');
+    if (!/^\s*\(?(?:SELECT|WITH|INSERT|UPDATE)\b/i.test(sql)) return false;
     if (!/\b(?:FROM|JOIN|UPDATE)\s+sdk_messages\b/i.test(sql)) return false;
+    const reads = sql
+      .replace(/\bAS\s+["`]?sdk_message["`]?/gi, '')
+      .replace(/\bSET\s+sdk_message\s*=/gi, 'SET value=');
     return (
-      /\bsdk_message\b/i.test(sql) || /\bSELECT\s+(?:\w+\.)?\*\s+FROM\s+sdk_messages\b/i.test(sql)
+      /\bsdk_message\b/i.test(reads) ||
+      /\bSELECT\s+(?:\w+\.)?\*\s+FROM\s+sdk_messages\b/i.test(reads)
     );
   });
 }
@@ -42,7 +46,9 @@ describe('SDK body reader guard', () => {
       return directReads(readFileSync(file, 'utf8')).flatMap((sql) => {
         if (
           path === 'storage/repositories/sdk-message-body-read.ts' &&
-          /COALESCE\(body\.sdk_message, (?:original|legacy)\.sdk_message\)/.test(sql)
+          /COALESCE\((?:body\.sdk_message, original|split_body\.sdk_message, split_legacy)\.sdk_message\)/.test(
+            sql
+          )
         )
           return [];
         if (

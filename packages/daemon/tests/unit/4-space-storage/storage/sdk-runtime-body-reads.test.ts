@@ -12,6 +12,7 @@ import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-m
 import { ensureTaskMessageRows } from '../../../../src/storage/schema/task-message-rows';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import { runScopedQuery } from '../../../../src/lib/db-query/scoped-query';
 
 let db: Database;
 let repo: SDKMessageRepository;
@@ -76,6 +77,9 @@ beforeEach(() => {
     "UPDATE sdk_messages SET task_id='t',timestamp=strftime('%Y-%m-%dT%H:%M:%fZ','2026-10-20','+'||rowid||' seconds')"
   );
   ensureTaskMessageRows(db, 't');
+  db.exec(
+    "INSERT INTO session_groups(id,ref_id,created_at) VALUES ('g','t',1); INSERT INTO session_group_members(group_id,session_id,role,joined_at) VALUES ('g','s','worker',1)"
+  );
   repo.saveSDKMessage('result-session', {
     type: 'result',
     uuid: 'result',
@@ -92,8 +96,9 @@ function reads() {
     ['messages.bySession', ['s', 200]],
     ['messages.bySession.compact', ['s', 200]],
     ['spaceTaskMessages.byTask', ['t']],
-    ['spaceTaskMessages.byTask.compact', ['t']],
+    ['spaceTaskMessages.byTask.compact', ['t', 100]],
     ['spaceTaskActiveTurn.byTask', ['t']],
+    ['sessionGroupMessages.byGroup', ['g']],
   ] as [string, (string | number)[]][]) {
     const query = NAMED_QUERY_REGISTRY.get(name)!;
     let rows = db.prepare(query.sql).all(...params) as Record<string, unknown>[];
@@ -110,6 +115,15 @@ function reads() {
 }
 
 describe('SDK runtime body reads', () => {
+  test('scoped queries expose the complete split body without crossing session scope', () => {
+    repo.saveUserMessage('space:p:worker', prompt, 'consumed');
+    db.exec("UPDATE sdk_messages SET sdk_message=''");
+    const rows = runScopedQuery(db, 'space', 'p', {
+      sql: 'SELECT sdk_message FROM sdk_messages',
+    }).rows;
+    expect(rows).toHaveLength(1);
+    expect(JSON.parse(rows[0].sdk_message as string)).toEqual(prompt);
+  });
   test.each(['side-only', 'mixed', 'legacy-only'])(
     '%s retains full feed and adapter output',
     (mode) => {
@@ -122,6 +136,9 @@ describe('SDK runtime body reads', () => {
         "UPDATE sdk_messages SET sdk_message='' WHERE rowid IN (SELECT seq FROM sdk_message_bodies)"
       );
       expect(reads()).toEqual(before);
+      expect(JSON.stringify(repo.getMessageByUuid('s', 'tool-result'))).toContain(
+        '完整工具结果'.repeat(100000)
+      );
       expect(() =>
         verifyPromptContent({ db, sessionId: 's', messageUuid: 'input', message: prompt })
       ).not.toThrow();
