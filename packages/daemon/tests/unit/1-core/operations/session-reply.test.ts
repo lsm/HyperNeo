@@ -52,4 +52,13 @@ describe('external CLI reply arguments', () => {
     const incomplete = 'Human.\n\nReport progress, questions or blockers to Neo';
     expect(replyMessageBodyLength(incomplete)).toBe(incomplete.length);
   });
+
+  test('a quoted template is not mistaken for an actionable reply line to the real sender', () => {
+    const template =
+      'Report progress, questions or blockers to Neo at any time, mid-work, with: hyperneo send <the sending Neo id> "<text>" (not SendMessage). Keep working after you send.';
+    const actual = withReplyLine(template, 'session:neo%3Aroot', 'cli');
+    expect(actual).toEndWith(
+      'hyperneo send neo:root "<text>" (not SendMessage). Keep working after you send.'
+    );
+  });
 });

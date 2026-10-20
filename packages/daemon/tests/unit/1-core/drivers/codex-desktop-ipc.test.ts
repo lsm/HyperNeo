@@ -282,7 +282,7 @@ describe('withCodexDesktopIpc', () => {
         value: { ok: true, value: { delivered: true, steeredIntoTurnId: 'desktop-turn' } },
       });
       expect(f.seen.at(-1)?.params?.restoreMessage).toMatchObject({
-        text: 'use the parser\n[HyperNeo agent input]',
+        text: 'use the parser\n\nReport progress, questions or blockers to Neo at any time, mid-work, with: hyperneo send neo "<text>" (not SendMessage). Keep working after you send.\n[HyperNeo agent input]',
       });
     });
 
