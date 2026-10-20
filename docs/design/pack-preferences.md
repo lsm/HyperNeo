@@ -131,16 +131,11 @@ A hold's linked Neo question (`neo_questions`, `m387-neo-ask-todo-tables.ts:81`)
 - the owner is told once: "waiting on the human; don't merge".
 
 **Lifted automatically** when the linked question is answered:
-- **Yes:** the row's `approved_head` is set to the head the question named, and the hold stops applying to that head; the normal policy decides readiness. Automatic holding (`humanSignoff`, a `human` policy) checks for that row first, so it never re-holds an approved head or re-asks. A `review_bot` repo still needs the bot's approval of that head.
+- **Yes:** the row's `approved_head` is set to the head the question named, and the hold stops applying to the PR; the normal policy decides readiness. Automatic holding (`humanSignoff`, a `human` policy) checks for that row first, so it never re-holds an approved PR or re-asks. A `review_bot` repo still needs the bot's approval of that head.
 - **No, or a reply:** the hold stays, and the answer goes to the owner as a change request.
 - **Retired question:** keeps the hold and asks again.
 
-**Approval scope: `per_head`** (pending the human's answer to question a0814e6f; switching is a one-word edit of this line).
-
-- **`per_head`:** an approval covers only `approved_head`. A head pushed after it is not covered: the hold applies again, and once that head is otherwise ready Neo asks once more, naming both heads so the human can see what changed. The human approves content, and a later commit can change it.
-- **`whole_pr`:** an approval covers the PR from `approved_head` on. Later heads stay approved, and Neo doesn't ask again for that PR; a new `humanSignoff` match on a later head doesn't re-hold it either.
-
-Everything else in this doc reads "covered by the approval" and doesn't depend on the choice. A new head never lifts an unapproved hold on its own. `pack.coding.pr.release` (human only) sets `approved_head` the same way as a "yes".
+**Approval scope: `whole_pr`** (the human's answer to question a0814e6f): an approval covers the PR from `approved_head` on. Later heads stay approved and Neo doesn't ask again for that PR; they need only the repo's policy (in a `review_bot` repo, the bot's approval of the new head and green CI). A new `humanSignoff` match on a later head doesn't re-hold it either. A new head never lifts an unapproved hold on its own. `pack.coding.pr.release` (human only) sets `approved_head` the same way as a "yes".
 
 ## Worker merge check
 
@@ -183,9 +178,9 @@ A convention is built on the existing `neo.rule.save` (`packages/daemon/src/lib/
 
 ## Tests (what a user can observe)
 
-- **Each policy:** a repo with that policy gets the right nudges for an approved, green PR. `review_bot` and `ci_only` get "merge"; `human` gets none until the human approves that head, then gets "merge".
+- **Each policy:** a repo with that policy gets the right nudges for an approved, green PR. `review_bot` and `ci_only` get "merge"; `human` gets none until the human approves the PR, then gets "merge".
 - **Sign-off match:** a PR matching `humanSignoff` in a `review_bot` repo shows `waiting_human`, the owner gets no merge text, and the snapshot shows the hold.
-- **Lifting:** answering the linked question "yes" lifts the hold and allows the merge nudge, and it stays lifted on later sweeps of that head. A new head re-holds and asks once. "No" keeps the hold and tells the owner.
+- **Lifting:** answering the linked question "yes" lifts the hold and allows the merge nudge, and it stays lifted on later sweeps and later heads, with no new question; a later head in a `review_bot` repo still waits for the bot's approval of that head. "No" keeps the hold and tells the owner.
 - **First use:** one question per new repo, none after it's answered, and no merge nudges before the answer.
 - **Conventions:** a convention saved for `coding` + `lsm/research` appears in the instruction of a coding todo for lsm/research, not in one for lsm/qlark. A save without the human's quoted words is refused.
 - **qlark#19 replay:** reproduced first. Same timeline with `docs/design/**` held: no merge nudge at +20 min, and `pack.coding.pr.readiness` returns `mayMerge: false` with the hold.
