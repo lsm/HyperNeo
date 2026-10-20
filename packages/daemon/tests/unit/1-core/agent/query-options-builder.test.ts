@@ -2298,7 +2298,8 @@ describe('QueryOptionsBuilder', () => {
       const options = await builder.build();
 
       expect(options.hooks?.PreToolUse).toBeDefined();
-      expect(options.hooks?.PreToolUse).toHaveLength(1);
+      expect(options.hooks?.PreToolUse).toHaveLength(2);
+      expect(options.hooks?.PreToolUse?.[1]?.matcher).toBe('SendMessage');
       expect(options.hooks?.PreToolUse?.[0]?.matcher).toBeUndefined();
       expect(options.hooks?.PreToolUse?.[0]?.hooks).toHaveLength(1);
     });
@@ -2383,10 +2384,10 @@ describe('QueryOptionsBuilder', () => {
 
       const options = await new QueryOptionsBuilder(mockContext).build();
 
-      expect(options.hooks?.PreToolUse).toHaveLength(2);
+      expect(options.hooks?.PreToolUse).toHaveLength(3);
       expect(options.hooks?.PreToolUse?.[0]?.matcher).toBeUndefined();
-      expect(options.hooks?.PreToolUse?.[1]?.matcher).toBeUndefined();
-      expect(options.hooks?.PreToolUse?.[1]?.hooks).toHaveLength(1);
+      expect(options.hooks?.PreToolUse?.[1]?.matcher).toBe('SendMessage');
+      expect(options.hooks?.PreToolUse?.[2]?.hooks).toHaveLength(1);
     });
 
     it('should default a partial outputLimiter setting to enabled', async () => {
@@ -2400,7 +2401,7 @@ describe('QueryOptionsBuilder', () => {
 
       const options = await new QueryOptionsBuilder(mockContext).build();
 
-      expect(options.hooks?.PreToolUse).toHaveLength(2);
+      expect(options.hooks?.PreToolUse).toHaveLength(3);
     });
 
     it('should not install the output-limiter hook when disabled in global settings', async () => {
@@ -2411,7 +2412,7 @@ describe('QueryOptionsBuilder', () => {
 
       const options = await new QueryOptionsBuilder(mockContext).build();
 
-      expect(options.hooks?.PreToolUse).toHaveLength(1);
+      expect(options.hooks?.PreToolUse).toHaveLength(2);
       expect(options.hooks?.PreToolUse?.[0]?.hooks).toHaveLength(1);
     });
 
@@ -2472,7 +2473,7 @@ describe('QueryOptionsBuilder', () => {
       }));
 
       const options = await new QueryOptionsBuilder(mockContext).build();
-      const preHook = options.hooks?.PreToolUse?.[1]?.hooks[0];
+      const preHook = options.hooks?.PreToolUse?.[2]?.hooks[0];
       expect(preHook).toBeDefined();
 
       const readResult = await preHook!(
@@ -2544,7 +2545,7 @@ describe('QueryOptionsBuilder', () => {
       });
       const options = await guardBuilder.build();
 
-      expect(options.hooks?.PreToolUse).toHaveLength(3);
+      expect(options.hooks?.PreToolUse).toHaveLength(4);
       const guardEntry = options.hooks?.PreToolUse?.find((e) => e.matcher === 'Bash');
       expect(guardEntry).toBeDefined();
 

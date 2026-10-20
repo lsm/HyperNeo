@@ -187,7 +187,7 @@ adds its journey here.
    `duplicate: …`; five more distinct sends are accepted and the next replies
    `rate_limited: …`. Messages sent while B is `processing` are `consumed` before
    its turn ends. A `work.send '{"ref":{"adapter":"hyperneo","id":"<B>"},"message":"…","from":"session:<A>"}'`
-   lands in B ending `Reply with message.send to <A>.`, and
+   lands in B ending `Reply with mcp__hyperneo-operations__invoke {"name":"message.send","input":{"sessionId":"<A>",…}}, not SendMessage.`, and
    `neo.question.get '{"questionId":"made-up"}'` replies `not_found: no such question.`
 
 11. **Root Neo owns goals outside any Space.** After journey 1 opened root, run

@@ -9,6 +9,7 @@ import type { MailboxHandoffOutcome } from '../mailbox/handoff.ts';
 import type { MailboxDeliveryMode } from '../mailbox/entry.ts';
 import { sessionUnavailable } from '../session-resolution/session-lookup.ts';
 import { parseAddress, parseRemoteAddress } from '../mailbox/address.ts';
+import { sessionReplyCall } from '../messaging/session-reply.ts';
 import { ModelUnavailableError } from '../session/session-lifecycle.ts';
 import { matchChatsBy } from './match-chats.ts';
 import { withChatEvidence } from './places.ts';
@@ -483,7 +484,9 @@ export function withReplyLine(message: string, from: string): string {
   const sender = parseAddress(from);
   const replyTo =
     sender?.kind === 'session' ? sender.sessionId : parseRemoteAddress(from) ? from : null;
-  return replyTo ? `${message}\n\nReply with message.send to ${replyTo}.` : message;
+  return replyTo
+    ? `${message}\n\nReply with ${sessionReplyCall(replyTo)}, not SendMessage.`
+    : message;
 }
 
 export async function deliverToHyperneo(
