@@ -1,7 +1,4 @@
 export const NEO_OPERATION_NAMES = [
-  'neo.home.init',
-  'neo.home.read',
-  'neo.home.save',
   'neo.ask.open',
   'neo.ask.settle',
   'neo.conversation.asks.read',
@@ -9,6 +6,9 @@ export const NEO_OPERATION_NAMES = [
   'neo.conversation.read',
   'neo.draft.recover',
   'neo.github.read',
+  'neo.home.init',
+  'neo.home.read',
+  'neo.home.save',
   'neo.message.send',
   'neo.open',
   'neo.pack.read',
