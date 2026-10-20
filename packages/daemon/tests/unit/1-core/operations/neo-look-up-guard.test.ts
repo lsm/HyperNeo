@@ -501,6 +501,11 @@ describe('Neo home repository boundaries', () => {
   });
   test.each([
     'echo changed > ../../new-direction.md',
+    'echo changed > $HOME/.hyperneo/Neo/direction.md',
+    'echo changed > "$HOME/.hyperneo/Neo/direction.md"',
+    'cd $HOME/.hyperneo/Neo && git branch new-direction',
+    'cd "$HOME/.hyperneo/Neo" && git -C . branch new-direction',
+
     'echo changed >| ../../clobber.md',
     'echo changed >|../../clobber.md',
     'echo changed 2>| ../../clobber.md',

@@ -116,6 +116,45 @@ describe('Neo home operations', () => {
       );
     }
   );
+  test.each(['identity', 'signing'])(
+    'bootstrap can retry after %s configuration is fixed',
+    async (failure) => {
+      if (failure === 'identity') {
+        await git('config', 'user.name', '');
+        await git('config', 'user.email', '');
+      } else {
+        await git('config', 'commit.gpgsign', 'true');
+        await git('config', 'gpg.program', '/usr/bin/false');
+      }
+      await expect(call('neo.home.init', {})).rejects.toThrow();
+      expect(await git('diff', '--cached', '--name-only')).toBe('');
+      await git('config', 'user.name', 'Verify Neo');
+      await git('config', 'user.email', 'verify@example.invalid');
+      await git('config', 'commit.gpgsign', 'false');
+      expect(await call('neo.home.init', {})).toMatchObject({ ok: true });
+      expect(await save('digest.md')).toMatchObject({ ok: true });
+    }
+  );
+  test('dot-prefixed metadata variants are refused and GIT is a separate document folder', async () => {
+    await call('neo.home.init', {});
+    const metadata = await readFile(join(root, '.git', 'config'), 'utf8');
+    for (const path of ['.GIT/config', '.Git/hooks/pre-commit']) {
+      expect(await call('neo.home.read', { path })).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('invalid_path'),
+      });
+      expect(await save(path)).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('invalid_path'),
+      });
+    }
+    expect(await save('GIT/config', 'Curated document.')).toMatchObject({ ok: true });
+    expect(await call('neo.home.read', { path: 'GIT/config' })).toMatchObject({
+      ok: true,
+      content: 'Curated document.',
+    });
+    expect(await readFile(join(root, '.git', 'config'), 'utf8')).toBe(metadata);
+  });
   test('reading an uninitialized home does not bootstrap files or commits', async () => {
     expect(await call('neo.home.read', { path: 'README.md' })).toMatchObject({ ok: false });
     expect(await git('ls-files')).toBe('');

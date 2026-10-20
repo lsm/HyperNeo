@@ -26,7 +26,8 @@ const saved = response.reply.value ?? response.reply;
 const after = (await readdir(root)).sort();
 await shell(`git init --quiet '${root}' && git -C '${root}' config user.name 'Verify Neo' && git -C '${root}' config user.email verify@example.invalid && git -C '${root}' add notes.txt && git -C '${root}' commit -m 'Synthetic home fixture'`);
 const guard = neoToolGuard({ home: run, dataDir: `${run}/data`, own: [cwd] });
-const commands = ['git --git-dir="$HOME/data/Neo/.git" branch unauthorized-option', 'GIT_DIR=$HOME/data/Neo/.git git branch unauthorized-env'];
+await writeFile(`${root}/direction.md`, 'Human direction.\n');
+const commands = ['echo changed > $HOME/data/Neo/direction.md', 'cd $HOME/data/Neo && git branch unauthorized-cd', 'git --git-dir="$HOME/data/Neo/.git" branch unauthorized-option', 'GIT_DIR=$HOME/data/Neo/.git git branch unauthorized-env'];
 const decisions = [];
 for (const command of commands) {
   const result = await guard({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, cwd, session_id: 'verify', tool_use_id: 'verify', transcript_path: `${cwd}/transcript` } as HookInput, 'verify', { signal: new AbortController().signal });
@@ -35,11 +36,13 @@ for (const command of commands) {
   if (!denied) await shell(command);
 }
 const branches = await shell(`git -C '${root}' branch --list 'unauthorized-*'`);
-const evidence = { saved, before, after, decisions, branches, notes: await readFile(`${root}/notes.txt`, 'utf8') };
+const direction = await readFile(`${root}/direction.md`, 'utf8');
+const evidence = { saved, before, after, decisions, branches, direction, notes: await readFile(`${root}/notes.txt`, 'utf8') };
 await writeFile(`${run}/evidence/neo-home-bootstrap-guard.json`, JSON.stringify(evidence, null, 2));
 console.log(JSON.stringify(evidence, null, 2));
-if (saved.ok || !saved.reason?.startsWith('dirty') || JSON.stringify(before) !== JSON.stringify(after) || decisions.some(({ denied }) => !denied) || branches || evidence.notes !== 'Human notes.\n') throw new Error('Refused home save or legacy git boundary changed the home repository');
+if (saved.ok || !saved.reason?.startsWith('dirty') || JSON.stringify(before) !== JSON.stringify(after) || decisions.some(({ denied }) => !denied) || branches || direction !== 'Human direction.\n' || evidence.notes !== 'Human notes.\n') throw new Error('Refused home save or legacy git boundary changed the home repository');
 await rm(`${root}/.git`, { recursive: true, force: true });
+await rm(`${root}/direction.md`);
 await mkdir(`${root}/human-private`, { recursive: true });
 await rename(`${root}/notes.txt`, `${root}/human-private/notes.md`);
 await writeFile(`${root}/.gitignore`, 'human-private/\n');
