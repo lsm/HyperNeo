@@ -79,6 +79,7 @@ export const WorkRejectionSchema = z.enum([
   'invalid_place',
   'busy',
   'human_only',
+  'live_todo',
 ]);
 
 export function workResultSchema<Value extends z.ZodType>(value: Value) {

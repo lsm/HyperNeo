@@ -2,6 +2,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../storage/database.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
+import { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { workResultSchema, type Result, type WorkRef, type WorkAdapter } from '../drivers/types.ts';
 import {
   forwardWork,
@@ -37,7 +38,13 @@ export function admitSessionArchive(ref: WorkRef, caller: OperationCaller, db: D
     )
   )
     return reject('human_only', 'Archive only when the human asks in the current live turn.');
-  return null;
+  const todo = new NeoTodoSessionRepository(db.getDatabase()).doingTodoOn(ref);
+  return todo
+    ? reject(
+        'live_todo',
+        `Todo "${todo.title}" is still working in this session; finish or drop it first.`
+      )
+    : null;
 }
 
 async function archiveSession(
