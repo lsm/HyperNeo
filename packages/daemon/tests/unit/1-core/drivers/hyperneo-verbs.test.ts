@@ -502,6 +502,16 @@ describe('hyperneo adapter send and status', () => {
     });
   });
 
+  test('a sender on another daemon gets its full address as the reply target', async () => {
+    await adapter().send?.(ref('idle'), 'go on', {
+      from: 'daemon:imac::session:neo-root',
+      caller: { source: 'rpc' },
+    });
+    expect(handed[0].message).toBe(
+      'go on\n\nReply with message.send to daemon:imac::session:neo-root.'
+    );
+  });
+
   test('send hands the message to the mailbox with the caller as origin', async () => {
     const idle = await adapter().send?.(ref('idle'), 'go on', from);
     const busy = await adapter().send?.(ref('busy'), 'next', from);

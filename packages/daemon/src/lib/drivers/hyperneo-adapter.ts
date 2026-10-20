@@ -8,7 +8,7 @@ import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import type { MailboxHandoffOutcome } from '../mailbox/handoff.ts';
 import type { MailboxDeliveryMode } from '../mailbox/entry.ts';
 import { sessionUnavailable } from '../session-resolution/session-lookup.ts';
-import { parseAddress } from '../mailbox/address.ts';
+import { parseAddress, parseRemoteAddress } from '../mailbox/address.ts';
 import { ModelUnavailableError } from '../session/session-lifecycle.ts';
 import { matchChatsBy } from './match-chats.ts';
 import { withChatEvidence } from './places.ts';
@@ -481,9 +481,9 @@ export function describeHyperneoWork(
 
 export function withReplyLine(message: string, from: string): string {
   const sender = parseAddress(from);
-  return sender?.kind === 'session'
-    ? `${message}\n\nReply with message.send to ${sender.sessionId}.`
-    : message;
+  const replyTo =
+    sender?.kind === 'session' ? sender.sessionId : parseRemoteAddress(from) ? from : null;
+  return replyTo ? `${message}\n\nReply with message.send to ${replyTo}.` : message;
 }
 
 export async function deliverToHyperneo(
