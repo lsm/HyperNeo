@@ -33,14 +33,13 @@ try {
     }
     const source = db;
     source.transaction(() => {
-      for (const row of source
-        .prepare(
-          'SELECT seq,sdk_message FROM sdk_message_bodies WHERE seq>? AND seq<=? ORDER BY seq'
-        )
-        .all(after, through) as { seq: number; sdk_message: string }[])
-        source
-          .prepare('UPDATE sdk_messages SET sdk_message=? WHERE seq=?')
-          .run(row.sdk_message, row.seq);
+      source
+        .prepare(`UPDATE sdk_messages SET sdk_message=(
+        SELECT sdk_message FROM sdk_message_bodies WHERE seq=sdk_messages.seq
+      ) WHERE seq>? AND seq<=? AND EXISTS (
+        SELECT 1 FROM sdk_message_bodies WHERE seq=sdk_messages.seq
+      )`)
+        .run(after, through);
     }, 'immediate')();
     after = through;
     console.log(JSON.stringify({ phase: 'restored', through, bytes }));
