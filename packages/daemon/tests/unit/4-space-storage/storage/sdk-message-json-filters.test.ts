@@ -46,6 +46,8 @@ function insert(row: Row): void {
     row.taskId ?? null,
     ...names.map((key) => derived[key])
   );
+  db.prepare(`INSERT INTO sdk_message_bodies(seq,sdk_message)
+    SELECT seq,? FROM sdk_messages WHERE id=?`).run(JSON.stringify(body), row.id);
 }
 
 const result = (

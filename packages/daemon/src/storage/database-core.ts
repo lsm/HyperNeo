@@ -32,6 +32,7 @@ import {
 import { Database as BunDatabase } from './sqlite-compat.ts';
 import { assertSupportedDatabaseVersion } from './schema/upgrade-floor.ts';
 import { backfillSdkMessageColumns } from './schema/m413-sdk-message-columns.ts';
+import { selectSdkBodyWriteMode } from './sdk-message-body-admission.ts';
 import { migrateSdkMessageBodies } from './sdk-message-body-copy.ts';
 import {
   reserveSdkBodyBackupPath,
@@ -120,6 +121,9 @@ export class DatabaseCore {
 
       createTables(this.db);
       await backfillSdkMessageColumns(this.db, (progress) => this.logger.info(progress));
+
+      const bodyMode = await selectSdkBodyWriteMode(this.db);
+      this.logger.warn(`SDK body startup mode selected: ${JSON.stringify(bodyMode)}`);
 
       configureMessageSearchFts(this.db);
     } catch (error) {

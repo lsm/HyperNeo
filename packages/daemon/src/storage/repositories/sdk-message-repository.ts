@@ -20,7 +20,7 @@ import {
 } from '../../lib/mailbox/entry.ts';
 import { withBusyRetry } from '../busy-retry.ts';
 import { writeSdkMessageBody } from './sdk-message-body-write.ts';
-import { hydrateSdkMessageBodies, sdkMessageBodyAt } from './sdk-message-body-read.ts';
+import { hydrateSdkMessageBodies } from './sdk-message-body-read.ts';
 import {
   buildFtsQuery,
   extractVisibleSearchText,
@@ -943,7 +943,7 @@ export class SDKMessageRepository {
 					id, session_id, message_type, message_subtype, sdk_message, timestamp, origin,
 					is_renderable, is_terminal, parent_tool_use_id, task_id, conversation_turn_index,
 					sdk_uuid, replacement_metadata_normalized${derived.insert}
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1${derived.placeholders})`
+				) VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, 1${derived.placeholders})`
     );
 
     const saveTransaction = this.db.transaction(() => {
@@ -957,7 +957,6 @@ export class SDKMessageRepository {
         sessionId,
         messageType,
         messageSubtype,
-        JSON.stringify(storedMessage),
         timestamp,
         origin ?? null,
         admission.isRenderable,
@@ -969,7 +968,9 @@ export class SDKMessageRepository {
         this.db,
         () => stmt.run(...values, conversationTurnIndex, admission.sdkUuid, ...derived.values),
         'id = ?',
-        [dbId]
+        [dbId],
+        '?',
+        [JSON.stringify(storedMessage)]
       );
       if (admission.isTerminal && this.tableHasColumn('sdk_messages', 'consumed_seq')) {
         const resultSeq = this.nextConsumedSeq();
@@ -1470,7 +1471,7 @@ export class SDKMessageRepository {
 				id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin,
 				is_renderable, is_terminal, parent_tool_use_id, task_id, conversation_turn_index,
 				sdk_uuid, replacement_metadata_normalized${derived.insert}
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1${derived.placeholders})`
+			) VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, 1${derived.placeholders})`
     );
 
     const conversationTurnIndex = this.resolveConversationTurnIndex(
@@ -1483,7 +1484,6 @@ export class SDKMessageRepository {
       sessionId,
       messageType,
       messageSubtype,
-      JSON.stringify(message),
       timestamp,
       sendStatus,
       origin ?? null,
@@ -1496,7 +1496,9 @@ export class SDKMessageRepository {
       this.db,
       () => stmt.run(...values, conversationTurnIndex, admission.sdkUuid, ...derived.values),
       'id = ?',
-      [id]
+      [id],
+      '?',
+      [JSON.stringify(message)]
     );
     this.saveReplacementEdges(id, sessionId, taskId, admission.replacementEdges);
     this.scheduleMessageSearchIndex(id);
@@ -2143,13 +2145,14 @@ export class SDKMessageRepository {
               this.db
                 .prepare(
                   `UPDATE sdk_messages
-                  SET sdk_message = ?,
-                      origin = CASE WHEN ? = 1 THEN COALESCE(origin, 'system') ELSE origin END${derived.update}
+                  SET origin = CASE WHEN ? = 1 THEN COALESCE(origin, 'system') ELSE origin END${derived.update}
                     WHERE id = ?`
                 )
-                .run(sdkMessage, synthetic ? 1 : 0, ...derived.values, rowId),
+                .run(synthetic ? 1 : 0, ...derived.values, rowId),
             'id = ?',
-            [rowId]
+            [rowId],
+            '?',
+            [sdkMessage]
           ).changes;
         },
       },
@@ -2176,16 +2179,14 @@ export class SDKMessageRepository {
         this.db
           .prepare(
             `UPDATE sdk_messages
-            SET sdk_message = json_set(
-              ${sdkMessageBodyAt('sdk_messages.rowid')},
-              '$.recovery_intercepted', 1,
-              '$.recovery_billing_terminal', ?
-            )${derived.update}
+            SET ${derived.update.slice(2)}
           WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'result'`
           )
-          .run(billingTerminal ? 1 : 0, ...derived.values, sessionId, sdkUuid),
+          .run(...derived.values, sessionId, sdkUuid),
       "session_id = ? AND sdk_uuid = ? AND message_type = 'result'",
-      [sessionId, sdkUuid]
+      [sessionId, sdkUuid],
+      "json_set(previous.sdk_message, '$.recovery_intercepted', 1, '$.recovery_billing_terminal', ?)",
+      [Number(billingTerminal)]
     );
   }
 
@@ -2200,12 +2201,14 @@ export class SDKMessageRepository {
           this.db
             .prepare(
               `UPDATE sdk_messages
-              SET sdk_message = json_set(${sdkMessageBodyAt('sdk_messages.rowid')}, '$.internal_compaction_turn', 1)${derived.update}
+              SET ${derived.update.slice(2)}
             WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'result'`
             )
             .run(...derived.values, sessionId, sdkUuid),
         "session_id = ? AND sdk_uuid = ? AND message_type = 'result'",
-        [sessionId, sdkUuid]
+        [sessionId, sdkUuid],
+        "json_set(previous.sdk_message, '$.internal_compaction_turn', 1)",
+        []
       )
     );
   }
@@ -2567,21 +2570,13 @@ export class SDKMessageRepository {
       admission.isConversationAnchor
     );
 
-    const values = [
-      id,
-      sessionId,
-      'hyperneo_action',
-      message.action,
-      JSON.stringify(message),
-      timestamp,
-      taskId,
-    ];
+    const values = [id, sessionId, 'hyperneo_action', message.action, timestamp, taskId];
 
     const insertStmt = this.db.prepare(
       `INSERT INTO sdk_messages (
            id, session_id, message_type, message_subtype, sdk_message, timestamp, task_id,
            conversation_turn_index, sdk_uuid, replacement_metadata_normalized${derived.insert}
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1${derived.placeholders})`
+         ) VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, 1${derived.placeholders})`
     );
 
     this.db.transaction(() => {
@@ -2590,7 +2585,9 @@ export class SDKMessageRepository {
         () =>
           insertStmt.run(...values, conversationTurnIndex, admission.sdkUuid, ...derived.values),
         'id = ?',
-        [id]
+        [id],
+        '?',
+        [JSON.stringify(message)]
       );
       this.applyBadgeUpdate(sessionId, badgeUpdate);
     })();
@@ -2614,14 +2611,16 @@ export class SDKMessageRepository {
   updateHyperNeoActionMessage(rowId: string, updated: HyperNeoActionMessage): void {
     const derived = this.derivedColumns(updated);
     const stmt = this.db.prepare(
-      `UPDATE sdk_messages SET sdk_message = ?${derived.update} WHERE id = ? AND message_type = 'hyperneo_action'
+      `UPDATE sdk_messages SET ${derived.update.slice(2)} WHERE id = ? AND message_type = 'hyperneo_action'
        RETURNING session_id`
     );
     const row = writeSdkMessageBody(
       this.db,
-      () => stmt.get(JSON.stringify(updated), ...derived.values, rowId),
+      () => stmt.get(...derived.values, rowId),
       "id = ? AND message_type = 'hyperneo_action'",
-      [rowId]
+      [rowId],
+      '?',
+      [JSON.stringify(updated)]
     ) as { session_id: string } | undefined;
     this.scheduleMessageSearchIndex(rowId);
     if (row) this.reactiveDb?.notifyChange('sdk_messages', { sessionId: row.session_id });
@@ -2642,16 +2641,18 @@ export class SDKMessageRepository {
       )
       .get(sessionId, messageUuid) as { id: string } | undefined;
     const stmt = this.db.prepare(
-      `UPDATE sdk_messages SET sdk_message = ?${derived.update}
+      `UPDATE sdk_messages SET ${derived.update.slice(2)}
        WHERE session_id = ?
          AND message_type = 'hyperneo_action'
          AND sdk_uuid = ?`
     );
     const result = writeSdkMessageBody(
       this.db,
-      () => stmt.run(JSON.stringify(updated), ...derived.values, sessionId, messageUuid),
+      () => stmt.run(...derived.values, sessionId, messageUuid),
       "session_id = ? AND sdk_uuid = ? AND message_type = 'hyperneo_action'",
-      [sessionId, messageUuid]
+      [sessionId, messageUuid],
+      '?',
+      [JSON.stringify(updated)]
     );
     if (row) this.scheduleMessageSearchIndex(row.id);
     if (result.changes > 0) this.reactiveDb?.notifyChange('sdk_messages', { sessionId });
