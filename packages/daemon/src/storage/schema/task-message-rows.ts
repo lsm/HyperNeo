@@ -133,31 +133,37 @@ const ARTIFACT_KEYS = `(
   HAVING COUNT(*) > 0
 )`;
 
-const TASK_MESSAGE_ROW_SELECT = `SELECT
-    sm.id,
-    sm.task_id,
-    sm.session_id,
-    sm.rowid,
-    CAST(ROUND((julianday(sm.timestamp) - 2440587.5) * 86400000) AS INTEGER),
-    sm.message_type,
-    sm.message_subtype,
-    CASE WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.subtype') END,
-    sm.send_status,
-    sm.is_renderable,
-    sm.is_terminal,
-    sm.parent_tool_use_id,
-    sm.conversation_turn_index,
-    sm.sdk_uuid,
-    ${MESSAGE_FLAGS},
-    ${ARTIFACT_KEYS}
+export const TASK_MESSAGE_ROW_COLUMNS = [
+  'id',
+  'task_id',
+  'session_id',
+  'seq',
+  'created_at',
+  'message_type',
+  'message_subtype',
+  'send_status',
+  'is_renderable',
+  'is_terminal',
+  'parent_tool_use_id',
+  'turn_index',
+  'sdk_uuid',
+];
+
+export const TASK_MESSAGE_METADATA_SELECT = `sm.id, sm.task_id, sm.session_id, sm.rowid,
+  CAST(ROUND((julianday(sm.timestamp) - 2440587.5) * 86400000) AS INTEGER),
+  sm.message_type, sm.message_subtype, sm.send_status, sm.is_renderable, sm.is_terminal,
+  sm.parent_tool_use_id, sm.conversation_turn_index, sm.sdk_uuid`;
+
+export const TASK_MESSAGE_BODY_COLUMNS = ['json_subtype', 'flags', 'artifact_keys'];
+export const TASK_MESSAGE_BODY_SELECT = `CASE WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.subtype') END,
+  ${MESSAGE_FLAGS}, ${ARTIFACT_KEYS}`;
+
+const TASK_MESSAGE_ROW_SELECT = `SELECT ${TASK_MESSAGE_METADATA_SELECT}, ${TASK_MESSAGE_BODY_SELECT}
   FROM sdk_messages sm`;
 
 const INSERT_ROWS = `INSERT OR REPLACE INTO task_message_rows (
-    id, task_id, session_id, seq, created_at, message_type, message_subtype, json_subtype,
-    send_status, is_renderable, is_terminal, parent_tool_use_id, turn_index, sdk_uuid, flags,
-    artifact_keys
-  )
-  ${TASK_MESSAGE_ROW_SELECT}`;
+    ${[...TASK_MESSAGE_ROW_COLUMNS, ...TASK_MESSAGE_BODY_COLUMNS].join(', ')}
+  ) ${TASK_MESSAGE_ROW_SELECT}`;
 
 const UPSERT_ROW = `${INSERT_ROWS}
   WHERE sm.rowid = NEW.rowid AND sm.task_id IS NOT NULL;`;
