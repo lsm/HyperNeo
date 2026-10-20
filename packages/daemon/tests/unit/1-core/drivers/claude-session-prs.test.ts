@@ -1,3 +1,5 @@
+import { claudeOwnerSession } from '../../../../../../.claude/skills/verify/pr-owner-session.ts';
+import { planCodingPrOwner } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
 import { describe, expect, test } from 'bun:test';
 import {
   appendFileSync,
@@ -108,6 +110,64 @@ describe('Claude transcript PR creation evidence', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  test('retains a folder identity across sweeps and refreshes after the folder leaves the reader', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'claude-owner-identity-'));
+    const scope = join(root, 'sessions/account/scope');
+    mkdirSync(scope, { recursive: true });
+    for (const id of ['local_one', 'local_two'])
+      writeFileSync(
+        join(scope, `${id}.json`),
+        JSON.stringify({ sessionId: id, cwd: '/synthetic' })
+      );
+    let reads = 0;
+    const read = createCodingClaudeOwnerReader(
+      join(root, 'sessions'),
+      join(root, 'projects'),
+      async () => {
+        reads++;
+        return { remotes: ['git@github.com:synthetic/cart-sandbox.git'] };
+      }
+    );
+    try {
+      expect((await read()).map((session) => session.remotes)).toEqual([
+        ['git@github.com:synthetic/cart-sandbox.git'],
+        ['git@github.com:synthetic/cart-sandbox.git'],
+      ]);
+      await read();
+      expect(reads).toBe(1);
+      rmSync(join(scope, 'local_one.json'));
+      rmSync(join(scope, 'local_two.json'));
+      expect(await read()).toEqual([]);
+      writeFileSync(
+        join(scope, 'local_one.json'),
+        JSON.stringify({ sessionId: 'local_one', cwd: '/synthetic' })
+      );
+      await read();
+      expect(reads).toBe(2);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('the live verification projection keeps a no-sidebar transcript creator owned', () => {
+    const ref = { adapter: 'claude-desktop', id: 'local_one' };
+    const session = claudeOwnerSession({
+      ref,
+      status: 'done',
+      lastActivityAt: 1,
+      remotes: [],
+      branches: [],
+      openedPrs: [url(4)],
+    });
+    expect(
+      planCodingPrOwner(
+        { repo: 'synthetic/cart-sandbox', number: 4, branch: 'other', owner: null },
+        new Map(),
+        [session]
+      )
+    ).toBe(JSON.stringify(ref));
   });
 
   test('the coding pack corroborates a sidebar link but honors dismissal and explicit own links', async () => {

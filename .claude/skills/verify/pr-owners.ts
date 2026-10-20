@@ -1,3 +1,4 @@
+import { claudeOwnerSession } from './pr-owner-session.ts';
 import { Database } from 'bun:sqlite';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -60,16 +61,7 @@ const { createCodingClaudeOwnerReader } = await import(
   '../../../packages/daemon/src/lib/neo/packs/coding/claude-pr-owners.ts'
 );
 for (const value of await createCodingClaudeOwnerReader()()) {
-  const linked = value.linkedPrs ?? [];
-  sessions.push({
-    ref: JSON.stringify(value.ref),
-    active: value.lastActivityAt,
-    repos: value.remotes.flatMap((remote) => codingRemoteRepo(remote) ?? []),
-    branches: value.branches,
-    owned: keys(linked.filter((pr) => pr.own && !pr.dismissed).map((pr) => pr.url)),
-    prs: [],
-    dismissed: keys(linked.filter((pr) => pr.dismissed).map((pr) => pr.url)),
-  });
+  sessions.push(claudeOwnerSession(value));
 }
 const codexPath = join(homedir(), '.codex/state_5.sqlite');
 const codex = new Database(`file:${codexPath}?mode=ro`, { readonly: true });
