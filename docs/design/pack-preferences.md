@@ -64,6 +64,7 @@ The first-use question is **generated from the declaration** and sent through th
 
 **Where paths and labels come from.** The ledger's GraphQL read (`CODING_LEDGER_QUERY`, `pr-ledger.ts:101-115`) fetches neither today.
 
+- **Review authors:** the reviews fetch (`pr-ledger.ts:102`) gains `author { login }`. Its nodes carry only `state` and `commit { oid }` today, and `reviewDecision` doesn't say who approved, so without the login a `review_bot` repo can't tell the bot's approval from anyone else's.
 - **Labels:** `labels(first: 100) { pageInfo { hasNextPage } nodes { name } }` is added to the open-PR fields and read on every ledger pass. A truncated label page counts as matching, so the PR is held, the same as the paths case below.
 - **Paths:** fetched only for repos whose `humanSignoff` has path globs, and only for an open PR whose head differs from the head stored with its last path list. That's one small `files(first: 100) { nodes { path } }` query per new head. It stays within the existing `CODING_LEDGER_MIN_RATE` budget check, so a low rate limit skips the read and the PR stays held until paths are known. The list is stored on the ledger row (`paths_json`, `paths_head`). A PR with more than 100 files counts as matching, so it's held.
 
@@ -95,7 +96,7 @@ A **hold** overrides only merge readiness, under every policy: a held PR that wo
 
 ## Per-PR human hold
 
-A hold is an explicit "waiting on the human" mark: `pack_coding_pr_holds(repo, number, question_id, reason, since)`.
+A hold is an explicit "waiting on the human" mark: `pack_coding_pr_holds(repo, number, question_id, reason, since, approved_head)`. The row is kept after the human answers; `approved_head` records which head the human approved.
 
 **Created when** one of these happens:
 - a PR matches `humanSignoff`, judged on its labels and the path list for its current head;
@@ -111,11 +112,11 @@ Creating a hold also opens one linked Neo question (`neo_questions`, `m387-neo-a
 - the owner is told once: "waiting on the human; don't merge".
 
 **Lifted automatically** when the linked question is answered:
-- **Yes:** the hold is removed, and the normal policy decides readiness. A `review_bot` repo still needs the bot's approval of the then-current head.
+- **Yes:** the row's `approved_head` is set to the head the question named, and the hold stops applying to that head; the normal policy decides readiness. Automatic holding (`humanSignoff`, a `human` policy) checks for that row first, so it never re-holds an approved head or re-asks. A `review_bot` repo still needs the bot's approval of that head.
 - **No, or a reply:** the hold stays, and the answer goes to the owner as a change request.
 - **Retired question:** keeps the hold and asks again.
 
-A new head commit does not lift a hold.
+Approval is per head. A head pushed after the approval is not covered: the hold applies again, and Neo asks once more, naming both heads so the human can see what changed. This is deliberate: the human approves content, and a later commit can change it. A new head never lifts a hold on its own. `pack.coding.pr.release` (human only) sets `approved_head` the same way.
 
 The question-answer path gets a generic pack hook, `onQuestionAnswered(question)` (core, no PR knowledge). The coding pack uses it to look up holds by `question_id`.
 
@@ -150,7 +151,7 @@ A convention is built on the existing `neo.rule.save` (`packages/daemon/src/lib/
 
 - **Each policy:** a repo with that policy gets the right nudges for an approved, green PR. `review_bot` and `ci_only` get "merge"; `human` gets none.
 - **Sign-off match:** a PR matching `humanSignoff` in a `review_bot` repo shows `waiting_human`, the owner gets no merge text, and the snapshot shows the hold.
-- **Lifting:** answering the linked question "yes" lifts the hold and allows the merge nudge; "no" keeps it and tells the owner.
+- **Lifting:** answering the linked question "yes" lifts the hold and allows the merge nudge, and it stays lifted on later sweeps of that head. A new head re-holds and asks once. "No" keeps the hold and tells the owner.
 - **First use:** one question per new repo, none after it's answered, and no merge nudges before the answer.
 - **Conventions:** a convention saved for `coding` + `lsm/research` appears in the instruction of a coding todo for lsm/research, not in one for lsm/qlark. A save without the human's quoted words is refused.
 - **qlark#19 replay:** reproduced first. Same timeline with `docs/design/**` held: no merge nudge at +20 min.
@@ -161,7 +162,7 @@ The qlark#19 prevention, slices 1–7, comes first: policy-aware readiness, then
 
 1. **Build core settings.** `NeoPack.preferences` declaration type, the `neo_pack_preferences` migration, lookup, and the one-time seed for the four repos.
 2. **Wire policy-aware ledger state** per the state table, including `waiting_human` and `waiting_ci`. The qlark#19 replay test is committed failing first. Repos without a stored policy count as `human`.
-3. **Build PR labels and paths.** Labels in the ledger query; the per-new-head paths read under the rate budget; `paths_json` and `paths_head` on the ledger row.
+3. **Build PR review authors, labels and paths.** Review-author logins and labels in the ledger query; the per-new-head paths read under the rate budget; `paths_json` and `paths_head` on the ledger row.
 4. **Build holds.** The table, plus `pack.coding.pr.hold` and the human-only `pack.coding.pr.release`; nothing reads them yet.
 5. **Wire holds into the sweep and events**, including automatic holds from `humanSignoff`. Held PRs get no merge text and no reminders, and the owner is told once.
 6. **Build the `onQuestionAnswered` core hook.** Nothing calls it yet.
@@ -169,4 +170,9 @@ The qlark#19 prevention, slices 1–7, comes first: policy-aware readiness, then
 8. **Build the settings operations** (`pack.preferences.*`, `set` human-only), with the values in `neo.snapshot`.
 9. **Wire the generated first-use question** for repos with no stored policy.
 10. **Build scoped conventions** in `neo.rule.save` (scope input and storage) and **wire their delivery** into `neoTodoCard`. If it exceeds the slice budget, split Build and Wire.
-11. **Delete the merge-rule text** from `packs/coding/instructions.md:18-27`, once the daemon enforces it.
+11. **Delete the merge-rule prompt text** from `packages/prompts/src/neo/packs/coding/instructions.md`, once the daemon enforces it. Only these sentences go:
+    - lines 18-20: put the merge rule in the todo instruction;
+    - lines 21-24: the ask-once review question;
+    - lines 26-27: write the answer into the merge rule.
+
+    The sentence "Never install apps, add reviewers or change repository settings yourself; that is the human's own GitHub setup" stays. The Claude Desktop question that follows ("in the same round of questions", lines 28-29) is reworded to stand alone.
