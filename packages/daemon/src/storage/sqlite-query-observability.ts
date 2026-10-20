@@ -99,6 +99,33 @@ function roundMs(value: number): number {
 
 let slowestQuery: { durationMs: number; sql: string } | null = null;
 
+type ResourceTick = {
+  resourceScope: 'event_loop_tick';
+  tickStartMs: number;
+  tickEndMs: number;
+  resources?: Record<string, unknown>;
+};
+type SlowQueryEmission = (tick?: ResourceTick) => void;
+let deferSlowQuery: ((emit: SlowQueryEmission) => void) | undefined;
+
+export function collectSlowQueryTicks() {
+  let pending: SlowQueryEmission[] = [];
+  const enqueue = (emit: SlowQueryEmission) => pending.push(emit);
+  deferSlowQuery = enqueue;
+  const flush = (tick?: ResourceTick) => {
+    const batch = pending;
+    pending = [];
+    for (const emit of batch) emit(tick);
+  };
+  return {
+    flush,
+    stop() {
+      if (deferSlowQuery === enqueue) deferSlowQuery = undefined;
+      flush();
+    },
+  };
+}
+
 export function takeSlowestQuery(): { durationMs: number; sql: string } | null {
   const slowest = slowestQuery;
   slowestQuery = null;
@@ -310,13 +337,21 @@ export class SQLiteQueryObserver {
     if (execution.rowsReturned !== undefined) metadata.rowsReturned = execution.rowsReturned;
     if (execution.rowsChanged !== undefined) metadata.rowsChanged = execution.rowsChanged;
 
-    this.emitting = true;
-    try {
-      this.emitEvent({ level: 'warn', event: SLOW_QUERY_EVENT, metadata });
-    } catch {
-    } finally {
-      this.emitting = false;
-    }
+    const emit: SlowQueryEmission = (tick) => {
+      this.emitting = true;
+      try {
+        this.emitEvent({
+          level: 'warn',
+          event: SLOW_QUERY_EVENT,
+          metadata: { ...metadata, ...tick },
+        });
+      } catch {
+      } finally {
+        this.emitting = false;
+      }
+    };
+    if (deferSlowQuery) deferSlowQuery(emit);
+    else emit();
   }
 }
 

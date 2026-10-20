@@ -1,4 +1,5 @@
 import type { NeoSessionMessage } from './neo-session-message.ts';
+import type { NeoConversationWake } from './neo-wake.ts';
 import type { NeoAskEntry, NeoStatusCode } from './neo-ask.ts';
 import type { NeoProject } from './neo-context.ts';
 import type { NeoModelPreference } from './settings.ts';
@@ -169,6 +170,7 @@ export interface NeoSnapshot {
   sessionNotices?: NeoSessionNotice[];
   sessionNoticeGroups?: NeoSessionNoticeGroup[];
   sessionMessages?: NeoSessionMessage[];
+  wakes?: NeoConversationWake[];
   mutedSessions?: string[];
   standingRules?: string[];
   omitted?: { asks?: number };

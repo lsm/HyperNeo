@@ -294,7 +294,10 @@ export class NeoService {
         if (status === 'processing' && previous !== 'processing')
           void this.steerQueuedInputs(sessionId);
         const bound = status || session?.status ? this.repo.getBindingBySession(sessionId) : null;
-        if (bound?.kind === 'neo') this.noteWorking();
+        if (bound?.kind === 'neo') {
+          this.noteWorking();
+          if (status && previous !== status) this.notifyChanged();
+        }
         if (status !== 'idle') return;
         const binding = this.repo.getBindingBySession(sessionId);
         if (binding?.kind === 'neo')
