@@ -1514,3 +1514,20 @@ in test mode) and uses a 60 s sampler cadence to keep the query pending until
 shutdown. The SQL execution, app cleanup and file sink are real; this does not
 verify production watchdog activation. Both sinks must still be subscribed when
 cleanup stops the lag monitor, before evidence flushing and sink teardown.
+### Core pack preferences (slice 1)
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-pack-preferences-XXXXXX)
+mkdir -p "$RUN/home"
+env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
+  bun .claude/skills/verify/pack-preferences.ts 9351 "$RUN"
+```
+
+The helper boots the real isolated daemon twice and reads `system.health` over
+WebSocket on each boot. `evidence/observed.json` must retain the ten seed rows
+for the four approved repos, seed provenance and timestamps. A synthetic human
+policy override survives restart, and a new repo stays unanswered. It uses only
+its fresh DB and temp HOME, without providers or credentials. Both instances
+stop in `finally`. This proves bootstrap persistence and the core lookup; there
+is no settings RPC/UI or merge-policy enforcement in slice 1. Those later slices
+need their own journeys. No live DB, GitHub request or model turn is involved.
