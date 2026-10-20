@@ -37,7 +37,14 @@ export async function verifySyntheticPrOwners(runText: string) {
   let transcriptBytes = 0;
   for (let i = 0; i < 64; i++) {
     const data =
-      padding + (i === 0 ? operation('commented', 4) : i === 1 ? operation('created', 6) : '');
+      padding +
+      (i === 0
+        ? operation('commented', 4)
+        : i === 1
+          ? operation('created', 6)
+          : i === 4
+            ? operation('created', 8)
+            : '');
     writeFileSync(join(project, `cli-${i}.jsonl`), data);
     transcriptBytes += Buffer.byteLength(data);
     writeFileSync(
@@ -48,14 +55,18 @@ export async function verifySyntheticPrOwners(runText: string) {
         cwd: '/synthetic',
         lastActivityAt: 1000 - i,
         ...(i === 3 ? { branch: 'b7' } : {}),
-        prs:
-          i === 0
-            ? [{ url: url(4) }]
-            : i === 1
-              ? [{ url: url(6) }]
-              : i === 2
-                ? [{ url: url(5), own: true }]
-                : [],
+        ...(i === 4
+          ? {}
+          : {
+              prs:
+                i === 0
+                  ? [{ url: url(4) }]
+                  : i === 1
+                    ? [{ url: url(6) }]
+                    : i === 2
+                      ? [{ url: url(5), own: true }]
+                      : [],
+            }),
       })
     );
   }
@@ -65,6 +76,16 @@ export async function verifySyntheticPrOwners(runText: string) {
   createCodingPackTables(db);
   const ledger = new CodingPrLedgerRepository(db);
   const now = Date.now();
+  const watcher = {
+    ref: { adapter: 'claude-desktop', id: 'local_4' },
+    status: 'done' as const,
+    lastActivityAt: 996,
+    remotes: ['git@github.com:synthetic/cart-sandbox.git'],
+    branches: [],
+    openedPrs: [url(9)],
+  };
+  ledger.observeSessions([watcher], now);
+
   const pack = createCodingPack({
     readPrs: async () => [],
     todoPrs: new CodingTodoPrRepository(db),
@@ -92,7 +113,7 @@ export async function verifySyntheticPrOwners(runText: string) {
           nameWithOwner: 'synthetic/cart-sandbox',
           open: {
             pageInfo: { hasNextPage: false },
-            nodes: [4, 5, 6, 7].map((number) => ({
+            nodes: [4, 5, 6, 7, 8, 9].map((number) => ({
               number,
               title: `Synthetic ${number}`,
               headRefName: `b${number}`,
@@ -153,8 +174,12 @@ export async function verifySyntheticPrOwners(runText: string) {
       { pr: 'synthetic/cart-sandbox#5', ownerId: 'local_2' },
       { pr: 'synthetic/cart-sandbox#6', ownerId: 'local_1' },
       { pr: 'synthetic/cart-sandbox#7', ownerId: 'local_3' },
+      { pr: 'synthetic/cart-sandbox#8', ownerId: 'local_4' },
+      { pr: 'synthetic/cart-sandbox#9', ownerId: 'local_4' },
     ]);
     assert.deepEqual(await sweep('unchanged'), first);
+    ledger.observeSessions([watcher], now + 1);
+    assert.deepEqual(await sweep('watcher-repeat'), first);
     appendFileSync(join(project, 'cli-1.jsonl'), operation('created', 4));
     const appended = await sweep('appended');
     assert.equal(appended[0].ownerId, 'local_1');

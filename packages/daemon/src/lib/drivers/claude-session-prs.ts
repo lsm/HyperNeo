@@ -1,10 +1,8 @@
 import { open } from 'node:fs/promises';
-import {
+import type {
   claudeSessionLinks,
-  claudeTranscriptPath,
-  readClaudeDesktopRecords,
-  type ClaudeDesktopRecord,
-  type ClaudeRecordCache,
+  ClaudeDesktopRecord,
+  ClaudeRecordCache,
 } from './claude-desktop-adapter.ts';
 
 type TranscriptPrs = {
@@ -80,6 +78,9 @@ export function createClaudeSessionPrReader(sessionsDir: string, projectsDir: st
   const transcripts = new Map<string, TranscriptPrs>();
   const links = new WeakMap<ClaudeDesktopRecord, ReturnType<typeof claudeSessionLinks>>();
   return async () => {
+    const { claudeSessionLinks, claudeTranscriptPath, readClaudeDesktopRecords } = await import(
+      './claude-desktop-adapter.ts'
+    );
     const present = new Set<string>();
     const found = [];
     for (const record of await readClaudeDesktopRecords(sessionsDir, records)) {

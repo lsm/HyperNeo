@@ -303,9 +303,11 @@ adds its journey here.
    provider or GUI is involved. End state: a `commented` sidebar link is unowned,
    an explicit `own:true` link owns its PR, a transcript `gitOperation.pr` with
    `action:created` corroborates ownership, branch matching still works, an append
-   is discovered without metadata changes, and dismissal unlinks its PR. The
+   is discovered without metadata changes, and dismissal unlinks its PR. A session
+   without a sidebar keeps both transcript-created and watcher-opened PR ownership
+   across repeated watcher/sweep observations. The
    helper writes `observed.json` before asserting each result and a 1,000 ms
-   maximum 10 ms heartbeat-lag budget. Cold, unchanged, appended and dismissed
+   maximum 10 ms heartbeat-lag budget. Cold, unchanged, repeated-watcher, appended and dismissed
    reconciles each report elapsed time and max lag. No daemon is started; the DB
    closes and the heartbeat stops in `finally`. Retain the JSON, remove only this
    synthetic run afterward. This does not prove deployed behavior.
