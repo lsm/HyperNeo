@@ -81,7 +81,7 @@ export function requireNeoDoneWhenEditable(
   packs: readonly NeoPack[]
 ): Gate<NeoTodo> {
   const pack = todo.check && packs.find((item) => item.id === todo.check?.pack)?.todos;
-  return input.doneWhen && todo.check && pack?.doneWhen?.(todo.check)
+  return input.doneWhen && todo.check && pack?.doneWhen?.(todo.check) === todo.doneWhen
     ? fail(
         "done_when_from_check: this todo's done-when comes from its check; change the check instead."
       )

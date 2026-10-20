@@ -318,13 +318,17 @@ export function codingTodoRepository(
   return neoGitRepo(/^[\w.-]+\/[\w.-]+$/.test(named.trim()) ? `github.com/${named.trim()}` : named);
 }
 
-export function codingTodoDoneWhen(check: NeoTodoCheck): string | null {
-  if (check.kind !== 'pr_merged') return null;
-  const urls = Array.isArray(check.params.urls) ? check.params.urls : [];
-  const refs = urls.flatMap((url) => {
+function codingCheckRefs(check: NeoTodoCheck | null): string[] {
+  const urls = Array.isArray(check?.params.urls) ? check.params.urls : [];
+  return urls.flatMap((url) => {
     const pr = typeof url === 'string' ? parsePrUrl(url) : null;
     return pr ? [`${pr.owner}/${pr.repo}#${pr.number}`] : [];
   });
+}
+
+export function codingTodoDoneWhen(check: NeoTodoCheck): string | null {
+  if (check.kind !== 'pr_merged') return null;
+  const refs = codingCheckRefs(check);
   return refs.length
     ? `${refs.join(', ')} merged`
     : "The one pull request this todo's session opens is merged";
@@ -333,10 +337,9 @@ export function codingTodoDoneWhen(check: NeoTodoCheck): string | null {
 export function codingTodoCheckRefusal(
   draft: Pick<NeoTodo, 'check' | 'instruction'>
 ): string | null {
-  const urls = draft.check?.params.urls;
   return draft.check?.kind === 'pr_merged' &&
     !draft.instruction &&
-    !(Array.isArray(urls) && urls.length)
+    !codingCheckRefs(draft.check).length
     ? 'pr_merged_needs_urls: a todo with no instruction opens no pull request; name each one in params.urls.'
     : null;
 }
