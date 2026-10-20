@@ -1,8 +1,51 @@
 import { describe, expect, test } from 'bun:test';
 import { deriveSdkMessageColumns } from '../../../../src/storage/sdk-message-columns';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import {
+  backfillSdkMessageColumns,
+  runMigration413,
+} from '../../../../src/storage/schema/m413-sdk-message-columns';
+import { runMigration414 } from '../../../../src/storage/schema/m414-sdk-message-filter-eligibility';
 
 describe('SDK message filter eligibility contracts', () => {
+  test('a completed slice-2 database receives typed eligibility before filters run', async () => {
+    const db = new Database(':memory:');
+    try {
+      db.exec(
+        'CREATE TABLE sdk_messages (seq INTEGER PRIMARY KEY, sdk_message TEXT, task_id TEXT, replacement_metadata_normalized INTEGER DEFAULT 1); CREATE TABLE migration_markers (key TEXT PRIMARY KEY, applied_at INTEGER)'
+      );
+      runMigration413(db);
+      db.exec(
+        'ALTER TABLE sdk_messages DROP COLUMN user_status_eligible; ALTER TABLE sdk_messages DROP COLUMN task_input_eligible'
+      );
+      db.prepare('INSERT INTO migration_markers VALUES (?, 1)').run(
+        'sdk_message_columns_backfilled'
+      );
+      const insert = db.prepare('INSERT INTO sdk_messages (sdk_message) VALUES (?)');
+      insert.run(
+        JSON.stringify({ type: 'user', isReplay: null, inputKind: null, isSynthetic: true })
+      );
+      insert.run(JSON.stringify({ type: 'user', isReplay: false, isSynthetic: true }));
+      runMigration414(db);
+      runMigration414(db);
+      await backfillSdkMessageColumns(db, () => {});
+      expect(
+        db
+          .prepare('SELECT user_status_eligible,task_input_eligible FROM sdk_messages ORDER BY seq')
+          .all()
+      ).toEqual([
+        { user_status_eligible: 0, task_input_eligible: 0 },
+        { user_status_eligible: 1, task_input_eligible: 1 },
+      ]);
+      expect(
+        db
+          .prepare('SELECT 1 FROM migration_markers WHERE key = ?')
+          .get('sdk_message_columns_backfilled_v2')
+      ).toBeTruthy();
+    } finally {
+      db.close();
+    }
+  });
   test('integer-affinity flags preserve JSON scalar comparisons', () => {
     const db = new Database(':memory:');
     try {
@@ -30,6 +73,7 @@ describe('SDK message filter eligibility contracts', () => {
   });
   test.each([
     ['missing', {}, 1],
+    ['omitted undefined', { isReplay: undefined }, 1],
     ['false', { isReplay: false }, 1],
     ['null', { isReplay: null }, 0],
     ['zero', { isReplay: 0 }, 0],
@@ -48,6 +92,7 @@ describe('SDK message filter eligibility contracts', () => {
     ['task', { inputKind: 'task' }, 1],
     ['task with false synthetic flag', { inputKind: 'task', isSynthetic: false }, 1],
     ['missing', { isSynthetic: true }, 1],
+    ['omitted undefined', { inputKind: undefined, isSynthetic: true }, 1],
     ['null', { inputKind: null, isSynthetic: true }, 0],
     ['false', { inputKind: false, isSynthetic: true }, 0],
     ['zero', { inputKind: 0, isSynthetic: true }, 0],

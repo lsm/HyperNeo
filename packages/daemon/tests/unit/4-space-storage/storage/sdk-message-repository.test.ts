@@ -9,6 +9,8 @@ import type { ReactiveDatabase } from '../../../../src/storage/reactive-database
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { createSQLiteAsciiPrefixRange } from '../../../../src/storage/sqlite-prefix-range';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import { runMigration413 } from '../../../../src/storage/schema/m413-sdk-message-columns';
+import { fillSdkMessageFixtureColumns } from '../../helpers/sdk-message-fixture-columns';
 
 describe('SDKMessageRepository', () => {
   let db: Database;
@@ -99,6 +101,7 @@ describe('SDKMessageRepository', () => {
 			CREATE INDEX idx_sdk_messages_session_uuid ON sdk_messages(session_id, sdk_uuid);
 			CREATE INDEX idx_sdk_messages_deferred_uuid ON sdk_messages(sdk_uuid) WHERE send_status = 'deferred';
 		`);
+    runMigration413(db);
     repository = new SDKMessageRepository(db as any);
   });
 
@@ -2258,6 +2261,7 @@ describe('SDKMessageRepository', () => {
        (id, session_id, message_type, sdk_message, timestamp, send_status)
        VALUES (?, ?, ?, ?, ?, ?)`
     ).run(id, sessionId, messageType, sdkMessage, timestamp, status);
+    fillSdkMessageFixtureColumns(db);
   }
 
   describe('getUserMessagesByStatus', () => {
@@ -2344,6 +2348,7 @@ describe('SDKMessageRepository', () => {
         }
       })();
 
+      fillSdkMessageFixtureColumns(db);
       const result = repository.getUserMessagesByStatus('session-1', 'consumed', 901);
 
       expect(result.messages).toHaveLength(901);
@@ -2488,6 +2493,7 @@ describe('SDKMessageRepository', () => {
          (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
          VALUES (?, ?, 'user', ?, ?, ?, ?)`
       ).run(id, sessionId, sdkMessage, timestamp, status, uuid);
+      fillSdkMessageFixtureColumns(db);
     }
 
     it('returns id, uuid, and timestamp without inflating payloads, in order', () => {
@@ -3299,6 +3305,7 @@ describe('SDKMessageRepository', () => {
         opts.uuid ?? null,
         consumedSeq
       );
+      fillSdkMessageFixtureColumns(db);
     }
 
     it('is true when a SUCCESS terminal result exists after the message', () => {
