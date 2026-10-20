@@ -387,10 +387,10 @@ describe('codex-desktop adapter status and send', () => {
     expect(
       await driver.archive!({ adapter: driver.id, id: 'idle' }, () => ({
         ok: false,
-        reason: 'live_card',
+        reason: 'busy',
         detail: 'new',
       }))
-    ).toMatchObject({ ok: false, reason: 'live_card' });
+    ).toMatchObject({ ok: false, reason: 'busy' });
     expect(await driver.archive!({ adapter: driver.id, id: 'old' }, () => null)).toEqual({
       ok: true,
       value: { archived: false },

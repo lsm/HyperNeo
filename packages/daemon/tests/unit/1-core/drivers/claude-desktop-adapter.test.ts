@@ -442,10 +442,10 @@ describe('claude-desktop adapter against the app session records', () => {
     expect(
       await adapter([]).archive!(ref, () => ({
         ok: false,
-        reason: 'live_card',
+        reason: 'busy',
         detail: 'new card',
       }))
-    ).toMatchObject({ ok: false, reason: 'live_card' });
+    ).toMatchObject({ ok: false, reason: 'busy' });
     expect(readFileSync(path, 'utf8')).toBe(before);
   });
 

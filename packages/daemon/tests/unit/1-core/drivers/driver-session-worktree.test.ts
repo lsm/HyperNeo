@@ -184,7 +184,7 @@ describe('hyperneoSessionControl archive', () => {
         },
       } as never);
       const result = await controls.archive!({ adapter: 'hyperneo', id: 'session' }, () =>
-        state === 'late_refusal' ? { ok: false, reason: 'live_card', detail: 'new' } : null
+        state === 'late_refusal' ? { ok: false, reason: 'busy', detail: 'new' } : null
       );
       expect(result.ok).toBe(state === 'idle' || state === 'archived');
       expect(archived).toEqual(state === 'idle' ? ['session:ui_session_archive'] : []);
