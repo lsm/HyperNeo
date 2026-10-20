@@ -43,7 +43,7 @@ it and change only what is needed:
 | Worker | How it sends | Sender identity |
 | --- | --- | --- |
 | HyperNeo session | `message.send` through the operations tool it already has | the daemon-assigned caller session id |
-| Claude Code, Codex, anything with Bash | `hyperneo send <session-id> "<text>"`, a new CLI subcommand that calls `message.send` on the local daemon | `HYPERNEO_SESSION_ID`, which the daemon sets in the environment of the processes it starts; see the risk on processes it does not start |
+| Claude Code, Codex, anything with Bash | `hyperneo send <session-id> "<text>"`, a new CLI subcommand that calls `message.send` through the local session door (not the RPC door; see Guardrails) | `HYPERNEO_SESSION_ID`, which the daemon sets in the environment of the processes it starts; see the risk on processes it does not start |
 
 Everything is local and same-user, so there are no tokens and no MCP bridges.
 
@@ -58,8 +58,17 @@ expanding to the text. The same pattern as wake rows (section 5). Rendering is f
 - **Rate limit** per sender: 6 a minute. Past that, messages are refused with
   `rate_limited` until the minute passes.
 - **Dedupe:** the same sender, recipient and text within 10 minutes is accepted once.
-- **No human authority:** a message from a session is never `human` input
-  (`message-send.ts:143` already refuses that). The mechanism is below.
+- **No human authority:** a message from a session is never `human` input. Today
+  `admitOperationMessage` (`message-send.ts:146`) refuses human `inputKind` only for MCP
+  callers. The RPC door is trusted as the local user: there a send can be human and
+  `isNeoHumanTurn` (`operations.ts:256`) trusts it. So:
+  - The CLI never uses the RPC door. It talks to a separate local **session door**, a
+    daemon socket whose caller is always `{source: 'session', sessionId}` taken from
+    `HYPERNEO_SESSION_ID`, and the same refusal as MCP applies there.
+  - `message.send` pins `inputKind` to a non-human kind whenever the sender is a session
+    (`from` or caller), on every door, and refuses `human` from any caller other than
+    the human chat clients.
+  The mechanism that keeps authority structural is below.
 
 ### Human or agent: an envelope nobody can forge
 
@@ -571,9 +580,11 @@ lines:
   what Neo sends; the human-authority checks refusing a turn that carried a `session:`
   input (with the "claims the human approved" test); `neo.question.get` and the
   verifiable question reference for relaying human decisions.
-- **M3. `hyperneo send` and `hyperneo question` CLI** (~120): the two subcommands,
-  `HYPERNEO_SESSION_ID` set by the adapters on the processes they start, and the local
-  daemon address.
+- **M3. `hyperneo send` and `hyperneo question` CLI** (~170): the two subcommands; the
+  local session door (a socket whose caller is always a session, never the RPC door);
+  `message.send` pinning a non-human `inputKind` for session senders on every door, with
+  a test that a CLI send never makes a Neo turn human; and `HYPERNEO_SESSION_ID` set by
+  the adapters on the processes they start.
 - **M4. Session message rows** (fs2, ~120): the `session` item in `neo.conversation.read`
   and the web row.
 
@@ -615,7 +626,7 @@ exchanges as rows. After step 5 the goal loop works end to end on one machine: a
 wakes Neo, Neo acts and journals, and mandate changes need a yes. Step 6 adds the second
 machine. Then the OAP and review-bot mandates and handoffs get written (not code).
 
-Total: about 1,110 fs3 lines and 1,240 fs2 lines over 18 PRs.
+Total: about 1,160 fs3 lines and 1,240 fs2 lines over 18 PRs.
 
 Goals and UI (fs2), each one PR from dev; sizes are production lines:
 
