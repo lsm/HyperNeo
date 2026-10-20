@@ -207,7 +207,11 @@ export function planCodingPrOwner(
   const claim = claims.get(url);
   if (claim) return claim;
   const owned = sessions.filter((session) => session.owned.includes(url));
-  const linked = sessions.filter((session) => session.prs.includes(url));
+  const linked = sessions.filter(
+    (session) =>
+      session.prs.includes(url) &&
+      (JSON.parse(session.ref) as { adapter: string }).adapter !== 'claude-desktop'
+  );
   const branched = sessions.filter(
     (session) =>
       !session.dismissed.includes(url) &&
@@ -383,10 +387,7 @@ export class CodingPrLedgerRepository {
       repos: JSON.parse(row.repos) as string[],
       branches: JSON.parse(row.branches) as string[],
       owned: JSON.parse(row.owned) as string[],
-      prs:
-        (JSON.parse(row.ref) as { adapter: string }).adapter === 'claude-desktop'
-          ? []
-          : (JSON.parse(row.linked ?? row.opened) as string[]),
+      prs: JSON.parse(row.linked ?? row.opened) as string[],
       dismissed: JSON.parse(row.dismissed) as string[],
     }));
     const rows = this.db
