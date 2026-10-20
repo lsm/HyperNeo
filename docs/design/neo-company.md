@@ -178,14 +178,21 @@ itself (see Enforcement). Goals and journals stay in the DB; their milestones re
 - For `direction.md` and `projects/*/mandate.md` it requires `questionId`: a
   `neo.question.ask` on Neo's ask that the human answered yes, whose body names that path
   and the exact content hash. That rule lives in the operation's gate, not in the prompt.
-- Neo's tool guard (`lib/neo/look-up-guard.ts`) today refuses `git push` and deletes
-  outside Neo's folders, and only nudges on other changes outside them
-  (`planNeoLocalChange`). Inside Neo's own folder, which holds the home repo, it allows
-  everything. H1 adds a deny rule for the home repo (except `.coordinators/`): `Write`,
-  `Edit` and `NotebookEdit` there, and Bash git write verbs (`add`, `commit`, `reset`,
-  `checkout`, `rebase`, `merge`, `stash`, `rm`, `mv`) with the repo as their working
-  directory or `-C` target. With that rule, the operation is the only write path the
-  guard sees. A script that writes files without git is still possible (section 11).
+- Neo's tool guard (`lib/neo/look-up-guard.ts`) today treats only the session's own
+  folder (`Neo/.coordinators/<session>`) as Neo's. Everything else under the data dir,
+  the home repo included, reads as secret: `Read`, `Write`, `Edit`, `cd` there and Bash
+  arguments naming existing or absolute paths there are denied (pinned in
+  `neo-look-up-guard.test.ts`). Two gaps remain: a shell redirect to a new relative path
+  (for example `> ../../direction.md`) is only nudged, and git verbs run from the session
+  folder act on the enclosing home repo because the target is "own".
+- H1 keeps those denials for writes and closes both gaps: redirects and git verbs whose
+  resolved target or repo is the home repo are denied, using the guard's existing
+  `GIT_CHANGES` and `GIT_DELETES` sets (which already cover `pull`, `apply`, `am`,
+  `cherry-pick`, `revert`, `restore`, `switch`, `branch`, `tag`, `worktree`, `clean`)
+  rather than a new list. H1 also lets `Read`, `Grep` and `Glob` into the home repo
+  (not `.git/`), so Neo can read its own documents. `.coordinators/` is git-ignored in
+  the home repo. With that, the operation is the only write path the guard sees; a
+  script that writes files without git is still possible (section 11).
 - Commit identity: the daemon's configured git user, with the trailer `Neo-Confirmed-By:
   question <id>` on confirmed changes.
 
@@ -600,8 +607,8 @@ Scheduler and home repo (fs3):
   and nudge counter, delivery through the `sendToRef` routing, and the `scheduled_wake`
   origin.
 - **H1. Home repo** (~230): `neo.home.init | save | read`, the layout and `.gitignore`,
-  `neo_concerns.home_path`, the guard rule that denies write tools and git write verbs
-  in the repo, a dirty-file refusal, and the new secret
+  `neo_concerns.home_path`, the guard changes (read access, and denying redirects and
+  `GIT_CHANGES`/`GIT_DELETES` verbs that reach the repo), a dirty-file refusal, and the new secret
   content check in `neo.home.save` (section 11). Local git only.
 - **H2. Mandate confirm gate** (~100): `neo_questions.confirm_json`, the save gate for
   `direction.md` and `mandate.md`, the decision-log append and the commit trailer.
@@ -690,8 +697,8 @@ Scheduler and home repo (fs3):
   list) fires every time. Facts must be sorted and stable; the fire tests cover it.
 - **Guard bypass.** Neo has Bash, so a script (Python, a shell redirect) could still write
   a home-repo file or run git indirectly; the guard checks commands, not what a script
-  does. It already blocks `git push` and inline code that pushes, and H1 denies the write
-  tools and git write verbs there. A bypass would skip the decision log, but an
+  does. It already blocks `git push` and inline code that pushes, and H1 denies redirects and
+  git write verbs that reach it. A bypass would skip the decision log, but an
   uncommitted change shows in `git status` and the next `neo.home.save` refuses a dirty
   file it did not write.
 - **Two machines.** Each daemon has its own schedules, so only the machine that owns a
