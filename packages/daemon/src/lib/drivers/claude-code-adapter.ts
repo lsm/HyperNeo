@@ -1,3 +1,4 @@
+import { runLagPhase } from '../event-loop-activity.ts';
 import { readClaudeCliStatus } from './claude-cli-status.ts';
 import type { ClaudeLiveSession } from './claude-desktop-adapter.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -182,7 +183,9 @@ export function createClaudeCodeAdapter(deps: ClaudeCodeAdapterDeps): WorkAdapte
   const cache: FolderCache = new Map();
   const projectsDir = deps.projectsDir;
   const scan = projectsDir
-    ? shareInFlight(() => readClaudeCodeFolders(projectsDir, cache))
+    ? shareInFlight(() =>
+        runLagPhase('scanner:claude_code', () => readClaudeCodeFolders(projectsDir, cache))
+      )
     : async () => [];
   const liveSessions = deps.liveSessions;
   const status: WorkAdapter['status'] = liveSessions

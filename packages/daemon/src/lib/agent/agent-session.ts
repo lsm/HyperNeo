@@ -1,3 +1,4 @@
+import { runLagPhase } from '../event-loop-activity.ts';
 import { AGENT_COMPACTION_RESUME } from '@hyperneo/prompts';
 import type {
   AgentProcessingState,
@@ -779,9 +780,11 @@ export class AgentSession
     this.reconcilerProvisioned = this.runtimeOptions.autoReplayPendingMessages ?? true;
     this.reconcileTimer = setInterval(() => {
       if (!this.reconcilerProvisioned) return;
-      void this.reconcileStrandedDeliveries().catch((error) => {
-        this.logger.warn('Periodic reconcileStrandedDeliveries failed:', error);
-      });
+      void runLagPhase('timer:stranded_deliveries', () => this.reconcileStrandedDeliveries()).catch(
+        (error) => {
+          this.logger.warn('Periodic reconcileStrandedDeliveries failed:', error);
+        }
+      );
     }, SESSION_RECONCILE_INTERVAL_MS);
     if (typeof this.reconcileTimer.unref === 'function') {
       this.reconcileTimer.unref();

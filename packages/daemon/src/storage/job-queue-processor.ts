@@ -1,3 +1,4 @@
+import { runLagPhase } from '../lib/event-loop-activity.ts';
 import {
   emitMessageDeliveryLifecycleEvent,
   fingerprintDeliveryClaim,
@@ -429,7 +430,9 @@ export class JobQueueProcessor {
           });
         }
       };
-      const result = await reg.handler(job, { signal: controller.signal, reportStage });
+      const result = await runLagPhase(`job:${job.queue.split(':', 1)[0]}`, () =>
+        reg.handler(job, { signal: controller.signal, reportStage })
+      );
       const completed = this.repo.complete(job.id, result ?? undefined, job.claimToken);
       if (completed) {
         record.settlement = 'completed';

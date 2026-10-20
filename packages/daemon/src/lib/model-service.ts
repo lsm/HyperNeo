@@ -1,3 +1,4 @@
+import { runLagPhase } from './event-loop-activity.ts';
 import type { ModelInfo, ProviderRecord, Session } from '@hyperneo/shared';
 import type {
   Provider,
@@ -1013,7 +1014,7 @@ function armProviderRetryTimer(providerId: string): void {
   const timer = setTimeout(() => {
     entry.timer = null;
     entry.lastAttemptAt = Date.now();
-    void runScheduledProviderRetry(providerId);
+    void runLagPhase('timer:model_provider_retry', () => runScheduledProviderRetry(providerId));
   }, PROVIDER_RETRY_BACKOFF_MS);
   timer.unref?.();
   entry.timer = timer;

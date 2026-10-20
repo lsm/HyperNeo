@@ -1,3 +1,4 @@
+import { runLagPhase } from '../event-loop-activity.ts';
 import { workStartPreparation, type WorkExecutionPreparer } from './start-preparation.ts';
 import { basename, join } from 'node:path';
 import { z } from 'zod';
@@ -299,7 +300,9 @@ export function buildCodexGroups(
 }
 
 export function loadCodexSnapshot(query: FindQuery, deps: CodexDesktopAdapterDeps): CodexSnapshot {
-  return readCodexSnapshot(deps.statePath, query.includeClosed);
+  return runLagPhase('scanner:codex_desktop', () =>
+    readCodexSnapshot(deps.statePath, query.includeClosed)
+  );
 }
 
 const runCodexFind = (superpipe({})('codex-find-work') as PipelineAPI)
