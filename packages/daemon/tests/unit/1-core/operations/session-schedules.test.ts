@@ -1,5 +1,8 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { createSessionScheduleOperations } from '../../../../src/lib/scheduler/operations';
+import { SessionGoalSchedules } from '../../../../src/lib/goals/session-goal-schedules';
+import { SessionGoalRepository } from '../../../../src/storage/repositories/session-goal-repository';
+import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository';
 import { SessionScheduler } from '../../../../src/lib/scheduler/session-schedules';
 import { SESSION_SCHEDULE_FIRE } from '../../../../src/lib/job-queue-constants';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
@@ -67,6 +70,57 @@ describe('session schedules', () => {
     expect(
       await call('schedule.session.list', { target: { adapter: 'hyperneo', id: 'other' } })
     ).toEqual({ ok: true, schedules: [] });
+  });
+
+  test('the target list exposes the current goal title without collecting or committing facts', async () => {
+    const goals = new SessionGoalRepository(db);
+    const source = new SessionGoalSchedules(
+      goals,
+      new NeoAskTodoRepository(db),
+      scheduler,
+      () => []
+    );
+    scheduler.registerSource(source);
+    const goal = goals.create(
+      'worker-1',
+      { title: 'Ship the guide', doneTest: 'Published' },
+      'human',
+      Date.now()
+    );
+    source.sync(goal);
+    const facts = spyOn(source, 'facts');
+    const storedBefore = scheduler.repo.list(target);
+    expect(await call('schedule.session.list', { target }, human)).toMatchObject({
+      ok: true,
+      schedules: [{ sourceKind: 'goal', sourceId: goal.id, sourceLabel: 'Ship the guide' }],
+    });
+    goals.update(goal, { title: 'Publish the guide' }, 'human', Date.now());
+    expect(await call('schedule.session.list', { target }, human)).toMatchObject({
+      schedules: [{ sourceLabel: 'Publish the guide' }],
+    });
+    expect(facts).not.toHaveBeenCalled();
+    expect(scheduler.repo.list(target)).toEqual(storedBefore);
+    expect(goals.factState(goal.id).lines).toEqual([]);
+  });
+
+  test('labels use reminder text and leave an unavailable source unlabeled', async () => {
+    await call('schedule.session.create', { target, cadence: hourly, note: 'Check the release.' });
+    scheduler.create({
+      target,
+      sourceKind: 'removed-pack',
+      sourceId: 'old-source',
+      note: null,
+      cadence: { kind: 'every', everyMs: 3_600_000 },
+      nudgeEvery: 4,
+      createdBySession: null,
+    });
+    expect(await call('schedule.session.list', { target }, human)).toMatchObject({
+      ok: true,
+      schedules: expect.arrayContaining([
+        expect.objectContaining({ sourceKind: 'reminder', sourceLabel: 'Check the release.' }),
+        expect.objectContaining({ sourceKind: 'removed-pack', sourceLabel: null }),
+      ]),
+    });
   });
 
   test('a cadence under a minute or a cron with no next run is refused', async () => {
