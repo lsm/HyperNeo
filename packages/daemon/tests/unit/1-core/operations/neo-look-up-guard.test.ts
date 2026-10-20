@@ -517,3 +517,34 @@ describe('Neo home repository boundaries', () => {
     }
   );
 });
+
+describe('Neo home paths through new files and glob patterns', () => {
+  test('denies a new redirect through a symlink back into the home repository', () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'neo-home-guard-')));
+    try {
+      const root = join(base, 'data', 'Neo');
+      const cwd = join(root, '.coordinators', 'root');
+      mkdirSync(cwd, { recursive: true });
+      symlinkSync(root, join(cwd, 'alias'));
+      expect(
+        decideNeoTool(
+          'Bash',
+          { command: 'echo changed > alias/new-direction.md' },
+          { home: base, dataDir: join(base, 'data'), cwd, own: [cwd] }
+        ).kind
+      ).toBe('deny');
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+  test('refuses glob traversal and nested git metadata while allowing ordinary home globs', () => {
+    const root = '/home/fictional/.hyperneo/Neo';
+    const cwd = `${root}/.coordinators/root`;
+    const home = { ...scope, cwd, own: [cwd] };
+    expect(decideNeoTool('Glob', { path: root, pattern: '**/.git/**' }, home).kind).toBe('deny');
+    expect(decideNeoTool('Glob', { path: root, pattern: '**/.coordinators/**' }, home).kind).toBe(
+      'deny'
+    );
+    expect(decideNeoTool('Read', { file_path: `${cwd}/.git/config` }, home).kind).toBe('deny');
+  });
+});

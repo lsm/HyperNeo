@@ -124,7 +124,7 @@ UI is served, that RPC answers, and that the mock model API is up. It ends with
   check scripts write to it: `seed-todo.sh` and `seed-ledger.sh` (journeys 3 and 4),
   `merge-check.sh` (journey 24), `archive-guard-check.sh` (journey 10) and
   `seed-start-question.sh` (journey 14), `quote-summary-check.mjs` (journey 18),
-  `seed-schedule-interrupt.ts` (journey 22), and `external-reply-check.ts` (journey 23).
+  `seed-schedule-interrupt.ts` (journey 22), and `external-reply-check.ts` (journey 23), and `neo-home.ts` (journey 25).
 - Web UI: open `http://127.0.0.1:<port>/neo` (Neo) or
   `/session/<sessionId>` (a session) in the browser; read the page text and take
   a screenshot.
@@ -409,6 +409,27 @@ adds its journey here.
    End state: `neo_project_merges` has `project:web-copy → project:web`, `ask-merge`
    now has `project_id` `project:web`, and `todo-merge` keeps
    `github.com/verify-test/other`.
+
+25. **Neo reads and commits curated home documents without bypassing confirmation.**
+    Run `bun .claude/skills/verify/neo-home.ts <port> "$RUN"` on a fresh isolated
+    daemon from Launch. It seeds only the run's local git identity and a synthetic
+    transcript, then uses `neo.project.save` and `neo.home.init/save/read` over RPC.
+    End state: the digest's RPC commit contains the requested text; `.coordinators/`
+    stays untracked; `home_path` is set once and survives a rename; dirty human edits
+    survive a refused save; secret-like content, hidden paths, direction and mandate
+    saves are refused. H1 returns `confirmation_required` for protected saves until
+    H2 adds human-answer verification. Evidence: `evidence/neo-home.json`.
+    `neo.home.read` does not initialize or commit a repository.
+
+    Run `bun .claude/skills/verify/neo-home-guard.ts <fresh-run-dir>` to exercise
+    the actual SDK PreToolUse hook on a synthetic home. Before H1 it records a denied
+    home read, an allowed enclosing-repo git mutation, and a merely nudged relative
+    redirect that writes the test file. After H1, the home read is allowed and both
+    mutations are denied; the file is absent. Evidence: `evidence/home-guard.json`.
+    The focused guard tests also cover quoted redirects, symlink parents, `.git`
+    traversal, and other coordinators' private folders. No real credentials or model
+    turn are needed. This checks the hook and operation doors; GUI rendering is not
+    covered. For the home_path migration, run the synthetic upgrade/restart journey 9.
 
 ## Evidence
 

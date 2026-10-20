@@ -1,3 +1,4 @@
+import { runMigration415 } from './m415-neo-home-path.ts';
 import { runMigration386 } from './m386-neo-work-control-failures.ts';
 import { runMigration388 } from './m388-claude-desktop-bridge-events.ts';
 import { runMigration387 } from './m387-neo-ask-todo-tables.ts';
@@ -883,6 +884,7 @@ export function runMigrations(
   run(migrationMarkerKey(411), () => runMigration411(db));
   run(migrationMarkerKey(412), () => runMigration412(db));
   run(migrationMarkerKey(413), () => runMigration413(db));
+  run(migrationMarkerKey(415), () => runMigration415(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

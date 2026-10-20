@@ -1,6 +1,6 @@
 import type { HookCallback, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
-import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 
 const SECRET_DIRS = [
@@ -95,6 +95,7 @@ interface LookUpScope {
   dataDir: string;
   cwd: string;
   own?: readonly string[];
+  readHome?: boolean;
 }
 
 interface LookUpPathFacts {
@@ -114,7 +115,17 @@ function readLookUpPathFacts(): LookUpPathFacts {
         try {
           real.set(path, realpathSync(path));
         } catch {
-          real.set(path, path);
+          let parent = dirname(path);
+          const suffix = [basename(path)];
+          while (parent !== dirname(parent) && !existsSync(parent)) {
+            suffix.unshift(basename(parent));
+            parent = dirname(parent);
+          }
+          try {
+            real.set(path, join(realpathSync(parent), ...suffix));
+          } catch {
+            real.set(path, path);
+          }
         }
       }
       return real.get(path)!;
@@ -197,7 +208,17 @@ export function isSecretPath(
 
 function secretAt(path: string, scope: LookUpScope): boolean {
   return (
-    (within(path, scope.dataDir) && !(scope.own ?? []).some((root) => within(path, root))) ||
+    (scope.readHome &&
+      within(path, join(scope.dataDir, 'Neo')) &&
+      relative(join(scope.dataDir, 'Neo'), path).split(sep).includes('.git')) ||
+    (within(path, scope.dataDir) &&
+      !(scope.own ?? []).some((root) => within(path, root)) &&
+      !(
+        scope.readHome &&
+        within(path, join(scope.dataDir, 'Neo')) &&
+        !within(path, join(scope.dataDir, 'Neo', '.git')) &&
+        !within(path, join(scope.dataDir, 'Neo', '.coordinators'))
+      )) ||
     SECRET_DIRS.some((dir) => within(path, join(scope.home, dir))) ||
     SECRET_FILES.some(
       (file) => path === join(scope.home, file) || path.endsWith(`${sep}${file}`)
@@ -764,7 +785,11 @@ function localChange(words: readonly string[], dir: string): LocalChange | null 
 function redirectTargets(segment: string): string[] {
   const masked = segment.replace(/'[^']*'|"[^"]*"/g, (quoted) => 'x'.repeat(quoted.length));
   return [...masked.matchAll(/(?:^|[^<>&\d])\d?(?:>>?|&>)\s*([^\s;&|]+)/g)]
-    .map((match) => segment.slice(match.index + match[0].length - match[1].length).split(/\s/)[0])
+    .map((match) =>
+      segment
+        .slice(match.index + match[0].length - match[1].length, match.index + match[0].length)
+        .replace(/^(['"])(.*)\1$/, '$2')
+    )
     .filter((target) => target && !target.startsWith('&'));
 }
 
@@ -894,7 +919,10 @@ function analyzeBash(
       continue;
     }
     if (words[0] !== 'ssh') found.secret ??= secretArgument(words.slice(1), dir, scope, facts);
-    found.secret ??= secretArgument(redirectTargets(segment), dir, scope, facts);
+    found.secret ??=
+      redirectTargets(segment).find((target) =>
+        isSecretPath(target, { ...scope, cwd: dir }, facts)
+      ) ?? null;
     if (/<</.test(segment) && (SHELLS.has(words[0]) || words[0] === 'ssh'))
       found.unchecked ??= 'feeding a heredoc to a shell';
     found.sharedState ??= neoSharedStateAction(words);
@@ -946,6 +974,15 @@ function analyzeBash(
     const here = { ...scope, cwd: dir };
     const outside = (target: string) => !ownPath(resolvePath(target, here), scope, facts);
     const change = localChange(words, dir);
+    if (
+      words[0] === 'git' &&
+      change?.targets.some((target) =>
+        [resolvePath(target, here), facts.realPath(resolvePath(target, here))].some((path) =>
+          within(path, join(scope.dataDir, 'Neo'))
+        )
+      )
+    )
+      found.sharedState ??= 'changing the Neo home repository';
     if (change?.delete && change.targets.some(outside)) found.deletesOutside = true;
     if (change?.targets.some(outside) || redirectTargets(segment).some(outside))
       found.changesOutside = true;
@@ -976,6 +1013,7 @@ function readDenial(
   scope: LookUpScope,
   facts: LookUpPathFacts
 ): string | null {
+  scope = { ...scope, readHome: true };
   const text = (key: string) => (typeof input[key] === 'string' ? (input[key] as string) : '');
   if (tool === 'Read')
     return isSecretPath(text('file_path'), scope, facts) ? 'that file may hold secrets' : null;
@@ -984,6 +1022,11 @@ function readDenial(
   if (isSecretPath(root, scope, facts) || tooBroad(root, scope))
     return 'search inside a project folder, not home or a secrets folder';
   if (tool === 'Grep') return grepDenial(input);
+  if (
+    within(resolvePath(root, scope), join(scope.dataDir, 'Neo')) &&
+    /(^|\/)(\.git|\.coordinators)(\/|$)/.test(text('pattern'))
+  )
+    return 'that pattern points at secrets';
   return patternNamesSecret(text('pattern')) ||
     (pattern && isSecretPath(pattern, { ...scope, cwd: resolvePath(root, scope) }, facts))
     ? 'that pattern points at secrets'
