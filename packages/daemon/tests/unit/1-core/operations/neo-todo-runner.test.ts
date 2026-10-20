@@ -38,6 +38,8 @@ function setup(packDone: boolean | null = null) {
   });
   const calls: { name: string; input: Record<string, unknown> }[] = [];
   const told: string[] = [];
+  const toldKeys: (string | undefined)[] = [];
+  let prOpen = false;
   const askNotes: string[] = [];
   const checkedTodos: string[] = [];
   let status: unknown = null;
@@ -58,6 +60,7 @@ function setup(packDone: boolean | null = null) {
       statusLine: () => null,
       topics: () => [],
       event: () => [],
+      waiting: () => prOpen,
     },
   } satisfies NeoPack;
   const runner = createNeoTodoRunner({
@@ -72,8 +75,9 @@ function setup(packDone: boolean | null = null) {
       return completed(status);
     },
     packs: () => [pack],
-    tell: async (_ask, _todo, note) => {
+    tell: async (_ask, _todo, note, key) => {
       told.push(note);
+      toldKeys.push(key);
     },
     tellAsk: async (_ask, messageId) => {
       askNotes.push(messageId);
@@ -101,11 +105,15 @@ function setup(packDone: boolean | null = null) {
     runner,
     calls,
     told,
+    toldKeys,
     askNotes,
     checkedTodos,
     add,
     setStatus: (value: unknown) => {
       status = value;
+    },
+    setPrOpen: (value: boolean) => {
+      prOpen = value;
     },
     setSend: (value: unknown) => {
       sendResult = value;
@@ -953,6 +961,20 @@ describe('stopped worker ladder', () => {
       blockedReason: 'Its session stopped 90 min ago and nobody ticked it after 2 reminders.',
     });
     expect(h.told).toHaveLength(4);
+    const reminders = h.toldKeys.slice(1, 3);
+    expect(reminders.every(Boolean)).toBe(true);
+    expect(new Set(h.toldKeys.slice(1)).size).toBe(3);
+    h.clock.mockRestore();
+    h.db.close();
+  });
+
+  test('a todo nothing checks waits quietly while its pull request is open', async () => {
+    const h = await stopped(null);
+    h.setPrOpen(true);
+    const told = h.told.length;
+    for (const minutes of [30, 60, 90]) await h.at(minutes);
+    expect(h.told).toHaveLength(told);
+    expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
     h.clock.mockRestore();
     h.db.close();
   });
