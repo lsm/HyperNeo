@@ -13,6 +13,8 @@ import { createDaemonSnapshotOperation } from '../inventory/snapshot-operation.t
 import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inventory-repository.ts';
 import { createSessionInspectionOperation } from '../inventory/session-inspection.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
+import { NeoSessionMessageRepository } from '../../storage/repositories/neo-session-message-repository.ts';
+import { planNeoSessionMessage } from '../neo/session-messages.ts';
 import { listSessionMessages } from '../session/space-session-reads.ts';
 import {
   createAgentReferenceLookups,
@@ -80,6 +82,20 @@ export function createDatabaseOperationCatalog(
         transitionStandaloneTask(db.getDatabase(), input, () => db.notifyChange('space_tasks')),
       sessionStatus: (sessionId) => readSessionField(db, 'status', sessionId),
       sessionTitle: (sessionId) => readSessionField(db, 'title', sessionId),
+      sessionSent: (sent) => {
+        const neo = new NeoRepository(db.getDatabase());
+        const sessionId = neo.defaultBinding()?.sessionId;
+        const conversationId = neo.conversationId();
+        const message = planNeoSessionMessage(
+          sent,
+          sessionId && conversationId ? { sessionId, conversationId } : null,
+          (id) => readSessionField(db, 'title', id)
+        );
+        if (message)
+          new NeoSessionMessageRepository(db.getDatabase(), () =>
+            db.notifyChange('neo_session_messages')
+          ).record(message);
+      },
       ...(ensureAgentSession
         ? { resolveMessageAgent: createAgentSessionResolver(agentLookups, ensureAgentSession) }
         : {}),

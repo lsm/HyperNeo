@@ -838,6 +838,12 @@ describe('QueryOptionsBuilder', () => {
       expect(options.env?.CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS).toBe('1');
     });
 
+    it('tells the session its own id and the session door, so `hyperneo send` knows the sender', async () => {
+      const options = await builder.build();
+      expect(options.env?.HYPERNEO_SESSION_ID).toBe(mockSession.id);
+      expect(options.env?.HYPERNEO_SESSION_DOOR).toMatch(/session-door\.sock$/);
+    });
+
     it('should keep an env stored on the session out of the SDK env', async () => {
       mockSession.config.env = { MY_VAR: 'value' };
       const options = await builder.build();

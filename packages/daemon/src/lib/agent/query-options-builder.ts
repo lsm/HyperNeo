@@ -37,6 +37,7 @@ import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-
 import type { McpEnablementRepository } from '../../storage/repositories/mcp-enablement-repository.ts';
 import { PROVIDER_KEY_ENV_VARS } from '../credential-discovery.ts';
 import { getDataDir } from '../data-dir.ts';
+import { sessionDoorPath } from '../messaging/session-door.ts';
 import { Logger } from '../logger.ts';
 import { mergeSessionMcpServers } from '../mcp/built-in-servers.ts';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
@@ -888,6 +889,8 @@ export class QueryOptionsBuilder {
       )
     );
     mergedEnv.CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS = '1';
+    mergedEnv.HYPERNEO_SESSION_ID = this.ctx.session.id;
+    mergedEnv.HYPERNEO_SESSION_DOOR = sessionDoorPath();
 
     if (this.ctx.session.config.provider === 'anthropic' || !this.ctx.session.config.provider) {
       const authToken = process.env.ANTHROPIC_AUTH_TOKEN;
