@@ -33,6 +33,17 @@ const afterHead = await git('rev-parse', 'HEAD');
 const tracked = await git('ls-files');
 const direction = await readFile(`${root}/direction.md`, 'utf8');
 const author = await git('log', '-1', '--format=%an <%ae>');
+if (mode === 'ignore-repair') {
+  await rm(`${root}/.gitignore`);
+  await git('commit', '-am', 'Existing home without coordinator ignore');
+  const before = await git('status', '--porcelain', '--untracked-files=all');
+  const repaired = await rpc('neo.home.init');
+  const evidence = { mode, before, repaired, transcript: await readFile(`${root}/.coordinators/verify/transcript.md`, 'utf8'), trackedTranscripts: await git('ls-files', '.coordinators'), status: await git('status', '--porcelain') };
+  await writeFile(`${run}/evidence/neo-home-setup.json`, JSON.stringify(evidence, null, 2));
+  if (!repaired.ok || evidence.status || evidence.trackedTranscripts || evidence.transcript !== 'Synthetic private transcript.') throw new Error('Coordinator ignore repair failed');
+  console.log('PASS: RPC repairs the missing ignore while preserving private untracked transcripts.');
+  process.exit(0);
+}
 await git('update-ref', '-d', 'HEAD');
 await git('read-tree', '--empty');
 if (mode === 'interrupted') {

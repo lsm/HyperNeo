@@ -82,6 +82,21 @@ describe('Neo home setup', () => {
       'Verify Neo <verify@example.invalid>'
     );
   });
+  test('repairs a missing coordinator ignore without tracking transcripts', async () => {
+    await init();
+    await rm(join(root, '.gitignore'));
+    await git('commit', '-am', 'Existing home without coordinator ignore');
+    await mkdir(join(root, '.coordinators', 'neo'), { recursive: true });
+    const transcript = join(root, '.coordinators', 'neo', 'transcript.md');
+    await writeFile(transcript, 'Private conversation.');
+    expect(await init()).toMatchObject({ ok: true });
+    expect(await readFile(transcript, 'utf8')).toBe('Private conversation.');
+    expect(await git('status', '--porcelain')).toBe('');
+    expect(await git('ls-files', '.coordinators')).toBe('');
+    expect(await git('check-ignore', '.coordinators/neo/transcript.md')).toBe(
+      '.coordinators/neo/transcript.md'
+    );
+  });
   test('assigns stable project folders across renames and service recreation', async () => {
     repo.saveProject({ id: 'project-release', title: 'Release', summary: '', context: '' }, 0);
     const first = await init();
