@@ -1,3 +1,4 @@
+import { stampNeoResponseInput } from '../../src/lib/neo/response-input.ts';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { Database } from '../../src/storage/sqlite-compat.ts';
 import { NeoAskTodoRepository } from '../../src/storage/repositories/neo-ask-todo-repository.ts';
@@ -18,7 +19,8 @@ export function seedNeoWake(db: Database, conversationId: string, additions = tr
   const scheduleId = crypto.randomUUID();
   const messageId = `schedule:${scheduleId}:${Date.now()}`;
   const sdk = new SDKMessageRepository(db);
-  new NeoInputOriginRepository(db).record(
+  const origins = new NeoInputOriginRepository(db);
+  origins.record(
     { sessionId, messageId },
     { sessionId, messageId },
     Date.now(),
@@ -45,7 +47,22 @@ export function seedNeoWake(db: Database, conversationId: string, additions = tr
       .get(sessionId, uuid) as { seq: number; consumed: number };
   };
   const input = saveInput(messageId, 'PRIVATE_WAKE_INSTRUCTIONS');
-  const nextInput = () => saveInput(crypto.randomUUID(), 'An unrelated next input.');
+  let boundInput = messageId;
+  const nextInput = (steered = false) => {
+    const uuid = crypto.randomUUID();
+    if (!steered) boundInput = uuid;
+    return saveInput(uuid, 'An unrelated next input.');
+  };
+  const continuation = (uuid: string) => {
+    origins.record(
+      { sessionId, messageId: uuid },
+      { sessionId, messageId },
+      Date.now(),
+      origins.trigger(sessionId, messageId)
+    );
+    boundInput = uuid;
+    return saveInput(uuid, 'Continue the same wake.');
+  };
   db.prepare('UPDATE sessions SET processing_state = ? WHERE id = ?').run(
     '{"status":"processing"}',
     sessionId
@@ -124,17 +141,25 @@ export function seedNeoWake(db: Database, conversationId: string, additions = tr
       createdAt: Date.now(),
     });
   }
-  const finish = (text = 'Details first.\nGuide cycle complete.') => {
+  const finish = (text = 'Details first.\nGuide cycle complete.', stamped = true) => {
     const uuid = crypto.randomUUID();
+    const message = {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: text,
+      uuid,
+      session_id: sessionId,
+    } as SDKMessage;
     if (
-      !sdk.saveSDKMessage(sessionId, {
-        type: 'result',
-        subtype: 'success',
-        is_error: false,
-        result: text,
-        uuid,
-        session_id: sessionId,
-      } as SDKMessage)
+      !sdk.saveSDKMessage(
+        sessionId,
+        stamped
+          ? stampNeoResponseInput(message, sessionId, boundInput, (input) =>
+              origins.get(input.sessionId, input.messageId)
+            )
+          : message
+      )
     )
       throw new Error('Terminal fixture rejected');
     const result = db
@@ -144,5 +169,5 @@ export function seedNeoWake(db: Database, conversationId: string, additions = tr
       .get(sessionId, uuid) as { consumed: number; timestamp: string };
     return { ...result, uuid };
   };
-  return { goal, scheduleId, messageId, expected, input, nextInput, finish };
+  return { goal, scheduleId, messageId, expected, input, nextInput, continuation, finish };
 }

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 import { seedNeoWake } from '../../../helpers/neo-wake-corpus.ts';
+import { NeoConversationWakeRepository } from '../../../../src/storage/repositories/neo-conversation-wake-repository.ts';
 import { NeoConversationReader } from '../../../../src/storage/repositories/neo-conversation-reader.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { createNeoConversationReadOperation } from '../../../../src/lib/neo/conversation-read-operation.ts';
@@ -136,6 +137,61 @@ describe('scheduled wakes in the public conversation', () => {
       reader.read({ conversationId, limit: 100 }).items.find((item) => item.role === 'wake')
     ).toMatchObject({
       wake: { settledAt: Date.parse(terminal.timestamp), summary: 'Guide cycle complete.' },
+    });
+  });
+
+  test('inherited question and recovery triggers do not create extra wake rows', () => {
+    const fixture = seedNeoWake(db.getDatabase(), conversationId);
+    fixture.continuation('neo-question:answered');
+    fixture.continuation(`restart-recovery:${fixture.messageId}`);
+    const reader = new NeoConversationReader(db.getDatabase());
+    expect(
+      reader.read({ conversationId, limit: 100 }).items.filter((row) => row.role === 'wake')
+    ).toHaveLength(1);
+    expect(
+      new NeoConversationWakeRepository(db.getDatabase()).latest(conversationId, 30)
+    ).toHaveLength(1);
+  });
+
+  test('a recovered wake settles through its recorded origin without creating a new wake', () => {
+    const fixture = seedNeoWake(db.getDatabase(), conversationId, false);
+    fixture.continuation(`restart-recovery:${fixture.messageId}`);
+    const terminal = fixture.finish();
+    const wakes = new NeoConversationReader(db.getDatabase())
+      .read({ conversationId, limit: 100 })
+      .items.filter((row) => row.role === 'wake');
+    expect(wakes).toHaveLength(1);
+    expect(wakes[0]).toMatchObject({
+      wake: { settledAt: Date.parse(terminal.timestamp), summary: 'Guide cycle complete.' },
+    });
+  });
+
+  test('a terminal bound to the wake settles it after a steered input', () => {
+    const fixture = seedNeoWake(db.getDatabase(), conversationId, false);
+    fixture.nextInput(true);
+    const terminal = fixture.finish();
+    expect(
+      new NeoConversationWakeRepository(db.getDatabase()).get(conversationId, fixture.messageId)
+    ).toMatchObject({
+      settledAt: Date.parse(terminal.timestamp),
+      summary: 'Guide cycle complete.',
+    });
+  });
+
+  test('unstamped results use the next independent input as a conservative boundary', () => {
+    const first = seedNeoWake(db.getDatabase(), conversationId, false);
+    const terminal = first.finish('Unstamped close.', false);
+    const unfinished = seedNeoWake(db.getDatabase(), conversationId, false);
+    unfinished.nextInput();
+    unfinished.finish('Other input.', false);
+    const wakes = new NeoConversationWakeRepository(db.getDatabase());
+    expect(wakes.get(conversationId, first.messageId)).toMatchObject({
+      settledAt: Date.parse(terminal.timestamp),
+      summary: 'Unstamped close.',
+    });
+    expect(wakes.get(conversationId, unfinished.messageId)).toMatchObject({
+      settledAt: null,
+      summary: null,
     });
   });
 
