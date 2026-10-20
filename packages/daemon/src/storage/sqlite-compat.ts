@@ -94,12 +94,15 @@ if (isBun) {
         immediate?: (...args: TArgs) => TReturn;
         exclusive?: (...args: TArgs) => TReturn;
       } & ((...args: TArgs) => TReturn);
-      if (mode === 'deferred') return txn;
-      const variant = mode === 'immediate' ? txn.immediate : txn.exclusive;
+      const variant =
+        mode === 'deferred' ? txn : mode === 'immediate' ? txn.immediate : txn.exclusive;
       if (!variant) {
         throw new Error(`bun:sqlite transaction does not expose the ${mode}() variant`);
       }
-      return (...args: TArgs) => variant(...args);
+      const observer = this.queryObserver;
+      if (!observer) return mode === 'deferred' ? txn : (...args: TArgs) => variant(...args);
+      return (...args: TArgs) =>
+        observeExecExecution(observer, 'transaction', () => variant(...args), 'transaction');
     }
 
     override close(): void {

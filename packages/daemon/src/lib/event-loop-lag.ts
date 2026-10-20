@@ -9,6 +9,42 @@ export const EVENT_LOOP_LAG_TICK_MS = 250;
 export const EVENT_LOOP_LAG_WARN_MS = 1_000;
 
 type SlowestQuery = { durationMs: number; sql: string } | null;
+type ResourceSample = {
+  cpuMs: number;
+  cpuSampler: 'thread' | 'process';
+  majorFaults: number;
+  blockWrites: number;
+  voluntarySwitches: number;
+};
+
+function sampleProcessResources(): ResourceSample | undefined {
+  try {
+    const usage = process.resourceUsage();
+    const thread = (process as { threadCpuUsage?: () => NodeJS.CpuUsage }).threadCpuUsage?.();
+    const cpu = thread ?? process.cpuUsage();
+    return {
+      cpuMs: (cpu.user + cpu.system) / 1000,
+      cpuSampler: thread ? 'thread' : 'process',
+      majorFaults: usage.majorPageFault,
+      blockWrites: usage.fsWrite,
+      voluntarySwitches: usage.voluntaryContextSwitches,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function resourceDelta(before: ResourceSample, after: ResourceSample, wallMs: number) {
+  const threadCpuMs = Math.round(after.cpuMs - before.cpuMs);
+  return {
+    cpuSampler: after.cpuSampler,
+    threadCpuMs,
+    offCpuMs: Math.max(0, Math.round(wallMs) - threadCpuMs),
+    majorPageFaults: after.majorFaults - before.majorFaults,
+    blockWrites: after.blockWrites - before.blockWrites,
+    voluntaryContextSwitches: after.voluntarySwitches - before.voluntarySwitches,
+  };
+}
 
 export function describeEventLoopLag(
   lagMs: number,
@@ -32,6 +68,7 @@ export function startEventLoopLagLog(
     sampleHeap?: () => number;
     onDiagnostic?: (report: Record<string, unknown>) => void;
     sampleStacks?: LagSamplingTick;
+    sampleResources?: () => ResourceSample | undefined;
   } = {}
 ): () => void {
   const now = deps.now ?? (() => performance.now());
@@ -53,7 +90,9 @@ export function startEventLoopLagLog(
       if (performance.now() - started > 1) normalHeapSampling = false;
     }
   };
+  const sampleResources = deps.sampleResources ?? sampleProcessResources;
   let beforeHeap = heap();
+  let beforeResources = sampleResources();
   let last = now();
   let heapAt = last;
   const timer = setInterval(() => {
@@ -64,6 +103,7 @@ export function startEventLoopLagLog(
     const recent = activity.drain(last);
     const afterHeap = line || normalHeapSampling ? heap() : undefined;
     const samplingProfile = deps.sampleStacks?.(line !== null, at);
+    const afterResources = sampleResources();
     if (line) {
       warn(line);
       const report = {
@@ -80,6 +120,9 @@ export function startEventLoopLagLog(
           beforeHeap === undefined || afterHeap === undefined ? undefined : afterHeap - beforeHeap,
         heapBeforeAgeMs: at - heapAt,
         heapSampling: normalHeapSampling ? 'each_tick' : 'blocks_only',
+        ...(beforeResources && afterResources
+          ? { resources: resourceDelta(beforeResources, afterResources, at - last) }
+          : {}),
       };
       if (deps.onDiagnostic) deps.onDiagnostic(report);
       else
@@ -91,6 +134,7 @@ export function startEventLoopLagLog(
           metadata: report,
         });
     }
+    beforeResources = afterResources;
     if (afterHeap !== undefined) {
       beforeHeap = afterHeap;
       heapAt = at;

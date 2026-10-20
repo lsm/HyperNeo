@@ -4,7 +4,7 @@ import {
   type SQLiteQueryDescriptor,
 } from './sqlite-query-normalization.ts';
 
-export type SQLiteQueryOperation = 'get' | 'all' | 'run' | 'iterate' | 'exec';
+export type SQLiteQueryOperation = 'get' | 'all' | 'run' | 'iterate' | 'exec' | 'transaction';
 
 export interface SQLiteQueryObservabilityOptions {
   slowThresholdMs: number;
@@ -90,7 +90,7 @@ export interface SQLiteQueryObservabilityDeps {
 }
 
 function emptyOperationCounts(): Record<SQLiteQueryOperation, number> {
-  return { get: 0, all: 0, run: 0, iterate: 0, exec: 0 };
+  return { get: 0, all: 0, run: 0, iterate: 0, exec: 0, transaction: 0 };
 }
 
 function roundMs(value: number): number {
@@ -482,7 +482,8 @@ export function createObservedStatementProxy<T extends object>(
 export function observeExecExecution<T>(
   observer: SQLiteQueryObserver,
   sql: string,
-  invoke: () => T
+  invoke: () => T,
+  operation: 'exec' | 'transaction' = 'exec'
 ): T {
   const descriptor = createSQLiteQueryDescriptor(sql);
   const start = performance.now();
@@ -490,7 +491,7 @@ export function observeExecExecution<T>(
     const result = invoke();
     observer.recordExecution({
       descriptor,
-      operation: 'exec',
+      operation,
       durationMs: performance.now() - start,
       outcome: 'ok',
     });
@@ -498,7 +499,7 @@ export function observeExecExecution<T>(
   } catch (error) {
     observer.recordExecution({
       descriptor,
-      operation: 'exec',
+      operation,
       durationMs: performance.now() - start,
       outcome: 'error',
     });

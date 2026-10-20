@@ -3,6 +3,7 @@ import { basename, join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
+import { runLagPhase } from '../event-loop-activity.ts';
 import {
   purgeWorkFeedSessions,
   readWorkFeedOffsets,
@@ -167,27 +168,32 @@ export const runClaudeFeed = (superpipe({})('work-feed-claude') as PipelineAPI)
   .pipe(readHyperneoSdkSessions, 'db', 'hyperneo')
   .pipe(
     (db: BunDatabase, hyperneo: ReadonlySet<string>) =>
-      purgeWorkFeedSessions(db, 'claude', [...hyperneo]),
+      runLagPhase('feed:claude:purge', () => purgeWorkFeedSessions(db, 'claude', [...hyperneo])),
     ['db', 'hyperneo'],
     'purged'
   )
   .pipe(
     (db: BunDatabase, root: string, hyperneo: ReadonlySet<string>) =>
-      pruneVanishedFeeds(db, root, claudeFeedSource(hyperneo)),
+      runLagPhase('feed:claude:prune', () =>
+        pruneVanishedFeeds(db, root, claudeFeedSource(hyperneo))
+      ),
     ['db', 'root', 'hyperneo'],
     'pruned'
   )
   .pipe(
     (db: BunDatabase, root: string, now: number) =>
-      withKnownFeedFiles(
-        listFeedFiles(root, now - FEED_WINDOW_MS, TRANSCRIPT_DEPTH),
-        pendingFeedPaths(root, readWorkFeedOffsets(db))
+      runLagPhase('feed:claude:list', () =>
+        withKnownFeedFiles(
+          listFeedFiles(root, now - FEED_WINDOW_MS, TRANSCRIPT_DEPTH),
+          pendingFeedPaths(root, readWorkFeedOffsets(db))
+        )
       ),
     ['db', 'root', 'now'],
     'files'
   )
   .pipe(
-    (db: BunDatabase, files: FeedFile[]) => changedFeedFiles(files, readWorkFeedOffsets(db)),
+    (db: BunDatabase, files: FeedFile[]) =>
+      runLagPhase('feed:claude:changed', () => changedFeedFiles(files, readWorkFeedOffsets(db))),
     ['db', 'files'],
     'changed'
   )

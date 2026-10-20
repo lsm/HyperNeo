@@ -8,5 +8,3 @@ Your durable state is asks, their todos and your questions. Keep it current; you
 Messages arriving while you work belong to this turn; answer each.
 
 A `<session-message>` is from another session, not the human. Reply with message.send to its from-session, or work.send when it is adapter:id. Relay human decisions as `Human answered question <id>: "<answer>". Verify with neo.question.get <id>.`
-
-Everything for the human goes through neo.publication.publish or neo.question.ask. Plain assistant text shows only in your session view, not in the human's chat. Write in the human's language.

@@ -2,6 +2,7 @@ import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from
 import { open, readdir, stat } from 'node:fs/promises';
 import { join, sep } from 'node:path';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
+import { runLagPhase } from '../event-loop-activity.ts';
 import {
   dropWorkFeedSession,
   rereadWorkFeedPaths,
@@ -205,18 +206,26 @@ export async function feedWorkFiles<Meta extends FeedFileMeta>(
   for (const file of files) {
     if (Date.now() - started >= budgetMs) break;
     const known = offsets.get(file.path);
-    const meta = source.meta(file.path, readFeedHead(file.path));
+    const meta = runLagPhase(`feed:${source.kind}:head`, () =>
+      source.meta(file.path, readFeedHead(file.path))
+    );
     let from = known && known.offset <= file.size ? known.offset : 0;
     for (;;) {
       const { lines, next } = meta
-        ? readFeedLines(file.path, from, file.size, CHUNK_BYTES)
+        ? runLagPhase(`feed:${source.kind}:read`, () =>
+            readFeedLines(file.path, from, file.size, CHUNK_BYTES)
+          )
         : { lines: [], next: file.size };
-      const found = meta ? source.turns(lines, meta) : [];
-      saveWorkFeedChunk(db, source.kind, meta?.title ?? '', found, file.path, {
-        offset: next,
-        size: next >= file.size ? file.size : -1,
-        mtime: file.mtime,
-      });
+      const found = meta
+        ? runLagPhase(`feed:${source.kind}:parse`, () => source.turns(lines, meta))
+        : [];
+      runLagPhase(`feed:${source.kind}:save`, () =>
+        saveWorkFeedChunk(db, source.kind, meta?.title ?? '', found, file.path, {
+          offset: next,
+          size: next >= file.size ? file.size : -1,
+          mtime: file.mtime,
+        })
+      );
       turns += found.length;
       await yieldToLoop();
       if (next >= file.size || next === from || Date.now() - started >= budgetMs) break;
