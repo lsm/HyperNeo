@@ -125,9 +125,10 @@ export function planNeoQuestion(
     if (path.reason) return fail(path.reason.reason);
     const pathText = confirm.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const delimiter = String.raw`[\s"'\x60()\[\]{}:;,!?<>]`;
-    const shownPath = new RegExp(`(?:^|${delimiter})${pathText}(?=$|${delimiter})`, 'u').test(
-      input.text
-    );
+    const shownPath = new RegExp(
+      `(?:^|${delimiter})(\\*{1,3}|_{1,3}|~~)?${pathText}\\1(?=$|${delimiter})`,
+      'u'
+    ).test(input.text);
     const shownHash = new RegExp(`(?<![a-f0-9])${confirm.sha256}(?![a-f0-9])`, 'iu').test(
       input.text
     );

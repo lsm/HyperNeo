@@ -205,7 +205,9 @@ against only that same owned synthetic DB and run `after`, then `restart`.
 The legacy text/answer stays intact with a null binding; new proposals persist.
 Repeat with `boundaries` to check that a path shown only as a longer filename or
 inside another path, and a hash shown only in a longer hex string, are refused.
-Exact path/hash tokens surrounded by Markdown/prose punctuation must be accepted.
+Exact path/hash tokens surrounded by Markdown/prose punctuation must be accepted,
+including balanced italic, bold and strike markers; underscore filename suffixes
+remain near misses.
 `evidence/neo-question-confirmation-boundaries.json` retains every response.
 The additive/idempotent legacy-answer migration contract runs in CI.
 Never copy or alter a real DB for this journey. Stop with `stop.sh` afterwards.
