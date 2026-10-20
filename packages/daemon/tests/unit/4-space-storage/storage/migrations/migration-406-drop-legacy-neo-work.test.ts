@@ -32,7 +32,9 @@ describe('runMigration406', () => {
     expect(tables(db)).toEqual(['neo_asks', 'neo_todos']);
     expect(db.prepare('SELECT id FROM neo_asks').all()).toEqual([{ id: 'live' }]);
   });
+});
 
+describe('createTables', () => {
   test('a restart does not bring any legacy table back', () => {
     const db = new Database(':memory:');
     const legacy = () =>
