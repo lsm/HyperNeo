@@ -99,6 +99,23 @@ describe('Neo home operations', () => {
       expect(await readFile(join(root, 'notes.txt'), 'utf8')).toBe('Human notes.');
     }
   );
+  test.each([false, true])(
+    'first save initializes a clean home and preserves ignored files (git metadata: %s)',
+    async (metadata) => {
+      if (!metadata) await rm(join(root, '.git'), { recursive: true });
+      await mkdir(join(root, 'human-private'));
+      await mkdir(join(root, '.coordinators', 'neo'), { recursive: true });
+      await writeFile(join(root, '.gitignore'), 'human-private/\n');
+      await writeFile(join(root, 'human-private', 'notes.md'), 'Private notes.');
+      await writeFile(join(root, '.coordinators', 'neo', 'transcript.md'), 'Private conversation.');
+      expect(await save('digest.md')).toMatchObject({ ok: true });
+      expect(await git('show', 'HEAD:digest.md')).toBe('Release is ready.');
+      expect(await git('status', '--porcelain')).toBe('');
+      expect(await readFile(join(root, 'human-private', 'notes.md'), 'utf8')).toBe(
+        'Private notes.'
+      );
+    }
+  );
   test('reading an uninitialized home does not bootstrap files or commits', async () => {
     expect(await call('neo.home.read', { path: 'README.md' })).toMatchObject({ ok: false });
     expect(await git('ls-files')).toBe('');

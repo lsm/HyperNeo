@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import type { HookInput } from '@anthropic-ai/claude-agent-sdk';
 import { neoToolGuard } from '../../../packages/daemon/src/lib/neo/look-up-guard.ts';
 const [port, run] = process.argv.slice(2);
@@ -39,4 +39,17 @@ const evidence = { saved, before, after, decisions, branches, notes: await readF
 await writeFile(`${run}/evidence/neo-home-bootstrap-guard.json`, JSON.stringify(evidence, null, 2));
 console.log(JSON.stringify(evidence, null, 2));
 if (saved.ok || !saved.reason?.startsWith('dirty') || JSON.stringify(before) !== JSON.stringify(after) || decisions.some(({ denied }) => !denied) || branches || evidence.notes !== 'Human notes.\n') throw new Error('Refused home save or legacy git boundary changed the home repository');
-console.log('PASS: dirty first save leaves the home unchanged; variable-indirected legacy git mutations are denied before execution.');
+await rm(`${root}/.git`, { recursive: true, force: true });
+await mkdir(`${root}/human-private`, { recursive: true });
+await rename(`${root}/notes.txt`, `${root}/human-private/notes.md`);
+await writeFile(`${root}/.gitignore`, 'human-private/\n');
+await mkdir(`${root}/.coordinators/verify`, { recursive: true });
+await writeFile(`${root}/.coordinators/verify/transcript.md`, 'Private conversation.');
+const cleanChild = Bun.spawn(['bun', '.claude/skills/verify/rpc.ts', 'neo.home.save', JSON.stringify({ path: 'digest.md', content: 'Ready.', message: 'Save digest' })], { env: { ...process.env, VERIFY_PORT: port }, stdout: 'pipe', stderr: 'inherit' });
+const cleanResponse = JSON.parse(await new Response(cleanChild.stdout).text());
+if (await cleanChild.exited) throw new Error(JSON.stringify(cleanResponse));
+const cleanSaved = cleanResponse.reply.value ?? cleanResponse.reply;
+const tracked = await shell(`git -C '${root}' ls-files`);
+await writeFile(`${run}/evidence/neo-home-bootstrap-guard.json`, JSON.stringify({ ...evidence, cleanSaved, tracked }, null, 2));
+if (!cleanSaved.ok || !cleanSaved.commit || tracked.includes('human-private') || tracked.includes('.coordinators') || await readFile(`${root}/digest.md`, 'utf8') !== 'Ready.') throw new Error('Clean first-save bootstrap failed');
+console.log('PASS: dirty first save leaves the home unchanged; variable-indirected legacy git mutations are denied; clean first save commits while private files remain ignored.');

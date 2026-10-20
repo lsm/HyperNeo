@@ -507,6 +507,17 @@ adds its journey here.
     turn are needed. This checks the hook and operation doors; GUI rendering is not
     covered. For the home_path migration, run the synthetic upgrade/restart journey 9.
 
+    On another fresh run, execute
+    `bun .claude/skills/verify/neo-home-bootstrap-guard.ts <port> "$RUN"`.
+    It places an untracked note before the first save: refusal must leave exactly
+    the same files and no git metadata. It then invokes the production PreToolUse
+    guard from a synthetic legacy folder, executing Bash only when allowed.
+    Both `$HOME`-indirected git-dir forms must be denied and no unauthorized
+    branch may exist. The helper then checks that a clean first save initializes
+    and commits the digest while private files and transcripts remain ignored.
+    Evidence: `evidence/neo-home-bootstrap-guard.json`.
+    This legacy-folder check exercises the real hook and shell, not an SDK turn.
+
     To verify the guard wiring in a real Neo SDK turn, launch with
     `VERIFY_MOCK=neo-home-api.ts .claude/skills/verify/launch.sh <port> "$RUN"`,
     run `neo-home.ts` as above to initialize the synthetic home, then run
@@ -514,6 +525,7 @@ adds its journey here.
     ignored private draft and a synthetic mandate, then checks typed refusals for
     case-variant protected saves, directories and file-shaped parents, with HEAD
     and original content unchanged. Evidence: `evidence/neo-home-review.json`.
+
     Then run `bun .claude/skills/verify/neo-home-sdk.ts <port> "$RUN"`. It registers the local
     mock provider in this run's DB, opens Neo and sends `verify-home-guard-sdk`.
     The scripted model calls two Reads, four Greps, two Globs and five Bash tools. End state:

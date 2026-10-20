@@ -1,5 +1,6 @@
-import { lstat, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
+import { tmpdir } from 'node:os';
 import type { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
 
@@ -106,7 +107,7 @@ export class NeoHomeRepository {
     return true;
   }
 
-  private async initialize(): Promise<HomeResult> {
+  private async initialize(saving = false): Promise<HomeResult> {
     if (!(await this.safePath('.git')))
       return refused('invalid_path: the home repo cannot use symlinks.');
     const metadata = await lstat(join(this.root, '.git')).catch((error) => {
@@ -145,6 +146,22 @@ export class NeoHomeRepository {
       if (metadata && (await this.git(['diff', '--cached', '--name-only'])).text)
         return refused('dirty: staged changes must be reviewed by the human first.');
       await mkdir(this.root, { recursive: true });
+      if (saving && !hasHead) {
+        const scratch = metadata ? null : await mkdtemp(join(tmpdir(), 'neo-home-preflight-'));
+        try {
+          if (scratch) await this.git(['init', '--bare', '--quiet', scratch]);
+          const prefix = scratch ? ['--git-dir', scratch, '--work-tree', this.root] : [];
+          const untracked = (
+            await this.git([...prefix, 'ls-files', '--others', '--exclude-standard', '-z'])
+          ).text
+            .split('\0')
+            .filter(Boolean);
+          if (untracked.some((path) => !documents.has(path) && !path.startsWith('.coordinators/')))
+            return refused('dirty: the home repository has changes outside the operation.');
+        } finally {
+          if (scratch) await rm(scratch, { recursive: true, force: true });
+        }
+      }
       await this.git(['init', '--quiet']);
       for (const [path, content] of documents) {
         if (path === '.gitignore') {
@@ -210,7 +227,7 @@ export class NeoHomeRepository {
 
   save(input: { path: string; content: string; message: string }): Promise<HomeResult> {
     return this.serial(async () => {
-      const initialized = await this.initialize();
+      const initialized = await this.initialize(true);
       if (!initialized.ok) return initialized;
       if (!(await this.safePath(input.path, true)))
         return refused('invalid_path: use a regular home document without symlinks.');

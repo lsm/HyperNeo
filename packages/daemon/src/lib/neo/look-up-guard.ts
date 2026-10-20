@@ -1034,12 +1034,24 @@ function analyzeBash(
     const here = { ...scope, cwd: dir };
     const outside = (target: string) => !ownPath(resolvePath(target, here), scope, facts);
     const change = localChange(words, dir);
-    if (words[0] === 'git' && change)
+    if (words[0] === 'git' && change) {
       change.targets.push(
         ...raw.flatMap((word) =>
           /^GIT_(DIR|WORK_TREE)=/.test(word) ? [word.slice(word.indexOf('=') + 1)] : []
-        )
+        ),
+        ...words
+          .slice(0, gitVerb(words).at)
+          .flatMap((word, index) =>
+            word === '--git-dir' || word === '--work-tree'
+              ? [words[index + 1] ?? '']
+              : /^--(git-dir|work-tree)=/.test(word)
+                ? [word.slice(word.indexOf('=') + 1)]
+                : []
+          )
       );
+      if (change.targets.some((target) => /[$`]/.test(target)))
+        found.unchecked ??= 'a git repository path with shell variables';
+    }
     found.secret ??= change?.targets.find((target) => isSecretPath(target, here, facts)) ?? null;
     if (
       words[0] === 'git' &&
