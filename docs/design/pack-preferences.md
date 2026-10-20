@@ -281,8 +281,19 @@ The qlark#19 prevention comes first: stored settings and this install's answers 
     The edits go sentence by sentence; line ranges are only locators, because lines 24 and 25 are shared. The sentence "Never install apps, add reviewers or change repository settings yourself; that is the human's own GitHub setup." stays whole. The Claude Desktop question that follows ("in the same round of questions", lines 28-29) is reworded to stand alone.
 
 
-Session-strategy extension (after the settings human-answer persistence slice and
-existing dispatch prerequisites; these do not gate the merge-safety slices above):
+**Persistence prerequisite ([#7892](https://github.com/lsm/HyperNeo/issues/7892),
+scheduled immediately after slice 3).** `pack.preferences.ask` takes an ask id,
+a retry request id and typed setting values. It validates them, generates the
+question text showing the exact values, and atomically stores the question with
+its immutable proposal. The human's yes applies only those stored values through
+the trusted question-answer path; `pack.preferences.applyAnswer` retries by
+question id only, accepting no caller-supplied replacement values. Agent setters
+stay forbidden. This is forward-only: an old question without a bound proposal
+cannot authorize settings. Slice 11's generated settings questions and slice 18's
+strategy question use this same persistence path.
+
+Session-strategy extension (after #7892 and existing dispatch prerequisites;
+these do not gate the merge-safety slices above):
 
 15. **Build the session strategy declaration and pure dispatch planner.** Declare
     the repo enum and explicit pre-answer `long_lived` behavior. Plan reuse, queue
@@ -294,6 +305,6 @@ existing dispatch prerequisites; these do not gate the merge-safety slices above
     the planner before `todo-runner` invokes the driver, give new long-lived
     sessions work-type names, and settle assignments without deleting history.
 18. **Wire the first-dispatch strategy question.** Generate the one-per-repo
-    question and bind its typed proposal through human-answer persistence. Prove
+    question and bind its typed proposal through the #7892 persistence path above. Prove
     pending-answer `long_lived` behavior and subsequent dispatch using the saved
     choice. No agent setter rights are added.
