@@ -27,7 +27,12 @@ import {
 } from './message-status.ts';
 import { neoAppLabel, neoSessionKind, neoSessionLink } from './work-driver.ts';
 import { NeoSessionMark } from './NeoCardParts.tsx';
-import { type NeoPendingAsk, type NeoQuote, neoQuoteExcerpt } from './neo-intake.ts';
+import {
+  type NeoPendingAsk,
+  type NeoQuote,
+  neoPublicationQuoteExcerpt,
+  neoQuoteExcerpt,
+} from './neo-intake.ts';
 import type {
   NeoPublicConversation as Conversation,
   NeoPublicEntry,
@@ -183,7 +188,7 @@ export function neoMessageReplyLabels(
           ? [
               [
                 `message:${entry.publication.publicationId}`,
-                { label: neoQuoteExcerpt(entry.publication.shortText), askId: '' },
+                { label: neoPublicationQuoteExcerpt(entry.publication), askId: '' },
               ] as const,
             ]
           : []
@@ -420,6 +425,7 @@ function PublicEntry({
   const hasDetails = !!short && !!full && full !== short;
   const copyText = ask ? publicAskText(ask.content) : full || short;
   const text = ask ? publicAskText(ask.content) : hasDetails ? short : full || short;
+  const quoteText = publication ? neoPublicationQuoteExcerpt(publication) : text;
   const photos = ask ? publicAskPhotos(ask.content) : [];
   const time = messageTime((ask ?? publication)!.createdAt);
   const author = publication?.producerInput.sessionId ? 'Neo' : t('chat.you');
@@ -634,7 +640,7 @@ function PublicEntry({
           disabled={!text.trim()}
           copiedAt={copiedAt}
         />
-        {onQuote && (ask ? text : full || text).trim() && (
+        {onQuote && quoteText.trim() && (
           <button
             type="button"
             aria-label={t(ask ? 'chat.replyYours' : 'chat.replyNeo')}
@@ -643,7 +649,7 @@ function PublicEntry({
             onClick={() =>
               onQuote({
                 author: ask ? 'You' : 'Neo',
-                text: ask ? text : full || text,
+                text: quoteText,
                 anchor,
                 replyTo,
               })
@@ -675,7 +681,7 @@ function PublicEntry({
                 }),
               share: () => void navigator.share?.({ text: copyText }).catch(() => {}),
               reply: () =>
-                onQuote?.({ author: ask ? 'You' : 'Neo', text: copyText, anchor, replyTo }),
+                onQuote?.({ author: ask ? 'You' : 'Neo', text: quoteText, anchor, replyTo }),
             })[action]()
           }
         />
