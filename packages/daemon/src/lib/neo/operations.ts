@@ -1,4 +1,8 @@
 import { NeoSessionMessageRepository } from '../../storage/repositories/neo-session-message-repository.ts';
+import {
+  NeoConversationWakeRepository,
+  NeoConversationWakeSchema,
+} from '../../storage/repositories/neo-conversation-wake-repository.ts';
 import { neoTurnRequestKey } from './request-key.ts';
 import { readNeoWorking } from './working.ts';
 import { hostname } from 'node:os';
@@ -134,6 +138,7 @@ const SnapshotOk = z.object({
     .max(NEO_SESSION_MESSAGES_SHOWN)
     .optional(),
   mutedSessions: z.array(z.string()).max(NEO_SESSION_MUTES_MAX).optional(),
+  wakes: z.array(NeoConversationWakeSchema).optional(),
   todoAsks: z.array(NeoAskEntrySchema).optional(),
   packRows: z
     .array(
@@ -408,6 +413,10 @@ export function createNeoOperations(service: NeoService) {
       ...(caller.source === 'rpc'
         ? {
             sessionMessages: new NeoSessionMessageRepository(service.db.getDatabase()).latest(
+              service.repo.conversationId() ?? '',
+              NEO_SESSION_MESSAGES_SHOWN
+            ),
+            wakes: new NeoConversationWakeRepository(service.db.getDatabase()).latest(
               service.repo.conversationId() ?? '',
               NEO_SESSION_MESSAGES_SHOWN
             ),
