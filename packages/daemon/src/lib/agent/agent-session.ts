@@ -2923,10 +2923,13 @@ export class AgentSession
               pinned
             );
             if (!provider) {
-              const message = `Provider '${pinned ?? 'anthropic'}' is not registered. Log in or add an API key for it under Providers, or switch this session to another provider.`;
+              const providerId = pinned ?? 'anthropic';
+              const message = `Provider '${providerId}' is not registered. Log in or add an API key for it under Providers, or switch this session to another provider.`;
               await this.errorManager.handleError(
                 this.session.id,
-                new Error(message),
+                new Error(
+                  `Provider '${providerId}' is not registered; cannot prepare environment for session '${this.session.id}'`
+                ),
                 ErrorCategory.MODEL,
                 message,
                 this.stateManager.getState()

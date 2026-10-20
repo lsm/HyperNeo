@@ -6359,7 +6359,7 @@ describe('AgentSession', () => {
       }
     });
 
-    it('fails once and tells the user when an unpinned session has no registered provider', async () => {
+    it('fails each delivery once and tells the user every time when an unpinned session has no registered provider', async () => {
       const db = await createTestDb();
       const registry = initializeProviders();
       const anthropic = registry.get('anthropic');
@@ -6396,19 +6396,23 @@ describe('AgentSession', () => {
           { autoReplayPendingMessages: false }
         );
         agentSession.queryPromise = new Promise<void>(() => {});
-        const delivery = agentSession.driveDeliveryTurn(
-          steerUuid,
-          steerContent,
-          null,
-          false,
-          () => true
-        );
-        await expect(delivery).rejects.toBeInstanceOf(MessageDeliveryTerminalTurnError);
-        await expect(delivery).rejects.toThrow("Provider 'anthropic' is not registered");
+        for (let attempt = 0; attempt < 4; attempt++) {
+          const delivery = agentSession.driveDeliveryTurn(
+            steerUuid,
+            steerContent,
+            null,
+            false,
+            () => true
+          );
+          await expect(delivery).rejects.toBeInstanceOf(MessageDeliveryTerminalTurnError);
+          await expect(delivery).rejects.toThrow("Provider 'anthropic' is not registered");
+        }
         await new Promise((resolve) => setTimeout(resolve, 0));
-        expect(shown).toEqual([
-          "Provider 'anthropic' is not registered. Log in or add an API key for it under Providers, or switch this session to another provider.",
-        ]);
+        expect(shown).toEqual(
+          Array(4).fill(
+            "Provider 'anthropic' is not registered. Log in or add an API key for it under Providers, or switch this session to another provider."
+          )
+        );
       } finally {
         markBuiltInProviderEnabled('anthropic');
         if (anthropic) registry.register(anthropic);
