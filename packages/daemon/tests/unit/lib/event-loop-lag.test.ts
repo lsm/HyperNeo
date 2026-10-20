@@ -64,3 +64,30 @@ describe('takeSlowestQuery', () => {
     expect(takeSlowestQuery()).toBeNull();
   });
 });
+
+describe('Event-loop lag diagnostic report', () => {
+  test('keeps the lag line stable while reporting before/after heap and phase names', async () => {
+    const diagnostics: Record<string, unknown>[] = [];
+    const clock = [0, 10, 1510, 1520];
+    const heaps = [900_000_000, 910_000_000, 100_000_000, 101_000_000];
+    const lines: string[] = [];
+    const stop = startEventLoopLagLog((line) => lines.push(line), {
+      now: () => clock.shift() ?? 1520,
+      tickMs: 10,
+      takeSlowest: () => null,
+      sampleHeap: () => heaps.shift() ?? 101_000_000,
+      onDiagnostic: (report) => diagnostics.push(report),
+    });
+    await settle();
+    stop();
+    expect(lines).toEqual(['[Daemon] Event loop blocked for 1490ms']);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({
+      lagMs: 1490,
+      heapBeforeBytes: 910_000_000,
+      heapAfterBytes: 100_000_000,
+      heapDeltaBytes: -810_000_000,
+      activities: [],
+    });
+  });
+});
