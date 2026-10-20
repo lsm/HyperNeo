@@ -119,7 +119,7 @@ A hold is an explicit "waiting on the human" mark: `pack_coding_pr_holds(repo, n
 
 **Created when** one of these happens:
 - a PR matches `humanSignoff`, judged on its labels and the path list for its current head;
-- the repo's stored policy is `human`. A repo that has no answer yet gets no per-PR holds or questions. It shows `waiting_human`, gets no merge nudges, and gets only the one first-use policy question (slice 9). Before slice 9 lands, a repo the human hasn't answered for, in slice 2's question or later, just stays `waiting_human`.
+- the repo's stored policy is `human`. A repo that has no answer yet gets no per-PR holds or questions. It shows `waiting_human`, gets no merge nudges, and gets only the one first-use policy question (slice 11). Before slice 11 lands, a repo the human hasn't answered for, in slice 2's question or later, just stays `waiting_human`.
 - Neo or a worker holds it through an operation, for example a design doc awaiting approval.
 
 A hold's linked Neo question (`neo_questions`, `m387-neo-ask-todo-tables.ts:81`) opens only when the PR is otherwise ready to merge: not a draft, nothing failing, no conflict, no requested changes, CI green, and in a `review_bot` repo, approved by `reviewBot`. It names the PR and the head as a yes/no question: "Approve lsm/qlark#19 at 9f88dc9 for merge?" A held PR that isn't ready yet shows its normal fix-it state and asks nothing.
@@ -141,6 +141,16 @@ A hold's linked Neo question (`neo_questions`, `m387-neo-ask-todo-tables.ts:81`)
 - **`whole_pr`:** an approval covers the PR from `approved_head` on. Later heads stay approved, and Neo doesn't ask again for that PR; a new `humanSignoff` match on a later head doesn't re-hold it either.
 
 Everything else in this doc reads "covered by the approval" and doesn't depend on the choice. A new head never lifts an unapproved hold on its own. `pack.coding.pr.release` (human only) sets `approved_head` the same way as a "yes".
+
+## Worker merge check
+
+Suppressing nudge text isn't enough: the worker merges by itself. Whenever a todo's `doneWhen` mentions merging, `driver-work.ts:83-88` appends `goal-merge.md` (`NEO_WORK_GOAL_MERGE`) to the worker's instruction on every delivery. That text tells the worker to judge readiness itself, from "the repository's own ready signal" or from how recent PRs were merged, and then run `gh pr merge --squash`. It knows nothing of `mergePolicy` or holds. Today it defers to the per-todo merge rule Neo writes (`instructions.md:18-20`); once slice 13 deletes that, the guesswork would decide, and a held `docs/design/**` PR in qlark would merge on bot approval and green CI, which is the qlark#19 incident.
+
+So the daemon's state becomes the worker's ready signal:
+- **`pack.coding.pr.readiness`** (read-only, any caller) takes `{ repo, number }` and returns the ledger state for the PR's current head, any hold with its question, and `mayMerge`: true only for `approved_green`. It re-reads the PR the same way the sweep does, so a worker never acts on a stale row.
+- **`goal-merge.md`** is rewritten around it: call `pack.coding.pr.readiness` immediately before merging, and run `gh pr merge <number> --squash` only when it returns `mayMerge` for the head you are about to merge. Otherwise report its state and wait for the PR event. The "own ready signal" and recent-merge archaeology go, because a repo with no stored policy is `waiting_human` and never merge-ready.
+
+The worker runs `gh` with the human's GitHub access, so the daemon can't refuse the merge itself; the instruction and the daemon state are the guard, and the sweep's "held, don't merge" tell repeats the same answer. The rest of `goal-merge.md` (no auto-merge, resolve threads, merge as its own command, diagnose a refused merge) stays.
 
 The question-answer path gets a generic pack hook, `onQuestionAnswered(question)` (core, no PR knowledge). The coding pack uses it to look up holds by `question_id`.
 
@@ -178,11 +188,12 @@ A convention is built on the existing `neo.rule.save` (`packages/daemon/src/lib/
 - **Lifting:** answering the linked question "yes" lifts the hold and allows the merge nudge, and it stays lifted on later sweeps of that head. A new head re-holds and asks once. "No" keeps the hold and tells the owner.
 - **First use:** one question per new repo, none after it's answered, and no merge nudges before the answer.
 - **Conventions:** a convention saved for `coding` + `lsm/research` appears in the instruction of a coding todo for lsm/research, not in one for lsm/qlark. A save without the human's quoted words is refused.
-- **qlark#19 replay:** reproduced first. Same timeline with `docs/design/**` held: no merge nudge at +20 min.
+- **qlark#19 replay:** reproduced first. Same timeline with `docs/design/**` held: no merge nudge at +20 min, and `pack.coding.pr.readiness` returns `mayMerge: false` with the hold.
+- **Worker merge check:** a coding todo whose `doneWhen` mentions merging gets the rewritten merge text, with no recent-merge fallback; `pack.coding.pr.readiness` returns `mayMerge` true only for `approved_green`, and false for a held, unanswered-repo or `human`-policy PR before approval.
 
 ## Slices (each about 100–200 production lines, built from fresh dev; Build and Wire kept apart per ADR 0004)
 
-The qlark#19 prevention comes first: stored settings and this install's answers (1–2), policy-aware readiness (3), then holds (4–6), then lifting a hold when the human answers (7–8).
+The qlark#19 prevention comes first: stored settings and this install's answers (1–2), policy-aware readiness (3), then holds (4–6), then the worker's own merge check (7–8), then lifting a hold when the human answers (9–10).
 
 1. **Build core settings.** `NeoPack.preferences` declaration type, the `neo_pack_preferences` migration (schema only, no rows) and lookup.
 2. **Build the settings operations** (`pack.preferences.*`, `set` human-only), with the values in `neo.snapshot`. Neo then proposes this install's existing repos to the human in one question.
@@ -190,11 +201,13 @@ The qlark#19 prevention comes first: stored settings and this install's answers 
 4. **Build PR review authors, labels and paths.** Review-author logins and labels in the ledger query; the per-new-head paths read under the rate budget; `paths_json` and `paths_head` on the ledger row.
 5. **Build holds.** The table, plus `pack.coding.pr.hold` and the human-only `pack.coding.pr.release`; nothing reads them yet.
 6. **Wire holds into the sweep and events**, including automatic holds from `humanSignoff`. Held PRs get no merge text and no reminders, and the owner is told once.
-7. **Build the `onQuestionAnswered` core hook.** Nothing calls it yet.
-8. **Wire question-linked holds.** Hold creation opens the linked question, and the human's answer lifts or keeps the hold.
-9. **Wire the generated first-use question** for repos with no stored policy.
-10. **Build scoped conventions** in `neo.rule.save` (scope input and storage) and **wire their delivery** into `neoTodoCard`. If it exceeds the slice budget, split Build and Wire.
-11. **Delete the merge-rule prompt text** from `packages/prompts/src/neo/packs/coding/instructions.md`, once the daemon enforces it. Only these sentences go:
+7. **Build `pack.coding.pr.readiness`.** Read-only operation over the ledger state and holds; nothing in the prompts names it yet.
+8. **Wire the worker merge check:** rewrite `goal-merge.md` to merge only on `mayMerge`, removing the ready-signal and recent-merge fallback.
+9. **Build the `onQuestionAnswered` core hook.** Nothing calls it yet.
+10. **Wire question-linked holds.** Hold creation opens the linked question, and the human's answer lifts or keeps the hold.
+11. **Wire the generated first-use question** for repos with no stored policy.
+12. **Build scoped conventions** in `neo.rule.save` (scope input and storage) and **wire their delivery** into `neoTodoCard`. If it exceeds the slice budget, split Build and Wire.
+13. **Delete the merge-rule prompt text** from `packages/prompts/src/neo/packs/coding/instructions.md`, only after slices 6 and 8 have landed, so the worker's merge path already reads the daemon state. Only these sentences go:
     - "Put the repository's merge rule in a coding todo's instruction: merge by hand after the review it uses approves the latest head and required checks are green, and never enable GitHub auto-merge." (lines 18-20)
     - "When you create a repository, or first start coding work in one with no merged pull request yet, ask the human once with neo.question.ask (kind choice) how its pull requests get reviewed: … \"I review them myself\"." (lines 21-24, ending mid-line 24)
     - "Write the answer into that repository's merge rule; until they answer, nothing there merges." (starting at the end of line 25, through line 27)
