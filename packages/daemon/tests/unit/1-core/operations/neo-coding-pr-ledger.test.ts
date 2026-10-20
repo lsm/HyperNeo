@@ -82,7 +82,23 @@ function setup() {
 describe('codingPrState', () => {
   test('reads each PR into one ledger state', () => {
     const state = (more: Record<string, unknown>, ci: string | null = 'SUCCESS') =>
-      codingPrState(node(1, more, ci) as never);
+      codingPrState(
+        node(
+          1,
+          {
+            reviews: {
+              nodes:
+                more.reviewDecision === 'APPROVED'
+                  ? [{ state: 'APPROVED', commit: { oid: 'h1' }, author: { login: 'bot' } }]
+                  : [],
+            },
+            ...more,
+          },
+          ci
+        ) as never,
+        false,
+        { mergePolicy: 'review_bot', reviewBot: 'bot' }
+      );
     expect(state({ state: 'MERGED' })).toBe('merged');
     expect(state({ state: 'CLOSED' })).toBe('closed');
     expect(state({ isDraft: true })).toBe('draft');
@@ -112,7 +128,7 @@ describe('planCodingLedgerRead', () => {
       now
     );
     expect(planned?.rows.map((row) => [row.number, row.state])).toEqual([
-      [1, 'waiting_review'],
+      [1, 'waiting_human'],
       [2, 'merged'],
     ]);
     expect(planned?.remaining).toBe(4000);
@@ -125,22 +141,22 @@ describe('planCodingLedgerRead', () => {
     expect(planCodingLedgerRead(null, now)).toBeNull();
   });
 
-  test('a repo with no review and no merge yet reads its open PRs as unreviewed', () => {
+  test('an unanswered repo never infers policy from PR history', () => {
     const states = (done: unknown[], more: Record<string, unknown> = {}) =>
       planCodingLedgerRead(response([node(1, more)], done), 0)?.rows.map((row) => row.state);
-    expect(states([])).toEqual(['unreviewed']);
+    expect(states([])).toEqual(['waiting_human']);
     expect(states([node(2, { state: 'CLOSED', closedAt: new Date(0).toISOString() })])).toEqual([
-      'unreviewed',
+      'waiting_human',
       'closed',
     ]);
     expect(states([node(2, { state: 'MERGED', closedAt: new Date(0).toISOString() })])).toEqual([
-      'waiting_review',
+      'waiting_human',
       'merged',
     ]);
     expect(states([], { reviews: { nodes: [{ state: 'COMMENTED', commit: null }] } })).toEqual([
-      'waiting_review',
+      'waiting_human',
     ]);
-    expect(states([], { reviewDecision: 'REVIEW_REQUIRED' })).toEqual(['waiting_review']);
+    expect(states([], { reviewDecision: 'REVIEW_REQUIRED' })).toEqual(['waiting_human']);
   });
 });
 
@@ -152,9 +168,9 @@ describe('PR ledger reconcile', () => {
       repo === 'lsm/hyperneo' ? response([node(1), node(2, { isDraft: true })]) : response(second);
     await reconcile(ledger, ['lsm/hyperneo', 'lsm/neo-ios'], read, 100);
     expect(ledger.list().map((row) => [row.repo, row.number, row.state, row.stateSince])).toEqual([
-      ['lsm/hyperneo', 1, 'unreviewed', 100],
+      ['lsm/hyperneo', 1, 'waiting_human', 100],
       ['lsm/hyperneo', 2, 'draft', 100],
-      ['lsm/neo-ios', 7, 'unreviewed', 100],
+      ['lsm/neo-ios', 7, 'waiting_human', 100],
     ]);
     db.exec('UPDATE pack_coding_pr_ledger SET nudges = 2');
     await reconcile(ledger, ['lsm/hyperneo', 'lsm/neo-ios'], read, 200);
@@ -267,15 +283,21 @@ describe('PR ledger cleanup', () => {
 });
 
 describe('ledger approval and repo coverage', () => {
-  test('approval comes from the latest review on the head commit when the repo requires none', () => {
+  test('approval needs the designated bot on the head, never aggregate reviewDecision', () => {
     const state = (reviews: { state: string; oid: string }[], decision: string | null = null) =>
       codingPrState(
         node(1, {
           reviewDecision: decision,
           reviews: {
-            nodes: reviews.map((item) => ({ state: item.state, commit: { oid: item.oid } })),
+            nodes: reviews.map((item) => ({
+              state: item.state,
+              commit: { oid: item.oid },
+              author: { login: 'bot' },
+            })),
           },
-        }) as never
+        }) as never,
+        false,
+        { mergePolicy: 'review_bot', reviewBot: 'bot' }
       );
     expect(state([{ state: 'APPROVED', oid: 'h1' }])).toBe('approved_green');
     expect(state([{ state: 'APPROVED', oid: 'old' }])).toBe('waiting_review');
@@ -285,7 +307,7 @@ describe('ledger approval and repo coverage', () => {
         { state: 'CHANGES_REQUESTED', oid: 'h1' },
       ])
     ).toBe('changes_requested');
-    expect(state([{ state: 'APPROVED', oid: 'old' }], 'APPROVED')).toBe('approved_green');
+    expect(state([{ state: 'APPROVED', oid: 'old' }], 'APPROVED')).toBe('waiting_review');
   });
 
   test('a renamed repo listed under both names is read into one set of rows under its GitHub name', async () => {
@@ -463,7 +485,7 @@ describe('CodingPrLedgerRepository owners and snapshot', () => {
       {
         pr: 'a/a#1',
         title: 'PR 1',
-        state: 'approved_green',
+        state: 'waiting_human',
         since: new Date(now).toISOString(),
         ownerAdapter: null,
         ownerId: null,
@@ -836,26 +858,36 @@ describe('codingPrState without CI', () => {
   const approved = (suites: number) =>
     node(1, {
       reviewDecision: 'APPROVED',
+      reviews: { nodes: [{ state: 'APPROVED', commit: { oid: 'h1' }, author: { login: 'bot' } }] },
       commits: {
         nodes: [{ commit: { statusCheckRollup: null, checkSuites: { totalCount: suites } } }],
       },
     }) as never;
 
   test('a CI repo just after a push, or with its run still queued, reads pending', () => {
-    expect(codingPrState(approved(1))).toBe('approved_pending');
+    expect(codingPrState(approved(1), false, { mergePolicy: 'review_bot', reviewBot: 'bot' })).toBe(
+      'approved_pending'
+    );
   });
 
   test('a repo with no CI at all reads green', () => {
-    expect(codingPrState(approved(0))).toBe('approved_green');
+    expect(codingPrState(approved(0), false, { mergePolicy: 'review_bot', reviewBot: 'bot' })).toBe(
+      'approved_green'
+    );
   });
 
   test('a repo whose CI posts commit statuses reads pending while one PR has no result yet', () => {
-    expect(codingPrState(approved(0), true)).toBe('approved_pending');
+    expect(codingPrState(approved(0), true, { mergePolicy: 'review_bot', reviewBot: 'bot' })).toBe(
+      'approved_pending'
+    );
     const fresh = {
       ...(approved(0) as object),
       number: 2,
     };
-    const planned = planCodingLedgerRead(response([node(1), fresh]), 0);
+    const planned = planCodingLedgerRead(response([node(1), fresh]), 0, () => ({
+      mergePolicy: 'review_bot',
+      reviewBot: 'bot',
+    }));
     expect(planned?.rows.map((row) => [row.number, row.state])).toEqual([
       [1, 'waiting_review'],
       [2, 'approved_pending'],

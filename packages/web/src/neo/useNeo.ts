@@ -190,7 +190,8 @@ export function useNeo() {
     asks,
     publications,
     snapshot?.sessionNoticeGroups,
-    snapshot?.sessionMessages
+    snapshot?.sessionMessages,
+    snapshot?.wakes
   );
   return {
     publicConversation,

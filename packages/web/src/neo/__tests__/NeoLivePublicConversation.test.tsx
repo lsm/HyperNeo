@@ -172,7 +172,10 @@ beforeEach(async () => {
     const conversation = projectNeoPublicConversation(
       rootSnapshot.sessionId,
       asks.value,
-      publications.value
+      publications.value,
+      rootSnapshot.sessionNoticeGroups,
+      rootSnapshot.sessionMessages,
+      rootSnapshot.wakes
     );
     return {
       store,
@@ -183,8 +186,8 @@ beforeEach(async () => {
         rootSnapshot,
         sessionId.value
       ),
-      asks: { ...asks.value, retry: retryAsks },
-      publications: { ...publications.value, refresh: refreshPublications },
+      asks: { ...asks.value, retry: retryAsks, loadEarlier: vi.fn() },
+      publications: { ...publications.value, refresh: refreshPublications, loadEarlier: vi.fn() },
       error: error.value,
       setError: (value: string) => (error.value = value),
       open,
@@ -543,6 +546,73 @@ describe('NeoLive durable conversation activation', () => {
     );
     await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
   });
+
+  it.each([0, 100])(
+    'restores the visible wake after folding a publication with hidden height %s',
+    async (hiddenHeight) => {
+      const reply = publication('wake-reply');
+      asks.value = { ...asks.value, items: [], hasEarlier: true };
+      publications.value = { ...publications.value, items: [reply], hasEarlier: true };
+      source.value = {
+        ...source.value,
+        wakes: [
+          {
+            scheduleId: 'wake',
+            sourceKind: 'goal',
+            sourceId: 'goal',
+            title: 'Guide check',
+            firedAt: Date.parse(reply.createdAt) - 1000,
+            settledAt: Date.parse(reply.createdAt),
+            summary: 'Ready.',
+            additions: [{ kind: 'publication', id: reply.publicationId, label: reply.shortText }],
+          },
+        ],
+      };
+      const rect = vi
+        .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+        .mockImplementation(function (this: HTMLElement) {
+          if (this.tagName === 'MAIN') return new DOMRect(0, 100, 500, 200);
+          if (this.getAttribute('data-message-ref') === reply.publicationId)
+            return this.closest('details:not([open])')
+              ? new DOMRect(0, 0, 500, hiddenHeight)
+              : new DOMRect(0, 140, 500, 100);
+          if (this.hasAttribute('data-wake')) return new DOMRect(0, 300, 500, 36);
+          return new DOMRect();
+        });
+      try {
+        const { container } = render(<NeoLive />);
+        const main = container.querySelector('main')!;
+        Object.defineProperties(main, {
+          scrollHeight: { configurable: true, value: 2000 },
+          clientHeight: { configurable: true, value: 200 },
+        });
+        main.scrollTop = 1800;
+        fireEvent.scroll(main);
+        main.scrollTop = 200;
+        fireEvent.scroll(main);
+        expect(container.querySelector('[data-wake]')).toBeNull();
+        fireEvent.click(screen.getByRole('button', { name: 'Load earlier saved conversation' }));
+        await act(async () => {
+          publications.value = {
+            ...publications.value,
+            items: [
+              {
+                ...publication('older', holder, reply.askOrigin, 2),
+                createdAt: new Date(Date.parse(reply.createdAt) - 2000).toISOString(),
+              },
+              reply,
+            ],
+          };
+        });
+        const message = container.querySelector('[data-message-ref="wake-reply"]')!;
+        expect(message.closest('details:not([open])')).toBeTruthy();
+        expect(message.getBoundingClientRect().height).toBe(hiddenHeight);
+        expect(main.scrollTop).toBe(360);
+      } finally {
+        rect.mockRestore();
+      }
+    }
+  );
 
   it('bases empty-state and scrolling on public entries, retaining manual reading position', async () => {
     asks.value = { ...asks.value, status: 'loading', items: [] };

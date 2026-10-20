@@ -24,6 +24,32 @@ root of your worktree.
   `<run>/pr.json`, refuses everything else (including `gh auth token`) and logs
   every call to `<run>/evidence/gh.log`. Nothing reaches github.com.
 
+## Neo animation stability (headless)
+
+Build web, then Launch on a free non-8399 port with a fresh synthetic run directory.
+In that same shell (with a stop.sh EXIT trap), run:
+
+```bash
+NODE_PATH=<directory containing playwright> node .claude/skills/verify/neo-animation-check.mjs 9378 "$RUN" verify
+```
+
+If Playwright's matching browser is unavailable, set `VERIFY_BROWSER` to an installed
+Chromium executable. This always launches headlessly, never the desktop browser.
+The helper validates the isolated daemon log, opens Neo over RPC, seeds 18 synthetic
+publications in that DB and enables voice with a loopback endpoint. At desktop and
+mobile widths it drives the real built `/neo` page, injecting only synthetic
+`neo.working` events on its browser WebSocket, and starts/cancels a fake microphone.
+It replaces browser analyser output with synthetic local audio levels; no transcription
+or model turn is needed. Rail/message bounding boxes must not move, and observing the
+rail and its children must receive zero resize callbacks during four busy toggles.
+Voice sampling median must be below 25 ms, with over 60 samples in 1.8 seconds;
+frame counts and p95 timing are recorded, not a hardware-independent FPS guarantee.
+Evidence: `evidence/neo-animation-verify.json` and `neo-animation-{1280,390}.png`.
+Before fixing, `reproduce` records 45 px message movement, four resizes, and about
+50 ms audio sampling gaps on a 60 Hz browser. The focused VoiceWaveform suite also
+drives synthetic 30/60/120 Hz timestamps to check refresh-independent sampling.
+This proves web behavior under synthetic input; it does not verify iOS or 5G service.
+
 ## Recovery expiry responsiveness
 
 Run a fresh isolated daemon without provider keys. The helper seeds 22,287
@@ -857,6 +883,34 @@ adds its journey here.
     is absent from the public output. Evidence: `evidence/neo-wake-contract.json`.
     This checks the API with synthetic recorded turns, not model behavior or the
     web disclosure row; G5b adds the rendering journey. Stop with `stop.sh`.
+
+30. **Scheduled wakes are quiet web disclosures (G5b).** Build the web and launch a
+    fresh isolated daemon. Run `bun .claude/skills/verify/neo-wake-web.ts <port> "$RUN"`
+    to seed synthetic active, settled-with-additions and settled-empty wakes, then
+    `NODE_PATH=<directory containing playwright> node .claude/skills/verify/neo-wake-web.mjs <port> "$RUN"`.
+    Like journey 18, `VERIFY_BROWSER` can select a headless Chrome executable.
+    `/neo` must show closed clock/title/summary/time rows; the active one reads
+    Working. Attributed publication detail appears once, inside its wake. The publication link must resolve to its rendered article (recorded in
+    `neo-wake-{desktop,mobile}-publication-link.json`). Opening
+    the row exposes labelled additions; following its question link reveals the
+    original question in Your work on desktop and in the mobile sheet. A removed
+    todo link opens its owning ask’s Details before scrolling to the retained row. Questions
+    remain independently answerable; journal labels are text until G6 supplies a
+    journal destination. Screenshots `neo-wake-{desktop,mobile}-{collapsed,expanded,question}.png`
+    and observed text `neo-wake-web.json` live in `evidence/`. No model turn, real
+    provider, real data or desktop GUI is exercised. Stop with `stop.sh`.
+
+    For history folding, use another fresh isolated run. Seed with
+    `bun .claude/skills/verify/neo-wake-pagination.ts <port> "$RUN"`, then run
+    `NODE_PATH=<directory containing playwright> node .claude/skills/verify/neo-wake-pagination.mjs <port> "$RUN"`
+    (`VERIFY_BROWSER` works here too). Its 51 retained publications put the wake
+    just outside the initial history window. Clicking Load earlier folds the
+    topmost publication into its newly visible closed wake; that wake must retain
+    the publication's viewport position on desktop and mobile. Closed descendants
+    can report nonzero cached rectangles in Chrome, so visibility is determined
+    by the disclosure, not height alone. Repeated already-rendered text isolates
+    folding from unrelated later Markdown reflow; that reflow is not fixed here. Evidence: `neo-wake-pagination.json`
+    and `neo-wake-pagination-{desktop,mobile}-{before,after}.png`. Stop the run.
 
 ## Evidence
 
@@ -1736,33 +1790,7 @@ The helper closes its own socket and daemon in `finally`. It uses no model or
 credentials and never reads the real session directories. Feed content reads
 remain synchronous in this slice; this journey verifies metadata I/O only.
 
-## Neo animation stability (headless)
-
-Build web, then Launch on a free non-8399 port with a fresh synthetic run directory.
-In that same shell (with a stop.sh EXIT trap), run:
-
-```bash
-NODE_PATH=<directory containing playwright> node .claude/skills/verify/neo-animation-check.mjs 9378 "$RUN" verify
-```
-
-If Playwright's matching browser is unavailable, set `VERIFY_BROWSER` to an installed
-Chromium executable. This always launches headlessly, never the desktop browser.
-The helper validates the isolated daemon log, opens Neo over RPC, seeds 18 synthetic
-publications in that DB and enables voice with a loopback endpoint. At desktop and
-mobile widths it drives the real built `/neo` page, injecting only synthetic
-`neo.working` events on its browser WebSocket, and starts/cancels a fake microphone.
-It replaces browser analyser output with synthetic local audio levels; no transcription
-or model turn is needed. Rail/message bounding boxes must not move, and observing the
-rail and its children must receive zero resize callbacks during four busy toggles.
-Voice sampling median must be below 25 ms, with over 60 samples in 1.8 seconds;
-frame counts and p95 timing are recorded, not a hardware-independent FPS guarantee.
-Evidence: `evidence/neo-animation-verify.json` and `neo-animation-{1280,390}.png`.
-Before fixing, `reproduce` records 45 px message movement, four resizes, and about
-50 ms audio sampling gaps on a 60 Hz browser. The focused VoiceWaveform suite also
-drives synthetic 30/60/120 Hz timestamps to check refresh-independent sampling.
-This proves web behavior under synthetic input; it does not verify iOS or 5G service.
-
-## Card-topic sweep attribution
+## Card-topic sweep responsiveness
 
 Run a fresh isolated daemon with synthetic HOME/data/DB and a free non-8399
 port. The helper creates 180 followed todos with two topic subscriptions each,
@@ -1773,17 +1801,23 @@ provider, key, transcript or live DB is involved.
 ```bash
 RUN=$(mktemp -d /private/tmp/hn-card-topic-phases-XXXXXX)
 env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
-  bun .claude/skills/verify/card-topic-phases.ts verify 9375 "$RUN"
+  bun .claude/skills/verify/card-topic-phases.ts verify 9375 "$RUN" enabled
 ```
 
-On the regression commit use `reproduce` in a separate new directory. Both runs
-must reproduce over 1 s max heartbeat lag: this slice adds attribution, not a
-latency fix. `observed.json` includes concurrent health latency, actual sweep
-results and structured lag diagnostics. In `verify`, the phase totals must
-attribute 180 settings reads and at least 1,440 ms to
-`neo:packs:eligibility_read`; listActive, per-todo followedTodo and
-cardEventsDelivered, and per-subscription end phases must also be present.
-Only the removed todo's two topics end; 360 followed topics remain.
+Repeat in another new directory with `disabled` instead of `enabled`. On the
+regression commit use `reproduce`: both modes must show 180 eligibility reads
+and max heartbeat lag over 1 s. Fixed `verify` must show exactly one settings
+read, including when eligibility is false, with heartbeat lag below 1 s and
+health below 250 ms. `observed.json` retains phase totals, actual subscriptions,
+health latency and any structured lag diagnostics.
+
+With delivery enabled, only the removed todo's two topics end and 360 remain.
+With delivery disabled, all 362 topics end. The helper then changes the stored
+pack setting, re-subscribes active topics if needed and sweeps again over the
+same WebSocket. The changed eligibility must take effect immediately on that
+next sweep, in both directions; no value is cached across sweeps. Focused tests
+also keep settings unread when there is no followed todo, including an empty
+sweep. This keeps the snapshot lazy rather than adding an unconditional read.
 
 The existing activity buffer retains 64 entries and reports dropped entries;
 large sweeps expose a suffix of per-todo phases plus the final aggregate. The
@@ -1792,3 +1826,29 @@ changing production buffering. Nested totals overlap and must not be added.
 This proves the repeated-read path under controlled latency, not the cause of
 the historical 20:09 four-second phase or a particular OS wait. The helper closes
 its socket, diagnostic observer, Neo service and daemon in `finally`.
+
+### Policy-aware merge nudges (slice 3)
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-policy-XXXXXX)
+mkdir -p "$RUN/home"
+env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
+  bun .claude/skills/verify/pack-policy.ts verify 9353 "$RUN"
+```
+
+On the reproduction commit run `reproduce` in another fresh directory: a scripted
+bot approval for synthetic qlark#19 leads to merge text immediately and again at
++20 minutes. Fixed code must emit zero merge messages and show `waiting_human`
+through the real daemon's `neo.snapshot` and production coding-pack sweep/events.
+Settings are written only to the synthetic daemon through the human RPC door.
+GitHub reads and message delivery use synthetic fixtures/capture sinks; the
+production classification, repositories, event delivery decisions and sweep run
+unchanged. Both daemon and socket close in `finally`. Evidence retains every
+state and emitted message in `evidence/observed.json`. No credentials, provider,
+model, live DB, real GitHub calls or GUI are used.
+
+Slice 3 conservatively keeps any configured humanSignoff in `waiting_human`
+when otherwise merge-ready: current-head path/label reads and durable holds are
+later slices. Review-author login is read now to enforce designated-bot approval;
+unknown/stale authors never count. This journey proves the nudge decision and
+snapshot, not live GitHub transport, actual delivery or later worker merge checks.

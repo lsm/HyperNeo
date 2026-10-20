@@ -1,3 +1,4 @@
+import { getNeoPackPreference } from '../preferences.ts';
 import { homedir } from 'node:os';
 import { z } from 'zod';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
@@ -12,6 +13,8 @@ export type CodingPrState =
   | 'draft'
   | 'waiting_review'
   | 'unreviewed'
+  | 'waiting_ci'
+  | 'waiting_human'
   | 'changes_requested'
   | 'failing'
   | 'dirty'
@@ -41,7 +44,11 @@ const Node = z.object({
   reviews: z
     .object({
       nodes: z.array(
-        z.object({ state: z.string(), commit: z.object({ oid: z.string() }).nullable() })
+        z.object({
+          state: z.string(),
+          commit: z.object({ oid: z.string() }).nullable(),
+          author: z.object({ login: z.string() }).nullable().optional(),
+        })
       ),
     })
     .default({ nodes: [] }),
@@ -99,7 +106,7 @@ const DONE_FIELDS =
   'number title headRefName headRefOid state isDraft mergeable reviewDecision closedAt createdAt';
 
 const FIELDS = `${DONE_FIELDS}
-  reviews(last: 30, states: [APPROVED, CHANGES_REQUESTED]) { nodes { state commit { oid } } }
+  reviews(last: 30, states: [APPROVED, CHANGES_REQUESTED]) { nodes { state commit { oid } author { login } } }
   author { login __typename }
   comments(last: 10) { nodes { author { login } createdAt } }
   replies: reviews(last: 10, states: [COMMENTED]) { nodes { author { login } submittedAt } }
@@ -123,7 +130,17 @@ export function codingPrReplyAt(pr: Node): number | null {
   return times.length ? Math.max(...times) : null;
 }
 
-export function codingPrState(pr: Node, repoHasCi = false, repoHasReview = true): CodingPrState {
+export interface CodingMergePolicy {
+  mergePolicy?: 'review_bot' | 'ci_only' | 'human';
+  reviewBot?: string;
+  humanSignoff?: readonly string[];
+}
+
+export function codingPrState(
+  pr: Node,
+  repoHasCi = false,
+  policy: CodingMergePolicy = {}
+): CodingPrState {
   if (pr.state === 'MERGED') return 'merged';
   if (pr.state === 'CLOSED') return 'closed';
   if (pr.isDraft) return 'draft';
@@ -136,9 +153,27 @@ export function codingPrState(pr: Node, repoHasCi = false, repoHasReview = true)
     pr.reviews.nodes.filter((item) => item.commit?.oid === pr.headRefOid).at(-1)?.state ??
     pr.reviewDecision;
   if (review === 'CHANGES_REQUESTED') return 'changes_requested';
-  if (review === 'APPROVED')
-    return noCi || ci === 'SUCCESS' ? 'approved_green' : 'approved_pending';
-  return repoHasReview ? 'waiting_review' : 'unreviewed';
+  if (!policy.mergePolicy) return 'waiting_human';
+  const readyCi = noCi || ci === 'SUCCESS';
+  if (policy.mergePolicy === 'human' || (policy.mergePolicy === 'review_bot' && !policy.reviewBot))
+    return readyCi ? 'waiting_human' : 'waiting_ci';
+  if (policy.mergePolicy === 'review_bot') {
+    const bot = pr.reviews.nodes
+      .filter(
+        (item) =>
+          item.commit?.oid === pr.headRefOid &&
+          item.author?.login.toLowerCase() === policy.reviewBot!.toLowerCase()
+      )
+      .at(-1);
+    if (bot?.state !== 'APPROVED') return 'waiting_review';
+    if (policy.humanSignoff?.length) return 'waiting_human';
+    return readyCi ? 'approved_green' : 'approved_pending';
+  }
+  return readyCi
+    ? policy.humanSignoff?.length
+      ? 'waiting_human'
+      : 'approved_green'
+    : 'waiting_ci';
 }
 
 export type CodingPrTransition = CodingLedgerRow & { from: CodingPrState };
@@ -159,7 +194,8 @@ export type CodingLedgerRow = {
 
 export function planCodingLedgerRead(
   raw: unknown,
-  now: number
+  now: number,
+  readPolicy: (repo: string) => CodingMergePolicy = () => ({})
 ): { repo: string; rows: CodingLedgerRow[]; remaining: number } | null {
   const parsed = Response.safeParse(raw);
   if (!parsed.success || parsed.data.errors?.length) return null;
@@ -171,9 +207,7 @@ export function planCodingLedgerRead(
       !!pr.commits.nodes[0]?.commit.statusCheckRollup ||
       (pr.commits.nodes[0]?.commit.checkSuites?.totalCount ?? 0) > 0
   );
-  const repoHasReview = [...open.nodes, ...done.nodes].some(
-    (pr) => pr.state === 'MERGED' || pr.reviews.nodes.length > 0 || pr.reviewDecision !== null
-  );
+  const policy = readPolicy(canonical);
   const rows = [...open.nodes, ...done.nodes]
     .map((pr) => ({
       repo: canonical,
@@ -181,7 +215,7 @@ export function planCodingLedgerRead(
       title: pr.title,
       branch: pr.headRefName,
       head: pr.headRefOid,
-      state: codingPrState(pr, repoHasCi, repoHasReview),
+      state: codingPrState(pr, repoHasCi, policy),
       ci: pr.commits.nodes[0]?.commit.statusCheckRollup?.state ?? null,
       replyAt: codingPrReplyAt(pr),
       closedAt: pr.closedAt ? Date.parse(pr.closedAt) : null,
@@ -260,6 +294,26 @@ function codingLedgerSnapshotRow(row: CodingLedgerSnapshotRow) {
 
 export class CodingPrLedgerRepository {
   constructor(private readonly db: Database) {}
+
+  policy(repo: string): CodingMergePolicy {
+    const read = (key: string) => {
+      const scope = this.db
+        .prepare(`SELECT scope_key FROM neo_pack_preferences
+        WHERE pack = 'coding' AND scope_kind = 'repo' AND scope_key = ? COLLATE NOCASE AND key = ?`)
+        .get(repo, key) as { scope_key: string } | undefined;
+      return getNeoPackPreference(
+        this.db,
+        'coding',
+        { kind: 'repo', key: scope?.scope_key ?? repo },
+        key
+      )?.value;
+    };
+    return {
+      mergePolicy: read('mergePolicy') as CodingMergePolicy['mergePolicy'],
+      reviewBot: read('reviewBot') as string | undefined,
+      humanSignoff: read('humanSignoff') as string[] | undefined,
+    };
+  }
 
   replace(repo: string, rows: readonly CodingLedgerRow[], now: number): CodingPrTransition[] {
     const before = new Map(
@@ -562,7 +616,7 @@ export async function reconcileCodingPrLedger(
   const order = [...repos].sort((a, b) => (last.get(a) ?? 0) - (last.get(b) ?? 0));
   for (const repo of order) {
     const raw = await read(repo);
-    const planned = planCodingLedgerRead(raw, now);
+    const planned = planCodingLedgerRead(raw, now, (canonical) => ledger.policy(canonical));
     const error = (raw as { error?: unknown } | null)?.error;
     const skipped = planned ? 0 : (skips.get(repo) ?? 0) + 1;
     skips.set(repo, skipped);
