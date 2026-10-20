@@ -49,7 +49,7 @@ The inventory has 73 statements (3 inserts, 6 body updates, 32 body outputs, 16 
 
 - **Writers** (#6, 41, 45 insert; #7, 35, 36, 37, 43, 44 update). One repository helper writes the row and its body in one transaction and sets the derived columns. The `json_set` updates become a body update plus a column update in the same transaction.
 - **Filters** (#1–4, 16, 21–23, 30, 32, 38, 39, 42, 55, 61, 67) use the new columns and never join the body.
-- **Body outputs** (#5, 8, 10, 11, 13–15, 17–20, 24–29, 31, 33, 34, 40, 49, 51, 54, 68–73) first pick their rows from `sdk_messages`, then `JOIN sdk_message_bodies USING (seq)` on the chosen rows only. Tail and key reads stay tail and key reads.
+- **Body outputs** (#5, 8, 10, 11, 13–15, 17–20, 24–29, 31, 33, 34, 40, 49, 51, 54, 68–73) first pick their rows from `sdk_messages`, then join the body by `seq` on the chosen rows only. Tail and key reads stay tail and key reads. Until the migration (slice 10) has copied every old body, the read is `LEFT JOIN sdk_message_bodies b USING (seq)` with `COALESCE(b.sdk_message, sm.sdk_message)`, so rows written before the dual write still return their body. Slice 11 drops the fallback together with the column.
 - **Both** (#9, 12, 46–48, 50, 52, 56, 57–60, 63–66) are split into the two steps above. In `messages.bySession` (#47), the subagent rows are joined through `tool_use` ids read from the bodies of the chosen window. They're extracted in TypeScript from the ≤200 window rows already loaded, then fetched `WHERE parent_tool_use_id IN (…)`. No JSON is scanned in SQL.
 - **`task_message_rows` triggers** (#57–59). Today they parse the body on every insert and on almost every status update (`task_message_rows_au` fires on `send_status`, `timestamp`, `is_terminal` and more). The work splits into two parts:
   - The body-derived part (flags, artifact keys, `json_subtype`) runs from a trigger on `sdk_message_bodies` insert and update.
@@ -82,7 +82,7 @@ The inventory has 73 statements (3 inserts, 6 body updates, 32 body outputs, 16 
 It runs at startup, before the server binds, like m212. All numbers below are measured on synthetic data: 110k rows and 850 MB of JSON, about twice the live body bytes.
 
 1. **Backup.** The existing pre-migration backup (`createBackup`, a full copy into `data/backups/daemon.db/`) runs first. About 1 GB of disk and a few seconds.
-2. **Columns.** `ALTER TABLE ADD COLUMN` × 14: 33 ms.
+2. **Columns.** `ALTER TABLE ADD COLUMN` × 14: 33 ms. Each add is guarded by `pragma_table_xinfo` (the existing idiom), so a restart after a crash re-enters this step safely. In practice slice 2 has already added and backfilled them, and this step is a no-op.
 3. **Chunked pass.** 5k-row transactions, each:
    - backfills the derived columns from the JSON;
    - copies the body into `sdk_message_bodies`;
@@ -90,10 +90,12 @@ It runs at startup, before the server binds, like m212. All numbers below are me
    - checkpoints the WAL.
 
    Measured: column backfill 10.2 s, copy plus blank 9.4 s. One pass with both is about 15 s synthetic, so about 7–8 s live. WAL peak 51 MB.
-4. **Rebuild without the column.** The table is now small: 12-step copy, swap and index recreate, about 1–2 s.
+4. **Rebuild without the column.** The table is now small: 12-step copy, swap and index recreate, about 1–2 s. It is re-entrant: a leftover `sdk_messages_new` from a crash is dropped and rebuilt, and the step is skipped once `sdk_message` is gone from `pragma_table_xinfo('sdk_messages')`.
+
+The body-derived `task_message_rows` trigger on `sdk_message_bodies` (slice 7) is dropped for the copy and recreated after step 4. The copied bodies are unchanged, so the rows it would recompute are already correct, and the measured copy cost (taken without the trigger) is the shipped cost.
 5. **Marker** `migration_4xx` is set only after step 4.
 
-Crash safety: every chunk is one transaction, and `sdk_message_bodies` is the progress record. A restart resumes at `max(seq)` of the bodies table, and a half-done chunk rolls back with its transaction. Rows already blanked always have their body copied in the same transaction.
+Crash safety: the marker is set only after step 4, so a crash anywhere makes the next boot re-enter the migration, and every step is safe to re-run. Steps 2 and 4 are guarded as described. In step 3 every chunk is one transaction, and the copy is `INSERT OR IGNORE` from the rows not yet blanked. A restart picks up where `sdk_message <> ''` rows remain, and a half-done chunk rolls back with its transaction. Rows already blanked always have their body copied in the same transaction. The trigger drop and recreate are idempotent (`IF EXISTS` / `IF NOT EXISTS`).
 
 Space: the file grows from 943 MB to 1,190 MB in the benchmark (+26%), with 249 MB free and reused by later writes. There's no VACUUM on the boot path (as in #2961). Live should land around 1.1–1.2 GB.
 
@@ -112,12 +114,12 @@ Same synthetic DB:
 3. **Wire repository filters** to the columns (#1–4, 16, 21–23, 30, 32, 38, 39, 42).
 4. **Wire adapter and runtime filters** (#55, 56, 61–67) and the indexes from the scan table.
 5. **Wire live-query filters** (#9, 12, 46, 47 with the TypeScript tool_use join, 48, 52).
-6. **Split the `task_message_rows` triggers** into body-derived and row-derived parts.
-7. **Build the bodies table** with dual write; reads unchanged.
-8. **Switch body outputs**, part 1: repository (#5–45).
-9. **Switch body outputs**, part 2: live queries, adapters, runtime, the db-query view.
-10. **Migration.** Chunked copy, blank, rebuild without the column, resume, plus the reverse script.
-11. **Delete.** Remove the dual write and any reference to the old column.
+6. **Build the bodies table** with dual write; reads unchanged.
+7. **Split the `task_message_rows` triggers** into body-derived (on `sdk_message_bodies`, which now exists and receives every new body) and row-derived parts.
+8. **Switch body outputs**, part 1: repository (#5–45), with the `LEFT JOIN … COALESCE` fallback.
+9. **Switch body outputs**, part 2: live queries, adapters, runtime, the db-query view, same fallback.
+10. **Migration.** Guarded columns, chunked copy and blank with the body trigger dropped, re-entrant rebuild without the column, a free-disk check (refuse under 2× the DB size), per-chunk progress logging, plus the reverse script.
+11. **Delete.** Remove the dual write, the `COALESCE` fallback and any reference to the old column.
 12. **Session-length fixes outside the split:** #48/#49 paging and #50 targeted search rebuild.
 
-Slices 2–6 also speed up today's daemon on their own, before any body moves.
+Slices 2–5 also speed up today's daemon on their own, before any body moves.
