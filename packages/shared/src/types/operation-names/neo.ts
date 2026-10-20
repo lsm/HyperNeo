@@ -7,6 +7,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.draft.recover',
   'neo.github.read',
   'neo.home.init',
+  'neo.home.save',
   'neo.message.send',
   'neo.open',
   'neo.pack.read',
