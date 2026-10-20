@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createHyperneoAdapter } from '../../../../src/lib/drivers/hyperneo-adapter.ts';
-import { readDriverSettlement } from '../../../../src/lib/neo/driver-work.ts';
+import { readDriverFollowUp, readDriverSettlement } from '../../../../src/lib/neo/driver-work.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
@@ -89,6 +89,23 @@ describe('HyperNeo todo reply attribution', () => {
     expect(digest()).toBe(original);
   });
 
+  test('inputs acknowledged at the same terminal watermark share its verified reply', async () => {
+    put('mid-turn', 'user', 'Consumed with the todo', 10);
+    put('report', 'assistant', 'Shared turn report', null);
+    put('terminal', 'result', '', 10);
+    expect((await settle())?.report).toBe('Agent: Shared turn report');
+  });
+
+  test('paging remains inside the consumed turn and preserves assistant ordering', async () => {
+    put('previous-result', 'result', 'PREVIOUS_TURN', 5);
+    for (let n = 0; n < 30; n++) put(`part-${n}`, 'assistant', `Part ${n}`, null);
+    put('terminal', 'result', '', 20);
+    put('other', 'user', 'Next turn', 30);
+    put('other-result', 'result', 'LATER_TURN', 40);
+    const expected = Array.from({ length: 30 }, (_, n) => `Agent: Part ${n}`).join('\n\n');
+    expect((await settle())?.report).toBe(expected);
+  });
+
   test('long result-only reports remain complete rather than using exchange excerpts', async () => {
     put('terminal', 'result', report, 20);
     expect((await settle())?.report).toBe(`Agent: ${report}`);
@@ -104,5 +121,12 @@ describe('HyperNeo todo reply attribution', () => {
   test('a missing acknowledged input cannot borrow the session latest reply', async () => {
     put('later-result', 'result', 'UNRELATED_LATEST_REPORT', 40);
     expect(await settle({ ...receipt, inputId: 'missing' })).toBeNull();
+    expect(
+      readDriverFollowUp(await status({ ...receipt, inputId: 'missing' }), 0, {
+        inputBefore: 0,
+        opening: 'Original',
+        receipt: { ...receipt, inputId: 'missing' },
+      })
+    ).toBeNull();
   });
 });
