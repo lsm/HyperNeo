@@ -1,0 +1,30 @@
+import { mkdir, readFile, writeFile, realpath } from 'node:fs/promises';
+import { join } from 'node:path';
+import type { HookInput } from '@anthropic-ai/claude-agent-sdk';
+import { neoToolGuard } from '../../../packages/daemon/src/lib/neo/look-up-guard.ts';
+const [directory] = process.argv.slice(2);
+if (!directory) throw new Error('usage: neo-home-guard.ts <fresh-run-dir>');
+await mkdir(directory, { recursive: true });
+const run = await realpath(directory);
+const home = join(run, 'home');
+const dataDir = join(home, '.hyperneo');
+const root = join(dataDir, 'Neo');
+const cwd = join(root, '.coordinators', 'verify');
+await mkdir(cwd, { recursive: true });
+await writeFile(join(root, 'README.md'), 'Curated direction\n');
+const guard = neoToolGuard({ home, dataDir, own: [cwd] });
+const call = async (tool_name: string, tool_input: Record<string, unknown>) => guard({ hook_event_name: 'PreToolUse', tool_name, tool_input, cwd, session_id: 'verify', tool_use_id: 'verify', transcript_path: join(cwd, 'transcript') } as HookInput, 'verify', { signal: new AbortController().signal });
+const read = await call('Read', { file_path: join(root, 'README.md') });
+const redirect = await call('Bash', { command: 'echo changed > ../../new-direction.md' });
+const git = await call('Bash', { command: 'git branch unauthorized-direction' });
+const denied = (value: unknown) => (value as { hookSpecificOutput?: { permissionDecision?: string } }).hookSpecificOutput?.permissionDecision === 'deny';
+if (!denied(redirect)) {
+  const child = Bun.spawn(['bash', '-c', 'echo changed > ../../new-direction.md'], { cwd, env: { HOME: home, PATH: '/usr/bin:/bin', NODE_ENV: 'test' }, stdout: 'pipe', stderr: 'pipe' });
+  if (await child.exited) throw new Error('reproduction shell failed');
+}
+const evidence = { read, redirect, git, escapedWrite: await readFile(join(root, 'new-direction.md'), 'utf8').catch(() => null) };
+await mkdir(join(run, 'evidence'), { recursive: true });
+await writeFile(join(run, 'evidence/home-guard.json'), JSON.stringify(evidence, null, 2));
+console.log(JSON.stringify(evidence, null, 2));
+if (denied(read) || !denied(redirect) || !denied(git) || evidence.escapedWrite) throw new Error('Home guard boundary failed');
+console.log('PASS: home docs readable; relative redirect and enclosing-repo git mutation denied.');

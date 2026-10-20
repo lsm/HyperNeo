@@ -485,3 +485,35 @@ describe('neoSecretReadRules', () => {
     );
   });
 });
+
+describe('Neo home repository boundaries', () => {
+  const root = '/home/fictional/.hyperneo/Neo';
+  const coordinator = `${root}/.coordinators/neo-1`;
+  const home = { ...scope, cwd: coordinator, own: [coordinator] };
+  test.each([
+    ['Read', { file_path: `${root}/direction.md` }],
+    ['Grep', { path: root, pattern: 'direction', glob: '*.md' }],
+    ['Glob', { path: root, pattern: 'projects/**/*.md' }],
+  ])('allows %s to read curated home documents', (tool, input) => {
+    expect(decideNeoTool(tool as string, input as Record<string, unknown>, home)).toEqual({
+      kind: 'allow',
+    });
+  });
+  test.each([
+    'echo changed > ../../new-direction.md',
+    'echo changed >> "../../new direction.md"',
+    'git commit -am changed',
+    'git clean -fd',
+    'git pull',
+    'git branch new-direction',
+    'git worktree add /scratch/other',
+  ])('denies %s from the coordinator folder', (command) => {
+    expect(decideNeoTool('Bash', { command }, home).kind).toBe('deny');
+  });
+  test.each([`${root}/.git/config`, `${root}/.coordinators/other/transcript.md`])(
+    'keeps %s private',
+    (path) => {
+      expect(decideNeoTool('Read', { file_path: path }, home).kind).toBe('deny');
+    }
+  );
+});
