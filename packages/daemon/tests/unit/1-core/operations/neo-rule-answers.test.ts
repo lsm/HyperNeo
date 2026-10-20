@@ -1,0 +1,142 @@
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import type { MessageHub } from '@hyperneo/shared';
+import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
+import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
+import {
+  createOperationRegistry,
+  type OperationCaller,
+} from '../../../../src/lib/operations/registry.ts';
+import {
+  InternalEventBus,
+  type DaemonInternalEventMap,
+} from '../../../../src/lib/internal-event-bus.ts';
+import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
+import { createTestDb, createTestSession } from '../../../helpers/database.ts';
+let db: Awaited<ReturnType<typeof createTestDb>>;
+let service: NeoService;
+const human: OperationCaller = { source: 'rpc', principal: 'local' };
+const agent: OperationCaller = { source: 'mcp', sessionId: 'neo:root', role: 'neo' };
+const edit = { add: ['Ask before publishing.'], remove: ['Old synthetic rule.'] };
+beforeEach(async () => {
+  db = await createTestDb();
+  db.createSession(createTestSession('neo:root'));
+  service = new NeoService(
+    db,
+    {} as SessionManager,
+    { event: mock(() => {}) } as unknown as MessageHub,
+    new InternalEventBus<DaemonInternalEventMap>()
+  );
+  service.deliverForward = async () => {};
+  service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', projectId: null });
+  db.updateGlobalSettings({ neo: { standingRules: ['Old synthetic rule.', 'Keep this rule.'] } });
+  service.todos.openAsk({
+    id: 'ask',
+    projectId: null,
+    sessionId: 'neo:root',
+    originMessageId: null,
+    title: 'Settings',
+    request: 'Synthetic proposal',
+    createdAt: 1,
+  });
+});
+afterEach(() => {
+  service.dispose();
+  db.close();
+});
+const invoke = (name: string, input: unknown, caller = agent) =>
+  invokeOperation(createOperationRegistry(createNeoOperations(service)), name, input, caller);
+const saved = () => db.getGlobalSettings().neo?.standingRules;
+async function propose(requestId = 'request', change = edit) {
+  const result = await invoke('neo.rule.ask', { askId: 'ask', requestId, ...change });
+  expect(result).toMatchObject({ value: { ok: true } });
+  return (result as { value: { questionId: string } }).value.questionId;
+}
+describe('human-approved standing rules', () => {
+  test('a system-turn proposal changes nothing until human yes, then applies the exact edit', async () => {
+    expect(await invoke('neo.rule.save', { add: edit.add, from: edit.add[0] })).toMatchObject({
+      value: { ok: false },
+    });
+    const id = await propose();
+    const text = service.todos.getQuestion(id)!.text;
+    for (const rule of [...edit.add, ...edit.remove]) expect(text).toContain(JSON.stringify(rule));
+    expect(saved()).toEqual(['Old synthetic rule.', 'Keep this rule.']);
+    expect(await invoke('neo.rule.applyAnswer', { questionId: id })).toMatchObject({
+      value: { ok: false },
+    });
+    expect(await invoke('neo.question.answer', { questionId: id, answer: 'yes' })).toMatchObject({
+      value: { ok: false },
+    });
+    expect(
+      await invoke('neo.question.answer', { questionId: id, answer: 'yes' }, human)
+    ).toMatchObject({ value: { ok: true } });
+    expect(await invoke('neo.question.get', { questionId: id })).toMatchObject({
+      value: { answeredByHuman: true },
+    });
+    expect(saved()).toEqual(['Keep this rule.', ...edit.add]);
+    await invoke('neo.rule.save', { add: ['A later human rule.'], remove: edit.add }, human);
+    expect(await invoke('neo.rule.applyAnswer', { questionId: id })).toMatchObject({
+      value: { ok: true },
+    });
+    expect(saved()).toEqual(['Keep this rule.', 'A later human rule.']);
+  });
+  test('post-answer payload injection and proposal rebinding are refused', async () => {
+    const id = await propose();
+    await invoke('neo.question.answer', { questionId: id, answer: 'yes' }, human);
+    const before = saved();
+    expect(
+      await invoke('neo.rule.applyAnswer', { questionId: id, add: ['Tampered.'] })
+    ).toMatchObject({ kind: 'failed', code: 'invalid_input' });
+    expect(
+      await invoke('neo.rule.ask', { askId: 'ask', requestId: 'request', add: ['Tampered.'] })
+    ).toMatchObject({ value: { ok: false } });
+    expect(saved()).toEqual(before);
+    expect(() =>
+      db
+        .getDatabase()
+        .prepare("UPDATE neo_rule_proposals SET edit_json='{}' WHERE question_id=?")
+        .run(id)
+    ).toThrow();
+  });
+  test.each(['no', 'Change the wording'])('human %s leaves rules unchanged', async (answer) => {
+    const before = saved();
+    const id = await propose();
+    if (answer === 'no') await invoke('neo.question.answer', { questionId: id, answer }, human);
+    else service.todos.answerQuestion(service.todos.getQuestion(id)!, answer, 'chat', 2);
+    expect(await invoke('neo.rule.applyAnswer', { questionId: id })).toMatchObject({
+      value: { ok: false },
+    });
+    expect(saved()).toEqual(before);
+  });
+  test('a proposal can replace one of twenty rules without dropping the other nineteen', async () => {
+    const rules = Array.from({ length: 20 }, (_, i) => `Synthetic rule ${i}.`);
+    db.updateGlobalSettings({ neo: { standingRules: rules } });
+    expect(
+      await invoke('neo.rule.ask', { askId: 'ask', requestId: 'over', add: edit.add })
+    ).toMatchObject({ value: { ok: false } });
+    const id = await propose('replace', { add: edit.add, remove: [rules[0]] });
+    service.todos.answerQuestion(service.todos.getQuestion(id)!, 'yes', 'chat', 2);
+    expect(saved()).toEqual([...rules.slice(1), ...edit.add]);
+  });
+  test('pending retries keep identity, closed retries require a new request', async () => {
+    const id = await propose();
+    expect(await propose()).toBe(id);
+    await invoke('neo.question.answer', { questionId: id, answer: 'no' }, human);
+    expect(
+      await invoke('neo.rule.ask', { askId: 'ask', requestId: 'request', ...edit })
+    ).toMatchObject({ value: { ok: false, reason: 'question_closed' } });
+    expect(await propose('new-request')).not.toBe(id);
+  });
+  test('application failure rolls back consent and all rule edits', async () => {
+    const before = saved();
+    const id = await propose();
+    db.getDatabase().exec(
+      "CREATE TRIGGER synthetic_rules_failure BEFORE INSERT ON global_settings BEGIN SELECT RAISE(ABORT,'synthetic_failure'); END"
+    );
+    expect(
+      await invoke('neo.question.answer', { questionId: id, answer: 'yes' }, human)
+    ).toMatchObject({ kind: 'failed' });
+    expect(service.todos.getQuestion(id)?.state).toBe('open');
+    expect(saved()).toEqual(before);
+  });
+});

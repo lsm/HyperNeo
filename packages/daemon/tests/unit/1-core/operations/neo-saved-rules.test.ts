@@ -484,6 +484,41 @@ describe('neo.rule.save edits', () => {
     turn.dispose();
   });
 
+  test('an explicitly selected consumed human message delivered mid-turn authorizes its own citation', async () => {
+    db.getSDKMessageRepo().markDeliveryConsumedByUuid(root, 'ask-1');
+    const turn = new NeoCoordinatorTurn(db, root, { isLive: () => true });
+    turn.bind('note-1');
+    turn.noteSteered('ask-1');
+    expect(
+      await invoke(
+        { add: [rule], from: rule, triggerId: 'human:ask-1' },
+        { ...caller, neoTurn: turn.identity() }
+      )
+    ).toMatchObject({ value: { ok: true } });
+    expect(saved()).toEqual([...standing, rule]);
+    turn.dispose();
+  });
+  test.each(['old', 'unconsumed', 'system'])(
+    'a guessed %s input cannot authorize a direct save',
+    async (kind) => {
+      if (kind !== 'unconsumed') db.getSDKMessageRepo().markDeliveryConsumedByUuid(root, 'ask-1');
+      const turn = new NeoCoordinatorTurn(db, root, { isLive: () => true });
+      turn.bind('note-1');
+      if (kind !== 'old') turn.noteSteered(kind === 'system' ? 'note-1' : 'ask-1');
+      expect(
+        await invoke(
+          {
+            add: [rule],
+            from: rule,
+            triggerId: kind === 'system' ? 'human:note-1' : 'human:ask-1',
+          },
+          { ...caller, neoTurn: turn.identity() }
+        )
+      ).toMatchObject({ value: { ok: false } });
+      expect(saved()).toEqual(standing);
+      turn.dispose();
+    }
+  );
   test('a turn the human did not start cannot add or remove rules', async () => {
     const note = { ...caller, neoTurn: { ...caller.neoTurn!, messageId: 'note-1', human: false } };
     expect(await invoke({ add: [rule], from: rule }, note)).toMatchObject({
