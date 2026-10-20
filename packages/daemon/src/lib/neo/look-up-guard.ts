@@ -668,7 +668,9 @@ function commandWords(words: readonly string[]): string[] {
       at += values.has(words[at]) ? 2 : 1;
     if (WRAPPER_NUMBER_ARG.has(word) && /^\d+(\.\d+)?[smhd]?$/.test(words[at] ?? '')) at += 1;
   }
-  return words.slice(at);
+  const command = words.slice(at);
+  if (basename(command[0] ?? '') === 'git') command[0] = 'git';
+  return command;
 }
 
 const GIT_LIST_FLAGS = new Set([
@@ -974,6 +976,12 @@ function analyzeBash(
     const here = { ...scope, cwd: dir };
     const outside = (target: string) => !ownPath(resolvePath(target, here), scope, facts);
     const change = localChange(words, dir);
+    if (words[0] === 'git' && change)
+      change.targets.push(
+        ...raw.flatMap((word) =>
+          /^GIT_(DIR|WORK_TREE)=/.test(word) ? [word.slice(word.indexOf('=') + 1)] : []
+        )
+      );
     found.secret ??= change?.targets.find((target) => isSecretPath(target, here, facts)) ?? null;
     if (
       words[0] === 'git' &&
@@ -1022,10 +1030,9 @@ function readDenial(
   const pattern = staticPrefix(text('pattern'));
   if (isSecretPath(root, scope, facts) || tooBroad(root, scope))
     return 'search inside a project folder, not home or a secrets folder';
-  if (tool === 'Grep') return grepDenial(input);
   if (
     within(resolvePath(root, scope), join(scope.dataDir, 'Neo')) &&
-    text('pattern')
+    text(tool === 'Grep' ? 'glob' : 'pattern')
       .split('/')
       .some(
         (part) =>
@@ -1034,6 +1041,7 @@ function readDenial(
       )
   )
     return 'that pattern points at secrets';
+  if (tool === 'Grep') return grepDenial(input);
   return patternNamesSecret(text('pattern')) ||
     (pattern && isSecretPath(pattern, { ...scope, cwd: resolvePath(root, scope) }, facts))
     ? 'that pattern points at secrets'

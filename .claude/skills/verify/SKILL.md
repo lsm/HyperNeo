@@ -512,9 +512,10 @@ adds its journey here.
     run `neo-home.ts` as above to initialize the synthetic home, then run
     `bun .claude/skills/verify/neo-home-sdk.ts <port> "$RUN"`. It registers the local
     mock provider in this run's DB, opens Neo and sends `verify-home-guard-sdk`.
-    The scripted model calls native Read and two Bash tools. End state:
-    `evidence/neo-home-sdk.json` contains a successful README read, denied redirect
-    and git mutation tool results, no written file and no created branch.
+    The scripted model calls native Read, two Greps and four Bash tools. End state:
+    `evidence/neo-home-sdk.json` contains a successful README read, denied private
+    Grep globs, denied redirect and plain/absolute/environment git mutations, no
+    written file and no created branch.
     This observes real SDK tool execution with a mocked model; GUI rendering is
     not covered. Stop the isolated daemon and mock as in Cleanup.
 
