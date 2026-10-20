@@ -744,6 +744,17 @@ adds its journey here.
     The renderer must return source-gone, with no exception or wake delivered.
     Evidence: `evidence/goal-close-race.json`. Its daemon stops in `finally`.
 
+29. **Scheduled wakes are part of the conversation contract (G5a).** Launch a fresh
+    isolated daemon, then run `bun .claude/skills/verify/neo-wake-contract.ts <port> "$RUN"`.
+    The helper validates the test DB and seeds synthetic delivered inputs through
+    the production repositories, including all five addition kinds. The real
+    `neo.conversation.read` and `neo.snapshot` RPCs must expose the same wake.
+    A later unrelated terminal must leave it working; only a terminal sharing its
+    `consumed_seq` settles it and supplies the closing line. The raw daemon note
+    is absent from the public output. Evidence: `evidence/neo-wake-contract.json`.
+    This checks the API with synthetic recorded turns, not model behavior or the
+    web disclosure row; G5b adds the rendering journey. Stop with `stop.sh`.
+
 ## Evidence
 
 ### SDK message body dual write (slice 6)
