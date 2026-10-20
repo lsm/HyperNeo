@@ -64,6 +64,104 @@ describe('createScheduleDelivery', () => {
   });
 });
 
+describe('Neo schedule target lifecycle', () => {
+  const target = { adapter: 'hyperneo', id: 'neo:root' };
+  const create = () => {
+    const scheduler = new SessionScheduler(db.getDatabase(), db.getJobQueueRepo());
+    const row = scheduler.create(
+      {
+        target,
+        sourceKind: 'reminder',
+        sourceId: 'neo-check',
+        note: 'Check the goal',
+        nudgeEvery: 1,
+        cadence: { kind: 'every', everyMs: 60000 },
+        createdBySession: null,
+      },
+      Date.now() - 60000
+    );
+    const delivery = createScheduleDelivery(db, () => createOperationRegistry([]));
+    const handler = createSessionScheduleFire({ scheduler, ...delivery });
+    const mail = () =>
+      db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': target.id });
+    return { scheduler, row, delivery, handler, mail };
+  };
+
+  test.each([
+    ['missing', 'not_found'],
+    ['ended', 'not_open'],
+    ['archived', 'not_open'],
+  ] as const)('%s Neo finishes target_gone instead of skipping busy', async (status, expected) => {
+    if (status !== 'missing') db.createSession({ ...createTestSession(target.id), status });
+    const { scheduler, row, delivery, handler, mail } = create();
+    expect(await delivery.status(target)).toBe(expected);
+    await handler(db.getJobQueueRepo().getJob(row.pendingJobId!)!);
+    expect(scheduler.repo.get(row.id)).toMatchObject({
+      status: 'done',
+      lastOutcome: 'target_gone',
+      pendingJobId: null,
+      nextRunAt: null,
+      lastMessageId: null,
+    });
+    expect(mail()).toEqual([]);
+  });
+
+  test('open interrupted Neo remains active and can fire after returning to idle', async () => {
+    db.createSession(createTestSession(target.id));
+    const state = (status: string) =>
+      db
+        .getDatabase()
+        .prepare('UPDATE sessions SET processing_state = ? WHERE id = ?')
+        .run(JSON.stringify({ status, reason: 'user' }), target.id);
+    state('interrupted');
+    const { scheduler, row, delivery, handler, mail } = create();
+    expect(await delivery.status(target)).toBe('stopped');
+    await handler(db.getJobQueueRepo().getJob(row.pendingJobId!)!);
+    const next = scheduler.repo.get(row.id)!;
+    expect(next).toMatchObject({
+      status: 'active',
+      lastOutcome: 'skipped_busy',
+      dueCount: 1,
+      pendingJobId: expect.any(String),
+    });
+    expect(mail()).toEqual([]);
+    state('idle');
+    expect(await delivery.status(target)).toBe('done');
+    const clock = spyOn(Date, 'now').mockReturnValue(next.nextRunAt!);
+    try {
+      await handler(db.getJobQueueRepo().getJob(next.pendingJobId!)!);
+      expect(scheduler.repo.get(row.id)).toMatchObject({
+        status: 'active',
+        lastOutcome: 'fired',
+        dueCount: 0,
+      });
+      expect(mail()).toHaveLength(1);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  test('Neo closed after the status check is rejected at delivery time', async () => {
+    db.createSession(createTestSession(target.id));
+    const { scheduler, row, handler, mail } = create();
+    scheduler.registerSource({
+      kind: 'reminder',
+      facts: async () => {
+        db.updateSession(target.id, { status: 'ended' });
+        return { digest: 'changed', summary: 'Check the goal' };
+      },
+      message: (_id, change) => change.summary,
+    });
+    await handler(db.getJobQueueRepo().getJob(row.pendingJobId!)!);
+    expect(scheduler.repo.get(row.id)).toMatchObject({
+      status: 'done',
+      lastOutcome: 'target_gone',
+      lastMessageId: null,
+    });
+    expect(mail()).toEqual([]);
+  });
+});
+
 describe('schedule target lifecycle and external delivery', () => {
   const create = (adapter = 'hyperneo') => {
     const scheduler = new SessionScheduler(db.getDatabase(), db.getJobQueueRepo());

@@ -582,6 +582,9 @@ adds its journey here.
     the session route; the router does not decode a percent-encoded session id.
     CI covers foreign-goal rejection, failed/unconfirmed delivery, unchanged
     nudges, linked question/PR changes, repository splits and migration reruns.
+    Missing and closed Neo targets finish `target_gone`; open interrupted Neo
+    targets remain active with `skipped_busy` and can fire when idle. Delivery
+    rechecks closure after facts load, so a closing target receives no wake.
     No real model, external PR or desktop GUI is exercised. Mandate reconciliation
     and what-works compaction belong to G8.
 
