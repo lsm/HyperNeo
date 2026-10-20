@@ -3,8 +3,6 @@ import type { Database } from '../sqlite-compat.ts';
 const hasTable = (db: Database, name: string): boolean =>
   !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name);
 
-const NEW_TABLES = ['pack_facts', 'neo_questions', 'neo_todo_sessions', 'neo_todos', 'neo_asks'];
-
 function renameTable(db: Database, from: string, to: string): void {
   const legacy = (db.prepare('PRAGMA legacy_alter_table').get() as { legacy_alter_table: number })
     .legacy_alter_table;
@@ -106,18 +104,4 @@ export function runMigration387(db: Database): void {
     value_json TEXT NOT NULL CHECK (json_valid(value_json)),
     PRIMARY KEY(todo_id, pack, key)
   )`);
-}
-
-export function revertMigration387(db: Database): 'restored' | 'nothing' | 'has_rows' {
-  if (!hasTable(db, 'legacy_neo_asks')) return 'nothing';
-  if (
-    NEW_TABLES.some(
-      (table) => hasTable(db, table) && db.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get()
-    )
-  )
-    return 'has_rows';
-  for (const table of NEW_TABLES) db.exec(`DROP TABLE IF EXISTS ${table}`);
-  db.exec("DELETE FROM migration_markers WHERE key = 'migration_387'");
-  renameTable(db, 'legacy_neo_asks', 'neo_asks');
-  return 'restored';
 }

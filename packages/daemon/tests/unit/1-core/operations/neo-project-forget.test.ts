@@ -48,16 +48,7 @@ describe('neo.project.forget', () => {
     expect(repo.getProject(kept)?.title).toBe('kept');
   });
 
-  test('refuses a project that still has a card, and an unknown project', async () => {
-    db.getDatabase()
-      .prepare(
-        `INSERT INTO neo_work (id, request_key, origin_session_id, concern_id, title, instruction,
-           status, created_at, updated_at)
-         VALUES ('w1', 'k1', 'neo:root', ?, 'Card', 'Do it', 'cancelled', 1, 1)`
-      )
-      .run(atlas);
-    expect(await forget(atlas)).toEqual({ ok: false, reason: 'project_in_use' });
-    expect(repo.getProject(atlas)?.title).toBe('atlas');
+  test('refuses an unknown project', async () => {
     expect(await forget('project:nope')).toEqual({ ok: false, reason: 'project_missing' });
   });
 

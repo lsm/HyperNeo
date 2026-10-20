@@ -155,19 +155,6 @@ describe('Neo MVP', () => {
       neoTurn: { messageId: 'human-message', human: true, isLive: () => true },
     };
   }
-  async function propose() {
-    const root = await service.open();
-    return service.repo.proposeWork({
-      id: crypto.randomUUID(),
-      requestKey: crypto.randomUUID(),
-      projectId: null,
-      originSessionId: root,
-      targetSessionId: 'ordinary',
-      title: 'Suggest venues',
-      instruction: 'Suggest three free venues. Do not book anything.',
-    });
-  }
-
   test('opening is idempotent, independent of project creation and uses constrained coordinator sessions', async () => {
     const ids = await Promise.all([service.open(), service.open(), service.open()]);
     expect(new Set(ids).size).toBe(1);
@@ -375,24 +362,6 @@ describe('Neo MVP', () => {
     ).toBe(true);
     expect(service.repo.getProject('private')).toBeNull();
   });
-
-  async function concernWork(origin?: string) {
-    service.repo.saveProject(project, 0);
-    const root = await service.open();
-    const work = service.repo.proposeWork({
-      id: crypto.randomUUID(),
-      requestKey: crypto.randomUUID(),
-      projectId: project.id,
-      originSessionId: origin ?? root,
-      targetSessionId: 'ordinary',
-      title: 'Suggest venues',
-      instruction: 'Suggest free venues, do not book anything.',
-    });
-    await service.start(work.id);
-    const saved = service.repo.getWork(work.id)!;
-    terminalSessions ??= new Set();
-    return { work: saved, root };
-  }
 
   test('query restriction gives Neo its tools and guard and drops plugins, settings and extra MCP servers', async () => {
     const operationServer = { type: 'stdio' as const, command: 'operations' };

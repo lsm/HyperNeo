@@ -10,7 +10,6 @@ import {
   wantsNeoWorkPrBlockers,
 } from '../../../../src/lib/neo/packs/coding/work-prs.ts';
 import { type NeoWorkPr, neoWorkPrVerdict } from '@hyperneo/shared/types/neo-snapshot';
-import type { NeoEvidenceState } from '../../../../src/lib/neo/evidence.ts';
 
 const head = 'abc123';
 const ghPr = (overrides: Record<string, unknown> = {}) => ({

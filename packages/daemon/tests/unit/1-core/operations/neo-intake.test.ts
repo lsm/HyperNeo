@@ -155,7 +155,6 @@ describe('durable Neo intake operation', () => {
       released: true,
     });
     expect(repo.listProjects()).toEqual([]);
-    expect(repo.listWork()).toEqual([]);
   });
   test('accepts another concern while the previous delivery remains processing', async () => {
     await invoke();

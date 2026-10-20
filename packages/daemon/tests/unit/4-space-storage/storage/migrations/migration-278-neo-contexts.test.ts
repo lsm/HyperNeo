@@ -23,7 +23,7 @@ describe('migration 278: Neo contexts', () => {
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'neo_%' ORDER BY name"
           )
           .all()
-      ).toEqual([{ name: 'neo_concerns' }, { name: 'neo_session_bindings' }, { name: 'neo_work' }]);
+      ).toEqual([{ name: 'neo_concerns' }, { name: 'neo_session_bindings' }]);
     } finally {
       db.close();
     }

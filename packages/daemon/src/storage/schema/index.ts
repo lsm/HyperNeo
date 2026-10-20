@@ -1,8 +1,6 @@
-import { runMigration386 } from './m386-neo-work-control-failures.ts';
 import { runMigration388 } from './m388-claude-desktop-bridge-events.ts';
 import { runMigration361 } from './m361-neo-project-avatars.ts';
 import { runMigration260 } from './m260-direct-start-requests.ts';
-import { runMigration363 } from './m363-neo-work-refusals.ts';
 import { runMigration360 } from './m360-workspace-projects.ts';
 import { runMigration258 } from './m258-direct-process-ownership.ts';
 import { runMigration257 } from './m257-direct-outcome-job.ts';
@@ -19,7 +17,6 @@ import { createEvolutionTables } from './evolution.ts';
 import { createLongHorizonAgentTables } from './long-horizon-agents.ts';
 import { createSpaceSessionEventSubscriptionTables } from './space-session-event-subscriptions.ts';
 import { createNeoTables } from './neo.ts';
-import { createNeoWorkResourceTable } from './m287-neo-work-resources.ts';
 import { createNeoPublicationTable } from './m288-neo-publications.ts';
 import { createNeoConversationAskTable } from './m289-neo-conversation-asks.ts';
 import { createSessionIncarnationTable } from './m290-session-incarnations.ts';
@@ -127,7 +124,6 @@ export { runMigration174 } from './migrations.ts';
 export function createTables(db: BunDatabase): void {
   createNeoTables(db);
   runMigration361(db);
-  createNeoWorkResourceTable(db);
   createNeoPublicationTable(db);
   createNeoConversationAskTable(db);
   db.exec(`
@@ -830,8 +826,6 @@ export function createTables(db: BunDatabase): void {
       )
 	    `);
   runMigration360(db);
-  runMigration363(db);
-  runMigration386(db);
   runMigration388(db);
 
   db.exec(`

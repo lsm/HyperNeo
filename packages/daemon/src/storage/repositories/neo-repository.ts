@@ -1,4 +1,4 @@
-import type { NeoBinding, NeoProject, NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { NeoBinding, NeoProject } from '@hyperneo/shared/types/neo-context';
 import { neoProjectMoveReason, neoProjectPath } from '@hyperneo/shared/types/neo-project-tree';
 import type { NeoProjectFacts } from '../../lib/neo/project-cleanup.ts';
 import type { Database } from '../sqlite-compat.ts';
@@ -7,34 +7,12 @@ import { NeoProjectMergeRepository } from './neo-project-merge-repository.ts';
 const concernColumns = `id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl,
   created_at AS createdAt, updated_at AS updatedAt`;
 const bindingColumns = 'session_id AS sessionId, concern_id AS projectId, kind';
-const workColumns = `id, request_key AS requestKey, concern_id AS projectId,
-  origin_session_id AS originSessionId, origin_message_id AS originMessageId,
-  title, instruction, target_session_id AS targetSessionId, session_id AS sessionId,
-  status, report, follows, created_at AS createdAt, updated_at AS updatedAt`;
-
 export type NeoProjectInput = Pick<NeoProject, 'id' | 'title' | 'summary' | 'context'>;
-export type NeoWorkInput = Pick<
-  NeoWork,
-  'id' | 'requestKey' | 'projectId' | 'originSessionId' | 'title' | 'instruction'
-> &
-  Partial<Pick<NeoWork, 'originMessageId' | 'follows'>> & { targetSessionId?: string | null };
-export interface NeoWorkTarget {
-  readonly id: string;
-  readonly targetSessionId: string | null;
-  readonly agent?: {
-    readonly spaceId: string;
-    readonly agentId: string;
-    readonly sessionId: string;
-  };
-}
-export type NeoWorkState = Pick<NeoWork, 'status' | 'sessionId' | 'report'>;
-
 export class NeoRepository {
   readonly projectMerges: NeoProjectMergeRepository;
   constructor(
     private readonly db: Database,
-    private readonly notify: () => void = () => {},
-    private readonly onSettled: (work: NeoWork) => void = () => {}
+    private readonly notify: () => void = () => {}
   ) {
     this.projectMerges = new NeoProjectMergeRepository(db, notify);
   }
@@ -51,29 +29,18 @@ export class NeoRepository {
       .prepare(`SELECT c.id, c.title, c.created_at AS createdAt,
           (c.epic_url IS NOT NULL OR EXISTS (SELECT 1 FROM neo_concerns k WHERE k.parent_id = c.id)) AS section,
           length(c.context) AS context,
-          (SELECT count(*) FROM legacy_neo_asks a WHERE a.concern_id = c.id)
-            + (SELECT count(*) FROM neo_asks n WHERE n.project_id = c.id) AS asks,
-          (SELECT count(*) FROM legacy_neo_asks a WHERE a.concern_id = c.id
-            AND a.status IN ('open', 'waiting', 'blocked'))
-            + (SELECT count(*) FROM neo_asks n WHERE n.project_id = c.id
-              AND n.status = 'open') AS liveAsks,
-          (SELECT count(*) FROM neo_work w WHERE w.concern_id = c.id
-            AND w.status IN ('proposed', 'queued')) AS liveWork
+          (SELECT count(*) FROM neo_asks n WHERE n.project_id = c.id) AS asks,
+          (SELECT count(*) FROM neo_asks n WHERE n.project_id = c.id
+            AND n.status = 'open') AS liveAsks
         FROM neo_concerns c
         WHERE c.id NOT IN (SELECT source_id FROM neo_project_merges)`)
-      .all() as (Omit<NeoProjectFacts, 'section' | 'work' | 'aliases'> & { section: number })[];
-    const work = this.db
-      .prepare(`SELECT w.concern_id AS projectId,
-          json_extract(t.ref, '$.adapter') || char(0) || json_extract(t.ref, '$.id') AS ref
-        FROM neo_work w LEFT JOIN neo_work_driver_targets t ON t.work_id = w.id`)
-      .all() as { projectId: string; ref: string | null }[];
+      .all() as (Omit<NeoProjectFacts, 'section' | 'aliases'> & { section: number })[];
     const aliases = this.db
       .prepare('SELECT project_id AS projectId, alias FROM neo_project_workspaces')
       .all() as { projectId: string; alias: string }[];
     return rows.map((row) => ({
       ...row,
       section: !!row.section,
-      work: work.filter((entry) => entry.projectId === row.id).map((entry) => ({ ref: entry.ref })),
       aliases: aliases.filter((entry) => entry.projectId === row.id).map((entry) => entry.alias),
     }));
   }
@@ -84,9 +51,7 @@ export class NeoRepository {
         .prepare(`SELECT 1 FROM neo_concerns c WHERE c.id = ? AND length(c.context) = 0
           AND c.epic_url IS NULL
           AND NOT EXISTS (SELECT 1 FROM neo_concerns k WHERE k.parent_id = c.id)
-          AND NOT EXISTS (SELECT 1 FROM legacy_neo_asks a WHERE a.concern_id = c.id)
-          AND NOT EXISTS (SELECT 1 FROM neo_asks n WHERE n.project_id = c.id)
-          AND NOT EXISTS (SELECT 1 FROM neo_work w WHERE w.concern_id = c.id)`)
+          AND NOT EXISTS (SELECT 1 FROM neo_asks n WHERE n.project_id = c.id)`)
         .get(projectId);
       if (!empty) throw new Error('the project is no longer empty');
       this.db.prepare('DELETE FROM neo_project_workspaces WHERE project_id = ?').run(projectId);
@@ -103,17 +68,11 @@ export class NeoRepository {
         return { reason: 'project_missing' as const };
       const used = this.db
         .prepare(`SELECT 1 WHERE EXISTS (SELECT 1 FROM neo_concerns WHERE parent_id = ?1)
-          OR EXISTS (SELECT 1 FROM neo_work WHERE concern_id = ?1)
-          OR EXISTS (SELECT 1 FROM legacy_neo_asks WHERE concern_id = ?1
-            AND status IN ('open', 'waiting', 'blocked'))
           OR EXISTS (SELECT 1 FROM neo_asks WHERE project_id = ?1 AND status = 'open')
           OR EXISTS (SELECT 1 FROM neo_session_bindings WHERE concern_id = ?1)
           OR EXISTS (SELECT 1 FROM neo_project_merges WHERE source_id = ?1 OR target_id = ?1)`)
         .get(projectId);
       if (used) return { reason: 'project_in_use' as const };
-      this.db
-        .prepare('UPDATE legacy_neo_asks SET concern_id = NULL WHERE concern_id = ?')
-        .run(projectId);
       this.db.prepare('UPDATE neo_asks SET project_id = NULL WHERE project_id = ?').run(projectId);
       this.db.prepare('DELETE FROM neo_project_workspaces WHERE project_id = ?').run(projectId);
       this.db.prepare('DELETE FROM neo_concerns WHERE id = ?').run(projectId);
@@ -336,124 +295,5 @@ export class NeoRepository {
       )
       .run(session.slice(4), Date.now());
     return (this.db.prepare('SELECT id FROM neo_conversation').get() as { id: string }).id;
-  }
-
-  listWork(projectId?: string | null): NeoWork[] {
-    const condition = projectId === undefined ? '' : 'WHERE concern_id IS ?';
-    return this.db
-      .prepare(`SELECT ${workColumns} FROM neo_work ${condition} ORDER BY created_at DESC, id`)
-      .all(...(projectId === undefined ? [] : [projectId])) as NeoWork[];
-  }
-
-  getWork(id: string): NeoWork | null {
-    return this.db
-      .prepare(`SELECT ${workColumns} FROM neo_work WHERE id = ?`)
-      .get(id) as NeoWork | null;
-  }
-
-  workForRequest(requestKey: string): NeoWork | null {
-    return (
-      (this.db
-        .prepare(`SELECT ${workColumns} FROM neo_work WHERE request_key = ?`)
-        .get(requestKey) as NeoWork | undefined) ?? null
-    );
-  }
-
-  findWorkBySession(sessionId: string): NeoWork | null {
-    return this.db
-      .prepare(`SELECT ${workColumns} FROM neo_work WHERE session_id = ?
-        ORDER BY created_at DESC, id DESC LIMIT 1`)
-      .get(sessionId) as NeoWork | null;
-  }
-
-  getWorkTarget(id: string): NeoWorkTarget | null {
-    return (
-      (this.db
-        .prepare('SELECT id, target_session_id AS targetSessionId FROM neo_work WHERE id = ?')
-        .get(id) as NeoWorkTarget | null) ?? null
-    );
-  }
-
-  proposeWork(input: NeoWorkInput): NeoWork {
-    const now = Date.now();
-    const result = this.db
-      .prepare(`INSERT INTO neo_work
-        (id, request_key, concern_id, origin_session_id, origin_message_id, target_session_id, title, instruction,
-          session_id, status, report, follows, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'proposed', NULL, ?, ?, ?)
-        ON CONFLICT(request_key) DO NOTHING`)
-      .run(
-        input.id,
-        input.requestKey,
-        input.projectId,
-        input.originSessionId,
-        input.originMessageId ?? null,
-        input.targetSessionId ?? null,
-        input.title,
-        input.instruction,
-        input.follows ?? null,
-        now,
-        now
-      );
-    if (result.changes > 0) this.notify();
-    return this.db
-      .prepare(`SELECT ${workColumns} FROM neo_work WHERE request_key = ?`)
-      .get(input.requestKey) as NeoWork;
-  }
-
-  moveWork(
-    ids: readonly string[],
-    owner: { projectId: string; originSessionId: string; originMessageId: string }
-  ): void {
-    if (ids.length === 0) return;
-    const moved = this.db
-      .prepare(`UPDATE neo_work SET concern_id = ?, origin_session_id = ?, origin_message_id = ?
-        WHERE id IN (SELECT value FROM json_each(?))`)
-      .run(owner.projectId, owner.originSessionId, owner.originMessageId, JSON.stringify(ids));
-    if (moved.changes > 0) this.notify();
-  }
-
-  workStartedAt(id: string): number | null {
-    return (
-      (
-        this.db
-          .prepare(`SELECT COALESCE(started_at,
-      (SELECT claimed_at FROM neo_work_driver_targets WHERE work_id = w.id),
-      (SELECT ROUND((julianday(timestamp) - 2440587.5) * 86400000)
-        FROM sdk_messages WHERE session_id = w.session_id AND json_extract(sdk_message, '$.uuid') = w.id
-          AND json_extract(sdk_message, '$.type') = 'user'
-          AND json_extract(sdk_message, '$.inputKind') = 'system'
-        ORDER BY rowid LIMIT 1)) AS at FROM neo_work w WHERE id = ?`)
-          .get(id) as { at: number | null } | null
-      )?.at ?? null
-    );
-  }
-
-  transitionWork(
-    id: string,
-    expected: NeoWorkState,
-    patch: Pick<NeoWorkState, 'status'> & Partial<Omit<NeoWorkState, 'status'>>
-  ): NeoWork | null {
-    const row = this.db
-      .prepare(`UPDATE neo_work SET status = ?, session_id = ?, report = ?, updated_at = ?,
-        started_at = CASE WHEN ? = 'queued' THEN COALESCE(started_at, ?) ELSE started_at END
-        WHERE id = ? AND status = ? AND session_id IS ? AND report IS ?
-        RETURNING ${workColumns}`)
-      .get(
-        patch.status,
-        patch.sessionId === undefined ? expected.sessionId : patch.sessionId,
-        patch.report === undefined ? expected.report : patch.report,
-        Date.now(),
-        patch.status,
-        Date.now(),
-        id,
-        expected.status,
-        expected.sessionId,
-        expected.report
-      );
-    if (row) this.notify();
-    if (row && expected.status === 'queued' && patch.status !== 'queued')
-      this.onSettled(row as NeoWork);
-    return row as NeoWork | null;
   }
 }

@@ -11,9 +11,6 @@ import { type NeoWorkingEvent } from '@hyperneo/shared/types/neo-snapshot';
 import { type NeoModelPreference, neoStandingRules } from '@hyperneo/shared/types/settings';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
-import { DaemonInventoryRepository } from '../../storage/repositories/daemon-inventory-repository.ts';
-import { NeoAgentWorkTargetRepository } from '../../storage/repositories/neo-agent-work-target-repository.ts';
-import { NeoAskCheckRepository } from '../../storage/repositories/neo-ask-check-repository.ts';
 import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { createNeoTodoRunner, neoTodoCard, type NeoTodoRunner } from './todo-runner.ts';
@@ -100,14 +97,12 @@ import {
 import type { NeoSessionNotice, NeoSessionNoticeGroup } from './session-watch.ts';
 import { NeoSessionWatcher } from './session-watcher.ts';
 import type { NeoSnapshotRead } from './snapshot-read.ts';
-import { createNeoWorkTargetResolver } from './work-target.ts';
 
 export class NeoService {
   readonly repo: NeoRepository;
   readonly publications: NeoPublicationRepository;
   readonly asks: NeoConversationAskRepository;
   readonly publish: ReturnType<typeof createNeoPublisher>;
-  readonly agentTargets: NeoAgentWorkTargetRepository;
   readonly todos: NeoAskTodoRepository;
   readonly todoSessions: NeoTodoSessionRepository;
   readonly todoRunner: NeoTodoRunner;
@@ -116,7 +111,6 @@ export class NeoService {
   private readonly sessionSubscriptions: SessionEventSubscriptionRepository;
   private readonly sessionEvents: SessionExternalEventStore;
   watchExternalTopic: ((topic: string) => Promise<void>) | null = null;
-  readonly askChecks: NeoAskCheckRepository;
   get sessionNotices(): NeoSessionNotice[] {
     return this.sessionWatcher.sessionNotices;
   }
@@ -147,7 +141,6 @@ export class NeoService {
     );
   readonly resolveAskOrigin: ReturnType<typeof createNeoAskOriginResolver>;
   readonly inputOrigins: NeoInputOriginRepository;
-  readonly resolveWorkTarget: ReturnType<typeof createNeoWorkTargetResolver>;
   readonly notifyChanged: () => void;
   private readonly noteWorking: () => void;
   private workingKey = '';
@@ -194,7 +187,6 @@ export class NeoService {
     this.repo = new NeoRepository(db.getDatabase(), this.notifyChanged);
     this.publications = new NeoPublicationRepository(db.getDatabase());
     this.asks = new NeoConversationAskRepository(db.getDatabase());
-    this.agentTargets = new NeoAgentWorkTargetRepository(db.getDatabase());
     this.todos = new NeoAskTodoRepository(db.getDatabase(), this.notifyChanged);
     this.todoSessions = new NeoTodoSessionRepository(db.getDatabase());
     this.todoPrs = new CodingTodoPrRepository(db.getDatabase());
@@ -238,7 +230,6 @@ export class NeoService {
     this.cardEvents = new NeoCardEventSubscriptionRepository(db.getDatabase());
     this.sessionSubscriptions = new SessionEventSubscriptionRepository(db.getDatabase());
     this.sessionEvents = new SessionExternalEventStore(db.getDatabase());
-    this.askChecks = new NeoAskCheckRepository(db.getDatabase());
     this.builtinPacks = [
       createCodingPack({
         readPrs: (urls) => this.readPrs(urls),
@@ -283,7 +274,6 @@ export class NeoService {
       getBinding: (id) => this.repo.getBindingBySession(id),
       getRootBinding: () => this.repo.defaultBinding(),
       hasProject: (id) => !!this.repo.getProject(id),
-      getWork: (id) => this.repo.getWork(id),
       resolveAskOrigin: (input) => this.resolveAskOrigin(input),
       resolveHumanAskOrigin: (input) => this.resolveHumanAskOrigin(input),
       inputTrigger: (input) => this.inputTrigger(input),
@@ -293,16 +283,6 @@ export class NeoService {
           'consumed',
       append: (input) => this.appendPublication(input),
       notify: notifyPublication,
-    });
-    this.resolveWorkTarget = createNeoWorkTargetResolver({
-      readTarget: (id) => {
-        const target = this.repo.getWorkTarget(id);
-        const agent = target ? this.agentTargets.get(id) : null;
-        return target && (agent ? { ...target, agent } : target);
-      },
-      readAgentOwner: (agent) => this.agentTargets.readOwner(agent),
-      readSession: (id) => new DaemonInventoryRepository(db.getDatabase()).readSession(id),
-      readBinding: (id) => this.repo.getBindingBySession(id),
     });
     const offUpdated = events.subscribe(
       'session.updated',

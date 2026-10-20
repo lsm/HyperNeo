@@ -6,7 +6,6 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
-import { runMigration313 } from '../../../../src/storage/schema/m313-neo-asks.ts';
 import { runMigration361 } from '../../../../src/storage/schema/m361-neo-project-avatars.ts';
 import { runMigration370 } from '../../../../src/storage/schema/m370-neo-project-merges.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
@@ -14,7 +13,6 @@ import {
   createNeoProjectMergePipeline,
   requireNeoMergeCurrent,
   requireNeoMergeTree,
-  requireNeoMergeIdle,
   requireNeoMergeIdentity,
   type NeoProjectMergeInput,
   type NeoProjectMergeState,
@@ -47,7 +45,6 @@ const input: NeoProjectMergeInput = {
 const state: NeoProjectMergeState = {
   projects: [source, target],
   identities: {},
-  unavailable: [],
   retired: [],
 };
 const plan = { source, target };
@@ -81,13 +78,6 @@ describe('Neo merge pure gates', () => {
         requireNeoMergeTree(changed, { ...state, projects: [changed.source, changed.target] })
       ).toMatchObject({ reason: { reason: 'unsafe_tree' } });
   });
-  test('rejects either unavailable project', () => {
-    expect(requireNeoMergeIdle(plan, state)).toEqual({ value: plan });
-    for (const id of ['source', 'target'])
-      expect(requireNeoMergeIdle(plan, { ...state, unavailable: [id] })).toMatchObject({
-        reason: { reason: 'project_busy' },
-      });
-  });
   test('requires equal complete identity sets or a human decision without conflict', () => {
     expect(requireNeoMergeIdentity(plan, input, state)).toEqual({ value: plan });
     expect(
@@ -108,17 +98,16 @@ describe('Neo merge pure gates', () => {
 });
 
 describe('createNeoProjectMergePipeline', () => {
-  test('is synchronous and gates before writes, with stale precedence over busy', () => {
+  test('is synchronous and gates before writes', () => {
     let writes = 0;
     const run = createNeoProjectMergePipeline(
-      () => ({ ...state, unavailable: ['source'] }),
+      () => state,
       () => {
         writes++;
         return { ok: true, sourceId: 'source', targetId: 'target' };
       }
     );
     expect(run({ ...input, sourceRevision: 2 })).toEqual({ ok: false, reason: 'superseded' });
-    expect(run(input)).toEqual({ ok: false, reason: 'project_busy' });
     expect(writes).toBe(0);
     const success = createNeoProjectMergePipeline(
       () => state,
@@ -145,7 +134,6 @@ beforeEach(() => {
     'PRAGMA foreign_keys = ON; CREATE TABLE sessions(id TEXT PRIMARY KEY, processing_state TEXT)'
   );
   createNeoTables(db);
-  runMigration313(db);
   runMigration361(db);
   runMigration387(db);
   repo = new NeoRepository(db);
@@ -156,13 +144,6 @@ afterEach(() => {
   db.close();
   rmSync(directory, { recursive: true, force: true });
 });
-const askRow = (status = 'open') =>
-  db
-    .prepare(`INSERT INTO legacy_neo_asks
-  (id, request_key, concern_id, origin_session_id, title, ask, done_when, done_source, status, created_at, updated_at)
-  VALUES ('ask', 'ask', 'source', 'human', 'ask', 'ask', 'done', 'human', ?, 1, 1)`)
-    .run(status);
-
 describe('Neo project merge storage', () => {
   test('the upgrade runner applies project merges independently of input receipt migration 369', () => {
     const upgrade = new Database(':memory:');
@@ -189,10 +170,7 @@ describe('Neo project merge storage', () => {
       upgrade.close();
     }
   });
-  test('atomically preserves context, workspaces, asks, cards, sections and old publications', () => {
-    askRow();
-    db.exec(`INSERT INTO neo_work(id, request_key, concern_id, origin_session_id, title, instruction, status, created_at, updated_at)
-      VALUES ('work', 'work', 'source', 'human', 'work', 'do', 'queued', 1, 1)`);
+  test('atomically preserves context, workspaces, sections and old publications', () => {
     repo.moveProject('child', 'source', 1);
     repo.reserveBinding({ sessionId: 'worker', projectId: 'source', kind: 'worker' });
     db.prepare('INSERT INTO neo_project_workspaces VALUES (?, ?)').run(identity, 'source');
@@ -211,11 +189,6 @@ describe('Neo project merge storage', () => {
       revision: 2,
     });
     expect(repo.getProject('child')).toMatchObject({ parentId: 'target', revision: 3 });
-    for (const table of ['legacy_neo_asks', 'neo_work'])
-      expect(db.prepare(`SELECT concern_id, origin_session_id FROM ${table}`).get()).toEqual({
-        concern_id: 'target',
-        origin_session_id: 'human',
-      });
     expect(repo.getBindingBySession('worker')?.projectId).toBe('target');
     expect(db.prepare('SELECT project_id FROM neo_project_workspaces').get()).toEqual({
       project_id: 'target',
@@ -241,12 +214,6 @@ describe('Neo project merge storage', () => {
     expect(repo.projectMerges.resolve('missing')).toBeNull();
     db.exec("UPDATE neo_project_merges SET target_id = 'source' WHERE source_id = 'target'");
     expect(repo.projectMerges.resolve('source')).toBeNull();
-  });
-  test('a waiting human question prevents writes', () => {
-    askRow('waiting');
-    expect(repo.projectMerges.merge(input)).toEqual({ ok: false, reason: 'project_busy' });
-    expect(db.prepare('SELECT * FROM neo_project_merges').all()).toEqual([]);
-    expect(repo.getProject('target')?.revision).toBe(1);
   });
   test('stored identities cannot be overridden by proposed evidence or approval', () => {
     db.prepare('INSERT INTO neo_project_workspaces VALUES (?, ?)').run(other, 'source');
@@ -280,13 +247,10 @@ describe('Neo project merge storage', () => {
     expect(committed).toEqual(['target']);
   });
   test('rolls back all prior writes when a storage effect fails', () => {
-    askRow();
     db.exec(`CREATE TRIGGER fail_merge BEFORE UPDATE ON neo_concerns WHEN NEW.id = 'target'
       BEGIN SELECT RAISE(ABORT, 'injected failure'); END`);
     expect(() => repo.projectMerges.merge(input)).toThrow('injected failure');
     expect(db.prepare('SELECT * FROM neo_project_merges').all()).toEqual([]);
-    expect(db.prepare('SELECT concern_id FROM legacy_neo_asks').get()).toEqual({
-      concern_id: 'source',
-    });
+    expect(repo.projectMerges.resolve('source')).toBe('source');
   });
 });

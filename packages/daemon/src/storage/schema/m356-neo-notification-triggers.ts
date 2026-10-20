@@ -1,8 +1,6 @@
 import type { Database } from '../sqlite-compat.ts';
 
 export function runMigration356(db: Database): void {
-  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'neo_asks' AND type = 'table'").get())
-    return;
   db.exec(`CREATE TABLE IF NOT EXISTS neo_notification_triggers (
     ask_id TEXT NOT NULL,
     trigger_key TEXT NOT NULL,

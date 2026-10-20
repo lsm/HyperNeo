@@ -106,18 +106,6 @@ function consumeHumanInput(harness: Harness, uuid: string): void {
   );
 }
 
-function settledCard(harness: Harness, id: string): void {
-  const work = harness.service.repo.proposeWork({
-    id,
-    requestKey: `k-${id}`,
-    projectId: null,
-    originSessionId: harness.sessionId,
-    title: 'Done card',
-    instruction: 'Done.',
-  });
-  harness.service.repo.transitionWork(id, work, { status: 'cancelled' });
-}
-
 const statusOf = (harness: Harness, uuid: string) =>
   harness.db.getSDKMessageRepo().getDeliveryContent(harness.sessionId, uuid)?.sendStatus;
 
@@ -171,7 +159,6 @@ describe('Neo note queue', () => {
   it('queues and delivers notes even when their card or ask has settled', async () => {
     const harness = await makeHarness('neo:settled');
     queueNote(harness, 'neo-card-pr:w-done:s1');
-    settledCard(harness, 'w-done');
     await harness.service.deliverForward(
       harness.sessionId,
       'w-done:done-check:4',
