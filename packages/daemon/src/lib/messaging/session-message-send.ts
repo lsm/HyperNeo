@@ -1,7 +1,8 @@
 import { generateUUID } from '@hyperneo/shared';
 import { z } from 'zod';
 import type { AgentSession } from '../agent/agent-session.ts';
-import { defineOperation } from '../operations/registry.ts';
+import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import { wrapSessionContent } from './session-envelope.ts';
 
 export interface SessionMessageSendRow {
   status: string;
@@ -18,6 +19,7 @@ export interface SendSessionMessageDependencies {
     sessionId: string;
     messageId: string;
     content: string;
+    mailboxOrigin?: 'space_agent';
   }) => Promise<void>;
   audit?: (name: string, data: Record<string, unknown>) => void;
 }
@@ -180,8 +182,12 @@ async function deliverAnswerQuestion(
 
 async function deliverSessionMessage(
   deps: SendSessionMessageDependencies,
-  input: SendInput
+  input: SendInput,
+  caller: OperationCaller
 ): Promise<SendResult> {
+  const content = isAgentCaller(caller)
+    ? (wrapSessionContent(input.message, { sessionId: caller.sessionId!, name: null }) as string)
+    : input.message;
   const rowOutcome = await requireMutableSessionRow(
     deps.getSessionRow,
     input.spaceId,
@@ -194,12 +200,13 @@ async function deliverSessionMessage(
     await deps.sendUserMessage({
       sessionId: input.sessionId,
       messageId,
-      content: input.message,
+      content,
+      ...(content !== input.message ? { mailboxOrigin: 'space_agent' as const } : {}),
     });
   } else {
     const liveOutcome = await requireLiveSession(deps.getLiveSession, input.sessionId);
     if ('reason' in liveOutcome) return liveOutcome.reason;
-    await liveOutcome.value.startQueryAndEnqueue(messageId, input.message);
+    await liveOutcome.value.startQueryAndEnqueue(messageId, content);
   }
   deps.audit?.('send_session_message', {
     session_id: input.sessionId,
@@ -209,6 +216,10 @@ async function deliverSessionMessage(
   return { success: true, delivered: true, message_id: messageId };
 }
 
+function isAgentCaller(caller: OperationCaller): boolean {
+  return caller.source === 'mcp' && !!caller.sessionId;
+}
+
 export function createSendSessionMessageOperation(deps: SendSessionMessageDependencies) {
   return defineOperation({
     name: 'session.message.send',
@@ -216,11 +227,11 @@ export function createSendSessionMessageOperation(deps: SendSessionMessageDepend
       'Send a user message to a session in a Space and optionally clear a pending question; returns the delivery result.',
     inputSchema: SendSessionMessageInputSchema,
     resultSchema: SendSessionMessageResultSchema,
-    execute: async (input) => {
+    execute: async (input, caller) => {
       try {
         return input.answerQuestion
           ? await deliverAnswerQuestion(deps, input)
-          : await deliverSessionMessage(deps, input);
+          : await deliverSessionMessage(deps, input, caller);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return { success: false, error: message };
