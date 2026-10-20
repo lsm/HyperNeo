@@ -120,6 +120,22 @@ describe('session schedules', () => {
     expect(await call('schedule.session.list', {})).toEqual({ ok: true, schedules: [] });
   });
 
+  test('a source that asks for a cron with no future run is refused, and nothing is queued', () => {
+    expect(() =>
+      scheduler.create({
+        target,
+        sourceKind: 'goal',
+        sourceId: 'g-past',
+        note: null,
+        cadence: { kind: 'cron', cron: '0 0 1 1 * 2001', timezone: 'UTC' },
+        nudgeEvery: 4,
+        createdBySession: null,
+      })
+    ).toThrow(/invalid_cadence/);
+    expect(pending()).toEqual([]);
+    expect(scheduler.repo.list()).toEqual([]);
+  });
+
   test('a pause that loses the race with a fire reports busy and leaves the schedule active', () => {
     const read = scheduler.create({
       target,

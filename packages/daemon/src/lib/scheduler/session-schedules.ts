@@ -25,6 +25,12 @@ export function nextScheduleRun(cadence: SessionScheduleCadence, after: number):
     : getNextRunAt(cadence.cron, cadence.timezone, after);
 }
 
+function requireNextRun(cadence: SessionScheduleCadence, after: number): number {
+  const next = nextScheduleRun(cadence, after);
+  if (next === null) throw new Error('invalid_cadence: the cadence has no next run.');
+  return next;
+}
+
 export function requireValidCadence(cadence: SessionScheduleCadence): Gate<SessionScheduleCadence> {
   if (cadence.kind === 'every')
     return cadence.everyMs >= MIN_EVERY_MS
@@ -62,7 +68,7 @@ export class SessionScheduler {
   create(input: NewSessionSchedule, now = Date.now()): SessionSchedule {
     const existing = this.repo.getBySource(input.sourceKind, input.sourceId);
     if (existing) return existing;
-    const nextRunAt = nextScheduleRun(input.cadence, now) as number;
+    const nextRunAt = requireNextRun(input.cadence, now);
     return this.db.transaction(() => {
       const created = this.repo.create(input, nextRunAt, now);
       this.repo.setPending(created.id, null, this.enqueue(created.id, nextRunAt), nextRunAt);
@@ -78,7 +84,7 @@ export class SessionScheduler {
   }
 
   resume(schedule: SessionSchedule, now = Date.now()): SessionSchedule | null {
-    const nextRunAt = nextScheduleRun(schedule.cadence, now) as number;
+    const nextRunAt = requireNextRun(schedule.cadence, now);
     const jobId = this.enqueue(schedule.id, nextRunAt);
     if (this.repo.setStatus(schedule.id, 'paused', 'active', null, { jobId, nextRunAt }))
       return this.repo.get(schedule.id);
