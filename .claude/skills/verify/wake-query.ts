@@ -25,75 +25,75 @@ const app = await createDaemonApp({
   config: getConfig({ port, host: '127.0.0.1', dbPath }),
   verbose: false,
 });
-const db = app.db.getDatabase();
-const conversation = '10000000-0000-4000-8000-000000000001',
-  root = `neo:${conversation}`;
-const session = db.prepare(
-  "INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?,?,?,'2026-10-20T00:00:00Z','2026-10-20T00:00:00Z','active','{}','{}')"
-);
-for (const id of [root, ...Array.from({ length: 50 }, (_, i) => `s${i}`)])
-  session.run(id, 'Synthetic', join(run, 'home'));
-new NeoRepository(db).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
-const put = db.prepare(
-  'INSERT INTO sdk_messages (id,session_id,message_type,sdk_uuid,sdk_message,timestamp) VALUES (?,?,?,?,?,?)'
-);
-const origin = db.prepare(
-  'INSERT INTO neo_input_origins (session_id,message_id,origin_session_id,origin_message_id,stamped_at,trigger_id) VALUES (?,?,?,?,?,?)'
-);
-const sdkRows = 140000,
-  originRows = sdkRows / 100;
-const body = JSON.stringify({ type: 'user', message: { content: 'synthetic '.repeat(150) } });
-db.transaction(() => {
-  for (let i = 0; i < sdkRows; i++) {
-    const id = i % 5 === 0 ? root : `s${i % 50}`;
-    put.run(
-      `m${i}`,
-      id,
-      i % 4 === 0 ? 'user' : 'assistant',
-      `u${i}`,
-      body,
-      '2026-10-20T00:00:00.000Z'
-    );
-    if (i % 100 === 0) origin.run(id, `u${i}`, id, `u${i}`, 1792454400000 + i, `human:u${i}`);
-  }
-})();
-const sql = NEO_WAKE_SELECT + ' ORDER BY at DESC, sequence DESC LIMIT ?';
 const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
-const pending = new Map<string, (data: unknown) => void>();
-const rpc = () =>
-  new Promise<{ data: { wakes?: unknown[] }; ms: number }>((done, fail) => {
-    const id = crypto.randomUUID(),
-      at = performance.now();
-    const timer = setTimeout(() => fail(new Error('snapshot timeout')), 15000);
-    pending.set(id, (data) => {
-      clearTimeout(timer);
-      done({
-        data: data as { wakes?: unknown[] },
-        ms: performance.now() - at,
-      });
-    });
-    ws.send(
-      JSON.stringify({
-        id,
-        type: 'REQ',
-        method: 'operation.invoke',
-        data: { name: 'neo.snapshot', input: {} },
-        sessionId: 'global',
-        version: '1.0.0',
-        timestamp: new Date().toISOString(),
-      })
-    );
-  });
-ws.onmessage = (event) => {
-  const m = JSON.parse(event.data.toString()),
-    reply = pending.get(m.requestId);
-  if (reply) {
-    pending.delete(m.requestId);
-    reply(m.data);
-  }
-};
-const cases: Record<string, unknown>[] = [];
 try {
+  const db = app.db.getDatabase();
+  const conversation = '10000000-0000-4000-8000-000000000001',
+    root = `neo:${conversation}`;
+  const session = db.prepare(
+    "INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?,?,?,'2026-10-20T00:00:00Z','2026-10-20T00:00:00Z','active','{}','{}')"
+  );
+  for (const id of [root, ...Array.from({ length: 50 }, (_, i) => `s${i}`)])
+    session.run(id, 'Synthetic', join(run, 'home'));
+  new NeoRepository(db).reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
+  const put = db.prepare(
+    'INSERT INTO sdk_messages (id,session_id,message_type,sdk_uuid,sdk_message,timestamp) VALUES (?,?,?,?,?,?)'
+  );
+  const origin = db.prepare(
+    'INSERT INTO neo_input_origins (session_id,message_id,origin_session_id,origin_message_id,stamped_at,trigger_id) VALUES (?,?,?,?,?,?)'
+  );
+  const sdkRows = 140000,
+    originRows = sdkRows / 100;
+  const body = JSON.stringify({ type: 'user', message: { content: 'synthetic '.repeat(150) } });
+  db.transaction(() => {
+    for (let i = 0; i < sdkRows; i++) {
+      const id = i % 5 === 0 ? root : `s${i % 50}`;
+      put.run(
+        `m${i}`,
+        id,
+        i % 4 === 0 ? 'user' : 'assistant',
+        `u${i}`,
+        body,
+        '2026-10-20T00:00:00.000Z'
+      );
+      if (i % 100 === 0) origin.run(id, `u${i}`, id, `u${i}`, 1792454400000 + i, `human:u${i}`);
+    }
+  })();
+  const sql = NEO_WAKE_SELECT + ' ORDER BY at DESC, sequence DESC LIMIT ?';
+  const pending = new Map<string, (data: unknown) => void>();
+  const rpc = () =>
+    new Promise<{ data: { wakes?: unknown[] }; ms: number }>((done, fail) => {
+      const id = crypto.randomUUID(),
+        at = performance.now();
+      const timer = setTimeout(() => fail(new Error('snapshot timeout')), 15000);
+      pending.set(id, (data) => {
+        clearTimeout(timer);
+        done({
+          data: data as { wakes?: unknown[] },
+          ms: performance.now() - at,
+        });
+      });
+      ws.send(
+        JSON.stringify({
+          id,
+          type: 'REQ',
+          method: 'operation.invoke',
+          data: { name: 'neo.snapshot', input: {} },
+          sessionId: 'global',
+          version: '1.0.0',
+          timestamp: new Date().toISOString(),
+        })
+      );
+    });
+  ws.onmessage = (event) => {
+    const m = JSON.parse(event.data.toString()),
+      reply = pending.get(m.requestId);
+    if (reply) {
+      pending.delete(m.requestId);
+      reply(m.data);
+    }
+  };
+  const cases: Record<string, unknown>[] = [];
   await new Promise<void>((done, fail) => {
     ws.onopen = () => done();
     ws.onerror = fail;

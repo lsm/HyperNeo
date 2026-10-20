@@ -19,7 +19,7 @@ export const NeoConversationWakeSchema: z.ZodType<NeoConversationWake> = z.objec
     })
   ),
 });
-const FROM = `FROM neo_input_origins o JOIN sdk_messages m
+const FROM = `FROM neo_input_origins o CROSS JOIN sdk_messages m INDEXED BY idx_sdk_messages_session_uuid
   ON m.session_id = o.session_id AND m.sdk_uuid = o.message_id
   WHERE o.session_id = 'neo:' || ? AND m.message_type = 'user'
     AND o.session_id = o.origin_session_id AND o.message_id = o.origin_message_id
