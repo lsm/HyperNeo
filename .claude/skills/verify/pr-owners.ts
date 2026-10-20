@@ -16,6 +16,12 @@ if (process.argv.includes('--synthetic')) {
   process.exit(0);
 }
 
+if (process.argv.includes('--synthetic-unowned')) {
+  const { verifySyntheticUnownedPrs } = await import('./pr-unowned-synthetic.ts');
+  await verifySyntheticUnownedPrs(Number(process.env.VERIFY_PORT), process.argv.at(-1)!);
+  process.exit(0);
+}
+
 const live = new Database(`file:${join(homedir(), '.hyperneo/data/daemon.db')}?mode=ro`, {
   readonly: true,
 });

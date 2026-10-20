@@ -337,10 +337,13 @@ export function codingTodoDoneWhen(check: NeoTodoCheck): string | null {
 export function codingTodoCheckRefusal(
   draft: Pick<NeoTodo, 'check' | 'instruction'>
 ): string | null {
-  return draft.check?.kind === 'pr_merged' &&
-    !draft.instruction &&
-    !codingCheckRefs(draft.check).length
-    ? 'pr_merged_needs_urls: a todo with no instruction opens no pull request; name each one in params.urls.'
+  if (draft.check?.kind !== 'pr_merged') return null;
+  if (!draft.instruction && !codingCheckRefs(draft.check).length)
+    return 'pr_merged_needs_urls: a todo with no instruction opens no pull request; name each one in params.urls.';
+  const urls = draft.check.params.urls;
+  return urls !== undefined &&
+    (!Array.isArray(urls) || urls.some((url) => typeof url !== 'string' || !codingPrKey(url)))
+    ? 'pr_merged_invalid_urls: every URL must name a pull request.'
     : null;
 }
 
@@ -380,7 +383,42 @@ export function createCodingTodoPack(
     statusLine: (todo) => codingTodoStatusLine(todo, repo.prs(todo.id), ledger),
     waiting: (todo) => repo.prs(todo.id).some((pr) => pr.state === 'OPEN'),
     doneWhen: codingTodoDoneWhen,
-    refuse: codingTodoCheckRefusal,
+    addUrls: (todo, urls) =>
+      todo.check?.kind === 'pr_merged'
+        ? {
+            ...todo.check,
+            params: {
+              ...todo.check.params,
+              urls: [
+                ...new Set(
+                  [
+                    ...(Array.isArray(todo.check.params.urls) ? todo.check.params.urls : []),
+                    ...urls,
+                  ].map((url) => (typeof url === 'string' ? (codingPrKey(url) ?? url) : url))
+                ),
+              ],
+            },
+          }
+        : null,
+    refuse: (draft, peers = []) => {
+      const refused = codingTodoCheckRefusal(draft);
+      if (refused || draft.check?.kind !== 'pr_merged') return refused;
+      const urls = Array.isArray(draft.check.params.urls) ? draft.check.params.urls : [];
+      const keys = new Set(urls.flatMap((url) => codingPrKey(url) ?? []));
+      for (const peer of peers) {
+        if (peer.id === draft.id || ['done', 'removed', 'failed'].includes(peer.state)) continue;
+        const named =
+          peer.check?.pack === 'coding' && Array.isArray(peer.check.params.urls)
+            ? peer.check.params.urls
+            : [];
+        const duplicate = [...named, ...repo.urls(peer.id)].find(
+          (url) => typeof url === 'string' && keys.has(codingPrKey(url) ?? '')
+        );
+        if (duplicate)
+          return `pr_already_tracked: ${duplicate} is already tracked by todo ${peer.id} "${peer.title}"; use neo.todo.edit addUrls on that todo.`;
+      }
+      return null;
+    },
     topics: (todo) =>
       repo.urls(todo.id).flatMap((url) => {
         const parsed = (repo.latest(url)?.pr.state ?? 'OPEN') === 'OPEN' ? parsePrUrl(url) : null;
