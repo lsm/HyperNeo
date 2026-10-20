@@ -1,3 +1,4 @@
+import { Logger } from '../logger.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
 import { workStartPreparation, type WorkExecutionPreparer } from './start-preparation.ts';
 import { basename, join } from 'node:path';
@@ -94,6 +95,8 @@ export interface CodexSnapshot {
   folders: CodexFolderRow[];
   threads: CodexThreadRow[];
 }
+
+const sendLog = new Logger('codex-send');
 
 export interface CodexDesktopAdapterDeps {
   prepareExecution?: WorkExecutionPreparer;
@@ -795,6 +798,11 @@ export async function queueCodexMessage(
   message: string,
   deps: CodexDesktopAdapterDeps
 ): Promise<Result<WorkDelivery>> {
+  sendLog.warn('work.send route', {
+    threadId: detail.thread.id,
+    path: 'queue',
+    reason: 'explicit_queue_or_steering_unavailable',
+  });
   const queued = await withCodexMessageServer<WorkDelivery>(deps, async (server) => {
     const before = codexUserInputIds(
       await readRolloutTail(detail.thread.rolloutPath).catch(() => [])
@@ -835,6 +843,7 @@ export async function queueCodexMessage(
       },
     };
   });
+  sendLog.warn('work.send queue result', { threadId: detail.thread.id, result: queued });
   return !queued.ok && queued.reason === 'unreachable'
     ? queueCodexCliMessage(detail, message, deps)
     : queued;
@@ -867,36 +876,33 @@ async function callCodexSteer(
   return { ok: true, value: { delivered: true, steeredIntoTurnId: steered.turnId } };
 }
 
-export async function steerCodexMessage(
-  detail: CodexThreadDetail,
-  message: string,
-  deps: CodexDesktopAdapterDeps
-): Promise<Result<WorkDelivery>> {
-  return withCodexMessageServer(deps, async (server) => {
-    const threadId = detail.thread.id;
-    const turn = admitCodexSteerTurn(
-      await server.call('thread/turns/list', { threadId, limit: 1 })
-    );
-    if ('reason' in turn) return turn.reason;
-    return callCodexSteer(server, threadId, turn.value, message);
-  });
-}
-
 async function tryDesktopCodexSend(
   detail: CodexThreadDetail,
   message: string,
-  deps: CodexDesktopAdapterDeps
+  deps: CodexDesktopAdapterDeps,
+  mode: 'auto' | 'steer'
 ): Promise<CodexSendGate<'app-server' | 'queue'>> {
-  return steerCodexDesktopTurn(deps.desktopSocketPath, detail.thread.id, message, deps.newId());
+  return steerCodexDesktopTurn(
+    deps.desktopSocketPath,
+    detail.thread.id,
+    message,
+    deps.newId(),
+    mode
+  );
 }
 
 async function tryServerCodexSend(
   route: 'app-server' | 'queue',
   detail: CodexThreadDetail,
   message: string,
-  deps: CodexDesktopAdapterDeps
+  deps: CodexDesktopAdapterDeps,
+  mode: 'auto' | 'steer'
 ): Promise<CodexSendGate<CodexThreadDetail>> {
-  if (route === 'queue') return { value: detail };
+  if (route === 'queue')
+    return mode === 'steer'
+      ? { reason: reject('not_delivered', 'Desktop refused steering: no steerable active turn.') }
+      : { value: detail };
+  sendLog.warn('work.send route', { threadId: detail.thread.id, path: 'app-server-steer', mode });
   let dispatched = false;
   const result = await withCodexMessageServer<WorkDelivery>(deps, async (server) => {
     const turn = admitCodexSteerTurn(
@@ -906,7 +912,15 @@ async function tryServerCodexSend(
     dispatched = true;
     return callCodexSteer(server, detail.thread.id, turn.value, message);
   });
-  return !result.ok &&
+  sendLog.warn('work.send app-server result', {
+    threadId: detail.thread.id,
+    mode,
+    dispatched,
+    result,
+  });
+  if (mode === 'steer' && !result.ok) return { reason: reject('not_delivered', result.detail) };
+  return mode === 'auto' &&
+    !result.ok &&
     (!dispatched ||
       /NoActiveTurn|no active turn|expected.*turn.*(?:mismatch|match)|activeTurnNotSteerable|-32601/.test(
         result.detail
@@ -959,32 +973,30 @@ const runCodexStatus = (superpipe({})('codex-work-status') as PipelineAPI)
 ) => Promise<Result<WorkDetail>>;
 
 const runCodexSend = (superpipe({})('codex-send-work') as PipelineAPI)
-  .input(['ref', 'message', 'deps'])
+  .input(['ref', 'message', 'deps', 'mode'])
   .pipe(requireCodexThread, ['ref', 'deps'], 'result:outcome')
   .pipe(requireOpenCodexThread, 'outcome', 'result:outcome')
   .pipe((detail: CodexThreadDetail) => detail, 'outcome', 'detail')
-  .pipe(tryDesktopCodexSend, ['detail', 'message', 'deps'], 'result:outcome')
-  .pipe(tryServerCodexSend, ['outcome', 'detail', 'message', 'deps'], 'result:outcome')
+  .pipe(tryDesktopCodexSend, ['detail', 'message', 'deps', 'mode'], 'result:outcome')
+  .pipe(tryServerCodexSend, ['outcome', 'detail', 'message', 'deps', 'mode'], 'result:outcome')
   .pipe(queueCodexMessage, ['outcome', 'message', 'deps'], 'outcome')
   .endAsync('outcome') as (
   ref: WorkRef,
   message: string,
-  deps: CodexDesktopAdapterDeps
+  deps: CodexDesktopAdapterDeps,
+  mode: 'auto' | 'steer'
 ) => Promise<Result<WorkDelivery>>;
-
-const runCodexSteer = (superpipe({})('codex-steer-work') as PipelineAPI)
-  .input(['ref', 'message', 'deps'])
-  .pipe(requireCodexThread, ['ref', 'deps'], 'result:outcome')
-  .pipe(requireOpenCodexThread, 'outcome', 'result:outcome')
-  .pipe(steerCodexMessage, ['outcome', 'message', 'deps'], 'outcome')
-  .endAsync('outcome') as typeof runCodexSend;
 
 const runCodexQueue = (superpipe({})('codex-queue-work') as PipelineAPI)
   .input(['ref', 'message', 'deps'])
   .pipe(requireCodexThread, ['ref', 'deps'], 'result:outcome')
   .pipe(requireOpenCodexThread, 'outcome', 'result:outcome')
   .pipe(queueCodexMessage, ['outcome', 'message', 'deps'], 'outcome')
-  .endAsync('outcome') as typeof runCodexSend;
+  .endAsync('outcome') as (
+  ref: WorkRef,
+  message: string,
+  deps: CodexDesktopAdapterDeps
+) => Promise<Result<WorkDelivery>>;
 
 const runCodexWithdraw = (superpipe({})('codex-withdraw-work') as PipelineAPI)
   .input(['ref', 'queuedSubmissionId', 'deps'])
@@ -1239,13 +1251,15 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
       runCodexSend(
         ref,
         context.from === 'chat' ? message : `${message}\n${WORK_AGENT_INPUT}`,
-        deps
+        deps,
+        'auto'
       ),
     steer: (ref, message, context) =>
-      runCodexSteer(
+      runCodexSend(
         ref,
         context.from === 'chat' ? message : `${message}\n${WORK_AGENT_INPUT}`,
-        deps
+        deps,
+        'steer'
       ),
     queue: (ref, message, context) =>
       runCodexQueue(

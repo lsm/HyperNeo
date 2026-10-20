@@ -1,7 +1,7 @@
-import type { SDKMessage } from '@hyperneo/shared/sdk';
+import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { Database } from '../../storage/database.ts';
 import type { OperationCaller } from '../operations/registry.ts';
-import { neoHumanTurnOrigin } from './notification-triggers.ts';
+import { neoHumanTrigger, neoHumanTurnOrigin } from './notification-triggers.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-origin-repository.ts';
 
@@ -12,6 +12,7 @@ export class NeoCoordinatorTurn {
   protected closed = false;
   private turn?: OperationCaller['neoTurn'];
   private readonly carriedInputs = new Set<string>();
+  private readonly deliveredInputs = new Set<string>();
   openedAt = 0;
   private end: () => void = () => {};
   readonly ended = new Promise<void>((resolve) => {
@@ -53,16 +54,19 @@ export class NeoCoordinatorTurn {
   }
 
   noteSteered(messageId: string): void {
+    this.deliveredInputs.add(messageId);
     if (this.turn?.human && !this.isHumanInput(messageId))
       this.turn = { ...this.turn, human: false };
   }
 
   protected open(messageId: string, origin: string | null): true {
     this.openedAt = Date.now();
+    this.deliveredInputs.add(messageId);
     this.turn = {
       messageId,
       ...(origin && origin !== messageId ? { origin } : {}),
       human: origin !== null,
+      hasInput: (id) => this.deliveredInputs.has(id),
       isLive: () => !this.closed && this.attempt.isLive(),
       yield: () => {
         if (!this.turn?.isLive()) return;
@@ -75,6 +79,26 @@ export class NeoCoordinatorTurn {
 
   steers(): boolean {
     return new NeoRepository(this.db.getDatabase()).defaultBinding()?.sessionId === this.sessionId;
+  }
+
+  inputEnvelope(message: SDKUserMessage): SDKUserMessage {
+    if (!message.uuid || !this.steers() || !this.isHumanInput(message.uuid)) return message;
+    const identity = {
+      sessionId: this.sessionId,
+      messageId: message.uuid,
+      triggerId: neoHumanTrigger(message.uuid),
+    };
+    const content = message.message.content;
+    return {
+      ...message,
+      message: {
+        ...message.message,
+        content: [
+          { type: 'text', text: `<human-input>${JSON.stringify(identity)}</human-input>` },
+          ...(typeof content === 'string' ? [{ type: 'text' as const, text: content }] : content),
+        ],
+      },
+    };
   }
 
   noteCarried(message: SDKMessage): void {

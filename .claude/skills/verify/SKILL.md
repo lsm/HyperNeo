@@ -10,6 +10,46 @@ its web UI. Lint, types and unit tests are not proof. Every helper named here
 lives next to this file in `.claude/skills/verify/`. Run commands from the repo
 root of your worktree.
 
+## Explicit mid-turn Answered linking (handoff PR5)
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-answered-XXXXXX)
+mkdir -p "$RUN/home"
+env -i HOME="$RUN/home" PATH="$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin" \
+  NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/worker-answered-linking.ts "$RUN" 9365
+```
+
+The actual SDK consumes the real Neo prompt generator, initially a synthetic
+todo-event turn. While its first model request is running, two synthetic human
+messages are stored and steered into that turn. The local scripted model reads
+the daemon-generated `<human-input>` metadata from its actual request, then
+calls `neo.publication.publish` through SDK/MCP using the second human trigger.
+`observed.json` records requests, receipts and the durable publications. Both
+human messages begin Received; the same status projection used by the chat UI
+must show only the selected message Answered. The producer stays the todo event.
+Reopening only the synthetic SQLite database and replaying the identical publish
+must return the existing receipt without another publication. `evidence.json`
+records this result and maximum heartbeat lag against 1 s. The helper closes
+its SDK stream, queue, loopback model and database in `finally`.
+
+On the failing reproduction commit, the actual model request has no daemon IDs
+and both messages remain Received. Focused contracts also reject foreign,
+nonhuman, unconsumed and older-turn IDs, keep initial and mid-turn content
+unchanged, and prevent a selected answer from answering a different producer.
+This proves the real SDK/MCP path and chat status projection, not GUI rendering
+or a killed-process recovery. No real provider, credentials, live DB or 8399.
+
+Also run the focused `neo-prompt.test.ts` unit contract: the root instructions
+must stay under their existing 160-word budget. The online
+`tests/online/convo/neo-publication-sdk.test.ts` checks the actual daemon/SDK
+request: one exact daemon ID envelope, then the unchanged local-time and human
+text blocks. Run that test with CI's Node Vitest runner and
+`vitest.online.config.ts`, from `packages/daemon`, with `env -i`, a fresh test
+HOME/data dir and TMPDIR. The Bun runner aliases `bun:sqlite` back into the
+compatibility module and cannot run this online configuration; the standalone
+mid-turn helper above runs directly under Bun. Both checks retain receipt replay.
+
 ## Rules
 
 - Never start, stop or mutate the human's daemon. Isolated runs never use port
@@ -180,6 +220,31 @@ symlinks, caller ownership and serialization with save. This proves the local
 RPC door, not a GUI or remote pull. It uses no provider/model, real credentials,
 real DB or GitHub requests. H2 confirmation and H3 sync remain later slices.
 Stop the isolated daemon and mock with `stop.sh`.
+
+## Codex send intent through a synthetic daemon
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-send-proof-XXXXXX)
+env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  LOG_LEVEL=warn bun .claude/skills/verify/codex-send-intent.ts verify 9377 "$RUN"
+```
+
+The helper starts an isolated daemon and synthetic Codex Desktop IPC/app-server
+Unix sockets under its fresh HOME. It uses real WebSocket `operation.invoke`
+with the production Codex adapter. `work.adapters` must advertise steer for
+Codex and omit it for HyperNeo; the subsequent explicit steer must return the
+active turn receipt. The real `operations.describe` door must scope
+strict steer guidance to Codex and direct HyperNeo/Space targets to auto. Owner discovery rejects with a synthetic
+version mismatch while app-server has a steerable turn: default auto and explicit
+steer must return `steeredIntoTurnId` without queueing. Explicit queue must return
+`queuedSubmissionId`. Idle explicit steer must return `not_delivered` without
+queueing; idle auto queues. An uncertain server steer must never also queue.
+A Desktop-owned turn must steer through its owner; explicit Desktop refusal must
+return `not_delivered` with its reason. Warning-level routing records, peer calls
+and all RPC responses are retained in `evidence/observed.json`. Run `reproduce`
+instead on the regression commit: it must queue without trying app-server steer.
+No model, provider, credentials, real Codex state or GUI is involved. All owned
+servers and the daemon close in finally. Pick a free port other than 8399.
 
 ### Home proposal questions (journey 37)
 
@@ -1949,7 +2014,8 @@ last-outcome/skip/nudge values are explicit DB fixtures, not proof of wake deliv
 The browser opens both `/neo` and `/session/<id>` at 1280/390px. Each strip starts
 folded and shows only its own target's rows. Expand it, inspect interval/cron,
 next/last timestamps, skip reason and nudge distance (or “Nudge due” after the
-threshold), then open the goal title's read-only definition. Pause/resume must update both UI and a fresh real RPC read.
+threshold), then open the goal title's read-only definition. Pause/resume must update
+both UI and a fresh real RPC read.
 The helper also opens a synthetic Space session route: no strip or schedule list
 RPC may be present there, including after focus. `reproduce` as the final browser
 argument skips the long visible-refresh check but retains both boundary assertions.
@@ -1961,6 +2027,43 @@ The strip refreshes every 30s while visible, on window focus and explicit refres
 and after controls. Goal titles use a disclosure until G6 adds the full goal panel;
 this journey does not claim a journal or cross-page goal link. No GUI, model,
 provider, real data or GitHub is used. Stop the daemon/mock with `stop.sh`.
+
+### Immutable settings proposal answers
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-preference-answers-XXXXXX)
+mkdir -p "$RUN/home"
+env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
+  bun .claude/skills/verify/pack-preference-answers.ts 9354 "$RUN"
+```
+
+The helper uses the real daemon registry's MCP and WebSocket operation doors.
+A declined question returns `question_closed` when retried with the same request id;
+a new request id must reach the human as an open question.
+Neo proposes two synthetic settings; the daemon generates the exact question
+text, and `neo.snapshot` must expose that question. Before consent the settings
+remain empty. Agent answering is refused; the human button's real
+`neo.question.answer` path must atomically apply the stored values. Across daemon
+restart, `neo.question.get` reports human consent, provenance stays human, and
+agent attempts to replace values or reuse a request id with a different proposal
+are refused. A questionId-only retry leaves settings unchanged. Complete replies
+are retained in `evidence/observed.json`; both daemons close in `finally`.
+
+No legacy binding, live database, provider, credentials, model or GUI is used.
+The ordinary human-answer notification may queue without a provider; this journey
+proves question/setting persistence and caller boundaries, not notification/model
+completion. Unit contracts also inject a failing settings write and require both
+consent and every value to roll back together. Actual browser rendering and the
+future first-dispatch trigger are not verified here.
+
+Before pushing a new numbered migration, run from the developer checkout:
+`bun .claude/skills/verify/migration-number.ts <number> [own-pr-number]`.
+This read-only preflight fetches fresh dev and enumerates every open PR's changed
+files through `gh`, then asserts a new candidate follows the highest numbered
+migration. A number already reserved in own-pr-number is checked for collisions
+instead. Supply own-pr-number only when updating that same PR. It uses GitHub,
+not the isolated daemon or a live database; do not run it under the stub-gh PATH.
+Unpublished reservations still need coordination with their owner.
 
 ## Source-labelled schedule list (G7 contract)
 
@@ -2002,3 +2105,35 @@ connection does not flush the operating system cache. This is controlled query
 work evidence, not proof of the cause of historical off-CPU waits. The helper
 closes its socket and daemon in `finally`. Focused tests also retain empty and
 populated views, scope, chronological ordering and both pagination directions.
+
+## Follow-topic refresh responsiveness
+
+After the card-topic expiry sweep, `refreshDriverWork` follows subscriptions for
+checkable todos. This journey exercises that actual refresh over an isolated
+daemon WebSocket, with 180 synthetic named PR links, two retained topics per
+todo and one removed todo. Its GitHub reader returns synthetic empty results;
+there is no root session binding, provider, live data or external request.
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-follow-topics-XXXXXX)
+env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/follow-topics-lag.ts verify 9378 "$RUN" enabled 8
+```
+
+Repeat with `disabled 8` in a fresh directory. The 8 ms controlled wait models
+slow settings reads; `enabled 0` and `disabled 0` measure native reads without
+injected latency. Before the fix, `reproduce` must record 180 settings reads in
+the follow phase and over 1 s max lag with the controlled wait. Fixed `verify`
+must record one follow-phase settings read, including disabled delivery, max
+lag below 1 s and a concurrent `system.health` reply below 250 ms. The preceding
+expiry stage retains its own once-per-sweep settings read; those two reads are
+reported separately. The next actual refresh must observe flipped pack settings.
+
+`observed.json` retains phase totals, subscription counts, health latency and
+lag diagnostics. Enabled refresh retains 360 synthetic topics and adds 180 PR
+topics; disabled refresh expires all 362 initial topics. After changing settings,
+the next refresh respectively expires all topics or adds 180 PR topics. Focused
+tests also cover an empty pack list, direct-call freshness, duplicate watch
+suppression and no followed todos. A controlled wait proves amplification of
+slow settings, not the cause of any historical live off-CPU event. The helper
+closes its own socket, timer, monitor, Neo service and daemon in `finally`.

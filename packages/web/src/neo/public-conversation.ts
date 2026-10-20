@@ -37,13 +37,11 @@ type Gate = { value: Sources } | { reason: NeoPublicConversation };
 export function neoPublicationAnswerOrigins(publication: NeoPublication) {
   return [
     publication.askOrigin,
-    publication.producerInput,
+    ...(publication.triggerId?.startsWith('human:') ? [] : [publication.producerInput]),
     ...(publication.answerOrigin ? [publication.answerOrigin] : []),
     ...(publication.answerInput ? [publication.answerInput] : []),
-    ...(publication.revisions?.flatMap((revision) => [
-      revision.producerInput,
-      ...(revision.askOrigin ? [revision.askOrigin] : []),
-    ]) ?? []),
+    ...(publication.revisions?.map((revision) => revision.askOrigin ?? revision.producerInput) ??
+      []),
   ].filter((origin) => !!origin);
 }
 

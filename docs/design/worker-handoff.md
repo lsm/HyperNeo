@@ -103,6 +103,19 @@ session ownership and actual delivery/consumption in the active turn. Mark the
 chosen human message answered only after durable publication; retries are
 idempotent. One publication does not silently answer every consumed human input.
 
+PR5 prepends a separate `<human-input>` JSON text block on the root Neo SDK feed,
+for the initial human input and each mid-turn human delivery. It carries
+`sessionId`, `messageId` and `triggerId`; original text/image blocks and stored
+SDK rows are unchanged. The model copies that trigger into the existing publish
+operation. Alternate answers require both membership in this live attempt's
+delivered-input set and a consumed human row in the root session. Merely typing
+an ID or finding an older consumed input is insufficient. SDK request-carried
+markers remain separate evidence for requeueing inputs on interruption.
+Publication retains its original producer, while the UI's Answered projection
+uses the selected human origin rather than also answering a different producer.
+SQLite reopen/replay retains the existing immutable publication receipt; no
+new migration or answered-state table is added.
+
 Local SDK reads keep the existing agent-visible session eligibility policy
 (namespaces, room/type, archival and terminal-age rules), checked before body
 hydration. This changes the data source for eligible sessions, not which sessions

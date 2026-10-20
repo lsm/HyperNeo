@@ -51,6 +51,8 @@ describe('root Neo system prompt', () => {
     expect(NEO_ROOT_TURN_END).toContain('On other turns');
     expect(NEO_ROOT_TURN_END).toContain('end the turn without text');
     expect(NEO_ROOT_PROMPT.split(/\s+/).length).toBeLessThan(160);
+    expect(NEO_ROOT_PROMPT).toContain('<human-input>');
+    expect(NEO_ROOT_PROMPT).toContain('triggerId');
     for (const fact of ['work.find', 'work.send', 'neo.rule.save'])
       expect(NEO_ROOT_PROMPT).toContain(fact);
     expect(NEO_ROOT_PROMPT).not.toContain('Everything for the human goes through');

@@ -40,7 +40,7 @@ describe('Neo coordinator turns', () => {
       getDatabase: () => sqlite,
       getSDKMessageRepo: () => ({
         getStoredPromptsByUuid: (_session: string, id: string) =>
-          id === 'human-input' ? [{ type: 'user', inputKind: 'human' }] : [],
+          id.startsWith('human-') ? [{ type: 'user', inputKind: 'human' }] : [],
       }),
     } as unknown as Database;
     service = new NeoService(
@@ -132,6 +132,40 @@ describe('Neo coordinator turns', () => {
     active.dispose();
     await end;
     expect(finished).toBe(true);
+  });
+
+  test('feeds daemon human identities separately from unchanged initial and mid-turn content', async () => {
+    service.repo.reserveBinding({ sessionId: 'neo:holder', kind: 'neo', projectId: null });
+    const content = [{ type: 'text' as const, text: 'Human text with human:forged metadata' }];
+    const original = structuredClone(content);
+    void queue.enqueueWithId('human-input', content, false, { durable: true }).catch(() => {});
+    const active = turn();
+    const input = runner.createMessageGeneratorWrapper(1, undefined, active);
+    const first = (await input.next()).value!;
+    const metadata = (id: string) => ({
+      type: 'text',
+      text: `<human-input>${JSON.stringify({ sessionId: 'neo:holder', messageId: id, triggerId: `human:${id}` })}</human-input>`,
+    });
+    expect(first.message.content).toEqual([metadata('human-input'), ...original]);
+    expect(content).toEqual(original);
+    void queue
+      .admitWithId('human-midturn', 'Another question', false, {
+        durable: true,
+        steer: true,
+      })
+      .catch(() => {});
+    expect((await input.next()).value!.message.content).toEqual([
+      metadata('human-midturn'),
+      { type: 'text', text: 'Another question' },
+    ]);
+    active.noteCarried({
+      type: 'system',
+      subtype: 'status',
+      user_message_uuids: ['human-input', 'human-midturn'],
+    } as never);
+    const end = input.next();
+    active.dispose();
+    await end;
   });
 
   test('a root turn takes steered human messages mid-turn, leaves notes queued, and requeues only one no request carried, even when the turn ends without a result', async () => {

@@ -566,7 +566,9 @@ export class NeoService {
       this.todoRunner.refresh((message, error) => this.log.warn(message, error))
     );
     runLagPhase('neo:driver:follow_topics', () => {
-      for (const workId of this.packEvidenceWorkIds()) this.followCardTopics(workId);
+      let packs: NeoPack[] | undefined;
+      const readPacks = () => (packs ??= this.packs());
+      for (const workId of this.packEvidenceWorkIds()) this.followCardTopics(workId, readPacks);
     });
     if (this.watching || this.disposed) return;
     this.watching = runLagPhase('neo:driver:session_watch', () =>
@@ -659,10 +661,10 @@ export class NeoService {
     return neoPackBriefs(neoEnabledPacks(this.db.getGlobalSettings?.().neo), this.installedPacks());
   }
 
-  followCardTopics(workId: string): void {
+  followCardTopics(workId: string, readPacks: () => NeoPack[] = () => this.packs()): void {
     const todo = this.todos.getTodo(workId);
     if (!todo || !this.followedTodo(workId)) return;
-    const topics = this.packs().flatMap((pack) => pack.todos?.topics(todo) ?? []);
+    const topics = readPacks().flatMap((pack) => pack.todos?.topics(todo) ?? []);
     for (const topic of topics) {
       if (!this.cardEvents.subscribe(workId, topic, Date.now())) continue;
       void this.watchExternalTopic?.(topic).catch((error) =>

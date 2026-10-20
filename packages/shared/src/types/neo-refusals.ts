@@ -39,6 +39,8 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
     'The card is cancelled, so it cannot gain dependencies. Propose a new card instead.',
   duplicate_dependency:
     'The same prerequisite card is listed more than once. Name each prerequisite once.',
+  duplicate_setting:
+    'The proposal lists the same pack, scope and key more than once. Include each setting once.',
   edit_unchanged:
     'The edit leaves the reply exactly as it was. Pass the changed wording, or skip the edit.',
   epic_unavailable:
@@ -90,6 +92,8 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
     'The card has no place to run its work. Propose it with a work target, such as a repository or a session.',
   not_approved:
     'The human has not approved this ask yet. Ask the human to approve it before starting work.',
+  open_ask_required:
+    'Settings questions need an open ask. Use the id of an open ask from neo.snapshot.',
   opened_check_unbound:
     'A PR-opened check is met when the PR opens; no card delivers it. Leave it out of delivers.',
   prerequisite_ref_missing:
@@ -101,8 +105,12 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
     'The project still has sections, cards, open asks, merges or a bound worker, so it cannot be forgotten. Settle its open asks and move its cards and sections first.',
   project_missing: 'No project has that id. Read the project ids from neo.snapshot.',
   project_protected: 'The Inbox is a system project and cannot be forgotten. Pick another project.',
+  proposal_is_immutable:
+    'This requestId already binds a different proposal. Keep its stored values, or ask a new question with a new requestId.',
   publication_superseded:
     'This turn’s session or conversation changed after the reply was prepared, so it cannot publish. Publish from the current live turn.',
+  question_closed:
+    'This settings question is already answered or retired. Read it with neo.question.get; use a new requestId if the human needs a new question.',
   recipient_is_coordinator:
     'Neo sessions do not report on cards; working sessions do. Report from the card’s working session.',
   recipient_mismatch:

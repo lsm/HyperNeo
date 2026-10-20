@@ -685,6 +685,11 @@ describe('codex-desktop adapter status and send', () => {
         },
         close: () => {},
       }));
+      expect(await driver.steer!(ref('busy'), 'now', user)).toMatchObject({
+        ok: false,
+        reason: 'not_delivered',
+        detail: expect.stringContaining(error),
+      });
       expect(await driver.send!(ref('busy'), 'later', user)).toEqual({
         ok: true,
         value: { delivered: false, queuedSubmissionId: 'q1' },
@@ -944,12 +949,12 @@ describe('codex-desktop adapter status and send', () => {
   });
 
   test.each(['steer', 'withdraw'] as const)(
-    'reports an unreachable server for %s without shell fallback',
+    'reports unavailable delivery for %s without shell fallback',
     async (method) => {
       const driver = adapter(0, '', () => Promise.reject(new Error('offline')));
       expect(await driver[method]!(ref('busy'), 'id-or-message', user)).toMatchObject({
         ok: false,
-        reason: 'unreachable',
+        reason: method === 'steer' ? 'not_delivered' : 'unreachable',
       });
       expect(spawned).toEqual([]);
     }

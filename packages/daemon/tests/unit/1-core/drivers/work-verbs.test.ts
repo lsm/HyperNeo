@@ -84,11 +84,82 @@ async function call(
 }
 
 describe('work verb operations', () => {
+  test.each(['steer', 'queue'] as const)('work.send honors explicit %s intent', async (mode) => {
+    const adapter: WorkAdapter = {
+      ...desktop,
+      capabilities: ['find', 'send', 'steer', 'queue'],
+      steer: async () => ({ ok: true, value: { delivered: true, steeredIntoTurnId: 'active' } }),
+      queue: async () => ({ ok: true, value: { delivered: false, queuedSubmissionId: 'next' } }),
+    };
+    expect(
+      await call(
+        'work.send',
+        { ref: { adapter: adapter.id, id: 'busy' }, message: 'intent', mode },
+        undefined,
+        { source: 'rpc' },
+        [adapter]
+      )
+    ).toEqual({
+      ok: true,
+      value:
+        mode === 'steer'
+          ? { delivered: true, steeredIntoTurnId: 'active' }
+          : { delivered: false, queuedSubmissionId: 'next' },
+    });
+  });
+
+  test('forwards send intent to the owning daemon', async () => {
+    const forwarded: unknown[] = [];
+    const result = await call(
+      'work.send',
+      {
+        ref: { adapter: 'codex-desktop', id: 'busy', daemon: 'laptop' },
+        message: 'now',
+        mode: 'steer',
+      },
+      async (_daemon, name, input) => {
+        forwarded.push({ name, input });
+        return { ok: false, reason: 'not_delivered', detail: 'NoActiveTurn' };
+      },
+      { source: 'rpc', principal: 'local' }
+    );
+    expect(result).toMatchObject({ ok: false, reason: 'not_delivered' });
+    expect(forwarded).toEqual([
+      {
+        name: 'work.send',
+        input: {
+          ref: { adapter: 'codex-desktop', id: 'busy' },
+          message: 'now',
+          mode: 'steer',
+          from: 'chat',
+        },
+      },
+    ]);
+  });
+
   test('keeps delivery facts in driver result schemas', () => {
     for (const fact of [{ queuedSubmissionId: 'q1' }, { steeredIntoTurnId: 't1' }]) {
       const result = { ok: true, value: { delivered: false, ...fact } };
       expect(SendWorkResultSchema.parse(result)).toEqual(result);
     }
+  });
+
+  test('advertises implemented steer locally and preserves it from remote discovery', async () => {
+    const adapter: WorkAdapter = {
+      ...desktop,
+      capabilities: ['find', 'send', 'steer'],
+      steer: async () => ({ ok: true, value: { delivered: true, steeredIntoTurnId: 'active' } }),
+    };
+    const expected = {
+      ok: true,
+      value: [{ id: adapter.id, capabilities: ['find', 'send', 'steer'] }],
+    };
+    expect(await call('work.adapters', {}, undefined, { source: 'rpc' }, [adapter])).toEqual(
+      expected
+    );
+    expect(await call('work.adapters', { daemon: 'laptop' }, async () => expected)).toEqual(
+      expected
+    );
   });
 
   test('operation discovery omits unrouted or unimplemented driver capabilities', async () => {

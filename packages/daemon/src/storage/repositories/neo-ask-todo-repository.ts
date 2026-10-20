@@ -1,3 +1,4 @@
+import { applyPackPreferenceAnswer } from './pack-preference-answer.ts';
 import type {
   NeoAsk,
   NeoQuestion,
@@ -428,7 +429,10 @@ export class NeoAskTodoRepository {
            WHERE id = ? AND state = 'open'`
         )
         .run(JSON.stringify(answer), by, now, question.id).changes;
-      if (answered) this.releaseStartTodos(question.id, now);
+      if (answered) {
+        this.releaseStartTodos(question.id, now);
+        if (answer === 'yes') applyPackPreferenceAnswer(this.db, question.id);
+      }
       return answered;
     })();
     if (!changed) return null;

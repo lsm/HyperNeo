@@ -20,6 +20,7 @@ export interface OperationCaller {
     readonly messageId: string;
     readonly origin?: string;
     readonly human: boolean;
+    readonly hasInput?: (messageId: string) => boolean;
     readonly isLive: () => boolean;
     readonly yield?: () => void;
   };
