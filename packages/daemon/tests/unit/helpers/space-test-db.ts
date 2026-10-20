@@ -1,4 +1,5 @@
 import { createEvolutionTables } from '../../../src/storage/schema/evolution';
+import { SDK_MESSAGE_COLUMN_TYPES } from '../../../src/storage/sdk-message-columns';
 import { createLongHorizonAgentTables } from '../../../src/storage/schema/long-horizon-agents';
 import { runMigration248 } from '../../../src/storage/schema/m248-direct-task-execution';
 import { runMigration250 } from '../../../src/storage/schema/m250-direct-stop-requests';
@@ -655,6 +656,9 @@ export function createSpaceTables(db: BunDatabase): void {
 			sdk_uuid TEXT,
 			consumed_seq INTEGER,
 			replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0,
+			${Object.entries(SDK_MESSAGE_COLUMN_TYPES)
+        .map(([name, type]) => `${name} ${type}`)
+        .join(',\n')},
 			FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 		)
 	`);

@@ -32,6 +32,7 @@ import type { ReactiveDatabase } from '../reactive-database.ts';
 import { createSQLiteAsciiPrefixRange } from '../sqlite-prefix-range.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SQLiteValue } from '../types.ts';
+import { deriveSdkMessageColumns, SDK_MESSAGE_COLUMN_TYPES } from '../sdk-message-columns.ts';
 import {
   searchWorkChats as queryWorkChats,
   type WorkChatKind,
@@ -655,6 +656,25 @@ export class SDKMessageRepository {
     }
   }
 
+  private derivedColumns(
+    message: unknown,
+    taskId: string | null = null,
+    keys: (keyof typeof SDK_MESSAGE_COLUMN_TYPES)[] = Object.keys(
+      SDK_MESSAGE_COLUMN_TYPES
+    ) as (keyof typeof SDK_MESSAGE_COLUMN_TYPES)[]
+  ) {
+    const derived = deriveSdkMessageColumns(message, taskId);
+    const names = this.tableHasColumn('sdk_messages', 'input_kind') ? keys : [];
+    return {
+      insert: names.length ? `, ${names.join(', ')}` : '',
+      placeholders: ', ?'.repeat(names.length),
+      update: names.length
+        ? `, ${names.map((name) => `${name} = ${name === 'bg_task_id' ? 'COALESCE(?, task_id)' : '?'}`).join(', ')}`
+        : '',
+      values: names.map((name) => derived[name]),
+    };
+  }
+
   private saveReplacementEdges(
     sourceMessageId: string,
     sessionId: string,
@@ -911,17 +931,22 @@ export class SDKMessageRepository {
     const { sessionId, dbId, message, admission, badgeUpdate, origin } = ctx;
     const stampInternalCompactionTurn =
       ctx.stampInternalCompactionTurn === true && admission.isTerminal && message.type === 'result';
+    const storedMessage = stampInternalCompactionTurn
+      ? { ...message, internal_compaction_turn: 1 }
+      : message;
     const messageType = message.type;
     const messageSubtype = 'subtype' in message ? (message.subtype as string) : null;
     const timestamp = new Date().toISOString();
     const taskId = this.resolveTaskIdForSession(sessionId);
 
+    const derived = this.derivedColumns(storedMessage, taskId);
+
     const stmt = this.db.prepare(
       `INSERT INTO sdk_messages (
 					id, session_id, message_type, message_subtype, sdk_message, timestamp, origin,
 					is_renderable, is_terminal, parent_tool_use_id, task_id, conversation_turn_index,
-					sdk_uuid, replacement_metadata_normalized
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
+					sdk_uuid, replacement_metadata_normalized${derived.insert}
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1${derived.placeholders})`
     );
 
     const saveTransaction = this.db.transaction(() => {
@@ -935,7 +960,7 @@ export class SDKMessageRepository {
         sessionId,
         messageType,
         messageSubtype,
-        JSON.stringify(message),
+        JSON.stringify(storedMessage),
         timestamp,
         origin ?? null,
         admission.isRenderable,
@@ -943,7 +968,7 @@ export class SDKMessageRepository {
         admission.parentToolUseId,
         taskId,
       ];
-      stmt.run(...values, conversationTurnIndex, admission.sdkUuid);
+      stmt.run(...values, conversationTurnIndex, admission.sdkUuid, ...derived.values);
       if (admission.isTerminal && this.tableHasColumn('sdk_messages', 'consumed_seq')) {
         const resultSeq = this.nextConsumedSeq();
         if (resultSeq !== null) {
@@ -951,15 +976,6 @@ export class SDKMessageRepository {
             .prepare('UPDATE sdk_messages SET consumed_seq = ? WHERE id = ?')
             .run(resultSeq, dbId);
         }
-      }
-      if (stampInternalCompactionTurn) {
-        this.db
-          .prepare(
-            `UPDATE sdk_messages
-                SET sdk_message = json_set(sdk_message, '$.internal_compaction_turn', 1)
-              WHERE id = ?`
-          )
-          .run(dbId);
       }
       this.saveReplacementEdges(dbId, sessionId, taskId, admission.replacementEdges);
       this.scheduleMessageSearchIndex(dbId);
@@ -1441,13 +1457,14 @@ export class SDKMessageRepository {
     const messageSubtype = 'subtype' in message ? (message.subtype as string) : null;
     const timestamp = new Date().toISOString();
     const taskId = this.resolveTaskIdForSession(sessionId);
+    const derived = this.derivedColumns(message, taskId);
 
     const stmt = this.db.prepare(
       `INSERT INTO sdk_messages (
 				id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin,
 				is_renderable, is_terminal, parent_tool_use_id, task_id, conversation_turn_index,
-				sdk_uuid, replacement_metadata_normalized
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
+				sdk_uuid, replacement_metadata_normalized${derived.insert}
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1${derived.placeholders})`
     );
 
     const conversationTurnIndex = this.resolveConversationTurnIndex(
@@ -1469,7 +1486,7 @@ export class SDKMessageRepository {
       admission.parentToolUseId,
       taskId,
     ];
-    stmt.run(...values, conversationTurnIndex, admission.sdkUuid);
+    stmt.run(...values, conversationTurnIndex, admission.sdkUuid, ...derived.values);
     this.saveReplacementEdges(id, sessionId, taskId, admission.replacementEdges);
     this.scheduleMessageSearchIndex(id);
     this.applyBadgeUpdate(sessionId, planAdmissionBadgeUpdate(admission));
@@ -2084,15 +2101,17 @@ export class SDKMessageRepository {
             | { id: string; sdk_message: string; origin: string | null }
             | null
             | undefined,
-        applyNormalizedDeliveryMessage: (rowId, sdkMessage, synthetic) =>
-          this.db
+        applyNormalizedDeliveryMessage: (rowId, sdkMessage, synthetic) => {
+          const derived = this.derivedColumns(JSON.parse(sdkMessage));
+          return this.db
             .prepare(
               `UPDATE sdk_messages
                   SET sdk_message = ?,
-                      origin = CASE WHEN ? = 1 THEN COALESCE(origin, 'system') ELSE origin END
+                      origin = CASE WHEN ? = 1 THEN COALESCE(origin, 'system') ELSE origin END${derived.update}
                     WHERE id = ?`
             )
-            .run(sdkMessage, synthetic ? 1 : 0, rowId).changes,
+            .run(sdkMessage, synthetic ? 1 : 0, ...derived.values, rowId).changes;
+        },
       },
     }).changed;
   }
@@ -2106,6 +2125,11 @@ export class SDKMessageRepository {
   }
 
   markResultRecoveryIntercepted(sessionId: string, sdkUuid: string, billingTerminal = false): void {
+    const derived = this.derivedColumns(
+      { recovery_intercepted: 1, recovery_billing_terminal: Number(billingTerminal) },
+      null,
+      ['recovery_intercepted', 'recovery_billing_terminal']
+    );
     this.db
       .prepare(
         `UPDATE sdk_messages
@@ -2113,21 +2137,24 @@ export class SDKMessageRepository {
               sdk_message,
               '$.recovery_intercepted', 1,
               '$.recovery_billing_terminal', ?
-            )
+            )${derived.update}
           WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'result'`
       )
-      .run(billingTerminal ? 1 : 0, sessionId, sdkUuid);
+      .run(billingTerminal ? 1 : 0, ...derived.values, sessionId, sdkUuid);
   }
 
   markResultInternalCompactionTurn(sessionId: string, sdkUuid: string): void {
+    const derived = this.derivedColumns({ internal_compaction_turn: 1 }, null, [
+      'internal_compaction_turn',
+    ]);
     withBusyRetry(() =>
       this.db
         .prepare(
           `UPDATE sdk_messages
-              SET sdk_message = json_set(sdk_message, '$.internal_compaction_turn', 1)
+              SET sdk_message = json_set(sdk_message, '$.internal_compaction_turn', 1)${derived.update}
             WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'result'`
         )
-        .run(sessionId, sdkUuid)
+        .run(...derived.values, sessionId, sdkUuid)
     );
   }
 
@@ -2490,6 +2517,7 @@ export class SDKMessageRepository {
     const badgeUpdate = planAdmissionBadgeUpdate(admission);
     const timestamp = new Date(message.timestamp).toISOString();
     const taskId = this.resolveTaskIdForSession(sessionId);
+    const derived = this.derivedColumns(message, taskId);
     const conversationTurnIndex = this.resolveConversationTurnIndex(
       taskId,
       sessionId,
@@ -2509,12 +2537,12 @@ export class SDKMessageRepository {
     const insertStmt = this.db.prepare(
       `INSERT INTO sdk_messages (
            id, session_id, message_type, message_subtype, sdk_message, timestamp, task_id,
-           conversation_turn_index, sdk_uuid, replacement_metadata_normalized
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
+           conversation_turn_index, sdk_uuid, replacement_metadata_normalized${derived.insert}
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1${derived.placeholders})`
     );
 
     this.db.transaction(() => {
-      insertStmt.run(...values, conversationTurnIndex, admission.sdkUuid);
+      insertStmt.run(...values, conversationTurnIndex, admission.sdkUuid, ...derived.values);
       this.applyBadgeUpdate(sessionId, badgeUpdate);
     })();
     return { id, badgeUpdate };
@@ -2535,11 +2563,14 @@ export class SDKMessageRepository {
   }
 
   updateHyperNeoActionMessage(rowId: string, updated: HyperNeoActionMessage): void {
+    const derived = this.derivedColumns(updated);
     const stmt = this.db.prepare(
-      `UPDATE sdk_messages SET sdk_message = ? WHERE id = ? AND message_type = 'hyperneo_action'
+      `UPDATE sdk_messages SET sdk_message = ?${derived.update} WHERE id = ? AND message_type = 'hyperneo_action'
        RETURNING session_id`
     );
-    const row = stmt.get(JSON.stringify(updated), rowId) as { session_id: string } | undefined;
+    const row = stmt.get(JSON.stringify(updated), ...derived.values, rowId) as
+      | { session_id: string }
+      | undefined;
     this.scheduleMessageSearchIndex(rowId);
     if (row) this.reactiveDb?.notifyChange('sdk_messages', { sessionId: row.session_id });
   }
@@ -2549,6 +2580,7 @@ export class SDKMessageRepository {
     messageUuid: string,
     updated: HyperNeoActionMessage
   ): void {
+    const derived = this.derivedColumns(updated);
     const row = this.db
       .prepare(
         `SELECT id FROM sdk_messages
@@ -2558,12 +2590,12 @@ export class SDKMessageRepository {
       )
       .get(sessionId, messageUuid) as { id: string } | undefined;
     const stmt = this.db.prepare(
-      `UPDATE sdk_messages SET sdk_message = ?
+      `UPDATE sdk_messages SET sdk_message = ?${derived.update}
        WHERE session_id = ?
          AND message_type = 'hyperneo_action'
          AND sdk_uuid = ?`
     );
-    const result = stmt.run(JSON.stringify(updated), sessionId, messageUuid);
+    const result = stmt.run(JSON.stringify(updated), ...derived.values, sessionId, messageUuid);
     if (row) this.scheduleMessageSearchIndex(row.id);
     if (result.changes > 0) this.reactiveDb?.notifyChange('sdk_messages', { sessionId });
   }
