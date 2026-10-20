@@ -1,3 +1,4 @@
+import { sessionReplyCall } from '../../../../src/lib/messaging/session-reply';
 import { readDriverSettlement } from '../../../../src/lib/neo/driver-work';
 import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-preparation';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
@@ -191,7 +192,7 @@ describe('hyperneo adapter send and status', () => {
       expect(handed).toEqual([
         {
           sessionId: id,
-          message: 'after this turn\n\nReply with message.send to sender.',
+          message: `after this turn\n\nReply with ${sessionReplyCall('sender')}, not SendMessage.`,
           from: 'session:sender',
           messageUuid: expect.any(String),
           deliveryMode: 'defer',
@@ -508,7 +509,7 @@ describe('hyperneo adapter send and status', () => {
       caller: { source: 'rpc' },
     });
     expect(handed[0].message).toBe(
-      'go on\n\nReply with message.send to daemon:imac::session:neo-root.'
+      `go on\n\nReply with ${sessionReplyCall('daemon:imac::session:neo-root')}, not SendMessage.`
     );
   });
 
@@ -518,13 +519,13 @@ describe('hyperneo adapter send and status', () => {
     expect(handed).toEqual([
       {
         sessionId: 'idle',
-        message: 'go on\n\nReply with message.send to neo:root.',
+        message: `go on\n\nReply with ${sessionReplyCall('neo:root')}, not SendMessage.`,
         from: 'session:neo:root',
         messageUuid: expect.any(String),
       },
       {
         sessionId: 'busy',
-        message: 'next\n\nReply with message.send to neo:root.',
+        message: `next\n\nReply with ${sessionReplyCall('neo:root')}, not SendMessage.`,
         from: 'session:neo:root',
         messageUuid: expect.any(String),
       },
@@ -614,7 +615,9 @@ describe('hyperneo adapter start and stop', () => {
       },
     });
     expect(events).toEqual(['create /focus/repo', 'worktree new', 'announce new']);
-    expect(handed).toEqual(['new: make it larger\n\nReply with message.send to neo:root.']);
+    expect(handed).toEqual([
+      `new: make it larger\n\nReply with ${sessionReplyCall('neo:root')}, not SendMessage.`,
+    ]);
     expect(result).toMatchObject({
       value: { receipt: { executionId: 'new', inputId: uuids[0] } },
     });
@@ -627,7 +630,9 @@ describe('hyperneo adapter start and stop', () => {
     );
     expect(events[0]).toBe('create /focus/notes on glm-5.3');
     expect(result).toMatchObject({ ok: true, value: { model: 'glm-5.3' } });
-    expect(handed).toEqual(['new: write it\n\nReply with message.send to neo:root.']);
+    expect(handed).toEqual([
+      `new: write it\n\nReply with ${sessionReplyCall('neo:root')}, not SendMessage.`,
+    ]);
   });
 
   test.each([{ model: 'unavailable' }, { effort: 'medium' }])(
