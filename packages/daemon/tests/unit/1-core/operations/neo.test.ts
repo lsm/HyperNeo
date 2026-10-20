@@ -332,6 +332,8 @@ describe('Neo MVP', () => {
       'neo.conversation.asks.read',
       'neo.conversation.image.read',
       'neo.draft.recover',
+      'pack.preferences.ask',
+      'pack.preferences.applyAnswer',
       'neo.preferences.set',
       'pack.preferences.get',
       'pack.preferences.list',
