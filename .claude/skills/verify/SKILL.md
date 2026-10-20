@@ -1735,3 +1735,34 @@ are asserted in `observed.json`. The retained-path prune must not change offsets
 The helper closes its own socket and daemon in `finally`. It uses no model or
 credentials and never reads the real session directories. Feed content reads
 remain synchronous in this slice; this journey verifies metadata I/O only.
+
+## Card-topic sweep attribution
+
+Run a fresh isolated daemon with synthetic HOME/data/DB and a free non-8399
+port. The helper creates 180 followed todos with two topic subscriptions each,
+plus one removed todo. Each pack-eligibility settings read gets an explicit
+8 ms synthetic blocking wait before its real SQLite read. No real session,
+provider, key, transcript or live DB is involved.
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-card-topic-phases-XXXXXX)
+env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/card-topic-phases.ts verify 9375 "$RUN"
+```
+
+On the regression commit use `reproduce` in a separate new directory. Both runs
+must reproduce over 1 s max heartbeat lag: this slice adds attribution, not a
+latency fix. `observed.json` includes concurrent health latency, actual sweep
+results and structured lag diagnostics. In `verify`, the phase totals must
+attribute 180 settings reads and at least 1,440 ms to
+`neo:packs:eligibility_read`; listActive, per-todo followedTodo and
+cardEventsDelivered, and per-subscription end phases must also be present.
+Only the removed todo's two topics end; 360 followed topics remain.
+
+The existing activity buffer retains 64 entries and reports dropped entries;
+large sweeps expose a suffix of per-todo phases plus the final aggregate. The
+helper separately totals every emitted phase in its own instrumentation, without
+changing production buffering. Nested totals overlap and must not be added.
+This proves the repeated-read path under controlled latency, not the cause of
+the historical 20:09 four-second phase or a particular OS wait. The helper closes
+its socket, diagnostic observer, Neo service and daemon in `finally`.

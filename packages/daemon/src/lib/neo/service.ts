@@ -636,7 +636,9 @@ export class NeoService {
     return neoPacks({
       builtins: this.builtinPacks,
       filePacks: this.filePacks,
-      enabled: neoEnabledPacks(this.db.getGlobalSettings?.().neo),
+      enabled: neoEnabledPacks(
+        runLagPhase('neo:packs:eligibility_read', () => this.db.getGlobalSettings?.().neo)
+      ),
     });
   }
 
@@ -671,13 +673,30 @@ export class NeoService {
 
   readonly endUnfollowedCardTopics = (superpipe({})('neo-card-topics-end') as PipelineAPI)
     .input(['now'])
-    .pipe(() => this.cardEvents.listActive(), 'now', 'rows')
+    .pipe(
+      () => runLagPhase('neo:card_topics:list_active', () => this.cardEvents.listActive()),
+      'now',
+      'rows'
+    )
     .pipe(
       (rows: NeoCardEventSubscription[]) =>
-        new Map(
-          [...new Set(rows.map((row) => row.workId))].map(
-            (workId) => [workId, !!this.followedTodo(workId) && this.cardEventsDelivered()] as const
-          )
+        runLagPhase(
+          'neo:card_topics:eligibility',
+          () =>
+            new Map(
+              [...new Set(rows.map((row) => row.workId))].map(
+                (workId) =>
+                  [
+                    workId,
+                    !!runLagPhase(`neo:card_topics:followed_todo:${workId}`, () =>
+                      this.followedTodo(workId)
+                    ) &&
+                      runLagPhase(`neo:card_topics:card_events_delivered:${workId}`, () =>
+                        this.cardEventsDelivered()
+                      ),
+                  ] as const
+              )
+            )
         ),
       'rows',
       'followed'
@@ -685,7 +704,10 @@ export class NeoService {
     .pipe(planNeoCardTopicsEnded, ['rows', 'followed'], 'ended')
     .pipe(
       (ended: NeoCardEventSubscription[], now: number) => {
-        for (const row of ended) this.cardEvents.end(row.workId, row.topic, now);
+        for (const row of ended)
+          runLagPhase(`neo:card_topics:end:${row.workId}`, () =>
+            this.cardEvents.end(row.workId, row.topic, now)
+          );
         return ended;
       },
       ['ended', 'now'],
