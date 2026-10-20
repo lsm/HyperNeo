@@ -5,9 +5,11 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { seedWorkFeedDeleteCorpus, storedWorkFeedDigest } from '../../../packages/daemon/tests/helpers/work-feed-delete-corpus.ts';
 
-const [portText, runText] = process.argv.slice(2);
+const [portText, runText, bodyCharsText = '8192'] = process.argv.slice(2);
 const port = Number(portText);
+const bodyChars = Number(bodyCharsText);
 assert(port > 0 && port !== 8399 && runText);
+assert(bodyChars > 0 && bodyChars <= 16000);
 const run = resolve(runText);
 assert(process.env.NODE_ENV === 'test');
 assert(process.env.HOME === join(run, 'home'));
@@ -23,7 +25,7 @@ let timer: ReturnType<typeof setInterval> | undefined;
 const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
 try {
   await new Promise<void>((done, fail) => { ws.onopen = () => done(); ws.onerror = () => fail(new Error('connect failed')); });
-  seedWorkFeedDeleteCorpus(db, 30000);
+  seedWorkFeedDeleteCorpus(db, 30000, bodyChars);
   const before = storedWorkFeedDigest(db);
   await pause(200);
   const sql: { text: string; calls: number; maxMs: number }[] = [];
@@ -74,7 +76,7 @@ try {
   db.prepare = prepare;
   const remaining = db.prepare("SELECT kind, COUNT(*) AS n FROM message_search_content GROUP BY kind").all();
   const after = storedWorkFeedDigest(db);
-  const report = { surface: 'real daemon work.feed.claude maintenance job with concurrent session.get RPC', turns: 30000, bodyChars: 8192, job: app.jobQueue.getJob(job.id), maxLagMs, maxRpcMs: Math.max(...latencies), rpcCount: latencies.length, sql, remaining, storedBefore: before, storedAfter: after, runtime: Bun.version };
+  const report = { surface: 'real daemon work.feed.claude maintenance job with concurrent session.get RPC', turns: 30000, bodyChars, job: app.jobQueue.getJob(job.id), maxLagMs, maxRpcMs: Math.max(...latencies), rpcCount: latencies.length, sql, remaining, storedBefore: before, storedAfter: after, runtime: Bun.version };
   writeFileSync(join(run, 'observed.json'), JSON.stringify(report, null, 2));
   process.stdout.write(JSON.stringify(report) + '\n');
   assert.equal(report.job?.status, 'completed');

@@ -72,6 +72,20 @@ describe('purgeWorkFeedSessions', () => {
       expect(samples.some((left) => left > 0 && left < 2000)).toBe(true);
       expect(count()).toBe(0);
       expect(storedWorkFeedDigest(db)).toBe(original);
+      expect(
+        db
+          .prepare(
+            "SELECT rowid FROM message_search_fts WHERE message_search_fts MATCH 'synthetic0token0'"
+          )
+          .all()
+      ).toEqual([]);
+      expect(
+        db
+          .prepare(
+            "SELECT COUNT(*) AS n FROM message_search_fts WHERE message_search_fts MATCH 'codex'"
+          )
+          .get()
+      ).toEqual({ n: 200 });
       expect(db.prepare('SELECT COUNT(*) AS n FROM message_search_vectors').get()).toEqual({
         n: 0,
       });
@@ -83,9 +97,9 @@ describe('purgeWorkFeedSessions', () => {
       db.close();
     }
   }, 30000);
-  test('deletes only that kind for those sessions through the session index', () => {
+  test('deletes only that kind for those sessions through the session index', async () => {
     const { db, plans, left } = setup();
-    purgeWorkFeedSessions(db, 'codex', ['s1']);
+    await purgeWorkFeedSessions(db, 'codex', ['s1']);
     expect(left()).toEqual(['c2', 'k1', 'm1']);
     expect(plans.some((plan) => plan.includes('idx_message_search_content_feed_turns'))).toBe(true);
     db.close();
@@ -93,9 +107,9 @@ describe('purgeWorkFeedSessions', () => {
 });
 
 describe('dropWorkFeedSession', () => {
-  test('deletes one session of one kind through the session index', () => {
+  test('deletes one session of one kind through the session index', async () => {
     const { db, plans, left } = setup();
-    expect(dropWorkFeedSession(db, 'claude', 's1', '/p')).toBe(1);
+    expect(await dropWorkFeedSession(db, 'claude', 's1', '/p')).toBe(1);
     expect(left()).toEqual(['c1', 'c2', 'm1']);
     expect(plans.some((plan) => plan.includes('idx_message_search_content_feed_turns'))).toBe(true);
     db.close();
