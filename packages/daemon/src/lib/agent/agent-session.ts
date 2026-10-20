@@ -185,6 +185,7 @@ import {
   initializeProviders,
   waitForOptionalProviderRegistration,
 } from '../providers/factory.js';
+import { resolveQueryProvider } from '../providers/registry.ts';
 import {
   claimProviderFailureNotice,
   recordClassifiedProviderFailure,
@@ -2910,15 +2911,19 @@ export class AgentSession
           if (this.db.getSession(this.session.id)?.status === 'archived') {
             throw new MessageDeliveryTerminalTurnError('Session is archived');
           }
-          const providerId = (this.session.config.provider as string | undefined)?.trim();
-          if (providerId) {
-            const registry = initializeProviders();
-            await waitForOptionalProviderRegistration(registry, true);
-            if (!registry.has(providerId)) {
-              throw new MessageDeliveryTerminalTurnError(
-                `Provider '${providerId}' is not registered`
-              );
-            }
+          const pinned = (this.session.config.provider as string | undefined)?.trim() || undefined;
+          const registry = initializeProviders();
+          await waitForOptionalProviderRegistration(registry, pinned !== undefined);
+          if (!resolveQueryProvider(registry, this.session.config.model || 'sonnet', pinned)) {
+            const message = `Provider '${pinned ?? 'anthropic'}' is not registered. Log in or add an API key for it under Providers, or switch this session to another provider.`;
+            await this.errorManager.handleError(
+              this.session.id,
+              new Error(message),
+              ErrorCategory.MODEL,
+              message,
+              this.stateManager.getState()
+            );
+            throw new MessageDeliveryTerminalTurnError(message);
           }
           if (this.isCleaningUp()) return { outcome: 'aborted' };
           if (claimGuard && !claimGuard()) return { outcome: 'aborted' };
