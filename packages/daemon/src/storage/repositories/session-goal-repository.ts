@@ -1,5 +1,7 @@
 import { generateUUID } from '@hyperneo/shared';
 import type {
+  GoalJournalDraft,
+  GoalJournalEntry,
   SessionGoal,
   SessionGoalDraft,
   SessionGoalPatch,
@@ -133,6 +135,56 @@ export class SessionGoalRepository {
     })();
     this.reactiveDb?.notifyChange('space_goals');
     return this.get(goal.id)!;
+  }
+
+  appendJournal(
+    goalId: string,
+    sessionId: string | null,
+    draft: GoalJournalDraft,
+    now: number
+  ): GoalJournalEntry {
+    const runId = draft.runId ?? null;
+    const id = generateUUID();
+    this.db.transaction(() => {
+      if (runId)
+        this.db
+          .prepare('DELETE FROM goal_journal WHERE goal_id = ? AND run_id = ?')
+          .run(goalId, runId);
+      this.db
+        .prepare(
+          `INSERT INTO goal_journal (id, goal_id, run_id, session_id, done, effect, evidence, worked, failed, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          id,
+          goalId,
+          runId,
+          sessionId,
+          draft.done,
+          draft.effect,
+          JSON.stringify(draft.evidence),
+          draft.worked,
+          draft.failed ?? null,
+          now
+        );
+    })();
+    this.reactiveDb?.notifyChange('goal_journal');
+    return this.listJournal(goalId, null, 1)[0]!;
+  }
+
+  listJournal(goalId: string, before: number | null, limit: number): GoalJournalEntry[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT id, goal_id AS goalId, run_id AS runId, session_id AS sessionId, done, effect,
+             evidence, worked, failed, created_at AS createdAt FROM goal_journal
+           WHERE goal_id = ? AND (? IS NULL OR created_at < ?)
+           ORDER BY created_at DESC, rowid DESC LIMIT ?`
+        )
+        .all(goalId, before, before, limit) as (Omit<GoalJournalEntry, 'evidence'> & {
+        evidence: string;
+      })[]
+    ).map((row) => ({ ...row, evidence: JSON.parse(row.evidence) }));
   }
 
   private recordEvent(

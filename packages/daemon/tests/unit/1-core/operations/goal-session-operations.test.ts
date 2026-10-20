@@ -167,3 +167,46 @@ describe('deleting the owner session', () => {
     db.close();
   });
 });
+
+describe('goal journal', () => {
+  test('a cycle appends one entry per run, newest first, and only the owner reaches it', async () => {
+    const { db, call } = setup();
+    const goal = (await call('goal.session.create', { title: 'Grow', doneTest: 'Ten adopters' }))
+      .goal;
+    const entry = {
+      goalId: goal.id,
+      done: 'Opened the adapter guide PR',
+      effect: 'Two projects asked for the guide',
+      evidence: [{ kind: 'pr', ref: 'https://github.com/lsm/oap/pull/9' }],
+      worked: 'Answering adopters in their issues',
+    };
+    await call('goal.journal.append', { ...entry, runId: 'run-1' });
+    await call('goal.journal.append', { ...entry, runId: 'run-1', effect: 'Three projects asked' });
+    await call('goal.journal.append', { ...entry, runId: 'run-2', done: 'Published the guide' });
+    const listed = await call('goal.journal.list', { goalId: goal.id });
+    expect(
+      listed.entries.map((item: { runId: string; done: string; effect: string }) => [
+        item.runId,
+        item.done,
+        item.effect,
+      ])
+    ).toEqual([
+      ['run-2', 'Published the guide', 'Two projects asked for the guide'],
+      ['run-1', 'Opened the adapter guide PR', 'Three projects asked'],
+    ]);
+    expect(listed.entries[0]).toMatchObject({
+      sessionId: 'neo:root',
+      evidence: [{ kind: 'pr', ref: 'https://github.com/lsm/oap/pull/9' }],
+      failed: null,
+    });
+    const other: OperationCaller = { source: 'mcp', sessionId: 'neo:other', role: 'neo' };
+    expect(await call('goal.journal.append', entry, other)).toEqual({
+      accepted: false,
+      reason: 'goal_not_found',
+    });
+    expect(await call('goal.journal.list', { goalId: goal.id, limit: 1 })).toMatchObject({
+      entries: [{ runId: 'run-2' }],
+    });
+    db.close();
+  });
+});
