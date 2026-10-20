@@ -1,6 +1,6 @@
 # Worker handoff: preserve the report, simplify delivery
 
-Status: proposal for human approval; implementation is not authorized yet. Scope:
+Status: human approved (question13e4f9b2); implementation ships in the five PRs below. Scope:
 local HyperNeo worker → Neo handoff, with existing remote routing kept intact.
 
 ## Evidence and diagnosis
@@ -36,8 +36,11 @@ Neo's read guard admits only the canonical published-artifact subtree; it keeps
 all other data-directory, credential-name and secret-file checks. Publication
 accepts only regular files from the caller's registered draft directory: reject
 traversal, symlinks, hard links and cross-session references; snapshot through the
-validated open descriptor, not a second path lookup. Published artifacts cannot
-be overwritten by the worker. No arbitrary source paths or implicit file reads
+validated open descriptor, not a second path lookup. Published artifacts are immutable through the API/SDK contract: publication never
+clobbers an existing snapshot. Workers and the daemon share an OS uid; this is
+**not OS isolation against same-user Bash**. A same-user worker can tamper with
+a file. Every reference carries its SHA-256, and a verified read returns
+`tampered` without content when the bytes differ. No arbitrary source paths or implicit file reads
 are added to `message.send`. The daemon derives sender identity as it does today.
 
 **Retention and size.** Never auto-delete results, including on session/worktree
@@ -49,6 +52,20 @@ or expiry. Existing transport limits still apply to each request; size errors
 name the limit and supported file/chunk path. Disk-full is a factual failure,
 never a successful receipt or a reason to erase older results. Finalization,
 hashing and delivery receipts survive restart and retries without duplicate sends.
+
+PR1 provides `handoff.publish {name}` and `handoff.read {reference, offset?, length?}`.
+The worker receives `HYPERNEO_HANDOFF_DIR` as its explicit SDK draft write root.
+Names are single non-secret filenames of at most128 ASCII characters; file
+contents may be arbitrary bytes. Content-addressed published paths embed SHA-256
+and retain their originating session and persistent local daemon id. Reads hash
+the entire descriptor stream before returning a base64 chunk (maximum256KiB);
+`nextOffset`/`complete` allow complete retrieval without trimming. Neo native Read
+uses the same hash preflight. Drafts, outbox parent directories, searches/shell
+reads of private daemon data and secret filenames remain outside its exception.
+The native SDK Read tool still owns its subsequent filesystem open; the verified
+operation returns only bytes captured from the descriptor it hashed. Neither
+interface claims protection against a same-user process changing the SDK itself.
+Message-send normalization/spill and structured transport wiring remain PR2.
 
 **Reads and reports.** Keep existing `work.read` response compatibility; add
 explicit continuation/availability metadata for complete text and file references.

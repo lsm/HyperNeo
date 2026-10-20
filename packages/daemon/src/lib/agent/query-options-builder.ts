@@ -79,6 +79,7 @@ import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.js';
 import { withSdkTranscriptRetention } from './sdk-transcript-retention.ts';
 import { neoCoordinatorBinding, restrictNeoQuery } from '../neo/session-policy.ts';
 import { neoSettingsPackBriefs } from '../neo/packs/index.ts';
+import { handoffDraftDirectory } from '../handoffs/outbox.ts';
 
 const log = new Logger('QueryOptionsBuilder');
 
@@ -424,6 +425,8 @@ export class QueryOptionsBuilder {
     const disallowedTools = this.getDisallowedTools();
     const allowedTools = this.getAllowedTools();
     const additionalDirectories = this.getAdditionalDirectories();
+    const handoffDirectory = handoffDraftDirectory(getDataDir(), this.ctx.session.id);
+    additionalDirectories?.push(handoffDirectory);
     const hooks = this.buildHooks(overrides?.askUserQuestionHook ?? this.askUserQuestionHook);
     const permissionMode = this.getPermissionMode();
     const pluginsFromSkills = [
@@ -468,7 +471,7 @@ export class QueryOptionsBuilder {
 
       cwd: this.getCwd(),
       additionalDirectories,
-      env: mergedEnv,
+      env: { ...mergedEnv, HYPERNEO_HANDOFF_DIR: handoffDirectory },
       executable: config.executable ?? (isRunningUnderBun() ? 'bun' : undefined),
       executableArgs: config.executableArgs,
       pathToClaudeCodeExecutable: sdkCliPath,

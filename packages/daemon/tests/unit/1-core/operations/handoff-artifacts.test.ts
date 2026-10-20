@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import fs from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import {
   chmodSync,
@@ -6,6 +7,8 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  realpathSync,
+  renameSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -25,12 +28,13 @@ describe('worker handoff artifact operation contract', () => {
   let before: string | undefined;
   let mailbox: MailboxTestDb;
   const sessionId = 'worker-1';
+  let status = 'active';
   const text = 'Synthetic report 🔬\n'.repeat(16000);
   const sha256 = createHash('sha256').update(text).digest('hex');
   const drafts = () => join(root, 'handoffs', sessionId, 'drafts');
   const catalog = () =>
     createDaemonOperationCatalog(mailbox.jobQueue, {
-      sessionStatus: (id: string) => (id === sessionId ? 'active' : null),
+      sessionStatus: (id: string) => (id === sessionId ? status : null),
     } as TaskOperationDependencies);
   const invoke = async (name: string, input: unknown, id = sessionId) => {
     const outcome = await invokeOperation(catalog(), name, input, { source: 'mcp', sessionId: id });
@@ -41,10 +45,11 @@ describe('worker handoff artifact operation contract', () => {
   const publish = (name = 'report.md', id = sessionId) => invoke('handoff.publish', { name }, id);
 
   beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), 'handoff-contract-'));
+    root = realpathSync(mkdtempSync(join(tmpdir(), 'handoff-contract-')));
     before = process.env.HYPERNEO_DATA_DIR;
     process.env.HYPERNEO_DATA_DIR = root;
     mailbox = createMailboxTestDb();
+    status = 'active';
     mkdirSync(drafts(), { recursive: true });
     writeFileSync(join(drafts(), 'report.md'), text);
   });
@@ -84,6 +89,18 @@ describe('worker handoff artifact operation contract', () => {
     rmSync(join(root, 'workspaces'), { recursive: true });
     expect((await invoke('handoff.read', { reference })).kind).toBe('read');
     expect(readdirSync(join(root, 'handoffs', sessionId, 'published'))).toHaveLength(1);
+  });
+
+  test.each(['idle', 'waiting_for_input', 'error'])(
+    'a registered %s worker may preserve its report',
+    async (state) => {
+      status = state;
+      expect((await publish()).kind).toBe('published');
+    }
+  );
+  test.each(['ended', 'archived'])('a %s session cannot publish', async (state) => {
+    status = state;
+    expect((await publish()).kind).toBe('rejected');
   });
 
   test('reports tampering without returning content or replacing the old snapshot', async () => {
@@ -134,7 +151,11 @@ describe('worker handoff artifact operation contract', () => {
   test('does not reinterpret a foreign-daemon reference or an altered path', async () => {
     const { reference } = (await publish()) as { reference: Record<string, unknown> };
     expect(
-      (await invoke('handoff.read', { reference: { ...reference, daemonId: 'foreign' } })).kind
+      (
+        await invoke('handoff.read', {
+          reference: { ...reference, daemonId: 'b0334375-3fd6-422c-8a37-d77975446469' },
+        })
+      ).kind
     ).toBe('unavailable');
     expect(
       (
@@ -143,5 +164,57 @@ describe('worker handoff artifact operation contract', () => {
         })
       ).kind
     ).toBe('rejected');
+  });
+
+  test('a snapshot disk-full failure returns no receipt and retains earlier results', async () => {
+    const { reference } = (await publish()) as { reference: Record<string, unknown> };
+    writeFileSync(join(drafts(), 'report.md'), 'a second synthetic report');
+    const original = fs.open;
+    const fault = spyOn(fs, 'open').mockImplementation((...args) =>
+      String(args[0]).includes('/.staging/')
+        ? Promise.reject(
+            Object.assign(new Error('ENOSPC: synthetic disk full'), { code: 'ENOSPC' })
+          )
+        : original(...args)
+    );
+    try {
+      expect(await publish()).toEqual({ kind: 'rejected', reason: 'ENOSPC: synthetic disk full' });
+      expect((await invoke('handoff.read', { reference })).kind).toBe('read');
+    } finally {
+      fault.mockRestore();
+    }
+  });
+
+  test('rejects a source replaced with a symlink after opening its descriptor', async () => {
+    const privatePath = join(root, 'private.md');
+    writeFileSync(privatePath, 'synthetic private sibling');
+    const source = join(drafts(), 'report.md');
+    const original = fs.open;
+    const race = spyOn(fs, 'open').mockImplementation(async (...args) => {
+      const descriptor = await original(...args);
+      if (String(args[0]) === source) {
+        renameSync(source, `${source}.moved`);
+        symlinkSync(privatePath, source);
+      }
+      return descriptor;
+    });
+    try {
+      expect((await publish()).kind).toBe('rejected');
+      expect(readdirSync(join(root, 'handoffs', sessionId, '.staging'))).toHaveLength(0);
+    } finally {
+      race.mockRestore();
+    }
+  });
+
+  test('rejects oversized read chunks and foreign worker reads', async () => {
+    const { reference } = await publish();
+    expect((await invoke('handoff.read', { reference }, 'worker-2')).kind).toBe('rejected');
+    const result = await invokeOperation(
+      catalog(),
+      'handoff.read',
+      { reference, length: 256 * 1024 + 1 },
+      { source: 'mcp', sessionId }
+    );
+    expect(result.kind).toBe('failed');
   });
 });
