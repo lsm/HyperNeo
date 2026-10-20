@@ -169,6 +169,37 @@ describe('deleting the owner session', () => {
 });
 
 describe('goal journal', () => {
+  test('pages through entries written in the same millisecond without skipping any', async () => {
+    const { db, call } = setup();
+    const goal = (await call('goal.session.create', { title: 'Grow', doneTest: 'Ten adopters' }))
+      .goal;
+    for (const runId of ['a', 'b', 'c'])
+      await call('goal.journal.append', {
+        goalId: goal.id,
+        runId,
+        done: runId,
+        effect: 'e',
+        worked: 'w',
+      });
+    db.exec('UPDATE goal_journal SET created_at = 5');
+    const seen: string[] = [];
+    let before: string | undefined;
+    for (let page = 0; page < 4; page++) {
+      const entries = (
+        await call('goal.journal.list', {
+          goalId: goal.id,
+          limit: 1,
+          ...(before ? { before } : {}),
+        })
+      ).entries as { id: string; runId: string }[];
+      if (!entries.length) break;
+      seen.push(entries[0].runId);
+      before = entries[0].id;
+    }
+    expect(seen).toEqual(['c', 'b', 'a']);
+    db.close();
+  });
+
   test('a cycle appends one entry per run, newest first, and only the owner reaches it', async () => {
     const { db, call, audited } = setup();
     const goal = (await call('goal.session.create', { title: 'Grow', doneTest: 'Ten adopters' }))

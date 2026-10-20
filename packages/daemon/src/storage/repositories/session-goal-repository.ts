@@ -172,13 +172,14 @@ export class SessionGoalRepository {
     return this.listJournal(goalId, null, 1)[0]!;
   }
 
-  listJournal(goalId: string, before: number | null, limit: number): GoalJournalEntry[] {
+  listJournal(goalId: string, before: string | null, limit: number): GoalJournalEntry[] {
     return (
       this.db
         .prepare(
           `SELECT id, goal_id AS goalId, run_id AS runId, session_id AS sessionId, done, effect,
              evidence, worked, failed, created_at AS createdAt FROM goal_journal
-           WHERE goal_id = ? AND (? IS NULL OR created_at < ?)
+           WHERE goal_id = ? AND (? IS NULL OR (created_at, rowid) <
+             (SELECT created_at, rowid FROM goal_journal WHERE id = ?))
            ORDER BY created_at DESC, rowid DESC LIMIT ?`
         )
         .all(goalId, before, before, limit) as (Omit<GoalJournalEntry, 'evidence'> & {

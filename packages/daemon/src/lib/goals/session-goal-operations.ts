@@ -91,7 +91,11 @@ const Journal = z
   .object({
     ...Owner,
     goalId: z.string().min(1),
-    before: z.number().int().optional().describe('Entries older than this time, for paging'),
+    before: z
+      .string()
+      .min(1)
+      .optional()
+      .describe('Entry id: return the entries older than it, for paging'),
     limit: z.number().int().min(1).max(100).default(20),
   })
   .strict();
