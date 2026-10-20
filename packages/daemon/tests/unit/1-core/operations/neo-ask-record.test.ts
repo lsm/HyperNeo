@@ -10,6 +10,8 @@ import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-a
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { SessionGoalRepository } from '../../../../src/storage/repositories/session-goal-repository.ts';
+import { neoTodoHome } from '../../../../src/lib/neo/todo-repo.ts';
 
 const turn = (messageId: string, human = true): OperationCaller => ({
   source: 'mcp',
@@ -28,6 +30,7 @@ function setup() {
     "INSERT INTO neo_concerns (id, title, summary, context, revision, created_at, updated_at) VALUES ('project-1', 'P', '', '', 1, 1, 1)"
   );
   const store = new NeoAskTodoRepository(db);
+  const goals = new SessionGoalRepository(db);
   const sessions = new NeoTodoSessionRepository(db);
   const started: string[] = [];
   const stopped: string[] = [];
@@ -57,12 +60,14 @@ function setup() {
       },
       (projectId) => (projectId === 'project-1' ? projectId : null),
       (sessionId) => sessionId === 'neo-a',
-      () => [{ id: 'project-1', title: 'P' }]
+      () => [{ id: 'project-1', title: 'P' }],
+      () => [],
+      (id) => goals.get(id)
     ).map((op) => [op.name, op])
   );
   const call = async (name: string, input: unknown, caller: OperationCaller) =>
     (await ops[name].execute(ops[name].inputSchema.parse(input), caller)) as Receipt;
-  return { store, sessions, call, started, stopped, refuse, stopFails, onStop };
+  return { store, goals, sessions, call, started, stopped, refuse, stopFails, onStop };
 }
 
 const opening = {
@@ -82,6 +87,33 @@ const opening = {
 };
 
 describe('neo.ask.open and neo.ask.settle', () => {
+  test('only the goal owner links an ask; retries and repo splits retain that goal', async () => {
+    const { store, goals, call, started } = setup();
+    const mine = goals.create('neo-a', { title: 'Ship', doneTest: 'Released' }, 'neo', 1);
+    const other = goals.create('neo-other', { title: 'Other', doneTest: 'Released' }, 'neo', 1);
+    for (const goalId of ['missing', other.id]) {
+      expect(await call('neo.ask.open', { ...opening, goalId }, turn('m1'))).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('goal_not_found'),
+      });
+    }
+    expect(store.listAsks(undefined, 100)).toEqual([]);
+    expect(started).toEqual([]);
+    const result = await call('neo.ask.open', { ...opening, goalId: mine.id }, turn('m1'));
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.ask.goalId).toBe(mine.id);
+    expect(await call('neo.ask.open', { ...opening, goalId: mine.id }, turn('m1'))).toMatchObject({
+      ok: true,
+      ask: { id: result.ask.id },
+    });
+    const independent = await call('neo.ask.open', { ...opening, todos: [] }, turn('m1'));
+    expect(independent.ok && independent.ask.id).not.toBe(result.ask.id);
+    const child = neoTodoHome(store, result.ask, 'github.com/verify/second', true);
+    expect(child.goalId).toBe(mine.id);
+    expect(store.listGoalAsks(mine.id).map((ask) => ask.id)).toEqual(
+      expect.arrayContaining([result.ask.id, child.id])
+    );
+  });
   test('opens an ask with its todos once per turn and starts the ones asked to start', async () => {
     const { call, started } = setup();
     const first = await call('neo.ask.open', opening, turn('m1'));

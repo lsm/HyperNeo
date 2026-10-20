@@ -201,6 +201,30 @@ export function buildJobQueueSessionFifoSelection(
 export class JobQueueRepository {
   constructor(private db: BunDatabase) {}
 
+  submissionReceipt<T>(key: string, fingerprint: string): T | null {
+    const row = this.db
+      .prepare('SELECT fingerprint, receipt FROM message_send_receipts WHERE key = ?')
+      .get(key) as { fingerprint: string; receipt: string } | null;
+    if (!row) return null;
+    if (row.fingerprint !== fingerprint)
+      throw new Error('idempotency_conflict: key already used for different input');
+    return JSON.parse(row.receipt) as T;
+  }
+
+  commitSubmissionReceipt<T>(key: string, fingerprint: string, submit: () => T): T {
+    return withBusyRetry(() =>
+      this.db.transaction(() => {
+        const prior = this.submissionReceipt<T>(key, fingerprint);
+        if (prior !== null) return prior;
+        const receipt = submit();
+        this.db
+          .prepare('INSERT INTO message_send_receipts (key, fingerprint, receipt) VALUES (?, ?, ?)')
+          .run(key, fingerprint, JSON.stringify(receipt));
+        return receipt;
+      }, 'immediate')()
+    );
+  }
+
   enqueue(params: EnqueueParams): Job {
     const id = generateUUID();
     const now = Date.now();

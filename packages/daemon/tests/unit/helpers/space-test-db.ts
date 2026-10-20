@@ -384,6 +384,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			works_note TEXT,
 			works_note_through INTEGER,
 			facts_lines TEXT,
+			wake_schedule TEXT,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
 			CHECK ((space_id IS NULL) <> (owner_session_id IS NULL))
 		)

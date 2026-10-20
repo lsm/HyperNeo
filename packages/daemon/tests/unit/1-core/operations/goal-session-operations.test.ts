@@ -1,22 +1,58 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { createSessionGoalOperations } from '../../../../src/lib/goals/session-goal-operations.ts';
+import { SessionGoalSchedules } from '../../../../src/lib/goals/session-goal-schedules.ts';
+import { SessionScheduler } from '../../../../src/lib/scheduler/session-schedules.ts';
+import { createSessionScheduleFire } from '../../../../src/lib/scheduler/session-schedule-fire.ts';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
+import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
+import type { NeoPack } from '../../../../src/lib/neo/packs/types.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
 import { SessionGoalRepository } from '../../../../src/storage/repositories/session-goal-repository.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
 import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { runMigration420 } from '../../../../src/storage/schema/m420-neo-ask-goal.ts';
 
 const neo: OperationCaller = { source: 'mcp', sessionId: 'neo:root', role: 'neo' };
 const human: OperationCaller = { source: 'rpc' };
 
-function setup() {
+describe('ask goal-link upgrade', () => {
+  test('old asks survive reruns and deleting a goal leaves its asks unlinked', () => {
+    const db = new Database(':memory:');
+    db.exec(
+      "PRAGMA foreign_keys = ON; CREATE TABLE space_goals(id TEXT PRIMARY KEY); CREATE TABLE neo_asks(id TEXT PRIMARY KEY); INSERT INTO neo_asks VALUES ('old'); INSERT INTO space_goals VALUES ('goal')"
+    );
+    runMigration420(db);
+    runMigration420(db);
+    expect(db.prepare('SELECT wake_schedule FROM space_goals').get()).toEqual({
+      wake_schedule: null,
+    });
+    expect(db.prepare('SELECT * FROM neo_asks').all()).toEqual([{ id: 'old', goal_id: null }]);
+    db.exec("UPDATE neo_asks SET goal_id = 'goal'; DELETE FROM space_goals WHERE id = 'goal'");
+    expect(db.prepare('SELECT goal_id FROM neo_asks').get()).toEqual({ goal_id: null });
+    expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+    db.close();
+  });
+});
+
+function setup(packs: NeoPack[] = []) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
   const audited: string[] = [];
+  const goals = new SessionGoalRepository(db);
+  const scheduler = new SessionScheduler(db, new JobQueueRepository(db));
+  const schedules = new SessionGoalSchedules(
+    goals,
+    new NeoAskTodoRepository(db),
+    scheduler,
+    () => packs
+  );
+  scheduler.registerSource(schedules);
   const ops = createSessionGoalOperations({
-    goals: new SessionGoalRepository(db),
+    goals,
+    schedules,
     sessionExists: (sessionId) => ['neo:root', 'neo:other'].includes(sessionId),
     audit: (_caller, toolName) => audited.push(toolName),
   });
@@ -24,8 +60,315 @@ function setup() {
     const op = ops.find((item) => item.name === name)!;
     return op.execute(op.inputSchema.parse(input), caller) as Promise<Record<string, any>>;
   };
-  return { db, call, audited };
+  return { db, call, audited, scheduler, goals, schedules };
 }
+
+describe('goal-owned schedules', () => {
+  test.each(['completed', 'archived', 'schedule_deleted', 'goal_deleted'] as const)(
+    '%s during fact collection retires the wake without a failed delivery',
+    async (change) => {
+      const { db, call, scheduler, schedules } = setup();
+      const goal = (await call('goal.session.create', { title: 'Ship', doneTest: 'Released' }))
+        .goal;
+      const row = scheduler.repo.getBySource('goal', goal.id)!;
+      const jobs = new JobQueueRepository(db);
+      const job = jobs.getJob(row.pendingJobId!)!;
+      const clock = spyOn(Date, 'now').mockReturnValue(row.nextRunAt!);
+      const deliveries: string[] = [];
+      scheduler.registerSource({
+        kind: 'goal',
+        facts: async (id) => {
+          const facts = await schedules.facts(id);
+          if (change === 'schedule_deleted') scheduler.delete(scheduler.repo.get(row.id)!);
+          else if (change === 'goal_deleted')
+            db.prepare('DELETE FROM space_goals WHERE id = ?').run(id);
+          else await call('goal.session.update', { goalId: id, status: change });
+          return facts;
+        },
+        message: (id, change) => schedules.message(id, change),
+      });
+      try {
+        const handler = createSessionScheduleFire({
+          scheduler,
+          status: async () => 'done',
+          deliver: async (_schedule, _messageId, text) => {
+            deliveries.push(text);
+          },
+        });
+        expect(await handler(job)).toEqual({ outcome: 'source_gone' });
+        expect(deliveries).toEqual([]);
+        if (change === 'goal_deleted')
+          expect(scheduler.repo.get(row.id)).toMatchObject({ status: 'done', pendingJobId: null });
+        else {
+          expect(scheduler.repo.get(row.id)).toBeNull();
+          expect(
+            db.prepare('SELECT facts_lines FROM space_goals WHERE id = ?').get(goal.id)
+          ).toEqual({
+            facts_lines: null,
+          });
+        }
+      } finally {
+        clock.mockRestore();
+        db.close();
+      }
+    }
+  );
+  test.each([false, true])(
+    'reactivating after target_gone restores wakes (pause first: %s)',
+    async (pauseFirst) => {
+      const { db, call, scheduler } = setup();
+      const jobs = new JobQueueRepository(db);
+      let now = Date.now();
+      const clock = spyOn(Date, 'now').mockImplementation(() => now);
+      let available = false;
+      const messages: string[] = [];
+      try {
+        const cadence = { kind: 'every', everyMs: 120000 };
+        const goal = (
+          await call('goal.session.create', {
+            title: 'Return to the guide',
+            doneTest: 'Published',
+            cadence,
+            nudgeEvery: 7,
+          })
+        ).goal;
+        const handler = createSessionScheduleFire({
+          scheduler,
+          status: async () => (available ? 'done' : 'not_open'),
+          deliver: async (_schedule, _messageId, text) => {
+            messages.push(text);
+          },
+        });
+        const fire = () => {
+          const schedule = scheduler.repo.getBySource('goal', goal.id)!;
+          now = schedule.nextRunAt!;
+          return handler(jobs.getJob(schedule.pendingJobId!)!);
+        };
+        const before = scheduler.repo.getBySource('goal', goal.id)!;
+        expect(await fire()).toEqual({ outcome: 'target_gone' });
+        expect(scheduler.repo.get(before.id)?.status).toBe('done');
+        expect(messages).toEqual([]);
+        available = true;
+        if (pauseFirst) await call('goal.session.update', { goalId: goal.id, status: 'paused' });
+        await call('goal.session.update', { goalId: goal.id, status: 'active' });
+        const after = scheduler.repo.getBySource('goal', goal.id)!;
+        expect(after).toMatchObject({ status: 'active', cadence, nudgeEvery: 7 });
+        expect(after.pendingJobId).not.toBeNull();
+        expect(await fire()).toEqual({ outcome: 'fired' });
+        expect(messages).toHaveLength(1);
+        expect(messages[0]).toContain('Return to the guide');
+      } finally {
+        clock.mockRestore();
+        db.close();
+      }
+    }
+  );
+  test.each(['completed', 'archived'] as const)(
+    'reopening a %s goal preserves its configured cadence and nudge interval',
+    async (status) => {
+      const { db, call, scheduler } = setup();
+      const cadence = { kind: 'cron', cron: '0 9 * * *', timezone: 'UTC' };
+      const goal = (
+        await call('goal.session.create', {
+          title: 'Daily guide',
+          doneTest: 'Published',
+          cadence,
+          nudgeEvery: 7,
+        })
+      ).goal;
+      const before = scheduler.repo.getBySource('goal', goal.id)!;
+      await call('goal.session.update', { goalId: goal.id, status });
+      expect(scheduler.repo.get(before.id)).toBeNull();
+      await call('goal.session.update', { goalId: goal.id, status: 'active' });
+      const after = scheduler.repo.getBySource('goal', goal.id)!;
+      expect(after.id).not.toBe(before.id);
+      expect(after).toMatchObject({ cadence, nudgeEvery: 7, status: 'active' });
+      db.close();
+    }
+  );
+  test('reads, busy skips and failed delivery preserve facts_lines until a confirmed wake', async () => {
+    const { db, call, scheduler } = setup();
+    const jobs = new JobQueueRepository(db);
+    let now = Date.now();
+    const clock = spyOn(Date, 'now').mockImplementation(() => now);
+    let busy = false;
+    let failed = false;
+    try {
+      const goal = (await call('goal.session.create', { title: 'Ship', doneTest: 'Released' }))
+        .goal;
+      const handler = createSessionScheduleFire({
+        scheduler,
+        status: async () => (busy ? 'running' : 'done'),
+        deliver: async () => {
+          if (failed) throw new Error('offline');
+        },
+      });
+      const fire = () => {
+        const schedule = scheduler.repo.getBySource('goal', goal.id)!;
+        now = schedule.nextRunAt!;
+        return handler(jobs.getJob(schedule.pendingJobId!)!);
+      };
+      const stored = () =>
+        (
+          db.prepare('SELECT facts_lines FROM space_goals WHERE id = ?').get(goal.id) as {
+            facts_lines: string | null;
+          }
+        ).facts_lines;
+      await call('goal.facts', { goalId: goal.id });
+      expect(stored()).toBeNull();
+      await fire();
+      const baseline = stored();
+      expect(JSON.parse(baseline!)).toContain('Progress: 0');
+      await call('goal.session.update', { goalId: goal.id, progress: 20 });
+      const delta = (await call('goal.facts', { goalId: goal.id })).facts;
+      expect(delta.summary).toBe('- Progress: 0\n+ Progress: 20');
+      expect(stored()).toBe(baseline);
+      busy = true;
+      expect(await fire()).toEqual({ outcome: 'skipped_busy' });
+      expect(stored()).toBe(baseline);
+      busy = false;
+      failed = true;
+      await expect(fire()).rejects.toThrow('offline');
+      expect(stored()).toBe(baseline);
+      expect((await call('goal.facts', { goalId: goal.id })).facts).toEqual(delta);
+      failed = false;
+      expect(await fire()).toEqual({ outcome: 'fired' });
+      expect(JSON.parse(stored()!)).toContain('Progress: 20');
+      expect((await call('goal.facts', { goalId: goal.id })).facts.summary).toBe('');
+    } finally {
+      clock.mockRestore();
+      db.close();
+    }
+  });
+  test('linked asks, todos, pack PRs and answered questions change the same facts Neo reads', async () => {
+    let state = 'open';
+    const { db, call, schedules } = setup([
+      {
+        id: 'coding',
+        describe: 'Coding',
+        instructions: () => null,
+        snapshotRows: () => [
+          { todoId: 'linked', pr: 'verify/demo#8', state },
+          { todoId: 'unrelated', pr: 'verify/demo#9', state },
+        ],
+      },
+    ]);
+    const goal = (await call('goal.session.create', { title: 'Ship', doneTest: 'Released' })).goal;
+    const asks = new NeoAskTodoRepository(db);
+    asks.openAsk({
+      id: 'ask',
+      goalId: goal.id,
+      projectId: null,
+      sessionId: 'neo:root',
+      originMessageId: null,
+      title: 'Release',
+      request: 'Ship',
+      createdAt: 1,
+    });
+    asks.addTodo(
+      'linked',
+      'ask',
+      { title: 'Merge', doneWhen: 'Merged', check: null, instruction: null, named: null },
+      1
+    );
+    const question = asks.askQuestion(
+      'q',
+      'ask',
+      {
+        text: 'Ship now?',
+        kind: 'yesno',
+        options: null,
+        multiple: false,
+        noLabel: 'No',
+        yesLabel: 'Yes',
+        startTodos: null,
+      },
+      1
+    );
+    const before = (await call('goal.facts', { goalId: goal.id })).facts;
+    expect(before.lines).toContain('Ask ask "Release": open');
+    expect(before.lines).toContain('Todo linked "Merge": todo');
+    expect(before.summary).toContain('verify/demo#8');
+    expect(before.summary).not.toContain('verify/demo#9');
+    expect(before.summary).not.toContain('Ship now?');
+    (await schedules.facts(goal.id))!.commit();
+    state = 'merged';
+    asks.answerQuestion(question, 'yes', 'button', 2);
+    const after = (await call('goal.facts', { goalId: goal.id })).facts;
+    expect(after.digest).not.toBe(before.digest);
+    expect(after.summary).toContain('"state":"merged"');
+    expect(after.summary).toContain('Answer q "Ship now?": "yes"');
+    expect(after.summary).not.toContain('Todo linked');
+    db.close();
+  });
+  test('one schedule follows pause, resume, completion and reopening', async () => {
+    const { db, call, scheduler, schedules } = setup();
+    const goal = (await call('goal.session.create', { title: 'Ship', doneTest: 'Released' })).goal;
+    const first = scheduler.repo.getBySource('goal', goal.id)!;
+    expect(first).toMatchObject({
+      target: { adapter: 'hyperneo', id: 'neo:root' },
+      cadence: { kind: 'every', everyMs: 3600000 },
+      nudgeEvery: 4,
+      status: 'active',
+    });
+    schedules.sync(goal);
+    expect(scheduler.repo.getBySource('goal', goal.id)?.id).toBe(first.id);
+    scheduler.pause(first);
+    await call('goal.session.update', { goalId: goal.id, progress: 20 });
+    expect(scheduler.repo.get(first.id)?.status).toBe('paused');
+    await call('goal.session.update', { goalId: goal.id, status: 'active' });
+    await call('goal.session.update', { goalId: goal.id, status: 'paused' });
+    expect(scheduler.repo.get(first.id)).toMatchObject({ status: 'paused', pendingJobId: null });
+    await call('goal.session.update', { goalId: goal.id, status: 'active' });
+    expect(scheduler.repo.get(first.id)).toMatchObject({
+      status: 'active',
+      pendingJobId: expect.any(String),
+    });
+    await call('goal.session.update', { goalId: goal.id, status: 'completed' });
+    expect(scheduler.repo.get(first.id)).toBeNull();
+    expect(await schedules.facts(goal.id)).toBeNull();
+    await call('goal.session.update', { goalId: goal.id, status: 'active' });
+    expect(scheduler.repo.getBySource('goal', goal.id)?.status).toBe('active');
+    await call('goal.session.update', { goalId: goal.id, status: 'archived' });
+    expect(scheduler.repo.getBySource('goal', goal.id)).toBeNull();
+    db.close();
+  });
+
+  test('invalid cadence creates neither a goal nor a job; facts are scoped and reads preserve the delta', async () => {
+    const { db, call, goals, schedules } = setup();
+    expect(
+      await call('goal.session.create', {
+        title: 'Ship',
+        doneTest: 'Released',
+        cadence: { kind: 'every', everyMs: 1000 },
+      })
+    ).toMatchObject({ accepted: false, reason: expect.stringContaining('invalid_cadence') });
+    expect(goals.list('neo:root', false)).toEqual([]);
+    const goal = (await call('goal.session.create', { title: 'Ship', metrics: { z: 0, a: 1 } }))
+      .goal;
+    const first = await call('goal.facts', { goalId: goal.id });
+    expect(first.facts.lines).toEqual(['Metric a: 1', 'Metric z: 0', 'Progress: 0']);
+    expect(await call('goal.facts', { goalId: goal.id })).toEqual(first);
+    expect(
+      await call(
+        'goal.facts',
+        { goalId: goal.id },
+        { source: 'mcp', role: 'neo', sessionId: 'neo:other' }
+      )
+    ).toEqual({ accepted: false, reason: 'goal_not_found' });
+    (await schedules.facts(goal.id))!.commit();
+    await call('goal.session.update', { goalId: goal.id, metrics: { a: 1, z: 0 } });
+    expect((await call('goal.facts', { goalId: goal.id })).facts).toMatchObject({
+      digest: first.facts.digest,
+      summary: '',
+    });
+    await call('goal.session.update', { goalId: goal.id, progress: 20 });
+    expect((await call('goal.facts', { goalId: goal.id })).facts.summary).toBe(
+      '- Progress: 0\n+ Progress: 20'
+    );
+    db.close();
+  });
+});
 
 describe('session-owned goals', () => {
   test('root Neo creates, reads and lists its own goal; a goal needs metrics or a done-test', async () => {

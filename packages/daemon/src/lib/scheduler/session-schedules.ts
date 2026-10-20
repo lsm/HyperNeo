@@ -11,8 +11,8 @@ import { SESSION_SCHEDULE_FIRE } from '../job-queue-constants.ts';
 
 export interface ScheduleSource {
   kind: string;
-  facts(id: string): Promise<{ digest: string; summary: string } | null>;
-  message(id: string, change: { summary: string; nudge: boolean }): string;
+  facts(id: string): Promise<{ digest: string; summary: string; commit?: () => void } | null>;
+  message(id: string, change: { summary: string; nudge: boolean }): string | null;
 }
 
 type Gate<T> = { value: T } | { reason: string };
@@ -110,10 +110,12 @@ export class SessionScheduler {
     outcome: string,
     digest = schedule.factsDigest,
     messageId = schedule.lastMessageId,
-    now = Date.now()
+    now = Date.now(),
+    commit?: () => void
   ): boolean {
     return this.db.transaction(() => {
       if (!this.repo.recordOutcome(schedule, outcome, digest, messageId)) return false;
+      if (outcome === 'fired') commit?.();
       const next =
         outcome === 'source_gone' || outcome === 'target_gone'
           ? null

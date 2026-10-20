@@ -1429,7 +1429,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     },
     onError: (error) => log.warn('Claude Desktop mods bridge unavailable', error),
   });
+  const sessionScheduler = new SessionScheduler(deps.db.getDatabase(), deps.jobQueue);
   const familyContext: FamilyOperationContext = {
+    sessionScheduler,
+    neoPacks: () => neoService.packs(),
     claudeDesktopMods,
     claudeInbox,
     deps,
@@ -1490,8 +1493,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       warn: (id, error) => log.warn(`Neo file pack ${id} was not loaded`, error),
     })
   );
-  const sessionScheduler = new SessionScheduler(deps.db.getDatabase(), deps.jobQueue);
-  sessionScheduler.recover();
   const familyOperations = [
     ...collectFamilyOperations({
       ...familyContext,
@@ -1500,6 +1501,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     ...createNeoOperations(neoService),
     ...createSessionScheduleOperations(sessionScheduler),
   ];
+  sessionScheduler.recover();
 
   const spaceOperationRegistryProvider = createSpaceOperationRegistryProvider(
     deps.db,

@@ -14,7 +14,7 @@ const BUSY = { ok: false as const, reason: 'busy: the schedule is firing; try ag
 
 const fail = (reason: string): { reason: Rejection } => ({ reason: { ok: false, reason } });
 
-const Cadence = z.discriminatedUnion('kind', [
+export const SessionScheduleCadenceSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('every'), everyMs: z.number().int().positive() }),
   z.object({
     kind: z.literal('cron'),
@@ -24,7 +24,7 @@ const Cadence = z.discriminatedUnion('kind', [
 ]);
 const Create = z.object({
   target: WorkRefSchema,
-  cadence: Cadence,
+  cadence: SessionScheduleCadenceSchema,
   note: z.string().trim().min(1).max(2000),
   nudgeEvery: z.number().int().min(1).max(100).default(1),
 });
