@@ -8,6 +8,7 @@ import {
   spaceWorkRefForSession,
 } from '../../../../src/lib/drivers/space-adapter';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import { fillSdkMessageFixtureColumns } from '../../helpers/sdk-message-fixture-columns';
 import type { WorkChatMatch } from '../../../../src/storage/work-chat-search';
 
 const chat = (sessionId: string | null, taskId: string | null = null): WorkChatMatch => ({
@@ -207,7 +208,10 @@ describe('space adapter against the space tables', () => {
     const base = Date.parse('2026-10-14T10:00:00.000Z');
     const adapter = () =>
       createSpaceAdapter({
-        db: () => db,
+        db: () => {
+          fillSdkMessageFixtureColumns(db);
+          return db;
+        },
         machine: 'imac',
         searchChats: async () => [],
         tasks: {
@@ -219,7 +223,9 @@ describe('space adapter against the space tables', () => {
       });
     const write = (session: string, at: number, type: string, payload: unknown) =>
       db
-        .prepare(`INSERT INTO sdk_messages VALUES (?, ?, ?, ?, NULL, 'consumed')`)
+        .prepare(
+          `INSERT INTO sdk_messages (session_id,message_type,sdk_message,timestamp,parent_tool_use_id,send_status) VALUES (?, ?, ?, ?, NULL, 'consumed')`
+        )
         .run(session, type, JSON.stringify(payload), new Date(base + at).toISOString());
     const user = (text: string, inputKind = 'human') => ({ inputKind, message: { content: text } });
     const settle = (value: unknown) =>

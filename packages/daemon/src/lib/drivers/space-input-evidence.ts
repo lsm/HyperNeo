@@ -16,11 +16,9 @@ type ReplyRow = { message: string; timestamp: string };
 
 const CONSUMED_INPUT = `message_type = 'user' AND parent_tool_use_id IS NULL
   AND COALESCE(send_status, 'consumed') = 'consumed'
-  AND CASE WHEN json_valid(sdk_message) THEN
-    COALESCE(json_extract(sdk_message, '$.isReplay'), 0) = 0
-    AND COALESCE(json_extract(sdk_message, '$.internal_compaction_turn'), 0) = 0
-    AND COALESCE(json_extract(sdk_message, '$.message.content[0].type'), 'text') <> 'tool_result'
-  ELSE 1 END`;
+  AND COALESCE(is_replay, 0) = 0
+  AND COALESCE(internal_compaction_turn, 0) = 0
+  AND COALESCE(first_block_type, 'text') <> 'tool_result'`;
 
 function readInput(db: Database, taskId: string | null, receipt: Receipt) {
   const rows = db
@@ -62,8 +60,9 @@ function requireInput(
 function readReplies(db: Database, receipt: Receipt, input: InputRow) {
   const uncertain = db
     .prepare(`SELECT 1 FROM sdk_messages WHERE session_id = ?1
-    AND ${CONSUMED_INPUT} AND (consumed_seq IS NULL OR
-      (consumed_seq = ?2 AND sdk_uuid IS NOT ?3)) LIMIT 1`)
+    AND ${CONSUMED_INPUT} AND consumed_seq IS NULL
+    UNION ALL SELECT 1 FROM sdk_messages WHERE session_id = ?1
+    AND ${CONSUMED_INPUT} AND consumed_seq = ?2 AND sdk_uuid IS NOT ?3 LIMIT 1`)
     .get(receipt.executionId, input.seq, receipt.inputId);
   if (uncertain) return { rows: null };
   const rows = db
@@ -72,11 +71,9 @@ function readReplies(db: Database, receipt: Receipt, input: InputRow) {
       AND parent_tool_use_id IS NULL AND consumed_seq >= ?2
       AND consumed_seq < COALESCE((SELECT MIN(consumed_seq) FROM sdk_messages
         WHERE session_id = ?1 AND ${CONSUMED_INPUT} AND consumed_seq > ?2), 9223372036854775807)
-      AND CASE WHEN json_valid(sdk_message) THEN
-        COALESCE(json_extract(sdk_message, '$.internal_compaction_turn'), 0) = 0
-        AND NOT (COALESCE(json_extract(sdk_message, '$.recovery_intercepted'), 0) = 1
-          AND COALESCE(json_extract(sdk_message, '$.recovery_billing_terminal'), 0) = 0)
-      ELSE 1 END
+      AND COALESCE(internal_compaction_turn, 0) = 0
+      AND NOT (COALESCE(recovery_intercepted, 0) = 1
+        AND COALESCE(recovery_billing_terminal, 0) = 0)
     ORDER BY consumed_seq ASC, rowid ASC LIMIT 40`)
     .all(receipt.executionId, input.seq) as ReplyRow[];
   return { rows };

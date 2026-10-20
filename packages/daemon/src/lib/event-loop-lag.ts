@@ -1,3 +1,5 @@
+import { createLagSamplingProfiler, type LagSamplingTick } from './event-loop-sampling.ts';
+import { loadRuntimeSamplingProfiler } from './runtime-sampling-profiler.ts';
 import { EventLoopActivity, observeLagGc } from './event-loop-activity.ts';
 import { emitStructuredLogEvent, subscribeToStructuredLogs } from './logger.ts';
 import type { MessageHub } from '@hyperneo/shared';
@@ -29,6 +31,7 @@ export function startEventLoopLagLog(
     activity?: EventLoopActivity;
     sampleHeap?: () => number;
     onDiagnostic?: (report: Record<string, unknown>) => void;
+    sampleStacks?: LagSamplingTick;
   } = {}
 ): () => void {
   const now = deps.now ?? (() => performance.now());
@@ -60,10 +63,12 @@ export function startEventLoopLagLog(
     gc.flush();
     const recent = activity.drain(last);
     const afterHeap = line || normalHeapSampling ? heap() : undefined;
+    const samplingProfile = deps.sampleStacks?.(line !== null, at);
     if (line) {
       warn(line);
       const report = {
         lagMs,
+        ...(samplingProfile ? { samplingProfile } : {}),
         tickStartMs: last,
         tickEndMs: at,
         activities: recent.entries,
@@ -116,8 +121,28 @@ export function startDaemonLagDiagnostics(
         `${module}:${typeof event.metadata.event === 'string' ? event.metadata.event : 'log'}`
       );
   });
-  const stop = startEventLoopLagLog(warn, { activity });
+  let stopped = false;
+  let sampleStacks: LagSamplingTick | undefined;
+  if (process.env.HYPERNEO_LAG_PROFILE === '1') {
+    sampleStacks = () => ({ status: 'starting' });
+    void loadRuntimeSamplingProfiler(() => !stopped).then(
+      (read) => {
+        if (!stopped)
+          sampleStacks = read
+            ? createLagSamplingProfiler(read, performance.now()).tick
+            : () => ({ status: 'unsupported' });
+      },
+      () => {
+        if (!stopped) sampleStacks = () => ({ status: 'failed' });
+      }
+    );
+  }
+  const stop = startEventLoopLagLog(warn, {
+    activity,
+    sampleStacks: (blocked, at) => sampleStacks?.(blocked, at),
+  });
   return () => {
+    stopped = true;
     offRpc();
     offLogs();
     stop();

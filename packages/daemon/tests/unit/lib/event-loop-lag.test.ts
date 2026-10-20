@@ -115,3 +115,28 @@ describe('Event-loop heap sampler budget', () => {
     expect(diagnostics[0]).toMatchObject({ heapSampling: 'blocks_only', heapBeforeAgeMs: 1510 });
   });
 });
+
+describe('stalled-tick sampling output', () => {
+  test('drains on healthy ticks and includes profiler results only in lag metadata', async () => {
+    const clock = [0, 10, 1510, 1520];
+    const calls: boolean[] = [];
+    const reports: Record<string, unknown>[] = [];
+    const lines: string[] = [];
+    const stop = startEventLoopLagLog((line) => lines.push(line), {
+      now: () => clock.shift() ?? 1520,
+      tickMs: 10,
+      takeSlowest: () => null,
+      sampleStacks: (blocked) => {
+        calls.push(blocked);
+        return blocked ? { status: 'captured', stacks: [] } : undefined;
+      },
+      onDiagnostic: (report) => reports.push(report),
+    });
+    await settle();
+    stop();
+    expect(calls.slice(0, 3)).toEqual([false, true, false]);
+    expect(reports).toHaveLength(1);
+    expect(reports[0].samplingProfile).toEqual({ status: 'captured', stacks: [] });
+    expect(lines).toEqual(['[Daemon] Event loop blocked for 1490ms']);
+  });
+});

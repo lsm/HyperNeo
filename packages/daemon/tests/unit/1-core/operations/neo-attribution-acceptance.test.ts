@@ -3,6 +3,7 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createSpaceAdapter } from '../../../../src/lib/drivers/space-adapter.ts';
 import type { WorkDelivery } from '../../../../src/lib/drivers/types.ts';
+import { fillSdkMessageFixtureColumns } from '../../helpers/sdk-message-fixture-columns.ts';
 import {
   NEO_WORK_UNVERIFIED_REPLY_NOTE,
   readDriverSettlement,
@@ -61,7 +62,9 @@ beforeEach(() => {
 afterEach(() => db.close());
 
 function write(id: string, type: string, seq: number | null, text: string, session = 's-code') {
-  db.prepare(`INSERT INTO sdk_messages VALUES (?, 't1', ?, ?, ?, ?, NULL, 'consumed', ?, 1)`).run(
+  db.prepare(
+    `INSERT INTO sdk_messages (session_id,task_id,sdk_uuid,message_type,sdk_message,timestamp,parent_tool_use_id,send_status,consumed_seq,is_terminal) VALUES (?, 't1', ?, ?, ?, ?, NULL, 'consumed', ?, 1)`
+  ).run(
     session,
     id,
     type,
@@ -77,7 +80,10 @@ function write(id: string, type: string, seq: number | null, text: string, sessi
 
 async function status(input: Receipt | undefined = receipt) {
   const adapter = createSpaceAdapter({
-    db: () => db,
+    db: () => {
+      fillSdkMessageFixtureColumns(db);
+      return db;
+    },
     machine: 'imac',
     searchChats: async () => [],
     tasks: {

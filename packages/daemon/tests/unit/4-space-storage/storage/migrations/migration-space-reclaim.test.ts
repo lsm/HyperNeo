@@ -3,7 +3,11 @@ import { mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
-import { runMigrations } from '../../../../../src/storage/schema/migrations';
+import {
+  runMigration169,
+  runMigration188,
+  runMigrations,
+} from '../../../../../src/storage/schema/migrations';
 import { reclaimPendingMigrationSpace } from '../../../../../src/storage/schema/migration-space-reclaim';
 
 interface MessageRow {
@@ -124,6 +128,8 @@ describe('migration space reclaim', () => {
       );
     }
 
+    runMigration169(db);
+    runMigration188(db);
     const mark = db.prepare(`INSERT INTO migration_markers (key, applied_at) VALUES (?, ?)`);
     for (let version = 1; version <= 210; version++) {
       if (version === 183) continue;
