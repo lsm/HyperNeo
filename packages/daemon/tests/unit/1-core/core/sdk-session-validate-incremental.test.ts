@@ -90,13 +90,15 @@ describe('validateSDKSessionFile', () => {
     expect((await validateSDKSessionFile(workspace, 's1')).orphanedToolResults).toHaveLength(1);
   });
 
-  test('concurrent validate-and-repair calls for one transcript share a single run', async () => {
-    writeFileSync(file, use('a') + result('a'));
-    const db = {} as Database;
-    const first = validateAndRepairSDKSession(workspace, 's1', 'kai', db);
-    const second = validateAndRepairSDKSession(workspace, 's1', 'kai', db);
-    expect(second).toBe(first);
-    expect(await first).toBe(true);
-    expect(validateAndRepairSDKSession(workspace, 's1', 'kai', db)).not.toBe(first);
+  describe('validateAndRepairSDKSession', () => {
+    test('concurrent validate-and-repair calls for one transcript share a single run', async () => {
+      writeFileSync(file, use('a') + result('a'));
+      const db = {} as Database;
+      const first = validateAndRepairSDKSession(workspace, 's1', 'kai', db);
+      const second = validateAndRepairSDKSession(workspace, 's1', 'kai', db);
+      expect(second).toBe(first);
+      expect(await first).toBe(true);
+      expect(validateAndRepairSDKSession(workspace, 's1', 'kai', db)).not.toBe(first);
+    });
   });
 });
