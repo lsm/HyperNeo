@@ -50,7 +50,11 @@ export interface NeoTodoPack {
   repository?(draft: Pick<NeoTodo, 'check' | 'named'> & { id?: string }): string | null;
   waiting?(todo: NeoTodo): boolean;
   doneWhen?(check: NeoTodoCheck): string | null;
-  refuse?(draft: Pick<NeoTodo, 'check' | 'instruction'>): string | null;
+  addUrls?(todo: NeoTodo, urls: readonly string[]): NeoTodoCheck | null;
+  refuse?(
+    draft: Pick<NeoTodo, 'check' | 'instruction'> & { id?: string },
+    peers?: readonly NeoTodo[]
+  ): string | null;
 }
 
 export interface NeoPack extends NeoPackBrief {
