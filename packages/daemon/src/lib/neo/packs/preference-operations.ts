@@ -10,7 +10,7 @@ const Scope = z
   .object({ kind: z.enum(['global', 'repo', 'project']), key: z.string() })
   .refine((s) => (s.kind === 'global' ? s.key === '' : s.key.length > 0));
 const Address = z.object({ pack: z.string().min(1), scope: Scope, key: z.string().min(1) });
-const SetInput = Address.extend({ value: z.unknown() });
+export const PackPreferenceInput = Address.extend({ value: z.unknown() });
 export const PackSettingSchema = Address.extend({
   value: z.unknown(),
   setBy: z.string(),
@@ -20,7 +20,7 @@ const Result = z.union([
   z.object({ ok: z.literal(false), reason: z.string() }),
   z.object({ ok: z.literal(true) }),
 ]);
-type Input = z.infer<typeof SetInput>;
+type Input = z.infer<typeof PackPreferenceInput>;
 
 function valueSchema(type: NeoPackPreferenceDeclaration['type']): z.ZodType {
   switch (type.kind) {
@@ -67,27 +67,28 @@ export function listPackPreferences(db: Database, pack?: string): NeoPackSetting
   }));
 }
 
+export function validatePackPreference(input: Input, packs: readonly NeoPack[]) {
+  const declarations = packs.find((pack) => pack.id === input.pack)?.preferences;
+  const declaration =
+    declarations && Object.hasOwn(declarations, input.key) ? declarations[input.key] : undefined;
+  const valid =
+    declaration &&
+    (input.scope.kind === 'global' || declaration.scope === input.scope.kind) &&
+    valueSchema(declaration.type).safeParse(input.value).success;
+  return valid
+    ? { value: input }
+    : {
+        reason: {
+          ok: false as const,
+          reason: 'Unknown setting, invalid scope or invalid value.',
+        },
+      };
+}
+
 export function createPackPreferenceOperations(db: Database, packs: () => readonly NeoPack[]) {
-  const validate = (input: Input) => {
-    const declarations = packs().find((pack) => pack.id === input.pack)?.preferences;
-    const declaration =
-      declarations && Object.hasOwn(declarations, input.key) ? declarations[input.key] : undefined;
-    const valid =
-      declaration &&
-      (input.scope.kind === 'global' || declaration.scope === input.scope.kind) &&
-      valueSchema(declaration.type).safeParse(input.value).success;
-    return valid
-      ? { value: input }
-      : {
-          reason: {
-            ok: false as const,
-            reason: 'Unknown setting, invalid scope or invalid value.',
-          },
-        };
-  };
   const set = (superpipe({})('pack.preferences.set') as PipelineAPI)
     .input(['input'])
-    .pipe(validate, 'input', 'result:setting')
+    .pipe((input: Input) => validatePackPreference(input, packs()), 'input', 'result:setting')
     .pipe(
       (input: Input) => {
         db.prepare(`INSERT INTO neo_pack_preferences (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
@@ -133,7 +134,7 @@ export function createPackPreferenceOperations(db: Database, packs: () => readon
       name: 'pack.preferences.set',
       description:
         'Set a declared pack setting. Only the local human may write; agents cannot change settings.',
-      inputSchema: SetInput,
+      inputSchema: PackPreferenceInput,
       resultSchema: Result,
       policy: { safetyClass: 'human_only', caller: 'local_user' },
       execute: set,

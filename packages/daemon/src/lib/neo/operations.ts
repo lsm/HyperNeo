@@ -1,3 +1,4 @@
+import { createPackPreferenceQuestions } from './packs/preference-questions.ts';
 import { NeoSessionMessageRepository } from '../../storage/repositories/neo-session-message-repository.ts';
 import {
   NeoConversationWakeRepository,
@@ -694,6 +695,9 @@ export function createNeoOperations(service: NeoService) {
     ),
     createNeoConversationImageReadOperation(service.repo, service.asks),
     createNeoDraftRecoveryOperation(service),
+    ...createPackPreferenceQuestions(service.db.getDatabase(), service.todos, () =>
+      service.installedPacks()
+    ),
     createNeoPreferenceOperation(service),
     ...createPackPreferenceOperations(service.db.getDatabase(), () => service.installedPacks()),
     ...createNeoTodoOperations(service.todos, service.todoSessions, todoControls, () =>

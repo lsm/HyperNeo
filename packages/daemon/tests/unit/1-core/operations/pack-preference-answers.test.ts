@@ -70,7 +70,8 @@ async function propose() {
     requestId: 'synthetic-request',
     values,
   });
-  expect(reply).toMatchObject({ value: { ok: true, questionId: expect.any(String) } });
+  expect(reply).toMatchObject({ value: { ok: true } });
+  expect(typeof (reply as { value: { questionId: string } }).value.questionId).toBe('string');
   return (reply as { value: { questionId: string } }).value.questionId;
 }
 const saved = () => invoke('pack.preferences.list', {});
@@ -139,6 +140,17 @@ describe('immutable human settings proposals', () => {
       expect(await saved()).toMatchObject({ value: { preferences: [] } });
     }
   );
+  test('a stored human chat yes applies the same immutable proposal', async () => {
+    const questionId = await propose();
+    service.todos.answerQuestion(service.todos.getQuestion(questionId)!, 'yes', 'chat', 2);
+    expect(await invoke('neo.question.get', { questionId })).toMatchObject({
+      value: { answeredByHuman: true },
+    });
+    expect(await saved()).toMatchObject({
+      value: { preferences: values.map((value) => ({ ...value, setBy: 'human' })) },
+    });
+  });
+
   test('agents cannot answer; legacy/unbound human yes has no settings effect', async () => {
     const questionId = await propose();
     expect(await invoke('neo.question.answer', { questionId, answer: 'yes' })).toMatchObject({
@@ -177,6 +189,26 @@ describe('immutable human settings proposals', () => {
     expect(await propose()).toBe(id);
     expect(service.todos.listQuestions('ask')).toHaveLength(1);
   });
+  test('question/proposal creation rolls back together and changed question text cannot authorize old values', async () => {
+    db.getDatabase().exec(
+      `CREATE TRIGGER synthetic_proposal_failure BEFORE INSERT ON neo_pack_preference_proposals BEGIN SELECT RAISE(ABORT,'synthetic_failure'); END`
+    );
+    expect(
+      await invoke('pack.preferences.ask', { askId: 'ask', requestId: 'fail', values })
+    ).toMatchObject({ kind: 'failed' });
+    expect(service.todos.listQuestions('ask')).toEqual([]);
+    db.getDatabase().exec('DROP TRIGGER synthetic_proposal_failure');
+    const questionId = await propose();
+    db.getDatabase()
+      .prepare("UPDATE neo_questions SET text='Different proposal' WHERE id=?")
+      .run(questionId);
+    expect(await invoke('neo.question.answer', { questionId, answer: 'yes' }, human)).toMatchObject(
+      { kind: 'failed' }
+    );
+    expect(service.todos.getQuestion(questionId)?.state).toBe('open');
+    expect(await saved()).toMatchObject({ value: { preferences: [] } });
+  });
+
   test('stored proposal fields cannot be edited, and application failure rolls back the human answer and all values', async () => {
     const questionId = await propose();
     expect(() =>

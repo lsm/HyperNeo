@@ -1,3 +1,4 @@
+import { runMigration428 } from './m428-pack-preference-proposals.ts';
 import { runMigration415 } from './m415-neo-home-path.ts';
 import { runMigration426 } from './m426-neo-pack-preferences.ts';
 import { runMigration425 } from './m425-message-send-receipts.ts';
@@ -907,6 +908,7 @@ export function runMigrations(
   run(migrationMarkerKey(424), () => runMigration424(db));
   run(migrationMarkerKey(425), () => runMigration425(db));
   run(migrationMarkerKey(426), () => runMigration426(db));
+  run(migrationMarkerKey(428), () => runMigration428(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

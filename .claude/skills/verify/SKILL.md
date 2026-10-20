@@ -1792,3 +1792,29 @@ when otherwise merge-ready: current-head path/label reads and durable holds are
 later slices. Review-author login is read now to enforce designated-bot approval;
 unknown/stale authors never count. This journey proves the nudge decision and
 snapshot, not live GitHub transport, actual delivery or later worker merge checks.
+
+### Immutable settings proposal answers
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-preference-answers-XXXXXX)
+mkdir -p "$RUN/home"
+env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
+  bun .claude/skills/verify/pack-preference-answers.ts 9354 "$RUN"
+```
+
+The helper uses the real daemon registry's MCP and WebSocket operation doors.
+Neo proposes two synthetic settings; the daemon generates the exact question
+text, and `neo.snapshot` must expose that question. Before consent the settings
+remain empty. Agent answering is refused; the human button's real
+`neo.question.answer` path must atomically apply the stored values. Across daemon
+restart, `neo.question.get` reports human consent, provenance stays human, and
+agent attempts to replace values or reuse a request id with a different proposal
+are refused. A questionId-only retry leaves settings unchanged. Complete replies
+are retained in `evidence/observed.json`; both daemons close in `finally`.
+
+No legacy binding, live database, provider, credentials, model or GUI is used.
+The ordinary human-answer notification may queue without a provider; this journey
+proves question/setting persistence and caller boundaries, not notification/model
+completion. Unit contracts also inject a failing settings write and require both
+consent and every value to roll back together. Actual browser rendering and the
+future first-dispatch trigger are not verified here.

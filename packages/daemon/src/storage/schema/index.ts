@@ -1,3 +1,4 @@
+import { runMigration428 } from './m428-pack-preference-proposals.ts';
 import { createNeoPackPreferencesTable } from './m426-neo-pack-preferences.ts';
 import { runMigration425 } from './m425-message-send-receipts.ts';
 import { runMigration388 } from './m388-claude-desktop-bridge-events.ts';
@@ -1149,4 +1150,5 @@ function createIndexes(db: BunDatabase): void {
   runMigration422(db);
   runMigration425(db);
   createNeoPackPreferencesTable(db);
+  runMigration428(db);
 }
