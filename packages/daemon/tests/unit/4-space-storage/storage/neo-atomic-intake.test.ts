@@ -1,3 +1,4 @@
+import { mirrorSdkMessageFixtureBodies } from '../../helpers/sdk-message-fixture-columns';
 import { afterEach, beforeEach, describe, expect, test, spyOn } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -228,6 +229,7 @@ describe('atomic public ask intake primitive', () => {
     mailbox.db
       .prepare("UPDATE sdk_messages SET sdk_message='invalid-json' WHERE sdk_uuid=?")
       .run(requestId);
+    mirrorSdkMessageFixtureBodies(mailbox.db);
     expect(() => accepted()).toThrow();
     expect(ledger.list(conversationId)).toHaveLength(1);
     expect(mailbox.rows()).toHaveLength(1);
