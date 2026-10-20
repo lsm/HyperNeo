@@ -1,10 +1,24 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCodexFeed } from '../../../../src/lib/drivers/codex-feed';
 import { runClaudeFeed } from '../../../../src/lib/drivers/claude-feed';
-import { pruneVanishedFeeds, withKnownFeedFiles } from '../../../../src/lib/drivers/work-feed';
+import {
+  listFeedFilesAsync,
+  pruneVanishedFeeds,
+  vanishedFeedPaths,
+  withKnownFeedFiles,
+} from '../../../../src/lib/drivers/work-feed';
 import { createWorkFeedOffsetsTable } from '../../../../src/storage/schema/m302-work-index-kinds';
 import type { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
@@ -109,4 +123,44 @@ test('known-file metadata yields and keeps descending order and unchanged file s
   expect(
     await responsive(() => withKnownFeedFiles([listed], [path, listed.path, join(root, 'gone')]))
   ).toEqual([expected, listed]);
+});
+
+test('listing preserves cutoff, depth, symlink targets and stable newest-first order', async () => {
+  mkdirSync(join(root, 'nested/deeper'), { recursive: true });
+  const make = (name: string, seconds: number) => {
+    const path = join(root, name);
+    writeFileSync(path, name);
+    utimesSync(path, seconds, seconds);
+    return path;
+  };
+  const old = make('old.jsonl', 1);
+  const tie = make('tie.jsonl', 2);
+  const recent = make('nested/recent.jsonl', 3);
+  make('nested/deeper/too-deep.jsonl', 4);
+  make('ignored.txt', 5);
+  symlinkSync(tie, join(root, 'alias.jsonl'));
+  symlinkSync(join(root, 'missing'), join(root, 'dangling.jsonl'));
+  const ties = readdirSync(root).filter((name) => ['alias.jsonl', 'tie.jsonl'].includes(name));
+  const files = await listFeedFilesAsync(root, 2000, 2);
+  expect(files.map(({ path }) => path)).toEqual([recent, ...ties.map((name) => join(root, name))]);
+  expect(
+    files.every(
+      ({ size, mtime, path }) =>
+        size === statSync(path).size && mtime === Math.floor(statSync(path).mtimeMs)
+    )
+  ).toBe(true);
+  expect(files.some(({ path }) => path === old)).toBe(false);
+  expect(await listFeedFilesAsync(join(root, 'absent'), 0)).toEqual([]);
+});
+
+test('vanished checks ignore adjacent roots, keep directories and follow symlinks', async () => {
+  const present = join(root, 'present');
+  mkdirSync(present);
+  const missing = join(root, 'missing.jsonl');
+  const link = join(root, 'dangling.jsonl');
+  symlinkSync(missing, link);
+  const paths = [present, missing, link, `${root}-adjacent/missing.jsonl`];
+  const offsets = new Map(paths.map((path) => [path, { offset: 1, size: 1, mtime: 1 }]));
+  expect(await vanishedFeedPaths(root, offsets)).toEqual([missing, link]);
+  expect([...offsets.keys()]).toEqual(paths);
 });
