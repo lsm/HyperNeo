@@ -317,9 +317,12 @@ interface ValidatedSessionFile {
 
 const validatedSessionFiles = new Map<string, ValidatedSessionFile>();
 
+const sessionFileRewrites = new Map<string, number>();
+
 function rewriteSessionFile(path: string, content: string): void {
   writeFileSync(path, content, 'utf-8');
   validatedSessionFiles.delete(path);
+  sessionFileRewrites.set(path, (sessionFileRewrites.get(path) ?? 0) + 1);
 }
 
 function scanSessionLine(state: ValidatedSessionFile, line: string, errors: string[]): void {
@@ -349,6 +352,8 @@ export async function validateSDKSessionFile(
 ): Promise<SDKSessionValidationResult> {
   const result: SDKSessionValidationResult = { valid: true, orphanedToolResults: [], errors: [] };
   const sessionFile = getSDKSessionFilePath(workspacePath, sdkSessionId);
+  const generation = sessionFileRewrites.get(sessionFile) ?? 0;
+  let rewritten = false;
   try {
     if (!existsSync(sessionFile)) {
       validatedSessionFiles.delete(sessionFile);
@@ -405,7 +410,8 @@ export async function validateSDKSessionFile(
       state.tail = Buffer.alloc(Math.min(64, state.offset));
       await handle.read(state.tail, 0, state.tail.length, state.offset - state.tail.length);
       state.pending = state.pending.filter((ref) => !state.toolUseIds.has(ref.toolUseId));
-      validatedSessionFiles.set(sessionFile, state);
+      rewritten = (sessionFileRewrites.get(sessionFile) ?? 0) !== generation;
+      if (!rewritten) validatedSessionFiles.set(sessionFile, state);
       for (const stale of validatedSessionFiles.keys()) {
         if (validatedSessionFiles.size <= VALIDATED_SESSION_FILES_MAX) break;
         validatedSessionFiles.delete(stale);
@@ -425,6 +431,7 @@ export async function validateSDKSessionFile(
     result.valid = false;
     result.errors.push(`Validation error: ${error}`);
   }
+  if (rewritten) return validateSDKSessionFile(workspacePath, sdkSessionId);
   return result;
 }
 

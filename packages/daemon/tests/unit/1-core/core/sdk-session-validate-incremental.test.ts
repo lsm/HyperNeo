@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import type { Database } from '../../../../src/storage/database';
 import {
   getSDKSessionFilePath,
+  truncateSessionFileAtMessage,
   validateAndRepairSDKSession,
   validateSDKSessionFile,
 } from '../../../../src/lib/sdk-session-file-manager';
@@ -97,6 +98,20 @@ describe('validateSDKSessionFile', () => {
     writeFileSync(file, use('b') + result('a') + result('b'));
     expect((await validateSDKSessionFile(workspace, 's1')).orphanedToolResults).toEqual([
       { toolUseId: 'a', messageUuid: 'u-a', lineIndex: 1 },
+    ]);
+  });
+
+  test('a rewrite through this module during a scan is not cached as a mix of old and new content', async () => {
+    writeFileSync(file, '');
+    for (let i = 0; i < 60; i++) appendFileSync(file, use(`k${i}`) + result(`k${i}`, 200_000));
+    appendFileSync(file, use('late') + result('late'));
+    const scan = validateSDKSessionFile(workspace, 's1');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    truncateSessionFileAtMessage(workspace, 's1', 'kai', 'a-k30');
+    await scan;
+    appendFileSync(file, result('k40'));
+    expect((await validateSDKSessionFile(workspace, 's1')).orphanedToolResults).toEqual([
+      { toolUseId: 'k40', messageUuid: 'u-k40', lineIndex: 60 },
     ]);
   });
 
