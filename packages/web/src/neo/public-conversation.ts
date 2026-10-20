@@ -1,3 +1,4 @@
+import type { NeoConversationWake } from '@hyperneo/shared/types/neo-wake';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import type { NeoSessionMessage } from '@hyperneo/shared/types/neo-session-message';
 import type { NeoSessionNoticeGroup } from '@hyperneo/shared/types/neo-snapshot';
@@ -15,6 +16,7 @@ export type NeoPublicEntry =
       replyTo: NeoAskItem | null;
     }
   | { kind: 'notices'; key: string; group: NeoSessionNoticeGroup }
+  | { kind: 'wake'; key: string; wake: NeoConversationWake }
   | { kind: 'session'; key: string; message: NeoSessionMessage };
 export type NeoPublicConversation = {
   conversationId: string | null;
@@ -28,6 +30,7 @@ type Sources = {
   publications: NeoPublicationState;
   noticeGroups?: readonly NeoSessionNoticeGroup[];
   sessionMessages?: readonly NeoSessionMessage[];
+  wakes?: readonly NeoConversationWake[];
 };
 type Gate = { value: Sources } | { reason: NeoPublicConversation };
 
@@ -59,11 +62,12 @@ export function admitNeoPublicSources(
   asks: NeoAskState,
   publications: NeoPublicationState,
   noticeGroups?: readonly NeoSessionNoticeGroup[],
-  sessionMessages?: readonly NeoSessionMessage[]
+  sessionMessages?: readonly NeoSessionMessage[],
+  wakes?: readonly NeoConversationWake[]
 ): Gate {
   const id = publicationConversationId(rootSessionId);
   return id && asks.conversationId === id && publications.conversationId === id
-    ? { value: { asks, publications, noticeGroups, sessionMessages } }
+    ? { value: { asks, publications, noticeGroups, sessionMessages, wakes } }
     : { reason: empty(id) };
 }
 
@@ -107,6 +111,7 @@ export function presentNeoPublicConversation({
   publications,
   noticeGroups = [],
   sessionMessages = [],
+  wakes = [],
 }: Sources): NeoPublicConversation {
   const originKey = (origin: NeoAskItem['askOrigin']) =>
     JSON.stringify([origin.sessionId, origin.messageId]);
@@ -129,8 +134,10 @@ export function presentNeoPublicConversation({
     ),
   ];
   const at = (entry: NeoPublicEntry) =>
-    entry.kind === 'notices'
-      ? entry.group.at
+    entry.kind === 'wake' || entry.kind === 'notices'
+      ? entry.kind === 'wake'
+        ? entry.wake.firedAt
+        : entry.group.at
       : Date.parse(
           (entry.kind === 'ask'
             ? entry.ask
@@ -150,6 +157,15 @@ export function presentNeoPublicConversation({
   const from =
     asks.hasEarlier || publications.hasEarlier ? Math.min(...entries.map(at)) : -Infinity;
   entries.push(
+    ...wakes
+      .filter((wake) => wake.firedAt >= from)
+      .map(
+        (wake): NeoPublicEntry => ({
+          kind: 'wake',
+          key: JSON.stringify([asks.conversationId, 'wake', wake.scheduleId, wake.firedAt]),
+          wake,
+        })
+      ),
     ...noticeGroups
       .filter((group) => group.at >= from)
       .map(
@@ -169,7 +185,7 @@ export function presentNeoPublicConversation({
         })
       )
   );
-  const rank = { ask: 0, publication: 1, notices: 2, session: 3 };
+  const rank = { ask: 0, publication: 1, notices: 2, session: 3, wake: 4 };
   entries.sort(
     (a, b) =>
       at(a) - at(b) ||
@@ -193,10 +209,10 @@ export function presentNeoPublicConversation({
 export const projectNeoPublicConversation = (
   superpipe({})('neo-public-conversation') as PipelineAPI
 )
-  .input(['rootSessionId', 'asks', 'publications', 'noticeGroups', 'sessionMessages'])
+  .input(['rootSessionId', 'asks', 'publications', 'noticeGroups', 'sessionMessages', 'wakes'])
   .pipe(
     admitNeoPublicSources,
-    ['rootSessionId', 'asks', 'publications', 'noticeGroups', 'sessionMessages'],
+    ['rootSessionId', 'asks', 'publications', 'noticeGroups', 'sessionMessages', 'wakes'],
     'result:conversation'
   )
   .pipe(requireNeoPublicIdentities, 'conversation', 'result:conversation')
@@ -206,5 +222,6 @@ export const projectNeoPublicConversation = (
   asks: NeoAskState,
   publications: NeoPublicationState,
   noticeGroups?: readonly NeoSessionNoticeGroup[],
-  sessionMessages?: readonly NeoSessionMessage[]
+  sessionMessages?: readonly NeoSessionMessage[],
+  wakes?: readonly NeoConversationWake[]
 ) => NeoPublicConversation;

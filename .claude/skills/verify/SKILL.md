@@ -203,6 +203,37 @@ instead on the regression commit: it must queue without trying app-server steer.
 No model, provider, credentials, real Codex state or GUI is involved. All owned
 servers and the daemon close in finally. Pick a free port other than 8399.
 
+### Home proposal questions (journey 37)
+
+On a fresh isolated daemon from Launch, run
+`bun .claude/skills/verify/neo-question-confirmation.ts <port> "$RUN" after`.
+The helper opens only a synthetic Neo session and seeds its own ask in its test
+DB, then uses real `neo.question.ask`, `get` and local-human `answer` RPCs.
+A yes/no proposal must retain `confirm:{path,sha256}` through creation and the
+human answer. The visible body must include that exact path/hash; an incomplete
+body is refused. Ordinary questions remain unbound. A protected `neo.home.save`
+remains `confirmation_required`: the save gate/decision commit is a later slice.
+
+Evidence: `evidence/neo-question-confirmation-after.json`. Stop the daemon/mock,
+restart only that same synthetic run, and run the helper with `restart`: its
+saved question must retain the exact binding, answered state and human yes.
+No provider/model, real credentials, GitHub requests or GUI are needed; a delivered
+answer note may queue a turn with no provider, which is not model-execution proof.
+
+For the upgrade reproduction, start on the contract-test commit before the
+migration and use `before`. It records the old ask/get dropping metadata and
+saves a legacy question id. After stopping those processes, boot the fixed code
+against only that same owned synthetic DB and run `after`, then `restart`.
+The legacy text/answer stays intact with a null binding; new proposals persist.
+Repeat with `boundaries` to check that a path shown only as a longer filename or
+inside another path, and a hash shown only in a longer hex string, are refused.
+Exact path/hash tokens surrounded by Markdown/prose punctuation must be accepted,
+including balanced italic, bold and strike markers; underscore filename suffixes
+remain near misses.
+`evidence/neo-question-confirmation-boundaries.json` retains every response.
+The additive/idempotent legacy-answer migration contract runs in CI.
+Never copy or alter a real DB for this journey. Stop with `stop.sh` afterwards.
+
 ## Codex Desktop work.send journey
 
 Codex work.send steers a Desktop-owned running turn. This journey uses
@@ -879,6 +910,34 @@ adds its journey here.
     is absent from the public output. Evidence: `evidence/neo-wake-contract.json`.
     This checks the API with synthetic recorded turns, not model behavior or the
     web disclosure row; G5b adds the rendering journey. Stop with `stop.sh`.
+
+30. **Scheduled wakes are quiet web disclosures (G5b).** Build the web and launch a
+    fresh isolated daemon. Run `bun .claude/skills/verify/neo-wake-web.ts <port> "$RUN"`
+    to seed synthetic active, settled-with-additions and settled-empty wakes, then
+    `NODE_PATH=<directory containing playwright> node .claude/skills/verify/neo-wake-web.mjs <port> "$RUN"`.
+    Like journey 18, `VERIFY_BROWSER` can select a headless Chrome executable.
+    `/neo` must show closed clock/title/summary/time rows; the active one reads
+    Working. Attributed publication detail appears once, inside its wake. The publication link must resolve to its rendered article (recorded in
+    `neo-wake-{desktop,mobile}-publication-link.json`). Opening
+    the row exposes labelled additions; following its question link reveals the
+    original question in Your work on desktop and in the mobile sheet. A removed
+    todo link opens its owning ask’s Details before scrolling to the retained row. Questions
+    remain independently answerable; journal labels are text until G6 supplies a
+    journal destination. Screenshots `neo-wake-{desktop,mobile}-{collapsed,expanded,question}.png`
+    and observed text `neo-wake-web.json` live in `evidence/`. No model turn, real
+    provider, real data or desktop GUI is exercised. Stop with `stop.sh`.
+
+    For history folding, use another fresh isolated run. Seed with
+    `bun .claude/skills/verify/neo-wake-pagination.ts <port> "$RUN"`, then run
+    `NODE_PATH=<directory containing playwright> node .claude/skills/verify/neo-wake-pagination.mjs <port> "$RUN"`
+    (`VERIFY_BROWSER` works here too). Its 51 retained publications put the wake
+    just outside the initial history window. Clicking Load earlier folds the
+    topmost publication into its newly visible closed wake; that wake must retain
+    the publication's viewport position on desktop and mobile. Closed descendants
+    can report nonzero cached rectangles in Chrome, so visibility is determined
+    by the disclosure, not height alone. Repeated already-rendered text isolates
+    folding from unrelated later Markdown reflow; that reflow is not fixed here. Evidence: `neo-wake-pagination.json`
+    and `neo-wake-pagination-{desktop,mobile}-{before,after}.png`. Stop the run.
 
 ## Evidence
 
