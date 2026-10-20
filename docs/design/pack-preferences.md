@@ -78,6 +78,7 @@ With a policy, `codingPrState` maps GitHub facts to states per policy. `failing`
 | Only someone other than `reviewBot` approved, for example the human | `waiting_review` | as above | as above |
 | `reviewBot` approved, CI pending | `approved_pending` | as above | as above |
 | `reviewBot` approved, CI green | `approved_green` | as above | `waiting_human` |
+| The human approved this head (a hold row's `approved_head` covers it, see Approval scope), CI green | per the `review_bot` rows | `approved_green` | `approved_green` |
 
 **No CI.** A repo with no CI keeps today's rule (`pr-ledger.ts:133,140`): a head with no status rollup and no check suites counts as "CI green" in every column, so a `ci_only` repo without CI is ready as soon as nothing failed.
 
@@ -88,6 +89,8 @@ With a policy, `codingPrState` maps GitHub facts to states per policy. `failing`
 
 The "green CI again" event (`pr-events.ts:33-37`, `from === 'failing'` into `waiting_review` or `unreviewed`) becomes `from === 'failing'` into `waiting_review`, `waiting_ci` or `waiting_human`, with the same text. A PR going from `failing` straight to `approved_green` gets the `approved_green` event instead, as today.
 
+In a `human` repo the human's approval is the review: once a hold row's `approved_head` covers the current head and CI is green, the PR is `approved_green` and gets the normal merge nudge. Before that it's `waiting_human`.
+
 A **hold** overrides only merge readiness, under every policy: a held PR that would be `approved_green` or `approved_pending` shows `waiting_human` instead. Every other state stays as it is, so the owner still fixes failing CI, conflicts and review findings on a held PR.
 
 **Wording rule.** Merge text appears only for `approved_green`:
@@ -97,11 +100,11 @@ A **hold** overrides only merge readiness, under every policy: a held PR that wo
 - `waiting_ci` is new, with its own wording: "CI is still running; fix it if it fails". It never mentions merging, under any policy.
 - `waiting_human` gets no merge text and no deadline.
 
-## First use and seeding
+## First use and existing repos
 
 **First use.** The first time the coding pack acts in a repo with no stored `mergePolicy`, Neo asks the generated question once, with the repo's apparent current practice offered first, and stores the answer. Until it's answered the repo is treated as `human`: no merge nudges there. Once answered, it's never asked again. This replaces the prompt-only question in `instructions.md:21-27`.
 
-**Seeding.** A one-time seed writes today's practice (`set_by = 'seed'`), so these repos never ask:
+**This install's existing repos.** Values aren't seeded by a schema migration, because migrations run on every HyperNeo install and these are one person's repos. Instead, after slice 2 ships, Neo proposes today's practice for the repos this install already tracks in one question to the human. The answer writes them through `pack.preferences.set` on the human's turn (`set_by = 'human'`). For this install the proposal is:
 
 | Repo | Merge policy | Human sign-off |
 |---|---|---|
@@ -116,10 +119,10 @@ A hold is an explicit "waiting on the human" mark: `pack_coding_pr_holds(repo, n
 
 **Created when** one of these happens:
 - a PR matches `humanSignoff`, judged on its labels and the path list for its current head;
-- the repo's policy is `human`;
+- the repo's stored policy is `human`. A repo that has no answer yet gets no per-PR holds or questions. It shows `waiting_human`, gets no merge nudges, and gets only the one first-use policy question (slice 9). Before slice 9 lands, a repo the human hasn't answered for, in slice 2's question or later, just stays `waiting_human`.
 - Neo or a worker holds it through an operation, for example a design doc awaiting approval.
 
-Creating a hold also opens one linked Neo question (`neo_questions`, `m387-neo-ask-todo-tables.ts:81`) that names the PR. It's a yes/no question: "Approve lsm/qlark#19 for merge?"
+A hold's linked Neo question (`neo_questions`, `m387-neo-ask-todo-tables.ts:81`) opens only when the PR is otherwise ready to merge: not a draft, nothing failing, no conflict, no requested changes, CI green, and in a `review_bot` repo, approved by `reviewBot`. It names the PR and the head as a yes/no question: "Approve lsm/qlark#19 at 9f88dc9 for merge?" A held PR that isn't ready yet shows its normal fix-it state and asks nothing.
 
 **Effect.** While held:
 - would-be merge-ready states (`approved_green`, `approved_pending`) become `waiting_human`, as in the state table; fix-it states (`failing`, `changes_requested`, `dirty`, `waiting_review`, `waiting_ci`) keep their own nudges, which never mention merging;
@@ -132,7 +135,12 @@ Creating a hold also opens one linked Neo question (`neo_questions`, `m387-neo-a
 - **No, or a reply:** the hold stays, and the answer goes to the owner as a change request.
 - **Retired question:** keeps the hold and asks again.
 
-Approval is per head. A head pushed after the approval is not covered: the hold applies again, and Neo asks once more, naming both heads so the human can see what changed. This is deliberate: the human approves content, and a later commit can change it. A new head never lifts a hold on its own. `pack.coding.pr.release` (human only) sets `approved_head` the same way.
+**Approval scope: `per_head`** (pending the human's answer to question a0814e6f; switching is a one-word edit of this line).
+
+- **`per_head`:** an approval covers only `approved_head`. A head pushed after it is not covered: the hold applies again, and once that head is otherwise ready Neo asks once more, naming both heads so the human can see what changed. The human approves content, and a later commit can change it.
+- **`whole_pr`:** an approval covers the PR from `approved_head` on. Later heads stay approved, and Neo doesn't ask again for that PR; a new `humanSignoff` match on a later head doesn't re-hold it either.
+
+Everything else in this doc reads "covered by the approval" and doesn't depend on the choice. A new head never lifts an unapproved hold on its own. `pack.coding.pr.release` (human only) sets `approved_head` the same way as a "yes".
 
 The question-answer path gets a generic pack hook, `onQuestionAnswered(question)` (core, no PR knowledge). The coding pack uses it to look up holds by `question_id`.
 
@@ -149,7 +157,7 @@ The question-answer path gets a generic pack hook, `onQuestionAnswered(question)
 | `pack.coding.pr.hold` | Any agent; holding only adds safety. |
 | `pack.coding.pr.release` | `human_only`. |
 
-Without that restriction an agent could loosen its own repo's policy or clear `humanSignoff`, recreating the failure this design prevents. Two values are written outside the operation: the first-use answer, through the human's answer to the generated question, and the one-time seed, from the migration. Neo and workers can't change a setting or lift a hold themselves. A hold also lifts automatically when the human answers its linked question. There's no settings panel: the human changes a setting by telling Neo, which asks the question or calls `set` on the human's turn.
+Without that restriction an agent could loosen its own repo's policy or clear `humanSignoff`, recreating the failure this design prevents. One value is written outside the operation: the first-use answer, through the human's answer to the generated question. This install's existing repos go through the operation itself, on the human's turn. Neo and workers can't change a setting or lift a hold themselves. A hold also lifts automatically when the human answers its linked question. There's no settings panel: the human changes a setting by telling Neo, which asks the question or calls `set` on the human's turn.
 
 ## Conventions
 
@@ -174,16 +182,16 @@ A convention is built on the existing `neo.rule.save` (`packages/daemon/src/lib/
 
 ## Slices (each about 100–200 production lines, built from fresh dev; Build and Wire kept apart per ADR 0004)
 
-The qlark#19 prevention, slices 1–7, comes first: policy-aware readiness, then holds, then lifting a hold when the human answers.
+The qlark#19 prevention comes first: stored settings and this install's answers (1–2), policy-aware readiness (3), then holds (4–6), then lifting a hold when the human answers (7–8).
 
-1. **Build core settings.** `NeoPack.preferences` declaration type, the `neo_pack_preferences` migration, lookup, and the one-time seed for the four repos.
-2. **Wire policy-aware ledger state** per the state table, including `waiting_human` and `waiting_ci`. The qlark#19 replay test is committed failing first. Repos without a stored policy count as `human`.
-3. **Build PR review authors, labels and paths.** Review-author logins and labels in the ledger query; the per-new-head paths read under the rate budget; `paths_json` and `paths_head` on the ledger row.
-4. **Build holds.** The table, plus `pack.coding.pr.hold` and the human-only `pack.coding.pr.release`; nothing reads them yet.
-5. **Wire holds into the sweep and events**, including automatic holds from `humanSignoff`. Held PRs get no merge text and no reminders, and the owner is told once.
-6. **Build the `onQuestionAnswered` core hook.** Nothing calls it yet.
-7. **Wire question-linked holds.** Hold creation opens the linked question, and the human's answer lifts or keeps the hold.
-8. **Build the settings operations** (`pack.preferences.*`, `set` human-only), with the values in `neo.snapshot`.
+1. **Build core settings.** `NeoPack.preferences` declaration type, the `neo_pack_preferences` migration (schema only, no rows) and lookup.
+2. **Build the settings operations** (`pack.preferences.*`, `set` human-only), with the values in `neo.snapshot`. Neo then proposes this install's existing repos to the human in one question.
+3. **Wire policy-aware ledger state** per the state table, including `waiting_human` and `waiting_ci`. The qlark#19 replay test is committed failing first. Repos without a stored policy count as `human`.
+4. **Build PR review authors, labels and paths.** Review-author logins and labels in the ledger query; the per-new-head paths read under the rate budget; `paths_json` and `paths_head` on the ledger row.
+5. **Build holds.** The table, plus `pack.coding.pr.hold` and the human-only `pack.coding.pr.release`; nothing reads them yet.
+6. **Wire holds into the sweep and events**, including automatic holds from `humanSignoff`. Held PRs get no merge text and no reminders, and the owner is told once.
+7. **Build the `onQuestionAnswered` core hook.** Nothing calls it yet.
+8. **Wire question-linked holds.** Hold creation opens the linked question, and the human's answer lifts or keeps the hold.
 9. **Wire the generated first-use question** for repos with no stored policy.
 10. **Build scoped conventions** in `neo.rule.save` (scope input and storage) and **wire their delivery** into `neoTodoCard`. If it exceeds the slice budget, split Build and Wire.
 11. **Delete the merge-rule prompt text** from `packages/prompts/src/neo/packs/coding/instructions.md`, once the daemon enforces it. Only these sentences go:
