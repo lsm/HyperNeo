@@ -1,3 +1,4 @@
+import { joinedSdkMessageBody } from '../../../storage/repositories/sdk-message-body-read.ts';
 import { toSqlStringList } from '../../../storage/sql-string-list.ts';
 import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import type { TableChangeScope } from '../../../storage/reactive-database.ts';
@@ -36,7 +37,6 @@ const BACKGROUND_TASK_METADATA_ARMS_SQL = BACKGROUND_TASK_METADATA_SUBTYPES.map(
   (subtype) => `SELECT * FROM (
     SELECT
       id,
-      sdk_message,
       timestamp,
       send_status,
       origin,
@@ -64,7 +64,6 @@ WITH recent_metadata AS (
 recent_progress AS (
   SELECT
     id,
-    sdk_message,
     timestamp,
     send_status,
     origin,
@@ -99,7 +98,6 @@ recent_task_ids AS (
 task_starts AS (
   SELECT
     id,
-    sdk_message,
     timestamp,
     send_status,
     origin,
@@ -115,7 +113,6 @@ task_starts AS (
 latest_progress AS (
   SELECT
     id,
-    sdk_message,
     timestamp,
     send_status,
     origin,
@@ -124,7 +121,6 @@ latest_progress AS (
   FROM (
     SELECT
       id,
-      sdk_message,
       timestamp,
       send_status,
       origin,
@@ -150,19 +146,21 @@ latest_progress AS (
   WHERE rn = 1
 )
 SELECT
-  id,
-  sdk_message                                                     AS content,
-  CAST((julianday(timestamp) - 2440587.5) * 86400000 AS INTEGER)  AS timestamp,
-  send_status                                                     AS sendStatus,
-  origin                                                          AS origin
+  metadata.id,
+  ${joinedSdkMessageBody('split_body', 'original')} AS content,
+  CAST((julianday(metadata.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS timestamp,
+  metadata.send_status AS sendStatus,
+  metadata.origin AS origin
 FROM (
   SELECT * FROM recent_metadata
   UNION ALL
   SELECT * FROM task_starts
   UNION ALL
   SELECT * FROM latest_progress
-)
-ORDER BY timestamp DESC, rowid DESC
+) metadata
+JOIN sdk_messages original ON original.rowid = metadata.rowid
+LEFT JOIN sdk_message_bodies split_body ON split_body.seq = metadata.rowid
+ORDER BY timestamp DESC, metadata.rowid DESC
 `.trim();
 
 export const MESSAGES_BY_SESSION_SQL = `
@@ -233,7 +231,7 @@ top_level AS (
 )
 SELECT
   t.id,
-  body.sdk_message AS content,
+  ${joinedSdkMessageBody('split_body', 'body')} AS content,
   CAST((julianday(t.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS timestamp,
   t.send_status AS sendStatus,
   body.origin AS origin,
@@ -242,6 +240,7 @@ SELECT
   t.deliveryRetryInfo AS deliveryRetryInfo
 FROM top_level t
 JOIN sdk_messages body ON body.rowid = t.rowid
+LEFT JOIN sdk_message_bodies split_body ON split_body.seq = t.rowid
 ORDER BY timestamp ASC, rowid ASC
 `.trim();
 

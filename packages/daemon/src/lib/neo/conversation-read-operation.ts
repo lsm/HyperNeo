@@ -48,12 +48,12 @@ export function createNeoConversationReadOperation(
     .pipe(() => repo.conversationId(), 'page', 'conversation')
     .pipe(requirePublicationConversation, ['page', 'conversation'], 'result:page')
     .pipe(
-      (page: NeoConversationPage) => ({
+      (page: NeoConversationPage, caller: OperationCaller) => ({
         ok: true as const,
         conversationId: page.conversationId,
-        ...ledger.read(page),
+        ...ledger.read(page, caller.source === 'rpc'),
       }),
-      'page',
+      ['page', 'caller'],
       'page'
     )
     .end('page') as (
@@ -111,7 +111,7 @@ export function createNeoConversationReadOperation(
   return defineOperation({
     name: 'neo.conversation.read',
     description:
-      'Read the recorded human and Neo conversation, with the messages root Neo exchanged with other sessions (role session), oldest first within each page. With no cursor, returns the newest page. Use nextBefore as before for older history, or nextAfter as after for newer entries. Human words and attachment references come from the immutable intake record; Neo replies and revision history come from the publication ledger. Session messages come from the record message.send writes when root Neo sends or receives one. Only the current public conversation is readable; SDK transcripts and internal notes are excluded.',
+      'Read the recorded human and Neo conversation, with the messages root Neo exchanged with other sessions (role session; the human sees only the ones Neo sent), oldest first within each page. With no cursor, returns the newest page. Use nextBefore as before for older history, or nextAfter as after for newer entries. Human words and attachment references come from the immutable intake record; Neo replies and revision history come from the publication ledger. Session messages come from the record message.send writes when root Neo sends or receives one. Only the current public conversation is readable; SDK transcripts and internal notes are excluded.',
     policy: { safetyClass: 'read', roles: ['neo'] },
     inputSchema: NeoConversationReadInput,
     resultSchema,

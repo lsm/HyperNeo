@@ -1,3 +1,4 @@
+import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies.ts';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import type { Session, SessionType } from '@hyperneo/shared';
 import { extractVisibleSearchText } from '../../../../src/storage/message-search';
@@ -429,6 +430,7 @@ describe('SessionRepository session-rebuild search parity', () => {
 			CREATE TRIGGER message_search_content_ad AFTER DELETE ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body); END;
 			CREATE TRIGGER message_search_content_au AFTER UPDATE OF title, body ON message_search_content BEGIN INSERT INTO message_search_fts(message_search_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body); INSERT INTO message_search_fts(rowid, title, body) VALUES (new.id, new.title, new.body); END
 		`);
+    runMigration418(db);
     repository = new SessionRepository(db as any);
   });
 

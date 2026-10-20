@@ -1,3 +1,4 @@
+import { sdkMessageBodyAt } from '../../storage/repositories/sdk-message-body-read.ts';
 import type { EvidenceRef } from '@hyperneo/shared';
 import { Logger } from '../logger.ts';
 import type {
@@ -85,9 +86,9 @@ export class EvolutionConversationAnalysisService {
   private loadTraceRows(taskId: string): TraceRow[] {
     const rows = this.deps.db
       .prepare(
-        `SELECT id, session_id, message_type, sdk_message, timestamp, origin
+        `SELECT id, session_id, message_type, ${sdkMessageBodyAt('recent_trace_rows.body_seq')} AS sdk_message, timestamp, origin
 				 FROM (
-					 SELECT id, session_id, message_type, sdk_message, timestamp, origin
+					 SELECT rowid AS body_seq, id, session_id, message_type, timestamp, origin
 					 FROM sdk_messages
 					 WHERE task_id = ?
 						 AND parent_tool_use_id IS NULL

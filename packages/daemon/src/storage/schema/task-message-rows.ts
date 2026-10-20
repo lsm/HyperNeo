@@ -1,3 +1,4 @@
+import { sdkMessageBodyAt } from '../repositories/sdk-message-body-read.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 
 export const TASK_MESSAGE_FLAG = {
@@ -223,7 +224,9 @@ export function ensureTaskMessageRows(db: BunDatabase, taskId: string): void {
     )
     .get(taskId) as { messages: number; projected: number };
   if (counts.messages === counts.projected) return;
-  db.prepare(`${INSERT_ROWS} WHERE sm.task_id = ?`).run(taskId);
+  db.prepare(
+    `${INSERT_ROWS} WHERE sm.task_id = ?`.replaceAll('sm.sdk_message', sdkMessageBodyAt('sm.rowid'))
+  ).run(taskId);
 }
 
 export function addTaskMessageArtifactKeys(db: BunDatabase): void {

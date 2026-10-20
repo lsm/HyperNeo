@@ -27,6 +27,7 @@ import {
   type OperationRegistry,
   type OperationDefinition,
 } from './registry.ts';
+import { createHandoffOperations } from '../handoffs/operations.ts';
 
 export interface TaskOperationDependencies {
   members?: OperationDefinition;
@@ -58,6 +59,7 @@ export function createDaemonOperationCatalog(
   extra: readonly OperationDefinition[] = []
 ): OperationRegistry {
   const registry: OperationRegistry = createOperationRegistry([
+    ...createHandoffOperations(tasks.sessionStatus),
     createSendMessageOperation(
       jobQueue,
       tasks.sessionStatus,

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { runMigration304 } from '../../../../src/storage/schema/m304-task-message-rows';
 import { ensureTaskMessageRows } from '../../../../src/storage/schema/task-message-rows';
+import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
 const SDK_MESSAGES = `CREATE TABLE sdk_messages (
@@ -195,6 +196,7 @@ describe('ensureTaskMessageRows', () => {
     runMigration304(db);
     insert.run('new', JSON.stringify(assistant({ type: 'thinking', thinking: 'hm' })), 'task-1');
 
+    runMigration418(db);
     ensureTaskMessageRows(db, 'task-1');
     ensureTaskMessageRows(db, 'task-1');
 

@@ -1,3 +1,4 @@
+import { sdkMessageBodyAt } from '../../storage/repositories/sdk-message-body-read.ts';
 import type { MessageOrigin } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
@@ -322,7 +323,7 @@ const RETRY_PROMPT_ROW_BY_UUID_SQL = `UPDATE sdk_messages
   AND send_status = 'failed'
   RETURNING id AS db_id`;
 
-const PROMPT_ROW_BY_UUID_SQL = `SELECT id AS "dbId", sdk_message AS "sdkMessage",
+const PROMPT_ROW_BY_UUID_SQL = `SELECT id AS "dbId", ${sdkMessageBodyAt('sdk_messages.rowid')} AS "sdkMessage",
     COALESCE(send_status, 'consumed') AS "sendStatus"
   FROM sdk_messages
   WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
@@ -619,7 +620,7 @@ export function verifyPromptContent(args: {
 }): void {
   const rows = args.db
     .prepare(
-      `SELECT sdk_message AS "sdkMessage" FROM sdk_messages
+      `SELECT ${sdkMessageBodyAt('sdk_messages.rowid')} AS "sdkMessage" FROM sdk_messages
         WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?`
     )
     .all(args.sessionId, args.messageUuid) as Array<{ sdkMessage: string }>;

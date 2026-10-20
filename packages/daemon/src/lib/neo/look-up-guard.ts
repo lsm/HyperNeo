@@ -2,6 +2,8 @@ import type { HookCallback, PreToolUseHookInput } from '@anthropic-ai/claude-age
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { publishedHandoffPath, verifyPublishedHandoff } from '../handoffs/outbox.ts';
+import { secretName } from '../secret-file-name.ts';
 
 const SECRET_DIRS = [
   '.ssh',
@@ -166,20 +168,6 @@ function within(path: string, root: string): boolean {
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
 }
 
-function secretName(name: string): boolean {
-  const lower = name.toLowerCase();
-  return (
-    lower === '.env' ||
-    lower.startsWith('.env.') ||
-    /\.(pem|key|p12|pfx|jks|keystore|ppk|asc|gpg|kdbx|tfstate|tfvars)$/.test(lower) ||
-    /^id_(rsa|dsa|ecdsa|ed25519)$/.test(lower) ||
-    ['.npmrc', '.netrc', '.pypirc', '.git-credentials', '.htpasswd', '.pgpass'].includes(lower) ||
-    /(secret|credential|service-?account|token)[^.]*(\.(json|ya?ml|ini|conf|cfg|toml|txt|xml|properties))?$/.test(
-      lower
-    )
-  );
-}
-
 function resolvePath(raw: string, scope: LookUpScope): string {
   const expanded = raw === '~' ? scope.home : raw.replace(/^~(?=\/)/, scope.home);
   return resolve(scope.cwd, expanded);
@@ -192,7 +180,11 @@ export function isSecretPath(
 ): boolean {
   const literal = resolvePath(raw, scope);
   const own = (scope.own ?? []).flatMap((root) => [root, facts.realPath(root)]);
-  return [literal, facts.realPath(literal)].some((path) => secretAt(path, { ...scope, own }));
+  return [literal, facts.realPath(literal)].some((path) =>
+    [scope.dataDir, facts.realPath(scope.dataDir)].some((dataDir) =>
+      secretAt(path, { ...scope, dataDir, own })
+    )
+  );
 }
 
 function secretAt(path: string, scope: LookUpScope): boolean {
@@ -977,8 +969,14 @@ function readDenial(
   facts: LookUpPathFacts
 ): string | null {
   const text = (key: string) => (typeof input[key] === 'string' ? (input[key] as string) : '');
-  if (tool === 'Read')
-    return isSecretPath(text('file_path'), scope, facts) ? 'that file may hold secrets' : null;
+  if (tool === 'Read') {
+    const raw = text('file_path');
+    const path = resolvePath(raw, scope);
+    const readable =
+      !raw.split(/[\\/]/).includes('..') && publishedHandoffPath(scope.dataDir, path);
+    const readScope = readable ? { ...scope, own: [...(scope.own ?? []), path] } : scope;
+    return isSecretPath(raw, readScope, facts) ? 'that file may hold secrets' : null;
+  }
   const root = text('path') || scope.cwd;
   const pattern = staticPrefix(text('pattern'));
   if (isSecretPath(root, scope, facts) || tooBroad(root, scope))
@@ -1069,11 +1067,27 @@ export function neoToolGuard(scope: Omit<LookUpScope, 'cwd'>): HookCallback {
   return async (input) => {
     if (input.hook_event_name !== 'PreToolUse') return {};
     const pre = input as PreToolUseHookInput;
-    const verdict = decideNeoTool(
-      pre.tool_name,
-      (pre.tool_input ?? {}) as Record<string, unknown>,
-      { ...scope, cwd: pre.cwd }
-    );
+    const toolInput = (pre.tool_input ?? {}) as Record<string, unknown>;
+    let verdict = decideNeoTool(pre.tool_name, (pre.tool_input ?? {}) as Record<string, unknown>, {
+      ...scope,
+      cwd: pre.cwd,
+    });
+    const path =
+      typeof toolInput.file_path === 'string'
+        ? resolvePath(toolInput.file_path, { ...scope, cwd: pre.cwd })
+        : '';
+    if (
+      verdict.kind === 'allow' &&
+      pre.tool_name === 'Read' &&
+      publishedHandoffPath(scope.dataDir, path)
+    ) {
+      try {
+        const verified = await verifyPublishedHandoff(scope.dataDir, path);
+        if (verified.kind !== 'read') verdict = { kind: 'deny', reason: verified.kind };
+      } catch {
+        verdict = { kind: 'deny', reason: 'artifact unavailable' };
+      }
+    }
     if (verdict.kind === 'deny')
       return {
         hookSpecificOutput: {

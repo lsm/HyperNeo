@@ -1,3 +1,4 @@
+import { sdkMessageBodyAt } from '../../storage/repositories/sdk-message-body-read.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import type { WorkDelivery, WorkDetail, WorkRef } from './types.ts';
@@ -22,7 +23,7 @@ const CONSUMED_INPUT = `message_type = 'user' AND parent_tool_use_id IS NULL
 
 function readInput(db: Database, taskId: string | null, receipt: Receipt) {
   const rows = db
-    .prepare(`SELECT sdk_message AS message, timestamp, send_status AS sendStatus,
+    .prepare(`SELECT ${sdkMessageBodyAt('sdk_messages.rowid')} AS message, timestamp, send_status AS sendStatus,
     consumed_seq AS seq FROM sdk_messages
     WHERE session_id = ? AND sdk_uuid = ? AND task_id IS ? AND message_type = 'user'
       AND parent_tool_use_id IS NULL LIMIT 2`)
@@ -66,7 +67,7 @@ function readReplies(db: Database, receipt: Receipt, input: InputRow) {
     .get(receipt.executionId, input.seq, receipt.inputId);
   if (uncertain) return { rows: null };
   const rows = db
-    .prepare(`SELECT sdk_message AS message, timestamp FROM sdk_messages
+    .prepare(`SELECT ${sdkMessageBodyAt('sdk_messages.rowid')} AS message, timestamp FROM sdk_messages
     WHERE session_id = ?1 AND message_type = 'result' AND is_terminal = 1
       AND parent_tool_use_id IS NULL AND consumed_seq >= ?2
       AND consumed_seq < COALESCE((SELECT MIN(consumed_seq) FROM sdk_messages
