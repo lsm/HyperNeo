@@ -32,13 +32,14 @@ const ask = (status: NeoAsk['status'] = 'open') => ({ status }) as NeoAsk;
 const question = (state: NeoQuestion['state']) => ({ state }) as NeoQuestion;
 
 describe('blocked todo cards', () => {
-  test('show the reason over the pack line and put the ask in waiting', () => {
+  test('show the reason over the pack line, and only an open question puts the ask in waiting', () => {
     const blocked = todo({ state: 'blocked', blockedReason: 'CI keeps failing' });
     expect(neoTodoStatusLine(blocked, [], { status: '#3 CI failing', statusCodes: [] })).toEqual({
       status: 'Blocked: CI keeps failing',
       statusCodes: [{ code: 'todo.blocked', params: { reason: 'CI keeps failing' } }],
     });
-    expect(neoAskEntryState(ask(), [blocked, todo({ state: 'done' })], [])).toBe('waiting');
+    expect(neoAskEntryState(ask(), [blocked, todo({ state: 'done' })], [])).toBe('doing');
+    expect(neoAskEntryState(ask(), [blocked], [question('open')])).toBe('waiting');
   });
 });
 

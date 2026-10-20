@@ -175,8 +175,7 @@ adds its journey here.
     `neo.session.archive` twice. End state: while the todo is doing the reply is
     `live_todo` naming the todo; after it is marked done the guard passes and the
     adapter answers `not_found` (the session is fictional).
-
-9. **A session messages another session.** `session-messages.sh <port> "$RUN"`
+11. **A session messages another session.** `session-messages.sh <port> "$RUN"`
    runs the steps below and prints the replies and B's first row. Create two sessions with
    `rpc.ts rpc:session.create '{"workspacePath":"/tmp","title":"Worker A"}'` (and
    `"Recipient B"`), then send B a message as A: `rpc.ts message.send
@@ -187,13 +186,24 @@ adds its journey here.
    one closing tag; B leaves idle and consumes it. The same send again replies
    `duplicate: …`; five more distinct sends are accepted and the next replies
    `rate_limited: …`. Messages sent while B is `processing` are `consumed` before
-   its turn ends.
-11. **Messages between root Neo and its workers show in Neo's conversation.** Run
-   `.claude/skills/verify/neo-session-rows.sh <port> "$RUN"`. It opens root, creates
-   a worker session "Fix the loader", and sends one message each way. End state: it
-   prints `Neo -> Fix the loader: Rebase on dev, then tell me.` then
-   `Fix the loader -> Neo: Rebased.`; on `/neo` each shows as one collapsed row
-   "Neo → Fix the loader" with its first line, expanding to the full text.
+   its turn ends. A `work.send '{"ref":{"adapter":"hyperneo","id":"<B>"},"message":"…","from":"session:<A>"}'`
+   lands in B ending `Reply with message.send to <A>.`, and
+   `neo.question.get '{"questionId":"made-up"}'` replies `not_found: no such question.`
+
+11. **Root Neo owns goals outside any Space.** After journey 1 opened root, run
+    `VERIFY_PORT=9311 .claude/skills/verify/session-goal.sh "$RUN"`. It creates a goal
+    for root through `goal.session.create`, first without metrics or a done-test, then
+    with one, updates it, and lists it. End state: `evidence/goal-refused.json` holds
+    `done_test_required`; `goal-list.json` lists "Grow OAP" at progress 40 with its
+    done-test, mandate link and next step; `goal-events.txt` reads `created|human`
+    then `updated|human`.
+
+12. **Messages between root Neo and its workers show in Neo's conversation.** Run
+    `.claude/skills/verify/neo-session-rows.sh <port> "$RUN"`. It opens root, creates
+    a worker session "Fix the loader", and sends one message each way. End state: it
+    prints `Neo -> Fix the loader: Rebase on dev, then tell me.` then
+    `Fix the loader -> Neo: Rebased.`; on `/neo` each shows as one collapsed row
+    "Neo → Fix the loader" with its first line, expanding to the full text.
 
 ## Evidence
 

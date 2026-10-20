@@ -71,7 +71,10 @@ export function dropWorkFeedSession(
 ): number {
   return db.transaction(() => {
     const dropped = db
-      .prepare('DELETE FROM message_search_content WHERE kind = ? AND session_id = ?')
+      .prepare(
+        `DELETE FROM message_search_content INDEXED BY idx_message_search_content_feed_turns
+          WHERE kind IN ('codex', 'claude') AND kind = ? AND session_id = ?`
+      )
       .run(kind, sessionId).changes;
     db.prepare('DELETE FROM work_feed_offsets WHERE path = ?').run(path);
     return dropped;
@@ -92,7 +95,7 @@ export function purgeWorkFeedSessions(
 ): void {
   if (sessionIds.length === 0) return;
   db.prepare(
-    `DELETE FROM message_search_content
-      WHERE kind = ? AND session_id IN (SELECT value FROM json_each(?))`
+    `DELETE FROM message_search_content INDEXED BY idx_message_search_content_feed_turns
+      WHERE kind IN ('codex', 'claude') AND kind = ? AND session_id IN (SELECT value FROM json_each(?))`
   ).run(kind, JSON.stringify(sessionIds));
 }

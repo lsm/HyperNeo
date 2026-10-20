@@ -13,7 +13,10 @@ import {
   listFeedFiles,
   pruneVanishedFeeds,
 } from '../../../../src/lib/drivers/work-feed';
-import { createWorkFeedOffsetsTable } from '../../../../src/storage/schema/m302-work-index-kinds';
+import {
+  createFeedTurnIndex,
+  createWorkFeedOffsetsTable,
+} from '../../../../src/storage/schema/m302-work-index-kinds';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { readWorkFeedOffsets } from '../../../../src/storage/work-feed';
 
@@ -99,6 +102,7 @@ describe('feedCodexFiles', () => {
       message_id TEXT, session_id TEXT, task_id TEXT, space_id TEXT, task_number INTEGER,
       message_type TEXT, title TEXT, body TEXT, timestamp INTEGER, UNIQUE (kind, source_id))`);
     createWorkFeedOffsetsTable(db);
+    createFeedTurnIndex(db);
   });
   afterEach(() => {
     db.close();
