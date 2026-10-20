@@ -1,8 +1,10 @@
 import { Buffer } from 'node:buffer';
+import { createHash } from 'node:crypto';
 import { lstat, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
+import type { HomeReadInput, HomeReadResult } from './read.ts';
 import type { HomeSaveInput, HomeSaveResult } from './save.ts';
 
 export type HomeResult =
@@ -45,15 +47,50 @@ export class NeoHomeRepository {
     return this.sequence(() => this.write(input));
   }
 
-  private async write(input: HomeSaveInput): Promise<HomeSaveResult> {
-    const parts = input.path.split('/');
+  private async hasSymbolicLink(path: string): Promise<boolean> {
+    const parts = path.split('/');
     for (let i = 0; i <= parts.length; i++) {
       const stat = await lstat(join(this.root, ...parts.slice(0, i))).catch((error) => {
         if (error.code !== 'ENOENT') throw error;
         return null;
       });
-      if (stat?.isSymbolicLink()) return { ok: false, reason: 'invalid_path: symbolic link.' };
+      if (stat?.isSymbolicLink()) return true;
     }
+    return false;
+  }
+
+  read(input: HomeReadInput): Promise<HomeReadResult> {
+    return this.sequence(() => this.readDocument(input.path));
+  }
+
+  private async readDocument(path: string): Promise<HomeReadResult> {
+    if (await this.hasSymbolicLink(path))
+      return { ok: false, reason: 'invalid_path: symbolic link.' };
+    const metadata = await lstat(join(this.root, '.git')).catch((error) => {
+      if (error.code !== 'ENOENT') throw error;
+      return null;
+    });
+    if (!metadata) return { ok: false, reason: 'not_found: home is not initialized.' };
+    if (!metadata.isDirectory()) return { ok: false, reason: 'invalid_path: home git directory.' };
+    if (!(await this.git(['check-ignore', '-q', '--', path], true)).code)
+      return { ok: false, reason: 'ignored_path: this document is git-ignored.' };
+    const target = join(this.root, path);
+    const stat = await lstat(target).catch((error) => {
+      if (error.code !== 'ENOENT') throw error;
+      return null;
+    });
+    if (!stat) return { ok: false, reason: 'not_found: home document does not exist.' };
+    if (!stat.isFile()) return { ok: false, reason: 'not_file: choose a regular home document.' };
+    const bytes = await readFile(target);
+    const content = bytes.toString('utf8');
+    if (!Buffer.from(content, 'utf8').equals(bytes))
+      return { ok: false, reason: 'invalid_content: home document is not UTF-8 text.' };
+    return { ok: true, path, content, sha256: createHash('sha256').update(bytes).digest('hex') };
+  }
+
+  private async write(input: HomeSaveInput): Promise<HomeSaveResult> {
+    if (await this.hasSymbolicLink(input.path))
+      return { ok: false, reason: 'invalid_path: symbolic link.' };
     const metadata = await lstat(join(this.root, '.git')).catch((error) => {
       if (error.code !== 'ENOENT') throw error;
       return null;
