@@ -143,7 +143,7 @@ export function seedNeoWake(db: Database, conversationId: string, additions = tr
         result.consumed,
         input.seq
       );
-    return result;
+    return { ...result, uuid };
   };
   return { goal, scheduleId, messageId, expected, input, finish };
 }

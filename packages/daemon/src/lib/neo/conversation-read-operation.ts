@@ -1,4 +1,5 @@
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
+import { NeoConversationWakeSchema } from '../../storage/repositories/neo-conversation-wake-repository.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
@@ -76,6 +77,11 @@ export function createNeoConversationReadOperation(
       items: z.array(
         z.discriminatedUnion('role', [
           z.object({
+            role: z.literal('wake'),
+            cursor: NeoConversationCursorSchema,
+            wake: NeoConversationWakeSchema,
+          }),
+          z.object({
             role: z.literal('human'),
             cursor: NeoConversationCursorSchema,
             ask: NeoConversationAskPageSchema.extend({
@@ -111,7 +117,7 @@ export function createNeoConversationReadOperation(
   return defineOperation({
     name: 'neo.conversation.read',
     description:
-      'Read the recorded human and Neo conversation, with the messages root Neo exchanged with other sessions (role session; the human sees only the ones Neo sent), oldest first within each page. With no cursor, returns the newest page. Use nextBefore as before for older history, or nextAfter as after for newer entries. Human words and attachment references come from the immutable intake record; Neo replies and revision history come from the publication ledger. Session messages come from the record message.send writes when root Neo sends or receives one. Only the current public conversation is readable; SDK transcripts and internal notes are excluded.',
+      'Read the recorded human and Neo conversation, with the messages root Neo exchanged with other sessions (role session; the human sees only the ones Neo sent), oldest first within each page. With no cursor, returns the newest page. Use nextBefore as before for older history, or nextAfter as after for newer entries. Human words and attachment references come from the immutable intake record; Neo replies and revision history come from the publication ledger. Session messages come from the record message.send writes when root Neo sends or receives one. Scheduled wakes appear as role wake with their summary and attributed additions. Only the current public conversation is readable; SDK transcripts and raw internal notes are excluded.',
     policy: { safetyClass: 'read', roles: ['neo'] },
     inputSchema: NeoConversationReadInput,
     resultSchema,

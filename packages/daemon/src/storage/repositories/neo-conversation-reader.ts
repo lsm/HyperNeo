@@ -1,6 +1,11 @@
 import type { NeoConversationAskPageItem } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import type { NeoSessionMessage } from '@hyperneo/shared/types/neo-session-message';
+import type { NeoConversationWake } from '@hyperneo/shared/types/neo-wake';
+import {
+  NEO_WAKE_SELECT,
+  NeoConversationWakeRepository,
+} from './neo-conversation-wake-repository.ts';
 import { z } from 'zod';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoConversationAskRepository } from './neo-conversation-ask-repository.ts';
@@ -11,7 +16,7 @@ import { presentNeoAskImageRefs } from '../../lib/neo/conversation-ask-read-oper
 export const NeoConversationCursorSchema = z
   .object({
     at: z.iso.datetime(),
-    role: z.enum(['human', 'neo', 'session']),
+    role: z.enum(['human', 'neo', 'session', 'wake']),
     sequence: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   })
   .strict();
@@ -29,7 +34,8 @@ export type NeoConversationPage = z.infer<typeof NeoConversationReadInput>;
 export type NeoConversationEntry =
   | { cursor: NeoConversationCursor; role: 'human'; ask: NeoConversationAskPageItem }
   | { cursor: NeoConversationCursor; role: 'neo'; publication: NeoPublication }
-  | { cursor: NeoConversationCursor; role: 'session'; message: NeoSessionMessage };
+  | { cursor: NeoConversationCursor; role: 'session'; message: NeoSessionMessage }
+  | { cursor: NeoConversationCursor; role: 'wake'; wake: NeoConversationWake };
 type Row = NeoConversationCursor & { id: string };
 
 export function neoConversationPage(entries: NeoConversationEntry[], page: NeoConversationPage) {
@@ -55,10 +61,12 @@ export class NeoConversationReader {
         FROM neo_publications WHERE conversation_id = ?
       UNION ALL
       SELECT created_at AS at, 'session' AS role, sequence, message_id AS id
-        FROM neo_session_messages WHERE conversation_id = ?${humanView ? ` AND ${SENT_BY_NEO}` : ''})
+        FROM neo_session_messages WHERE conversation_id = ?${humanView ? ` AND ${SENT_BY_NEO}` : ''}
+      UNION ALL ${NEO_WAKE_SELECT})
       ${cursor ? `WHERE (at, role, sequence) ${page.after ? '>' : '<'} (?, ?, ?)` : ''}
       ORDER BY at ${direction}, role ${direction}, sequence ${direction} LIMIT ?`)
       .all(
+        page.conversationId,
         page.conversationId,
         page.conversationId,
         page.conversationId,
@@ -71,6 +79,11 @@ export class NeoConversationReader {
     const sessionMessages = new NeoSessionMessageRepository(this.db);
     const items = rows.map((row): NeoConversationEntry => {
       const cursor = { at: row.at, role: row.role, sequence: row.sequence };
+      if (row.role === 'wake') {
+        const wake = new NeoConversationWakeRepository(this.db).get(page.conversationId, row.id);
+        if (!wake) throw new Error('Recorded wake disappeared');
+        return { cursor, role: row.role, wake };
+      }
       if (row.role === 'human') {
         const ask = asks.find(page.conversationId, row.id);
         if (!ask) throw new Error('Recorded human message disappeared');
