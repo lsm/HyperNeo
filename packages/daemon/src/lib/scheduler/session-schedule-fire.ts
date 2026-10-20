@@ -67,12 +67,14 @@ export function createSessionScheduleFire(deps: ScheduleFireDeps) {
         const nudge = facts.digest === schedule.factsDigest;
         if (nudge && schedule.dueCount < schedule.nudgeEvery)
           return finish(schedule, 'skipped_unchanged');
+        const text = source.message(schedule.sourceId, { summary: facts.summary, nudge });
+        if (text === null) return finish(schedule, 'source_gone');
         return {
           value: {
             schedule,
             digest: facts.digest,
             commit: facts.commit,
-            text: source.message(schedule.sourceId, { summary: facts.summary, nudge }),
+            text,
           },
         };
       },

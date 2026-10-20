@@ -12,7 +12,7 @@ import { SESSION_SCHEDULE_FIRE } from '../job-queue-constants.ts';
 export interface ScheduleSource {
   kind: string;
   facts(id: string): Promise<{ digest: string; summary: string; commit?: () => void } | null>;
-  message(id: string, change: { summary: string; nudge: boolean }): string;
+  message(id: string, change: { summary: string; nudge: boolean }): string | null;
 }
 
 type Gate<T> = { value: T } | { reason: string };

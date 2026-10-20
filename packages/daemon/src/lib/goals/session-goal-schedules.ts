@@ -99,9 +99,11 @@ export class SessionGoalSchedules implements ScheduleSource {
     };
   }
 
-  message(id: string, change: { summary: string; nudge: boolean }): string {
-    const goal = this.goals.get(id)!;
-    const schedule = this.scheduler.repo.getBySource(this.kind, id)!;
+  message(id: string, change: { summary: string; nudge: boolean }): string | null {
+    const goal = this.goals.get(id);
+    const schedule = this.scheduler.repo.getBySource(this.kind, id);
+    if (!goal || goal.status === 'completed' || goal.status === 'archived' || !schedule)
+      return null;
     const runId = `schedule:${schedule.id}:${schedule.nextRunAt}`;
     return `Goal "${goal.title}": ${change.nudge ? 'Nothing moved; check what can advance.' : change.summary}
 Read ${goal.mandateRef ?? 'the goal definition'} and this what-works note:
