@@ -1125,7 +1125,7 @@ export async function startCodexThread(
         threadId,
         approvalPolicy: 'never',
         sandboxPolicy: { type: 'dangerFullAccess' },
-        input: [{ type: 'text', text: request.message }],
+        input: [{ type: 'text', text: request.message, text_elements: [] }],
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
       });
