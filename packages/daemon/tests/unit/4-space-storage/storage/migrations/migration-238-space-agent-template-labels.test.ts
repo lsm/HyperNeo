@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { runMigrations } from '../../../../../src/storage/schema/migrations.ts';
+import {
+  runMigration169,
+  runMigration188,
+  runMigration212,
+  runMigrations,
+} from '../../../../../src/storage/schema/migrations.ts';
 import { runMigration225 } from '../../../../../src/storage/schema/m225-space-agent-templates.ts';
 import { runMigration226 } from '../../../../../src/storage/schema/m226-space-agent-templates-version.ts';
 import { runMigration227 } from '../../../../../src/storage/schema/m227-space-agent-template-version-seq.ts';
@@ -92,6 +97,9 @@ describe('migration 238: space_agent_templates labels column', () => {
   test('precedes template-writing migrations on the upgrade path (m228 ordering)', () => {
     const db = new BunDatabase(':memory:');
     createSpaceAgentSchema(db);
+    runMigration169(db);
+    runMigration188(db);
+    runMigration212(db);
     insertSpace(db);
     runMigration225(db);
     runMigration226(db);
