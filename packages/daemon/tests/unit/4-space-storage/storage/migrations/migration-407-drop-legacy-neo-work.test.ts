@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { createTables, runMigrations } from '../../../../../src/storage/schema/index.ts';
-import { runMigration406 } from '../../../../../src/storage/schema/m406-drop-legacy-neo-work.ts';
+import { runMigration407 } from '../../../../../src/storage/schema/m407-drop-legacy-neo-work.ts';
 import { Database } from '../../../../../src/storage/sqlite-compat.ts';
 
 const tables = (db: Database) =>
@@ -10,7 +10,7 @@ const tables = (db: Database) =>
     }[]
   ).map((row) => row.name);
 
-describe('runMigration406', () => {
+describe('runMigration407', () => {
   test('drops the legacy card and ask tables with their rows and keeps the new ask tables', () => {
     const db = new Database(':memory:');
     db.exec('PRAGMA foreign_keys = ON');
@@ -27,8 +27,8 @@ describe('runMigration406', () => {
       INSERT INTO neo_work_driver_targets VALUES ('w1');
       INSERT INTO neo_agent_work_targets VALUES ('w1');
       INSERT INTO neo_asks VALUES ('live');`);
-    runMigration406(db);
-    runMigration406(db);
+    runMigration407(db);
+    runMigration407(db);
     expect(tables(db)).toEqual(['neo_asks', 'neo_todos']);
     expect(db.prepare('SELECT id FROM neo_asks').all()).toEqual([{ id: 'live' }]);
   });

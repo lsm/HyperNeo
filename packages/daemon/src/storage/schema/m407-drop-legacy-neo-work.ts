@@ -22,6 +22,6 @@ const LEGACY_TABLES = [
   'neo_work',
 ];
 
-export function runMigration406(db: Database): void {
+export function runMigration407(db: Database): void {
   for (const table of LEGACY_TABLES) db.exec(`DROP TABLE IF EXISTS ${table}`);
 }
