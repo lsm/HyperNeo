@@ -1,3 +1,4 @@
+import { runMigration418 } from '../../src/storage/schema/m418-sdk-message-bodies';
 import { Database } from '../../src/storage/sqlite-compat';
 import { SDKMessageRepository } from '../../src/storage/repositories/sdk-message-repository';
 import { JobQueueRepository } from '../../src/storage/repositories/job-queue-repository';
@@ -69,6 +70,7 @@ export function createOutboxTestDb(): OutboxTestDb {
     );
   `);
   runMigration413(db);
+  runMigration418(db);
   const sdkRepo = new SDKMessageRepository(db as never);
   const jobQueue = new JobQueueRepository(db as never);
   return {

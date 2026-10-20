@@ -74,6 +74,7 @@ export const EXCLUDED_TABLE_NAMES: string[] = [
   'tool_continuation_recovery',
   'tool_continuation_inbox',
   'sdk_message_replacements',
+  'sdk_message_bodies',
   'github_filter_configs',
   'workspace_history',
   'workspace_projects',

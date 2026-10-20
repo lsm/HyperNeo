@@ -1,3 +1,4 @@
+import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { SpaceWorkflow } from '@hyperneo/shared';
 import { ApiErrorCircuitBreaker } from '../../../../src/lib/agent/api-error-circuit-breaker';
@@ -298,6 +299,7 @@ describe('prompt-too-long replay — recovery escalation: reason & final visible
     workflowRunRepo = new SpaceWorkflowRunRepository(db);
     taskRepo = new SpaceTaskRepository(db);
     nodeExecutionRepo = new NodeExecutionRepository(db);
+    runMigration418(db);
     sdkMessageRepo = new SDKMessageRepository(db);
     longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
     workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(db));
@@ -538,6 +540,7 @@ describe('prompt-too-long replay — terminal-error row deferral', () => {
     workflowRunRepo = new SpaceWorkflowRunRepository(db);
     taskRepo = new SpaceTaskRepository(db);
     nodeExecutionRepo = new NodeExecutionRepository(db);
+    runMigration418(db);
     sdkMessageRepo = new SDKMessageRepository(db);
     longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
     workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(db));

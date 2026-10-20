@@ -1,3 +1,4 @@
+import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { spaceTaskControl } from '../../../../src/lib/rpc-handlers/family-operations/drivers';
 import {
@@ -618,6 +619,7 @@ describe('space adapter send', () => {
     async (state) => {
       db.exec(`CREATE TABLE sdk_messages (session_id TEXT, sdk_uuid TEXT, message_type TEXT,
         sdk_message TEXT, timestamp TEXT, send_status TEXT)`);
+      runMigration418(db);
       const repository = new SDKMessageRepository(db);
       const injections: unknown[] = [];
       const control = spaceTaskControl({

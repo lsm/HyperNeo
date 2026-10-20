@@ -1,3 +1,4 @@
+import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { SpaceWorkflow, SpaceWorkflowRun } from '@hyperneo/shared';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
@@ -192,6 +193,7 @@ describe('SpaceRuntime', () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
       ]);
+      runMigration418(db);
       const sdkMessageRepo = new SDKMessageRepository(db);
       const restarted: string[] = [];
       const tam = {
@@ -412,6 +414,7 @@ describe('SpaceRuntime', () => {
         data: { handoffRequired: true },
       });
       seedRuntimeSession(db, 'session:predecessor');
+      runMigration418(db);
       new SDKMessageRepository(db).saveSDKMessage('session:predecessor', {
         type: 'assistant',
         message: {

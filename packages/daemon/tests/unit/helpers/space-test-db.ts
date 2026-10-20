@@ -663,6 +663,12 @@ export function createSpaceTables(db: BunDatabase): void {
 			FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 		)
 	`);
+  db.exec(`CREATE TABLE IF NOT EXISTS sdk_message_bodies (
+    seq INTEGER PRIMARY KEY,
+    sdk_message TEXT NOT NULL
+  )`);
+  db.exec(`CREATE TRIGGER IF NOT EXISTS sdk_message_bodies_ad AFTER DELETE ON sdk_messages
+    BEGIN DELETE FROM sdk_message_bodies WHERE seq=old.rowid; END`);
   db.exec(`
 		CREATE TABLE IF NOT EXISTS sdk_message_replacements (
 			source_message_id TEXT NOT NULL,

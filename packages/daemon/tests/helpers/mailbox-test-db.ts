@@ -1,3 +1,4 @@
+import { runMigration418 } from '../../src/storage/schema/m418-sdk-message-bodies';
 import { JobQueueRepository } from '../../src/storage/repositories/job-queue-repository';
 import { SDKMessageRepository } from '../../src/storage/repositories/sdk-message-repository';
 import { Database } from '../../src/storage/sqlite-compat';
@@ -97,6 +98,7 @@ export function createMailboxTestDb(): MailboxTestDb {
     CREATE INDEX idx_sdk_messages_session ON sdk_messages(session_id);
   `);
   const jobQueue = new JobQueueRepository(db);
+  runMigration418(db);
   const sdkMessageRepo = new SDKMessageRepository(db as never);
   return {
     db,

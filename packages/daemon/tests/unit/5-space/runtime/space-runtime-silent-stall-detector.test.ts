@@ -1,3 +1,4 @@
+import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { NodeExecutionStatus, SpaceTaskStatus, SpaceWorkflow } from '@hyperneo/shared';
 import { configureLogger, LogLevel, subscribeToStructuredLogs } from '../../../../src/lib/logger';
@@ -279,6 +280,7 @@ describe('SpaceRuntime — silent-stall detector for terminal-healthy idle tasks
     workflowManager = new SpaceWorkflowManager(workflowRepo);
     spaceManager = new SpaceManager(db);
     nodeExecutionRepo = new NodeExecutionRepository(db);
+    runMigration418(db);
     sdkMessageRepo = new SDKMessageRepository(db);
     nudges.length = 0;
     logEvents = [];
