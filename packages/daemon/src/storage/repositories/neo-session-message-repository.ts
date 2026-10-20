@@ -5,6 +5,8 @@ const SELECT = `SELECT message_id AS messageId, conversation_id AS conversationI
   from_session AS fromSession, from_name AS fromName, to_session AS toSession, to_name AS toName,
   text, created_at AS createdAt FROM neo_session_messages`;
 
+export const SENT_BY_NEO = "from_session GLOB 'neo:*'";
+
 export type NeoSessionMessageDraft = Omit<NeoSessionMessage, 'sequence'>;
 
 export class NeoSessionMessageRepository {
@@ -44,7 +46,8 @@ export class NeoSessionMessageRepository {
     return (
       this.db
         .prepare(
-          `${SELECT} WHERE conversation_id = ? ORDER BY created_at DESC, sequence DESC LIMIT ?`
+          `${SELECT} WHERE conversation_id = ? AND ${SENT_BY_NEO}
+           ORDER BY created_at DESC, sequence DESC LIMIT ?`
         )
         .all(conversationId, limit) as NeoSessionMessage[]
     ).reverse();
