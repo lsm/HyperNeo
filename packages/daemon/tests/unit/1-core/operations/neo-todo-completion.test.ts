@@ -23,7 +23,7 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 const owner: OperationCaller = { source: 'mcp', sessionId: 'neo', role: 'neo' };
 const url = (n: number) => `https://github.com/lsm/HyperNeo/pull/${n}`;
 
-function setup() {
+function setup(stop: () => Promise<string | null> = async () => null) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
@@ -75,7 +75,7 @@ function setup() {
         start: async () => ({ ok: false as const, reason: 'not started' }),
         proceed: async () => ({ ok: false as const, reason: 'no session' }),
         retry: async () => ({ ok: false as const, reason: 'not failed' }),
-        stop: async () => null,
+        stop,
       },
       () => [coding]
     ).map((op) => [op.name, op])
@@ -327,6 +327,72 @@ describe('coding todo PR ownership through add and edit', () => {
       await runner.checkNow(['same'], () => {});
       expect(store.getTodo('same')).toMatchObject({ state: 'done', evidence: '#1 #2 merged' });
     } finally {
+      db.close();
+    }
+  });
+  test.each(['edit', 'close', 'sweep'] as const)(
+    'an overlapping %s completion cannot ignore a newly pinned PR',
+    async (path) => {
+      const { db, store, call, runner, states } = setup();
+      try {
+        store.addTodo('same', 'ask', draft([url(1)]), 1);
+        const pending =
+          path === 'sweep'
+            ? runner.checkNow(['same'], () => {})
+            : call(
+                `neo.todo.${path}`,
+                path === 'edit'
+                  ? { todoId: 'same', done: 'met', evidence: 'First merged' }
+                  : { todoId: 'same', reason: 'First merged' }
+              );
+        expect(await call('neo.todo.edit', { todoId: 'same', addUrls: [url(2)] })).toMatchObject({
+          ok: true,
+        });
+        await pending;
+        expect(store.getTodo('same')?.state).not.toBe('done');
+        expect(store.getTodo('same')?.check?.params.urls).toEqual([
+          url(1).toLowerCase(),
+          url(2).toLowerCase(),
+        ]);
+        await runner.checkNow(['same'], () => {});
+        expect(store.getTodo('same')?.state).not.toBe('done');
+        states.set(2, 'MERGED');
+        await runner.checkNow(['same'], () => {});
+        expect(store.getTodo('same')).toMatchObject({ state: 'done', evidence: '#1 #2 merged' });
+      } finally {
+        db.close();
+      }
+    }
+  );
+  test('close rechecks required URLs after stopping its session', async () => {
+    let entered!: () => void;
+    let release!: () => void;
+    const stopping = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const stopped = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { db, store, call } = setup(async () => {
+      entered();
+      await stopped;
+      return null;
+    });
+    try {
+      store.addTodo('same', 'ask', draft([url(1)]), 1);
+      const closing = call('neo.todo.close', { todoId: 'same', reason: 'First merged' });
+      await stopping;
+      expect(await call('neo.todo.edit', { todoId: 'same', addUrls: [url(2)] })).toMatchObject({
+        ok: true,
+      });
+      release();
+      expect(await closing).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('todo_changed'),
+      });
+      expect(store.getTodo('same')?.state).not.toBe('done');
+    } finally {
+      release();
       db.close();
     }
   });
