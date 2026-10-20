@@ -1,5 +1,39 @@
 import type { HookCallback } from '@anthropic-ai/claude-agent-sdk';
-import { parseRemoteAddress } from '../mailbox/address.ts';
+import { parseAddress, parseRemoteAddress } from '../mailbox/address.ts';
+
+export const REPLY_ORIGIN_MAX = 500;
+const CLI_PREFIX =
+  'Report progress, questions or blockers to Neo at any time, mid-work, with: hyperneo send ';
+const CLI_SUFFIX = ' "<text>" (not SendMessage). Keep working after you send.';
+
+export function replyMessageBodyLength(message: string): number {
+  const at = message.lastIndexOf(`\n\n${CLI_PREFIX}`);
+  const argumentLength = message.length - at - 2 - CLI_PREFIX.length - CLI_SUFFIX.length;
+  return at >= 0 &&
+    message.endsWith(CLI_SUFFIX) &&
+    argumentLength > 0 &&
+    argumentLength <= REPLY_ORIGIN_MAX * 4 + 2
+    ? at
+    : message.length;
+}
+
+export function withReplyLine(
+  message: string,
+  from: string,
+  format: 'mcp' | 'cli' = 'mcp'
+): string {
+  const sender = parseAddress(from);
+  const replyTo =
+    sender?.kind === 'session' ? sender.sessionId : parseRemoteAddress(from) ? from : null;
+  if (!replyTo) return message;
+  if (format === 'mcp')
+    return `${message}\n\nReply with ${sessionReplyCall(replyTo)}, not SendMessage.`;
+  const argument = /^[A-Za-z0-9_:./%-]+$/.test(replyTo)
+    ? replyTo
+    : `'${replyTo.replaceAll("'", "'\\''")}'`;
+  const line = `${CLI_PREFIX}${argument}${CLI_SUFFIX}`;
+  return message.includes(line) ? message : `${message}\n\n${line}`;
+}
 
 export function sessionReplyCall(sessionId: string): string {
   return `mcp__hyperneo-operations__invoke ${JSON.stringify({
