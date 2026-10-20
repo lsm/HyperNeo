@@ -22,7 +22,7 @@ const prompt = {
   inputKind: 'human',
   parent_tool_use_id: null,
   message: { role: 'user', content: [{ type: 'text', text: '完整报告'.repeat(4000) }] },
-} as SDKMessage;
+} as unknown as SDKMessage;
 beforeEach(() => {
   db = new Database(':memory:');
   runMigrations(db, () => {});
@@ -86,7 +86,7 @@ beforeEach(() => {
     subtype: 'success',
     result: 'final report',
     is_error: false,
-  } as SDKMessage);
+  } as unknown as SDKMessage);
 });
 afterEach(() => db.close());
 
