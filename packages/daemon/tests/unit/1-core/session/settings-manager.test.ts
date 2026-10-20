@@ -1,5 +1,18 @@
-import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
-import { writeFileSync, readFileSync, mkdirSync, existsSync, rmSync } from 'node:fs';
+import { describe, expect, it, beforeEach, mock, afterEach, jest } from 'bun:test';
+import { open } from 'node:fs/promises';
+import {
+  writeFileSync,
+  readFileSync,
+  mkdirSync,
+  existsSync,
+  rmSync,
+  chmodSync,
+  symlinkSync,
+  lstatSync,
+  statSync,
+  readdirSync,
+  readlinkSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { SettingsManager } from '../../../../src/lib/settings-manager';
@@ -119,6 +132,122 @@ describe('SettingsManager', () => {
   });
 
   describe('writeFileOnlySettings (via prepareSDKOptions)', () => {
+    it('leaves invalid existing settings untouched and reports the error', async () => {
+      const directory = join(workspacePath, '.claude');
+      const path = join(directory, 'settings.local.json');
+      mkdirSync(directory);
+      const original = '{"custom":"PRIVATE_SETTINGS_VALUE",';
+      writeFileSync(path, original);
+      const error = await settingsManager.prepareSDKOptions().catch((error: unknown) => error);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain('Invalid SDK settings JSON');
+      expect((error as Error).message).not.toContain('PRIVATE_SETTINGS_VALUE');
+      expect(readFileSync(path, 'utf8')).toBe(original);
+      expect(readdirSync(directory)).toEqual(['settings.local.json']);
+      writeFileSync(path, JSON.stringify({ custom: 'repaired' }));
+      await settingsManager.prepareSDKOptions();
+      expect(JSON.parse(readFileSync(path, 'utf8')).custom).toBe('repaired');
+    });
+
+    it('leaves original settings and unrelated temp files on a failed write', async () => {
+      const directory = join(workspacePath, '.claude');
+      const path = join(directory, 'settings.local.json');
+      const unrelated = join(directory, 'settings.local.json.unrelated.tmp');
+      mkdirSync(directory);
+      const original = JSON.stringify({ custom: 'preserved' });
+      writeFileSync(path, original);
+      writeFileSync(unrelated, 'unrelated');
+      chmodSync(directory, 0o500);
+      try {
+        await expect(settingsManager.prepareSDKOptions()).rejects.toThrow();
+        expect(readFileSync(path, 'utf8')).toBe(original);
+        expect(readFileSync(unrelated, 'utf8')).toBe('unrelated');
+        expect(readdirSync(directory).sort()).toEqual([
+          'settings.local.json',
+          'settings.local.json.unrelated.tmp',
+        ]);
+      } finally {
+        chmodSync(directory, 0o700);
+      }
+    });
+
+    it('preserves the settings symlink and target permissions', async () => {
+      const directory = join(workspacePath, '.claude');
+      const target = join(tempDir, 'linked-settings.json');
+      const path = join(directory, 'settings.local.json');
+      mkdirSync(directory);
+      writeFileSync(target, JSON.stringify({ custom: 'linked' }), { mode: 0o600 });
+      symlinkSync(target, path);
+      await settingsManager.prepareSDKOptions();
+      expect(lstatSync(path).isSymbolicLink()).toBe(true);
+      expect(statSync(target).mode & 0o777).toBe(0o600);
+      expect(JSON.parse(readFileSync(target, 'utf8')).custom).toBe('linked');
+    });
+
+    it.each(['absolute', 'relative', 'chained'])(
+      'creates a missing target through a %s settings symlink',
+      async (kind) => {
+        const directory = join(workspacePath, '.claude');
+        const target = join(tempDir, 'missing-settings.json');
+        const path = join(directory, 'settings.local.json');
+        mkdirSync(directory);
+        const link = kind === 'relative' ? '../../missing-settings.json' : target;
+        if (kind === 'chained') symlinkSync('missing-settings.json', join(tempDir, 'intermediate'));
+        const destination = kind === 'chained' ? join(tempDir, 'intermediate') : link;
+        symlinkSync(destination, path);
+        (mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
+          outputStyle: 'concise',
+          attribution: { commit: 'synthetic' },
+        });
+        await settingsManager.prepareSDKOptions();
+        expect(lstatSync(path).isSymbolicLink()).toBe(true);
+        expect(readlinkSync(path)).toBe(destination);
+        expect(JSON.parse(readFileSync(target, 'utf8'))).toMatchObject({
+          outputStyle: 'concise',
+          attribution: { commit: 'synthetic' },
+        });
+      }
+    );
+
+    it('keeps a dangling settings symlink when its target parent is missing', async () => {
+      const directory = join(workspacePath, '.claude');
+      const path = join(directory, 'settings.local.json');
+      const target = join(tempDir, 'missing-parent/settings.json');
+      mkdirSync(directory);
+      symlinkSync(target, path);
+      await expect(settingsManager.prepareSDKOptions()).rejects.toThrow();
+      expect(lstatSync(path).isSymbolicLink()).toBe(true);
+      expect(readlinkSync(path)).toBe(target);
+      expect(existsSync(target)).toBe(false);
+      expect(readdirSync(directory)).toEqual(['settings.local.json']);
+    });
+
+    it('removes only its own staging file when writing fails after creation', async () => {
+      const directory = join(workspacePath, '.claude');
+      const path = join(directory, 'settings.local.json');
+      const unrelated = join(directory, 'unrelated.tmp');
+      mkdirSync(directory);
+      const original = JSON.stringify({ custom: 'preserved' });
+      writeFileSync(path, original);
+      writeFileSync(unrelated, 'unrelated');
+      const probe = await open(join(tempDir, 'probe'), 'w');
+      const prototype = Object.getPrototypeOf(probe);
+      await probe.close();
+      const fail = jest
+        .spyOn(prototype, 'writeFile')
+        .mockRejectedValueOnce(new Error('synthetic write failure'));
+      try {
+        await expect(settingsManager.prepareSDKOptions()).rejects.toThrow(
+          'synthetic write failure'
+        );
+        expect(readFileSync(path, 'utf8')).toBe(original);
+        expect(readFileSync(unrelated, 'utf8')).toBe('unrelated');
+        expect(readdirSync(directory).sort()).toEqual(['settings.local.json', 'unrelated.tmp']);
+      } finally {
+        fail.mockRestore();
+      }
+    });
+
     it('should write permission settings', async () => {
       (mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
         ...DEFAULT_GLOBAL_SETTINGS,

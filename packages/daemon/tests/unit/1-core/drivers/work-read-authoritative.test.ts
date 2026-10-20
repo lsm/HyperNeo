@@ -353,6 +353,9 @@ describe('authoritative work.read', () => {
     db.prepare("UPDATE sessions SET status='ended',last_active_at=? WHERE id='ended-old'").run(
       new Date(Date.now() - 31 * 86400000).toISOString()
     );
+    db.prepare(
+      "INSERT INTO message_search_content(kind,source_id,message_id,session_id,message_type,body,timestamp) VALUES ('message','private-stale','private-stale','archived-worker','assistant','HIDDEN_PRIVATE_TRANSCRIPT',1)"
+    ).run();
     for (const sessionId of ids) {
       const result = await invoke({ sessionId });
       expect(result).toMatchObject({
