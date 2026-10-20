@@ -1,3 +1,4 @@
+import { ensureCodexDesktopProject } from '../../../packages/daemon/src/lib/drivers/codex-desktop-project.ts';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -109,6 +110,7 @@ if (action === 'prepare') {
       spawn: spawnProcess,
       appServer,
       bootstrapServer: appServer,
+      prepareDesktopProject: (folder) => ensureCodexDesktopProject(folder, home, spawnProcess),
       startDesktopTurn: (id: string, request: Record<string, unknown>) =>
         startCodexDesktopTurn(socket, spawnProcess, id, request),
       folderExists: () => true,
