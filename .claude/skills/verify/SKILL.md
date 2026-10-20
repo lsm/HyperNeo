@@ -882,6 +882,21 @@ Transient creation failures may retry; a verification failure requires operator
 action and has no automatic retry. Never repair, delete or replace a live backup
 to make the check pass.
 
+For slow-chunk handling use another fresh isolated directory and
+`bun .claude/skills/verify/sdk-body-copy-slow.ts verify 9337 "$RUN"` with the same
+cleared environment/own HOME/data-dir setup. It deliberately injects one 300 ms
+synchronous delay into a synthetic copy UPDATE to cross the pause threshold;
+this is a control-flow fault injection, not a physical disk performance result.
+`slow-chunk.json` must show one backup verification, one `slow_chunk_pause`, no
+deferred run, successful health RPCs and unchanged full-body hash after completion.
+The same helper's `reproduce` mode on the unfixed source must observe a deferred
+run and a second complete backup verification after 60 seconds. It records the
+source-file SHA-256; no production clock/timeout is changed by the helper.
+Shutdown during the cancellable pause is pinned in the CI contract. Slow chunks
+pause asynchronously for one second inside the current run, preserving its
+verified worker channel; a process restart still requires full backup verification.
+Repeat the ordinary 90k-row journey separately for actual performance numbers.
+
 Before merging, require Neo's explicit go-ahead, latest-head bot approval and
 green CI. Read-only stat/free-space checks must show room for 2× the live DB
 plus the permanent backup; the production admission itself requires 2× DB+WAL.

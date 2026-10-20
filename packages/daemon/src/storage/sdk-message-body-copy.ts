@@ -220,11 +220,28 @@ export async function migrateSdkMessageBodies(db: Database, options: Options) {
           elapsedMs: performance.now() - started,
         })
       );
-      if (transactionMs >= 250)
-        throw new Error(`SDK body copy paused after a ${transactionMs}ms transaction`);
+      const pauseMs = transactionMs >= 250 ? 1000 : 0;
+      if (pauseMs)
+        options.log(
+          JSON.stringify({
+            phase: 'slow_chunk_pause',
+            through: state.through,
+            transactionMs,
+            resumeAfterMs: pauseMs,
+          })
+        );
       if (options.signal?.aborted) break;
       await options.checkpoint();
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise<void>((resolve) => {
+        const finish = () => {
+          clearTimeout(timer);
+          options.signal?.removeEventListener('abort', finish);
+          resolve();
+        };
+        const timer = setTimeout(finish, pauseMs);
+        if (options.signal?.aborted) finish();
+        else options.signal?.addEventListener('abort', finish, { once: true });
+      });
     }
     return { status: 'cancelled' as const };
   } finally {
