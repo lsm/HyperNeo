@@ -120,6 +120,29 @@ describe('session schedules', () => {
     expect(await call('schedule.session.list', {})).toEqual({ ok: true, schedules: [] });
   });
 
+  test('a pause that loses the race with a fire reports busy and leaves the schedule active', () => {
+    const read = scheduler.create({
+      target,
+      sourceKind: 'goal',
+      sourceId: 'g-race',
+      note: null,
+      cadence: { kind: 'every', everyMs: 3_600_000 },
+      nudgeEvery: 4,
+      createdBySession: null,
+    });
+    const refired = jobs.enqueue({
+      queue: SESSION_SCHEDULE_FIRE,
+      payload: { scheduleId: read.id },
+      runAt: Date.now() + 7_200_000,
+    });
+    scheduler.repo.setPending(read.id, read.pendingJobId, refired.id, refired.runAt);
+    expect(scheduler.pause(read)).toBeNull();
+    expect(scheduler.repo.get(read.id)).toMatchObject({
+      status: 'active',
+      pendingJobId: refired.id,
+    });
+  });
+
   test('startup recovery queues a wake for an active schedule whose job is gone, once', () => {
     const created = scheduler.create({
       target,

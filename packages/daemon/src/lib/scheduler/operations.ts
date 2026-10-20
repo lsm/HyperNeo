@@ -10,6 +10,8 @@ import { requireValidCadence, type SessionScheduler } from './session-schedules.
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
 
+const BUSY = { ok: false as const, reason: 'busy: the schedule is firing; try again.' };
+
 const fail = (reason: string): { reason: Rejection } => ({ reason: { ok: false, reason } });
 
 const Cadence = z.discriminatedUnion('kind', [
@@ -112,11 +114,14 @@ export function createSessionScheduleOperations(scheduler: SessionScheduler) {
   const changed = (
     name: string,
     status: SessionSchedule['status'] | null,
-    act: (s: SessionSchedule) => SessionSchedule
+    act: (s: SessionSchedule) => SessionSchedule | null
   ) =>
     byId(name, status)
       .pipe(
-        (schedule: SessionSchedule) => ({ ok: true as const, schedule: act(schedule) }),
+        (schedule: SessionSchedule) => {
+          const changedTo = act(schedule);
+          return changedTo ? { ok: true as const, schedule: changedTo } : BUSY;
+        },
         'outcome',
         'outcome'
       )
@@ -127,9 +132,7 @@ export function createSessionScheduleOperations(scheduler: SessionScheduler) {
   const remove = byId('schedule.session.delete', null)
     .pipe(
       (schedule: SessionSchedule) =>
-        scheduler.delete(schedule)
-          ? { ok: true as const, schedule }
-          : { ok: false as const, reason: 'busy: the schedule is firing; try again.' },
+        scheduler.delete(schedule) ? { ok: true as const, schedule } : BUSY,
       'outcome',
       'outcome'
     )

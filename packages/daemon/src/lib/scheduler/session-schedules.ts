@@ -70,18 +70,20 @@ export class SessionScheduler {
     })();
   }
 
-  pause(schedule: SessionSchedule): SessionSchedule {
+  pause(schedule: SessionSchedule): SessionSchedule | null {
     if (schedule.pendingJobId) this.jobQueue.deleteJob(schedule.pendingJobId);
-    this.repo.setStatus(schedule.id, 'active', 'paused', schedule.pendingJobId, null);
-    return this.repo.get(schedule.id) as SessionSchedule;
+    return this.repo.setStatus(schedule.id, 'active', 'paused', schedule.pendingJobId, null)
+      ? this.repo.get(schedule.id)
+      : null;
   }
 
-  resume(schedule: SessionSchedule, now = Date.now()): SessionSchedule {
+  resume(schedule: SessionSchedule, now = Date.now()): SessionSchedule | null {
     const nextRunAt = nextScheduleRun(schedule.cadence, now) as number;
     const jobId = this.enqueue(schedule.id, nextRunAt);
-    if (!this.repo.setStatus(schedule.id, 'paused', 'active', null, { jobId, nextRunAt }))
-      this.jobQueue.deleteJob(jobId);
-    return this.repo.get(schedule.id) as SessionSchedule;
+    if (this.repo.setStatus(schedule.id, 'paused', 'active', null, { jobId, nextRunAt }))
+      return this.repo.get(schedule.id);
+    this.jobQueue.deleteJob(jobId);
+    return null;
   }
 
   delete(schedule: SessionSchedule): boolean {
