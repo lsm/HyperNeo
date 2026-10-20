@@ -313,6 +313,39 @@ adds its journey here.
    ledger (opened `?mode=ro`) and prints owned-before/after counts plus each
    owner change; check every change names the session that created the PR.
 
+   For the b2 ownership regression, use only synthetic session metadata/transcripts:
+
+   ```bash
+   RUN=$(mktemp -d /private/tmp/hn-pr-owners-XXXXXX)
+   env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
+     bun .claude/skills/verify/pr-owners.ts --synthetic "$RUN"
+   ```
+
+   The helper creates its own DB and 64 Claude sessions with about 130 MB of
+   synthetic transcripts. It runs the real coding-pack sweep/reconcile and reads
+   the ledger snapshot. Git remote lookup uses a real local synthetic Git repo
+   once per retained folder across sweeps; only GitHub replies are stubbed. No
+   provider or GUI is involved. The live helper's owner projection must match
+   the ledger, including no-sidebar transcript and stored watcher evidence. End state: a `commented` sidebar link is unowned,
+   an explicit `own:true` link owns its PR, a transcript `gitOperation.pr` with
+   `action:created` corroborates ownership, branch matching still works, an append
+   is discovered without metadata changes, and dismissal unlinks its PR. A session
+   without a sidebar keeps both transcript-created and watcher-opened PR ownership
+   across repeated watcher/sweep observations. The
+   helper writes `observed.json` before asserting each result and a 1,000 ms
+   maximum 10 ms heartbeat-lag budget. Cold, unchanged, repeated-watcher, appended and dismissed
+   reconciles each report elapsed time and max lag. No daemon is started; the DB
+   closes and the heartbeat stops in `finally`. Retain the JSON, remove only this
+   synthetic run afterward. This does not prove deployed behavior.
+
+   The driver reuses the session JSON mtime cache and caches its branch projection
+   per record. Git remotes stay cached while a folder remains represented; removing
+   its last session evicts that entry. Transcript reads resume after the last complete newline, in 64 KiB
+   chunks that yield; partial UTF-8 lines, truncation and replacement are covered.
+   The coding pack alone treats a successful creation as ownership evidence; a
+   Claude sidebar reference alone is not an owner. The default live read-only
+   helper now uses that same reader/policy. Never read auth or credential files.
+
 7. **A cross-repo request becomes one card per repo.** Launch with
    `VERIFY_MOCK=neo-script-api.ts .claude/skills/verify/launch.sh 9311 "$RUN"`.
    That mock plays root's model: when the human's message contains
