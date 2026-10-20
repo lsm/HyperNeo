@@ -977,3 +977,10 @@ an explicit false signer in focused unit tests, without real signing credentials
 This slice adds setup only; save/content checks and reads have later journeys.
 It adds no command parser or native-tool hook policy. Filesystem/container limits
 are the safety boundary. No provider, GitHub or GUI turn is part of this RPC check.
+
+Repeat journey 32 on a fresh run with final argument `cleanup-failure` to
+`neo-home-setup.ts`. A synthetic git shim makes reset fail after the commit fails
+for missing identity. RPC must preserve the original author-identity error.
+The helper records the remaining staged files, removes its shim, explicitly
+unstages only its own fixture files, configures identity and verifies retry.
+This fault mode does not claim that a failed cleanup left the index empty.

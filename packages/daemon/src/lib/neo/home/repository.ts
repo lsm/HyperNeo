@@ -80,7 +80,7 @@ export class NeoHomeRepository {
       try {
         await this.git(['commit', '--only', '-m', 'Initialize Neo home', '--', ...paths]);
       } catch (error) {
-        await this.git(['reset', '--', ...paths]);
+        await this.git(['reset', '--', ...paths]).catch(() => {});
         throw error;
       }
     }
