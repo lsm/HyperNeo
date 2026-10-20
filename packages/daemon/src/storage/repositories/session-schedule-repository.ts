@@ -139,6 +139,16 @@ export class SessionScheduleRepository {
     ).map(toSchedule);
   }
 
+  reserveExternalDelivery(schedule: SessionSchedule, messageId: string): boolean {
+    return (
+      this.db
+        .prepare(`UPDATE session_schedules SET last_message_id = ?,
+      last_outcome = 'sending', updated_at = ? WHERE id = ? AND status = 'active'
+      AND pending_job_id IS ? AND last_message_id IS NOT ?`)
+        .run(messageId, Date.now(), schedule.id, schedule.pendingJobId, messageId).changes > 0
+    );
+  }
+
   countDue(id: string, jobId: string, dueAt: number, now: number): SessionSchedule | null {
     this.db
       .prepare(`UPDATE session_schedules SET due_count = due_count + 1,

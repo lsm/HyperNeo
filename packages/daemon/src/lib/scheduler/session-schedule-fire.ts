@@ -6,8 +6,12 @@ import type { SessionScheduler } from './session-schedules.ts';
 
 export interface ScheduleFireDeps {
   scheduler: SessionScheduler;
-  status(target: WorkRef): Promise<WorkStatus>;
-  deliver(schedule: SessionSchedule, messageId: string, text: string): Promise<void>;
+  status(target: WorkRef): Promise<WorkStatus | 'not_found' | 'not_open'>;
+  deliver(
+    schedule: SessionSchedule,
+    messageId: string,
+    text: string
+  ): Promise<void | 'target_gone' | 'unconfirmed'>;
 }
 
 type Outcome = { outcome: string };
@@ -41,6 +45,8 @@ export function createSessionScheduleFire(deps: ScheduleFireDeps) {
     .pipe(
       async (schedule: SessionSchedule): Promise<Gate<SessionSchedule>> => {
         const status = await deps.status(schedule.target);
+        if (status === 'stopped' || status === 'not_found' || status === 'not_open')
+          return finish(schedule, 'target_gone');
         if (status === 'running' || status === 'queued') return finish(schedule, 'skipped_busy');
         if (status === 'needs_you') return finish(schedule, 'skipped_needs_you');
         return { value: schedule };
@@ -84,7 +90,19 @@ export function createSessionScheduleFire(deps: ScheduleFireDeps) {
         if (current?.status !== 'active' || current.pendingJobId !== schedule.pendingJobId)
           return { outcome: 'superseded' };
         const messageId = `schedule:${schedule.id}:${schedule.nextRunAt}`;
-        await deps.deliver(schedule, messageId, text);
+        const delivery = await deps.deliver(schedule, messageId, text);
+        if (delivery === 'target_gone') return finish(schedule, 'target_gone').reason;
+        if (delivery === 'unconfirmed')
+          return {
+            outcome: scheduler.finishRun(
+              schedule,
+              'skipped_delivery_unconfirmed',
+              schedule.factsDigest,
+              messageId
+            )
+              ? 'skipped_delivery_unconfirmed'
+              : 'superseded',
+          };
         return {
           outcome: scheduler.finishRun(schedule, 'fired', digest, messageId)
             ? 'fired'

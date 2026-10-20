@@ -114,7 +114,10 @@ export class SessionScheduler {
   ): boolean {
     return this.db.transaction(() => {
       if (!this.repo.recordOutcome(schedule, outcome, digest, messageId)) return false;
-      const next = outcome === 'source_gone' ? null : nextScheduleRun(schedule.cadence, now);
+      const next =
+        outcome === 'source_gone' || outcome === 'target_gone'
+          ? null
+          : nextScheduleRun(schedule.cadence, now);
       if (next === null)
         return this.repo.setStatus(schedule.id, 'active', 'done', schedule.pendingJobId, null);
       const jobId = this.enqueue(schedule.id, next);

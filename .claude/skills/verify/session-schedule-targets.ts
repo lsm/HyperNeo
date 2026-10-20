@@ -36,6 +36,6 @@ await mkdir(`${run}/evidence`, { recursive: true });
 await writeFile(`${run}/evidence/session-schedule-targets.json`, JSON.stringify(evidence, null, 2));
 console.log(JSON.stringify(evidence, null, 2));
 for (const id of ids) await rpc('schedule.session.delete', { scheduleId: id });
-if (!rows.every((r) => r.status === 'done' && r.last_outcome === 'target_gone' && r.pending_job_id === null) || messages.length) throw new Error('Closed targets must complete without delivery');
+if (!rows.every((r) => r.status === 'done' && r.last_outcome === 'target_gone' && r.pending_job_id === null) || messages.length || jobs.some((j) => (j as { retry_count: number; status: string }).retry_count !== 0 || (j as { status: string }).status !== 'completed')) throw new Error('Closed targets must complete without delivery');
 console.log('PASS: archived and missing targets complete without delivery or retries.');
 db.close();
