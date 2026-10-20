@@ -20,14 +20,25 @@ export interface WorkFeedOffset {
   mtime: number;
 }
 
+const feedOffsets = new WeakMap<BunDatabase, Map<string, WorkFeedOffset>>();
+
+function knownWorkFeedOffsets(db: BunDatabase): Map<string, WorkFeedOffset> {
+  let known = feedOffsets.get(db);
+  if (!known) {
+    known = new Map(
+      (
+        db.prepare('SELECT path, offset, size, mtime FROM work_feed_offsets').all() as Array<
+          WorkFeedOffset & { path: string }
+        >
+      ).map(({ path, ...offset }) => [path, Object.freeze(offset)])
+    );
+    feedOffsets.set(db, known);
+  }
+  return known;
+}
+
 export function readWorkFeedOffsets(db: BunDatabase): Map<string, WorkFeedOffset> {
-  return new Map(
-    (
-      db.prepare('SELECT path, offset, size, mtime FROM work_feed_offsets').all() as Array<
-        WorkFeedOffset & { path: string }
-      >
-    ).map(({ path, ...offset }) => [path, offset])
-  );
+  return new Map(knownWorkFeedOffsets(db));
 }
 
 export function saveWorkFeedChunk(
@@ -62,6 +73,7 @@ export function saveWorkFeedChunk(
       );
     mark.run(path, offset.offset, offset.size, offset.mtime);
   })();
+  knownWorkFeedOffsets(db).set(path, Object.freeze({ ...offset }));
 }
 
 async function deleteWorkFeedSessions(
@@ -94,6 +106,7 @@ export async function dropWorkFeedSession(
 ): Promise<number> {
   const dropped = await deleteWorkFeedSessions(db, kind, [sessionId]);
   db.prepare('DELETE FROM work_feed_offsets WHERE path = ?').run(path);
+  knownWorkFeedOffsets(db).delete(path);
   return dropped;
 }
 
@@ -102,6 +115,11 @@ export function rereadWorkFeedPaths(db: BunDatabase, paths: readonly string[]): 
   db.prepare(
     'UPDATE work_feed_offsets SET offset = 0, size = -1 WHERE path IN (SELECT value FROM json_each(?))'
   ).run(JSON.stringify(paths));
+  const known = knownWorkFeedOffsets(db);
+  for (const path of paths) {
+    const offset = known.get(path);
+    if (offset) known.set(path, Object.freeze({ ...offset, offset: 0, size: -1 }));
+  }
 }
 
 export async function purgeWorkFeedSessions(
