@@ -1,0 +1,176 @@
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  handoffDraftDirectory,
+  HandoffReference,
+  publishHandoff,
+  readHandoff,
+} from '../../../../src/lib/handoffs/outbox.ts';
+import { createSendMessageOperation } from '../../../../src/lib/messaging/message-send.ts';
+import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
+import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
+
+describe('simple message.send worker handoff', () => {
+  let root: string;
+  let before: string | undefined;
+  let mailbox: MailboxTestDb;
+  const sender = 'worker-report';
+  const report = 'Synthetic report\n'.padEnd(8192, 'x');
+  const caller = { source: 'mcp' as const, sessionId: sender };
+  const registry = () =>
+    createOperationRegistry([
+      createSendMessageOperation(mailbox.jobQueue, (id) =>
+        [sender, 'neo:root'].includes(id) ? 'active' : null
+      ),
+    ]);
+  const send = (input: unknown, catalog = registry()) =>
+    invokeOperation(catalog, 'message.send', input, caller);
+  const accepted = async (input: unknown, catalog = registry()) => {
+    const result = await send(input, catalog);
+    expect(result.kind).toBe('completed');
+    if (result.kind !== 'completed') throw new Error(JSON.stringify(result));
+    expect(result.value).toMatchObject({ kind: 'accepted' });
+    return result.value as {
+      kind: string;
+      mailboxId: string;
+      messageId: string;
+      files?: unknown[];
+    };
+  };
+
+  beforeEach(() => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), 'simple-send-')));
+    before = process.env.HYPERNEO_DATA_DIR;
+    process.env.HYPERNEO_DATA_DIR = root;
+    mailbox = createMailboxTestDb();
+  });
+  afterEach(() => {
+    mailbox.close();
+    if (before === undefined) delete process.env.HYPERNEO_DATA_DIR;
+    else process.env.HYPERNEO_DATA_DIR = before;
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test('one 8KB report call reaches Neo as a complete hash-checked file reference', async () => {
+    const receipt = await accepted({ to: 'neo:root', text: report });
+    expect(receipt.files).toHaveLength(1);
+    const ref = HandoffReference.parse(receipt.files![0]);
+    expect(ref).toMatchObject({
+      sessionId: sender,
+      byteLength: 8192,
+      sha256: createHash('sha256').update(report).digest('hex'),
+    });
+    expect(readFileSync(ref.path, 'utf8')).toBe(report);
+    const read = await readHandoff(root, ref);
+    expect(read.kind).toBe('read');
+    if (read.kind !== 'read') throw new Error('report not readable');
+    expect(Buffer.from(read.data, 'base64').toString()).toBe(report);
+    const entry = JSON.parse(mailbox.rows()[0].payload);
+    expect(entry.to).toEqual({ kind: 'session', sessionId: 'neo:root' });
+    expect(entry.origin).toBe(`session:${sender}`);
+    expect(entry.message.inputKind).toBe('task');
+    expect(JSON.stringify(entry.message)).toContain(ref.sha256);
+    expect(JSON.stringify(entry.message)).toContain(ref.path);
+    expect(JSON.stringify(entry.message)).not.toContain(report);
+  });
+
+  test.each([4096, 4097])('the inline limit is UTF8 bytes, at %i bytes', async (bytes) => {
+    const text = '🔬'.repeat(1024) + (bytes === 4097 ? 'x' : '');
+    const receipt = await accepted({ to: 'neo:root', text });
+    if (bytes === 4096) {
+      expect(receipt.files).toBeUndefined();
+      expect(JSON.stringify(JSON.parse(mailbox.rows()[0].payload).message)).toContain(text);
+    } else {
+      const ref = HandoffReference.parse(receipt.files![0]);
+      expect(ref.byteLength).toBe(bytes);
+      expect(readFileSync(ref.path, 'utf8')).toBe(text);
+    }
+  });
+
+  test('the old nested SDK envelope retains its content and accepted result shape', async () => {
+    const receipt = await accepted({
+      sessionId: 'neo:root',
+      message: { type: 'user', message: { content: report }, parent_tool_use_id: null },
+    });
+    expect(Object.keys(receipt).sort()).toEqual(['kind', 'mailboxId', 'messageId']);
+    expect(JSON.stringify(JSON.parse(mailbox.rows()[0].payload).message)).toContain(
+      report.replaceAll('\n', '\\n')
+    );
+    expect(existsSync(join(root, 'handoffs'))).toBe(false);
+  });
+
+  test('schema errors show a working simple shape and the full legacy envelope', async () => {
+    const result = await send({ sessionId: 'neo:root', message: { message: { content: report } } });
+    expect(result).toMatchObject({ kind: 'failed', code: 'invalid_input' });
+    if (result.kind !== 'failed') throw new Error('expected schema failure');
+    for (const field of ['"to"', '"text"', '"type"', '"parent_tool_use_id"'])
+      expect(result.message).toContain(field);
+    expect(mailbox.rows()).toHaveLength(0);
+  });
+
+  test('attached references are explicit, verified and retain their SHA256', async () => {
+    const draft = join(handoffDraftDirectory(root, sender), 'evidence.md');
+    writeFileSync(draft, 'Synthetic evidence');
+    const published = await publishHandoff(root, sender, 'evidence.md');
+    if (published.kind !== 'published') throw new Error('fixture publication failed');
+    const receipt = await accepted({
+      to: 'neo:root',
+      text: 'Evidence attached',
+      files: [published.reference],
+    });
+    expect(receipt.files).toEqual([published.reference]);
+    chmodSync(published.reference.path, 0o600);
+    writeFileSync(published.reference.path, 'tampered');
+    expect(
+      await send({ to: 'neo:root', text: 'Changed evidence', files: [published.reference] })
+    ).toMatchObject({
+      kind: 'completed',
+      value: { kind: 'rejected', reason: expect.stringContaining('tampered') },
+    });
+    expect(mailbox.rows()).toHaveLength(1);
+  });
+
+  test('an unknown target causes no spill or mailbox side effect', async () => {
+    expect(await send({ to: 'missing', text: report })).toMatchObject({
+      kind: 'completed',
+      value: { kind: 'rejected' },
+    });
+    expect(existsSync(join(root, 'handoffs'))).toBe(false);
+    expect(mailbox.rows()).toHaveLength(0);
+  });
+
+  test('remote file delivery is unavailable instead of reinterpreting local paths', async () => {
+    expect(await send({ to: 'daemon:remote::session:target', text: report })).toMatchObject({
+      kind: 'completed',
+      value: { kind: 'rejected', reason: expect.stringContaining('unavailable') },
+    });
+    expect(existsSync(join(root, 'handoffs'))).toBe(false);
+    expect(mailbox.rows()).toHaveLength(0);
+  });
+
+  test('an idempotency key replays a durable receipt after restart and completed-job cleanup', async () => {
+    const input = { to: 'neo:root', text: report, idempotencyKey: 'incident-report-once' };
+    const first = await accepted(input);
+    expect(await accepted(input)).toEqual(first);
+    expect(mailbox.rows()).toHaveLength(1);
+    mailbox.db.exec('DELETE FROM job_queue');
+    expect(await accepted(input)).toEqual(first);
+    expect(mailbox.rows()).toHaveLength(0);
+    expect(await send({ ...input, text: 'different report' })).toMatchObject({
+      kind: 'completed',
+      value: { kind: 'rejected', reason: expect.stringContaining('idempotency') },
+    });
+  });
+});
