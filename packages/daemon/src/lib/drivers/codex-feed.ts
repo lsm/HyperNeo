@@ -3,6 +3,7 @@ import { basename, join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
+import { runLagPhase } from '../event-loop-activity.ts';
 import { readWorkFeedOffsets, type WorkFeedTurn } from '../../storage/work-feed.ts';
 import {
   changedFeedFiles,
@@ -127,17 +128,20 @@ export const runCodexFeed = (superpipe({})('work-feed-codex') as PipelineAPI)
   .input(['queue', 'db', 'root', 'now'])
   .pipe(scheduleCodexFeed, 'queue')
   .pipe(
-    (db: BunDatabase, root: string) => pruneVanishedFeeds(db, root, codexFeedSource),
+    (db: BunDatabase, root: string) =>
+      runLagPhase('feed:codex:prune', () => pruneVanishedFeeds(db, root, codexFeedSource)),
     ['db', 'root'],
     'pruned'
   )
   .pipe(
-    (root: string, now: number) => listFeedFiles(root, now - FEED_WINDOW_MS),
+    (root: string, now: number) =>
+      runLagPhase('feed:codex:list', () => listFeedFiles(root, now - FEED_WINDOW_MS)),
     ['root', 'now'],
     'files'
   )
   .pipe(
-    (db: BunDatabase, files: FeedFile[]) => changedFeedFiles(files, readWorkFeedOffsets(db)),
+    (db: BunDatabase, files: FeedFile[]) =>
+      runLagPhase('feed:codex:changed', () => changedFeedFiles(files, readWorkFeedOffsets(db))),
     ['db', 'files'],
     'changed'
   )
