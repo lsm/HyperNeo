@@ -451,9 +451,16 @@ function unverifiedDriverReply(reply: string | undefined): string | null {
 }
 
 type DriverInputAttribution =
-  | { state: 'observed'; replies: WorkExchangeEntry[]; cut: boolean }
+  | {
+      state: 'observed';
+      replies: WorkExchangeEntry[];
+      cut: boolean;
+      replyAvailability?: 'complete' | 'incomplete';
+      replyReport?: string;
+      replyAt?: number;
+    }
   | { state: 'pending' }
-  | { state: 'unverified' };
+  | { state: 'unverified'; replyAvailability?: 'reply_unavailable' };
 
 export function readDriverInputAttribution(
   outcome: OperationOutcome,
@@ -470,11 +477,19 @@ export function readDriverInputAttribution(
   )
     return { state: 'unverified' };
   if (found.state !== 'observed')
-    return { state: found.state === 'pending' ? 'pending' : 'unverified' };
+    return found.state === 'pending'
+      ? { state: 'pending' }
+      : {
+          state: 'unverified',
+          ...(found.replyAvailability ? { replyAvailability: found.replyAvailability } : {}),
+        };
   return {
     state: 'observed',
     replies: found.exchange.filter((entry) => entry.role === 'agent'),
     cut: found.exchangeCut,
+    ...(found.replyAvailability ? { replyAvailability: found.replyAvailability } : {}),
+    ...(found.replyReport !== undefined ? { replyReport: found.replyReport } : {}),
+    ...(found.replyAt !== undefined ? { replyAt: found.replyAt } : {}),
   };
 }
 
@@ -484,7 +499,12 @@ export const NEO_WORK_LATER_REPLIES_CUT =
 function attributedDriverReport(attribution: {
   replies: readonly WorkExchangeEntry[];
   cut: boolean;
+  replyAvailability?: 'complete' | 'incomplete';
+  replyReport?: string;
 }): string | null {
+  if (attribution.replyAvailability === 'incomplete')
+    return 'Reply history is incomplete; the consumed turn has no verified terminal reply yet.';
+  if (attribution.replyReport !== undefined) return attribution.replyReport;
   const report = driverExchangeReport(attribution.replies, false, null);
   return report && attribution.cut ? `${report}\n\n${NEO_WORK_LATER_REPLIES_CUT}` : report;
 }
@@ -529,7 +549,15 @@ export function readDriverFollowUp(
   const value = parseDriverStatus(outcome);
   if (!value || value.status === 'running' || value.status === 'queued') return null;
   const attribution = readDriverInputAttribution(outcome, sent?.receipt);
-  if (attribution?.state === 'pending') return null;
+  if (
+    attribution?.state === 'pending' ||
+    (attribution?.state === 'unverified' && attribution.replyAvailability)
+  )
+    return null;
+  if (attribution?.state === 'observed' && attribution.replyAvailability)
+    return attribution.replyAvailability === 'complete' && (attribution.replyAt ?? 0) > since
+      ? (attribution.replyReport ?? null)
+      : null;
   if (attribution?.state === 'observed')
     return attributedDriverReport({
       ...attribution,
@@ -563,6 +591,7 @@ export function readDriverSettlement(
   }
   const { status, lastActivityAt, lastReplyAt, exchange, exchangeCut } = reply.value;
   const attribution = readDriverInputAttribution(outcome, receipt);
+  if (attribution?.state === 'unverified' && attribution.replyAvailability) return null;
   if (attribution && attribution.state !== 'unverified')
     return settleAttributedDriverWork(status, attribution);
   if (requireFresh && startedAt === null)
