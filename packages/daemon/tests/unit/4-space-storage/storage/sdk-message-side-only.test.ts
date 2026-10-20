@@ -8,6 +8,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { selectSdkBodyWriteMode } from '../../../../src/storage/sdk-message-body-admission';
+import { writeSdkMessageBody } from '../../../../src/storage/repositories/sdk-message-body-write';
 
 let db: Database;
 let repo: SDKMessageRepository;
@@ -22,6 +23,27 @@ beforeEach(async () => {
   await selectSdkBodyWriteMode(db);
 });
 afterEach(() => db.close());
+
+test.each(['dual-write', 'side-only'])(
+  'qualified row and body predicates retain complete results in %s mode',
+  async (mode) => {
+    if (mode === 'dual-write') {
+      db.exec("DELETE FROM migration_markers WHERE key='sdk_message_bodies_copy_v1:complete'");
+      await selectSdkBodyWriteMode(db);
+    }
+    const body = JSON.stringify({ type: 'result', uuid: 'qualified', subtype: 'success', result });
+    repo.saveSDKMessage('s', JSON.parse(body) as SDKMessage);
+    const row = db.prepare('SELECT rowid AS seq FROM sdk_messages').get() as { seq: number };
+    writeSdkMessageBody(db, () => {}, 'm.rowid=?', [row.seq], '?', [body]);
+    db.prepare('UPDATE sdk_messages SET sdk_message=?').run(body);
+    writeSdkMessageBody(db, () => {}, "m.sdk_message<>''", [], 'm.sdk_message', []);
+    expect(repo.getMessageByUuid('s', 'qualified')).toMatchObject({ result });
+    expect(db.prepare('SELECT sdk_message FROM sdk_message_bodies').get()).toEqual({
+      sdk_message: body,
+    });
+    expect(db.prepare('SELECT sdk_message FROM sdk_messages').get()).toEqual({ sdk_message: body });
+  }
+);
 
 test('new messages retain every tool-result byte only in the side body', () => {
   const message = {
