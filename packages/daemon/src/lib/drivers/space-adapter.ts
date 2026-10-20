@@ -77,6 +77,11 @@ export interface SpaceTaskNode {
 }
 
 export interface SpaceTaskControl {
+  rename?: (
+    target: { spaceId: string; taskId?: string; agentId?: string },
+    title: string,
+    caller: OperationCaller
+  ) => ReturnType<NonNullable<WorkAdapter['rename']>>;
   create(
     spaceId: string,
     title: string,
@@ -584,10 +589,56 @@ const runSpaceAgentSend = (superpipe({})('space-agent-send-work') as PipelineAPI
   deps: SpaceAdapterDeps
 ) => Promise<Result<{ delivered: boolean }>>;
 
+function requireSpaceRenameTarget(
+  ref: WorkRef,
+  deps: SpaceAdapterDeps
+): Gate<{ spaceId: string; taskId?: string; agentId?: string }> {
+  if (ref.id.startsWith(AGENT_REF)) {
+    const agent = readSpaceAgents(deps.db(), true, ref.id.slice(AGENT_REF.length))[0];
+    return agent
+      ? { value: { spaceId: agent.spaceId, agentId: agent.id } }
+      : { reason: reject('not_found', `No Space agent ${ref.id}.`) };
+  }
+  const task = requireSpaceTask(ref, deps);
+  return 'reason' in task
+    ? task
+    : { value: { spaceId: task.value.spaceId, taskId: task.value.id } };
+}
+
+const runSpaceRename = (superpipe({})('space-rename-work') as PipelineAPI)
+  .input(['ref', 'title', 'context', 'deps'])
+  .pipe(requireSpaceRenameTarget, ['ref', 'deps'], 'result:outcome')
+  .pipe(
+    (
+      target: { spaceId: string; taskId?: string; agentId?: string },
+      title: string,
+      context: WorkCallContext,
+      deps: SpaceAdapterDeps
+    ) => deps.tasks.rename!(target, title, context.caller),
+    ['outcome', 'title', 'context', 'deps'],
+    'outcome'
+  )
+  .endAsync('outcome') as (
+  ref: WorkRef,
+  title: string,
+  context: WorkCallContext,
+  deps: SpaceAdapterDeps
+) => ReturnType<NonNullable<WorkAdapter['rename']>>;
+
 export function createSpaceAdapter(deps: SpaceAdapterDeps): WorkAdapter {
   return {
     id: 'space',
-    capabilities: ['find', 'start', 'send', 'status', 'stop'],
+    capabilities: [
+      'find',
+      'start',
+      'send',
+      'status',
+      'stop',
+      ...(deps.tasks.rename ? ['rename' as const] : []),
+    ],
+    rename: deps.tasks.rename
+      ? (ref, title, context) => runSpaceRename(ref, title, context, deps)
+      : undefined,
     find: async (query) =>
       runSpaceFind(query, deps, query.text ? await deps.searchChats(query.text) : []),
     start: (request, context) => runSpaceStart(request, context, deps),

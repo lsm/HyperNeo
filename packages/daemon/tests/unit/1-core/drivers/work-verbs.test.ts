@@ -170,6 +170,52 @@ describe('work verb operations', () => {
     ]);
   });
 
+  test.each(['', 'x'.repeat(201), 'two\nlines', 'control\u0000name'])(
+    'rejects invalid rename title without calling the adapter: %j',
+    async (title) => {
+      let renamed = false;
+      const adapter: WorkAdapter = {
+        ...desktop,
+        capabilities: ['find', 'rename'],
+        rename: async (_ref, title) => {
+          renamed = true;
+          return { ok: true, value: { renamed: true, title } };
+        },
+      };
+      const registry = createOperationRegistry(
+        createWorkVerbOperations({
+          adapters: () => [adapter],
+          remote: { list: () => [], invoke: async () => ({}) },
+          daemonName: 'imac',
+        })
+      );
+      const outcome = await invokeOperation(
+        registry,
+        'work.rename',
+        { ref: { adapter: adapter.id, id: 'busy' }, title },
+        { source: 'mcp', role: 'neo' }
+      );
+      expect(outcome).toMatchObject({ kind: 'failed', code: 'invalid_input' });
+      expect(renamed).toBe(false);
+    }
+  );
+
+  test('a non-Neo remote worker cannot rename another daemon’s work', async () => {
+    let forwarded = false;
+    expect(
+      await call(
+        'work.rename',
+        { ref: { adapter: 'codex-desktop', id: 'busy', daemon: 'laptop' }, title: 'ops' },
+        async () => {
+          forwarded = true;
+          return {};
+        },
+        { source: 'mcp', sessionId: 'worker', role: 'direct_task_worker' }
+      )
+    ).toMatchObject({ ok: false, reason: 'unsupported' });
+    expect(forwarded).toBe(false);
+  });
+
   test('keeps delivery facts in driver result schemas', () => {
     for (const fact of [{ queuedSubmissionId: 'q1' }, { steeredIntoTurnId: 't1' }]) {
       const result = { ok: true, value: { delivered: false, ...fact } };

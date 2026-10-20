@@ -71,6 +71,7 @@ export const WorkRejectionSchema = z.enum([
   ...workStartPreparation.refusalSchema.options,
   'unknown_adapter',
   'unsupported',
+  'not_supported',
   'not_found',
   'not_open',
   'not_delivered',
@@ -181,6 +182,7 @@ export type Result<T> = { ok: true; value: T } | Rejected;
 export type WorkVerb =
   | 'find'
   | 'start'
+  | 'rename'
   | 'send'
   | 'steer'
   | 'queue'
@@ -219,6 +221,8 @@ export interface WorkCallContext {
   caller: OperationCaller;
 }
 
+export type WorkRenamed = { renamed: true; title: string };
+
 export interface WorkAdapter {
   readonly id: string;
   readonly capabilities: readonly WorkVerb[];
@@ -234,6 +238,11 @@ export interface WorkAdapter {
     message: string,
     context: WorkCallContext
   ) => Promise<Result<WorkDelivery>>;
+  readonly rename?: (
+    ref: WorkRef,
+    title: string,
+    context: WorkCallContext
+  ) => Promise<Result<WorkRenamed>>;
   readonly steer?: WorkAdapter['send'];
   readonly queue?: WorkAdapter['send'];
   readonly withdraw?: (
