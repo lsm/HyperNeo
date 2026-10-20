@@ -2,8 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { Database } from '../../../../src/storage/database';
 import {
   getSDKSessionFilePath,
+  validateAndRepairSDKSession,
   validateSDKSessionFile,
 } from '../../../../src/lib/sdk-session-file-manager';
 
@@ -86,5 +88,15 @@ describe('validateSDKSessionFile', () => {
     expect((await validateSDKSessionFile(workspace, 's1')).valid).toBe(false);
     appendFileSync(file, '\n');
     expect((await validateSDKSessionFile(workspace, 's1')).orphanedToolResults).toHaveLength(1);
+  });
+
+  test('concurrent validate-and-repair calls for one transcript share a single run', async () => {
+    writeFileSync(file, use('a') + result('a'));
+    const db = {} as Database;
+    const first = validateAndRepairSDKSession(workspace, 's1', 'kai', db);
+    const second = validateAndRepairSDKSession(workspace, 's1', 'kai', db);
+    expect(second).toBe(first);
+    expect(await first).toBe(true);
+    expect(validateAndRepairSDKSession(workspace, 's1', 'kai', db)).not.toBe(first);
   });
 });

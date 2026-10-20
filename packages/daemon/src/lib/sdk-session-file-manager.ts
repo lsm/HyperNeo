@@ -562,7 +562,25 @@ export async function repairSDKSessionFile(
   return result;
 }
 
-export async function validateAndRepairSDKSession(
+const validatingSessionFiles = new Map<string, Promise<boolean>>();
+
+export function validateAndRepairSDKSession(
+  workspacePath: string,
+  sdkSessionId: string,
+  kaiSessionId: string,
+  db: Database
+): Promise<boolean> {
+  const sessionFile = getSDKSessionFilePath(workspacePath, sdkSessionId);
+  const running = validatingSessionFiles.get(sessionFile);
+  if (running) return running;
+  const run = validateAndRepairSessionFile(workspacePath, sdkSessionId, kaiSessionId, db).finally(
+    () => validatingSessionFiles.delete(sessionFile)
+  );
+  validatingSessionFiles.set(sessionFile, run);
+  return run;
+}
+
+async function validateAndRepairSessionFile(
   workspacePath: string,
   sdkSessionId: string,
   kaiSessionId: string,
