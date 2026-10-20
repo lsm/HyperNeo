@@ -1,0 +1,36 @@
+import { describe, expect, test } from 'bun:test';
+import { WorkerAgentMemoryEmbedder } from '../../../src/storage/repositories/agent-memory-worker-embedder.ts';
+
+const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
+const fakeWorker = new URL('../../helpers/fake-embed-worker.ts', import.meta.url).href;
+
+describe.skipIf(!isBun)('WorkerAgentMemoryEmbedder', () => {
+  test('returns the worker’s vector bit for bit, one request at a time', async () => {
+    const embedder = new WorkerAgentMemoryEmbedder(fakeWorker);
+    try {
+      const vectors = await Promise.all(
+        ['one', 'three', 'fiftyfive'].map((text) => embedder.embedPassage(text))
+      );
+      expect(vectors.map((vector) => Array.from(vector))).toEqual(
+        ['one', 'three', 'fiftyfive'].map((text) =>
+          Array.from(Float32Array.from([text.length, 0.1, -0.3333333, 1]))
+        )
+      );
+    } finally {
+      embedder.stop();
+    }
+  });
+
+  test('a refused, crashed or hung request fails, and the next one gets a fresh worker', async () => {
+    const embedder = new WorkerAgentMemoryEmbedder(fakeWorker, 200);
+    try {
+      await expect(embedder.embedQuery('refuse')).rejects.toThrow('model unavailable');
+      await expect(embedder.embedQuery('crash')).rejects.toThrow('embedding worker crashed');
+      expect(Array.from(await embedder.embedQuery('ok'))[0]).toBe(2);
+      await expect(embedder.embedQuery('hang')).rejects.toThrow('gave no answer in 200 ms');
+      expect(Array.from(await embedder.embedQuery('again'))[0]).toBe(5);
+    } finally {
+      embedder.stop();
+    }
+  });
+});

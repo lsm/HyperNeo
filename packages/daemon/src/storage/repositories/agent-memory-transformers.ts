@@ -10,9 +10,9 @@ import { withoutAuthorization } from './agent-memory-fetch-options.ts';
 import type { AgentMemoryEmbedder } from './agent-memory-repository.ts';
 
 const log = new Logger('AgentMemory');
-const MODEL_ID = 'onnx-community/granite-embedding-small-english-r2-ONNX';
+export const MODEL_ID = 'onnx-community/granite-embedding-small-english-r2-ONNX';
 const GITHUB_RELEASE_BASE = 'https://github.com/lsm/neokai/releases/download/embedding-models-v1';
-const DIMENSIONS = 384;
+export const DIMENSIONS = 384;
 const MODEL_FILES = [
   'config.json',
   'tokenizer.json',
