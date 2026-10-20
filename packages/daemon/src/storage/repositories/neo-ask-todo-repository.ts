@@ -93,6 +93,9 @@ const toTodo = ({ checkJson, named, addedAfterStart, ...row }: TodoRow): NeoTodo
   addedAfterStart: addedAfterStart === 1,
 });
 
+const isStartable = (todo: NeoTodo) =>
+  todo.state === 'todo' || (todo.state === 'blocked' && todo.blockedBy === 'question');
+
 export class NeoAskTodoRepository {
   constructor(
     private readonly db: Database,
@@ -254,6 +257,9 @@ export class NeoAskTodoRepository {
         )
         .run(askId, repo, todo.id);
       this.pruneStartQuestions(todo.askId);
+      const moved = this.getTodo(todo.id)!;
+      if (askId !== todo.askId && moved.instruction && isStartable(moved))
+        this.joinStartQuestion(moved, now);
     })();
     this.db.prepare('UPDATE neo_asks SET repo = ? WHERE id = ? AND repo IS NULL').run(repo, askId);
     this.touchAsk(todo.askId, now);
@@ -353,6 +359,36 @@ export class NeoAskTodoRepository {
     this.touchAsk(question.askId, now);
   }
 
+  joinStartQuestion(todo: NeoTodo, now: number): void {
+    const todos = this.listTodos(todo.askId);
+    const open = this.listQuestions(todo.askId).find(
+      (question) => question.kind === 'start' && question.state === 'open'
+    );
+    const listed = (open?.startTodos ?? []).filter((id) =>
+      todos.some((item) => item.id === id && isStartable(item) && item.instruction)
+    );
+    const startTodos = [...new Set([...listed, todo.id])];
+    const text = neoStartQuestionTitle(
+      startTodos.map((id) => ({ title: todos.find((item) => item.id === id)?.title }))
+    );
+    if (open) this.extendStartQuestion(open.id, startTodos, text, now);
+    else
+      this.askQuestion(
+        crypto.randomUUID(),
+        todo.askId,
+        {
+          text,
+          kind: 'start',
+          options: null,
+          multiple: false,
+          noLabel: null,
+          yesLabel: null,
+          startTodos,
+        },
+        now
+      );
+  }
+
   answerQuestion(
     question: NeoQuestion,
     answer: NeoQuestionAnswer,
@@ -432,14 +468,7 @@ export class NeoAskTodoRepository {
 
   private pruneStartQuestions(askId: string): void {
     const todos = this.listTodos(askId);
-    const startable = new Set(
-      todos
-        .filter(
-          (todo) =>
-            todo.state === 'todo' || (todo.state === 'blocked' && todo.blockedBy === 'question')
-        )
-        .map((todo) => todo.id)
-    );
+    const startable = new Set(todos.filter(isStartable).map((todo) => todo.id));
     for (const question of this.listQuestions(askId)) {
       if (question.kind !== 'start' || question.state !== 'open' || !question.startTodos) continue;
       const kept = question.startTodos.filter((id) => startable.has(id));

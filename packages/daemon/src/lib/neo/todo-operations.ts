@@ -1,4 +1,4 @@
-import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type {
@@ -8,10 +8,9 @@ import type {
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { NeoTodoTargetSchema } from './driver-work.ts';
 import type { NeoPack } from './packs/types.ts';
-import { neoStartQuestionTitle } from './start-question.ts';
 import { neoTodoHome, neoTodoRepo } from './todo-repo.ts';
 import { readNeoTodoCompletion, requireNeoTodoMayFinish } from './todo-completion.ts';
-import { isNeoTodoStartable, planNeoTodoAwaitingStart } from './todo-runner.ts';
+import { planNeoTodoAwaitingStart } from './todo-runner.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 
 type Rejection = { ok: false; reason: string };
@@ -87,44 +86,9 @@ export async function addNeoTodo(
   return { ok: true, todo: added };
 }
 
-export function planNeoStartQuestionJoin(
-  todo: NeoTodo,
-  questions: readonly NeoQuestion[],
-  todos: readonly NeoTodo[]
-): { questionId: string | null; startTodos: string[]; text: string } {
-  const open = questions.find((question) => question.kind === 'start' && question.state === 'open');
-  const startable = (id: string) =>
-    todos.some((item) => item.id === id && isNeoTodoStartable(item) && item.instruction);
-  const startTodos = [...new Set([...(open?.startTodos ?? []).filter(startable), todo.id])];
-  const text = neoStartQuestionTitle(
-    startTodos.map((id) => ({ title: todos.find((item) => item.id === id)?.title }))
-  );
-  return { questionId: open?.id ?? null, startTodos, text };
-}
-
 function joinNeoStartQuestion(todos: NeoAskTodoRepository, todo: NeoTodo): void {
-  const plan = planNeoStartQuestionJoin(
-    todo,
-    todos.listQuestions(todo.askId),
-    todos.listTodos(todo.askId)
-  );
   const now = Date.now();
-  if (plan.questionId) todos.extendStartQuestion(plan.questionId, plan.startTodos, plan.text, now);
-  else
-    todos.askQuestion(
-      crypto.randomUUID(),
-      todo.askId,
-      {
-        text: plan.text,
-        kind: 'start',
-        options: null,
-        multiple: false,
-        noLabel: null,
-        yesLabel: null,
-        startTodos: plan.startTodos,
-      },
-      now
-    );
+  todos.joinStartQuestion(todo, now);
   const blocked = planNeoTodoAwaitingStart(todo);
   if (blocked) todos.updateTodo(todo, blocked, now);
 }
