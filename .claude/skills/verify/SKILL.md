@@ -307,6 +307,15 @@ adds its journey here.
    line) and, within ~25 s, an `assistant` and a `result` row from the mock. The
    mock returns plain text, so no publication is written; a publication needs a
    scripted model (see `tests/online/convo/neo-publication-sdk.test.ts`).
+   For the root visibility prompt experiment, run that focused online test with a fresh
+   temporary HOME and `env -i` as documented in `packages/daemon/tests/online/README.md`.
+   It starts its own isolated test daemon and loopback scripted model, checks the assembled
+   `neoPrompt()` reaches the real SDK, and reads back the exact publication through RPC.
+   The final prompt block must state that only publish/question reaches the human, with no
+   mandatory assistant-text summary; the root prompt still has its word-cap unit test.
+   This proves prompt delivery and publication plumbing, not a generative model's choice
+   to publish or stay silent. Without a permitted local model, report that behavior as
+   unverified; do not use live credentials or treat the script as behavioral acceptance.
 2. **Voice streaming relays text.** Start the stub ASR (Deepgram protocol) with
    `bun .claude/skills/verify/asr-stub.ts 9312 < /dev/null > "$RUN/asr-stub.log" 2>&1 & echo $! > "$RUN/asr-stub.pid"`, then
    `VERIFY_PORT=9311 bun .claude/skills/verify/voice.ts 9312`. It points voice at
@@ -1046,8 +1055,38 @@ preserve evidence outside the worktree, then remove only this synthetic run
 tool behavior,
 not GUI rendering or protection against a malicious same-user OS process.
 
+### Lag diagnostics name the step (journey 32)
 
-### Neo home setup (journey 32)
+```bash
+bun .claude/skills/verify/lag-diagnostics-check.ts "$(mktemp -d /private/tmp/hn-lag-diag-XXXXXX)"
+```
+
+The helper runs the daemon's own `startDaemonLagDiagnostics` and the Bun SQLite wrapper with
+query observability on a throwaway file, then blocks the event loop three ways: a 1.3 s CPU spin,
+a 1.3 s `Atomics.wait` (off-CPU, like a lock or I/O wait) and a transaction that spins 1.3 s.
+End state in `lag-diagnostics.json`: three `[Daemon] Event loop blocked` lines; each
+`event_loop.lag_activity` record carries `resources` (main-thread CPU ms, off-CPU ms, major page
+faults, block writes, voluntary context switches since the previous tick). The spin reads as
+~1,300 ms CPU, the wait as ~1,400 ms off-CPU, and the third line ends
+`slowest SQL …ms: transaction`. On macOS a blocking wait may not count voluntary switches.
+
+Live, a feed or driver-refresh block names its open phase: `feed:<claude|codex>:<head|read|parse|save>`,
+`feed:<kind>:<purge|prune|list|changed>`, and `neo:driver:<card_topic_sweep|todo_refresh|follow_topics|session_watch>`.
+A block with high `majorPageFaults` and off-CPU time is paging, not our work.
+
+To load the Claude feed on a synthetic transcript in an isolated daemon:
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-feed-lag-XXXXXX)
+env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
+  bun .claude/skills/verify/work-feed-lag.ts 9350 "$RUN" 24
+```
+
+It writes a 24 MB transcript (text turns plus tool results), runs `work.feed.claude` until every
+turn is indexed and samples the event loop. Baseline on dev: one 1.2 s job, max lag 67 ms.
+
+
+### Neo home setup (journey 33)
 
 On a fresh isolated daemon from Launch, run
 `bun .claude/skills/verify/neo-home-setup.ts <port> "$RUN"`.
@@ -1064,27 +1103,27 @@ This slice adds setup only; save/content checks and reads have later journeys.
 It adds no command parser or native-tool hook policy. Filesystem/container limits
 are the safety boundary. No provider, GitHub or GUI turn is part of this RPC check.
 
-Repeat journey 32 on a fresh run with final argument `cleanup-failure` to
+Repeat journey 33 on a fresh run with final argument `cleanup-failure` to
 `neo-home-setup.ts`. A synthetic git shim makes reset fail after the commit fails
 for missing identity. RPC must preserve the original author-identity error.
 The helper records the remaining staged files, removes its shim, explicitly
 unstages only its own fixture files, configures identity and verifies retry.
 This fault mode does not claim that a failed cleanup left the index empty.
 
-Repeat journey 32 on a fresh run with final argument `interrupted` to seed the
+Repeat journey 33 on a fresh run with final argument `interrupted` to seed the
 persisted state from interruption between add and commit: no HEAD and exactly
 README.md, .gitignore and direction.md staged. The next real `neo.home.init` RPC
 must finish one bootstrap commit without manual reset. This simulates the disk
 state; it does not kill the daemon. Focused contracts retain refusal for other
 staged files. Existing file contents survive recovery.
 
-Repeat journey 32 with final argument `ignore-repair` on another fresh run. The
+Repeat journey 33 with final argument `ignore-repair` on another fresh run. The
 helper removes only its fixture ignore in a local commit, leaving an existing
 home with untracked coordinator transcripts. `neo.home.init` must repair the
 ignore, preserve transcript contents, track no transcript and leave clean status.
 Other dirty files still require human review.
 
-Repeat journey 32 with final argument `ignore-repair-failure` to force a missing
+Repeat journey 33 with final argument `ignore-repair-failure` to force a missing
 identity during ignore repair. After configuring identity, retry must create the
 repair commit and leave clean status, preserving private transcripts. The gate
 checks the committed ignore; failed repair restores its prior ignore contents

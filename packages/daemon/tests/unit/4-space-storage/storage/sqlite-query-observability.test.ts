@@ -13,6 +13,7 @@ import {
   SQLiteQueryObserver,
   type SQLiteQueryEmitParams,
   type SQLiteQueryObservabilityOptions,
+  takeSlowestQuery,
 } from '../../../../src/storage/sqlite-query-observability';
 
 interface CapturedEvent {
@@ -285,6 +286,31 @@ describe('sqlite query observability through the bun compat layer', () => {
     const allRuns = metadataList(events).filter((meta) => meta.operation === 'run');
     expect(allRuns).toHaveLength(2);
     expect(metadataList(events).some((meta) => meta.operation === 'all')).toBe(true);
+  });
+
+  test('names a slow transaction, commit included, as the slowest SQL', () => {
+    takeSlowestQuery();
+    const db = new Database(':memory:', {
+      queryObservability: {
+        slowThresholdMs: 15,
+        summaryIntervalMs: 0,
+        maxQueryGroups: 10,
+        summaryQueryLimit: 5,
+      },
+    });
+    try {
+      db.exec('CREATE TABLE kv (k TEXT PRIMARY KEY, v TEXT)');
+      const insert = db.prepare('INSERT INTO kv (k, v) VALUES (?, ?)');
+      db.transaction(() => {
+        insert.run('a', 'one');
+        const until = performance.now() + 25;
+        while (performance.now() < until);
+      })();
+      expect(takeSlowestQuery()).toMatchObject({ sql: 'transaction' });
+      expect(db.prepare('SELECT v FROM kv WHERE k = ?').get('a')).toEqual({ v: 'one' });
+    } finally {
+      db.close();
+    }
   });
 
   test('records iterate once on full consumption and once on early return', () => {

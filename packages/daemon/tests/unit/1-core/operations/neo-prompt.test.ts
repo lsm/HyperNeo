@@ -47,18 +47,13 @@ describe('root Neo system prompt', () => {
     });
     expect(neoPrompt([])).toBe(`${NEO_ROOT_PROMPT}\n\n${NEO_ROOT_TURN_END}`);
     expect(NEO_ROOT_TURN_END.trim()).toBe(
-      'End every turn with one or two short sentences saying what you did, then: Done.'
+      'The human sees none of your assistant text: not between tool calls and not at the end of a turn. Work silently; call tools without narrating or explaining them. The human hears you only through neo.publication.publish, or neo.question.ask when you need their answer, so when they should know something, publish it in their language. When there is nothing to tell them, end the turn without text.'
     );
     expect(NEO_ROOT_PROMPT.split(/\s+/).length).toBeLessThan(160);
-    for (const fact of [
-      'work.find',
-      'work.send',
-      'neo.publication.publish',
-      'neo.question.ask',
-      'neo.rule.save',
-      "Plain assistant text shows only in your session view, not in the human's chat.",
-    ])
+    for (const fact of ['work.find', 'work.send', 'neo.rule.save'])
       expect(NEO_ROOT_PROMPT).toContain(fact);
+    expect(NEO_ROOT_PROMPT).not.toContain('Everything for the human goes through');
+    expect(NEO_ROOT_PROMPT).not.toContain('Plain assistant text shows only');
   });
 
   test('appends the pack briefing only when packs are enabled', () => {
