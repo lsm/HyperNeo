@@ -17,7 +17,10 @@ import {
   pendingFeedPaths,
   pruneVanishedFeeds,
 } from '../../../../src/lib/drivers/work-feed';
-import { createWorkFeedOffsetsTable } from '../../../../src/storage/schema/m302-work-index-kinds';
+import {
+  createFeedTurnIndex,
+  createWorkFeedOffsetsTable,
+} from '../../../../src/storage/schema/m302-work-index-kinds';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { readWorkFeedOffsets } from '../../../../src/storage/work-feed';
 
@@ -116,6 +119,7 @@ describe('Claude transcript feed', () => {
     db.exec('CREATE TABLE sessions (id TEXT, sdk_session_id TEXT)');
     db.exec("INSERT INTO sessions VALUES ('hn-1', 'sdk-hyperneo')");
     createWorkFeedOffsetsTable(db);
+    createFeedTurnIndex(db);
   });
   afterEach(() => {
     db.close();
