@@ -177,6 +177,7 @@ describe('SessionSchedules', () => {
     request.mockRejectedValue(new Error('Connection lost'));
     fireEvent.click(screen.getByRole('button', { name: 'Refresh schedules' }));
     await screen.findByText('Connection lost');
+    expect(screen.queryByText('No schedules')).toBeNull();
     rerender(<SessionSchedules sessionId={null} />);
     expect(screen.queryByText('Schedules')).toBeNull();
   });
