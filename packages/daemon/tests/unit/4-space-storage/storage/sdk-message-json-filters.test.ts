@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
+import { BACKGROUND_TASK_METADATA_SQL } from '../../../../src/lib/live-query/queries/messages';
 import { readSpaceStartReceipt } from '../../../../src/lib/drivers/space-adapter';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index';
@@ -191,5 +192,43 @@ describe('readSpaceStartReceipt', () => {
     task('start', 5, {});
     task('later', 6, { message: { content: [{ type: 'text', text: 'more' }] } });
     expect(readSpaceStartReceipt(db, 'k')).toEqual({ executionId: 's1', inputId: 'start' });
+  });
+});
+
+function seedBackgroundTasks(): void {
+  const task = (
+    id: string,
+    subtype: string,
+    at: number,
+    body: Record<string, unknown>,
+    taskId?: string
+  ) => insert({ id, type: 'system', subtype, body: { ...body, mark: id }, at, taskId });
+  task('start', 'task_started', 2, { task_id: 'k' });
+  task('col', 'task_updated', 3, {}, 'j');
+  task('old', 'task_progress', 4, { task_id: 'k', tool_use_id: 'u' });
+  task('new', 'task_progress', 5, { task_id: 'k', tool_use_id: 'u' });
+  task('colp', 'task_progress', 6, { tool_use_id: 'v' }, 'j');
+  task('gone', 'task_progress', 7, { task_id: 'z', tool_use_id: 'w' });
+}
+
+describe('SDKMessageRepository.getBackgroundTaskMessages', () => {
+  test('keys background tasks by the JSON task id or the task_id column, keeping only the latest progress per tool use', () => {
+    seedBackgroundTasks();
+    const marks = repo
+      .getBackgroundTaskMessages('s1')
+      .map((message) => (message as unknown as { mark: string }).mark);
+    expect(new Set(marks)).toEqual(new Set(['start', 'col', 'new', 'colp', 'gone']));
+  });
+});
+
+describe('BACKGROUND_TASK_METADATA_SQL', () => {
+  test('returns the same background task rows as the repository read', () => {
+    seedBackgroundTasks();
+    const rows = db.prepare(BACKGROUND_TASK_METADATA_SQL).all(...Array(7).fill('s1')) as {
+      id: string;
+    }[];
+    expect(new Set(rows.map((row) => row.id))).toEqual(
+      new Set(['start', 'col', 'new', 'colp', 'gone'])
+    );
   });
 });
