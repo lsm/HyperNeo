@@ -358,7 +358,7 @@ adds its journey here.
     1-second cadence replies `invalid_cadence`; an hourly reminder is `active` with
     one pending `sessionSchedule.fire` job an hour out and appears in `list` for that
     target; `pause` makes it `paused` and drops the job; `resume` makes it `active`
-    with a new job; `delete` removes the row and its job. Nothing fires yet (S2).
+    with a new job; `delete` removes the row and its job. Journey 20 verifies delivery.
 18. **Reply quotes show the same summary in the composer and after sending.**
     After opening root and configuring the mock provider, run
     `NODE_PATH=<directory containing playwright> node .claude/skills/verify/quote-summary-check.mjs <port> "$RUN"`.
@@ -514,6 +514,27 @@ adds its journey here.
     asynchronous phase duration includes awaits. This journey proves diagnostic
     output, not the cause of any real laptop block. Live logs remain read-only.
 
+
+27. **A session goal owns a fact-driven wake and its asks.** Launch a fresh run with
+    `VERIFY_MOCK=neo-script-api.ts`, register the synthetic provider from Launch,
+    then run `bun .claude/skills/verify/goal-schedule.ts <port> "$RUN"`. It creates
+    an hourly-capable goal with a one-minute cadence for verification. The mock
+    model calls `neo.ask.open` through the real MCP door with that `goalId`.
+    End state: `evidence/goal-schedule.json` contains the linked ask, a delivered
+    `<daemon-note kind="scheduled_wake">` in root Neo's transcript with mandate
+    and journal run identity, the exact same digest from `goal.facts`, and an
+    empty summary after delivery. Reading facts twice before delivery preserves
+    the delta. Updating progress to 40 produces only `- Progress: 0` and
+    `+ Progress: 40`. Pausing removes the job, resuming restores it, and completing
+    the goal removes its schedule and returns null facts. Run
+    `NODE_PATH=<directory containing playwright> node .claude/skills/verify/goal-schedule-view.mjs <port> "$RUN"`
+    to open the root session transcript headlessly and capture
+    `evidence/goal-schedule-transcript.png`. Keep the `neo:` colon unescaped in
+    the session route; the router does not decode a percent-encoded session id.
+    CI covers foreign-goal rejection, failed/unconfirmed delivery, unchanged
+    nudges, linked question/PR changes, repository splits and migration reruns.
+    No real model, external PR or desktop GUI is exercised. Mandate reconciliation
+    and what-works compaction belong to G8.
 
 ## Evidence
 

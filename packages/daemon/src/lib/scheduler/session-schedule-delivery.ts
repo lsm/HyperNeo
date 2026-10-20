@@ -10,6 +10,7 @@ import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
 import { renderAddress } from '../mailbox/address.ts';
 import { invokeOperation } from '../operations/invoke.ts';
 import type { OperationRegistry } from '../operations/registry.ts';
+import { hyperneoWorkStatus } from '../drivers/hyperneo-adapter.ts';
 
 export function createScheduleDelivery(db: Database, registry: () => OperationRegistry) {
   const caller = { source: 'internal' as const, role: 'neo' as const };
@@ -27,6 +28,15 @@ export function createScheduleDelivery(db: Database, registry: () => OperationRe
     status: async (
       ref: SessionSchedule['target']
     ): Promise<WorkStatus | 'not_found' | 'not_open'> => {
+      if (ref.adapter === 'hyperneo' && !ref.daemon && ref.id.startsWith('neo:')) {
+        const session = db.getSession(ref.id);
+        if (!session) return 'not_found';
+        if (sessionUnavailable(session.status)) return 'not_open';
+        return hyperneoWorkStatus(
+          session.status,
+          session.processingState ? JSON.parse(session.processingState).status : null
+        );
+      }
       const result = await invoke('work.status', { ref });
       if (!result.ok) return result.reason === 'not_found' ? 'not_found' : 'not_open';
       if (!result.value?.status) throw new Error('work.status returned no work');

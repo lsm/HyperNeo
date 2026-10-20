@@ -57,7 +57,9 @@ export function createSessionScheduleFire(deps: ScheduleFireDeps) {
     .pipe(
       async (
         schedule: SessionSchedule
-      ): Promise<Gate<{ schedule: SessionSchedule; digest: string; text: string }>> => {
+      ): Promise<
+        Gate<{ schedule: SessionSchedule; digest: string; text: string; commit?: () => void }>
+      > => {
         const source = scheduler.source(schedule.sourceKind);
         if (!source) throw new Error(`Unregistered schedule source: ${schedule.sourceKind}`);
         const facts = await source.facts(schedule.sourceId);
@@ -69,6 +71,7 @@ export function createSessionScheduleFire(deps: ScheduleFireDeps) {
           value: {
             schedule,
             digest: facts.digest,
+            commit: facts.commit,
             text: source.message(schedule.sourceId, { summary: facts.summary, nudge }),
           },
         };
@@ -81,10 +84,12 @@ export function createSessionScheduleFire(deps: ScheduleFireDeps) {
         schedule,
         digest,
         text,
+        commit,
       }: {
         schedule: SessionSchedule;
         digest: string;
         text: string;
+        commit?: () => void;
       }): Promise<Outcome> => {
         const current = scheduler.repo.get(schedule.id);
         if (current?.status !== 'active' || current.pendingJobId !== schedule.pendingJobId)
@@ -104,7 +109,7 @@ export function createSessionScheduleFire(deps: ScheduleFireDeps) {
               : 'superseded',
           };
         return {
-          outcome: scheduler.finishRun(schedule, 'fired', digest, messageId)
+          outcome: scheduler.finishRun(schedule, 'fired', digest, messageId, Date.now(), commit)
             ? 'fired'
             : 'superseded',
         };

@@ -36,8 +36,12 @@ import type { SpaceTaskManager } from '../../tasks/task-manager.ts';
 import type { CodingArtifactProfile } from '../../workflows/coding-artifact-profile.ts';
 import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
 import type { RPCHandlerDependencies } from '../index.ts';
+import type { SessionScheduler } from '../../scheduler/session-schedules.ts';
+import type { NeoPack } from '../../neo/packs/types.ts';
 
 export interface FamilyOperationContext {
+  readonly sessionScheduler: SessionScheduler;
+  readonly neoPacks: () => readonly NeoPack[];
   readonly claudeInbox?: ReturnType<typeof createClaudeInboxDriver>;
   readonly claudeDesktopMods?: ReturnType<typeof createClaudeDesktopModsDriver>;
   readonly executionPreparations?: () => readonly {

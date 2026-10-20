@@ -112,6 +112,7 @@ const Nullable = z.string().nullable();
 export const NeoAskEntrySchema = z.object({
   ask: z.object({
     id: z.string(),
+    goalId: Nullable.optional(),
     projectId: Nullable,
     repo: Nullable,
     parentId: Nullable,

@@ -9,6 +9,9 @@ import { z } from 'zod';
 import type { SessionGoalRepository } from '../../storage/repositories/session-goal-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { GOAL_READ_POLICY, GOAL_WRITE_POLICY } from './goal-operation-scope.ts';
+import { SessionScheduleCadenceSchema } from '../scheduler/operations.ts';
+import { requireValidCadence } from '../scheduler/session-schedules.ts';
+import type { SessionGoalSchedules } from './session-goal-schedules.ts';
 import {
   GoalMetricsSchema,
   GoalPrioritySchema,
@@ -51,7 +54,15 @@ const Fields = {
   mandateRev: z.string().nullable().optional().describe('Home repo commit the goal matches'),
 };
 
-const Create = z.object({ ...Owner, ...Fields, title: z.string().min(1) }).strict();
+const Create = z
+  .object({
+    ...Owner,
+    ...Fields,
+    title: z.string().min(1),
+    cadence: SessionScheduleCadenceSchema.default({ kind: 'every', everyMs: 3_600_000 }),
+    nudgeEvery: z.number().int().positive().default(4),
+  })
+  .strict();
 const Get = z.object({ ...Owner, goalId: z.string().min(1) }).strict();
 const List = z.object({ ...Owner, includeClosed: z.boolean().default(false) }).strict();
 const Update = z
@@ -195,12 +206,14 @@ function patchOf(input: z.infer<typeof Update>): SessionGoalPatch {
 
 export interface SessionGoalDependencies {
   readonly goals: SessionGoalRepository;
+  readonly schedules: SessionGoalSchedules;
   readonly sessionExists: (sessionId: string) => boolean;
   readonly audit: (caller: OperationCaller, toolName: string, summary: object) => void;
 }
 
 export function createSessionGoalOperations({
   goals,
+  schedules,
   sessionExists,
   audit,
 }: SessionGoalDependencies) {
@@ -222,9 +235,19 @@ export function createSessionGoalOperations({
   const create = owner(superpipe({})('goal.session.create') as PipelineAPI)
     .pipe(requireGoalDoneTest, ['outcome', 'input'], 'result:outcome')
     .pipe(
+      (owned: string, input: z.infer<typeof Create>) => {
+        const cadence = requireValidCadence(input.cadence);
+        return 'reason' in cadence ? refuse(cadence.reason) : { value: owned };
+      },
+      ['outcome', 'input'],
+      'result:outcome'
+    )
+    .pipe(
       (owned: string, input: z.infer<typeof Create>, caller: OperationCaller) => {
-        const { ownerSessionId: _owner, ...draft } = input;
-        const goal = goals.create(owned, draft, eventSource(caller), Date.now());
+        const { ownerSessionId: _owner, cadence, nudgeEvery, ...draft } = input;
+        const goal = goals.create(owned, draft, eventSource(caller), Date.now(), (created) =>
+          schedules.sync(created, cadence, nudgeEvery)
+        );
         audit(caller, 'goal.session.create', { goalId: goal.id, ownerSessionId: owned });
         return done(goal);
       },
@@ -264,7 +287,11 @@ export function createSessionGoalOperations({
       (goal: SessionGoal, input: z.infer<typeof Update>, caller: OperationCaller) => {
         const patch = patchOf(input);
         audit(caller, 'goal.session.update', { goalId: goal.id, fields: Object.keys(patch) });
-        return done(goals.update(goal, patch, eventSource(caller), Date.now()));
+        return done(
+          goals.update(goal, patch, eventSource(caller), Date.now(), (updated) =>
+            schedules.sync(updated)
+          )
+        );
       },
       ['outcome', 'input', 'caller'],
       'outcome'
@@ -311,12 +338,26 @@ export function createSessionGoalOperations({
     )
     .endAsync('outcome');
 
+  const facts = owned(superpipe({})('goal.facts') as PipelineAPI)
+    .pipe(
+      async (goal: SessionGoal) => {
+        const read = await schedules.facts(goal.id);
+        return {
+          accepted: true as const,
+          facts: read ? { digest: read.digest, summary: read.summary, lines: read.lines } : null,
+        };
+      },
+      'outcome',
+      'outcome'
+    )
+    .endAsync('outcome');
+
   type Run = (input: unknown, caller: OperationCaller) => Promise<unknown>;
   return [
     defineOperation({
       name: 'goal.session.create',
       description:
-        'Create a goal owned by a session (root Neo). Give metrics or a written doneTest. Returns { accepted, goal } or { accepted: false, reason }.',
+        'Create a goal owned by a session (root Neo), with one fact-driven wake schedule. Give metrics or a written doneTest. cadence defaults to hourly; nudgeEvery defaults to 4. Returns { accepted, goal } or { accepted: false, reason }.',
       policy: GOAL_WRITE_POLICY,
       inputSchema: Create,
       resultSchema: GoalResult,
@@ -344,11 +385,28 @@ export function createSessionGoalOperations({
     defineOperation({
       name: 'goal.session.update',
       description:
-        'Update a session-owned goal: its fields, progress, next steps, mandate link, or status (paused, completed, archived). Each change is recorded as a goal event.',
+        'Update a session-owned goal: fields, progress, next steps, mandate link, or status. Paused pauses its schedule, active resumes it, completed or archived removes it. Each change is recorded as a goal event.',
       policy: GOAL_WRITE_POLICY,
       inputSchema: Update,
       resultSchema: GoalResult,
       execute: async (input, caller) => (update as Run)(input, caller) as never,
+    }),
+    defineOperation({
+      name: 'goal.facts',
+      description:
+        'Read the same goal facts and changed-line summary as its scheduler, without consuming the changes. Closed goals return null facts.',
+      policy: GOAL_READ_POLICY,
+      inputSchema: Get,
+      resultSchema: z.discriminatedUnion('accepted', [
+        z.object({
+          accepted: z.literal(true),
+          facts: z
+            .object({ digest: z.string(), summary: z.string(), lines: z.array(z.string()) })
+            .nullable(),
+        }),
+        RejectionSchema,
+      ]),
+      execute: async (input, caller) => (facts as Run)(input, caller) as never,
     }),
     defineOperation({
       name: 'goal.journal.append',
