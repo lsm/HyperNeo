@@ -14,6 +14,8 @@ import { createTestDb } from '../../../helpers/database';
 
 let db: Awaited<ReturnType<typeof createTestDb>>;
 let root: string;
+let gitHome: string;
+let previousGitConfig: string | undefined;
 let repo: NeoRepository;
 let home: NeoHomeRepository;
 const git = async (...args: string[]) => {
@@ -52,6 +54,13 @@ const call = async (
 beforeEach(async () => {
   db = await createTestDb();
   root = await mkdtemp(join(tmpdir(), 'neo-home-'));
+  gitHome = await mkdtemp(join(tmpdir(), 'neo-home-git-'));
+  previousGitConfig = process.env.GIT_CONFIG_GLOBAL;
+  await writeFile(
+    join(gitHome, 'config'),
+    '[user]\n name = Verify Neo\n email = verify@example.invalid\n[commit]\n gpgsign = false\n'
+  );
+  process.env.GIT_CONFIG_GLOBAL = join(gitHome, 'config');
   repo = new NeoRepository(db.getDatabase());
   home = new NeoHomeRepository(root, repo);
   await git('init', '--quiet');
@@ -62,6 +71,9 @@ beforeEach(async () => {
 afterEach(async () => {
   db.close();
   await rm(root, { recursive: true, force: true });
+  await rm(gitHome, { recursive: true, force: true });
+  if (previousGitConfig === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+  else process.env.GIT_CONFIG_GLOBAL = previousGitConfig;
 });
 const save = (path: string, content = 'Release is ready.\n') =>
   call('neo.home.save', { path, content, message: 'Record release progress' });
