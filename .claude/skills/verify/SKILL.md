@@ -156,6 +156,12 @@ only a synthetic non-UTF-8 document and forces commit failure: rollback must
 preserve every original byte and leave clean status. Valid Unicode is encoded
 and compared as UTF-8 bytes; existing files are never decoded for rollback.
 
+Repeat journey 35 in another fresh run with final argument `ignore-repair`.
+The helper removes its fixture ignore in a local commit, then calls save with
+untracked coordinator transcripts present. Save must repair the ignore and commit
+the curated document while preserving and never tracking the transcripts.
+Staged transcripts and unrelated human changes still cause dirty refusal.
+
 ## Codex Desktop work.send journey
 
 Codex work.send steers a Desktop-owned running turn. This journey uses

@@ -155,6 +155,13 @@ describe('Neo home save', () => {
       else if (state !== 'staged transcript')
         await writeFile(join(root, 'human.md'), 'Human draft.');
       if (state === 'staged') await git('add', 'human.md');
+      if (state === 'staged transcript') {
+        await rm(join(root, '.gitignore'));
+        await git('commit', '-am', 'Existing home without coordinator ignore');
+        await mkdir(join(root, '.coordinators'), { recursive: true });
+        await writeFile(join(root, '.coordinators', 'transcript.md'), 'Private fixture.');
+        await git('add', '.coordinators/transcript.md');
+      }
       const before = await git('status', '--porcelain', '-z');
       expect(await save({ path: 'digest.md', content: 'Curated.' })).toMatchObject({
         ok: false,

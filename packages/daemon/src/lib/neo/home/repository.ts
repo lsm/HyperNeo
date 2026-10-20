@@ -61,7 +61,9 @@ export class NeoHomeRepository {
     if (metadata && !metadata.isDirectory())
       return { ok: false, reason: 'invalid_path: home git directory.' };
     const dirty = metadata
-      ? (await this.git(['status', '--porcelain', '--untracked-files=all'])).text
+      ? (await this.git(['status', '--porcelain', '-z', '--untracked-files=all'])).text
+          .split('\0')
+          .some((entry) => entry && !entry.startsWith('?? .coordinators/'))
       : (
           await readdir(this.root).catch((error) => {
             if (error.code !== 'ENOENT') throw error;
