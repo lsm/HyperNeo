@@ -43,7 +43,7 @@ export function neoConversationPage(entries: NeoConversationEntry[], page: NeoCo
 export class NeoConversationReader {
   constructor(private readonly db: Database) {}
 
-  read(page: NeoConversationPage) {
+  read(page: NeoConversationPage, humanView = false) {
     const cursor = page.after ?? page.before;
     const direction = page.after ? 'ASC' : 'DESC';
     const rows = this.db
@@ -55,7 +55,7 @@ export class NeoConversationReader {
         FROM neo_publications WHERE conversation_id = ?
       UNION ALL
       SELECT created_at AS at, 'session' AS role, sequence, message_id AS id
-        FROM neo_session_messages WHERE conversation_id = ? AND ${SENT_BY_NEO})
+        FROM neo_session_messages WHERE conversation_id = ?${humanView ? ` AND ${SENT_BY_NEO}` : ''})
       ${cursor ? `WHERE (at, role, sequence) ${page.after ? '>' : '<'} (?, ?, ?)` : ''}
       ORDER BY at ${direction}, role ${direction}, sequence ${direction} LIMIT ?`)
       .all(

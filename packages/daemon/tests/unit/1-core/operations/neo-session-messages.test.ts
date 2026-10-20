@@ -39,7 +39,7 @@ describe('planNeoSessionMessage', () => {
 });
 
 describe('NeoConversationReader session rows', () => {
-  test('the human sees what Neo sent and Neo publications, never what other sessions sent Neo', () => {
+  test('the human sees what Neo sent and Neo publications, never what other sessions sent Neo; Neo still reads all of it', () => {
     const db = new Database(':memory:');
     runMigrations(db, () => {});
     createTables(db);
@@ -60,10 +60,8 @@ describe('NeoConversationReader session rows', () => {
       links: [],
       triggerId: 'human:m-1',
     });
-    const page = new NeoConversationReader(db).read({
-      conversationId: root.conversationId,
-      limit: 10,
-    });
+    const reader = new NeoConversationReader(db);
+    const page = reader.read({ conversationId: root.conversationId, limit: 10 }, true);
     expect(
       page.items.map((item) =>
         item.role === 'session'
@@ -76,7 +74,11 @@ describe('NeoConversationReader session rows', () => {
     expect(messages.latest(root.conversationId, 5).map((item) => item.text)).toEqual([
       'Rebase on dev',
     ]);
-    expect(messages.get(root.conversationId, 'worker-1-2000')?.text).toBe('Rebased, CI is green');
+    expect(
+      reader
+        .read({ conversationId: root.conversationId, limit: 10 })
+        .items.flatMap((item) => (item.role === 'session' ? [item.message.text] : []))
+    ).toEqual(['Rebase on dev', 'Rebased, CI is green', 'fullstack 2: fixed the bot finding']);
     db.close();
   });
 });
