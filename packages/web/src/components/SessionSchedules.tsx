@@ -147,7 +147,7 @@ function ScheduleStrip({ sessionId, readonly }: { sessionId: string; readonly?: 
           </p>
         )}
         {loading && <p role="status">{t('schedules.loading')}</p>}
-        {!loading && !rows.length && <p>{t('schedules.empty')}</p>}
+        {!loading && !error && !rows.length && <p>{t('schedules.empty')}</p>}
         {rows.map((row) => (
           <article key={row.id} data-schedule={row.id} class="border-t border-line py-2">
             <div class="flex items-start justify-between gap-3">
