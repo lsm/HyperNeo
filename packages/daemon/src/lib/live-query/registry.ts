@@ -47,6 +47,7 @@ import {
   mapMessageRow,
   mapThinMessageRow,
 } from './queries/messages.ts';
+import { expandSessionMessages } from './queries/message-children.ts';
 
 export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
   [
@@ -162,6 +163,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
     'messages.bySession',
     {
       sql: MESSAGES_BY_SESSION_SQL,
+      expandRows: expandSessionMessages,
       paramCount: 2,
       debounceMs: DEBOUNCE_SDK_MESSAGES_MS,
       mapRow: mapMessageRow,

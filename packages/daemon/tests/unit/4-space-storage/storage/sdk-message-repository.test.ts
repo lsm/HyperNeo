@@ -10,6 +10,7 @@ import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-m
 import { createSQLiteAsciiPrefixRange } from '../../../../src/storage/sqlite-prefix-range';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { runMigration413 } from '../../../../src/storage/schema/m413-sdk-message-columns';
+import { runMigration169 } from '../../../../src/storage/schema/migrations';
 import { fillSdkMessageFixtureColumns } from '../../helpers/sdk-message-fixture-columns';
 
 describe('SDKMessageRepository', () => {
@@ -101,6 +102,7 @@ describe('SDKMessageRepository', () => {
 			CREATE INDEX idx_sdk_messages_session_uuid ON sdk_messages(session_id, sdk_uuid);
 			CREATE INDEX idx_sdk_messages_deferred_uuid ON sdk_messages(sdk_uuid) WHERE send_status = 'deferred';
 		`);
+    runMigration169(db);
     runMigration413(db);
     repository = new SDKMessageRepository(db as any);
   });

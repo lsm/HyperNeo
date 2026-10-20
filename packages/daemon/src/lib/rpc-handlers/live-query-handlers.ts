@@ -378,6 +378,9 @@ export function setupLiveQueryHandlers(
         scopeFilter: namedQuery.buildScopeFilter?.(params, db),
         metadataScopeFilter: namedQuery.metadataScopeFilter,
         rowFingerprint: namedQuery.rowFingerprint,
+        expandRows: namedQuery.expandRows
+          ? (rows, params) => namedQuery.expandRows!(rows, params, db)
+          : undefined,
       }
     );
 

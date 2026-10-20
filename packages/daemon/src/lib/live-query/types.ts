@@ -2,6 +2,11 @@ import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type { TableChangeScope } from '../../storage/reactive-database.ts';
 
 export interface NamedQuery {
+  expandRows?: (
+    rows: Record<string, unknown>[],
+    params: ReadonlyArray<unknown>,
+    db: BunDatabase
+  ) => Record<string, unknown>[];
   sql: string;
   paramCount: number;
   debounceMs?: number;

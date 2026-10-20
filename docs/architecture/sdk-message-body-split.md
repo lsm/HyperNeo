@@ -103,6 +103,17 @@ adapter reads; the first-block expression index uses the original COALESCE rule.
 All index keys and predicates use metadata only. Body outputs remain unchanged
 until slices 8–9.
 
+Slice 5 switches the live-query/repository predicates to these columns. The
+transcript query selects only its capped top-level window; a TypeScript row
+expander extracts tool-use ids from that window and fetches children by indexed
+parent id. The live-query engine expands before hashing both snapshots and
+deltas, so late child updates and window eviction retain the original behavior.
+The active-turn CTE carries its selected metadata once, avoiding downstream
+joins that can choose a whole-session scan. Body output projections (including
+block/text extraction) stay in place for slices 8–9. Migration 417 adds a covering
+session-window index so the bounded transcript selection never filters body pages;
+the body is read by rowid only after the window is selected.
+
 ## Migration
 
 Only the cheap schema steps run at startup. The body copy runs online as a background job: the dual write (slice 6) and the `COALESCE` reads (slices 8–9) make a half-copied table correct to read. That matters because the iMac database is about 30× the synthetic one. At startup the copy would keep the daemon down for minutes; online, it runs in chunks that yield between transactions, with no downtime. All numbers below are measured on synthetic data: 110k rows and 850 MB of JSON, about twice the laptop's live body bytes.

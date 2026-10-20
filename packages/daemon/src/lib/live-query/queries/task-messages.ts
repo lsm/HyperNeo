@@ -210,13 +210,7 @@ sdk_rows_raw AS (
   WHERE (
       sm.message_type != 'system'
       OR sm.message_subtype_norm != 'informational'
-      OR NOT json_valid(sm.sdk_message)
-      OR COALESCE(
-        CASE
-          WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.level')
-        END,
-        ''
-      ) != 'info'
+      OR COALESCE(sm.info_level, 0) != 1
     )
     ${WORKER_SHUTDOWN_TAIL_FILTER_SQL}
 ),

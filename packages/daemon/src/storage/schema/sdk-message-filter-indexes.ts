@@ -2,6 +2,10 @@ import type { Database } from '../sqlite-compat.ts';
 
 const indexes: readonly [string, string, string?][] = [
   [
+    'session_window',
+    'session_id, parent_tool_use_id, timestamp, seq, message_subtype_norm, message_type, info_level, id, send_status, sdk_uuid',
+  ],
+  [
     'status_projection',
     'session_id, send_status, message_type, user_status_eligible, timestamp, id, sdk_uuid',
   ],
