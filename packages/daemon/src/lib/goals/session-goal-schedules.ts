@@ -48,6 +48,10 @@ export class SessionGoalSchedules implements ScheduleSource {
     if (goal.status === 'active' && row.status === 'paused') this.scheduler.resume(row);
   }
 
+  label(id: string): string | null {
+    return this.goals.get(id)?.title ?? null;
+  }
+
   async facts(id: string) {
     const goal = this.goals.get(id);
     if (!goal || goal.status === 'completed' || goal.status === 'archived') return null;
