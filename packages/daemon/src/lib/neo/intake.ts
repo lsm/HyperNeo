@@ -148,6 +148,8 @@ export function readNeoReply(
 }
 
 export function neoReplyFact(reply: NeoReply | null): string | null {
+  if (reply?.question?.kind === 'start')
+    return `The human replied about your start question "${reply.question.text}" (it stays open; only its Start button starts todos):`;
   if (reply?.question) return `The human answered your question "${reply.question.text}":`;
   if (reply?.todo) return `The human replied about todo ${reply.todo.id}:`;
   return reply?.replyTo.kind === 'ask' && reply.ask
@@ -215,6 +217,7 @@ export function recordNeoReplyAnswer(
     receipt.ok &&
     words &&
     reply?.question?.state === 'open' &&
+    reply.question.kind !== 'start' &&
     reply.ask?.sessionId === sessionId
   )
     store.answerQuestion(reply.question, words, 'chat', Date.now());
