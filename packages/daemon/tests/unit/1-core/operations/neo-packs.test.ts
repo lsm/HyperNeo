@@ -1,16 +1,5 @@
 import { describe, expect, test } from 'bun:test';
 import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
-import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { NeoAsk, NeoAskItem, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
-import type { NeoEvidence } from '../../../../src/lib/neo/evidence.ts';
-import { createCodingPack } from '../../../../src/lib/neo/packs/coding/pack.ts';
-import { createLifeAdminPack } from '../../../../src/lib/neo/packs/life-admin/pack.ts';
-import {
-  type NeoPrClaimRow,
-  planNeoCardPrCandidates,
-} from '../../../../src/lib/neo/packs/coding/card-pr-claims.ts';
-import { githubUrlKey } from '../../../../src/lib/github/parse-pr-url.ts';
-import type { NeoWorkPrRow } from '../../../../src/lib/neo/packs/coding/neo-work-pr-repository.ts';
 import { NEO_DEFAULT_PACKS, neoPackBriefs, neoPacks } from '../../../../src/lib/neo/packs/index.ts';
 import type { NeoPack } from '../../../../src/lib/neo/packs/types.ts';
 
@@ -68,28 +57,4 @@ describe('neoPacks', () => {
     expect(packs.map((item) => item.id)).toEqual(ids);
     expect(packs[0]).toBe(coding);
   });
-});
-
-const merged: NeoEvidence = {
-  key: 'https://github.com/lsm/HyperNeo/pull/1',
-  state: 'done',
-  summary: 'merged',
-  blockers: [],
-};
-const open: NeoEvidence = {
-  ...merged,
-  key: 'https://github.com/lsm/HyperNeo/pull/2',
-  state: 'pending',
-  summary: 'open',
-};
-const item = (overrides: Partial<NeoAskItem> = {}): NeoAskItem => ({
-  id: 'i1',
-  text: 'Fix merged to dev',
-  state: 'pending',
-  evidence: null,
-  check: 'coding.pr_merged',
-  metBy: null,
-  removed: false,
-  addedAt: null,
-  ...overrides,
 });

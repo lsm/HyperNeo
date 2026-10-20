@@ -48,7 +48,6 @@ type Triggered = Proof & { triggerId?: string };
 type LinkEvidence = {
   link: NeoPublicationLink;
   exists: boolean;
-  origin: NeoAskOrigin | null;
 };
 
 interface NeoPublicationRuntime {
@@ -122,26 +121,17 @@ export function requirePublicationProducer(
     : { reason: { accepted: false, reason: 'live_avatar_required' } };
 }
 
-function publicationLinkProblem(
-  proof: Proof,
-  { link, exists, origin }: LinkEvidence
-): string | null {
-  const ref = `${link.kind} link "${link.id}"`;
-  if (!exists)
-    return `${ref} does not exist; link only Neo project or work ids, never work.find refs or session ids`;
-  if (
-    link.kind !== 'project' &&
-    (origin?.sessionId !== proof.ask.sessionId || origin.messageId !== proof.ask.messageId)
-  )
-    return `${ref} was not started for this ask; link only work this ask created`;
-  return null;
+function publicationLinkProblem({ link, exists }: LinkEvidence): string | null {
+  return exists
+    ? null
+    : `${link.kind} link "${link.id}" does not exist; link only Neo project ids, never work ids, work.find refs or session ids`;
 }
 
 export function requirePublicationLinks(
   proof: Proof,
   evidence: readonly LinkEvidence[]
 ): { value: Proof } | { reason: Rejection } {
-  const problem = evidence.map((item) => publicationLinkProblem(proof, item)).find(Boolean);
+  const problem = evidence.map(publicationLinkProblem).find(Boolean);
   return problem
     ? { reason: { accepted: false, reason: 'invalid_scene_reference', detail: problem } }
     : { value: proof };
@@ -167,7 +157,7 @@ export function requirePublicationLifetime(
 }
 
 function readLinkEvidence(link: NeoPublicationLink, runtime: NeoPublicationRuntime): LinkEvidence {
-  return { link, exists: link.kind === 'project' && runtime.hasProject(link.id), origin: null };
+  return { link, exists: link.kind === 'project' && runtime.hasProject(link.id) };
 }
 
 export function createNeoPublisher(runtime: NeoPublicationRuntime) {

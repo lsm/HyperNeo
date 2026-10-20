@@ -17,7 +17,6 @@ import {
   driverExchangeReport,
   driverWorkCall,
   driverWorkCaller,
-  isNeoReceiptUnconfirmed,
   NEO_CARD_CONFIRM_MS,
   NEO_WORK_UNANCHORED_NOTE,
   NEO_WORK_UNANCHORED_SETTLE_MS,
@@ -32,11 +31,9 @@ import {
   readDriverSettlement,
   withWorkGoal,
 } from '../../../../src/lib/neo/driver-work.ts';
-import { neoEvidenceSignature } from '../../../../src/lib/neo/evidence.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import type { NeoRef } from '../../../../src/lib/neo/packs/coding/ask-prs.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
-import { pickNeoReplacementWorkers } from '../../../../src/lib/neo/work-reroute.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,

@@ -550,7 +550,7 @@ describe('runtime-bound publication operation', () => {
       );
       const detail = {
         unknown:
-          'work link "missing" does not exist; link only Neo project or work ids, never work.find refs or session ids',
+          'work link "missing" does not exist; link only Neo project ids, never work ids, work.find refs or session ids',
       }[kind];
       expect(result).toMatchObject(
         kind === 'unsafe-kind'
@@ -562,20 +562,17 @@ describe('runtime-bound publication operation', () => {
     }
   );
 
-  test('pure link/lifetime gates refuse foreign evidence and superseded turns', () => {
+  test('pure link/lifetime gates refuse missing links and superseded turns', () => {
     const who = caller();
     const producer = requirePublicationProducer(who, root, root);
     if (!('value' in producer)) throw new Error('Expected producer');
     const proof = { ...producer.value, ask };
-    const link = { label: 'Open', kind: 'work' as const, id: 'work:1' };
-    expect(requirePublicationLinks(proof, [{ link, exists: true, origin: ask }])).toEqual({
-      value: proof,
-    });
-    expect(
-      requirePublicationLinks(proof, [
-        { link, exists: true, origin: { ...ask, messageId: 'foreign' } },
-      ])
-    ).toHaveProperty('reason.reason', 'invalid_scene_reference');
+    const link = { label: 'Open', kind: 'project' as const, id: 'project:web' };
+    expect(requirePublicationLinks(proof, [{ link, exists: true }])).toEqual({ value: proof });
+    expect(requirePublicationLinks(proof, [{ link, exists: false }])).toHaveProperty(
+      'reason.reason',
+      'invalid_scene_reference'
+    );
     expect(requirePublicationLifetime(proof, who, root, root)).toEqual({ value: proof });
     expect(
       requirePublicationLifetime(proof, { ...who, neoTurn: undefined }, root, root)
