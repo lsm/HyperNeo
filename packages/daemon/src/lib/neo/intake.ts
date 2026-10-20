@@ -4,6 +4,7 @@ import type { Session } from '@hyperneo/shared';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { NeoAsk, NeoQuestion, NeoReplyTo, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import { neoReplyExcerpt } from '@hyperneo/shared/types/neo-ask';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -177,7 +178,7 @@ export function neoReplySnapshot(
     : quoted
       ? neoAskText(quoted.content, '\n').trim() || '(attachment)'
       : '';
-  const excerpt = text.length > 300 ? `${text.slice(0, 300).trimEnd()}…` : text;
+  const excerpt = neoReplyExcerpt(text);
   return {
     kind: replyTo.kind,
     id: replyTo.id,

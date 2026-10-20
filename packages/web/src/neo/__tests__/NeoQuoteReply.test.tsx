@@ -29,7 +29,8 @@ const originalConnection = connectionState.value;
 const sessionId = signal<string | null>(root);
 const pending = signal<readonly NeoPendingAsk[]>([]);
 const originalText = 'First request\nSecond line';
-const fullReply = 'Short answer\n\n## Full evidence\n\nPreserve **this detail**.';
+const shortReply = 'Short answer';
+const fullReply = `${shortReply}\n\n## Full evidence\n\nPreserve **this detail**.`;
 const conversation: NeoPublicConversation = {
   conversationId,
   status: 'ready',
@@ -57,7 +58,7 @@ const conversation: NeoPublicConversation = {
         publicationId: 'saved-reply',
         askOrigin: { sessionId: root, messageId: 'original-ask' },
         producerInput: { sessionId: 'holder', messageId: 'reply' },
-        shortText: 'Short answer',
+        shortText: shortReply,
         fullText: fullReply,
         links: [],
         sequence: 1,
@@ -290,7 +291,7 @@ describe('Neo quote reply through live chat and durable intake', () => {
     }
   );
 
-  it('selects either author, keeps drafts on replacement and quotes full collapsed replies', async () => {
+  it('selects either author, keeps drafts on replacement and quotes summaries of collapsed replies', async () => {
     const input = await open();
     type('My existing draft');
     quote('You');
@@ -298,7 +299,7 @@ describe('Neo quote reply through live chat and durable intake', () => {
     expect(input.value).toBe('My existing draft');
     expect(screen.queryByRole('heading', { name: 'Full evidence' })).toBeNull();
     const anchor = quote('Neo');
-    expect(screen.getByRole('region', { name: /^回复/ }).textContent).toContain(fullReply);
+    expect(screen.getByRole('region', { name: /^回复/ }).textContent).toContain(shortReply);
     expect(input.value).toBe('My existing draft');
     submit();
     await waitFor(() => expect(calls()).toHaveLength(1));
@@ -384,9 +385,7 @@ describe('Neo quote reply through live chat and durable intake', () => {
     submit();
     const retry = await screen.findByRole('button', { name: '重试' });
     const failed = document.querySelector('[data-pending-ask]')!;
-    expect(failed.querySelector('[data-quote-bar]')?.textContent).toContain(
-      `Neo${fullReply.split('\n')[0]}`
-    );
+    expect(failed.querySelector('[data-quote-bar]')?.textContent).toContain(`Neo${shortReply}`);
     fireEvent.click(retry);
     await waitFor(() => expect(calls()).toHaveLength(2));
     expect(calls()[0][1].input).toMatchObject({
@@ -406,7 +405,7 @@ describe('Neo quote reply through live chat and durable intake', () => {
     quote('You');
     fireEvent.click(screen.getByRole('button', { name: '编辑' }));
     await waitFor(() => expect(input.value).toBe('Please explain'));
-    expect(screen.getByRole('region', { name: /^回复/ }).textContent).toContain(fullReply);
+    expect(screen.getByRole('region', { name: /^回复/ }).textContent).toContain(shortReply);
     expect(screen.getByRole('region', { name: /^回复/ }).textContent).toContain('Neo');
     fireEvent.click(screen.getByRole('button', { name: '移除回复' }));
     submit();
@@ -426,7 +425,7 @@ describe('Neo quote reply through live chat and durable intake', () => {
       });
       submit();
       const retry = await screen.findByRole('button', { name: '重试' });
-      expect(screen.getByRole('region', { name: /^回复/ }).textContent).toContain(fullReply);
+      expect(screen.getByRole('region', { name: /^回复/ }).textContent).toContain(shortReply);
       fireEvent.click(retry);
       await waitFor(() => expect(screen.queryByRole('region', { name: /^回复/ })).toBeNull());
       expect(calls()[1][1].input).toEqual(calls()[0][1].input);
@@ -442,7 +441,7 @@ describe('Neo quote reply through live chat and durable intake', () => {
       const finish = deferredSend();
       submit();
       await waitFor(() => expect(calls()).toHaveLength(1));
-      expect(screen.getByRole('region', { name: /^回复/ }).textContent).toContain(fullReply);
+      expect(screen.getByRole('region', { name: /^回复/ }).textContent).toContain(shortReply);
       if (change === 'replacement') quote('You');
       if (change === 'cancel' || change === 'reselection') {
         fireEvent.click(screen.getByRole('button', { name: '移除回复' }));
@@ -462,7 +461,7 @@ describe('Neo quote reply through live chat and durable intake', () => {
         await waitFor(() => expect(screen.queryByRole('region', { name: /^回复/ })).toBeNull());
       } else {
         expect(screen.getByRole('region', { name: /^回复/ }).textContent).toContain(
-          change === 'reselection' ? fullReply : originalText
+          change === 'reselection' ? shortReply : originalText
         );
       }
       expect(screen.getByRole('textbox', { name: '给 Neo 发消息' })).toHaveProperty(
@@ -504,13 +503,13 @@ describe('Neo quote reply through live chat and durable intake', () => {
     expect(calls()).toHaveLength(0);
   });
 
-  it('renders a two-line quote preview as literal text, capped like iOS', async () => {
+  it('renders a two-line summary preview as literal text within the stored excerpt limit', async () => {
     const publication = conversation.entries[1];
     if (publication.kind !== 'publication') throw new Error('Expected publication fixture');
     const previous = publication.publication;
     publication.publication = {
       ...previous,
-      fullText: '<img src=x onerror=alert(1)> **literal**\r' + 'a'.repeat(4500),
+      shortText: '<img src=x onerror=alert(1)> **literal**\r' + 'a'.repeat(1500),
     };
     try {
       await open();
@@ -519,7 +518,7 @@ describe('Neo quote reply through live chat and durable intake', () => {
       const region = screen.getByRole('region', { name: /^回复Neo/ });
       expect(region.textContent).toContain('Neo');
       const preview = region.querySelector('.line-clamp-2')!;
-      expect(Array.from(preview.textContent!)).toHaveLength(501);
+      expect(Array.from(preview.textContent!)).toHaveLength(301);
       expect(preview.textContent).toContain('<img src=x onerror=alert(1)> **literal**\n');
       expect(preview.textContent!.endsWith('…')).toBe(true);
       expect(preview.querySelector('img')).toBeNull();

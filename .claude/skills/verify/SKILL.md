@@ -67,7 +67,7 @@ UI is served, that RPC answers, and that the mock model API is up. It ends with
   `sqlite3 -readonly "$RUN/data/daemon.db" "SELECT ..."`. Only the seed and
   check scripts write to it: `seed-todo.sh` and `seed-ledger.sh` (journeys 3 and 4),
   `merge-check.sh` (journey 7), `archive-guard-check.sh` (journey 10) and
-  `seed-start-question.sh` (journey 12).
+  `seed-start-question.sh` (journey 12), and `quote-summary-check.mjs` (journey 14).
 - Web UI: open `http://127.0.0.1:<port>/neo` (Neo) or
   `/session/<sessionId>` (a session) in the browser; read the page text and take
   a screenshot.
@@ -207,7 +207,9 @@ adds its journey here.
     with one, updates it, and lists it. End state: `evidence/goal-refused.json` holds
     `done_test_required`; `goal-list.json` lists "Grow OAP" at progress 40 with its
     done-test, mandate link and next step; `goal-events.txt` reads `created|human`
-    then `updated|human`.
+    then `updated|human`. The script then appends a journal entry twice for the same
+    run: `goal-journal.json` holds one entry for `run-1`, with the second effect
+    ("Three projects asked for it") and the PR as evidence.
 12. **A start question lists only todos that can still start.** After journey 1
     opened root, run `.claude/skills/verify/seed-start-question.sh "$RUN"`. It
     writes `ask-prune` with two todos awaiting start, `todo-a` (check
@@ -232,7 +234,26 @@ adds its journey here.
     `Fix the loader -> Neo: Rebased.`; on `/neo` each shows as one collapsed row
     "Neo → Fix the loader" with its first line, expanding to the full text.
 
-13. **Codex work.send steers a Desktop-owned running turn.** This journey uses
+14. **Reply quotes show the same summary in the composer and after sending.**
+    After opening root and configuring the mock provider, run
+    `NODE_PATH=<directory containing playwright> node .claude/skills/verify/quote-summary-check.mjs <port> "$RUN"`.
+    If Playwright's browser is not installed, set `VERIFY_BROWSER` to a Chrome
+    executable; it runs headless with a fresh browser context. The check seeds
+    a publication in the isolated run DB with different short and detailed text,
+    then replies through the visible footer button and the context menu, types
+    and sends a reply, and waits for the durable message rather than its pending
+    preview. End state: all four quote previews show only the short summary;
+    `evidence/quote-summary.json` records the observed strings, with composer
+    and sent-message screenshots for both paths. To retain before/after proof,
+    pass an evidence name as the third argument. Keep the launch shell alive
+    while driving the UI if your command executor stops background children
+    when the launching command exits.
+    Repeat with `VERIFY_QUOTE_LONG=1` to seed a 350-character summary: composer
+    and durable quote must both show the stored 300-character excerpt plus an
+    ellipsis. The daemon and web share this excerpt rule; detailed message text
+    remains available through Details and Copy.
+
+15. **Codex work.send steers a Desktop-owned running turn.** This journey uses
     the real native IPC and the `invokeOperation` door used by Neo; it does not
     automate the GUI or start a HyperNeo daemon. Use only a sacrificial thread
     in a fresh temporary workspace, never a human's working thread. Run helpers
@@ -272,5 +293,6 @@ kill "$(cat "$RUN/asr-stub.pid")"   # only if journey 2 started it
 .claude/skills/verify/stop.sh "$RUN"
 ```
 
-`stop.sh` stops only the daemon and mock it started, by their pid files. Close
+`stop.sh` stops only the daemon and mock it started, by their pid files, and
+waits for both to exit before the run directory can be reused. Close
 the browser tab you opened. Delete `$RUN` once the evidence is in the PR.
