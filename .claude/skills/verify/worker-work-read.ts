@@ -26,6 +26,11 @@ for (const id of ['neo:private','archived-worker']) {
   db.prepare("INSERT INTO sessions(id,title,created_at,last_active_at,status,config,metadata) VALUES (?,?,'2026-10-20','2026-10-20',?,'{}','{}')").run(id,id,id==='archived-worker'?'archived':'active');
   db.prepare('INSERT INTO sdk_messages(id,session_id,message_type,sdk_message,timestamp) VALUES (?, ?, ?, ?, ?)').run(`private-${id}`,id,'assistant',JSON.stringify({type:'assistant',message:{content:[{type:'text',text:'HIDDEN_PRIVATE_TRANSCRIPT'}]}}),'2026-10-20T00:00:00Z');
 }
+for (const [id,status,completedAt] of [['archived-task','archived',null],['old-task','done',Date.now()-31*86400000]] as const) {
+  db.prepare('INSERT INTO space_tasks(id,title,status,created_at,updated_at,completed_at) VALUES (?,?,?,?,?,?)').run(id,id,status,Date.now(),Date.now(),completedAt);
+  db.prepare("INSERT INTO sessions(id,title,created_at,last_active_at,status,config,metadata) VALUES (?,?,'2026-10-20','2026-10-20','active','{}','{}')").run(`space:${id}`,id);
+  db.prepare('INSERT INTO sdk_messages(id,session_id,message_type,sdk_message,timestamp,task_id) VALUES (?,?,?,?,?,?)').run(id,`space:${id}`,'assistant',JSON.stringify({type:'assistant',message:{content:[{type:'text',text:'HIDDEN_TASK_TRANSCRIPT'}]}}),'2026-10-20T00:00:00Z',id);
+}
 const text = '  SYNTHETIC_COMPLETE_REPORT 🔬\n'.repeat(6000) + '\n';
 const insert = db.prepare('INSERT INTO sdk_messages(id,session_id,message_type,sdk_message,timestamp) VALUES (?, ?, ?, ?, ?)');
 for(let n=0;n<20;n++) insert.run(`tool-prefix-${n}`,'worker','assistant',JSON.stringify({type:'assistant',message:{content:[{type:'tool_use',id:`tool-${n}`,name:'Read',input:{path:'synthetic'}}]}}),'2026-10-20T00:00:00Z');
@@ -47,7 +52,7 @@ const server = Bun.serve({hostname:'127.0.0.1',port,async fetch(request){
   const body=await request.json() as {messages?:{content?:unknown}[]};
   for(const message of body.messages??[]) if(Array.isArray(message.content)) for(const block of message.content) if(block.type==='tool_result') results[Number(block.tool_use_id.split('-').at(-1))]=strings(block.content);
   const prior=step?object(results[step-1]??'{}'):undefined;
-  const input=step<2?{sessionId:['neo:private','archived-worker'][step],before:0,after:0}:step===2?{sessionId:'worker',around:'report',before:0,after:0}:prior?.value?.nextCursor?{sessionId:'worker',before:0,after:0,cursor:prior.value.nextCursor}:undefined;
+  const input=step<4?{sessionId:['neo:private','archived-worker','space:archived-task','space:old-task'][step],before:0,after:0}:step===4?{sessionId:'worker',around:'report',before:0,after:0}:prior?.value?.nextCursor?{sessionId:'worker',before:0,after:0,cursor:prior.value.nextCursor}:undefined;
   const id=`read-${step++}`;
   const usage={input_tokens:20,output_tokens:20};
   const events=[
@@ -65,10 +70,10 @@ const timer=setInterval(()=>{const now=performance.now();maxLagMs=Math.max(maxLa
 const stream=query({prompt:'Read the complete older report using work.read and its cursors.',options:{cwd:join(run,'workspace'),executable:'bun',pathToClaudeCodeExecutable:resolveSDKCliPath(),model:'claude-sonnet-4-20250514',tools:[],permissionMode:'bypassPermissions',allowDangerouslySkipPermissions:true,settingSources:[],env:{...process.env,ANTHROPIC_BASE_URL:`http://127.0.0.1:${port}`,ANTHROPIC_API_KEY:'sk-devproxy-test-key',CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1'},mcpServers:{'hyperneo-operations':createOperationMcpServer(registry,()=>({sessionId:'neo:verify-work-read',role:'neo'}))},stderr:data=>writeFileSync(join(run,'sdk-stderr.log'),data,{flag:'a'}),maxTurns:40}});
 try {
   for await(const event of stream) writeFileSync(join(run,'sdk-events.jsonl'),JSON.stringify(event)+'\n',{flag:'a'});
-  const denials=results.slice(0,2).map(object);
-  const pages=results.slice(2).map(object);
+  const denials=results.slice(0,4).map(object);
+  const pages=results.slice(4).map(object);
   writeFileSync(join(run,'observed.json'),JSON.stringify({denials,pages,maxLagMs},null,2));
-  assert(denials.every(result=>result.ok===false&&result.reason==='not_found'),'restricted session bodies must not be readable');
+  assert(denials.every((result,n)=>n<2?result.ok===false&&result.reason==='not_found':result.ok===true&&result.value.turns.length===0&&result.value.availability==='reply_unavailable'),'restricted session bodies must not be readable');
   assert(pages.every(page=>page.ok===true),'work.read must locate an older report without its search-index row');
   const actual=pages.flatMap(page=>page.value.turns.map((turn:{text:string})=>turn.text)).join('');
   assert.equal(createHash('sha256').update(actual).digest('hex'),createHash('sha256').update(text).digest('hex'));
@@ -79,6 +84,6 @@ try {
   assert.equal(pages.at(-1).value.availability,'complete');
   assert(pages.length>1,'long reports must be paged without truncation');
   assert(maxLagMs<1000);
-  writeFileSync(join(run,'evidence.json'),JSON.stringify({actualSdkMcp:true,pages:pages.length,reportBytes:Buffer.byteLength(text),sha256:createHash('sha256').update(actual).digest('hex'),maxLagMs,sdkStorageUnchanged:true,searchIndexEmpty:true,retractedLegacyIdHidden:true,textlessHistoryExhausted:true,restrictedSessionsHidden:true,malformedBodySkipped:true},null,2));
+  writeFileSync(join(run,'evidence.json'),JSON.stringify({actualSdkMcp:true,pages:pages.length,reportBytes:Buffer.byteLength(text),sha256:createHash('sha256').update(actual).digest('hex'),maxLagMs,sdkStorageUnchanged:true,searchIndexEmpty:true,retractedLegacyIdHidden:true,textlessHistoryExhausted:true,restrictedSessionsHidden:true,malformedBodySkipped:true,restrictedTasksHidden:true},null,2));
   console.log(join(run,'evidence.json'));
 } finally {stream.close();clearInterval(timer);await server.stop(true);core.close();}

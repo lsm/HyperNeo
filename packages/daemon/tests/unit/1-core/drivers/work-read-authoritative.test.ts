@@ -90,6 +90,9 @@ describe('authoritative work.read', () => {
   beforeEach(() => {
     db = new Database(':memory:');
     createTables(db);
+    db.exec(
+      `CREATE TABLE space_tasks (id TEXT PRIMARY KEY,status TEXT,completed_at INTEGER,updated_at INTEGER)`
+    );
     db.exec(`CREATE TABLE message_search_content (id INTEGER PRIMARY KEY, kind TEXT, source_id TEXT,
       message_id TEXT, session_id TEXT, message_type TEXT, body TEXT, timestamp INTEGER)`);
     for (const id of ['worker', 'other'])
@@ -425,6 +428,92 @@ describe('authoritative work.read', () => {
     expect(
       (await page({ cursor: value.nextCursor, before: 0, after: 0 })).turns.map((t) => t.text)
     ).toEqual(['Older report']);
+  });
+
+  test('linked task archival and terminal age apply per message across anchors and cursor pages', async () => {
+    const now = Date.now();
+    const old = now - 31 * 86400000;
+    const cases = [
+      ['archived', now, now, false],
+      ['done', old, now, false],
+      ['cancelled', null, old, false],
+      ['completed', old, now, false],
+      ['in_progress', old, old, true],
+      ['done', now, old, true],
+      ['completed', null, null, true],
+    ] as const;
+    db.prepare(
+      "INSERT INTO sessions(id,title,created_at,last_active_at,status,config,metadata) VALUES ('space:task:worker','Space','2026-10-20','2026-10-20','active','{}','{}')"
+    ).run();
+    for (const [n, [status, completedAt, updatedAt]] of cases.entries()) {
+      const id = `task-${n}`;
+      db.prepare('INSERT INTO space_tasks VALUES (?,?,?,?)').run(
+        id,
+        status,
+        completedAt,
+        updatedAt
+      );
+      put(id, 'assistant', [{ type: 'text', text: id }], {
+        session: 'space:task:worker',
+        split: true,
+      });
+      db.prepare('UPDATE sdk_messages SET task_id=? WHERE id=?').run(id, id);
+    }
+    put('unlinked', 'assistant', [{ type: 'text', text: 'Unlinked report' }], {
+      session: 'space:task:worker',
+    });
+    const original = digest();
+    for (const [n, [, , , visible]] of cases.entries()) {
+      const result = await invoke({
+        sessionId: 'space:task:worker',
+        around: `task-${n}`,
+        before: 0,
+        after: 0,
+      });
+      expect(result).toMatchObject({
+        kind: 'completed',
+        value: {
+          ok: true,
+          value: visible
+            ? { turns: [{ text: `task-${n}` }] }
+            : { turns: [], availability: 'reply_unavailable' },
+        },
+      });
+    }
+    let value = await page({ sessionId: 'space:task:worker', before: 0, after: 0 });
+    const ids = value.turns.map((turn) => turn.messageId);
+    for (let n = 0; value.nextCursor && n < 20; n++) {
+      value = await page({
+        sessionId: 'space:task:worker',
+        before: 0,
+        after: 0,
+        cursor: value.nextCursor,
+      });
+      ids.push(...value.turns.map((turn) => turn.messageId));
+    }
+    expect(ids).toEqual(['unlinked', 'task-6', 'task-5', 'task-4']);
+    expect(value.availability).toBe('complete');
+    expect(digest()).toBe(original);
+  });
+
+  test('a task archived between pages hides its rows and cannot supply result predecessor text', async () => {
+    db.prepare("INSERT INTO space_tasks VALUES ('task','in_progress',NULL,?)").run(Date.now());
+    put('older', 'assistant', [{ type: 'text', text: 'Hidden after task archival' }]);
+    db.prepare("UPDATE sdk_messages SET task_id='task' WHERE id='older'").run();
+    put('empty-result', 'result', '');
+    put('latest', 'user', 'Visible latest');
+    const first = await page({ before: 0, after: 0 });
+    const original = digest();
+    db.prepare("UPDATE space_tasks SET status='archived' WHERE id='task'").run();
+    expect((await page({ around: 'empty-result', before: 0, after: 0 })).turns).toEqual([]);
+    const next = await page({ before: 0, after: 0, cursor: first.nextCursor });
+    expect(next.turns).toEqual([]);
+    expect(next.availability).toBe('complete');
+    expect(digest()).toBe(original);
+    db.prepare("UPDATE space_tasks SET status='in_progress' WHERE id='task'").run();
+    expect((await page({ around: 'older', before: 0, after: 0 })).turns[0].text).toBe(
+      'Hidden after task archival'
+    );
   });
 
   test('external drivers retain their existing indexed source', async () => {
