@@ -169,6 +169,28 @@ describe('deleting the owner session', () => {
 });
 
 describe('goal journal', () => {
+  test('a retried run keeps its entry id, so a page cursor on it still works; an unknown cursor is refused', async () => {
+    const { db, call } = setup();
+    const goal = (await call('goal.session.create', { title: 'Grow', doneTest: 'Ten adopters' }))
+      .goal;
+    const append = (runId: string, effect: string) =>
+      call('goal.journal.append', { goalId: goal.id, runId, done: runId, effect, worked: 'w' });
+    await append('a', 'first');
+    const b = (await append('b', 'first')).entry;
+    const retried = (await append('b', 'second')).entry;
+    expect(retried).toMatchObject({ id: b.id, effect: 'second' });
+    expect(
+      (await call('goal.journal.list', { goalId: goal.id, before: b.id })).entries.map(
+        (entry: { runId: string }) => entry.runId
+      )
+    ).toEqual(['a']);
+    expect(await call('goal.journal.list', { goalId: goal.id, before: 'missing' })).toEqual({
+      accepted: false,
+      reason: 'cursor_not_found: before names no entry of this goal; list again without it.',
+    });
+    db.close();
+  });
+
   test('pages through entries written in the same millisecond without skipping any', async () => {
     const { db, call } = setup();
     const goal = (await call('goal.session.create', { title: 'Grow', doneTest: 'Ten adopters' }))

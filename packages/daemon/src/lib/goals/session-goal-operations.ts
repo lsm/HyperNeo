@@ -159,6 +159,12 @@ export function requireGoalChange(goal: SessionGoal, patch: SessionGoalPatch): G
     : refuse('nothing_to_update: name at least one field to change.');
 }
 
+export function requireJournalCursor(goal: SessionGoal, known: boolean): Gate<SessionGoal> {
+  return known
+    ? { value: goal }
+    : refuse('cursor_not_found: before names no entry of this goal; list again without it.');
+}
+
 export function requireKnownOwner(owner: string, known: boolean): Gate<string> {
   return known ? { value: owner } : refuse(`owner_unknown: no session ${owner}.`);
 }
@@ -286,6 +292,15 @@ export function createSessionGoalOperations({
     .endAsync('outcome');
 
   const journal = owned(superpipe({})('goal.journal.list') as PipelineAPI)
+    .pipe(
+      (goal: SessionGoal, input: z.infer<typeof Journal>) =>
+        requireJournalCursor(
+          goal,
+          !input.before || goals.journalEntry(goal.id, { id: input.before }) !== null
+        ),
+      ['outcome', 'input'],
+      'result:outcome'
+    )
     .pipe(
       (goal: SessionGoal, input: z.infer<typeof Journal>) => ({
         accepted: true as const,
