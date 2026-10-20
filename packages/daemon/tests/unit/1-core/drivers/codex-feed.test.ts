@@ -10,7 +10,7 @@ import {
 } from '../../../../src/lib/drivers/codex-feed';
 import {
   changedFeedFiles,
-  listFeedFiles,
+  listFeedFilesAsync,
   pruneVanishedFeeds,
 } from '../../../../src/lib/drivers/work-feed';
 import {
@@ -118,7 +118,10 @@ describe('feedCodexFiles', () => {
       `${meta('t2', { subagent: {} })}\n${message('g1', 'user', ['judge it'])}\n`
     );
     const run = async () =>
-      feedCodexFiles(db, changedFeedFiles(listFeedFiles(root, 0), readWorkFeedOffsets(db)));
+      feedCodexFiles(
+        db,
+        changedFeedFiles(await listFeedFilesAsync(root, 0), readWorkFeedOffsets(db))
+      );
     expect(await run()).toEqual({ files: 2, turns: 1 });
     expect(await run()).toEqual({ files: 0, turns: 0 });
     appendFileSync(thread, `${message('m2', 'assistant', ['Fixed it.'])}\n{"partial`);
@@ -141,7 +144,7 @@ describe('feedCodexFiles', () => {
       gone,
       `${meta('22222222-2222-2222-2222-222222222222')}\n${message('g1', 'user', ['forget me'])}\n`
     );
-    await feedCodexFiles(db, listFeedFiles(root, 0));
+    await feedCodexFiles(db, await listFeedFilesAsync(root, 0));
     unlinkSync(gone);
     expect(await pruneVanishedFeeds(db, root, codexFeedSource)).toEqual([]);
     expect(rows().map((row) => (row as { body: string }).body)).toEqual(['keep me']);

@@ -5,7 +5,8 @@ import { defineOperation, type OperationCaller } from '../../operations/registry
 import { neoFolderPath } from '../folder.ts';
 import type { NeoService } from '../service.ts';
 import { NeoHomeRepository, type HomeResult } from './repository.ts';
-import { HomeSaveInput, HomeSaveResult, requireHomeSave } from './save.ts';
+import { HomeReadInput, HomeReadResult } from './read.ts';
+import { HomeSaveInput, HomeSaveResult, requireHomePath, requireHomeSave } from './save.ts';
 
 export function createNeoHomeOperations(
   service: Pick<NeoService, 'repo' | 'defaultSessionId'>,
@@ -26,13 +27,32 @@ export function createNeoHomeOperations(
   const save = (superpipe({})('neo.home.save') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(owner, 'caller', 'result:outcome')
-    .pipe(requireHomeSave, 'input', 'result:outcome')
+    .pipe(requireHomePath, 'input', 'result:outcome')
+    .pipe(requireHomeSave, 'outcome', 'result:outcome')
     .pipe((input: HomeSaveInput) => home.save(input), 'outcome', 'outcome')
     .endAsync('outcome') as (
     input: HomeSaveInput,
     caller: OperationCaller
   ) => Promise<HomeSaveResult>;
+  const read = (superpipe({})('neo.home.read') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(owner, 'caller', 'result:outcome')
+    .pipe(requireHomePath, 'input', 'result:outcome')
+    .pipe((input: HomeReadInput) => home.read(input), 'outcome', 'outcome')
+    .endAsync('outcome') as (
+    input: HomeReadInput,
+    caller: OperationCaller
+  ) => Promise<HomeReadResult>;
   return [
+    defineOperation({
+      name: 'neo.home.read',
+      description:
+        'Read a complete local curated home document and its SHA-256, including human edits. Never initializes or commits. Refuses internal, ignored or symlink paths and non-UTF-8 content. Root Neo or the local user only.',
+      inputSchema: HomeReadInput,
+      resultSchema: HomeReadResult,
+      policy: { safetyClass: 'read', roles: ['neo'] },
+      execute: (input, caller) => read(input, caller),
+    }),
     defineOperation({
       name: 'neo.home.save',
       description:

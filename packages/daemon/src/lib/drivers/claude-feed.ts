@@ -15,7 +15,7 @@ import {
   type FeedFileMeta,
   type FeedSource,
   feedWorkFiles,
-  listFeedFiles,
+  listFeedFilesAsync,
   pendingFeedPaths,
   pruneVanishedFeeds,
   withKnownFeedFiles,
@@ -182,9 +182,9 @@ export const runClaudeFeed = (superpipe({})('work-feed-claude') as PipelineAPI)
   )
   .pipe(
     (db: BunDatabase, root: string, now: number) =>
-      runLagPhase('feed:claude:list', () =>
+      runLagPhase('feed:claude:list', async () =>
         withKnownFeedFiles(
-          listFeedFiles(root, now - FEED_WINDOW_MS, TRANSCRIPT_DEPTH),
+          await listFeedFilesAsync(root, now - FEED_WINDOW_MS, TRANSCRIPT_DEPTH),
           pendingFeedPaths(root, readWorkFeedOffsets(db))
         )
       ),

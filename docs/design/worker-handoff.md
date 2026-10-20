@@ -103,6 +103,29 @@ session ownership and actual delivery/consumption in the active turn. Mark the
 chosen human message answered only after durable publication; retries are
 idempotent. One publication does not silently answer every consumed human input.
 
+Local SDK reads keep the existing agent-visible session eligibility policy
+(namespaces, room/type, archival and terminal-age rules), checked before body
+hydration. This changes the data source for eligible sessions, not which sessions
+are exposed; excluded sessions still return `not_found`, with stored data retained.
+
+SDK row visibility also follows the linked Space task: archived tasks and
+terminal tasks older than the shared 30-day retention window are excluded before
+body hydration, including anchor, cursor and predecessor queries. Stored data is
+retained; task archival or ageing changes visibility only.
+
+Local SDK `work.read` pages retain the existing `sessionId` and `turns` fields and
+add `availability`, `nextCursor`, and per-turn `textOffset`/`textComplete` plus
+structured `files` when present. Pass `nextCursor` back as `cursor`; it is scoped
+to the session and uses SDK sequence anchors, preserving the selected window
+across later appends. Text chunks budget 16,000 serialized UTF-8 bytes to stay
+below the SDK tool-output persistence threshold. Reassemble a message's chunks
+in cursor order; whitespace and Unicode are preserved. `complete` describes the
+retrieved history window, not task completion. Result matching inspects the selected
+page plus at most 16 preceding records and does not cross a distinct visible
+result. Unscanned history remains available through cursors; an exhausted
+continuation is `complete` even when its final page contains only textless rows. An unavailable anchor returns
+`reply_unavailable`; an external driver's existing indexed source is unchanged.
+
 ## Small PR sequence and acceptance
 
 Production-line estimates are contracts to remeasure against fresh `dev`; tests

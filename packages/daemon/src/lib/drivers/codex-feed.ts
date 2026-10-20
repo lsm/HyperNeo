@@ -11,7 +11,7 @@ import {
   type FeedFileMeta,
   type FeedSource,
   feedWorkFiles,
-  listFeedFiles,
+  listFeedFilesAsync,
   pruneVanishedFeeds,
 } from './work-feed.ts';
 
@@ -135,7 +135,7 @@ export const runCodexFeed = (superpipe({})('work-feed-codex') as PipelineAPI)
   )
   .pipe(
     (root: string, now: number) =>
-      runLagPhase('feed:codex:list', () => listFeedFiles(root, now - FEED_WINDOW_MS)),
+      runLagPhase('feed:codex:list', () => listFeedFilesAsync(root, now - FEED_WINDOW_MS)),
     ['root', 'now'],
     'files'
   )
