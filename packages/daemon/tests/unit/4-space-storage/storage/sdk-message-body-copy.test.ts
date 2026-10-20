@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { migrateSdkMessageBodies } from '../../../../src/storage/sdk-message-body-copy';
@@ -57,6 +58,63 @@ function options() {
 }
 
 describe('SDK body live migration', () => {
+  test('a slow committed chunk pauses in place and completes without re-verifying its backup', async () => {
+    const before = hash(),
+      logs: string[] = [];
+    const verifyBackup = vi.fn(options().verifyBackup);
+    vi.useFakeTimers();
+    let now = 0;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => (now += 300));
+    try {
+      const result = migrateSdkMessageBodies(db, {
+        ...options(),
+        verifyBackup,
+        log: (line) => logs.push(line),
+      }).then(
+        (value) => ({ value }),
+        (error) => ({ error })
+      );
+      await vi.runAllTimersAsync();
+      expect(await result).toMatchObject({ value: { status: 'complete' } });
+      expect(verifyBackup).toHaveBeenCalledTimes(1);
+      expect(logs.some((line) => line.includes('"phase":"slow_chunk_pause"'))).toBe(true);
+      expect(hash()).toBe(before);
+      expect(pending()).toBe(0);
+    } finally {
+      clock.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  test('shutdown cancels an in-place slow-chunk pause and keeps committed bodies readable', async () => {
+    const before = hash(),
+      abort = new AbortController();
+    vi.useFakeTimers();
+    let now = 0;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => (now += 300));
+    try {
+      const result = migrateSdkMessageBodies(db, {
+        ...options(),
+        signal: abort.signal,
+        log: (line) => {
+          if (line.includes('"phase":"slow_chunk_pause"')) setTimeout(() => abort.abort(), 1);
+        },
+      }).then(
+        (value) => ({ value }),
+        (error) => ({ error })
+      );
+      await vi.runAllTimersAsync();
+      expect(await result).toMatchObject({ value: { status: 'cancelled' } });
+      expect(pending()).toBe(4);
+      expect(hash()).toBe(before);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(db.prepare('SELECT * FROM sdk_message_body_copy_active').all()).toEqual([]);
+    } finally {
+      clock.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   test('keeps malformed bytes in full and records NULL derived columns', async () => {
     db.exec('DROP INDEX IF EXISTS idx_sdk_messages_uuid_status');
     db.exec(
