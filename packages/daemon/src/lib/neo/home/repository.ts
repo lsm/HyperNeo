@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { lstat, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
@@ -73,14 +74,15 @@ export class NeoHomeRepository {
     if (!(await this.git(['check-ignore', '-q', '--', input.path], true)).code)
       return { ok: false, reason: 'ignored_path: this document is git-ignored.' };
     const path = join(this.root, input.path);
-    const before = await readFile(path, 'utf8').catch((error) => {
+    const before = await readFile(path).catch((error) => {
       if (error.code !== 'ENOENT') throw error;
       return null;
     });
-    if (before !== input.content) {
+    const content = Buffer.from(input.content, 'utf8');
+    if (!before?.equals(content)) {
       await mkdir(dirname(path), { recursive: true });
       try {
-        await writeFile(path, input.content);
+        await writeFile(path, content);
         await this.git(['add', '--', input.path]);
         await this.git(['commit', '--only', '-m', input.message, '--', input.path]);
       } catch (error) {

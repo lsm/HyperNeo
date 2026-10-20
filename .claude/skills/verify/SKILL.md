@@ -149,6 +149,13 @@ apply only to this operation; environment/filesystem limits must bound general
 writes. Read behavior, human confirmation support and remote sync remain later
 slices. Stop the isolated daemon and mock with `stop.sh`.
 
+Repeat journey 35 in a fresh run with final argument `unicode` to
+`neo-home-save.ts`. Unpaired surrogate input must return a Unicode content
+refusal on both attempts, without a file or new commit. The helper then seeds
+only a synthetic non-UTF-8 document and forces commit failure: rollback must
+preserve every original byte and leave clean status. Valid Unicode is encoded
+and compared as UTF-8 bytes; existing files are never decoded for rollback.
+
 ## Codex Desktop work.send journey
 
 Codex work.send steers a Desktop-owned running turn. This journey uses

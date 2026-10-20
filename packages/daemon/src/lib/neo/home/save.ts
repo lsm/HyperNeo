@@ -28,8 +28,10 @@ export function requireHomeSave(input: HomeSaveInput) {
     ? 'invalid_path: use a relative document path outside hidden folders.'
     : protectedDocument
       ? 'confirmation_required: direction and mandate saves await human-confirmation support.'
-      : sensitive
-        ? 'content_refused: private keys or credential-like content cannot be saved.'
-        : null;
+      : !input.content.isWellFormed()
+        ? 'content_refused: content must be well-formed Unicode text.'
+        : sensitive
+          ? 'content_refused: private keys or credential-like content cannot be saved.'
+          : null;
   return reason ? { reason: { ok: false as const, reason } } : { value: input };
 }

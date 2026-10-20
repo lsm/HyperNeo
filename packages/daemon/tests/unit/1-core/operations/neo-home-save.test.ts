@@ -66,7 +66,7 @@ describe('Neo home save', () => {
   test('commits one curated file without changing its bytes, and unchanged retry adds no commit', async () => {
     const input = {
       path: 'projects/verify/digest.md',
-      content: '  Progress\n\n',
+      content: '  Progress 🦊\n\n',
       message: 'Record progress',
     };
     const first = await save(input);

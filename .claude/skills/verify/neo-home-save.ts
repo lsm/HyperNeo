@@ -19,7 +19,7 @@ async function git(...args: string[]) {
 await writeFile(`${run}/home/.gitconfig`, '[user]\n name = Verify Neo\n email = verify@example.invalid\n[commit]\n gpgsign = false\n');
 await mkdir(`${root}/.coordinators/verify`, { recursive: true });
 await writeFile(`${root}/.coordinators/verify/transcript.md`, 'Synthetic private transcript.');
-const input = { path: 'projects/verify/digest.md', content: '  Curated progress.\n\n', message: 'Record verified progress' };
+const input = { path: 'projects/verify/digest.md', content: '  Curated progress 🦊.\n\n', message: 'Record verified progress' };
 const first = await rpc(input);
 await writeFile(`${run}/evidence/neo-home-save.json`, JSON.stringify({ first }, null, 2));
 if (!first.ok) throw new Error(JSON.stringify(first));
