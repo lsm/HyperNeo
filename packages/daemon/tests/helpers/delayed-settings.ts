@@ -14,6 +14,7 @@ path, delay = sys.argv[1:]
 content = json.dumps({"custom": "preserved", "attribution": {"commit": "synthetic"}})
 print("ready", flush=True)
 with open(path, "w") as pipe:
+    print("reading", flush=True)
     time.sleep(float(delay) / 1000)
     pipe.write(content)
     pipe.flush()
@@ -34,6 +35,7 @@ with open(path, "w") as pipe:
     }),
   ]);
   return {
+    reading: once(writer.stdout!, 'data'),
     done: exited,
     async stop() {
       if (writer.exitCode === null && writer.signalCode === null) writer.kill();
