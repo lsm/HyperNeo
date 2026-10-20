@@ -1,3 +1,4 @@
+import { runLagPhase } from '../lib/event-loop-activity.ts';
 import { Database as BunDatabase } from './sqlite-compat.ts';
 import { Logger } from '../lib/logger.ts';
 import { hashString32 } from '../lib/runtime-hash.ts';
@@ -206,7 +207,9 @@ export class LiveQueryEngine {
 
     if (!entry) {
       const rows = this.runQuery<T>(sql, params);
-      const hashSnapshot = hashRows(rows, options.rowFingerprint);
+      const hashSnapshot = runLagPhase('live_query:hash_rows', () =>
+        hashRows(rows, options.rowFingerprint)
+      );
       const tables = extractTables(sql);
       const cachedMetadata = options.getMetadata?.(rows, params);
 
@@ -346,7 +349,9 @@ export class LiveQueryEngine {
     entry.pendingTimer = null;
 
     const newRows = this.runQuery(entry.sql, entry.params);
-    const newHashSnapshot = hashRows(newRows, entry.rowFingerprint);
+    const newHashSnapshot = runLagPhase('live_query:hash_rows', () =>
+      hashRows(newRows, entry.rowFingerprint)
+    );
     const metadataStale = entry.metadataDirty || !entry.metadataScopeFilter;
     entry.metadataDirty = false;
     const newMetadata = metadataStale

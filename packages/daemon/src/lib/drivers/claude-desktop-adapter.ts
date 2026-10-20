@@ -1,3 +1,4 @@
+import { runLagPhase } from '../event-loop-activity.ts';
 import { workStartPreparation, type WorkExecutionPreparer } from './start-preparation.ts';
 import type { createClaudeDesktopModsDriver } from './claude-desktop-mods-driver.ts';
 import { CLAUDE_DESKTOP_RELAY, fillPrompt } from '@hyperneo/prompts';
@@ -329,7 +330,9 @@ export function loadClaudeDesktopRecords(
   deps: ClaudeDesktopAdapterDeps,
   cache: ClaudeRecordCache
 ): Promise<ClaudeDesktopRecord[]> {
-  return readClaudeDesktopRecords(deps.sessionsDir, cache);
+  return runLagPhase('scanner:claude_desktop', () =>
+    readClaudeDesktopRecords(deps.sessionsDir, cache)
+  );
 }
 
 export async function loadLiveClaudeSessions(

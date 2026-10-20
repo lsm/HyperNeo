@@ -1,3 +1,4 @@
+import { runLagPhase } from '../event-loop-activity.ts';
 import type { FallbackModelEntry, MessageContent } from '@hyperneo/shared';
 import { Logger } from '../logger.ts';
 import {
@@ -540,7 +541,7 @@ export class RateLimitWatchdog {
       this.logger.info(
         `Cooldown elapsed; firing retry (step ${this.retryCount}/${this.config.maxAutoRetries}).`
       );
-      void this.fireCooldownRetry(errorMessage);
+      void runLagPhase('timer:rate_limit_retry', () => this.fireCooldownRetry(errorMessage));
     }, decision.delayMs);
     this.currentRetryAt = decision.retryAtMs;
 
@@ -686,7 +687,7 @@ export class RateLimitWatchdog {
     this.cooldownTimer = setTimeout(() => {
       this.cooldownTimer = null;
       this.currentRetryAt = null;
-      void this.fireCooldownRetry(errorMessage);
+      void runLagPhase('timer:rate_limit_retry', () => this.fireCooldownRetry(errorMessage));
     }, STARTUP_RETRY_DELAY_MS);
     this.currentRetryAt = Date.now() + STARTUP_RETRY_DELAY_MS;
     if (

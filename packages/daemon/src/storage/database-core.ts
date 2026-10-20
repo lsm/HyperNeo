@@ -1,3 +1,4 @@
+import { runLagPhase } from '../lib/event-loop-activity.ts';
 import {
   copyFileSync,
   existsSync,
@@ -135,7 +136,9 @@ export class DatabaseCore {
     this.messageSearchMergeTimer = setTimeout(() => {
       this.messageSearchMergeTimer = null;
       this.messageSearchMergeInFlight = true;
-      const merge = runMessageSearchMerge(this.dbPath);
+      const merge = runLagPhase('timer:search_merge_worker_start', () =>
+        runMessageSearchMerge(this.dbPath)
+      );
       this.messageSearchMergeCancel = merge.cancel;
       void merge.promise.then((status) => {
         this.messageSearchMergeCancel = null;

@@ -1,3 +1,4 @@
+import { runLagPhase } from '../../event-loop-activity.ts';
 import { createHash } from 'node:crypto';
 import type { MessageHub } from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
@@ -1129,7 +1130,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           this.scheduleNextPoll();
           return;
         }
-        this.runExclusivePoll(() => this.runPollCycle()).catch(() => {});
+        runLagPhase('timer:github_event_poll', () =>
+          this.runExclusivePoll(() => this.runPollCycle())
+        ).catch(() => {});
       },
       Math.max(1_000, delayMs)
     );
