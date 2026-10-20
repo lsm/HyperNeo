@@ -206,6 +206,13 @@ adds its journey here.
     within ~3 min: `todo-a` is `done` with `started_at` empty, and `q-start`
     is still `open` with `start_todos` `["todo-b"]`.
 
+12. **Messages between root Neo and its workers show in Neo's conversation.** Run
+    `.claude/skills/verify/neo-session-rows.sh <port> "$RUN"`. It opens root, creates
+    a worker session "Fix the loader", and sends one message each way. End state: it
+    prints `Neo -> Fix the loader: Rebase on dev, then tell me.` then
+    `Fix the loader -> Neo: Rebased.`; on `/neo` each shows as one collapsed row
+    "Neo → Fix the loader" with its first line, expanding to the full text.
+
 ## Evidence
 
 Keep everything in `$RUN/evidence/` and quote it in the pull request:

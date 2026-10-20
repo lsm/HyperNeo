@@ -10,6 +10,7 @@ import { createDiscoveryOperations } from './discovery.ts';
 import {
   createSendMessageOperation,
   type AgentTargetResolver,
+  type SessionSentObserver,
   type SessionStatusRead,
   type SessionTitleRead,
 } from '../messaging/message-send.ts';
@@ -48,6 +49,7 @@ export interface TaskOperationDependencies {
   sessionStatus: SessionStatusRead;
   sessionTitle?: SessionTitleRead;
   resolveMessageAgent?: AgentTargetResolver;
+  sessionSent?: SessionSentObserver;
 }
 
 export function createDaemonOperationCatalog(
@@ -61,7 +63,8 @@ export function createDaemonOperationCatalog(
       tasks.sessionStatus,
       createRemoteSendForwarder(remoteDaemons),
       tasks.resolveMessageAgent,
-      tasks.sessionTitle
+      tasks.sessionTitle,
+      tasks.sessionSent
     ),
     createAttachDaemonOperation(remoteDaemons),
     createProbeDaemonOperation(remoteDaemons),
