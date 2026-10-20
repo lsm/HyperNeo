@@ -239,6 +239,34 @@ describe('authoritative work.read', () => {
     ]);
   });
 
+  test('replaced messages use SDK UUID or legacy ID with session and self-edge scope', async () => {
+    put('legacy-replaced', 'assistant', [{ type: 'text', text: 'HIDDEN_REPLACED_ID' }]);
+    put('uuid-replaced', 'assistant', [{ type: 'text', text: 'HIDDEN_REPLACED_UUID' }]);
+    db.prepare('UPDATE sdk_messages SET sdk_uuid=? WHERE id=?').run('sdk-uuid', 'uuid-replaced');
+    put('foreign-edge', 'assistant', [{ type: 'text', text: 'Visible foreign edge' }]);
+    put('self-edge', 'assistant', [{ type: 'text', text: 'Visible self edge' }]);
+    put('replacement', 'assistant', [{ type: 'text', text: 'Visible replacement' }]);
+    const edge = db.prepare(
+      'INSERT INTO sdk_message_replacements(source_message_id,session_id,target_uuid,kind) VALUES (?,?,?,?)'
+    );
+    edge.run('replacement', 'worker', 'legacy-replaced', 'retracted');
+    edge.run('replacement', 'worker', 'sdk-uuid', 'superseded');
+    edge.run('replacement', 'other', 'foreign-edge', 'retracted');
+    edge.run('self-edge', 'worker', 'self-edge', 'superseded');
+    const before = digest();
+    expect((await page({ before: 10, after: 10 })).turns.map((t) => t.text)).toEqual([
+      'Visible foreign edge',
+      'Visible self edge',
+      'Visible replacement',
+    ]);
+    for (const around of ['legacy-replaced', 'uuid-replaced', 'sdk-uuid'])
+      expect(await page({ around, before: 0, after: 0 })).toMatchObject({
+        turns: [],
+        availability: 'reply_unavailable',
+      });
+    expect(digest()).toBe(before);
+  });
+
   test('external drivers retain their existing indexed source', async () => {
     db.prepare(
       "INSERT INTO message_search_content(kind,source_id,message_id,session_id,message_type,body,timestamp) VALUES ('codex','source','message','external','assistant','External reply',1)"
