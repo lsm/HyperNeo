@@ -199,6 +199,15 @@ describe('Neo project merge storage', () => {
     expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
     expect(repo.projectMerges.merge(input)).toEqual({ ok: false, reason: 'superseded' });
   });
+  test("moves the source's asks to the target and leaves their todos' repos alone", () => {
+    db.exec(`INSERT INTO neo_asks (id, project_id, session_id, title, request, status, created_at, updated_at)
+        VALUES ('ask', 'source', 'neo:root', 'Fix', 'Fix it', 'open', 1, 1);
+      INSERT INTO neo_todos (id, ask_id, position, title, done_when, repo, created_at, updated_at)
+        VALUES ('todo', 'ask', 0, 'Fix', 'Merged', 'github.com/lsm/web', 1, 1)`);
+    expect(repo.projectMerges.merge(input).ok).toBe(true);
+    expect(db.prepare('SELECT project_id FROM neo_asks').get()).toEqual({ project_id: 'target' });
+    expect(db.prepare('SELECT repo FROM neo_todos').get()).toEqual({ repo: 'github.com/lsm/web' });
+  });
   test('keeps redirects across later merges and migration reapplication', () => {
     expect(repo.projectMerges.merge(input).ok).toBe(true);
     expect(

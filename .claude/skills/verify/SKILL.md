@@ -143,7 +143,13 @@ adds its journey here.
    the cleanup would do on a real daemon without touching it, run
    `bun .claude/skills/verify/cleanup-dry-run.ts [db]` (read-only; defaults to
    `~/.hyperneo/data/daemon.db`): it prints the planned deletes, and any merge it
-   lists runs only with `apply: true`.
+   lists runs only with `apply: true`. To see an explicit merge carry its asks,
+   run `VERIFY_PORT=<port> .claude/skills/verify/merge-check.sh "$RUN"`: it seeds a
+   `Web` home with a `repository:` alias and a same-titled copy holding a done ask
+   whose todo names another repo, then calls `neo.projects.reorganize {"apply":true}`.
+   End state: `neo_project_merges` has `project:web-copy → project:web`, `ask-merge`
+   now has `project_id` `project:web`, and `todo-merge` keeps
+   `github.com/verify-test/other`.
 8. **A todo whose PR lands in another repo moves to that repo's card.** After
    journey 1 opened root, run
    `VERIFY_CARD_REPO=github.com/verify-test/app .claude/skills/verify/seed-todo.sh "$RUN"`.
