@@ -14,6 +14,7 @@ export type NeoTodoPatch = Partial<
   Pick<
     NeoTodo,
     | 'title'
+    | 'check'
     | 'doneWhen'
     | 'state'
     | 'reason'
@@ -30,6 +31,7 @@ export type NeoTodoPatch = Partial<
 
 const TODO_COLUMNS: Record<keyof NeoTodoPatch, string> = {
   title: 'title',
+  check: 'check_json',
   doneWhen: 'done_when',
   state: 'state',
   reason: 'reason',
@@ -280,7 +282,13 @@ export class NeoAskTodoRepository {
             keys.length ? ', ' : ''
           }updated_at = ? WHERE id = ?`
         )
-        .run(...keys.map((key) => patch[key] ?? null), now, todo.id);
+        .run(
+          ...keys.map((key) =>
+            key === 'check' ? JSON.stringify(patch.check ?? null) : (patch[key] ?? null)
+          ),
+          now,
+          todo.id
+        );
       if (patch.state) this.pruneStartQuestions(todo.askId);
     })();
     this.touchAsk(todo.askId, now);

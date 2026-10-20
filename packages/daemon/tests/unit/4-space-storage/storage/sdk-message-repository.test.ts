@@ -12,7 +12,10 @@ import { createSQLiteAsciiPrefixRange } from '../../../../src/storage/sqlite-pre
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { runMigration413 } from '../../../../src/storage/schema/m413-sdk-message-columns';
 import { runMigration169 } from '../../../../src/storage/schema/migrations';
-import { fillSdkMessageFixtureColumns } from '../../helpers/sdk-message-fixture-columns';
+import {
+  fillSdkMessageFixtureColumns,
+  mirrorSdkMessageFixtureBodies,
+} from '../../helpers/sdk-message-fixture-columns';
 
 describe('SDKMessageRepository', () => {
   let db: Database;
@@ -1252,6 +1255,7 @@ describe('SDKMessageRepository', () => {
          SET sdk_message = ?
          WHERE message_subtype = 'task_started'`
       ).run('{not-json');
+      mirrorSdkMessageFixtureBodies(db);
 
       const metadataMessages = repository.getBackgroundTaskMessages('session-1');
 
@@ -1470,6 +1474,7 @@ describe('SDKMessageRepository', () => {
          SET sdk_message = ?
          WHERE message_subtype = 'informational'`
       ).run('{not-json');
+      mirrorSdkMessageFixtureBodies(db);
 
       const { messages } = repository.getSDKMessages('session-1');
 
@@ -1795,6 +1800,7 @@ describe('SDKMessageRepository', () => {
          SET sdk_message = ?
          WHERE message_subtype = 'task_progress'`
       ).run('{not-json');
+      mirrorSdkMessageFixtureBodies(db);
 
       const message = repository.getLastSDKMessage('session-1');
 
@@ -5926,6 +5932,7 @@ describe('SDKMessageRepository', () => {
         expect(contentRowCount(id)).toBe(1);
 
         db.prepare(`UPDATE sdk_messages SET sdk_message = 'null' WHERE id = ?`).run(id);
+        mirrorSdkMessageFixtureBodies(db);
         repository.updateMessageTimestamp(id);
 
         repository.flushMessageSearchIndex();
@@ -5937,6 +5944,7 @@ describe('SDKMessageRepository', () => {
           JSON.stringify(createUserMessage('null payload repaired', `repaired-${id}`)),
           id
         );
+        mirrorSdkMessageFixtureBodies(db);
         repository.flushMessageSearchIndex();
 
         expect(pendingCount()).toBe(0);
@@ -5956,6 +5964,7 @@ describe('SDKMessageRepository', () => {
         expect(contentRowCount(id)).toBe(1);
 
         db.prepare(`UPDATE sdk_messages SET sdk_message = '{not-json' WHERE id = ?`).run(id);
+        mirrorSdkMessageFixtureBodies(db);
         repository.updateMessageTimestamp(id);
 
         repository.flushMessageSearchIndex();

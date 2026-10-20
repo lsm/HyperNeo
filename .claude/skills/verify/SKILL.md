@@ -24,6 +24,42 @@ root of your worktree.
   `<run>/pr.json`, refuses everything else (including `gh auth token`) and logs
   every call to `<run>/evidence/gh.log`. Nothing reaches github.com.
 
+## Recovery expiry responsiveness
+
+Run a fresh isolated daemon without provider keys. The helper seeds 22,287
+synthetic recovery records (22,269 consumed / 18 expired), matching the observed
+production status counts, with no eligible expiry rows. It probes `system.health`
+over the real WebSocket while the maintenance operation runs on the main DB.
+The extra Python connection holds a synthetic WAL writer lock for 1.2 seconds.
+It never opens the real DB. All helper-owned processes and the daemon close in
+`finally`.
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-expiry-proof-XXXXXX)
+mkdir -p "$RUN/home"
+env -i HOME="$RUN/home" PATH="$(dirname "$(command -v bun)"):/usr/bin:/bin" \
+  NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/recovery-expiry.ts verify 9335 "$RUN" expiry
+```
+
+`evidence/verify.json` must show covering-index checks, no expiry UPDATE during
+the empty sweep, a health reply below 250 ms, and event-loop lag below 1 s.
+After releasing the lock, it also expires an actual mapping and inbox request,
+retaining the entire request and its existing reason. Unit boundary/status/
+count/retention/upgrade contracts run only in CI. This proves the focused expiry
+path, not the performance of every other writer in the daemon.
+
+On the contract-test commit before the fix, `reproduce` with scope `full-tick`
+records the recovery UPDATE blocking over 250 ms and the delayed health reply.
+On fixed code, repeat `verify` with scope `full-tick` in another fresh directory:
+its saved report can still fail because the following `space_external_events`
+expiry performs an unrelated empty UPDATE under the same held writer lock.
+Report that remaining failure explicitly; do not treat the focused expiry pass
+as whole-tick acceptance. That wider contention fix is a separate item. A
+controlled synthetic lock reproduces a possible cause; it does not identify the
+writer responsible for an historical production event. No GUI or model turn is
+part of this maintenance journey.
+
 ## Launch
 
 ```bash
@@ -250,7 +286,8 @@ UI is served, that RPC answers, and that the mock model API is up. It ends with
   arrived.
 - State: read the run's DB read-only, e.g.
   `sqlite3 -readonly "$RUN/data/daemon.db" "SELECT ..."`. Only the seed and
-  check scripts write to it: `seed-todo.sh` and `seed-ledger.sh` (journeys 3 and 4),
+  check scripts write to it: `seed-todo.sh`, `todo-pr-claims.ts`, `todo-pr-concurrency.ts` (journey 3) and
+  `seed-ledger.sh` (journey 4),
   `merge-check.sh` (journey 24), `archive-guard-check.sh` (journey 10) and
   `seed-start-question.sh` (journey 14), `quote-summary-check.mjs` (journey 18),
   `seed-schedule-interrupt.ts` (journey 22), and `external-reply-check.ts` (journey 23).
@@ -288,6 +325,28 @@ adds its journey here.
    `rpc.ts neo.ask.settle '{"askId":"ask-verify","status":"done","outcome":"Shipped."}'`
    replies `todos_unfinished: … "Fix the loader" (todo-verify, doing).` and the ask
    stays `open`; the same call after the todo is `done` settles the ask `done`.
+   To verify PR ownership and URL edits, run
+   `bun .claude/skills/verify/todo-pr-claims.ts <port> "$RUN"` on a fresh isolated
+   daemon. It seeds only this run's ask, URL-less session todo and coding ledger
+   claim, then uses the real `neo.todo.add/edit/remove` RPC door. End state: adding
+   a duplicate refuses with the existing todo id/title; `addUrls` pins the PR on
+   that original; a competing edit refuses it. The helper marks the stub PR merged
+   and waits up to 210 seconds for the coding pack to finish the original without
+   a manual close. Evidence: `evidence/todo-pr-claims.json` includes RPC receipts,
+   stored merged evidence and the Neo snapshot; `gh.log` shows stub-only lookups.
+   No real PR, provider, credentials or GUI is used; model notifications use the
+   local mock and this run's dev-proxy provider row. GUI rendering is not verified.
+   In another fresh run, execute
+   `bun .claude/skills/verify/todo-pr-concurrency.ts <port> "$RUN"`.
+   It overlaps a completion check awaiting GitHub with 20 URL additions on that
+   same todo. Every URL must remain in its check; the stale completion is refused
+   and the todo remains open. Repeat in fresh run directories with a final
+   argument `edit`, `close`, and `sweep` to cover plain completion, closure and the
+   real periodic background check. Each mode pauses the local gh stub after its
+   check starts, adds 20 URLs through RPC, then releases the old result. None may
+   finish the todo. The sweep mode can take up to 3 minutes to begin.
+   Evidence: `evidence/todo-pr-concurrency.json`.
+
 4. **An open todo's PR leads the PR ledger in the snapshot.** After journey 1
    opened root, run `.claude/skills/verify/seed-ledger.sh "$RUN"`. It writes a
    project for `verify-test/demo` (so the pack sweep keeps its ledger rows), an
@@ -345,6 +404,34 @@ adds its journey here.
    The coding pack alone treats a successful creation as ownership evidence; a
    Claude sidebar reference alone is not an owner. The default live read-only
    helper now uses that same reader/policy. Never read auth or credential files.
+
+   For PR-ledger c, run the unowned-PR wake door in a new synthetic database:
+
+   ```bash
+   RUN=$(mktemp -d /private/tmp/hn-pr-unowned-XXXXXX)
+   env -i PATH="$PATH" NODE_ENV=test HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" \
+     HYPERNEO_USE_DEV_PROXY=1 VERIFY_PORT=9355 \
+     bun .claude/skills/verify/pr-owners.ts --synthetic-unowned "$RUN"
+   ```
+
+   Ports 9355 and 8000 must be free. The helper starts its own isolated daemon
+   and local mock provider, and uses synthetic GitHub responses through the real
+   coding-pack reconcile. It observes the result at the actual Neo mailbox input
+   via WebSocket `session.messages.byStatus`, not just a mocked wake callback.
+   End state: one consumed Neo input lists 90 newly unowned human PRs, excluding
+   drafts, bots, known owners, closed PRs, unknown metadata, and creation at/before
+   the persisted first-activation cutoff. A later new PR survives a lost handoff acknowledgement
+   and pack recreation with the same batch identity and reaches Neo once.
+   Unchanged reconciles send nothing. Each PR has one `neo-pr-unowned:repo#N`
+   record; one pending batch preserves retry identity. New arrivals while a
+   batch retries wait until the next reconcile. The notice describes discovery
+   facts and tells Neo to check current ownership before assigning anyone.
+   `observed.json` records elapsed time and max 10 ms heartbeat lag for each
+   reconcile against a 1,000 ms budget; `delivered.json` and `accepted.json`
+   prove both batches reached Neo as consumed input. GitHub and existing Claude
+   owner reads are synthetic; no deployed or GUI behavior is claimed. The helper
+   disposes its service, daemon, SDK processes and local provider in `finally`.
+   Retain evidence, confirm both ports are closed, then remove only this run.
 
 7. **A cross-repo request becomes one card per repo.** Launch with
    `VERIFY_MOCK=neo-script-api.ts .claude/skills/verify/launch.sh 9311 "$RUN"`.
@@ -632,6 +719,44 @@ may settle as failed with no provider; this verifies persistence and transcript
 delivery, not model execution. Unit contracts cover the remaining writer doors,
 failure rollback, nested transactions and status-only updates in CI.
 
+### Repository body reads (slice 8)
+
+Use a fresh synthetic fixture, never a live DB or a copy. Unit suites run in CI.
+This journey exercises the same `message.sdkMessages` and `message.sdkMessage`
+RPC doors used to load a transcript and an individual full message. It does not
+drive the GUI or start a model turn. It uses the real repository, daemon and
+WebSocket transport, without the mock API or a provider key.
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-body-read-door-XXXXXX)
+mkdir -p "$RUN/home"
+env -i HOME="$RUN/home" PATH="$(dirname "$(command -v bun)"):/usr/bin:/bin" \
+  NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/sdk-live-query-filters.ts seed "$RUN"
+env -i HOME="$RUN/home" PATH="$(dirname "$(command -v bun)"):/usr/bin:/bin" \
+  NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/sdk-body-repository-door.ts verify 9334 "$RUN"
+```
+
+The seed writes 55,014 rows through production derivation and dual write, with
+`replacement_metadata_normalized=1` as production writers do. The helper first
+loads both RPC responses, then blanks only the newest 500 synthetic legacy body
+columns whose side bodies exist. Both responses must remain identical, including
+background metadata and subagent messages, and remain identical after restart.
+The complete logical-body SHA-256 must match before/after; tool results remain
+stored in full. Full-body hashing and synthetic mutation happen outside latency
+measurement, while startup/restart and RPC reads have separate lag measurements.
+`observed.json` records executed SQL, query plans, RPC times and max event-loop lag;
+SQL executions must be below 250 ms and measured lag below 1 s. Startup SQL is
+not individually instrumented. Both daemon instances close in `finally`.
+
+On the contract-test commit before the read wiring, use `reproduce` instead of
+`verify` in a separate fresh run. `reproduction.json` records the wrong returned
+transcript (`unknown` with empty content on that code), or a read error; neither
+is a pass. Do not reuse that modified fixture for the fixed-code acceptance run.
+GUI rendering, external drivers and the remaining live-query body outputs belong
+to other journeys/slice 9 and are not verified by this repository-read journey.
+
 ### Task body projection triggers (slice 7)
 
 First reproduce the body-source boundary with a fresh isolated run directory:
@@ -813,12 +938,34 @@ Measurements establish the tested synthetic workloads, not a physical upper
 bound on disk I/O or deployed performance. Keep both JSON reports and the exact
 command as PR evidence; stored source data is never deleted.
 
-26. **Work-feed polls don't re-read the offsets table.** Run
-   `bun .claude/skills/verify/work-feed-offsets.ts [rows] [polls]` (default
-   2,700 rows, 35 polls, the live per-5-minute cadence) on synthetic data in a
-   temp DB. Each poll calls `readWorkFeedOffsets`, then writes one offset
-   through `saveWorkFeedChunk`. End state: `table reads=1` for any number of
-   polls. Before the in-memory offsets map it printed `table reads=35`. On the
-   live daemon, `select path, offset, size, mtime from work_feed_offsets` then
-   appears in the `sqlite.query` summaries only in the first window after a
-   restart.
+### Search index insert latency (journey 29)
+
+Index synthetic messages into an isolated daemon that runs its own background
+FTS merges, then keep writing while the space tick's expiry UPDATE runs:
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-fts-merge-XXXXXX)
+env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
+  bun .claude/skills/verify/fts-merge-lag.ts 9349 "$RUN" 500000 256 45
+```
+
+Arguments after the run dir: rows (500,000, about the iMac's index), words per
+body (64 ≈ the live average, 256 for 4x bodies) and seconds of steady writes. The
+helper inserts in 200-row transactions that yield between batches, samples the
+event loop every 10 ms, times 20 search queries, then runs the
+`space_external_events` expiry UPDATE plus a 20-row index write every 100 ms.
+
+End state: `observed.json` shows `index.worstBatchMs` and both `maxLagMs` below
+1,000 ms at 256 words, and the same `searchAfterIndexing.totalMatches` before and
+after a change. With `crisismerge` 64 the 256-word worst batch was 1,859 ms (an
+FTS5 crisis merge inside the insert); with 16 it was 434 ms.
+
+### Work-feed offsets read once (journey 31)
+
+Work-feed polls must not re-read the offsets table:
+
+```bash
+bun .claude/skills/verify/work-feed-offsets.ts 2700 35
+```
+
+The script builds a synthetic temp DB (2,700 rows and 35 polls by default, the live per-5-minute cadence). Each poll calls `readWorkFeedOffsets`, then writes one offset through `saveWorkFeedChunk`. End state: `table reads=1` for any number of polls. Before the in-memory offsets map it printed `table reads=35`. On the live daemon, `select path, offset, size, mtime from work_feed_offsets` then appears in the `sqlite.query` summaries only in the first window after a restart.

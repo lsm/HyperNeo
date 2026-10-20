@@ -8,7 +8,10 @@ review requirements, never a pull request merely opened; write doneWhen that way
 the human names a pull request; the daemon then writes its doneWhen from the
 check. Without urls the todo tracks the one pull request its own session opens,
 so it needs an instruction; a todo with no instruction names its pull requests in
-params.urls. Only the pack closes it, once every pull request it claimed has merged; one closed unmerged and never replaced fails the todo, and
+params.urls. To pin a PR link on an existing todo, use neo.todo.edit with
+addUrls, not a new todo. Another live todo on the same ask cannot claim a PR
+already tracked explicitly or through its session; a refusal names the original
+todo to edit. Only the pack closes it, once every pull request it claimed has merged; one closed unmerged and never replaced fails the todo, and
 you decide whether to redo or drop it. Read pull request and CI state with
 neo.github.read; never ask the human to confirm it. Work in stages gets one todo
 per stage, in order. Name pull requests as owner/repo#N, never a bare #N.
