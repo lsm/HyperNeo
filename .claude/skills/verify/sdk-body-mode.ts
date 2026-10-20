@@ -39,7 +39,8 @@ const unsubscribe = subscribeToStructuredLogs((event) => {
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let ws: WebSocket | undefined;
 let last = performance.now(), maxLagMs = 0, maxQueryMs = 0;
-const timer = setInterval(() => { const now = performance.now(); maxLagMs = Math.max(maxLagMs, now - last - 10); last = now; }, 10);
+const lagSamples: { lagMs: number; phase: string }[] = [];
+const timer = setInterval(() => { const now = performance.now(); const lagMs = now - last - 10; maxLagMs = Math.max(maxLagMs, lagMs); if (lagMs > 100) lagSamples.push({ lagMs, phase: probing ? 'digest-probe' : serving ? 'serving' : 'startup-or-shutdown' }); last = now; }, 10);
 const timings: number[] = [];
 async function rpc(method: string, data = {}) {
   const id = crypto.randomUUID(), at = performance.now();
@@ -56,13 +57,21 @@ async function rpc(method: string, data = {}) {
   timings.push(performance.now() - at);
   return reply;
 }
-function digest(db: InstanceType<typeof Database>) {
-  probing = true;
+async function digest(db: InstanceType<typeof Database>) {
   const side = Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE name='sdk_message_bodies'").get());
   const hash = createHash('sha256'); let rows = 0;
-  const sql = side ? 'SELECT m.seq,COALESCE(b.sdk_message,m.sdk_message) AS body FROM sdk_messages m LEFT JOIN sdk_message_bodies b ON b.seq=m.seq ORDER BY m.seq' : 'SELECT seq,sdk_message AS body FROM sdk_messages ORDER BY seq';
-  for (const row of db.prepare(sql).iterate() as Iterable<{ seq: number; body: string }>) {
-    hash.update(`${row.seq}:${Buffer.byteLength(row.body)}:`); hash.update(row.body); rows++;
+  const sql = side ? 'SELECT m.seq,COALESCE(b.sdk_message,m.sdk_message) AS body FROM sdk_messages m LEFT JOIN sdk_message_bodies b ON b.seq=m.seq WHERE m.seq>? ORDER BY m.seq LIMIT 256' : 'SELECT seq,sdk_message AS body FROM sdk_messages WHERE seq>? ORDER BY seq LIMIT 256';
+  let through = 0;
+  for (;;) {
+    probing = true;
+    const page = db.prepare(sql).all(through) as { seq: number; body: string }[];
+    for (const row of page) {
+      hash.update(`${row.seq}:${Buffer.byteLength(row.body)}:`); hash.update(row.body); rows++;
+      through = row.seq;
+    }
+    probing = false;
+    if (!page.length) break;
+    await pause(0);
   }
   probing = false;
   return { rows, hash: hash.digest('hex') };
@@ -74,6 +83,7 @@ async function start() {
   app = await createDaemonApp({ config: { ...getConfig({ host: '127.0.0.1', port, dbPath }),
     sqlQueryObservability: { slowThresholdMs: 1, summaryIntervalMs: 300000, maxQueryGroups: 500, summaryQueryLimit: 10 } }, verbose: false });
   startupMs.push(performance.now() - begin);
+  await pause(0);
   serving = true;
   const selected = logs.slice(logAt).find((event) => event.message.includes('SDK body startup mode selected'));
   assert(selected, 'Startup mode must be visible at WARN'); modes.push(selected.message);
@@ -120,15 +130,16 @@ try {
     seed.exec("INSERT INTO migration_markers VALUES ('sdk_message_bodies_copy_v1:complete',1)");
     if (scenario === 'mixed') seed.exec('DELETE FROM sdk_message_bodies WHERE seq%2=0');
   }
-  const before = digest(seed); core.close();
-  last = performance.now(); maxLagMs = 0;
+  const before = await digest(seed); core.close();
+  last = performance.now(); maxLagMs = 0; lagSamples.length = 0;
   const copyBegin = performance.now();
   await start();
   const db = app!.db.getDatabase();
   assert(modes[0].includes(scenario === 'laptop' ? 'side-only' : 'dual-write'));
-  assert.deepEqual(digest(db), before);
+  assert.deepEqual(await digest(db), before);
   const initialPage = JSON.stringify(await rpc('message.sdkMessages', { sessionId: 'mode-proof', limit: 2 }));
   assert(initialPage.includes(`seed-${scenario === 'old' ? 59999 : 4999}`));
+  if (scenario === 'old') assert(!db.prepare("SELECT 1 FROM migration_markers WHERE key='sdk_message_bodies_copy_v1:complete'").get(), 'Exercise writes while the old-schema copy is still pending');
   const initialRows = exercise('initial');
   assert(initialRows.every((row) => scenario === 'laptop' ? row.legacy === '' : row.legacy === row.side));
   const deadline = Date.now() + 120000;
@@ -145,19 +156,19 @@ try {
   }
   const afterCopyRows = exercise('same-run');
   assert(afterCopyRows.every((row) => scenario === 'laptop' ? row.legacy === '' : row.legacy === row.side));
-  const beforeRestart = digest(db);
+  const beforeRestart = await digest(db);
   const missing = db.prepare('SELECT COUNT(*) AS n FROM sdk_messages m LEFT JOIN sdk_message_bodies b ON b.seq=m.seq WHERE b.seq IS NULL').get();
   assert.deepEqual(missing, { n: 0 });
   await stop(); await start();
   assert(modes[1].includes('side-only'));
-  assert.deepEqual(digest(app!.db.getDatabase()), beforeRestart);
+  assert.deepEqual(await digest(app!.db.getDatabase()), beforeRestart);
   assert(exercise('next-start').every((row) => row.legacy === ''));
   for (let n = 0; n < 25; n++) {
     assert.equal((await rpc('system.health')).status, 'ok');
     assert(JSON.stringify(await rpc('message.sdkMessages', { sessionId: 'mode-proof', limit: 12 })).includes(tool));
     await pause(10);
   }
-  const observed = { scenario, before, beforeRestart, modes, startupMs, copyElapsedMs, maxLagMs, maxQueryMs, maxServingQueryMs, slowQueries, rpcReplies: timings.length, maxRpcMs: Math.max(...timings), missing, logs };
+  const observed = { scenario, before, beforeRestart, modes, startupMs, copyElapsedMs, maxLagMs, lagSamples, maxQueryMs, maxServingQueryMs, slowQueries, rpcReplies: timings.length, maxRpcMs: Math.max(...timings), missing, logs };
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(observed, null, 2));
   console.log(JSON.stringify({ ...observed, logs: logs.length }));
 } finally { clearInterval(timer); unsubscribe(); await stop(); }

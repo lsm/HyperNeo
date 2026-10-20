@@ -82,6 +82,7 @@ test.each(['unfinished', 'missing', 'reversed'])(
     const path = join(directory, 'daemon.db');
     const original = new DatabaseCore(path);
     const restarted = new DatabaseCore(path);
+    let originalOpen = true;
     try {
       await original.initialize();
       const source = original.getDb();
@@ -109,6 +110,7 @@ test.each(['unfinished', 'missing', 'reversed'])(
         );
       if (fault === 'missing') source.exec('DELETE FROM sdk_message_bodies');
       original.close();
+      originalOpen = false;
       await restarted.initialize();
       const repository = new SDKMessageRepository(restarted.getDb());
       expect(repository.getMessageByUuid('s', 'keep')).toMatchObject({ result });
@@ -123,7 +125,7 @@ test.each(['unfinished', 'missing', 'reversed'])(
       expect(JSON.parse(side.sdk_message)).toMatchObject({ result, internal_compaction_turn: 1 });
       expect(side).toEqual(legacy);
     } finally {
-      original.close();
+      if (originalOpen) original.close();
       if (restarted.getDb()) restarted.close();
       rmSync(directory, { recursive: true, force: true });
     }
