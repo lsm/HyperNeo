@@ -12,6 +12,7 @@ export class NeoCoordinatorTurn {
   protected closed = false;
   private turn?: OperationCaller['neoTurn'];
   private readonly carriedInputs = new Set<string>();
+  openedAt = 0;
   private end: () => void = () => {};
   readonly ended = new Promise<void>((resolve) => {
     this.end = resolve;
@@ -57,6 +58,7 @@ export class NeoCoordinatorTurn {
   }
 
   protected open(messageId: string, origin: string | null): true {
+    this.openedAt = Date.now();
     this.turn = {
       messageId,
       ...(origin && origin !== messageId ? { origin } : {}),
