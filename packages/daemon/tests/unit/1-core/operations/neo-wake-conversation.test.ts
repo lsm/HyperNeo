@@ -120,7 +120,7 @@ describe('scheduled wakes in the public conversation', () => {
     expect(terminal.consumed).toBeGreaterThan(next.consumed);
     const reader = new NeoConversationReader(db.getDatabase());
     expect(
-      reader.read({ conversationId }).items.find((item) => item.role === 'wake')
+      reader.read({ conversationId, limit: 100 }).items.find((item) => item.role === 'wake')
     ).toMatchObject({
       wake: { settledAt: null, summary: null, additions: [] },
     });
@@ -133,7 +133,7 @@ describe('scheduled wakes in the public conversation', () => {
     fixture.finish('An unrelated later summary.');
     const reader = new NeoConversationReader(db.getDatabase());
     expect(
-      reader.read({ conversationId }).items.find((item) => item.role === 'wake')
+      reader.read({ conversationId, limit: 100 }).items.find((item) => item.role === 'wake')
     ).toMatchObject({
       wake: { settledAt: Date.parse(terminal.timestamp), summary: 'Guide cycle complete.' },
     });
