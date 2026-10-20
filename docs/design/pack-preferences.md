@@ -81,7 +81,14 @@ With a policy, `codingPrState` maps GitHub facts to states per policy. `failing`
 
 **No CI.** A repo with no CI keeps today's rule (`pr-ledger.ts:133,140`): a head with no status rollup and no check suites counts as "CI green" in every column, so a `ci_only` repo without CI is ready as soon as nothing failed.
 
-A **hold** overrides only merge readiness, under every policy: a held PR that would be `approved_green` or `approved_pending` shows `waiting_human` instead. Every other state stays as it is, so the owner still fixes failing CI, conflicts and review findings on a held PR. The sweep says "merge" only for `approved_green`; `waiting_human` gets no merge text and no deadline. `waiting_ci` is new; it has the existing approved-pending wording without "approved".
+A **hold** overrides only merge readiness, under every policy: a held PR that would be `approved_green` or `approved_pending` shows `waiting_human` instead. Every other state stays as it is, so the owner still fixes failing CI, conflicts and review findings on a held PR.
+
+**Wording rule.** Merge text appears only for `approved_green`:
+- `pr-sweep.ts:46`'s "Merge it now".
+- The escalation clause "or merge it yourself if it is approved and green" (`pr-sweep.ts:85`) is added only when the row is `approved_green`.
+- `approved_pending`'s next step loses "merge once CI is green" (`pr-sweep.ts:52`) and says only that CI is still running.
+- `waiting_ci` is new, with its own wording: "CI is still running; fix it if it fails". It never mentions merging, under any policy.
+- `waiting_human` gets no merge text and no deadline.
 
 ## First use and seeding
 
@@ -108,8 +115,8 @@ A hold is an explicit "waiting on the human" mark: `pack_coding_pr_holds(repo, n
 Creating a hold also opens one linked Neo question (`neo_questions`, `m387-neo-ask-todo-tables.ts:81`) that names the PR. It's a yes/no question: "Approve lsm/qlark#19 for merge?"
 
 **Effect.** While held:
-- the ledger state is `waiting_human`;
-- `planCodingPrEvent` and the sweep send no "merge" text and no deadline reminders;
+- would-be merge-ready states (`approved_green`, `approved_pending`) become `waiting_human`, as in the state table; fix-it states (`failing`, `changes_requested`, `dirty`, `waiting_review`, `waiting_ci`) keep their own nudges, which never mention merging;
+- `planCodingPrEvent` and the sweep send no "merge" text, and `waiting_human` has no deadline reminders;
 - the snapshot shows the PR as held, with the question;
 - the owner is told once: "waiting on the human; don't merge".
 
@@ -173,8 +180,8 @@ The qlark#19 prevention, slices 1–7, comes first: policy-aware readiness, then
 9. **Wire the generated first-use question** for repos with no stored policy.
 10. **Build scoped conventions** in `neo.rule.save` (scope input and storage) and **wire their delivery** into `neoTodoCard`. If it exceeds the slice budget, split Build and Wire.
 11. **Delete the merge-rule prompt text** from `packages/prompts/src/neo/packs/coding/instructions.md`, once the daemon enforces it. Only these sentences go:
-    - lines 18-20: put the merge rule in the todo instruction;
-    - lines 21-24: the ask-once review question;
-    - lines 26-27: write the answer into the merge rule.
+    - "Put the repository's merge rule in a coding todo's instruction: merge by hand after the review it uses approves the latest head and required checks are green, and never enable GitHub auto-merge." (lines 18-20)
+    - "When you create a repository, or first start coding work in one with no merged pull request yet, ask the human once with neo.question.ask (kind choice) how its pull requests get reviewed: … \"I review them myself\"." (lines 21-24, ending mid-line 24)
+    - "Write the answer into that repository's merge rule; until they answer, nothing there merges." (starting at the end of line 25, through line 27)
 
-    The sentence "Never install apps, add reviewers or change repository settings yourself; that is the human's own GitHub setup" stays. The Claude Desktop question that follows ("in the same round of questions", lines 28-29) is reworded to stand alone.
+    The edits go sentence by sentence; line ranges are only locators, because lines 24 and 25 are shared. The sentence "Never install apps, add reviewers or change repository settings yourself; that is the human's own GitHub setup." stays whole. The Claude Desktop question that follows ("in the same round of questions", lines 28-29) is reworded to stand alone.
