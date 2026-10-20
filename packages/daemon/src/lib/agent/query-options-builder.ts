@@ -59,6 +59,7 @@ import type { SettingsManager } from '../settings-manager.ts';
 import type { SkillsManager } from '../skills-manager.ts';
 import { NON_DELEGATING_GENERAL_AGENT } from '../agents/custom-agent.ts';
 import { createBashScopeHook, extractBashScopePrefixes } from './bash-scope.ts';
+import { createSendMessageRedirectHook } from '../messaging/session-reply.ts';
 import {
   builtinSkillPluginPath,
   defaultBuiltinSkillPluginRoot,
@@ -1009,6 +1010,11 @@ export class QueryOptionsBuilder {
         });
       }
     }
+
+    preToolUse.push({
+      matcher: 'SendMessage',
+      hooks: [createSendMessageRedirectHook((id) => !!this.ctx.db?.getSession?.(id))],
+    });
 
     const bashScopePrefixes = extractBashScopePrefixes(this.ctx.session.config.allowedTools ?? []);
     if (bashScopePrefixes.length > 0 && !neoCoordinatorBinding(this.ctx.db, this.ctx.session.id)) {

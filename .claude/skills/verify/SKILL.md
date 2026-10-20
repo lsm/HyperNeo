@@ -188,7 +188,7 @@ adds its journey here.
    `duplicate: …`; five more distinct sends are accepted and the next replies
    `rate_limited: …`. Messages sent while B is `processing` are `consumed` before
    its turn ends. A `work.send '{"ref":{"adapter":"hyperneo","id":"<B>"},"message":"…","from":"session:<A>"}'`
-   lands in B ending `Reply with message.send to <A>.`, and
+   lands in B ending `Reply with mcp__hyperneo-operations__invoke {"name":"message.send","input":{"sessionId":"<A>",…}}, not SendMessage.`, and
    `neo.question.get '{"questionId":"made-up"}'` replies `not_found: no such question.`
 
 11. **Root Neo owns goals outside any Space.** After journey 1 opened root, run
@@ -207,6 +207,13 @@ adds its journey here.
     (no check), and one open start question `q-start` listing both. End state
     within ~3 min: `todo-a` is `done` with `started_at` empty, and `q-start`
     is still `open` with `start_todos` `["todo-b"]`.
+
+12. **Messages between root Neo and its workers show in Neo's conversation.** Run
+    `.claude/skills/verify/neo-session-rows.sh <port> "$RUN"`. It opens root, creates
+    a worker session "Fix the loader", and sends one message each way. End state: it
+    prints `Neo -> Fix the loader: Rebase on dev, then tell me.` then
+    `Fix the loader -> Neo: Rebased.`; on `/neo` each shows as one collapsed row
+    "Neo → Fix the loader" with its first line, expanding to the full text.
 
 ## Evidence
 

@@ -1,3 +1,4 @@
+import type { NeoSessionMessage } from '@hyperneo/shared/types/neo-session-message';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type {
   NeoConversationAskPageItem,
@@ -225,6 +226,36 @@ export type NeoSessionMute = {
   muted: ReadonlySet<string>;
   onMute: (key: string, muted: boolean) => void;
 };
+
+function SessionMessageRow({
+  entryKey,
+  message,
+}: {
+  entryKey: string;
+  message: NeoSessionMessage;
+}) {
+  const from = message.fromName ?? message.fromSession;
+  const to = message.toName ?? message.toSession;
+  const time = messageTime(message.createdAt);
+  return (
+    <details
+      data-public-entry={entryKey}
+      aria-label={t('chat.sessionMessageLabel', { from, to })}
+      class="neo-arrive group mx-auto max-w-[94%] text-xs text-fg-muted"
+    >
+      <summary class="flex min-h-9 cursor-pointer list-none items-center gap-2 rounded-md px-3 hover:bg-fill-soft">
+        {time && (
+          <time dateTime={time.iso} title={time.full} class="text-[11px] text-fg-faint">
+            {time.label}
+          </time>
+        )}
+        <span class="shrink-0 font-medium text-fg">{t('chat.sessionMessage', { from, to })}</span>
+        <span class="min-w-0 truncate">{message.text.split('\n')[0]}</span>
+      </summary>
+      <p class="whitespace-pre-wrap break-words px-3 pb-2 pt-1 text-fg">{message.text}</p>
+    </details>
+  );
+}
 
 function NoticeRow({
   entryKey,
@@ -834,6 +865,8 @@ export function NeoPublicConversation({
       {conversation.entries.map((entry) =>
         entry.kind === 'notices' ? (
           <NoticeRow key={entry.key} entryKey={entry.key} group={entry.group} mute={mute} />
+        ) : entry.kind === 'session' ? (
+          <SessionMessageRow key={entry.key} entryKey={entry.key} message={entry.message} />
         ) : (
           <PublicEntry
             key={entry.key}
