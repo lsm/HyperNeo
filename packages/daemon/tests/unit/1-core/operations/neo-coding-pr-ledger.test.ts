@@ -1,3 +1,7 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createCodingClaudeOwnerReader } from '../../../../src/lib/neo/packs/coding/claude-pr-owners.ts';
 import { describe, expect, test } from 'bun:test';
 import {
   CODING_LEDGER_KEEP_MS,
@@ -496,6 +500,75 @@ describe('CodingPrLedgerRepository.observeSessions', () => {
   const owners = (db: Database) =>
     db.prepare('SELECT number, owner FROM pack_coding_pr_ledger ORDER BY number').all();
 
+  test('a Claude commenter link does not claim a PR it did not create', async () => {
+    const { db, ledger } = setup();
+    await reconcile(ledger, ['lsm/a'], async () => response([node(4)]), 100);
+    ledger.observeSessions(
+      [
+        facts(
+          { adapter: 'claude-desktop', id: 'commenter' },
+          {
+            linkedPrs: [{ url: 'https://github.com/lsm/a/pull/4' }],
+            linkedPrsWindow: true,
+          }
+        ),
+      ],
+      101
+    );
+    expect(owners(db)).toEqual([{ number: 4, owner: null }]);
+    db.close();
+  });
+
+  test('keeps actual opened-PR evidence when a Claude session has no sidebar list', async () => {
+    const { db, ledger } = setup();
+    const ref = { adapter: 'claude-desktop', id: 'legacy-opener' };
+    await reconcile(ledger, ['lsm/a'], async () => response([node(4)]), 100);
+    ledger.observeSessions([facts(ref, { openedPrs: ['https://github.com/lsm/a/pull/4'] })], 101);
+    expect(owners(db)).toEqual([{ number: 4, owner: JSON.stringify(ref) }]);
+    db.close();
+  });
+
+  test('a no-sidebar creation sweep preserves watcher-opened PRs across repeated observations', async () => {
+    const { db, ledger } = setup();
+    const root = mkdtempSync(join(tmpdir(), 'claude-owner-ledger-'));
+    const scope = join(root, 'sessions/account/scope');
+    const project = join(root, 'projects/-synthetic');
+    mkdirSync(scope, { recursive: true });
+    mkdirSync(project, { recursive: true });
+    const ref = { adapter: 'claude-desktop', id: 'local_one' };
+    const pr = (number: number) => `https://github.com/lsm/a/pull/${number}`;
+    writeFileSync(
+      join(scope, 'local_one.json'),
+      JSON.stringify({ sessionId: ref.id, cliSessionId: 'one', cwd: '/synthetic' })
+    );
+    writeFileSync(
+      join(project, 'one.jsonl'),
+      JSON.stringify({
+        type: 'user',
+        toolUseResult: { gitOperation: { pr: { action: 'created', number: 5, url: pr(5) } } },
+      }) + '\n'
+    );
+    const read = createCodingClaudeOwnerReader(
+      join(root, 'sessions'),
+      join(root, 'projects'),
+      async () => ({ remotes: ['git@github.com:lsm/a.git'] })
+    );
+    try {
+      await reconcile(ledger, ['lsm/a'], async () => response([node(4), node(5)]), 100);
+      for (const now of [101, 103]) {
+        ledger.observeSessions([facts(ref, { openedPrs: [pr(4)] })], now);
+        ledger.observeSessions(await read(), now + 1);
+        expect(owners(db)).toEqual([
+          { number: 4, owner: JSON.stringify(ref) },
+          { number: 5, owner: JSON.stringify(ref) },
+        ]);
+      }
+    } finally {
+      db.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('an app link owns its PR before a branch match, and the first owner keeps it', async () => {
     const { db, ledger } = setup();
     const opener = { adapter: 'claude-desktop', id: 'opener' };
@@ -504,7 +577,7 @@ describe('CodingPrLedgerRepository.observeSessions', () => {
     ledger.observeSessions(
       [
         facts(opener, {
-          linkedPrs: [{ url: 'https://github.com/LSM/a/pull/1' }],
+          linkedPrs: [{ url: 'https://github.com/LSM/a/pull/1', own: true }],
           linkedPrsWindow: true,
           branches: ['b1'],
         }),
@@ -559,7 +632,7 @@ describe('CodingPrLedgerRepository.observeSessions', () => {
     const pr = (n: number) => `https://github.com/lsm/a/pull/${n}`;
     ledger.observeSessions(
       [
-        facts(claude, { linkedPrs: [{ url: pr(1) }], linkedPrsWindow: true }),
+        facts(claude, { linkedPrs: [{ url: pr(1), own: true }], linkedPrsWindow: true }),
         facts(codex, { linkedPrs: [{ url: pr(2) }] }),
       ],
       101
