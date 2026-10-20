@@ -137,6 +137,39 @@ describe('work verb operations', () => {
     ]);
   });
 
+  test('rename refuses an adapter without a supported API', async () => {
+    expect(
+      await call('work.rename', {
+        ref: { adapter: 'claude-desktop', id: 'existing' },
+        title: 'ops',
+      })
+    ).toMatchObject({ ok: false, reason: 'not_supported' });
+  });
+
+  test('forwards rename to the owning daemon without losing the title', async () => {
+    const calls: unknown[] = [];
+    expect(
+      await call(
+        'work.rename',
+        {
+          ref: { adapter: 'codex-desktop', id: 'busy', daemon: 'laptop' },
+          title: ' HyperNeo backend ',
+        },
+        async (_daemon, name, input) => {
+          calls.push({ name, input });
+          return { ok: true, value: { renamed: true, title: 'HyperNeo backend' } };
+        },
+        { source: 'mcp', role: 'neo', sessionId: 'neo' }
+      )
+    ).toEqual({ ok: true, value: { renamed: true, title: 'HyperNeo backend' } });
+    expect(calls).toEqual([
+      {
+        name: 'work.rename',
+        input: { ref: { adapter: 'codex-desktop', id: 'busy' }, title: 'HyperNeo backend' },
+      },
+    ]);
+  });
+
   test('keeps delivery facts in driver result schemas', () => {
     for (const fact of [{ queuedSubmissionId: 'q1' }, { steeredIntoTurnId: 't1' }]) {
       const result = { ok: true, value: { delivered: false, ...fact } };
