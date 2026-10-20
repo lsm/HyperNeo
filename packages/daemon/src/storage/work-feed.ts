@@ -30,7 +30,7 @@ function knownWorkFeedOffsets(db: BunDatabase): Map<string, WorkFeedOffset> {
         db.prepare('SELECT path, offset, size, mtime FROM work_feed_offsets').all() as Array<
           WorkFeedOffset & { path: string }
         >
-      ).map(({ path, ...offset }) => [path, offset])
+      ).map(({ path, ...offset }) => [path, Object.freeze(offset)])
     );
     feedOffsets.set(db, known);
   }
@@ -73,7 +73,7 @@ export function saveWorkFeedChunk(
       );
     mark.run(path, offset.offset, offset.size, offset.mtime);
   })();
-  knownWorkFeedOffsets(db).set(path, { ...offset });
+  knownWorkFeedOffsets(db).set(path, Object.freeze({ ...offset }));
 }
 
 async function deleteWorkFeedSessions(
@@ -118,7 +118,7 @@ export function rereadWorkFeedPaths(db: BunDatabase, paths: readonly string[]): 
   const known = knownWorkFeedOffsets(db);
   for (const path of paths) {
     const offset = known.get(path);
-    if (offset) known.set(path, { ...offset, offset: 0, size: -1 });
+    if (offset) known.set(path, Object.freeze({ ...offset, offset: 0, size: -1 }));
   }
 }
 

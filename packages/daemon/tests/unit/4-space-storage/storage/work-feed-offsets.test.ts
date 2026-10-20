@@ -80,11 +80,15 @@ describe('readWorkFeedOffsets', () => {
     expect([...table().keys()]).toEqual(['/b.jsonl']);
   });
 
-  test('hands out a snapshot, so a caller iterating it is not changed by later writes', () => {
+  test('hands out a snapshot of frozen offsets, unchanged by later writes and impossible to mutate', () => {
     const { db } = setup();
     saveWorkFeedChunk(db, 'codex', 't', [], '/a.jsonl', { offset: 1, size: 1, mtime: 1 });
     const snapshot = readWorkFeedOffsets(db);
     saveWorkFeedChunk(db, 'codex', 't', [], '/a.jsonl', { offset: 2, size: 2, mtime: 2 });
     expect(snapshot.get('/a.jsonl')).toEqual({ offset: 1, size: 1, mtime: 1 });
+    expect(() => {
+      (snapshot.get('/a.jsonl') as { offset: number }).offset = 99;
+    }).toThrow();
+    expect(readWorkFeedOffsets(db).get('/a.jsonl')).toEqual({ offset: 2, size: 2, mtime: 2 });
   });
 });
