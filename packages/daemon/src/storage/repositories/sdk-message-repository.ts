@@ -1286,7 +1286,8 @@ export class SDKMessageRepository {
       .prepare(
         hydrateSdkMessageBodies(
           `SELECT rowid AS body_seq, timestamp FROM sdk_messages
-          WHERE session_id = ? AND message_type = ? AND message_subtype = ?
+          INDEXED BY idx_sdk_messages_session_subtype_parent
+          WHERE session_id = ? AND message_type = ? AND message_subtype_norm = ?
           ORDER BY timestamp DESC, rowid DESC LIMIT ?`,
           'body_selection.timestamp DESC, body_selection.body_seq DESC'
         )
