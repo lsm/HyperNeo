@@ -39,6 +39,11 @@ for (const phase of ['initial', 'restart']) {
       db.exec(`INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata)
         VALUES ('synthetic-root','Synthetic Neo','/tmp','2026-10-20T00:00:00Z','2026-10-20T00:00:00Z','active','{}','{}')`);
       new NeoAskTodoRepository(db).openAsk({ id: 'synthetic-ask', projectId: null, sessionId: 'synthetic-root', originMessageId: null, title: 'Synthetic settings', request: 'Verify immutable proposal', createdAt: 1 });
+      const declined = await mcp('pack.preferences.ask', { askId: 'synthetic-ask', requestId: 'declined-request', values });
+      assert.equal(declined.ok, true);
+      assert.equal((await rpc('neo.question.answer', { questionId: declined.questionId, answer: 'no' })).ok, true);
+      const closed = await mcp('pack.preferences.ask', { askId: 'synthetic-ask', requestId: 'declined-request', values });
+      assert.deepEqual(closed, { ok: false, reason: 'question_closed' });
       const proposed = await mcp('pack.preferences.ask', { askId: 'synthetic-ask', requestId: 'synthetic-request', values });
       assert.equal(proposed.ok, true); questionId = proposed.questionId;
       assert.equal((await rpc('pack.preferences.list', {})).preferences.length, 0);

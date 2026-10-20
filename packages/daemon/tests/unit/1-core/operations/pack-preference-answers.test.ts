@@ -189,6 +189,31 @@ describe('immutable human settings proposals', () => {
     expect(await propose()).toBe(id);
     expect(service.todos.listQuestions('ask')).toHaveLength(1);
   });
+  test.each(['no', 'yes', 'retired'])(
+    'retry after %s reports a closed question and a new request reaches the human',
+    async (answer) => {
+      const questionId = await propose();
+      if (answer === 'retired')
+        service.todos.retireQuestion(service.todos.getQuestion(questionId)!, 'superseded', null, 2);
+      else await invoke('neo.question.answer', { questionId, answer }, human);
+      expect(
+        await invoke('pack.preferences.ask', {
+          askId: 'ask',
+          requestId: 'synthetic-request',
+          values,
+        })
+      ).toMatchObject({ value: { ok: false, reason: 'question_closed' } });
+      const next = await invoke('pack.preferences.ask', {
+        askId: 'ask',
+        requestId: 'replacement-request',
+        values,
+      });
+      expect(next).toMatchObject({ value: { ok: true } });
+      const nextId = (next as { value: { questionId: string } }).value.questionId;
+      expect(nextId).not.toBe(questionId);
+      expect(service.todos.getQuestion(nextId)?.state).toBe('open');
+    }
+  );
   test('question/proposal creation rolls back together and changed question text cannot authorize old values', async () => {
     db.getDatabase().exec(
       `CREATE TRIGGER synthetic_proposal_failure BEFORE INSERT ON neo_pack_preference_proposals BEGIN SELECT RAISE(ABORT,'synthetic_failure'); END`
