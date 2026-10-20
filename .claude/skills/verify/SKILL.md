@@ -860,6 +860,28 @@ verification failure, runtime-capacity/worker refusal, durable backup reservatio
 rollback, restart, authoritative-side conflicts, malformed
 bytes and concurrent normal writers. No GUI, model or credentials are used.
 
+Exercise the lifecycle/error boundary in another fresh directory (65-second
+observation spans the former automatic retry interval):
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-sdk-copy-lifecycle-XXXXXX)
+mkdir -p "$RUN/home"
+env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
+  bun .claude/skills/verify/sdk-body-copy-lifecycle.ts verify 9337 "$RUN"
+```
+
+`lifecycle.json` must show no copy logs after a delayed Space-ready callback runs
+on a closed core; a corrupt synthetic backup manifest must produce one error-level
+operator-action log with the backup path, one disk admission, no deferred retries,
+responsive real health RPCs and unchanged complete logical-body hash. The manifest
+is restored in `finally`; no verified backup is deleted. The same helper's
+`reproduce` mode takes an optional baseline worktree as the final argument and
+must observe the closed-DB warning plus two verification attempts across 65 s on
+the unfixed code. Stop all owned daemons/workers and remove the baseline worktree.
+Transient creation failures may retry; a verification failure requires operator
+action and has no automatic retry. Never repair, delete or replace a live backup
+to make the check pass.
+
 Before merging, require Neo's explicit go-ahead, latest-head bot approval and
 green CI. Read-only stat/free-space checks must show room for 2× the live DB
 plus the permanent backup; the production admission itself requires 2× DB+WAL.

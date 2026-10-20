@@ -25,6 +25,7 @@ const worker = globalThis as unknown as {
 worker.onmessage = ({ data }) => {
   const started = performance.now();
   let db: Database | undefined;
+  let verifying = false;
   try {
     if (data.action === 'checkpoint') {
       db = new Database(data.dbPath);
@@ -34,6 +35,7 @@ worker.onmessage = ({ data }) => {
       return;
     }
     mkdirSync(dirname(data.backupPath), { recursive: true, mode: 0o700 });
+    verifying = data.mustExist === true;
     if (!existsSync(data.backupPath)) {
       if (data.mustExist)
         throw new Error('Original SDK body migration backup is missing; refusing to resume');
@@ -52,6 +54,7 @@ worker.onmessage = ({ data }) => {
       }
       renameSync(partial, data.backupPath);
     }
+    verifying = true;
     db = new Database(data.backupPath, { readonly: true });
     const checks = db.prepare('PRAGMA quick_check').all() as { quick_check: string }[];
     if (checks.length !== 1 || checks[0].quick_check !== 'ok')
@@ -118,7 +121,11 @@ worker.onmessage = ({ data }) => {
       elapsedMs: performance.now() - started,
     });
   } catch (error) {
-    worker.postMessage({ id: data.id, error: String(error) });
+    worker.postMessage({
+      id: data.id,
+      error: String(error),
+      ...(verifying ? { errorCode: 'verification_failed' as const } : {}),
+    });
   } finally {
     db?.close();
   }

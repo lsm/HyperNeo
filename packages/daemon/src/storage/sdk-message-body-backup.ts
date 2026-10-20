@@ -50,6 +50,7 @@ export type BodyBackupRequest = {
 export type BodyBackupReply = {
   id: number;
   error?: string;
+  errorCode?: 'verification_failed';
   backupPath?: string;
   hash?: string;
   rows?: number;
@@ -58,6 +59,15 @@ export type BodyBackupReply = {
   quickCheck?: 'ok';
   fileHash?: string;
 };
+
+export class SdkBodyBackupVerificationError extends Error {
+  constructor(
+    message: string,
+    readonly backupPath: string
+  ) {
+    super(message);
+  }
+}
 
 export function sdkBodyBackupChannel(dbPath: string, backupPath: string, signal: AbortSignal) {
   const worker = new Worker(new URL('./sdk-message-body-backup-worker.ts', import.meta.url).href, {
@@ -79,7 +89,12 @@ export function sdkBodyBackupChannel(dbPath: string, backupPath: string, signal:
     const reply = event.data;
     const call = pending.get(reply.id);
     pending.delete(reply.id);
-    if (reply.error) call?.reject(new Error(reply.error));
+    if (reply.error)
+      call?.reject(
+        reply.errorCode === 'verification_failed'
+          ? new SdkBodyBackupVerificationError(reply.error, backupPath)
+          : new Error(reply.error)
+      );
     else call?.resolve(reply);
   };
   worker.onerror = (error) => {

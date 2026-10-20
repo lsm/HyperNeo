@@ -46,7 +46,9 @@ describe('SDK body copy retry safety', () => {
       expect(vi.getTimerCount()).toBe(0);
     } finally {
       unsubscribe();
-      core.close();
+      try {
+        core.close();
+      } catch {}
     }
   });
 

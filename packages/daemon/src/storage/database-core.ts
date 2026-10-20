@@ -33,7 +33,11 @@ import { Database as BunDatabase } from './sqlite-compat.ts';
 import { assertSupportedDatabaseVersion } from './schema/upgrade-floor.ts';
 import { backfillSdkMessageColumns } from './schema/m413-sdk-message-columns.ts';
 import { migrateSdkMessageBodies } from './sdk-message-body-copy.ts';
-import { reserveSdkBodyBackupPath, sdkBodyBackupChannel } from './sdk-message-body-backup.ts';
+import {
+  reserveSdkBodyBackupPath,
+  sdkBodyBackupChannel,
+  SdkBodyBackupVerificationError,
+} from './sdk-message-body-backup.ts';
 
 const MIGRATION_BACKUP_RETENTION = 3;
 const MIGRATION_BACKUP_TEMP_STALE_MS = 60 * 60 * 1000;
@@ -58,6 +62,7 @@ export class DatabaseCore {
   private messageSearchMergeIntervalMs = MESSAGE_SEARCH_MERGE_INTERVAL_MS;
   private bodyCopyAbort: AbortController | null = null;
   private bodyCopyRetry: ReturnType<typeof setTimeout> | null = null;
+  private bodyCopyClosed = false;
 
   constructor(
     private dbPath: string,
@@ -168,13 +173,14 @@ export class DatabaseCore {
   }
 
   startSdkMessageBodyCopy(): void {
-    if (this.bodyCopyAbort || this.dbPath === ':memory:') return;
+    if (this.bodyCopyClosed || this.bodyCopyAbort || this.dbPath === ':memory:') return;
     if (typeof Worker === 'undefined') {
       this.logger.info('SDK body copy: {"phase":"refused","reason":"worker_unavailable"}');
       return;
     }
     const abort = (this.bodyCopyAbort = new AbortController());
     const attempt = async () => {
+      if (this.bodyCopyClosed || abort.signal.aborted) return;
       const started = performance.now();
       let last = started,
         maxLagMs = 0;
@@ -185,6 +191,7 @@ export class DatabaseCore {
       }, 10);
       let channel: ReturnType<typeof sdkBodyBackupChannel> | undefined;
       let complete = false;
+      let terminal = false;
       try {
         const dbBytes =
           statSync(this.dbPath).size +
@@ -218,13 +225,20 @@ export class DatabaseCore {
           `SDK body copy: ${JSON.stringify({ phase: 'run_finished', status: result.status, elapsedMs: performance.now() - started, maxLagMs })}`
         );
       } catch (error) {
-        if (!abort.signal.aborted)
+        if (error instanceof SdkBodyBackupVerificationError) {
+          terminal = true;
+          if (!abort.signal.aborted)
+            this.logger.error(
+              `SDK body copy stopped; backup verification requires operator action; backup=${error.backupPath}`,
+              error
+            );
+        } else if (!abort.signal.aborted)
           this.logger.warn('SDK body copy deferred; no unverified changes permitted', error);
       } finally {
         clearInterval(heartbeat);
         channel?.close();
       }
-      if (!complete && !abort.signal.aborted)
+      if (!complete && !terminal && !this.bodyCopyClosed && !abort.signal.aborted)
         this.bodyCopyRetry = setTimeout(() => {
           void attempt();
         }, 60_000);
@@ -239,6 +253,7 @@ export class DatabaseCore {
   }
 
   close(): void {
+    this.bodyCopyClosed = true;
     this.bodyCopyAbort?.abort();
     if (this.bodyCopyRetry) clearTimeout(this.bodyCopyRetry);
     this.messageSearchMergeClosed = true;
