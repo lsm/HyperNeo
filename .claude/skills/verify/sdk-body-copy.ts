@@ -51,6 +51,7 @@ if(mode==='seed') {
   const abort=new AbortController(),channel=sdkBodyBackupChannel(dbPath,backup,abort.signal);
   let rejected=false;
   try {
+    await channel.verify(true);
     writeFileSync(manifest,JSON.stringify({...JSON.parse(original),hash:'invalid'}));
     await assert.rejects(channel.verify(true),/digest mismatch/);rejected=true;
     writeFileSync(manifest,original);
