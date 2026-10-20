@@ -114,6 +114,16 @@ block/text extraction) stay in place for slices 8–9. Migration 417 adds a cove
 session-window index so the bounded transcript selection never filters body pages;
 the body is read by rowid only after the window is selected.
 
+Slice 8 switches repository body outputs (#5–45) to a shared hydration query:
+materialize the existing metadata selection first, then join only its chosen
+rowids to `sdk_message_bodies`, with `COALESCE` falling back to the legacy body.
+The caller's output order is repeated after hydration. Background-task ranking
+and union arms now carry metadata only; they hydrate after selecting the latest
+progress per key. Search admission and delivery normalization use the same body
+source. Existing legacy-only rows, mixed copy state and side-only bodies preserve
+the read contract. No historical copy, schema migration, trimming or new deletion
+path is introduced. Live-query/adapter outputs remain for slice 9.
+
 ## Migration
 
 Slice 7 installs the split projection triggers in migration 419 and the fresh

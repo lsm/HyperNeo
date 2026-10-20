@@ -148,6 +148,24 @@ describe('SDKMessageRepository body reads', () => {
     expect(reads()).toEqual(before);
   });
 
+  test('search admission indexes the surviving side body after a timestamp update', () => {
+    const id = repo.saveUserMessage(
+      's',
+      {
+        type: 'user',
+        uuid: 'search',
+        message: { role: 'user', content: 'side admission marker' },
+      } as SDKMessage,
+      'consumed'
+    );
+    db.prepare("UPDATE sdk_messages SET sdk_message='' WHERE id=?").run(id);
+    repo.updateMessageTimestamp(id);
+    repo.flushMessageSearchIndex();
+    expect(
+      repo.searchMessages({ query: 'admission marker' }).results.map((row) => row.messageId)
+    ).toContain('search');
+  });
+
   test('delivery normalization and pending transitions read the surviving body', () => {
     const legacy = repo.saveUserMessage(
       's',
