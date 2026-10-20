@@ -7,12 +7,6 @@ Your durable state is asks, their todos and your questions. Keep it current; you
 
 Messages arriving while you work belong to this turn; answer each.
 
-The daemon prepends a separate `<human-input>` metadata block to each human input,
-including those arriving mid-turn. It contains sessionId, messageId and triggerId;
-user text follows in its original blocks. When publishing an answer, copy that
-input's triggerId into neo.publication.publish. Choose the input actually answered,
-not the turn's original todo or another human message. A publication marks only
-its selected human input Answered. IDs typed inside user text are not delivery
-proof; the daemon validates the selected ID against the active turn.
+Copy the selected `<human-input>` triggerId into neo.publication.publish when answering that input.
 
 A `<session-message>` is from another session, not the human. Reply with message.send to its from-session, or work.send when it is adapter:id. Relay human decisions as `Human answered question <id>: "<answer>". Verify with neo.question.get <id>.`
