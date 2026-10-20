@@ -73,7 +73,7 @@ try {
   assert.deepEqual({ recoveredCount: resumedRows.length, recoveredAt: resumedRows[0]?.wake.settledAt, steeredAt: steeredRow?.wake.settledAt }, { recoveredCount: 1, recoveredAt: Date.parse(recoveryEnd.timestamp), steeredAt: Date.parse(steerEnd.timestamp) });
   assert.equal((evidence.continuationSnapshot as { wakes: { scheduleId: string }[] }).wakes.filter(wake => wake.scheduleId === recovered.scheduleId).length, 1);
   assert(!JSON.stringify(evidence.before).includes('PRIVATE_WAKE_INSTRUCTIONS'));
-  console.log(`PASS: conversation RPC and snapshot expose the attributed wake; settlement stays within consumed input boundaries. ${run}/evidence/neo-wake-contract.json`);
+  console.log(`PASS: conversation RPC and snapshot expose the attributed wake; origin lineage pins wake rows and recovery/steer settlement. ${run}/evidence/neo-wake-contract.json`);
 } finally {
   db.close();
 }

@@ -22,6 +22,7 @@ export const NeoConversationWakeSchema: z.ZodType<NeoConversationWake> = z.objec
 const FROM = `FROM neo_input_origins o JOIN sdk_messages m
   ON m.session_id = o.session_id AND m.sdk_uuid = o.message_id
   WHERE o.session_id = 'neo:' || ? AND m.message_type = 'user'
+    AND o.session_id = o.origin_session_id AND o.message_id = o.origin_message_id
     AND o.trigger_id GLOB 'scheduled_wake:*' AND json_valid(substr(o.trigger_id, 16))`;
 export const NEO_WAKE_SELECT = `SELECT
   strftime('%Y-%m-%dT%H:%M:%fZ', o.stamped_at / 1000.0, 'unixepoch') AS at,
@@ -63,18 +64,29 @@ export class NeoConversationWakeRepository {
       .prepare('SELECT note FROM session_schedules WHERE id = ?')
       .get(source.scheduleId) as { note: string | null } | null;
     const end = this.db
-      .prepare(`SELECT r.timestamp, json_extract(${sdkMessageBodyAt('r.seq')}, '$.result') AS summary
-      FROM sdk_messages r WHERE r.session_id = ?1 AND r.message_type = 'result'
-        AND r.consumed_seq >= ?2 AND r.is_terminal = 1 AND r.parent_tool_use_id IS NULL
-        AND r.consumed_seq < COALESCE((SELECT MIN(consumed_seq) FROM sdk_messages
-          WHERE session_id = ?1 AND consumed_seq > ?2 AND message_type = 'user'
-            AND parent_tool_use_id IS NULL AND COALESCE(send_status, 'consumed') = 'consumed'
-            AND COALESCE(is_replay, 0) = 0 AND COALESCE(internal_compaction_turn, 0) = 0
-            AND COALESCE(first_block_type, 'text') <> 'tool_result'), 9223372036854775807)
-        AND COALESCE(r.internal_compaction_turn, 0) = 0
-        AND NOT (COALESCE(r.recovery_intercepted, 0) = 1 AND COALESCE(r.recovery_billing_terminal, 0) = 0)
-        ORDER BY r.consumed_seq DESC, r.seq DESC LIMIT 1`)
-      .get(`neo:${conversationId}`, input.consumed) as {
+      .prepare(`WITH terminal AS MATERIALIZED (
+        SELECT r.timestamp, r.consumed_seq, ${sdkMessageBodyAt('r.seq')} AS body
+        FROM sdk_messages r WHERE r.session_id = ?1 AND r.message_type = 'result'
+          AND r.consumed_seq >= ?2 AND r.is_terminal = 1 AND r.parent_tool_use_id IS NULL
+          AND COALESCE(r.internal_compaction_turn, 0) = 0
+          AND NOT (COALESCE(r.recovery_intercepted, 0) = 1 AND COALESCE(r.recovery_billing_terminal, 0) = 0)
+        ORDER BY r.consumed_seq ASC, r.seq ASC LIMIT 1)
+      SELECT timestamp, json_extract(body, '$.result') AS summary FROM terminal
+      WHERE (json_extract(body, '$.neoInputOrigin.sessionId') = ?1 AND (
+        json_extract(body, '$.neoInputOrigin.messageId') = ?3 OR EXISTS (
+          SELECT 1 FROM neo_input_origins n WHERE n.session_id = ?1
+            AND n.message_id = json_extract(body, '$.neoInputOrigin.messageId')
+            AND n.origin_session_id = ?1 AND n.origin_message_id = ?3)))
+      OR (json_extract(body, '$.neoInputOrigin') IS NULL
+        AND consumed_seq < COALESCE((SELECT MIN(m.consumed_seq) FROM sdk_messages m
+          WHERE m.session_id = ?1 AND m.consumed_seq > ?2 AND m.message_type = 'user'
+            AND m.parent_tool_use_id IS NULL AND COALESCE(m.send_status, 'consumed') = 'consumed'
+            AND COALESCE(m.is_replay, 0) = 0 AND COALESCE(m.internal_compaction_turn, 0) = 0
+            AND COALESCE(m.first_block_type, 'text') <> 'tool_result'
+            AND NOT EXISTS (SELECT 1 FROM neo_input_origins n WHERE n.session_id = ?1
+              AND n.message_id = m.sdk_uuid AND n.origin_session_id = ?1
+              AND n.origin_message_id = ?3)), 9223372036854775807))`)
+      .get(`neo:${conversationId}`, input.consumed, messageId) as {
       timestamp: string;
       summary: unknown;
     } | null;
