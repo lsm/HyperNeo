@@ -23,7 +23,7 @@ export async function backfillSdkMessageColumns(
     .prepare("SELECT key FROM migration_markers WHERE key GLOB 'sdk_message_columns_backfill:*'")
     .get() as { key: string } | undefined;
   let after = cursor ? Number(cursor.key.slice(cursorPrefix.length)) : 0;
-  const names = Object.keys(SDK_MESSAGE_COLUMN_TYPES);
+  const names = Object.keys(SDK_MESSAGE_COLUMN_TYPES) as (keyof typeof SDK_MESSAGE_COLUMN_TYPES)[];
   const update = db.prepare(
     `UPDATE sdk_messages SET ${names.map((name) => `${name} = ?`).join(', ')} WHERE seq = ?`
   );
@@ -31,7 +31,7 @@ export async function backfillSdkMessageColumns(
     const startedAt = performance.now();
     const sizes = db
       .prepare(
-        'SELECT seq, length(CAST(sdk_message AS BLOB)) AS bytes FROM sdk_messages WHERE seq > ? ORDER BY seq LIMIT 512'
+        'SELECT seq, octet_length(sdk_message) AS bytes FROM sdk_messages WHERE seq > ? ORDER BY seq LIMIT 512'
       )
       .all(after) as { seq: number; bytes: number }[];
     if (!sizes.length) break;
@@ -57,7 +57,8 @@ export async function backfillSdkMessageColumns(
           malformed++;
           continue;
         }
-        update.run(...Object.values(deriveSdkMessageColumns(message, row.task_id)), row.seq);
+        const derived = deriveSdkMessageColumns(message, row.task_id);
+        update.run(...names.map((name) => derived[name]), row.seq);
       }
       db.exec("DELETE FROM migration_markers WHERE key GLOB 'sdk_message_columns_backfill:*'");
       db.prepare('INSERT INTO migration_markers (key, applied_at) VALUES (?, ?)').run(

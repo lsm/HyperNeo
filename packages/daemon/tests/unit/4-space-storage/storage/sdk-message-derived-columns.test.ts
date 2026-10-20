@@ -255,6 +255,24 @@ describe('SDK message column backfill', () => {
     });
   });
 
+  test('counts UTF-8 body bytes when splitting chunks', async () => {
+    const body = JSON.stringify({
+      message: { content: [{ type: 'text', text: '界'.repeat(1_200_000) }] },
+    });
+    insert('unicode-a', body);
+    insert('unicode-b', body);
+    const chunks: ReturnType<typeof progress>[] = [];
+    await backfillSdkMessageColumns(db, (line) => chunks.push(progress(line)));
+    expect(chunks.map((chunk) => chunk.rows)).toEqual([1, 1]);
+    expect(chunks.map((chunk) => chunk.bytes)).toEqual([
+      Buffer.byteLength(body),
+      Buffer.byteLength(body),
+    ]);
+    expect(
+      db.prepare('SELECT sdk_message FROM sdk_messages WHERE id = ?').get('unicode-b')
+    ).toEqual({ sdk_message: body });
+  });
+
   test('commits a checkpoint per chunk and resumes after interruption without reprocessing completed rows', async () => {
     db.transaction(() => {
       for (let i = 0; i < 515; i++)
