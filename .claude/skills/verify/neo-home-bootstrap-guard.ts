@@ -1,0 +1,42 @@
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import type { HookInput } from '@anthropic-ai/claude-agent-sdk';
+import { neoToolGuard } from '../../../packages/daemon/src/lib/neo/look-up-guard.ts';
+const [port, run] = process.argv.slice(2);
+if (!port || !run || port === '8399') throw new Error('usage: neo-home-bootstrap-guard.ts <test-port> <run-dir>');
+const log = await readFile(`${run}/daemon.log`, 'utf8');
+if (!log.includes('HyperNeo Test Server') || !log.includes(`Database: ${run}/data/daemon.db`)) throw new Error('Not an isolated test daemon');
+const root = `${run}/data/Neo`;
+const cwd = `${run}/legacy`;
+const env = { HOME: run, PATH: '/usr/bin:/bin', NODE_ENV: 'test' };
+async function shell(command: string) {
+  const child = Bun.spawn(['bash', '-c', command], { cwd, env, stdout: 'pipe', stderr: 'pipe' });
+  const [text, error, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+  if (code) throw new Error(error);
+  return text.trim();
+}
+await mkdir(root, { recursive: true });
+await mkdir(cwd, { recursive: true });
+await writeFile(`${run}/home/.gitconfig`, '[user]\n name = Verify Neo\n email = verify@example.invalid\n');
+await writeFile(`${root}/notes.txt`, 'Human notes.\n');
+const before = (await readdir(root)).sort();
+const child = Bun.spawn(['bun', '.claude/skills/verify/rpc.ts', 'neo.home.save', JSON.stringify({ path: 'digest.md', content: 'Ready.', message: 'Save digest' })], { env: { ...process.env, VERIFY_PORT: port }, stdout: 'pipe', stderr: 'inherit' });
+const response = JSON.parse(await new Response(child.stdout).text());
+if (await child.exited) throw new Error(JSON.stringify(response));
+const saved = response.reply.value ?? response.reply;
+const after = (await readdir(root)).sort();
+await shell(`git init --quiet '${root}' && git -C '${root}' config user.name 'Verify Neo' && git -C '${root}' config user.email verify@example.invalid && git -C '${root}' add notes.txt && git -C '${root}' commit -m 'Synthetic home fixture'`);
+const guard = neoToolGuard({ home: run, dataDir: `${run}/data`, own: [cwd] });
+const commands = ['git --git-dir="$HOME/data/Neo/.git" branch unauthorized-option', 'GIT_DIR=$HOME/data/Neo/.git git branch unauthorized-env'];
+const decisions = [];
+for (const command of commands) {
+  const result = await guard({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, cwd, session_id: 'verify', tool_use_id: 'verify', transcript_path: `${cwd}/transcript` } as HookInput, 'verify', { signal: new AbortController().signal });
+  const denied = (result as { hookSpecificOutput?: { permissionDecision?: string } }).hookSpecificOutput?.permissionDecision === 'deny';
+  decisions.push({ command, result, denied });
+  if (!denied) await shell(command);
+}
+const branches = await shell(`git -C '${root}' branch --list 'unauthorized-*'`);
+const evidence = { saved, before, after, decisions, branches, notes: await readFile(`${root}/notes.txt`, 'utf8') };
+await writeFile(`${run}/evidence/neo-home-bootstrap-guard.json`, JSON.stringify(evidence, null, 2));
+console.log(JSON.stringify(evidence, null, 2));
+if (saved.ok || !saved.reason?.startsWith('dirty') || JSON.stringify(before) !== JSON.stringify(after) || decisions.some(({ denied }) => !denied) || branches || evidence.notes !== 'Human notes.\n') throw new Error('Refused home save or legacy git boundary changed the home repository');
+console.log('PASS: dirty first save leaves the home unchanged; variable-indirected legacy git mutations are denied before execution.');

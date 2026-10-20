@@ -85,6 +85,20 @@ describe('Neo home operations', () => {
     expect(await git('show', 'HEAD:projects/release/digest.md')).toBe('Release is ready.');
     expect(await git('status', '--porcelain')).toBe('');
   });
+  test.each([false, true])(
+    'a refused first save leaves an untracked home unchanged (git metadata: %s)',
+    async (metadata) => {
+      if (!metadata) await rm(join(root, '.git'), { recursive: true });
+      await writeFile(join(root, 'notes.txt'), 'Human notes.');
+      const before = (await readdir(root)).sort();
+      expect(await save('digest.md')).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('dirty'),
+      });
+      expect((await readdir(root)).sort()).toEqual(before);
+      expect(await readFile(join(root, 'notes.txt'), 'utf8')).toBe('Human notes.');
+    }
+  );
   test('reading an uninitialized home does not bootstrap files or commits', async () => {
     expect(await call('neo.home.read', { path: 'README.md' })).toMatchObject({ ok: false });
     expect(await git('ls-files')).toBe('');

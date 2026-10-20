@@ -524,6 +524,15 @@ describe('Neo home repository boundaries', () => {
   ])('denies %s from the coordinator folder', (command) => {
     expect(decideNeoTool('Bash', { command }, home).kind).toBe('deny');
   });
+  test.each([
+    'git --git-dir="$HOME/.hyperneo/Neo/.git" branch new-direction',
+    'git --git-dir "$HOME/.hyperneo/Neo/.git" branch new-direction',
+    'GIT_DIR=$HOME/.hyperneo/Neo/.git git branch new-direction',
+    'env GIT_DIR=$HOME/.hyperneo/Neo/.git git branch new-direction',
+    'git --work-tree="$HOME/.hyperneo/Neo" branch new-direction',
+  ])('denies unchecked repository indirection from a legacy folder: %s', (command) => {
+    expect(decideNeoTool('Bash', { command }, scope).kind).toBe('deny');
+  });
   test('allows clobber redirects inside its own coordinator folder', () => {
     expect(decideNeoTool('Bash', { command: 'echo changed >| own-note.md' }, home)).toEqual({
       kind: 'allow',
