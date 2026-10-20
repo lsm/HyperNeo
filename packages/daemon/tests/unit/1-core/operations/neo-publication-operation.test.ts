@@ -123,7 +123,6 @@ describe('runtime-bound publication operation', () => {
       getBinding: (id) => repo.getBindingBySession(id),
       getRootBinding: () => repo.defaultBinding(),
       hasProject: (id) => !!repo.getProject(id),
-      getWork: (id) => repo.getWork(id),
       resolveAskOrigin: resolve,
       resolveHumanAskOrigin: (input) => {
         const origin = resolve(input);
@@ -532,35 +531,31 @@ describe('runtime-bound publication operation', () => {
     expect(ledger.list(conversationId)![0].links).toEqual(links);
   });
 
-  test.each(['unknown', 'unsafe-kind'])(
-    'rejects %s scene refs, without partial publication',
-    async (kind) => {
-      const input = 'neo-note:1';
-      prompt(root.sessionId, input, 'system');
-      stamp({ sessionId: root.sessionId, messageId: input }, ask, 'continues');
-      prompt(root.sessionId, 'other-ask');
-      const link = {
-        label: 'Open',
-        kind: kind === 'unsafe-kind' ? 'url' : 'work',
-        id: kind === 'unknown' ? 'missing' : 'work:1',
-      };
-      const result = await invoke(
-        { ...draft, links: [link] },
-        caller(root.sessionId, input, false)
-      );
-      const detail = {
-        unknown:
-          'work link "missing" does not exist; link only Neo project ids, never work ids, work.find refs or session ids',
-      }[kind];
-      expect(result).toMatchObject(
-        kind === 'unsafe-kind'
-          ? { kind: 'failed', code: 'invalid_input' }
-          : { value: { accepted: false, reason: 'invalid_scene_reference', detail } }
-      );
-      expect(ledger.list(conversationId)).toEqual([]);
-      expect(notify).not.toHaveBeenCalled();
-    }
-  );
+  test.each([
+    [
+      'a missing project',
+      'project',
+      'project link "missing" does not exist; link only Neo project ids, never work.find refs or session ids',
+    ],
+    ['a work', 'work', 'work links are no longer supported; link only Neo project ids'],
+    ['an unsafe-kind', 'url', null],
+  ])('rejects %s scene ref, without partial publication', async (_label, kind, detail) => {
+    const input = 'neo-note:1';
+    prompt(root.sessionId, input, 'system');
+    stamp({ sessionId: root.sessionId, messageId: input }, ask, 'continues');
+    prompt(root.sessionId, 'other-ask');
+    const result = await invoke(
+      { ...draft, links: [{ label: 'Open', kind, id: 'missing' }] },
+      caller(root.sessionId, input, false)
+    );
+    expect(result).toMatchObject(
+      detail === null
+        ? { kind: 'failed', code: 'invalid_input' }
+        : { value: { accepted: false, reason: 'invalid_scene_reference', detail } }
+    );
+    expect(ledger.list(conversationId)).toEqual([]);
+    expect(notify).not.toHaveBeenCalled();
+  });
 
   test('pure link/lifetime gates refuse missing links and superseded turns', () => {
     const who = caller();

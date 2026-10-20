@@ -122,9 +122,11 @@ export function requirePublicationProducer(
 }
 
 function publicationLinkProblem({ link, exists }: LinkEvidence): string | null {
+  if (link.kind !== 'project')
+    return `${link.kind} links are no longer supported; link only Neo project ids`;
   return exists
     ? null
-    : `${link.kind} link "${link.id}" does not exist; link only Neo project ids, never work ids, work.find refs or session ids`;
+    : `project link "${link.id}" does not exist; link only Neo project ids, never work.find refs or session ids`;
 }
 
 export function requirePublicationLinks(
