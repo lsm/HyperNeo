@@ -81,6 +81,13 @@ With a policy, `codingPrState` maps GitHub facts to states per policy. `failing`
 
 **No CI.** A repo with no CI keeps today's rule (`pr-ledger.ts:133,140`): a head with no status rollup and no check suites counts as "CI green" in every column, so a `ci_only` repo without CI is ready as soon as nothing failed.
 
+**`unreviewed` goes away.** Today `codingPrState` guesses a repo has no review from its PR history (`repoHasReview`, `pr-ledger.ts:141`) and returns `unreviewed`. A stored `mergePolicy` replaces that guess, so `unreviewed` folds into the table's "no approval from `reviewBot`" row:
+- `review_bot`: `waiting_review`;
+- `ci_only`: `waiting_ci`, then `approved_green`;
+- `human`: `waiting_ci`, then `waiting_human`.
+
+The "green CI again" event (`pr-events.ts:33-37`, `from === 'failing'` into `waiting_review` or `unreviewed`) becomes `from === 'failing'` into `waiting_review`, `waiting_ci` or `waiting_human`, with the same text. A PR going from `failing` straight to `approved_green` gets the `approved_green` event instead, as today.
+
 A **hold** overrides only merge readiness, under every policy: a held PR that would be `approved_green` or `approved_pending` shows `waiting_human` instead. Every other state stays as it is, so the owner still fixes failing CI, conflicts and review findings on a held PR.
 
 **Wording rule.** Merge text appears only for `approved_green`:
