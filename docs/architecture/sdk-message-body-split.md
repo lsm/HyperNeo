@@ -127,7 +127,9 @@ path is introduced. Live-query/adapter outputs remain for slice 9.
 Slice 9 routes the remaining live-query, runtime, evolution and adapter body
 outputs through the shared split-body reader. A scalar rowid lookup preserves
 existing SQL output shapes, with the same side-first/legacy fallback as repository
-hydration. Background metadata ranking and capped trace selection carry rowids
+hydration. Session feeds and background metadata use explicit joins to preserve
+their existing no-correlated-subquery query-plan contracts. Background metadata
+ranking and capped trace selection carry rowids
 until the output projection. Both delivery-outbox reads, scoped SQL copies, lazy
 task projection repair and the two result `json_set` source reads use that path.
 Historical migration SQL and the intentional dual-write copy still read the

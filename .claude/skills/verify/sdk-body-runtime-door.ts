@@ -9,6 +9,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { DEBOUNCE_SPACE_TASK_FEEDS_MS } from '../../../packages/daemon/src/lib/live-query/queries/task-messages.ts';
+import { BACKGROUND_TASK_METADATA_SQL, MESSAGES_BY_SESSION_SQL } from '../../../packages/daemon/src/lib/live-query/queries/messages.ts';
 
 const [mode, portText, runText] = process.argv.slice(2);
 const port = Number(portText);
@@ -116,6 +117,12 @@ try {
     for(const row of current.prepare('SELECT COALESCE(b.sdk_message,m.sdk_message) AS body FROM sdk_messages m LEFT JOIN sdk_message_bodies b ON b.seq=m.rowid ORDER BY m.rowid').iterate() as Iterable<{body:string}>) digest.update(row.body);
     return digest.digest('hex');
   };
+  const plans = [
+    {name:'backgroundMetadata',sql:BACKGROUND_TASK_METADATA_SQL,params:Array(7).fill(sid)},
+    {name:'sessionFeed',sql:MESSAGES_BY_SESSION_SQL,params:[sid,200]},
+  ].map(({name,sql,params}) => ({name,detail:current.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...params)}));
+  writeFileSync(join(run,'evidence/plans.json'),JSON.stringify(plans,null,2));
+  if(mode==='verify') assert(!JSON.stringify(plans).includes('CORRELATED'));
   const beforeHash=hash();
   measuring=true; maxLagMs=0;last=performance.now();
   const before=await snapshots('before'); await pause();phases.beforeLagMs=maxLagMs;
@@ -139,7 +146,7 @@ try {
     assert.deepEqual(await snapshots('restart'),before);await pause();phases.restartedReadsLagMs=maxLagMs;
     measuring=false;const afterHash=hash();assert.equal(afterHash,beforeHash);
     const maxQueryMs=Math.max(...queries.map((query) => query.elapsedMs));
-    const observed={seed,phases,maxQueryMs,queries,calls,beforeHash,afterHash,before,after};
+    const observed={seed,phases,maxQueryMs,queries,calls,plans,beforeHash,afterHash,before,after};
     writeFileSync(join(run,'evidence/observed.json'),JSON.stringify(observed,null,2));
     assert(Math.max(...Object.values(phases))<1000);assert(maxQueryMs<250);
     console.log(JSON.stringify({phases,maxQueryMs,beforeHash,afterHash}));

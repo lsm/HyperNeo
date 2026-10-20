@@ -783,6 +783,8 @@ Full logical-body SHA-256 must remain identical, including every complete tool
 result. `evidence/observed.json` records replies, snapshots, SQL times and heartbeat
 lag against the 250 ms / 1,000 ms goals. Hashing, corpus creation and synthetic
 blanking are outside measured hot reads; startup lag is measured separately.
+`evidence/plans.json` records the actual session-feed and background-metadata plans;
+both must hydrate selected rowids with joins and contain no correlated subquery.
 Repeat with `reproduce` on pre-slice-9 code in a separate fresh directory/port:
 `reproduction.json` records missing output or the legacy parser error. A baseline
 RPC/setup failure is inconclusive, not a successful reproduction.
