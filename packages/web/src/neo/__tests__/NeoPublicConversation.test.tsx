@@ -215,7 +215,7 @@ describe('durable public conversation presentation', () => {
     fireEvent.contextMenu(entry, { clientX: 10, clientY: 10 });
     fireEvent.click(screen.getByRole('menuitem', { name: 'Reply' }));
     expect(quote).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ author: 'Neo', text: value.fullText })
+      expect.objectContaining({ author: 'Neo', text: value.shortText })
     );
   });
 
@@ -308,7 +308,7 @@ describe('durable public conversation presentation', () => {
     await waitFor(() => expect(clipboard).toHaveBeenCalledWith('Latest **detail**'));
     fireEvent.click(screen.getByRole('button', { name: 'Reply to Neo’s message' }));
     expect(onQuote).toHaveBeenCalledWith(
-      expect.objectContaining({ text: 'Latest **detail**', anchor: bubble.id })
+      expect.objectContaining({ text: 'Latest summary', anchor: bubble.id })
     );
     fireEvent.click(edited);
     expect(edited.getAttribute('aria-expanded')).toBe('false');
