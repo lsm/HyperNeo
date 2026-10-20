@@ -17,6 +17,8 @@ try {
   const message=page.locator(`[data-message-ref="${seed.publication}"]`);
   const wake=page.locator(`[data-wake="${seed.scheduleId}"]`);
   await message.waitFor({timeout:30000});
+  await page.locator(`[data-message-ref="${seed.cached}"]`).getByText('Later retained update 1.',{exact:true}).waitFor();
+  await page.evaluate(()=>document.fonts.ready);
   assert.equal(await wake.count(),0);
   const earlier=page.getByRole('button',{name:'Load earlier saved conversation',exact:true});
   await earlier.scrollIntoViewIfNeeded();

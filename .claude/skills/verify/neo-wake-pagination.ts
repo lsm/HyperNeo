@@ -24,13 +24,17 @@ try {
     return publicationId;
   };
   const now=Date.now();
-  const older=add('The older retained update.',now-10000);
+  const older=add('Later retained update 1.',now-10000);
   const wake=seedNeoWake(db,id);
   wake.finish('Guide check complete.');
   const publication=wake.expected.find(item=>item.kind==='publication')!.id;
   db.prepare('UPDATE neo_input_origins SET stamped_at=? WHERE message_id=?').run(now,wake.messageId);
   db.prepare('UPDATE neo_publications SET created_at=? WHERE publication_id=?').run(new Date(now+1000).toISOString(),publication);
-  for(let index=0;index<49;index++) add(`Later retained update ${index+1}.`,now+2000+index*1000);
+  let cached = '';
+  for(let index=0;index<49;index++) {
+    const added=add(`Later retained update ${index+1}.`,now+2000+index*1000);
+    if(index===0) cached=added;
+  }
   db.exec('COMMIT');
-  writeFileSync(`${run}/evidence/neo-wake-pagination-seed.json`,JSON.stringify({root,scheduleId:wake.scheduleId,publication,older},null,2));
+  writeFileSync(`${run}/evidence/neo-wake-pagination-seed.json`,JSON.stringify({root,scheduleId:wake.scheduleId,publication,older,cached},null,2));
 } finally {db.close();}

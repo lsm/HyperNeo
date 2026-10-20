@@ -882,7 +882,8 @@ adds its journey here.
     topmost publication into its newly visible closed wake; that wake must retain
     the publication's viewport position on desktop and mobile. Closed descendants
     can report nonzero cached rectangles in Chrome, so visibility is determined
-    by the disclosure, not height alone. Evidence: `neo-wake-pagination.json`
+    by the disclosure, not height alone. Repeated already-rendered text isolates
+    folding from unrelated later Markdown reflow; that reflow is not fixed here. Evidence: `neo-wake-pagination.json`
     and `neo-wake-pagination-{desktop,mobile}-{before,after}.png`. Stop the run.
 
 ## Evidence
