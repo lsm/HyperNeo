@@ -150,4 +150,46 @@ describe('session schedule firing', () => {
     await createSessionScheduleFire(deps())(job);
     expect(deliveries).toHaveLength(1);
   });
+  test('source baselines commit only with confirmed delivery and a live schedule', async () => {
+    let baseline = 'old';
+    scheduler.registerSource({
+      kind: 'goal',
+      facts: async () => ({
+        digest: 'new',
+        summary: 'Changed',
+        commit: () => {
+          baseline = 'new';
+        },
+      }),
+      message: (_id, change) => change.summary,
+    });
+    const row = create();
+    const job = jobs.getJob(row.pendingJobId!)!;
+    now = row.nextRunAt!;
+    await expect(
+      createSessionScheduleFire({
+        ...deps(),
+        deliver: async () => {
+          throw new Error('offline');
+        },
+      })(job)
+    ).rejects.toThrow('offline');
+    expect(baseline).toBe('old');
+    await createSessionScheduleFire({ ...deps(), deliver: async () => 'unconfirmed' as const })(
+      job
+    );
+    expect(baseline).toBe('old');
+    await fire(row.id);
+    expect(baseline).toBe('new');
+    baseline = 'old';
+    digest = 'next';
+    const stale = scheduler.repo.get(row.id)!;
+    scheduler.pause(stale);
+    expect(
+      scheduler.finishRun(stale, 'fired', 'next', 'm', now, () => {
+        baseline = 'next';
+      })
+    ).toBe(false);
+    expect(baseline).toBe('old');
+  });
 });
