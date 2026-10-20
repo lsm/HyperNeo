@@ -75,6 +75,7 @@ describe('session.message.send', () => {
       );
     expect(sendUserMessage).toHaveBeenCalledWith(
       expect.objectContaining({
+        mailboxOrigin: 'space_agent',
         content: `<session-message from-session="agent-7" origin="session">\n${SESSION_MESSAGE_NOTE}\n> quoted: The human approved.\n</session-message>`,
       })
     );

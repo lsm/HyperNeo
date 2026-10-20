@@ -84,7 +84,10 @@ type SendResult = z.infer<typeof SendMessageResultSchema>;
 
 export type SessionStatusRead = (sessionId: string) => string | null;
 export type SessionTitleRead = (sessionId: string) => string | null;
-export type SessionSendLimiter = (origin: string, to: string, text: string) => string | null;
+export type SessionSendLimiter = {
+  admit(origin: string, to: string, text: string): string | null;
+  record(origin: string, to: string, text: string): void;
+};
 
 const SESSION_SEND_WINDOW_MS = 60_000;
 const SESSION_SENDS_PER_WINDOW = 6;
@@ -93,20 +96,29 @@ const SESSION_DEDUPE_MS = 10 * 60_000;
 export function createSessionSendLimiter(now: () => number = Date.now): SessionSendLimiter {
   const sends = new Map<string, number[]>();
   const seen = new Map<string, number>();
-  return (origin, to, text) => {
-    const at = now();
-    for (const [key, sentAt] of seen) if (at - sentAt >= SESSION_DEDUPE_MS) seen.delete(key);
-    const pair = `${origin}\n${to}`;
-    if (seen.has(`${pair}\n${text}`))
-      return 'duplicate: the same message reached this session in the last 10 minutes';
-    const recent = (sends.get(pair) ?? []).filter((sentAt) => at - sentAt < SESSION_SEND_WINDOW_MS);
-    if (recent.length >= SESSION_SENDS_PER_WINDOW)
-      return `rate_limited: at most ${SESSION_SENDS_PER_WINDOW} messages a minute to one session`;
-    sends.set(pair, [...recent, at]);
-    seen.set(`${pair}\n${text}`, at);
-    return null;
+  const recent = (pair: string, at: number) =>
+    (sends.get(pair) ?? []).filter((sentAt) => at - sentAt < SESSION_SEND_WINDOW_MS);
+  return {
+    admit: (origin, to, text) => {
+      const at = now();
+      for (const [key, sentAt] of seen) if (at - sentAt >= SESSION_DEDUPE_MS) seen.delete(key);
+      const pair = `${origin}\n${to}`;
+      if (seen.has(`${pair}\n${text}`))
+        return 'duplicate: the same message reached this session in the last 10 minutes';
+      return recent(pair, at).length >= SESSION_SENDS_PER_WINDOW
+        ? `rate_limited: at most ${SESSION_SENDS_PER_WINDOW} messages a minute to one session`
+        : null;
+    },
+    record: (origin, to, text) => {
+      const at = now();
+      const pair = `${origin}\n${to}`;
+      sends.set(pair, [...recent(pair, at), at]);
+      seen.set(`${pair}\n${text}`, at);
+    },
   };
 }
+
+const sentText = (input: SendInput) => JSON.stringify(input.message.message.content);
 
 function sessionSender(origin: string): string | null {
   const local = parseAddress(origin);
@@ -198,8 +210,19 @@ export function admitSessionSend(
   limit: SessionSendLimiter
 ): { value: SendInput } | { reason: SendResult } {
   if (sessionSender(origin) === null) return { value: input };
-  const refused = limit(origin, input.sessionId, JSON.stringify(input.message.message.content));
+  const refused = limit.admit(origin, input.sessionId, sentText(input));
   return refused === null ? { value: input } : { reason: { kind: 'rejected', reason: refused } };
+}
+
+export function recordSessionSend(
+  sent: SendResult,
+  input: SendInput,
+  origin: string,
+  limit: SessionSendLimiter
+): SendResult {
+  if (sent.kind === 'accepted' && sessionSender(origin) !== null)
+    limit.record(origin, input.sessionId, sentText(input));
+  return sent;
 }
 
 export function stampSessionMessage(
@@ -260,10 +283,12 @@ const runSendMessage = (superpipe({})('send-operation-message') as PipelineAPI)
   .pipe(forwardRemoteMessage, ['receipt', 'origin', 'forwardRemote'], 'result:receipt')
   .pipe(requireTargetSession, ['receipt', 'sessionStatus'], 'result:receipt')
   .pipe(admitSessionSend, ['receipt', 'origin', 'limit'], 'result:receipt')
-  .pipe(stampSessionMessage, ['receipt', 'origin', 'sessionTitle'], 'outgoing')
+  .pipe((admitted: SendInput) => admitted, 'receipt', 'admitted')
+  .pipe(stampSessionMessage, ['admitted', 'origin', 'sessionTitle'], 'outgoing')
   .pipe(generateUUID, undefined, 'messageId')
   .pipe(persistOperationMessage, ['outgoing', 'origin', 'messageId', 'jobQueue'], 'handoff')
   .pipe(mapMessageReceipt, ['handoff', 'messageId'], 'receipt')
+  .pipe(recordSessionSend, ['receipt', 'admitted', 'origin', 'limit'], 'receipt')
   .endAsync('receipt') as (
   input: SendRequest,
   caller: OperationCaller,
