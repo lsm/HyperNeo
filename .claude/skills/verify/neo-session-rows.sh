@@ -19,3 +19,9 @@ for item in items:
         m = item['message']
         print(f\"{m['fromName']} -> {m['toName']}: {m['text'].splitlines()[0]}\")
 " "$RUN/evidence/session-rows.json"
+rpc neo.snapshot '{}' > "$RUN/evidence/session-snapshot.json"
+python3 -c "
+import json, sys
+for m in json.load(open(sys.argv[1]))['reply'].get('sessionMessages', []):
+    print(f\"snapshot: {m['fromName']} -> {m['toName']}: {m['text'].splitlines()[0]}\")
+" "$RUN/evidence/session-snapshot.json"

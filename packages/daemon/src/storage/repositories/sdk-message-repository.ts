@@ -1137,7 +1137,7 @@ export class SDKMessageRepository {
          AND parent_tool_use_id IN (${placeholders})
          AND COALESCE(message_subtype, '') NOT IN (${EXCLUDED_FROM_PAGINATION_SQL_LIST})
          AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
-        ORDER BY timestamp ASC, rowid ASC`,
+        ORDER BY +timestamp ASC, rowid ASC`,
         'body_selection.timestamp ASC, body_selection.body_seq ASC'
       );
       const subagentParams: SQLiteValue[] = [sessionId, ...toolUseIds];

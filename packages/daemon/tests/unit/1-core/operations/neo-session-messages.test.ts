@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { planNeoSessionMessage } from '../../../../src/lib/neo/session-messages.ts';
 import { NeoConversationReader } from '../../../../src/storage/repositories/neo-conversation-reader.ts';
+import { NeoPublicationRepository } from '../../../../src/storage/repositories/neo-publication-repository.ts';
 import { NeoSessionMessageRepository } from '../../../../src/storage/repositories/neo-session-message-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
@@ -38,7 +39,7 @@ describe('planNeoSessionMessage', () => {
 });
 
 describe('NeoConversationReader session rows', () => {
-  test('pages the messages root Neo exchanged, oldest first, once each', () => {
+  test('the human sees what Neo sent and Neo publications, never what other sessions sent Neo; Neo still reads all of it', () => {
     const db = new Database(':memory:');
     runMigrations(db, () => {});
     createTables(db);
@@ -46,29 +47,38 @@ describe('NeoConversationReader session rows', () => {
     for (const item of [
       sent('neo:root', 'worker-1', 'Rebase on dev', 1000),
       sent('worker-1', 'neo:root', 'Rebased, CI is green', 2000),
-      sent('worker-1', 'neo:root', 'Rebased, CI is green', 2000),
+      sent('claude-code:30da458c', 'neo:root', 'fullstack 2: fixed the bot finding', 3000),
     ])
       messages.record(planNeoSessionMessage(item, root, title)!);
-    const reader = new NeoConversationReader(db);
-    const first = reader.read({ conversationId: root.conversationId, limit: 1 });
-    expect(first.items).toMatchObject([
-      {
-        role: 'session',
-        message: { fromName: 'Fix the loader', toName: 'Neo', text: 'Rebased, CI is green' },
-      },
-    ]);
-    const earlier = reader.read({
+    new NeoPublicationRepository(db).append({
       conversationId: root.conversationId,
-      before: first.nextBefore!,
-      limit: 5,
+      publicationId: '00000000-0000-4000-8000-0000000000a1',
+      askOrigin: { sessionId: root.sessionId, messageId: 'm-1' },
+      producerInput: { sessionId: root.sessionId, messageId: 'm-1' },
+      shortText: 'The loader is fixed.',
+      fullText: 'Merged #8.',
+      links: [],
+      triggerId: 'human:m-1',
     });
-    expect(earlier.items).toMatchObject([
-      { role: 'session', message: { fromName: 'Neo', text: 'Rebase on dev' } },
-    ]);
+    const reader = new NeoConversationReader(db);
+    const page = reader.read({ conversationId: root.conversationId, limit: 10 }, true);
+    expect(
+      page.items.map((item) =>
+        item.role === 'session'
+          ? item.message.text
+          : item.role === 'neo'
+            ? item.publication.shortText
+            : item.role
+      )
+    ).toEqual(['Rebase on dev', 'The loader is fixed.']);
     expect(messages.latest(root.conversationId, 5).map((item) => item.text)).toEqual([
       'Rebase on dev',
-      'Rebased, CI is green',
     ]);
+    expect(
+      reader
+        .read({ conversationId: root.conversationId, limit: 10 })
+        .items.flatMap((item) => (item.role === 'session' ? [item.message.text] : []))
+    ).toEqual(['Rebase on dev', 'Rebased, CI is green', 'fullstack 2: fixed the bot finding']);
     db.close();
   });
 });
