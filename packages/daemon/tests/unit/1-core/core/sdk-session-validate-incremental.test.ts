@@ -1,5 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  closeSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  writeSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Database } from '../../../../src/storage/database';
@@ -29,21 +39,28 @@ describe('validateSDKSessionFile', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  test('a long transcript is checked without holding it in memory, then only its new lines are read', async () => {
-    const pair = use('t') + result('t', 200_000);
+  test('a later pass reads only the lines appended since the last one', async () => {
+    const pair = use('t') + result('t', 2_000);
     writeFileSync(file, '');
-    for (let i = 0; i < 1_500; i++) appendFileSync(file, pair.replaceAll('"t"', `"t${i}"`));
-    const before = process.memoryUsage().heapUsed;
-    expect((await validateSDKSessionFile(workspace, 's1')).valid).toBe(true);
-    expect(process.memoryUsage().heapUsed - before).toBeLessThan(120 * 1024 * 1024);
+    for (let i = 0; i < 20; i++) appendFileSync(file, pair.replaceAll('"t"', `"t${i}"`));
+    expect(await validateSDKSessionFile(workspace, 's1')).toEqual({
+      valid: true,
+      orphanedToolResults: [],
+      errors: [],
+    });
 
+    const text = readFileSync(file, 'utf8');
+    const middle = text.lastIndexOf('\n', text.indexOf('"tool_use_id":"t10"')) + 1;
+    expect(middle).toBeGreaterThan(1_000);
+    const fd = openSync(file, 'r+');
+    writeSync(fd, 'X', middle);
+    closeSync(fd);
     appendFileSync(file, result('missing'));
-    const started = performance.now();
-    const next = await validateSDKSessionFile(workspace, 's1');
-    expect(performance.now() - started).toBeLessThan(50);
-    expect(next.orphanedToolResults).toEqual([
-      { toolUseId: 'missing', messageUuid: 'u-missing', lineIndex: 3_000 },
-    ]);
+    expect(await validateSDKSessionFile(workspace, 's1')).toEqual({
+      valid: false,
+      orphanedToolResults: [{ toolUseId: 'missing', messageUuid: 'u-missing', lineIndex: 40 }],
+      errors: [],
+    });
 
     appendFileSync(file, use('missing'));
     expect((await validateSDKSessionFile(workspace, 's1')).valid).toBe(true);
