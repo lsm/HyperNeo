@@ -11,6 +11,7 @@ import {
   readSync,
   statSync,
   writeFileSync,
+  chmodSync,
 } from 'node:fs';
 import { dirname } from 'node:path';
 import { Database } from './sqlite-compat.ts';
@@ -42,6 +43,7 @@ worker.onmessage = ({ data }) => {
       db.prepare('VACUUM INTO ?').run(partial);
       db.close();
       db = undefined;
+      chmodSync(partial, 0o600);
       const fd = openSync(partial, 'r');
       try {
         fsyncSync(fd);
@@ -98,6 +100,12 @@ worker.onmessage = ({ data }) => {
           flush: true,
         }
       );
+    }
+    const directory = openSync(dirname(data.backupPath), 'r');
+    try {
+      fsyncSync(directory);
+    } finally {
+      closeSync(directory);
     }
     worker.postMessage({
       id: data.id,
