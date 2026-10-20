@@ -130,10 +130,13 @@ describe('Neo question confirmation binding', () => {
       ).toMatchObject({ ok: false, reason: expect.stringContaining('path') });
     }
   );
-  test('rejects malformed hashes through the input schema', async () => {
-    await expect(ask({ confirm: { ...confirm, sha256: 'not-a-hash' } })).rejects.toThrow();
-    expect(store.listQuestions('ask-proof')).toHaveLength(0);
-  });
+  test.each(['not-a-hash', confirm.sha256 + '\n', confirm.sha256.toUpperCase()])(
+    'rejects malformed hashes through the input schema',
+    async (sha256) => {
+      await expect(ask({ confirm: { ...confirm, sha256 } })).rejects.toThrow();
+      expect(store.listQuestions('ask-proof')).toHaveLength(0);
+    }
+  );
   test('replaces a proposal atomically and preserves the old binding', async () => {
     const old = await ask();
     expect(await ask({ text: 'Missing hash', replaces: old.question.id })).toMatchObject({

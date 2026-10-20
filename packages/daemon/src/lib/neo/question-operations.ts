@@ -12,6 +12,7 @@ import type {
 } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { requireLocalUser } from '../operations/caller.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import { requireHomePath } from './home/save.ts';
 import { requireNeoOpenAsk } from './todo-operations.ts';
 
 type Rejection = { ok: false; reason: string };
@@ -22,7 +23,19 @@ const fail = (reason: string): { reason: Rejection } => ({ reason: { ok: false, 
 
 const Text = z.string().trim().min(1);
 
-const Asked = { askId: Text, text: Text, replaces: Text.optional() };
+const Confirmation = z.object({
+  path: z.string().min(1),
+  sha256: z
+    .string()
+    .length(64)
+    .regex(/^[a-f0-9]+$/),
+});
+const Asked = {
+  askId: Text,
+  text: Text,
+  replaces: Text.optional(),
+  confirm: Confirmation.optional(),
+};
 
 const Ask = z.discriminatedUnion('kind', [
   z.object({ ...Asked, kind: z.literal('yesno'), noLabel: Text, yesLabel: Text }),
@@ -33,7 +46,7 @@ const Ask = z.discriminatedUnion('kind', [
     multiple: z.boolean().default(false),
   }),
   z.object({ ...Asked, kind: z.literal('reply') }),
-  z.object({ askId: Text, text: Text, kind: z.literal('start') }),
+  z.object({ askId: Text, text: Text, kind: z.literal('start'), confirm: Confirmation.optional() }),
 ]);
 
 const Retire = z.object({ questionId: Text, reason: Text });
@@ -52,6 +65,7 @@ export const NeoQuestionSchema = z.object({
   noLabel: z.string().nullable(),
   yesLabel: z.string().nullable(),
   startTodos: z.array(z.string()).nullable(),
+  confirm: Confirmation.nullable().optional(),
   state: z.enum(['open', 'answered', 'retired']),
   answer: z.union([z.string(), z.array(z.string())]).nullable(),
   answeredBy: z.enum(['button', 'chat']).nullable(),
@@ -72,6 +86,7 @@ const QuestionReadResult = z.union([
       state: true,
       answer: true,
       answeredAt: true,
+      confirm: true,
     }),
     answeredByHuman: z.boolean(),
   }),
@@ -79,10 +94,10 @@ const QuestionReadResult = z.union([
 
 export function readNeoQuestion(question: NeoQuestion | null): z.infer<typeof QuestionReadResult> {
   if (!question) return { ok: false, reason: 'not_found: no such question.' };
-  const { id, text, kind, state, answer, answeredAt } = question;
+  const { id, text, kind, state, answer, answeredAt, confirm } = question;
   return {
     ok: true,
-    question: { id, text, kind, state, answer, answeredAt },
+    question: { id, text, kind, state, answer, answeredAt, confirm },
     answeredByHuman: state === 'answered',
   };
 }
@@ -102,6 +117,15 @@ export function planNeoQuestion(
   questions: readonly NeoQuestion[],
   input: z.infer<typeof Ask>
 ): Gate<QuestionPlan> {
+  const confirm = input.confirm ?? null;
+  if (confirm) {
+    if (input.kind !== 'yesno')
+      return fail('confirmation_kind: only yes/no questions bind a home proposal.');
+    const path = requireHomePath(confirm);
+    if (path.reason) return fail(path.reason.reason);
+    if (!input.text.includes(confirm.path) || !input.text.includes(confirm.sha256))
+      return fail('confirmation_body: show the exact home path and SHA-256 in the question text.');
+  }
   const draft: NeoQuestionDraft = {
     text: input.text,
     kind: input.kind,
@@ -110,6 +134,7 @@ export function planNeoQuestion(
     noLabel: input.kind === 'yesno' ? input.noLabel : null,
     yesLabel: input.kind === 'yesno' ? input.yesLabel : null,
     startTodos: null,
+    confirm,
   };
   if (input.kind !== 'start') return { value: { ask, draft, reworded: null } };
   const open = questions.find((question) => question.kind === 'start' && question.state === 'open');
@@ -335,7 +360,7 @@ export function createNeoQuestionOperations(
     defineOperation({
       name: 'neo.question.ask',
       description:
-        'Ask the human one question on an open ask you own. kind yesno: noLabel (left, keep things as they are) and yesLabel (right, the change it names). choice: 2-6 options, multiple for pick-any. Every card also has Reply in chat, where the human can answer in their own words, so never add an "other" or "something else" option. reply: answered in chat. start: rewords the start question the daemon opens on this ask for todos waiting to start; the human unticks any they do not want, and answering starts the ticked ones. It never opens a second one. Ask only what you cannot read yourself; never a bookkeeping question. replaces names an open question on the same ask: it is retired as replaced by this one in the same step.',
+        'Ask the human one question on an open ask you own. A home proposal uses kind yesno with confirm:{path,sha256}; the question text must show that exact path and 64-character lowercase content hash alongside the proposed change. This records the proposal, not permission to save. kind yesno: noLabel (left, keep things as they are) and yesLabel (right, the change it names). choice: 2-6 options, multiple for pick-any. Every card also has Reply in chat, where the human can answer in their own words, so never add an "other" or "something else" option. reply: answered in chat. start: rewords the start question the daemon opens on this ask for todos waiting to start; the human unticks any they do not want, and answering starts the ticked ones. It never opens a second one. Ask only what you cannot read yourself; never a bookkeeping question. replaces names an open question on the same ask: it is retired as replaced by this one in the same step.',
       inputSchema: Ask,
       resultSchema: QuestionResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -353,7 +378,7 @@ export function createNeoQuestionOperations(
     defineOperation({
       name: 'neo.question.get',
       description:
-        "Read one of Neo's questions to the human by id: its text, state and answer. answeredByHuman is true only when the human answered it, by button or in their own chat; use it to check a decision another session reports.",
+        "Read one of Neo's questions to the human by id: its text, state, answer and optional home path/hash binding. answeredByHuman is true only when the human answered it, by button or in their own chat; use it to check a decision another session reports.",
       inputSchema: Get,
       resultSchema: QuestionReadResult,
       policy: { safetyClass: 'read' },

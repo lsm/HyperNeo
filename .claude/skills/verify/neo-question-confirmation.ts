@@ -11,6 +11,14 @@ async function rpc(name: string, input: unknown = {}) {
   if (await child.exited) throw new Error(JSON.stringify(result));
   return result.reply.value ?? result.reply;
 }
+if (phase === 'restart') {
+  const expected = JSON.parse(await readFile(`${run}/evidence/neo-question-confirmation-after.json`, 'utf8'));
+  const observed = await rpc('neo.question.get', { questionId: expected.created.question.id });
+  await writeFile(`${run}/evidence/neo-question-confirmation-restart.json`, JSON.stringify({ expected: expected.after, observed }, null, 2));
+  if (!observed.answeredByHuman || observed.question.state !== 'answered' || observed.question.answer !== 'yes' || JSON.stringify(observed.question.confirm) !== JSON.stringify(expected.confirm)) throw new Error('Binding or human answer did not survive restart');
+  console.log('PASS: the real get RPC retains the exact binding and human yes across daemon restart.');
+  process.exit(0);
+}
 const sessionId = (await rpc('neo.open')).sessionId;
 if (!sessionId) throw new Error('Synthetic Neo session did not open');
 const askId = crypto.randomUUID();
@@ -31,7 +39,10 @@ const created = await rpc('neo.question.ask', input);
 const read = await rpc('neo.question.get', { questionId: created.question?.id });
 const evidence: Record<string, unknown> = { phase, legacy, legacyRead, confirm, created, read };
 await writeFile(`${run}/evidence/neo-question-confirmation-${phase}.json`, JSON.stringify(evidence, null, 2));
-if (phase === 'before') throw new Error('Baseline question silently drops the proposed path/hash binding');
+if (phase === 'before') {
+  if (created.question.confirm || read.question.confirm) throw new Error('Feature already present; this is not a failing baseline');
+  throw new Error('Observed baseline: ask/get omit the proposed path/hash binding');
+}
 const badBody = await rpc('neo.question.ask', { ...input, text: 'Missing visible path/hash' });
 const answered = await rpc('neo.question.answer', { questionId: created.question.id, answer: 'yes' });
 const after = await rpc('neo.question.get', { questionId: created.question.id });

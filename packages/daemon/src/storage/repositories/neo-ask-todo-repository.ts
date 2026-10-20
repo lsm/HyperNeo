@@ -57,15 +57,19 @@ const TODO_SELECT = `SELECT id, ask_id AS askId, position, title, done_when AS d
 
 export type NeoQuestionDraft = Pick<
   NeoQuestion,
-  'text' | 'kind' | 'options' | 'multiple' | 'noLabel' | 'yesLabel' | 'startTodos'
+  'text' | 'kind' | 'options' | 'multiple' | 'noLabel' | 'yesLabel' | 'startTodos' | 'confirm'
 >;
 
 const QUESTION_SELECT = `SELECT id, ask_id AS askId, text, kind, options, multiple, no_label AS noLabel,
   yes_label AS yesLabel, start_todos AS startTodos, state, answer, answered_by AS answeredBy,
   answered_at AS answeredAt, retired_reason AS retiredReason, replaced_by AS replacedBy,
-  created_at AS createdAt FROM neo_questions`;
+  confirm_json AS confirmJson, created_at AS createdAt FROM neo_questions`;
 
-type QuestionRow = Omit<NeoQuestion, 'options' | 'multiple' | 'startTodos' | 'answer'> & {
+type QuestionRow = Omit<
+  NeoQuestion,
+  'options' | 'multiple' | 'startTodos' | 'answer' | 'confirm'
+> & {
+  confirmJson: string | null;
   options: string | null;
   multiple: number;
   startTodos: string | null;
@@ -74,8 +78,9 @@ type QuestionRow = Omit<NeoQuestion, 'options' | 'multiple' | 'startTodos' | 'an
 
 const parsed = <T>(json: string | null): T | null => (json ? (JSON.parse(json) as T) : null);
 
-const toQuestion = (row: QuestionRow): NeoQuestion => ({
+const toQuestion = ({ confirmJson, ...row }: QuestionRow): NeoQuestion => ({
   ...row,
+  confirm: parsed<NonNullable<NeoQuestion['confirm']>>(confirmJson),
   options: parsed<string[]>(row.options),
   multiple: row.multiple === 1,
   startTodos: parsed<string[]>(row.startTodos),
@@ -352,7 +357,7 @@ export class NeoAskTodoRepository {
     this.db
       .prepare(
         `INSERT INTO neo_questions (id, ask_id, text, kind, options, multiple, no_label, yes_label,
-           start_todos, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           start_todos, confirm_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -364,6 +369,7 @@ export class NeoAskTodoRepository {
         draft.noLabel,
         draft.yesLabel,
         draft.startTodos ? JSON.stringify(draft.startTodos) : null,
+        draft.confirm ? JSON.stringify(draft.confirm) : null,
         now
       );
     this.touchAsk(askId, now);
