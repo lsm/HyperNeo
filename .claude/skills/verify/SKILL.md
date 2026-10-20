@@ -959,3 +959,21 @@ End state: `observed.json` shows `index.worstBatchMs` and both `maxLagMs` below
 1,000 ms at 256 words, and the same `searchAfterIndexing.totalMatches` before and
 after a change. With `crisismerge` 64 the 256-word worst batch was 1,859 ms (an
 FTS5 crisis merge inside the insert); with 16 it was 434 ms.
+
+
+### Neo home setup (journey 32)
+
+On a fresh isolated daemon from Launch, run
+`bun .claude/skills/verify/neo-home-setup.ts <port> "$RUN"`.
+The helper seeds only a synthetic git identity in the isolated HOME and a private
+transcript, then invokes `neo.project.save` and `neo.home.init` over real RPC.
+It expects one local bootstrap commit containing README, empty direction and
+`.gitignore`; coordinator transcripts stay ignored. Repeating initialization and
+renaming a project preserves HEAD and its assigned home path. The helper then
+removes only its synthetic HEAD/index to force an identity failure: no bootstrap
+files may remain staged, and configuring the identity must make retry succeed.
+Evidence: `evidence/neo-home-setup.json`. Signing-failure recovery is checked with
+an explicit false signer in focused unit tests, without real signing credentials.
+This slice adds setup only; save/content checks and reads have later journeys.
+It adds no command parser or native-tool hook policy. Filesystem/container limits
+are the safety boundary. No provider, GitHub or GUI turn is part of this RPC check.

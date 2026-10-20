@@ -49,6 +49,11 @@ beforeEach(async () => {
     '[user]\n name = Verify Neo\n email = verify@example.invalid\n[commit]\n gpgsign = false\n'
   );
   process.env.GIT_CONFIG_GLOBAL = join(fixture, 'gitconfig');
+  await mkdir(root);
+  await git('init', '--quiet');
+  await git('config', 'user.name', 'Verify Neo');
+  await git('config', 'user.email', 'verify@example.invalid');
+  await git('config', 'commit.gpgsign', 'false');
   db = await createTestDb();
   repo = new NeoRepository(db.getDatabase());
   home = new NeoHomeRepository(root, repo);
@@ -93,7 +98,6 @@ describe('Neo home setup', () => {
   test.each(['identity', 'signing'])(
     'recovers after %s configuration is fixed',
     async (failure) => {
-      await mkdir(root);
       await git('init', '--quiet');
       if (failure === 'identity') {
         await git('config', 'user.name', '');
@@ -114,7 +118,6 @@ describe('Neo home setup', () => {
     }
   );
   test('refuses bootstrap when pre-existing changes are staged', async () => {
-    await mkdir(root);
     await git('init', '--quiet');
     await writeFile(join(root, 'human.md'), 'Human draft.');
     await git('add', 'human.md');
