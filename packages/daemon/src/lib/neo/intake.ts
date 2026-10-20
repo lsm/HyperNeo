@@ -19,7 +19,7 @@ import {
 import { neoImageSize } from './image-size.ts';
 import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import { toMailboxMessage } from '../mailbox/entry.ts';
-import { MessageSessionIdSchema, SendMessageInputSchema } from '../messaging/message-send.ts';
+import { MessageSessionIdSchema, SessionContentSchema } from '../messaging/message-send.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { NeoReplyRefSchema } from './conversation-ask.ts';
 
@@ -27,7 +27,7 @@ const Input = z
   .object({
     sessionId: MessageSessionIdSchema,
     requestId: z.uuid(),
-    content: SendMessageInputSchema.shape.message.shape.message.shape.content,
+    content: SessionContentSchema,
     thumbnails: z
       .array(
         z

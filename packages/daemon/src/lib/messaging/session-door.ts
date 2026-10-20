@@ -49,7 +49,7 @@ export async function startSessionDoor(
     let size = 0;
     request.on('data', (chunk: Buffer) => {
       size += chunk.length;
-      if (size > MAX_BODY_BYTES) request.destroy();
+      if (size > MAX_BODY_BYTES) chunks.length = 0;
       else chunks.push(chunk);
     });
     request.on('end', async () => {
@@ -57,6 +57,11 @@ export async function startSessionDoor(
         response.writeHead(status, { 'content-type': 'application/json' });
         response.end(JSON.stringify(body));
       };
+      if (size > MAX_BODY_BYTES)
+        return reply(413, {
+          error:
+            'Request exceeds 256 KiB. Write the report to HYPERNEO_HANDOFF_DIR, call handoff.publish, then message.send {to, text, files: [reference]}.',
+        });
       let parsed: unknown;
       try {
         parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));

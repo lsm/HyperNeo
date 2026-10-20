@@ -1,3 +1,4 @@
+import { runMigration425 } from '../../src/storage/schema/m425-message-send-receipts.ts';
 import { runMigration418 } from '../../src/storage/schema/m418-sdk-message-bodies';
 import { JobQueueRepository } from '../../src/storage/repositories/job-queue-repository';
 import { SDKMessageRepository } from '../../src/storage/repositories/sdk-message-repository';
@@ -99,6 +100,7 @@ export function createMailboxTestDb(): MailboxTestDb {
   `);
   const jobQueue = new JobQueueRepository(db);
   runMigration418(db);
+  runMigration425(db);
   const sdkMessageRepo = new SDKMessageRepository(db as never);
   return {
     db,
