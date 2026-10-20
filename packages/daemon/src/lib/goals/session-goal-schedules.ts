@@ -17,7 +17,7 @@ export class SessionGoalSchedules implements ScheduleSource {
   ) {}
 
   sync(goal: SessionGoal, cadence?: SessionScheduleCadence, nudgeEvery = 4): void {
-    const known = this.scheduler.repo.getBySource(this.kind, goal.id);
+    let known = this.scheduler.repo.getBySource(this.kind, goal.id);
     const config = known
       ? { cadence: known.cadence, nudgeEvery: known.nudgeEvery }
       : ((cadence ? { cadence, nudgeEvery } : this.goals.wakeSchedule(goal.id)) ?? {
@@ -28,6 +28,10 @@ export class SessionGoalSchedules implements ScheduleSource {
     if (goal.status === 'completed' || goal.status === 'archived') {
       if (known) this.scheduler.delete(known);
       return;
+    }
+    if (goal.status === 'active' && known?.status === 'done') {
+      this.scheduler.delete(known);
+      known = null;
     }
     const row =
       known ??
