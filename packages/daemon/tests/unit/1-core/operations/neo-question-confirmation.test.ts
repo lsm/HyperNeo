@@ -117,6 +117,8 @@ describe('Neo question confirmation binding', () => {
     `${confirm.path}.bak ${confirm.sha256}`,
     `archive/${confirm.path} ${confirm.sha256}`,
     `é${confirm.path} ${confirm.sha256}`,
+    `other_${confirm.path} ${confirm.sha256}`,
+    `${confirm.path}_backup ${confirm.sha256}`,
     `${confirm.path} ${confirm.sha256}a`,
     `${confirm.path} 0${confirm.sha256}`,
   ])('refuses a path/hash shown only inside a longer token', async (text) => {
@@ -133,6 +135,14 @@ describe('Neo question confirmation binding', () => {
   ])('accepts exact visible tokens with prose punctuation', async (text) => {
     expect(await ask({ text })).toMatchObject({ ok: true, question: { confirm } });
   });
+  test.each(['*', '**', '***', '_', '__', '~~'])(
+    'accepts an exact path inside matching Markdown emphasis %s',
+    async (marker) => {
+      expect(
+        await ask({ text: `Use ${marker}${confirm.path}${marker}? ${confirm.sha256}` })
+      ).toMatchObject({ ok: true, question: { confirm } });
+    }
+  );
   test.each(['reply', 'choice', 'start'])(
     'refuses confirmation binding on %s questions',
     async (kind) => {

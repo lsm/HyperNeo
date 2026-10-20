@@ -39,14 +39,17 @@ if (phase === 'boundaries') {
   const cases = [
     `${confirm.path}.bak ${confirm.sha256}`,
     `archive/${confirm.path} ${confirm.sha256}`,
+    `other_${confirm.path} ${confirm.sha256}`,
+    `${confirm.path}_backup ${confirm.sha256}`,
     `${confirm.path} ${confirm.sha256}a`,
     `${confirm.path} 0${confirm.sha256}`,
   ];
   const observed = [];
   for (const text of cases) observed.push({ text, result: await rpc('neo.question.ask', { ...input, text }) });
-  const exact = await rpc('neo.question.ask', { ...input, text: `Approve \`${confirm.path}\` (SHA-256: ${confirm.sha256})?` });
+  const exact = [];
+  for (const marker of ['`', '*', '**', '***', '_', '__', '~~']) exact.push({ marker, result: await rpc('neo.question.ask', { ...input, text: `Approve ${marker}${confirm.path}${marker}? SHA-256: ${confirm.sha256}` }) });
   await writeFile(`${run}/evidence/neo-question-confirmation-boundaries.json`, JSON.stringify({ observed, exact }, null, 2));
-  if (observed.some(({ result }) => result.ok || !result.reason?.includes('confirmation_body')) || !exact.ok) throw new Error('Near-miss proposal tokens accepted or exact tokens refused');
+  if (observed.some(({ result }) => result.ok || !result.reason?.includes('confirmation_body')) || exact.some(({ result }) => !result.ok)) throw new Error('Near-miss proposal tokens accepted or exact tokens refused');
   console.log('PASS: near-miss path/hash tokens refused; exact Markdown/prose tokens accepted.');
   process.exit(0);
 }
