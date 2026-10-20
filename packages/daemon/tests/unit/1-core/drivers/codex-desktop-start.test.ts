@@ -36,6 +36,7 @@ function adapter(
   } = {}
 ) {
   const calls: Array<[string, Record<string, unknown>]> = [];
+  const projectCalls: Array<[string, Record<string, unknown>]> = [];
   const spawned: Array<{ args: string[]; cwd?: string }> = [];
   let closed = false;
   const instance = createCodexDesktopAdapter({
@@ -55,9 +56,15 @@ function adapter(
         kill: () => {},
       };
     },
-    appServer: async () => {
-      throw new Error('Shared daemon must not create desktop threads');
-    },
+    appServer: async () => ({
+      call: async (method, params) => {
+        projectCalls.push([method, params]);
+        if (method === 'project/list') return { data: [], nextCursor: null };
+        if (method === 'project/create') return { project: { id: 'project-1' } };
+        throw new Error('Shared daemon must not create desktop threads');
+      },
+      close: () => {},
+    }),
     startDesktopTurn: async (threadId, params) => {
       expect(closed).toBe(true);
       expect(params.threadId).toBe(threadId);
@@ -83,7 +90,7 @@ function adapter(
     gitCheckout: async () => (git.root ? { repo: git.root, linked: git.linked ?? false } : null),
     newId: () => 'abcd1234-0000',
   });
-  return { instance, calls, spawned, closed: () => closed };
+  return { instance, calls, projectCalls, spawned, closed: () => closed };
 }
 
 describe('startedThreadId', () => {
@@ -478,6 +485,32 @@ describe('codex-desktop start', () => {
     expect(await instance.start?.(request, user)).toMatchObject({ ok: true });
     const opening = calls.find(([method]) => method === 'desktop/start-turn')?.[1];
     expect(opening?.input).toEqual([{ type: 'text', text: request.message, text_elements: [] }]);
+  });
+
+  test('creates the repo project and assigns the new worktree thread to it', async () => {
+    const { instance, calls, projectCalls } = adapter(
+      { call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}) },
+      ['/focus/dolmen/web'],
+      { root: '/focus/dolmen' }
+    );
+    expect(
+      await instance.start?.({ ...request, place: { ...place, folder: '/focus/dolmen/web' } }, user)
+    ).toMatchObject({ ok: true });
+    expect(projectCalls).toEqual([
+      ['project/list', { limit: 100 }],
+      [
+        'project/create',
+        {
+          name: 'dolmen',
+          roots: [{ path: '/focus/dolmen' }],
+          idempotencyKey: 'hyperneo:/focus/dolmen',
+        },
+      ],
+    ]);
+    expect(calls.find(([method]) => method === 'thread/start')?.[1]).toMatchObject({
+      cwd: '/codex/worktrees/abcd1234/dolmen',
+      projectId: 'project-1',
+    });
   });
 
   test('starts a thread in a git repo in its own detached worktree', async () => {
