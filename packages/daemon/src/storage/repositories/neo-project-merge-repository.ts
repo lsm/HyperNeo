@@ -103,9 +103,10 @@ export class NeoProjectMergeRepository {
             .prepare(`INSERT INTO neo_project_merges(source_id, target_id, merged_at)
           VALUES (?, ?, ?)`)
             .run(source.id, target.id, Date.now());
-          this.db
-            .prepare('UPDATE neo_project_workspaces SET project_id = ? WHERE project_id = ?')
-            .run(target.id, source.id);
+          for (const table of ['neo_project_workspaces', 'neo_asks'])
+            this.db
+              .prepare(`UPDATE ${table} SET project_id = ? WHERE project_id = ?`)
+              .run(target.id, source.id);
           this.db
             .prepare(
               'UPDATE neo_concerns SET parent_id = ?, revision = revision + 1 WHERE parent_id = ?'
