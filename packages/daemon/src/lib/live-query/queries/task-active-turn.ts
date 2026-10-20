@@ -3,41 +3,40 @@ import { HOOK_SUBTYPE_NAMES, HOOK_SUBTYPES } from './task-delivery.ts';
 
 export const SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL = `
 ${spaceTaskFlagRowsBaseCte(false)},
-active_turn AS MATERIALIZED (
-  SELECT c.sessionId AS sessionId, c.turnIndex AS turnIndex
+active_rows AS MATERIALIZED (
+  SELECT r.*, sm.sdk_message AS content
   FROM (
     SELECT
-      j.sessionId AS sessionId,
-      j.turnIndex AS turnIndex,
-      j.isTerminal AS isTerminal,
-      ROW_NUMBER() OVER (PARTITION BY j.sessionId ORDER BY j.createdAt DESC, j.insOrder DESC) AS rn
-    FROM joined j
-    WHERE j.sessionId IS NOT NULL
-      AND (
-        j.messageType IN ('assistant', 'result')
-        OR (
-          j.messageType = 'system'
-          AND COALESCE(j.jsonSubtype, '') IN ('api_retry', ${HOOK_SUBTYPE_NAMES})
-        )
-      )
-  ) c
-  WHERE c.rn = 1
-    AND c.isTerminal = 0
-    AND c.turnIndex = (
-      SELECT j2.turnIndex
-      FROM joined j2
-      WHERE j2.sessionId = c.sessionId
-      ORDER BY j2.createdAt DESC, j2.insOrder DESC
-      LIMIT 1
-    )
-),
-active_rows AS MATERIALIZED (
-  SELECT j.*, sm.sdk_message AS content
-  FROM joined j
-  JOIN active_turn at
-    ON at.sessionId = j.sessionId
-   AND at.turnIndex = j.turnIndex
-  JOIN sdk_messages sm ON sm.id = j.id
+      j.*,
+      FIRST_VALUE(j.turnIndex) OVER (
+        PARTITION BY j.sessionId ORDER BY j.createdAt DESC, j.insOrder DESC
+      ) AS latestTurn,
+      MAX(j.isCandidate) OVER (PARTITION BY j.sessionId) AS sessionHasCandidate,
+      FIRST_VALUE(j.turnIndex) OVER (
+        PARTITION BY j.sessionId ORDER BY j.isCandidate DESC, j.createdAt DESC, j.insOrder DESC
+      ) AS candidateTurn,
+      FIRST_VALUE(j.isTerminal) OVER (
+        PARTITION BY j.sessionId ORDER BY j.isCandidate DESC, j.createdAt DESC, j.insOrder DESC
+      ) AS candidateTerminal
+    FROM (
+      SELECT
+        joined.*,
+        (sessionId IS NOT NULL AND (
+          messageType IN ('assistant', 'result')
+          OR (
+            messageType = 'system'
+            AND COALESCE(jsonSubtype, '') IN ('api_retry', ${HOOK_SUBTYPE_NAMES})
+          )
+        )) AS isCandidate
+      FROM joined
+    ) j
+  ) r
+  JOIN sdk_messages sm ON sm.id = r.id
+  WHERE r.sessionId IS NOT NULL
+    AND r.sessionHasCandidate
+    AND r.candidateTerminal = 0
+    AND r.candidateTurn = r.latestTurn
+    AND r.turnIndex = r.candidateTurn
 ),
 -- One row per assistant content block (tool_use / non-empty text / thinking).
 assistant_entries AS (

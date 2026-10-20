@@ -19,4 +19,20 @@ describe('NAMED_QUERY_REGISTRY', () => {
     expect(refused).toEqual([]);
     db.close();
   });
+
+  test('every live query leaves room for a second copy of itself under the subquery cap', () => {
+    const db = new Database(':memory:');
+    runMigrations(db, () => {});
+    createTables(db);
+    const tight = [...NAMED_QUERY_REGISTRY].flatMap(([name, entry]) => {
+      try {
+        db.prepare(`SELECT * FROM (${entry.sql}) UNION ALL SELECT * FROM (${entry.sql})`);
+        return [];
+      } catch (error) {
+        return [`${name}: ${(error as Error).message}`];
+      }
+    });
+    expect(tight).toEqual([]);
+    db.close();
+  });
 });
