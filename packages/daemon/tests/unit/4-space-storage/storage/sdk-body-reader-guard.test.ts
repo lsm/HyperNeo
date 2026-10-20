@@ -47,18 +47,17 @@ describe('SDK body reader guard', () => {
       const path = relative(root, file);
       if (path.startsWith('storage/schema/')) return [];
       return directReads(readFileSync(file, 'utf8')).flatMap((sql) => {
-        if (path === 'storage/repositories/sdk-message-body-read.ts') return [];
         if (
-          (path === 'storage/sdk-message-body-copy.ts' ||
-            path === 'storage/sdk-message-body-backup-worker.ts') &&
-          /COALESCE\((?:octet_length\(b\.sdk_message\),octet_length\(m\.sdk_message\)|b\.sdk_message,m\.sdk_message)\)/.test(
+          path === 'storage/repositories/sdk-message-body-read.ts' &&
+          /COALESCE\((?:body\.sdk_message, original|split_body\.sdk_message, split_legacy)\.sdk_message\)/.test(
             sql
           )
         )
           return [];
         if (
           path === 'storage/repositories/sdk-message-body-write.ts' &&
-          (/INSERT INTO sdk_message_bodies/.test(sql) ||
+          ((/INSERT INTO sdk_message_bodies/.test(sql) &&
+            /LEFT JOIN sdk_message_bodies previous ON previous.seq=m.rowid/.test(sql)) ||
             /UPDATE sdk_messages SET sdk_message=\(SELECT b.sdk_message/.test(sql))
         )
           return [];
