@@ -1,6 +1,5 @@
 import { getDataDir } from '../../lib/data-dir.ts';
 import { Logger } from '../../lib/logger.ts';
-import { SHUTDOWN_ABORT } from '../../lib/process-fatal-logger.ts';
 import { access, constants, mkdir, readFile, rename, unlink } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import { Readable } from 'node:stream';
@@ -10,9 +9,9 @@ import { withoutAuthorization } from './agent-memory-fetch-options.ts';
 import type { AgentMemoryEmbedder } from './agent-memory-repository.ts';
 
 const log = new Logger('AgentMemory');
-const MODEL_ID = 'onnx-community/granite-embedding-small-english-r2-ONNX';
+export const MODEL_ID = 'onnx-community/granite-embedding-small-english-r2-ONNX';
 const GITHUB_RELEASE_BASE = 'https://github.com/lsm/neokai/releases/download/embedding-models-v1';
-const DIMENSIONS = 384;
+export const DIMENSIONS = 384;
 const MODEL_FILES = [
   'config.json',
   'tokenizer.json',
@@ -54,6 +53,10 @@ export class TransformersAgentMemoryEmbedder implements AgentMemoryEmbedder {
 
   embedPassage(text: string): Promise<Float32Array> {
     return this.embedQuery(text);
+  }
+
+  load(): Promise<void> {
+    return this.getInit().then(() => {});
   }
 
   private getInit(): Promise<InitializedEmbedder> {
@@ -171,14 +174,6 @@ export function resetAgentMemoryEmbedderStateForTests(): void {
   prefetchAbortController = null;
   prefetchGeneration = 0;
   abortedPrefetchGenerations = new Set<number>();
-}
-
-export function abortAgentMemoryEmbeddingModelPrefetch(): void {
-  const abortController = prefetchAbortController;
-  if (!abortController) return;
-  abortedPrefetchGenerations.add(prefetchGeneration);
-  abortController.abort(SHUTDOWN_ABORT);
-  prefetchResult = null;
 }
 
 function loadTransformers(): Promise<TransformersModule> {
