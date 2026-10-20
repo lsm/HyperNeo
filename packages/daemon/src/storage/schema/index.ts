@@ -28,6 +28,7 @@ import { SDK_MESSAGE_COLUMN_TYPES } from '../sdk-message-columns.ts';
 import { createSdkMessageFilterIndexes } from './sdk-message-filter-indexes.ts';
 import { runMigration418 } from './m418-sdk-message-bodies.ts';
 import { runMigration419 } from './m419-task-message-body-triggers.ts';
+import { runMigration422 } from './m422-tool-continuation-expiry-indexes.ts';
 import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
 
 // knip-ignore-next-line
@@ -1138,4 +1139,5 @@ function createIndexes(db: BunDatabase): void {
     `CREATE INDEX IF NOT EXISTS idx_tool_continuation_inbox_tool
 		 ON tool_continuation_inbox(tool_use_id, status, expires_at)`
   );
+  runMigration422(db);
 }

@@ -46,7 +46,11 @@ const Node = z.object({
     })
     .default({ nodes: [] }),
   closedAt: z.string().nullable(),
-  author: z.object({ login: z.string() }).nullable().default(null),
+  createdAt: z.string().nullable().default(null),
+  author: z
+    .object({ login: z.string(), __typename: z.string().optional() })
+    .nullable()
+    .default(null),
   comments: z
     .object({
       nodes: z.array(
@@ -92,11 +96,11 @@ const Response = z.object({
 });
 
 const DONE_FIELDS =
-  'number title headRefName headRefOid state isDraft mergeable reviewDecision closedAt';
+  'number title headRefName headRefOid state isDraft mergeable reviewDecision closedAt createdAt';
 
 const FIELDS = `${DONE_FIELDS}
   reviews(last: 30, states: [APPROVED, CHANGES_REQUESTED]) { nodes { state commit { oid } } }
-  author { login }
+  author { login __typename }
   comments(last: 10) { nodes { author { login } createdAt } }
   replies: reviews(last: 10, states: [COMMENTED]) { nodes { author { login } submittedAt } }
   commits(last: 1) { nodes { commit { statusCheckRollup { state } checkSuites(first: 1) { totalCount } } } }`;
@@ -149,6 +153,8 @@ export type CodingLedgerRow = {
   closedAt: number | null;
   ci?: string | null;
   replyAt?: number | null;
+  createdAt?: number | null;
+  authorIsBot?: boolean;
 };
 
 export function planCodingLedgerRead(
@@ -179,6 +185,8 @@ export function planCodingLedgerRead(
       ci: pr.commits.nodes[0]?.commit.statusCheckRollup?.state ?? null,
       replyAt: codingPrReplyAt(pr),
       closedAt: pr.closedAt ? Date.parse(pr.closedAt) : null,
+      createdAt: pr.createdAt ? Date.parse(pr.createdAt) : null,
+      authorIsBot: pr.author?.__typename !== 'User',
     }))
     .filter((row) => row.closedAt === null || now - row.closedAt < CODING_LEDGER_KEEP_MS);
   return { repo: canonical, rows, remaining: parsed.data.data.rateLimit.remaining };
@@ -277,8 +285,8 @@ export class CodingPrLedgerRepository {
   private upsert(rows: readonly CodingLedgerRow[], now: number): void {
     const insert = this.db.prepare(
       `INSERT INTO pack_coding_pr_ledger
-         (repo, number, title, branch, head, state, state_since, closed_at, read_at, reply_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         (repo, number, title, branch, head, state, state_since, closed_at, read_at, reply_at, created_at, author_is_bot)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(repo, number) DO UPDATE SET
          title = excluded.title, branch = excluded.branch, closed_at = excluded.closed_at,
          read_at = excluded.read_at,
@@ -291,6 +299,7 @@ export class CodingPrLedgerRepository {
              THEN MAX(state_since, excluded.reply_at)
            ELSE state_since END,
          reply_at = COALESCE(excluded.reply_at, reply_at),
+         created_at = excluded.created_at, author_is_bot = excluded.author_is_bot,
          head = excluded.head, state = excluded.state`
     );
     for (const row of rows)
@@ -304,7 +313,9 @@ export class CodingPrLedgerRepository {
         now,
         row.closedAt,
         now,
-        row.replyAt ?? null
+        row.replyAt ?? null,
+        row.createdAt ?? null,
+        row.authorIsBot === false ? 0 : 1
       );
   }
 

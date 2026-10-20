@@ -9,7 +9,11 @@ import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-to
 import { NeoTodoTargetSchema } from './driver-work.ts';
 import type { NeoPack } from './packs/types.ts';
 import { neoTodoHome, neoTodoRepo } from './todo-repo.ts';
-import { readNeoTodoCompletion, requireNeoTodoMayFinish } from './todo-completion.ts';
+import {
+  readNeoTodoCompletion,
+  requireNeoTodoMayFinish,
+  sameNeoTodoCheck,
+} from './todo-completion.ts';
 import { planNeoTodoAwaitingStart } from './todo-runner.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 
@@ -65,10 +69,11 @@ const Add = TodoDraft.extend({ askId: Text }).superRefine(refineNeoTodoDraft);
 
 export function planNeoTodoDraft<T extends Pick<NeoTodo, 'check' | 'instruction' | 'doneWhen'>>(
   draft: T,
-  packs: readonly NeoPack[]
+  packs: readonly NeoPack[],
+  peers: readonly NeoTodo[] = []
 ): Gate<T> {
   const pack = draft.check && packs.find((item) => item.id === draft.check?.pack)?.todos;
-  const refused = pack?.refuse?.(draft);
+  const refused = pack?.refuse?.(draft, peers);
   if (refused) return fail(`check_refused: ${refused}`);
   const doneWhen = draft.check && pack?.doneWhen?.(draft.check);
   return { value: doneWhen ? { ...draft, doneWhen } : draft };
@@ -106,6 +111,8 @@ export async function addNeoTodo(
       ok: false,
       reason: `ask_settled: ${home.title} is settled; open a new ask for this todo.`,
     };
+  const accepted = planNeoTodoDraft(draft, packs, todos.listTodos(home.id));
+  if ('reason' in accepted) return accepted.reason;
   const added = todos.addTodo(crypto.randomUUID(), home.id, draft, Date.now(), repo);
   if (draft.target) sessions.create(added.id, draft.target);
   if (draft.start) return start(added.id);
@@ -123,6 +130,7 @@ function joinNeoStartQuestion(todos: NeoAskTodoRepository, todo: NeoTodo): void 
 const Edit = z.object({
   todoId: Text,
   title: Text.optional(),
+  addUrls: z.array(Text).min(1).optional(),
   doneWhen: Text.optional(),
   done: z.enum(['met', 'reported']).optional(),
   evidence: Text.optional(),
@@ -240,7 +248,55 @@ export function createNeoTodoOperations(
 ) {
   const completion = (plan: { todo: NeoTodo; patch: NeoTodoPatch }) =>
     plan.patch.state === 'done' ? readNeoTodoCompletion(packs(), plan.todo) : null;
-  const write = (plan: { todo: NeoTodo; patch: NeoTodoPatch }): TodoReceipt => {
+  const withUrls = (
+    plan: { todo: NeoTodo; patch: NeoTodoPatch },
+    input: z.infer<typeof Edit>
+  ): Gate<{ todo: NeoTodo; patch: NeoTodoPatch }> => {
+    if (!input.addUrls) return { value: plan };
+    const pack = packs().find((pack) => pack.id === plan.todo.check?.pack)?.todos;
+    const check = pack?.addUrls?.(plan.todo, input.addUrls);
+    if (!check)
+      return fail('check_urls_unsupported: this todo needs a check that accepts PR urls.');
+    const accepted = planNeoTodoDraft(
+      { ...plan.todo, check },
+      packs(),
+      todos.listTodos(plan.todo.askId)
+    );
+    if ('reason' in accepted) return accepted;
+    return {
+      value: {
+        todo: accepted.value,
+        patch: { ...plan.patch, check, doneWhen: accepted.value.doneWhen },
+      },
+    };
+  };
+  const write = (
+    plan: { todo: NeoTodo; patch: NeoTodoPatch },
+    input?: z.infer<typeof Edit>
+  ): TodoReceipt | Rejection => {
+    const checked = plan.todo;
+    if (input?.addUrls) {
+      const latest = requireNeoOpenTodo(todos.getTodo(plan.todo.id), todos.getAsk(plan.todo.askId));
+      if ('reason' in latest) return latest.reason;
+      const edited = planNeoTodoEdit(latest.value, input);
+      if ('reason' in edited) return edited.reason;
+      const rebased = withUrls(edited.value, input);
+      if ('reason' in rebased) return rebased.reason;
+      plan = rebased.value;
+    }
+    if (plan.patch.state === 'done') {
+      const latest = requireNeoOpenTodo(todos.getTodo(plan.todo.id), todos.getAsk(plan.todo.askId));
+      if ('reason' in latest) return latest.reason;
+      if (!sameNeoTodoCheck(checked, input?.addUrls ? plan.todo : latest.value))
+        return {
+          ok: false,
+          reason: 'todo_changed: PR URLs changed during completion; retry with the current check.',
+        };
+    }
+    if (plan.patch.check) {
+      const accepted = planNeoTodoDraft(plan.todo, packs(), todos.listTodos(plan.todo.askId));
+      if ('reason' in accepted) return accepted.reason;
+    }
     const todo = todos.updateTodo(plan.todo, plan.patch, Date.now());
     return { ok: true, todo, todos: todos.listTodos(todo.askId) };
   };
@@ -288,9 +344,10 @@ export function createNeoTodoOperations(
       'result:outcome'
     )
     .pipe(planNeoTodoEdit, ['outcome', 'input'], 'result:outcome')
+    .pipe(withUrls, ['outcome', 'input'], 'result:outcome')
     .pipe(completion, 'outcome', 'completion')
     .pipe(requireNeoTodoMayFinish, ['outcome', 'completion'], 'result:outcome')
-    .pipe(write, 'outcome', 'outcome')
+    .pipe(write, ['outcome', 'input'], 'outcome')
     .endAsync('outcome') as (
     input: z.infer<typeof Edit>,
     caller: OperationCaller
@@ -342,7 +399,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.add',
       description:
-        'Add a todo to an open ask you own: title, doneWhen (one sentence), and check {pack, kind, params} when a pack can read it; a pack may refuse a check, or write doneWhen from it. instruction is the task for a session and target says where it runs ({verb: start, adapter, place} or {verb: send, ref}); without them the daemon checks the todo itself. named records what the human named for it (engine, session, repository, folder). A session the human named is sent to only through the ref work.find {session} returns as an exact match. start:true starts it now; otherwise the daemon lists it, ticked, in the start question of the ask.',
+        'Add a todo to an open ask you own. A coding PR already tracked by another live todo on that ask is refused; pin URLs with neo.todo.edit addUrls on the original instead. Pass title, doneWhen (one sentence), and check {pack, kind, params} when a pack can read it; a pack may refuse a check, or write doneWhen from it. instruction is the task for a session and target says where it runs ({verb: start, adapter, place} or {verb: send, ref}); without them the daemon checks the todo itself. named records what the human named for it (engine, session, repository, folder). A session the human named is sent to only through the ref work.find {session} returns as an exact match. start:true starts it now; otherwise the daemon lists it, ticked, in the start question of the ask.',
       inputSchema: Add,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -351,7 +408,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.edit',
       description:
-        'Change a todo on an open ask you own: title or doneWhen, or tick it done with evidence (done met for what you read, reported for a claim you cannot read).',
+        'Change a todo on an open ask you own: title or doneWhen; addUrls appends PR URLs to its existing PR-merge check and updates doneWhen, refusing URLs another live todo on this ask tracks. Prefer editing to adding a duplicate PR todo. Or tick it done with evidence (done met for what you read, reported for a claim you cannot read).',
       inputSchema: Edit,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

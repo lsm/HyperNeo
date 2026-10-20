@@ -183,7 +183,7 @@ describe('Migration 134: message search FTS', () => {
     expect(
       db.prepare(`SELECT v FROM message_search_fts_config WHERE k = 'crisismerge'`).get()
     ).toEqual({
-      v: 64,
+      v: 16,
     });
 
     const rows = db

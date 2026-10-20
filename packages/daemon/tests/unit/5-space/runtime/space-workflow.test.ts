@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { vi } from 'vitest';
 import type { WorkflowNodeInput } from '@hyperneo/shared';
 import {
   createSpaceAgentLookup,
@@ -172,19 +173,22 @@ describe('SpaceWorkflowRepository', () => {
     expect(updated?.description).toBe('Updated desc');
   });
 
-  test('updateWorkflow bumps updatedAt on step-only update', async () => {
-    const wf = repo.createWorkflow({
-      spaceId: 'space-1',
-      name: 'WF',
-      nodes: [coderNode],
-      completionAutonomyLevel: 3,
-    });
-    const before = wf.updatedAt;
-    await new Promise((r) => setTimeout(r, 2));
-    const updated = repo.updateWorkflow(wf.id, {
-      nodes: [{ id: 'node-coder', name: 'Plan', agentId: 'agent-planner' }],
-    });
-    expect(updated?.updatedAt).toBeGreaterThan(before);
+  test('updateWorkflow bumps updatedAt on a step-only update in the same millisecond', () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000);
+    try {
+      const wf = repo.createWorkflow({
+        spaceId: 'space-1',
+        name: 'WF',
+        nodes: [coderNode],
+        completionAutonomyLevel: 3,
+      });
+      const updated = repo.updateWorkflow(wf.id, {
+        nodes: [{ id: 'node-coder', name: 'Plan', agentId: 'agent-planner' }],
+      });
+      expect(updated?.updatedAt).toBeGreaterThan(wf.updatedAt);
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   test('updateWorkflow updates stable nodes in place on nodes param', () => {
