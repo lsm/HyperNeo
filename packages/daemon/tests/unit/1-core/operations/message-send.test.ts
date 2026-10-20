@@ -107,12 +107,12 @@ describe('shared message.send operation', () => {
     expect(parseMailboxEntry(JSON.parse(mailbox.rows()[0].payload))?.message).toEqual(message);
   });
 
-  test('a send that was not accepted does not count toward the duplicate or rate limits', () => {
+  test('a send that was not accepted frees its duplicate and rate slots', () => {
     const limit = createSessionSendLimiter(() => 1_000);
     expect(limit.admit('session:w', 'b', 'retry me')).toBeNull();
-    expect(limit.admit('session:w', 'b', 'retry me')).toBeNull();
-    limit.record('session:w', 'b', 'retry me');
     expect(limit.admit('session:w', 'b', 'retry me')).toMatch(/^duplicate/);
+    limit.release('session:w', 'b', 'retry me');
+    expect(limit.admit('session:w', 'b', 'retry me')).toBeNull();
   });
 
   test('a session may send the same text once in 10 minutes and six messages a minute to one session', async () => {

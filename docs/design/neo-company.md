@@ -55,7 +55,7 @@ expanding to the text. The same pattern as wake rows (section 5). Rendering is f
 
 ### Guardrails
 
-- **Rate limit** per sender: 6 a minute. Past that, messages are refused with
+- **Rate limit** per sender and recipient: 6 a minute. Past that, messages are refused with
   `rate_limited` until the minute passes.
 - **Dedupe:** the same sender, recipient and text within 10 minutes is accepted once.
 - **No human authority:** a message from a session is never `human` input. Today

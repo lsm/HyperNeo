@@ -86,7 +86,7 @@ export type SessionStatusRead = (sessionId: string) => string | null;
 export type SessionTitleRead = (sessionId: string) => string | null;
 export type SessionSendLimiter = {
   admit(origin: string, to: string, text: string): string | null;
-  record(origin: string, to: string, text: string): void;
+  release(origin: string, to: string, text: string): void;
 };
 
 const SESSION_SEND_WINDOW_MS = 60_000;
@@ -105,15 +105,21 @@ export function createSessionSendLimiter(now: () => number = Date.now): SessionS
       const pair = `${origin}\n${to}`;
       if (seen.has(`${pair}\n${text}`))
         return 'duplicate: the same message reached this session in the last 10 minutes';
-      return recent(pair, at).length >= SESSION_SENDS_PER_WINDOW
-        ? `rate_limited: at most ${SESSION_SENDS_PER_WINDOW} messages a minute to one session`
-        : null;
-    },
-    record: (origin, to, text) => {
-      const at = now();
-      const pair = `${origin}\n${to}`;
-      sends.set(pair, [...recent(pair, at), at]);
+      const sent = recent(pair, at);
+      if (sent.length >= SESSION_SENDS_PER_WINDOW)
+        return `rate_limited: at most ${SESSION_SENDS_PER_WINDOW} messages a minute to one session`;
+      sends.set(pair, [...sent, at]);
       seen.set(`${pair}\n${text}`, at);
+      return null;
+    },
+    release: (origin, to, text) => {
+      const pair = `${origin}\n${to}`;
+      const reserved = seen.get(`${pair}\n${text}`);
+      seen.delete(`${pair}\n${text}`);
+      sends.set(
+        pair,
+        (sends.get(pair) ?? []).filter((sentAt) => sentAt !== reserved)
+      );
     },
   };
 }
@@ -214,14 +220,14 @@ export function admitSessionSend(
   return refused === null ? { value: input } : { reason: { kind: 'rejected', reason: refused } };
 }
 
-export function recordSessionSend(
+export function releaseUnsentSend(
   sent: SendResult,
   input: SendInput,
   origin: string,
   limit: SessionSendLimiter
 ): SendResult {
-  if (sent.kind === 'accepted' && sessionSender(origin) !== null)
-    limit.record(origin, input.sessionId, sentText(input));
+  if (sent.kind !== 'accepted' && sessionSender(origin) !== null)
+    limit.release(origin, input.sessionId, sentText(input));
   return sent;
 }
 
@@ -288,7 +294,7 @@ const runSendMessage = (superpipe({})('send-operation-message') as PipelineAPI)
   .pipe(generateUUID, undefined, 'messageId')
   .pipe(persistOperationMessage, ['outgoing', 'origin', 'messageId', 'jobQueue'], 'handoff')
   .pipe(mapMessageReceipt, ['handoff', 'messageId'], 'receipt')
-  .pipe(recordSessionSend, ['receipt', 'admitted', 'origin', 'limit'], 'receipt')
+  .pipe(releaseUnsentSend, ['receipt', 'admitted', 'origin', 'limit'], 'receipt')
   .endAsync('receipt') as (
   input: SendRequest,
   caller: OperationCaller,
