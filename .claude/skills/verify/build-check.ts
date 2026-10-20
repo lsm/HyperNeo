@@ -26,14 +26,16 @@ const post = (name: string, sender: string | undefined = 'verify-build') =>
   });
 const outputs: Record<string, unknown> = {};
 for (const entry of ['main.ts', 'prod-entry.ts']) {
-  const help = Bun.spawn([process.execPath, `packages/cli/${entry}`, '--help'], {
-    env: process.env, stdout: 'pipe', stderr: 'pipe',
-  });
-  const helpText = await new Response(help.stdout).text();
-  const helpError = await new Response(help.stderr).text();
-  assert.equal(await help.exited, 0, helpError);
-  assert(helpText.includes('hyperneo build'), `${entry} help must list build`);
-  outputs[`${entry}:help`] = helpText;
+  if (entry === 'main.ts') {
+    const help = Bun.spawn([process.execPath, `packages/cli/${entry}`, '--help'], {
+      env: process.env, stdout: 'pipe', stderr: 'pipe',
+    });
+    const helpText = await new Response(help.stdout).text();
+    const helpError = await new Response(help.stderr).text();
+    assert.equal(await help.exited, 0, helpError);
+    assert(helpText.includes('hyperneo build'), `${entry} help must list build`);
+    outputs[`${entry}:help`] = helpText;
+  }
   const child = Bun.spawn([process.execPath, `packages/cli/${entry}`, 'build'], {
     env: { ...process.env, HYPERNEO_SESSION_ID: 'verify-build', HYPERNEO_SESSION_DOOR: socketPath },
     stdout: 'pipe', stderr: 'pipe',

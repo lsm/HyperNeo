@@ -1487,8 +1487,9 @@ env -i HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
 ```
 
 The helper runs the real `hyperneo build` command through both source and release
-CLI entries, checks that both `--help` outputs list `build`, and uses only
-`<run>/data/session-door.sock` for the query. The worker sender is set
+CLI entries, checks that source `--help` lists `build`, and uses only
+`<run>/data/session-door.sock` for the query. Release `--help` requires generated
+embedded assets and is not exercised by this source-only journey. The worker sender is set
 synthetically; normal workers inherit their session sender and socket location.
 It verifies socket permissions 0600, daemon PID and build commit, stable process
 startedAt (Unix milliseconds), increasing uptime (milliseconds), health `ok`, and
