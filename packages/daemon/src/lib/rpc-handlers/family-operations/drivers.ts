@@ -1,3 +1,4 @@
+import { ensureCodexDesktopProject } from '../../drivers/codex-desktop-project.ts';
 import { neoWorkerPermissionMode } from '@hyperneo/shared/types/settings';
 import { sleep } from '../../utils/sleep.ts';
 import { withdrawOwnedInput } from '../../drivers/owned-input-withdrawal.ts';
@@ -305,6 +306,7 @@ function codexDesktopAdapters(
       appServer: () =>
         connectCodexAppServer(join(codexHome, 'app-server-control', 'app-server-control.sock')),
       bootstrapServer: () => startCodexBootstrapServer(),
+      prepareDesktopProject: (folder) => ensureCodexDesktopProject(folder, codexHome, spawnProcess),
       startDesktopTurn: (threadId, request) =>
         startCodexDesktopTurn(join(codexHome, 'ipc', 'ipc.sock'), spawnProcess, threadId, request),
       folderExists: existsSync,

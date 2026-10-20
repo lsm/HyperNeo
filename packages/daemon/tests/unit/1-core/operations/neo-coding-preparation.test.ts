@@ -72,8 +72,10 @@ describe('createCodexDesktopAdapter with coding preparation', () => {
           throw new Error('Unexpected folder creation');
         },
         homeDir: '/unused',
-        gitCheckout: async () => {
-          throw new Error('Must not fall back to local HEAD');
+        gitCheckout: async () => ({ repo: f.directory, linked: false }),
+        prepareDesktopProject: async (folder) => {
+          expect(folder).toBe(f.directory);
+          return 'project-1';
         },
         newId: () => 'prepared-1',
         spawn: () => {

@@ -425,6 +425,7 @@ describe('codex-desktop adapter status and send', () => {
     };
     return createCodexDesktopAdapter({
       bootstrapServer: () => Promise.reject(new Error('not used')),
+      prepareDesktopProject: async () => 'project-1',
       startDesktopTurn: async () => {
         throw new Error('not used');
       },

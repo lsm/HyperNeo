@@ -105,6 +105,7 @@ export interface CodexDesktopAdapterDeps {
   spawn: SpawnFn;
   appServer: () => Promise<CodexAppServer>;
   bootstrapServer: () => Promise<CodexAppServer>;
+  prepareDesktopProject: (folder: string) => Promise<string>;
   startDesktopTurn: (threadId: string, request: Record<string, unknown>) => Promise<void>;
   folderExists: (folder: string) => boolean;
   makeFolder: (folder: string) => void;
@@ -1097,7 +1098,10 @@ export async function startCodexThread(
         if (!prepared.ok) return prepared;
         workFolder = prepared.value;
       }
+      const projectFolder = (await deps.gitCheckout(folder))?.repo ?? folder;
+      const projectId = await deps.prepareDesktopProject(projectFolder);
       const started = await server.call('thread/start', {
+        projectId,
         cwd: workFolder.cwd,
         approvalPolicy: 'never',
         sandbox: 'danger-full-access',
