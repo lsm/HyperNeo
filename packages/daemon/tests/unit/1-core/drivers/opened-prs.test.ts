@@ -81,3 +81,26 @@ describe('keepOpenedPrs', () => {
     expect(keepOpenedPrs(many)).toEqual(many.slice(2));
   });
 });
+
+describe('codexOpenedPrs raw artifact attribution', () => {
+  test.each([
+    [`attach_artifact pull_request ${pr(1)} ${pr(2)}`, [pr(1)]],
+    [`attach_artifact attach_artifact pull_request ${pr(1)}`, [pr(1)]],
+    [`attach_artifact pull_request ${pr(1)} attach_artifact pull_request ${pr(2)}`, [pr(1), pr(2)]],
+    [`attach_artifact (pull_request (${pr(1)}))`, [pr(1)]],
+    [`attach_artifact) pull_request ${pr(1)}`, []],
+    [`attach_artifact pull_request) ${pr(1)}`, []],
+    [`pull_request attach_artifact ${pr(1)}`, []],
+    [`attach_artifact other ${pr(1)}`, []],
+    [
+      `attach_artifact pull_request ${pr(1)}) attach_artifact pull_request ${pr(2)}`,
+      [pr(1), pr(2)],
+    ],
+    [
+      `attach_artifact pull_request https://github.com/o/r/pull/nope attach_artifact pull_request ${pr(2)}`,
+      [pr(2)],
+    ],
+  ])('preserves attribution and boundaries for %s', (line, expected) => {
+    expect(codexOpenedPrs([line])).toEqual(expected);
+  });
+});
