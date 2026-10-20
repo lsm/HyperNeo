@@ -24,6 +24,7 @@ const db = core.getDb();
 db.prepare("INSERT INTO sessions(id,title,created_at,last_active_at,status,config,metadata) VALUES ('worker','Synthetic','2026-10-20','2026-10-20','active','{}','{}')").run();
 const text = '  SYNTHETIC_COMPLETE_REPORT 🔬\n'.repeat(6000) + '\n';
 const insert = db.prepare('INSERT INTO sdk_messages(id,session_id,message_type,sdk_message,timestamp) VALUES (?, ?, ?, ?, ?)');
+for(let n=0;n<20;n++) insert.run(`tool-prefix-${n}`,'worker','assistant',JSON.stringify({type:'assistant',message:{content:[{type:'tool_use',id:`tool-${n}`,name:'Read',input:{path:'synthetic'}}]}}),'2026-10-20T00:00:00Z');
 insert.run('legacy-retracted','worker','assistant',JSON.stringify({type:'assistant',message:{content:[{type:'text',text:'HIDDEN_REPLACED_REPORT'}]}}),'2026-10-20T00:00:00Z');
 insert.run('report','worker','assistant','{"type":"assistant"}','2026-10-20T00:00:00Z');
 db.prepare('INSERT INTO sdk_message_bodies(seq,sdk_message) VALUES ((SELECT seq FROM sdk_messages WHERE id=?),?)').run('report',JSON.stringify({type:'assistant',message:{content:[{type:'thinking',thinking:'HIDDEN_SYNTHETIC'},{type:'text',text}]}}));
@@ -71,6 +72,6 @@ try {
   assert.equal(pages.at(-1).value.availability,'complete');
   assert(pages.length>1,'long reports must be paged without truncation');
   assert(maxLagMs<1000);
-  writeFileSync(join(run,'evidence.json'),JSON.stringify({actualSdkMcp:true,pages:pages.length,reportBytes:Buffer.byteLength(text),sha256:createHash('sha256').update(actual).digest('hex'),maxLagMs,sdkStorageUnchanged:true,searchIndexEmpty:true,retractedLegacyIdHidden:true},null,2));
+  writeFileSync(join(run,'evidence.json'),JSON.stringify({actualSdkMcp:true,pages:pages.length,reportBytes:Buffer.byteLength(text),sha256:createHash('sha256').update(actual).digest('hex'),maxLagMs,sdkStorageUnchanged:true,searchIndexEmpty:true,retractedLegacyIdHidden:true,textlessHistoryExhausted:true},null,2));
   console.log(join(run,'evidence.json'));
 } finally {stream.close();clearInterval(timer);await server.stop(true);core.close();}

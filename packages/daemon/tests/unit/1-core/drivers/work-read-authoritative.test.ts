@@ -267,6 +267,60 @@ describe('authoritative work.read', () => {
     expect(digest()).toBe(before);
   });
 
+  test('distinct intervening results are not lost when following older history', async () => {
+    put('original', 'assistant', [{ type: 'text', text: 'Original report' }]);
+    put('distinct', 'result', 'A distinct stored result');
+    put('echo', 'result', 'Original report');
+    let value = await page({ before: 0, after: 0 });
+    const turns = [...value.turns];
+    for (let n = 0; value.nextCursor && n < 10; n++) {
+      value = await page({ before: 0, after: 0, cursor: value.nextCursor });
+      turns.push(...value.turns);
+    }
+    expect(
+      turns.filter((t) => t.text === 'A distinct stored result').map((t) => t.messageId)
+    ).toEqual(['distinct']);
+    expect(turns.some((t) => t.text === 'Original report')).toBe(true);
+    expect(value.availability).toBe('complete');
+  });
+
+  test('exhausting textless older pages completes an already located reply', async () => {
+    put('tool-user', 'user', [{ type: 'tool_result', tool_use_id: 'tool', content: 'HIDDEN' }]);
+    put('tool-assistant', 'assistant', [{ type: 'tool_use', id: 'tool', name: 'Read', input: {} }]);
+    put('answer', 'assistant', [{ type: 'text', text: 'Visible answer' }]);
+    let value = await page({ before: 0, after: 0 });
+    expect(value.turns[0].text).toBe('Visible answer');
+    const later: Page[] = [];
+    for (let n = 0; value.nextCursor && n < 10; n++) {
+      value = await page({ before: 0, after: 0, cursor: value.nextCursor });
+      later.push(value);
+    }
+    expect(later.flatMap((p) => p.turns)).toEqual([]);
+    expect(later.map((p) => p.availability)).not.toContain('reply_unavailable');
+    expect(value.availability).toBe('complete');
+  });
+
+  test('a long textless prefix remains available through bounded cursor pages', async () => {
+    put('early-report', 'assistant', [{ type: 'text', text: 'Complete older report' }]);
+    for (let n = 0; n < 512; n++)
+      put(`tool-${n}`, 'assistant', [
+        { type: 'tool_use', id: `call-${n}`, name: 'Read', input: { path: 'synthetic' } },
+      ]);
+    put('empty-result', 'result', '');
+    const before = digest();
+    let value = await page({ around: 'empty-result', before: 0, after: 0 });
+    expect(value).toMatchObject({ turns: [], availability: 'incomplete' });
+    expect(value.nextCursor).toBeDefined();
+    const turns = [...value.turns];
+    for (let n = 0; value.nextCursor && n < 100; n++) {
+      value = await page({ before: 10, after: 10, cursor: value.nextCursor });
+      turns.push(...value.turns);
+    }
+    expect(turns.map((t) => t.text)).toEqual(['Complete older report']);
+    expect(value.availability).toBe('complete');
+    expect(digest()).toBe(before);
+  });
+
   test('external drivers retain their existing indexed source', async () => {
     db.prepare(
       "INSERT INTO message_search_content(kind,source_id,message_id,session_id,message_type,body,timestamp) VALUES ('codex','source','message','external','assistant','External reply',1)"
