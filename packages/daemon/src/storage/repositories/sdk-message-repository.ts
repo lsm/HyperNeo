@@ -19,6 +19,7 @@ import {
   toMailboxMessage,
 } from '../../lib/mailbox/entry.ts';
 import { withBusyRetry } from '../busy-retry.ts';
+import { writeSdkMessageBody } from './sdk-message-body-write.ts';
 import {
   buildFtsQuery,
   extractVisibleSearchText,
@@ -963,7 +964,12 @@ export class SDKMessageRepository {
         admission.parentToolUseId,
         taskId,
       ];
-      stmt.run(...values, conversationTurnIndex, admission.sdkUuid, ...derived.values);
+      writeSdkMessageBody(
+        this.db,
+        () => stmt.run(...values, conversationTurnIndex, admission.sdkUuid, ...derived.values),
+        'id = ?',
+        [dbId]
+      );
       if (admission.isTerminal && this.tableHasColumn('sdk_messages', 'consumed_seq')) {
         const resultSeq = this.nextConsumedSeq();
         if (resultSeq !== null) {
@@ -1463,7 +1469,12 @@ export class SDKMessageRepository {
       admission.parentToolUseId,
       taskId,
     ];
-    stmt.run(...values, conversationTurnIndex, admission.sdkUuid, ...derived.values);
+    writeSdkMessageBody(
+      this.db,
+      () => stmt.run(...values, conversationTurnIndex, admission.sdkUuid, ...derived.values),
+      'id = ?',
+      [id]
+    );
     this.saveReplacementEdges(id, sessionId, taskId, admission.replacementEdges);
     this.scheduleMessageSearchIndex(id);
     this.applyBadgeUpdate(sessionId, planAdmissionBadgeUpdate(admission));
@@ -2076,14 +2087,20 @@ export class SDKMessageRepository {
             | undefined,
         applyNormalizedDeliveryMessage: (rowId, sdkMessage, synthetic) => {
           const derived = this.derivedColumns(JSON.parse(sdkMessage));
-          return this.db
-            .prepare(
-              `UPDATE sdk_messages
+          return writeSdkMessageBody(
+            this.db,
+            () =>
+              this.db
+                .prepare(
+                  `UPDATE sdk_messages
                   SET sdk_message = ?,
                       origin = CASE WHEN ? = 1 THEN COALESCE(origin, 'system') ELSE origin END${derived.update}
                     WHERE id = ?`
-            )
-            .run(sdkMessage, synthetic ? 1 : 0, ...derived.values, rowId).changes;
+                )
+                .run(sdkMessage, synthetic ? 1 : 0, ...derived.values, rowId),
+            'id = ?',
+            [rowId]
+          ).changes;
         },
       },
     }).changed;
@@ -2103,17 +2120,23 @@ export class SDKMessageRepository {
       null,
       ['recovery_intercepted', 'recovery_billing_terminal']
     );
-    this.db
-      .prepare(
-        `UPDATE sdk_messages
+    writeSdkMessageBody(
+      this.db,
+      () =>
+        this.db
+          .prepare(
+            `UPDATE sdk_messages
             SET sdk_message = json_set(
               sdk_message,
               '$.recovery_intercepted', 1,
               '$.recovery_billing_terminal', ?
             )${derived.update}
           WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'result'`
-      )
-      .run(billingTerminal ? 1 : 0, ...derived.values, sessionId, sdkUuid);
+          )
+          .run(billingTerminal ? 1 : 0, ...derived.values, sessionId, sdkUuid),
+      "session_id = ? AND sdk_uuid = ? AND message_type = 'result'",
+      [sessionId, sdkUuid]
+    );
   }
 
   markResultInternalCompactionTurn(sessionId: string, sdkUuid: string): void {
@@ -2121,13 +2144,19 @@ export class SDKMessageRepository {
       'internal_compaction_turn',
     ]);
     withBusyRetry(() =>
-      this.db
-        .prepare(
-          `UPDATE sdk_messages
+      writeSdkMessageBody(
+        this.db,
+        () =>
+          this.db
+            .prepare(
+              `UPDATE sdk_messages
               SET sdk_message = json_set(sdk_message, '$.internal_compaction_turn', 1)${derived.update}
             WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'result'`
-        )
-        .run(...derived.values, sessionId, sdkUuid)
+            )
+            .run(...derived.values, sessionId, sdkUuid),
+        "session_id = ? AND sdk_uuid = ? AND message_type = 'result'",
+        [sessionId, sdkUuid]
+      )
     );
   }
 
@@ -2506,7 +2535,13 @@ export class SDKMessageRepository {
     );
 
     this.db.transaction(() => {
-      insertStmt.run(...values, conversationTurnIndex, admission.sdkUuid, ...derived.values);
+      writeSdkMessageBody(
+        this.db,
+        () =>
+          insertStmt.run(...values, conversationTurnIndex, admission.sdkUuid, ...derived.values),
+        'id = ?',
+        [id]
+      );
       this.applyBadgeUpdate(sessionId, badgeUpdate);
     })();
     return { id, badgeUpdate };
@@ -2532,9 +2567,12 @@ export class SDKMessageRepository {
       `UPDATE sdk_messages SET sdk_message = ?${derived.update} WHERE id = ? AND message_type = 'hyperneo_action'
        RETURNING session_id`
     );
-    const row = stmt.get(JSON.stringify(updated), ...derived.values, rowId) as
-      | { session_id: string }
-      | undefined;
+    const row = writeSdkMessageBody(
+      this.db,
+      () => stmt.get(JSON.stringify(updated), ...derived.values, rowId),
+      "id = ? AND message_type = 'hyperneo_action'",
+      [rowId]
+    ) as { session_id: string } | undefined;
     this.scheduleMessageSearchIndex(rowId);
     if (row) this.reactiveDb?.notifyChange('sdk_messages', { sessionId: row.session_id });
   }
@@ -2559,7 +2597,12 @@ export class SDKMessageRepository {
          AND message_type = 'hyperneo_action'
          AND sdk_uuid = ?`
     );
-    const result = stmt.run(JSON.stringify(updated), ...derived.values, sessionId, messageUuid);
+    const result = writeSdkMessageBody(
+      this.db,
+      () => stmt.run(JSON.stringify(updated), ...derived.values, sessionId, messageUuid),
+      "session_id = ? AND sdk_uuid = ? AND message_type = 'hyperneo_action'",
+      [sessionId, messageUuid]
+    );
     if (row) this.scheduleMessageSearchIndex(row.id);
     if (result.changes > 0) this.reactiveDb?.notifyChange('sdk_messages', { sessionId });
   }

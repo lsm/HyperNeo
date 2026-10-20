@@ -1,3 +1,4 @@
+import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies';
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { unlinkSync } from 'node:fs';
 import { Database } from '../../../../src/storage/sqlite-compat';
@@ -50,6 +51,7 @@ describe('SDK message writes under a held WAL write lock', () => {
 				PRIMARY KEY (source_message_id, target_uuid, kind)
 			);
 		`);
+    runMigration418(db);
     repository = new SDKMessageRepository(db as never);
   });
 

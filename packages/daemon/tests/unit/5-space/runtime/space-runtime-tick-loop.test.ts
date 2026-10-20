@@ -1,3 +1,4 @@
+import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies';
 import { createDirectTaskStarter } from '../../../../src/lib/tasks/start-direct-task';
 import { classifyReportableTerminal } from '../../../../src/lib/goals/reportable-terminal-gates.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
@@ -321,6 +322,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
     workflowRunRepo = new SpaceWorkflowRunRepository(db);
     taskRepo = new SpaceTaskRepository(db);
     nodeExecutionRepo = new NodeExecutionRepository(db);
+    runMigration418(db);
     sdkMessageRepo = new SDKMessageRepository(db);
 
     longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);

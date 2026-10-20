@@ -116,6 +116,16 @@ the body is read by rowid only after the window is selected.
 
 ## Migration
 
+Slice 6 creates `sdk_message_bodies` in migration 418 and the fresh schema. All
+eight current repository body-write sites use `writeSdkMessageBody` to update
+the original row (including its derived columns) and upsert the body in one
+transaction. The old inventory's ninth write, the compaction stamp, is already
+folded into the SDK insert. Reads and historical bodies are unchanged; no old
+bodies are copied yet. Status-only updates do not rewrite the side table.
+`sdk_message_bodies_ad` only follows an existing `sdk_messages` row deletion;
+it introduces no message deletion, retention or trimming policy. Undeleted
+messages and full tool results retain their exact body bytes.
+
 Only the cheap schema steps run at startup. The body copy runs online as a background job: the dual write (slice 6) and the `COALESCE` reads (slices 8–9) make a half-copied table correct to read. That matters because the iMac database is about 30× the synthetic one. At startup the copy would keep the daemon down for minutes; online, it runs in chunks that yield between transactions, with no downtime. All numbers below are measured on synthetic data: 110k rows and 850 MB of JSON, about twice the laptop's live body bytes.
 
 1. **Backup and disk check.** The existing pre-migration backup (`createBackup`, a full copy into `data/backups/daemon.db/`) runs first: about 1 GB on the laptop, 31–38 GB on the iMac. The copy refuses to start while free disk is under twice the DB size. It logs why and retries on the next run.

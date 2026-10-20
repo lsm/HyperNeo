@@ -1,3 +1,4 @@
+import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies';
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
@@ -76,6 +77,7 @@ function setup() {
       completed_at INTEGER
     );
   `);
+  runMigration418(db);
   const sdkRepo = new SDKMessageRepository(db as never);
   const jobQueue = new JobQueueRepository(db as never);
   return { db, sdkRepo, jobQueue };

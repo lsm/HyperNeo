@@ -3,6 +3,7 @@ import type { HyperNeoActionMessage } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
+import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
 let db: Database;
@@ -44,6 +45,19 @@ function saveSdk(message: SDKMessage): string {
 }
 
 describe('SDK message body persistence', () => {
+  test('schema upgrades are idempotent and never copy, blank or trim existing bodies', () => {
+    const message = user();
+    const id = repo.saveUserMessage('s', message);
+    db.exec('DROP TRIGGER sdk_message_bodies_ad; DROP TABLE sdk_message_bodies');
+    runMigration418(db);
+    runMigration418(db);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM sdk_message_bodies').get()).toEqual({ n: 0 });
+    expect(db.prepare('SELECT sdk_message FROM sdk_messages WHERE id=?').get(id)).toEqual({
+      sdk_message: JSON.stringify(message),
+    });
+    expect(repo.getSDKMessages('s').messages).toHaveLength(1);
+  });
+
   test('all insertion doors retain the complete body and existing transcript', () => {
     const message = user();
     const ids = [
@@ -134,8 +148,24 @@ describe('SDK message body persistence', () => {
     ).toThrow('outer rollback');
     expect(db.prepare('SELECT COUNT(*) AS n FROM sdk_message_bodies').get()).toEqual({ n: 0 });
     const id = repo.saveUserMessage('s', user());
+    const retained = user();
+    const retainedId = repo.saveUserMessage('s', retained);
     mirrored(id);
     db.prepare('DELETE FROM sdk_messages WHERE id=?').run(id);
-    expect(db.prepare('SELECT COUNT(*) AS n FROM sdk_message_bodies').get()).toEqual({ n: 0 });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM sdk_message_bodies').get()).toEqual({ n: 1 });
+    expect(mirrored(retainedId)).toBe(JSON.stringify(retained));
+  });
+
+  test('delivery status updates preserve both full bodies without rewriting the side table', () => {
+    const message = user();
+    const id = repo.saveUserMessage('s', message, 'enqueued');
+    db.exec(
+      `CREATE TRIGGER reject_body BEFORE UPDATE ON sdk_message_bodies BEGIN SELECT RAISE(ABORT,'unexpected body write'); END`
+    );
+    repo.updateMessageStatus([id], 'consumed');
+    expect(mirrored(id)).toBe(JSON.stringify(message));
+    expect(db.prepare('SELECT send_status FROM sdk_messages WHERE id=?').get(id)).toEqual({
+      send_status: 'consumed',
+    });
   });
 });

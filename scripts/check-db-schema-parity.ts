@@ -66,6 +66,7 @@ export const HELPER_SCHEMA_TABLES = [
   'mcp_audit_log',
   'node_executions',
   'sdk_message_replacements',
+  'sdk_message_bodies',
   'sdk_messages',
   'session_counters',
   'task_message_rows',

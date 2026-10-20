@@ -1,3 +1,4 @@
+import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { SpaceWorkflow } from '@hyperneo/shared';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
@@ -402,6 +403,7 @@ describe('SpaceRuntime — prompt-too-long recovery', () => {
     workflowRunRepo = new SpaceWorkflowRunRepository(db);
     taskRepo = new SpaceTaskRepository(db);
     nodeExecutionRepo = new NodeExecutionRepository(db);
+    runMigration418(db);
     sdkMessageRepo = new SDKMessageRepository(db);
     longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
     workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(db));

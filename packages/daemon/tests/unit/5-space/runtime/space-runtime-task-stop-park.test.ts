@@ -1,3 +1,4 @@
+import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { NodeExecutionStatus, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import { ExternalEventService } from '../../../../src/lib/external-events/external-event-service';
@@ -339,6 +340,7 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
     workflowRunRepo = new SpaceWorkflowRunRepository(db);
     taskRepo = new SpaceTaskRepository(db);
     nodeExecutionRepo = new NodeExecutionRepository(db);
+    runMigration418(db);
     sdkMessageRepo = new SDKMessageRepository(db);
     longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
     const workflowRepo = new SpaceWorkflowRepository(db);

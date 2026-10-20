@@ -1,3 +1,4 @@
+import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies';
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
@@ -144,6 +145,7 @@ describe('hidden-subtype SQL filters — idle detection + SessionInfoPanel', () 
 		`);
     runMigration169(db);
     runMigration413(db);
+    runMigration418(db);
     repository = new SDKMessageRepository(db as any);
   });
 

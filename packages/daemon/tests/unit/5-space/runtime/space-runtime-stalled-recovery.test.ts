@@ -1,3 +1,4 @@
+import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { NodeExecutionStatus, SpaceWorkflow } from '@hyperneo/shared';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
@@ -201,6 +202,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
     workflowManager = new SpaceWorkflowManager(workflowRepo);
     spaceManager = new SpaceManager(db);
     nodeExecutionRepo = new NodeExecutionRepository(db);
+    runMigration418(db);
     sdkMessageRepo = new SDKMessageRepository(db);
     bus = new InternalEventBus<DaemonInternalEventMap>();
     busUnsubs = [];

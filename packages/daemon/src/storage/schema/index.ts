@@ -26,6 +26,7 @@ import { backfillSessionCounters, createSessionCounters } from './session-counte
 import { createTaskMessageRows } from './task-message-rows.ts';
 import { SDK_MESSAGE_COLUMN_TYPES } from '../sdk-message-columns.ts';
 import { createSdkMessageFilterIndexes } from './sdk-message-filter-indexes.ts';
+import { runMigration418 } from './m418-sdk-message-bodies.ts';
 import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
 
 // knip-ignore-next-line
@@ -223,6 +224,7 @@ export function createTables(db: BunDatabase): void {
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
       )
     `);
+  runMigration418(db);
   db.exec(`
       CREATE TABLE IF NOT EXISTS sdk_message_replacements (
         source_message_id TEXT NOT NULL,

@@ -1,3 +1,4 @@
+import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies';
 import { describe, expect, it } from 'bun:test';
 import type { NodeExecution, SpaceTask, SpaceWorkflowRun } from '@hyperneo/shared';
 import { Database } from '../../../../src/storage/sqlite-compat';
@@ -146,6 +147,7 @@ function makeDeps(overrides: Partial<ImmediateEventDeliveryDeps> = {}): {
   jobQueue: JobQueueRepository;
 } {
   const db = setupDb();
+  runMigration418(db);
   const messages = new SDKMessageRepository(db);
   const jobQueue = new JobQueueRepository(db);
   const rec: Recording = {

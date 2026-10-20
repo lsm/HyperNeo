@@ -1,3 +1,4 @@
+import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import type { HyperNeoActionMessage } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
@@ -104,6 +105,7 @@ describe('SDKMessageRepository', () => {
 		`);
     runMigration169(db);
     runMigration413(db);
+    runMigration418(db);
     repository = new SDKMessageRepository(db as any);
   });
 
@@ -849,6 +851,7 @@ describe('SDKMessageRepository', () => {
             consumed_seq INTEGER
           )
         `);
+        runMigration418(legacyDb);
         const legacyRepository = new SDKMessageRepository(legacyDb as any);
 
         expect(
@@ -894,6 +897,7 @@ describe('SDKMessageRepository', () => {
           throw new Error('reactive notify failed');
         },
       } as unknown as ReactiveDatabase;
+      runMigration418(db);
       const repo = new SDKMessageRepository(db as any, failingReactiveDb);
 
       const result = repo.saveSDKMessage('session-1', createUserMessage('committed'));
@@ -2004,6 +2008,7 @@ describe('SDKMessageRepository', () => {
         );
         CREATE INDEX idx_sdk_messages_session ON sdk_messages(session_id);
       `);
+      runMigration418(badgeDb);
       badgeRepo = new SDKMessageRepository(badgeDb as any);
       createSession(SID);
     });
@@ -2147,6 +2152,7 @@ describe('SDKMessageRepository', () => {
           PRIMARY KEY (source_message_id, target_uuid, kind)
         );
       `);
+      runMigration418(subsetDb);
       const subsetRepo = new SDKMessageRepository(subsetDb as never);
       expect(() =>
         subsetRepo.saveSDKMessage('no-sessions', createAssistantMessage('x'))
@@ -2205,6 +2211,7 @@ describe('SDKMessageRepository', () => {
           if (table === 'sessions') throw new Error('sessions notify failed');
         },
       } as unknown as ReactiveDatabase;
+      runMigration418(db);
       const repo = new SDKMessageRepository(db as any, failingReactiveDb);
 
       expect(() =>
@@ -2237,6 +2244,7 @@ describe('SDKMessageRepository', () => {
           if (table === 'sessions') throw new Error('sessions notify failed');
         },
       } as unknown as ReactiveDatabase;
+      runMigration418(db);
       const repo = new SDKMessageRepository(db as any, failingReactiveDb);
 
       expect(() =>
