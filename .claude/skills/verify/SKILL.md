@@ -89,9 +89,9 @@ dialog by hand. Open the thread and confirm its first reply renders without a
 restart. Start a second task in that repo: there must still be one project. Keep
 the thread IDs, project root and the human's result as evidence.
 
-For the staged opening helper below, first manually open
-`codex://threads/new?path=<RUN>/workspace` to register its fresh workspace, then
-run `prepare`. The helper refuses to open the registration URL automatically;
+For the staged opening helper below, create the workspace first with
+`mkdir -p "$RUN/workspace"`, then manually open
+`codex://threads/new?path=<RUN>/workspace` to register it before running `prepare`. The helper refuses to open the registration URL automatically;
 retry preparation after the human registered the workspace. Native create/select
 and delayed registration are covered with fake launcher/state fixtures in CI.
 The existing app-server-only prototype evidence does not verify this GUI journey.
