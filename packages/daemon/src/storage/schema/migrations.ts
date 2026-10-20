@@ -7451,7 +7451,7 @@ export function configureMessageSearchFts(
   db.exec(
     `INSERT INTO message_search_fts(message_search_fts, rank) VALUES('automerge', ${options.automerge ?? 0})`
   );
-  db.exec(`INSERT INTO message_search_fts(message_search_fts, rank) VALUES('crisismerge', 64)`);
+  db.exec(`INSERT INTO message_search_fts(message_search_fts, rank) VALUES('crisismerge', 16)`);
 }
 
 function backfillMessageSearchFts(db: BunDatabase): void {
