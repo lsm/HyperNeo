@@ -338,7 +338,7 @@ function shellSegments(command: string): string[] {
   const masked = command.replace(/'[^']*'|"[^"]*"/g, (quoted) => 'x'.repeat(quoted.length));
   const segments: string[] = [];
   let start = 0;
-  for (const operator of masked.matchAll(/&&|\|\||;|\||&|\r?\n|\r/g)) {
+  for (const operator of masked.matchAll(/&&|\|\||;|(?<!>)\||&|\r?\n|\r/g)) {
     segments.push(command.slice(start, operator.index));
     start = (operator.index ?? 0) + operator[0].length;
   }
@@ -844,7 +844,7 @@ function localChange(words: readonly string[], dir: string): LocalChange | null 
 
 function redirectTargets(segment: string): string[] {
   const masked = segment.replace(/'[^']*'|"[^"]*"/g, (quoted) => 'x'.repeat(quoted.length));
-  return [...masked.matchAll(/(?:^|[^<>&\d])\d?(?:>>?|&>)\s*([^\s;&|]+)/g)]
+  return [...masked.matchAll(/(?:^|[^<>&\d])\d*(?:>>|>\|?|&>)\s*([^\s;&|]+)/g)]
     .map((match) =>
       segment
         .slice(match.index + match[0].length - match[1].length, match.index + match[0].length)

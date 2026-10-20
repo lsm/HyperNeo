@@ -502,7 +502,7 @@ adds its journey here.
     home read, an allowed enclosing-repo git mutation, and a merely nudged relative
     redirect that writes the test file. After H1, the home read is allowed and both
     mutations are denied; the file is absent. Evidence: `evidence/home-guard.json`.
-    The focused guard tests also cover quoted redirects, symlink parents, `.git`
+    The focused guard tests also cover quoted and file-descriptor clobber redirects, symlink parents, `.git`
     traversal, and other coordinators' private folders. No real credentials or model
     turn are needed. This checks the hook and operation doors; GUI rendering is not
     covered. For the home_path migration, run the synthetic upgrade/restart journey 9.
@@ -516,10 +516,11 @@ adds its journey here.
     and original content unchanged. Evidence: `evidence/neo-home-review.json`.
     Then run `bun .claude/skills/verify/neo-home-sdk.ts <port> "$RUN"`. It registers the local
     mock provider in this run's DB, opens Neo and sends `verify-home-guard-sdk`.
-    The scripted model calls two Reads, four Greps, two Globs and four Bash tools. End state:
+    The scripted model calls two Reads, four Greps, two Globs and five Bash tools. End state:
     `evidence/neo-home-sdk.json` contains a successful README read and curated
     project Grep/Glob, denied ignored-draft Read/Grep/Glob, denied private globs,
-    redirect and plain/absolute/environment git mutations, no written file and no
+    ordinary and `>|` clobber redirects, plain/absolute/environment git mutations,
+    no written file and no
     created branch. Broad searches that could include ignored home documents are
     refused; narrow the path or glob to curated documents. Own coordinator notes
     retain their existing access.
