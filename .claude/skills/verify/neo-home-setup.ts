@@ -1,5 +1,5 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-const [port, run] = process.argv.slice(2);
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+const [port, run, mode = 'normal'] = process.argv.slice(2);
 if (!port || !run || port === '8399') throw new Error('usage: neo-home-setup.ts <test-port> <run-dir>');
 const log = await readFile(`${run}/daemon.log`, 'utf8');
 if (!log.includes('HyperNeo Test Server') || !log.includes(`Database: ${run}/data/daemon.db`)) throw new Error('Not an isolated test daemon');
@@ -37,12 +37,22 @@ await git('update-ref', '-d', 'HEAD');
 await git('read-tree', '--empty');
 await git('config', 'user.name', '');
 await git('config', 'user.email', '');
+if (mode === 'cleanup-failure') await writeFile(`${run}/bin/git`, `#!/bin/bash
+for arg in "$@"; do
+  if [ "$arg" = reset ]; then echo 'synthetic reset failure' >&2; exit 76; fi
+done
+exec /usr/bin/git "$@"
+`, { mode: 0o755 });
 const failed = await rpc('neo.home.init');
 const staged = await git('diff', '--cached', '--name-only');
+if (mode === 'cleanup-failure') {
+  await rm(`${run}/bin/git`);
+  await git('reset', '--', 'README.md', '.gitignore', 'direction.md');
+}
 await git('config', 'user.name', 'Verify Neo');
 await git('config', 'user.email', 'verify@example.invalid');
 const recovered = await rpc('neo.home.init');
-const evidence = { project, first, second, renamed, initialHead, afterHead, tracked, direction, author, failed, staged, recovered, status: await git('status', '--porcelain') };
+const evidence = { mode, project, first, second, renamed, initialHead, afterHead, tracked, direction, author, failed, staged, recovered, status: await git('status', '--porcelain') };
 await writeFile(`${run}/evidence/neo-home-setup.json`, JSON.stringify(evidence, null, 2));
-if (!second.ok || initialHead !== afterHead || renamed.projects.find((p: { id: string }) => p.id === project.project.id)?.homePath !== entry.homePath || tracked !== '.gitignore\nREADME.md\ndirection.md' || direction || author !== 'Verify Neo <verify@example.invalid>' || !failed.error || staged || !recovered.ok || evidence.status) throw new Error('Home setup contract failed');
+if (!second.ok || initialHead !== afterHead || renamed.projects.find((p: { id: string }) => p.id === project.project.id)?.homePath !== entry.homePath || tracked !== '.gitignore\nREADME.md\ndirection.md' || direction || author !== 'Verify Neo <verify@example.invalid>' || !String(failed.error).includes('Author identity unknown') || (mode === 'cleanup-failure' ? !staged : !!staged) || !recovered.ok || evidence.status) throw new Error('Home setup contract failed');
 console.log('PASS: RPC initializes one local commit, ignores transcripts, preserves project paths on rename, and recovers after identity configuration.');
