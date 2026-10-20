@@ -17,7 +17,9 @@ export function fillSdkMessageFixtureColumns(db: Database): void {
     : 'NULL AS task_id';
   const names = Object.keys(SDK_MESSAGE_COLUMN_TYPES) as (keyof typeof SDK_MESSAGE_COLUMN_TYPES)[];
   const rows = db
-    .prepare(`SELECT rowid AS row_id, sdk_message, ${taskId} FROM sdk_messages`)
+    .prepare(`SELECT m.rowid AS row_id,
+      COALESCE(NULLIF(m.sdk_message,''),b.sdk_message) AS sdk_message, ${taskId}
+      FROM sdk_messages m LEFT JOIN sdk_message_bodies b ON b.seq=m.rowid`)
     .all() as { row_id: number; sdk_message: string; task_id: string | null }[];
   const update = db.prepare(
     `UPDATE sdk_messages SET ${names.map((key) => `${key} = ?`).join(',')} WHERE rowid = ?`
@@ -31,12 +33,14 @@ export function fillSdkMessageFixtureColumns(db: Database): void {
     writeSdkMessageBody(
       db,
       () => update.run(...names.map((key) => derived?.[key] ?? null), row.row_id),
-      'rowid=?',
-      [row.row_id]
+      'm.rowid=?',
+      [row.row_id],
+      '?',
+      [row.sdk_message]
     );
   }
 }
 
 export function mirrorSdkMessageFixtureBodies(db: Database): void {
-  writeSdkMessageBody(db, () => {}, '1=1', []);
+  writeSdkMessageBody(db, () => {}, "m.sdk_message<>''", [], 'm.sdk_message', []);
 }

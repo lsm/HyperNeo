@@ -36,6 +36,27 @@ export function createCodingPack(deps: {
   const ledgerSkips = new Map<string, number>();
   return {
     ...CODING_PACK_BRIEF,
+    preferences: {
+      mergePolicy: {
+        scope: 'repo',
+        type: { kind: 'enum', values: ['review_bot', 'ci_only', 'human'] },
+        default: 'human',
+        ask: 'How are pull requests reviewed in this repository?',
+      },
+      reviewBot: {
+        scope: 'repo',
+        type: { kind: 'login' },
+        default: 'hyperneo-ai-test',
+        ask: 'Which GitHub reviewer bot must approve?',
+        askWhen: { key: 'mergePolicy', equals: 'review_bot' },
+      },
+      humanSignoff: {
+        scope: 'repo',
+        type: { kind: 'globs' },
+        default: [],
+        ask: 'Which paths or labels require human sign-off?',
+      },
+    },
     prepareExecution: prepareCodingExecution,
     todos: createCodingTodoPack(deps.todoPrs, deps.readPrs, (url) => deps.prLedger.stateOf(url)),
     observeSessions: (sessions, now) => deps.prLedger.observeSessions(sessions, now),

@@ -85,6 +85,11 @@ import { createNeoTodoOperations, type NeoTodoControls } from './todo-operations
 import { createNeoAskRecordOperations } from './ask-record-operations.ts';
 import { SessionGoalRepository } from '../../storage/repositories/session-goal-repository.ts';
 import { NeoAskEntrySchema, projectNeoAskEntries } from './ask-entries.ts';
+import {
+  createPackPreferenceOperations,
+  listPackPreferences,
+  PackSettingSchema,
+} from './packs/preference-operations.ts';
 import { createNeoPreferenceOperation } from './model-preference.ts';
 import { planNeoRuleEdit, planNeoSavedRules, requireNeoRuleCitation } from './saved-rules.ts';
 
@@ -160,6 +165,7 @@ const SnapshotOk = z.object({
     )
     .max(100)
     .optional(),
+  packPreferences: z.array(PackSettingSchema).optional(),
   preferences: z
     .object({
       model: z.string(),
@@ -424,6 +430,7 @@ export function createNeoOperations(service: NeoService) {
         : {}),
       mutedSessions: service.db.getGlobalSettings?.().neo?.mutedSessions ?? [],
       preferences: service.modelPreference(),
+      packPreferences: listPackPreferences(service.db.getDatabase()),
       todoAsks,
       ...(unlisted > 0 ? { omitted: { asks: unlisted } } : {}),
       packRows: service.packs().flatMap((pack) => {
@@ -688,6 +695,7 @@ export function createNeoOperations(service: NeoService) {
     createNeoConversationImageReadOperation(service.repo, service.asks),
     createNeoDraftRecoveryOperation(service),
     createNeoPreferenceOperation(service),
+    ...createPackPreferenceOperations(service.db.getDatabase(), () => service.installedPacks()),
     ...createNeoTodoOperations(service.todos, service.todoSessions, todoControls, () =>
       service.installedPacks()
     ),

@@ -36,7 +36,7 @@ try {
       const message = { uuid: id, ...body };
       const raw = JSON.stringify(message);
       const columns = deriveSdkMessageColumns(message, task);
-      writeSdkMessageBody(db, () => insert.run(id, sid, message.type, subtype, id, raw, new Date(at * 1000).toISOString(), parent, task, Number(computeIsRenderable(message as SDKMessage)), Number(computeIsTerminal(message as SDKMessage)), task ? 1 : null, at, ...names.map((key) => columns[key])), 'id=?', [id]);
+      writeSdkMessageBody(db, () => insert.run(id, sid, message.type, subtype, id, raw, new Date(at * 1000).toISOString(), parent, task, Number(computeIsRenderable(message as SDKMessage)), Number(computeIsTerminal(message as SDKMessage)), task ? 1 : null, at, ...names.map((key) => columns[key])), 'id=?', [id], '?', [raw]);
       hash.update(raw);
     };
     const tool = 'full-tool-result-'.repeat(43_750);

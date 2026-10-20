@@ -27,6 +27,9 @@ beforeEach(() => {
         ],
       },
     } as unknown as SDKMessage);
+  db.exec(
+    'UPDATE sdk_messages SET sdk_message=(SELECT sdk_message FROM sdk_message_bodies WHERE seq=sdk_messages.seq)'
+  );
 });
 afterEach(() => db.close());
 
@@ -160,7 +163,9 @@ describe('SDK body live migration', () => {
               .prepare('UPDATE sdk_messages SET sdk_message=? WHERE sdk_uuid=?')
               .run(updated, 'tool-0'),
           'sdk_uuid=?',
-          ['tool-0']
+          ['tool-0'],
+          '?',
+          [updated]
         );
       },
     });

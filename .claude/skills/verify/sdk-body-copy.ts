@@ -36,7 +36,7 @@ if(mode==='seed') {
     db.transaction(()=>{for(let n=0;n<90000;n++) {
       const id=`copy-${n}`,message=n%100===0?{type:'user',uuid:id,message:{role:'user',content:[{type:'tool_result',tool_use_id:`tool-${n}`,content:'complete-tool-result-'.repeat(35000)}]}}:{type:'assistant',uuid:id,message:{role:'assistant',content:[{type:'text',text:`Synthetic body ${n}`}]}};
       const raw=JSON.stringify(message),columns=deriveSdkMessageColumns(message);
-      writeSdkMessageBody(db,()=>put.run(id,message.type,id,raw,...names.map((key)=>columns[key])),'id=?',[id]);
+      writeSdkMessageBody(db,()=>put.run(id,message.type,id,raw,...names.map((key)=>columns[key])),'id=?',[id],'?', [raw]);
     }})();
     db.exec('DELETE FROM sdk_message_bodies WHERE seq%2=1');
   } finally {core.close();}
