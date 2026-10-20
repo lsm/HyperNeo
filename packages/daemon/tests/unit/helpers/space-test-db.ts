@@ -1,5 +1,6 @@
 import { createEvolutionTables } from '../../../src/storage/schema/evolution';
 import { SDK_MESSAGE_COLUMN_TYPES } from '../../../src/storage/sdk-message-columns';
+import { createSdkMessageFilterIndexes } from '../../../src/storage/schema/sdk-message-filter-indexes';
 import { createLongHorizonAgentTables } from '../../../src/storage/schema/long-horizon-agents';
 import { runMigration248 } from '../../../src/storage/schema/m248-direct-task-execution';
 import { runMigration250 } from '../../../src/storage/schema/m250-direct-stop-requests';
@@ -682,6 +683,7 @@ export function createSpaceTables(db: BunDatabase): void {
   db.exec(`
 		INSERT OR IGNORE INTO delivery_consumed_seq (singleton, next_seq) VALUES (1, 1)
 	`);
+  createSdkMessageFilterIndexes(db);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_timestamp_id
 		ON sdk_messages(session_id, timestamp DESC, id DESC)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_parent_tool_use_id

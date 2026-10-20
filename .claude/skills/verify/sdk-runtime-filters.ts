@@ -1,4 +1,5 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { strictEqual, ok } from 'node:assert';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { DatabaseCore } from '../../../packages/daemon/src/storage/database-core.ts';
@@ -99,6 +100,16 @@ try {
     for (const row of db.prepare('SELECT sdk_message FROM sdk_messages WHERE session_id=? ORDER BY seq').iterate(sid) as Iterable<{ sdk_message: string }>) hash.update(row.sdk_message);
     const result = { lag, startupMs, methods, maxQueryMs: Math.max(...queries.map((query) => query.durationMs)), queries, receiptHash: createHash('sha256').update(JSON.stringify(receipts)).digest('hex'), bodyHash: hash.digest('hex'), receipts };
     writeFileSync(join(run, `evidence/${name}.json`), JSON.stringify(result, null, 2));
+    strictEqual(result.bodyHash, JSON.parse(readFileSync(join(run, 'evidence/seed.json'), 'utf8')).bodyHash);
+    if (name !== 'before') {
+      if (existsSync(join(run, 'evidence/before.json'))) {
+        const before = JSON.parse(readFileSync(join(run, 'evidence/before.json'), 'utf8'));
+        strictEqual(result.receiptHash, before.receiptHash);
+        strictEqual(result.bodyHash, before.bodyHash);
+      }
+      ok(Math.max(lag.startup, lag.queries) < 1000, 'Event-loop lag exceeded 1 s');
+      ok(result.maxQueryMs < 250, 'Query exceeded 250 ms');
+    }
     console.log(JSON.stringify({ lag, startupMs, methods, maxQueryMs: result.maxQueryMs, receiptHash: result.receiptHash, bodyHash: result.bodyHash }));
   }
 } finally {

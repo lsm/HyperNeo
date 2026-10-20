@@ -7,6 +7,7 @@ import {
 import { readSpaceStartReceipt } from '../../../../src/lib/drivers/space-adapter';
 import { readSessionInputEvidence } from '../../../../src/lib/drivers/space-input-evidence';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
+import { runMigration416 } from '../../../../src/storage/schema/m416-sdk-message-filter-indexes';
 import {
   SDK_MESSAGE_COLUMN_TYPES,
   deriveSdkMessageColumns,
@@ -50,6 +51,31 @@ function put(
 }
 
 describe('SDK runtime filter contracts', () => {
+  test('upgrading filter indexes preserves bodies and matches fresh schema on restart', () => {
+    put(
+      'tool',
+      'user',
+      { message: { content: [{ type: 'tool_result', content: 'Full result' }] } },
+      1
+    );
+    const indexes = () =>
+      db
+        .prepare(
+          "SELECT name,sql FROM sqlite_schema WHERE type='index' AND tbl_name='sdk_messages' ORDER BY name"
+        )
+        .all();
+    const bodies = () => db.prepare('SELECT sdk_message FROM sdk_messages ORDER BY seq').all();
+    const expected = indexes();
+    const original = bodies();
+    db.exec(
+      'DROP INDEX idx_sdk_messages_consumed_boundary; DROP INDEX idx_sdk_messages_start_receipt; DROP INDEX idx_sdk_messages_exchange_time'
+    );
+    runMigration416(db);
+    runMigration416(db);
+    expect(indexes()).toEqual(expected);
+    expect(bodies()).toEqual(original);
+  });
+
   test('start receipts reject malformed JSON, replay, compaction and tool results', () => {
     const taskId = 'k';
     put('bad', 'user', {}, 1, { taskId, raw: '{broken' });
@@ -111,6 +137,14 @@ describe('SDK runtime filter contracts', () => {
       'Null kind',
       'Replay text',
     ]);
+  });
+
+  test('a second input with the same consumed watermark makes a receipt ambiguous', () => {
+    put('prompt', 'user', { message: { content: 'Build' } }, 10);
+    put('other', 'user', { message: { content: 'Other' } }, 11, { seq: 10 });
+    put('reply', 'result', { result: 'Reply' }, 12);
+    const receipt = { executionId: 's', inputId: 'prompt' };
+    expect(readSessionInputEvidence(db, 's', receipt)).toEqual({ receipt, state: 'unavailable' });
   });
 
   test('exchange and last-result reads skip compaction but retain their distinct input rules', () => {

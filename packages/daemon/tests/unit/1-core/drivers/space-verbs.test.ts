@@ -13,6 +13,7 @@ import {
 } from '../../../../src/lib/drivers/space-adapter';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { readSessionInputEvidence } from '../../../../src/lib/drivers/space-input-evidence';
+import { fillSdkMessageFixtureColumns } from '../../helpers/sdk-message-fixture-columns';
 
 describe('taskOperationRejection', () => {
   test('reads a task or an accepted job as success and anything else as a reason', () => {
@@ -60,6 +61,7 @@ describe('space adapter start, status and stop', () => {
   afterEach(() => db.close());
 
   function adapter(refuse?: string) {
+    fillSdkMessageFixtureColumns(db);
     return createSpaceAdapter({
       db: () => db,
       machine: 'imac',
@@ -94,7 +96,9 @@ describe('space adapter start, status and stop', () => {
       return result.value;
     };
     expect('startReceipt' in (await status())).toBe(false);
-    const write = db.prepare('INSERT INTO sdk_messages VALUES (?, ?, ?, ?, ?, ?, ?)');
+    const write = db.prepare(
+      'INSERT INTO sdk_messages (session_id,task_id,sdk_uuid,message_type,sdk_message,timestamp,parent_tool_use_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    );
     const user = (text: string) => JSON.stringify({ type: 'user', message: { content: text } });
     write.run(
       's-code',
@@ -313,6 +317,7 @@ describe('space adapter send', () => {
   afterEach(() => db.close());
 
   function adapter() {
+    fillSdkMessageFixtureColumns(db);
     return createSpaceAdapter({
       db: () => db,
       machine: 'imac',
@@ -350,7 +355,9 @@ describe('space adapter send', () => {
       session = 's-code',
       task = 't1'
     ) => {
-      db.prepare(`INSERT INTO sdk_messages VALUES (?, ?, ?, ?, ?, ?, NULL, 'consumed', ?, 1)`).run(
+      db.prepare(
+        `INSERT INTO sdk_messages (session_id,task_id,sdk_uuid,message_type,sdk_message,timestamp,parent_tool_use_id,send_status,consumed_seq,is_terminal) VALUES (?, ?, ?, ?, ?, ?, NULL, 'consumed', ?, 1)`
+      ).run(
         session,
         task,
         id,
@@ -363,6 +370,7 @@ describe('space adapter send', () => {
         new Date(1000).toISOString(),
         seq
       );
+      fillSdkMessageFixtureColumns(db);
     };
     const read = async (id = 't1', input = receipt) => {
       const result = await adapter().status!(ref(id), undefined, input);
@@ -577,7 +585,9 @@ describe('space adapter send', () => {
   test('status exposes typed human input for the Space agent after the refusal time', async () => {
     db.exec(`CREATE TABLE sdk_messages (session_id TEXT, message_type TEXT, sdk_message TEXT,
       timestamp TEXT, send_status TEXT, parent_tool_use_id TEXT)`);
-    const insert = db.prepare('INSERT INTO sdk_messages VALUES (?, ?, ?, ?, ?, NULL)');
+    const insert = db.prepare(
+      'INSERT INTO sdk_messages (session_id,message_type,sdk_message,timestamp,send_status,parent_tool_use_id) VALUES (?, ?, ?, ?, ?, NULL)'
+    );
     for (const [kind, timestamp] of [
       ['task', '2026-10-13T10:00:00.000Z'],
       ['human', '2026-10-13T10:01:00.000Z'],
@@ -624,7 +634,9 @@ describe('space adapter send', () => {
             injections.push({ sessionId, message, internal });
             if (state === 'failed') throw new Error('injection refused');
             if (state !== 'missing')
-              db.prepare('INSERT INTO sdk_messages VALUES (?, ?, ?, ?, ?, ?)').run(
+              db.prepare(
+                'INSERT INTO sdk_messages (session_id,sdk_uuid,message_type,sdk_message,timestamp,send_status) VALUES (?, ?, ?, ?, ?, ?)'
+              ).run(
                 state === 'wrong-session' ? 's-code' : sessionId,
                 'input-123',
                 'user',
