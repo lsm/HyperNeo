@@ -20,7 +20,7 @@ export class SpaceGoalRepository {
   listAllActive(): SpaceGoal[] {
     const rows = this.db
       .prepare(
-        `SELECT * FROM space_goals WHERE status = 'active' ORDER BY updated_at DESC, id DESC`
+        `SELECT * FROM space_goals WHERE status = 'active' AND space_id IS NOT NULL ORDER BY updated_at DESC, id DESC`
       )
       .all() as Record<string, unknown>[];
     return rows.map((r) => this.rowToGoal(r));
@@ -69,9 +69,9 @@ export class SpaceGoalRepository {
   }
 
   getById(id: string): SpaceGoal | null {
-    const row = this.db.prepare(`SELECT * FROM space_goals WHERE id = ?`).get(id) as
-      | Record<string, unknown>
-      | undefined;
+    const row = this.db
+      .prepare(`SELECT * FROM space_goals WHERE id = ? AND space_id IS NOT NULL`)
+      .get(id) as Record<string, unknown> | undefined;
     return row ? this.rowToGoal(row) : null;
   }
 
