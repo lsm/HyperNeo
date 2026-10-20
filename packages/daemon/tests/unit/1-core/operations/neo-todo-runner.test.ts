@@ -769,7 +769,7 @@ describe('blocked todos', () => {
     expect(store.getTodo(todo.id)).toMatchObject({ state: 'doing', blockedBy: null });
   });
 
-  test('a session that stops again after a follow-up blocks the todo again', async () => {
+  test('a session that stops again after a follow-up keeps the todo doing and reports again', async () => {
     const { store, runner, told, add, setStatus, calls } = setup();
     const todo = add();
     await runner.start(todo.id);
@@ -786,8 +786,8 @@ describe('blocked todos', () => {
     await runner.refresh(warn);
     store.updateTodo(store.getTodo(todo.id)!, { state: 'doing', report: 'Pushed a fix' }, 3);
     await runner.refresh(warn);
-    expect(store.getTodo(todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'worker' });
-    expect(told.filter((note) => note.includes('is blocked'))).toHaveLength(2);
+    expect(store.getTodo(todo.id)).toMatchObject({ state: 'doing', blockedBy: null });
+    expect(told.filter((note) => note.includes('nothing checks it'))).toHaveLength(2);
   });
 
   test('a todo held by its start question still starts, and starting clears the hold', async () => {

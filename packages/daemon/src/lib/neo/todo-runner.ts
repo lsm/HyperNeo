@@ -201,18 +201,7 @@ export function planNeoTodoSettled(
   now: number
 ): NeoTodoPatch | null {
   if (settled.status === 'failed') return planNeoTodoFailure(todo, settled.report, now);
-  if (todo.check) return todo.report === settled.report ? null : { report: settled.report };
-  return {
-    report: settled.report,
-    ...planNeoTodoBlocked(
-      todo,
-      'worker',
-      'Its session finished its turn; nothing confirms the todo is done yet.',
-      todo.check
-        ? 'Continue the session with neo.todo.continue, or close the todo.'
-        : 'Tick it done with evidence, continue the session, or close it.'
-    ),
-  };
+  return todo.report === settled.report ? null : { report: settled.report };
 }
 
 export function planNeoTodoCheck(
@@ -239,6 +228,8 @@ export function neoTodoNote(todo: NeoTodo): string {
     return `Todo "${todo.title}" is done: ${todo.evidence}`;
   if (todo.state === 'done')
     return `Todo "${todo.title}" reported and is done:\n${todo.report ?? ''}`;
+  if (todo.state === 'doing')
+    return `Todo "${todo.title}" reported, and nothing checks it: tick it done with evidence once "${todo.doneWhen}" holds, or let it go on.\nIts report:\n${todo.report ?? ''}`;
   return `Todo "${todo.title}" is blocked: ${todo.blockedReason ?? ''}\nNext: ${
     todo.nextAction ?? ''
   }\nIts last report:\n${todo.report ?? '(none)'}`;
@@ -433,7 +424,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     anchorFollow: (id, at) => sessions.recordFollowAnchor(id, at),
     returnReport: async (card) => {
       const todo = store.getTodo(card.id);
-      if (todo && todo.state !== 'doing') await deps.tell(ask, todo, neoTodoNote(todo));
+      if (todo && (todo.state !== 'doing' || !todo.check))
+        await deps.tell(ask, todo, neoTodoNote(todo));
     },
   });
 
