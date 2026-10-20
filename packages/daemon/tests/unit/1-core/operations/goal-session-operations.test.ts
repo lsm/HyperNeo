@@ -97,6 +97,10 @@ describe('session-owned goals', () => {
       completedAt: expect.any(Number),
     });
     expect((await call('goal.session.list', {})).goals).toEqual([]);
+    expect(
+      (await call('goal.session.update', { goalId: created.goal.id, status: 'active' })).goal
+    ).toMatchObject({ status: 'active', completedAt: null });
+    await call('goal.session.update', { goalId: created.goal.id, status: 'completed' });
     expect((await call('goal.session.list', { includeClosed: true })).goals).toHaveLength(1);
     expect(
       db
@@ -107,6 +111,8 @@ describe('session-owned goals', () => {
     ).toEqual([
       { event_type: 'created', source: 'neo' },
       { event_type: 'status_changed', source: 'human' },
+      { event_type: 'status_changed', source: 'neo' },
+      { event_type: 'status_changed', source: 'neo' },
     ]);
     db.close();
   });

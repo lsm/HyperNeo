@@ -104,20 +104,22 @@ export class SessionGoalRepository {
     now: number
   ): SessionGoal {
     const keys = Object.keys(patch) as (keyof SessionGoalPatch)[];
-    const closing =
-      patch.status === 'completed' && goal.status !== 'completed' ? ', completed_at = ?' : '';
+    const completedAt =
+      patch.status === undefined
+        ? []
+        : [patch.status === 'completed' ? (goal.completedAt ?? now) : null];
     this.db.transaction(() => {
       this.db
         .prepare(
           `UPDATE space_goals SET ${keys.map((key) => `${COLUMNS[key]} = ?, `).join('')}updated_at = ?,
-             revision = revision + 1${closing} WHERE id = ?`
+             revision = revision + 1${completedAt.length ? ', completed_at = ?' : ''} WHERE id = ?`
         )
         .run(
           ...keys.map((key) =>
             JSON_FIELDS.has(key) ? JSON.stringify(patch[key]) : (patch[key] ?? null)
           ),
           now,
-          ...(closing ? [now] : []),
+          ...completedAt,
           goal.id
         );
       this.recordEvent(
