@@ -49,6 +49,19 @@ describe('lag sampling diagnostics', () => {
     expect(drains).toBe(6);
   });
 
+  test('discloses omitted samples and removes inline source bodies and unknown line sentinels', () => {
+    const traces = Array.from({ length: 2100 }, () => ({
+      frames: [{ name: 'busy', sourceURL: 'data:text/javascript,PRIVATE', line: 0xffffffff }],
+    }));
+    const report = createLagSamplingProfiler(() => ({ traces }), 0).tick(true, 2000)!;
+    expect(report.sampleCount).toBe(2100);
+    expect(report.droppedSamples).toBe(100);
+    expect(report.stacks).toEqual([
+      { samples: 2000, frames: [{ name: 'busy', file: '[inline]', line: null }] },
+    ]);
+    expect(JSON.stringify(report)).not.toContain('PRIVATE');
+  });
+
   test('a profiler failure is diagnostic rather than a daemon failure', () => {
     const sampler = createLagSamplingProfiler(() => {
       throw new Error('PRIVATE');
