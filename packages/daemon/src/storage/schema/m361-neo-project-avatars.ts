@@ -1,6 +1,6 @@
 import type { Database } from '../sqlite-compat.ts';
 
-export function runMigration361(db: Database): void {
+export function createNeoProjectSchema(db: Database): void {
   const table = db
     .prepare("SELECT sql FROM sqlite_master WHERE name = 'neo_session_bindings'")
     .get() as { sql: string } | null;
@@ -25,6 +25,10 @@ export function runMigration361(db: Database): void {
     alias TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES neo_concerns(id)
   )`);
+}
+
+export function runMigration361(db: Database): void {
+  createNeoProjectSchema(db);
   if (db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'neo_consultation_publications'").get())
     db.exec(`UPDATE neo_consultation_publications SET payload_json = replace(payload_json, '"kind":"concern"', '"kind":"project"')
     WHERE payload_json LIKE '%"kind":"concern"%'`);
