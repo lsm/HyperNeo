@@ -68,6 +68,7 @@ export interface NeoQuestion {
   noLabel: string | null;
   yesLabel: string | null;
   startTodos: string[] | null;
+  confirm?: { path: string; sha256: string } | null;
   state: NeoQuestionState;
   answer: NeoQuestionAnswer | null;
   answeredBy: 'button' | 'chat' | null;
