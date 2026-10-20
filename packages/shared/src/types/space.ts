@@ -395,14 +395,17 @@ export type SpaceGoalEventType =
   | 'task_triggered'
   | 'task_queued'
   | 'task_terminal'
-  | 'schedule_updated';
+  | 'schedule_updated'
+  | 'journal_compacted';
 
 export type SpaceGoalEventSource =
   | 'rpc'
   | 'space_agent_tool'
   | 'workflow_node_agent'
   | 'scheduler'
-  | 'system';
+  | 'system'
+  | 'neo'
+  | 'human';
 
 export type SpaceGoalEventSnapshot = Partial<{
   title: string;
