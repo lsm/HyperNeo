@@ -3236,6 +3236,12 @@ export class AgentSession
   }
 
   steerNeoInput(messageUuid: string): boolean {
+    if (
+      !this.messageQueue.isRunning() ||
+      !(this.queryRunner instanceof QueryRunner) ||
+      !this.queryRunner.acceptsSteer(this.getQueryGeneration())
+    )
+      return false;
     if (this.messageQueue.steer(messageUuid)) return true;
     const loaded = this.db.getSDKMessageRepo().getDeliveryContent(this.session.id, messageUuid);
     if (loaded?.sendStatus !== 'enqueued' || !STEERED_INPUTS.has(loaded.inputKind ?? ''))
@@ -3316,7 +3322,7 @@ export class AgentSession
       const stranded = selectStrandedDeliveries(
         this.db.getUserMessageIdsByStatus(this.session.id, 'enqueued'),
         active,
-        (uuid) => this.messageQueue.hasPendingOrInFlight(uuid)
+        (uuid) => this.messageQueue.isRunning() && this.messageQueue.hasPendingOrInFlight(uuid)
       );
       for (const uuid of stranded) {
         deliverMessage(jobQueue, this.session.id, uuid, { origin: 'recovery' });
