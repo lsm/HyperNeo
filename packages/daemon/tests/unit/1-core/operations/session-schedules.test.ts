@@ -1,0 +1,150 @@
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { createSessionScheduleOperations } from '../../../../src/lib/scheduler/operations';
+import { SessionScheduler } from '../../../../src/lib/scheduler/session-schedules';
+import { SESSION_SCHEDULE_FIRE } from '../../../../src/lib/job-queue-constants';
+import { invokeOperation } from '../../../../src/lib/operations/invoke';
+import {
+  createOperationRegistry,
+  type OperationCaller,
+} from '../../../../src/lib/operations/registry';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { createTables, runMigrations } from '../../../../src/storage/schema/index';
+import { Database } from '../../../../src/storage/sqlite-compat';
+
+const neo: OperationCaller = { source: 'mcp', sessionId: 'neo:root', role: 'neo' };
+const human: OperationCaller = { source: 'rpc', principal: 'local' };
+const worker: OperationCaller = { source: 'mcp', sessionId: 'worker-1' };
+const target = { adapter: 'hyperneo', id: 'worker-1' };
+const hourly = { kind: 'every', everyMs: 3_600_000 };
+
+describe('session schedules', () => {
+  let db: Database;
+  let jobs: JobQueueRepository;
+  let scheduler: SessionScheduler;
+  beforeEach(() => {
+    db = new Database(':memory:');
+    runMigrations(db, () => {});
+    createTables(db);
+    jobs = new JobQueueRepository(db);
+    scheduler = new SessionScheduler(db, jobs);
+  });
+  afterEach(() => db.close());
+
+  const call = async (name: string, input: unknown, caller = neo) => {
+    const outcome = await invokeOperation(
+      createOperationRegistry(createSessionScheduleOperations(scheduler)),
+      name,
+      input,
+      caller
+    );
+    return outcome.kind === 'completed' ? outcome.value : outcome;
+  };
+  const pending = () =>
+    jobs.listJobs({ queue: SESSION_SCHEDULE_FIRE, status: ['pending'] }).map((job) => ({
+      scheduleId: (job.payload as { scheduleId: string }).scheduleId,
+      runAt: job.runAt,
+    }));
+
+  test('Neo schedules an hourly reminder for a session, and one wake is queued for the next hour', async () => {
+    const before = Date.now();
+    const created = (await call('schedule.session.create', {
+      target,
+      cadence: hourly,
+      note: 'Check the release checklist.',
+    })) as { ok: true; schedule: { id: string; status: string; nextRunAt: number } };
+    expect(created).toMatchObject({
+      ok: true,
+      schedule: { status: 'active', note: 'Check the release checklist.', target },
+    });
+    expect(created.schedule.nextRunAt).toBeGreaterThanOrEqual(before + 3_600_000);
+    expect(pending()).toEqual([
+      { scheduleId: created.schedule.id, runAt: created.schedule.nextRunAt },
+    ]);
+    expect(await call('schedule.session.list', { target })).toMatchObject({
+      ok: true,
+      schedules: [{ id: created.schedule.id }],
+    });
+    expect(
+      await call('schedule.session.list', { target: { adapter: 'hyperneo', id: 'other' } })
+    ).toEqual({ ok: true, schedules: [] });
+  });
+
+  test('a cadence under a minute or a cron with no next run is refused', async () => {
+    expect(
+      await call('schedule.session.create', {
+        target,
+        cadence: { kind: 'every', everyMs: 1000 },
+        note: 'x',
+      })
+    ).toMatchObject({ ok: false, reason: expect.stringMatching(/^invalid_cadence/) });
+    expect(
+      await call('schedule.session.create', {
+        target,
+        cadence: { kind: 'cron', cron: 'not cron' },
+        note: 'x',
+      })
+    ).toMatchObject({ ok: false, reason: expect.stringMatching(/^invalid_cadence/) });
+    expect(pending()).toEqual([]);
+  });
+
+  test('only Neo or the local user manages schedules', async () => {
+    expect(
+      await call('schedule.session.create', { target, cadence: hourly, note: 'x' }, worker)
+    ).toEqual({ ok: false, reason: 'This action belongs to Neo or the user.' });
+    expect(
+      await call('schedule.session.create', { target, cadence: hourly, note: 'x' }, human)
+    ).toMatchObject({ ok: true });
+  });
+
+  test('pause drops the queued wake, resume queues one from now, delete removes both', async () => {
+    const { schedule } = (await call('schedule.session.create', {
+      target,
+      cadence: hourly,
+      note: 'x',
+    })) as { schedule: { id: string } };
+    const scheduleId = schedule.id;
+    expect(await call('schedule.session.pause', { scheduleId })).toMatchObject({
+      schedule: { status: 'paused', pendingJobId: null },
+    });
+    expect(pending()).toEqual([]);
+    expect(await call('schedule.session.pause', { scheduleId })).toMatchObject({
+      ok: false,
+      reason: expect.stringMatching(/^wrong_status/),
+    });
+    expect(await call('schedule.session.resume', { scheduleId })).toMatchObject({
+      schedule: { status: 'active' },
+    });
+    expect(pending()).toHaveLength(1);
+    expect(await call('schedule.session.delete', { scheduleId })).toMatchObject({ ok: true });
+    expect(pending()).toEqual([]);
+    expect(await call('schedule.session.list', {})).toEqual({ ok: true, schedules: [] });
+  });
+
+  test('startup recovery queues a wake for an active schedule whose job is gone, once', () => {
+    const created = scheduler.create({
+      target,
+      sourceKind: 'goal',
+      sourceId: 'g-1',
+      note: null,
+      cadence: { kind: 'every', everyMs: 3_600_000 },
+      nudgeEvery: 4,
+      createdBySession: null,
+    });
+    expect(
+      scheduler.create({
+        target,
+        sourceKind: 'goal',
+        sourceId: 'g-1',
+        note: null,
+        cadence: { kind: 'every', everyMs: 60_000 },
+        nudgeEvery: 4,
+        createdBySession: null,
+      }).id
+    ).toBe(created.id);
+    jobs.deleteJob(created.pendingJobId as string);
+    expect(pending()).toEqual([]);
+    expect(scheduler.recover()).toBe(1);
+    expect(scheduler.recover()).toBe(0);
+    expect(pending()).toEqual([{ scheduleId: created.id, runAt: created.nextRunAt }]);
+  });
+});
