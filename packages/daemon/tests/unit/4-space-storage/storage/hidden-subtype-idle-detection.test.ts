@@ -3,6 +3,8 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { classifyLastMessageForIdleAgent } from '../../../../src/lib/session/last-message-classifier';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { runMigration169 } from '../../../../src/storage/schema/migrations';
+import { runMigration413 } from '../../../../src/storage/schema/m413-sdk-message-columns';
 
 const HIDDEN_SUBTYPES = [
   'session_state_changed',
@@ -140,6 +142,8 @@ describe('hidden-subtype SQL filters — idle detection + SessionInfoPanel', () 
 			CREATE INDEX idx_sdk_messages_timestamp ON sdk_messages(timestamp);
 			CREATE INDEX idx_sdk_messages_task_id ON sdk_messages(task_id);
 		`);
+    runMigration169(db);
+    runMigration413(db);
     repository = new SDKMessageRepository(db as any);
   });
 

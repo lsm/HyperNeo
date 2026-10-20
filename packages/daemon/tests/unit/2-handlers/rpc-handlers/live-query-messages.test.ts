@@ -979,7 +979,9 @@ describe('messages.bySession — SQL behavior', () => {
     )
       .map((row) => row.detail)
       .join('\n');
-    expect(plan).toContain('idx_sdk_messages_parent_tool_use_id');
+    expect(plan).toMatch(
+      /SEARCH sdk_messages USING (?:COVERING )?INDEX \S+ \(session_id=\? AND parent_tool_use_id=\?\)/
+    );
   });
 
   test('background-task sidecar subtype filter is sargable via message_subtype_norm', () => {
