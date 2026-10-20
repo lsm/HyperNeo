@@ -196,7 +196,7 @@ export class NeoService {
       invoke: (caller, name, input) =>
         invokeOperation(this.sessions.getOperationRegistry(), name, input, caller),
       packs: () => this.installedPacks(),
-      tell: (ask, todo, note) => {
+      tell: (ask, todo, note, key) => {
         const parent = ask.originMessageId
           ? { sessionId: ask.sessionId, messageId: ask.originMessageId }
           : null;
@@ -204,7 +204,7 @@ export class NeoService {
         const origin = resolved && this.db.getSession(resolved.sessionId) ? resolved : parent;
         return this.deliverForward(
           origin?.sessionId ?? ask.sessionId,
-          `neo-todo:${todo.id}:${todo.updatedAt}`,
+          key ?? `neo-todo:${todo.id}:${todo.updatedAt}`,
           note,
           ask.sessionId,
           origin,

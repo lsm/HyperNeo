@@ -52,7 +52,7 @@ export interface NeoTodoRunnerDeps {
     input: Record<string, unknown>
   ): Promise<OperationOutcome>;
   packs(): readonly NeoPack[];
-  tell(ask: NeoAsk, todo: NeoTodo, note: string): Promise<void>;
+  tell(ask: NeoAsk, todo: NeoTodo, note: string, key?: string): Promise<void>;
   tellAsk(ask: NeoAsk, messageId: string, note: string): Promise<void>;
   changed(): void;
 }
@@ -533,7 +533,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     const ask = store.getAsk(todo.askId);
     const waiting = deps
       .packs()
-      .some((pack) => pack.id === todo.check?.pack && pack.todos?.waiting?.(todo));
+      .some((pack) => (!todo.check || pack.id === todo.check.pack) && pack.todos?.waiting?.(todo));
     if (
       todo.state !== 'doing' ||
       !todo.instruction ||
@@ -554,7 +554,12 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     if (!live || !['done', 'stopped'].includes(live.status)) return;
     const minutes = Math.round((now - read.since) / 60_000);
     if (plan.kind === 'remind' && !todo.check) {
-      await deps.tell(ask, todo, neoTodoUntickedReminder(todo, minutes));
+      await deps.tell(
+        ask,
+        todo,
+        neoTodoUntickedReminder(todo, minutes),
+        `neo-todo-remind:${todo.id}:${read.since}:${plan.nudges}`
+      );
       idle.set(todo.id, { since: read.since, nudges: plan.nudges });
       return;
     }
