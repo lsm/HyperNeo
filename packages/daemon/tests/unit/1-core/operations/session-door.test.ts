@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { OPERATION_NAMES } from '@hyperneo/shared/types/operation-names';
+import { createBuildOperation } from '../../../../src/lib/system/build-operation';
 import { startSessionDoor } from '../../../../src/lib/messaging/session-door';
 import { createSendMessageOperation } from '../../../../src/lib/messaging/message-send';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
@@ -41,6 +42,7 @@ describe('the session door', () => {
     dir = mkdtempSync(join(tmpdir(), 'door-'));
     const registry = createOperationRegistry([
       createSendMessageOperation(mailbox.jobQueue, () => 'active'),
+      createBuildOperation(() => mailbox.db.prepare('SELECT 1').get()),
     ]);
     door = await startSessionDoor(() => registry, join(dir, 'door.sock'));
   });
@@ -52,7 +54,7 @@ describe('the session door', () => {
 
   test('build reports exactly six public fields over the real socket', async () => {
     const reply = await post(door.path, { sender: 'worker-1', name: 'system.build', input: {} });
-    expect(reply).toMatchObject({
+    expect(structuredClone(reply)).toMatchObject({
       status: 200,
       body: {
         kind: 'completed',
@@ -88,6 +90,33 @@ describe('the session door', () => {
         status: 400,
         body: { error: expect.stringMatching(/^not_allowed/) },
       });
+    }
+  });
+
+  test('the result schema rejects extra fields and health failure reveals no error details', async () => {
+    const operation = createBuildOperation(() => {
+      throw new Error('SYNTHETIC_PRIVATE_PATH');
+    });
+    const door = await startSessionDoor(
+      () => createOperationRegistry([operation]),
+      join(dir, 'failed.sock')
+    );
+    try {
+      const reply = await post(door.path, { sender: 'worker-1', name: 'system.build', input: {} });
+      expect(reply).toMatchObject({ body: { kind: 'completed', value: { health: 'fail' } } });
+      const value = (reply.body as { value: Record<string, unknown> }).value;
+      expect(Object.keys(value).sort()).toEqual([
+        'commit',
+        'health',
+        'pid',
+        'startedAt',
+        'uptime',
+        'version',
+      ]);
+      expect(JSON.stringify(reply)).not.toContain('SYNTHETIC_PRIVATE_PATH');
+      expect(operation.resultSchema.safeParse({ ...value, env: 'SYNTHETIC' }).success).toBe(false);
+    } finally {
+      await door.close();
     }
   });
 

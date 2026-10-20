@@ -6,7 +6,7 @@ import { getDataDir } from '../data-dir.ts';
 import { invokeOperation } from '../operations/invoke.ts';
 import type { OperationCaller, OperationRegistry } from '../operations/registry.ts';
 
-const DOOR_OPERATIONS = new Set(['message.send', 'neo.question.get']);
+const DOOR_OPERATIONS = new Set(['message.send', 'neo.question.get', 'system.build']);
 const MAX_BODY_BYTES = 256 * 1024;
 
 export function sessionDoorPath(): string {

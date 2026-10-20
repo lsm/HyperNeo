@@ -1,3 +1,4 @@
+import { createBuildOperation } from '../system/build-operation.ts';
 import type { Database } from '../../storage/database.ts';
 import { transitionStandaloneTask } from '../../storage/tasks/transition-task.ts';
 import { listTaskCores } from '../../storage/tasks/list-tasks.ts';
@@ -103,6 +104,7 @@ export function createDatabaseOperationCatalog(
     },
     [
       ...extra,
+      createBuildOperation(() => db.getDatabase().prepare('SELECT 1').get()),
       createDaemonSnapshotOperation({
         readResources: (input) => new DaemonInventoryRepository(db.getDatabase()).read(input),
         readCapabilities: (caller) =>

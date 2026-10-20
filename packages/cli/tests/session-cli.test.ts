@@ -1,4 +1,8 @@
 import { describe, expect, test } from 'bun:test';
+import { createServer } from 'node:http';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { vi } from 'vitest';
 import { planSessionCommand, resolveSender, runSessionCommand } from '../src/session-cli';
 
@@ -31,6 +35,38 @@ describe('hyperneo send, question and build', () => {
       value: { name: 'system.build', input: {} },
     });
     expect(planSessionCommand(['build', 'extra'], 'worker-1')).toHaveProperty('reason');
+  });
+
+  test('build prints bounded failed health and exits unsuccessfully', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'build-cli-'));
+    const socketPath = join(dir, 'door.sock');
+    const value = {
+      commit: 'a'.repeat(40),
+      version: 'test',
+      pid: 1,
+      startedAt: 1,
+      uptime: 2,
+      health: 'fail',
+    };
+    const server = createServer((request, response) => {
+      request.resume();
+      request.on('end', () => response.end(JSON.stringify({ kind: 'completed', value })));
+    });
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+    const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      expect(
+        await runSessionCommand(['build'], {
+          HYPERNEO_SESSION_ID: 'worker',
+          HYPERNEO_SESSION_DOOR: socketPath,
+        })
+      ).toBe(1);
+      expect(output).toHaveBeenCalledWith(JSON.stringify(value, null, 2));
+    } finally {
+      output.mockRestore();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   test('send joins the words into one message and question reads by id', () => {
