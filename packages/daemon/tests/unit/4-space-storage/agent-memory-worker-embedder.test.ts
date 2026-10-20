@@ -2,14 +2,18 @@ import { describe, expect, test } from 'bun:test';
 import { WorkerAgentMemoryEmbedder } from '../../../src/storage/repositories/agent-memory-worker-embedder.ts';
 
 const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
-const fakeWorker = () =>
-  new Worker(new URL('../../helpers/fake-embed-worker.ts', import.meta.url).href, {
-    type: 'module',
-  });
+const fakeWorker =
+  (load = '') =>
+  () => {
+    process.env.FAKE_EMBED_LOAD = load;
+    return new Worker(new URL('../../helpers/fake-embed-worker.ts', import.meta.url).href, {
+      type: 'module',
+    });
+  };
 
 describe.skipIf(!isBun)('WorkerAgentMemoryEmbedder', () => {
   test('returns the worker’s vector bit for bit, one request at a time', async () => {
-    const embedder = new WorkerAgentMemoryEmbedder(fakeWorker);
+    const embedder = new WorkerAgentMemoryEmbedder(fakeWorker());
     try {
       const vectors = await Promise.all(
         ['one', 'three', 'fiftyfive'].map((text) => embedder.embedPassage(text))
@@ -25,13 +29,39 @@ describe.skipIf(!isBun)('WorkerAgentMemoryEmbedder', () => {
   });
 
   test('a refused, crashed or hung request fails, and the next one gets a fresh worker', async () => {
-    const embedder = new WorkerAgentMemoryEmbedder(fakeWorker, 200);
+    const embedder = new WorkerAgentMemoryEmbedder(fakeWorker(), 200);
     try {
       await expect(embedder.embedQuery('refuse')).rejects.toThrow('model unavailable');
       await expect(embedder.embedQuery('crash')).rejects.toThrow('embedding worker crashed');
       expect(Array.from(await embedder.embedQuery('ok'))[0]).toBe(2);
       await expect(embedder.embedQuery('hang')).rejects.toThrow('gave no answer in 200 ms');
       expect(Array.from(await embedder.embedQuery('again'))[0]).toBe(5);
+    } finally {
+      embedder.stop();
+    }
+  });
+
+  test('a slow model load is not cut off by the request timeout', async () => {
+    const embedder = new WorkerAgentMemoryEmbedder(fakeWorker('slow'), 100);
+    try {
+      expect(Array.from(await embedder.embedPassage('loaded'))[0]).toBe(6);
+    } finally {
+      embedder.stop();
+    }
+  });
+
+  test('a model that fails to load fails the request and is tried again next time', async () => {
+    let spawned = 0;
+    const embedder = new WorkerAgentMemoryEmbedder(() => {
+      spawned += 1;
+      return fakeWorker(spawned === 1 ? 'fail' : '')();
+    });
+    try {
+      await expect(embedder.embedQuery('x')).rejects.toThrow(
+        'embedding model failed to load: model files missing'
+      );
+      expect(Array.from(await embedder.embedQuery('second'))[0]).toBe(6);
+      expect(spawned).toBe(2);
     } finally {
       embedder.stop();
     }

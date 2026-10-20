@@ -501,6 +501,10 @@ export class Database {
     return this.jobQueueRepo;
   }
 
+  warmEmbedder(): void {
+    this.embedder.warm();
+  }
+
   getEmbedder(): AgentMemoryEmbedder {
     return this.embedder;
   }

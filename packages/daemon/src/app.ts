@@ -8,10 +8,6 @@ import { parsePositiveInt, type Config } from './config.ts';
 import type { WebSocketData } from './types/websocket.ts';
 import { createHttpWsServer, type ServerHandle } from './lib/runtime-server/index.ts';
 import { Database } from './storage/database.ts';
-import {
-  prefetchAgentMemoryEmbeddingModel,
-  abortAgentMemoryEmbeddingModelPrefetch,
-} from './storage/repositories/agent-memory-transformers.ts';
 import { SessionManager } from './lib/session-manager.ts';
 import {
   hasRuntimeWorkerOperations,
@@ -444,13 +440,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       if (priorStall) {
         console.error(`[Daemon] ${describeEventLoopStallMarker(priorStall)}`);
       }
-
-      const prefetchLogInfo = verbose ? console.log : () => {};
-      const prefetchLogError = verbose ? console.error : () => {};
-      void prefetchAgentMemoryEmbeddingModel({
-        logInfo: prefetchLogInfo,
-        logError: prefetchLogError,
-      });
     }
 
     const db = new Database(
@@ -462,6 +451,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const reactiveDb = createReactiveDatabase(db);
     startupTimer.start('database + auth initialize');
     await db.initialize(reactiveDb);
+    if (process.env.NODE_ENV !== 'test') db.warmEmbedder();
     const cutOffSessionIds = db.listProcessingSessionIds();
     const interruptedTurns = db.markRestartInterruptedTurns();
     const liveQueries = new LiveQueryEngine(db.getDatabase(), reactiveDb);
@@ -1538,7 +1528,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       for (const timer of cooldownResumeTimers) clearTimeout(timer);
 
       removeRuntimeDescriptorFile();
-      abortAgentMemoryEmbeddingModelPrefetch();
       await sessionDoor?.close();
 
       if (reaperTimer !== null) {
@@ -1727,7 +1716,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     startupLogCaptureCleanup?.();
     unsubscribeProviderFailureChanges?.();
     await invalidateInFlightModelLoads();
-    abortAgentMemoryEmbeddingModelPrefetch();
     restoreConsoleCapture();
     strandedStartupFileLogCapture = closeFileLogCapture;
     throw error;

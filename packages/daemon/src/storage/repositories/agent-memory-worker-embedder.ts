@@ -3,7 +3,17 @@ import { DIMENSIONS, MODEL_ID } from './agent-memory-transformers.ts';
 
 const EMBED_TIMEOUT_MS = 120_000;
 
-type EmbedResponse = { vector: ArrayBuffer } | { error: string };
+type EmbedResponse =
+  | { ready: true }
+  | { loadError: string }
+  | { vector: ArrayBuffer }
+  | { error: string };
+type Running = {
+  worker: Worker;
+  ready: Promise<void>;
+  answer: ((response: EmbedResponse) => void) | null;
+  crash: ((error: Error) => void) | null;
+};
 
 function createEmbedWorker(): Worker {
   return new Worker(new URL('./agent-memory-embed-worker.ts', import.meta.url).href, {
@@ -14,7 +24,7 @@ function createEmbedWorker(): Worker {
 export class WorkerAgentMemoryEmbedder implements AgentMemoryEmbedder {
   model = MODEL_ID;
   dimensions = DIMENSIONS;
-  private worker: Worker | null = null;
+  private running: Running | null = null;
   private queue: Promise<unknown> = Promise.resolve();
 
   constructor(
@@ -30,9 +40,13 @@ export class WorkerAgentMemoryEmbedder implements AgentMemoryEmbedder {
     return this.enqueue('passage', text);
   }
 
+  warm(): void {
+    this.running ??= this.spawn();
+  }
+
   stop(): void {
-    this.worker?.terminate();
-    this.worker = null;
+    this.running?.worker.terminate();
+    this.running = null;
   }
 
   private enqueue(kind: 'query' | 'passage', text: string): Promise<Float32Array> {
@@ -41,34 +55,64 @@ export class WorkerAgentMemoryEmbedder implements AgentMemoryEmbedder {
     return next;
   }
 
-  private request(kind: 'query' | 'passage', text: string): Promise<Float32Array> {
-    const worker = (this.worker ??= this.spawn());
+  private async request(kind: 'query' | 'passage', text: string): Promise<Float32Array> {
+    const running = (this.running ??= this.spawn());
+    await running.ready;
     return new Promise((resolve, reject) => {
-      const fail = (error: Error) => {
+      const settle = () => {
         clearTimeout(timer);
-        this.stop();
+        running.answer = null;
+        running.crash = null;
+      };
+      const fail = (error: Error) => {
+        settle();
+        if (this.running === running) this.stop();
         reject(error);
       };
       const timer = setTimeout(
         () => fail(new Error(`embedding worker gave no answer in ${this.timeoutMs} ms`)),
         this.timeoutMs
       );
-      worker.onmessage = ({ data }: MessageEvent<EmbedResponse>) => {
-        clearTimeout(timer);
-        if ('vector' in data) resolve(new Float32Array(data.vector));
-        else reject(new Error(data.error));
+      running.crash = fail;
+      running.answer = (response) => {
+        settle();
+        if ('vector' in response) resolve(new Float32Array(response.vector));
+        else reject(new Error('error' in response ? response.error : 'unexpected worker answer'));
       };
-      worker.onerror = (event) => {
-        event.preventDefault?.();
-        fail(new Error(`embedding worker crashed: ${event.message}`));
-      };
-      worker.postMessage({ kind, text });
+      running.worker.postMessage({ kind, text });
     });
   }
 
-  private spawn(): Worker {
+  private spawn(): Running {
     const worker = this.createWorker();
     (worker as Worker & { unref?: () => void }).unref?.();
-    return worker;
+    let loaded: (() => void) | null = null;
+    let failed: ((error: Error) => void) | null = null;
+    const running: Running = {
+      worker,
+      ready: new Promise<void>((resolve, reject) => {
+        loaded = resolve;
+        failed = reject;
+      }),
+      answer: null,
+      crash: null,
+    };
+    running.ready.catch(() => {});
+    const lose = (error: Error) => {
+      if (this.running === running) this.stop();
+      failed?.(error);
+      running.crash?.(error);
+    };
+    worker.onmessage = ({ data }: MessageEvent<EmbedResponse>) => {
+      if ('ready' in data) loaded?.();
+      else if ('loadError' in data)
+        lose(new Error(`embedding model failed to load: ${data.loadError}`));
+      else running.answer?.(data);
+    };
+    worker.onerror = (event) => {
+      event.preventDefault?.();
+      lose(new Error(`embedding worker crashed: ${event.message}`));
+    };
+    return running;
   }
 }

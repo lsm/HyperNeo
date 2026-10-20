@@ -1,7 +1,14 @@
-import { TransformersAgentMemoryEmbedder } from './agent-memory-transformers.ts';
+import {
+  prefetchAgentMemoryEmbeddingModel,
+  TransformersAgentMemoryEmbedder,
+} from './agent-memory-transformers.ts';
 
 type EmbedRequest = { kind: 'query' | 'passage'; text: string };
-type EmbedResponse = { vector: ArrayBuffer } | { error: string };
+type EmbedResponse =
+  | { ready: true }
+  | { loadError: string }
+  | { vector: ArrayBuffer }
+  | { error: string };
 type WorkerGlobal = {
   onmessage: ((event: { data: EmbedRequest }) => void | Promise<void>) | null;
   postMessage(message: EmbedResponse, transfer?: ArrayBuffer[]): void;
@@ -9,6 +16,14 @@ type WorkerGlobal = {
 
 const worker = globalThis as unknown as WorkerGlobal;
 const embedder = new TransformersAgentMemoryEmbedder();
+const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
+prefetchAgentMemoryEmbeddingModel()
+  .then(() => embedder.load())
+  .then(
+    () => worker.postMessage({ ready: true }),
+    (err) => worker.postMessage({ loadError: message(err) })
+  );
 
 worker.onmessage = async ({ data }) => {
   try {
@@ -19,6 +34,6 @@ worker.onmessage = async ({ data }) => {
     );
     worker.postMessage({ vector: vector.buffer }, [vector.buffer]);
   } catch (err) {
-    worker.postMessage({ error: err instanceof Error ? err.message : String(err) });
+    worker.postMessage({ error: message(err) });
   }
 };
