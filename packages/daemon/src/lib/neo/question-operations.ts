@@ -40,6 +40,8 @@ const Retire = z.object({ questionId: Text, reason: Text });
 
 const Answer = z.object({ questionId: Text, answer: z.union([z.string(), z.array(z.string())]) });
 
+const Get = z.object({ questionId: Text });
+
 export const NeoQuestionSchema = z.object({
   id: z.string(),
   askId: z.string(),
@@ -58,6 +60,32 @@ export const NeoQuestionSchema = z.object({
   replacedBy: z.string().nullable(),
   createdAt: z.number(),
 });
+
+const QuestionReadResult = z.union([
+  z.object({ ok: z.literal(false), reason: z.string() }),
+  z.object({
+    ok: z.literal(true),
+    question: NeoQuestionSchema.pick({
+      id: true,
+      text: true,
+      kind: true,
+      state: true,
+      answer: true,
+      answeredAt: true,
+    }),
+    answeredByHuman: z.boolean(),
+  }),
+]);
+
+export function readNeoQuestion(question: NeoQuestion | null): z.infer<typeof QuestionReadResult> {
+  if (!question) return { ok: false, reason: 'not_found: no such question.' };
+  const { id, text, kind, state, answer, answeredAt } = question;
+  return {
+    ok: true,
+    question: { id, text, kind, state, answer, answeredAt },
+    answeredByHuman: state === 'answered',
+  };
+}
 
 const QuestionResult = z.union([
   z.object({ ok: z.literal(false), reason: z.string() }),
@@ -321,6 +349,15 @@ export function createNeoQuestionOperations(
       resultSchema: QuestionResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
       execute: async (input, caller) => retire(input, caller),
+    }),
+    defineOperation({
+      name: 'neo.question.get',
+      description:
+        "Read one of Neo's questions to the human by id: its text, state and answer. answeredByHuman is true only when the human answered it, by button or in their own chat; use it to check a decision another session reports.",
+      inputSchema: Get,
+      resultSchema: QuestionReadResult,
+      policy: { safetyClass: 'read' },
+      execute: async (input) => readNeoQuestion(store.getQuestion(input.questionId)),
     }),
     defineOperation({
       name: 'neo.question.answer',

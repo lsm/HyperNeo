@@ -20,6 +20,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.publication.read',
   'neo.question.answer',
   'neo.question.ask',
+  'neo.question.get',
   'neo.question.retire',
   'neo.restart',
   'neo.rule.save',

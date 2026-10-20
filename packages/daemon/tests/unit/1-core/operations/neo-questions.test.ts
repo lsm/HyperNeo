@@ -209,6 +209,32 @@ describe('neo.question operations', () => {
       reason: 'This action needs the user.',
     });
   });
+
+  test('another session reads whether the human answered a question it was told about', async () => {
+    const { call, asked } = setup();
+    const worker: OperationCaller = { source: 'mcp', sessionId: 'worker-1' };
+    const merge = await asked({
+      kind: 'yesno',
+      text: 'Merge it?',
+      noLabel: 'Wait',
+      yesLabel: 'Merge',
+    });
+    expect(await call('neo.question.get', { questionId: merge.id }, worker)).toMatchObject({
+      ok: true,
+      question: { state: 'open', answer: null },
+      answeredByHuman: false,
+    });
+    await call('neo.question.answer', { questionId: merge.id, answer: 'yes' }, human);
+    expect(await call('neo.question.get', { questionId: merge.id }, worker)).toMatchObject({
+      ok: true,
+      question: { text: 'Merge it?', state: 'answered', answer: 'yes' },
+      answeredByHuman: true,
+    });
+    expect(await call('neo.question.get', { questionId: 'made-up' }, worker)).toEqual({
+      ok: false,
+      reason: 'not_found: no such question.',
+    });
+  });
 });
 
 describe("Neo's start question", () => {
