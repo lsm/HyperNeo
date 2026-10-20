@@ -87,6 +87,27 @@ describe('Neo schedule target lifecycle', () => {
     return { scheduler, row, delivery, handler, mail };
   };
 
+  test.each(['{', 'null', '{"status":7}'])(
+    'unreadable processing state %s does not strand an open Neo wake',
+    async (processingState) => {
+      db.createSession(createTestSession(target.id));
+      db.getDatabase()
+        .prepare('UPDATE sessions SET processing_state = ? WHERE id = ?')
+        .run(processingState, target.id);
+      const { scheduler, row, delivery, handler, mail } = create();
+      expect(await delivery.status(target)).toBe('done');
+      expect(await handler(db.getJobQueueRepo().getJob(row.pendingJobId!)!)).toEqual({
+        outcome: 'fired',
+      });
+      expect(scheduler.repo.get(row.id)).toMatchObject({
+        status: 'active',
+        lastOutcome: 'fired',
+        pendingJobId: expect.any(String),
+      });
+      expect(mail()).toHaveLength(1);
+    }
+  );
+
   test.each([
     ['missing', 'not_found'],
     ['ended', 'not_open'],

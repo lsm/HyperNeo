@@ -721,6 +721,12 @@ adds its journey here.
     through RPC, and pauses/reactivates its goal. The restored schedule must keep
     its configured cadence/nudge interval and deliver its next wake to that
     session's transcript. Evidence: `evidence/goal-target-return.json`.
+    Run `bun .claude/skills/verify/goal-unreadable-state.ts <port> "$RUN"` in
+    another fresh isolated run to check a malformed processing-state fixture.
+    The helper validates its test DB, seeds unreadable state only on its new Neo,
+    and waits for the real goal cadence. The schedule must record `fired`, deliver
+    its wake and enqueue the next cadence without a job error. The fixture is
+    restored in `finally`. Evidence: `evidence/goal-unreadable-state.json`.
 
 ## Evidence
 
