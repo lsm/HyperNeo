@@ -90,6 +90,8 @@ describe('pack settings operations', () => {
     { key: 'reviewBot', value: 'bad--login' },
     { key: 'humanSignoff', value: 'docs/**' },
     { key: 'unknown' },
+    { key: '__proto__', scope: { kind: 'global', key: '' } },
+    { key: 'constructor', scope: { kind: 'global', key: '' } },
     { pack: 'unknown' },
     { scope: { kind: 'project', key: 'synthetic' } },
   ])('refuses invalid declaration/type/scope without storing anything: %j', async (change) => {
