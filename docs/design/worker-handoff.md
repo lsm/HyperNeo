@@ -103,6 +103,11 @@ session ownership and actual delivery/consumption in the active turn. Mark the
 chosen human message answered only after durable publication; retries are
 idempotent. One publication does not silently answer every consumed human input.
 
+Local SDK reads keep the existing agent-visible session eligibility policy
+(namespaces, room/type, archival and terminal-age rules), checked before body
+hydration. This changes the data source for eligible sessions, not which sessions
+are exposed; excluded sessions still return `not_found`, with stored data retained.
+
 Local SDK `work.read` pages retain the existing `sessionId` and `turns` fields and
 add `availability`, `nextCursor`, and per-turn `textOffset`/`textComplete` plus
 structured `files` when present. Pass `nextCursor` back as `cursor`; it is scoped

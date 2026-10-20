@@ -1,5 +1,9 @@
 import { z } from 'zod';
 import { HandoffReference } from '../lib/handoffs/outbox.ts';
+import {
+  isMessageSearchIndexEligible,
+  type MessageSearchEligibilityRow,
+} from './repositories/message-search-admission.ts';
 import { hydrateSdkMessageBodies } from './repositories/sdk-message-body-read.ts';
 import { extractTextBlockContents } from './repositories/sdk-message-projections.ts';
 import type { Database } from './sqlite-compat.ts';
@@ -67,8 +71,13 @@ export function readWorkTurnPage(
   after: number,
   cursor?: Cursor
 ): WorkTurnPage | WorkTurn[] | null {
-  if (!db.prepare('SELECT 1 FROM sessions WHERE id=?').get(sessionId))
-    return readWorkTurns(db, sessionId, around, before, after);
+  const session = db
+    .prepare(`SELECT id AS session_id,status AS session_status,type AS session_type,
+    last_active_at AS session_last_active_at,room_id AS session_room_id,
+    NULL AS task_status,NULL AS task_completed_at,NULL AS task_updated_at FROM sessions WHERE id=?`)
+    .get(sessionId) as MessageSearchEligibilityRow | undefined;
+  if (!session) return readWorkTurns(db, sessionId, around, before, after);
+  if (!isMessageSearchIndexEligible(session, Date.now())) return null;
   const select = (
     condition: string,
     args: (number | string)[],
