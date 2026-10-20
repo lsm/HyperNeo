@@ -152,8 +152,7 @@ function QuestionBox({
     const now = ids ? ids.split(',') : [];
     const added = now.filter((id) => !seen.current.includes(id));
     seen.current = now;
-    if (added.length)
-      setPicked((current) => [...current.filter((id) => now.includes(id)), ...added]);
+    setPicked((current) => [...current.filter((id) => now.includes(id)), ...added]);
   }, [ids]);
   const toggle = (value: string, on: boolean) =>
     setPicked((current) => (on ? [...current, value] : current.filter((item) => item !== value)));
