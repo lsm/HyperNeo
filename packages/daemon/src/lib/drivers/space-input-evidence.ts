@@ -15,6 +15,10 @@ type InputRow = {
 };
 type ReplyRow = { message: string; timestamp: string };
 
+export const SESSION_BILLING_TERMINAL = `message_type='result' AND is_terminal=1 AND parent_tool_use_id IS NULL
+  AND COALESCE(internal_compaction_turn,0)=0
+  AND NOT (COALESCE(recovery_intercepted,0)=1 AND COALESCE(recovery_billing_terminal,0)=0)`;
+
 const CONSUMED_INPUT = `message_type = 'user' AND parent_tool_use_id IS NULL
   AND COALESCE(send_status, 'consumed') = 'consumed'
   AND COALESCE(is_replay, 0) = 0
@@ -63,7 +67,9 @@ function readReplies(db: Database, receipt: Receipt, input: InputRow) {
     .prepare(`SELECT 1 FROM sdk_messages WHERE session_id = ?1
     AND ${CONSUMED_INPUT} AND consumed_seq IS NULL
     UNION ALL SELECT 1 FROM sdk_messages WHERE session_id = ?1
-    AND ${CONSUMED_INPUT} AND consumed_seq = ?2 AND sdk_uuid IS NOT ?3 LIMIT 1`)
+    AND ${CONSUMED_INPUT} AND consumed_seq = ?2 AND sdk_uuid IS NOT ?3
+    AND NOT EXISTS (SELECT 1 FROM sdk_messages terminal WHERE session_id=?1
+      AND ${SESSION_BILLING_TERMINAL} AND consumed_seq=?2) LIMIT 1`)
     .get(receipt.executionId, input.seq, receipt.inputId);
   if (uncertain) return { rows: null };
   const rows = db
