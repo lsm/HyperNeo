@@ -46,14 +46,17 @@ export class NeoHomeRepository {
       const changes = (
         await this.git(
           hasHead
-            ? ['status', '--porcelain', '--untracked-files=all']
+            ? ['status', '--porcelain', '-z', '--untracked-files=all']
             : ['diff', '--cached', '--name-only', '-z']
         )
-      ).text;
-      const staged = changes.split('\0').filter(Boolean);
+      ).text
+        .split('\0')
+        .filter((entry) => entry && !(hasHead && entry.startsWith('?? .coordinators/')));
       const interrupted =
-        !hasHead && staged.length === paths.length && paths.every((path) => staged.includes(path));
-      if (changes && !interrupted)
+        !hasHead &&
+        changes.length === paths.length &&
+        paths.every((path) => changes.includes(path));
+      if (changes.length && !interrupted)
         return { ok: false, reason: 'dirty: review existing home changes before initialization.' };
       const documents = new Map([
         [

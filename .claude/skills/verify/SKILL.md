@@ -991,3 +991,9 @@ README.md, .gitignore and direction.md staged. The next real `neo.home.init` RPC
 must finish one bootstrap commit without manual reset. This simulates the disk
 state; it does not kill the daemon. Focused contracts retain refusal for other
 staged files. Existing file contents survive recovery.
+
+Repeat journey 32 with final argument `ignore-repair` on another fresh run. The
+helper removes only its fixture ignore in a local commit, leaving an existing
+home with untracked coordinator transcripts. `neo.home.init` must repair the
+ignore, preserve transcript contents, track no transcript and leave clean status.
+Other dirty files still require human review.

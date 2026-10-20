@@ -97,6 +97,21 @@ describe('Neo home setup', () => {
       '.coordinators/neo/transcript.md'
     );
   });
+  test.each(['untracked document', 'staged transcript'])(
+    'does not ignore unrelated changes during ignore repair: %s',
+    async (change) => {
+      await init();
+      await rm(join(root, '.gitignore'));
+      await git('commit', '-am', 'Existing home without coordinator ignore');
+      const path = change === 'staged transcript' ? '.coordinators/draft.md' : 'human.md';
+      await mkdir(join(root, '.coordinators'), { recursive: true });
+      await writeFile(join(root, path), 'Human draft.');
+      if (change === 'staged transcript') await git('add', path);
+      const before = await git('status', '--porcelain', '-z');
+      expect(await init()).toMatchObject({ ok: false, reason: expect.stringContaining('dirty') });
+      expect(await git('status', '--porcelain', '-z')).toBe(before);
+    }
+  );
   test('assigns stable project folders across renames and service recreation', async () => {
     repo.saveProject({ id: 'project-release', title: 'Release', summary: '', context: '' }, 0);
     const first = await init();
