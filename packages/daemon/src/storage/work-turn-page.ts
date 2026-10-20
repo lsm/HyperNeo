@@ -1,0 +1,217 @@
+import { z } from 'zod';
+import { HandoffReference } from '../lib/handoffs/outbox.ts';
+import {
+  isMessageSearchIndexEligible,
+  MESSAGE_SEARCH_TERMINAL_SESSION_TTL_MS,
+  TERMINAL_SPACE_TASK_STATUSES,
+  type MessageSearchEligibilityRow,
+} from './repositories/message-search-admission.ts';
+import { hydrateSdkMessageBodies } from './repositories/sdk-message-body-read.ts';
+import {
+  extractTextBlockContents,
+  parseSdkMessageRow,
+} from './repositories/sdk-message-projections.ts';
+import type { Database } from './sqlite-compat.ts';
+import { readWorkTurns, type WorkTurn } from './work-turns.ts';
+
+export const WorkReadCursor = z.object({
+  sessionId: z.string().min(1),
+  before: z.number().int().positive().safe(),
+  resume: z
+    .object({
+      seq: z.number().int().positive().safe(),
+      offset: z.number().int().nonnegative().safe(),
+      through: z.number().int().positive().safe(),
+    })
+    .optional(),
+});
+type Cursor = z.infer<typeof WorkReadCursor>;
+type Turn = WorkTurn & {
+  textOffset?: number;
+  textComplete?: boolean;
+  files?: z.infer<typeof HandoffReference>[];
+};
+export interface WorkTurnPage {
+  turns: Turn[];
+  availability: 'complete' | 'incomplete' | 'reply_unavailable';
+  nextCursor?: Cursor;
+}
+interface Row {
+  body_seq: number;
+  id: string;
+  message_type: string;
+  timestamp: string;
+  sdk_message: string;
+}
+const SCOPE = `session_id=? AND parent_tool_use_id IS NULL AND COALESCE(internal_compaction_turn,0)=0
+  AND message_type IN ('user','assistant','result') AND (message_type!='user' OR COALESCE(send_status,'consumed') IN ('consumed','failed'))
+  AND NOT EXISTS (SELECT 1 FROM space_tasks st WHERE st.id=sdk_messages.task_id
+    AND (st.status='archived' OR (st.status IN (${TERMINAL_SPACE_TASK_STATUSES.map((status) => `'${status}'`).join(',')})
+      AND COALESCE(st.completed_at,st.updated_at)<?)))
+  AND NOT EXISTS (SELECT 1 FROM sdk_message_replacements r WHERE r.session_id=sdk_messages.session_id
+    AND r.target_uuid=COALESCE(sdk_messages.sdk_uuid,sdk_messages.id) AND r.source_message_id!=sdk_messages.id)`;
+
+function text(row: Row): string {
+  const body = parseSdkMessageRow(row.sdk_message, 'synthesize');
+  return row.message_type === 'result'
+    ? 'result' in body && typeof body.result === 'string'
+      ? body.result
+      : ''
+    : extractTextBlockContents(body, 'join-all').join('\n\n');
+}
+
+function files(row: Row): Turn['files'] {
+  return extractTextBlockContents(
+    parseSdkMessageRow(row.sdk_message, 'synthesize'),
+    'join-all'
+  ).flatMap((part) => {
+    try {
+      return z.object({ handoffFiles: z.array(HandoffReference) }).parse(JSON.parse(part))
+        .handoffFiles;
+    } catch {
+      return [];
+    }
+  });
+}
+
+export function readWorkTurnPage(
+  db: Database,
+  sessionId: string,
+  around: string | undefined,
+  before: number,
+  after: number,
+  cursor?: Cursor
+): WorkTurnPage | WorkTurn[] | null {
+  const now = Date.now();
+  const session = db
+    .prepare(`SELECT id AS session_id,status AS session_status,type AS session_type,
+    last_active_at AS session_last_active_at,room_id AS session_room_id,
+    NULL AS task_status,NULL AS task_completed_at,NULL AS task_updated_at FROM sessions WHERE id=?`)
+    .get(sessionId) as MessageSearchEligibilityRow | undefined;
+  if (!session) return readWorkTurns(db, sessionId, around, before, after);
+  if (!isMessageSearchIndexEligible(session, now)) return null;
+  const select = (
+    condition: string,
+    args: (number | string)[],
+    limit: number,
+    descending = false
+  ): Row[] =>
+    db
+      .prepare(
+        hydrateSdkMessageBodies(
+          `SELECT seq AS body_seq,id,message_type,timestamp FROM sdk_messages INDEXED BY idx_sdk_messages_parent_tool_use_id
+      WHERE ${SCOPE} AND ${condition} ORDER BY seq ${descending ? 'DESC' : 'ASC'} LIMIT ?`,
+          `body_selection.body_seq ${descending ? 'DESC' : 'ASC'}`
+        )
+      )
+      .all(sessionId, now - MESSAGE_SEARCH_TERMINAL_SESSION_TTL_MS, ...args, limit) as Row[];
+  const unavailable: WorkTurnPage = { turns: [], availability: 'reply_unavailable' };
+  const size = before + after + 1;
+  let rows: Row[];
+  if (cursor?.resume)
+    rows = select('seq>=? AND seq<=?', [cursor.resume.seq, cursor.resume.through], size);
+  else if (cursor) rows = select('seq<?', [cursor.before], size, true).reverse();
+  else if (around) {
+    const anchor = (db
+      .prepare('SELECT seq FROM sdk_messages WHERE session_id=? AND id=?')
+      .get(sessionId, around) ??
+      db
+        .prepare(
+          'SELECT seq FROM sdk_messages WHERE session_id=? AND sdk_uuid=? ORDER BY seq LIMIT 1'
+        )
+        .get(sessionId, around)) as { seq: number } | undefined;
+    if (!anchor || !select('seq=?', [anchor.seq], 1).length) return unavailable;
+    rows = [
+      ...select('seq<?', [anchor.seq], before, true).reverse(),
+      ...select('seq>=?', [anchor.seq], after + 1),
+    ];
+  } else rows = select('1', [], size, true).reverse();
+  if (!rows.length) return cursor ? { turns: [], availability: 'complete' } : unavailable;
+  const context = rows.some((row) => row.message_type === 'result')
+    ? [...select('seq<?', [rows[0].body_seq], 16, true).reverse(), ...rows]
+    : rows;
+  const values = new Map(context.map((row) => [row.body_seq, text(row)]));
+  const through = cursor?.resume?.through ?? rows.at(-1)!.body_seq;
+  let boundary = cursor?.resume ? cursor.before : rows[0].body_seq;
+  const turns: Turn[] = [];
+  const seen = new Set<string>();
+  let remaining = 16_000;
+  for (let row of rows) {
+    let value = values.get(row.body_seq)!;
+    if (row.message_type === 'result') {
+      for (const candidate of context
+        .filter((prior) => prior.body_seq < row.body_seq)
+        .slice(-16)
+        .reverse()) {
+        const candidateText = values.get(candidate.body_seq)!;
+        if (!candidateText.trim()) continue;
+        if (
+          candidate.message_type === 'user' ||
+          (value.trim() && candidateText.trim() !== value.trim())
+        )
+          break;
+        row = candidate;
+        value = candidateText;
+        if (candidate.message_type === 'assistant') break;
+      }
+    }
+    if (!value.trim() || seen.has(row.id) || (cursor?.resume && row.body_seq < cursor.resume.seq))
+      continue;
+    seen.add(row.id);
+    boundary = Math.min(boundary, row.body_seq);
+    const start = cursor?.resume?.seq === row.body_seq ? cursor.resume.offset : 0;
+    let end = Math.min(value.length, start + remaining);
+    let low = start;
+    while (low < end) {
+      const mid = Math.ceil((low + end) / 2);
+      if (Buffer.byteLength(JSON.stringify(value.slice(start, mid))) <= remaining) low = mid;
+      else end = mid - 1;
+    }
+    end = low;
+    if (end < value.length && end > start && /[\uD800-\uDBFF]/.test(value[end - 1])) end--;
+    if (end > start)
+      turns.push({
+        messageId: row.id,
+        role: row.message_type === 'result' ? 'assistant' : row.message_type,
+        at: new Date(row.timestamp).getTime(),
+        text: value.slice(start, end),
+        textOffset: start,
+        textComplete: end === value.length,
+        files: files(row),
+      });
+    remaining -= Buffer.byteLength(JSON.stringify(value.slice(start, end)));
+    if (end < value.length)
+      return {
+        turns,
+        availability: 'incomplete',
+        nextCursor: {
+          sessionId,
+          before: boundary,
+          resume: { seq: row.body_seq, offset: end, through },
+        },
+      };
+  }
+  if (cursor?.resume && rows.at(-1)!.body_seq < through) {
+    const next = select('seq>? AND seq<=?', [rows.at(-1)!.body_seq, through], 1)[0];
+    if (next)
+      return {
+        turns,
+        availability: 'incomplete',
+        nextCursor: {
+          sessionId,
+          before: boundary,
+          resume: { seq: next.body_seq, offset: 0, through },
+        },
+      };
+  }
+  const earlier = select('seq<?', [boundary], 1, true).length > 0;
+  return {
+    turns,
+    availability: earlier
+      ? 'incomplete'
+      : turns.length || cursor
+        ? 'complete'
+        : 'reply_unavailable',
+    ...(earlier ? { nextCursor: { sessionId, before: boundary } } : {}),
+  };
+}

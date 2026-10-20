@@ -61,7 +61,7 @@ import { neoFolder } from '../../neo/folder.ts';
 import { remoteDaemons } from '../../remote-daemons/registry.ts';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
 import { WorktreeManager } from '../../worktree-manager.ts';
-import { readWorkTurns } from '../../../storage/work-turns.ts';
+import { readWorkTurnPage, type WorkTurnPage } from '../../../storage/work-turn-page.ts';
 import type { SessionManager } from '../../session/session-manager.ts';
 import { ModelUnavailableError } from '../../session/session-lifecycle.ts';
 import type { ModelInfo, Provider } from '@hyperneo/shared';
@@ -533,8 +533,9 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     sessionId: string,
     around: string | undefined,
     before: number,
-    after: number
-  ) => readWorkTurns(db(), sessionId, around, before, after);
+    after: number,
+    cursor?: WorkTurnPage['nextCursor']
+  ) => readWorkTurnPage(db(), sessionId, around, before, after, cursor);
   return [
     createFindWorkOperation(deps),
     ...createWorkVerbOperations(deps),
