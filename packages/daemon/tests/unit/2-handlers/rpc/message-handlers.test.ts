@@ -6,6 +6,7 @@ import { setupMessageHandlers } from '../../../../src/lib/rpc-handlers/message-h
 import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { Database } from '../../../../src/storage/database';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies';
 
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
@@ -799,6 +800,7 @@ describe('Message RPC Handlers', () => {
     test('returns one message in full for "show full output"', async () => {
       const sqlite = new BunDatabase(':memory:');
       sqlite.exec('CREATE TABLE sdk_messages (session_id TEXT, sdk_uuid TEXT, sdk_message TEXT)');
+      runMigration418(sqlite);
       const full = { type: 'user', uuid: 'u1', message: { content: 'z'.repeat(20_000) } };
       sqlite
         .prepare('INSERT INTO sdk_messages VALUES (?, ?, ?)')
