@@ -73,6 +73,25 @@ describe('neo.session.archive', () => {
   });
   afterEach(() => db.close());
 
+  test('refuses a session a doing todo drives until the todo is done', async () => {
+    const todo = (target: WorkRef) => {
+      db.getDatabase().exec(`INSERT INTO neo_asks (id, session_id, title, request, status, created_at, updated_at)
+          VALUES ('ask', 'root', 'Ship', 'Ship it', 'open', 1, 1);
+        INSERT INTO neo_todos (id, ask_id, position, title, done_when, state, created_at, updated_at)
+          VALUES ('todo', 'ask', 0, 'Fix the loader', 'Merged', 'doing', 1, 1)`);
+      db.getDatabase()
+        .prepare('INSERT INTO neo_todo_sessions (todo_id, target, ref) VALUES (?, ?, ?)')
+        .run('todo', JSON.stringify({ verb: 'send', ref: target }), JSON.stringify(target));
+    };
+    todo(ref);
+    expect(await invoke(ref, user)).toMatchObject({
+      value: { ok: false, reason: 'live_todo', detail: expect.stringContaining('Fix the loader') },
+    });
+    expect(archive).not.toHaveBeenCalled();
+    db.getDatabase().exec("UPDATE neo_todos SET state = 'done' WHERE id = 'todo'");
+    expect(await invoke(ref, user)).toMatchObject({ value: { ok: true } });
+  });
+
   test('allows a verified live human turn and the local user', async () => {
     expect(await invoke()).toMatchObject({ value: { ok: true, value: { archived: true } } });
     expect(await invoke(ref, user)).toMatchObject({ value: { ok: true } });
