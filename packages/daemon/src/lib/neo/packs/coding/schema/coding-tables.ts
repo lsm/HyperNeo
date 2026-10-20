@@ -1,6 +1,6 @@
 import type { Database } from '../../../../../storage/sqlite-compat.ts';
 
-export function createCodingPackTables(db: Database): void {
+export function createCodingPackTables(db: Database, activatedAt = Date.now()): void {
   db.exec(`CREATE TABLE IF NOT EXISTS pack_coding_todo_prs (
     todo_id TEXT PRIMARY KEY REFERENCES neo_todos(id) ON DELETE CASCADE,
     prs_json TEXT NOT NULL CHECK (json_valid(prs_json)),
@@ -33,6 +33,16 @@ export function createCodingPackTables(db: Database): void {
     alias TEXT PRIMARY KEY,
     canonical TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS pack_coding_pr_unowned (
+    key TEXT PRIMARY KEY,
+    listed_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS pack_coding_pr_unowned_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    activated_at INTEGER NOT NULL,
+    pending_key TEXT,
+    pending_text TEXT
+  );
   DROP TABLE IF EXISTS pack_coding_session_prs;
   CREATE TABLE IF NOT EXISTS pack_coding_session_facts (
     ref TEXT PRIMARY KEY CHECK (json_valid(ref)),
@@ -49,4 +59,13 @@ export function createCodingPackTables(db: Database): void {
   const ledger = db.prepare('PRAGMA table_info(pack_coding_pr_ledger)').all() as { name: string }[];
   if (!ledger.some((column) => column.name === 'reply_at'))
     db.exec('ALTER TABLE pack_coding_pr_ledger ADD COLUMN reply_at INTEGER');
+  if (!ledger.some((column) => column.name === 'created_at'))
+    db.exec('ALTER TABLE pack_coding_pr_ledger ADD COLUMN created_at INTEGER');
+  if (!ledger.some((column) => column.name === 'author_is_bot'))
+    db.exec(
+      'ALTER TABLE pack_coding_pr_ledger ADD COLUMN author_is_bot INTEGER NOT NULL DEFAULT 1'
+    );
+  db.prepare(
+    'INSERT OR IGNORE INTO pack_coding_pr_unowned_state (id, activated_at) VALUES (1, ?)'
+  ).run(activatedAt);
 }

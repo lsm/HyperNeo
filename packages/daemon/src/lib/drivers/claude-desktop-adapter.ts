@@ -565,7 +565,7 @@ export function describeClaudeSession(
     ...workExecutionLocation(record.cwd, deps.machine),
     ...(waitingFor ? { waitingFor } : {}),
   };
-  if (!transcript) return { ok: true, value: { ...work, ...claudeLinkedPrs(record) } };
+  if (!transcript) return { ok: true, value: { ...work, ...claudeSessionLinks(record) } };
   return {
     ok: true,
     value: {
@@ -578,12 +578,14 @@ export function describeClaudeSession(
       recentInputs: transcript.inputs,
       ...withExchange(transcript.exchange),
       ...(transcript.openedPrs ? { openedPrs: transcript.openedPrs } : {}),
-      ...claudeLinkedPrs(record),
+      ...claudeSessionLinks(record),
     },
   };
 }
 
-function claudeLinkedPrs(record: Pick<ClaudeDesktopRecord, 'prs' | 'branch' | 'writtenBranches'>): {
+export function claudeSessionLinks(
+  record: Pick<ClaudeDesktopRecord, 'prs' | 'branch' | 'writtenBranches'>
+): {
   linkedPrs?: { url: string; dismissed?: true; own?: true }[];
   linkedPrsWindow?: true;
   branches?: string[];

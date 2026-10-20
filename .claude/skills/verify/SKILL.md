@@ -313,6 +313,67 @@ adds its journey here.
    ledger (opened `?mode=ro`) and prints owned-before/after counts plus each
    owner change; check every change names the session that created the PR.
 
+   For the b2 ownership regression, use only synthetic session metadata/transcripts:
+
+   ```bash
+   RUN=$(mktemp -d /private/tmp/hn-pr-owners-XXXXXX)
+   env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
+     bun .claude/skills/verify/pr-owners.ts --synthetic "$RUN"
+   ```
+
+   The helper creates its own DB and 64 Claude sessions with about 130 MB of
+   synthetic transcripts. It runs the real coding-pack sweep/reconcile and reads
+   the ledger snapshot. Git remote lookup uses a real local synthetic Git repo
+   once per retained folder across sweeps; only GitHub replies are stubbed. No
+   provider or GUI is involved. The live helper's owner projection must match
+   the ledger, including no-sidebar transcript and stored watcher evidence. End state: a `commented` sidebar link is unowned,
+   an explicit `own:true` link owns its PR, a transcript `gitOperation.pr` with
+   `action:created` corroborates ownership, branch matching still works, an append
+   is discovered without metadata changes, and dismissal unlinks its PR. A session
+   without a sidebar keeps both transcript-created and watcher-opened PR ownership
+   across repeated watcher/sweep observations. The
+   helper writes `observed.json` before asserting each result and a 1,000 ms
+   maximum 10 ms heartbeat-lag budget. Cold, unchanged, repeated-watcher, appended and dismissed
+   reconciles each report elapsed time and max lag. No daemon is started; the DB
+   closes and the heartbeat stops in `finally`. Retain the JSON, remove only this
+   synthetic run afterward. This does not prove deployed behavior.
+
+   The driver reuses the session JSON mtime cache and caches its branch projection
+   per record. Git remotes stay cached while a folder remains represented; removing
+   its last session evicts that entry. Transcript reads resume after the last complete newline, in 64 KiB
+   chunks that yield; partial UTF-8 lines, truncation and replacement are covered.
+   The coding pack alone treats a successful creation as ownership evidence; a
+   Claude sidebar reference alone is not an owner. The default live read-only
+   helper now uses that same reader/policy. Never read auth or credential files.
+
+   For PR-ledger c, run the unowned-PR wake door in a new synthetic database:
+
+   ```bash
+   RUN=$(mktemp -d /private/tmp/hn-pr-unowned-XXXXXX)
+   env -i PATH="$PATH" NODE_ENV=test HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" \
+     HYPERNEO_USE_DEV_PROXY=1 VERIFY_PORT=9355 \
+     bun .claude/skills/verify/pr-owners.ts --synthetic-unowned "$RUN"
+   ```
+
+   Ports 9355 and 8000 must be free. The helper starts its own isolated daemon
+   and local mock provider, and uses synthetic GitHub responses through the real
+   coding-pack reconcile. It observes the result at the actual Neo mailbox input
+   via WebSocket `session.messages.byStatus`, not just a mocked wake callback.
+   End state: one consumed Neo input lists 90 newly unowned human PRs, excluding
+   drafts, bots, known owners, closed PRs, unknown metadata, and creation at/before
+   the persisted first-activation cutoff. A later new PR survives a lost handoff acknowledgement
+   and pack recreation with the same batch identity and reaches Neo once.
+   Unchanged reconciles send nothing. Each PR has one `neo-pr-unowned:repo#N`
+   record; one pending batch preserves retry identity. New arrivals while a
+   batch retries wait until the next reconcile. The notice describes discovery
+   facts and tells Neo to check current ownership before assigning anyone.
+   `observed.json` records elapsed time and max 10 ms heartbeat lag for each
+   reconcile against a 1,000 ms budget; `delivered.json` and `accepted.json`
+   prove both batches reached Neo as consumed input. GitHub and existing Claude
+   owner reads are synthetic; no deployed or GUI behavior is claimed. The helper
+   disposes its service, daemon, SDK processes and local provider in `finally`.
+   Retain evidence, confirm both ports are closed, then remove only this run.
+
 7. **A cross-repo request becomes one card per repo.** Launch with
    `VERIFY_MOCK=neo-script-api.ts .claude/skills/verify/launch.sh 9311 "$RUN"`.
    That mock plays root's model: when the human's message contains
@@ -636,6 +697,44 @@ instances in `finally` and uses no provider, real keys or GUI. The accepted inpu
 may settle as failed with no provider; this verifies persistence and transcript
 delivery, not model execution. Unit contracts cover the remaining writer doors,
 failure rollback, nested transactions and status-only updates in CI.
+
+### Repository body reads (slice 8)
+
+Use a fresh synthetic fixture, never a live DB or a copy. Unit suites run in CI.
+This journey exercises the same `message.sdkMessages` and `message.sdkMessage`
+RPC doors used to load a transcript and an individual full message. It does not
+drive the GUI or start a model turn. It uses the real repository, daemon and
+WebSocket transport, without the mock API or a provider key.
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-body-read-door-XXXXXX)
+mkdir -p "$RUN/home"
+env -i HOME="$RUN/home" PATH="$(dirname "$(command -v bun)"):/usr/bin:/bin" \
+  NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/sdk-live-query-filters.ts seed "$RUN"
+env -i HOME="$RUN/home" PATH="$(dirname "$(command -v bun)"):/usr/bin:/bin" \
+  NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/sdk-body-repository-door.ts verify 9334 "$RUN"
+```
+
+The seed writes 55,014 rows through production derivation and dual write, with
+`replacement_metadata_normalized=1` as production writers do. The helper first
+loads both RPC responses, then blanks only the newest 500 synthetic legacy body
+columns whose side bodies exist. Both responses must remain identical, including
+background metadata and subagent messages, and remain identical after restart.
+The complete logical-body SHA-256 must match before/after; tool results remain
+stored in full. Full-body hashing and synthetic mutation happen outside latency
+measurement, while startup/restart and RPC reads have separate lag measurements.
+`observed.json` records executed SQL, query plans, RPC times and max event-loop lag;
+SQL executions must be below 250 ms and measured lag below 1 s. Startup SQL is
+not individually instrumented. Both daemon instances close in `finally`.
+
+On the contract-test commit before the read wiring, use `reproduce` instead of
+`verify` in a separate fresh run. `reproduction.json` records the wrong returned
+transcript (`unknown` with empty content on that code), or a read error; neither
+is a pass. Do not reuse that modified fixture for the fixed-code acceptance run.
+GUI rendering, external drivers and the remaining live-query body outputs belong
+to other journeys/slice 9 and are not verified by this repository-read journey.
 
 ### Task body projection triggers (slice 7)
 

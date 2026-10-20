@@ -20,6 +20,7 @@ import {
 } from '../../lib/mailbox/entry.ts';
 import { withBusyRetry } from '../busy-retry.ts';
 import { writeSdkMessageBody } from './sdk-message-body-write.ts';
+import { hydrateSdkMessageBodies } from './sdk-message-body-read.ts';
 import {
   buildFtsQuery,
   extractVisibleSearchText,
@@ -260,12 +261,12 @@ export function buildMessageSearchAdmissionLookupSql(
   const spaceTaskJoin = features.hasSpaceTasks
     ? 'LEFT JOIN space_tasks st ON st.id = sm.task_id'
     : '';
-  return `SELECT sm.id, sm.session_id, sm.task_id, sm.message_type, sm.sdk_message, sm.timestamp,
+  return hydrateSdkMessageBodies(`SELECT sm.id, sm.session_id, sm.task_id, sm.message_type, sm.rowid AS body_seq, sm.timestamp,
 					${sessionTitleSelect}, ${sessionPolicySelect}, ${spaceTaskSelect}
 			 FROM sdk_messages sm
 			 ${sessionJoin}
 			 ${spaceTaskJoin}
-			 WHERE sm.id = ?`;
+			 WHERE sm.id = ?`);
 }
 
 type TimestampComparison = '>' | '>=';
@@ -1016,7 +1017,8 @@ export class SDKMessageRepository {
   getRenderableTextMessages(sessionId: string, limit = 20): Array<RenderableTextMessage> {
     const messages: Array<RenderableTextMessage> = [];
     const stmt = this.db.prepare(
-      `SELECT id, message_type, sdk_message, timestamp FROM sdk_messages
+      hydrateSdkMessageBodies(
+        `SELECT id, message_type, rowid AS body_seq, timestamp FROM sdk_messages
 			 WHERE session_id = ?
 			   AND parent_tool_use_id IS NULL
 			   AND is_renderable = 1
@@ -1029,7 +1031,9 @@ export class SDKMessageRepository {
 			   )
 			   AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
 			 ORDER BY timestamp DESC, rowid DESC
-			 LIMIT ? OFFSET ?`
+			 LIMIT ? OFFSET ?`,
+        'body_selection.timestamp DESC, body_selection.body_seq DESC'
+      )
     );
     const maxScan = resolveRenderableTextScanBudget(limit);
     let scanned = 0;
@@ -1068,7 +1072,7 @@ export class SDKMessageRepository {
     >;
     hasMore: boolean;
   } {
-    let query = `SELECT id, sdk_message, timestamp, send_status, origin, rowid AS rowid FROM sdk_messages
+    let query = `SELECT id, rowid AS body_seq, timestamp, send_status, origin, rowid AS rowid FROM sdk_messages
       WHERE session_id = ?
         AND parent_tool_use_id IS NULL
         AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
@@ -1120,17 +1124,22 @@ export class SDKMessageRepository {
     query += ` ORDER BY timestamp DESC, rowid DESC LIMIT ?`;
     params.push(limit);
 
-    const stmt = this.db.prepare(query);
+    const stmt = this.db.prepare(
+      hydrateSdkMessageBodies(query, 'body_selection.timestamp DESC, body_selection.body_seq DESC')
+    );
     const rows = stmt.all(...params) as Array<PaginationMessageRow>;
 
     return composeMessagePage(rows, limit, (toolUseIds) => {
       const placeholders = toolUseIds.map(() => '?').join(',');
-      const subagentQuery = `SELECT id, sdk_message, timestamp FROM sdk_messages
+      const subagentQuery = hydrateSdkMessageBodies(
+        `SELECT id, rowid AS body_seq, timestamp FROM sdk_messages
        WHERE session_id = ?
          AND parent_tool_use_id IN (${placeholders})
          AND COALESCE(message_subtype, '') NOT IN (${EXCLUDED_FROM_PAGINATION_SQL_LIST})
          AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
-        ORDER BY timestamp ASC, rowid ASC`;
+        ORDER BY timestamp ASC, rowid ASC`,
+        'body_selection.timestamp ASC, body_selection.body_seq ASC'
+      );
       const subagentParams: SQLiteValue[] = [sessionId, ...toolUseIds];
 
       const subagentStmt = this.db.prepare(subagentQuery);
@@ -1140,7 +1149,11 @@ export class SDKMessageRepository {
 
   getMessageByUuid(sessionId: string, messageUuid: string): SDKMessage | null {
     const row = this.db
-      .prepare('SELECT sdk_message FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ? LIMIT 1')
+      .prepare(
+        hydrateSdkMessageBodies(
+          'SELECT rowid AS body_seq FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ? LIMIT 1'
+        )
+      )
       .get(sessionId, messageUuid) as { sdk_message: string } | null;
     return row ? (JSON.parse(row.sdk_message) as SDKMessage) : null;
   }
@@ -1148,10 +1161,11 @@ export class SDKMessageRepository {
   getBackgroundTaskMessages(sessionId: string): Array<ChatMessage & { timestamp: number }> {
     const rows = this.db
       .prepare(
-        `WITH recent_metadata AS (
+        hydrateSdkMessageBodies(
+          `WITH recent_metadata AS (
            SELECT
              id,
-             sdk_message,
+             rowid AS body_seq,
              timestamp,
              origin,
              rowid,
@@ -1171,7 +1185,7 @@ export class SDKMessageRepository {
          task_starts AS (
            SELECT
              id,
-             sdk_message,
+             rowid AS body_seq,
              timestamp,
              origin,
              rowid,
@@ -1186,7 +1200,7 @@ export class SDKMessageRepository {
          latest_progress AS (
            SELECT
              id,
-             sdk_message,
+             rowid AS body_seq,
              timestamp,
              origin,
              rowid,
@@ -1194,7 +1208,7 @@ export class SDKMessageRepository {
            FROM (
              SELECT
                id,
-               sdk_message,
+               rowid AS body_seq,
                timestamp,
                origin,
                rowid,
@@ -1217,7 +1231,7 @@ export class SDKMessageRepository {
            )
            WHERE rn = 1
          )
-         SELECT id, sdk_message, timestamp, origin
+         SELECT id, rowid AS body_seq, timestamp, origin
          FROM (
            SELECT * FROM recent_metadata
            UNION ALL
@@ -1225,7 +1239,9 @@ export class SDKMessageRepository {
            UNION ALL
            SELECT * FROM latest_progress
          )
-         ORDER BY timestamp DESC, rowid DESC`
+         ORDER BY timestamp DESC, rowid DESC`,
+          'body_selection.timestamp DESC, body_selection.body_seq DESC'
+        )
       )
       .all(
         sessionId,
@@ -1243,7 +1259,7 @@ export class SDKMessageRepository {
     messageSubtype?: string,
     limit = 100
   ): SDKMessage[] {
-    let query = `SELECT sdk_message FROM sdk_messages WHERE session_id = ? AND message_type = ?`;
+    let query = `SELECT rowid AS body_seq, timestamp FROM sdk_messages WHERE session_id = ? AND message_type = ?`;
     const params: SQLiteValue[] = [sessionId, messageType];
 
     if (messageSubtype) {
@@ -1254,7 +1270,7 @@ export class SDKMessageRepository {
     query += ` ORDER BY timestamp ASC LIMIT ?`;
     params.push(limit);
 
-    const stmt = this.db.prepare(query);
+    const stmt = this.db.prepare(hydrateSdkMessageBodies(query, 'body_selection.timestamp ASC'));
     const rows = stmt.all(...params) as Record<string, unknown>[];
 
     return rows.map((r) => JSON.parse(r.sdk_message as string) as SDKMessage);
@@ -1268,9 +1284,12 @@ export class SDKMessageRepository {
   ): SDKMessage[] {
     const rows = this.db
       .prepare(
-        `SELECT sdk_message FROM sdk_messages
+        hydrateSdkMessageBodies(
+          `SELECT rowid AS body_seq, timestamp FROM sdk_messages
           WHERE session_id = ? AND message_type = ? AND message_subtype = ?
-          ORDER BY timestamp DESC, rowid DESC LIMIT ?`
+          ORDER BY timestamp DESC, rowid DESC LIMIT ?`,
+          'body_selection.timestamp DESC, body_selection.body_seq DESC'
+        )
       )
       .all(sessionId, messageType, messageSubtype, limit) as Record<string, unknown>[];
     return rows.map((r) => JSON.parse(r.sdk_message as string) as SDKMessage).reverse();
@@ -1278,13 +1297,16 @@ export class SDKMessageRepository {
 
   getLastSDKMessage(sessionId: string): (SDKMessage & { dbId: string; timestamp: number }) | null {
     const stmt = this.db.prepare(
-      `SELECT id, sdk_message, timestamp FROM sdk_messages
+      hydrateSdkMessageBodies(
+        `SELECT id, rowid AS body_seq, timestamp FROM sdk_messages
 	       WHERE session_id = ?
 		       AND parent_tool_use_id IS NULL
 		       AND COALESCE(message_subtype, '') NOT IN (${EXCLUDED_FROM_LAST_MESSAGE_SQL_LIST})
 		       AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
 	       ORDER BY timestamp DESC, rowid DESC
-	       LIMIT 1`
+	       LIMIT 1`,
+        'body_selection.timestamp DESC, body_selection.body_seq DESC'
+      )
     );
     const row = stmt.get(sessionId) as {
       id: string;
@@ -1522,8 +1544,8 @@ export class SDKMessageRepository {
     for (const { rowIds, placeholders } of buildRowIdHydrationBatches(projected)) {
       const rows = this.db
         .prepare(
-          `SELECT rowid AS row_id, id, sdk_message, timestamp FROM sdk_messages
-           WHERE rowid IN (${placeholders})`
+          hydrateSdkMessageBodies(`SELECT rowid AS row_id, id, rowid AS body_seq, timestamp FROM sdk_messages
+           WHERE rowid IN (${placeholders})`)
         )
         .all(...rowIds) as Array<{
         row_id: number;
@@ -1571,14 +1593,17 @@ export class SDKMessageRepository {
         : [sessionId, lowerBound, upperBound, pageSize];
       const rows = this.db
         .prepare(
-          `SELECT rowid AS row_id, id, sdk_message, timestamp, COALESCE(send_status, 'consumed') AS send_status FROM sdk_messages
+          hydrateSdkMessageBodies(
+            `SELECT rowid AS row_id, id, rowid AS body_seq, timestamp, COALESCE(send_status, 'consumed') AS send_status FROM sdk_messages
 	       WHERE session_id = ?
 	         AND message_type = 'user'
 	         AND sdk_uuid >= ?
 	         AND sdk_uuid < ?
 	         ${cursorClause}
 	       ORDER BY timestamp DESC, rowid DESC
-	       LIMIT ?`
+	       LIMIT ?`,
+            'body_selection.timestamp DESC, body_selection.body_seq DESC'
+          )
         )
         .all(...params) as Array<{
         row_id: number;
@@ -1608,12 +1633,15 @@ export class SDKMessageRepository {
     uuid: string
   ): (SDKMessage & { dbId: string; timestamp: number }) | null {
     const stmt = this.db.prepare(
-      `SELECT id, sdk_message, timestamp FROM sdk_messages
+      hydrateSdkMessageBodies(
+        `SELECT id, rowid AS body_seq, timestamp FROM sdk_messages
 	       WHERE session_id = ?
 	         AND send_status = ?
 	         AND sdk_uuid = ?
 	       ORDER BY timestamp ASC, rowid ASC
-	       LIMIT 1`
+	       LIMIT 1`,
+        'body_selection.timestamp ASC, body_selection.body_seq ASC'
+      )
     );
     const row = stmt.get(sessionId, status, uuid) as {
       id: string;
@@ -1630,9 +1658,9 @@ export class SDKMessageRepository {
   ): (SDKMessage & { dbId: string; timestamp: number }) | null {
     const row = this.db
       .prepare(
-        `SELECT id, sdk_message, timestamp FROM sdk_messages
+        hydrateSdkMessageBodies(`SELECT id, rowid AS body_seq, timestamp FROM sdk_messages
          WHERE session_id = ? AND send_status = ? AND id = ?
-         LIMIT 1`
+         LIMIT 1`)
       )
       .get(sessionId, status, dbId) as {
       id: string;
@@ -1785,14 +1813,14 @@ export class SDKMessageRepository {
   ): { dbId: string; uuid: string; status: 'deferred' | 'enqueued' } | null {
     const row = this.db
       .prepare(
-        `SELECT id, sdk_message, send_status
+        hydrateSdkMessageBodies(`SELECT id, rowid AS body_seq, send_status
 				   FROM sdk_messages
 				  WHERE session_id = ?
 				    AND id = ?
 				    AND message_type = 'user'
 				    AND send_status IN ('deferred', 'enqueued')
             AND (? IS NULL OR send_status = ?)
-				  LIMIT 1`
+				  LIMIT 1`)
       )
       .get(sessionId, messageId, expectedStatus ?? null, expectedStatus ?? null) as
       | { id: string; sdk_message: string; send_status: 'deferred' | 'enqueued' }
@@ -1837,9 +1865,9 @@ export class SDKMessageRepository {
   ): { dbId: string; uuid: string } | null {
     const row = this.db
       .prepare(
-        `SELECT id, sdk_message, send_status FROM sdk_messages
+        hydrateSdkMessageBodies(`SELECT id, rowid AS body_seq, send_status FROM sdk_messages
           WHERE session_id = ? AND id = ? AND message_type = 'user'
-          LIMIT 1`
+          LIMIT 1`)
       )
       .get(sessionId, messageId) as
       | { id: string; sdk_message: string; send_status: string | null }
@@ -1897,9 +1925,12 @@ export class SDKMessageRepository {
 
   getUserMessages(sessionId: string): Array<{ uuid: string; timestamp: number; content: string }> {
     const stmt = this.db.prepare(
-      `SELECT sdk_message, timestamp FROM sdk_messages
+      hydrateSdkMessageBodies(
+        `SELECT rowid AS body_seq, timestamp FROM sdk_messages
        WHERE session_id = ? AND message_type = 'user'
-       ORDER BY timestamp ASC`
+       ORDER BY timestamp ASC`,
+        'body_selection.timestamp ASC'
+      )
     );
     const rows = stmt.all(sessionId) as Array<{ sdk_message: string; timestamp: string }>;
 
@@ -1921,12 +1952,15 @@ export class SDKMessageRepository {
   ): { uuid: string; timestamp: number; content: string } | undefined {
     const row = this.db
       .prepare(
-        `SELECT sdk_message, timestamp FROM sdk_messages
+        hydrateSdkMessageBodies(
+          `SELECT rowid AS body_seq, timestamp FROM sdk_messages
          WHERE session_id = ?
            AND message_type = 'user'
            AND sdk_uuid = ?
          ORDER BY timestamp ASC, rowid ASC
-         LIMIT 1`
+         LIMIT 1`,
+          'body_selection.timestamp ASC, body_selection.body_seq ASC'
+        )
       )
       .get(sessionId, uuid) as { sdk_message: string; timestamp: string } | undefined;
     if (!row) return undefined;
@@ -1936,9 +1970,12 @@ export class SDKMessageRepository {
   getStoredPromptsByUuid(sessionId: string, uuid: string): SDKMessage[] {
     const rows = this.db
       .prepare(
-        `SELECT sdk_message FROM sdk_messages
+        hydrateSdkMessageBodies(
+          `SELECT rowid AS body_seq, timestamp FROM sdk_messages
           WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-          ORDER BY timestamp ASC, rowid ASC`
+          ORDER BY timestamp ASC, rowid ASC`,
+          'body_selection.timestamp ASC, body_selection.body_seq ASC'
+        )
       )
       .all(sessionId, uuid) as Array<{ sdk_message: string }>;
     const messages: SDKMessage[] = [];
@@ -1953,9 +1990,12 @@ export class SDKMessageRepository {
   getHumanPrompt(sessionId: string, uuid: string): { at: number; text: string } | null {
     const rows = this.db
       .prepare(
-        `SELECT sdk_message, timestamp FROM sdk_messages
+        hydrateSdkMessageBodies(
+          `SELECT rowid AS body_seq, timestamp FROM sdk_messages
           WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-          ORDER BY timestamp ASC, rowid ASC`
+          ORDER BY timestamp ASC, rowid ASC`,
+          'body_selection.timestamp ASC, body_selection.body_seq ASC'
+        )
       )
       .all(sessionId, uuid) as Array<{ sdk_message: string; timestamp: string | number }>;
     for (const row of rows) {
@@ -2000,9 +2040,12 @@ export class SDKMessageRepository {
   getUserMessageContentByUuid(sessionId: string, uuid: string): string | MessageContent[] | null {
     const row = this.db
       .prepare(
-        `SELECT sdk_message FROM sdk_messages
+        hydrateSdkMessageBodies(
+          `SELECT rowid AS body_seq, timestamp FROM sdk_messages
            WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-           ORDER BY timestamp ASC LIMIT 1`
+           ORDER BY timestamp ASC LIMIT 1`,
+          'body_selection.timestamp ASC'
+        )
       )
       .get(sessionId, uuid) as { sdk_message: string } | undefined;
     if (!row) return null;
@@ -2044,10 +2087,13 @@ export class SDKMessageRepository {
   ): { content: string | MessageContent[]; sendStatus: SendStatus; inputKind?: string } | null {
     const row = this.db
       .prepare(
-        `SELECT sdk_message, COALESCE(send_status, 'consumed') AS send_status
+        hydrateSdkMessageBodies(
+          `SELECT rowid AS body_seq, timestamp, COALESCE(send_status, 'consumed') AS send_status
            FROM sdk_messages
           WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-          ORDER BY timestamp ASC LIMIT 1`
+          ORDER BY timestamp ASC LIMIT 1`,
+          'body_selection.timestamp ASC'
+        )
       )
       .get(sessionId, uuid) as { sdk_message: string; send_status: SendStatus } | undefined;
     if (!row) return null;
@@ -2077,9 +2123,12 @@ export class SDKMessageRepository {
         selectDeliveryMessageRow: (selectSessionId, selectUuid) =>
           this.db
             .prepare(
-              `SELECT id, sdk_message, origin FROM sdk_messages
+              hydrateSdkMessageBodies(
+                `SELECT id, rowid AS body_seq, timestamp, origin FROM sdk_messages
                 WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-                ORDER BY timestamp ASC, rowid ASC LIMIT 1`
+                ORDER BY timestamp ASC, rowid ASC LIMIT 1`,
+                'body_selection.timestamp ASC, body_selection.body_seq ASC'
+              )
             )
             .get(selectSessionId, selectUuid) as
             | { id: string; sdk_message: string; origin: string | null }
@@ -2447,7 +2496,7 @@ export class SDKMessageRepository {
 
     if (afterMessageId) {
       query = `
-				SELECT id, sdk_message FROM sdk_messages
+				SELECT rowid AS body_seq, id, timestamp FROM sdk_messages
 				WHERE session_id = ?
 				  AND message_type = 'assistant'
 				  AND timestamp > (
@@ -2458,14 +2507,14 @@ export class SDKMessageRepository {
       params = [sessionId, afterMessageId];
     } else {
       query = `
-				SELECT id, sdk_message FROM sdk_messages
+				SELECT rowid AS body_seq, id, timestamp FROM sdk_messages
 				WHERE session_id = ? AND message_type = 'assistant'
 				ORDER BY timestamp ASC
 			`;
       params = [sessionId];
     }
 
-    const stmt = this.db.prepare(query);
+    const stmt = this.db.prepare(hydrateSdkMessageBodies(query, 'body_selection.timestamp ASC'));
     const rows = stmt.all(...params) as Array<{ id: string; sdk_message: string }>;
 
     return rows.map((row) => {
