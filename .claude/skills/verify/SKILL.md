@@ -1401,7 +1401,9 @@ over MCP against an isolated SQLite database and a loopback scripted model.
 A synthetic 198,001-byte report lives only in SDK body storage, behind 30 later
 follow-ups; no search-index row exists. Neo/internal and archived session reads
 must return `not_found` through the same MCP door, without exposing their
-synthetic private text. The helper follows the returned cursors
+synthetic private text. Linked archived tasks and terminal tasks older than the
+shared 30-day TTL must also return no body, using each SDK row's task ID rather
+than session-name inference. The helper follows the returned cursors
 and checks exact UTF-8 byte length and SHA-256, hidden-thinking exclusion and
 unchanged SDK/body rows. A retracted legacy message without an SDK UUID must
 stay hidden when its replacement edge targets the stored message ID. The proof also

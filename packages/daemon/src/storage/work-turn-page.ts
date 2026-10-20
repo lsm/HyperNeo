@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { HandoffReference } from '../lib/handoffs/outbox.ts';
 import {
   isMessageSearchIndexEligible,
+  MESSAGE_SEARCH_TERMINAL_SESSION_TTL_MS,
+  TERMINAL_SPACE_TASK_STATUSES,
   type MessageSearchEligibilityRow,
 } from './repositories/message-search-admission.ts';
 import { hydrateSdkMessageBodies } from './repositories/sdk-message-body-read.ts';
@@ -43,6 +45,9 @@ interface Row {
 }
 const SCOPE = `session_id=? AND parent_tool_use_id IS NULL AND COALESCE(internal_compaction_turn,0)=0
   AND message_type IN ('user','assistant','result') AND (message_type!='user' OR COALESCE(send_status,'consumed') IN ('consumed','failed'))
+  AND NOT EXISTS (SELECT 1 FROM space_tasks st WHERE st.id=sdk_messages.task_id
+    AND (st.status='archived' OR (st.status IN (${TERMINAL_SPACE_TASK_STATUSES.map((status) => `'${status}'`).join(',')})
+      AND COALESCE(st.completed_at,st.updated_at)<?)))
   AND NOT EXISTS (SELECT 1 FROM sdk_message_replacements r WHERE r.session_id=sdk_messages.session_id
     AND r.target_uuid=COALESCE(sdk_messages.sdk_uuid,sdk_messages.id) AND r.source_message_id!=sdk_messages.id)`;
 
@@ -77,13 +82,14 @@ export function readWorkTurnPage(
   after: number,
   cursor?: Cursor
 ): WorkTurnPage | WorkTurn[] | null {
+  const now = Date.now();
   const session = db
     .prepare(`SELECT id AS session_id,status AS session_status,type AS session_type,
     last_active_at AS session_last_active_at,room_id AS session_room_id,
     NULL AS task_status,NULL AS task_completed_at,NULL AS task_updated_at FROM sessions WHERE id=?`)
     .get(sessionId) as MessageSearchEligibilityRow | undefined;
   if (!session) return readWorkTurns(db, sessionId, around, before, after);
-  if (!isMessageSearchIndexEligible(session, Date.now())) return null;
+  if (!isMessageSearchIndexEligible(session, now)) return null;
   const select = (
     condition: string,
     args: (number | string)[],
@@ -98,7 +104,7 @@ export function readWorkTurnPage(
           `body_selection.body_seq ${descending ? 'DESC' : 'ASC'}`
         )
       )
-      .all(sessionId, ...args, limit) as Row[];
+      .all(sessionId, now - MESSAGE_SEARCH_TERMINAL_SESSION_TTL_MS, ...args, limit) as Row[];
   const unavailable: WorkTurnPage = { turns: [], availability: 'reply_unavailable' };
   const size = before + after + 1;
   let rows: Row[];

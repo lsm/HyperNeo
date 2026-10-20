@@ -108,6 +108,11 @@ Local SDK reads keep the existing agent-visible session eligibility policy
 hydration. This changes the data source for eligible sessions, not which sessions
 are exposed; excluded sessions still return `not_found`, with stored data retained.
 
+SDK row visibility also follows the linked Space task: archived tasks and
+terminal tasks older than the shared 30-day retention window are excluded before
+body hydration, including anchor, cursor and predecessor queries. Stored data is
+retained; task archival or ageing changes visibility only.
+
 Local SDK `work.read` pages retain the existing `sessionId` and `turns` fields and
 add `availability`, `nextCursor`, and per-turn `textOffset`/`textComplete` plus
 structured `files` when present. Pass `nextCursor` back as `cursor`; it is scoped
