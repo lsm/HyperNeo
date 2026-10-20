@@ -631,7 +631,7 @@ export function createNeoOperations(service: NeoService) {
     createNeoProjectForgetOperation(service.repo),
     createNeoIntakeOperation(service.db, service.repo, (sessionId) => {
       service.notifyChanged();
-      void service.steerHumanMessages(sessionId);
+      void service.steerQueuedInputs(sessionId);
     }),
     createNeoReorganizeOperation(neoReorganizeRuntime(service)),
     createNeoPublicationOperation(service.publish),

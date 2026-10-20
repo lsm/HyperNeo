@@ -14,6 +14,7 @@ import { handoffPromptToMailbox, type MailboxHandoffOutcome } from '../mailbox/h
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { AgentReferenceSchema } from '../agents/agent-reference.ts';
 import { sessionUnavailable } from '../session-resolution/session-lookup.ts';
+import { wrapSessionContent } from './session-envelope.ts';
 
 const ContentBlockSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('text'), text: z.string().min(1) }),
@@ -82,6 +83,36 @@ type SendInput = Omit<SendRequest, 'sessionId' | 'agent'> & { sessionId: string 
 type SendResult = z.infer<typeof SendMessageResultSchema>;
 
 export type SessionStatusRead = (sessionId: string) => string | null;
+export type SessionTitleRead = (sessionId: string) => string | null;
+export type SessionSendLimiter = (origin: string, to: string, text: string) => string | null;
+
+const SESSION_SEND_WINDOW_MS = 60_000;
+const SESSION_SENDS_PER_WINDOW = 6;
+const SESSION_DEDUPE_MS = 10 * 60_000;
+
+export function createSessionSendLimiter(now: () => number = Date.now): SessionSendLimiter {
+  const sends = new Map<string, number[]>();
+  const seen = new Map<string, number>();
+  return (origin, to, text) => {
+    const at = now();
+    for (const [key, sentAt] of seen) if (at - sentAt >= SESSION_DEDUPE_MS) seen.delete(key);
+    const pair = `${origin}\n${to}`;
+    if (seen.has(`${pair}\n${text}`))
+      return 'duplicate: the same message reached this session in the last 10 minutes';
+    const recent = (sends.get(pair) ?? []).filter((sentAt) => at - sentAt < SESSION_SEND_WINDOW_MS);
+    if (recent.length >= SESSION_SENDS_PER_WINDOW)
+      return `rate_limited: at most ${SESSION_SENDS_PER_WINDOW} messages a minute to one session`;
+    sends.set(pair, [...recent, at]);
+    seen.set(`${pair}\n${text}`, at);
+    return null;
+  };
+}
+
+function sessionSender(origin: string): string | null {
+  const local = parseAddress(origin);
+  if (local?.kind === 'session') return local.sessionId;
+  return parseRemoteAddress(origin) === null ? null : origin;
+}
 
 export type RemoteSendForwarder = (
   target: RemoteSessionAddress,
@@ -161,6 +192,35 @@ export function selectSendOrigin(input: { from?: string }, caller: OperationCall
     : selectMessageOrigin(caller);
 }
 
+export function admitSessionSend(
+  input: SendInput,
+  origin: string,
+  limit: SessionSendLimiter
+): { value: SendInput } | { reason: SendResult } {
+  if (sessionSender(origin) === null) return { value: input };
+  const refused = limit(origin, input.sessionId, JSON.stringify(input.message.message.content));
+  return refused === null ? { value: input } : { reason: { kind: 'rejected', reason: refused } };
+}
+
+export function stampSessionMessage(
+  input: SendInput,
+  origin: string,
+  sessionTitle: SessionTitleRead
+): SendInput {
+  const sender = sessionSender(origin);
+  if (sender === null) return input;
+  const name = sender === origin ? null : sessionTitle(sender);
+  const content = wrapSessionContent(input.message.message.content, { sessionId: sender, name });
+  return {
+    ...input,
+    message: {
+      ...input.message,
+      inputKind: 'task',
+      message: { ...input.message.message, content } as SendInput['message']['message'],
+    },
+  };
+}
+
 export function persistOperationMessage(
   input: SendInput,
   origin: string,
@@ -184,14 +244,25 @@ export function mapMessageReceipt(outcome: MailboxHandoffOutcome, messageId: str
 }
 
 const runSendMessage = (superpipe({})('send-operation-message') as PipelineAPI)
-  .input(['input', 'caller', 'jobQueue', 'sessionStatus', 'forwardRemote', 'resolveAgent'])
+  .input([
+    'input',
+    'caller',
+    'jobQueue',
+    'sessionStatus',
+    'forwardRemote',
+    'resolveAgent',
+    'sessionTitle',
+    'limit',
+  ])
   .pipe(admitOperationMessage, ['input', 'caller'], 'result:receipt')
   .pipe(resolveMessageTarget, ['receipt', 'resolveAgent'], 'result:receipt')
   .pipe(selectSendOrigin, ['input', 'caller'], 'origin')
   .pipe(forwardRemoteMessage, ['receipt', 'origin', 'forwardRemote'], 'result:receipt')
   .pipe(requireTargetSession, ['receipt', 'sessionStatus'], 'result:receipt')
+  .pipe(admitSessionSend, ['receipt', 'origin', 'limit'], 'result:receipt')
+  .pipe(stampSessionMessage, ['receipt', 'origin', 'sessionTitle'], 'outgoing')
   .pipe(generateUUID, undefined, 'messageId')
-  .pipe(persistOperationMessage, ['receipt', 'origin', 'messageId', 'jobQueue'], 'handoff')
+  .pipe(persistOperationMessage, ['outgoing', 'origin', 'messageId', 'jobQueue'], 'handoff')
   .pipe(mapMessageReceipt, ['handoff', 'messageId'], 'receipt')
   .endAsync('receipt') as (
   input: SendRequest,
@@ -199,22 +270,35 @@ const runSendMessage = (superpipe({})('send-operation-message') as PipelineAPI)
   jobQueue: JobQueueRepository,
   sessionStatus: SessionStatusRead,
   forwardRemote: RemoteSendForwarder,
-  resolveAgent: AgentTargetResolver
+  resolveAgent: AgentTargetResolver,
+  sessionTitle: SessionTitleRead,
+  limit: SessionSendLimiter
 ) => Promise<SendResult>;
 
 export function createSendMessageOperation(
   jobQueue: JobQueueRepository,
   sessionStatus: SessionStatusRead,
   forwardRemote: RemoteSendForwarder = rejectUnattachedDaemon,
-  resolveAgent: AgentTargetResolver = rejectAgentTargets
+  resolveAgent: AgentTargetResolver = rejectAgentTargets,
+  sessionTitle: SessionTitleRead = () => null
 ) {
+  const limit = createSessionSendLimiter();
   return defineOperation({
     name: 'message.send',
     description:
-      'Persist a message for a session, addressed by session id or by agent {space, agent}, and not restricted to the caller Space. An agent target names the space by id, slug or name and the agent by id, @handle or display name; it finds or starts that agent\'s session, and an unknown or ambiguous name is rejected with the candidates. Rejects an unknown session id and a session that is archived or ended. A session on an attached remote daemon is addressed as "daemon:<daemonId>::session:<sessionId>"; that send is forwarded to the remote daemon, whose mailbox owns the message, and fails if the daemon is unattached or unreachable. Acceptance means the message is queued for that session, not that the session has processed it or replied. from is set by a daemon forwarding a send, as daemon:<sender daemon>::session:<id>; it is honored only from the RPC door, which is trusted as the local user, and only when it is an address.',
+      'Persist a message for a session, addressed by session id or by agent {space, agent}, and not restricted to the caller Space. An agent target names the space by id, slug or name and the agent by id, @handle or display name; it finds or starts that agent\'s session, and an unknown or ambiguous name is rejected with the candidates. Rejects an unknown session id and a session that is archived or ended. A session on an attached remote daemon is addressed as "daemon:<daemonId>::session:<sessionId>"; that send is forwarded to the remote daemon, whose mailbox owns the message, and fails if the daemon is unattached or unreachable. Acceptance means the message is queued for that session, not that the session has processed it or replied. A message from a session reaches the recipient as task input inside a daemon-written <session-message from-session=… from-name=…> envelope saying it is not from the human; it is injected into a running turn at the next tool round or wakes an idle session. Sends from a session are limited to 6 a minute to one recipient, and the same text to the same recipient within 10 minutes is refused as a duplicate. from is set by a daemon forwarding a send, as daemon:<sender daemon>::session:<id>; it is honored only from the RPC door, which is trusted as the local user, and only when it is an address.',
     inputSchema: SendMessageInputSchema,
     resultSchema: SendMessageResultSchema,
     execute: (input, caller) =>
-      runSendMessage(input, caller, jobQueue, sessionStatus, forwardRemote, resolveAgent),
+      runSendMessage(
+        input,
+        caller,
+        jobQueue,
+        sessionStatus,
+        forwardRemote,
+        resolveAgent,
+        sessionTitle,
+        limit
+      ),
   });
 }
