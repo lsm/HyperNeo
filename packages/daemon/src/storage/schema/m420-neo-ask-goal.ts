@@ -1,6 +1,6 @@
 import type { Database } from '../sqlite-compat.ts';
 
-export function runMigration419(db: Database): void {
+export function runMigration420(db: Database): void {
   const columns = db.prepare('PRAGMA table_info(neo_asks)').all() as { name: string }[];
   if (!columns.length) return;
   if (!columns.some((column) => column.name === 'goal_id'))

@@ -11,7 +11,7 @@ import { SessionRepository } from '../../../../src/storage/repositories/session-
 import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
-import { runMigration419 } from '../../../../src/storage/schema/m419-neo-ask-goal.ts';
+import { runMigration420 } from '../../../../src/storage/schema/m420-neo-ask-goal.ts';
 
 const neo: OperationCaller = { source: 'mcp', sessionId: 'neo:root', role: 'neo' };
 const human: OperationCaller = { source: 'rpc' };
@@ -22,8 +22,8 @@ describe('ask goal-link upgrade', () => {
     db.exec(
       "PRAGMA foreign_keys = ON; CREATE TABLE space_goals(id TEXT PRIMARY KEY); CREATE TABLE neo_asks(id TEXT PRIMARY KEY); INSERT INTO neo_asks VALUES ('old'); INSERT INTO space_goals VALUES ('goal')"
     );
-    runMigration419(db);
-    runMigration419(db);
+    runMigration420(db);
+    runMigration420(db);
     expect(db.prepare('SELECT * FROM neo_asks').all()).toEqual([{ id: 'old', goal_id: null }]);
     db.exec("UPDATE neo_asks SET goal_id = 'goal'; DELETE FROM space_goals WHERE id = 'goal'");
     expect(db.prepare('SELECT goal_id FROM neo_asks').get()).toEqual({ goal_id: null });
