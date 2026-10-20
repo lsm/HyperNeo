@@ -6,6 +6,7 @@ import type { OperationDefinition } from '../../operations/registry.ts';
 import type { FamilyOperationContext } from './context.ts';
 
 export function registerGoalOperations(context: FamilyOperationContext): OperationDefinition[] {
+  const audit = new McpAuditLogRepository(context.deps.db.getDatabase());
   return [
     ...createGoalOperations({
       goalService: context.spaceGoalService,
@@ -16,8 +17,18 @@ export function registerGoalOperations(context: FamilyOperationContext): Operati
       taskRepo: context.spaceTaskRepo,
       goalScopeRepo: context.spaceAgentGoalScopeRepo,
       getSession: (sessionId) => context.deps.db.getSession(sessionId),
-      auditLogRepo: new McpAuditLogRepository(context.deps.db.getDatabase()),
+      auditLogRepo: audit,
     }),
-    ...createSessionGoalOperations(new SessionGoalRepository(context.deps.db.getDatabase())),
+    ...createSessionGoalOperations({
+      goals: new SessionGoalRepository(context.deps.db.getDatabase(), context.deps.reactiveDb),
+      sessionExists: (sessionId) => context.deps.db.getSession(sessionId) !== null,
+      audit: (caller, toolName, summary) =>
+        audit.createEntry({
+          agentName: caller.agentName,
+          sessionId: caller.sessionId,
+          toolName,
+          paramsSummary: JSON.stringify(summary),
+        }),
+    }),
   ];
 }

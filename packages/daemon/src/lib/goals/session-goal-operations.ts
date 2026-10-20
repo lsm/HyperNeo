@@ -101,6 +101,10 @@ export function resolveGoalOwner(
     : refuse('owner_denied: a session acts only on its own goals.');
 }
 
+export function requireKnownOwner(owner: string, known: boolean): Gate<string> {
+  return known ? { value: owner } : refuse(`owner_unknown: no session ${owner}.`);
+}
+
 export function requireOwnedGoal(goal: SessionGoal | null, owner: string): Gate<SessionGoal> {
   return goal?.ownerSessionId === owner ? { value: goal } : refuse('goal_not_found');
 }
@@ -125,11 +129,26 @@ function patchOf(input: z.infer<typeof Update>): SessionGoalPatch {
   ) as SessionGoalPatch;
 }
 
-export function createSessionGoalOperations(goals: SessionGoalRepository) {
+export interface SessionGoalDependencies {
+  readonly goals: SessionGoalRepository;
+  readonly sessionExists: (sessionId: string) => boolean;
+  readonly audit: (caller: OperationCaller, toolName: string, summary: object) => void;
+}
+
+export function createSessionGoalOperations({
+  goals,
+  sessionExists,
+  audit,
+}: SessionGoalDependencies) {
   const owner = (pipeline: PipelineAPI) =>
     pipeline
       .input(['input', 'caller'])
-      .pipe(resolveGoalOwner, ['caller', 'input'], 'result:outcome');
+      .pipe(resolveGoalOwner, ['caller', 'input'], 'result:outcome')
+      .pipe(
+        (owned: string) => requireKnownOwner(owned, sessionExists(owned)),
+        'outcome',
+        'result:outcome'
+      );
   const owned = (pipeline: PipelineAPI) =>
     owner(pipeline)
       .pipe((input: { goalId: string }) => goals.get(input.goalId), 'input', 'goal')
@@ -141,7 +160,9 @@ export function createSessionGoalOperations(goals: SessionGoalRepository) {
     .pipe(
       (owned: string, input: z.infer<typeof Create>, caller: OperationCaller) => {
         const { ownerSessionId: _owner, ...draft } = input;
-        return done(goals.create(owned, draft, eventSource(caller), Date.now()));
+        const goal = goals.create(owned, draft, eventSource(caller), Date.now());
+        audit(caller, 'goal.session.create', { goalId: goal.id, ownerSessionId: owned });
+        return done(goal);
       },
       ['outcome', 'input', 'caller'],
       'outcome'
@@ -171,8 +192,11 @@ export function createSessionGoalOperations(goals: SessionGoalRepository) {
       'result:outcome'
     )
     .pipe(
-      (goal: SessionGoal, input: z.infer<typeof Update>, caller: OperationCaller) =>
-        done(goals.update(goal, patchOf(input), eventSource(caller), Date.now())),
+      (goal: SessionGoal, input: z.infer<typeof Update>, caller: OperationCaller) => {
+        const patch = patchOf(input);
+        audit(caller, 'goal.session.update', { goalId: goal.id, fields: Object.keys(patch) });
+        return done(goals.update(goal, patch, eventSource(caller), Date.now()));
+      },
       ['outcome', 'input', 'caller'],
       'outcome'
     )

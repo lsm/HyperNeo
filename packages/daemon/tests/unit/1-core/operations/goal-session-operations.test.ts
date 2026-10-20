@@ -13,12 +13,17 @@ function setup() {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
-  const ops = createSessionGoalOperations(new SessionGoalRepository(db));
+  const audited: string[] = [];
+  const ops = createSessionGoalOperations({
+    goals: new SessionGoalRepository(db),
+    sessionExists: (sessionId) => ['neo:root', 'neo:other'].includes(sessionId),
+    audit: (_caller, toolName) => audited.push(toolName),
+  });
   const call = (name: string, input: unknown, caller: OperationCaller = neo) => {
     const op = ops.find((item) => item.name === name)!;
     return op.execute(op.inputSchema.parse(input), caller) as Promise<Record<string, any>>;
   };
-  return { db, call };
+  return { db, call, audited };
 }
 
 describe('session-owned goals', () => {
@@ -77,11 +82,18 @@ describe('session-owned goals', () => {
         )
       ).goal.id
     ).toBe(created.goal.id);
+    expect(
+      await call(
+        'goal.session.create',
+        { ownerSessionId: 'neo:typo', title: 'X', doneTest: 'Y' },
+        human
+      )
+    ).toEqual({ accepted: false, reason: 'owner_unknown: no session neo:typo.' });
     db.close();
   });
 
   test('completing a goal records it, closes it from the default list, and keeps the done-test rule', async () => {
-    const { db, call } = setup();
+    const { db, call, audited } = setup();
     const created = await call('goal.session.create', { title: 'Ship', doneTest: 'Released' });
     expect(
       await call('goal.session.update', { goalId: created.goal.id, doneTest: null })
@@ -113,6 +125,12 @@ describe('session-owned goals', () => {
       { event_type: 'status_changed', source: 'human' },
       { event_type: 'status_changed', source: 'neo' },
       { event_type: 'status_changed', source: 'neo' },
+    ]);
+    expect(audited).toEqual([
+      'goal.session.create',
+      'goal.session.update',
+      'goal.session.update',
+      'goal.session.update',
     ]);
     db.close();
   });
