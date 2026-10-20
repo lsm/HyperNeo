@@ -1818,3 +1818,12 @@ proves question/setting persistence and caller boundaries, not notification/mode
 completion. Unit contracts also inject a failing settings write and require both
 consent and every value to roll back together. Actual browser rendering and the
 future first-dispatch trigger are not verified here.
+
+Before pushing a new numbered migration, run from the developer checkout:
+`bun .claude/skills/verify/migration-number.ts <number> [own-pr-number]`.
+This read-only preflight fetches fresh dev and enumerates every open PR's changed
+files through `gh`, then asserts a new candidate follows the highest numbered
+migration. A number already reserved in own-pr-number is checked for collisions
+instead. Supply own-pr-number only when updating that same PR. It uses GitHub,
+not the isolated daemon or a live database; do not run it under the stub-gh PATH.
+Unpublished reservations still need coordination with their owner.
