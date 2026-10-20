@@ -805,6 +805,21 @@ adds its journey here.
     This checks the API with synthetic recorded turns, not model behavior or the
     web disclosure row; G5b adds the rendering journey. Stop with `stop.sh`.
 
+30. **Scheduled wakes are quiet web disclosures (G5b).** Build the web and launch a
+    fresh isolated daemon. Run `bun .claude/skills/verify/neo-wake-web.ts <port> "$RUN"`
+    to seed synthetic active, settled-with-additions and settled-empty wakes, then
+    `NODE_PATH=<directory containing playwright> node .claude/skills/verify/neo-wake-web.mjs <port> "$RUN"`.
+    Like journey 18, `VERIFY_BROWSER` can select a headless Chrome executable.
+    `/neo` must show closed clock/title/summary/time rows; the active one reads
+    Working. Attributed publication detail appears once, inside its wake. Opening
+    the row exposes labelled additions; following its question link reveals the
+    original question in Your work on desktop and in the mobile sheet. A removed
+    todo link opens its owning ask’s Details before scrolling to the retained row. Questions
+    remain independently answerable; journal labels are text until G6 supplies a
+    journal destination. Screenshots `neo-wake-{desktop,mobile}-{collapsed,expanded,question}.png`
+    and observed text `neo-wake-web.json` live in `evidence/`. No model turn, real
+    provider, real data or desktop GUI is exercised. Stop with `stop.sh`.
+
 ## Evidence
 
 ### SDK message body dual write (slice 6)

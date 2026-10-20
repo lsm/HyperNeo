@@ -1,0 +1,79 @@
+import type { NeoConversationWake } from '@hyperneo/shared/types/neo-wake';
+import type { ComponentChildren } from 'preact';
+import { t } from '../lib/i18n/index.ts';
+import { NeoIcon } from './NeoIcon.tsx';
+import { messageTime } from './NeoMessage.tsx';
+import { neoMessageAnchor } from './reply-context.ts';
+
+export function NeoWakeRow({
+  entryKey,
+  wake,
+  sessionId,
+  onOpenWork,
+  children,
+}: {
+  entryKey: string;
+  wake: NeoConversationWake;
+  sessionId: string;
+  onOpenWork?: (anchor: string) => void;
+  children?: ComponentChildren;
+}) {
+  const time = messageTime(wake.firedAt);
+  return (
+    <details
+      data-public-entry={entryKey}
+      data-wake={wake.scheduleId}
+      aria-label={t('chat.wakeLabel', { title: wake.title })}
+      class="neo-arrive group/wake mx-auto max-w-[94%] text-xs text-fg-muted"
+    >
+      <summary class="flex min-h-9 cursor-pointer list-none items-center gap-2 rounded-md px-3 hover:bg-fill-soft">
+        <NeoIcon name="clock" class="!h-3.5 !w-3.5" />
+        <span class="max-w-40 truncate font-medium text-fg">{wake.title}</span>
+        <span class="min-w-0 flex-1 truncate">
+          {wake.settledAt === null
+            ? t('session.working')
+            : (wake.summary ?? t('chat.wakeFinished'))}
+        </span>
+        {time && (
+          <time dateTime={time.iso} title={time.full} class="shrink-0 text-[11px] text-fg-faint">
+            {time.label}
+          </time>
+        )}
+        <NeoIcon name="chevron" class="!h-3 !w-3 rotate-90 group-open/wake:rotate-180" />
+      </summary>
+      <div class="space-y-3 px-3 pb-2 pt-1">
+        <ul class="space-y-1 break-words">
+          {wake.additions.map((item) => {
+            const anchor =
+              item.kind === 'journal'
+                ? null
+                : item.kind === 'publication'
+                  ? neoMessageAnchor(sessionId, item.id)
+                  : `neo-ref-${item.kind}-${item.id}`;
+            return (
+              <li key={`${item.kind}:${item.id}`}>
+                {anchor ? (
+                  <a
+                    href={`#${anchor}`}
+                    class="text-accent hover:underline"
+                    onClick={(event) => {
+                      if (item.kind !== 'publication' && onOpenWork) {
+                        event.preventDefault();
+                        onOpenWork(anchor);
+                      }
+                    }}
+                  >
+                    {item.label}
+                  </a>
+                ) : (
+                  item.label
+                )}
+              </li>
+            );
+          })}
+        </ul>
+        {children}
+      </div>
+    </details>
+  );
+}

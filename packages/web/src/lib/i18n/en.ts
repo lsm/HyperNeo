@@ -89,6 +89,8 @@ export const en = {
   'chat.notice.failed': 'failed',
   'chat.notice.finished': 'finished',
   'chat.mute': 'Mute',
+  'chat.wakeLabel': 'Scheduled check-in: {title}',
+  'chat.wakeFinished': 'Check-in finished',
   'chat.sessionMessage': '{from} → {to}',
   'chat.sessionMessageLabel': 'Message from {from} to {to}',
   'chat.unmute': 'Unmute',

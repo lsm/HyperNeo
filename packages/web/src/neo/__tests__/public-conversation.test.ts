@@ -142,7 +142,9 @@ describe('durable public conversation projection', () => {
             ? entry.publication.publicationId
             : entry.kind === 'notices'
               ? entry.group.id
-              : entry.message.messageId
+              : entry.kind === 'wake'
+                ? entry.wake.scheduleId
+                : entry.message.messageId
       )
     ).toEqual(['publication-2', 'ask-1', 'publication-1', 'ask-2']);
     expect(a[0]).toBe(laterAsk);

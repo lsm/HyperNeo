@@ -420,6 +420,24 @@ export function NeoLive() {
               sessionId={neo.sessionId}
               replyLabels={replyLabels}
               publicConversation={publicConversation}
+              onOpenWork={(anchor) => {
+                setChat(null);
+                setScenesOpen(true);
+                requestAnimationFrame(() => {
+                  const owner = (view?.todoAsks ?? []).find(
+                    ({ ask, todos, questions }) =>
+                      anchor === `neo-ref-ask-${ask.id}` ||
+                      todos.some((todo) => anchor === `neo-ref-todo-${todo.id}`) ||
+                      questions.some((question) => anchor === `neo-ref-question-${question.id}`)
+                  );
+                  const card = owner && document.getElementById(`neo-ref-ask-${owner.ask.id}`);
+                  if (!document.getElementById(anchor))
+                    card?.querySelector<HTMLButtonElement>('[data-ask-details-toggle]')?.click();
+                  requestAnimationFrame(() =>
+                    (document.getElementById(anchor) ?? card)?.scrollIntoView({ block: 'center' })
+                  );
+                });
+              }}
               onRetryPublic={retryPublicConversation}
               busy={neoBusyWords(
                 neo.snapshot?.working ?? [],

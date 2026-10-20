@@ -3,7 +3,7 @@ import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NeoPublicConversation } from '../NeoPublicConversation.tsx';
-import { presentNeoPublicConversation } from '../public-conversation.ts';
+import { projectNeoPublicConversation } from '../public-conversation.ts';
 import { locale } from '../../lib/i18n/index.ts';
 
 const id = '10000000-0000-4000-8000-000000000001';
@@ -56,7 +56,7 @@ const conversation = (wakes = [wake], publications = [publication]) => {
     },
     wakes,
   };
-  return presentNeoPublicConversation(sources);
+  return projectNeoPublicConversation(root, sources.asks, sources.publications, [], [], wakes);
 };
 const originalLocale = locale.value;
 afterEach(() => {
@@ -116,6 +116,17 @@ describe('scheduled wake disclosures in the public conversation', () => {
     ).toBeNull();
     expect(container.querySelector('[data-message-ref="other"]')).toBeTruthy();
   });
+  it('orders wake rows by immutable fired time and distinguishes repeated fires of a schedule', () => {
+    const first = conversation([wake, { ...wake, firedAt: firedAt + 5000, settledAt: null }]);
+    expect(first.entries.map((entry) => entry.kind)).toEqual(['wake', 'publication', 'wake']);
+    const keys = first.entries.filter((entry) => entry.kind === 'wake').map((entry) => entry.key);
+    expect(new Set(keys).size).toBe(2);
+    const settled = conversation([
+      { ...wake, settledAt: firedAt + 10000, summary: 'Updated closing line.' },
+    ]);
+    expect(settled.entries.find((entry) => entry.kind === 'wake')?.key).toBe(keys[0]);
+  });
+
   it('uses Chinese labels for an active wake', () => {
     locale.value = 'zh-Hans';
     const { container } = render(
@@ -123,6 +134,6 @@ describe('scheduled wake disclosures in the public conversation', () => {
         conversation={conversation([{ ...wake, settledAt: null, additions: [] }], [])}
       />
     );
-    expect(container.querySelector('summary')?.textContent).toContain('正在处理');
+    expect(container.querySelector('summary')?.textContent).toContain('正在做…');
   });
 });
