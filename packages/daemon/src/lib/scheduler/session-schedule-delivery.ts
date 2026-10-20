@@ -11,6 +11,7 @@ import { renderAddress } from '../mailbox/address.ts';
 import { invokeOperation } from '../operations/invoke.ts';
 import type { OperationRegistry } from '../operations/registry.ts';
 import { hyperneoWorkStatus } from '../drivers/hyperneo-adapter.ts';
+import { neoSessionStatus } from '../neo/session-status.ts';
 
 export function createScheduleDelivery(db: Database, registry: () => OperationRegistry) {
   const caller = { source: 'internal' as const, role: 'neo' as const };
@@ -32,10 +33,7 @@ export function createScheduleDelivery(db: Database, registry: () => OperationRe
         const session = db.getSession(ref.id);
         if (!session) return 'not_found';
         if (sessionUnavailable(session.status)) return 'not_open';
-        return hyperneoWorkStatus(
-          session.status,
-          session.processingState ? JSON.parse(session.processingState).status : null
-        );
+        return hyperneoWorkStatus(session.status, neoSessionStatus(session.processingState));
       }
       const result = await invoke('work.status', { ref });
       if (!result.ok) return result.reason === 'not_found' ? 'not_found' : 'not_open';
