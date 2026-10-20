@@ -12,6 +12,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
+import { open } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import type { Database } from '../storage/database.ts';
 
@@ -170,7 +171,7 @@ export function removeToolResultFromSessionFile(
       return false;
     }
 
-    writeFileSync(sessionFile, `${updatedLines.join('\n')}\n`, 'utf-8');
+    rewriteSessionFile(sessionFile, `${updatedLines.join('\n')}\n`);
 
     return true;
   } catch {
@@ -291,7 +292,7 @@ export function sanitizeAssistantUsageInSDKSessionFile(
     }
 
     if (changed) {
-      writeFileSync(sessionFile, lines.join('\n'), 'utf-8');
+      rewriteSessionFile(sessionFile, lines.join('\n'));
     }
   } catch (error) {
     result.success = false;
@@ -301,72 +302,121 @@ export function sanitizeAssistantUsageInSDKSessionFile(
   return result;
 }
 
-export function validateSDKSessionFile(
+const VALIDATE_CHUNK_BYTES = 8 * 1024 * 1024;
+
+interface ValidatedSessionFile {
+  ino: number;
+  offset: number;
+  head: Buffer;
+  tail: Buffer;
+  lines: number;
+  toolUseIds: Set<string>;
+  pending: SDKSessionValidationResult['orphanedToolResults'];
+}
+
+const validatedSessionFiles = new Map<string, ValidatedSessionFile>();
+
+function rewriteSessionFile(path: string, content: string): void {
+  writeFileSync(path, content, 'utf-8');
+  validatedSessionFiles.delete(path);
+}
+
+function scanSessionLine(state: ValidatedSessionFile, line: string, errors: string[]): void {
+  if (!line.trim()) return;
+  const lineIndex = state.lines++;
+  if (!line.includes('"tool_use"') && !line.includes('"tool_result"')) return;
+  try {
+    const message = JSON.parse(line) as SDKFileMessage;
+    for (const block of message.message?.content ?? []) {
+      if (message.type === 'assistant' && block.type === 'tool_use' && block.id)
+        state.toolUseIds.add(block.id);
+      if (message.type === 'user' && block.type === 'tool_result' && block.tool_use_id)
+        state.pending.push({
+          toolUseId: block.tool_use_id,
+          messageUuid: message.uuid || 'unknown',
+          lineIndex,
+        });
+    }
+  } catch (parseError) {
+    errors.push(`Failed to parse line ${lineIndex}: ${parseError}`);
+  }
+}
+
+export async function validateSDKSessionFile(
   workspacePath: string,
   sdkSessionId: string
-): SDKSessionValidationResult {
-  const result: SDKSessionValidationResult = {
-    valid: true,
-    orphanedToolResults: [],
-    errors: [],
-  };
-
+): Promise<SDKSessionValidationResult> {
+  const result: SDKSessionValidationResult = { valid: true, orphanedToolResults: [], errors: [] };
+  const sessionFile = getSDKSessionFilePath(workspacePath, sdkSessionId);
   try {
-    const sessionFile = getSDKSessionFilePath(workspacePath, sdkSessionId);
-
-    if (!existsSync(sessionFile)) {
-      return result;
-    }
-
-    const content = readFileSync(sessionFile, 'utf-8');
-    const lines = content.split('\n').filter((line) => line.trim());
-
-    const toolUseIds = new Set<string>();
-    const toolResultRefs: Array<{
-      toolUseId: string;
-      messageUuid: string;
-      lineIndex: number;
-    }> = [];
-
-    for (let i = 0; i < lines.length; i++) {
-      try {
-        const message = JSON.parse(lines[i]) as SDKFileMessage;
-
-        if (message.type === 'assistant' && message.message?.content) {
-          for (const block of message.message.content) {
-            if (block.type === 'tool_use' && block.id) {
-              toolUseIds.add(block.id);
-            }
-          }
-        }
-
-        if (message.type === 'user' && message.message?.content) {
-          for (const block of message.message.content) {
-            if (block.type === 'tool_result' && block.tool_use_id) {
-              toolResultRefs.push({
-                toolUseId: block.tool_use_id,
-                messageUuid: message.uuid || 'unknown',
-                lineIndex: i,
-              });
-            }
-          }
-        }
-      } catch (parseError) {
-        result.errors.push(`Failed to parse line ${i}: ${parseError}`);
+    if (!existsSync(sessionFile)) return result;
+    const { ino, size } = statSync(sessionFile);
+    const known = validatedSessionFiles.get(sessionFile);
+    validatedSessionFiles.delete(sessionFile);
+    const handle = await open(sessionFile, 'r');
+    try {
+      const head = Buffer.alloc(known ? known.head.length : 0);
+      const tail = Buffer.alloc(known ? known.tail.length : 0);
+      if (known && known.ino === ino && known.offset <= size) {
+        await handle.read(head, 0, head.length, 0);
+        await handle.read(tail, 0, tail.length, known.offset - tail.length);
       }
-    }
-
-    for (const ref of toolResultRefs) {
-      if (!toolUseIds.has(ref.toolUseId)) {
-        result.orphanedToolResults.push(ref);
-        result.valid = false;
+      const state: ValidatedSessionFile =
+        known &&
+        known.ino === ino &&
+        known.offset <= size &&
+        head.equals(known.head) &&
+        tail.equals(known.tail)
+          ? known
+          : {
+              ino,
+              offset: 0,
+              head: Buffer.alloc(0),
+              tail: Buffer.alloc(0),
+              lines: 0,
+              toolUseIds: new Set(),
+              pending: [],
+            };
+      let buffer = Buffer.alloc(Math.min(VALIDATE_CHUNK_BYTES, Math.max(1, size - state.offset)));
+      let partial = '';
+      while (state.offset < size) {
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, state.offset);
+        if (bytesRead === 0) break;
+        const chunk = buffer.subarray(0, bytesRead);
+        const end = chunk.lastIndexOf(0x0a);
+        if (end < 0 && state.offset + bytesRead >= size) {
+          partial = chunk.toString('utf8');
+          break;
+        }
+        if (end < 0) {
+          buffer = Buffer.alloc(buffer.length * 2);
+          continue;
+        }
+        for (const line of chunk.subarray(0, end).toString('utf8').split('\n'))
+          scanSessionLine(state, line, result.errors);
+        state.offset += end + 1;
       }
+      state.head = Buffer.alloc(Math.min(64, state.offset));
+      await handle.read(state.head, 0, state.head.length, 0);
+      state.tail = Buffer.alloc(Math.min(64, state.offset));
+      await handle.read(state.tail, 0, state.tail.length, state.offset - state.tail.length);
+      state.pending = state.pending.filter((ref) => !state.toolUseIds.has(ref.toolUseId));
+      validatedSessionFiles.set(sessionFile, state);
+      const view = partial
+        ? { ...state, toolUseIds: new Set(state.toolUseIds), pending: [...state.pending] }
+        : state;
+      if (partial) scanSessionLine(view, partial, result.errors);
+      result.orphanedToolResults = view.pending.filter(
+        (ref) => !view.toolUseIds.has(ref.toolUseId)
+      );
+      result.valid = result.orphanedToolResults.length === 0;
+    } finally {
+      await handle.close();
     }
   } catch (error) {
     result.valid = false;
     result.errors.push(`Validation error: ${error}`);
   }
-
   return result;
 }
 
@@ -386,12 +436,12 @@ function backupSDKSessionFile(sessionFilePath: string): string | null {
   }
 }
 
-export function repairSDKSessionFile(
+export async function repairSDKSessionFile(
   workspacePath: string,
   sdkSessionId: string,
   kaiSessionId: string,
   db: Database
-): SDKSessionRepairResult {
+): Promise<SDKSessionRepairResult> {
   const result: SDKSessionRepairResult = {
     success: false,
     backupPath: null,
@@ -400,7 +450,7 @@ export function repairSDKSessionFile(
   };
 
   try {
-    const validation = validateSDKSessionFile(workspacePath, sdkSessionId);
+    const validation = await validateSDKSessionFile(workspacePath, sdkSessionId);
 
     if (validation.valid) {
       result.success = true;
@@ -494,7 +544,7 @@ export function repairSDKSessionFile(
       lines.splice(insertion.lineIndex, 0, insertion.message);
     }
 
-    writeFileSync(sessionFile, `${lines.join('\n')}\n`, 'utf-8');
+    rewriteSessionFile(sessionFile, `${lines.join('\n')}\n`);
 
     result.success = result.repairedCount > 0;
   } catch (error) {
@@ -504,24 +554,24 @@ export function repairSDKSessionFile(
   return result;
 }
 
-export function validateAndRepairSDKSession(
+export async function validateAndRepairSDKSession(
   workspacePath: string,
   sdkSessionId: string,
   kaiSessionId: string,
   db: Database
-): boolean {
+): Promise<boolean> {
   const sessionFile = getSDKSessionFilePath(workspacePath, sdkSessionId);
   if (!existsSync(sessionFile)) {
     return false;
   }
 
-  const validation = validateSDKSessionFile(workspacePath, sdkSessionId);
+  const validation = await validateSDKSessionFile(workspacePath, sdkSessionId);
 
   if (validation.valid) {
     return true;
   }
 
-  const repair = repairSDKSessionFile(workspacePath, sdkSessionId, kaiSessionId, db);
+  const repair = await repairSDKSessionFile(workspacePath, sdkSessionId, kaiSessionId, db);
 
   if (repair.success) {
     return true;
@@ -765,7 +815,7 @@ export function stripThinkingBlocksFromSessionFile(
     if (modified) {
       result.backupPath = backupSDKSessionFile(sessionFile);
 
-      writeFileSync(sessionFile, `${updatedLines.join('\n')}\n`, 'utf-8');
+      rewriteSessionFile(sessionFile, `${updatedLines.join('\n')}\n`);
       result.stripped = true;
     }
   } catch {}
@@ -825,7 +875,7 @@ export function truncateSessionFileAtMessage(
     const linesRemoved = lines.length - truncateIndex;
 
     const newContent = keptLines.length > 0 ? `${keptLines.join('\n')}\n` : '';
-    writeFileSync(filePath, newContent);
+    rewriteSessionFile(filePath, newContent);
 
     return { truncated: true, linesRemoved };
   } catch {
