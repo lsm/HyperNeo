@@ -1,5 +1,5 @@
 import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-const [port, run] = process.argv.slice(2);
+const [port, run, mode = 'normal'] = process.argv.slice(2);
 if (!port || !run || port === '8399') throw new Error('usage: neo-home-save.ts <test-port> <run-dir>');
 const log = await readFile(`${run}/daemon.log`, 'utf8');
 if (!log.includes('HyperNeo Test Server') || !log.includes(`Database: ${run}/data/daemon.db`)) throw new Error('Not an isolated test daemon');
@@ -24,6 +24,26 @@ const first = await rpc(input);
 await writeFile(`${run}/evidence/neo-home-save.json`, JSON.stringify({ first }, null, 2));
 if (!first.ok) throw new Error(JSON.stringify(first));
 const head = await git('rev-parse', 'HEAD');
+if (mode === 'unicode') {
+  const invalid = { ...input, path: 'surrogate.md', content: '\ud800' };
+  const firstInvalid = await rpc(invalid);
+  const repeatInvalid = await rpc(invalid);
+  const invalidBytes = await readFile(`${root}/surrogate.md`).catch(() => null);
+  const afterInvalidHead = await git('rev-parse', 'HEAD');
+  const original = new Uint8Array([0xff, 0xc3, 0x28]);
+  await writeFile(`${root}/legacy.md`, original);
+  await git('add', 'legacy.md');
+  await git('commit', '-m', 'Synthetic legacy bytes');
+  await git('config', 'user.name', '');
+  await git('config', 'user.email', '');
+  const failure = await rpc({ ...input, path: 'legacy.md' });
+  const after = await readFile(`${root}/legacy.md`);
+  const evidence = { mode, firstInvalid, repeatInvalid, invalidHex: invalidBytes?.toString('hex') ?? null, head, afterInvalidHead, failure, original: [...original], after: [...after], status: await git('status', '--porcelain') };
+  await writeFile(`${run}/evidence/neo-home-save.json`, JSON.stringify(evidence, null, 2));
+  if (firstInvalid.ok || !firstInvalid.reason?.includes('Unicode') || repeatInvalid.ok || invalidBytes || head !== afterInvalidHead || !String(failure.error).includes('Author identity unknown') || JSON.stringify(evidence.original) !== JSON.stringify(evidence.after) || evidence.status) throw new Error('Unicode/byte preservation contract failed');
+  console.log('PASS: malformed Unicode is refused unchanged and failed save preserves every original non-UTF-8 byte.');
+  process.exit(0);
+}
 const repeat = await rpc(input);
 const commits = await git('rev-list', '--count', 'HEAD');
 const committedPaths = await git('show', '--format=', '--name-only', 'HEAD');

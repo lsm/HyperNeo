@@ -82,6 +82,18 @@ describe('Neo home save', () => {
     expect(await git('rev-list', '--count', 'HEAD')).toBe('2');
     expect(await git('status', '--porcelain')).toBe('');
   });
+  test.each(['\ud800', '\udc00'])(
+    'refuses malformed Unicode without changing HEAD',
+    async (content) => {
+      const before = await git('rev-parse', 'HEAD');
+      expect(await save({ path: 'surrogate.md', content })).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('Unicode'),
+      });
+      expect(await git('rev-parse', 'HEAD')).toBe(before);
+      expect(await git('status', '--porcelain')).toBe('');
+    }
+  );
   test.each([
     '-----BEGIN OPENSSH PRIVATE KEY-----\nsynthetic\n-----END OPENSSH PRIVATE KEY-----',
     'sk-' + 'a'.repeat(32),
@@ -168,12 +180,18 @@ describe('Neo home save', () => {
     expect(await readFile(join(root, 'README.md'), 'utf8').catch(() => null)).toBeNull();
     expect(await readFile(join(root, '.git', 'HEAD'), 'utf8').catch(() => null)).toBeNull();
   });
-  test.each(['existing', 'new'])(
+  test.each(['existing', 'new', 'non-UTF-8'])(
     'restores only its own %s document after commit failure',
     async (state) => {
       if (state === 'existing') {
         await save({ path: 'digest.md', content: 'Original bytes.\n' });
       }
+      if (state === 'non-UTF-8') {
+        await writeFile(join(root, 'digest.md'), new Uint8Array([0xff, 0xc3, 0x28]));
+        await git('add', 'digest.md');
+        await git('commit', '-m', 'Synthetic legacy bytes');
+      }
+      const original = await readFile(join(root, 'digest.md')).catch(() => null);
       const before = await git('rev-parse', 'HEAD');
       await git('config', 'user.name', '');
       await git('config', 'user.email', '');
@@ -182,9 +200,7 @@ describe('Neo home save', () => {
       );
       expect(await git('rev-parse', 'HEAD')).toBe(before);
       expect(await git('status', '--porcelain')).toBe('');
-      expect(await readFile(join(root, 'digest.md'), 'utf8').catch(() => null)).toBe(
-        state === 'existing' ? 'Original bytes.\n' : null
-      );
+      expect(await readFile(join(root, 'digest.md')).catch(() => null)).toEqual(original);
     }
   );
   test('reports an invalid filesystem name without changing the repository', async () => {
