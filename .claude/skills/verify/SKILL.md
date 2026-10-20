@@ -24,6 +24,42 @@ root of your worktree.
   `<run>/pr.json`, refuses everything else (including `gh auth token`) and logs
   every call to `<run>/evidence/gh.log`. Nothing reaches github.com.
 
+## Recovery expiry responsiveness
+
+Run a fresh isolated daemon without provider keys. The helper seeds 22,287
+synthetic recovery records (22,269 consumed / 18 expired), matching the observed
+production status counts, with no eligible expiry rows. It probes `system.health`
+over the real WebSocket while the maintenance operation runs on the main DB.
+The extra Python connection holds a synthetic WAL writer lock for 1.2 seconds.
+It never opens the real DB. All helper-owned processes and the daemon close in
+`finally`.
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-expiry-proof-XXXXXX)
+mkdir -p "$RUN/home"
+env -i HOME="$RUN/home" PATH="$(dirname "$(command -v bun)"):/usr/bin:/bin" \
+  NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/recovery-expiry.ts verify 9335 "$RUN" expiry
+```
+
+`evidence/verify.json` must show covering-index checks, no expiry UPDATE during
+the empty sweep, a health reply below 250 ms, and event-loop lag below 1 s.
+After releasing the lock, it also expires an actual mapping and inbox request,
+retaining the entire request and its existing reason. Unit boundary/status/
+count/retention/upgrade contracts run only in CI. This proves the focused expiry
+path, not the performance of every other writer in the daemon.
+
+On the contract-test commit before the fix, `reproduce` with scope `full-tick`
+records the recovery UPDATE blocking over 250 ms and the delayed health reply.
+On fixed code, repeat `verify` with scope `full-tick` in another fresh directory:
+its saved report can still fail because the following `space_external_events`
+expiry performs an unrelated empty UPDATE under the same held writer lock.
+Report that remaining failure explicitly; do not treat the focused expiry pass
+as whole-tick acceptance. That wider contention fix is a separate item. A
+controlled synthetic lock reproduces a possible cause; it does not identify the
+writer responsible for an historical production event. No GUI or model turn is
+part of this maintenance journey.
+
 ## Launch
 
 ```bash
@@ -901,3 +937,25 @@ other feed kinds remain searchable and vanished-feed callers await cleanup.
 Measurements establish the tested synthetic workloads, not a physical upper
 bound on disk I/O or deployed performance. Keep both JSON reports and the exact
 command as PR evidence; stored source data is never deleted.
+
+### Search index insert latency (journey 29)
+
+Index synthetic messages into an isolated daemon that runs its own background
+FTS merges, then keep writing while the space tick's expiry UPDATE runs:
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-fts-merge-XXXXXX)
+env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
+  bun .claude/skills/verify/fts-merge-lag.ts 9349 "$RUN" 500000 256 45
+```
+
+Arguments after the run dir: rows (500,000, about the iMac's index), words per
+body (64 ≈ the live average, 256 for 4x bodies) and seconds of steady writes. The
+helper inserts in 200-row transactions that yield between batches, samples the
+event loop every 10 ms, times 20 search queries, then runs the
+`space_external_events` expiry UPDATE plus a 20-row index write every 100 ms.
+
+End state: `observed.json` shows `index.worstBatchMs` and both `maxLagMs` below
+1,000 ms at 256 words, and the same `searchAfterIndexing.totalMatches` before and
+after a change. With `crisismerge` 64 the 256-word worst batch was 1,859 ms (an
+FTS5 crisis merge inside the insert); with 16 it was 434 ms.
