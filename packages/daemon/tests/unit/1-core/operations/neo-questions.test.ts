@@ -296,7 +296,7 @@ describe('NeoAskTodoRepository start question pruning', () => {
     expect(store.getQuestion('q-start')).toMatchObject({ state: 'open', startTodos: ['t2'] });
   });
 
-  test('a todo started elsewhere or moved to another ask leaves it too', () => {
+  test('a todo started elsewhere or moved to another ask leaves it, and a moved one is asked there', () => {
     const { store, fix, rows } = setup();
     startQuestion(store, [fix.id, rows.id]);
     store.claimStart(fix, 2);
@@ -312,6 +312,9 @@ describe('NeoAskTodoRepository start question pruning', () => {
     });
     store.moveTodo(rows, 'other', 'lsm/other', 3);
     expect(store.getQuestion('q-start')).toMatchObject({ state: 'retired', startTodos: [] });
+    expect(store.listQuestions('other')).toMatchObject([
+      { kind: 'start', state: 'open', startTodos: ['t2'], text: 'Start "Todo rows"?' },
+    ]);
   });
 
   test('once every todo it lists is done or removed, it is retired and the ask stops waiting', () => {
