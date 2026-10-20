@@ -1,6 +1,6 @@
-# Pack preferences and human holds
+# Pack settings, conventions and human holds
 
-Status: design for approval (question 087e13b7). No code until the human approves it.
+Status: design for approval (question 087e13b7, revised with the human). No code until the human approves it.
 
 ## Problem
 
@@ -25,33 +25,40 @@ That 20 minutes is exactly the sweep's `approved_green` deadline. The first wron
 - `pr-events.ts:29-31` sends the owner "is approved and green … Merge it now" the moment the state appears.
 - `pr-sweep.ts:7` sets a 20-minute deadline for `approved_green`, and `pr-sweep.ts:46` repeats "Merge it now with a manual squash". The sweep (`sweepCodingPrs`, `pr-sweep.ts:113-137`) has no notion of a PR held for the human.
 
-## Pack preferences (core)
+## Two kinds of thing
 
-A pack declares its preferences next to its other hooks. A new optional field goes on `NeoPack` (`packages/daemon/src/lib/neo/packs/types.ts:60`):
+1. **Settings** are structured and enforced by code. A pack declares typed values in code, and the daemon acts on them directly. For coding they are `mergePolicy` and `humanSignoff`. The first-use question is only how a value gets collected.
+2. **Conventions** are open and meant for agents. A convention is a rule the settings don't cover, in the human's own words, scoped to global, a pack, or a pack plus an object. Code doesn't enforce them; they're added to the instruction of matching work.
+
+Growth path: a convention that keeps mattering and can be checked in code is turned into a setting by a developer. There are no user-defined setting fields, no settings UI panel, and no generic question engine.
+
+## Settings (core)
+
+A pack declares its settings next to its other hooks, as a new optional field on `NeoPack` (`packages/daemon/src/lib/neo/packs/types.ts:60`):
 
 ```ts
 preferences?: Record<string, {
   scope: 'global' | 'repo' | 'project';
-  schema: z.ZodType;          // validates stored and incoming values
-  default: unknown;           // used only after the human chose "use the default"
-  question: string;           // what Neo asks on first use in a scope
+  type:                        // closed set; no free-form fields
+    | { kind: 'enum'; values: readonly string[] }
+    | { kind: 'boolean' }
+    | { kind: 'number'; min?: number; max?: number }
+    | { kind: 'globs' };
+  default: unknown;            // offered first in the question; never applied silently
+  ask: string;                 // one-line wording for the first-use question
 }>;
 ```
 
-The core stores and serves values. It knows nothing about any pack's meaning. Lookup order: the exact scope, then `global` for that pack. A missing value counts as **unanswered**, not as the default.
+The core stores and serves values, and knows nothing about any pack's meaning. Lookup order: the exact scope, then `global` for that pack. A missing value counts as **unanswered**, not as the default.
 
-| Pack | Example preferences |
-|---|---|
-| Coding | per repo: merge policy and human sign-off; see below |
-| Live admin | global or per project, for example whether Neo may restart a daemon without asking |
-| Future packs | declare their own; nothing in the core changes |
+The first-use question is **generated from the declaration** and sent through the existing `neo.question.ask`. An enum becomes a choice question, a boolean a yes/no question, and globs and numbers a reply question validated against the type. There is no separate question system.
 
-## Coding pack preferences (scope: repo)
+## Coding settings (scope: repo)
 
 | Key | Values | Meaning |
 |---|---|---|
 | `mergePolicy` | `review_bot` with a `bot` login, `ci_only`, or `human` | `review_bot`: the bot's approval of the exact head plus green CI. `ci_only`: green CI with no review. `human`: the human reviews and merges or says so. |
-| `humanSignoff` | path globs plus labels, for example `docs/design/**`, `docs/architecture/**`, label `needs-human` | A PR that touches a matching path or carries a matching label is held for the human whatever the merge policy. |
+| `humanSignoff` | `globs`: path globs, plus `label:<name>` entries for labels, for example `docs/design/**`, `docs/architecture/**`, `label:needs-human` | A PR that touches a matching path or carries a matching label is held for the human whatever the merge policy. |
 
 **Where paths and labels come from.** The ledger's GraphQL read (`CODING_LEDGER_QUERY`, `pr-ledger.ts:101-115`) fetches neither today.
 
@@ -70,7 +77,7 @@ A PR the policy doesn't yet allow to merge shows `waiting_human`, and the sweep 
 
 ## First use and seeding
 
-**First use.** The first time the coding pack acts in a repo that has no stored `mergePolicy`, Neo asks the human one choice question. The options are the three policies, with the repo's apparent current practice shown first, and the answer is stored. Until it's answered the repo is treated as `human`: no merge nudges for that repo. One question per scope, never repeated once answered.
+**First use.** The first time the coding pack acts in a repo with no stored `mergePolicy`, Neo asks the generated question once, with the repo's apparent current practice offered first, and stores the answer. Until it's answered the repo is treated as `human`: no merge nudges there. Once answered, it's never asked again. This replaces the prompt-only question in `instructions.md:21-27`.
 
 **Seeding.** A one-time seed writes today's practice (`set_by = 'seed'`), so these repos never ask:
 
@@ -107,7 +114,7 @@ A new head commit does not lift a hold.
 
 The question-answer path gets a generic pack hook, `onQuestionAnswered(question)` (core, no PR knowledge). The coding pack uses it to look up holds by `question_id`.
 
-## Storage, surface, UI
+## Storage and operations
 
 **Storage.** Core table `neo_pack_preferences(pack, scope_kind, scope_key, key, value_json, set_by, set_at, PRIMARY KEY(pack, scope_kind, scope_key, key))`, a numbered migration that takes the next free number after the newest on dev and in open PRs. Holds live in the coding pack's own schema (`packs/coding/schema/coding-tables.ts`, `CREATE TABLE IF NOT EXISTS`).
 
@@ -115,14 +122,24 @@ The question-answer path gets a generic pack hook, `onQuestionAnswered(question)
 
 | Operation | Who may call it |
 |---|---|
-| `pack.preferences.list`, `pack.preferences.get` | Read-only; anyone. |
-| `pack.preferences.set` | `safetyClass: 'human_only'`, like `neo.preferences.set` (`model-preference.ts:115`). It validates against the pack's schema and records `set_by`. |
+| `pack.preferences.list`, `pack.preferences.get` | Read-only; anyone. Values also appear in `neo.snapshot`, so the human sees them through Neo. |
+| `pack.preferences.set` | `safetyClass: 'human_only'`, like `neo.preferences.set` (`model-preference.ts:115`). It validates against the declared type and records `set_by`. |
 | `pack.coding.pr.hold` | Any agent; holding only adds safety. |
 | `pack.coding.pr.release` | `human_only`. |
 
-Without that restriction an agent could loosen its own repo's policy or clear `humanSignoff`, recreating the failure this design prevents. Two values are written outside the operation: the first-use answer, through the human's answer to Neo's question, and the one-time seed, from the migration. Neo and workers can't change a preference or lift a hold themselves. A hold also lifts automatically when the human answers its linked question.
+Without that restriction an agent could loosen its own repo's policy or clear `humanSignoff`, recreating the failure this design prevents. Two values are written outside the operation: the first-use answer, through the human's answer to the generated question, and the one-time seed, from the migration. Neo and workers can't change a setting or lift a hold themselves. A hold also lifts automatically when the human answers its linked question. There's no settings panel: the human changes a setting by telling Neo, which asks the question or calls `set` on the human's turn.
 
-**UI.** Web gets a "Packs" settings panel listing each pack, its scopes (repos for coding) and current values, with edit controls that call the same operations. iOS reads and edits through the same operations. That UI lives in the private neo-ios repo; this doc defines only the contract.
+## Conventions
+
+A convention is built on the existing `neo.rule.save` (`packages/daemon/src/lib/neo/operations.ts:499-535`), not as a new mechanism.
+
+**What stays the same.** It's still admitted only on the human's own turn (`operations.ts:292`) and still requires a `from` quote of the human's exact words (`requireNeoRuleCitation`). Today a rule is a plain string in global settings (`neo.standingRules`).
+
+**What's added:**
+
+- **Scope.** The input gains an optional scope `{ pack?, object? }`, for example `{ pack: 'coding' }` or `{ pack: 'coding', object: 'lsm/research' }`. A stored rule becomes `{ text, pack?, object? }`; existing string rules read as global. The 20-rule and 500-character limits apply per scope.
+- **Delivery.** When Neo hands out work, `neoTodoCard` (`packages/daemon/src/lib/neo/todo-runner.ts:69-77`), which already joins the todo instruction with the pack's `workerRules`, also appends the conventions matching that work. A pack names the object a todo belongs to through a small hook, `conventionObject(todo)`; for coding that's the todo's repo. Global conventions stay in Neo's own snapshot, as today.
+- **Origin.** Conventions come only from the human's words; agents never write them.
 
 ## Tests (what a user can observe)
 
@@ -130,18 +147,21 @@ Without that restriction an agent could loosen its own repo's policy or clear `h
 - **Sign-off match:** a PR matching `humanSignoff` in a `review_bot` repo shows `waiting_human`, the owner gets no merge text, and the snapshot shows the hold.
 - **Lifting:** answering the linked question "yes" lifts the hold and allows the merge nudge; "no" keeps it and tells the owner.
 - **First use:** one question per new repo, none after it's answered, and no merge nudges before the answer.
+- **Conventions:** a convention saved for `coding` + `lsm/research` appears in the instruction of a coding todo for lsm/research, not in one for lsm/qlark. A save without the human's quoted words is refused.
 - **qlark#19 replay:** reproduced first. Same timeline with `docs/design/**` held: no merge nudge at +20 min.
 
 ## Slices (each about 100–200 production lines, built from fresh dev; Build and Wire kept apart per ADR 0004)
 
-1. **Build core preferences.** `NeoPack.preferences` type, the `neo_pack_preferences` migration, repository and lookup.
-2. **Build the operations.** `pack.preferences.*` with `set` human-only, plus the one-time seed for the four repos.
+The qlark#19 prevention, slices 1–7, comes first: policy-aware readiness, then holds, then lifting a hold when the human answers.
+
+1. **Build core settings.** `NeoPack.preferences` declaration type, the `neo_pack_preferences` migration, lookup, and the one-time seed for the four repos.
+2. **Wire policy-aware ledger state** and `waiting_human`. The qlark#19 replay test is committed failing first. Repos without a stored policy count as `human`.
 3. **Build PR labels and paths.** Labels in the ledger query; the per-new-head paths read under the rate budget; `paths_json` and `paths_head` on the ledger row.
-4. **Wire policy-aware ledger state** and `waiting_human`. The qlark#19 replay test is committed failing first.
-5. **Build holds.** The table, plus `pack.coding.pr.hold` and the human-only `pack.coding.pr.release`; nothing reads them yet.
-6. **Wire holds into the sweep and events.** Held PRs get no merge text and no reminders, and the owner is told once.
-7. **Build the `onQuestionAnswered` core hook.** Nothing calls it yet.
-8. **Wire question-linked holds.** Hold creation opens the linked question, and the hook lifts or keeps the hold.
-9. **Wire the first-use question** for repos with no stored policy, written through the human's answer.
-10. **Web Packs panel**, with the verify-skill journey added in the same PR.
+4. **Build holds.** The table, plus `pack.coding.pr.hold` and the human-only `pack.coding.pr.release`; nothing reads them yet.
+5. **Wire holds into the sweep and events**, including automatic holds from `humanSignoff`. Held PRs get no merge text and no reminders, and the owner is told once.
+6. **Build the `onQuestionAnswered` core hook.** Nothing calls it yet.
+7. **Wire question-linked holds.** Hold creation opens the linked question, and the human's answer lifts or keeps the hold.
+8. **Build the settings operations** (`pack.preferences.*`, `set` human-only), with the values in `neo.snapshot`.
+9. **Wire the generated first-use question** for repos with no stored policy.
+10. **Build scoped conventions** in `neo.rule.save` (scope input and storage) and **wire their delivery** into `neoTodoCard`. If it exceeds the slice budget, split Build and Wire.
 11. **Delete the merge-rule text** from `packs/coding/instructions.md:18-27`, once the daemon enforces it.
