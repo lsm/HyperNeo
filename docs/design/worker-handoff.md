@@ -110,7 +110,10 @@ to the session and uses SDK sequence anchors, preserving the selected window
 across later appends. Text chunks budget 16,000 serialized UTF-8 bytes to stay
 below the SDK tool-output persistence threshold. Reassemble a message's chunks
 in cursor order; whitespace and Unicode are preserved. `complete` describes the
-retrieved history window, not task completion. An unavailable anchor returns
+retrieved history window, not task completion. Result matching inspects the selected
+page plus at most 16 preceding records and does not cross a distinct visible
+result. Unscanned history remains available through cursors; an exhausted
+continuation is `complete` even when its final page contains only textless rows. An unavailable anchor returns
 `reply_unavailable`; an external driver's existing indexed source is unchanged.
 
 ## Small PR sequence and acceptance

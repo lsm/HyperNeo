@@ -105,34 +105,33 @@ export function readWorkTurnPage(
       ...select('seq>=?', [anchor.seq], after + 1),
     ];
   } else rows = select('1', [], size, true).reverse();
-  if (!rows.length) return unavailable;
+  if (!rows.length) return cursor ? { turns: [], availability: 'complete' } : unavailable;
+  const context = rows.some((row) => row.message_type === 'result')
+    ? [...select('seq<?', [rows[0].body_seq], 16, true).reverse(), ...rows]
+    : rows;
+  const values = new Map(context.map((row) => [row.body_seq, text(row)]));
   const through = cursor?.resume?.through ?? rows.at(-1)!.body_seq;
   let boundary = cursor?.resume ? cursor.before : rows[0].body_seq;
   const turns: Turn[] = [];
   const seen = new Set<string>();
   let remaining = 16_000;
   for (let row of rows) {
-    let value = text(row);
+    let value = values.get(row.body_seq)!;
     if (row.message_type === 'result') {
-      let prior = row.body_seq;
-      let searching = true;
-      while (searching) {
-        const previous = select("seq<? AND message_type!='result'", [prior], 16, true);
-        if (!previous.length) break;
-        for (const candidate of previous) {
-          prior = candidate.body_seq;
-          const candidateText = text(candidate);
-          if (!candidateText.trim()) continue;
-          searching = false;
-          if (
-            candidate.message_type === 'assistant' &&
-            (!value.trim() || candidateText.trim() === value.trim())
-          ) {
-            row = candidate;
-            value = candidateText;
-          }
+      for (const candidate of context
+        .filter((prior) => prior.body_seq < row.body_seq)
+        .slice(-16)
+        .reverse()) {
+        const candidateText = values.get(candidate.body_seq)!;
+        if (!candidateText.trim()) continue;
+        if (
+          candidate.message_type === 'user' ||
+          (value.trim() && candidateText.trim() !== value.trim())
+        )
           break;
-        }
+        row = candidate;
+        value = candidateText;
+        if (candidate.message_type === 'assistant') break;
       }
     }
     if (!value.trim() || seen.has(row.id) || (cursor?.resume && row.body_seq < cursor.resume.seq))
@@ -187,7 +186,11 @@ export function readWorkTurnPage(
   const earlier = select('seq<?', [boundary], 1, true).length > 0;
   return {
     turns,
-    availability: earlier ? 'incomplete' : turns.length ? 'complete' : 'reply_unavailable',
+    availability: earlier
+      ? 'incomplete'
+      : turns.length || cursor
+        ? 'complete'
+        : 'reply_unavailable',
     ...(earlier ? { nextCursor: { sessionId, before: boundary } } : {}),
   };
 }
