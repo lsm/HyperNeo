@@ -71,7 +71,7 @@ try {
   await app.spaceRuntimeService.ready();
   ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('connection failed')); });
-  const send = (mode?: string, describe = false) => new Promise<any>((done, fail) => {
+  const send = (mode?: string, describe = false, adapters = false) => new Promise<any>((done, fail) => {
     const id = crypto.randomUUID();
     const timer = setTimeout(() => fail(new Error('RPC timeout')), 10000);
     ws!.onmessage = (event) => {
@@ -80,13 +80,19 @@ try {
       clearTimeout(timer); replies.push(reply);
       if (reply.error) fail(new Error(JSON.stringify(reply.error))); else done(reply.data);
     };
-    ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: describe ? { name: 'operations.describe', input: { name: 'work.send' } } : { name: 'work.send', input: { ref: { adapter: 'codex-desktop', id: 'synthetic' }, message: 'synthetic marker', ...(mode ? { mode } : {}) } }, timestamp: new Date().toISOString(), version: '1.0.0' }));
+    ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: adapters ? { name: 'work.adapters', input: {} } : describe ? { name: 'operations.describe', input: { name: 'work.send' } } : { name: 'work.send', input: { ref: { adapter: 'codex-desktop', id: 'synthetic' }, message: 'synthetic marker', ...(mode ? { mode } : {}) } }, timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
   const first = await send();
   if (action === 'reproduce') {
     assert.equal(first.value.queuedSubmissionId, 'synthetic-queue');
     assert(!calls.some((call) => (call as { server?: string }).server === 'turn/steer'));
   } else {
+    const discovery = await send(undefined, false, true);
+    assert.equal(discovery.ok, true);
+    const codex = discovery.value.find((adapter: { id: string }) => adapter.id === 'codex-desktop');
+    assert(codex.capabilities.includes('steer'), 'Codex must advertise its implemented steer capability');
+    const hyperneo = discovery.value.find((adapter: { id: string }) => adapter.id === 'hyperneo');
+    assert(!hyperneo.capabilities.includes('steer'), 'Do not advertise steer for adapters without a steer method');
     const description = await send(undefined, true);
     assert.equal(description.found, true);
     assert(description.description.includes('For Codex, choose mode steer'));

@@ -144,6 +144,24 @@ describe('work verb operations', () => {
     }
   });
 
+  test('advertises implemented steer locally and preserves it from remote discovery', async () => {
+    const adapter: WorkAdapter = {
+      ...desktop,
+      capabilities: ['find', 'send', 'steer'],
+      steer: async () => ({ ok: true, value: { delivered: true, steeredIntoTurnId: 'active' } }),
+    };
+    const expected = {
+      ok: true,
+      value: [{ id: adapter.id, capabilities: ['find', 'send', 'steer'] }],
+    };
+    expect(await call('work.adapters', {}, undefined, { source: 'rpc' }, [adapter])).toEqual(
+      expected
+    );
+    expect(await call('work.adapters', { daemon: 'laptop' }, async () => expected)).toEqual(
+      expected
+    );
+  });
+
   test('operation discovery omits unrouted or unimplemented driver capabilities', async () => {
     const adapter: WorkAdapter = {
       ...desktop,
