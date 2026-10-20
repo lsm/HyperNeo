@@ -44,16 +44,17 @@ for (const phase of ['initial', 'restart']) {
     });
     const db = app.db.getDatabase();
     const rows = db.prepare('SELECT * FROM neo_pack_preferences ORDER BY pack, scope_key, key').all();
-    assert.equal(rows.length, 10);
-    const scope = { kind: 'repo' as const, key: 'lsm/qlark' };
+    assert.equal(rows.length, phase === 'initial' ? 0 : 1);
+    const scope = { kind: 'repo' as const, key: 'synthetic/repo' };
     const saved = getNeoPackPreference(db, 'coding', scope, 'mergePolicy');
-    assert.equal(saved?.value, phase === 'initial' ? 'review_bot' : 'human');
-    assert.equal(saved?.setBy, phase === 'initial' ? 'seed' : 'human');
+    assert.equal(saved?.value, phase === 'initial' ? undefined : 'human');
+    assert.equal(saved?.setBy, phase === 'initial' ? undefined : 'human');
+    if (phase === 'restart') assert.equal(saved?.setAt, 123);
     assert.equal(getNeoPackPreference(db, 'coding', { kind: 'repo', key: 'synthetic/new' }, 'mergePolicy'), null);
     snapshots.push({ phase, health, rows, saved });
-    if (phase === 'initial') db.prepare(`UPDATE neo_pack_preferences SET value_json = '"human"',
-      set_by = 'human', set_at = 123 WHERE pack = 'coding' AND scope_kind = 'repo'
-      AND scope_key = 'lsm/qlark' AND key = 'mergePolicy'`).run();
+    if (phase === 'initial') db.prepare(`INSERT INTO neo_pack_preferences
+      (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
+      VALUES ('coding', 'repo', 'synthetic/repo', 'mergePolicy', '"human"', 'human', 123)`).run();
   } finally {
     ws?.close();
     await app.cleanup();

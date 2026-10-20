@@ -16,28 +16,4 @@ export function createNeoPackPreferencesTable(db: Database): void {
 
 export function runMigration426(db: Database): void {
   createNeoPackPreferencesTable(db);
-  const insert = db.prepare(`INSERT INTO neo_pack_preferences
-    (pack, scope_kind, scope_key, key, value_json, set_by, set_at)
-    VALUES ('coding', 'repo', ?, ?, ?, 'seed', ?)
-    ON CONFLICT (pack, scope_kind, scope_key, key) DO NOTHING`);
-  const now = Date.now();
-  db.transaction(() => {
-    for (const [repo, preferences] of Object.entries({
-      'lsm/HyperNeo': {
-        mergePolicy: 'review_bot',
-        reviewBot: 'hyperneo-ai-test',
-        humanSignoff: ['docs/design/**', 'docs/architecture/**'],
-      },
-      'lsm/qlark': {
-        mergePolicy: 'review_bot',
-        reviewBot: 'hyperneo-ai-test',
-        humanSignoff: ['docs/design/**', 'docs/plan/**'],
-      },
-      'lsm/research': { mergePolicy: 'ci_only', humanSignoff: [] },
-      'lsm/ops': { mergePolicy: 'ci_only', humanSignoff: [] },
-    })) {
-      for (const [key, value] of Object.entries(preferences))
-        insert.run(repo, key, JSON.stringify(value), now);
-    }
-  })();
 }
