@@ -33,6 +33,7 @@ export type OperationSafetyClass = 'read' | 'mutate' | 'destructive' | 'human_on
 
 export interface OperationPolicy {
   readonly safetyClass: OperationSafetyClass;
+  readonly caller?: 'local_user';
   readonly roles?: readonly OperationCallerRole[];
 }
 
