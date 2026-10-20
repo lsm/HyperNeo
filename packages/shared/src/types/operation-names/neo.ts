@@ -37,4 +37,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.todo.edit',
   'neo.todo.remove',
   'neo.todo.retry',
+  'pack.preferences.get',
+  'pack.preferences.list',
+  'pack.preferences.set',
 ] as const;

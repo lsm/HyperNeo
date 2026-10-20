@@ -998,6 +998,74 @@ readers until the later migration/removal slices.
 
 ### Online SDK body copy (slice 10)
 
+### SDK body next-start mode (online precursor to slice 11)
+
+Use a fresh isolated HOME/data directory and a free port; no GUI, provider or
+credentials are needed. The helper seeds consumed inputs, so no model turn is
+scheduled. Do not use a live DB or port 8399.
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-sdk-side-only-XXXXXX)
+mkdir -p "$RUN/home"
+env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
+  bun .claude/skills/verify/sdk-body-mode.ts laptop 9372 "$RUN"
+```
+
+Repeat with `mixed` and another fresh run/port. Both seed 5,000 synthetic messages,
+derive columns through the production chunked backfill, and retain complete tool
+results. The mixed fixture deliberately removes half its side copies, retaining
+their legacy bodies; startup must serve in dual-write mode. Its own synthetic
+missing copies are restored before the next restart. The completed laptop fixture
+must choose side-only immediately. All eight production writers are exercised in
+both runs; side bodies remain complete and the logical hash survives restart.
+Fifty real health/transcript RPCs return full tool results. This is not a GUI test.
+
+For the single-step old-schema upgrade, create a detached worktree at the observed
+iMac build `258b731c` under `~/focus/worktrees/`, install frozen dependencies, and
+run `old` in a fresh isolated directory, adding that worktree as the fourth
+argument. It creates 60,000 synthetic old-schema rows with consumed inputs and
+`replacement_metadata_normalized=1`, never copying the live DB. On the old #7865
+head `2014efa`, the same old-schema startup refused before serving (reproduction:
+`/private/tmp/sdk-side-old-schema-proof/evidence/observed.json`). Fixed code must
+run migrations, bind, serve health/transcript, finish the real background copy,
+continue dual-writing in that process, then choose side-only on the next start.
+
+Evidence is `evidence/observed.json`: complete logical hashes/counts, WARN-level
+chosen modes, startup/copy/query/lag/RPC timings and missing count. Initial legacy
+hash equals the migrated logical hash before new writes; the post-write logical
+hash remains identical across restart. Seeding and deliberate full-digest reads
+are measurement probes, not production RPC workloads. The helper closes its
+WebSocket and daemon in `finally`; unit suites run only in CI.
+
+Mode selection runs after numbered migrations/backfill and checks gaps in bounded
+yielding batches. No live mode switch occurs. Unified reads retain side-first
+COALESCE until slice 11; all writes always keep a complete side body, and pending,
+reversed or incomplete copies also update the legacy body atomically. Startup
+mode is logged at production WARN. Permanent backups are retained. Slice 11 must
+accept legitimate nonempty legacy copies from writes during background copying:
+side completeness, verified backup and hashes establish authority, not empty
+legacy text. Column removal still needs its separately scheduled downtime PR.
+
+For the qualified-predicate regression behind CI's `no such column: m.rowid`
+and `m.sdk_message` failures, use a fresh isolated run directory:
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-sdk-body-predicate-XXXXXX)
+mkdir -p "$RUN/home"
+env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
+  bun .claude/skills/verify/sdk-body-predicate.ts verify "$RUN"
+```
+
+This uses real in-memory SQLite and the production body writer, testing both
+qualified row/body predicates in both modes. Every tool-result byte remains
+readable through the repository. On the failing head run `reproduce`: dual-write
+must throw both unknown-column errors while side-only succeeds. The UPDATE must
+declare the same `m` target alias as the side INSERT. It does not change fixture
+assertions, schemas or body semantics. Repeat the real-daemon `laptop` and `mixed`
+journeys above to verify all eight production writers and RPC output afterward.
+
+### Historical slice-10 copy journey
+
 Run only on a new synthetic database, larger than the read-only live file-size
 observation; never seed from or copy a live DB:
 
@@ -1650,6 +1718,25 @@ stop in `finally`. This proves bootstrap persistence and the core lookup; there
 is no settings RPC/UI or merge-policy enforcement in slice 1. Those later slices
 need their own journeys. No live DB, GitHub request or model turn is involved.
 
+### Pack settings operations (slice 2)
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-pack-settings-XXXXXX)
+mkdir -p "$RUN/home"
+env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
+  bun .claude/skills/verify/pack-settings-operations.ts 9352 "$RUN"
+```
+
+The real isolated daemon's WebSocket `operation.invoke` door must show empty
+settings, accept a valid human write, refuse an invalid enum, and return the
+saved value/provenance in get, list and `neo.snapshot`. The real MCP adapter over
+the daemon's registry must refuse Neo's attempted policy change with `forbidden`
+and still allow reads. Restart preserves the saved value, and an unknown repo
+stays unanswered. `evidence/observed.json` retains every response. Both instances
+stop in `finally`. Only synthetic data and temp HOME are used; no provider,
+credential, model turn, live DB or GUI is involved. This proves operation caller
+admission and persistence, not later policy enforcement or the install question.
+
 ## Feed metadata I/O responsiveness
 
 Use a new synthetic HOME/data/DB and a free non-8399 port. The helper drives the
@@ -1675,3 +1762,34 @@ are asserted in `observed.json`. The retained-path prune must not change offsets
 The helper closes its own socket and daemon in `finally`. It uses no model or
 credentials and never reads the real session directories. Feed content reads
 remain synchronous in this slice; this journey verifies metadata I/O only.
+
+## Card-topic sweep attribution
+
+Run a fresh isolated daemon with synthetic HOME/data/DB and a free non-8399
+port. The helper creates 180 followed todos with two topic subscriptions each,
+plus one removed todo. Each pack-eligibility settings read gets an explicit
+8 ms synthetic blocking wait before its real SQLite read. No real session,
+provider, key, transcript or live DB is involved.
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-card-topic-phases-XXXXXX)
+env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/card-topic-phases.ts verify 9375 "$RUN"
+```
+
+On the regression commit use `reproduce` in a separate new directory. Both runs
+must reproduce over 1 s max heartbeat lag: this slice adds attribution, not a
+latency fix. `observed.json` includes concurrent health latency, actual sweep
+results and structured lag diagnostics. In `verify`, the phase totals must
+attribute 180 settings reads and at least 1,440 ms to
+`neo:packs:eligibility_read`; listActive, per-todo followedTodo and
+cardEventsDelivered, and per-subscription end phases must also be present.
+Only the removed todo's two topics end; 360 followed topics remain.
+
+The existing activity buffer retains 64 entries and reports dropped entries;
+large sweeps expose a suffix of per-todo phases plus the final aggregate. The
+helper separately totals every emitted phase in its own instrumentation, without
+changing production buffering. Nested totals overlap and must not be added.
+This proves the repeated-read path under controlled latency, not the cause of
+the historical 20:09 four-second phase or a particular OS wait. The helper closes
+its socket, diagnostic observer, Neo service and daemon in `finally`.
