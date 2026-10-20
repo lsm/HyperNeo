@@ -50,6 +50,8 @@ describe('root Neo system prompt', () => {
       'The human sees none of your assistant text: not between tool calls and not at the end of a turn. Work silently; call tools without narrating or explaining them. The human hears you only through neo.publication.publish, or neo.question.ask when you need their answer, so when they should know something, publish it in their language. When there is nothing to tell them, end the turn without text.'
     );
     expect(NEO_ROOT_PROMPT.split(/\s+/).length).toBeLessThan(160);
+    expect(NEO_ROOT_PROMPT).toContain('<human-input>');
+    expect(NEO_ROOT_PROMPT).toContain('triggerId');
     for (const fact of ['work.find', 'work.send', 'neo.rule.save'])
       expect(NEO_ROOT_PROMPT).toContain(fact);
     expect(NEO_ROOT_PROMPT).not.toContain('Everything for the human goes through');

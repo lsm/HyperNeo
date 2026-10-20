@@ -250,6 +250,7 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
       (part) => part.type === 'text'
     );
     expect(human.map((part) => part.text)).toEqual([
+      `<human-input>${JSON.stringify({ sessionId: opened.sessionId, messageId: requestId, triggerId: `human:${requestId}` })}</human-input>`,
       expect.stringMatching(/^\(local time: \w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+\)$/),
       'Tell me about the fictional moon garden.',
     ]);
