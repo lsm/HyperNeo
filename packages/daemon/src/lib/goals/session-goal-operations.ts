@@ -288,9 +288,9 @@ export function createSessionGoalOperations({
         const patch = patchOf(input);
         audit(caller, 'goal.session.update', { goalId: goal.id, fields: Object.keys(patch) });
         return done(
-          goals.update(goal, patch, eventSource(caller), Date.now(), (updated) =>
-            schedules.sync(updated)
-          )
+          goals.update(goal, patch, eventSource(caller), Date.now(), (updated) => {
+            if (patch.status) schedules.sync(updated);
+          })
         );
       },
       ['outcome', 'input', 'caller'],

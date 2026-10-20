@@ -133,6 +133,10 @@ describe('goal-owned schedules', () => {
     });
     schedules.sync(goal);
     expect(scheduler.repo.getBySource('goal', goal.id)?.id).toBe(first.id);
+    scheduler.pause(first);
+    await call('goal.session.update', { goalId: goal.id, progress: 20 });
+    expect(scheduler.repo.get(first.id)?.status).toBe('paused');
+    await call('goal.session.update', { goalId: goal.id, status: 'active' });
     await call('goal.session.update', { goalId: goal.id, status: 'paused' });
     expect(scheduler.repo.get(first.id)).toMatchObject({ status: 'paused', pendingJobId: null });
     await call('goal.session.update', { goalId: goal.id, status: 'active' });
