@@ -1691,6 +1691,25 @@ stop in `finally`. This proves bootstrap persistence and the core lookup; there
 is no settings RPC/UI or merge-policy enforcement in slice 1. Those later slices
 need their own journeys. No live DB, GitHub request or model turn is involved.
 
+### Pack settings operations (slice 2)
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-pack-settings-XXXXXX)
+mkdir -p "$RUN/home"
+env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
+  bun .claude/skills/verify/pack-settings-operations.ts 9352 "$RUN"
+```
+
+The real isolated daemon's WebSocket `operation.invoke` door must show empty
+settings, accept a valid human write, refuse an invalid enum, and return the
+saved value/provenance in get, list and `neo.snapshot`. The real MCP adapter over
+the daemon's registry must refuse Neo's attempted policy change with `forbidden`
+and still allow reads. Restart preserves the saved value, and an unknown repo
+stays unanswered. `evidence/observed.json` retains every response. Both instances
+stop in `finally`. Only synthetic data and temp HOME are used; no provider,
+credential, model turn, live DB or GUI is involved. This proves operation caller
+admission and persistence, not later policy enforcement or the install question.
+
 ## Feed metadata I/O responsiveness
 
 Use a new synthetic HOME/data/DB and a free non-8399 port. The helper drives the
@@ -1742,3 +1761,66 @@ and incomplete terminal history. This proves todo dispatch, settlement and its
 SDK/MCP interface using synthetic runtime evidence, not PR5 answered linking or
 GUI rendering. Stop the isolated SDK/model server and preserve evidence before
 removing only this synthetic run directory.
+
+## Card-topic sweep responsiveness
+
+Run a fresh isolated daemon with synthetic HOME/data/DB and a free non-8399
+port. The helper creates 180 followed todos with two topic subscriptions each,
+plus one removed todo. Each pack-eligibility settings read gets an explicit
+8 ms synthetic blocking wait before its real SQLite read. No real session,
+provider, key, transcript or live DB is involved.
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-card-topic-phases-XXXXXX)
+env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/card-topic-phases.ts verify 9375 "$RUN" enabled
+```
+
+Repeat in another new directory with `disabled` instead of `enabled`. On the
+regression commit use `reproduce`: both modes must show 180 eligibility reads
+and max heartbeat lag over 1 s. Fixed `verify` must show exactly one settings
+read, including when eligibility is false, with heartbeat lag below 1 s and
+health below 250 ms. `observed.json` retains phase totals, actual subscriptions,
+health latency and any structured lag diagnostics.
+
+With delivery enabled, only the removed todo's two topics end and 360 remain.
+With delivery disabled, all 362 topics end. The helper then changes the stored
+pack setting, re-subscribes active topics if needed and sweeps again over the
+same WebSocket. The changed eligibility must take effect immediately on that
+next sweep, in both directions; no value is cached across sweeps. Focused tests
+also keep settings unread when there is no followed todo, including an empty
+sweep. This keeps the snapshot lazy rather than adding an unconditional read.
+
+The existing activity buffer retains 64 entries and reports dropped entries;
+large sweeps expose a suffix of per-todo phases plus the final aggregate. The
+helper separately totals every emitted phase in its own instrumentation, without
+changing production buffering. Nested totals overlap and must not be added.
+This proves the repeated-read path under controlled latency, not the cause of
+the historical 20:09 four-second phase or a particular OS wait. The helper closes
+its socket, diagnostic observer, Neo service and daemon in `finally`.
+
+### Policy-aware merge nudges (slice 3)
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-policy-XXXXXX)
+mkdir -p "$RUN/home"
+env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
+  bun .claude/skills/verify/pack-policy.ts verify 9353 "$RUN"
+```
+
+On the reproduction commit run `reproduce` in another fresh directory: a scripted
+bot approval for synthetic qlark#19 leads to merge text immediately and again at
++20 minutes. Fixed code must emit zero merge messages and show `waiting_human`
+through the real daemon's `neo.snapshot` and production coding-pack sweep/events.
+Settings are written only to the synthetic daemon through the human RPC door.
+GitHub reads and message delivery use synthetic fixtures/capture sinks; the
+production classification, repositories, event delivery decisions and sweep run
+unchanged. Both daemon and socket close in `finally`. Evidence retains every
+state and emitted message in `evidence/observed.json`. No credentials, provider,
+model, live DB, real GitHub calls or GUI are used.
+
+Slice 3 conservatively keeps any configured humanSignoff in `waiting_human`
+when otherwise merge-ready: current-head path/label reads and durable holds are
+later slices. Review-author login is read now to enforce designated-bot approval;
+unknown/stale authors never count. This journey proves the nudge decision and
+snapshot, not live GitHub transport, actual delivery or later worker merge checks.

@@ -43,6 +43,7 @@ export const en = {
   'todo.pr.closed': '{pr} closed',
   'todo.pr.ciFailing': '{pr} CI failing',
   'todo.pr.changesRequested': '{pr} needs changes',
+  'todo.pr.waitingHuman': '{pr} waiting on the human',
   'todo.pr.waitingCi': '{pr} open, waiting on CI',
   'todo.pr.approved': '{pr} approved, waiting to merge',
   'todo.pr.waitingReview': '{pr} open, waiting on review',

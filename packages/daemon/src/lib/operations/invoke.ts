@@ -1,3 +1,4 @@
+import { isLocalUser } from './caller.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { OperationCaller, OperationDefinition, OperationRegistry } from './registry.ts';
 
@@ -112,7 +113,10 @@ export function isOperationAdmitted(
   operation: OperationDefinition,
   caller: OperationCaller
 ): boolean {
-  return !isEndedTurnWrite(operation, caller);
+  return (
+    !isEndedTurnWrite(operation, caller) &&
+    (operation.policy?.caller !== 'local_user' || isLocalUser(caller))
+  );
 }
 
 export function admitOperationCaller(

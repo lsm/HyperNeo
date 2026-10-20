@@ -86,7 +86,7 @@ describe('PR ledger events', () => {
     );
     expect(told.map((item) => item.key)).toEqual([
       'neo-pr-event:lsm/a#1:head1abc:failing',
-      'neo-pr-event:lsm/a#1:head1abc:unreviewed',
+      'neo-pr-event:lsm/a#1:head1abc:waiting_human',
     ]);
     expect(told[0]).toMatchObject({ ref: owner });
     expect(told[1].text).toBe('lsm/a#1 "PR 1" has green CI again on head head1ab.');

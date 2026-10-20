@@ -160,7 +160,17 @@ export interface NeoSessionNoticeGroup {
   notices: NeoSessionNotice[];
 }
 
+export interface NeoPackSetting {
+  pack: string;
+  scope: { kind: 'global' | 'repo' | 'project'; key: string };
+  key: string;
+  value: unknown;
+  setBy: string;
+  setAt: number;
+}
+
 export interface NeoSnapshot {
+  packPreferences?: NeoPackSetting[];
   ok: true;
   rev?: string;
   sessionId: string | null;

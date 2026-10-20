@@ -10,6 +10,7 @@ export const CODING_PR_DEADLINE_MIN: Partial<Record<CodingPrState, number>> = {
   changes_requested: 30,
   waiting_review: 30,
   approved_pending: 60,
+  waiting_ci: 60,
 };
 export const CODING_PR_FRESH_MS = 15 * 60_000;
 export const CODING_PR_REMINDERS = 2;
@@ -40,6 +41,7 @@ const STATE_TEXT: Partial<Record<CodingPrState, string>> = {
   changes_requested: 'waiting on requested changes',
   waiting_review: 'waiting for review',
   approved_pending: 'approved with CI still pending',
+  waiting_ci: 'waiting for CI',
 };
 
 const NEXT_STEP: Partial<Record<CodingPrState, string>> = {
@@ -48,8 +50,8 @@ const NEXT_STEP: Partial<Record<CodingPrState, string>> = {
   failing: 'Fix the failing CI and push.',
   changes_requested: 'Address the review and push.',
   waiting_review: 'Get it reviewed; re-request the review bot if its review stalled.',
-  approved_pending:
-    'This is usually CI capacity, not something to fix; merge once CI is green, and look only if a check is stuck.',
+  waiting_ci: 'CI is still running; fix it if it fails.',
+  approved_pending: 'CI is still running; fix it if it fails.',
 };
 
 export function planCodingPrNudge(
@@ -82,7 +84,7 @@ export function codingPrEscalationText(
   const why = unreachable
     ? `its owner ${owned(row.owner!)} could not be reached`
     : `its owner ${owned(row.owner!)} was reminded ${CODING_PR_REMINDERS} times without progress`;
-  return `PR sweep: ${row.repo}#${row.number} "${row.title}" has been ${STATE_TEXT[row.state] ?? row.state} for ${minutesSince(row, now)} min on head ${row.head.slice(0, 7)}, and ${why}. Reassign it to a free session, or merge it yourself if it is approved and green and the owner is gone.`;
+  return `PR sweep: ${row.repo}#${row.number} "${row.title}" has been ${STATE_TEXT[row.state] ?? row.state} for ${minutesSince(row, now)} min on head ${row.head.slice(0, 7)}, and ${why}. Reassign it to a free session.${row.state === 'approved_green' ? ' Or merge it yourself if the owner is gone.' : ''}`;
 }
 
 export class CodingPrSweepRepository {
