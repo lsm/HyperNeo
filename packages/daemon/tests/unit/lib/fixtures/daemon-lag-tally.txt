@@ -1,0 +1,7 @@
+2026-10-19T23:59:59.000Z [Daemon] Event loop blocked for 1200ms; slowest SQL 900ms: SELECT * FROM jobs WHERE id = 'first' LIMIT 1
+2026-10-20T00:00:00.000Z [Daemon] Event loop blocked for 1500ms; slowest SQL 800ms: select * from jobs where id = :id limit ?2
+2026-10-20T00:00:01.000Z [Daemon] Event loop blocked for 2500ms; slowest SQL 1300ms: SELECT * FROM jobs WHERE id = 'it''s private' LIMIT 99
+2026-10-20T00:00:02.000Z [Daemon] Event loop blocked for 5000ms
+2026-10-20T00:00:03.000Z [Daemon] Event loop unresponsive for 60080ms; the daemon is not serving requests. Marker written to /synthetic/event-loop-stall.json
+2026-10-20T00:00:04.000Z [Daemon] Event loop blocked for 900ms
+ordinary unrelated output
