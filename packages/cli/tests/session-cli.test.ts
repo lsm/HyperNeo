@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import { planSessionCommand, resolveSender, runSessionCommand } from '../src/session-cli';
 
-describe('hyperneo send and question', () => {
+describe('hyperneo send, question and build', () => {
   test('the sender is the HyperNeo session first, then the Codex thread, then Claude Code', () => {
     expect(
       resolveSender({
@@ -24,6 +24,13 @@ describe('hyperneo send and question', () => {
     ).toBe(1);
     expect(error).toHaveBeenCalledWith(expect.stringContaining('hyperneo send: no sender'));
     error.mockRestore();
+  });
+
+  test('build requests only the read-only build operation', () => {
+    expect(planSessionCommand(['build'], 'worker-1')).toEqual({
+      value: { name: 'system.build', input: {} },
+    });
+    expect(planSessionCommand(['build', 'extra'], 'worker-1')).toHaveProperty('reason');
   });
 
   test('send joins the words into one message and question reads by id', () => {

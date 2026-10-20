@@ -3,6 +3,7 @@ import { request } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { OPERATION_NAMES } from '@hyperneo/shared/types/operation-names';
 import { startSessionDoor } from '../../../../src/lib/messaging/session-door';
 import { createSendMessageOperation } from '../../../../src/lib/messaging/message-send';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
@@ -47,6 +48,47 @@ describe('the session door', () => {
     await door.close();
     rmSync(dir, { recursive: true, force: true });
     mailbox.close();
+  });
+
+  test('build reports exactly six public fields over the real socket', async () => {
+    const reply = await post(door.path, { sender: 'worker-1', name: 'system.build', input: {} });
+    expect(reply).toMatchObject({
+      status: 200,
+      body: {
+        kind: 'completed',
+        value: {
+          commit: expect.any(String),
+          version: expect.any(String),
+          pid: process.pid,
+          startedAt: expect.any(Number),
+          uptime: expect.any(Number),
+          health: 'ok',
+        },
+      },
+    });
+    const value = (reply.body as { value: Record<string, unknown> }).value;
+    expect(Object.keys(value).sort()).toEqual([
+      'commit',
+      'health',
+      'pid',
+      'startedAt',
+      'uptime',
+      'version',
+    ]);
+    expect(value.startedAt).toBeLessThanOrEqual(Date.now());
+    expect(value.uptime).toBeGreaterThanOrEqual(0);
+    expect(mailbox.rows()).toEqual([]);
+  });
+
+  test('every other registered operation is rejected by the socket allowlist', async () => {
+    const allowed = new Set(['message.send', 'neo.question.get', 'system.build']);
+    for (const name of [...OPERATION_NAMES, 'system.health', 'unknown.operation']) {
+      if (allowed.has(name)) continue;
+      expect(await post(door.path, { sender: 'worker-1', name, input: {} })).toMatchObject({
+        status: 400,
+        body: { error: expect.stringMatching(/^not_allowed/) },
+      });
+    }
   });
 
   test('a CLI send arrives as the calling session, never as the human', async () => {
@@ -94,7 +136,7 @@ describe('the session door', () => {
     expect(mailbox.rows()).toEqual([]);
   });
 
-  test('only message.send and neo.question.get pass, and only with a sender', async () => {
+  test('only message.send, neo.question.get and system.build pass, and only with a sender', async () => {
     expect(
       await post(door.path, { sender: 'worker-1', name: 'neo.rule.save', input: {} })
     ).toMatchObject({ status: 400, body: { error: expect.stringMatching(/^not_allowed/) } });
