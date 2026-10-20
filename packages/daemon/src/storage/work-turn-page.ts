@@ -37,7 +37,7 @@ interface Row {
 const SCOPE = `session_id=? AND parent_tool_use_id IS NULL AND COALESCE(internal_compaction_turn,0)=0
   AND message_type IN ('user','assistant','result') AND (message_type!='user' OR COALESCE(send_status,'consumed') IN ('consumed','failed'))
   AND NOT EXISTS (SELECT 1 FROM sdk_message_replacements r WHERE r.session_id=sdk_messages.session_id
-    AND r.target_uuid=sdk_messages.sdk_uuid AND r.source_message_id!=sdk_messages.id)`;
+    AND r.target_uuid=COALESCE(sdk_messages.sdk_uuid,sdk_messages.id) AND r.source_message_id!=sdk_messages.id)`;
 
 function text(row: Row): string {
   const body = JSON.parse(row.sdk_message) as Record<string, unknown>;

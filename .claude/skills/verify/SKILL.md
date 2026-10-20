@@ -1182,7 +1182,9 @@ over MCP against an isolated SQLite database and a loopback scripted model.
 A synthetic 198,001-byte report lives only in SDK body storage, behind 30 later
 follow-ups; no search-index row exists. The helper follows the returned cursors
 and checks exact UTF-8 byte length and SHA-256, hidden-thinking exclusion and
-unchanged SDK/body rows. `evidence.json` records the page count and maximum
+unchanged SDK/body rows. A retracted legacy message without an SDK UUID must
+stay hidden when its replacement edge targets the stored message ID.
+`evidence.json` records the page count and maximum
 observed event-loop lag against the 1 s goal. Text pages budget serialized UTF-8
 bytes so the SDK does not replace the tool result with a persisted-output stub.
 `textOffset` counts UTF-16 code units; concatenate chunks of the same message ID
