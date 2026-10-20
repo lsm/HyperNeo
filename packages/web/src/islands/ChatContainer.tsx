@@ -1,3 +1,4 @@
+import { SessionSchedules } from '../components/SessionSchedules.tsx';
 import { ChevronLeftGlyph } from '../components/icons/common-glyphs.tsx';
 import type {
   AgentProcessingState,
@@ -1361,6 +1362,8 @@ export default function ChatContainer({
         displayMode={displayMode}
         onDisplayModeChange={handleDisplayModeChange}
       />
+
+      <SessionSchedules sessionId={sessionId} readonly={readonly} />
 
       <div class="flex-1 relative min-h-0">
         <div
