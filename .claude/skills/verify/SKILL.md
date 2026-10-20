@@ -189,8 +189,8 @@ The helper opens only a synthetic Neo session and seeds its own ask in its test
 DB, then uses real `neo.question.ask`, `get` and local-human `answer` RPCs.
 A yes/no proposal must retain `confirm:{path,sha256}` through creation and the
 human answer. The visible body must include that exact path/hash; an incomplete
-body is refused. Ordinary questions remain unbound. A protected `neo.home.save`
-remains `confirmation_required`: the save gate/decision commit is a later slice.
+body is refused. Ordinary questions remain unbound. A protected `neo.home.save` without a question remains `confirmation_required`;
+journey 38 exercises confirmed saves and the paired decision commit.
 
 Evidence: `evidence/neo-question-confirmation-after.json`. Stop the daemon/mock,
 restart only that same synthetic run, and run the helper with `restart`: its
@@ -211,6 +211,27 @@ remain near misses.
 `evidence/neo-question-confirmation-boundaries.json` retains every response.
 The additive/idempotent legacy-answer migration contract runs in CI.
 Never copy or alter a real DB for this journey. Stop with `stop.sh` afterwards.
+
+### Confirmed home saves (journey 38)
+
+On a fresh isolated daemon from Launch, run
+`bun .claude/skills/verify/neo-home-confirmed-save.ts <port> "$RUN" after`.
+The helper seeds only a synthetic Git identity/ask/history in its own HOME and
+DB, then uses real question ask/get/answer and home init/save RPCs. Missing,
+open, no, wrong-path and wrong-hash confirmations must refuse without changing
+HEAD or either file. A matching human yes must commit the exact mandate bytes
+and append to its sibling decisions.md in one commit with the question trailer.
+Root direction uses root decisions.md; focused contracts cover that path too.
+
+The helper records question/get's answeredByHuman flag, both committed paths,
+contents and trailer. An unchanged retry adds no decision. Removing only the
+synthetic Git identity forces commit failure: both prior files and HEAD must
+remain identical, the index clean, and configuring identity makes retry succeed.
+Evidence: `evidence/neo-home-confirmed-save-after.json`. On the test-only commit,
+use `before` in a separate fresh run to retain the matching-human-yes refusal.
+No provider/model, real credentials, GitHub request or GUI is exercised. Stop
+with `stop.sh`. Direct filesystem write restrictions still belong to the
+surrounding environment; this verifies the single operation, not a shell sandbox.
 
 ## Codex Desktop work.send journey
 
@@ -1899,3 +1920,28 @@ Evidence: `evidence/schedule-labels.json`. This proves the shared read contract
 and local-user RPC controls, not the web schedules strip (the next G7 slice),
 actual wake delivery, or an iOS screen. No provider/model, GUI, real DB or GitHub
 requests are used. Stop the isolated daemon and mock with `stop.sh`.
+
+## Conversation wake lookup query
+
+Run the actual isolated daemon with synthetic HOME/data/DB and a free non-8399
+port. The helper seeds 140,000 SDK headers, 1,400 input origins, then zero and two
+scheduled wakes. No model, credentials, live data or GUI is involved.
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-wake-query-XXXXXX)
+env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/wake-query.ts verify 9377 "$RUN"
+```
+
+On the regression commit, `verify` must fail the VM-work budget; `reproduce`
+records the original excessive traversal without failing. Fixed code must return
+exactly zero then two wakes from the real `neo.snapshot` WebSocket door and the
+Bun repository. `observed.json` retains query plans, repository/RPC timings, exact
+SQLite VM steps and SQLite page-cache miss/hit deltas. These counters use public
+SQLite C APIs through Python's linked SQLite library in read-only mode on the
+synthetic DB. Compare its reported SQLite version with Bun's reported version;
+page-cache misses mean SQLite page reads, not physical disk reads. A fresh
+connection does not flush the operating system cache. This is controlled query
+work evidence, not proof of the cause of historical off-CPU waits. The helper
+closes its socket and daemon in `finally`. Focused tests also retain empty and
+populated views, scope, chronological ordering and both pagination directions.

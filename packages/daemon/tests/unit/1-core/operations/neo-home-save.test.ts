@@ -10,6 +10,7 @@ import {
 } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { spawnProcess } from '../../../../src/lib/runtime-spawn/index.ts';
+import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { createTestDb } from '../../../helpers/database.ts';
 
@@ -33,7 +34,14 @@ const save = async (
   caller: OperationCaller = { source: 'rpc', principal: 'local' }
 ) => {
   const registry = createOperationRegistry(
-    createNeoHomeOperations({ repo, defaultSessionId: () => 'neo:root' }, home)
+    createNeoHomeOperations(
+      {
+        repo,
+        todos: new NeoAskTodoRepository(db.getDatabase()),
+        defaultSessionId: () => 'neo:root',
+      },
+      home
+    )
   );
   const result = await invokeOperation(
     registry,
@@ -128,7 +136,7 @@ describe('Neo home save', () => {
     expect(await git('status', '--porcelain')).toBe('');
   });
   test.each(['direction.md', 'projects/verify/mandate.md'])(
-    'keeps %s confirmation-gated until H2',
+    'keeps %s gated without a human confirmation',
     async (path) => {
       expect(await save({ path, content: 'New direction.' })).toMatchObject({
         ok: false,

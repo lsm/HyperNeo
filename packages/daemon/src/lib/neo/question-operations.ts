@@ -12,7 +12,7 @@ import type {
 } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { requireLocalUser } from '../operations/caller.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import { requireHomePath } from './home/save.ts';
+import { isVisibleHomeProposal, requireHomePath } from './home/save.ts';
 import { requireNeoOpenAsk } from './todo-operations.ts';
 
 type Rejection = { ok: false; reason: string };
@@ -123,16 +123,7 @@ export function planNeoQuestion(
       return fail('confirmation_kind: only yes/no questions bind a home proposal.');
     const path = requireHomePath(confirm);
     if (path.reason) return fail(path.reason.reason);
-    const pathText = confirm.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const delimiter = String.raw`[\s"'\x60()\[\]{}:;,!?<>]`;
-    const shownPath = new RegExp(
-      `(?:^|${delimiter})(\\*{1,3}|_{1,3}|~~)?${pathText}\\1(?=$|${delimiter})`,
-      'u'
-    ).test(input.text);
-    const shownHash = new RegExp(`(?<![a-f0-9])${confirm.sha256}(?![a-f0-9])`, 'iu').test(
-      input.text
-    );
-    if (!shownPath || !shownHash)
+    if (!isVisibleHomeProposal(input.text, confirm))
       return fail('confirmation_body: show the exact home path and SHA-256 in the question text.');
   }
   const draft: NeoQuestionDraft = {
