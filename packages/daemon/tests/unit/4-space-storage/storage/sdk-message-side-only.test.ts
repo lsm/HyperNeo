@@ -7,16 +7,19 @@ import { DatabaseCore } from '../../../../src/storage/database-core';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { selectSdkBodyWriteMode } from '../../../../src/storage/sdk-message-body-admission';
 
 let db: Database;
 let repo: SDKMessageRepository;
 const result = '完整工具结果'.repeat(100000);
-beforeEach(() => {
+beforeEach(async () => {
   db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
   db.exec('PRAGMA foreign_keys=OFF');
   repo = new SDKMessageRepository(db);
+  db.exec("INSERT INTO migration_markers VALUES ('sdk_message_bodies_copy_v1:complete',1)");
+  await selectSdkBodyWriteMode(db);
 });
 afterEach(() => db.close());
 
@@ -66,7 +69,7 @@ test('a side-body failure rolls back the metadata insert', () => {
 });
 
 test.each(['unfinished', 'missing', 'reversed'])(
-  'daemon refuses side-only startup with %s historical data, preserving every byte',
+  'daemon serves dual-write on %s data, preserving complete tool results',
   async (fault) => {
     const directory = mkdtempSync(join(tmpdir(), 'sdk-side-admission-'));
     const path = join(directory, 'daemon.db');
@@ -83,6 +86,9 @@ test.each(['unfinished', 'missing', 'reversed'])(
         result,
       } as SDKMessage);
       source
+        .prepare('UPDATE sdk_messages SET sdk_message=?')
+        .run(JSON.stringify({ type: 'result', uuid: 'keep', subtype: 'success', result }));
+      source
         .prepare('INSERT OR IGNORE INTO migration_markers(key,applied_at) VALUES (?,?)')
         .run(
           fault === 'reversed'
@@ -95,15 +101,20 @@ test.each(['unfinished', 'missing', 'reversed'])(
           "DELETE FROM migration_markers WHERE key='sdk_message_bodies_copy_v1:complete'"
         );
       if (fault === 'missing') source.exec('DELETE FROM sdk_message_bodies');
-      const before = source.prepare('SELECT * FROM sdk_messages').all();
       original.close();
-      await expect(restarted.initialize()).rejects.toThrow('side-only startup refused');
-      const read = new Database(path, { readonly: true });
-      try {
-        expect(read.prepare('SELECT * FROM sdk_messages').all()).toEqual(before);
-      } finally {
-        read.close();
-      }
+      await restarted.initialize();
+      const repository = new SDKMessageRepository(restarted.getDb());
+      expect(repository.getMessageByUuid('s', 'keep')).toMatchObject({ result });
+      repository.markResultInternalCompactionTurn('s', 'keep');
+      const legacy = restarted.getDb().prepare('SELECT sdk_message FROM sdk_messages').get() as {
+        sdk_message: string;
+      };
+      const side = restarted
+        .getDb()
+        .prepare('SELECT sdk_message FROM sdk_message_bodies')
+        .get() as { sdk_message: string };
+      expect(JSON.parse(side.sdk_message)).toMatchObject({ result, internal_compaction_turn: 1 });
+      expect(side).toEqual(legacy);
     } finally {
       original.close();
       if (restarted.getDb()) restarted.close();
@@ -111,3 +122,29 @@ test.each(['unfinished', 'missing', 'reversed'])(
     }
   }
 );
+
+test('completion changes writes only on the next startup, with independent DB modes', async () => {
+  const other = new Database(':memory:');
+  try {
+    runMigrations(other, () => {});
+    createTables(other);
+    other.exec('PRAGMA foreign_keys=OFF');
+    expect(await selectSdkBodyWriteMode(other)).toMatchObject({ mode: 'dual-write' });
+    const writer = new SDKMessageRepository(other);
+    other.exec("INSERT INTO migration_markers VALUES ('sdk_message_bodies_copy_v1:complete',1)");
+    writer.saveSDKMessage('s', { type: 'result', uuid: 'during', result } as SDKMessage);
+    expect(
+      other.prepare("SELECT sdk_message FROM sdk_messages WHERE sdk_uuid='during'").get()
+    ).toEqual(other.prepare('SELECT sdk_message FROM sdk_message_bodies').get());
+    expect(await selectSdkBodyWriteMode(other)).toMatchObject({ mode: 'side-only' });
+    writer.saveSDKMessage('s', { type: 'result', uuid: 'after', result } as SDKMessage);
+    expect(
+      other.prepare("SELECT sdk_message FROM sdk_messages WHERE sdk_uuid='after'").get()
+    ).toEqual({ sdk_message: '' });
+    repo.saveSDKMessage('s', { type: 'result', uuid: 'independent', result } as SDKMessage);
+    expect(db.prepare('SELECT sdk_message FROM sdk_messages').get()).toEqual({ sdk_message: '' });
+    expect(writer.getMessageByUuid('s', 'after')).toMatchObject({ result });
+  } finally {
+    other.close();
+  }
+});
