@@ -254,6 +254,13 @@ describe('projectNeoAskEntries', () => {
       { id: 'q3', text: '要不要先把图标做了？' },
     ]);
     expect(entry.questions[2]).not.toHaveProperty('textCodes');
+    store.updateTodo(store.getTodo('t2')!, { state: 'removed', reason: 'Not needed' }, 2);
+    const [pruned] = projectNeoAskEntries([opened], store, sessions, []);
+    expect(pruned.questions.find((question) => question.id === 'q2')).toMatchObject({
+      startTodos: ['t1'],
+      text: 'Start "Rows"?',
+      textCodes: [{ code: 'question.startOne', params: { title: 'Rows' } }],
+    });
   });
 });
 
