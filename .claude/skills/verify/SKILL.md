@@ -1296,3 +1296,30 @@ reply button before the yesno and choice decisions; iOS
 `Neo/Views/AskEntryCardView.swift` in `~/focus/neo-ios` includes `reply` in every
 `ViewThatFits` layout before the kind-specific `decisions`. Do not automate GUI
 checks unattended.
+
+## Resources on sub-second slow SQL
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-slow-sql-resources-XXXXXX)
+env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/slow-sql-resources.ts "$RUN"
+```
+
+This exercises the real Bun SQLite wrapper and daemon structured diagnostic log
+stream. An owned Python connection holds a writer lock on a fresh synthetic WAL
+DB for 0.6 s, then a calibrated recursive SQL query does CPU work. Neither case
+needs a model, network port, real database or credential. The writer is stopped
+in `finally`; the synthetic DB and `observed.json` remain as evidence.
+
+Both slow records must carry `resourceScope: event_loop_tick`, monotonic tick
+boundaries, and the same resource delta available to the lag monitor. The lock
+wait must show over 400 ms off-CPU; recursive SQL must show over 250 ms CPU. They
+can be below the 1 s event-loop warning threshold and still get resource data.
+These are whole-tick counters, including other work and idle time, not exclusive
+statement costs or proof that an historical query blocked on a lock or fsync.
+
+While diagnostics are armed, slow warnings flush at the next existing 250 ms
+resource sample (or shutdown); no per-statement resource syscall is added.
+Outside the monitor, warnings retain immediate delivery without tick metadata.
+Unavailable resource sampling leaves counters absent rather than fabricating
+zeroes. Fast queries and summary aggregation keep their existing behavior.
