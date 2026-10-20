@@ -180,6 +180,13 @@ export function neoTodoIdleReminder(todo: Pick<NeoTodo, 'title' | 'doneWhen'>, m
   return `Todo "${todo.title}" is not done yet (done when: ${todo.doneWhen}), and your session has been stopped for ${minutes} min. Continue it, or report what blocks you.`;
 }
 
+export function neoTodoUntickedReminder(
+  todo: Pick<NeoTodo, 'title' | 'doneWhen'>,
+  minutes: number
+) {
+  return `Todo "${todo.title}" stopped ${minutes} min ago and nobody ticked it (done when: ${todo.doneWhen}). Tick it done with evidence, continue it with neo.todo.continue, or close it.`;
+}
+
 export function planNeoTodoFailure(
   todo: NeoTodo,
   reason: string,
@@ -527,14 +534,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     const waiting = deps
       .packs()
       .some((pack) => pack.id === todo.check?.pack && pack.todos?.waiting?.(todo));
-    if (
-      todo.state !== 'doing' ||
-      !todo.check ||
-      !todo.report ||
-      !ref ||
-      ask?.status !== 'open' ||
-      waiting
-    ) {
+    if (todo.state !== 'doing' || !todo.report || !ref || ask?.status !== 'open' || waiting) {
       idle.delete(todo.id);
       return;
     }
@@ -546,6 +546,11 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     const live = readDriverLive(await deps.invoke(caller(ask), 'work.status', { ref }));
     if (!live || !['done', 'stopped'].includes(live.status)) return;
     const minutes = Math.round((now - read.since) / 60_000);
+    if (plan.kind === 'remind' && !todo.check) {
+      await deps.tell(ask, todo, neoTodoUntickedReminder(todo, minutes));
+      idle.set(todo.id, { since: read.since, nudges: plan.nudges });
+      return;
+    }
     if (plan.kind === 'remind') {
       const sent = await deps.invoke(caller(ask), 'work.send', {
         ref,
@@ -565,8 +570,12 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         'worker',
         plan.kind === 'remind'
           ? `Its session stopped ${minutes} min ago and could not be reached.`
-          : `Its session stopped ${minutes} min ago and did not continue after ${NEO_TODO_IDLE_REMINDERS} reminders.`,
-        'Continue the session with neo.todo.continue, or close the todo.'
+          : todo.check
+            ? `Its session stopped ${minutes} min ago and did not continue after ${NEO_TODO_IDLE_REMINDERS} reminders.`
+            : `Its session stopped ${minutes} min ago and nobody ticked it after ${NEO_TODO_IDLE_REMINDERS} reminders.`,
+        todo.check
+          ? 'Continue the session with neo.todo.continue, or close the todo.'
+          : 'Tick it done with evidence, continue the session, or close it.'
       ),
       now
     );
