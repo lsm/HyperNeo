@@ -152,7 +152,7 @@ describe('sweepCodingPrs', () => {
 });
 
 describe('codingPrNudgeText', () => {
-  test('a long CI wait reads as CI still pending, not as something to fix', () => {
+  test('pending CI text never tells the owner to merge', () => {
     expect(
       codingPrNudgeText(
         {
@@ -169,7 +169,7 @@ describe('codingPrNudgeText', () => {
         65 * MIN
       )
     ).toBe(
-      'lsm/open-agent-protocol#1266 "hub" has been approved with CI still pending for 65 min on head abcdef1. This is usually CI capacity, not something to fix; merge once CI is green, and look only if a check is stuck.'
+      'lsm/open-agent-protocol#1266 "hub" has been approved with CI still pending for 65 min on head abcdef1. CI is still running; fix it if it fails.'
     );
   });
 });
