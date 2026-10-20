@@ -84,6 +84,30 @@ async function call(
 }
 
 describe('work verb operations', () => {
+  test.each(['steer', 'queue'] as const)('work.send honors explicit %s intent', async (mode) => {
+    const adapter: WorkAdapter = {
+      ...desktop,
+      capabilities: ['find', 'send', 'steer', 'queue'],
+      steer: async () => ({ ok: true, value: { delivered: true, steeredIntoTurnId: 'active' } }),
+      queue: async () => ({ ok: true, value: { delivered: false, queuedSubmissionId: 'next' } }),
+    };
+    expect(
+      await call(
+        'work.send',
+        { ref: { adapter: adapter.id, id: 'busy' }, message: 'intent', mode },
+        undefined,
+        { source: 'rpc' },
+        [adapter]
+      )
+    ).toEqual({
+      ok: true,
+      value:
+        mode === 'steer'
+          ? { delivered: true, steeredIntoTurnId: 'active' }
+          : { delivered: false, queuedSubmissionId: 'next' },
+    });
+  });
+
   test('keeps delivery facts in driver result schemas', () => {
     for (const fact of [{ queuedSubmissionId: 'q1' }, { steeredIntoTurnId: 't1' }]) {
       const result = { ok: true, value: { delivered: false, ...fact } };

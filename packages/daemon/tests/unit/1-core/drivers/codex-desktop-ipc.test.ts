@@ -76,6 +76,21 @@ describe('withCodexDesktopIpc', () => {
     return { path, seen, closed };
   }
 
+  test('tries app-server when Desktop discovery refuses before dispatch', async () => {
+    const f = await fixture((message, _socket, send) =>
+      send({
+        type: 'response',
+        requestId: message.requestId,
+        resultType: 'error',
+        error: 'request-version-mismatch',
+      })
+    );
+    expect(await steerCodexDesktopTurn(f.path, 'thread-1', 'now', 'input-1')).toEqual({
+      value: 'app-server',
+    });
+    expect(f.seen.some((message) => message.method === 'thread-follower-steer-turn')).toBe(false);
+  });
+
   test('correlates out-of-order fragmented replies and declines discovery requests', async () => {
     const pending: Message[] = [];
     let resolveDiscovery = () => {};
