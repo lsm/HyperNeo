@@ -250,7 +250,7 @@ UI is served, that RPC answers, and that the mock model API is up. It ends with
   arrived.
 - State: read the run's DB read-only, e.g.
   `sqlite3 -readonly "$RUN/data/daemon.db" "SELECT ..."`. Only the seed and
-  check scripts write to it: `seed-todo.sh`, `todo-pr-claims.ts` (journey 3) and
+  check scripts write to it: `seed-todo.sh`, `todo-pr-claims.ts`, `todo-pr-concurrency.ts` (journey 3) and
   `seed-ledger.sh` (journey 4),
   `merge-check.sh` (journey 24), `archive-guard-check.sh` (journey 10) and
   `seed-start-question.sh` (journey 14), `quote-summary-check.mjs` (journey 18),
@@ -300,6 +300,12 @@ adds its journey here.
    stored merged evidence and the Neo snapshot; `gh.log` shows stub-only lookups.
    No real PR, provider, credentials or GUI is used; model notifications use the
    local mock and this run's dev-proxy provider row. GUI rendering is not verified.
+   In another fresh run, execute
+   `bun .claude/skills/verify/todo-pr-concurrency.ts <port> "$RUN"`.
+   It overlaps a completion check awaiting GitHub with 20 URL additions on that
+   same todo. Every URL must remain in its check; the stale completion is refused
+   and the todo remains open. Evidence: `evidence/todo-pr-concurrency.json`.
+
 4. **An open todo's PR leads the PR ledger in the snapshot.** After journey 1
    opened root, run `.claude/skills/verify/seed-ledger.sh "$RUN"`. It writes a
    project for `verify-test/demo` (so the pack sweep keeps its ledger rows), an

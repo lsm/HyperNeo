@@ -244,7 +244,49 @@ export function createNeoTodoOperations(
 ) {
   const completion = (plan: { todo: NeoTodo; patch: NeoTodoPatch }) =>
     plan.patch.state === 'done' ? readNeoTodoCompletion(packs(), plan.todo) : null;
-  const write = (plan: { todo: NeoTodo; patch: NeoTodoPatch }): TodoReceipt | Rejection => {
+  const withUrls = (
+    plan: { todo: NeoTodo; patch: NeoTodoPatch },
+    input: z.infer<typeof Edit>
+  ): Gate<{ todo: NeoTodo; patch: NeoTodoPatch }> => {
+    if (!input.addUrls) return { value: plan };
+    const pack = packs().find((pack) => pack.id === plan.todo.check?.pack)?.todos;
+    const check = pack?.addUrls?.(plan.todo, input.addUrls);
+    if (!check)
+      return fail('check_urls_unsupported: this todo needs a check that accepts PR urls.');
+    const accepted = planNeoTodoDraft(
+      { ...plan.todo, check },
+      packs(),
+      todos.listTodos(plan.todo.askId)
+    );
+    if ('reason' in accepted) return accepted;
+    return {
+      value: {
+        todo: accepted.value,
+        patch: { ...plan.patch, check, doneWhen: accepted.value.doneWhen },
+      },
+    };
+  };
+  const write = (
+    plan: { todo: NeoTodo; patch: NeoTodoPatch },
+    input?: z.infer<typeof Edit>
+  ): TodoReceipt | Rejection => {
+    if (input?.addUrls) {
+      const latest = requireNeoOpenTodo(todos.getTodo(plan.todo.id), todos.getAsk(plan.todo.askId));
+      if ('reason' in latest) return latest.reason;
+      const edited = planNeoTodoEdit(latest.value, input);
+      if ('reason' in edited) return edited.reason;
+      const rebased = withUrls(edited.value, input);
+      if ('reason' in rebased) return rebased.reason;
+      if (
+        input.done &&
+        JSON.stringify(rebased.value.todo.check) !== JSON.stringify(plan.todo.check)
+      )
+        return {
+          ok: false,
+          reason: 'todo_changed: PR URLs changed during completion; retry with the current check.',
+        };
+      plan = rebased.value;
+    }
     if (plan.patch.check) {
       const accepted = planNeoTodoDraft(plan.todo, packs(), todos.listTodos(plan.todo.askId));
       if ('reason' in accepted) return accepted.reason;
@@ -296,35 +338,10 @@ export function createNeoTodoOperations(
       'result:outcome'
     )
     .pipe(planNeoTodoEdit, ['outcome', 'input'], 'result:outcome')
-    .pipe(
-      (
-        plan: { todo: NeoTodo; patch: NeoTodoPatch },
-        input: z.infer<typeof Edit>
-      ): Gate<{ todo: NeoTodo; patch: NeoTodoPatch }> => {
-        if (!input.addUrls) return { value: plan };
-        const pack = packs().find((pack) => pack.id === plan.todo.check?.pack)?.todos;
-        const check = pack?.addUrls?.(plan.todo, input.addUrls);
-        if (!check)
-          return fail('check_urls_unsupported: this todo needs a check that accepts PR urls.');
-        const accepted = planNeoTodoDraft(
-          { ...plan.todo, check },
-          packs(),
-          todos.listTodos(plan.todo.askId)
-        );
-        if ('reason' in accepted) return accepted;
-        return {
-          value: {
-            todo: accepted.value,
-            patch: { ...plan.patch, check, doneWhen: accepted.value.doneWhen },
-          },
-        };
-      },
-      ['outcome', 'input'],
-      'result:outcome'
-    )
+    .pipe(withUrls, ['outcome', 'input'], 'result:outcome')
     .pipe(completion, 'outcome', 'completion')
     .pipe(requireNeoTodoMayFinish, ['outcome', 'completion'], 'result:outcome')
-    .pipe(write, 'outcome', 'outcome')
+    .pipe(write, ['outcome', 'input'], 'outcome')
     .endAsync('outcome') as (
     input: z.infer<typeof Edit>,
     caller: OperationCaller

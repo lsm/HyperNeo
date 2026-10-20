@@ -302,7 +302,7 @@ describe('coding todo PR ownership through add and edit', () => {
   test('concurrent URL additions to the same todo preserve every required PR', async () => {
     const { db, store, call, runner, states } = setup();
     try {
-      store.addTodo('same', 'ask', draft(), 1);
+      store.addTodo('same', 'ask', draft([url(1)]), 1);
       const results = await Promise.all([
         call('neo.todo.edit', {
           todoId: 'same',
@@ -313,6 +313,10 @@ describe('coding todo PR ownership through add and edit', () => {
         call('neo.todo.edit', { todoId: 'same', addUrls: [url(2)] }),
       ]);
       expect(results[1].ok).toBe(true);
+      expect(results[0]).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('todo_changed'),
+      });
       expect(store.getTodo('same')?.check?.params.urls).toEqual([
         url(1).toLowerCase(),
         url(2).toLowerCase(),
