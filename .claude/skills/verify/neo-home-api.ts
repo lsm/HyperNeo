@@ -21,6 +21,11 @@ createServer(async (req, res) => {
       { type: 'tool_use', id: 'toolu_home_git_env', name: 'Bash', input: { command: `cd / && GIT_DIR=${join(process.env.HOME!, '..', 'data', 'Neo', '.git')} git branch sdk-env-should-not-exist` } },
       { type: 'tool_use', id: 'toolu_home_grep_git', name: 'Grep', input: { path: '../..', pattern: '.', glob: '**/.git/**', output_mode: 'files_with_matches' } },
       { type: 'tool_use', id: 'toolu_home_grep_coordinators', name: 'Grep', input: { path: '../..', pattern: '.', glob: '.coordinators/**', output_mode: 'files_with_matches' } },
+      { type: 'tool_use', id: 'toolu_home_ignored_read', name: 'Read', input: { file_path: '../../human-private/draft.md' } },
+      { type: 'tool_use', id: 'toolu_home_ignored_grep', name: 'Grep', input: { path: '../..', pattern: '.', glob: '**/draft.md', output_mode: 'files_with_matches' } },
+      { type: 'tool_use', id: 'toolu_home_ignored_glob', name: 'Glob', input: { path: '../..', pattern: '**/draft.md' } },
+      { type: 'tool_use', id: 'toolu_home_public_grep', name: 'Grep', input: { path: '../../projects', pattern: 'Release', glob: '*.md', output_mode: 'files_with_matches' } },
+      { type: 'tool_use', id: 'toolu_home_public_glob', name: 'Glob', input: { path: '../..', pattern: 'projects/**/*.md' } },
     ];
   }
   const message = { id: `msg_${Date.now()}`, type: 'message', role: 'assistant', model: 'claude-sonnet-4-20250514', content, stop_reason: content[0].type === 'tool_use' ? 'tool_use' : 'end_turn', stop_sequence: null, usage: { input_tokens: 100, output_tokens: 30 } };

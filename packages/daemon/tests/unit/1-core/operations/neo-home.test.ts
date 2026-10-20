@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, mkdir, readFile, readdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { HookInput } from '@anthropic-ai/claude-agent-sdk';
+import { neoToolGuard } from '../../../../src/lib/neo/look-up-guard';
 import { createNeoHomeOperations } from '../../../../src/lib/neo/home/operations';
 import { NeoHomeRepository } from '../../../../src/lib/neo/home/repository';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository';
@@ -213,15 +215,101 @@ describe('Neo home operations', () => {
       reason: expect.stringContaining('secret_content'),
     });
   });
-  test.each(['direction.md', 'projects/release/mandate.md'])(
-    'keeps %s gated until H2',
+  test.each([
+    'direction.md',
+    'Direction.md',
+    'DIRECTION.MD',
+    'projects/release/mandate.md',
+    'projects/release/MANDATE.md',
+  ])('keeps %s gated until H2', async (path) => {
+    expect(await save(path)).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('confirmation_required'),
+    });
+  });
+  test.each(['projects', 'digest.md/child.md'])(
+    'refuses non-document path %s through both operation doors',
     async (path) => {
+      await save('digest.md');
+      await mkdir(join(root, 'projects'), { recursive: true });
+      const head = await git('rev-parse', 'HEAD');
+      expect(await call('neo.home.read', { path })).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('invalid_path'),
+      });
       expect(await save(path)).toMatchObject({
         ok: false,
-        reason: expect.stringContaining('confirmation_required'),
+        reason: expect.stringContaining('invalid_path'),
       });
+      expect(await git('rev-parse', 'HEAD')).toBe(head);
+      expect(await readFile(join(root, 'digest.md'), 'utf8')).toBe('Release is ready.\n');
     }
   );
+  test('native reads and searches keep ignored documents private while allowing curated docs', async () => {
+    const dataDir = root;
+    root = join(dataDir, 'Neo');
+    await mkdir(root);
+    home = new NeoHomeRepository(root, repo);
+    await git('init', '--quiet');
+    await git('config', 'user.name', 'Verify Neo');
+    await git('config', 'user.email', 'verify@example.invalid');
+    await call('neo.home.init', {});
+    await writeFile(
+      join(root, '.gitignore'),
+      '.coordinators/\nhuman-private/\n!human-private/shared.md\n'
+    );
+    await mkdir(join(root, 'human-private'));
+    await writeFile(join(root, 'human-private', 'draft.md'), 'Private draft.');
+    await mkdir(join(root, 'projects'));
+    await writeFile(join(root, 'projects', 'public.md'), 'Curated document.');
+    const cwd = join(root, '.coordinators', 'test');
+    await mkdir(cwd, { recursive: true });
+    const guard = neoToolGuard({ home: dataDir, dataDir, own: [cwd] });
+    const hook = (tool_name: string, tool_input: Record<string, unknown>) =>
+      guard(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name,
+          tool_input,
+          cwd,
+          session_id: 'test',
+          tool_use_id: 'test',
+          transcript_path: join(cwd, 'transcript'),
+        } as HookInput,
+        'test',
+        { signal: new AbortController().signal }
+      );
+    try {
+      for (const [tool, input] of [
+        ['Read', { file_path: join(root, 'human-private', 'draft.md') }],
+        [
+          'Grep',
+          { path: root, pattern: '.', glob: '**/draft.md', output_mode: 'files_with_matches' },
+        ],
+        ['Glob', { path: root, pattern: '**/draft.md' }],
+        ['Grep', { path: join(root, 'human-private'), pattern: '.', output_mode: 'count' }],
+      ] as const)
+        expect(await hook(tool, input)).toMatchObject({
+          hookSpecificOutput: { permissionDecision: 'deny' },
+        });
+      for (const [tool, input] of [
+        ['Read', { file_path: join(root, 'README.md') }],
+        [
+          'Grep',
+          {
+            path: join(root, 'projects'),
+            pattern: '.',
+            glob: '*.md',
+            output_mode: 'files_with_matches',
+          },
+        ],
+        ['Glob', { path: root, pattern: 'projects/**/*.md' }],
+      ] as const)
+        expect(await hook(tool, input)).toEqual({});
+    } finally {
+      root = dataDir;
+    }
+  });
   test('only root Neo and the local human can use the home operations', async () => {
     for (const source of ['mcp', 'internal']) {
       expect(await call('neo.home.init', {}, { source, principal: 'worker' })).toMatchObject({
