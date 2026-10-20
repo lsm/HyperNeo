@@ -490,7 +490,7 @@ adds its journey here.
     End state: the digest's RPC commit contains the requested text; `.coordinators/`
     stays untracked; `home_path` is set once and survives a rename; dirty human edits
     survive a refused save; secret-like content, hidden paths, direction and mandate
-    saves are refused. H1 returns `confirmation_required` for protected saves until
+    saves (including case variants) are refused. H1 returns `confirmation_required` for protected saves until
     H2 adds human-answer verification. Evidence: `evidence/neo-home.json`.
     `neo.home.read` does not initialize or commit a repository. The helper first
     seeds an existing direction and ignore file, retries refused init/save calls,
@@ -510,12 +510,19 @@ adds its journey here.
     To verify the guard wiring in a real Neo SDK turn, launch with
     `VERIFY_MOCK=neo-home-api.ts .claude/skills/verify/launch.sh <port> "$RUN"`,
     run `neo-home.ts` as above to initialize the synthetic home, then run
-    `bun .claude/skills/verify/neo-home-sdk.ts <port> "$RUN"`. It registers the local
+    `bun .claude/skills/verify/neo-home-review.ts <port> "$RUN"`. This seeds an
+    ignored private draft and a synthetic mandate, then checks typed refusals for
+    case-variant protected saves, directories and file-shaped parents, with HEAD
+    and original content unchanged. Evidence: `evidence/neo-home-review.json`.
+    Then run `bun .claude/skills/verify/neo-home-sdk.ts <port> "$RUN"`. It registers the local
     mock provider in this run's DB, opens Neo and sends `verify-home-guard-sdk`.
-    The scripted model calls native Read, two Greps and four Bash tools. End state:
-    `evidence/neo-home-sdk.json` contains a successful README read, denied private
-    Grep globs, denied redirect and plain/absolute/environment git mutations, no
-    written file and no created branch.
+    The scripted model calls two Reads, four Greps, two Globs and four Bash tools. End state:
+    `evidence/neo-home-sdk.json` contains a successful README read and curated
+    project Grep/Glob, denied ignored-draft Read/Grep/Glob, denied private globs,
+    redirect and plain/absolute/environment git mutations, no written file and no
+    created branch. Broad searches that could include ignored home documents are
+    refused; narrow the path or glob to curated documents. Own coordinator notes
+    retain their existing access.
     This observes real SDK tool execution with a mocked model; GUI rendering is
     not covered. Stop the isolated daemon and mock as in Cleanup.
 

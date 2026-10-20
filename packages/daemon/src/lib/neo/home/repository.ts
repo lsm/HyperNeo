@@ -32,7 +32,7 @@ export function requireHomePath(path: string): HomeGate<string> {
 export function requireHomeContent<T extends { path: string; content: string }>(
   input: T
 ): HomeGate<T> {
-  if (input.path === 'direction.md' || /(^|\/)mandate\.md$/.test(input.path))
+  if (input.path.toLowerCase() === 'direction.md' || /(^|\/)mandate\.md$/i.test(input.path))
     return {
       reason: refused(
         'confirmation_required: direction and mandate saves require human confirmation (H2).'
@@ -87,13 +87,19 @@ export class NeoHomeRepository {
     return { code, text: text.trim() };
   }
 
-  private async safePath(path: string): Promise<boolean> {
+  private async safePath(path: string, document = false): Promise<boolean> {
     let current = this.root;
     for (const part of ['', ...path.split('/')]) {
       current = join(current, part);
       try {
-        if ((await lstat(current)).isSymbolicLink()) return false;
+        const info = await lstat(current);
+        if (
+          info.isSymbolicLink() ||
+          (document && current === join(this.root, path) && !info.isFile())
+        )
+          return false;
       } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOTDIR') return false;
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       }
     }
@@ -124,7 +130,7 @@ export class NeoHomeRepository {
         ['direction.md', ''],
         ['.gitignore', ''],
       ]) {
-        if (!(await this.safePath(path)))
+        if (!(await this.safePath(path, true)))
           return refused('invalid_path: the home repo cannot use symlinks.');
         const content = await readFile(join(this.root, path), 'utf8').catch((error) => {
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
@@ -183,8 +189,8 @@ export class NeoHomeRepository {
 
   read(path: string): Promise<HomeResult> {
     return this.serial(async () => {
-      if (!(await this.safePath(path)))
-        return refused('invalid_path: symlinks are not home documents.');
+      if (!(await this.safePath(path, true)))
+        return refused('invalid_path: use a regular home document without symlinks.');
       const metadata = await lstat(join(this.root, '.git')).catch((error) => {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
         return null;
@@ -206,8 +212,8 @@ export class NeoHomeRepository {
     return this.serial(async () => {
       const initialized = await this.initialize();
       if (!initialized.ok) return initialized;
-      if (!(await this.safePath(input.path)))
-        return refused('invalid_path: symlinks are not home documents.');
+      if (!(await this.safePath(input.path, true)))
+        return refused('invalid_path: use a regular home document without symlinks.');
       if (!(await this.git(['check-ignore', '-q', '--', input.path], true)).code)
         return refused('ignored: that path is private or git-ignored.');
       if ((await this.git(['status', '--porcelain', '--untracked-files=all'])).text)

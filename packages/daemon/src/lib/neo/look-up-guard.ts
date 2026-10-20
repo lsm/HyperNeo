@@ -1,7 +1,17 @@
 import type { HookCallback, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  matchesGlob,
+  relative,
+  resolve,
+  sep,
+} from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { spawnProcess } from '../runtime-spawn/index.ts';
 
 const SECRET_DIRS = [
   '.ssh',
@@ -99,6 +109,7 @@ interface LookUpScope {
 }
 
 interface LookUpPathFacts {
+  ignoredHome?: boolean;
   realPath(path: string): string;
   exists(path: string): boolean;
   readText?(path: string): string | null;
@@ -142,6 +153,53 @@ function readLookUpPathFacts(): LookUpPathFacts {
       }
     },
   };
+}
+
+async function readHomeIgnoreFacts(
+  tool: string,
+  input: Record<string, unknown>,
+  scope: LookUpScope,
+  facts: LookUpPathFacts
+): Promise<boolean> {
+  if (!['Read', 'Grep', 'Glob'].includes(tool)) return false;
+  const text = (key: string) => (typeof input[key] === 'string' ? (input[key] as string) : '');
+  const home = facts.realPath(join(scope.dataDir, 'Neo'));
+  const target = facts.realPath(
+    resolvePath(text(tool === 'Read' ? 'file_path' : 'path') || scope.cwd, scope)
+  );
+  if (!within(target, home) || ownPath(target, scope, facts) || !facts.exists(join(home, '.git')))
+    return false;
+  const git = async (...args: string[]) => {
+    const child = spawnProcess(['git', '--no-optional-locks', '-C', home, ...args], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const [text, , code] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    return { text, code };
+  };
+  const direct = await git('check-ignore', '-q', '--', target);
+  if (direct.code !== 1) return true;
+  if (tool === 'Read') return false;
+  const ignored = await git('ls-files', '--others', '--ignored', '--exclude-standard', '-z');
+  if (ignored.code) return true;
+  const pattern = text(tool === 'Grep' ? 'glob' : 'pattern');
+  return ignored.text
+    .split('\0')
+    .filter(Boolean)
+    .some((entry) => {
+      const file = join(home, entry);
+      return (
+        within(file, target) &&
+        !ownPath(file, scope, facts) &&
+        (!pattern ||
+          matchesGlob(file, resolve(target, pattern)) ||
+          (tool === 'Grep' && !pattern.includes('/') && matchesGlob(basename(file), pattern)))
+      );
+    });
 }
 
 export function neoSecretReadRules(): string[] {
@@ -1022,6 +1080,8 @@ function readDenial(
   scope: LookUpScope,
   facts: LookUpPathFacts
 ): string | null {
+  if (facts.ignoredHome)
+    return 'that path or search includes git-ignored home documents; narrow the search';
   scope = { ...scope, readHome: true };
   const text = (key: string) => (typeof input[key] === 'string' ? (input[key] as string) : '');
   if (tool === 'Read')
@@ -1127,11 +1187,11 @@ export function neoToolGuard(scope: Omit<LookUpScope, 'cwd'>): HookCallback {
   return async (input) => {
     if (input.hook_event_name !== 'PreToolUse') return {};
     const pre = input as PreToolUseHookInput;
-    const verdict = decideNeoTool(
-      pre.tool_name,
-      (pre.tool_input ?? {}) as Record<string, unknown>,
-      { ...scope, cwd: pre.cwd }
-    );
+    const toolInput = (pre.tool_input ?? {}) as Record<string, unknown>;
+    const here = { ...scope, cwd: pre.cwd };
+    const facts = readLookUpPathFacts();
+    facts.ignoredHome = await readHomeIgnoreFacts(pre.tool_name, toolInput, here, facts);
+    const verdict = decideNeoTool(pre.tool_name, toolInput, here, facts);
     if (verdict.kind === 'deny')
       return {
         hookSpecificOutput: {

@@ -254,16 +254,14 @@ describe('Neo home operations', () => {
     await git('config', 'user.name', 'Verify Neo');
     await git('config', 'user.email', 'verify@example.invalid');
     await call('neo.home.init', {});
-    await writeFile(
-      join(root, '.gitignore'),
-      '.coordinators/\nhuman-private/\n!human-private/shared.md\n'
-    );
+    await writeFile(join(root, '.gitignore'), '.coordinators/\nhuman-private/\n');
     await mkdir(join(root, 'human-private'));
     await writeFile(join(root, 'human-private', 'draft.md'), 'Private draft.');
     await mkdir(join(root, 'projects'));
     await writeFile(join(root, 'projects', 'public.md'), 'Curated document.');
     const cwd = join(root, '.coordinators', 'test');
     await mkdir(cwd, { recursive: true });
+    await writeFile(join(cwd, 'own.md'), 'Own working note.');
     const guard = neoToolGuard({ home: dataDir, dataDir, own: [cwd] });
     const hook = (tool_name: string, tool_input: Record<string, unknown>) =>
       guard(
@@ -294,6 +292,7 @@ describe('Neo home operations', () => {
         });
       for (const [tool, input] of [
         ['Read', { file_path: join(root, 'README.md') }],
+        ['Read', { file_path: join(cwd, 'own.md') }],
         [
           'Grep',
           {
