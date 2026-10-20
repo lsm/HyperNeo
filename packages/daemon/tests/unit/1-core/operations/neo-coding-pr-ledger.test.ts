@@ -515,6 +515,15 @@ describe('CodingPrLedgerRepository.observeSessions', () => {
     db.close();
   });
 
+  test('keeps actual opened-PR evidence when a Claude session has no sidebar list', async () => {
+    const { db, ledger } = setup();
+    const ref = { adapter: 'claude-desktop', id: 'legacy-opener' };
+    await reconcile(ledger, ['lsm/a'], async () => response([node(4)]), 100);
+    ledger.observeSessions([facts(ref, { openedPrs: ['https://github.com/lsm/a/pull/4'] })], 101);
+    expect(owners(db)).toEqual([{ number: 4, owner: JSON.stringify(ref) }]);
+    db.close();
+  });
+
   test('an app link owns its PR before a branch match, and the first owner keeps it', async () => {
     const { db, ledger } = setup();
     const opener = { adapter: 'claude-desktop', id: 'opener' };

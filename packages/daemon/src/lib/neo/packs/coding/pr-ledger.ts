@@ -191,6 +191,7 @@ type CodingSessionLinks = {
   owned: string[];
   prs: string[];
   dismissed: string[];
+  sidebar?: boolean;
 };
 
 export function codingRemoteRepo(remote: string): string | null {
@@ -210,7 +211,8 @@ export function planCodingPrOwner(
   const linked = sessions.filter(
     (session) =>
       session.prs.includes(url) &&
-      (JSON.parse(session.ref) as { adapter: string }).adapter !== 'claude-desktop'
+      (session.sidebar === false ||
+        (JSON.parse(session.ref) as { adapter: string }).adapter !== 'claude-desktop')
   );
   const branched = sessions.filter(
     (session) =>
@@ -388,6 +390,7 @@ export class CodingPrLedgerRepository {
       branches: JSON.parse(row.branches) as string[],
       owned: JSON.parse(row.owned) as string[],
       prs: JSON.parse(row.linked ?? row.opened) as string[],
+      sidebar: row.linked !== null,
       dismissed: JSON.parse(row.dismissed) as string[],
     }));
     const rows = this.db

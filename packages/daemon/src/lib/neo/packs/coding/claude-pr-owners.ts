@@ -30,8 +30,7 @@ export function createCodingClaudeOwnerReader(
         ...(folder ? { folder } : {}),
         remotes: folder ? ((await identity(folder)).remotes ?? []) : [],
         branches: links.branches ?? [],
-        linkedPrs,
-        linkedPrsWindow: true,
+        ...(links.linkedPrs || created.size ? { linkedPrs, linkedPrsWindow: true as const } : {}),
         openedPrs: createdPrs,
       });
     }
