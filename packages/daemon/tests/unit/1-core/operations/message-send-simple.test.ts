@@ -32,7 +32,7 @@ describe('simple message.send worker handoff', () => {
   const registry = () =>
     createOperationRegistry([
       createSendMessageOperation(mailbox.jobQueue, (id) =>
-        [sender, 'neo:root'].includes(id) ? 'active' : null
+        [sender, 'neo:root', 'neo:second'].includes(id) ? 'active' : null
       ),
     ]);
   const send = (input: unknown, catalog = registry()) =>
@@ -97,6 +97,53 @@ describe('simple message.send worker handoff', () => {
       expect(ref.byteLength).toBe(bytes);
       expect(readFileSync(ref.path, 'utf8')).toBe(text);
     }
+  });
+
+  test('an interrupted older spill cannot poison future sends of the same report', async () => {
+    const path = join(
+      handoffDraftDirectory(root, sender),
+      `message-${createHash('sha256').update(report).digest('hex')}.txt`
+    );
+    writeFileSync(path, report.slice(0, 32));
+    const receipt = await accepted({ to: 'neo:root', text: report });
+    const ref = HandoffReference.parse(receipt.files![0]);
+    expect(readFileSync(ref.path, 'utf8')).toBe(report);
+    expect(readFileSync(path, 'utf8')).toBe(report.slice(0, 32));
+  });
+
+  test('concurrent reports to different recipients both retain every byte', async () => {
+    const shared = registry();
+    const receipts = await Promise.all(
+      ['neo:root', 'neo:second'].map((to) => accepted({ to, text: report }, shared))
+    );
+    for (const receipt of receipts) {
+      const ref = HandoffReference.parse(receipt.files![0]);
+      expect(readFileSync(ref.path, 'utf8')).toBe(report);
+      expect(ref.byteLength).toBe(8192);
+    }
+    expect(mailbox.rows()).toHaveLength(2);
+  });
+
+  test('at most 20 explicit references are accepted per send, with a useful limit error', async () => {
+    writeFileSync(join(handoffDraftDirectory(root, sender), 'limits.txt'), 'Synthetic attachment');
+    const published = await publishHandoff(root, sender, 'limits.txt');
+    if (published.kind !== 'published') throw new Error('fixture publication failed');
+    const files = Array.from({ length: 20 }, () => published.reference);
+    expect(
+      (await accepted({ to: 'neo:root', text: 'Twenty attachments', files })).files
+    ).toHaveLength(20);
+    expect(
+      await send({
+        to: 'neo:root',
+        text: 'Too many attachments',
+        files: [...files, published.reference],
+      })
+    ).toMatchObject({
+      kind: 'failed',
+      code: 'invalid_input',
+      message: expect.stringContaining('20'),
+    });
+    expect(mailbox.rows()).toHaveLength(1);
   });
 
   test('the old nested SDK envelope retains its content and accepted result shape', async () => {
