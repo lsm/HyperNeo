@@ -18,6 +18,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import { PROVIDER_KEY_ENV_VARS } from '../credential-discovery.ts';
 import { ErrorCategory, type ErrorManager } from '../error-manager.ts';
+import { runLagPhase } from '../event-loop-activity.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Logger } from '../logger.ts';
 import type { ProviderEnvVars } from '../provider-service.ts';
@@ -865,11 +866,13 @@ export class QueryRunner {
         provider = providerRegistry.get(resolvedProviderId) ?? provider;
       }
 
-      let queryOptions = await optionsBuilder.build({
-        askUserQuestionHook: attemptHook,
-        canUseTool: this.createAttemptBoundCanUseTool(attemptToken, questionOrigin),
-        session: providerSession,
-      });
+      let queryOptions = await runLagPhase('sdk:options_build', () =>
+        optionsBuilder.build({
+          askUserQuestionHook: attemptHook,
+          canUseTool: this.createAttemptBoundCanUseTool(attemptToken, questionOrigin),
+          session: providerSession,
+        })
+      );
 
       queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
       const coordinator = neoCoordinatorBinding(this.ctx.db, session.id);
@@ -932,7 +935,7 @@ export class QueryRunner {
       const originalSpawn = queryOptions.spawnClaudeCodeProcess;
       queryOptions.spawnClaudeCodeProcess = (opts: SpawnOptions): SpawnedProcess => {
         recoveryState.startGuard?.();
-        const proc = (
+        const proc = runLagPhase('sdk:spawn', () =>
           originalSpawn ? originalSpawn(opts) : defaultSpawn(opts)
         ) as TrackedAgentProcess;
         this.ctx.trackAgentProcess(proc);
@@ -1034,17 +1037,21 @@ export class QueryRunner {
         throw envAbort;
       }
 
-      removeFlagSettingsFile = writeFlagSettingsFile(queryOptions, session.id);
+      removeFlagSettingsFile = runLagPhase('sdk:flag_settings', () =>
+        writeFlagSettingsFile(queryOptions, session.id)
+      );
       recoveryState.startGuard?.();
-      const queryObject = query({
-        prompt: this.createMessageGeneratorWrapper(
-          queryGeneration,
-          recoveryState.startGuard,
-          holderTurn,
-          questionInputs
-        ),
-        options: queryOptions,
-      });
+      const queryObject = runLagPhase('sdk:query_create', () =>
+        query({
+          prompt: this.createMessageGeneratorWrapper(
+            queryGeneration,
+            recoveryState.startGuard,
+            holderTurn,
+            questionInputs
+          ),
+          options: queryOptions,
+        })
+      );
       this.ctx.queryObject = queryObject;
 
       this.ctx.onModelsFetched(queryGeneration, attemptToken).catch((e) => {

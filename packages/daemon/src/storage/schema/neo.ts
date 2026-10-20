@@ -1,3 +1,4 @@
+import { runMigration415 } from './m415-neo-home-path.ts';
 import { runMigration370 } from './m370-neo-project-merges.ts';
 import { runMigration368 } from './m368-neo-project-tree.ts';
 import type { Database } from '../sqlite-compat.ts';
@@ -29,6 +30,7 @@ export function createNeoTables(db: Database): void {
   createNeoContextTables(db);
   runMigration389(db);
   runMigration368(db);
+  runMigration415(db);
   runMigration370(db);
   createNeoPublicationTable(db);
 }

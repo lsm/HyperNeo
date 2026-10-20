@@ -1,3 +1,4 @@
+import { runMigration415 } from './m415-neo-home-path.ts';
 import { runMigration425 } from './m425-message-send-receipts.ts';
 import { runMigration386 } from './m386-neo-work-control-failures.ts';
 import { runMigration388 } from './m388-claude-desktop-bridge-events.ts';
@@ -894,6 +895,7 @@ export function runMigrations(
   run(migrationMarkerKey(412), () => runMigration412(db));
   run(migrationMarkerKey(413), () => runMigration413(db));
   run(migrationMarkerKey(414), () => runMigration414(db));
+  run(migrationMarkerKey(415), () => runMigration415(db));
   run(migrationMarkerKey(416), () => runMigration416(db));
   run(migrationMarkerKey(417), () => runMigration417(db));
   run(migrationMarkerKey(418), () => runMigration418(db));

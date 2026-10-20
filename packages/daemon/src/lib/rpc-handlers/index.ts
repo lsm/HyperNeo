@@ -1,3 +1,4 @@
+import { createNeoHomeOperations } from '../neo/home/operations.ts';
 import { homedir } from 'node:os';
 import { SessionScheduler } from '../scheduler/session-schedules.ts';
 import { createSessionScheduleOperations } from '../scheduler/operations.ts';
@@ -1499,6 +1500,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       executionPreparations: () => neoService.packs(),
     }),
     ...createNeoOperations(neoService),
+    ...createNeoHomeOperations(neoService),
     ...createSessionScheduleOperations(sessionScheduler),
   ];
   sessionScheduler.recover();

@@ -32,6 +32,12 @@ import {
 import { Database as BunDatabase } from './sqlite-compat.ts';
 import { assertSupportedDatabaseVersion } from './schema/upgrade-floor.ts';
 import { backfillSdkMessageColumns } from './schema/m413-sdk-message-columns.ts';
+import { migrateSdkMessageBodies } from './sdk-message-body-copy.ts';
+import {
+  reserveSdkBodyBackupPath,
+  sdkBodyBackupChannel,
+  SdkBodyCopyTerminalError,
+} from './sdk-message-body-backup.ts';
 
 const MIGRATION_BACKUP_RETENTION = 3;
 const MIGRATION_BACKUP_TEMP_STALE_MS = 60 * 60 * 1000;
@@ -54,6 +60,9 @@ export class DatabaseCore {
   private messageSearchMergeWorkerFailures = 0;
   private messageSearchMergeStarted = false;
   private messageSearchMergeIntervalMs = MESSAGE_SEARCH_MERGE_INTERVAL_MS;
+  private bodyCopyAbort: AbortController | null = null;
+  private bodyCopyRetry: ReturnType<typeof setTimeout> | null = null;
+  private bodyCopyClosed = false;
 
   constructor(
     private dbPath: string,
@@ -163,11 +172,93 @@ export class DatabaseCore {
     return this.db;
   }
 
+  startSdkMessageBodyCopy(): void {
+    if (this.bodyCopyClosed || this.bodyCopyAbort || this.dbPath === ':memory:') return;
+    if (typeof Worker === 'undefined') {
+      this.logger.info('SDK body copy: {"phase":"refused","reason":"worker_unavailable"}');
+      return;
+    }
+    const abort = (this.bodyCopyAbort = new AbortController());
+    const attempt = async () => {
+      if (this.bodyCopyClosed || abort.signal.aborted) return;
+      const started = performance.now();
+      let last = started,
+        maxLagMs = 0;
+      const heartbeat = setInterval(() => {
+        const now = performance.now();
+        maxLagMs = Math.max(maxLagMs, now - last - 10);
+        last = now;
+      }, 10);
+      let channel: ReturnType<typeof sdkBodyBackupChannel> | undefined;
+      let complete = false;
+      let terminal = false;
+      try {
+        const dbBytes =
+          statSync(this.dbPath).size +
+          (existsSync(`${this.dbPath}-wal`) ? statSync(`${this.dbPath}-wal`).size : 0);
+        const result = await migrateSdkMessageBodies(this.db, {
+          dbBytes,
+          freeBytes: freeBytesAt(dirname(this.dbPath)),
+          signal: abort.signal,
+          verifyBackup: async (mustExist, priorPath) => {
+            const backupDir = join(dirname(this.dbPath), 'backups', 'sdk-message-bodies-v1');
+            if (mustExist && (!priorPath || dirname(priorPath) !== backupDir))
+              throw new SdkBodyCopyTerminalError(
+                'SDK body copy original backup location is invalid',
+                priorPath ?? '<unknown>'
+              );
+            const backupPath = mustExist
+              ? priorPath!
+              : await reserveSdkBodyBackupPath(this.db, this.dbPath, abort.signal);
+            channel = sdkBodyBackupChannel(this.dbPath, backupPath, abort.signal);
+            const verified = await channel.verify(mustExist);
+            this.logger.info(
+              `SDK body copy: ${JSON.stringify({ phase: 'backup_verified', ...verified })}`
+            );
+            return backupPath;
+          },
+          checkpoint: async () => {
+            await channel?.checkpoint();
+          },
+          log: (progress) => this.logger.info(`SDK body copy: ${progress}`),
+        });
+        complete = result.status === 'complete';
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        this.logger.info(
+          `SDK body copy: ${JSON.stringify({ phase: 'run_finished', status: result.status, elapsedMs: performance.now() - started, maxLagMs })}`
+        );
+      } catch (error) {
+        if (error instanceof SdkBodyCopyTerminalError) {
+          terminal = true;
+          if (!abort.signal.aborted)
+            this.logger.error(
+              `SDK body copy stopped; requires operator action; backup=${error.backupPath}`,
+              error
+            );
+        } else if (!abort.signal.aborted)
+          this.logger.warn('SDK body copy deferred; no unverified changes permitted', error);
+      } finally {
+        clearInterval(heartbeat);
+        channel?.close();
+      }
+      if (!complete && !terminal && !this.bodyCopyClosed && !abort.signal.aborted)
+        this.bodyCopyRetry = setTimeout(() => {
+          void attempt();
+        }, 60_000);
+    };
+    this.bodyCopyRetry = setTimeout(() => {
+      void attempt();
+    }, 0);
+  }
+
   getDbPath(): string {
     return this.dbPath;
   }
 
   close(): void {
+    this.bodyCopyClosed = true;
+    this.bodyCopyAbort?.abort();
+    if (this.bodyCopyRetry) clearTimeout(this.bodyCopyRetry);
     this.messageSearchMergeClosed = true;
     if (this.messageSearchMergeTimer) {
       clearTimeout(this.messageSearchMergeTimer);

@@ -97,6 +97,7 @@ const Project = z.object({
   context: z.string(),
   parentId: z.string().nullable().optional(),
   epicUrl: z.string().nullable().optional(),
+  homePath: z.string().nullable().optional(),
   workspaceAliases: z.array(z.string()).optional(),
   repository: z.string().optional(),
   folders: z

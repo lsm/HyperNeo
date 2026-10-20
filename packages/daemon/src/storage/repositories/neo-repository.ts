@@ -1,10 +1,11 @@
+import { createHash } from 'node:crypto';
 import type { NeoBinding, NeoProject } from '@hyperneo/shared/types/neo-context';
 import { neoProjectMoveReason, neoProjectPath } from '@hyperneo/shared/types/neo-project-tree';
 import type { NeoProjectFacts } from '../../lib/neo/project-cleanup.ts';
 import type { Database } from '../sqlite-compat.ts';
 import { NeoProjectMergeRepository } from './neo-project-merge-repository.ts';
 
-const concernColumns = `id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl,
+const concernColumns = `id, title, summary, context, revision, parent_id AS parentId, epic_url AS epicUrl, home_path AS homePath,
   created_at AS createdAt, updated_at AS updatedAt`;
 const bindingColumns = 'session_id AS sessionId, concern_id AS projectId, kind';
 export type NeoProjectInput = Pick<NeoProject, 'id' | 'title' | 'summary' | 'context'>;
@@ -127,6 +128,21 @@ export class NeoRepository {
             .get(input.title, input.summary, input.context, now, input.id, expectedRevision);
     if (row) this.notify();
     return row as NeoProject | null;
+  }
+
+  ensureHomePath(project: NeoProject): string {
+    const slug =
+      project.title
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, 48) || 'project';
+    const path = `projects/${slug}-${createHash('sha256').update(project.id).digest('hex').slice(0, 12)}`;
+    const changed = this.db
+      .prepare('UPDATE neo_concerns SET home_path = ? WHERE id = ? AND home_path IS NULL')
+      .run(path, project.id);
+    if (changed.changes) this.notify();
+    return this.getProject(project.id)!.homePath!;
   }
 
   allRepositories(projectId?: string): string[] {

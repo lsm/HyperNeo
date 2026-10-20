@@ -2,6 +2,7 @@ export interface NeoProject {
   id: string;
   parentId?: string | null;
   epicUrl?: string | null;
+  homePath?: string | null;
   workspaceAliases?: string[];
   repository?: string;
   folders?: { machine: string; folder: string }[];

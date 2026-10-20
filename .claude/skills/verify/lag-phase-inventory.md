@@ -27,6 +27,18 @@ survive; a completion during the delayed tick can still name a long operation.
 | Search FTS merge dispatch | **30 s**, worker owns merge | `timer:search_merge_worker_start` | `storage/database-core.ts` |
 | GitHub event poll | recursive **120 s** default, configurable/rate limited | `timer:github_event_poll` | `lib/external-events/github/github-event-extension.ts`, `scheduleNextPollAfter` |
 | Session schedules and all other durable jobs | per queued run time | `job:<queue>` | `storage/job-queue-processor.ts`, `processJob` |
+| SDK settings read/merge/write | each query preparation | `sdk:settings_prepare` | `lib/settings-manager.ts`, `prepareSDKOptions` |
+| SDK option assembly | each query attempt | `sdk:options_build` | `lib/agent/query-runner.ts`, `runQuery` |
+| SDK flag settings file | each query attempt | `sdk:flag_settings` | `lib/agent/query-runner.ts`, `runQuery` |
+| SDK query construction | each query attempt | `sdk:query_create` | `lib/agent/query-runner.ts`, `runQuery` |
+| SDK child spawn | each SDK spawn | `sdk:spawn` | `lib/agent/query-runner.ts`, `spawnClaudeCodeProcess` |
+
+SDK settings and option assembly phases include asynchronous waits. A long
+settings phase with a responsive loop is expected for slow storage; its duration
+alone does not prove blocking. Query construction and child spawn phases isolate
+synchronous SDK entry. Names contain no session IDs, settings contents or command
+arguments. These phases do not establish the cause of the historical 17:48:36Z
+stall; a delayed synthetic settings FIFO reproduces a separate concrete hazard.
 
 Other 10 minute constants are deadlines, not repeating work: event-loop watchdog
 startup grace (only arms detection), ACP request timeout and native folder-picker
