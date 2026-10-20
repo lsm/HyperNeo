@@ -97,6 +97,26 @@ describe('Neo home setup', () => {
       '.coordinators/neo/transcript.md'
     );
   });
+  test.each(['missing', 'existing'])(
+    'retries failed ignore repair with %s ignore',
+    async (state) => {
+      await init();
+      if (state === 'missing') await rm(join(root, '.gitignore'));
+      else await writeFile(join(root, '.gitignore'), 'scratch/\n');
+      await git('add', '-A');
+      await git('commit', '-m', 'Existing home without coordinator ignore');
+      const before = await git('rev-parse', 'HEAD');
+      await git('config', 'user.name', '');
+      await git('config', 'user.email', '');
+      await expect(init()).rejects.toThrow();
+      expect(await git('status', '--porcelain')).toBe('');
+      await git('config', 'user.name', 'Verify Neo');
+      await git('config', 'user.email', 'verify@example.invalid');
+      expect(await init()).toMatchObject({ ok: true });
+      expect(await git('rev-parse', 'HEAD')).not.toBe(before);
+      expect(await git('status', '--porcelain')).toBe('');
+    }
+  );
   test.each(['untracked document', 'staged transcript'])(
     'does not ignore unrelated changes during ignore repair: %s',
     async (change) => {

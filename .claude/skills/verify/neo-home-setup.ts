@@ -33,14 +33,26 @@ const afterHead = await git('rev-parse', 'HEAD');
 const tracked = await git('ls-files');
 const direction = await readFile(`${root}/direction.md`, 'utf8');
 const author = await git('log', '-1', '--format=%an <%ae>');
-if (mode === 'ignore-repair') {
+if (mode === 'ignore-repair' || mode === 'ignore-repair-failure') {
   await rm(`${root}/.gitignore`);
   await git('commit', '-am', 'Existing home without coordinator ignore');
   const before = await git('status', '--porcelain', '--untracked-files=all');
+  let failure;
+  let afterFailure;
+  if (mode === 'ignore-repair-failure') {
+    await git('config', 'user.name', '');
+    await git('config', 'user.email', '');
+    failure = await rpc('neo.home.init');
+    afterFailure = await git('status', '--porcelain', '--untracked-files=all');
+    await git('config', 'user.name', 'Verify Neo');
+    await git('config', 'user.email', 'verify@example.invalid');
+  }
+  const beforeRepairHead = await git('rev-parse', 'HEAD');
   const repaired = await rpc('neo.home.init');
-  const evidence = { mode, before, repaired, transcript: await readFile(`${root}/.coordinators/verify/transcript.md`, 'utf8'), trackedTranscripts: await git('ls-files', '.coordinators'), status: await git('status', '--porcelain') };
+  const afterRepairHead = await git('rev-parse', 'HEAD');
+  const evidence = { mode, before, failure, afterFailure, beforeRepairHead, afterRepairHead, repaired, transcript: await readFile(`${root}/.coordinators/verify/transcript.md`, 'utf8'), trackedTranscripts: await git('ls-files', '.coordinators'), status: await git('status', '--porcelain') };
   await writeFile(`${run}/evidence/neo-home-setup.json`, JSON.stringify(evidence, null, 2));
-  if (!repaired.ok || evidence.status || evidence.trackedTranscripts || evidence.transcript !== 'Synthetic private transcript.') throw new Error('Coordinator ignore repair failed');
+  if (beforeRepairHead === afterRepairHead || (mode === 'ignore-repair-failure' && !String(failure.error).includes('Author identity unknown')) || !repaired.ok || evidence.status || evidence.trackedTranscripts || evidence.transcript !== 'Synthetic private transcript.') throw new Error('Coordinator ignore repair failed');
   console.log('PASS: RPC repairs the missing ignore while preserving private untracked transcripts.');
   process.exit(0);
 }
