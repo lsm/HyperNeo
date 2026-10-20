@@ -16,6 +16,9 @@ import {
 import { WorkDetailSchema } from '../../../../src/lib/drivers/types';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
+import { invokeOperation } from '../../../../src/lib/operations/invoke';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 
 const NOW = Date.parse('2026-10-04T12:00:00.000Z');
 
@@ -441,6 +444,39 @@ describe('codex-desktop adapter status and send', () => {
 
   const ref = (id: string) => ({ adapter: 'codex-desktop', id });
 
+  test('work.send steers a running Codex turn instead of queuing it', async () => {
+    const calls: string[] = [];
+    const driver = adapter(0, '', async () => ({
+      call: async (method) => {
+        calls.push(method);
+        if (method === 'thread/turns/list')
+          return { data: [{ id: 'live-turn', status: 'inProgress' }] };
+        if (method === 'turn/steer') return { turnId: 'live-turn' };
+        return { queuedSubmission: { id: 'queued' } };
+      },
+      close: () => {},
+    }));
+    const registry = createOperationRegistry(
+      createWorkVerbOperations({
+        adapters: () => [driver],
+        daemonName: 'test',
+        remote: { list: () => [], invoke: async () => ({}) },
+      })
+    );
+    expect(
+      await invokeOperation(
+        registry,
+        'work.send',
+        { ref: ref('busy'), message: 'use the parser' },
+        { source: 'mcp', role: 'neo', sessionId: 'neo' }
+      )
+    ).toEqual({
+      kind: 'completed',
+      value: { ok: true, value: { delivered: true, steeredIntoTurnId: 'live-turn' } },
+    });
+    expect(calls).toEqual(['thread/turns/list', 'turn/steer']);
+  });
+
   test('stop interrupts the running turn through the shared app-server', async () => {
     const calls: Array<[string, Record<string, unknown>]> = [];
     let closed = false;
@@ -601,6 +637,7 @@ describe('codex-desktop adapter status and send', () => {
     const driver = adapter(0, '', async () => ({
       call: async (method, params) => {
         calls.push([method, params]);
+        if (method === 'thread/turns/list') return { data: [] };
         return {
           queuedSubmission: {
             id: 'queue-1',
@@ -622,7 +659,7 @@ describe('codex-desktop adapter status and send', () => {
         value: { delivered: false, queuedSubmissionId: 'queue-1' },
       });
     }
-    expect(calls).toEqual(
+    expect(calls.filter(([method]) => method !== 'thread/turns/list')).toEqual(
       Array.from({ length: 2 }, () => [
         'thread/queue/add',
         {
@@ -633,7 +670,48 @@ describe('codex-desktop adapter status and send', () => {
       ])
     );
     expect(spawned).toEqual([]);
-    expect(closed).toBe(2);
+    expect(closed).toBe(3);
+  });
+
+  test.each(['NoActiveTurn', 'turn/steer: method not found (-32601)'])(
+    'work.send queues when the active server turn cannot be steered: %s',
+    async (error) => {
+      const driver = adapter(0, '', async () => ({
+        call: async (method) => {
+          if (method === 'thread/turns/list') return { data: [{ id: 't1', status: 'inProgress' }] };
+          if (method === 'turn/steer') throw new Error(error);
+          return { queuedSubmission: { id: 'q1' } };
+        },
+        close: () => {},
+      }));
+      expect(await driver.send!(ref('busy'), 'later', user)).toEqual({
+        ok: true,
+        value: { delivered: false, queuedSubmissionId: 'q1' },
+      });
+    }
+  );
+
+  test('work.send never duplicates a server steer whose outcome is unknown; work.queue remains next-turn input', async () => {
+    let queued = 0;
+    const driver = adapter(0, '', async () => ({
+      call: async (method) => {
+        if (method === 'thread/turns/list') return { data: [{ id: 't1', status: 'inProgress' }] };
+        if (method === 'turn/steer') throw new Error('connection closed');
+        queued++;
+        return { queuedSubmission: { id: 'q1' } };
+      },
+      close: () => {},
+    }));
+    expect(await driver.send!(ref('busy'), 'now', user)).toMatchObject({
+      ok: false,
+      reason: 'not_delivered',
+    });
+    expect(queued).toBe(0);
+    expect(await driver.queue!(ref('busy'), 'later', user)).toEqual({
+      ok: true,
+      value: { delivered: false, queuedSubmissionId: 'q1' },
+    });
+    expect(queued).toBe(1);
   });
 
   test('steers the active server turn even when the local rollout disagrees', async () => {
@@ -897,7 +975,8 @@ describe('codex-desktop adapter status and send', () => {
   test('native queue preserves a fresh delivered input receipt for later evidence reads', async () => {
     appendFileSync(join(dir, 'running.jsonl'), `\n${heardAs('older', 'next step')}`);
     const driver = adapter(0, '', async () => ({
-      call: async () => {
+      call: async (method) => {
+        if (method === 'thread/turns/list') return { data: [] };
         appendFileSync(join(dir, 'running.jsonl'), `\n${heardAs('native-input', 'next step')}`);
         return { queuedSubmission: { id: 'native-queue' } };
       },
