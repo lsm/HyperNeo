@@ -89,6 +89,21 @@ describe('HyperNeo todo reply attribution', () => {
     expect(digest()).toBe(original);
   });
 
+  test('a todo injected mid-turn does not claim assistant text written before its input', async () => {
+    db.prepare("UPDATE sdk_messages SET seq=100 WHERE id='todo-input'").run();
+    db.prepare(`INSERT INTO sdk_messages(seq,id,session_id,message_type,sdk_message,timestamp)
+      VALUES (99,'earlier-progress','worker','assistant',?,?)`).run(
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'UNRELATED_BEFORE_TODO' }] },
+      }),
+      new Date(1000).toISOString()
+    );
+    put('report', 'assistant', 'Own final report', null);
+    put('terminal', 'result', '', 20);
+    expect((await settle())?.report).toBe('Agent: Own final report');
+  });
+
   test('inputs acknowledged at the same terminal watermark share its verified reply', async () => {
     put('mid-turn', 'user', 'Consumed with the todo', 10);
     put('report', 'assistant', 'Shared turn report', null);
