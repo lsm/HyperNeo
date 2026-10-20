@@ -5,7 +5,8 @@ type Env = Record<string, string | undefined>;
 
 export const SESSION_CLI_USAGE = `Usage:
   hyperneo send <session-id> <text>   Message another session (inside a HyperNeo, Codex or Claude Code session)
-  hyperneo question <question-id>     Read a Neo question and whether the human answered it`;
+  hyperneo question <question-id>     Read a Neo question and whether the human answered it
+  hyperneo build                      Read daemon build and health through the owner-only session socket`;
 
 export function resolveSender(env: Env): string | null {
   if (env.HYPERNEO_SESSION_ID) return env.HYPERNEO_SESSION_ID;
@@ -29,6 +30,8 @@ export function planSessionCommand(
         },
       },
     };
+  if (command === 'build' && !target && !rest.length)
+    return { value: { name: 'system.build', input: {} } };
   if (command === 'question' && target && !rest.length)
     return { value: { name: 'neo.question.get', input: { questionId: target } } };
   return { reason: SESSION_CLI_USAGE };
@@ -82,7 +85,7 @@ export async function runSessionCommand(args: string[], env: Env = process.env):
     console.error(outcome.error ?? outcome.message ?? JSON.stringify(outcome));
     return 1;
   }
-  const value = outcome.value as { kind?: string; ok?: boolean; reason?: string };
+  const value = outcome.value as { kind?: string; ok?: boolean; reason?: string; health?: string };
   console.log(JSON.stringify(value, null, 2));
-  return value.kind === 'rejected' || value.ok === false ? 1 : 0;
+  return value.kind === 'rejected' || value.ok === false || value.health === 'fail' ? 1 : 0;
 }
