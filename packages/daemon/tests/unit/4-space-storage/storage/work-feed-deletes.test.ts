@@ -5,6 +5,11 @@ import {
 } from '../../../../src/storage/schema/m302-work-index-kinds';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { dropWorkFeedSession, purgeWorkFeedSessions } from '../../../../src/storage/work-feed';
+import { createTables, runMigrations } from '../../../../src/storage/schema/index';
+import {
+  seedWorkFeedDeleteCorpus,
+  storedWorkFeedDigest,
+} from '../../../helpers/work-feed-delete-corpus';
 
 function setup() {
   const db = new Database(':memory:');
@@ -43,6 +48,41 @@ function setup() {
 }
 
 describe('purgeWorkFeedSessions', () => {
+  test('large derived transcript cleanup leaves the daemon responsive and stored tool results intact', async () => {
+    const db = new Database(':memory:');
+    runMigrations(db, () => {});
+    createTables(db);
+    seedWorkFeedDeleteCorpus(db, 2000);
+    const original = storedWorkFeedDigest(db);
+    const count = () =>
+      (
+        db
+          .prepare("SELECT COUNT(*) AS n FROM message_search_content WHERE kind = 'claude'")
+          .get() as { n: number }
+      ).n;
+    const samples: number[] = [];
+    const timer = setInterval(() => samples.push(count()), 0);
+    try {
+      await purgeWorkFeedSessions(
+        db,
+        'claude',
+        Array.from({ length: 100 }, (_, i) => `sdk-${i}`)
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(samples.some((left) => left > 0 && left < 2000)).toBe(true);
+      expect(count()).toBe(0);
+      expect(storedWorkFeedDigest(db)).toBe(original);
+      expect(db.prepare('SELECT COUNT(*) AS n FROM message_search_vectors').get()).toEqual({
+        n: 0,
+      });
+      expect(
+        db.prepare("SELECT COUNT(*) AS n FROM message_search_content WHERE kind = 'codex'").get()
+      ).toEqual({ n: 200 });
+    } finally {
+      clearInterval(timer);
+      db.close();
+    }
+  }, 30000);
   test('deletes only that kind for those sessions through the session index', () => {
     const { db, plans, left } = setup();
     purgeWorkFeedSessions(db, 'codex', ['s1']);
