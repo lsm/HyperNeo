@@ -354,6 +354,7 @@ export async function validateSDKSessionFile(
   const sessionFile = getSDKSessionFilePath(workspacePath, sdkSessionId);
   const generation = sessionFileRewrites.get(sessionFile) ?? 0;
   let rewritten = false;
+  let scanned: ValidatedSessionFile | null = null;
   try {
     if (!existsSync(sessionFile)) {
       validatedSessionFiles.delete(sessionFile);
@@ -410,12 +411,7 @@ export async function validateSDKSessionFile(
       state.tail = Buffer.alloc(Math.min(64, state.offset));
       await handle.read(state.tail, 0, state.tail.length, state.offset - state.tail.length);
       state.pending = state.pending.filter((ref) => !state.toolUseIds.has(ref.toolUseId));
-      rewritten = (sessionFileRewrites.get(sessionFile) ?? 0) !== generation;
-      if (!rewritten) validatedSessionFiles.set(sessionFile, state);
-      for (const stale of validatedSessionFiles.keys()) {
-        if (validatedSessionFiles.size <= VALIDATED_SESSION_FILES_MAX) break;
-        validatedSessionFiles.delete(stale);
-      }
+      scanned = state;
       const view = partial
         ? { ...state, toolUseIds: new Set(state.toolUseIds), pending: [...state.pending] }
         : state;
@@ -426,6 +422,12 @@ export async function validateSDKSessionFile(
       result.valid = result.orphanedToolResults.length === 0;
     } finally {
       await handle.close();
+    }
+    rewritten = (sessionFileRewrites.get(sessionFile) ?? 0) !== generation;
+    if (scanned && !rewritten) validatedSessionFiles.set(sessionFile, scanned);
+    for (const stale of validatedSessionFiles.keys()) {
+      if (validatedSessionFiles.size <= VALIDATED_SESSION_FILES_MAX) break;
+      validatedSessionFiles.delete(stale);
     }
   } catch (error) {
     result.valid = false;
