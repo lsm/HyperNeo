@@ -22,6 +22,7 @@ import { createTables, runMigration74 } from '../../../../src/storage/schema';
 import { runMigration191 } from '../../../../src/storage/schema/migrations';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
+import { fillSdkMessageFixtureColumns } from '../../helpers/sdk-message-fixture-columns';
 
 type ActiveTurnSummary = {
   sessionId: string;
@@ -51,6 +52,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
   const now = Date.now();
 
   function backfillConversationTurns(): void {
+    fillSdkMessageFixtureColumns(db);
     db.exec(`DROP TABLE IF EXISTS _test_turn_backfill`);
     db.exec(`
       CREATE TEMP TABLE _test_turn_backfill AS
@@ -358,6 +360,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
     }
 
     function queryMessages(taskId: string): Record<string, unknown>[] {
+      fillSdkMessageFixtureColumns(db);
       const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!;
       const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
       return entry.mapRow ? rows.map(entry.mapRow) : rows;

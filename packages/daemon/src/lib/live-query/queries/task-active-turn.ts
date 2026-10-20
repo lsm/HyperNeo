@@ -4,7 +4,8 @@ import { HOOK_SUBTYPE_NAMES, HOOK_SUBTYPES } from './task-delivery.ts';
 export const SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL = `
 ${spaceTaskFlagRowsBaseCte(false)},
 active_rows AS MATERIALIZED (
-  SELECT r.*, sm.sdk_message AS content
+  SELECT r.*, sm.sdk_message AS content, sm.rowid AS rowId, sm.send_status AS sendStatus,
+    sm.info_level AS infoLevel, sm.tool_result_only AS toolResultOnly, sm.hook_id AS hookId
   FROM (
     SELECT
       j.*,
@@ -48,7 +49,7 @@ assistant_entries AS (
     -- so the entry id + final ORDER BY keep same-millisecond rows (e.g. a
     -- tool_use and the hook it triggers) in emission order instead of shuffling
     -- by UUID.
-    base.rowid AS rowId,
+    ar.rowId AS rowId,
     CAST(je.key AS INTEGER) AS blockIdx,
     json_extract(ar.content, '$.uuid') AS uuid,
     json_extract(je.value, '$.type') AS blockType,
@@ -60,14 +61,14 @@ assistant_entries AS (
     json_extract(je.value, '$.text') AS textValue,
     json_extract(je.value, '$.thinking') AS thinkingValue
   FROM active_rows ar
-  JOIN sdk_messages base ON base.id = ar.id,
+  CROSS JOIN
        json_each(
          CASE WHEN json_valid(ar.content)
               THEN json_extract(ar.content, '$.message.content')
               ELSE '[]' END
        ) je
   WHERE ar.messageType = 'assistant'
-    AND json_valid(ar.content)
+    AND ar.infoLevel IS NOT NULL
     AND json_type(ar.content, '$.message.content') = 'array'
     AND (
       json_extract(je.value, '$.type') = 'tool_use'
@@ -87,7 +88,7 @@ user_entries AS (
     ar.sessionId AS sessionId,
     ar.turnIndex AS turnIndex,
     ar.createdAt AS ts,
-    base.rowid AS rowId,
+    ar.rowId AS rowId,
     -1 AS blockIdx,
     json_extract(ar.content, '$.uuid') AS uuid,
     CASE
@@ -115,13 +116,12 @@ user_entries AS (
     END AS textValue,
     NULL AS thinkingValue
   FROM active_rows ar
-  JOIN sdk_messages base ON base.id = ar.id
   WHERE ar.messageType = 'user'
     -- Task #862 (review P2): a deferred prompt is explicitly waiting for the
     -- next turn -- keep it in the main thread, but don't show it in the live
     -- active-turn roster as input "inside" the active turn.
-    AND COALESCE(base.send_status, 'consumed') != 'deferred'
-    AND json_valid(ar.content)
+    AND COALESCE(ar.sendStatus, 'consumed') != 'deferred'
+    AND ar.infoLevel IS NOT NULL
     -- Skip user rows whose content is exclusively tool_result blocks (or
     -- mixes tool_result with empty/whitespace-only text blocks). Such rows
     -- render as null in the compact feed and would otherwise produce a
@@ -130,20 +130,7 @@ user_entries AS (
     --
     -- Mirrors the assistant-entries filter on lines above, which also
     -- excludes empty-text blocks from contributing to the roster.
-    AND NOT (
-      json_type(ar.content, '$.message.content') = 'array'
-      AND EXISTS (
-        SELECT 1
-        FROM json_each(json_extract(ar.content, '$.message.content')) je
-        WHERE json_extract(je.value, '$.type') = 'tool_result'
-      )
-      AND NOT EXISTS (
-        SELECT 1
-        FROM json_each(json_extract(ar.content, '$.message.content')) je
-        WHERE json_extract(je.value, '$.type') = 'text'
-          AND TRIM(COALESCE(json_extract(je.value, '$.text'), '')) != ''
-      )
-    )
+    AND COALESCE(ar.toolResultOnly, 0) = 0
 ),
 -- One row per hook run in the active turn. A hook emits hook_started →
 -- hook_progress → hook_response; collapse to the LATEST message per hook_id
@@ -154,7 +141,7 @@ hook_runs AS (
     ar.sessionId AS sessionId,
     ar.turnIndex AS turnIndex,
     ar.createdAt AS ts,
-    base.rowid AS rowId,
+    ar.rowId AS rowId,
     json_extract(ar.content, '$.uuid') AS uuid,
     json_extract(ar.content, '$.hook_id') AS hookId,
     json_extract(ar.content, '$.hook_name') AS hookName,
@@ -167,21 +154,20 @@ hook_runs AS (
       -- single agent's turn, so two active sessions emitting the same hook_id
       -- must not collapse into one window (one would be dropped before grouping
       -- by sessionId).
-      PARTITION BY ar.sessionId, ar.turnIndex, json_extract(ar.content, '$.hook_id')
+      PARTITION BY ar.sessionId, ar.turnIndex, ar.hookId
       -- createdAt ties (same-millisecond hook_started/progress/response) are
       -- broken by insertion order: sdk_messages.id is a random UUID, so join
       -- back to the base table for its implicit rowid, which is monotonic.
-      ORDER BY ar.createdAt DESC, base.rowid DESC
+      ORDER BY ar.createdAt DESC, ar.rowId DESC
     ) AS rn
   FROM active_rows ar
-  JOIN sdk_messages base ON base.id = ar.id
   WHERE ar.messageType = 'system'
     -- Guard the hook json_extract calls on valid JSON so a single malformed
     -- sdk_message blob can't raise 'malformed JSON' and break the active-turn
     -- subscription. Malformed rows simply don't qualify as hook runs.
-    AND json_valid(ar.content)
-    AND json_extract(ar.content, '$.subtype') IN ${HOOK_SUBTYPES}
-    AND json_extract(ar.content, '$.hook_id') IS NOT NULL
+    AND ar.infoLevel IS NOT NULL
+    AND ar.jsonSubtype IN ${HOOK_SUBTYPES}
+    AND ar.hookId IS NOT NULL
 ),
 hook_entries AS (
   SELECT
@@ -219,7 +205,7 @@ api_retry_entries AS (
     ar.sessionId AS sessionId,
     ar.turnIndex AS turnIndex,
     ar.createdAt AS ts,
-    base.rowid AS rowId,
+    ar.rowId AS rowId,
     -3 AS blockIdx,
     json_extract(ar.content, '$.uuid') AS uuid,
     '__api_retry' AS blockType,
@@ -235,10 +221,9 @@ api_retry_entries AS (
     COALESCE(json_extract(ar.content, '$.retry_delay_ms'), 0) AS retryDelayMs,
     json_extract(ar.content, '$.error_status') AS errorStatus
   FROM active_rows ar
-  JOIN sdk_messages base ON base.id = ar.id
   WHERE ar.messageType = 'system'
-    AND json_valid(ar.content)
-    AND json_extract(ar.content, '$.subtype') = 'api_retry'
+    AND ar.infoLevel IS NOT NULL
+    AND ar.jsonSubtype = 'api_retry'
 )
 SELECT
   sessionId || ':' || turnIndex || ':' || rowId || ':' || blockIdx AS id,

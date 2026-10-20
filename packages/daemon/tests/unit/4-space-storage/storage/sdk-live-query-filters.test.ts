@@ -3,6 +3,7 @@ import { NAMED_QUERY_REGISTRY } from '../../../../src/lib/live-query/registry';
 import { BACKGROUND_TASK_METADATA_SQL } from '../../../../src/lib/live-query/queries/messages';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
+import { runMigration417 } from '../../../../src/storage/schema/m417-sdk-message-session-window';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { fillSdkMessageFixtureColumns } from '../../helpers/sdk-message-fixture-columns';
 
@@ -45,11 +46,31 @@ function put(
 
 function feed(limit = 200) {
   const query = NAMED_QUERY_REGISTRY.get('messages.bySession')!;
-  const rows = db.prepare(query.sql).all('s', limit) as Record<string, unknown>[];
+  let rows = db.prepare(query.sql).all('s', limit) as Record<string, unknown>[];
+  if (query.expandRows) rows = query.expandRows(rows, ['s', limit], db);
   return rows.map(query.mapRow!);
 }
 
 describe('SDK live-query filter contracts', () => {
+  test('session-window index upgrades are idempotent and leave full bodies unchanged', () => {
+    put('tool', {
+      type: 'user',
+      message: { content: [{ type: 'tool_result', content: 'Full result' }] },
+    });
+    const definition = () =>
+      db
+        .prepare("SELECT sql FROM sqlite_schema WHERE name='idx_sdk_messages_session_window'")
+        .get();
+    const bodies = () => db.prepare('SELECT id,sdk_message FROM sdk_messages ORDER BY seq').all();
+    const fresh = definition();
+    const original = bodies();
+    db.exec('DROP INDEX idx_sdk_messages_session_window');
+    runMigration417(db);
+    runMigration417(db);
+    expect(definition()).toEqual(fresh);
+    expect(bodies()).toEqual(original);
+  });
+
   test('hides only informational info rows while preserving invalid, null and mistyped levels', () => {
     for (const [id, level] of [
       ['info', 'info'],

@@ -11,6 +11,11 @@ import { createReactiveDatabase } from '../../../../src/storage/reactive-databas
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { createTables } from '../../../../src/storage/schema';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import {
+  deriveSdkMessageColumns,
+  SDK_MESSAGE_COLUMN_TYPES,
+} from '../../../../src/storage/sdk-message-columns';
+import { expandSessionMessages } from '../../../../src/lib/live-query/queries/message-children';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -62,10 +67,12 @@ function insertSdkMessage(db: BunDatabase, args: InsertSdkMessageArgs): void {
       ? args.sdkMessage.parent_tool_use_id
       : null;
   const sdkUuid = typeof args.sdkMessage.uuid === 'string' ? args.sdkMessage.uuid : null;
+  const names = Object.keys(SDK_MESSAGE_COLUMN_TYPES) as (keyof typeof SDK_MESSAGE_COLUMN_TYPES)[];
+  const derived = deriveSdkMessageColumns(args.sdkMessage, args.taskId ?? null);
   db.prepare(
     `INSERT INTO sdk_messages
-		 (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, parent_tool_use_id, task_id, sdk_uuid)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		 (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, parent_tool_use_id, task_id, sdk_uuid, ${names.join(',')})
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${names.map(() => '?').join(',')})`
   ).run(
     args.id,
     args.sessionId,
@@ -77,7 +84,8 @@ function insertSdkMessage(db: BunDatabase, args: InsertSdkMessageArgs): void {
     args.origin ?? null,
     parentToolUseId,
     args.taskId ?? null,
-    sdkUuid
+    sdkUuid,
+    ...names.map((key) => derived[key])
   );
 }
 
@@ -118,7 +126,11 @@ function insertDeliveryJob(
 
 function query(db: BunDatabase, sessionId: string, limit: number): Record<string, unknown>[] {
   const entry = NAMED_QUERY_REGISTRY.get('messages.bySession')!;
-  const rows = db.prepare(entry.sql).all(sessionId, limit) as Record<string, unknown>[];
+  const rows = expandSessionMessages(
+    db.prepare(entry.sql).all(sessionId, limit) as Record<string, unknown>[],
+    [sessionId, limit],
+    db
+  );
   return entry.mapRow ? rows.map(entry.mapRow) : rows;
 }
 
@@ -943,7 +955,30 @@ describe('messages.bySession — SQL behavior', () => {
   });
 
   test('uses the materialised parent_tool_use_id index for subagent lookups', () => {
-    const plan = queryPlan(db, 's1', 200);
+    const queries: string[] = [];
+    const observed = Object.assign(Object.create(db), {
+      prepare: (sql: string) => {
+        queries.push(sql);
+        return db.prepare(sql);
+      },
+    });
+    expandSessionMessages(
+      [
+        {
+          content: JSON.stringify({
+            type: 'assistant',
+            message: { content: [{ type: 'tool_use', id: 'tool' }] },
+          }),
+        },
+      ],
+      ['s1', 200],
+      observed
+    );
+    const plan = (
+      db.prepare(`EXPLAIN QUERY PLAN ${queries[0]}`).all('s1', 'tool') as { detail: string }[]
+    )
+      .map((row) => row.detail)
+      .join('\n');
     expect(plan).toContain('idx_sdk_messages_parent_tool_use_id');
   });
 
@@ -1049,6 +1084,55 @@ describe('messages.bySession — SQL behavior', () => {
     const uuids = rows.map((r) => r.uuid as string).sort();
     expect(uuids).toEqual(['u-child', 'u-parent']);
   });
+
+  test.each(['messages.bySession', 'messages.bySession.compact'])(
+    '%s emits children arriving after the initial snapshot and removes them with the window',
+    async (queryName) => {
+      insertSdkMessage(db, {
+        id: 'parent',
+        sessionId: 's1',
+        messageType: 'assistant',
+        sdkMessage: { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tool' }] } },
+        timestamp: '2024-01-01 00:00:01',
+      });
+      const reactiveDb = createReactiveDatabase({ getDatabase: () => db } as never);
+      const engine = new LiveQueryEngine(db, reactiveDb);
+      const setup = createMockHub();
+      const cleanup = setupLiveQueryHandlers(setup.hub, engine, db);
+      try {
+        setup.subscribe('s1', 1, queryName);
+        insertSdkMessage(db, {
+          id: 'child',
+          sessionId: 's1',
+          messageType: 'assistant',
+          sdkMessage: {
+            type: 'assistant',
+            parent_tool_use_id: 'tool',
+            message: { content: [{ type: 'text', text: 'Child reply' }] },
+          },
+          timestamp: '2024-01-01 00:00:02',
+        });
+        reactiveDb.notifyChange('sdk_messages', { sessionId: 's1' });
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        const added = setup.sentMessages.at(-1)!.message.data.added as { id: string }[];
+        expect(added.map((row) => row.id)).toEqual(['child']);
+        insertSdkMessage(db, {
+          id: 'new-parent',
+          sessionId: 's1',
+          messageType: 'assistant',
+          sdkMessage: { type: 'assistant', message: { content: [] } },
+          timestamp: '2024-01-01 00:00:03',
+        });
+        reactiveDb.notifyChange('sdk_messages', { sessionId: 's1' });
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        const removed = setup.sentMessages.at(-1)!.message.data.removed as { id: string }[];
+        expect(removed.map((row) => row.id).sort()).toEqual(['child', 'parent']);
+      } finally {
+        cleanup();
+        engine.dispose();
+      }
+    }
+  );
 
   test('subagent tool-result rows do not surface delivery retry info', () => {
     insertSdkMessage(db, {

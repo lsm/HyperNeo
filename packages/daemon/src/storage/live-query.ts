@@ -12,6 +12,10 @@ export interface LiveQueryHandle<T> {
 }
 
 export interface LiveQuerySubscribeOptions {
+  expandRows?: (
+    rows: Record<string, unknown>[],
+    params: ReadonlyArray<unknown>
+  ) => Record<string, unknown>[];
   debounceMs?: number;
   getMetadata?: (
     rows: Record<string, unknown>[],
@@ -38,6 +42,7 @@ interface Subscriber<T extends Record<string, unknown>> {
 }
 
 interface QueryEntry<T extends Record<string, unknown>> {
+  expandRows: LiveQuerySubscribeOptions['expandRows'];
   sql: string;
   params: ReadonlyArray<unknown>;
   tables: string[];
@@ -206,7 +211,7 @@ export class LiveQueryEngine {
     let entry = this.queries.get(cacheKey) as QueryEntry<T> | undefined;
 
     if (!entry) {
-      const rows = this.runQuery<T>(sql, params);
+      const rows = this.runQuery<T>(sql, params, options.expandRows);
       const hashSnapshot = runLagPhase('live_query:hash_rows', () =>
         hashRows(rows, options.rowFingerprint)
       );
@@ -214,6 +219,7 @@ export class LiveQueryEngine {
       const cachedMetadata = options.getMetadata?.(rows, params);
 
       entry = {
+        expandRows: options.expandRows,
         sql,
         params,
         tables,
@@ -348,7 +354,7 @@ export class LiveQueryEngine {
     entry.pendingEval = false;
     entry.pendingTimer = null;
 
-    const newRows = this.runQuery(entry.sql, entry.params);
+    const newRows = this.runQuery(entry.sql, entry.params, entry.expandRows);
     const newHashSnapshot = runLagPhase('live_query:hash_rows', () =>
       hashRows(newRows, entry.rowFingerprint)
     );
@@ -394,7 +400,8 @@ export class LiveQueryEngine {
 
   private runQuery<T extends Record<string, unknown>>(
     sql: string,
-    params: ReadonlyArray<unknown>
+    params: ReadonlyArray<unknown>,
+    expandRows?: LiveQuerySubscribeOptions['expandRows']
   ): T[] {
     let stmt = this.statements.get(sql);
     if (!stmt) {
@@ -402,7 +409,8 @@ export class LiveQueryEngine {
       this.statements.set(sql, stmt);
     }
     const paramsArray = Array.from(params) as Parameters<typeof stmt.all>;
-    return stmt.all(...paramsArray) as T[];
+    const rows = stmt.all(...paramsArray) as T[];
+    return (expandRows ? expandRows(rows, params) : rows) as T[];
   }
 
   private computeVersion(tables: string[]): number {

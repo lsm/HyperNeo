@@ -41,10 +41,7 @@ const BACKGROUND_TASK_METADATA_ARMS_SQL = BACKGROUND_TASK_METADATA_SUBTYPES.map(
       send_status,
       origin,
       rowid AS rowid,
-      COALESCE(
-        CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
-        task_id
-      ) AS task_id
+      COALESCE(bg_task_id, task_id) AS task_id
     FROM sdk_messages
     WHERE session_id = ?
       AND parent_tool_use_id IS NULL
@@ -72,10 +69,7 @@ recent_progress AS (
     send_status,
     origin,
     rowid AS rowid,
-    COALESCE(
-      CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
-      task_id
-    ) AS task_id
+    COALESCE(bg_task_id, task_id) AS task_id
   FROM sdk_messages
   WHERE session_id = ?
     AND parent_tool_use_id IS NULL
@@ -84,10 +78,7 @@ recent_progress AS (
   LIMIT ${BACKGROUND_TASK_METADATA_BATCH_SIZE}
 ),
 terminal_task_ids AS MATERIALIZED (
-  SELECT DISTINCT COALESCE(
-    CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
-    task_id
-  ) AS task_id
+  SELECT DISTINCT COALESCE(bg_task_id, task_id) AS task_id
   FROM sdk_messages
   WHERE session_id = ?
     AND parent_tool_use_id IS NULL
@@ -113,18 +104,12 @@ task_starts AS (
     send_status,
     origin,
     rowid AS rowid,
-    COALESCE(
-      CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
-      task_id
-    ) AS task_id
+    COALESCE(bg_task_id, task_id) AS task_id
   FROM sdk_messages
   WHERE session_id = ?
     AND parent_tool_use_id IS NULL
     AND message_subtype_norm = 'task_started'
-    AND COALESCE(
-      CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
-      task_id
-    ) IN (SELECT task_id FROM recent_task_ids)
+    AND COALESCE(bg_task_id, task_id) IN (SELECT task_id FROM recent_task_ids)
     AND id NOT IN (SELECT id FROM recent_metadata)
 ),
 latest_progress AS (
@@ -144,13 +129,10 @@ latest_progress AS (
       send_status,
       origin,
       rowid AS rowid,
-      COALESCE(
-        CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
-        task_id
-      ) AS task_id,
+      COALESCE(bg_task_id, task_id) AS task_id,
       ROW_NUMBER() OVER (
         PARTITION BY COALESCE(
-          CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.tool_use_id') END,
+          bg_tool_use_id,
           ''
         )
         ORDER BY timestamp DESC, rowid DESC
@@ -160,13 +142,10 @@ latest_progress AS (
       AND parent_tool_use_id IS NULL
       AND message_subtype_norm = 'task_progress'
       AND COALESCE(
-        CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.tool_use_id') END,
+        bg_tool_use_id,
         ''
       ) != ''
-      AND COALESCE(
-        CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
-        task_id
-      ) IN (SELECT task_id FROM recent_task_ids)
+      AND COALESCE(bg_task_id, task_id) IN (SELECT task_id FROM recent_task_ids)
   )
   WHERE rn = 1
 )
@@ -219,10 +198,8 @@ active_delivery_retry AS MATERIALIZED (
 top_level AS (
   SELECT
     id,
-    sdk_message,
     timestamp,
     send_status,
-    origin,
     rowid AS rowid,
     message_type,
     active_delivery_retry.deliveryRetryInfo AS deliveryRetryInfo
@@ -240,13 +217,7 @@ top_level AS (
     AND (
       message_type != 'system'
       OR message_subtype_norm != 'informational'
-      OR NOT json_valid(sdk_message)
-      OR COALESCE(
-        CASE
-          WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.level')
-        END,
-        ''
-      ) != 'info'
+      OR COALESCE(info_level, 0) != 1
     )
     AND (
       message_type != 'system'
@@ -256,64 +227,21 @@ top_level AS (
   -- Cap window orders by (timestamp, rowid) so a LiveQuery limit that cuts
   -- through same-millisecond hook_started/progress/response rows keeps the
   -- later phases (insertion order) instead of dropping the terminal response
-  -- by random UUID. The planner falls back to idx_sdk_messages_session_timestamp_id + a
-  -- bounded temp sort (rowid isn't in the composite index) — acceptable for a
-  -- capped window, and correctness beats the micro-optimisation here.
+  -- by random UUID.
   ORDER BY timestamp DESC, rowid DESC
   LIMIT ?2
-),
-tool_use_ids AS (
-  SELECT DISTINCT json_extract(je.value, '$.id') AS id
-  FROM top_level,
-       json_each(
-         CASE
-           WHEN json_valid(top_level.sdk_message)
-            AND json_extract(top_level.sdk_message, '$.type') = 'assistant'
-           THEN json_extract(top_level.sdk_message, '$.message.content')
-           ELSE '[]'
-         END
-       ) AS je
-  WHERE json_valid(top_level.sdk_message)
-    AND json_extract(top_level.sdk_message, '$.type') = 'assistant'
-    AND json_extract(je.value, '$.type') = 'tool_use'
-    AND json_extract(je.value, '$.id') IS NOT NULL
-),
-subagent AS (
-  SELECT
-    sm.id AS id,
-    sm.sdk_message AS sdk_message,
-    sm.timestamp AS timestamp,
-    sm.send_status AS send_status,
-    sm.origin AS origin,
-    sm.rowid AS rowid,
-    sm.message_type AS message_type,
-    NULL AS deliveryRetryInfo
-  FROM sdk_messages sm
-  WHERE sm.session_id = ?1
-    AND sm.parent_tool_use_id IN (SELECT id FROM tool_use_ids)
-    AND sm.message_subtype_norm != 'thinking_tokens'
 )
 SELECT
-  id,
-  sdk_message                                                       AS content,
-  CAST((julianday(timestamp) - 2440587.5) * 86400000 AS INTEGER)    AS timestamp,
-  send_status                                                       AS sendStatus,
-  origin                                                            AS origin,
-  rowid                                                             AS rowid,
-  message_type                                                      AS messageType,
-  deliveryRetryInfo                                                 AS deliveryRetryInfo
-FROM top_level
-UNION ALL
-SELECT
-  id,
-  sdk_message                                                       AS content,
-  CAST((julianday(timestamp) - 2440587.5) * 86400000 AS INTEGER)    AS timestamp,
-  send_status                                                       AS sendStatus,
-  origin                                                            AS origin,
-  rowid                                                             AS rowid,
-  message_type                                                      AS messageType,
-  deliveryRetryInfo                                                 AS deliveryRetryInfo
-FROM subagent
+  t.id,
+  body.sdk_message AS content,
+  CAST((julianday(t.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS timestamp,
+  t.send_status AS sendStatus,
+  body.origin AS origin,
+  t.rowid AS rowid,
+  t.message_type AS messageType,
+  t.deliveryRetryInfo AS deliveryRetryInfo
+FROM top_level t
+JOIN sdk_messages body ON body.rowid = t.rowid
 ORDER BY timestamp ASC, rowid ASC
 `.trim();
 

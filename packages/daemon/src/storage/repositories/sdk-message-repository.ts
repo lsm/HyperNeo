@@ -1070,13 +1070,7 @@ export class SDKMessageRepository {
         AND (
           message_type != 'system'
           OR COALESCE(message_subtype, '') != 'informational'
-          OR NOT json_valid(sdk_message)
-          OR COALESCE(
-            CASE
-              WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.level')
-            END,
-            ''
-          ) != 'info'
+          OR COALESCE(info_level, 0) != 1
         )
         AND (
           message_type != 'system'
@@ -1155,14 +1149,11 @@ export class SDKMessageRepository {
              timestamp,
              origin,
              rowid,
-             COALESCE(
-               CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
-               task_id
-             ) AS task_id
+             COALESCE(bg_task_id, task_id) AS task_id
            FROM sdk_messages
            WHERE session_id = ?
              AND parent_tool_use_id IS NULL
-             AND COALESCE(message_subtype, '') IN (${BACKGROUND_TASK_METADATA_SQL_LIST})
+             AND message_subtype_norm IN (${BACKGROUND_TASK_METADATA_SQL_LIST})
            ORDER BY timestamp DESC, rowid DESC
            LIMIT ?
          ),
@@ -1178,18 +1169,12 @@ export class SDKMessageRepository {
              timestamp,
              origin,
              rowid,
-             COALESCE(
-               CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
-               task_id
-             ) AS task_id
+             COALESCE(bg_task_id, task_id) AS task_id
            FROM sdk_messages
            WHERE session_id = ?
              AND parent_tool_use_id IS NULL
-             AND COALESCE(message_subtype, '') = 'task_started'
-             AND COALESCE(
-               CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
-               task_id
-             ) IN (SELECT task_id FROM recent_task_ids)
+             AND message_subtype_norm = 'task_started'
+             AND COALESCE(bg_task_id, task_id) IN (SELECT task_id FROM recent_task_ids)
              AND id NOT IN (SELECT id FROM recent_metadata)
          ),
          latest_progress AS (
@@ -1207,13 +1192,10 @@ export class SDKMessageRepository {
                timestamp,
                origin,
                rowid,
-               COALESCE(
-                 CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.task_id') END,
-                 task_id
-               ) AS task_id,
+               COALESCE(bg_task_id, task_id) AS task_id,
                ROW_NUMBER() OVER (
                  PARTITION BY COALESCE(
-                   CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.tool_use_id') END,
+                   bg_tool_use_id,
                    ''
                  )
                  ORDER BY timestamp DESC, rowid DESC
@@ -1221,9 +1203,9 @@ export class SDKMessageRepository {
              FROM sdk_messages
              WHERE session_id = ?
                AND parent_tool_use_id IS NULL
-               AND COALESCE(message_subtype, '') = 'task_progress'
+               AND message_subtype_norm = 'task_progress'
                AND COALESCE(
-                 CASE WHEN json_valid(sdk_message) THEN json_extract(sdk_message, '$.tool_use_id') END,
+                 bg_tool_use_id,
                  ''
                ) != ''
            )
