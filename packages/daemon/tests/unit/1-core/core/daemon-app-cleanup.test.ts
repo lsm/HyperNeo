@@ -1,10 +1,12 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test, jest } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDaemonApp, releaseStartupFileLogCapture } from '../../../../src/app';
 import type { Config } from '../../../../src/config';
 import { MAILBOX_EXPIRE_FIRE } from '../../../../src/lib/job-queue-constants';
+import * as watchdog from '../../../../src/lib/event-loop-watchdog';
+import { SQLiteQueryObserver } from '../../../../src/storage/sqlite-query-observability';
 import {
   clearStructuredLogSubscribers,
   emitStructuredLogEvent,
@@ -314,6 +316,71 @@ describe('Daemon App Cleanup', () => {
   });
 
   describe('daemon startup (no workspace required)', () => {
+    test.each([false, true])(
+      'retains pending slow SQL in the file on cleanup; error: %s',
+      async (fails) => {
+        const directory = join(tmpdir(), `hyperneo-shutdown-sql-${crypto.randomUUID()}`);
+        const path = join(directory, 'daemon.jsonl');
+        jest.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+        const arm = spyOn(watchdog, 'armStallDetectionWhenStartupSettles').mockImplementation(
+          (_handle, _settled, options) => options?.onArm?.('startup_settled')
+        );
+        const observer = new SQLiteQueryObserver({
+          slowThresholdMs: 250,
+          summaryIntervalMs: 0,
+          maxQueryGroups: 10,
+          summaryQueryLimit: 5,
+        });
+        let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
+        try {
+          app = await createDaemonApp({
+            config: { ...config, structuredLogFilePath: path },
+            verbose: false,
+          });
+          emitStructuredLogEvent({
+            level: 'warn',
+            args: ['shutdown capture baseline'],
+            source: 'logger',
+          });
+          await app.flushStructuredLogs();
+          const dispose = app.fileIndex.dispose.bind(app.fileIndex);
+          spyOn(app.fileIndex, 'dispose').mockImplementation(() => {
+            dispose();
+            observer.recordExecution({
+              descriptor: {
+                fingerprint: 'shutdown_sql',
+                normalizedSql: 'select shutdown_sql',
+                normalizedSqlTruncated: false,
+              },
+              operation: 'get',
+              durationMs: 563,
+              outcome: 'ok',
+            });
+            if (fails) throw new Error('synthetic cleanup failure');
+          });
+          if (fails) await expect(app.cleanup()).rejects.toThrow('synthetic cleanup failure');
+          else await app.cleanup();
+          const events = readFileSync(path, 'utf8')
+            .trim()
+            .split('\n')
+            .map((line) => JSON.parse(line));
+          const slow = events.filter((event) => event.metadata?.fingerprint === 'shutdown_sql');
+          expect(slow).toHaveLength(1);
+          expect(slow[0].metadata).toMatchObject({
+            event: 'slow',
+            resourceScope: 'event_loop_tick',
+          });
+        } finally {
+          await app?.cleanup();
+          if (fails) app?.db.close();
+          observer.close();
+          arm.mockRestore();
+          jest.useRealTimers();
+          rmSync(directory, { recursive: true, force: true });
+        }
+      }
+    );
+
     test('should restore structured log capture when startup fails', async () => {
       const originalError = console.error;
       const alreadyInstalledRestore = installConsoleLogCapture();
