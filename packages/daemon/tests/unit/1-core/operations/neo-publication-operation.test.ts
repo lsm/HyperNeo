@@ -49,7 +49,7 @@ const caller = (sessionId = root.sessionId, messageId = ask.messageId, human = t
   source: 'mcp' as const,
   sessionId,
   role: 'neo' as const,
-  neoTurn: { messageId, human, isLive: () => true },
+  neoTurn: { messageId, human, isLive: () => true, carried: (id: string) => id === 'steered' },
 });
 describe('runtime-bound publication operation', () => {
   let mailbox: MailboxTestDb;
@@ -200,6 +200,18 @@ describe('runtime-bound publication operation', () => {
     expect(
       await invoke({ ...draft, triggerId: 'human:waiting' }, caller(root.sessionId, 'event', false))
     ).toMatchObject({ value: { accepted: false, reason: 'wrong_trigger' } });
+  });
+
+  test('a consumed human input from an older turn cannot be answered by guessing its id', async () => {
+    prompt(root.sessionId, 'event', 'system');
+    prompt(root.sessionId, 'old-human');
+    expect(
+      await invoke(
+        { ...draft, triggerId: 'human:old-human' },
+        caller(root.sessionId, 'event', false)
+      )
+    ).toMatchObject({ value: { accepted: false, reason: 'wrong_trigger' } });
+    expect(ledger.list(conversationId)).toEqual([]);
   });
 
   test('an unbound event delivery does not invent an answered human question', async () => {

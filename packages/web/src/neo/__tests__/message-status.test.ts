@@ -129,6 +129,19 @@ describe('projectNeoMessageStatuses', () => {
 });
 
 describe('neoRepliedAsks', () => {
+  it('an explicit human trigger answers its chosen input, not the turn producer as well', () => {
+    const selected = {
+      ...reply('B'),
+      publication: {
+        askOrigin: { sessionId: 'neo', messageId: 'B' },
+        producerInput: { sessionId: 'neo', messageId: 'A' },
+        triggerId: 'human:B',
+      },
+    } as unknown as NeoPublicEntry;
+    expect(
+      read(projectNeoMessageStatuses([ask('A'), ask('B'), selected], 'inactive', idle, live))
+    ).toEqual({ A: 'received', B: 'answered' });
+  });
   it('recognizes every attributed reply', () => {
     expect([...neoRepliedAsks([ask('A'), reply('A'), ask('B'), reply('B')])]).toEqual(['A', 'B']);
   });
