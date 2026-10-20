@@ -89,19 +89,19 @@ Only the cheap schema steps run at startup. The body copy runs online as a backg
 
 1. **Backup and disk check.** The existing pre-migration backup (`createBackup`, a full copy into `data/backups/daemon.db/`) runs first: about 1 GB on the laptop, 31–38 GB on the iMac. The copy refuses to start while free disk is under twice the DB size. It logs why and retries on the next run.
 2. **Columns.** `ALTER TABLE ADD COLUMN` × 15: 33 ms (measured with 14). Each add is guarded by `pragma_table_xinfo` (the existing idiom), so a restart after a crash re-enters this step safely. In practice slice 2 has already added and backfilled them, and this step is a no-op.
-3. **Chunked pass (background job).** 5k-row transactions with a yield between them, each:
+3. **Chunked pass (background job).** Each chunk is one transaction bounded by bytes, not rows: up to 5k rows or 16 MB of body bytes (`sum(length(sdk_message))` in seq order), whichever comes first. A single row larger than the limit is a chunk on its own. There's a yield between chunks. A tool-heavy region with 700 KB results therefore never builds a multi-hundred-MB transaction, a WAL spike or a long event-loop block. Each chunk:
    - backfills the derived columns from the JSON;
    - copies the body into `sdk_message_bodies`;
    - sets `sdk_message = ''`;
    - checkpoints the WAL.
 
-   Measured: column backfill 10.2 s, copy plus blank 9.4 s. One pass with both is about 15 s synthetic, so about 7–8 s live. WAL peak 51 MB.
-4. **Rebuild without the column** (ships in slice 11, not slice 10, together with removing every code reference to `sdk_message`; until then the blanked column stays, so a daemon built between the two slices still prepares its dual-write and `COALESCE` statements). The table is now small: 12-step copy, swap and index recreate, about 1–2 s. It is re-entrant: a leftover `sdk_messages_new` from a crash is dropped and rebuilt, and the step is skipped once `sdk_message` is gone from `pragma_table_xinfo('sdk_messages')`.
+   Measured (5k-row chunks, average 7.7 MB): column backfill 10.2 s, copy plus blank 9.4 s. One pass with both is about 15 s synthetic, so about 7–8 s on the laptop. WAL peak 51 MB. A 16 MB byte cap keeps the per-chunk WAL and block time near those figures in any region of the table.
+4. **Rebuild without the column** (ships in slice 11, not slice 10, together with removing every code reference to `sdk_message`; until then the blanked column stays, so a daemon built between the two slices still prepares its dual-write and `COALESCE` statements). The table is now small: 12-step copy, swap, then recreate the indexes and the triggers, about 1–2 s. `DROP TABLE sdk_messages` drops its triggers, so step 4 recreates them by name: the row-derived `task_message_rows` trigger (insert and update) and the `sdk_message_bodies_ad` cleanup. It also asserts they exist before it sets the marker. The repo precedent, runMigration15, recreates indexes only because no triggers existed then. It is re-entrant: a leftover `sdk_messages_new` from a crash is dropped and rebuilt, and the step is skipped once `sdk_message` is gone from `pragma_table_xinfo('sdk_messages')`.
 
-The body-derived `task_message_rows` trigger on `sdk_message_bodies` (slice 7) must not run for copied rows, but it must keep running for new messages written while the online copy is going. The copy job records `max(seq)` at its start in a one-row state table. The trigger's `WHEN NEW.seq > (SELECT through_seq FROM sdk_message_body_copy_state)` skips copies of old rows and fires for every new insert, which always has a higher seq. Copied bodies are unchanged, so the projection rows the trigger would recompute are already correct, and the measured copy cost (taken without the trigger) is the shipped cost. The state row is removed when the copy finishes.
+The body-derived `task_message_rows` trigger on `sdk_message_bodies` (slice 7) must not run for copied rows, but it must keep running for every other write. Slice 7 creates the one-row table `sdk_message_body_copy_active` empty, and the trigger's `WHEN NOT EXISTS (SELECT 1 FROM sdk_message_body_copy_active)` fires whenever it's empty. That covers every write from slice 7 on, and after the copy ends. The copy job inserts the row at the start of each chunk transaction and deletes it before commit. Chunks run synchronously on the daemon's single connection, so no other write can happen while the row exists. The skip therefore covers exactly the copy's own inserts, with no seq comparison, so a NULL cutoff or a reused rowid can't disable it. Copied bodies are unchanged, so the projection rows the trigger would recompute are already correct, and the measured copy cost (taken without the trigger) is the shipped cost.
 5. **Markers.** Slice 10's migration (steps 1–3) and slice 11's (step 4) each set their own marker only after their last step.
 
-Crash safety: each marker is set only after its last step, so a crash anywhere makes the next run re-enter the migration, and every step is safe to re-run. The background copy keeps its cutoff in the state table across restarts. Steps 2 and 4 are guarded as described. In step 3 every chunk is one transaction, and the copy is `INSERT OR IGNORE` from the rows not yet blanked. A restart picks up where `sdk_message <> ''` rows remain, and a half-done chunk rolls back with its transaction. Rows already blanked always have their body copied in the same transaction. 
+Crash safety: each marker is set only after its last step, so a crash anywhere makes the next run re-enter the migration, and every step is safe to re-run. A crash inside a chunk rolls back that chunk's flag row with the rest of its transaction. Steps 2 and 4 are guarded as described. In step 3 every chunk is one transaction, and the copy is `INSERT OR IGNORE` from the rows not yet blanked. A restart picks up where `sdk_message <> ''` rows remain, and a half-done chunk rolls back with its transaction. Rows already blanked always have their body copied in the same transaction. 
 
 Space: the file grows from 943 MB to 1,190 MB in the benchmark (+26%), with 249 MB free and reused by later writes. There's no VACUUM on the boot path (as in #2961). Expected sizes:
 
@@ -110,7 +110,10 @@ Space: the file grows from 943 MB to 1,190 MB in the benchmark (+26%), with 249 
 
 Slice 11's rebuild without the column runs at startup on small rows: about 1–2 s on the laptop, and an estimated 1 minute for the iMac's 3.69M rows. That one deploy is scheduled.
 
-Rollback: restore the step-1 backup, which loses anything written since. A reverse script ships with the migration slice as a manual tool: it re-adds the column, copies bodies back by seq, and drops the side table.
+Rollback has two paths:
+
+- **The reverse script** is the durable path. It ships with slice 10 as a manual tool, works at any time and loses nothing. Before slice 11 it copies bodies back into the still-present column by seq. After slice 11 it first re-adds the column. Then it drops the side table.
+- **Restoring the step-1 backup** is a short-window fallback only. `createBackup` keeps the last `MIGRATION_BACKUP_RETENTION` = 3 backups and every migrated boot writes one, so the pre-split backup ages out after three more migration runs. Restoring it also loses everything written since.
 
 ## Benefit measured
 
