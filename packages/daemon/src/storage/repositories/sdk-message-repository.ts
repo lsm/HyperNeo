@@ -1661,7 +1661,7 @@ export class SDKMessageRepository {
 
   listQueuedInputs(
     sessionId: string,
-    kind: 'system' | 'human' = 'system'
+    kind: 'system' | 'human' | 'task' = 'system'
   ): { uuid: string; seq: number }[] {
     return this.db
       .prepare(

@@ -14,6 +14,7 @@ import { transitionStandaloneTask } from '../../../../src/storage/tasks/transiti
 import { createTestSession } from '../../../helpers/database';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db';
 import { operationInvoke } from '../../../helpers/operation-mcp';
+import { SESSION_MESSAGE_NOTE } from '../../../../src/lib/messaging/session-envelope';
 
 const categories = [undefined, 'lobby', 'worker', 'space_chat', 'worker'] as const;
 const cases = categories.flatMap((targetType) => [
@@ -134,7 +135,11 @@ describe('shared operation delivery parity', () => {
       expect(mailbox.sdkRows()).toHaveLength(1);
       expect(row.session_id).toBe(target.id);
       expect(row.sdk_uuid).toBe(receipt.messageId);
-      expect(JSON.parse(row.sdk_message).message.content).toEqual(message.message.content);
+      expect(JSON.parse(row.sdk_message).message.content).toEqual(
+        source === 'rpc'
+          ? message.message.content
+          : `<session-message from-session="sender" origin="session">\n${SESSION_MESSAGE_NOTE}\n${message.message.content}\n</session-message>`
+      );
       expect(Boolean(JSON.parse(row.sdk_message).isSynthetic)).toBe(source === 'mcp');
       expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)).toHaveLength(1);
       await deliver(job);

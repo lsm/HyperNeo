@@ -2276,6 +2276,7 @@ export class QueryRunner {
         break;
       }
       this.ctx.markHolderInputConsumed?.(message.uuid);
+      turn.noteSteered(message.uuid);
       fed.push(message.uuid);
       yield message;
       this.streamSilence = noteStreamFed(this.streamSilence, Date.now());
