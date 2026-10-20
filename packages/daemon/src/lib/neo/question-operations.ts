@@ -123,7 +123,15 @@ export function planNeoQuestion(
       return fail('confirmation_kind: only yes/no questions bind a home proposal.');
     const path = requireHomePath(confirm);
     if (path.reason) return fail(path.reason.reason);
-    if (!input.text.includes(confirm.path) || !input.text.includes(confirm.sha256))
+    const pathText = confirm.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const delimiter = String.raw`[\s"'\x60()\[\]{}:;,!?<>]`;
+    const shownPath = new RegExp(`(?:^|${delimiter})${pathText}(?=$|${delimiter})`, 'u').test(
+      input.text
+    );
+    const shownHash = new RegExp(`(?<![a-f0-9])${confirm.sha256}(?![a-f0-9])`, 'iu').test(
+      input.text
+    );
+    if (!shownPath || !shownHash)
       return fail('confirmation_body: show the exact home path and SHA-256 in the question text.');
   }
   const draft: NeoQuestionDraft = {
