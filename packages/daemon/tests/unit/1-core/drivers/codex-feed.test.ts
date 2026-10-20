@@ -143,7 +143,7 @@ describe('feedCodexFiles', () => {
     );
     await feedCodexFiles(db, listFeedFiles(root, 0));
     unlinkSync(gone);
-    expect(pruneVanishedFeeds(db, root, codexFeedSource)).toEqual([]);
+    expect(await pruneVanishedFeeds(db, root, codexFeedSource)).toEqual([]);
     expect(rows().map((row) => (row as { body: string }).body)).toEqual(['keep me']);
     expect([...readWorkFeedOffsets(db).keys()]).toEqual([keep]);
   });

@@ -9,6 +9,7 @@ import { NAMED_QUERY_REGISTRY } from '../../../packages/daemon/src/lib/live-quer
 import { BACKGROUND_TASK_METADATA_SQL } from '../../../packages/daemon/src/lib/live-query/queries/messages.ts';
 import { ensureTaskMessageRows } from '../../../packages/daemon/src/storage/schema/task-message-rows.ts';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { writeSdkMessageBody } from '../../../packages/daemon/src/storage/repositories/sdk-message-body-write.ts';
 
 const [, , mode, run, name = mode] = process.argv;
 if (!run || !['seed', 'measure'].includes(mode) || process.env.NODE_ENV !== 'test') throw new Error('NODE_ENV=test bun sdk-live-query-filters.ts seed|measure <fresh-run-dir> [name]');
@@ -35,7 +36,7 @@ try {
       const message = { uuid: id, ...body };
       const raw = JSON.stringify(message);
       const columns = deriveSdkMessageColumns(message, task);
-      insert.run(id, sid, message.type, subtype, id, raw, new Date(at * 1000).toISOString(), parent, task, Number(computeIsRenderable(message as SDKMessage)), Number(computeIsTerminal(message as SDKMessage)), task ? 1 : null, at, ...names.map((key) => columns[key]));
+      writeSdkMessageBody(db, () => insert.run(id, sid, message.type, subtype, id, raw, new Date(at * 1000).toISOString(), parent, task, Number(computeIsRenderable(message as SDKMessage)), Number(computeIsTerminal(message as SDKMessage)), task ? 1 : null, at, ...names.map((key) => columns[key])), 'id=?', [id]);
       hash.update(raw);
     };
     const tool = 'full-tool-result-'.repeat(43_750);

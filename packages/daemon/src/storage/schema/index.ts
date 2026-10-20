@@ -27,6 +27,7 @@ import { createTaskMessageRows } from './task-message-rows.ts';
 import { SDK_MESSAGE_COLUMN_TYPES } from '../sdk-message-columns.ts';
 import { createSdkMessageFilterIndexes } from './sdk-message-filter-indexes.ts';
 import { runMigration418 } from './m418-sdk-message-bodies.ts';
+import { runMigration419 } from './m419-task-message-body-triggers.ts';
 import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
 
 // knip-ignore-next-line
@@ -888,6 +889,7 @@ export function createTables(db: BunDatabase): void {
   createSessionCounters(db);
   backfillSessionCounters(db);
   createTaskMessageRows(db);
+  runMigration419(db);
 
   createIndexes(db);
 }

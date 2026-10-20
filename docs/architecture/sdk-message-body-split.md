@@ -116,6 +116,22 @@ the body is read by rowid only after the window is selected.
 
 ## Migration
 
+Slice 7 installs the split projection triggers in migration 419 and the fresh
+schema. Row upserts update metadata columns only; body upserts update flags,
+artifact keys and JSON subtype only. Required insert fields are initialized when
+either upsert creates a projection. Shared SQL expressions preserve the legacy
+JSON/type/artifact semantics. Status updates of existing projections never parse
+the body. An UPDATE encountering a missing historical projection first fills it
+from the side body or legacy fallback, only when the projection id is absent;
+this prevents an empty scaffold from defeating the count-based lazy repair. Blanking
+the old column fires neither projection writer. Existing task detachment removes
+only its projection; reattachment restores body fields using the side body or
+the historical body until copying is complete. These rare classification paths
+are separate from status updates. Message/body deletion policies are unchanged.
+The empty `sdk_message_body_copy_active` singleton table suppresses body projection
+only during the future copy job's own transaction; commit/rollback removes the
+active flag with that transaction. Slice 7 performs no historical copy or rewrite.
+
 Slice 6 creates `sdk_message_bodies` in migration 418 and the fresh schema. All
 eight current repository body-write sites use `writeSdkMessageBody` to update
 the original row (including its derived columns) and upsert the body in one
@@ -173,7 +189,7 @@ Same synthetic DB:
 7. **Split the `task_message_rows` triggers** into body-derived (on `sdk_message_bodies`, which now exists and receives every new body) and row-derived parts.
 8. **Switch body outputs**, part 1: repository (#5–45), with the `LEFT JOIN … COALESCE` fallback.
 9. **Switch body outputs**, part 2: live queries, adapters, runtime, the db-query view, same fallback.
-10. **Migration.** Guarded columns at startup. The chunked copy and blank runs as an online background job, with the body trigger skipping copied rows by the seq cutoff, a free-disk check (refuse under 2× the DB size) and per-chunk progress logging. Malformed JSON gets NULL columns and is counted. Plus the reverse script. The blanked column stays.
+10. **Migration.** Guarded columns at startup. The chunked copy and blank runs as an online background job, with the body trigger skipping copied rows through the transaction-local flag described above, a free-disk check (refuse under 2× the DB size) and per-chunk progress logging. Malformed JSON gets NULL columns and is counted. Plus the reverse script. The blanked column stays.
 11. **Delete.** Remove the dual write, the `COALESCE` fallback and every reference to the old column, and in the same slice the re-entrant rebuild that drops it (step 4).
 12. **Session-length fixes outside the split:** #48/#49 paging and #50 targeted search rebuild.
 
