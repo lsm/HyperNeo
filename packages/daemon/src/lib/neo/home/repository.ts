@@ -41,16 +41,19 @@ export class NeoHomeRepository {
     const hasHead = !(await this.git(['rev-parse', '--verify', 'HEAD'], true)).code;
     const ignores = !(await this.git(['check-ignore', '-q', '--', '.coordinators/verify'], true))
       .code;
+    const paths = ['README.md', '.gitignore', 'direction.md'];
     if (!hasHead || !ignores) {
-      if (
-        (
-          await this.git(
-            hasHead
-              ? ['status', '--porcelain', '--untracked-files=all']
-              : ['diff', '--cached', '--name-only']
-          )
-        ).text
-      )
+      const changes = (
+        await this.git(
+          hasHead
+            ? ['status', '--porcelain', '--untracked-files=all']
+            : ['diff', '--cached', '--name-only', '-z']
+        )
+      ).text;
+      const staged = changes.split('\0').filter(Boolean);
+      const interrupted =
+        !hasHead && staged.length === paths.length && paths.every((path) => staged.includes(path));
+      if (changes && !interrupted)
         return { ok: false, reason: 'dirty: review existing home changes before initialization.' };
       const documents = new Map([
         [
@@ -75,7 +78,6 @@ export class NeoHomeRepository {
           join(this.root, '.gitignore'),
           `${ignore}${!ignore || ignore.endsWith('\n') ? '' : '\n'}.coordinators/\n`
         );
-      const paths = ['README.md', '.gitignore', 'direction.md'];
       await this.git(['add', '--', ...paths]);
       try {
         await this.git(['commit', '--only', '-m', 'Initialize Neo home', '--', ...paths]);

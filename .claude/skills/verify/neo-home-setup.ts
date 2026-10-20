@@ -38,10 +38,13 @@ await git('read-tree', '--empty');
 if (mode === 'interrupted') {
   await git('add', '--', 'README.md', '.gitignore', 'direction.md');
   const staged = await git('diff', '--cached', '--name-only');
+  const paths = ['README.md', '.gitignore', 'direction.md'];
+  const before = await Promise.all(paths.map(path => readFile(`${root}/${path}`, 'utf8')));
   const recovered = await rpc('neo.home.init');
-  const evidence = { mode, staged, recovered, status: await git('status', '--porcelain') };
+  const after = await Promise.all(paths.map(path => readFile(`${root}/${path}`, 'utf8')));
+  const evidence = { mode, staged, recovered, contentsPreserved: JSON.stringify(before) === JSON.stringify(after), status: await git('status', '--porcelain') };
   await writeFile(`${run}/evidence/neo-home-setup.json`, JSON.stringify(evidence, null, 2));
-  if (!recovered.ok || evidence.status || await git('rev-list', '--count', 'HEAD') !== '1') throw new Error('Interrupted bootstrap did not recover');
+  if (!recovered.ok || !evidence.contentsPreserved || evidence.status || await git('rev-list', '--count', 'HEAD') !== '1') throw new Error('Interrupted bootstrap did not recover');
   console.log('PASS: RPC recovers an unborn repository with exactly the staged bootstrap paths, preserving its files.');
   process.exit(0);
 }

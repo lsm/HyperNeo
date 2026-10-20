@@ -984,3 +984,10 @@ for missing identity. RPC must preserve the original author-identity error.
 The helper records the remaining staged files, removes its shim, explicitly
 unstages only its own fixture files, configures identity and verifies retry.
 This fault mode does not claim that a failed cleanup left the index empty.
+
+Repeat journey 32 on a fresh run with final argument `interrupted` to seed the
+persisted state from interruption between add and commit: no HEAD and exactly
+README.md, .gitignore and direction.md staged. The next real `neo.home.init` RPC
+must finish one bootstrap commit without manual reset. This simulates the disk
+state; it does not kill the daemon. Focused contracts retain refusal for other
+staged files. Existing file contents survive recovery.
