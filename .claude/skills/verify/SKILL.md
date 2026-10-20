@@ -969,3 +969,13 @@ bun .claude/skills/verify/subagent-lookup.ts 45000 10
 ```
 
 The script builds a synthetic session (45,000 rows by default, with 10 tool uses on the last page) and installs the live laptop's `sqlite_stat1` figures for `sdk_messages`. It then times the subagent lookup inside `getSDKMessages` and prints its plan. It runs on Bun's SQLite, the planner the daemon uses; Vitest's `node:sqlite` plans differently. End state: the plan seeks `(session_id=? AND parent_tool_use_id=?)` (the covering `idx_sdk_messages_session_visible`), and the lookup takes about 0.1 ms. Before the `ORDER BY +timestamp` hint, it walked `idx_sdk_messages_session_timestamp_id` whenever a page had two or more tool uses: about 7.4 ms on warm synthetic rows, and 234–2,734 ms on the live disk.
+
+### Work-feed offsets read once (journey 31)
+
+Work-feed polls must not re-read the offsets table:
+
+```bash
+bun .claude/skills/verify/work-feed-offsets.ts 2700 35
+```
+
+The script builds a synthetic temp DB (2,700 rows and 35 polls by default, the live per-5-minute cadence). Each poll calls `readWorkFeedOffsets`, then writes one offset through `saveWorkFeedChunk`. End state: `table reads=1` for any number of polls. Before the in-memory offsets map it printed `table reads=35`. On the live daemon, `select path, offset, size, mtime from work_feed_offsets` then appears in the `sqlite.query` summaries only in the first window after a restart.
