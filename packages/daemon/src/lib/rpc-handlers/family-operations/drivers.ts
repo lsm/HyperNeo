@@ -296,6 +296,7 @@ function codexDesktopAdapters(
   return [
     createCodexDesktopAdapter({
       statePath,
+      desktopSocketPath: join(codexHome, 'ipc', 'ipc.sock'),
       prepareExecution,
       worktreesDir: join(codexHome, 'worktrees'),
       machine: hostname(),

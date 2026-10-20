@@ -10,7 +10,7 @@ interface DesktopResponse {
   resultType?: string;
   error?: string;
   handledByClientId?: string;
-  result?: { clientId?: string; result?: { turn?: { id?: string } } };
+  result?: { clientId?: string; result?: { turn?: { id?: string }; turnId?: string } };
 }
 
 export interface CodexDesktopIpc {
