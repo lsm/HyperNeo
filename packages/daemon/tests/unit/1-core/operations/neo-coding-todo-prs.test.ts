@@ -542,5 +542,10 @@ describe('coding pr_merged check wording and rules', () => {
         instruction: null,
       })
     ).toBeNull();
+    expect(
+      codingTodoCheckRefusal({ check: merged({ urls: ['lsm/HyperNeo#7709'] }), instruction: null })
+    ).toBe(
+      'pr_merged_needs_urls: a todo with no instruction opens no pull request; name each one in params.urls.'
+    );
   });
 });

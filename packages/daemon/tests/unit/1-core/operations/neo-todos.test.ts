@@ -310,6 +310,18 @@ describe('a pack owns its check', () => {
     });
   });
 
+  test('a todo whose done-when predates its pack wording stays editable', async () => {
+    const { repo, call } = setup([gauge]);
+    const old = repo.addTodo(
+      'old',
+      'ask',
+      { title: 'Fill it', doneWhen: 'Full enough', check, instruction: 'Fill.', named: null },
+      1
+    );
+    const edited = await call('neo.todo.edit', { todoId: old.id, doneWhen: 'Half full' });
+    expect(edited.ok && edited.todo.doneWhen).toBe('Half full');
+  });
+
   test('refuses a check its pack refuses, and adds nothing', async () => {
     const { repo, call } = setup([gauge]);
     expect(
