@@ -79,6 +79,8 @@ Use synthetic bodies only. Before applying the column implementation, run
 then `inspect "$RUN"` with the same helper. The latter must fail because the
 derived columns are absent. Seed records 11,000 messages, including full large
 tool results and one malformed JSON row, plus a SHA-256 of the valid bodies.
+The seed writes `replacement_metadata_normalized=1`, matching production writers
+so the unrelated one-time legacy replacement reconciliation does not run.
 Use a temporary HOME and `env -i` as in Launch; no real database is read or copied.
 
 With this branch, run `upgrade "$RUN"`, then `inspect "$RUN"`, then `upgrade`

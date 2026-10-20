@@ -19,7 +19,7 @@ if (mode === 'seed') {
     createTables(db);
     db.exec('PRAGMA foreign_keys = OFF');
     const insert = db.prepare(
-      "INSERT INTO sdk_messages (id,session_id,message_type,sdk_message,timestamp,task_id) VALUES (?,'synthetic-columns','user',?,'2026-10-20T00:00:00Z','fallback-task')"
+      "INSERT INTO sdk_messages (id,session_id,message_type,sdk_message,timestamp,task_id,replacement_metadata_normalized) VALUES (?,'synthetic-columns','user',?,'2026-10-20T00:00:00Z','fallback-task',1)"
     );
     const hash = createHash('sha256');
     const tool = 'tool-result-preserved-'.repeat(35_000);
