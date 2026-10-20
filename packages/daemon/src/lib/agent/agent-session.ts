@@ -185,7 +185,7 @@ import {
   initializeProviders,
   waitForOptionalProviderRegistration,
 } from '../providers/factory.js';
-import { resolveQueryProvider } from '../providers/registry.ts';
+import { resolveAvailableQueryProvider } from '../providers/registry.ts';
 import {
   claimProviderFailureNotice,
   recordClassifiedProviderFailure,
@@ -2915,17 +2915,24 @@ export class AgentSession
           }
           const pinned = (this.session.config.provider as string | undefined)?.trim() || undefined;
           const registry = initializeProviders();
-          await waitForOptionalProviderRegistration(registry, pinned !== undefined);
-          if (!resolveQueryProvider(registry, this.session.config.model || 'sonnet', pinned)) {
-            const message = `Provider '${pinned ?? 'anthropic'}' is not registered. Log in or add an API key for it under Providers, or switch this session to another provider.`;
-            await this.errorManager.handleError(
-              this.session.id,
-              new Error(message),
-              ErrorCategory.MODEL,
-              message,
-              this.stateManager.getState()
+          if (pinned || !registry.has('anthropic')) {
+            await waitForOptionalProviderRegistration(registry, pinned !== undefined);
+            const { provider } = await resolveAvailableQueryProvider(
+              registry,
+              this.session.config.model || 'sonnet',
+              pinned
             );
-            throw new MessageDeliveryTerminalTurnError(message);
+            if (!provider) {
+              const message = `Provider '${pinned ?? 'anthropic'}' is not registered. Log in or add an API key for it under Providers, or switch this session to another provider.`;
+              await this.errorManager.handleError(
+                this.session.id,
+                new Error(message),
+                ErrorCategory.MODEL,
+                message,
+                this.stateManager.getState()
+              );
+              throw new MessageDeliveryTerminalTurnError(message);
+            }
           }
           if (this.isCleaningUp()) return { outcome: 'aborted' };
           if (claimGuard && !claimGuard()) return { outcome: 'aborted' };
