@@ -1190,6 +1190,25 @@ below 1 s and health below 250 ms while settings preparation still takes 1.4 s.
 This proves a synchronous settings I/O hazard; attribution of the historical
 2026-10-20 17:48:36Z production stall remains unproven.
 
+Settings preparations share a promise chain keyed by the resolved target path,
+including across SettingsManager instances and workspace aliases. They re-read
+local settings after awaiting inherited attribution, then commit complete JSON
+with a same-directory temporary file and rename, preserving existing permissions
+and symlink targets. This does not lock unrelated external editors. Invalid JSON
+is reported without including its contents and left untouched. A failed write
+only unlinks its own successfully created staging file, never the settings file
+or another writer's temporary file.
+
+The focused settings suites also exercise overlapping sessions, an external edit
+during the delayed attribution read, invalid JSON and queue recovery, read-only
+directories, and an injected staging-write failure. All fixtures stay in their
+own temporary workspace and user-settings directory:
+
+```bash
+cd packages/daemon
+bunx vitest run tests/unit/1-core/session/settings-manager.test.ts tests/unit/1-core/session/settings-responsiveness.test.ts
+```
+
 ### Notice groups reload by subtype (journey 33)
 
 ```bash

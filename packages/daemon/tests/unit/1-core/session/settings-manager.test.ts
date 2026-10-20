@@ -1,4 +1,5 @@
-import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
+import { describe, expect, it, beforeEach, mock, afterEach, jest } from 'bun:test';
+import { open } from 'node:fs/promises';
 import {
   writeFileSync,
   readFileSync,
@@ -179,6 +180,32 @@ describe('SettingsManager', () => {
       expect(lstatSync(path).isSymbolicLink()).toBe(true);
       expect(statSync(target).mode & 0o777).toBe(0o600);
       expect(JSON.parse(readFileSync(target, 'utf8')).custom).toBe('linked');
+    });
+
+    it('removes only its own staging file when writing fails after creation', async () => {
+      const directory = join(workspacePath, '.claude');
+      const path = join(directory, 'settings.local.json');
+      const unrelated = join(directory, 'unrelated.tmp');
+      mkdirSync(directory);
+      const original = JSON.stringify({ custom: 'preserved' });
+      writeFileSync(path, original);
+      writeFileSync(unrelated, 'unrelated');
+      const probe = await open(join(tempDir, 'probe'), 'w');
+      const prototype = Object.getPrototypeOf(probe);
+      await probe.close();
+      const fail = jest
+        .spyOn(prototype, 'writeFile')
+        .mockRejectedValueOnce(new Error('synthetic write failure'));
+      try {
+        await expect(settingsManager.prepareSDKOptions()).rejects.toThrow(
+          'synthetic write failure'
+        );
+        expect(readFileSync(path, 'utf8')).toBe(original);
+        expect(readFileSync(unrelated, 'utf8')).toBe('unrelated');
+        expect(readdirSync(directory).sort()).toEqual(['settings.local.json', 'unrelated.tmp']);
+      } finally {
+        fail.mockRestore();
+      }
     });
 
     it('should write permission settings', async () => {
