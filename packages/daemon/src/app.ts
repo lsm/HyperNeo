@@ -1637,6 +1637,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
         fileIndex.dispose();
 
+        stopEventLoopLagLog();
         logEvidenceService.flush();
         unsubscribeStructuredLogs();
         unsubscribeProviderFailureChanges?.();
@@ -1647,6 +1648,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         logInfo('[Daemon] Graceful shutdown complete');
       } catch (error) {
         logError('Error during cleanup:', error);
+        stopEventLoopLagLog();
         logEvidenceService.flush();
         unsubscribeStructuredLogs();
         unsubscribeProviderFailureChanges?.();

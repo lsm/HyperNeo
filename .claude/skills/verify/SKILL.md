@@ -1323,3 +1323,20 @@ resource sample (or shutdown); no per-statement resource syscall is added.
 Outside the monitor, warnings retain immediate delivery without tick metadata.
 Unavailable resource sampling leaves counters absent rather than fabricating
 zeroes. Fast queries and summary aggregation keep their existing behavior.
+
+Verify shutdown delivery through the actual daemon and its JSONL file sink:
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-slow-sql-shutdown-XXXXXX)
+env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/slow-sql-shutdown.ts "$RUN"
+```
+
+The helper enables query observation on its own synthetic DB and runs a real
+recursive SQLite query immediately before normal cleanup or a synthetic cleanup
+failure. `observed.json` must contain exactly one persisted slow record per case,
+with tick resource context. It explicitly simulates watchdog arming (normally off
+in test mode) and uses a 60 s sampler cadence to keep the query pending until
+shutdown. The SQL execution, app cleanup and file sink are real; this does not
+verify production watchdog activation. Both sinks must still be subscribed when
+cleanup stops the lag monitor, before evidence flushing and sink teardown.
