@@ -64,8 +64,8 @@ if (phase === 'before') {
 const badBody = await rpc('neo.question.ask', { ...input, text: 'Missing visible path/hash' });
 const answered = await rpc('neo.question.answer', { questionId: created.question.id, answer: 'yes' });
 const after = await rpc('neo.question.get', { questionId: created.question.id });
-const stillBlocked = await rpc('neo.home.save', { path: confirm.path, content: 'Synthetic new mandate.\n', message: 'Not wired in this slice', questionId: created.question.id });
+const stillBlocked = await rpc('neo.home.save', { path: confirm.path, content: 'Synthetic new mandate.\n', message: 'Unconfirmed save' });
 Object.assign(evidence, { badBody, answered, after, stillBlocked });
 await writeFile(`${run}/evidence/neo-question-confirmation-after.json`, JSON.stringify(evidence, null, 2));
 if (JSON.stringify(created.question.confirm) !== JSON.stringify(confirm) || JSON.stringify(read.question.confirm) !== JSON.stringify(confirm) || read.answeredByHuman || !answered.ok || !after.answeredByHuman || after.question.state !== 'answered' || after.question.answer !== 'yes' || JSON.stringify(after.question.confirm) !== JSON.stringify(confirm) || badBody.ok || !badBody.reason?.includes('confirmation_body') || legacyRead.question.text !== legacy.text || legacyRead.question.confirm !== null || stillBlocked.ok || !stillBlocked.reason?.includes('confirmation_required')) throw new Error('Question binding contract failed');
-console.log('PASS: real ask/get/answer RPC retains the exact path/hash, exposes only the human answer, preserves the legacy question, rejects an incomplete body, and leaves protected saves blocked for the next slice.');
+console.log('PASS: real ask/get/answer RPC retains the exact path/hash, exposes only the human answer, preserves the legacy question, rejects an incomplete body, and leaves protected saves without a question blocked.');

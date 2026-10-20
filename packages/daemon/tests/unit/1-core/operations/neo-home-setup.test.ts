@@ -8,6 +8,7 @@ import { createOperationRegistry } from '../../../../src/lib/operations/registry
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
 import { spawnProcess } from '../../../../src/lib/runtime-spawn/index.ts';
+import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { createTestDb } from '../../../helpers/database.ts';
 
@@ -29,7 +30,14 @@ const git = async (...args: string[]) => {
 };
 const init = async (caller: OperationCaller = { source: 'rpc', principal: 'local' }) => {
   const registry = createOperationRegistry(
-    createNeoHomeOperations({ repo, defaultSessionId: () => 'neo:root' }, home)
+    createNeoHomeOperations(
+      {
+        repo,
+        todos: new NeoAskTodoRepository(db.getDatabase()),
+        defaultSessionId: () => 'neo:root',
+      },
+      home
+    )
   );
   const result = await invokeOperation(registry, 'neo.home.init', {}, caller);
   if (result.kind !== 'completed') throw new Error(JSON.stringify(result));

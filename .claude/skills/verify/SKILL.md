@@ -219,8 +219,8 @@ The helper opens only a synthetic Neo session and seeds its own ask in its test
 DB, then uses real `neo.question.ask`, `get` and local-human `answer` RPCs.
 A yes/no proposal must retain `confirm:{path,sha256}` through creation and the
 human answer. The visible body must include that exact path/hash; an incomplete
-body is refused. Ordinary questions remain unbound. A protected `neo.home.save`
-remains `confirmation_required`: the save gate/decision commit is a later slice.
+body is refused. Ordinary questions remain unbound. A protected `neo.home.save` without a question remains `confirmation_required`;
+journey 38 exercises confirmed saves and the paired decision commit.
 
 Evidence: `evidence/neo-question-confirmation-after.json`. Stop the daemon/mock,
 restart only that same synthetic run, and run the helper with `restart`: its
@@ -241,6 +241,27 @@ remain near misses.
 `evidence/neo-question-confirmation-boundaries.json` retains every response.
 The additive/idempotent legacy-answer migration contract runs in CI.
 Never copy or alter a real DB for this journey. Stop with `stop.sh` afterwards.
+
+### Confirmed home saves (journey 38)
+
+On a fresh isolated daemon from Launch, run
+`bun .claude/skills/verify/neo-home-confirmed-save.ts <port> "$RUN" after`.
+The helper seeds only a synthetic Git identity/ask/history in its own HOME and
+DB, then uses real question ask/get/answer and home init/save RPCs. Missing,
+open, no, wrong-path and wrong-hash confirmations must refuse without changing
+HEAD or either file. A matching human yes must commit the exact mandate bytes
+and append to its sibling decisions.md in one commit with the question trailer.
+Root direction uses root decisions.md; focused contracts cover that path too.
+
+The helper records question/get's answeredByHuman flag, both committed paths,
+contents and trailer. An unchanged retry adds no decision. Removing only the
+synthetic Git identity forces commit failure: both prior files and HEAD must
+remain identical, the index clean, and configuring identity makes retry succeed.
+Evidence: `evidence/neo-home-confirmed-save-after.json`. On the test-only commit,
+use `before` in a separate fresh run to retain the matching-human-yes refusal.
+No provider/model, real credentials, GitHub request or GUI is exercised. Stop
+with `stop.sh`. Direct filesystem write restrictions still belong to the
+surrounding environment; this verifies the single operation, not a shell sandbox.
 
 ## Codex Desktop work.send journey
 

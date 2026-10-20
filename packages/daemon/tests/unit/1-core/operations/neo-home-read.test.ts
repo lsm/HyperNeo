@@ -11,6 +11,7 @@ import {
 } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { spawnProcess } from '../../../../src/lib/runtime-spawn/index.ts';
+import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { createTestDb } from '../../../helpers/database.ts';
 
@@ -34,7 +35,14 @@ const read = async (
   caller: OperationCaller = { source: 'rpc', principal: 'local' }
 ) => {
   const registry = createOperationRegistry(
-    createNeoHomeOperations({ repo, defaultSessionId: () => 'neo:root' }, home)
+    createNeoHomeOperations(
+      {
+        repo,
+        todos: new NeoAskTodoRepository(db.getDatabase()),
+        defaultSessionId: () => 'neo:root',
+      },
+      home
+    )
   );
   const outcome = await invokeOperation(registry, 'neo.home.read', { path }, caller);
   if (outcome.kind !== 'completed') throw new Error(outcome.message);

@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import type { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
 import type { HomeReadInput, HomeReadResult } from './read.ts';
-import type { HomeSaveInput, HomeSaveResult } from './save.ts';
+import type { HomeSavePlan, HomeSaveResult } from './save.ts';
 
 export type HomeResult =
   | { ok: true; path: string; projects: { id: string; homePath: string }[] }
@@ -43,7 +43,7 @@ export class NeoHomeRepository {
     return this.sequence(() => this.initialize());
   }
 
-  save(input: HomeSaveInput): Promise<HomeSaveResult> {
+  save(input: HomeSavePlan): Promise<HomeSaveResult> {
     return this.sequence(() => this.write(input));
   }
 
@@ -88,9 +88,12 @@ export class NeoHomeRepository {
     return { ok: true, path, content, sha256: createHash('sha256').update(bytes).digest('hex') };
   }
 
-  private async write(input: HomeSaveInput): Promise<HomeSaveResult> {
-    if (await this.hasSymbolicLink(input.path))
-      return { ok: false, reason: 'invalid_path: symbolic link.' };
+  private async write(input: HomeSavePlan): Promise<HomeSaveResult> {
+    const paths = [input.path];
+    if (input.confirmation) paths.push(join(dirname(input.path), 'decisions.md'));
+    for (const path of paths)
+      if (await this.hasSymbolicLink(path))
+        return { ok: false, reason: 'invalid_path: symbolic link.' };
     const metadata = await lstat(join(this.root, '.git')).catch((error) => {
       if (error.code !== 'ENOENT') throw error;
       return null;
@@ -110,25 +113,46 @@ export class NeoHomeRepository {
     if (dirty) return { ok: false, reason: 'dirty: review existing home changes before saving.' };
     const initialized = await this.initialize();
     if (!initialized.ok) return initialized;
-    if (!(await this.git(['check-ignore', '-q', '--', input.path], true)).code)
-      return { ok: false, reason: 'ignored_path: this document is git-ignored.' };
-    const path = join(this.root, input.path);
-    const before = await readFile(path).catch((error) => {
-      if (error.code !== 'ENOENT') throw error;
-      return null;
-    });
+    const originals = new Map<string, Buffer | null>();
+    for (const path of paths) {
+      if (!(await this.git(['check-ignore', '-q', '--', path], true)).code)
+        return { ok: false, reason: 'ignored_path: this document is git-ignored.' };
+      originals.set(
+        path,
+        await readFile(join(this.root, path)).catch((error) => {
+          if (error.code !== 'ENOENT') throw error;
+          return null;
+        })
+      );
+    }
     const content = Buffer.from(input.content, 'utf8');
-    if (!before?.equals(content)) {
-      await mkdir(dirname(path), { recursive: true });
-      try {
-        await writeFile(path, content);
-        await this.git(['add', '--', input.path]);
-        await this.git(['commit', '--only', '-m', input.message, '--', input.path]);
-      } catch (error) {
-        await this.git(['reset', '--', input.path]).catch(() => {});
-        await (before === null ? rm(path, { force: true }) : writeFile(path, before)).catch(
-          () => {}
+    if (!originals.get(input.path)?.equals(content)) {
+      const writes = new Map([[input.path, content]]);
+      if (input.confirmation)
+        writes.set(
+          paths[1],
+          Buffer.concat([
+            originals.get(paths[1]) ?? Buffer.alloc(0),
+            Buffer.from(input.confirmation.entry, 'utf8'),
+          ])
         );
+      const message = input.confirmation
+        ? `${input.message}\n\nNeo-Confirmed-By: question ${input.confirmation.questionId}`
+        : input.message;
+      try {
+        for (const [path, bytes] of writes) {
+          await mkdir(dirname(join(this.root, path)), { recursive: true });
+          await writeFile(join(this.root, path), bytes);
+        }
+        await this.git(['add', '--', ...paths]);
+        await this.git(['commit', '--only', '-m', message, '--', ...paths]);
+      } catch (error) {
+        await this.git(['reset', '--', ...paths]).catch(() => {});
+        for (const [path, before] of originals)
+          await (before === null
+            ? rm(join(this.root, path), { force: true })
+            : writeFile(join(this.root, path), before)
+          ).catch(() => {});
         throw error;
       }
     }
