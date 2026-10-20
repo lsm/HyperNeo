@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { Database } from 'bun:sqlite';
 
 const [port, run] = process.argv.slice(2);
@@ -17,6 +17,10 @@ async function rpc(name: string, input: unknown) {
 }
 const root = (await rpc('neo.open', {})).sessionId;
 const worker = (await rpc('rpc:session.create', { workspacePath: '/tmp', title: 'Schedule worker' })).sessionId;
+mkdirSync(`${run}/workspace`, { recursive: true });
+const space = await rpc('rpc:space.create', { name: 'Schedule scope', workspacePath: `${run}/workspace`, seedAgentTemplateKeys: [] });
+assert(space.id, JSON.stringify(space));
+writeFileSync(`${run}/evidence/schedule-web-space.json`, JSON.stringify({ spaceId: space.id, worker }, null, 2));
 const surfaces = [];
 for (const [name, sessionId, title] of [['neo', root, 'Ship root guide'], ['session', worker, 'Publish worker notes']]) {
   const target = { adapter: 'hyperneo', id: sessionId };
@@ -37,7 +41,7 @@ for (const [name, sessionId, title] of [['neo', root, 'Ship root guide'], ['sess
 const db = new Database(`${run}/data/daemon.db`);
 try {
   db.exec('PRAGMA busy_timeout=5000');
-  for (const surface of surfaces) db.query(`UPDATE session_schedules SET last_run_at = ?, last_outcome = 'skipped_busy', last_skip_reason = 'busy', due_count = 2 WHERE id = ?`).run(Date.now() - 60000, surface.scheduleId);
+  for (const surface of surfaces) db.query(`UPDATE session_schedules SET last_run_at = ?, last_outcome = 'skipped_busy', last_skip_reason = 'busy', due_count = ? WHERE id = ?`).run(Date.now() - 60000, surface.name === 'neo' ? 6 : 2, surface.scheduleId);
 } finally { db.close(); }
 writeFileSync(`${run}/evidence/schedule-web-seed.json`, JSON.stringify(surfaces, null, 2));
 console.log(`Seeded synthetic schedule facts (last outcomes are fixtures, not real deliveries). ${run}/evidence/schedule-web-seed.json`);

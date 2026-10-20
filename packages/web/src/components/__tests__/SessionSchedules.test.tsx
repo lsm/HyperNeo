@@ -215,6 +215,17 @@ describe('SessionSchedules', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('Goal no longer exists');
     expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
   });
+  it.each([4, 6])(
+    'shows nudge due after %s busy ticks without changing stored facts',
+    async (dueCount) => {
+      rows = [{ ...row, dueCount }];
+      render(<SessionSchedules sessionId="root" />);
+      await open();
+      expect(screen.getByText(/Nudge due/)).toBeTruthy();
+      expect(screen.queryByText(/Nudge in -/)).toBeNull();
+      expect(rows[0].dueCount).toBe(dueCount);
+    }
+  );
   it('localizes the visible strip and controls', async () => {
     locale.value = 'zh-Hans';
     render(<SessionSchedules sessionId="root" />);

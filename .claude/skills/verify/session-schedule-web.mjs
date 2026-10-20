@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 
-const [port, run] = process.argv.slice(2);
+const [port, run, mode] = process.argv.slice(2);
 assert(port && run && port !== '8399');
 const log = readFileSync(`${run}/daemon.log`, 'utf8');
 assert(log.includes('HyperNeo Test Server') && log.includes(`Database: ${run}/`));
@@ -40,7 +40,7 @@ try {
       assert.equal(await strip.locator(`[data-schedule="${other.scheduleId}"]`).count(),0);
     }
     assert((await row.innerText()).includes('Every 60 min'));
-    assert((await row.innerText()).includes('Nudge in 2'));
+
     assert((await row.innerText()).includes('Skipped · Session busy'));
     assert.equal(await row.locator('time').count(),2);
     assert((await strip.innerText()).includes('0 9 * * * · UTC'));
@@ -56,7 +56,7 @@ try {
     await strip.getByRole('button',{ name:'Refresh schedules', exact:true }).waitFor({ state:'visible' });
     await row.getByRole('button',{ name:'Pause', exact:true }).waitFor();
     await page.waitForFunction(id => !document.querySelector(`[data-session-schedules="${id}"] > div > button`)?.disabled, surface.sessionId);
-    if (width === 1280 && surface.name === 'neo') {
+    if (mode !== 'reproduce' && width === 1280 && surface.name === 'neo') {
       const goalId = list(surface.sessionId).find(item => item.id === surface.scheduleId).sourceId;
       assert(rpc('goal.session.update', { ownerSessionId:surface.sessionId, goalId, title:'Guide renamed externally' }).accepted);
       await row.getByRole('button',{ name:'Guide renamed externally', exact:true }).waitFor({ timeout:45000 });
@@ -69,6 +69,24 @@ try {
     await page.screenshot({ path:`${run}/evidence/schedules-${surface.name}-${width}.png`, fullPage:true });
     observed.push({ surface:surface.name, width, target:surface.sessionId, text:await strip.innerText(), controlsPersisted:true, visibleRefresh:width === 1280 && surface.name === 'neo' });
   }
+  const scope = JSON.parse(readFileSync(`${run}/evidence/schedule-web-space.json`, 'utf8'));
+  const requests = [];
+  page.on('websocket', socket => socket.on('framesent', frame => {
+    const message = JSON.parse(String(frame.payload));
+    if (message.data?.name === 'schedule.session.list') requests.push(message.data);
+  }));
+  await page.goto(`http://127.0.0.1:${port}/space/${scope.spaceId}/session/${scope.worker}`);
+  await page.locator('[data-messages-container]').waitFor({ timeout:30000 });
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  const spaceStrips = await page.locator('[data-session-schedules]').count();
+  await page.screenshot({ path:`${run}/evidence/schedules-space.png`, fullPage:true });
+  observed.push({ surface:'space', spaceStrips, requests });
   writeFileSync(`${run}/evidence/schedule-web.json`, JSON.stringify(observed,null,2));
+  assert.equal(spaceStrips,0,'Space chats must not mount the schedule strip');
+  assert.equal(requests.length,0,'Space chats must not read schedules');
+  for (const entry of observed.filter(item => item.text)) {
+    assert(entry.text.includes(entry.surface === 'neo' ? 'Nudge due' : 'Nudge in 2'),entry.text);
+    assert(!entry.text.includes('Nudge in -'),entry.text);
+  }
   console.log(`PASS: session and Neo strips at desktop/mobile widths; facts, goal definition, target isolation and RPC-backed controls. ${run}/evidence/schedule-web.json`);
 } finally { await browser.close(); }
