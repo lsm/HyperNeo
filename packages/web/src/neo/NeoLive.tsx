@@ -169,7 +169,8 @@ export function NeoLive() {
       element,
       (item) => item.getAttribute('data-public-entry') === anchor.key
     );
-    if (entry) element.scrollTop += entry.getBoundingClientRect().top - anchor.top;
+    const visibleEntry = entry?.closest('details[data-public-entry]:not([open])') ?? entry;
+    if (visibleEntry) element.scrollTop += visibleEntry.getBoundingClientRect().top - anchor.top;
     lastScrollTop.current = element.scrollTop;
     if (publicConversation?.status === 'loading') return;
     earlierAnchor.current = null;
@@ -509,7 +510,12 @@ export function NeoLive() {
                 const top = element?.getBoundingClientRect().top ?? 0;
                 const entry =
                   element &&
-                  publicEntryAt(element, (item) => item.getBoundingClientRect().bottom > top);
+                  publicEntryAt(
+                    element,
+                    (item) =>
+                      !item.parentElement?.closest('details:not([open])') &&
+                      item.getBoundingClientRect().bottom > top
+                  );
                 if (element && entry) {
                   earlierAnchor.current = {
                     key: entry.getAttribute('data-public-entry') ?? '',

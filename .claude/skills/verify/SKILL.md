@@ -874,6 +874,17 @@ adds its journey here.
     and observed text `neo-wake-web.json` live in `evidence/`. No model turn, real
     provider, real data or desktop GUI is exercised. Stop with `stop.sh`.
 
+    For history folding, use another fresh isolated run. Seed with
+    `bun .claude/skills/verify/neo-wake-pagination.ts <port> "$RUN"`, then run
+    `NODE_PATH=<directory containing playwright> node .claude/skills/verify/neo-wake-pagination.mjs <port> "$RUN"`
+    (`VERIFY_BROWSER` works here too). Its 51 retained publications put the wake
+    just outside the initial history window. Clicking Load earlier folds the
+    topmost publication into its newly visible closed wake; that wake must retain
+    the publication's viewport position on desktop and mobile. Closed descendants
+    can report nonzero cached rectangles in Chrome, so visibility is determined
+    by the disclosure, not height alone. Evidence: `neo-wake-pagination.json`
+    and `neo-wake-pagination-{desktop,mobile}-{before,after}.png`. Stop the run.
+
 ## Evidence
 
 ### SDK message body dual write (slice 6)
