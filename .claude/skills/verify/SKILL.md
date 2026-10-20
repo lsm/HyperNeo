@@ -37,6 +37,8 @@ cd packages/web && bun run build && cd ../..
   (DB), `home/`, `bin/gh`, the logs, the pid files and `evidence/`.
 - Ready signal: `ready: http://127.0.0.1:<port>  run dir: <run>`. The daemon log
   shows `HyperNeo Test Server` and `Database: <run>/data/daemon.db`.
+- The daemon logs nothing in test mode. Set `VERIFY_LOG_LEVEL=error` (or `info`,
+  `debug`) on `launch.sh` to see its errors in `daemon.log`.
 
 Give it a model, once per run (stored in the run's DB only):
 
@@ -205,6 +207,15 @@ adds its journey here.
     (no check), and one open start question `q-start` listing both. End state
     within ~3 min: `todo-a` is `done` with `started_at` empty, and `q-start`
     is still `open` with `start_todos` `["todo-b"]`.
+13. **A session with no registered provider fails once and says why.** A fresh run
+    dir has no provider records, so Anthropic is not registered there. Launch with
+    `VERIFY_LOG_LEVEL=error`, then run
+    `VERIFY_PORT=<port> .claude/skills/verify/missing-provider-check.sh "$RUN"`. It
+    sends one message to root Neo and waits for its delivery job to settle. End
+    state: the job is `dead` with `retry_count` 0 and the error `Provider
+    'anthropic' is not registered. Log in or add an API key for it under Providers,
+    or switch this session to another provider.`, the message is `failed`, and
+    `daemon.log` has that one `[ErrorManager] model` entry.
 
 12. **Messages between root Neo and its workers show in Neo's conversation.** Run
     `.claude/skills/verify/neo-session-rows.sh <port> "$RUN"`. It opens root, creates
