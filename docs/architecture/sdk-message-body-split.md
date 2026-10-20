@@ -38,14 +38,15 @@ BEGIN DELETE FROM sdk_message_bodies WHERE seq = old.seq; END;
 | `bg_task_id TEXT` | `COALESCE($.task_id, task_id)`: the SDK background task id, falling back to the `task_id` column exactly as #12/#46 key today | 12, 46 |
 | `bg_tool_use_id TEXT` | `$.tool_use_id` of `task_progress` | 12, 46 |
 | `hook_id TEXT` | `$.hook_id` | 52 |
-| `first_block_type TEXT` | `$.message.content[0].type` | 55, 56, 61, 64, 65, 66 |
-| `has_tool_result INTEGER` | any content block of type `tool_result` | 32, 52 |
+| `first_block_type TEXT` | `$.message.content[0].type` | 55, 56, 61, 64, 65, 66 (via fragments #53, #62) |
+| `has_tool_result INTEGER` | any content block of type `tool_result` | 32 |
+| `tool_result_only INTEGER` | has a `tool_result` block and no non-empty text block (the roster drops these rows but keeps tool result plus text) | 52 |
 
 `$.type`, `$.subtype` and `$.uuid` already have columns (`message_type`, `message_subtype`, `sdk_uuid`), so those filters switch to the columns. `json_valid` guards go away: bodies are written by the daemon and are always valid JSON.
 
 ## Read and write paths
 
-The inventory has 73 statements (3 inserts, 6 body updates, 32 body outputs, 16 filters, 16 both). Rules:
+The inventory has 73 statements (3 inserts, 6 body updates, 32 body outputs, 16 filters, 16 both). The 32 body outputs are the 30 numbers listed below, with #40 counted twice for its two variants, plus the db-query copy #74. #53 (`CONSUMED_INPUT`) and #62 (`LANDED_INPUT`) are SQL fragments, not statements. They are rewritten wherever they're used: #53 inside #55, #56 and #61, and #62 inside #64 and #65. Rules:
 
 - **Writers** (#6, 41, 45 insert; #7, 35, 36, 37, 43, 44 update). One repository helper writes the row and its body in one transaction and sets the derived columns. The `json_set` updates become a body update plus a column update in the same transaction.
 - **Filters** (#1–4, 16, 21–23, 30, 32, 38, 39, 42, 55, 61, 67) use the new columns and never join the body.
@@ -82,7 +83,7 @@ The inventory has 73 statements (3 inserts, 6 body updates, 32 body outputs, 16 
 It runs at startup, before the server binds, like m212. All numbers below are measured on synthetic data: 110k rows and 850 MB of JSON, about twice the live body bytes.
 
 1. **Backup.** The existing pre-migration backup (`createBackup`, a full copy into `data/backups/daemon.db/`) runs first. About 1 GB of disk and a few seconds.
-2. **Columns.** `ALTER TABLE ADD COLUMN` × 14: 33 ms. Each add is guarded by `pragma_table_xinfo` (the existing idiom), so a restart after a crash re-enters this step safely. In practice slice 2 has already added and backfilled them, and this step is a no-op.
+2. **Columns.** `ALTER TABLE ADD COLUMN` × 15: 33 ms (measured with 14). Each add is guarded by `pragma_table_xinfo` (the existing idiom), so a restart after a crash re-enters this step safely. In practice slice 2 has already added and backfilled them, and this step is a no-op.
 3. **Chunked pass.** 5k-row transactions, each:
    - backfills the derived columns from the JSON;
    - copies the body into `sdk_message_bodies`;
@@ -110,7 +111,7 @@ Same synthetic DB:
 ## Slices (100–200 production lines each, one PR per rung)
 
 1. **Pin.** Characterization tests for the filter results of #1–4, 12, 21–23, 30, 32, 38, 39, 42, 46, 55, 61, 67 and the `task_message_rows` projection. For #12/#46, that includes a row whose JSON lacks `task_id` and resolves through the column.
-2. **Build columns.** `deriveSdkMessageColumns`, migration adds and backfills the 14 columns (chunked), all writers set them.
+2. **Build columns.** `deriveSdkMessageColumns`, migration adds and backfills the 15 columns (chunked), all writers set them.
 3. **Wire repository filters** to the columns (#1–4, 16, 21–23, 30, 32, 38, 39, 42).
 4. **Wire adapter and runtime filters** (#55, 56, 61–67) and the indexes from the scan table.
 5. **Wire live-query filters** (#9, 12, 46, 47 with the TypeScript tool_use join, 48, 52).
