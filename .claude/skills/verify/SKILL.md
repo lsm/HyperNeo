@@ -65,7 +65,7 @@ UI is served, that RPC answers, and that the mock model API is up. It ends with
   `sqlite3 -readonly "$RUN/data/daemon.db" "SELECT ..."`. Only the seed and
   check scripts write to it: `seed-todo.sh` and `seed-ledger.sh` (journeys 3 and 4),
   `merge-check.sh` (journey 7), `archive-guard-check.sh` (journey 10) and
-  `seed-start-question.sh` (journey 11).
+  `seed-start-question.sh` (journey 12).
 - Web UI: open `http://127.0.0.1:<port>/neo` (Neo) or
   `/session/<sessionId>` (a session) in the browser; read the page text and take
   a screenshot.
@@ -176,8 +176,7 @@ adds its journey here.
     `neo.session.archive` twice. End state: while the todo is doing the reply is
     `live_todo` naming the todo; after it is marked done the guard passes and the
     adapter answers `not_found` (the session is fictional).
-
-9. **A session messages another session.** `session-messages.sh <port> "$RUN"`
+11. **A session messages another session.** `session-messages.sh <port> "$RUN"`
    runs the steps below and prints the replies and B's first row. Create two sessions with
    `rpc.ts rpc:session.create '{"workspacePath":"/tmp","title":"Worker A"}'` (and
    `"Recipient B"`), then send B a message as A: `rpc.ts message.send
@@ -188,8 +187,18 @@ adds its journey here.
    one closing tag; B leaves idle and consumes it. The same send again replies
    `duplicate: …`; five more distinct sends are accepted and the next replies
    `rate_limited: …`. Messages sent while B is `processing` are `consumed` before
-   its turn ends.
-11. **A start question lists only todos that can still start.** After journey 1
+   its turn ends. A `work.send '{"ref":{"adapter":"hyperneo","id":"<B>"},"message":"…","from":"session:<A>"}'`
+   lands in B ending `Reply with message.send to <A>.`, and
+   `neo.question.get '{"questionId":"made-up"}'` replies `not_found: no such question.`
+
+11. **Root Neo owns goals outside any Space.** After journey 1 opened root, run
+    `VERIFY_PORT=9311 .claude/skills/verify/session-goal.sh "$RUN"`. It creates a goal
+    for root through `goal.session.create`, first without metrics or a done-test, then
+    with one, updates it, and lists it. End state: `evidence/goal-refused.json` holds
+    `done_test_required`; `goal-list.json` lists "Grow OAP" at progress 40 with its
+    done-test, mandate link and next step; `goal-events.txt` reads `created|human`
+    then `updated|human`.
+12. **A start question lists only todos that can still start.** After journey 1
     opened root, run `.claude/skills/verify/seed-start-question.sh "$RUN"`. It
     writes `ask-prune` with two todos awaiting start, `todo-a` (check
     `pr_merged` on `verify-test/demo#8`, which reads as `MERGED`) and `todo-b`
