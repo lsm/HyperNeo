@@ -183,7 +183,9 @@ function ScheduleStrip({ sessionId, readonly }: { sessionId: string; readonly?: 
             </p>
             <p>
               {factLabel('status', row.status)} ·{' '}
-              {t('schedules.nudge', { count: row.nudgeEvery - row.dueCount })}
+              {row.dueCount >= row.nudgeEvery
+                ? t('schedules.nudgeDue')
+                : t('schedules.nudge', { count: row.nudgeEvery - row.dueCount })}
             </p>
             <p>
               {t('schedules.next')}: <RunTime at={row.nextRunAt} />

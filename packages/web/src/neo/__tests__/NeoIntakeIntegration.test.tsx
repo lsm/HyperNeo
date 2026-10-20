@@ -10,6 +10,7 @@ const stores = vi.hoisted(
 );
 const connected = signal('connected');
 const attempts = signal(0);
+vi.mock('../../components/SessionSchedules.tsx', () => ({ SessionSchedules: () => null }));
 vi.mock('../../lib/state.ts', () => ({
   get connectionState() {
     return connected;

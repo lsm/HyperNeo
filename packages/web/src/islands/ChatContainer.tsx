@@ -1,4 +1,4 @@
-import { SessionSchedules } from '../components/SessionSchedules.tsx';
+import type { ComponentChildren } from 'preact';
 import { ChevronLeftGlyph } from '../components/icons/common-glyphs.tsx';
 import type {
   AgentProcessingState,
@@ -179,6 +179,7 @@ export async function sendChatContainerMessage({
 }
 
 interface ChatContainerProps {
+  headerExtra?: ComponentChildren;
   sessionId: string;
   readonly?: boolean;
   onBack?: () => void;
@@ -198,6 +199,7 @@ const RETURN_TO_PARENT_PROMPT =
   'Wrap up now: invoke the operation session.clone.return with a concise summary of what you learned and what is left, so your parent session can continue from it.';
 
 export default function ChatContainer({
+  headerExtra,
   sessionId,
   readonly = false,
   onBack,
@@ -1363,7 +1365,7 @@ export default function ChatContainer({
         onDisplayModeChange={handleDisplayModeChange}
       />
 
-      <SessionSchedules sessionId={sessionId} readonly={readonly} />
+      {headerExtra}
 
       <div class="flex-1 relative min-h-0">
         <div
