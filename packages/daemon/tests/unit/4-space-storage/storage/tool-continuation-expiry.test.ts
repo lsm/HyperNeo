@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { ToolContinuationRecoveryRepository } from '../../../../src/storage/repositories/tool-continuation-recovery-repository';
+import { runMigration422 } from '../../../../src/storage/schema/m422-tool-continuation-expiry-indexes';
 
 let db: Database;
 let writer: Database;
@@ -44,6 +45,22 @@ function inbox(id: string, status: string, expires: number, reason: string | nul
 }
 
 describe('ToolContinuationRecoveryRepository expiry', () => {
+  test('an existing database upgrades repeatedly without changing any stored data', () => {
+    mapping('old', 'waiting_rebind', 99, 'original reason');
+    inbox('old', 'pending', 99);
+    const rows = () => [
+      db.prepare('SELECT * FROM tool_continuation_recovery').all(),
+      db.prepare('SELECT * FROM tool_continuation_inbox').all(),
+    ];
+    const before = rows();
+    db.exec(
+      'DROP INDEX idx_tool_continuation_recovery_expiry; DROP INDEX idx_tool_continuation_inbox_expiry'
+    );
+    runMigration422(db);
+    runMigration422(db);
+    expect(rows()).toEqual(before);
+    expect(repo.markExpired(100)).toBe(1);
+  });
   test('an empty expiry sweep completes while an unrelated connection holds the writer lock', () => {
     db.transaction(() => {
       for (let i = 0; i < 22269; i++) mapping(`consumed-${i}`, 'consumed', 0);
@@ -109,6 +126,17 @@ describe('ToolContinuationRecoveryRepository expiry', () => {
     expect(repo.markExpired(100)).toBe(0);
     expect(db.prepare('SELECT COUNT(*) AS n FROM tool_continuation_recovery').get()).toEqual({
       n: 9,
+    });
+  });
+
+  test('an inbox-only expiry still runs when no mapping is due', () => {
+    inbox('only', 'pending', 99, 'retained reason');
+    expect(repo.markExpired(100)).toBe(0);
+    expect(repo.getInbox('only')).toMatchObject({
+      status: 'expired',
+      recoveryReason: 'retained reason',
+      updatedAt: 100,
+      requestJson: '完整工具结果'.repeat(10000),
     });
   });
 });

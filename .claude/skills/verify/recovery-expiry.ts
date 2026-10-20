@@ -4,11 +4,13 @@ import { spawn } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { ToolContinuationRecoveryRepository } from '../../../packages/daemon/src/storage/repositories/tool-continuation-recovery-repository.ts';
 
-const [mode, portText, runText] = process.argv.slice(2);
+const [mode, portText, runText, scope = 'full-tick'] = process.argv.slice(2);
 const port = Number(portText);
 const run = resolve(runText);
 assert(['reproduce', 'verify'].includes(mode));
+assert(['full-tick', 'expiry'].includes(scope));
 assert(port > 0 && port !== 8399);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -29,6 +31,7 @@ try {
   await pause();
   const db = app.db.getDatabase();
   const prepare = db.prepare.bind(db);
+  const expiry = new ToolContinuationRecoveryRepository(db);
   const put = prepare(`INSERT INTO tool_continuation_recovery
     (tool_use_id,session_id,status,created_at,updated_at,expires_at)
     VALUES (?,'synthetic',?,1,1,0)`);
@@ -58,7 +61,8 @@ try {
       ws!.send(JSON.stringify({id,type:'REQ',sessionId:'global',method:'system.health',data:{},timestamp:new Date().toISOString(),version:'1.0.0'}));
     });
     const queryStart=queries.length;
-    await app!.spaceRuntimeService.getSpaceRuntime().executeTick();
+    if (scope === 'expiry') expiry.markExpired();
+    else await app!.spaceRuntimeService.getSpaceRuntime().executeTick();
     const tickMs=performance.now()-at;
     const response=await health;
     const healthMs=performance.now()-at;
@@ -77,7 +81,17 @@ db=sqlite3.connect(sys.argv[1]); db.execute('BEGIN IMMEDIATE'); print('locked',f
   const plans=['tool_continuation_recovery','tool_continuation_inbox'].map((table) => ({table,plan:prepare(`EXPLAIN QUERY PLAN SELECT 1 FROM ${table} WHERE ${table.endsWith('recovery') ? "status IN ('active','waiting_rebind')" : "status='pending'"} AND expires_at<? LIMIT 1`).all(Date.now())}));
   const counts=prepare('SELECT status,COUNT(*) AS n FROM tool_continuation_recovery GROUP BY status').all();
   const slowest=Math.max(...contended.queries.map((query) => query.elapsedMs));
-  const report={uncontended,contended,slowest,plans,counts,productionContentionProven:false};
+  expiry.recordToolUse({ toolUseId:'due-tool',sessionId:'synthetic',ttlMs:-10000,owner:{executionId:null,workflowRunId:null} });
+  const request={full:'完整工具结果'.repeat(100000)};
+  const queued=expiry.queueContinuation({toolUseId:'due-tool',sessionId:'synthetic',requestBody:request,reason:'preserve reason',ttlMs:10000});
+  assert.equal(expiry.markExpired(),1);
+  assert.equal(expiry.getToolUse('due-tool')?.status,'expired');
+  const retained=expiry.getInbox(queued.inbox.id)!;
+  assert.equal(retained.status,'expired');
+  assert.equal(retained.recoveryReason,'preserve reason');
+  assert.deepEqual(JSON.parse(retained.requestJson),request);
+  assert.equal(expiry.markExpired(),0);
+  const report={scope,uncontended,contended,slowest,plans,counts,fullRequestRetained:true,productionContentionProven:false};
   writeFileSync(join(run,`evidence/${mode}.json`),JSON.stringify(report,null,2));
   if(mode==='reproduce') assert(slowest>250,'Did not reproduce a slow expiry UPDATE');
   else { assert(slowest<250); assert(contended.maxLagMs<1000); assert(contended.healthMs<250); }
