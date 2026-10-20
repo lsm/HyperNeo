@@ -13,6 +13,11 @@ const browser = await chromium.launch({ headless: true,
   ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}),
 });
 const observed = [];
+async function settle(page) {
+  await page.evaluate(async () => { await document.fonts.ready; });
+  await page.waitForFunction(() => document.getAnimations().every(animation =>
+    animation.playState !== 'running' || animation.effect?.getTiming().iterations === Infinity));
+}
 function rpc(name, input) {
   const response = JSON.parse(execFileSync('bun', ['.claude/skills/verify/rpc.ts', name, JSON.stringify(input)], { env: { ...process.env, VERIFY_PORT:port }, encoding:'utf8' }));
   assert(!response.reply.error, JSON.stringify(response));
@@ -66,8 +71,9 @@ try {
     }
     const box = await strip.boundingBox();
     assert(box && box.x >= 0 && box.x + box.width <= width + 1,JSON.stringify(box));
+    await settle(page);
     await page.screenshot({ path:`${run}/evidence/schedules-${surface.name}-${width}.png`, fullPage:true });
-    observed.push({ surface:surface.name, width, target:surface.sessionId, text:await strip.innerText(), controlsPersisted:true, visibleRefresh:width === 1280 && surface.name === 'neo' });
+    observed.push({ surface:surface.name, width, target:surface.sessionId, text:await strip.innerText(), controlsPersisted:true, visibleRefresh:mode !== 'reproduce' && width === 1280 && surface.name === 'neo' });
   }
   const scope = JSON.parse(readFileSync(`${run}/evidence/schedule-web-space.json`, 'utf8'));
   const requests = [];
@@ -79,6 +85,7 @@ try {
   await page.locator('[data-messages-container]').waitFor({ timeout:30000 });
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   const spaceStrips = await page.locator('[data-session-schedules]').count();
+  await settle(page);
   await page.screenshot({ path:`${run}/evidence/schedules-space.png`, fullPage:true });
   observed.push({ surface:'space', spaceStrips, requests });
   writeFileSync(`${run}/evidence/schedule-web.json`, JSON.stringify(observed,null,2));
