@@ -1,0 +1,144 @@
+import { strict as assert } from 'node:assert';
+import { existsSync, mkdirSync, writeFileSync, appendFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
+import {
+  syntheticCodexPrLines,
+  SYNTHETIC_PR,
+} from '../../../packages/daemon/tests/helpers/codex-pr-transcript.ts';
+
+const [portText, runText] = process.argv.slice(2);
+const port = Number(portText);
+assert(port > 0 && port !== 8399 && runText);
+const run = resolve(runText);
+assert(process.env.NODE_ENV === 'test');
+assert(process.env.HOME === join(run, 'home'));
+assert(process.env.HYPERNEO_DATA_DIR === join(run, 'data'));
+assert(!process.env.HYPERNEO_LAG_PROFILE);
+const home = join(run, 'home');
+const dbPath = join(run, 'data/daemon.db');
+assert(!existsSync(dbPath));
+for (const path of [join(home, '.codex'), join(run, 'data'), join(run, 'project')])
+  mkdirSync(path, { recursive: true });
+const rollout = join(run, 'data/rollout.jsonl');
+const padding = JSON.stringify({
+  type: 'event_msg',
+  payload: { type: 'agent_reasoning', text: 'Synthetic ordinary step. '.repeat(100) },
+});
+const initial =
+  [
+    ...Array.from({ length: 1400 }, () => padding),
+    ...syntheticCodexPrLines(),
+    JSON.stringify({
+      type: 'event_msg',
+      payload: { type: 'task_complete', last_agent_message: 'Synthetic complete.' },
+    }),
+  ].join('\n') + '\n';
+assert(Buffer.byteLength(initial) > 3_000_000 && Buffer.byteLength(initial) < 4 * 1024 * 1024);
+writeFileSync(rollout, initial);
+const db = new Database(join(home, '.codex/state_5.sqlite'));
+db.exec(
+  'CREATE TABLE projects (id TEXT PRIMARY KEY,name TEXT,updated_at_ms INTEGER); CREATE TABLE project_roots (project_id TEXT,position INTEGER,path TEXT); CREATE TABLE threads (id TEXT PRIMARY KEY,name TEXT,title TEXT,first_user_message TEXT,cwd TEXT,source TEXT,archived INTEGER,updated_at_ms INTEGER,rollout_path TEXT,git_branch TEXT)'
+);
+db.prepare("INSERT INTO projects VALUES ('p','synthetic',1)").run();
+db.prepare("INSERT INTO project_roots VALUES ('p',0,?)").run(join(run, 'project'));
+db.prepare("INSERT INTO threads VALUES ('synthetic','synthetic','','',?,'vscode',0,?,?,NULL)").run(
+  join(run, 'project'),
+  Date.now(),
+  rollout
+);
+db.close();
+const app = await createDaemonApp({
+  config: getConfig({ port, host: '127.0.0.1', dbPath }),
+  verbose: false,
+});
+const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+let maxLagMs = 0;
+let last = performance.now();
+const timer = setInterval(() => {
+  const at = performance.now();
+  maxLagMs = Math.max(maxLagMs, at - last - 10);
+  last = at;
+}, 10);
+const pause = (ms: number) => new Promise((done) => setTimeout(done, ms));
+const calls: { name: string; elapsedMs: number; openedPrs: unknown }[] = [];
+try {
+  await new Promise<void>((done, fail) => {
+    ws.onopen = () => done();
+    ws.onerror = () => fail(new Error('connect failed'));
+  });
+  const status = (name: string) =>
+    new Promise<Record<string, unknown>>((done, fail) => {
+      const id = crypto.randomUUID();
+      const started = performance.now();
+      const timeout = setTimeout(() => fail(new Error('RPC timeout')), 60_000);
+      ws.onmessage = (event) => {
+        const message = JSON.parse(event.data.toString());
+        if (message.requestId !== id) return;
+        clearTimeout(timeout);
+        if (message.error) {
+          fail(new Error(JSON.stringify(message.error)));
+          return;
+        }
+        assert(message.data.ok, JSON.stringify(message.data));
+        calls.push({
+          name,
+          elapsedMs: performance.now() - started,
+          openedPrs: message.data.value.openedPrs,
+        });
+        done(message.data.value);
+      };
+      ws.send(
+        JSON.stringify({
+          id,
+          type: 'REQ',
+          sessionId: 'global',
+          method: 'operation.invoke',
+          data: {
+            name: 'work.status',
+            input: { ref: { adapter: 'codex-desktop', id: 'synthetic' } },
+          },
+          timestamp: new Date().toISOString(),
+        })
+      );
+    });
+  await pause(30);
+  assert.deepEqual((await status('first')).openedPrs, [SYNTHETIC_PR]);
+  assert.deepEqual((await status('unchanged')).openedPrs, [SYNTHETIC_PR]);
+  const second = 'https://github.com/synthetic/repo/pull/43';
+  appendFileSync(
+    rollout,
+    JSON.stringify({
+      type: 'response_item',
+      payload: { type: 'custom_tool_call', input: `attach_artifact pull_request ${second}` },
+    }) + '\n'
+  );
+  assert.deepEqual((await status('appended')).openedPrs, [SYNTHETIC_PR, second]);
+  writeFileSync(
+    rollout,
+    JSON.stringify({
+      type: 'response_item',
+      payload: { type: 'custom_tool_call', input: `attach_artifact pull_request ${second}` },
+    }) + '\n'
+  );
+  assert.deepEqual((await status('truncated')).openedPrs, [second]);
+  await pause(30);
+  const report = {
+    surface:
+      'real isolated daemon operation.invoke work.status with synthetic Codex state/transcript',
+    transcriptBytes: Buffer.byteLength(initial),
+    maxLagMs,
+    calls,
+    runtime: Bun.version,
+    syntheticOnly: true,
+  };
+  writeFileSync(join(run, 'observed.json'), JSON.stringify(report, null, 2));
+  process.stdout.write(JSON.stringify(report) + '\n');
+  assert(maxLagMs < 1000, `daemon event-loop lag ${maxLagMs.toFixed(1)}ms exceeds1second goal`);
+} finally {
+  clearInterval(timer);
+  ws.close();
+  await app.cleanup();
+}

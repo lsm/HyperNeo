@@ -15,7 +15,7 @@ import { matchChatsBy } from './match-chats.ts';
 import { withChatEvidence } from './places.ts';
 import { selectLocalStartFolder } from './start-folder.ts';
 import { workExecutionLocation } from './execution-location.ts';
-import { codexOpenedPrs } from './opened-prs.ts';
+import { codexOpenedPrs, createCodexPrReader } from './opened-prs.ts';
 import { readTailLines } from './transcript-tail.ts';
 import type {
   FindQuery,
@@ -544,11 +544,14 @@ export function requireOpenCodexThread(detail: CodexThreadDetail): Gate<CodexThr
 
 export async function readCodexTurn(
   detail: CodexThreadDetail,
-  since?: number
+  since?: number,
+  readOpenedPrs?: ReturnType<typeof createCodexPrReader>
 ): Promise<CodexTurnState> {
   try {
     const { lines, truncated } = await readTailLines(detail.thread.rolloutPath, ROLLOUT_TAIL_BYTES);
-    const openedPrs = codexOpenedPrs(lines);
+    const openedPrs = readOpenedPrs
+      ? readOpenedPrs(detail.thread.rolloutPath, lines)
+      : codexOpenedPrs(lines);
     return {
       ...codexTurnState(lines),
       inputs: codexRecentInputs(lines, since),
@@ -939,10 +942,10 @@ export async function withdrawCodexMessage(
 }
 
 const runCodexStatus = (superpipe({})('codex-work-status') as PipelineAPI)
-  .input(['ref', 'deps', 'since', 'receipt'])
+  .input(['ref', 'deps', 'since', 'receipt', 'readOpenedPrs'])
   .pipe(requireCodexThread, ['ref', 'deps'], 'result:outcome')
   .pipe((detail: CodexThreadDetail) => detail, 'outcome', 'detail')
-  .pipe(readCodexTurn, ['detail', 'since'], 'turn')
+  .pipe(readCodexTurn, ['detail', 'since', 'readOpenedPrs'], 'turn')
   .pipe(readCodexInputEvidence, ['detail', 'receipt'], 'evidence')
   .pipe(describeCodexThread, ['detail', 'turn', 'deps'], 'outcome')
   .pipe(withCodexInputEvidence, ['outcome', 'evidence'], 'outcome')
@@ -950,7 +953,8 @@ const runCodexStatus = (superpipe({})('codex-work-status') as PipelineAPI)
   ref: WorkRef,
   deps: CodexDesktopAdapterDeps,
   since: number | undefined,
-  receipt: CodexReceipt | undefined
+  receipt: CodexReceipt | undefined,
+  readOpenedPrs: ReturnType<typeof createCodexPrReader>
 ) => Promise<Result<WorkDetail>>;
 
 const runCodexSend = (superpipe({})('codex-send-work') as PipelineAPI)
@@ -1204,6 +1208,7 @@ const runCodexStop = (superpipe({})('codex-stop-work') as PipelineAPI)
 ) => Promise<Result<{ stopped: boolean }>>;
 
 export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAdapter {
+  const readOpenedPrs = createCodexPrReader();
   return {
     id: 'codex-desktop',
     supportsStartPreparation: !!deps.prepareExecution,
@@ -1245,7 +1250,7 @@ export function createCodexDesktopAdapter(deps: CodexDesktopAdapterDeps): WorkAd
         deps
       ),
     withdraw: (ref, queuedSubmissionId) => runCodexWithdraw(ref, queuedSubmissionId, deps),
-    status: (ref, since, receipt) => runCodexStatus(ref, deps, since, receipt),
+    status: (ref, since, receipt) => runCodexStatus(ref, deps, since, receipt, readOpenedPrs),
     stop: (ref) => runCodexStop(ref, deps),
     archive: async (ref, admit) => {
       const found = requireCodexThread(ref, deps);
