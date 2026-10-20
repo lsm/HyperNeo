@@ -128,6 +128,27 @@ checks the committed ignore; failed repair restores its prior ignore contents
 documents after a failed repair. Focused contracts cover both absent
 and existing ignore files.
 
+### Neo home save (journey 35)
+
+On a fresh isolated daemon from Launch, run
+`bun .claude/skills/verify/neo-home-save.ts <port> "$RUN"`.
+The helper seeds synthetic identity and transcript data, then calls the actual
+`neo.home.save` RPC. First save creates the local bootstrap plus one document
+commit, preserving leading spaces and trailing newlines. Repeating identical
+content must return the same commit. Credential-like content, direction changes
+and dirty human files must be refused without changing the document or HEAD.
+
+A synthetic missing identity forces commit failure: the original document must
+remain byte-for-byte intact and retry must succeed after configuring identity.
+A read-only fixture directory forces an actual write-before-file-creation EACCES;
+cleanup must preserve that error. An overlong filename must retain ENAMETOOLONG.
+Evidence: `evidence/neo-home-save.json`. Focused contracts cover the other token
+forms, ignored/internal/outside/symlink paths, concurrent saves and caller ownership.
+No real credentials, remote, provider/model turn or GUI are used. Content checks
+apply only to this operation; environment/filesystem limits must bound general
+writes. Read behavior, human confirmation support and remote sync remain later
+slices. Stop the isolated daemon and mock with `stop.sh`.
+
 ## Codex Desktop work.send journey
 
 Codex work.send steers a Desktop-owned running turn. This journey uses

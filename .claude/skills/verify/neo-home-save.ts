@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 const [port, run] = process.argv.slice(2);
 if (!port || !run || port === '8399') throw new Error('usage: neo-home-save.ts <test-port> <run-dir>');
 const log = await readFile(`${run}/daemon.log`, 'utf8');
@@ -42,7 +42,15 @@ await git('config', 'user.name', 'Verify Neo');
 await git('config', 'user.email', 'verify@example.invalid');
 const retry = await rpc(input);
 const writeFailure = await rpc({ ...input, path: 'x'.repeat(300) });
-const evidence = { first, repeat, commits, committedPaths, head, content, denied, confirmation, dirty, humanDraft, failure, afterFailure, retry, writeFailure, finalHead: await git('rev-parse', 'HEAD'), status: await git('status', '--porcelain'), trackedTranscripts: await git('ls-files', '.coordinators') };
+await mkdir(`${root}/readonly`);
+await chmod(`${root}/readonly`, 0o555);
+let createFailure;
+try {
+  createFailure = await rpc({ ...input, path: 'readonly/digest.md' });
+} finally {
+  await chmod(`${root}/readonly`, 0o755);
+}
+const evidence = { first, repeat, commits, committedPaths, head, content, denied, confirmation, dirty, humanDraft, failure, afterFailure, retry, writeFailure, createFailure, finalHead: await git('rev-parse', 'HEAD'), status: await git('status', '--porcelain'), trackedTranscripts: await git('ls-files', '.coordinators') };
 await writeFile(`${run}/evidence/neo-home-save.json`, JSON.stringify(evidence, null, 2));
-if (!repeat.ok || first.commit !== head || repeat.commit !== head || commits !== '2' || committedPaths !== input.path || content !== input.content || denied.ok || !denied.reason?.includes('content') || confirmation.ok || !confirmation.reason?.includes('confirmation_required') || dirty.ok || !dirty.reason?.includes('dirty') || humanDraft !== 'Synthetic human draft.' || !String(failure.error).includes('Author identity unknown') || afterFailure !== input.content || !retry.ok || !String(writeFailure.error).includes('ENAMETOOLONG') || evidence.finalHead !== head || evidence.status || evidence.trackedTranscripts) throw new Error('Home save contract failed');
+if (!repeat.ok || first.commit !== head || repeat.commit !== head || commits !== '2' || committedPaths !== input.path || content !== input.content || denied.ok || !denied.reason?.includes('content') || confirmation.ok || !confirmation.reason?.includes('confirmation_required') || dirty.ok || !dirty.reason?.includes('dirty') || humanDraft !== 'Synthetic human draft.' || !String(failure.error).includes('Author identity unknown') || afterFailure !== input.content || !retry.ok || !String(writeFailure.error).includes('ENAMETOOLONG') || !String(createFailure.error).includes('EACCES') || evidence.finalHead !== head || evidence.status || evidence.trackedTranscripts) throw new Error('Home save contract failed');
 console.log('PASS: real RPC saves exact bytes in one commit, refuses credentials/confirmation/dirty writes, preserves existing content on failure, and retries cleanly.');

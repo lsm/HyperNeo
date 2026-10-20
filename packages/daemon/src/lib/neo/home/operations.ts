@@ -5,27 +5,43 @@ import { defineOperation, type OperationCaller } from '../../operations/registry
 import { neoFolderPath } from '../folder.ts';
 import type { NeoService } from '../service.ts';
 import { NeoHomeRepository, type HomeResult } from './repository.ts';
+import { HomeSaveInput, HomeSaveResult, requireHomeSave } from './save.ts';
 
 export function createNeoHomeOperations(
   service: Pick<NeoService, 'repo' | 'defaultSessionId'>,
   home = new NeoHomeRepository(neoFolderPath(), service.repo)
 ) {
+  const owner = (caller: OperationCaller) =>
+    isLocalUser(caller) ||
+    (caller.source === 'mcp' &&
+      !!caller.sessionId &&
+      caller.sessionId === service.defaultSessionId())
+      ? { value: caller }
+      : { reason: { ok: false, reason: 'This operation belongs to root Neo or the user.' } };
   const init = (superpipe({})('neo.home.init') as PipelineAPI)
     .input(['input', 'caller'])
-    .pipe(
-      (caller: OperationCaller) =>
-        isLocalUser(caller) ||
-        (caller.source === 'mcp' &&
-          !!caller.sessionId &&
-          caller.sessionId === service.defaultSessionId())
-          ? { value: caller }
-          : { reason: { ok: false, reason: 'This operation belongs to root Neo or the user.' } },
-      'caller',
-      'result:outcome'
-    )
+    .pipe(owner, 'caller', 'result:outcome')
     .pipe(() => home.init(), 'outcome', 'outcome')
     .endAsync('outcome') as (input: unknown, caller: OperationCaller) => Promise<HomeResult>;
+  const save = (superpipe({})('neo.home.save') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(owner, 'caller', 'result:outcome')
+    .pipe(requireHomeSave, 'input', 'result:outcome')
+    .pipe((input: HomeSaveInput) => home.save(input), 'outcome', 'outcome')
+    .endAsync('outcome') as (
+    input: HomeSaveInput,
+    caller: OperationCaller
+  ) => Promise<HomeSaveResult>;
   return [
+    defineOperation({
+      name: 'neo.home.save',
+      description:
+        'Save one curated document and commit locally. Refuses credential-like content, internal/ignored paths and dirty home changes. Direction and mandate require later confirmation support. Root Neo or the local user only; direct filesystem access requires an environment boundary.',
+      inputSchema: HomeSaveInput,
+      resultSchema: HomeSaveResult,
+      policy: { safetyClass: 'mutate', roles: ['neo'] },
+      execute: (input, caller) => save(input, caller),
+    }),
     defineOperation({
       name: 'neo.home.init',
       description:

@@ -1,7 +1,8 @@
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { lstat, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import type { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
+import type { HomeSaveInput, HomeSaveResult } from './save.ts';
 
 export type HomeResult =
   | { ok: true; path: string; projects: { id: string; homePath: string }[] }
@@ -29,10 +30,68 @@ export class NeoHomeRepository {
     return { code, text: text.trim() };
   }
 
-  init(): Promise<HomeResult> {
-    const result = this.pending.then(() => this.initialize());
+  private sequence<T>(run: () => Promise<T>): Promise<T> {
+    const result = this.pending.then(run);
     this.pending = result.catch(() => {});
     return result;
+  }
+
+  init(): Promise<HomeResult> {
+    return this.sequence(() => this.initialize());
+  }
+
+  save(input: HomeSaveInput): Promise<HomeSaveResult> {
+    return this.sequence(() => this.write(input));
+  }
+
+  private async write(input: HomeSaveInput): Promise<HomeSaveResult> {
+    const parts = input.path.split('/');
+    for (let i = 0; i <= parts.length; i++) {
+      const stat = await lstat(join(this.root, ...parts.slice(0, i))).catch((error) => {
+        if (error.code !== 'ENOENT') throw error;
+        return null;
+      });
+      if (stat?.isSymbolicLink()) return { ok: false, reason: 'invalid_path: symbolic link.' };
+    }
+    const metadata = await lstat(join(this.root, '.git')).catch((error) => {
+      if (error.code !== 'ENOENT') throw error;
+      return null;
+    });
+    if (metadata && !metadata.isDirectory())
+      return { ok: false, reason: 'invalid_path: home git directory.' };
+    const dirty = metadata
+      ? (await this.git(['status', '--porcelain', '--untracked-files=all'])).text
+      : (
+          await readdir(this.root).catch((error) => {
+            if (error.code !== 'ENOENT') throw error;
+            return [];
+          })
+        ).some((name) => name !== '.coordinators');
+    if (dirty) return { ok: false, reason: 'dirty: review existing home changes before saving.' };
+    const initialized = await this.initialize();
+    if (!initialized.ok) return initialized;
+    if (!(await this.git(['check-ignore', '-q', '--', input.path], true)).code)
+      return { ok: false, reason: 'ignored_path: this document is git-ignored.' };
+    const path = join(this.root, input.path);
+    const before = await readFile(path, 'utf8').catch((error) => {
+      if (error.code !== 'ENOENT') throw error;
+      return null;
+    });
+    if (before !== input.content) {
+      await mkdir(dirname(path), { recursive: true });
+      try {
+        await writeFile(path, input.content);
+        await this.git(['add', '--', input.path]);
+        await this.git(['commit', '--only', '-m', input.message, '--', input.path]);
+      } catch (error) {
+        await this.git(['reset', '--', input.path]).catch(() => {});
+        await (before === null ? rm(path, { force: true }) : writeFile(path, before)).catch(
+          () => {}
+        );
+        throw error;
+      }
+    }
+    return { ok: true, path: input.path, commit: (await this.git(['rev-parse', 'HEAD'])).text };
   }
 
   private async initialize(): Promise<HomeResult> {

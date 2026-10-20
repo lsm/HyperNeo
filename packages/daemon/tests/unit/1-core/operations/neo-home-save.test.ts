@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNeoHomeOperations } from '../../../../src/lib/neo/home/operations.ts';
@@ -187,11 +187,25 @@ describe('Neo home save', () => {
       );
     }
   );
-  test('preserves the original error when file creation itself fails', async () => {
+  test('reports an invalid filesystem name without changing the repository', async () => {
     await expect(save({ path: 'x'.repeat(300), content: 'Curated.' })).rejects.toThrow(
       'ENAMETOOLONG'
     );
     expect(await git('status', '--porcelain')).toBe('');
+  });
+  test('preserves the actual write error when no file was created', async () => {
+    const parent = join(root, 'readonly');
+    await mkdir(parent);
+    await chmod(parent, 0o555);
+    try {
+      await expect(save({ path: 'readonly/digest.md', content: 'Curated.' })).rejects.toThrow(
+        'EACCES'
+      );
+      expect(await readFile(join(parent, 'digest.md'), 'utf8').catch(() => null)).toBeNull();
+      expect(await git('status', '--porcelain')).toBe('');
+    } finally {
+      await chmod(parent, 0o755);
+    }
   });
   test('serializes concurrent saves and only admits the local user or root Neo', async () => {
     expect(
