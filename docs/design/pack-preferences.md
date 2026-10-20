@@ -144,7 +144,7 @@ Everything else in this doc reads "covered by the approval" and doesn't depend o
 
 ## Worker merge check
 
-Suppressing nudge text isn't enough: the worker merges by itself. Whenever a todo's `doneWhen` mentions merging, `driver-work.ts:83-88` appends `goal-merge.md` (`NEO_WORK_GOAL_MERGE`) to the worker's instruction on every delivery. That text tells the worker to judge readiness itself, from "the repository's own ready signal" or from how recent PRs were merged, and then run `gh pr merge --squash`. It knows nothing of `mergePolicy` or holds. Today it defers to the per-todo merge rule Neo writes (`instructions.md:18-20`); once slice 13 deletes that, the guesswork would decide, and a held `docs/design/**` PR in qlark would merge on bot approval and green CI, which is the qlark#19 incident.
+Suppressing nudge text isn't enough: the worker merges by itself. Whenever a todo's `doneWhen` mentions merging, `driver-work.ts:83-88` appends `goal-merge.md` (`NEO_WORK_GOAL_MERGE`) to the worker's instruction on every delivery. That text tells the worker to judge readiness itself, from "the repository's own ready signal" or from how recent PRs were merged, and then run `gh pr merge --squash`. It knows nothing of `mergePolicy` or holds. Today it defers to the per-todo merge rule Neo writes (`instructions.md:18-20`); once slice 14 deletes that, the guesswork would decide, and a held `docs/design/**` PR in qlark would merge on bot approval and green CI, which is the qlark#19 incident.
 
 So the daemon's state becomes the worker's ready signal:
 - **`pack.coding.pr.readiness`** (read-only, any caller) takes `{ repo, number }` and returns the ledger state for the PR's current head, any hold with its question, and `mayMerge`: true only for `approved_green`. It re-reads the PR the same way the sweep does, so a worker never acts on a stale row.
@@ -206,8 +206,9 @@ The qlark#19 prevention comes first: stored settings and this install's answers 
 9. **Build the `onQuestionAnswered` core hook.** Nothing calls it yet.
 10. **Wire question-linked holds.** Hold creation opens the linked question, and the human's answer lifts or keeps the hold.
 11. **Wire the generated first-use question** for repos with no stored policy.
-12. **Build scoped conventions** in `neo.rule.save` (scope input and storage) and **wire their delivery** into `neoTodoCard`. If it exceeds the slice budget, split Build and Wire.
-13. **Delete the merge-rule prompt text** from `packages/prompts/src/neo/packs/coding/instructions.md`, only after slices 6 and 8 have landed, so the worker's merge path already reads the daemon state. Only these sentences go:
+12. **Build scoped conventions** in `neo.rule.save`: the scope input and storage; nothing delivers them yet.
+13. **Wire convention delivery** into `neoTodoCard` through the `conventionObject(todo)` hook.
+14. **Delete the merge-rule prompt text** from `packages/prompts/src/neo/packs/coding/instructions.md`, only after slices 6 and 8 have landed, so the worker's merge path already reads the daemon state. Only these sentences go:
     - "Put the repository's merge rule in a coding todo's instruction: merge by hand after the review it uses approves the latest head and required checks are green, and never enable GitHub auto-merge." (lines 18-20)
     - "When you create a repository, or first start coding work in one with no merged pull request yet, ask the human once with neo.question.ask (kind choice) how its pull requests get reviewed: … \"I review them myself\"." (lines 21-24, ending mid-line 24)
     - "Write the answer into that repository's merge rule; until they answer, nothing there merges." (starting at the end of line 25, through line 27)
