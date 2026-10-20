@@ -175,8 +175,7 @@ adds its journey here.
     `neo.session.archive` twice. End state: while the todo is doing the reply is
     `live_todo` naming the todo; after it is marked done the guard passes and the
     adapter answers `not_found` (the session is fictional).
-
-9. **A session messages another session.** `session-messages.sh <port> "$RUN"`
+11. **A session messages another session.** `session-messages.sh <port> "$RUN"`
    runs the steps below and prints the replies and B's first row. Create two sessions with
    `rpc.ts rpc:session.create '{"workspacePath":"/tmp","title":"Worker A"}'` (and
    `"Recipient B"`), then send B a message as A: `rpc.ts message.send
@@ -187,7 +186,9 @@ adds its journey here.
    one closing tag; B leaves idle and consumes it. The same send again replies
    `duplicate: …`; five more distinct sends are accepted and the next replies
    `rate_limited: …`. Messages sent while B is `processing` are `consumed` before
-   its turn ends.
+   its turn ends. A `work.send '{"ref":{"adapter":"hyperneo","id":"<B>"},"message":"…","from":"session:<A>"}'`
+   lands in B ending `Reply with message.send to <A>.`, and
+   `neo.question.get '{"questionId":"made-up"}'` replies `not_found: no such question.`
 
 11. **Root Neo owns goals outside any Space.** After journey 1 opened root, run
     `VERIFY_PORT=9311 .claude/skills/verify/session-goal.sh "$RUN"`. It creates a goal
