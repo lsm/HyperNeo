@@ -1000,6 +1000,24 @@ accept legitimate nonempty legacy copies from writes during background copying:
 side completeness, verified backup and hashes establish authority, not empty
 legacy text. Column removal still needs its separately scheduled downtime PR.
 
+For the qualified-predicate regression behind CI's `no such column: m.rowid`
+and `m.sdk_message` failures, use a fresh isolated run directory:
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-sdk-body-predicate-XXXXXX)
+mkdir -p "$RUN/home"
+env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
+  bun .claude/skills/verify/sdk-body-predicate.ts verify "$RUN"
+```
+
+This uses real in-memory SQLite and the production body writer, testing both
+qualified row/body predicates in both modes. Every tool-result byte remains
+readable through the repository. On the failing head run `reproduce`: dual-write
+must throw both unknown-column errors while side-only succeeds. The UPDATE must
+declare the same `m` target alias as the side INSERT. It does not change fixture
+assertions, schemas or body semantics. Repeat the real-daemon `laptop` and `mixed`
+journeys above to verify all eight production writers and RPC output afterward.
+
 ### Historical slice-10 copy journey
 
 Run only on a new synthetic database, larger than the read-only live file-size

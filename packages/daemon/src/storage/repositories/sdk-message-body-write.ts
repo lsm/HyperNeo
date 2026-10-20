@@ -20,7 +20,7 @@ export function writeSdkMessageBody<T>(
       ...params
     );
     if (!sdkSideOnlyWrites(db))
-      db.prepare(`UPDATE sdk_messages SET sdk_message=(SELECT b.sdk_message FROM sdk_message_bodies b WHERE b.seq=sdk_messages.rowid)
+      db.prepare(`UPDATE sdk_messages AS m SET sdk_message=(SELECT b.sdk_message FROM sdk_message_bodies b WHERE b.seq=m.rowid)
         WHERE ${predicate}`).run(...params);
     return result;
   })();
