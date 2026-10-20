@@ -103,6 +103,16 @@ session ownership and actual delivery/consumption in the active turn. Mark the
 chosen human message answered only after durable publication; retries are
 idempotent. One publication does not silently answer every consumed human input.
 
+Local SDK `work.read` pages retain the existing `sessionId` and `turns` fields and
+add `availability`, `nextCursor`, and per-turn `textOffset`/`textComplete` plus
+structured `files` when present. Pass `nextCursor` back as `cursor`; it is scoped
+to the session and uses SDK sequence anchors, preserving the selected window
+across later appends. Text chunks budget 16,000 serialized UTF-8 bytes to stay
+below the SDK tool-output persistence threshold. Reassemble a message's chunks
+in cursor order; whitespace and Unicode are preserved. `complete` describes the
+retrieved history window, not task completion. An unavailable anchor returns
+`reply_unavailable`; an external driver's existing indexed source is unchanged.
+
 ## Small PR sequence and acceptance
 
 Production-line estimates are contracts to remeasure against fresh `dev`; tests

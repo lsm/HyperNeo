@@ -179,7 +179,7 @@ describe('authoritative work.read', () => {
     const before = digest();
     const parts: string[] = [];
     let value = await page({ before: 0, after: 0 });
-    for (let n = 0; n < 10; n++) {
+    for (let n = 0; n < 30; n++) {
       for (const turn of value.turns) {
         expect(Buffer.from(turn.text, 'utf8').toString('utf8')).toBe(turn.text);
         parts.push(turn.text);
@@ -237,6 +237,19 @@ describe('authoritative work.read', () => {
     expect(turns.filter((t) => t.messageId === 'following').map((t) => t.text)).toEqual([
       'Following message',
     ]);
+  });
+
+  test('external drivers retain their existing indexed source', async () => {
+    db.prepare(
+      "INSERT INTO message_search_content(kind,source_id,message_id,session_id,message_type,body,timestamp) VALUES ('codex','source','message','external','assistant','External reply',1)"
+    ).run();
+    expect(await invoke({ sessionId: 'external' })).toMatchObject({
+      kind: 'completed',
+      value: {
+        ok: true,
+        value: { sessionId: 'external', turns: [{ messageId: 'message', text: 'External reply' }] },
+      },
+    });
   });
 
   test('an unlocated reply says unavailable and a cursor cannot cross session scope', async () => {

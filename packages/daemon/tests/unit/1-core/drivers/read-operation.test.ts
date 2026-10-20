@@ -54,6 +54,16 @@ describe('work.read operation', () => {
     ]);
   });
 
+  test('an old remote cannot silently ignore a continuation cursor', async () => {
+    expect(
+      await invoke(deps, {
+        sessionId: 's9',
+        daemon: 'laptop',
+        cursor: { sessionId: 's9', before: 5 },
+      })
+    ).toMatchObject({ ok: false, reason: 'unsupported' });
+  });
+
   test('reads locally when the daemon named is this one', async () => {
     expect(await invoke(deps, { sessionId: 's1', daemon: 'imac' })).toMatchObject({ ok: true });
   });

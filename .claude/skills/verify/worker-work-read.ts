@@ -8,7 +8,7 @@ import { createReadWorkOperation } from '../../../packages/daemon/src/lib/driver
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import { createOperationMcpServer } from '../../../packages/daemon/src/lib/operations/mcp-server.ts';
 import { DatabaseCore } from '../../../packages/daemon/src/storage/database-core.ts';
-import { readWorkTurns } from '../../../packages/daemon/src/storage/work-turns.ts';
+import { readWorkTurnPage } from '../../../packages/daemon/src/storage/work-turn-page.ts';
 
 const run = resolve(process.argv[2] ?? '');
 const port = Number(process.argv[3] ?? 9363);
@@ -29,7 +29,7 @@ db.prepare('INSERT INTO sdk_message_bodies(seq,sdk_message) VALUES ((SELECT seq 
 for(let n=0;n<30;n++) insert.run(`followup-${n}`,'worker','user',JSON.stringify({type:'user',message:{content:`Later followup ${n}`}}),'2026-10-20T00:00:00Z');
 const digest = () => createHash('sha256').update(JSON.stringify([db.prepare('SELECT * FROM sdk_messages ORDER BY seq').all(),db.prepare('SELECT * FROM sdk_message_bodies ORDER BY seq').all()])).digest('hex');
 const original = digest();
-const registry = createOperationRegistry([createReadWorkOperation({readTurns:(id,around,before,after) => readWorkTurns(db,id,around,before,after),remote:{list:()=>[],invoke:async()=>{throw new Error('No remote in this proof');}},daemonName:'synthetic'})]);
+const registry = createOperationRegistry([createReadWorkOperation({readTurns:(id,around,before,after,cursor) => readWorkTurnPage(db,id,around,before,after,cursor),remote:{list:()=>[],invoke:async()=>{throw new Error('No remote in this proof');}},daemonName:'synthetic'})]);
 const results: string[] = [];
 let step = 0;
 const strings = (value:unknown):string => typeof value==='string'?value:Array.isArray(value)?value.map(strings).join('\n'):value&&typeof value==='object'&&'text' in value?strings(value.text):JSON.stringify(value);
@@ -54,14 +54,15 @@ const server = Bun.serve({hostname:'127.0.0.1',port,async fetch(request){
 }});
 let maxLagMs=0; let previous=performance.now();
 const timer=setInterval(()=>{const now=performance.now();maxLagMs=Math.max(maxLagMs,now-previous-10);previous=now;},10);
-const stream=query({prompt:'Read the complete older report using work.read and its cursors.',options:{cwd:join(run,'workspace'),executable:'bun',pathToClaudeCodeExecutable:resolveSDKCliPath(),model:'claude-sonnet-4-20250514',tools:[],permissionMode:'bypassPermissions',allowDangerouslySkipPermissions:true,settingSources:[],env:{...process.env,ANTHROPIC_BASE_URL:`http://127.0.0.1:${port}`,ANTHROPIC_API_KEY:'sk-devproxy-test-key',CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1'},mcpServers:{'hyperneo-operations':createOperationMcpServer(registry,()=>({sessionId:'neo:verify-work-read',role:'neo'}))},stderr:data=>writeFileSync(join(run,'sdk-stderr.log'),data,{flag:'a'}),maxTurns:20}});
+const stream=query({prompt:'Read the complete older report using work.read and its cursors.',options:{cwd:join(run,'workspace'),executable:'bun',pathToClaudeCodeExecutable:resolveSDKCliPath(),model:'claude-sonnet-4-20250514',tools:[],permissionMode:'bypassPermissions',allowDangerouslySkipPermissions:true,settingSources:[],env:{...process.env,ANTHROPIC_BASE_URL:`http://127.0.0.1:${port}`,ANTHROPIC_API_KEY:'sk-devproxy-test-key',CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1'},mcpServers:{'hyperneo-operations':createOperationMcpServer(registry,()=>({sessionId:'neo:verify-work-read',role:'neo'}))},stderr:data=>writeFileSync(join(run,'sdk-stderr.log'),data,{flag:'a'}),maxTurns:40}});
 try {
   for await(const event of stream) writeFileSync(join(run,'sdk-events.jsonl'),JSON.stringify(event)+'\n',{flag:'a'});
   const pages=results.map(object);
   writeFileSync(join(run,'observed.json'),JSON.stringify({pages,maxLagMs},null,2));
   assert(pages.every(page=>page.ok===true),'work.read must locate an older report without its search-index row');
   const actual=pages.flatMap(page=>page.value.turns.map((turn:{text:string})=>turn.text)).join('');
-  assert.equal(actual,text);
+  assert.equal(createHash('sha256').update(actual).digest('hex'),createHash('sha256').update(text).digest('hex'));
+  assert.equal(Buffer.byteLength(actual),Buffer.byteLength(text));
   assert(!actual.includes('HIDDEN_SYNTHETIC'));
   assert.equal(digest(),original);
   assert.equal(pages.at(-1).value.availability,'complete');
