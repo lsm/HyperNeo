@@ -167,3 +167,100 @@ describe('deleting the owner session', () => {
     db.close();
   });
 });
+
+describe('goal journal', () => {
+  test('a retried run keeps its entry id, so a page cursor on it still works; an unknown cursor is refused', async () => {
+    const { db, call } = setup();
+    const goal = (await call('goal.session.create', { title: 'Grow', doneTest: 'Ten adopters' }))
+      .goal;
+    const append = (runId: string, effect: string) =>
+      call('goal.journal.append', { goalId: goal.id, runId, done: runId, effect, worked: 'w' });
+    await append('a', 'first');
+    const b = (await append('b', 'first')).entry;
+    const retried = (await append('b', 'second')).entry;
+    expect(retried).toMatchObject({ id: b.id, effect: 'second' });
+    expect(
+      (await call('goal.journal.list', { goalId: goal.id, before: b.id })).entries.map(
+        (entry: { runId: string }) => entry.runId
+      )
+    ).toEqual(['a']);
+    expect(await call('goal.journal.list', { goalId: goal.id, before: 'missing' })).toEqual({
+      accepted: false,
+      reason: 'cursor_not_found: before names no entry of this goal; list again without it.',
+    });
+    db.close();
+  });
+
+  test('pages through entries written in the same millisecond without skipping any', async () => {
+    const { db, call } = setup();
+    const goal = (await call('goal.session.create', { title: 'Grow', doneTest: 'Ten adopters' }))
+      .goal;
+    for (const runId of ['a', 'b', 'c'])
+      await call('goal.journal.append', {
+        goalId: goal.id,
+        runId,
+        done: runId,
+        effect: 'e',
+        worked: 'w',
+      });
+    db.exec('UPDATE goal_journal SET created_at = 5');
+    const seen: string[] = [];
+    let before: string | undefined;
+    for (let page = 0; page < 4; page++) {
+      const entries = (
+        await call('goal.journal.list', {
+          goalId: goal.id,
+          limit: 1,
+          ...(before ? { before } : {}),
+        })
+      ).entries as { id: string; runId: string }[];
+      if (!entries.length) break;
+      seen.push(entries[0].runId);
+      before = entries[0].id;
+    }
+    expect(seen).toEqual(['c', 'b', 'a']);
+    db.close();
+  });
+
+  test('a cycle appends one entry per run, newest first, and only the owner reaches it', async () => {
+    const { db, call, audited } = setup();
+    const goal = (await call('goal.session.create', { title: 'Grow', doneTest: 'Ten adopters' }))
+      .goal;
+    const entry = {
+      goalId: goal.id,
+      done: 'Opened the adapter guide PR',
+      effect: 'Two projects asked for the guide',
+      evidence: [{ kind: 'pr', ref: 'https://github.com/lsm/oap/pull/9' }],
+      worked: 'Answering adopters in their issues',
+    };
+    await call('goal.journal.append', { ...entry, runId: 'run-1' });
+    await call('goal.journal.append', { ...entry, runId: 'run-1', effect: 'Three projects asked' });
+    await call('goal.journal.append', { ...entry, runId: 'run-2', done: 'Published the guide' });
+    const listed = await call('goal.journal.list', { goalId: goal.id });
+    expect(
+      listed.entries.map((item: { runId: string; done: string; effect: string }) => [
+        item.runId,
+        item.done,
+        item.effect,
+      ])
+    ).toEqual([
+      ['run-2', 'Published the guide', 'Two projects asked for the guide'],
+      ['run-1', 'Opened the adapter guide PR', 'Three projects asked'],
+    ]);
+    expect(listed.entries[0]).toMatchObject({
+      sessionId: 'neo:root',
+      evidence: [{ kind: 'pr', ref: 'https://github.com/lsm/oap/pull/9' }],
+      failed: null,
+    });
+    const other: OperationCaller = { source: 'mcp', sessionId: 'neo:other', role: 'neo' };
+    expect(await call('goal.journal.append', entry, other)).toEqual({
+      accepted: false,
+      reason: 'goal_not_found',
+    });
+    expect(await call('goal.journal.list', { goalId: goal.id, limit: 1 })).toMatchObject({
+      entries: [{ runId: 'run-2' }],
+    });
+    expect(audited.filter((name) => name === 'goal.journal.append')).toHaveLength(3);
+    db.close();
+  });
+});

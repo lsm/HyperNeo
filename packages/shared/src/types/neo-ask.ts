@@ -83,6 +83,11 @@ export interface NeoReplyTo {
   excerpt?: string;
 }
 
+export function neoReplyExcerpt(text: string): string {
+  const trimmed = text.trim();
+  return trimmed.length > 300 ? `${trimmed.slice(0, 300).trimEnd()}…` : trimmed;
+}
+
 export interface NeoStatusCode {
   code: string;
   params: Record<string, string>;
