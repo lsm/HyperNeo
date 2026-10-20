@@ -1107,7 +1107,9 @@ function createIndexes(db: BunDatabase): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_job_queue_dequeue ON job_queue(queue, status, priority DESC, run_at ASC)`
   );
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_job_queue_status ON job_queue(status)`);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_job_queue_status_completed ON job_queue(status, completed_at)`
+  );
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_message_delivery_session_active
       ON job_queue (json_extract(payload, '$.sessionId'))

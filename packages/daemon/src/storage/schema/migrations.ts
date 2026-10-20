@@ -46,6 +46,7 @@ import { runMigration416 } from './m416-sdk-message-filter-indexes.ts';
 import { runMigration417 } from './m417-sdk-message-session-window.ts';
 import { runMigration418 } from './m418-sdk-message-bodies.ts';
 import { runMigration419 } from './m419-task-message-body-triggers.ts';
+import { runMigration421 } from './m421-job-queue-status-completed-index.ts';
 import { runMigration422 } from './m422-tool-continuation-expiry-indexes.ts';
 import { runMigration424 } from './m424-message-delivery-message-index.ts';
 import { runMigration384 } from './m384-neo-conversation-cursors.ts';
@@ -895,6 +896,7 @@ export function runMigrations(
   run(migrationMarkerKey(417), () => runMigration417(db));
   run(migrationMarkerKey(418), () => runMigration418(db));
   run(migrationMarkerKey(419), () => runMigration419(db));
+  run(migrationMarkerKey(421), () => runMigration421(db));
   run(migrationMarkerKey(422), () => runMigration422(db));
   run(migrationMarkerKey(424), () => runMigration424(db));
 
