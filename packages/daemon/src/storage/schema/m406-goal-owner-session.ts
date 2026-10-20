@@ -58,7 +58,7 @@ function rebuild(db: Database, table: string, sql: string): void {
 export function runMigration406(db: Database): void {
   const goals = tableSql(db, 'space_goals');
   const events = tableSql(db, 'space_goal_events');
-  if (!goals || !events || !SPACE_REQUIRED.test(goals)) return;
+  if (!goals || !events) return;
   const existing = new Set(
     (db.prepare('PRAGMA table_info(space_goals)').all() as { name: string }[]).map(
       ({ name }) => name
@@ -71,21 +71,23 @@ export function runMigration406(db: Database): void {
     .foreign_keys;
   db.exec('PRAGMA foreign_keys = OFF');
   try {
-    rebuild(
-      db,
-      'space_goals',
-      tableSql(db, 'space_goals')!
-        .replace(SPACE_REQUIRED, 'space_id TEXT')
-        .replace(/\)\s*$/, ',\n  CHECK ((space_id IS NULL) <> (owner_session_id IS NULL))\n)')
-    );
-    rebuild(
-      db,
-      'space_goal_events',
-      events
-        .replace(SPACE_REQUIRED, 'space_id TEXT')
-        .replace(EVENT_TYPES, "'schedule_updated', 'journal_compacted')")
-        .replace(EVENT_SOURCES, "'system', 'neo', 'human')")
-    );
+    if (SPACE_REQUIRED.test(goals))
+      rebuild(
+        db,
+        'space_goals',
+        tableSql(db, 'space_goals')!
+          .replace(SPACE_REQUIRED, 'space_id TEXT')
+          .replace(/\)\s*$/, ',\n  CHECK ((space_id IS NULL) <> (owner_session_id IS NULL))\n)')
+      );
+    if (!events.includes('journal_compacted'))
+      rebuild(
+        db,
+        'space_goal_events',
+        events
+          .replace(SPACE_REQUIRED, 'space_id TEXT')
+          .replace(EVENT_TYPES, "'schedule_updated', 'journal_compacted')")
+          .replace(EVENT_SOURCES, "'system', 'neo', 'human')")
+      );
   } finally {
     db.exec(`PRAGMA foreign_keys = ${foreignKeys ? 'ON' : 'OFF'}`);
   }

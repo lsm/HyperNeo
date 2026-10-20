@@ -135,6 +135,29 @@ describe('goal owner-session migration', () => {
     }
   });
 
+  test('a start interrupted after the goal rebuild still rebuilds the events on the next run', () => {
+    const db = new Database(':memory:');
+    try {
+      db.exec(OLD_SCHEMA);
+      const events = db
+        .prepare("SELECT sql FROM sqlite_master WHERE name = 'space_goal_events'")
+        .get() as { sql: string };
+      runMigration406(db);
+      db.exec('PRAGMA foreign_keys = OFF');
+      db.exec('ALTER TABLE space_goal_events RENAME TO done_events');
+      db.exec(events.sql);
+      db.exec('INSERT INTO space_goal_events SELECT * FROM done_events');
+      db.exec('DROP TABLE done_events');
+      runMigration406(db);
+      db.exec(
+        "INSERT INTO space_goal_events (id, goal_id, event_type, source, created_at) VALUES ('j', 'g', 'journal_compacted', 'human', 2)"
+      );
+      expect(db.prepare('SELECT COUNT(*) AS n FROM space_goal_events').get()).toEqual({ n: 2 });
+    } finally {
+      db.close();
+    }
+  });
+
   test('a fresh database takes owner-session goals', () => {
     const db = new Database(':memory:');
     try {
