@@ -10,7 +10,9 @@ import {
 import { startEventLoopLagLog } from '../../../packages/daemon/src/lib/event-loop-lag.ts';
 import { NeoService } from '../../../packages/daemon/src/lib/neo/service.ts';
 
-const [mode, portText, runText] = process.argv.slice(2);
+const [mode, portText, runText, delivery = 'enabled'] = process.argv.slice(2);
+assert(['enabled', 'disabled'].includes(delivery));
+const enabled = delivery === 'enabled';
 const port = Number(portText),
   run = resolve(runText);
 assert(['reproduce', 'verify'].includes(mode));
@@ -25,6 +27,7 @@ const app = await createDaemonApp({
   verbose: false,
 });
 const service = new NeoService(app.db, app.sessionManager, app.messageHub, app.internalEventBus);
+if (!enabled) app.db.updateGlobalSettings({ neo: { packs: ['life-admin'] } });
 const now = Date.now(),
   count = 180;
 app.db.createSession({
@@ -147,41 +150,58 @@ try {
   app.db.getGlobalSettings = readSettings;
   await pause(300);
   assert.equal((health.data as { status: string }).status, 'ok');
+  const endedIds = enabled ? [count] : Array.from({ length: count + 1 }, (_, i) => i);
   assert.deepEqual(result.data, {
-    ended: [
-      { workId: `synthetic-${count}`, topic: `synthetic/${count}/a` },
-      { workId: `synthetic-${count}`, topic: `synthetic/${count}/b` },
-    ],
+    ended: endedIds.flatMap((id) => [
+      { workId: `synthetic-${id}`, topic: `synthetic/${id}/a` },
+      { workId: `synthetic-${id}`, topic: `synthetic/${id}/b` },
+    ]),
   });
-  assert.equal(service.cardEvents.listActive().length, count * 2);
+  const remainingTopics = service.cardEvents.listActive().length;
+  assert.equal(remainingTopics, enabled ? count * 2 : 0);
+  const initialMaxLagMs = maxLagMs;
+  const initialTotals = Object.fromEntries(
+    [...totals].map(([name, value]) => [name, { ...value }])
+  );
+  app.db.updateGlobalSettings({ neo: { packs: enabled ? ['life-admin'] : ['coding'] } });
+  if (!enabled)
+    for (let i = 0; i < count; i++)
+      for (const suffix of ['a', 'b'])
+        service.cardEvents.subscribe(`synthetic-${i}`, `synthetic/${i}/${suffix}`, now + 2);
+  const next = await rpc('verify.card_topics');
+  const nextEnded = (next.data as { ended: unknown[] }).ended.length;
+  assert.equal(nextEnded, enabled ? count * 2 : 0);
+  assert.equal(service.cardEvents.listActive().length, enabled ? 0 : count * 2);
   const report = {
     surface:
       'isolated daemon WebSocket → real synchronous Neo card-topic sweep → lag diagnostic phases',
     fixture:
       '180 followed synthetic todos with two topics each, one removed todo; 8ms controlled wait plus native SQLite settings SELECT per eligibility read, no live data',
     mode,
-    maxLagMs,
+    delivery,
+    maxLagMs: initialMaxLagMs,
     healthMs: health.ms,
     sweepMs: result.ms,
     settingsReads: reads,
-    phaseTotals: Object.fromEntries(totals),
+    phaseTotals: initialTotals,
     diagnostics,
     result: result.data,
-    remainingTopics: service.cardEvents.listActive().length,
+    remainingTopics,
+    nextSweepSettingsEffect: { nextEnded, remainingTopics: service.cardEvents.listActive().length },
   };
   writeFileSync(join(run, 'observed.json'), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
-  assert(maxLagMs >= 1000, 'must reproduce the synchronous sweep cost');
+  const pack = initialTotals['neo:packs:eligibility_read'];
   if (mode === 'verify') {
-    const pack = totals.get('neo:packs:eligibility_read');
+    assert(initialMaxLagMs < 1000, 'the sweep must not block the main thread for 1 s');
+    assert(health.ms < 250, 'health must remain responsive');
     assert(
-      pack && pack.count === count && pack.totalMs >= count * 8,
-      'must attribute repeated settings reads to their narrow phase'
+      pack && pack.count === 1 && reads === 1,
+      'sample pack delivery eligibility once per sweep, including false'
     );
-    assert(totals.has('neo:card_topics:list_active'));
-    assert(totals.has('neo:card_topics:followed_todo'));
-    assert(totals.has('neo:card_topics:card_events_delivered'));
-    assert(totals.has('neo:card_topics:end'));
+  } else {
+    assert(initialMaxLagMs >= 1000, 'must reproduce the synchronous sweep cost');
+    assert.equal(reads, count);
   }
 } finally {
   app.db.getGlobalSettings = readSettings;

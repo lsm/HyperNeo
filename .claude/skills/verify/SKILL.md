@@ -1736,7 +1736,7 @@ The helper closes its own socket and daemon in `finally`. It uses no model or
 credentials and never reads the real session directories. Feed content reads
 remain synchronous in this slice; this journey verifies metadata I/O only.
 
-## Card-topic sweep attribution
+## Card-topic sweep responsiveness
 
 Run a fresh isolated daemon with synthetic HOME/data/DB and a free non-8399
 port. The helper creates 180 followed todos with two topic subscriptions each,
@@ -1747,17 +1747,23 @@ provider, key, transcript or live DB is involved.
 ```bash
 RUN=$(mktemp -d /private/tmp/hn-card-topic-phases-XXXXXX)
 env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
-  bun .claude/skills/verify/card-topic-phases.ts verify 9375 "$RUN"
+  bun .claude/skills/verify/card-topic-phases.ts verify 9375 "$RUN" enabled
 ```
 
-On the regression commit use `reproduce` in a separate new directory. Both runs
-must reproduce over 1 s max heartbeat lag: this slice adds attribution, not a
-latency fix. `observed.json` includes concurrent health latency, actual sweep
-results and structured lag diagnostics. In `verify`, the phase totals must
-attribute 180 settings reads and at least 1,440 ms to
-`neo:packs:eligibility_read`; listActive, per-todo followedTodo and
-cardEventsDelivered, and per-subscription end phases must also be present.
-Only the removed todo's two topics end; 360 followed topics remain.
+Repeat in another new directory with `disabled` instead of `enabled`. On the
+regression commit use `reproduce`: both modes must show 180 eligibility reads
+and max heartbeat lag over 1 s. Fixed `verify` must show exactly one settings
+read, including when eligibility is false, with heartbeat lag below 1 s and
+health below 250 ms. `observed.json` retains phase totals, actual subscriptions,
+health latency and any structured lag diagnostics.
+
+With delivery enabled, only the removed todo's two topics end and 360 remain.
+With delivery disabled, all 362 topics end. The helper then changes the stored
+pack setting, re-subscribes active topics if needed and sweeps again over the
+same WebSocket. The changed eligibility must take effect immediately on that
+next sweep, in both directions; no value is cached across sweeps. Focused tests
+also keep settings unread when there is no followed todo, including an empty
+sweep. This keeps the snapshot lazy rather than adding an unconditional read.
 
 The existing activity buffer retains 64 entries and reports dropped entries;
 large sweeps expose a suffix of per-todo phases plus the final aggregate. The
