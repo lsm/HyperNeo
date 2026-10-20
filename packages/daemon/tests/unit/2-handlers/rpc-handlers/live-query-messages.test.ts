@@ -930,7 +930,7 @@ describe('messages.bySession — SQL behavior', () => {
   test('uses one bounded shutdown lookup and the session timestamp index', () => {
     const plan = queryPlan(db, 's1', 200);
     expect(plan).toContain('MATERIALIZE latest_shutdown_boundary');
-    expect(plan).toMatch(/idx_sdk_messages_session(_timestamp_id)?\b/);
+    expect(plan).toMatch(/idx_sdk_messages_session(_timestamp_id|_visible)?\b/);
     expect(plan).not.toContain('MULTI-INDEX OR');
     expect(plan).not.toContain('SCAN sdk_messages USING');
   });
