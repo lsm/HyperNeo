@@ -1083,3 +1083,11 @@ helper removes only its fixture ignore in a local commit, leaving an existing
 home with untracked coordinator transcripts. `neo.home.init` must repair the
 ignore, preserve transcript contents, track no transcript and leave clean status.
 Other dirty files still require human review.
+
+Repeat journey 32 with final argument `ignore-repair-failure` to force a missing
+identity during ignore repair. After configuring identity, retry must create the
+repair commit and leave clean status, preserving private transcripts. The gate
+checks the committed ignore; failed repair restores its prior ignore contents
+(or removes only the newly created ignore), removing newly created bootstrap
+documents after a failed repair. Focused contracts cover both absent
+and existing ignore files.

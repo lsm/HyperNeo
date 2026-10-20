@@ -103,6 +103,8 @@ describe('Neo home setup', () => {
       await init();
       if (state === 'missing') await rm(join(root, '.gitignore'));
       else await writeFile(join(root, '.gitignore'), 'scratch/\n');
+      await rm(join(root, 'README.md'));
+      await rm(join(root, 'direction.md'));
       await git('add', '-A');
       await git('commit', '-m', 'Existing home without coordinator ignore');
       const before = await git('rev-parse', 'HEAD');

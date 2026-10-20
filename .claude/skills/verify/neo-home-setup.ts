@@ -35,6 +35,10 @@ const direction = await readFile(`${root}/direction.md`, 'utf8');
 const author = await git('log', '-1', '--format=%an <%ae>');
 if (mode === 'ignore-repair' || mode === 'ignore-repair-failure') {
   await rm(`${root}/.gitignore`);
+  if (mode === 'ignore-repair-failure') {
+    await rm(`${root}/README.md`);
+    await rm(`${root}/direction.md`);
+  }
   await git('commit', '-am', 'Existing home without coordinator ignore');
   const before = await git('status', '--porcelain', '--untracked-files=all');
   let failure;
@@ -52,7 +56,7 @@ if (mode === 'ignore-repair' || mode === 'ignore-repair-failure') {
   const afterRepairHead = await git('rev-parse', 'HEAD');
   const evidence = { mode, before, failure, afterFailure, beforeRepairHead, afterRepairHead, repaired, transcript: await readFile(`${root}/.coordinators/verify/transcript.md`, 'utf8'), trackedTranscripts: await git('ls-files', '.coordinators'), status: await git('status', '--porcelain') };
   await writeFile(`${run}/evidence/neo-home-setup.json`, JSON.stringify(evidence, null, 2));
-  if (beforeRepairHead === afterRepairHead || (mode === 'ignore-repair-failure' && !String(failure.error).includes('Author identity unknown')) || !repaired.ok || evidence.status || evidence.trackedTranscripts || evidence.transcript !== 'Synthetic private transcript.') throw new Error('Coordinator ignore repair failed');
+  if (beforeRepairHead === afterRepairHead || (mode === 'ignore-repair-failure' && (!String(failure.error).includes('Author identity unknown') || afterFailure !== before)) || !repaired.ok || evidence.status || evidence.trackedTranscripts || evidence.transcript !== 'Synthetic private transcript.') throw new Error('Coordinator ignore repair failed');
   console.log('PASS: RPC repairs the missing ignore while preserving private untracked transcripts.');
   process.exit(0);
 }

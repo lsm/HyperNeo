@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
@@ -39,8 +39,9 @@ export class NeoHomeRepository {
     await mkdir(this.root, { recursive: true });
     await this.git(['init', '--quiet']);
     const hasHead = !(await this.git(['rev-parse', '--verify', 'HEAD'], true)).code;
-    const ignores = !(await this.git(['check-ignore', '-q', '--', '.coordinators/verify'], true))
-      .code;
+    const ignores = (await this.git(['show', 'HEAD:.gitignore'], true)).text
+      .split('\n')
+      .includes('.coordinators/');
     const paths = ['README.md', '.gitignore', 'direction.md'];
     if (!hasHead || !ignores) {
       const changes = (
@@ -65,27 +66,40 @@ export class NeoHomeRepository {
         ],
         ['direction.md', ''],
       ]);
+      const created: string[] = [];
       for (const [path, content] of documents) {
         try {
           await writeFile(join(this.root, path), content, { flag: 'wx' });
+          created.push(path);
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
         }
       }
-      const ignore = await readFile(join(this.root, '.gitignore'), 'utf8').catch((error) => {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-        return '';
-      });
+      const originalIgnore = await readFile(join(this.root, '.gitignore'), 'utf8').catch(
+        (error) => {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+          return null;
+        }
+      );
+      const ignore = originalIgnore ?? '';
       if (!ignore.split('\n').includes('.coordinators/'))
         await writeFile(
           join(this.root, '.gitignore'),
           `${ignore}${!ignore || ignore.endsWith('\n') ? '' : '\n'}.coordinators/\n`
         );
-      await this.git(['add', '--', ...paths]);
       try {
+        await this.git(['add', '--', ...paths]);
         await this.git(['commit', '--only', '-m', 'Initialize Neo home', '--', ...paths]);
       } catch (error) {
         await this.git(['reset', '--', ...paths]).catch(() => {});
+        if (hasHead) {
+          for (const path of created)
+            await rm(join(this.root, path), { force: true }).catch(() => {});
+          await (originalIgnore === null
+            ? rm(join(this.root, '.gitignore'), { force: true })
+            : writeFile(join(this.root, '.gitignore'), originalIgnore)
+          ).catch(() => {});
+        }
         throw error;
       }
     }
