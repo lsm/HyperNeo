@@ -46,15 +46,18 @@ export function createPackPreferenceQuestions(
         db.transaction(() => {
           const json = JSON.stringify(input.values);
           const prior = db
-            .prepare(`SELECT p.question_id, p.values_json, q.ask_id FROM neo_pack_preference_proposals p
+            .prepare(`SELECT p.question_id, p.values_json, q.ask_id, q.state FROM neo_pack_preference_proposals p
         JOIN neo_questions q ON q.id=p.question_id WHERE p.request_id=?`)
             .get(input.requestId) as
-            | { question_id: string; values_json: string; ask_id: string }
+            | { question_id: string; values_json: string; ask_id: string; state: string }
             | undefined;
-          if (prior)
-            return prior.ask_id === input.askId && prior.values_json === json
+          if (prior) {
+            if (prior.ask_id !== input.askId || prior.values_json !== json)
+              return { ok: false as const, reason: 'proposal_is_immutable' };
+            return prior.state === 'open'
               ? { ok: true as const, questionId: prior.question_id }
-              : { ok: false as const, reason: 'proposal_is_immutable' };
+              : { ok: false as const, reason: 'question_closed' };
+          }
           const questionId = crypto.randomUUID();
           const text = `Apply these pack settings?\n\n${input.values.map((value) => JSON.stringify(value)).join('\n')}`;
           store.askQuestion(
@@ -91,7 +94,7 @@ export function createPackPreferenceQuestions(
     defineOperation({
       name: 'pack.preferences.ask',
       description:
-        'Ask the human to apply typed pack settings. The daemon displays and binds this exact immutable proposal; no settings change until human yes. Reuse requestId for retries.',
+        'Ask the human to apply typed pack settings. The daemon displays and binds this exact immutable proposal; no settings change until human yes. Reuse requestId for pending retries; question_closed means use a new requestId to ask again.',
       inputSchema: Ask,
       resultSchema: Result,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

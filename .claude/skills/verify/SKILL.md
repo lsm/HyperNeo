@@ -1803,6 +1803,8 @@ env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test
 ```
 
 The helper uses the real daemon registry's MCP and WebSocket operation doors.
+A declined question returns `question_closed` when retried with the same request id;
+a new request id must reach the human as an open question.
 Neo proposes two synthetic settings; the daemon generates the exact question
 text, and `neo.snapshot` must expose that question. Before consent the settings
 remain empty. Agent answering is refused; the human button's real
