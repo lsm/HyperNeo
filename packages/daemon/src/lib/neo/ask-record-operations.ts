@@ -10,6 +10,7 @@ import {
   addNeoTodo,
   type NeoTodoControls,
   NeoTodoDraftSchema,
+  planNeoTodoDraft,
   requireNeoOpenAsk,
 } from './todo-operations.ts';
 import { isNeoTodoStartable } from './todo-runner.ts';
@@ -164,6 +165,11 @@ export function createNeoAskRecordOperations(
             ok: false,
             reason: `ask_settled: ${ask.title} is settled and "${homeless.title}" has no open card in it; nothing was added. Open a new ask for it with a different title, since this title in this turn reaches the settled request.`,
           };
+        const refused = input.todos
+          .filter((todo) => !recordedRow(todo))
+          .map((todo) => planNeoTodoDraft(todo, packs()))
+          .find((planned) => 'reason' in planned);
+        if (refused && 'reason' in refused) return refused.reason;
         for (const todo of input.todos) {
           const row = recordedRow(todo);
           const added = !row

@@ -63,6 +63,30 @@ export const NeoTodoDraftSchema = TodoDraft.superRefine(refineNeoTodoDraft);
 
 const Add = TodoDraft.extend({ askId: Text }).superRefine(refineNeoTodoDraft);
 
+export function planNeoTodoDraft<T extends Pick<NeoTodo, 'check' | 'instruction' | 'doneWhen'>>(
+  draft: T,
+  packs: readonly NeoPack[]
+): Gate<T> {
+  const pack = draft.check && packs.find((item) => item.id === draft.check?.pack)?.todos;
+  const refused = pack?.refuse?.(draft);
+  if (refused) return fail(`check_refused: ${refused}`);
+  const doneWhen = draft.check && pack?.doneWhen?.(draft.check);
+  return { value: doneWhen ? { ...draft, doneWhen } : draft };
+}
+
+export function requireNeoDoneWhenEditable(
+  todo: NeoTodo,
+  input: { doneWhen?: string },
+  packs: readonly NeoPack[]
+): Gate<NeoTodo> {
+  const pack = todo.check && packs.find((item) => item.id === todo.check?.pack)?.todos;
+  return input.doneWhen && todo.check && pack?.doneWhen?.(todo.check) === todo.doneWhen
+    ? fail(
+        "done_when_from_check: this todo's done-when comes from its check; change the check instead."
+      )
+    : { value: todo };
+}
+
 export async function addNeoTodo(
   todos: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
@@ -72,16 +96,19 @@ export async function addNeoTodo(
   packs: readonly NeoPack[],
   split = false
 ): Promise<{ ok: true; todo: NeoTodo } | Rejection> {
-  const repo = neoTodoRepo(input, packs, ask);
+  const planned = planNeoTodoDraft(input, packs);
+  if ('reason' in planned) return planned.reason;
+  const draft = planned.value;
+  const repo = neoTodoRepo(draft, packs, ask);
   const home = neoTodoHome(todos, ask, repo, split || todos.listChildAsks(ask.id).length > 0);
   if (home.status !== 'open')
     return {
       ok: false,
       reason: `ask_settled: ${home.title} is settled; open a new ask for this todo.`,
     };
-  const added = todos.addTodo(crypto.randomUUID(), home.id, input, Date.now(), repo);
-  if (input.target) sessions.create(added.id, input.target);
-  if (input.start) return start(added.id);
+  const added = todos.addTodo(crypto.randomUUID(), home.id, draft, Date.now(), repo);
+  if (draft.target) sessions.create(added.id, draft.target);
+  if (draft.start) return start(added.id);
   if (added.instruction) joinNeoStartQuestion(todos, added);
   return { ok: true, todo: added };
 }
@@ -254,6 +281,12 @@ export function createNeoTodoOperations(
   ) => Promise<TodoReceipt | Rejection>;
 
   const edit = owned(superpipe({})('neo.todo.edit') as PipelineAPI)
+    .pipe(
+      (todo: NeoTodo, input: z.infer<typeof Edit>) =>
+        requireNeoDoneWhenEditable(todo, input, packs()),
+      ['outcome', 'input'],
+      'result:outcome'
+    )
     .pipe(planNeoTodoEdit, ['outcome', 'input'], 'result:outcome')
     .pipe(completion, 'outcome', 'completion')
     .pipe(requireNeoTodoMayFinish, ['outcome', 'completion'], 'result:outcome')
@@ -309,7 +342,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.add',
       description:
-        'Add a todo to an open ask you own: title, doneWhen (one sentence), and check {pack, kind, params} when a pack can read it. instruction is the task for a session and target says where it runs ({verb: start, adapter, place} or {verb: send, ref}); without them the daemon checks the todo itself. named records what the human named for it (engine, session, repository, folder). A session the human named is sent to only through the ref work.find {session} returns as an exact match. start:true starts it now; otherwise the daemon lists it, ticked, in the start question of the ask.',
+        'Add a todo to an open ask you own: title, doneWhen (one sentence), and check {pack, kind, params} when a pack can read it; a pack may refuse a check, or write doneWhen from it. instruction is the task for a session and target says where it runs ({verb: start, adapter, place} or {verb: send, ref}); without them the daemon checks the todo itself. named records what the human named for it (engine, session, repository, folder). A session the human named is sent to only through the ref work.find {session} returns as an exact match. start:true starts it now; otherwise the daemon lists it, ticked, in the start question of the ask.',
       inputSchema: Add,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
