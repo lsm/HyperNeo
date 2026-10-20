@@ -5,7 +5,7 @@ import { DatabaseCore } from '../../../packages/daemon/src/storage/database-core
 import { writeSdkMessageBody } from '../../../packages/daemon/src/storage/repositories/sdk-message-body-write.ts';
 import { deriveSdkMessageColumns, SDK_MESSAGE_COLUMN_TYPES } from '../../../packages/daemon/src/storage/sdk-message-columns.ts';
 
-const [runText] = process.argv.slice(2);
+const [runText, mode = 'body'] = process.argv.slice(2);
 const run = resolve(runText);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -21,9 +21,15 @@ try {
   const derived = deriveSdkMessageColumns(body, 'task');
   writeSdkMessageBody(db, () => db.prepare(`INSERT INTO sdk_messages(id,session_id,task_id,message_type,sdk_message,timestamp,replacement_metadata_normalized,${names.join(',')}) VALUES ('probe','synthetic','task','assistant',?,'2026-10-20T00:00:00Z',1,${names.map(() => '?').join(',')})`).run(JSON.stringify(body), ...names.map((key) => derived[key])), "id='probe'", []);
   const before = db.prepare("SELECT flags,json_subtype FROM task_message_rows WHERE id='probe'").get();
-  db.prepare('UPDATE sdk_message_bodies SET sdk_message=?').run(JSON.stringify({ type: 'assistant', subtype: 'after', message: { content: [{ type: 'thinking', thinking: 'hmm' }] } }));
+  if (mode === 'missing') {
+    db.exec("DELETE FROM task_message_rows WHERE id='probe'");
+    db.exec("UPDATE sdk_messages SET sdk_message='' WHERE id='probe'");
+    db.exec("UPDATE sdk_messages SET send_status='failed' WHERE id='probe'");
+  } else {
+    db.prepare('UPDATE sdk_message_bodies SET sdk_message=?').run(JSON.stringify({ type: 'assistant', subtype: 'after', message: { content: [{ type: 'thinking', thinking: 'hmm' }] } }));
+  }
   const after = db.prepare("SELECT flags,json_subtype FROM task_message_rows WHERE id='probe'").get();
-  const observed = { before, after, expected: { flags: 18, json_subtype: 'after' } };
+  const observed = { before, after, expected: mode === 'missing' ? { flags: 17, json_subtype: 'before' } : { flags: 18, json_subtype: 'after' } };
   writeFileSync(join(run, 'evidence/body-projection.json'), JSON.stringify(observed, null, 2));
   console.log(JSON.stringify(observed));
   assert.deepEqual(after, observed.expected);

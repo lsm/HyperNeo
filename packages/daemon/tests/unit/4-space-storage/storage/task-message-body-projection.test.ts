@@ -3,6 +3,7 @@ import { writeSdkMessageBody } from '../../../../src/storage/repositories/sdk-me
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { runMigration419 } from '../../../../src/storage/schema/m419-task-message-body-triggers';
 import { createTaskMessageRows } from '../../../../src/storage/schema/task-message-rows';
+import { ensureTaskMessageRows } from '../../../../src/storage/schema/task-message-rows';
 import { TASK_MESSAGE_FLAG as F } from '../../../../src/storage/schema/task-message-rows';
 import {
   deriveSdkMessageColumns,
@@ -59,6 +60,31 @@ function projection(id: string) {
 }
 
 describe('task message body projection', () => {
+  test.each(['side', 'legacy'])(
+    'repairs a missing projection on status update using the %s body',
+    (source) => {
+      const body = assistant('kept.ts');
+      if (source === 'side') {
+        put('old', body);
+        db.exec("UPDATE sdk_messages SET sdk_message='' WHERE id='old'");
+      } else {
+        db.prepare(`INSERT INTO sdk_messages(id,session_id,task_id,message_type,sdk_message,timestamp,replacement_metadata_normalized)
+        VALUES ('old','s','task','assistant',?,'2026-10-20T00:00:00Z',1)`).run(
+          JSON.stringify(body)
+        );
+      }
+      db.exec("DELETE FROM task_message_rows WHERE id='old'");
+      db.exec("UPDATE sdk_messages SET send_status='failed' WHERE id='old'");
+      ensureTaskMessageRows(db, 'task');
+      expect(projection('old')).toMatchObject({
+        send_status: 'failed',
+        flags: F.validJson | F.text | F.toolUse | F.mutatingTool,
+        artifact_keys: '["file:kept.ts"]',
+        json_subtype: 'body-subtype',
+      });
+    }
+  );
+
   test('matches legacy flags and artifact keys for malformed, mistyped and mutating-tool bodies', () => {
     for (const name of [
       'task_message_rows_ai',
