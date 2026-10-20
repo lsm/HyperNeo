@@ -43,7 +43,8 @@ preferences?: Record<string, {
     | { kind: 'enum'; values: readonly string[] }
     | { kind: 'boolean' }
     | { kind: 'number'; min?: number; max?: number }
-    | { kind: 'globs' };
+    | { kind: 'globs' }
+    | { kind: 'login' };       // a GitHub login, checked against GitHub's login rules
   default: unknown;            // offered first in the question; never applied silently
   ask: string;                 // one-line wording for the first-use question
 }>;
@@ -51,29 +52,33 @@ preferences?: Record<string, {
 
 The core stores and serves values, and knows nothing about any pack's meaning. Lookup order: the exact scope, then `global` for that pack. A missing value counts as **unanswered**, not as the default.
 
-The first-use question is **generated from the declaration** and sent through the existing `neo.question.ask`. An enum becomes a choice question, a boolean a yes/no question, and globs and numbers a reply question validated against the type. There is no separate question system.
+The first-use question is **generated from the declaration** and sent through the existing `neo.question.ask`. An enum becomes a choice question, a boolean a yes/no question, and globs, numbers and logins a reply question validated against the type. A setting may declare `askWhen: { key, equals }` so it's asked only when another setting has a given value. There is no separate question system.
 
 ## Coding settings (scope: repo)
 
 | Key | Values | Meaning |
 |---|---|---|
-| `mergePolicy` | `review_bot` with a `bot` login, `ci_only`, or `human` | `review_bot`: the bot's approval of the exact head plus green CI. `ci_only`: green CI with no review. `human`: the human reviews and merges or says so. |
+| `mergePolicy` | enum: `review_bot`, `ci_only` or `human` | `review_bot`: the review bot's approval of the exact head plus green CI. `ci_only`: green CI with no review. `human`: the human reviews and merges or says so. |
+| `reviewBot` | `login`, asked only when `mergePolicy` is `review_bot` | The bot whose approval counts, for example `hyperneo-ai-test`. A `review_bot` repo with no `reviewBot` counts as `human` until it's answered. |
 | `humanSignoff` | `globs`: path globs, plus `label:<name>` entries for labels, for example `docs/design/**`, `docs/architecture/**`, `label:needs-human` | A PR that touches a matching path or carries a matching label is held for the human whatever the merge policy. |
 
 **Where paths and labels come from.** The ledger's GraphQL read (`CODING_LEDGER_QUERY`, `pr-ledger.ts:101-115`) fetches neither today.
 
-- **Labels:** `labels(first: 10) { nodes { name } }` is added to the open-PR fields. It's cheap, and it's read on every ledger pass.
+- **Labels:** `labels(first: 100) { pageInfo { hasNextPage } nodes { name } }` is added to the open-PR fields and read on every ledger pass. A truncated label page counts as matching, so the PR is held, the same as the paths case below.
 - **Paths:** fetched only for repos whose `humanSignoff` has path globs, and only for an open PR whose head differs from the head stored with its last path list. That's one small `files(first: 100) { nodes { path } }` query per new head. It stays within the existing `CODING_LEDGER_MIN_RATE` budget check, so a low rate limit skips the read and the PR stays held until paths are known. The list is stored on the ledger row (`paths_json`, `paths_head`). A PR with more than 100 files counts as matching, so it's held.
 
 Auto-merge is not a preference: it is **never** allowed. The sweep and workers merge by hand only, and nothing in this design can enable GitHub auto-merge.
 
-With a policy, `codingPrState` gains a policy-aware ready state. `approved_green` means "ready under this repo's policy", which differs by policy:
+With a policy, `codingPrState` maps GitHub facts to states per policy. `failing`, `changes_requested`, `dirty`, `draft`, `merged` and `closed` are unchanged under every policy, and so are their fix-it nudges. Only the states that lead to a merge change:
 
-- **`review_bot`:** the named bot approved the exact head, and CI is green.
-- **`ci_only`:** green CI is enough.
-- **`human`:** the PR is never `approved_green`.
+| GitHub facts on the head (no failure, no changes requested) | `review_bot` | `ci_only` | `human` |
+|---|---|---|---|
+| No approval from `reviewBot`, CI pending or green | `waiting_review`; the "re-request the review bot" nudge stays | CI pending: `waiting_ci`. CI green: `approved_green` | CI pending: `waiting_ci`. CI green: `waiting_human` |
+| Only someone other than `reviewBot` approved, for example the human | `waiting_review` | as above | as above |
+| `reviewBot` approved, CI pending | `approved_pending` | as above | as above |
+| `reviewBot` approved, CI green | `approved_green` | as above | `waiting_human` |
 
-A PR the policy doesn't yet allow to merge shows `waiting_human`, and the sweep never says "merge".
+A **hold** overrides only merge readiness, under every policy: a held PR that would be `approved_green` or `approved_pending` shows `waiting_human` instead. Every other state stays as it is, so the owner still fixes failing CI, conflicts and review findings on a held PR. The sweep says "merge" only for `approved_green`; `waiting_human` gets no merge text and no deadline. `waiting_ci` is new; it has the existing approved-pending wording without "approved".
 
 ## First use and seeding
 
@@ -83,8 +88,8 @@ A PR the policy doesn't yet allow to merge shows `waiting_human`, and the sweep 
 
 | Repo | Merge policy | Human sign-off |
 |---|---|---|
-| lsm/HyperNeo | `review_bot`, bot hyperneo-ai-test | `docs/design/**`, `docs/architecture/**` |
-| lsm/qlark | `review_bot`, bot hyperneo-ai-test | `docs/design/**`, `docs/plan/**` |
+| lsm/HyperNeo | `review_bot`, `reviewBot` hyperneo-ai-test | `docs/design/**`, `docs/architecture/**` |
+| lsm/qlark | `review_bot`, `reviewBot` hyperneo-ai-test | `docs/design/**`, `docs/plan/**` |
 | lsm/research | `ci_only` | none |
 | lsm/ops | `ci_only` | none |
 
@@ -155,7 +160,7 @@ A convention is built on the existing `neo.rule.save` (`packages/daemon/src/lib/
 The qlark#19 prevention, slices 1–7, comes first: policy-aware readiness, then holds, then lifting a hold when the human answers.
 
 1. **Build core settings.** `NeoPack.preferences` declaration type, the `neo_pack_preferences` migration, lookup, and the one-time seed for the four repos.
-2. **Wire policy-aware ledger state** and `waiting_human`. The qlark#19 replay test is committed failing first. Repos without a stored policy count as `human`.
+2. **Wire policy-aware ledger state** per the state table, including `waiting_human` and `waiting_ci`. The qlark#19 replay test is committed failing first. Repos without a stored policy count as `human`.
 3. **Build PR labels and paths.** Labels in the ledger query; the per-new-head paths read under the rate budget; `paths_json` and `paths_head` on the ledger row.
 4. **Build holds.** The table, plus `pack.coding.pr.hold` and the human-only `pack.coding.pr.release`; nothing reads them yet.
 5. **Wire holds into the sweep and events**, including automatic holds from `humanSignoff`. Held PRs get no merge text and no reminders, and the owner is told once.
