@@ -27,25 +27,12 @@ function save(
 }
 
 describe('pack preference lookup', () => {
-  test('seeds all four approved repository policies with provenance', () => {
+  test('creates an empty settings store without applying install-specific defaults', () => {
     const db = fixture();
-    for (const [repo, policy, paths] of [
-      ['lsm/HyperNeo', 'review_bot', ['docs/design/**', 'docs/architecture/**']],
-      ['lsm/qlark', 'review_bot', ['docs/design/**', 'docs/plan/**']],
-      ['lsm/research', 'ci_only', []],
-      ['lsm/ops', 'ci_only', []],
-    ] as const) {
-      expect(
-        getNeoPackPreference(db, 'coding', { kind: 'repo', key: repo }, 'mergePolicy')
-      ).toMatchObject({ value: policy, setBy: 'seed', scope: { kind: 'repo', key: repo } });
-      expect(
-        getNeoPackPreference(db, 'coding', { kind: 'repo', key: repo }, 'humanSignoff')?.value
-      ).toEqual(paths);
-      expect(
-        getNeoPackPreference(db, 'coding', { kind: 'repo', key: repo }, 'reviewBot')?.value
-      ).toBe(policy === 'review_bot' ? 'hyperneo-ai-test' : undefined);
-    }
-    expect(db.prepare('SELECT COUNT(*) AS n FROM neo_pack_preferences').get()).toEqual({ n: 10 });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM neo_pack_preferences').get()).toEqual({ n: 0 });
+    expect(
+      getNeoPackPreference(db, 'coding', { kind: 'repo', key: 'synthetic/new' }, 'mergePolicy')
+    ).toBeNull();
   });
   test('missing is unanswered; exact scope wins over same-pack global, including false and zero', () => {
     const db = fixture();
@@ -69,9 +56,9 @@ describe('pack preference lookup', () => {
       getNeoPackPreference(db, 'coding', { kind: 'global', key: '' }, 'mergePolicy')?.value
     ).toBe('human');
   });
-  test('reapplying seed preserves human settings and unrelated stored bytes', () => {
+  test('reapplying schema preserves human settings and unrelated stored bytes', () => {
     const db = fixture();
-    save(db, 'coding', 'repo', 'lsm/qlark', 'mergePolicy', 'human');
+    save(db, 'coding', 'repo', 'synthetic/repo', 'mergePolicy', 'human');
     save(db, 'custom', 'project', 'synthetic', 'data', 'stored bytes '.repeat(1000));
     const before = db
       .prepare('SELECT * FROM neo_pack_preferences ORDER BY pack, scope_key, key')
