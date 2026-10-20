@@ -192,8 +192,16 @@ adds its journey here.
    its turn ends. A `work.send '{"ref":{"adapter":"hyperneo","id":"<B>"},"message":"…","from":"session:<A>"}'`
    lands in B ending `Reply with mcp__hyperneo-operations__invoke {"name":"message.send","input":{"sessionId":"<A>",…}}, not SendMessage.`, and
    `neo.question.get '{"questionId":"made-up"}'` replies `not_found: no such question.`
+12. **A worker outside HyperNeo messages a session from Bash.** `session-cli.sh <port> "$RUN"`
+   runs `bun packages/cli/main.ts send <B> "Tests pass."` with only
+   `CODEX_THREAD_ID` set, then with no sender variable, then `question made-up`,
+   all against `<run>/data/session-door.sock` (owner-only). End state: the first
+   send is accepted and B's row is `task` input wrapped as
+   `from-session="codex-desktop:verify-thread"`; the second exits 1 with
+   `hyperneo send: no sender…` and sends nothing; the question replies
+   `not_found`. Stopping the daemon removes the socket.
 
-11. **Root Neo owns goals outside any Space.** After journey 1 opened root, run
+13. **Root Neo owns goals outside any Space.** After journey 1 opened root, run
     `VERIFY_PORT=9311 .claude/skills/verify/session-goal.sh "$RUN"`. It creates a goal
     for root through `goal.session.create`, first without metrics or a done-test, then
     with one, updates it, and lists it. End state: `evidence/goal-refused.json` holds
