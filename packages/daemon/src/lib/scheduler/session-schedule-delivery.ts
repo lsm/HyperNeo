@@ -30,6 +30,11 @@ export function createScheduleDelivery(db: Database, registry: () => OperationRe
       const result = await invoke('work.status', { ref });
       if (!result.ok) return result.reason === 'not_found' ? 'not_found' : 'not_open';
       if (!result.value?.status) throw new Error('work.status returned no work');
+      if (result.value.status === 'stopped' && ref.adapter === 'hyperneo' && !ref.daemon) {
+        const session = db.getSession(ref.id);
+        if (!session) return 'not_found';
+        if (sessionUnavailable(session.status)) return 'not_open';
+      }
       return result.value.status;
     },
     deliver: async (

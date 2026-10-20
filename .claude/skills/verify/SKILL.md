@@ -67,7 +67,7 @@ UI is served, that RPC answers, and that the mock model API is up. It ends with
   `sqlite3 -readonly "$RUN/data/daemon.db" "SELECT ..."`. Only the seed and
   check scripts write to it: `seed-todo.sh` and `seed-ledger.sh` (journeys 3 and 4),
   `merge-check.sh` (journey 7), `archive-guard-check.sh` (journey 10) and
-  `seed-start-question.sh` (journey 12), and `quote-summary-check.mjs` (journey 14).
+  `seed-start-question.sh` (journey 12), and `quote-summary-check.mjs` (journey 14), and `seed-schedule-interrupt.ts` (journey 22).
 - Web UI: open `http://127.0.0.1:<port>/neo` (Neo) or
   `/session/<sessionId>` (a session) in the browser; read the page text and take
   a screenshot.
@@ -316,6 +316,18 @@ adds its journey here.
     This gives external adapters at-most-once submission per occurrence: a crash
     before submission may miss that occurrence, and a later cadence can try again.
     Real external-adapter delivery is not verified by this journey.
+
+22. **Interrupting an open session preserves its schedule.** Run
+    `bun .claude/skills/verify/seed-schedule-interrupt.ts <port> "$RUN"` against an
+    isolated daemon. The helper checks the test-mode log and database path before
+    seeding a user-interrupted processing state on its newly created session.
+    `work.status` reads `stopped`, but the due reminder must read `active` with
+    `skipped_busy`, due count 1 and a future cadence through `schedule.session.list`.
+    No message is delivered. Evidence: `evidence/session-schedule-interrupt.json`.
+    The helper deletes its schedule after capturing evidence. The focused delivery
+    test also returns the target to idle and observes a fired reminder on its next
+    cadence. Stopped adapters with unknown lifecycle skip busy; local ended/archived
+    targets are recognized from their session row and still complete as target_gone.
 
 ## Evidence
 

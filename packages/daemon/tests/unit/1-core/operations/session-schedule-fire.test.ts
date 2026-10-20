@@ -81,7 +81,7 @@ describe('session schedule firing', () => {
     digest = 'b';
     expect(await fire(initial.id)).toMatchObject({ lastOutcome: 'fired', factsDigest: 'b' });
   });
-  test.each(['running', 'queued', 'needs_you'] as const)(
+  test.each(['running', 'queued', 'stopped', 'needs_you'] as const)(
     '%s skips to a future cadence, counts each due, then nudges when idle',
     async (busy) => {
       const row = create();

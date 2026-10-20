@@ -45,9 +45,9 @@ export function createSessionScheduleFire(deps: ScheduleFireDeps) {
     .pipe(
       async (schedule: SessionSchedule): Promise<Gate<SessionSchedule>> => {
         const status = await deps.status(schedule.target);
-        if (status === 'stopped' || status === 'not_found' || status === 'not_open')
-          return finish(schedule, 'target_gone');
-        if (status === 'running' || status === 'queued') return finish(schedule, 'skipped_busy');
+        if (status === 'not_found' || status === 'not_open') return finish(schedule, 'target_gone');
+        if (status === 'running' || status === 'queued' || status === 'stopped')
+          return finish(schedule, 'skipped_busy');
         if (status === 'needs_you') return finish(schedule, 'skipped_needs_you');
         return { value: schedule };
       },
