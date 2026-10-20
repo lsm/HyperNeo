@@ -16,6 +16,9 @@ import {
 import { WorkDetailSchema } from '../../../../src/lib/drivers/types';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
+import { invokeOperation } from '../../../../src/lib/operations/invoke';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 
 const NOW = Date.parse('2026-10-04T12:00:00.000Z');
 
@@ -440,6 +443,39 @@ describe('codex-desktop adapter status and send', () => {
   }
 
   const ref = (id: string) => ({ adapter: 'codex-desktop', id });
+
+  test('work.send steers a running Codex turn instead of queuing it', async () => {
+    const calls: string[] = [];
+    const driver = adapter(0, '', async () => ({
+      call: async (method) => {
+        calls.push(method);
+        if (method === 'thread/turns/list')
+          return { data: [{ id: 'live-turn', status: 'inProgress' }] };
+        if (method === 'turn/steer') return { turnId: 'live-turn' };
+        return { queuedSubmission: { id: 'queued' } };
+      },
+      close: () => {},
+    }));
+    const registry = createOperationRegistry(
+      createWorkVerbOperations({
+        adapters: () => [driver],
+        daemonName: 'test',
+        remote: { list: () => [], invoke: async () => ({}) },
+      })
+    );
+    expect(
+      await invokeOperation(
+        registry,
+        'work.send',
+        { ref: ref('busy'), message: 'use the parser' },
+        { source: 'mcp', role: 'neo', sessionId: 'neo' }
+      )
+    ).toEqual({
+      kind: 'completed',
+      value: { ok: true, value: { delivered: true, steeredIntoTurnId: 'live-turn' } },
+    });
+    expect(calls).toEqual(['thread/turns/list', 'turn/steer']);
+  });
 
   test('stop interrupts the running turn through the shared app-server', async () => {
     const calls: Array<[string, Record<string, unknown>]> = [];
