@@ -28,6 +28,8 @@ const text = 'SYNTHETIC_HANDOFF_REPORT\n'.padEnd(8192, 'x');
 assert.equal(Buffer.byteLength(text), 8192);
 const input = {to: 'neo:verify-handoff', text, idempotencyKey: 'synthetic-one-call'};
 const drafts = handoffDraftDirectory(join(run, 'data'), worker);
+const interruptedDraft = join(drafts, `message-${createHash('sha256').update(text).digest('hex')}.txt`);
+writeFileSync(interruptedDraft, text.slice(0,32));
 const privateFile = join(run, 'data', 'private.md');
 writeFileSync(privateFile, 'SYNTHETIC_PRIVATE_MUST_NOT_BE_READ');
 assert(!existsSync(join(run, 'data/daemon.db')), 'requires a fresh synthetic DB');
@@ -56,7 +58,7 @@ const server = Bun.serve({
     let tool: { name: string; input: unknown } | undefined;
     if (mode === 'worker') {
       if (step === 0) tool = { name: 'mcp__hyperneo-operations__invoke', input: { name: 'message.send', input } };
-      if (step === 1) { const receipt = object(results['worker-0']); reference = receipt.files?.[0]; }
+      if (step === 1) { const receipt = object(results['worker-0']); reference = receipt.files?.[0]; if (reference) tool = {name:'mcp__hyperneo-operations__invoke',input:{name:'message.send',input:{to:'neo:verify-handoff',text:'Too many explicit files',files:Array.from({length:21},() => reference)}}}; }
     } else {
       if (step === 0) tool = { name: 'mcp__hyperneo-operations__invoke', input: { name: 'handoff.read', input: { reference } } };
       if (step === 1) tool = { name: 'Read', input: { file_path: reference.path } };
@@ -104,6 +106,10 @@ try {
   assert(reference!, results['worker-0'] ?? 'worker must receive a real MCP send receipt');
   assert.equal(reference.sha256, createHash('sha256').update(text).digest('hex'));
   assert.equal(readFileSync(reference.path as string, 'utf8'), text);
+  assert.equal(readFileSync(interruptedDraft,'utf8'),text.slice(0,32));
+  const attachmentLimit = object(results['worker-1']);
+  assert.equal(attachmentLimit.code,'invalid_input');
+  assert(attachmentLimit.message.includes('20'));
   const receipt = object(results['worker-0']);
   const row = core.getDb().prepare("SELECT payload FROM job_queue WHERE queue='mailbox'").get() as {payload:string};
   const entry = JSON.parse(row.payload);
@@ -134,7 +140,7 @@ try {
   const read = object(results['neo-0']);
   assert.equal(Buffer.from(read.data, 'base64').toString(), text);
   assert(results['neo-1'].includes('SYNTHETIC_HANDOFF_REPORT'));
-  writeFileSync(join(run, 'evidence.json'), JSON.stringify({ reference, receipt, cliReceipt, reportBytes: Buffer.byteLength(text), maxLagMs, actualWorkerMcpSend: true, actualNeoMcpRead: true, actualNeoNativeRead: true, actualCliUnixDoor:true, replayAfterDatabaseReopenAndJobCleanup:true, automaticSdkMailboxConsumptionVerified:false, results }, null, 2));
+  writeFileSync(join(run, 'evidence.json'), JSON.stringify({ reference, receipt, cliReceipt, reportBytes: Buffer.byteLength(text), maxLagMs, actualWorkerMcpSend: true, interruptedDraftIgnored:true, actualMcpAttachmentLimit:true, actualNeoMcpRead: true, actualNeoNativeRead: true, actualCliUnixDoor:true, replayAfterDatabaseReopenAndJobCleanup:true, automaticSdkMailboxConsumptionVerified:false, results }, null, 2));
   assert(maxLagMs < 1000, `Synthetic send/read event-loop lag ${maxLagMs} ms`);
   console.log(join(run, 'evidence.json'));
 } finally { clearInterval(lagTimer); child?.kill(); await door?.close(); await server.stop(true); core.close(); }

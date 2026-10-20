@@ -1113,3 +1113,7 @@ consumer or a GUI. It closes SDK streams, the socket and mock server in `finally
 Preserve evidence outside the worktree, then remove only the synthetic run before
 repository checks. Keep the same-user trust boundary from PR1: no OS isolation is
 claimed, and reads detect changed published bytes instead of returning them.
+The contract suite also seeds an interrupted partial draft and sends the same
+report concurrently to different recipients; every accepted report must retain
+all bytes. Explicit file arrays accept 20 references; 21 must return a schema error
+that names the limit and the option of sending additional references separately.

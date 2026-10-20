@@ -87,7 +87,13 @@ export const SendMessageInputSchema = z
       .optional(),
     to: z.union([MessageSessionIdSchema, AgentReferenceSchema]).optional(),
     text: z.string().min(1).optional(),
-    files: z.array(HandoffReference).optional(),
+    files: z
+      .array(HandoffReference)
+      .max(
+        20,
+        'At most 20 published file references per send; send additional references in another message'
+      )
+      .optional(),
     idempotencyKey: z.string().min(1).max(200).optional(),
     deliveryMode: z.enum(['immediate', 'defer']).optional(),
     from: z.string().min(1).max(500).optional(),
@@ -398,13 +404,9 @@ async function prepareHandoff(
       if (!caller.sessionId)
         throw new Error('session_required: publish large reports with handoff.publish');
       const sha = digest(text);
-      const name = `message-${sha}.txt`;
+      const name = `message-${generateUUID()}.txt`;
       const path = join(handoffDraftDirectory(dataDir, caller.sessionId), name);
-      await writeFile(path, text, { flag: 'wx', mode: 0o600 }).catch(
-        (error: NodeJS.ErrnoException) => {
-          if (error.code !== 'EEXIST') throw error;
-        }
-      );
+      await writeFile(path, text, { flag: 'wx', mode: 0o600 });
       const published = await publishHandoff(dataDir, caller.sessionId, name);
       if (published.kind !== 'published') throw new Error(published.kind);
       if (

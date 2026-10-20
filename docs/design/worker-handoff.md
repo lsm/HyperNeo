@@ -67,7 +67,10 @@ operation returns only bytes captured from the descriptor it hashed. Neither
 interface claims protection against a same-user process changing the SDK itself.
 PR2 accepts `message.send {to, text, files?, idempotencyKey?}` as well as the
 legacy nested SDK envelope. `files` contains complete published references, not
-source paths. Workers may attach their own artifacts; Neo and the human may
+source paths. At most 20 explicit references are accepted per send; additional
+references can be sent in another message without trimming any artifact. Spill
+writes use unique exclusive drafts, closed before publication, so interrupted
+drafts and concurrent sends cannot poison later reports. Workers may attach their own artifacts; Neo and the human may
 forward existing published artifacts. New simple text over 4 KiB UTF-8 is
 published through the same outbox path and replaced by a descriptor plus structured
 references in the mailbox. Legacy envelope content stays unchanged. Local
