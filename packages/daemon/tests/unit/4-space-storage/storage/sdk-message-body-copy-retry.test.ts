@@ -11,6 +11,7 @@ import { configureLogger, LogLevel, subscribeToStructuredLogs } from '../../../.
 
 const directories: string[] = [];
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   configureLogger({ level: LogLevel.SILENT });
@@ -24,6 +25,76 @@ function location() {
 }
 
 describe('SDK body copy retry safety', () => {
+  test('a delayed Space-ready callback after close starts no copy or retry timer', async () => {
+    const core = new DatabaseCore(location());
+    await core.initialize();
+    configureLogger({ level: LogLevel.INFO });
+    const logs: string[] = [];
+    const unsubscribe = subscribeToStructuredLogs((event) => logs.push(event.message));
+    let ready!: () => void;
+    const delayed = new Promise<void>((resolve) => {
+      ready = resolve;
+    }).then(() => core.startSdkMessageBodyCopy());
+    core.close();
+    vi.stubGlobal('Worker', class {});
+    vi.useFakeTimers();
+    try {
+      ready();
+      await delayed;
+      await vi.advanceTimersByTimeAsync(120000);
+      expect(logs.filter((line) => line.includes('SDK body copy'))).toEqual([]);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      unsubscribe();
+      core.close();
+    }
+  });
+
+  test('failed backup verification logs operator action once and never automatically rehashes', async () => {
+    const core = new DatabaseCore(location());
+    await core.initialize();
+    configureLogger({ level: LogLevel.INFO });
+    const logs: { message: string; level: string }[] = [];
+    const unsubscribe = subscribeToStructuredLogs((event) =>
+      logs.push({ message: event.message, level: String(event.level) })
+    );
+    let verifications = 0;
+    vi.stubGlobal(
+      'Worker',
+      class {
+        onmessage?: (event: { data: unknown }) => void;
+        terminate() {}
+        postMessage(request: { id: number }) {
+          verifications++;
+          queueMicrotask(() =>
+            this.onmessage?.({
+              data: {
+                id: request.id,
+                error: 'backup digest mismatch',
+                errorCode: 'verification_failed',
+              },
+            })
+          );
+        }
+      }
+    );
+    vi.useFakeTimers();
+    try {
+      core.startSdkMessageBodyCopy();
+      await vi.advanceTimersByTimeAsync(1);
+      await vi.advanceTimersByTimeAsync(180000);
+      expect(verifications).toBe(1);
+      const errors = logs.filter((event) => event.message.includes('operator action'));
+      expect(errors).toHaveLength(1);
+      expect(errors[0].level.toLowerCase()).toBe('error');
+      expect(logs.some((event) => event.message.includes('deferred'))).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      unsubscribe();
+      core.close();
+    }
+  });
+
   test('retains one backup destination across failures before a first chunk and a restart', async () => {
     const path = location(),
       signal = new AbortController().signal;
