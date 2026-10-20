@@ -183,7 +183,7 @@ A convention is built on the existing `neo.rule.save` (`packages/daemon/src/lib/
 
 ## Tests (what a user can observe)
 
-- **Each policy:** a repo with that policy gets the right nudges for an approved, green PR. `review_bot` and `ci_only` get "merge"; `human` gets none.
+- **Each policy:** a repo with that policy gets the right nudges for an approved, green PR. `review_bot` and `ci_only` get "merge"; `human` gets none until the human approves that head, then gets "merge".
 - **Sign-off match:** a PR matching `humanSignoff` in a `review_bot` repo shows `waiting_human`, the owner gets no merge text, and the snapshot shows the hold.
 - **Lifting:** answering the linked question "yes" lifts the hold and allows the merge nudge, and it stays lifted on later sweeps of that head. A new head re-holds and asks once. "No" keeps the hold and tells the owner.
 - **First use:** one question per new repo, none after it's answered, and no merge nudges before the answer.
