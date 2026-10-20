@@ -88,15 +88,15 @@ describe('scheduled wakes in the public conversation', () => {
     expect(JSON.stringify(wakes)).not.toContain('Not from this wake');
   });
 
-  test('only the shared consumed_seq terminal settles a wake, including a no-additions run', () => {
+  test('a separately allocated terminal settles its consumed wake without additions', () => {
     const fixture = seedNeoWake(db.getDatabase(), conversationId, false);
-    fixture.finish(false, 'Later turn must not settle the wake.');
     const reader = new NeoConversationReader(db.getDatabase());
     const read = () =>
       reader.read({ conversationId, limit: 100 }).items.find((item) => item.role === 'wake');
     const cursor = read()!.cursor;
     expect(read()).toMatchObject({ wake: { settledAt: null, summary: null, additions: [] } });
     const result = fixture.finish();
+    expect(result.consumed).toBeGreaterThan(fixture.input.consumed);
     db.getDatabase()
       .prepare('UPDATE sdk_messages SET timestamp = ? WHERE sdk_uuid = ?')
       .run(result.timestamp, fixture.messageId);
@@ -110,6 +110,33 @@ describe('scheduled wakes in the public conversation', () => {
     expect(read()!.cursor).toEqual(cursor);
     db.getDatabase().exec('UPDATE sessions SET processing_state = \'{"status":"processing"}\'');
     expect(read()).toMatchObject({ wake: { settledAt: Date.parse(result.timestamp) } });
+  });
+
+  test('a terminal after the next consumed input cannot settle an earlier wake', () => {
+    const fixture = seedNeoWake(db.getDatabase(), conversationId, false);
+    const next = fixture.nextInput();
+    const terminal = fixture.finish('Only the later input finished.');
+    expect(next.consumed).toBeGreaterThan(fixture.input.consumed);
+    expect(terminal.consumed).toBeGreaterThan(next.consumed);
+    const reader = new NeoConversationReader(db.getDatabase());
+    expect(
+      reader.read({ conversationId }).items.find((item) => item.role === 'wake')
+    ).toMatchObject({
+      wake: { settledAt: null, summary: null, additions: [] },
+    });
+  });
+
+  test('later turns do not replace an already settled wake summary', () => {
+    const fixture = seedNeoWake(db.getDatabase(), conversationId, false);
+    const terminal = fixture.finish();
+    fixture.nextInput();
+    fixture.finish('An unrelated later summary.');
+    const reader = new NeoConversationReader(db.getDatabase());
+    expect(
+      reader.read({ conversationId }).items.find((item) => item.role === 'wake')
+    ).toMatchObject({
+      wake: { settledAt: Date.parse(terminal.timestamp), summary: 'Guide cycle complete.' },
+    });
   });
 
   test('equal-time wakes page both ways and exclude other sessions, skips and undelivered origins', () => {

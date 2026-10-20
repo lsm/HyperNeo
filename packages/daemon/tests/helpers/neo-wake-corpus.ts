@@ -24,28 +24,32 @@ export function seedNeoWake(db: Database, conversationId: string, additions = tr
     Date.now(),
     `scheduled_wake:${JSON.stringify({ scheduleId, sourceKind: 'goal', sourceId: goal.id })}`
   );
-  if (
-    !sdk.saveSDKMessage(
+  const saveInput = (uuid: string, content: string) => {
+    sdk.saveUserMessage(
       sessionId,
       {
         type: 'user',
-        uuid: messageId,
-        message: { role: 'user', content: 'PRIVATE_WAKE_INSTRUCTIONS' },
+        uuid,
+        message: { role: 'user', content },
         inputKind: 'system',
       } as SDKMessage,
+      'enqueued',
       'system'
-    )
-  )
-    throw new Error('Wake fixture rejected');
+    );
+    if (sdk.markDeliveryConsumedByUuids(sessionId, [uuid]).length !== 1)
+      throw new Error('Wake fixture was not consumed');
+    return db
+      .prepare(
+        'SELECT seq, consumed_seq AS consumed FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ?'
+      )
+      .get(sessionId, uuid) as { seq: number; consumed: number };
+  };
+  const input = saveInput(messageId, 'PRIVATE_WAKE_INSTRUCTIONS');
+  const nextInput = () => saveInput(crypto.randomUUID(), 'An unrelated next input.');
   db.prepare('UPDATE sessions SET processing_state = ? WHERE id = ?').run(
     '{"status":"processing"}',
     sessionId
   );
-  const input = db
-    .prepare('SELECT seq FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ?')
-    .get(sessionId, messageId) as { seq: number };
-  db.prepare('UPDATE sdk_messages SET consumed_seq = ? WHERE seq = ?').run(input.seq, input.seq);
-  db.exec('UPDATE delivery_consumed_seq SET next_seq = MAX(next_seq, 1000)');
   const expected: { kind: string; id: string; label: string }[] = [];
   if (additions) {
     const store = new NeoAskTodoRepository(db);
@@ -120,7 +124,7 @@ export function seedNeoWake(db: Database, conversationId: string, additions = tr
       createdAt: Date.now(),
     });
   }
-  const finish = (shareInput = true, text = 'Details first.\nGuide cycle complete.') => {
+  const finish = (text = 'Details first.\nGuide cycle complete.') => {
     const uuid = crypto.randomUUID();
     if (
       !sdk.saveSDKMessage(sessionId, {
@@ -138,12 +142,7 @@ export function seedNeoWake(db: Database, conversationId: string, additions = tr
         'SELECT consumed_seq AS consumed, timestamp FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ?'
       )
       .get(sessionId, uuid) as { consumed: number; timestamp: string };
-    if (shareInput)
-      db.prepare('UPDATE sdk_messages SET consumed_seq = ? WHERE seq = ?').run(
-        result.consumed,
-        input.seq
-      );
     return { ...result, uuid };
   };
-  return { goal, scheduleId, messageId, expected, input, finish };
+  return { goal, scheduleId, messageId, expected, input, nextInput, finish };
 }
