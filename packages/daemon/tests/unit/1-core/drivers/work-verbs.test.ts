@@ -108,6 +108,35 @@ describe('work verb operations', () => {
     });
   });
 
+  test('forwards send intent to the owning daemon', async () => {
+    const forwarded: unknown[] = [];
+    const result = await call(
+      'work.send',
+      {
+        ref: { adapter: 'codex-desktop', id: 'busy', daemon: 'laptop' },
+        message: 'now',
+        mode: 'steer',
+      },
+      async (_daemon, name, input) => {
+        forwarded.push({ name, input });
+        return { ok: false, reason: 'not_delivered', detail: 'NoActiveTurn' };
+      },
+      { source: 'rpc', principal: 'local' }
+    );
+    expect(result).toMatchObject({ ok: false, reason: 'not_delivered' });
+    expect(forwarded).toEqual([
+      {
+        name: 'work.send',
+        input: {
+          ref: { adapter: 'codex-desktop', id: 'busy' },
+          message: 'now',
+          mode: 'steer',
+          from: 'chat',
+        },
+      },
+    ]);
+  });
+
   test('keeps delivery facts in driver result schemas', () => {
     for (const fact of [{ queuedSubmissionId: 'q1' }, { steeredIntoTurnId: 't1' }]) {
       const result = { ok: true, value: { delivered: false, ...fact } };
