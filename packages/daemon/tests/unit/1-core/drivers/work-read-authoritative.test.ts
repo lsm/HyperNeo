@@ -321,6 +321,81 @@ describe('authoritative work.read', () => {
     expect(digest()).toBe(before);
   });
 
+  test('sessions excluded from agent-visible search cannot expose SDK bodies', async () => {
+    const ids = [
+      'room:chat:private',
+      'planner:private',
+      'coder:private',
+      'leader:private',
+      'general:private',
+      'neo:private',
+      'private:internal',
+      'archived-worker',
+      'room-worker',
+      'room-context',
+      'ended-old',
+    ];
+    const insert = db.prepare(
+      "INSERT INTO sessions (id,title,created_at,last_active_at,status,config,metadata) VALUES (?,?,'2026-10-20','2026-10-20','active','{}','{}')"
+    );
+    for (const id of ids) {
+      insert.run(id, id);
+      put(`private-${id}`, 'assistant', [{ type: 'text', text: 'HIDDEN_PRIVATE_TRANSCRIPT' }], {
+        session: id,
+        split: true,
+      });
+    }
+    db.prepare("UPDATE sessions SET status='archived' WHERE id='archived-worker'").run();
+    db.prepare("UPDATE sessions SET type='room_chat' WHERE id='room-worker'").run();
+    db.prepare("UPDATE sessions SET session_context=? WHERE id='room-context'").run(
+      JSON.stringify({ roomId: 'private-room' })
+    );
+    db.prepare("UPDATE sessions SET status='ended',last_active_at=? WHERE id='ended-old'").run(
+      new Date(Date.now() - 31 * 86400000).toISOString()
+    );
+    for (const sessionId of ids) {
+      const result = await invoke({ sessionId });
+      expect(result).toMatchObject({
+        kind: 'completed',
+        value: { ok: false, reason: 'not_found' },
+      });
+      expect(JSON.stringify(result)).not.toContain('HIDDEN_PRIVATE_TRANSCRIPT');
+    }
+    for (const sessionId of ['space:visible', 'ended-recent']) {
+      insert.run(sessionId, sessionId);
+      if (sessionId === 'ended-recent')
+        db.prepare("UPDATE sessions SET status='ended',last_active_at=? WHERE id=?").run(
+          new Date().toISOString(),
+          sessionId
+        );
+      put(`allowed-${sessionId}`, 'assistant', [{ type: 'text', text: 'Visible report' }], {
+        session: sessionId,
+      });
+      expect(await invoke({ sessionId })).toMatchObject({
+        kind: 'completed',
+        value: { ok: true, value: { turns: [{ text: 'Visible report' }] } },
+      });
+    }
+  });
+
+  test('archiving between pages denies reads without deleting the stored report', async () => {
+    put('older', 'assistant', [{ type: 'text', text: 'Older report' }]);
+    put('latest', 'assistant', [{ type: 'text', text: 'Latest report' }]);
+    const value = await page({ before: 0, after: 0 });
+    expect(value.nextCursor).toBeDefined();
+    const before = digest();
+    db.prepare("UPDATE sessions SET status='archived' WHERE id='worker'").run();
+    expect(await invoke({ sessionId: 'worker', cursor: value.nextCursor })).toMatchObject({
+      kind: 'completed',
+      value: { ok: false, reason: 'not_found' },
+    });
+    expect(digest()).toBe(before);
+    db.prepare("UPDATE sessions SET status='active' WHERE id='worker'").run();
+    expect(
+      (await page({ cursor: value.nextCursor, before: 0, after: 0 })).turns.map((t) => t.text)
+    ).toEqual(['Older report']);
+  });
+
   test('external drivers retain their existing indexed source', async () => {
     db.prepare(
       "INSERT INTO message_search_content(kind,source_id,message_id,session_id,message_type,body,timestamp) VALUES ('codex','source','message','external','assistant','External reply',1)"
