@@ -1905,6 +1905,28 @@ later slices. Review-author login is read now to enforce designated-bot approval
 unknown/stale authors never count. This journey proves the nudge decision and
 snapshot, not live GitHub transport, actual delivery or later worker merge checks.
 
+## Web schedule strip (G7b)
+
+Build the web and launch a fresh isolated daemon as above. Run
+`bun .claude/skills/verify/session-schedule-web.ts <port> "$RUN"`, then the
+headless `.claude/skills/verify/session-schedule-web.mjs <port> "$RUN"` with a
+Node runtime that can resolve Playwright. `VERIFY_BROWSER` may name a local
+Chromium executable, always launched headless with a fresh profile.
+
+The helper creates only synthetic Neo/session goals and reminders through RPC;
+last-outcome/skip/nudge values are explicit DB fixtures, not proof of wake delivery.
+The browser opens both `/neo` and `/session/<id>` at 1280/390px. Each strip starts
+folded and shows only its own target's rows. Expand it, inspect interval/cron,
+next/last timestamps, skip reason and nudge distance, then open the goal title's
+read-only definition. Pause/resume must update both UI and a fresh real RPC read.
+Screenshots: `evidence/schedules-{neo,session}-{1280,390}.png`; assertions and
+observed text: `evidence/schedule-web.json`. Inspect screenshots as well.
+
+The strip refreshes every 30s while visible, on window focus and explicit refresh,
+and after controls. Goal titles use a disclosure until G6 adds the full goal panel;
+this journey does not claim a journal or cross-page goal link. No GUI, model,
+provider, real data or GitHub is used. Stop the daemon/mock with `stop.sh`.
+
 ## Source-labelled schedule list (G7 contract)
 
 On a fresh isolated daemon from Launch, run

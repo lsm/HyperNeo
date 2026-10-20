@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionScheduleView } from '@hyperneo/shared/types/session-schedule';
 import { SessionSchedules } from '../SessionSchedules.tsx';
@@ -76,7 +76,7 @@ describe('SessionSchedules', () => {
     });
     expect(container.querySelector('details')?.open).toBe(true);
     expect(screen.getByText('Every 60 min')).toBeTruthy();
-    expect(screen.getByText('Nudge in 2')).toBeTruthy();
+    expect(screen.getByText(/Nudge in 2/)).toBeTruthy();
     expect(screen.getByText(/Skipped · Session busy/)).toBeTruthy();
     expect([...container.querySelectorAll('time')].map((time) => time.dateTime)).toEqual([
       new Date(row.nextRunAt!).toISOString(),
@@ -131,7 +131,7 @@ describe('SessionSchedules', () => {
     fireEvent.click(screen.getByText('Schedules'));
     expect(screen.getByText('0 9 * * * · Asia/Shanghai')).toBeTruthy();
     expect(screen.getByText('Source unavailable')).toBeTruthy();
-    expect(screen.getByText('Session closed')).toBeTruthy();
+    expect(screen.getByText(/Session closed/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Resume' })).toBeNull();
   });
   it('keeps refused mutations visible and allows a fresh read without changing status', async () => {
@@ -180,12 +180,46 @@ describe('SessionSchedules', () => {
     rerender(<SessionSchedules sessionId={null} />);
     expect(screen.queryByText('Schedules')).toBeNull();
   });
+  it('updates run facts on the visible refresh without replacing the disclosure', async () => {
+    const hidden = document.hidden;
+    Object.defineProperty(document, 'hidden', { value: false, configurable: true });
+    vi.useFakeTimers();
+    try {
+      const { container } = render(<SessionSchedules sessionId="root" />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      const details = container.querySelector('details')!;
+      details.open = true;
+      rows = [{ ...row, dueCount: 0, lastOutcome: 'fired', lastSkipReason: null }];
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30000);
+      });
+      expect(request).toHaveBeenCalledTimes(2);
+      vi.useRealTimers();
+      await screen.findByText(/Delivered/);
+      expect(screen.getByText(/Nudge in 4/)).toBeTruthy();
+      expect(container.querySelector('details')).toBe(details);
+      expect(details.open).toBe(true);
+    } finally {
+      vi.useRealTimers();
+      Object.defineProperty(document, 'hidden', { value: hidden, configurable: true });
+    }
+  });
+  it('shows a goal read failure without losing schedule controls', async () => {
+    render(<SessionSchedules sessionId="root" />);
+    await open();
+    request.mockResolvedValueOnce({ accepted: false, reason: 'Goal no longer exists' });
+    fireEvent.click(screen.getByRole('button', { name: 'Ship guide' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Goal no longer exists');
+    expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
+  });
   it('localizes the visible strip and controls', async () => {
     locale.value = 'zh-Hans';
     render(<SessionSchedules sessionId="root" />);
     await screen.findByText('Ship guide');
     expect(screen.getByText('定时检查')).toBeTruthy();
-    expect(screen.getByText('还有 2 次提醒')).toBeTruthy();
+    expect(screen.getByText(/还有 2 次提醒/)).toBeTruthy();
     expect(screen.getByRole('button', { name: '暂停', hidden: true })).toBeTruthy();
   });
 });
