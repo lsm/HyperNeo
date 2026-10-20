@@ -1,4 +1,4 @@
-import type { NeoBinding, NeoProject, NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { NeoBinding, NeoProject } from '@hyperneo/shared/types/neo-context';
 import { neoProjectMoveReason, neoProjectPath } from '@hyperneo/shared/types/neo-project-tree';
 import type { NeoProjectFacts } from '../../lib/neo/project-cleanup.ts';
 import type { Database } from '../sqlite-compat.ts';
@@ -8,21 +8,11 @@ const concernColumns = `id, title, summary, context, revision, parent_id AS pare
   created_at AS createdAt, updated_at AS updatedAt`;
 const bindingColumns = 'session_id AS sessionId, concern_id AS projectId, kind';
 export type NeoProjectInput = Pick<NeoProject, 'id' | 'title' | 'summary' | 'context'>;
-export interface NeoWorkTarget {
-  readonly id: string;
-  readonly targetSessionId: string | null;
-  readonly agent?: {
-    readonly spaceId: string;
-    readonly agentId: string;
-    readonly sessionId: string;
-  };
-}
 export class NeoRepository {
   readonly projectMerges: NeoProjectMergeRepository;
   constructor(
     private readonly db: Database,
-    private readonly notify: () => void = () => {},
-    private readonly onSettled: (work: NeoWork) => void = () => {}
+    private readonly notify: () => void = () => {}
   ) {
     this.projectMerges = new NeoProjectMergeRepository(db, notify);
   }

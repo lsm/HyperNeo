@@ -29,7 +29,6 @@ import { createNeoTables } from '../../../../src/storage/schema/neo';
 import { runMigration279 } from '../../../../src/storage/schema/m279-neo-consultations';
 import { runMigration282 } from '../../../../src/storage/schema/m282-neo-consultation-origins';
 import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins';
-import { NeoInputOriginRepository } from '../../../../src/storage/repositories/neo-input-origin-repository.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository';
 import { createTestDb, createTestSession } from '../../../helpers/database';
 import type { OperationCaller } from '../../../../src/lib/operations/registry';
