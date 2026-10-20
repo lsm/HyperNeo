@@ -58,18 +58,6 @@ db.transaction(() => {
   }
 })();
 const sql = NEO_WAKE_SELECT + ' ORDER BY at DESC, sequence DESC LIMIT ?';
-const python = `import sqlite3,sys,json,time
-c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True,cached_statements=0)
-sql=sys.argv[2]; args=(sys.argv[3],7)
-c.execute('PRAGMA cache_size=-2000')
-plan=list(c.execute('EXPLAIN QUERY PLAN '+sql,args))
-steps=[0]
-def count(): steps[0]+=100; return 0
-c.set_progress_handler(count,100)
-at=time.perf_counter(); rows=list(c.execute(sql,args)); ms=(time.perf_counter()-at)*1000
-print(json.dumps({'sqliteVersion':sqlite3.sqlite_version,'rows':len(rows),'ms':ms,'vmStepsApprox':steps[0],'plan':plan}))
-c.close()
-`;
 const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
 const pending = new Map<string, (data: unknown) => void>();
 const rpc = () =>
@@ -120,10 +108,14 @@ try {
           root,
           `u${i}`
         );
-    const result = spawnSync('/usr/bin/python3', ['-c', python, dbPath, sql, conversation], {
-      encoding: 'utf8',
-      env: { HOME: join(run, 'home'), PATH: '/usr/bin:/bin' },
-    });
+    const result = spawnSync(
+      '/usr/bin/python3',
+      ['packages/daemon/tests/helpers/sqlite-query-metrics.py', dbPath, sql, conversation],
+      {
+        encoding: 'utf8',
+        env: { HOME: join(run, 'home'), PATH: '/usr/bin:/bin' },
+      }
+    );
     assert.equal(result.status, 0, result.stderr);
     const cold = JSON.parse(result.stdout);
     const at = performance.now();
@@ -154,7 +146,7 @@ try {
     mode,
     sqliteVersion: db.prepare('SELECT sqlite_version() AS version').get(),
     counter:
-      'Python read-only SQLite progress handler every100 VM operations, same SQLite version; fresh connection not an OS cache flush',
+      'SQLite public C API stmt VM_STEP and db CACHE_MISS/HIT deltas via Python linked library; page reads are SQLite cache misses, not physical disk reads; fresh connection not OS cache flush',
     workBudget: originRows * 40 + 1000,
     cases,
   };
@@ -163,14 +155,12 @@ try {
   if (mode === 'verify')
     for (const c of cases)
       assert(
-        (c.coldConnection as { vmStepsApprox: number }).vmStepsApprox <= report.workBudget,
+        (c.coldConnection as { vmSteps: number }).vmSteps <= report.workBudget,
         'wake lookup work must scale with origins, not all SDK session messages'
       );
   else
     assert(
-      cases.some(
-        (c) => (c.coldConnection as { vmStepsApprox: number }).vmStepsApprox > report.workBudget
-      ),
+      cases.some((c) => (c.coldConnection as { vmSteps: number }).vmSteps > report.workBudget),
       'must reproduce excessive SDK traversal'
     );
 } finally {

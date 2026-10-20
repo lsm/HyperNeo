@@ -1,6 +1,13 @@
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { NeoConversationReader } from '../../../../src/storage/repositories/neo-conversation-reader';
-import { NeoConversationWakeRepository } from '../../../../src/storage/repositories/neo-conversation-wake-repository';
+import {
+  NEO_WAKE_SELECT,
+  NeoConversationWakeRepository,
+} from '../../../../src/storage/repositories/neo-conversation-wake-repository';
 import { createTestDb, createTestSession } from '../../../helpers/database';
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
@@ -100,4 +107,57 @@ test('latest and both cursor directions retain timestamp/SDK-sequence ordering a
   expect(reader.read({ conversationId, limit: 1, after: previous.nextAfter! }).items).toEqual([
     all[2],
   ]);
+});
+
+test.each([false, true])('wake lookup VM work scales with origins (has wakes: %s)', (positive) => {
+  const dir = mkdtempSync(join(tmpdir(), 'hn-wake-query-'));
+  try {
+    db.getDatabase().transaction(() => {
+      for (let i = 0; i < 20000; i++)
+        db.getDatabase()
+          .prepare(
+            'INSERT INTO sdk_messages (id,session_id,message_type,sdk_uuid,sdk_message,timestamp) VALUES (?,?,?,?,?,?)'
+          )
+          .run(
+            `bulk-${i}`,
+            `neo:${conversationId}`,
+            'user',
+            `bulk-${i}`,
+            '{}',
+            new Date(at).toISOString()
+          );
+      for (let i = 0; i < 200; i++)
+        db.getDatabase()
+          .prepare('INSERT INTO neo_input_origins VALUES (?,?,?,?,?,?)')
+          .run(
+            `neo:${conversationId}`,
+            `bulk-${i}`,
+            `neo:${conversationId}`,
+            `bulk-${i}`,
+            at,
+            'human:bulk'
+          );
+    })();
+    {
+      if (positive) put('wake');
+      const path = join(dir, positive ? 'positive.db' : 'empty.db');
+      db.getDatabase().prepare('VACUUM INTO ?').run(path);
+      const result = JSON.parse(
+        execFileSync(
+          '/usr/bin/python3',
+          [
+            resolve('tests/helpers/sqlite-query-metrics.py'),
+            path,
+            NEO_WAKE_SELECT + ' ORDER BY at DESC, sequence DESC LIMIT ?',
+            conversationId,
+          ],
+          { encoding: 'utf8' }
+        )
+      ) as { rows: number; vmSteps: number };
+      expect(result.rows).toBe(positive ? 1 : 0);
+      expect(result.vmSteps).toBeLessThan(201 * 40 + 1000);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
