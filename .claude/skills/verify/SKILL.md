@@ -812,3 +812,13 @@ other feed kinds remain searchable and vanished-feed callers await cleanup.
 Measurements establish the tested synthetic workloads, not a physical upper
 bound on disk I/O or deployed performance. Keep both JSON reports and the exact
 command as PR evidence; stored source data is never deleted.
+
+26. **Work-feed polls don't re-read the offsets table.** Run
+   `bun .claude/skills/verify/work-feed-offsets.ts [rows] [polls]` (default
+   2,700 rows, 35 polls, the live per-5-minute cadence) on synthetic data in a
+   temp DB. Each poll calls `readWorkFeedOffsets`, then writes one offset
+   through `saveWorkFeedChunk`. End state: `table reads=1` for any number of
+   polls. Before the in-memory offsets map it printed `table reads=35`. On the
+   live daemon, `select path, offset, size, mtime from work_feed_offsets` then
+   appears in the `sqlite.query` summaries only in the first window after a
+   restart.
