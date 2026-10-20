@@ -50,7 +50,7 @@ preferences?: Record<string, {
 }>;
 ```
 
-The core stores and serves values, and knows nothing about any pack's meaning. Lookup order: the exact scope, then `global` for that pack. A missing value counts as **unanswered**, not as the default.
+The core stores and serves values, and knows nothing about any pack's meaning. Lookup order: the exact scope, then `global` for that pack. A missing value counts as **unanswered**, not as the default. The coding pack's explicit pre-answer `sessionStrategy` behavior below is a runtime fallback; it does not store a default or mark the question answered.
 
 The first-use question is **generated from the declaration** and sent through the existing `neo.question.ask`. An enum becomes a choice question, a boolean a yes/no question, and globs, numbers and logins a reply question validated against the type. A setting may declare `askWhen: { key, equals }` so it's asked only when another setting has a given value. There is no separate question system.
 
@@ -61,6 +61,7 @@ The first-use question is **generated from the declaration** and sent through th
 | `mergePolicy` | enum: `review_bot`, `ci_only` or `human` | `review_bot`: the review bot's approval of the exact head plus green CI. `ci_only`: green CI with no review. `human`: the human reviews and merges or says so. |
 | `reviewBot` | `login`, asked only when `mergePolicy` is `review_bot` | The bot whose approval counts, for example `hyperneo-ai-test`. A `review_bot` repo with no `reviewBot` counts as `human` until it's answered. |
 | `humanSignoff` | `globs`: path globs, plus `label:<name>` entries for labels, for example `docs/design/**`, `docs/architecture/**`, `label:needs-human` | A PR that touches a matching path or carries a matching label is held for the human whatever the merge policy. |
+| `sessionStrategy` | enum: `long_lived` (default), `per_task`, `per_pr` | How Neo reuses or creates sessions on dispatch; before an answer it uses `long_lived` without storing it. See Session strategy. |
 
 **Where paths and labels come from.** The ledger's GraphQL read (`CODING_LEDGER_QUERY`, `pr-ledger.ts:101-115`) fetches neither today.
 
@@ -99,6 +100,74 @@ A **hold** overrides only merge readiness, under every policy: a held PR that wo
 - `approved_pending`'s next step loses "merge once CI is green" (`pr-sweep.ts:52`) and says only that CI is still running.
 - `waiting_ci` is new, with its own wording: "CI is still running; fix it if it fails". It gets a 60-minute entry in `CODING_PR_DEADLINE_MIN` (`pr-sweep.ts:6-13`), the same as `approved_pending`, because deadline-gated nudges are the only channel that delivers state wording. It never mentions merging, under any policy.
 - `waiting_human` gets no merge text and no deadline.
+
+## Session strategy
+
+Approved by the human in question `9bec1d4c-bf30-44d6-84c1-d179fcd0c572`
+(`yes`, "加进设计，默认长周期"). This is a repo-scoped coding setting,
+independent of merge policy; selecting a session never grants permission to merge.
+
+| Value | Dispatch behavior | Session lifetime |
+|---|---|---|
+| `long_lived` (default) | Reuse sessions named for work type: frontend, backend, iOS, or dev-1/2/3, never task titles. All PRs of one feature go to the same session. | Keep the session available for later work after a feature finishes. |
+| `per_task` | Start one session for each task; that task's follow-ups and PRs stay there. | Retire its assignment when the task is done. |
+| `per_pr` | Start one session for each PR; review fixes and CI fixes return to that PR's session. This offers the most parallelism and the highest token cost. | Retire its assignment when that PR's work is done. |
+
+**First dispatch.** When a repo has no stored `sessionStrategy`, Neo asks one
+choice question generated from its declaration, offering `long_lived` first.
+Repeated dispatches reuse the same open question. While unanswered, dispatch
+uses `long_lived`; it neither writes a preference nor claims the human answered.
+A human answer persists through the settings-question answer path. Later human
+changes use the same human-only settings rules. A strategy change affects future
+assignments, never moves a task already running or splits its active PR ownership.
+
+**Sources for "busy" and "related".** These are dispatch facts, not guesses from
+session titles, transcript similarity, or command lines:
+
+- The repo comes from the coding todo's resolved repository and workspace.
+  Candidates are existing, reusable sessions for that repo on a reachable driver
+  that supports continuing the work. A work-type name is descriptive, not a repo
+  identity or a reason to ignore an idle compatible session.
+- Busy comes from a fresh `work.status`/driver summary (`WorkSummarySchema.busy`,
+  `queued` or `running`) plus durable ownership in `neo_todos` and
+  `neo_todo_sessions`. A session with unfinished work remains occupied even if
+  its turn is idle while CI or review runs. `needs_you` also reserves it for its
+  current work; Neo doesn't steer around the human's prompt. A stale/unreachable
+  status is unknown, not evidence of an idle session or permission to create one.
+- Related comes from a durable repo + `featureKey` assignment to a `WorkRef`.
+  A todo uses its ask id as the default feature key; when several asks implement
+  one feature, Neo links them to one explicit shared key before dispatch. Existing
+  todo/session and PR-claim bindings attach later PRs and review work to that same
+  feature. Repo equality alone doesn't make two features related. Neo may choose
+  a work type from the task's intended role, but may not replace the stored
+  feature key with a title-based guess each time it dispatches.
+
+**`long_lived` decision order.** Look up the feature assignment first. If it has
+an available session, send there (`target.verb = 'send'` / `work.send`); if it is
+busy, queue the related work for that same session. Never create another session
+for the feature just to bypass its current PR or review. Without an assignment,
+reuse an idle compatible session in the repo pool, preferring its work type, and
+bind the feature to it. Only when every existing compatible session is busy and
+the new work is unrelated to all their assignments may Neo create a new session
+(`target.verb = 'start'` / `work.start`). An empty pool bootstraps its first
+session. If inventory or status is unknown, refresh or wait. Concurrent dispatches
+reserve the feature/session assignment before calling the driver so two todos
+cannot both decide to start its session; retries recover that reservation rather
+than starting a duplicate. `work.start` receives the work-type session name while
+the todo retains its own task title.
+
+The binding is consulted in `todo-runner.ts` before its existing dispatch, which
+currently accepts a start/send target and forwards it through `driver-work.ts`.
+The daemon validates the selected target against the plan; an agent-supplied
+`start` cannot silently bypass reuse. `per_task` keys the assignment by todo id;
+`per_pr` uses the known PR identity, or a reserved prospective-PR slot until that
+session reports its PR. Retries reuse the slot; reporting the URL binds it without
+starting again. A known PR already owned by a session keeps that owner. Separate
+PR slots may run in parallel, subject to ordinary capacity and workspace rules.
+Retiring an assignment means stopping future dispatch to that task/PR session,
+not deleting a session, transcript, stored result, or worktree history. A failed
+or human-blocked task keeps its ownership until it is settled or explicitly
+reassigned; it isn't silently treated as finished.
 
 ## First use and existing repos
 
@@ -183,6 +252,7 @@ A convention is built on the existing `neo.rule.save` (`packages/daemon/src/lib/
 - **Lifting:** answering the linked question "yes" lifts the hold and allows the merge nudge, and it stays lifted on later sweeps and later heads, with no new question; a later head in a `review_bot` repo still waits for the bot's approval of that head. "No" keeps the hold and tells the owner.
 - **First use:** one question per new repo, none after it's answered, and no merge nudges before the answer.
 - **Conventions:** a convention saved for `coding` + `lsm/research` appears in the instruction of a coding todo for lsm/research, not in one for lsm/qlark. A save without the human's quoted words is refused.
+- **Session strategy:** an unanswered repo gets one question and behaves as `long_lived` without a stored default. Two PR slices of a feature reuse one work-type-named session; related work queues while it is busy. An unrelated task uses an idle session before any start; only an all-busy unrelated pool permits a new one. Stale status and concurrent dispatch never produce a duplicate feature session. `per_task` reuses within its task; `per_pr` reuses each PR/slot through retries and review, with distinct PRs parallel. Retiring assignments preserves stored data; changing strategy doesn't move active work.
 - **qlark#19 replay:** reproduced first. Same timeline with `docs/design/**` held: no merge nudge at +20 min, and `pack.coding.pr.readiness` returns `mayMerge: false` with the hold.
 - **Worker merge check:** a coding todo whose `doneWhen` mentions merging gets the rewritten merge text, with no recent-merge fallback; `pack.coding.pr.readiness` returns `mayMerge` true only for `approved_green`, and false for a held, unanswered-repo or `human`-policy PR before approval.
 
@@ -209,3 +279,21 @@ The qlark#19 prevention comes first: stored settings and this install's answers 
     - "Write the answer into that repository's merge rule; until they answer, nothing there merges." (starting at the end of line 25, through line 27)
 
     The edits go sentence by sentence; line ranges are only locators, because lines 24 and 25 are shared. The sentence "Never install apps, add reviewers or change repository settings yourself; that is the human's own GitHub setup." stays whole. The Claude Desktop question that follows ("in the same round of questions", lines 28-29) is reworded to stand alone.
+
+
+Session-strategy extension (after the settings human-answer persistence slice and
+existing dispatch prerequisites; these do not gate the merge-safety slices above):
+
+15. **Build the session strategy declaration and pure dispatch planner.** Declare
+    the repo enum and explicit pre-answer `long_lived` behavior. Plan reuse, queue
+    or start from typed pool/status/assignment facts; nothing dispatches it yet.
+16. **Build durable session assignments.** Store repo/feature/task/PR-slot to
+    session ownership with atomic reservation and retry recovery. Integrate the
+    existing todo/session and PR bindings; nothing chooses a driver target yet.
+17. **Wire session strategy into coding dispatch.** Validate start/send against
+    the planner before `todo-runner` invokes the driver, give new long-lived
+    sessions work-type names, and settle assignments without deleting history.
+18. **Wire the first-dispatch strategy question.** Generate the one-per-repo
+    question and bind its typed proposal through human-answer persistence. Prove
+    pending-answer `long_lived` behavior and subsequent dispatch using the saved
+    choice. No agent setter rights are added.
