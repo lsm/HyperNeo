@@ -3,6 +3,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { Provider, MessageHub } from '@hyperneo/shared';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
+import { createMessageDeliveryHandler } from '../../../../src/lib/job-handlers/message-delivery.handler';
 import {
   decideCoordinatorHandoff,
   gateHandoffBinding,
@@ -109,6 +110,11 @@ describe.each(['neo'] as const)('AgentSession %s coordinator handoff', (kind) =>
   let secondReady: ReturnType<typeof deferred>;
   let finishSecond: ReturnType<typeof deferred>;
   let received: string[];
+  let holdSdkOpen: boolean;
+  let consumeSteer: boolean;
+  let steerReady: ReturnType<typeof deferred>;
+  let sdkEof: ReturnType<typeof deferred>;
+  let resultHandled: ReturnType<typeof deferred>;
   let active: number;
   let peak: number;
 
@@ -136,6 +142,8 @@ describe.each(['neo'] as const)('AgentSession %s coordinator handoff', (kind) =>
       async () => 'test-key',
       undefined,
       undefined,
+      undefined,
+      undefined,
       { autoReplayPendingMessages: false }
     );
     spyOn(agent.optionsBuilder, 'build').mockResolvedValue({ model: 'unit' });
@@ -144,12 +152,17 @@ describe.each(['neo'] as const)('AgentSession %s coordinator handoff', (kind) =>
     finishFirst = deferred();
     secondReady = deferred();
     finishSecond = deferred();
+    holdSdkOpen = false;
+    consumeSteer = false;
+    steerReady = deferred();
+    sdkEof = deferred();
+    resultHandled = deferred();
     received = [];
     active = 0;
     peak = 0;
     (query as unknown as ReturnType<typeof mock>).mockImplementation(
       (args: Parameters<typeof query>[0]) => ({
-        close: () => {},
+        close: () => sdkEof.resolve(),
         interrupt: async () => {},
         [Symbol.asyncIterator]: async function* () {
           active++;
@@ -158,12 +171,18 @@ describe.each(['neo'] as const)('AgentSession %s coordinator handoff', (kind) =>
             const feed = (args.prompt as AsyncIterable<{ uuid: string }>)[Symbol.asyncIterator]();
             const first = await feed.next();
             received.push(first.value!.uuid);
-            const end = feed.next();
+            let end = feed.next();
             const initial = received.length === 1;
             (initial ? firstReady : secondReady).resolve();
+            if (initial && consumeSteer) {
+              received.push((await end).value!.uuid);
+              end = feed.next();
+              steerReady.resolve();
+            }
             await (initial ? finishFirst : finishSecond).promise;
             yield { type: 'result', subtype: 'success', uuid: crypto.randomUUID() };
             expect((await end).done).toBe(true);
+            if (initial && holdSdkOpen) await sdkEof.promise;
           } finally {
             active--;
           }
@@ -176,16 +195,18 @@ describe.each(['neo'] as const)('AgentSession %s coordinator handoff', (kind) =>
     agent.setCleaningUp(true);
     finishFirst.resolve();
     finishSecond.resolve();
+    sdkEof.resolve();
+    agent.messageQueue.stop();
     await agent.queryPromise;
     agent.messageQueue.clear();
     agent.messageQueue.stop();
-    agent.cleanupEventSubscriptions();
+    await agent.cleanup();
     db.getDatabase().close();
     initializeProviders().unregister(providerId);
     (query as unknown as ReturnType<typeof mock>).mockReset();
   });
 
-  function deliver(uuid: string) {
+  function deliver(uuid: string, inputKind: 'human' | 'task' | 'system' = 'human') {
     db.saveUserMessage(
       agent.session.id,
       {
@@ -193,7 +214,7 @@ describe.each(['neo'] as const)('AgentSession %s coordinator handoff', (kind) =>
         uuid,
         session_id: agent.session.id,
         parent_tool_use_id: null,
-        inputKind: 'human',
+        inputKind,
         message: { role: 'user', content: uuid },
       },
       'enqueued'
@@ -213,6 +234,112 @@ describe.each(['neo'] as const)('AgentSession %s coordinator handoff', (kind) =>
     expect(agent.messageQueue.hasPendingOrInFlight('ask-B')).toBe(true);
     return { second, firstQuery: agent.queryPromise };
   }
+
+  it.each(['human', 'task', 'system'] as const)(
+    'recovers persisted %s input when the session is reconstructed without a new input event',
+    async (inputKind) => {
+      const session = agent.session;
+      const uuid = crypto.randomUUID();
+      db.saveUserMessage(
+        session.id,
+        {
+          type: 'user',
+          uuid,
+          session_id: session.id,
+          parent_tool_use_id: null,
+          inputKind,
+          message: { role: 'user', content: 'persisted-input' },
+        },
+        'enqueued'
+      );
+      await agent.cleanup();
+      agent = new AgentSession(
+        db.getSession(session.id)!,
+        db,
+        { event: mock(() => {}) } as unknown as MessageHub,
+        await createTestInternalEventBus(),
+        async () => 'test-key'
+      );
+      spyOn(agent.optionsBuilder, 'build').mockResolvedValue({ model: 'unit' });
+      spyOn(agent, 'onSDKMessage').mockResolvedValue(undefined);
+      const jobs = db.getJobQueueRepo();
+      await expect.poll(() => jobs.activeDeliveryMessageUuids(session.id)).toContain(uuid);
+      const [job] = jobs.dequeueSessionFifo('message_delivery', 1, { releasedPath: '$.released' });
+      expect(job).toBeTruthy();
+      const handler = createMessageDeliveryHandler({
+        jobQueue: jobs,
+        getSession: async () => agent,
+        getMessageContent: (id, uuid) => db.getSDKMessageRepo().getDeliveryContent(id, uuid),
+      });
+      const delivery = handler(job);
+      void delivery.catch(() => {});
+      await expect.poll(() => received, { timeout: 1000 }).toEqual([uuid]);
+      await expect(delivery).resolves.toEqual({ outcome: 'completed' });
+      expect(received).toEqual([uuid]);
+      expect(db.getMessageByStatusAndUuid(session.id, 'consumed', uuid)).toBeTruthy();
+    }
+  );
+
+  it.each(['human', 'task', 'system'] as const)(
+    'starts an idle %s input when the previous SDK stream stays open after its result',
+    async (inputKind) => {
+      holdSdkOpen = true;
+      spyOn(agent, 'onSDKMessage').mockImplementation(async (message) => {
+        if (message.type === 'result') {
+          await agent.stateManager.setIdle();
+          resultHandled.resolve();
+        }
+      });
+      await deliver('ask-A');
+      finishFirst.resolve();
+      await resultHandled.promise;
+      const successor = deliver('idle-input', inputKind);
+      await expect.poll(() => received, { timeout: 1000 }).toEqual(['ask-A', 'idle-input']);
+      await expect(successor).resolves.toEqual({ outcome: 'completed' });
+      expect(db.getMessageByStatusAndUuid(agent.session.id, 'consumed', 'idle-input')).toBeTruthy();
+      expect(agent.getQueryGeneration()).toBe(2);
+      expect(peak).toBe(1);
+    }
+  );
+
+  it.each(['human', 'task'] as const)(
+    'still steers live %s input after the kickoff',
+    async (inputKind) => {
+      consumeSteer = true;
+      await deliver('ask-A');
+      const steered = deliver('live-steer', inputKind);
+      await withSessionLock(agent.session.id, async () => {});
+      expect(agent.steerNeoInput('live-steer')).toBe(true);
+      await steerReady.promise;
+      await expect(steered).resolves.toEqual({ outcome: 'completed' });
+      expect(received).toEqual(['ask-A', 'live-steer']);
+      expect(agent.getQueryGeneration()).toBe(1);
+    }
+  );
+
+  it('leaves an input for the successor while the terminal publication is still awaiting completion', async () => {
+    const publishing = deferred();
+    const published = deferred();
+    spyOn(agent, 'replyAtNeoTurnEnd').mockImplementation(async () => {
+      publishing.resolve();
+      await published.promise;
+    });
+    await deliver('ask-A');
+    finishFirst.resolve();
+    await publishing.promise;
+    try {
+      const successor = deliver('late-steer', 'task');
+      await withSessionLock(agent.session.id, async () => {});
+      expect(agent.steerNeoInput('late-steer')).toBe(false);
+      published.resolve();
+      await expect.poll(() => received, { timeout: 1000 }).toEqual(['ask-A', 'late-steer']);
+      await expect(successor).resolves.toEqual({ outcome: 'completed' });
+      expect(agent.getQueryGeneration()).toBe(2);
+      expect(peak).toBe(1);
+    } finally {
+      published.resolve();
+    }
+  });
 
   it('starts an already-admitted successor on settlement without timeout or another start call', async () => {
     const errors = spyOn(agent.errorManager, 'handleError').mockResolvedValue(undefined);
