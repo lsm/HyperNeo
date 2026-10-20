@@ -1116,6 +1116,11 @@ function createIndexes(db: BunDatabase): void {
       WHERE queue = 'message_delivery' AND status IN ('pending', 'processing')
   `);
   db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_message_delivery_message
+      ON job_queue (json_extract(payload, '$.messageUuid'))
+      WHERE queue = 'message_delivery'
+  `);
+  db.exec(`
     CREATE INDEX IF NOT EXISTS idx_message_delivery_session_message_active
       ON job_queue (json_extract(payload, '$.sessionId'), json_extract(payload, '$.messageUuid'))
       WHERE queue = 'message_delivery' AND status IN ('pending', 'processing')
