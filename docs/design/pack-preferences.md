@@ -97,7 +97,7 @@ A **hold** overrides only merge readiness, under every policy: a held PR that wo
 - `pr-sweep.ts:46`'s "Merge it now".
 - The escalation clause "or merge it yourself if it is approved and green" (`pr-sweep.ts:85`) is added only when the row is `approved_green`.
 - `approved_pending`'s next step loses "merge once CI is green" (`pr-sweep.ts:52`) and says only that CI is still running.
-- `waiting_ci` is new, with its own wording: "CI is still running; fix it if it fails". It never mentions merging, under any policy.
+- `waiting_ci` is new, with its own wording: "CI is still running; fix it if it fails". It gets a 60-minute entry in `CODING_PR_DEADLINE_MIN` (`pr-sweep.ts:6-13`), the same as `approved_pending`, because deadline-gated nudges are the only channel that delivers state wording. It never mentions merging, under any policy.
 - `waiting_human` gets no merge text and no deadline.
 
 ## First use and existing repos
@@ -203,7 +203,7 @@ The qlark#19 prevention comes first: stored settings and this install's answers 
 11. **Wire the generated first-use question** for repos with no stored policy.
 12. **Build scoped conventions** in `neo.rule.save`: the scope input and storage; nothing delivers them yet.
 13. **Wire convention delivery** into `neoTodoCard` through the `conventionObject(todo)` hook.
-14. **Delete the merge-rule prompt text** from `packages/prompts/src/neo/packs/coding/instructions.md`, only after slices 6 and 8 have landed, so the worker's merge path already reads the daemon state. Only these sentences go:
+14. **Delete the merge-rule prompt text** from `packages/prompts/src/neo/packs/coding/instructions.md`, only after slices 6, 8 and 11 have landed, so the worker's merge path already reads the daemon state and the generated first-use question has replaced the prompt's. Only these sentences go:
     - "Put the repository's merge rule in a coding todo's instruction: merge by hand after the review it uses approves the latest head and required checks are green, and never enable GitHub auto-merge." (lines 18-20)
     - "When you create a repository, or first start coding work in one with no merged pull request yet, ask the human once with neo.question.ask (kind choice) how its pull requests get reviewed: … \"I review them myself\"." (lines 21-24, ending mid-line 24)
     - "Write the answer into that repository's merge rule; until they answer, nothing there merges." (starting at the end of line 25, through line 27)
