@@ -36,3 +36,7 @@ export function fillSdkMessageFixtureColumns(db: Database): void {
     );
   }
 }
+
+export function mirrorSdkMessageFixtureBodies(db: Database): void {
+  writeSdkMessageBody(db, () => {}, '1=1', []);
+}
