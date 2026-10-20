@@ -6,6 +6,7 @@ import {
   isValidAddress,
   parseAddress,
   parseRemoteAddress,
+  renderRemoteAddress,
   renderAddress,
   type RemoteSessionAddress,
 } from '../mailbox/address.ts';
@@ -350,6 +351,16 @@ export function createSendMessageOperation(
   sent: SessionSentObserver = () => {}
 ) {
   const limit = createSessionSendLimiter();
+  const forwardAndReport: RemoteSendForwarder = async (target, input, origin) => {
+    const forwarded = await forwardRemote(target, input, origin);
+    reportSessionSend(
+      forwarded,
+      { ...input, sessionId: renderRemoteAddress(target) },
+      origin,
+      sent
+    );
+    return forwarded;
+  };
   return defineOperation({
     name: 'message.send',
     description:
@@ -362,7 +373,7 @@ export function createSendMessageOperation(
         caller,
         jobQueue,
         sessionStatus,
-        forwardRemote,
+        forwardAndReport,
         resolveAgent,
         sessionTitle,
         limit,

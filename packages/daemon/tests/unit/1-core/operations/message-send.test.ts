@@ -104,6 +104,25 @@ describe('shared message.send operation', () => {
         (item) => sent.push(item)
       ),
     ]);
+    const forwarded = createOperationRegistry([
+      createSendMessageOperation(
+        mailbox.jobQueue,
+        () => 'active',
+        async () => ({ kind: 'accepted', mailboxId: 'remote-box', messageId: 'remote-1' }),
+        undefined,
+        () => null,
+        (item) => sent.push(item)
+      ),
+    ]);
+    await invokeOperation(
+      forwarded,
+      'message.send',
+      {
+        sessionId: 'daemon:imac::session:worker-9',
+        message: { ...message, message: { content: 'Ship it' } },
+      },
+      { source: 'mcp', sessionId: 'worker-1' }
+    );
     await sendFrom(registry, 'PR #9 is up');
     await invokeOperation(
       registry,
@@ -114,6 +133,13 @@ describe('shared message.send operation', () => {
       }
     );
     expect(sent).toEqual([
+      {
+        messageId: 'remote-1',
+        fromSession: 'worker-1',
+        toSession: 'daemon:imac::session:worker-9',
+        text: 'Ship it',
+        at: expect.any(Number),
+      },
       {
         messageId: expect.any(String),
         fromSession: 'worker-1',

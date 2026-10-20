@@ -91,7 +91,10 @@ export function createDatabaseOperationCatalog(
           sessionId && conversationId ? { sessionId, conversationId } : null,
           (id) => readSessionField(db, 'title', id)
         );
-        if (message) new NeoSessionMessageRepository(db.getDatabase()).record(message);
+        if (message)
+          new NeoSessionMessageRepository(db.getDatabase(), () =>
+            db.notifyChange('neo_session_messages')
+          ).record(message);
       },
       ...(ensureAgentSession
         ? { resolveMessageAgent: createAgentSessionResolver(agentLookups, ensureAgentSession) }

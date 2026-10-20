@@ -30,6 +30,9 @@ describe('planNeoSessionMessage', () => {
       createdAt: '1970-01-01T00:00:01.000Z',
     });
     expect(planNeoSessionMessage(sent('worker-1', 'worker-2', 'hi', 1000), root, title)).toBeNull();
+    expect(
+      planNeoSessionMessage(sent('daemon:imac::session:w9', 'neo:root', 'hi', 1000), root, title)
+    ).toMatchObject({ fromSession: 'daemon:imac::session:w9', fromName: 'w9 @ imac' });
     expect(planNeoSessionMessage(sent('worker-1', 'neo:root', 'hi', 1000), null, title)).toBeNull();
   });
 });

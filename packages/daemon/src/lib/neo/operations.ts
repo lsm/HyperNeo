@@ -403,10 +403,14 @@ export function createNeoOperations(service: NeoService) {
       }),
       ...(caller.source === 'rpc' ? { sessionNotices: service.sessionNotices } : {}),
       sessionNoticeGroups: latestNeoSessionNoticeGroups(service.sessionNoticeGroups),
-      sessionMessages: new NeoSessionMessageRepository(service.db.getDatabase()).latest(
-        service.repo.conversationId() ?? '',
-        NEO_SESSION_MESSAGES_SHOWN
-      ),
+      ...(caller.source === 'rpc'
+        ? {
+            sessionMessages: new NeoSessionMessageRepository(service.db.getDatabase()).latest(
+              service.repo.conversationId() ?? '',
+              NEO_SESSION_MESSAGES_SHOWN
+            ),
+          }
+        : {}),
       mutedSessions: service.db.getGlobalSettings?.().neo?.mutedSessions ?? [],
       preferences: service.modelPreference(),
       todoAsks,
