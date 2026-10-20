@@ -35,12 +35,20 @@ for (const fails of [false, true]) {
   const name = fails ? 'error' : 'normal';
   const path = join(run, `${name}.jsonl`);
   const app = await createDaemonApp({
-    config: getConfig({
-      host: '127.0.0.1',
-      port: 0,
-      dbPath: join(run, `data/${name}.db`),
-      structuredLogFilePath: path,
-    }),
+    config: {
+      ...getConfig({
+        host: '127.0.0.1',
+        port: 0,
+        dbPath: join(run, `data/${name}.db`),
+        structuredLogFilePath: path,
+      }),
+      sqlQueryObservability: {
+        slowThresholdMs: 250,
+        summaryIntervalMs: 0,
+        maxQueryGroups: 10,
+        summaryQueryLimit: 5,
+      },
+    },
     verbose: false,
   });
   let cleaned = false;
