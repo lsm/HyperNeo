@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { hyperneoWorkStatus } from '../../../../src/lib/drivers/hyperneo-adapter';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { createScheduleDelivery } from '../../../../src/lib/scheduler/session-schedule-delivery';
 import { SessionScheduler } from '../../../../src/lib/scheduler/session-schedules';
 import { z } from 'zod';
@@ -73,6 +74,7 @@ describe('schedule target lifecycle and external delivery', () => {
     '%s completes the schedule instead of retrying or reporting fired',
     async (reason) => {
       const { scheduler, row, job } = create();
+      if (reason === 'stopped') db.updateSession('recipient', { status: 'archived' });
       const registry = createOperationRegistry([
         defineOperation({
           name: 'work.status',
@@ -98,6 +100,61 @@ describe('schedule target lifecycle and external delivery', () => {
       ).toEqual([]);
     }
   );
+  test('an interrupted open session skips one due run and can fire when idle again', async () => {
+    const { scheduler, row, job } = create();
+    const setState = (status: string) =>
+      db
+        .getDatabase()
+        .prepare('UPDATE sessions SET processing_state = ? WHERE id = ?')
+        .run(JSON.stringify({ status, reason: 'user' }), 'recipient');
+    setState('interrupted');
+    const registry = createOperationRegistry([
+      defineOperation({
+        name: 'work.status',
+        description: 'Real HyperNeo status projection',
+        inputSchema: z.unknown(),
+        resultSchema: z.unknown(),
+        execute: async () => {
+          const session = db.getSession('recipient')!;
+          return {
+            ok: true,
+            value: {
+              status: hyperneoWorkStatus(
+                session.status,
+                JSON.parse(session.processingState ?? '{}').status ?? null
+              ),
+            },
+          };
+        },
+      }),
+    ]);
+    const handler = createSessionScheduleFire({
+      scheduler,
+      ...createScheduleDelivery(db, () => registry),
+    });
+    await handler(job);
+    const next = scheduler.repo.get(row.id)!;
+    expect(next).toMatchObject({ status: 'active', lastOutcome: 'skipped_busy', dueCount: 1 });
+    expect(next.nextRunAt).toBeGreaterThan(Date.now());
+    expect(
+      db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': row.target.id })
+    ).toEqual([]);
+    setState('idle');
+    const clock = spyOn(Date, 'now').mockReturnValue(next.nextRunAt!);
+    try {
+      await handler(db.getJobQueueRepo().getJob(next.pendingJobId!)!);
+      expect(scheduler.repo.get(row.id)).toMatchObject({
+        status: 'active',
+        lastOutcome: 'fired',
+        dueCount: 0,
+      });
+      expect(
+        db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': row.target.id })
+      ).toHaveLength(1);
+    } finally {
+      clock.mockRestore();
+    }
+  });
   test('archival during source lookup completes without a mailbox delivery', async () => {
     const { scheduler, row, job } = create();
     scheduler.registerSource({
