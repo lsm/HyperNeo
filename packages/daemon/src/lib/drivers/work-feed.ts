@@ -146,17 +146,16 @@ export function vanishedFeedPaths(
   return [...offsets.keys()].filter((path) => path.startsWith(`${root}${sep}`) && !exists(path));
 }
 
-export function pruneVanishedFeeds<Meta extends FeedFileMeta>(
+export async function pruneVanishedFeeds<Meta extends FeedFileMeta>(
   db: BunDatabase,
   root: string,
   source: FeedSource<Meta>
-): string[] {
+): Promise<string[]> {
   const known = readWorkFeedOffsets(db);
   const gone = vanishedFeedPaths(root, known);
-  const dropped = gone.reduce(
-    (rows, path) => rows + dropWorkFeedSession(db, source.kind, source.sessionOf(path), path),
-    0
-  );
+  let dropped = 0;
+  for (const path of gone)
+    dropped += await dropWorkFeedSession(db, source.kind, source.sessionOf(path), path);
   if (!source.sharesTurnsWithSiblings || dropped === 0) return [];
   const reread = [...known.keys()].filter(
     (path) => path.startsWith(`${root}${sep}`) && !gone.includes(path)

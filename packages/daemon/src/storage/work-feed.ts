@@ -1,6 +1,7 @@
 import type { Database as BunDatabase } from './sqlite-compat.ts';
 
 const BODY_CHARS = 16_000;
+const DELETE_BATCH_ROWS = 64;
 
 export type WorkFeedKind = 'codex' | 'claude';
 
@@ -63,22 +64,37 @@ export function saveWorkFeedChunk(
   })();
 }
 
-export function dropWorkFeedSession(
+async function deleteWorkFeedSessions(
+  db: BunDatabase,
+  kind: WorkFeedKind,
+  sessionIds: readonly string[]
+): Promise<number> {
+  const remove = db.prepare(
+    `DELETE FROM message_search_content WHERE id IN (
+       SELECT id FROM message_search_content INDEXED BY idx_message_search_content_feed_turns
+       WHERE kind IN ('codex', 'claude') AND kind = ?
+         AND session_id IN (SELECT value FROM json_each(?)) LIMIT ${DELETE_BATCH_ROWS}
+     )`
+  );
+  const sessions = JSON.stringify(sessionIds);
+  let total = 0;
+  for (;;) {
+    const changed = remove.run(kind, sessions).changes;
+    if (changed === 0) return total;
+    total += changed;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
+export async function dropWorkFeedSession(
   db: BunDatabase,
   kind: WorkFeedKind,
   sessionId: string,
   path: string
-): number {
-  return db.transaction(() => {
-    const dropped = db
-      .prepare(
-        `DELETE FROM message_search_content INDEXED BY idx_message_search_content_feed_turns
-          WHERE kind IN ('codex', 'claude') AND kind = ? AND session_id = ?`
-      )
-      .run(kind, sessionId).changes;
-    db.prepare('DELETE FROM work_feed_offsets WHERE path = ?').run(path);
-    return dropped;
-  })();
+): Promise<number> {
+  const dropped = await deleteWorkFeedSessions(db, kind, [sessionId]);
+  db.prepare('DELETE FROM work_feed_offsets WHERE path = ?').run(path);
+  return dropped;
 }
 
 export function rereadWorkFeedPaths(db: BunDatabase, paths: readonly string[]): void {
@@ -88,14 +104,11 @@ export function rereadWorkFeedPaths(db: BunDatabase, paths: readonly string[]): 
   ).run(JSON.stringify(paths));
 }
 
-export function purgeWorkFeedSessions(
+export async function purgeWorkFeedSessions(
   db: BunDatabase,
   kind: WorkFeedKind,
   sessionIds: readonly string[]
-): void {
+): Promise<void> {
   if (sessionIds.length === 0) return;
-  db.prepare(
-    `DELETE FROM message_search_content INDEXED BY idx_message_search_content_feed_turns
-      WHERE kind IN ('codex', 'claude') AND kind = ? AND session_id IN (SELECT value FROM json_each(?))`
-  ).run(kind, JSON.stringify(sessionIds));
+  await deleteWorkFeedSessions(db, kind, sessionIds);
 }

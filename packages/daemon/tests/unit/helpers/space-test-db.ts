@@ -17,6 +17,7 @@ import { createSessionIncarnationTable } from '../../../src/storage/schema/m290-
 import { createSessionCounters } from '../../../src/storage/schema/session-counters';
 import { createSpaceSessionEventSubscriptionTables } from '../../../src/storage/schema/space-session-event-subscriptions';
 import { createTaskMessageRows } from '../../../src/storage/schema/task-message-rows';
+import { runMigration419 } from '../../../src/storage/schema/m419-task-message-body-triggers';
 import { createWorkflowEventSubscriptionTables } from '../../../src/storage/schema/workflow-event-subscriptions';
 import type { Database as BunDatabase } from '../../../src/storage/sqlite-compat';
 
@@ -725,6 +726,7 @@ export function createSpaceTables(db: BunDatabase): void {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_message_replacements_task_target
 		ON sdk_message_replacements(task_id, target_uuid)`);
   createTaskMessageRows(db);
+  runMigration419(db);
 
   db.exec(`
 		CREATE TABLE IF NOT EXISTS workflow_run_artifacts (
