@@ -55,17 +55,6 @@ const sendTarget: NeoDriverTarget = {
 };
 const work = { title: 'Bigger font', instruction: 'Raise the body font to 16px.' };
 
-describe('isNeoReceiptUnconfirmed', () => {
-  const card: Parameters<typeof isNeoReceiptUnconfirmed>[0] = {
-    ref: true,
-    workStatus: 'queued',
-    workCreatedAt: 100,
-    startedAt: null,
-    inputBefore: null,
-    status: 'running',
-  };
-});
-
 describe('NeoDriverTargetSchema', () => {
   test('normalizes requested configuration and preserves omitted settings', () => {
     expect(

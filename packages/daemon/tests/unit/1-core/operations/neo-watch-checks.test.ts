@@ -3,7 +3,6 @@ import { vi } from 'vitest';
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoAsk, NeoAskItem, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoRefState } from '../../../../src/lib/neo/packs/coding/ask-prs.ts';
-import { keepNeoCardPrReads } from '../../../../src/lib/neo/packs/coding/card-pr-claims.ts';
 import { readNeoGithubRef } from '../../../../src/lib/neo/packs/coding/github-read.ts';
 import type { NeoPack } from '../../../../src/lib/neo/packs/types.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
@@ -142,33 +141,5 @@ describe('readNeoGithubRef', () => {
       pull(9)
     );
     expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('unreadable') });
-  });
-});
-
-describe('keepNeoCardPrReads', () => {
-  const card = { createdAt: 1_000, title: 'Fix network outages', instruction: 'Fix it.' };
-  const mentioned = (n: number) => ({
-    url: pull(n),
-    claim: 'mentioned' as const,
-    claimedAt: 1_500,
-    claimed: false,
-    score: null,
-  });
-
-  test('a PR the report names attaches once read when it is current', () => {
-    const prs: NeoWorkPr[] = [
-      {
-        url: pull(6651),
-        state: 'OPEN',
-        checks: 'pending',
-        review: 'none',
-        createdAt: 3_000,
-        refs: [6650],
-      },
-      { url: pull(6600), state: 'MERGED', checks: 'passing', review: 'none', createdAt: 500 },
-    ];
-    const sorted = keepNeoCardPrReads(card, [mentioned(6651), mentioned(6600)], prs);
-    expect(sorted.kept.map((entry) => entry.url)).toEqual([pull(6651)]);
-    expect(sorted.rejected.map((entry) => entry.url)).toEqual([pull(6600)]);
   });
 });

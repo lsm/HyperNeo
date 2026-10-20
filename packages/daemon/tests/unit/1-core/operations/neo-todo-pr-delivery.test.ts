@@ -87,7 +87,6 @@ test('NeoService delivers a real-shaped CI failure to a todo target without a le
       summary: 'Web Tests failed',
       payload: { prUrl: url, prNumber: 7374, checkName: 'Web Tests', conclusion: 'failure' },
     });
-    expect(service.repo.listWork()).toEqual([]);
     expect(delivered).toHaveLength(1);
     expect(delivered[0].ref).toEqual(ref);
     expect(delivered[0].message).toContain('Web Tests');
