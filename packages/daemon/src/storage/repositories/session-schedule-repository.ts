@@ -2,33 +2,16 @@ import { generateUUID } from '@hyperneo/shared';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { WorkRef } from '../../lib/drivers/types.ts';
 
-export type SessionScheduleCadence =
-  | { kind: 'every'; everyMs: number }
-  | { kind: 'cron'; cron: string; timezone: string };
+import type {
+  SessionSchedule,
+  SessionScheduleStatus,
+} from '@hyperneo/shared/types/session-schedule';
 
-export type SessionScheduleStatus = 'active' | 'paused' | 'done';
-
-export interface SessionSchedule {
-  id: string;
-  target: WorkRef;
-  sourceKind: string;
-  sourceId: string;
-  note: string | null;
-  cadence: SessionScheduleCadence;
-  nudgeEvery: number;
-  status: SessionScheduleStatus;
-  nextRunAt: number | null;
-  pendingJobId: string | null;
-  dueCount: number;
-  factsDigest: string | null;
-  lastRunAt: number | null;
-  lastOutcome: string | null;
-  lastSkipReason: string | null;
-  lastMessageId: string | null;
-  createdBySession: string | null;
-  createdAt: number;
-  updatedAt: number;
-}
+export type {
+  SessionSchedule,
+  SessionScheduleCadence,
+  SessionScheduleStatus,
+} from '@hyperneo/shared/types/session-schedule';
 
 export type NewSessionSchedule = Pick<
   SessionSchedule,

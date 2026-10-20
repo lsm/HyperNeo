@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -245,7 +246,38 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
     await new Promise((resolve) => setTimeout(resolve, 3000));
     expect(nudged, 'ending with Done. keeps the CLI from nudging for visible output').toEqual([]);
     const { neoPrompt } = await import('../../../src/lib/neo/prompt.ts');
+    if (process.env.VERIFY_EVIDENCE_DIR) {
+      await mkdir(process.env.VERIFY_EVIDENCE_DIR, { recursive: true });
+      await writeFile(
+        join(process.env.VERIFY_EVIDENCE_DIR, 'neo-goal-cycle-sdk.json'),
+        JSON.stringify(
+          {
+            sent,
+            calls,
+            receipts,
+            publication: page.items[0],
+            daemonPort: daemon.server.port,
+            mockPort: address.port,
+          },
+          null,
+          2
+        )
+      );
+    }
     expect(sent[0].system).toContain(neoPrompt());
+    for (const instruction of [
+      'On a scheduled goal wake',
+      'goal.session.get',
+      'neo.home.read',
+      'goal.journal.append',
+      'runId',
+      'neo.question.get',
+      'answeredByHuman',
+      'sha256',
+      'one plain-text summary line',
+      'On other turns',
+    ])
+      expect(sent[0].system).toContain(instruction);
     const human = (sent[0].human as { type: string; text?: string }[]).filter(
       (part) => part.type === 'text'
     );

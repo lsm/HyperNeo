@@ -1,4 +1,5 @@
 import { generateUUID } from '@hyperneo/shared';
+import type { SessionScheduleListResult } from '@hyperneo/shared/types/session-schedule';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { SessionSchedule } from '../../storage/repositories/session-schedule-repository.ts';
@@ -38,7 +39,10 @@ const ScheduleResult = z.union([
 ]);
 const ListResult = z.union([
   z.object({ ok: z.literal(false), reason: z.string() }),
-  z.object({ ok: z.literal(true), schedules: z.array(ScheduleShape) }),
+  z.object({
+    ok: z.literal(true),
+    schedules: z.array(ScheduleShape.extend({ sourceLabel: z.string().nullable() })),
+  }),
 ]);
 
 export function admitScheduleCaller(caller: OperationCaller): Gate<OperationCaller> {
@@ -102,9 +106,12 @@ export function createSessionScheduleOperations(scheduler: SessionScheduler) {
     .input(['input', 'caller'])
     .pipe(admitScheduleCaller, 'caller', 'result:outcome')
     .pipe(
-      (_caller: OperationCaller, input: z.infer<typeof List>) => ({
+      (_caller: OperationCaller, input: z.infer<typeof List>): SessionScheduleListResult => ({
         ok: true as const,
-        schedules: scheduler.repo.list(input.target),
+        schedules: scheduler.repo.list(input.target).map((schedule) => ({
+          ...schedule,
+          sourceLabel: scheduler.source(schedule.sourceKind)?.label?.(schedule.sourceId) ?? null,
+        })),
       }),
       ['outcome', 'input'],
       'outcome'
