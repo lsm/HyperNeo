@@ -16,6 +16,17 @@ beforeEach(async () => {
 afterEach(() => db.close());
 
 describe('createScheduleDelivery', () => {
+  test('root Neo is an available schedule target even though work discovery excludes it', async () => {
+    db.createSession(createTestSession('neo:root'));
+    const delivery = createScheduleDelivery(db, () => createOperationRegistry([]));
+    expect(await delivery.status({ adapter: 'hyperneo', id: 'neo:root' })).toBe('done');
+    db.getDatabase()
+      .prepare('UPDATE sessions SET processing_state = ? WHERE id = ?')
+      .run(JSON.stringify({ status: 'processing' }), 'neo:root');
+    expect(await delivery.status({ adapter: 'hyperneo', id: 'neo:root' })).toBe('running');
+    db.updateSession('neo:root', { status: 'archived' });
+    expect(await delivery.status({ adapter: 'hyperneo', id: 'neo:root' })).toBe('not_open');
+  });
   test('concurrent retries enqueue one daemon note with verifiable wake metadata', async () => {
     const scheduler = new SessionScheduler(db.getDatabase(), db.getJobQueueRepo());
     const row = scheduler.create({
