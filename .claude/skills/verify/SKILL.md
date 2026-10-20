@@ -307,6 +307,15 @@ adds its journey here.
    line) and, within ~25 s, an `assistant` and a `result` row from the mock. The
    mock returns plain text, so no publication is written; a publication needs a
    scripted model (see `tests/online/convo/neo-publication-sdk.test.ts`).
+   For the root visibility prompt experiment, run that focused online test with a fresh
+   temporary HOME and `env -i` as documented in `packages/daemon/tests/online/README.md`.
+   It starts its own isolated test daemon and loopback scripted model, checks the assembled
+   `neoPrompt()` reaches the real SDK, and reads back the exact publication through RPC.
+   The final prompt block must state that only publish/question reaches the human, with no
+   mandatory assistant-text summary; the root prompt still has its word-cap unit test.
+   This proves prompt delivery and publication plumbing, not a generative model's choice
+   to publish or stay silent. Without a permitted local model, report that behavior as
+   unverified; do not use live credentials or treat the script as behavioral acceptance.
 2. **Voice streaming relays text.** Start the stub ASR (Deepgram protocol) with
    `bun .claude/skills/verify/asr-stub.ts 9312 < /dev/null > "$RUN/asr-stub.log" 2>&1 & echo $! > "$RUN/asr-stub.pid"`, then
    `VERIFY_PORT=9311 bun .claude/skills/verify/voice.ts 9312`. It points voice at
