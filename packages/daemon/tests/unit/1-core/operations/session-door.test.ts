@@ -64,6 +64,15 @@ describe('the session door', () => {
     );
   });
 
+  test('a second daemon on the same data dir leaves the live door alone', async () => {
+    await expect(startSessionDoor(() => createOperationRegistry([]), door.path)).rejects.toThrow(
+      /another daemon already serves/
+    );
+    expect(
+      await post(door.path, { sender: 'worker-1', name: 'message.send', input: send('still here') })
+    ).toMatchObject({ status: 200, body: { value: { kind: 'accepted' } } });
+  });
+
   test('a send claiming human input is refused', async () => {
     const reply = await post(door.path, {
       sender: 'worker-1',

@@ -1429,12 +1429,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     logInfo('[Daemon] Mailbox expiration job processor started');
     messageDeliveryProcessor.start();
     logInfo('[Daemon] Message-delivery job processor started');
-    const sessionDoor = await startSessionDoor(() => sessionManager.getOperationRegistry()).catch(
-      (error: unknown) => {
-        logError('[Daemon] Session door not started:', error);
-        return null;
-      }
-    );
+    const sessionDoor =
+      process.env.NODE_ENV === 'test' && !process.env.HYPERNEO_DATA_DIR
+        ? null
+        : await startSessionDoor(() => sessionManager.getOperationRegistry()).catch(
+            (error: unknown) => {
+              logError('[Daemon] Session door not started:', error);
+              return null;
+            }
+          );
     if (process.env.NODE_ENV !== 'test') {
       processWatchdog.start();
       logInfo('[Daemon] Process watchdog started');

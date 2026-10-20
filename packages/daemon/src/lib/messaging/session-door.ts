@@ -1,5 +1,6 @@
 import { chmod, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { connect } from 'node:net';
 import { join } from 'node:path';
 import { getDataDir } from '../data-dir.ts';
 import { invokeOperation } from '../operations/invoke.ts';
@@ -26,10 +27,22 @@ export function planSessionDoorCall(
   return { value: { name, input: rest, caller: { source: 'mcp', sessionId: sender.trim() } } };
 }
 
+function doorAnswers(path: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = connect(path);
+    socket.once('connect', () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once('error', () => resolve(false));
+  });
+}
+
 export async function startSessionDoor(
   registry: () => OperationRegistry,
   path = sessionDoorPath()
 ) {
+  if (await doorAnswers(path)) throw new Error(`another daemon already serves ${path}`);
   await rm(path, { force: true });
   const server = createServer((request, response) => {
     const chunks: Buffer[] = [];
