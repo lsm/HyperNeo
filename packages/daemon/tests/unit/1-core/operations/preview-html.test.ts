@@ -26,6 +26,7 @@ function expectInert(document: string) {
     /<(iframe|frame|object|embed|form|input|button|select|textarea|svg|math|base|link|template|noscript)\b/
   );
   expect(lower).not.toMatch(/https?:\/\//);
+  expect(lower).not.toContain('evil.example');
   expect(lower).not.toContain('expression(');
   expect(lower).not.toContain('@import');
   expect(head(document).match(/<meta /g)).toHaveLength(2);
@@ -99,6 +100,11 @@ describe('artifact HTML preview document', () => {
       'wrapper breakout',
       '</title></style></head><body></html><meta http-equiv="refresh" content="0"><script>x()</script><!-- --><!--<script>x()</script>--><plaintext><script>x()</script><p>Kept</p>',
     ],
+    ['markup inside a stylesheet', '<style><script>alert(1)</script></style><p>Kept</p>'],
+    [
+      'comment-split CSS url()',
+      '<style>p{background:url/*c*/("//evil.example/x")}</style><p style="background:url/**/(//evil.example/y)">Kept</p>',
+    ],
     [
       'template and noscript',
       '<template><script>x()</script></template><noscript><img src="https://evil.example"></noscript><p>Kept</p>',
@@ -113,6 +119,24 @@ describe('artifact HTML preview document', () => {
     expect(prepareArtifactHtml('<script>x()</script><p>Chart</p>').scriptsRemoved).toBe(true);
     expect(prepareArtifactHtml('<button onclick="x()">Go</button>').scriptsRemoved).toBe(true);
     expect(prepareArtifactHtml('<p>Static</p>').scriptsRemoved).toBe(false);
+    for (const page of [
+      '<body onload="steal()"><p>S</p></body>',
+      '<html onclick="steal()"><p>S</p>',
+    ])
+      expect(prepareArtifactHtml(page).scriptsRemoved).toBe(true);
+  });
+
+  test('keeps child selectors and quoted ampersands in a stylesheet intact', () => {
+    expect(
+      prepareArtifactHtml('<style>ul>li{color:red}p::after{content:"&"}</style><p>K</p>').document
+    ).toContain('<style>ul>li{color:red}p::after{content:"&"}</style>');
+  });
+
+  test('bounds the host link list a page can produce', () => {
+    const anchor = `<a href="https://example.com/x">${'t'.repeat(500)}</a>`;
+    const prepared = prepareArtifactHtml(anchor.repeat(300));
+    expect(prepared.links).toHaveLength(200);
+    expect(prepared.links.every((link) => link.text.length === 200)).toBe(true);
   });
 
   test('turns safe web links into host actions outside the frame, keeping their text', () => {
