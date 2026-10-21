@@ -51,7 +51,7 @@ The upgrade attaches `{deviceId, kind}` to the connection. `CallContext` carries
 | kind | principal | may call |
 | --- | --- | --- |
 | human | `local` | everything, as today |
-| relay | `relay` | read subscriptions plus `client.register`; no `human_only` operations |
+| relay | `relay` | read subscriptions plus the operations the push relay reads: `neo.snapshot`, `neo.publication.read`, `client.list`; nothing else |
 | daemon | `peer` | `operations.list` and forwarded `message.send`; never `requireLocalUser` operations |
 
 **Pairing a new device.**
