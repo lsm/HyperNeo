@@ -100,6 +100,7 @@ import type { NeoSessionNotice, NeoSessionNoticeGroup } from './session-watch.ts
 import { NeoSessionWatcher } from './session-watcher.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
 import type { NeoSnapshotRead } from './snapshot-read.ts';
+import { createArtifactRefReader } from '../artifacts/read-operations.ts';
 
 type NeoFollowedTodoSnapshot = {
   todos: Map<string, NeoTodo>;
@@ -294,6 +295,7 @@ export class NeoService {
           'consumed',
       append: (input) => this.appendPublication(input),
       notify: notifyPublication,
+      artifact: createArtifactRefReader(() => this.db.getDatabase()),
     });
     const offUpdated = events.subscribe(
       'session.updated',

@@ -1,5 +1,6 @@
 import type { NeoPublication, NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import { z } from 'zod';
+import { ArtifactRefSchema } from '../artifacts/file-contracts.ts';
 
 const text = (max: number) =>
   z
@@ -28,6 +29,7 @@ export const NeoPublicationSchema = z
       )
       .max(16)
       .default([]),
+    artifacts: z.array(ArtifactRefSchema).max(16).optional(),
     triggerId: text(200).optional(),
     askSummary: text(300).optional(),
     awaiting: text(500).optional(),

@@ -84,6 +84,7 @@ import {
 } from './session-track.ts';
 import { createNeoQuestionOperations } from './question-operations.ts';
 import { createNeoTodoOperations, type NeoTodoControls } from './todo-operations.ts';
+import { createArtifactRefReader } from '../artifacts/read-operations.ts';
 import { createNeoAskRecordOperations } from './ask-record-operations.ts';
 import { SessionGoalRepository } from '../../storage/repositories/session-goal-repository.ts';
 import { NeoAskEntrySchema, projectNeoAskEntries } from './ask-entries.ts';
@@ -755,8 +756,12 @@ export function createNeoOperations(service: NeoService) {
     ),
     createNeoPreferenceOperation(service),
     ...createPackPreferenceOperations(service.db.getDatabase(), () => service.installedPacks()),
-    ...createNeoTodoOperations(service.todos, service.todoSessions, todoControls, () =>
-      service.installedPacks()
+    ...createNeoTodoOperations(
+      service.todos,
+      service.todoSessions,
+      todoControls,
+      () => service.installedPacks(),
+      createArtifactRefReader(() => service.db.getDatabase())
     ),
     ...createNeoAskRecordOperations(
       service.todos,
