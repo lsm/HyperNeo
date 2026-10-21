@@ -1,5 +1,4 @@
 export const NEO_OPERATION_NAMES = [
-  'neo.home.github',
   'neo.ask.open',
   'neo.ask.settle',
   'neo.conversation.asks.read',
@@ -7,6 +6,7 @@ export const NEO_OPERATION_NAMES = [
   'neo.conversation.read',
   'neo.draft.recover',
   'neo.github.read',
+  'neo.home.github',
   'neo.home.init',
   'neo.home.read',
   'neo.home.save',

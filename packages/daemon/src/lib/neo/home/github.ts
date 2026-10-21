@@ -59,7 +59,9 @@ export function createNeoHomeGithubOperation(
           !!caller.sessionId &&
           caller.sessionId === service.defaultSessionId())
           ? { value: caller }
-          : fail('root_neo_required'),
+          : fail(
+              'root_neo_required: only root Neo or the local human can configure the home remote.'
+            ),
       'caller',
       'result:outcome'
     )
@@ -90,7 +92,9 @@ export function createNeoHomeGithubOperation(
           !!service.defaultSessionId() &&
           ask.sessionId === service.defaultSessionId()
           ? { value: input }
-          : fail('open_root_ask_required');
+          : fail(
+              'open_root_ask_required: propose the remote on an open ask belonging to root Neo.'
+            );
       },
       'input',
       'result:outcome'
