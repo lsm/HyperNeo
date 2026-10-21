@@ -100,6 +100,32 @@ describe('Copilot worker construction', () => {
     }
   });
 
+  test('overlapping sends bind both receipts before replaying early events', async () => {
+    const worker = await openCopilotWorker(config());
+    try {
+      const [first, second] = await Promise.all([
+        worker.submit('late-ack'),
+        worker.submit('settled'),
+      ]);
+      const state = await worker.snapshot();
+      expect(state.status).toBe('done');
+      expect(state.inputs[first.inputId].replyReport).toBe('REPLY_1');
+      expect(state.inputs[second.inputId].replyReport).toBe('REPLY_2');
+    } finally {
+      await worker.close();
+    }
+  });
+
+  test('a denied child-agent permission remains visible as needs_you', async () => {
+    const worker = await openCopilotWorker(config());
+    try {
+      await worker.submit('permission-agent');
+      expect((await worker.snapshot()).status).toBe('needs_you');
+    } finally {
+      await worker.close();
+    }
+  });
+
   test('an idle before any submitted work preserves queued status', async () => {
     const worker = await openCopilotWorker(config('fixture-1', '--initial-idle'));
     try {

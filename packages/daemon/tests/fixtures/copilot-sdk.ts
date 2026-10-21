@@ -9,13 +9,20 @@ const send = (message: unknown) => {
   const data = JSON.stringify(message);
   process.stdout.write(`Content-Length: ${Buffer.byteLength(data)}\r\n\r\n${data}`);
 };
-const event = (type: string, data: unknown, id = `event-${++eventId}`) =>
+const event = (type: string, data: unknown, id = `event-${++eventId}`, agentId?: string) =>
   send({
     jsonrpc: '2.0',
     method: 'session.event',
     params: {
       sessionId,
-      event: { id, type, data, timestamp: new Date().toISOString(), parentId: null },
+      event: {
+        id,
+        type,
+        data,
+        timestamp: new Date().toISOString(),
+        parentId: null,
+        ...(agentId ? { agentId } : {}),
+      },
     },
   });
 function receive(msg: { id?: number; method: string; params?: Record<string, unknown> }) {
@@ -89,14 +96,23 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
           interactionId: 'interaction-1',
           phase: 'final_answer',
         });
-      if (prompt === 'permission' || prompt === 'permission-queued') {
-        event('permission.requested', {
-          requestId: 'permission-1',
-          permissionRequest: { kind: 'read', path: '/outside' },
-        });
+      if (
+        prompt === 'permission' ||
+        prompt === 'permission-queued' ||
+        prompt === 'permission-agent'
+      ) {
+        event(
+          'permission.requested',
+          {
+            requestId: 'permission-1',
+            permissionRequest: { kind: 'read', path: '/outside' },
+          },
+          undefined,
+          prompt === 'permission-agent' ? 'child' : undefined
+        );
         event('session.idle', {});
       }
-      if (prompt === 'settled') {
+      if (prompt === 'settled' || prompt === 'late-ack') {
         event('assistant.message', {
           messageId: `reply-${input}`,
           content: `REPLY_${input}`,
@@ -142,7 +158,8 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
         !String(prompt).endsWith('-queued')
       )
         event('user.message', { messageId: id, interactionId: 'rewritten', content: prompt });
-      if (prompt !== 'lost-ack') reply({ messageId: id });
+      if (prompt === 'late-ack') setTimeout(() => reply({ messageId: id }), 20);
+      else if (prompt !== 'lost-ack') reply({ messageId: id });
       break;
     }
     case 'session.abort':
