@@ -10,6 +10,7 @@ import type { Place, PlaceGroup } from '../drivers/types.ts';
 import { placeKey } from '../drivers/places.ts';
 import { neoFolderPath } from './folder.ts';
 import { repoNameFromRemote } from '../drivers/code-identity.ts';
+import { runLagPhase } from '../event-loop-activity.ts';
 
 export function neoIdentityOwner(
   held: string | null,
@@ -270,16 +271,24 @@ export const mirrorNeoWorkspaceProjects = (superpipe({})('neo-project-mirror') a
         isTemp: isTempCwd,
         exists: existsSync,
       };
-      return planNeoWorkspaceProjects(groups, (place) => isNeoPlumbingFolder(place, local));
+      return runLagPhase('neo:project_mirror:plan', () =>
+        planNeoWorkspaceProjects(groups, (place) => isNeoPlumbingFolder(place, local))
+      );
     },
     'groups',
     'projects'
   )
   .pipe(
-    (db: Database, projects: readonly NeoWorkspaceProject[]) => {
-      const persisted = persistNeoWorkspaceProjects(db, projects);
-      return backfillNeoRepositoryIdentities(db) || persisted;
-    },
+    (db: Database, projects: readonly NeoWorkspaceProject[]) =>
+      db.transaction(() => {
+        const persisted = runLagPhase('neo:project_mirror:persist', () =>
+          persistNeoWorkspaceProjects(db, projects)
+        );
+        return (
+          runLagPhase('neo:project_mirror:backfill', () => backfillNeoRepositoryIdentities(db)) ||
+          persisted
+        );
+      }, 'immediate')(),
     ['db', 'projects'],
     'changed'
   )
