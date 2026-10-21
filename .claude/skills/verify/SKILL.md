@@ -322,6 +322,54 @@ No provider/model, real credentials, GitHub request or GUI is exercised. Stop
 with `stop.sh`. Direct filesystem write restrictions still belong to the
 surrounding environment; this verifies the single operation, not a shell sandbox.
 
+### Home save remote sync (H3 slice 1)
+
+On a fresh isolated daemon from Launch, run
+`bun .claude/skills/verify/neo-home-sync.ts <port> "$RUN" after`.
+The helper seeds a synthetic Git identity and a local bare remote plus peer clone,
+then configures only that test home's origin/upstream. No GitHub, credentials or
+network remote is used; keep the verify gh stub first on the daemon's PATH.
+
+The real save RPC must pull the peer's new file and push the requested document.
+It then sets remote.pushDefault to an unrelated local bare repo: another save
+must still update only origin, leaving the unrelated repo without any heads.
+Then both peers commit conflicting versions of another document: save must
+return conflict, abort its rebase, retain the local bytes/HEAD, leave the index
+clean and never write the pending file. The helper explicitly resolves only its
+synthetic fixture with a merge preserving the local version before continuing;
+the product never chooses a conflict resolution.
+
+A synthetic receive-pack failure then forces push_failed. Its local commit must
+remain intact and be named in the refusal. Removing that fixture setting and
+retrying must push the same commit without another commit. Evidence:
+`evidence/neo-home-sync-after.json`. Use `before` on the test-only commit in a
+separate fresh run: it records a local save that neither pulled nor pushed.
+Stop with `stop.sh` afterwards. Focused contracts additionally cover local-only
+homes, failed pulls, dirty input, a paused human rebase, links introduced by a
+pull, and confirmed document/decision-log pushes. No GUI or model is exercised.
+
+For rebase ownership, use another fresh isolated run and execute
+`bun .claude/skills/verify/neo-home-sync-faults.ts <port> "$RUN" race after`.
+A synthetic upload-pack pauses fetch; while it waits, the helper starts a real
+human-owned interactive rebase and edits at its stop. Save must refuse without
+aborting that rebase, changing HEAD/status or losing the edit. Pulls stamp their
+own unique Git reflog action, and cleanup requires that ownership marker.
+Existing conflict contracts still require the operation to abort its own rebase.
+
+For deadline/queue recovery, run the same helper with `deadline after` in another
+fresh run. Upload-pack stays pending until the daemon's actual 30-second network
+deadline; its process group must stop, save returns a timeout and a queued read
+then succeeds. The helper auto-releases its fixture at 35 seconds on old code so
+the baseline cannot hang forever. It records the noninteractive Git/SSH settings,
+elapsed time and queued read in `evidence/neo-home-sync-<mode>-after.json`.
+Use `before` instead of `after` on the regression commit to retain the failing
+race and 35-second baseline. Unit contracts use a shorter injected deadline for
+both pull and push; RPC exercises the production default. Stop with `stop.sh`.
+
+This slice syncs saves to an existing configured origin/upstream. GitHub's
+once-only private-repo proposal/create, second-machine clone, read-once-per-wake
+sync and conflict-question presentation are later H3 slices.
+
 ### Goal-cycle prompt delivery (P1)
 
 Run the existing real SDK/publication journey with a clean synthetic HOME and a
@@ -2025,6 +2073,33 @@ later slices. Review-author login is read now to enforce designated-bot approval
 unknown/stale authors never count. This journey proves the nudge decision and
 snapshot, not live GitHub transport, actual delivery or later worker merge checks.
 
+## Web schedule strip (G7b)
+
+Build the web and launch a fresh isolated daemon as above. Run
+`bun .claude/skills/verify/session-schedule-web.ts <port> "$RUN"`, then the
+headless `.claude/skills/verify/session-schedule-web.mjs <port> "$RUN"` with a
+Node runtime that can resolve Playwright. `VERIFY_BROWSER` may name a local
+Chromium executable, always launched headless with a fresh profile.
+
+The helper creates only synthetic Neo/session goals and reminders through RPC;
+last-outcome/skip/nudge values are explicit DB fixtures, not proof of wake delivery.
+The browser opens both `/neo` and `/session/<id>` at 1280/390px. Each strip starts
+folded and shows only its own target's rows. Expand it, inspect interval/cron,
+next/last timestamps, skip reason and nudge distance (or “Nudge due” after the
+threshold), then open the goal title's read-only definition. Pause/resume must update
+both UI and a fresh real RPC read.
+The helper also opens a synthetic Space session route: no strip or schedule list
+RPC may be present there, including after focus. `reproduce` as the final browser
+argument skips the long visible-refresh check but retains both boundary assertions.
+Screenshots: `evidence/schedules-{neo,session}-{1280,390}.png` and
+`evidence/schedules-space.png`; assertions and
+observed text: `evidence/schedule-web.json`. Inspect screenshots as well.
+
+The strip refreshes every 30s while visible, on window focus and explicit refresh,
+and after controls. Goal titles use a disclosure until G6 adds the full goal panel;
+this journey does not claim a journal or cross-page goal link. No GUI, model,
+provider, real data or GitHub is used. Stop the daemon/mock with `stop.sh`.
+
 ### Immutable settings proposal answers
 
 ```bash
@@ -2061,6 +2136,21 @@ migration. A number already reserved in own-pr-number is checked for collisions
 instead. Supply own-pr-number only when updating that same PR. It uses GitHub,
 not the isolated daemon or a live database; do not run it under the stub-gh PATH.
 Unpublished reservations still need coordination with their owner.
+
+### Unknown schedule counts
+
+On another fresh run, seed with `session-schedule-web.ts`, then run the headless
+`session-schedule-summary.mjs <port> "$RUN"` with the same Node/Playwright setup.
+It holds and refuses only the first schedule-list reply at the WebSocket boundary;
+all other calls and the successful retry use the actual isolated daemon. While the
+strip is collapsed, both pending and failed reads must show only “Schedules”,
+without a fabricated zero. Retry must show the actual count of two. Component
+contracts separately check a successful empty read shows zero.
+
+Evidence: `evidence/schedule-summary.json` and
+`schedule-summary-{loading,failed,recovered}.png`. This is controlled fault
+injection into the real web surface, not a claim that the daemon itself failed.
+The helper closes its headless browser; stop the daemon/mock with `stop.sh`.
 
 ## Source-labelled schedule list (G7 contract)
 
@@ -2134,6 +2224,46 @@ tests also cover an empty pack list, direct-call freshness, duplicate watch
 suppression and no followed todos. A controlled wait proves amplification of
 slow settings, not the cause of any historical live off-CPU event. The helper
 closes its own socket, timer, monitor, Neo service and daemon in `finally`.
+
+
+### Human-approved standing-rule edits
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-rule-answers-XXXXXX)
+mkdir -p "$RUN/home"
+env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
+  bun .claude/skills/verify/neo-rule-answers.ts 9355 "$RUN"
+```
+
+This helper starts a real isolated daemon and uses its MCP and WebSocket
+`operation.invoke` doors. A system-triggered direct `neo.rule.save` is refused.
+After a stored human message is consumed and delivered in that active turn, an
+explicit `human:<messageId>` triggerId and that message's exact citation allow
+the direct path, matching #7904's input attribution.
+
+The preferred `neo.rule.ask {askId,requestId,add?,remove?}` path generates a yes/no
+question and atomically binds its immutable exact edit. No answer leaves the
+rules unchanged. Human yes applies only the stored edit; an agent cannot answer,
+replace the proposal after consent or pass new edit fields to the questionId-only
+`neo.rule.applyAnswer`. Both the human consent and resulting `neo.snapshot`
+standingRules survive restart. Successful chat consent must also deliver the
+updated `state.settings` event over the connected WebSocket; the helper waits
+for the exact new rule in this projection, rather than accepting a DB read as
+proof that connected clients updated. Pending proposal retries reuse requestId; closed
+questions require a new requestId. Evidence is retained even on failure in
+`evidence/observed.json`; each daemon and socket closes in `finally`.
+
+Unit contracts also replace one of twenty rules while keeping the other nineteen,
+refuse guessed/queued/nonhuman direct-save triggers, and roll back consent and
+all edits on infrastructure failure. A stale proposal (a missing removal or a
+changed rule cap) records the human answer without changing rules. Chat sends
+remain accepted and notify Neo; `neo.rule.applyAnswer` returns the typed refusal.
+The real helper exercises a stale chat yes through `neo.message.send`, and the
+unit journey checks notification and retry idempotency for both stale cases.
+Only synthetic fixtures are used. This journey
+proves the daemon operation and snapshot surfaces; GUI rendering, model choices,
+notification completion and deployment are not verified. Neo's default guidance
+asks for consent first; the existing direct human-message path remains available.
 
 ## Copilot discovery boundary (worker slice 1)
 
@@ -2209,3 +2339,33 @@ Runtime version is supplied explicitly and checked before session creation. The
 fixture reports `fixture-1`/protocol 3 against pinned SDK 1.0.13; it is not a claim
 that any untested real CLI/SDK pair is supported. Final wiring must select and
 verify the runtime pair and admission/model/effort policy before exposing it.
+
+## Claude Desktop link registration
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-claude-link-XXXXXX)
+mkdir -p "$RUN/home"
+env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin" \
+  NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/claude-desktop-link.ts 9383 "$RUN"
+```
+
+Use fresh synthetic HOME/data and a free non-8399 port. The real isolated daemon
+calls a synthetic CLI that records the first input and remains busy. Public
+`work.start`, `work.status` and `work.find` must omit the Desktop epitaxy link and
+return `watchHint` directing Neo to `work.status` while no Desktop record exists.
+The helper then writes a synthetic Desktop-store record and repeats find/status:
+the link must appear and the hint disappear without restarting the daemon. CLI
+exit or a requested Desktop handoff alone is not proof of Desktop registration.
+On the reproduction commit the same journey fails on the premature start link.
+
+`evidence/observed.json` retains every operation reply. The helper closes the
+socket, stops all fixture worker PIDs and cleans up the daemon in `finally`.
+Both `claude` and Desktop-launch `script` are stubbed, as is `gh`; no real CLI,
+provider, auth/token files, human sessions, GitHub or GUI is used. This proves the
+public response and record-discovery transition, not the live Desktop UI's import,
+account access or restart behavior. For a supervised live check, have the human
+observe the running CLI-only session in Neo, then after a genuine Desktop import
+ask Neo to refresh find/status and have the human open the returned link. Do not
+resume a second owner of a still-running CLI session, automate the GUI or restart
+the human's Desktop app as part of this journey.

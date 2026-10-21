@@ -1,3 +1,4 @@
+import { SessionSchedules } from '../components/SessionSchedules.tsx';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { getBannerLevel } from '../components/ConnectionOverlay.tsx';
 import { ScrollToBottomButton } from '../components/ScrollToBottomButton.tsx';
@@ -387,6 +388,7 @@ export function NeoLive() {
             <h1 class="text-3xl font-medium leading-tight tracking-tight">{t('live.heading')}</h1>
             <p class="mt-3 max-w-lg text-sm leading-relaxed text-fg-muted">{t('live.intro')}</p>
           </div>
+          <SessionSchedules sessionId={neo.sessionId} />
           {firstConnect && (
             <p role="status" class="mb-4 rounded-xl bg-warning/10 p-3 text-sm text-warning">
               {t('live.connecting')}

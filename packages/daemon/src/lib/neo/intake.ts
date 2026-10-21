@@ -468,9 +468,9 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
 export function createNeoIntakeOperation(
   db: Database,
   repo: NeoRepository,
-  notify: NeoIntakeNotifier = noNotification
+  notify: NeoIntakeNotifier = noNotification,
+  store: NeoAskTodoRepository = new NeoAskTodoRepository(db.getDatabase())
 ) {
-  const store = new NeoAskTodoRepository(db.getDatabase());
   return defineOperation({
     name: 'neo.message.send',
     description:

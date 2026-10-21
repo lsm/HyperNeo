@@ -1,3 +1,4 @@
+import { SessionSchedules } from '../components/SessionSchedules.tsx';
 import { CheckGlyph, ChevronRightGlyph } from '../components/icons/common-glyphs.tsx';
 import type { ComponentChildren } from 'preact';
 import { lazy, Suspense } from 'preact/compat';
@@ -398,7 +399,11 @@ export default function MainContent() {
     if (sessionId) {
       return (
         <Suspense fallback={lazyFallback}>
-          <ChatContainer key={sessionId} sessionId={sessionId} />
+          <ChatContainer
+            key={sessionId}
+            sessionId={sessionId}
+            headerExtra={<SessionSchedules sessionId={sessionId} />}
+          />
         </Suspense>
       );
     }

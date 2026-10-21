@@ -1,3 +1,4 @@
+import { applyNeoRuleAnswer } from './neo-rule-answer.ts';
 import { applyPackPreferenceAnswer } from './pack-preference-answer.ts';
 import type {
   NeoAsk,
@@ -107,7 +108,8 @@ const isStartable = (todo: NeoTodo) =>
 export class NeoAskTodoRepository {
   constructor(
     private readonly db: Database,
-    private readonly changed: () => void = () => {}
+    private readonly changed: () => void = () => {},
+    private readonly rulesChanged: () => void = () => {}
   ) {}
 
   openAsk(
@@ -422,6 +424,7 @@ export class NeoAskTodoRepository {
     by: 'button' | 'chat',
     now: number
   ): NeoQuestion | null {
+    let rulesChanged = false;
     const changed = this.db.transaction(() => {
       const answered = this.db
         .prepare(
@@ -431,12 +434,17 @@ export class NeoAskTodoRepository {
         .run(JSON.stringify(answer), by, now, question.id).changes;
       if (answered) {
         this.releaseStartTodos(question.id, now);
-        if (answer === 'yes') applyPackPreferenceAnswer(this.db, question.id);
+        if (answer === 'yes') {
+          applyPackPreferenceAnswer(this.db, question.id);
+          const rules = applyNeoRuleAnswer(this.db, question.id);
+          rulesChanged = rules.ok && rules.changed;
+        }
       }
       return answered;
     })();
     if (!changed) return null;
     this.touchAsk(question.askId, now);
+    if (rulesChanged) this.rulesChanged();
     return this.getQuestion(question.id);
   }
 
