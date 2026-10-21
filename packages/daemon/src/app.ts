@@ -187,6 +187,7 @@ import {
 import { sweepOrphanedAgentChildren } from './lib/agent/orphan-child-sweep.ts';
 import { AgentChildProcessRepository } from './storage/repositories/agent-child-process-repository.ts';
 import { remoteDaemons } from './lib/remote-daemons/registry.ts';
+import { RemoteDaemonSecretRepository } from './storage/repositories/remote-daemon-secret-repository.ts';
 
 interface ReconcilePersistedDiscoveryDeps {
   credentialManager: ProviderCredentialManager;
@@ -571,7 +572,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     applyProviderModelAllowlistsToEnv(settingsManager.getGlobalSettings().providerModelAllowlists);
     remoteDaemons.restore(
       settingsManager.getGlobalSettings().attachedDaemons ?? [],
-      (attachedDaemons) => settingsManager.updateGlobalSettings({ attachedDaemons })
+      (attachedDaemons) => settingsManager.updateGlobalSettings({ attachedDaemons }),
+      new RemoteDaemonSecretRepository(db.getDatabase())
     );
 
     const credentialManager = ProviderCredentialManager.create(db.getDatabase());
