@@ -1,4 +1,5 @@
 import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
+import NodeWebSocket from 'ws';
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 5000;
 const DEFAULT_PROBE_REQUEST_TIMEOUT_MS = 4000;
@@ -125,7 +126,14 @@ export class RemoteDaemonRegistry {
       url,
       autoReconnect: false,
       pingInterval: 0,
-      ...(credential ? { headers: { authorization: `Bearer ${credential}` } } : {}),
+      ...(credential
+        ? {
+            createSocket: (socketUrl: string) =>
+              new NodeWebSocket(socketUrl, {
+                headers: { authorization: `Bearer ${credential}` },
+              }) as unknown as WebSocket,
+          }
+        : {}),
     });
     hub.registerTransport(transport);
     const opening = transport.initialize();

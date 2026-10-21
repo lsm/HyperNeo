@@ -27,7 +27,7 @@ export interface WebSocketClientTransportOptions {
 
   pongTimeout?: number;
 
-  headers?: Record<string, string>;
+  createSocket?: (url: string) => WebSocket;
 }
 
 export function reconnectDelayFor(
@@ -46,7 +46,7 @@ export class WebSocketClientTransport implements IMessageTransport {
   private ws: WebSocket | null = null;
   private state: ConnectionState = 'disconnected';
   private readonly url: string;
-  private readonly headers: Record<string, string> | undefined;
+  private readonly createSocket: (url: string) => WebSocket;
   private readonly autoReconnect: boolean;
   private readonly maxReconnectAttempts: number;
   private readonly reconnectDelay: number;
@@ -76,7 +76,7 @@ export class WebSocketClientTransport implements IMessageTransport {
 
   constructor(options: WebSocketClientTransportOptions) {
     this.url = options.url;
-    this.headers = options.headers;
+    this.createSocket = options.createSocket ?? ((url) => new WebSocket(url));
     this.autoReconnect = options.autoReconnect ?? true;
     this.maxReconnectAttempts = options.maxReconnectAttempts ?? 5;
     this.reconnectDelay = options.reconnectDelay ?? 1000;
@@ -124,9 +124,7 @@ export class WebSocketClientTransport implements IMessageTransport {
       let connectResolved = false;
 
       try {
-        this.ws = this.headers
-          ? new WebSocket(this.url, { headers: this.headers } as unknown as string[])
-          : new WebSocket(this.url);
+        this.ws = this.createSocket(this.url);
         const ws = this.ws;
 
         ws.onopen = () => {
