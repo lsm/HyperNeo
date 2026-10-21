@@ -55,3 +55,12 @@ export type ArtifactReadResult =
       readonly sha256: string;
       readonly complete: boolean;
     };
+
+export interface ArtifactFileMetadata {
+  readonly context: { readonly kind: 'todo' | 'ask'; readonly id: string };
+  readonly artifact: ArtifactRef;
+  readonly sha256: string;
+  readonly createdAt: number;
+  readonly sourcePath: string;
+  readonly producer: { readonly adapter: string; readonly id: string };
+}
