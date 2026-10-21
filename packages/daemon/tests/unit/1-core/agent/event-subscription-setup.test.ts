@@ -178,7 +178,7 @@ describe('EventSubscriptionSetup', () => {
         });
       });
 
-      it('client.interrupt RPC path cancels pending durable deliveries end-to-end (#3744105273)', async () => {
+      it('client.interrupt RPC path preserves pending durable deliveries', async () => {
         const raw = new BunDatabase(':memory:');
         createTables(raw);
         const jobQueueRepo = new JobQueueRepository(raw);
@@ -239,12 +239,12 @@ describe('EventSubscriptionSetup', () => {
         await callback({ sessionId });
 
         expect((raw.prepare(`SELECT COUNT(*) AS n FROM job_queue`).get() as { n: number }).n).toBe(
-          0
+          1
         );
         const row = raw
           .prepare(`SELECT send_status AS sendStatus FROM sdk_messages WHERE id = 'db-msg-1'`)
           .get() as { sendStatus: string };
-        expect(row.sendStatus).toBe('failed');
+        expect(row.sendStatus).toBe('enqueued');
         raw.close();
       });
 

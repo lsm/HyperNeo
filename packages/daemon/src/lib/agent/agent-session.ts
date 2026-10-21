@@ -2890,7 +2890,7 @@ export class AgentSession
         `${getProviderRegistry().get(providerId)?.displayName ?? providerId} key rejected; update it in Providers.`,
         { markAsError: true }
       );
-    void this.handleInterrupt().catch((interruptError: unknown) =>
+    void this.handleInterrupt({ skipDeferredReplay: true }).catch((interruptError: unknown) =>
       this.logger.warn(`Stopping after a rejected provider key failed: ${String(interruptError)}`)
     );
   }
