@@ -8,12 +8,15 @@ import { MermaidFigureToolbar, getMermaidForTheme } from './MermaidViewer.tsx';
 import { decideMarkdownImage, isNavigatableHref } from './markdown-image.ts';
 import { LruCache } from '../../lib/lru-cache.ts';
 import { decideArtifactImage, decideArtifactLink } from '../../lib/artifact-link-policy.ts';
+import { markPreviewReferences } from './markdown-references.ts';
 
 interface MarkdownRendererProps {
   content: string;
   class?: string;
   trailing?: ComponentChildren;
   artifactLinks?: boolean;
+  references?: readonly string[];
+  onReference?: (reference: string) => void;
 }
 
 type MarkdownModules = {
@@ -462,11 +465,16 @@ export default function MarkdownRenderer({
   class: className,
   trailing,
   artifactLinks = false,
+  references,
+  onReference,
 }: MarkdownRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const trailingMount = useRef<HTMLElement | null>(null);
   const hasTrailing = trailing != null;
   const overlayOwner = useRef({});
+  const referenceHandler = useRef(onReference);
+  referenceHandler.current = onReference;
+  const referenceKey = JSON.stringify(references ?? []);
   const [html, setHtml] = useState<string | null>(
     () => renderCache(artifactLinks).get(content) ?? null
   );
@@ -525,6 +533,20 @@ export default function MarkdownRenderer({
     container.addEventListener('click', handleImageActivate);
     container.addEventListener('auxclick', handleImageActivate);
 
+    markPreviewReferences(container, JSON.parse(referenceKey));
+    const handleReference = (event: Event) => {
+      if (event instanceof KeyboardEvent && event.key !== 'Enter') return;
+      const target = event.target instanceof Element ? event.target : null;
+      const reference = target
+        ?.closest('[data-preview-reference]')
+        ?.getAttribute('data-preview-reference');
+      if (!reference || !referenceHandler.current) return;
+      event.preventDefault();
+      referenceHandler.current(reference);
+    };
+    container.addEventListener('click', handleReference);
+    container.addEventListener('keydown', handleReference);
+
     const copyMounts = attachCodeBlockCopyButtons(containerRef.current);
 
     let mermaidCancelled = false;
@@ -563,6 +585,8 @@ export default function MarkdownRenderer({
     return () => {
       container.removeEventListener('click', handleImageActivate);
       container.removeEventListener('auxclick', handleImageActivate);
+      container.removeEventListener('click', handleReference);
+      container.removeEventListener('keydown', handleReference);
       copyMounts.forEach((mount) => {
         render(null, mount);
       });
@@ -573,7 +597,7 @@ export default function MarkdownRenderer({
       if (mount) render(null, mount);
       trailingMount.current = null;
     };
-  }, [html, theme, hasTrailing, artifactLinks]);
+  }, [html, theme, hasTrailing, artifactLinks, referenceKey]);
 
   useLayoutEffect(() => {
     if (trailingMount.current) render(trailing ?? null, trailingMount.current);

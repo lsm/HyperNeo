@@ -1,3 +1,4 @@
+import type { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import {
   ARTIFACT_DEFAULT_LIMITS,
@@ -9,11 +10,12 @@ import {
   readArtifactPreview,
   type ArtifactPreviewState,
 } from '../../lib/artifact-preview-client.ts';
+import { t } from '../../lib/i18n/index.ts';
 import MarkdownRenderer, { clearArtifactRenderCache } from '../chat/MarkdownRenderer.tsx';
 
 type Shown = ArtifactPreviewState | { state: 'loading' };
 
-const KIND_LABELS = {
+export const KIND_LABELS = {
   markdown: 'Markdown',
   html: 'HTML',
   image: 'Image',
@@ -22,27 +24,71 @@ const KIND_LABELS = {
   text: 'Text',
 };
 
-const formatBytes = (bytes: number) =>
+export const formatBytes = (bytes: number) =>
   bytes < 1024
     ? `${bytes} B`
     : bytes < 1024 * 1024
       ? `${Number((bytes / 1024).toFixed(1))} KB`
       : `${Number((bytes / 1024 / 1024).toFixed(1))} MB`;
 
-const MESSAGES = {
-  loading: 'Loading preview…',
-  daemon_unavailable: 'The daemon that owns this file is not reachable.',
-  needs_update: 'Preview needs an updated daemon.',
-  revoked: 'This file is no longer available to you.',
-  forbidden: 'This reference points outside what the preview may open.',
-  unsupported: 'This format has no preview yet.',
-  limit: `This file is larger than the ${formatBytes(ARTIFACT_DEFAULT_LIMITS.documentPreviewBytes)} preview limit.`,
-};
+export function artifactStateMessage(state: Exclude<Shown['state'], 'ready'>) {
+  if (state === 'limit')
+    return t('artifact.limit', {
+      limit: formatBytes(ARTIFACT_DEFAULT_LIMITS.documentPreviewBytes),
+    });
+  return t(
+    (
+      {
+        loading: 'artifact.loading',
+        daemon_unavailable: 'artifact.daemonUnavailable',
+        needs_update: 'artifact.needsUpdate',
+        revoked: 'artifact.revoked',
+        forbidden: 'artifact.forbidden',
+        unsupported: 'artifact.unsupported',
+      } as const
+    )[state]
+  );
+}
 
 function revisionLabel({ revision, sha256 }: ArtifactFileMetadata) {
-  if (revision?.kind === 'commit') return `commit ${revision.commitSha.slice(0, 7)}`;
+  if (revision?.kind === 'commit')
+    return t('artifact.commit', { sha: revision.commitSha.slice(0, 7) });
   const hash = sha256.slice(0, 8);
-  return revision?.kind === 'worktree' ? `worktree snapshot ${hash}` : `snapshot ${hash}`;
+  return revision?.kind === 'worktree'
+    ? t('artifact.worktreeSnapshot', { hash })
+    : t('artifact.snapshot', { hash });
+}
+
+export function PreviewHeader({
+  title,
+  facts,
+  onBack,
+  children,
+}: {
+  title: string;
+  facts?: string;
+  onBack: () => void;
+  children?: ComponentChildren;
+}) {
+  return (
+    <header class="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line px-4 py-3">
+      <button
+        type="button"
+        aria-label={t('artifact.back')}
+        onClick={onBack}
+        class="rounded-md px-2 py-1 text-fg-soft hover:bg-surface-raised hover:text-fg"
+      >
+        ←
+      </button>
+      <div class="min-w-0 flex-1 basis-56">
+        <h1 id="artifact-preview-title" class="truncate text-sm font-medium" title={title}>
+          {title}
+        </h1>
+        {facts && <p class="truncate text-xs text-fg-muted">{facts}</p>}
+      </div>
+      {children}
+    </header>
+  );
 }
 
 export function ArtifactPreview({
@@ -103,33 +149,26 @@ export function ArtifactPreview({
   );
 
   return (
-    <section class="flex h-full min-h-0 flex-col bg-surface text-fg" aria-label="File preview">
-      <header class="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line px-4 py-3">
-        <button
-          type="button"
-          aria-label="Back"
-          onClick={onBack}
-          class="rounded-md px-2 py-1 text-fg-soft hover:bg-surface-raised hover:text-fg"
-        >
-          ←
-        </button>
-        <div class="min-w-0 flex-1 basis-56">
-          <h1 class="truncate text-sm font-medium" title={metadata?.artifact.title}>
-            {metadata?.artifact.title ?? 'Preview'}
-          </h1>
-          {metadata && (
-            <p class="truncate text-xs text-fg-muted">
-              {`${KIND_LABELS[metadata.artifact.kind]} · ${formatBytes(metadata.artifact.byteLength)} · ${revisionLabel(metadata)}`}
-            </p>
-          )}
-        </div>
+    <section
+      class="flex h-full min-h-0 flex-col bg-surface text-fg"
+      aria-label={t('artifact.region')}
+    >
+      <PreviewHeader
+        title={metadata?.artifact.title ?? t('artifact.untitled')}
+        facts={
+          metadata
+            ? `${KIND_LABELS[metadata.artifact.kind]} · ${formatBytes(metadata.artifact.byteLength)} · ${revisionLabel(metadata)}`
+            : undefined
+        }
+        onBack={onBack}
+      >
         {shown.state === 'ready' && (
           <div class="flex gap-1">
-            {toggle('preview', 'Preview')}
-            {toggle('source', 'Source')}
+            {toggle('preview', t('artifact.preview'))}
+            {toggle('source', t('artifact.source'))}
           </div>
         )}
-      </header>
+      </PreviewHeader>
       <div
         class="min-h-0 flex-1 overflow-auto px-4 py-4"
         onClick={activateLink}
@@ -137,7 +176,7 @@ export function ArtifactPreview({
       >
         {shown.state !== 'ready' ? (
           <p class="text-sm text-fg-muted" role="status">
-            {MESSAGES[shown.state]}
+            {artifactStateMessage(shown.state)}
           </p>
         ) : view === 'preview' ? (
           <MarkdownRenderer content={shown.text} artifactLinks />
@@ -149,7 +188,7 @@ export function ArtifactPreview({
       </div>
       {pendingUrl && (
         <div class="flex flex-wrap items-center gap-2 border-t border-line px-4 py-3 text-sm">
-          <span class="basis-full text-fg-muted">Open this link in a new tab?</span>
+          <span class="basis-full text-fg-muted">{t('artifact.linkPrompt')}</span>
           <code class="min-w-0 flex-1 basis-full break-all">{pendingUrl}</code>
           <button
             type="button"
@@ -159,14 +198,14 @@ export function ArtifactPreview({
               setPendingUrl(null);
             }}
           >
-            Open link
+            {t('artifact.openLink')}
           </button>
           <button
             type="button"
             class="rounded-md px-3 py-1 text-fg-muted hover:text-fg"
             onClick={() => setPendingUrl(null)}
           >
-            Cancel
+            {t('artifact.cancel')}
           </button>
         </div>
       )}

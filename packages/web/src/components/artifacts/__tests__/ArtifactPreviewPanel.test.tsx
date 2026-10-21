@@ -94,7 +94,7 @@ describe('ArtifactPreviewPanel', () => {
         'github.com/acme/demo #7 · Open · checks passing · approved · head c0ffee0'
       )
     ).toBeTruthy();
-    expect(within(panel).getByText('layout')).toBeTruthy();
+    expect(await within(panel).findByText('layout')).toBeTruthy();
     expect(within(panel).queryByRole('button', { name: /src\/layout\.ts/ })).toBeNull();
 
     fireEvent.click(within(panel).getByRole('button', { name: /docs\/design\/layout\.md/ }));

@@ -1,4 +1,5 @@
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
+import { ArtifactCards } from '../components/artifacts/ArtifactCards.tsx';
 import type {
   NeoAskEntry,
   NeoQuestion,
@@ -109,6 +110,7 @@ function TodoRow({
             ? neoTodoStatus(todo)
             : t('todo.doneWhen', { doneWhen: todo.doneWhen })}
         </span>
+        <ArtifactCards artifacts={todo.artifacts} />
         {number === undefined && todo.state === 'blocked' && todo.nextAction && (
           <span data-todo-next-action class="block break-words text-xs text-fg-muted">
             {t('todo.nextAction', { action: todo.nextAction })}
