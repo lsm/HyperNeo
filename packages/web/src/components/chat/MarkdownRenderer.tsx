@@ -428,6 +428,8 @@ function getMarkdownProcessor(
   return processor;
 }
 
+export const clearArtifactRenderCache = () => renderedArtifactCache.clear();
+
 const renderCache = (artifactLinks: boolean) =>
   artifactLinks ? renderedArtifactCache : renderedMarkdownCache;
 

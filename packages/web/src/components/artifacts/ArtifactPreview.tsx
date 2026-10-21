@@ -9,7 +9,7 @@ import {
   readArtifactPreview,
   type ArtifactPreviewState,
 } from '../../lib/artifact-preview-client.ts';
-import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
+import MarkdownRenderer, { clearArtifactRenderCache } from '../chat/MarkdownRenderer.tsx';
 
 type Shown = ArtifactPreviewState | { state: 'loading' };
 
@@ -59,12 +59,18 @@ export function ArtifactPreview({
   const [pendingUrl, setPendingUrl] = useState<string | null>(null);
 
   useEffect(() => {
-    setShown(lost ? { state: 'daemon_unavailable' } : { state: 'loading' });
     setPendingUrl(null);
     if (!connected) {
+      clearArtifactRenderCache();
+      setShown((previous) =>
+        lost || previous.state === 'daemon_unavailable'
+          ? { state: 'daemon_unavailable' }
+          : { state: 'loading' }
+      );
       if (!lost) connectionManager.getHub().catch(() => undefined);
       return;
     }
+    setShown({ state: 'loading' });
     let current = true;
     connectionManager
       .getHub()
