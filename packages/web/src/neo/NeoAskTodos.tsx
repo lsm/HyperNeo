@@ -19,6 +19,7 @@ import {
   NeoSessionMark,
 } from './NeoCardParts.tsx';
 import { neoSessionKind } from './work-driver.ts';
+import { NEO_DONE_SHOWN, type NeoDoneTodosPage } from './neo-asks.ts';
 import { NeoIcon } from './NeoIcon.tsx';
 import { messageTime } from './NeoMessage.tsx';
 import { t } from '../lib/i18n/index.ts';
@@ -292,6 +293,7 @@ export function NeoAskTodos({
   onReply,
   onOpen,
   onSettle,
+  onLoadDone,
 }: {
   entry: NeoAskEntry;
   disabled?: boolean;
@@ -299,8 +301,12 @@ export function NeoAskTodos({
   onReply?: (question: NeoQuestion) => void;
   onOpen?: (link: string, title: string) => void;
   onSettle?: (status: 'done' | 'dropped') => void;
+  onLoadDone?: (askId: string, offset: number) => Promise<NeoDoneTodosPage>;
 }) {
   const [open, setOpen] = useState(false);
+  const [doneOpen, setDoneOpen] = useState(false);
+  const [paged, setPaged] = useState<NeoTodoEntry[]>([]);
+  const [paging, setPaging] = useState(false);
   const { ask, todos } = entry;
   const asked = entry.questions.filter((question) => question.state === 'open');
   const answered = entry.questions.filter((question) => question.state === 'answered');
@@ -308,7 +314,26 @@ export function NeoAskTodos({
   const inQuestion = new Set(
     asked.flatMap((question) => (question.kind === 'start' ? (question.startTodos ?? []) : []))
   );
-  const live = todos.filter((todo) => todo.state !== 'removed');
+  const sent = todos.filter((todo) => todo.state === 'done');
+  const shownDone =
+    doneOpen || entry.doneCount <= NEO_DONE_SHOWN
+      ? [...sent, ...paged.filter((todo) => !sent.some((other) => other.id === todo.id))]
+      : [];
+  const hiddenDone = entry.doneCount - shownDone.length;
+  const live = [
+    ...todos.filter((todo) => todo.state !== 'removed' && todo.state !== 'done'),
+    ...shownDone,
+  ];
+  const showMoreDone = () => {
+    setDoneOpen(true);
+    if (sent.length > 0 || !onLoadDone || paging) return;
+    setPaging(true);
+    void onLoadDone(ask.id, paged.length)
+      .then((page) => {
+        if (page.ok) setPaged((current) => [...current, ...page.todos]);
+      })
+      .finally(() => setPaging(false));
+  };
   const removed = todos.filter((todo) => todo.state === 'removed' && !inQuestion.has(todo.id));
   const hasDetails =
     answered.length > 0 || retired.length > 0 || !!ask.outcome || removed.length > 0;
@@ -365,6 +390,16 @@ export function NeoAskTodos({
               <TodoRow key={todo.id} todo={todo} onOpen={onOpen} />
             ))}
         </div>
+      )}
+      {hiddenDone > 0 && (
+        <button
+          type="button"
+          class="mt-2 text-xs font-medium text-fg-muted hover:text-fg-soft disabled:opacity-60"
+          disabled={paging}
+          onClick={showMoreDone}
+        >
+          {t('ask.moreDone', { count: hiddenDone })}
+        </button>
       )}
       {open && hasDetails && (
         <div data-ask-details class="mt-3 space-y-3 text-sm text-fg-muted">

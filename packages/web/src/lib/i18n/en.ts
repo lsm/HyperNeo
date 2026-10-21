@@ -47,6 +47,7 @@ export const en = {
   'ask.actions': 'Ask actions',
   'ask.markDone': 'Mark done',
   'ask.drop': 'Drop this ask',
+  'ask.moreDone': '{count} done — show more',
   'ask.todos': 'Todos',
   'ask.removed': 'Removed',
   'ask.answered': 'Answered',

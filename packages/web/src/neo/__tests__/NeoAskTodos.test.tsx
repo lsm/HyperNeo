@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NeoAskTodos, neoQuestionAnswerLabel } from '../NeoAskTodos.tsx';
 import { messageTime } from '../NeoMessage.tsx';
-import { neoAskEntryGroup } from '../neo-asks.ts';
+import { neoAskEntriesInOrder, neoAskEntryGroup } from '../neo-asks.ts';
 import { locale } from '../../lib/i18n/index.ts';
 
 beforeEach(() => {
@@ -465,9 +465,81 @@ describe('neoQuestionAnswerLabel', () => {
 
 describe('neoAskEntryGroup', () => {
   it('puts waiting asks first and finished ones last', () => {
-    expect(neoAskEntryGroup({ state: 'waiting' })).toBe('attention');
-    expect(neoAskEntryGroup({ state: 'doing' })).toBe('running');
-    expect(neoAskEntryGroup({ state: 'dropped' })).toBe('outcomes');
+    expect(neoAskEntryGroup({ state: 'waiting', todos: [] })).toBe('attention');
+    expect(neoAskEntryGroup({ state: 'doing', todos: [] })).toBe('running');
+    expect(neoAskEntryGroup({ state: 'dropped', todos: [] })).toBe('outcomes');
+  });
+
+  it('moves a card holding a blocked todo to the very top', () => {
+    const blocked = entry({ state: 'doing', todos: [todo('b', { state: 'blocked' })] });
+    const waiting = entry({ state: 'waiting' });
+    expect(neoAskEntryGroup(blocked)).toBe('attention');
+    expect(neoAskEntriesInOrder([waiting, blocked, entry({ state: 'doing' })])).toEqual([
+      blocked,
+      waiting,
+      expect.objectContaining({ state: 'doing' }),
+    ]);
+  });
+});
+
+describe('done todos on a card', () => {
+  beforeEach(() => {
+    locale.value = 'en';
+  });
+  const done = (id: string) => todo(id, { state: 'done', status: 'Done', title: `Done ${id}` });
+  const rows = (app: ReturnType<typeof render>) =>
+    [...app.container.querySelectorAll('[data-ask-todo]')].map((row) =>
+      row.getAttribute('data-ask-todo')
+    );
+
+  it('shows up to three done todos and folds more behind one control', () => {
+    const few = render(
+      <NeoAskTodos
+        entry={entry({ todos: [todo('a'), done('d1'), done('d2')], doneCount: 2 })}
+        onAnswer={vi.fn()}
+      />
+    );
+    expect(rows(few)).toEqual(['a', 'd1', 'd2']);
+    cleanup();
+    const many = render(
+      <NeoAskTodos
+        entry={entry({
+          todos: [todo('a'), done('d1'), done('d2'), done('d3'), done('d4')],
+          doneCount: 4,
+        })}
+        onAnswer={vi.fn()}
+      />
+    );
+    expect(rows(many)).toEqual(['a']);
+    fireEvent.click(many.getByRole('button', { name: '4 done — show more' }));
+    expect(rows(many)).toEqual(['a', 'd1', 'd2', 'd3', 'd4']);
+    expect(many.queryByRole('button', { name: /done — show more/ })).toBeNull();
+  });
+
+  it('pages done todos the snapshot left out through neo.ask.doneTodos', async () => {
+    const onLoadDone = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        todos: [done('d1'), done('d2')],
+        doneCount: 3,
+        nextOffset: 2,
+      })
+      .mockResolvedValueOnce({ ok: true, todos: [done('d3')], doneCount: 3, nextOffset: null });
+    const app = render(
+      <NeoAskTodos
+        entry={entry({ todos: [todo('a')], doneCount: 3 })}
+        onAnswer={vi.fn()}
+        onLoadDone={onLoadDone}
+      />
+    );
+    fireEvent.click(app.getByRole('button', { name: '3 done — show more' }));
+    await waitFor(() => expect(rows(app)).toEqual(['a', 'd1', 'd2']));
+    expect(onLoadDone).toHaveBeenLastCalledWith('ask', 0);
+    fireEvent.click(app.getByRole('button', { name: '1 done — show more' }));
+    await waitFor(() => expect(rows(app)).toEqual(['a', 'd1', 'd2', 'd3']));
+    expect(onLoadDone).toHaveBeenLastCalledWith('ask', 2);
+    expect(app.queryByRole('button', { name: /done — show more/ })).toBeNull();
   });
 });
 

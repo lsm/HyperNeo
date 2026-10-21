@@ -18,7 +18,13 @@ import { NeoDrawer } from './NeoDrawer.tsx';
 import { NeoIcon } from './NeoIcon.tsx';
 import { publicAskText } from './NeoPublicConversation.tsx';
 import { NeoSessionPane } from './NeoSessionPane.tsx';
-import { type NeoAskGroup, neoAskEntryGroup } from './neo-asks.ts';
+import {
+  type NeoAskGroup,
+  type NeoDoneTodosPage,
+  neoAskEntriesInOrder,
+  neoAskEntryGroup,
+} from './neo-asks.ts';
+import { invokeOperation } from '../lib/operations.ts';
 import { restoreNeoImages, useNeoAttachments } from './neo-attachments.ts';
 import { createNeoDraftReloadBuffer } from './neo-draft-reload-buffer.ts';
 import { neoAwaitingReply, neoBusyWords } from './processing-activity.ts';
@@ -99,7 +105,9 @@ export function NeoLive() {
     return {
       ...group,
       key,
-      entries: (view?.todoAsks ?? []).filter((entry) => neoAskEntryGroup(entry) === key),
+      entries: neoAskEntriesInOrder(
+        (view?.todoAsks ?? []).filter((entry) => neoAskEntryGroup(entry) === key)
+      ),
     };
   });
   const workCount = sceneGroups.reduce((total, group) => total + group.entries.length, 0);
@@ -615,6 +623,14 @@ export function NeoLive() {
                         : undefined
                     }
                     onSettle={(status) => void neo.settleAsk(entry.ask.id, status)}
+                    onLoadDone={(askId, offset) =>
+                      connectionManager.getHub().then((hub) =>
+                        invokeOperation<NeoDoneTodosPage>(hub, 'neo.ask.doneTodos', {
+                          askId,
+                          offset,
+                        })
+                      )
+                    }
                     onOpen={(link, title) =>
                       link.startsWith('/session/')
                         ? setChat({ sessionId: link.slice('/session/'.length), title })
