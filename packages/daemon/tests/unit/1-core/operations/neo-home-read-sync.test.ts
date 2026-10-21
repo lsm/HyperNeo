@@ -287,3 +287,21 @@ describe('Conflict document filenames', () => {
     expect(await git(root, 'status', '--porcelain')).toBe('');
   });
 });
+
+describe('Conflict snapshot failure recovery', () => {
+  test('still aborts its own rebase when reading the fetched revision fails', async () => {
+    await writeFile(join(root, 'direction.md'), 'Local preserved\n');
+    await git(root, 'add', '.');
+    await git(root, 'commit', '-m', 'Local preserved');
+    const head = await git(root, 'rev-parse', 'HEAD');
+    await version('Remote preserved');
+    await writeFile(
+      join(fixture, 'bin', 'git'),
+      `#!/bin/sh\nfor arg do\n if [ "$arg" = FETCH_HEAD ]; then echo 'synthetic snapshot failure' >&2; exit 7; fi\ndone\nexec /usr/bin/git "$@"\n`
+    );
+    await expect(read()).rejects.toThrow('synthetic snapshot failure');
+    expect(await readFile(join(root, 'direction.md'), 'utf8')).toBe('Local preserved\n');
+    expect(await git(root, 'rev-parse', 'HEAD')).toBe(head);
+    expect(await git(root, 'status', '--porcelain')).toBe('');
+  });
+});
