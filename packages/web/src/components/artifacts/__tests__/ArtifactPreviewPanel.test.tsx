@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { connectionState } from '../../../lib/state.ts';
 import { artifactPreviewStack, openArtifactPreview } from '../../../lib/artifact-preview-store.ts';
 import { ArtifactPreviewPanel } from '../ArtifactPreviewPanel.tsx';
+import { Modal } from '../../ui/Modal.tsx';
 
 const request = vi.hoisted(() => vi.fn());
 vi.mock('../../../lib/connection-manager.ts', () => ({
@@ -165,5 +166,38 @@ describe('ArtifactPreviewPanel', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(document.activeElement).toBe(opener);
     opener.remove();
+  });
+
+  it('lets Escape close only a Modal opened on top of the panel', async () => {
+    route(() => ({ accepted: true, artifact: { artifactId: 'a1' } }));
+    render(<ArtifactPreviewPanel />);
+    act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a1' }));
+    await screen.findByRole('heading', { name: 'Layout design' });
+    const onClose = vi.fn();
+    render(
+      <Modal isOpen onClose={onClose} title="Question document">
+        Synthetic document
+      </Modal>
+    );
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('heading', { name: 'Layout design' })).toBeTruthy();
+  });
+
+  it('returns focus to the latest tap when a new preview replaces an open one', async () => {
+    route(() => ({ accepted: true, artifact: { artifactId: 'a1' } }));
+    const [first, second] = [document.createElement('button'), document.createElement('button')];
+    document.body.append(first, second);
+    render(<ArtifactPreviewPanel />);
+    first.focus();
+    act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a1' }));
+    await screen.findByRole('heading', { name: 'Layout design' });
+    second.focus();
+    act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a1' }));
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByText('Layout design')).toBeNull();
+    expect(document.activeElement).toBe(second);
+    first.remove();
+    second.remove();
   });
 });
