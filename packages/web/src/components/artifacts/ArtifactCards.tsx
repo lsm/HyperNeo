@@ -15,7 +15,7 @@ export function ArtifactCards({ artifacts }: { artifacts?: readonly ArtifactRef[
             onClick={() =>
               openArtifactPreview({ kind: 'artifact', artifactId: artifact.artifactId })
             }
-            class="max-w-full truncate rounded-lg border border-line px-3 py-1.5 text-left text-sm hover:bg-fill-soft"
+            class="max-w-full break-words rounded-lg border border-line px-3 py-1.5 text-left text-sm hover:bg-fill-soft"
           >
             {`${artifact.title} · ${KIND_LABELS[artifact.kind]} · ${formatBytes(artifact.byteLength)} · `}
             <span class="text-accent">{t('artifact.openPreview')}</span>

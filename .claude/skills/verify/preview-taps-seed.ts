@@ -29,7 +29,7 @@ if (phase === 'seed') {
   const text = [
     'The layout notes are in `notes.md`, and the design PR is https://github.com/lsm/HyperNeo/pull/42.',
     '',
-    'I attached the notes as a file too.',
+    'I attached the notes as a file too; notes.md also sits in the worktree.',
   ].join('\n');
   const result = new NeoPublicationRepository(db).append({
     conversationId: rootSession.slice(4),

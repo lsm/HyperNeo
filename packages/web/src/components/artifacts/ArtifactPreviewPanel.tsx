@@ -15,7 +15,6 @@ import {
 } from '../../lib/artifact-reference-client.ts';
 import { ArtifactPreview, artifactStateMessage, PreviewHeader } from './ArtifactPreview.tsx';
 import { ArtifactPrSummary } from './ArtifactPrSummary.tsx';
-import { hasOpenModal } from '../ui/Modal.tsx';
 
 type Reference = Extract<ArtifactPreviewTarget, { kind: 'reference' }>;
 
@@ -98,9 +97,9 @@ export function ArtifactPreviewPanel() {
 
   useLayoutEffect(() => {
     if (!open) return;
-    dialog.current?.focus({ preventScroll: true });
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !hasOpenModal()) backArtifactPreview();
+      if (event.key === 'Escape' && dialog.current?.contains(event.target as Node))
+        backArtifactPreview();
     };
     document.addEventListener('keydown', onKey);
     return () => {
@@ -109,6 +108,10 @@ export function ArtifactPreviewPanel() {
       takeArtifactPreviewOpener()?.focus({ preventScroll: true });
     };
   }, [open]);
+
+  useLayoutEffect(() => {
+    dialog.current?.focus({ preventScroll: true });
+  }, [stack[0]]);
 
   if (!top) return null;
   return (

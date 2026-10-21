@@ -94,10 +94,22 @@ try {
     assert.equal(await scrollTop(), before);
     assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Open preview: Synthetic notes');
 
-    await article.getByText('notes.md', { exact: true }).click();
+    await article.locator('code', { hasText: 'notes.md' }).click();
     await dialog.getByRole('heading', { name: 'Synthetic layout notes' }).waitFor();
     observed[`path-${width}`] = await dialog.locator('header p').innerText();
     await page.keyboard.press('Escape');
+    await dialog.waitFor({ state: 'detached' });
+
+    const bare = article.locator('span[data-preview-reference]', { hasText: 'notes.md' });
+    observed[`bareStyle-${width}`] = await bare.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return `${style.cursor} ${style.textDecorationLine} ${style.textDecorationStyle}`;
+    });
+    assert.equal(observed[`bareStyle-${width}`], 'pointer underline dotted');
+    await article.screenshot({ path: join(run, 'evidence', `preview-taps-message-${width}.png`) });
+    await bare.click();
+    await dialog.getByRole('heading', { name: 'Synthetic layout notes' }).waitFor();
+    await back();
     await dialog.waitFor({ state: 'detached' });
 
     await article.getByText('https://github.com/lsm/HyperNeo/pull/42').click();
