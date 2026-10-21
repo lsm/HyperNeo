@@ -410,7 +410,7 @@ export function NeoAskTodos({
   const sent = todos.filter((todo) => todo.state === 'done');
   const knownDone = [
     ...sent,
-    ...paged.filter((todo) => !sent.some((other) => other.id === todo.id)),
+    ...paged.filter((todo) => !todos.some((other) => other.id === todo.id)),
   ];
   const shownDone = doneOpen || entry.doneCount <= NEO_DONE_SHOWN ? knownDone : [];
   const hiddenDone = entry.doneCount - shownDone.length;
