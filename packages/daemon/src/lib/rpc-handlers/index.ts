@@ -1,4 +1,7 @@
 import { createNeoHomeOperations } from '../neo/home/operations.ts';
+import { createNeoHomeGithubOperation } from '../neo/home/github.ts';
+import { NeoHomeRepository } from '../neo/home/repository.ts';
+import { neoFolderPath } from '../neo/folder.ts';
 import { homedir } from 'node:os';
 import { SessionScheduler } from '../scheduler/session-schedules.ts';
 import { createSessionScheduleOperations } from '../scheduler/operations.ts';
@@ -1494,13 +1497,15 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       warn: (id, error) => log.warn(`Neo file pack ${id} was not loaded`, error),
     })
   );
+  const neoHome = new NeoHomeRepository(neoFolderPath(), neoService.repo);
   const familyOperations = [
     ...collectFamilyOperations({
       ...familyContext,
       executionPreparations: () => neoService.packs(),
     }),
     ...createNeoOperations(neoService),
-    ...createNeoHomeOperations(neoService),
+    ...createNeoHomeOperations(neoService, neoHome),
+    createNeoHomeGithubOperation(neoService, neoHome),
     ...createSessionScheduleOperations(sessionScheduler),
   ];
   sessionScheduler.recover();

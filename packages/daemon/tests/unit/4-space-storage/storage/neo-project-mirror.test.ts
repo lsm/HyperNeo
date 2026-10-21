@@ -63,6 +63,23 @@ describe('mirrorNeoWorkspaceProjects', () => {
   });
   afterEach(() => db.close());
 
+  test('a failed repository backfill rolls back aliases from that mirror', () => {
+    repo.saveProject({ id: 'held', title: 'Synthetic', summary: '', context: '' }, 0);
+    const insert = db.prepare('INSERT INTO neo_project_workspaces VALUES (?, ?)');
+    insert.run(`tool:${elsewhere}:synthetic`, 'held');
+    insert.run('repo:synthetic/repo\u0000old-folder', 'held');
+    db.exec(`CREATE TRIGGER reject_backfill BEFORE INSERT ON neo_project_workspaces
+      WHEN NEW.alias LIKE 'repository:%' BEGIN SELECT RAISE(ABORT, 'synthetic backfill failure'); END`);
+    const group = workspace('/synthetic-project');
+    group.place.toolProject = { id: 'synthetic', name: 'Synthetic' };
+    expect(() => mirrorNeoWorkspaceProjects(db, [group])).toThrow('synthetic backfill failure');
+    expect(
+      db.prepare("SELECT alias FROM neo_project_workspaces WHERE alias LIKE 'folder:%'").all()
+    ).toEqual([]);
+    expect(repo.getProject('held')?.title).toBe('Synthetic');
+    expect(db.prepare('SELECT alias FROM neo_project_workspaces').all()).toHaveLength(2);
+  });
+
   test('discovery persists an avatar through the real work.find operation', async () => {
     const registry = createOperationRegistry([
       createFindWorkOperation({

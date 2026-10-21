@@ -20,7 +20,20 @@ export class NeoHomeRepository {
   ) {}
 
   private async git(args: string[], allowFailure = false, network = false, action?: string) {
-    const child = spawnProcess(['git', '-c', 'core.hooksPath=/dev/null', ...args], {
+    return this.command(
+      ['git', '-c', 'core.hooksPath=/dev/null', ...args],
+      allowFailure,
+      network,
+      action
+    );
+  }
+
+  github(args: string[]) {
+    return this.command(['gh', ...args], true, true);
+  }
+
+  private async command(args: string[], allowFailure = false, network = false, action?: string) {
+    const child = spawnProcess(args, {
       cwd: this.root,
       stdout: 'pipe',
       stderr: 'pipe',
@@ -33,6 +46,7 @@ export class NeoHomeRepository {
               )
             ),
             GIT_TERMINAL_PROMPT: '0',
+            GH_PROMPT_DISABLED: '1',
             GIT_ASKPASS: '/usr/bin/false',
             SSH_ASKPASS: '/usr/bin/false',
             SSH_ASKPASS_REQUIRE: 'force',
@@ -62,7 +76,7 @@ export class NeoHomeRepository {
       const diagnostic = timedOut
         ? `network timed out after ${this.networkTimeoutMs}ms`
         : error.trim();
-      if (code && !allowFailure) throw new Error(`home git ${args[0]}: ${diagnostic}`);
+      if (code && !allowFailure) throw new Error(`home ${args.join(' ')}: ${diagnostic}`);
       return { code, text: text.trim(), error: diagnostic };
     } finally {
       clearTimeout(timer);
@@ -125,6 +139,40 @@ export class NeoHomeRepository {
 
   init(): Promise<HomeResult> {
     return this.sequence(() => this.initialize());
+  }
+
+  createGithub(repository: string, reserve: () => boolean) {
+    return this.sequence(async () => {
+      const initialized = await this.initialize();
+      if (!initialized.ok) return initialized;
+      if (!(await this.git(['remote', 'get-url', 'origin'], true)).code)
+        return { ok: false as const, reason: 'remote_exists: keep the configured origin.' };
+      if ((await this.git(['status', '--porcelain'])).text)
+        return { ok: false as const, reason: 'dirty: review existing home changes first.' };
+      if (!reserve())
+        return {
+          ok: false as const,
+          reason:
+            'creation_unconfirmed: reconcile the prior attempt with the human; never replay creation.',
+        };
+      const result = await this.github([
+        'repo',
+        'create',
+        repository,
+        '--private',
+        '--source',
+        '.',
+        '--remote',
+        'origin',
+        '--push',
+      ]);
+      return result.code
+        ? {
+            ok: false as const,
+            reason: `creation_unconfirmed: check GitHub/origin with the human before any retry. ${result.error}`,
+          }
+        : { ok: true as const };
+    });
   }
 
   save(input: HomeSavePlan): Promise<HomeSaveResult> {

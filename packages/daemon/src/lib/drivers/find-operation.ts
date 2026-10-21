@@ -69,7 +69,7 @@ export interface NamedFolderDeps {
 export interface FindWorkDeps {
   adapters(): readonly WorkAdapter[];
   remote: RemoteDaemons;
-  mirrorProjects?(groups: readonly PlaceGroup[]): void;
+  mirrorProjects?(groups: readonly PlaceGroup[]): void | Promise<void>;
   namedFolder?: NamedFolderDeps;
   ownPlaces?(caller: OperationCaller): ReadonlySet<string>;
 }
@@ -356,8 +356,8 @@ const runFindWork = (superpipe({})('find-work') as PipelineAPI)
   .pipe((asked: { pending: Promise<SourceOutcome> }) => asked.pending, 'asked', 'remote')
   .pipe(combineFindResults, ['local', 'remote', 'input', 'budget', 'own'], 'result')
   .pipe(
-    (result: FindResult, deps: FindWorkDeps) => {
-      deps.mirrorProjects?.(result.places);
+    async (result: FindResult, deps: FindWorkDeps) => {
+      await deps.mirrorProjects?.(result.places);
       return result;
     },
     ['result', 'deps'],
