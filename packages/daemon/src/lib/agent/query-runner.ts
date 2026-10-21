@@ -1647,9 +1647,11 @@ export class QueryRunner {
           recoveryState,
           resetStartupState: true,
           idleFirst: true,
-          requeueLastConsumedFor: 'model stream stall retry',
+          snapshotLastConsumed: true,
+          snapshotRequeueLabel: 'model stream stall retry',
           notice: `⚠️ The model sent nothing for ${Math.round(silenceThresholdMs / 1000)} s. Retrying…`,
           guardAfterExit: true,
+          restartQueue: true,
         });
       }
 
