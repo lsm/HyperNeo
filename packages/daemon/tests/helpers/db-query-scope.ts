@@ -1,6 +1,8 @@
 import { type DbScopeType, getScopeConfig } from '../../src/lib/db-query/scope-config.ts';
 
 export const EXCLUDED_TABLE_NAMES: string[] = [
+  'artifact_file_identity',
+  'artifact_files',
   'claude_inbox_routes',
   'claude_desktop_bridge_events',
   'claude_desktop_bridge_instances',
@@ -26,6 +28,9 @@ export const EXCLUDED_TABLE_NAMES: string[] = [
   'legacy_neo_asks',
   'neo_asks',
   'neo_todos',
+  'paired_devices',
+  'unpaired_connections',
+  'pairing_codes',
   'goal_journal',
   'neo_session_messages',
   'neo_todo_sessions',

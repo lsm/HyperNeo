@@ -91,11 +91,11 @@ try {
   await assert.rejects(rpc('verify.copilot', { action: 'hold' }), /permission/);
   assert.equal((await rpc('verify.copilot', { action: 'snapshot' }) as { status: string }).status, 'needs_you');
   const adapters = await rpc('operation.invoke', { name: 'work.adapters', input: {} }) as { value: { id: string; capabilities: string[] }[] };
-  assert.deepEqual(adapters.value.find(a => a.id === 'copilot-cli')?.capabilities, ['find']);
+  assert.deepEqual(adapters.value.find(a => a.id === 'copilot-cli')?.capabilities, ['find', 'start', 'send', 'queue', 'status', 'stop']);
   const calls = readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
   assert(calls.every(call => !call.secretPresent));
   evidence.push({ sdkProtocolCalls: calls });
-  console.log(`PASS: isolated daemon SDK RPC; repeated echo keeps reply binding, empty idle queued, bounded receipts, post-abort idle stopped, explicit restart completes, permission stays blocked; adapters find-only. ${run}/evidence/observed.json`);
+  console.log(`PASS: isolated daemon SDK RPC; repeated echo keeps reply binding, empty idle queued, bounded receipts, post-abort idle stopped, explicit restart completes, permission stays blocked; public lifecycle capabilities present. ${run}/evidence/observed.json`);
 } finally {
   ws?.close();
   await worker.close();

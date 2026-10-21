@@ -1,6 +1,7 @@
 import { NeoWakeRow } from './NeoWakeRow.tsx';
 import type { NeoSessionMessage } from '@hyperneo/shared/types/neo-session-message';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { previewReferenceCandidates } from '@hyperneo/shared/types/artifact-reference';
 import type {
   NeoConversationAskPageItem,
   NeoConversationImageRef,
@@ -8,6 +9,8 @@ import type {
 import type { NeoReplyTo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoSessionNoticeGroup } from '@hyperneo/shared/types/neo-snapshot';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
+import { ArtifactCards } from '../components/artifacts/ArtifactCards.tsx';
+import { openArtifactPreview } from '../lib/artifact-preview-store.ts';
 import { CopyButton } from '../components/ui/CopyButton.tsx';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { t } from '../lib/i18n/index.ts';
@@ -429,6 +432,25 @@ function PublicEntry({
   const copyText = ask ? publicAskText(ask.content) : full || short;
   const text = ask ? publicAskText(ask.content) : hasDetails ? short : full || short;
   const quoteText = publication ? neoPublicationQuoteExcerpt(publication) : text;
+  const references = useMemo(
+    () => ({
+      text: publication ? previewReferenceCandidates(text).map((item) => item.reference) : [],
+      full: publication ? previewReferenceCandidates(full).map((item) => item.reference) : [],
+    }),
+    [publication, text, full]
+  );
+  const openReference = publication
+    ? (reference: string) =>
+        openArtifactPreview({
+          kind: 'reference',
+          source: {
+            kind: 'publication',
+            id: publication.publicationId,
+            ...(publication.revisionId ? { revisionId: publication.revisionId } : {}),
+          },
+          reference,
+        })
+    : undefined;
   const photos = ask ? publicAskPhotos(ask.content) : [];
   const time = messageTime((ask ?? publication)!.createdAt);
   const author = publication?.producerInput.sessionId ? 'Neo' : t('chat.you');
@@ -566,6 +588,8 @@ function PublicEntry({
             <MarkdownRenderer
               content={text}
               trailing={more}
+              references={references.text}
+              onReference={openReference}
               class={`neo-markdown neo-markdown-${ask ? 'user' : 'assistant'} text-base leading-relaxed`}
             />
           );
@@ -587,10 +611,13 @@ function PublicEntry({
                   <MarkdownRenderer
                     content={full}
                     trailing={fold('chat.foldLess')}
+                    references={references.full}
+                    onReference={openReference}
                     class="neo-markdown neo-markdown-assistant text-sm leading-relaxed"
                   />
                 </div>
               )}
+              {publication && <ArtifactCards artifacts={publication.artifacts} />}
               {publication && links.length > 0 && (
                 <ul
                   aria-label={t('chat.scenes')}

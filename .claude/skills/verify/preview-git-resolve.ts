@@ -1,0 +1,105 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import { spyOn } from 'bun:test';
+import { randomUUID, createHash } from 'node:crypto';
+import { readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { ArtifactFileRepository } from '../../../packages/daemon/src/storage/repositories/artifact-file-repository.ts';
+import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
+import { createArtifactReferenceResolve } from '../../../packages/daemon/src/lib/artifacts/resolve-operation.ts';
+import { createArtifactRegistration } from '../../../packages/daemon/src/lib/artifacts/register-operation.ts';
+import { createArtifactReadOperations } from '../../../packages/daemon/src/lib/artifacts/read-operations.ts';
+import { readBoundGitBlob } from '../../../packages/daemon/src/lib/artifacts/git-blob.ts';
+import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
+import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
+const root = realpathSync(process.argv[2]); const phase = process.argv[3] ?? 'native';
+assert.equal(process.env.NODE_ENV, 'test'); assert.equal(process.env.HOME, join(root, 'home'));
+const child = Bun.spawn([process.execPath, fileURLToPath(new URL('./preview-git-capture.ts', import.meta.url)), root, 'seed'], { env: process.env, stdout: 'pipe', stderr: 'inherit' });
+const seeded = await new Response(child.stdout).text(); assert.equal(await child.exited, 0, seeded);
+const data = join(root, 'data'); let db = new Database(join(data, 'daemon.db'));
+const sha = 'a'.repeat(40); const url = `https://github.com/lsm/HyperNeo/blob/${sha}/docs/report.md`; const prUrl = 'https://github.com/lsm/HyperNeo/pull/42';
+const expected = Buffer.from('# Complete immutable 🦊\n'.repeat(60000));
+const blobSha = createHash('sha1').update(`blob ${expected.length}\0`).update(expected).digest('hex');
+const hash = createHash('sha256').update(expected).digest('hex');
+const originalFixtures = JSON.parse(readFileSync(join(root, 'git-fixtures.json'), 'utf8'));
+const originalPr = JSON.parse(readFileSync(join(root, 'pr.json'), 'utf8'));
+function source(text = `[Document](${url}) [PR](${prUrl})`) { db.prepare(`UPDATE sdk_message_bodies SET sdk_message = ? WHERE seq=(SELECT rowid FROM sdk_messages WHERE id='source')`).run(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } })); }
+source();
+if (phase === 'seed') { db.close(); console.log('seeded Git resolver fixture'); process.exit(0); }
+const human = { source: 'rpc' as const, principal: 'local' as const };
+const input = { sourceMessageOrCard: { kind: 'message' as const, id: 'source' }, reference: url, requestId: randomUUID() };
+const makeRegistry = () => createOperationRegistry([createArtifactReferenceResolve(() => db, data, join(root, 'home')), ...createArtifactReadOperations(() => db, data)]);
+let registry = makeRegistry();
+async function call(name: string, params: unknown, catalog = registry, caller = human) {
+ const result = await invokeOperation(catalog, name, params, caller); assert.equal(result.kind, 'completed', JSON.stringify(result)); return (result as { kind: 'completed'; value: { accepted: boolean; reason: string; artifact: { artifactId: string }; metadata: { sha256: string; sourcePath: string; revision: unknown }; data: string; nextOffset: number; complete: boolean; sha256: string } }).value;
+}
+const unavailable = { accepted: false, reason: 'unavailable' };
+const blocked = await invokeOperation(registry, 'artifact.reference.resolve', input, { source: 'mcp', role: 'direct_task_worker', sessionId: 'worker' });
+assert.equal(blocked.kind, 'completed'); assert.deepEqual((blocked as { kind: 'completed'; value: unknown }).value, unavailable);
+const first = await call('artifact.reference.resolve', input); assert.equal(first.accepted, true, JSON.stringify(first));
+assert(!JSON.stringify(first).includes(root)); const id = { artifactId: first.artifact.artifactId };
+const metadata = await call('artifact.file.get', id);
+assert.equal(metadata.metadata.sha256, hash); assert.equal(metadata.metadata.sourcePath, 'docs/report.md');
+assert.deepEqual(metadata.metadata.revision, { kind: 'commit', repository: 'github.com/lsm/hyperneo', commitSha: sha, blobSha });
+let offset = 0; const chunks: Buffer[] = [];
+for (;;) { const part = await call('artifact.file.read', { ...id, offset }); assert(part.accepted); assert.equal(part.sha256, hash); const bytes = Buffer.from(part.data, 'base64'); assert(bytes.length <= 256 * 1024); chunks.push(bytes); offset = part.nextOffset; if (part.complete) break; }
+assert(Buffer.concat(chunks).equals(expected));
+const calls = () => readFileSync(join(root, 'evidence', 'gh.log'), 'utf8').trim().split('\n'); let before = calls().length;
+assert.deepEqual(await call('artifact.reference.resolve', input), first); assert.equal(calls().length, before);
+assert.deepEqual(await call('artifact.reference.resolve', { ...input, reference: url.replace('HyperNeo', 'Other') }), unavailable); assert.equal(calls().length, before);
+source('removed'); assert.deepEqual(await call('artifact.reference.resolve', input), unavailable); assert.equal(calls().length, before); source();
+const selection = { ...input, reference: prUrl, requestId: randomUUID(), file: { headSha: sha, path: 'docs/report.md' } };
+assert.deepEqual(await call('artifact.reference.resolve', { ...selection, file: { ...selection.file, headSha: 'd'.repeat(40) } }), { accepted: false, reason: 'source_changed' });
+assert.deepEqual(await call('artifact.reference.resolve', { ...selection, file: { ...selection.file, path: 'not-listed.md' } }), { accepted: false, reason: 'source_changed' });
+assert.deepEqual(await call('artifact.reference.resolve', { ...selection, reference: url }), unavailable);
+assert.equal(calls().filter((line) => line.includes('"api"')).length, before);
+const picked = await call('artifact.reference.resolve', selection); assert(picked.accepted); assert.notEqual(picked.artifact.artifactId, first.artifact.artifactId);
+writeFileSync(join(root, 'pr.json'), JSON.stringify({ ...originalPr, headRefOid: 'd'.repeat(40) }));
+assert.deepEqual(await call('artifact.reference.resolve', selection), { accepted: false, reason: 'source_changed' });
+assert.deepEqual((await call('artifact.file.get', { artifactId: picked.artifact.artifactId })).metadata.revision, metadata.metadata.revision);
+writeFileSync(join(root, 'pr.json'), JSON.stringify(originalPr));
+const count = () => (db.prepare('SELECT COUNT(*) AS n FROM artifact_files').get() as { n: number }).n;
+const concurrentInput = { ...input, requestId: randomUUID() };
+const concurrent = await Promise.all([call('artifact.reference.resolve', concurrentInput), call('artifact.reference.resolve', concurrentInput)]);
+assert(concurrent[0].accepted); assert.deepEqual(concurrent[0], concurrent[1]);
+const beforeRaces = count();
+const moved = createOperationRegistry([createArtifactReferenceResolve(() => db, data, join(root, 'home'), undefined, undefined, async (target) => {
+ const blob = await readBoundGitBlob(target); writeFileSync(join(root, 'pr.json'), JSON.stringify({ ...originalPr, headRefOid: 'd'.repeat(40) })); return blob;
+})]);
+assert.deepEqual(await call('artifact.reference.resolve', { ...selection, requestId: randomUUID() }, moved), unavailable); assert.equal(count(), beforeRaces);
+writeFileSync(join(root, 'pr.json'), JSON.stringify(originalPr));
+
+const changing = createOperationRegistry([createArtifactReferenceResolve(() => db, data, join(root, 'home'), undefined, undefined, async (target) => {
+ const blob = await readBoundGitBlob(target); source('removed during Git lookup'); return blob;
+})]);
+assert.deepEqual(await call('artifact.reference.resolve', { ...input, requestId: randomUUID() }, changing), unavailable); assert.equal(count(), beforeRaces); source();
+const revoked = createOperationRegistry([createArtifactReferenceResolve(() => db, data, join(root, 'home'), undefined, undefined, async (target) => {
+ const blob = await readBoundGitBlob(target); db.prepare(`UPDATE neo_todo_sessions SET ref = ? WHERE todo_id='todo'`).run(JSON.stringify({ adapter: 'hyperneo', id: 'replacement' })); return blob;
+})]);
+assert.deepEqual(await call('artifact.reference.resolve', { ...input, requestId: randomUUID() }, revoked), unavailable); assert.equal(count(), beforeRaces);
+db.prepare(`UPDATE neo_todo_sessions SET ref = ? WHERE todo_id='todo'`).run(JSON.stringify({ adapter: 'hyperneo', id: 'replacement', daemon: 'remote' }));
+assert.deepEqual(await call('artifact.file.get', id), unavailable); assert.deepEqual(await call('artifact.file.read', id), unavailable);
+db.prepare(`UPDATE neo_todo_sessions SET ref = ? WHERE todo_id='todo'`).run(JSON.stringify({ adapter: 'hyperneo', id: 'worker' }));
+const originalLink = fs.link;
+const changingDuringCommit = spyOn(fs, 'link').mockImplementation(async (...args) => {
+ try { return await originalLink(...args); } finally { source('removed during durable commit'); }
+});
+try { assert.deepEqual(await call('artifact.reference.resolve', { ...input, requestId: randomUUID() }), unavailable); assert.equal(count(), beforeRaces); }
+finally { changingDuringCommit.mockRestore(); source(); }
+const fixtures = structuredClone(originalFixtures); const tree = Object.keys(fixtures).find((key) => key.includes('/trees/') && fixtures[key].tree?.some((entry: { path: string }) => entry.path === 'report.md'))!;
+fixtures[tree].tree[0].mode = '120000'; writeFileSync(join(root, 'git-fixtures.json'), JSON.stringify(fixtures));
+assert.deepEqual(await call('artifact.reference.resolve', { ...input, requestId: randomUUID() }), unavailable); assert.equal(count(), beforeRaces);
+writeFileSync(join(root, 'git-fixtures.json'), JSON.stringify(originalFixtures));
+const local = await createArtifactRegistration(() => db, data, join(root, 'home')).execute({ requestId: 'local', context: { kind: 'todo', id: 'todo' }, path: 'report.md', title: 'Local snapshot' }, human) as { accepted: boolean; artifact: { artifactId: string } }; assert(local.accepted);
+assert.deepEqual((await call('artifact.file.get', { artifactId: local.artifact.artifactId })).metadata.revision, { kind: 'worktree' });
+const legacy = new ArtifactFileRepository(db).save({ kind: 'todo', id: 'todo' }, 'legacy', 'legacy', hash, { ...first.artifact, artifactId: randomUUID() } as Parameters<ArtifactFileRepository['save']>[4], JSON.stringify({ adapter: 'hyperneo', id: 'worker' }), 'docs/report.md');
+assert.equal((await call('artifact.file.get', { artifactId: legacy.artifact.artifactId })).metadata.revision, undefined);
+renameSync(join(root, 'workspace'), join(root, 'workspace.retained'));
+db.close(); db = new Database(join(data, 'daemon.db')); registry = makeRegistry();
+writeFileSync(join(root, 'git-fixtures.json'), '{}'); before = calls().length;
+assert.deepEqual(await call('artifact.reference.resolve', input), first); assert.equal(calls().length, before);
+assert.deepEqual(await call('artifact.file.get', id), metadata); assert(Buffer.from((await call('artifact.file.read', id)).data, 'base64').equals(expected.subarray(0, 256 * 1024)));
+db.close();
+const evidence = { sourceBound: true, immutableHead: true, fullRead: true, provenance: true, racesRefused: true, revoked: true, localLabel: true, restart: true, first, picked, sha256: hash, byteLength: expected.length, ghCalls: calls().length };
+writeFileSync(join(root, 'git-resolve-evidence.json'), JSON.stringify(evidence, null, 2)); console.log(JSON.stringify(evidence));

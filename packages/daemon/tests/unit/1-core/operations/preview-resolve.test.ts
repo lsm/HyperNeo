@@ -1,0 +1,71 @@
+import { describe, expect, test } from 'bun:test';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createArtifactReferenceResolve } from '../../../../src/lib/artifacts/resolve-operation.ts';
+
+describe('human stored reference capture', () => {
+  test('discovery and non-human calls do not touch SQLite or capture', async () => {
+    const operation = createArtifactReferenceResolve(() => {
+      throw new Error('SQLite touched');
+    });
+    expect(operation.name).toBe('artifact.reference.resolve');
+    expect(
+      await operation.execute(
+        {
+          sourceMessageOrCard: { kind: 'todo', id: 'todo' },
+          reference: 'report.md',
+          requestId: '11111111-1111-4111-8111-111111111111',
+        },
+        { source: 'mcp', role: 'neo', sessionId: 'neo' }
+      )
+    ).toEqual({ accepted: false, reason: 'unavailable' });
+    const valid = {
+      sourceMessageOrCard: { kind: 'todo', id: 'todo' },
+      reference: 'report.md',
+      requestId: '11111111-1111-4111-8111-111111111111',
+    };
+    expect(operation.inputSchema.safeParse(valid).success).toBe(true);
+    expect(operation.inputSchema.safeParse({ ...valid, root: '/outside' }).success).toBe(false);
+    expect(
+      operation.inputSchema.safeParse({
+        ...valid,
+        sourceMessageOrCard: { ...valid.sourceMessageOrCard, text: 'injected.md' },
+      }).success
+    ).toBe(false);
+  });
+  test('captures only source-bound synthetic bytes and rechecks current authority', () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'preview-resolve-')));
+    mkdirSync(join(root, 'home'));
+    try {
+      const output = execFileSync(
+        'bun',
+        [
+          fileURLToPath(
+            new URL('../../../../../../.claude/skills/verify/preview-resolve.ts', import.meta.url)
+          ),
+          root,
+        ],
+        {
+          cwd: root,
+          env: { PATH: process.env.PATH, HOME: join(root, 'home'), NODE_ENV: 'test' },
+          encoding: 'utf8',
+          timeout: 30000,
+        }
+      );
+      expect(JSON.parse(output)).toMatchObject({
+        exactSnapshot: true,
+        sourceBound: true,
+        ambiguity: true,
+        revoked: true,
+        safeDescriptor: true,
+        historicalSource: true,
+        restart: true,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

@@ -31,7 +31,7 @@ try {
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('connection failed')); });
   const rpc = (name: string, input: unknown) => new Promise<unknown>((done, fail) => {
     const id = crypto.randomUUID();
-    const timer = setTimeout(() => fail(new Error(`${name} timeout`)), 15000);
+    const timer = setTimeout(() => fail(new Error(`${name} timeout`)), 150000);
     ws!.onmessage = event => {
       const reply = JSON.parse(String(event.data));
       if (reply.id !== id && reply.requestId !== id) return;
@@ -45,21 +45,37 @@ try {
   const ref = started.value.ref;
   const sessionId = ref.id.replace(/^local_/, '');
   assert(!existsSync(join(scope, `${ref.id}.json`)));
-  const assertPending = (value: { link?: string; watchHint?: string }) => { assert.equal(value.link, undefined, 'unregistered CLI worker must not advertise a Desktop link'); assert.match(value.watchHint ?? '', /work.status/); };
-  assertPending(started.value);
+  const value = started.value as { link?: string; watchHint?: string; status?: string };
+  assert.equal(value.status, 'running', 'a start in an existing folder runs its task with no click');
+  assert.equal(value.link, undefined, 'unregistered session must not advertise a Desktop link');
+  assert.match(value.watchHint ?? '', /work.status/);
+  const inputs = () => readFileSync(join(run, 'evidence/cli-inputs'), 'utf8');
+  assert.match(inputs(), /^bypassPermissions Synthetic task only$/m, 'the task runs as the first CLI turn');
+  const assertPending = (pending: { link?: string }) => assert.equal(pending.link, undefined, 'unregistered session must not advertise a Desktop link');
   const status = await rpc('work.status', { ref }) as typeof started;
   assert.equal(status.ok, true); assertPending(status.value);
   const pending = await rpc('work.find', { adapters: ['claude-desktop'], id: ref.id, localOnly: true }) as { places: { work: typeof started.value[] }[] };
   assert.equal(pending.places.flatMap(p => p.work).length, 1);
   assertPending(pending.places[0].work[0]);
-  writeFileSync(join(scope, `${ref.id}.json`), JSON.stringify({ sessionId: ref.id, cliSessionId: sessionId, cwd: join(run, 'workspace'), title: 'Synthetic CLI worker', lastActivityAt: Date.now(), isArchived: false }));
+  writeFileSync(join(scope, `${ref.id}.json`), JSON.stringify({ sessionId: ref.id, cliSessionId: sessionId, cwd: join(run, 'workspace'), title: 'Synthetic CLI worker', lastActivityAt: Date.now(), isArchived: false, permissionMode: 'acceptEdits' }));
   const registered = await rpc('work.find', { adapters: ['claude-desktop'], id: ref.id, localOnly: true }) as typeof pending;
   assert.equal(registered.places[0].work[0].link, `claude://claude.ai/epitaxy/${ref.id}`);
   assert.equal(registered.places[0].work[0].watchHint, undefined);
   const registeredStatus = await rpc('work.status', { ref }) as typeof started;
   assert.equal(registeredStatus.value.link, `claude://claude.ai/epitaxy/${ref.id}`);
-  evidence.push({ registeredWithoutDaemonRestart: true, cliSessionId: sessionId });
-  console.log(`PASS: real work.start/status/find withhold an unregistered Desktop link, then expose it after a synthetic Desktop record appears. ${run}/evidence/observed.json`);
+  const sent = await rpc('work.send', { ref, message: 'Synthetic follow-up' }) as { ok: boolean; value?: { delivered?: boolean } };
+  assert.equal(sent.ok, true, JSON.stringify(sent)); assert.equal(sent.value?.delivered, true);
+  assert.match(inputs(), /^bypassPermissions Synthetic follow-up$/m, 'Neo\'s session resumes in the mode it started in, though Desktop relabelled it acceptEdits');
+  const human = 'local_synthetic-human';
+  const humanTranscripts = join(run, 'home/.claude/projects', join(run, 'workspace').replace(/[/.]/g, '-'));
+  writeFileSync(join(humanTranscripts, 'synthetic-human.jsonl'), `${JSON.stringify({ type: 'user', uuid: 'h1', entrypoint: 'claude-desktop', permissionMode: 'acceptEdits', message: { content: 'human work' } })}\n`);
+  writeFileSync(join(scope, `${human}.json`), JSON.stringify({ sessionId: human, cliSessionId: 'synthetic-human', cwd: join(run, 'workspace'), title: 'Synthetic human session', lastActivityAt: Date.now(), isArchived: false, permissionMode: 'acceptEdits' }));
+  const refused = await rpc('work.send', { ref: { adapter: 'claude-desktop', id: human }, message: 'Synthetic escalation attempt' }) as { ok: boolean; reason?: string; detail?: string };
+  assert.equal(refused.ok, false); assert.equal(refused.reason, 'unreachable');
+  assert.match(refused.detail ?? '', /acceptEdits permission mode .* claude:\/\/claude\.ai\/epitaxy\/local_synthetic-human/);
+  assert.doesNotMatch(inputs(), /Synthetic escalation attempt/, 'a human session is never run headless above its own mode');
+  evidence.push({ registeredWithoutDaemonRestart: true, cliSessionId: sessionId, cliInputs: inputs() });
+  console.log(`PASS: work.start runs the task as the first CLI turn with no click, find/status link it once a Desktop record appears, an idle send resumes Neo's session in its started mode, and a human acceptEdits session is sent to Desktop instead. ${run}/evidence/observed.json`);
 } finally {
   ws?.close();
   const pidFile = join(run, 'evidence/worker-pid');

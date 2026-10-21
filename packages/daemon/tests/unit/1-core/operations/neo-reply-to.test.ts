@@ -1,3 +1,4 @@
+import { runMigration433 } from '../../../../src/storage/schema/m433-neo-question-document.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
 import {
@@ -22,6 +23,7 @@ import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-or
 import { runMigration289 } from '../../../../src/storage/schema/m289-neo-conversation-asks.ts';
 import { runMigration387 } from '../../../../src/storage/schema/m387-neo-ask-todo-tables.ts';
 import { runMigration398 } from '../../../../src/storage/schema/m398-neo-todo-blocked.ts';
+import { runMigration434 } from '../../../../src/storage/schema/m434-neo-todo-artifacts.ts';
 import { runMigration420 } from '../../../../src/storage/schema/m420-neo-ask-goal.ts';
 import { runMigration427 } from '../../../../src/storage/schema/m427-neo-question-confirm.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
@@ -43,8 +45,10 @@ describe('neo.message.send replyTo', () => {
     runMigration289(mailbox.db);
     runMigration387(mailbox.db);
     runMigration398(mailbox.db);
+    runMigration434(mailbox.db);
     runMigration420(mailbox.db);
     runMigration427(mailbox.db);
+    runMigration433(mailbox.db);
     createNeoPublicationTable(mailbox.db);
     runMigration344(mailbox.db);
     for (const id of [root, holder])
@@ -184,6 +188,57 @@ describe('neo.message.send replyTo', () => {
     mailbox.db.exec("UPDATE neo_questions SET state = 'open', answer = NULL");
     await send(crypto.randomUUID(), '   ', { kind: 'question', id: 'q1' });
     expect(store.getQuestion('q1')?.state).toBe('open');
+  });
+
+  test('a letter reply to a choice question answers with that option, like a tap', async () => {
+    const choice = (id: string, multiple: boolean) =>
+      store.askQuestion(
+        id,
+        'ask',
+        {
+          text: 'Which layout?',
+          kind: 'choice',
+          options: ['保留旧的列表布局，只调整间距', 'Cards', 'Use the compact table everywhere'],
+          multiple,
+          noLabel: null,
+          yesLabel: null,
+          startTodos: null,
+        },
+        1
+      );
+    const replies: [string, string[]][] = [
+      ['A', ['保留旧的列表布局，只调整间距']],
+      ['选A', ['保留旧的列表布局，只调整间距']],
+      ['B吧', ['Cards']],
+      ['option C', ['Use the compact table everywhere']],
+      ['c.', ['Use the compact table everywhere']],
+    ];
+    for (const [index, [words, answer]] of replies.entries()) {
+      choice(`c${index}`, false);
+      const id = crypto.randomUUID();
+      await send(id, words, { kind: 'question', id: `c${index}` });
+      expect(store.getQuestion(`c${index}`)).toMatchObject({ answer, answeredBy: 'chat' });
+      expect(prompt(id).message.content[0].text).toBe(
+        `The human answered your question "Which layout?" with ${words.match(/[a-c]/i)?.[0].toUpperCase()} (${answer[0]}):`
+      );
+    }
+    choice('many', true);
+    await send(crypto.randomUUID(), 'A、C', { kind: 'question', id: 'many' });
+    expect(store.getQuestion('many')?.answer).toEqual([
+      '保留旧的列表布局，只调整间距',
+      'Use the compact table everywhere',
+    ]);
+    choice('both', true);
+    await send(crypto.randomUUID(), 'a and b', { kind: 'question', id: 'both' });
+    expect(store.getQuestion('both')?.answer).toEqual(['保留旧的列表布局，只调整间距', 'Cards']);
+    choice('glued', true);
+    await send(crypto.randomUUID(), 'banda', { kind: 'question', id: 'glued' });
+    expect(store.getQuestion('glued')?.answer).toBe('banda');
+    for (const [index, words] of ['A、C', 'bad', 'D', 'a bit of both'].entries()) {
+      choice(`raw${index}`, false);
+      await send(crypto.randomUUID(), words, { kind: 'question', id: `raw${index}` });
+      expect(store.getQuestion(`raw${index}`)?.answer).toBe(words);
+    }
   });
 
   test('a reply about a todo goes to root Neo without answering anything', async () => {

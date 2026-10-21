@@ -109,6 +109,16 @@ export class CodingTodoPrRepository {
     return row ? (JSON.parse(row.prs) as NeoWorkPr[]) : [];
   }
 
+  prsForTodos(ids: readonly string[]): Map<string, NeoWorkPr[]> {
+    const rows = this.db
+      .prepare(
+        `SELECT todo_id AS todoId, prs_json AS prs FROM pack_coding_todo_prs
+          WHERE todo_id IN (SELECT value FROM json_each(?))`
+      )
+      .all(JSON.stringify(ids)) as { todoId: string; prs: string }[];
+    return new Map(rows.map((row) => [row.todoId, JSON.parse(row.prs) as NeoWorkPr[]]));
+  }
+
   latest(url: string): { pr: NeoWorkPr; readAt: number } | null {
     const key = codingPrKey(url);
     const rows = this.db
@@ -202,6 +212,37 @@ export function codingTodoOwnPrs(
         Number(a.state === 'CLOSED') - Number(b.state === 'CLOSED') || createdAt(a) - createdAt(b)
     )
     .slice(0, 1);
+}
+
+export function codingTodoOpenBranchPrs(
+  todo: Pick<NeoTodo, 'id'>,
+  claims: readonly CodingPrClaimRow[],
+  prs: readonly NeoWorkPr[],
+  window: CodingTodoWindow,
+  own: readonly NeoWorkPr[]
+): NeoWorkPr[] {
+  const owned = new Set(own.map((pr) => codingPrKey(pr.url)));
+  const branch = new Set(
+    claims
+      .filter((row) => row.todoId === todo.id && row.claim === 'branch')
+      .filter(
+        (row) =>
+          !claims.some(
+            (rival) => rival.todoId !== todo.id && rival.url === row.url && outranks(rival, row)
+          )
+      )
+      .map((row) => row.url)
+  );
+  return prs.filter((pr) => {
+    const key = codingPrKey(pr.url);
+    return (
+      pr.state === 'OPEN' &&
+      key !== null &&
+      branch.has(key) &&
+      !owned.has(key) &&
+      inWindow(window, pr)
+    );
+  });
 }
 
 const prNumber = (pr: NeoWorkPr) => `#${pr.url.replace(/\/+$/, '').split('/').pop()}`;
@@ -379,8 +420,11 @@ export function createCodingTodoPack(
       const read = await readPrs(urls);
       if (!read || urls.some((url) => !read.some((pr) => codingPrKey(pr.url) === url)))
         return todo.check ? { done: false, evidence: null } : null;
-      const prs = codingTodoOwnPrs(todo, repo.claimsOn(urls), read, repo.window(todo.id));
-      repo.record(todo.id, prs, Date.now());
+      const claims = repo.claimsOn(urls);
+      const window = repo.window(todo.id);
+      const prs = codingTodoOwnPrs(todo, claims, read, window);
+      const open = todo.check ? [] : codingTodoOpenBranchPrs(todo, claims, read, window, prs);
+      repo.record(todo.id, [...prs, ...open], Date.now());
       return todo.check ? codingTodoCheck(todo.check.kind, prs) : null;
     },
     statusLine: (todo) => codingTodoStatusLine(todo, repo.prs(todo.id), ledger),

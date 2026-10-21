@@ -76,7 +76,7 @@ export interface AcpAgentAdapterDeps {
   machine: string;
   now: () => number;
   listSessions: () => Promise<readonly AcpAgentSession[]>;
-  ownSessions: () => ReadonlySet<string>;
+  ownSessions: () => Pick<ReadonlySet<string>, 'has'>;
   projectFolder: (folder: string) => string | Promise<string>;
   link?: (session: AcpAgentSession) => string;
 }

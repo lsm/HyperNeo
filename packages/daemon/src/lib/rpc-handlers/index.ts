@@ -67,6 +67,7 @@ import { createCompletionGateBindings } from '../tasks/complete-task-gates.ts';
 import { isCoderOwnedMergeWorkflow } from '../workflows/post-approval-router.ts';
 import { createGithubConnector } from '../github/connectors/github-connector.ts';
 import { setupOperationHandlers } from './operation-handlers.ts';
+import type { UpgradeIdentity } from '../pairing/upgrade-auth.ts';
 import { createSpaceCallerScopeResolver } from '../space/runtime/space-caller-scope.ts';
 import { createSpaceScopeResolver } from '../space/runtime/space-scope-resolver.ts';
 import { createDatabaseDirectTaskWorkerResolver } from '../tasks/direct-task-worker-identity.ts';
@@ -257,6 +258,7 @@ export interface RPCHandlerDependencies {
   ) => void;
   isSessionTopicCovered?: (sessionId: string, topic: string) => boolean;
   messageHub: MessageHub;
+  deviceOf: (clientId: string) => UpgradeIdentity | null;
   sessionManager: SessionManager;
   authManager: AuthManager;
   credentialManager?: ProviderCredentialManager;
@@ -401,7 +403,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   let inactivityRunNowCancelled = false;
   let inactivityAborted = false;
   setupMessageHandlers(deps.messageHub, deps.sessionManager, deps.db);
-  setupOperationHandlers(deps.messageHub, () => deps.sessionManager.getOperationRegistry());
+  setupOperationHandlers(
+    deps.messageHub,
+    () => deps.sessionManager.getOperationRegistry(),
+    deps.deviceOf
+  );
   setupSystemHandlers(deps.messageHub, deps.sessionManager);
   setupAuthHandlers(
     deps.messageHub,
@@ -1434,7 +1440,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     onError: (error) => log.warn('Claude Desktop mods bridge unavailable', error),
   });
   const sessionScheduler = new SessionScheduler(deps.db.getDatabase(), deps.jobQueue);
+  const driverCleanup: (() => Promise<void>)[] = [];
   const familyContext: FamilyOperationContext = {
+    driverCleanup,
     sessionScheduler,
     neoPacks: () => neoService.packs(),
     claudeDesktopMods,
@@ -1765,7 +1773,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     cleanup: async () => {
       try {
         try {
-          await claudeDesktopMods?.close();
+          try {
+            await Promise.all(driverCleanup.map((close) => close()));
+          } finally {
+            await claudeDesktopMods?.close();
+          }
         } finally {
           await claudeInbox.close();
         }

@@ -37,6 +37,19 @@ describe('hyperneo send, question and build', () => {
     expect(planSessionCommand(['build', 'extra'], 'worker-1')).toHaveProperty('reason');
   });
 
+  test('pair makes a code of the named kind, or reopens pairing after a lockout', () => {
+    expect(planSessionCommand(['pair'], 'cli')).toEqual({
+      value: { name: 'device.pair.create', input: { kind: 'human' } },
+    });
+    expect(planSessionCommand(['pair', '--kind', 'relay', '--name', 'Push relay'], 'cli')).toEqual({
+      value: { name: 'device.pair.create', input: { kind: 'relay', name: 'Push relay' } },
+    });
+    expect(planSessionCommand(['pair', '--reset-lockout'], 'cli')).toEqual({
+      value: { name: 'device.pair.reset_lockout', input: {} },
+    });
+    expect(planSessionCommand(['pair', '--kind'], 'cli')).toHaveProperty('reason');
+  });
+
   test('build prints bounded failed health and exits unsuccessfully', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'build-cli-'));
     const socketPath = join(dir, 'door.sock');

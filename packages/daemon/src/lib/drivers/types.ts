@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { WorkTurnPage } from '../../storage/work-turn-page.ts';
 import { workStartConfiguration } from './start-configuration.ts';
 import { workStartPreparation } from './start-preparation.ts';
 import type { OperationCaller } from '../operations/registry.ts';
@@ -54,6 +55,12 @@ export const WorkSummarySchema = z.object({
   model: z.string().optional(),
   effort: z.string().optional(),
   remoteLink: z.string().optional(),
+  remoteControl: z
+    .boolean()
+    .describe(
+      "Whether the session's Remote Control is on, so the human can follow and reply from claude.ai or the phone."
+    )
+    .optional(),
   score: z.number().optional(),
   hits: z.number().int().nonnegative().optional(),
   lastHitAt: z.number().optional(),
@@ -119,6 +126,12 @@ export const WorkDeliverySchema = z.object({
   queuedSubmissionId: z.string().min(1).optional(),
   steeredIntoTurnId: z.string().min(1).optional(),
   confirmedAt: z.number().optional(),
+  remoteControl: z
+    .boolean()
+    .describe(
+      "Whether the session's Remote Control is on, so the human can follow and reply from claude.ai or the phone."
+    )
+    .optional(),
 });
 
 export type WorkDelivery = z.infer<typeof WorkDeliverySchema>;
@@ -235,6 +248,13 @@ export interface WorkAdapter {
   readonly supportsStartEffort?: boolean;
   readonly supportsStartPreparation?: boolean;
   find(query: FindQuery): PlaceGroup[] | Promise<PlaceGroup[]>;
+  readonly readTurns?: (
+    sessionId: string,
+    around: string | undefined,
+    before: number,
+    after: number,
+    cursor?: WorkTurnPage['nextCursor']
+  ) => WorkTurnPage | null;
   readonly start?: (
     request: StartRequest,
     context: WorkCallContext

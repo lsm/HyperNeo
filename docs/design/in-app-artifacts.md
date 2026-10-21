@@ -260,8 +260,9 @@ old daemons show "Preview needs an updated daemon" without a filesystem fallback
 
 ## Verification and implementation slices
 
-Each feature slice updates `.claude/skills/verify/SKILL.md` (or the iOS repo's
-verify instructions) in its own PR. Use synthetic workspace/evidence files and a
+Each feature slice adds or updates its own file in `.claude/skills/verify/journeys/`
+(or the iOS repo's verify instructions) in its own PR; never edit an index.
+Use synthetic workspace/evidence files and a
 fresh isolated DB/HOME, never credentials, live user files or port 8399. Leave
 repeatable operation/transport checks as scripts. No unattended GUI tests.
 
