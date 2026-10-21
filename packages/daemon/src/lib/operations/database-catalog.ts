@@ -115,7 +115,7 @@ export function createDatabaseOperationCatalog(
       createArtifactReferenceResolve(() => db.getDatabase()),
       createBuildOperation(() => db.getDatabase().prepare('SELECT 1').get()),
       ...createDevicePairingOperations({
-        repo: new DevicePairingRepository(db.getDatabase()),
+        repo: () => new DevicePairingRepository(db.getDatabase()),
         limiter: daemonPairingLimiter,
         now: Date.now,
       }),

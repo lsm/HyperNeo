@@ -13,6 +13,35 @@ export interface PairRouteDeps {
   readonly now: () => number;
 }
 
+const MAX_BODY_BYTES = 4 * 1024;
+
+async function readBoundedText(req: Request): Promise<string | null> {
+  if (Number(req.headers.get('content-length') ?? 0) > MAX_BODY_BYTES) return null;
+  const reader = req.body?.getReader();
+  if (!reader) return '';
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_BODY_BYTES) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+const parseJson = (text: string): unknown => {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+};
+
 const answer = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), {
     status,
@@ -25,8 +54,16 @@ export function createPairRoute({ repo, limiter, now }: PairRouteDeps) {
     const admitted = limiter.admit(now());
     if (!admitted.ok)
       return answer(429, { error: admitted.error, retryAfterMs: admitted.retryAfterMs });
-    const parsed = PairRequest.safeParse(await req.json().catch(() => null));
-    if (!parsed.success) return answer(400, { error: 'invalid_request' });
+    const text = await readBoundedText(req);
+    if (text === null) {
+      limiter.fail(now());
+      return answer(413, { error: 'request_too_large' });
+    }
+    const parsed = PairRequest.safeParse(parseJson(text));
+    if (!parsed.success) {
+      limiter.fail(now());
+      return answer(400, { error: 'invalid_request' });
+    }
     const at = now();
     const paired = repo.redeem(parsed.data.code, parsed.data.name, at);
     if (paired)

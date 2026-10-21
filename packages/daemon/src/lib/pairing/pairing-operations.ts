@@ -11,7 +11,7 @@ const Refused = z.object({ ok: z.literal(false), reason: z.string() });
 const refused = { ok: false as const, reason: 'This action needs the user.' };
 
 export interface PairingOperationDeps {
-  readonly repo: DevicePairingRepository;
+  readonly repo: () => DevicePairingRepository;
   readonly limiter: PairingLimiter;
   readonly now: () => number;
 }
@@ -28,7 +28,11 @@ export function planPairingCode(
   return null;
 }
 
-export function createDevicePairingOperations({ repo, limiter, now }: PairingOperationDeps) {
+export function createDevicePairingOperations({
+  repo: pairing,
+  limiter,
+  now,
+}: PairingOperationDeps) {
   return [
     defineOperation({
       name: 'device.pair.create',
@@ -49,9 +53,9 @@ export function createDevicePairingOperations({ repo, limiter, now }: PairingOpe
         Refused,
       ]),
       execute: async (input, caller) => {
-        const plan = planPairingCode(caller, repo.countDevices());
+        const plan = planPairingCode(caller, pairing().countDevices());
         if (!plan) return refused;
-        const made = repo.createCode(input.kind, input.name ?? null, plan.approved, now());
+        const made = pairing().createCode(input.kind, input.name ?? null, plan.approved, now());
         return {
           ok: true as const,
           codeId: made.id,
@@ -82,7 +86,9 @@ export function createDevicePairingOperations({ repo, limiter, now }: PairingOpe
         Refused,
       ]),
       execute: async (_input, caller) =>
-        isLocalUser(caller) ? { ok: true as const, pending: repo.listPending(now()) } : refused,
+        isLocalUser(caller)
+          ? { ok: true as const, pending: pairing().listPending(now()) }
+          : refused,
     }),
     defineOperation({
       name: 'device.pair.approve',
@@ -92,7 +98,7 @@ export function createDevicePairingOperations({ repo, limiter, now }: PairingOpe
       resultSchema: z.union([z.object({ ok: z.literal(true) }), Refused]),
       execute: async (input, caller) => {
         if (!isLocalUser(caller)) return refused;
-        return repo.approve(input.codeId, now())
+        return pairing().approve(input.codeId, now())
           ? { ok: true as const }
           : { ok: false as const, reason: 'not_pending: no pending code with that id.' };
       },
