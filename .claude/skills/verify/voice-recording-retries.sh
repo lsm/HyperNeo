@@ -32,6 +32,7 @@ start() {
 }
 start
 "${clean[@]}" bun .claude/skills/verify/voice-recording-retries.ts "$RUN" "$PORT" "$ASR_PORT" "${4:-initial}"
+if [[ "${4:-initial}" == preflight ]]; then exit 0; fi
 bash .claude/skills/verify/stop.sh "$RUN"
 start
 "${clean[@]}" bun .claude/skills/verify/voice-recording-retries.ts "$RUN" "$PORT" "$ASR_PORT" restarted

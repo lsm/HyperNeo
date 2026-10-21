@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CallContext, MessageHub } from '@hyperneo/shared';
 import { Database } from '../../../../src/storage/database';
+import type { ProviderCredentialManager } from '../../../../src/lib/credentials/provider-credential-manager';
 import { SettingsManager } from '../../../../src/lib/settings-manager';
 import {
   registerVoiceHandlers,
@@ -33,12 +34,12 @@ describe('voice recording retries through registered RPC handlers', () => {
   let requests: number;
   let handler: Handler;
 
-  const register = () => {
+  const register = (credentials?: ProviderCredentialManager) => {
     const handlers = new Map<string, Handler>();
     const hub = {
       onRequest: (name: string, value: Handler) => handlers.set(name, value),
     } as unknown as MessageHub;
-    registerVoiceHandlers(hub, new SettingsManager(db), undefined, {
+    registerVoiceHandlers(hub, new SettingsManager(db), credentials, {
       db: db.getDatabase(),
       deviceOf: () => ({ deviceId: 'synthetic-phone', kind: 'human' }),
     });
@@ -170,6 +171,95 @@ describe('voice recording retries through registered RPC handlers', () => {
     expect(
       await handler({ ...input, recordingId: id.toUpperCase() }, context('reconnected-phone'))
     ).toEqual(first);
+    expect(requests).toBe(1);
+  });
+
+  it('retries the same recording after voice setup is repaired before dispatch', async () => {
+    const settings = new SettingsManager(db);
+    const voice = settings.getGlobalSettings().voice!;
+    settings.updateGlobalSettings({ voice: { ...voice, enabled: false } });
+    await expect(handler(input, context())).rejects.toThrow('disabled');
+    expect(requests).toBe(0);
+    settings.updateGlobalSettings({ voice });
+    expect(await handler(input, context())).toEqual({ text: 'synthetic result 1' });
+    expect(requests).toBe(1);
+  });
+
+  it('retries a second recording after the first upload releases its concurrency slot', async () => {
+    let release: () => void = () => {};
+    let accepted: () => void = () => {};
+    const started = new Promise<void>((resolve) => {
+      accepted = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.stubGlobal('fetch', async () => {
+      const call = ++requests;
+      accepted();
+      if (call === 1) await gate;
+      return Response.json({ text: `synthetic result ${call}` });
+    });
+    const first = handler(input, context());
+    await started;
+    const second = { ...input, recordingId: crypto.randomUUID() };
+    try {
+      await expect(handler(second, context())).rejects.toThrow('already in progress');
+      expect(requests).toBe(1);
+    } finally {
+      release();
+      await first;
+    }
+    expect(await handler(second, context())).toEqual({ text: 'synthetic result 2' });
+    expect(requests).toBe(2);
+  });
+
+  it('retries an identical recording after credential lookup fails before dispatch', async () => {
+    const settings = new SettingsManager(db);
+    settings.updateGlobalSettings({
+      voice: {
+        ...settings.getGlobalSettings().voice!,
+        apiKeyEndpoint: 'http://127.0.0.1:1/v1/audio/transcriptions',
+      },
+    });
+    let failed = true;
+    handler = register({
+      getCredentials: async () => {
+        if (failed) throw new Error('synthetic credential lookup failure');
+        return null;
+      },
+    } as unknown as ProviderCredentialManager);
+    await expect(handler(input, context())).rejects.toThrow('synthetic credential lookup failure');
+    expect(requests).toBe(0);
+    failed = false;
+    expect(await handler(input, context())).toEqual({ text: 'synthetic result 1' });
+    expect(requests).toBe(1);
+  });
+
+  it('retries after a rate-limit window clears without changing recording identity', async () => {
+    const now = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      for (let index = 0; index < 6; index++)
+        await handler({ ...input, recordingId: crypto.randomUUID() }, context());
+      await expect(handler(input, context())).rejects.toThrow('rate limit exceeded');
+      expect(requests).toBe(6);
+      clock.mockReturnValue(now + 61_000);
+      expect(await handler(input, context())).toEqual({ text: 'synthetic result 7' });
+      expect(requests).toBe(7);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it('retries after endpoint policy rejects before any network dispatch', async () => {
+    const settings = new SettingsManager(db);
+    const voice = settings.getGlobalSettings().voice!;
+    settings.updateGlobalSettings({ voice: { ...voice, allowPrivateNetwork: false } });
+    await expect(handler(input, context())).rejects.toThrow('private');
+    expect(requests).toBe(0);
+    settings.updateGlobalSettings({ voice });
+    expect(await handler(input, context())).toEqual({ text: 'synthetic result 1' });
     expect(requests).toBe(1);
   });
 

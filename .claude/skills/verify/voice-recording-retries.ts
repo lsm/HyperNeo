@@ -37,7 +37,38 @@ const connect = async () => { const connection = await client(); opened.push(con
 const requestPath = join(run, 'recording.json');
 try {
   const phone = await connect();
-  if (phase === 'initial' || phase === 'baseline') {
+  if (phase === 'preflight') {
+    const voice = { enabled: true, endpoint: `${asr}/v1/audio/transcriptions`, model: 'fake', allowPrivateNetwork: true };
+    const configure = (updates: object) => phone.call('settings.global.update', { updates: { voice: updates } });
+    const request = { recordingId: crypto.randomUUID(), audioBase64: Buffer.from(pcm16Wav(new Uint8Array(3200))).toString('base64'), mimeType: 'audio/wav' };
+    await configure({ ...voice, enabled: false });
+    await assert.rejects(() => phone.call('voice.transcribe', request), /disabled/);
+    const before = await count(); assert.equal(before, 0);
+    await configure(voice);
+    const repaired = await phone.call('voice.transcribe', request);
+    assert.deepEqual(repaired, { text: 'synthetic stored transcript 1' });
+    const first = { ...request, recordingId: crypto.randomUUID() };
+    const second = { ...request, recordingId: crypto.randomUUID() };
+    const running = phone.call('voice.transcribe', first);
+    for (let attempt = 0; await count() < 2 && attempt < 100; attempt++) await Bun.sleep(10);
+    assert.equal(await count(), 2);
+    try {
+      await assert.rejects(() => phone.call('voice.transcribe', second), /already in progress/);
+    } finally {
+      await running;
+    }
+    const afterBusy = await phone.call('voice.transcribe', second);
+    assert.deepEqual(afterBusy, { text: 'synthetic stored transcript 3' });
+    assert.deepEqual(await phone.call('voice.transcribe', second), afterBusy);
+    const network = { ...request, recordingId: crypto.randomUUID() };
+    await configure({ ...voice, allowPrivateNetwork: false });
+    await assert.rejects(() => phone.call('voice.transcribe', network), /private/);
+    assert.equal(await count(), 3);
+    await configure(voice);
+    const afterPolicy = await phone.call('voice.transcribe', network);
+    assert.deepEqual(afterPolicy, { text: 'synthetic stored transcript 4' });
+    await writeFile(join(run, 'evidence', 'preflight.json'), JSON.stringify({ repaired, afterBusy, afterPolicy, beforeDispatchCalls: before, totalCalls: await count() }, null, 2));
+  } else if (phase === 'initial' || phase === 'baseline') {
     await phone.call('settings.global.update', { updates: { voice: { enabled: true, endpoint: `${asr}/v1/audio/transcriptions`, model: 'fake', allowPrivateNetwork: true } } });
     const request = { recordingId: crypto.randomUUID(), audioBase64: Buffer.from(pcm16Wav(new Uint8Array(217.9 * 32_000))).toString('base64'), mimeType: 'audio/wav' };
     await writeFile(requestPath, JSON.stringify(request));
