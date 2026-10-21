@@ -55,6 +55,12 @@ export const WorkSummarySchema = z.object({
   model: z.string().optional(),
   effort: z.string().optional(),
   remoteLink: z.string().optional(),
+  remoteControl: z
+    .boolean()
+    .describe(
+      "Whether the session's Remote Control is on, so the human can follow and reply from claude.ai or the phone."
+    )
+    .optional(),
   score: z.number().optional(),
   hits: z.number().int().nonnegative().optional(),
   lastHitAt: z.number().optional(),
@@ -120,6 +126,12 @@ export const WorkDeliverySchema = z.object({
   queuedSubmissionId: z.string().min(1).optional(),
   steeredIntoTurnId: z.string().min(1).optional(),
   confirmedAt: z.number().optional(),
+  remoteControl: z
+    .boolean()
+    .describe(
+      "Whether the session's Remote Control is on, so the human can follow and reply from claude.ai or the phone."
+    )
+    .optional(),
 });
 
 export type WorkDelivery = z.infer<typeof WorkDeliverySchema>;

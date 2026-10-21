@@ -205,6 +205,7 @@ describe('claude-desktop adapter against the app session records', () => {
           delivered: true,
           receipt: { executionId: 'cli-a1', inputId: 'in-1' },
           confirmedAt,
+          remoteControl: false,
         },
       });
       expect(spawned).toEqual([]);
@@ -231,6 +232,7 @@ describe('claude-desktop adapter against the app session records', () => {
           delivered: true,
           receipt: { executionId: 'cli-a1', inputId: 'u-relay' },
           confirmedAt,
+          remoteControl: false,
         },
       });
       expect(spawned[0].args.slice(0, 11)).toEqual([
@@ -256,7 +258,7 @@ describe('claude-desktop adapter against the app session records', () => {
       );
       expect(await queued.send?.(ref, 'load "orders"\nthen stop', context)).toEqual({
         ok: true,
-        value: { delivered: true, confirmedAt },
+        value: { delivered: true, confirmedAt, remoteControl: false },
       });
       const lost = adapter(undefined, 1, undefined, undefined, async () => reply);
       expect(await lost.send?.(ref, 'load "orders"', context)).toEqual({
@@ -300,6 +302,7 @@ describe('claude-desktop adapter against the app session records', () => {
           delivered: true,
           receipt: { executionId: 'cli-c1', inputId: 'in-c1' },
           confirmedAt: 0,
+          remoteControl: false,
         },
       });
       expect(spawned).toEqual([]);
@@ -395,6 +398,7 @@ describe('claude-desktop adapter against the app session records', () => {
       status: 'needs_you',
       lastActivityAt: 30,
       link: 'claude://claude.ai/epitaxy/local_a1',
+      remoteControl: false,
     });
   });
 
@@ -614,6 +618,7 @@ describe('claude-desktop adapter against the app session records', () => {
         status: 'needs_you',
         lastActivityAt: 30,
         link: 'claude://claude.ai/epitaxy/local_a1',
+        remoteControl: false,
         execution: { directory: '/focus/dolmen/.claude/worktrees/w1', machine: 'laptop' },
         waitingFor: 'permission prompt',
         lastReply: 'Loaded 3 tables.',

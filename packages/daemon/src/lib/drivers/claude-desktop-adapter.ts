@@ -149,7 +149,6 @@ async function listDir(dir: string): Promise<string[]> {
 
 export type ClaudeRecordCache = Map<string, { modifiedAt: number; records: ClaudeDesktopRecord[] }>;
 const STARTED_KEY = 'started:';
-const HEADLESS_PERMISSION_MODES = new Set(['bypassPermissions', 'auto']);
 
 async function readRecord(path: string, cache: ClaudeRecordCache): Promise<ClaudeDesktopRecord[]> {
   try {
@@ -282,6 +281,7 @@ function toClaudeWork(
             'Watch this Claude Code session via Neo with work.status using this work ref. It is not registered in Claude Desktop yet.',
         }),
     ...(remoteLink ? { remoteLink } : {}),
+    ...(record.desktopRegistered ? { remoteControl: !!remoteLink } : {}),
   };
 }
 
@@ -959,56 +959,32 @@ async function sendOwnedClaudeMessage(
   );
 }
 
-export async function resumeIdleClaudeSession(
+export async function openIdleClaudeSession(
   record: ClaudeDesktopRecord & { cliSessionId: string },
   liveSessions: readonly ClaudeLiveSession[],
-  message: string,
   deps: ClaudeDesktopAdapterDeps
 ): Promise<{ value: readonly ClaudeLiveSession[] } | { reason: Result<WorkDelivery> }> {
   const running = (sessions: readonly ClaudeLiveSession[]) =>
     sessions.some((session) => session.sessionId === record.cliSessionId && session.pid);
   if (running(liveSessions)) return { value: liveSessions };
-  if (!record.permissionMode || !HEADLESS_PERMISSION_MODES.has(record.permissionMode))
-    return {
-      reason: reject(
-        'unreachable',
-        `${record.title} is not running, and in ${record.permissionMode ?? 'default'} permission mode a headless turn cannot get tool approvals. Open it in Claude Desktop: claude://claude.ai/epitaxy/${record.sessionId}`
-      ),
-    };
   const recheck = await deps.liveSessions().catch(() => liveSessions);
   if (running(recheck)) return { value: recheck };
-  const turn = await runClaudeTurn(
-    [
-      'claude',
-      '-p',
-      '--resume',
+  try {
+    launchInClaudeDesktop(
       record.cliSessionId,
-      '--permission-mode',
-      record.permissionMode,
-      '--',
-      message,
-    ],
-    record.cwd ?? record.originCwd ?? deps.homeDir,
-    record,
-    message,
-    deps,
-    DELIVERY_POLLS
-  );
-  return {
-    reason: turn.ok
-      ? {
-          ok: true,
-          value: {
-            delivered: true,
-            receipt: {
-              executionId: record.cliSessionId,
-              inputId: turn.value.inputId ?? record.cliSessionId,
-            },
-            confirmedAt: turn.value.at ?? deps.now(),
-          },
-        }
-      : turn,
-  };
+      record.cwd ?? record.originCwd ?? deps.homeDir,
+      deps
+    );
+  } catch {}
+  const opened = await waitUntilLive(record.cliSessionId, deps);
+  return opened && running(opened)
+    ? { value: opened }
+    : {
+        reason: reject(
+          'unreachable',
+          `${record.title} is not open in Claude Desktop, and Desktop did not open it in time. Open it there, then send again: claude://claude.ai/epitaxy/${record.sessionId}`
+        ),
+      };
 }
 
 export const sendClaudeMessage = (superpipe({})('claude-owner-send') as PipelineAPI)
@@ -1018,7 +994,7 @@ export const sendClaudeMessage = (superpipe({})('claude-owner-send') as Pipeline
     'record',
     'cliSessionId'
   )
-  .pipe(resumeIdleClaudeSession, ['record', 'liveSessions', 'message', 'deps'], 'result:outcome')
+  .pipe(openIdleClaudeSession, ['record', 'liveSessions', 'deps'], 'result:outcome')
   .pipe((live: readonly ClaudeLiveSession[]) => live, 'outcome', 'running')
   .pipe(requireClaudePeerOwner, ['cliSessionId', 'running'], 'result:outcome')
   .pipe(sendOwnedClaudeMessage, ['record', 'running', 'message', 'deps', 'context'], 'outcome')
@@ -1030,6 +1006,15 @@ export const sendClaudeMessage = (superpipe({})('claude-owner-send') as Pipeline
   context?: WorkCallContext
 ) => Promise<Result<WorkDelivery>>;
 
+export function withRemoteControl(
+  sent: Result<WorkDelivery>,
+  record: ClaudeDesktopRecord
+): Result<WorkDelivery> {
+  return sent.ok
+    ? { ok: true, value: { ...sent.value, remoteControl: !!claudeRemoteLink(record) } }
+    : sent;
+}
+
 const runClaudeDesktopSend = (superpipe({})('claude-desktop-send-work') as PipelineAPI)
   .input(['ref', 'message', 'deps', 'cache', 'context'])
   .pipe(loadClaudeDesktopRecords, ['deps', 'cache'], 'records')
@@ -1039,6 +1024,7 @@ const runClaudeDesktopSend = (superpipe({})('claude-desktop-send-work') as Pipel
   .pipe(probeLiveClaudeSessions, 'deps', 'result:outcome')
   .pipe((live: readonly ClaudeLiveSession[]) => live, 'outcome', 'liveSessions')
   .pipe(sendClaudeMessage, ['record', 'liveSessions', 'message', 'deps', 'context'], 'outcome')
+  .pipe(withRemoteControl, ['outcome', 'record'], 'outcome')
   .endAsync('outcome') as (
   ref: WorkRef,
   message: string,

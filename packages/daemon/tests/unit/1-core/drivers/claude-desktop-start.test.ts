@@ -214,6 +214,7 @@ describe('claude-desktop start', () => {
         status: 'running',
         lastActivityAt: 1_000,
         link: 'claude://claude.ai/epitaxy/local_u1',
+        remoteControl: false,
         receipt: { executionId: 'u1', inputId: 'u-task' },
       },
     });
