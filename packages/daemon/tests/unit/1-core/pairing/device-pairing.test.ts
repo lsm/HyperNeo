@@ -240,6 +240,35 @@ describe('device pairing', () => {
     db.close();
   });
 
+  test('a browser gets its credential only as an HttpOnly cookie, Secure when its page is HTTPS', async () => {
+    const { repo } = setup();
+    const route = createPairRoute({ repo, limiter: createPairingLimiter(), now: () => 1_000_000 });
+    const redeem = async (origin: string) => {
+      const made = repo.createCode('human', null, true, 1_000_000);
+      const response = await route(
+        new Request(`${origin}/pair`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', origin },
+          body: JSON.stringify({ code: made.code, name: 'Browser' }),
+        })
+      );
+      return { response, body: (await response.json()) as Record<string, unknown> };
+    };
+    const served = await redeem('https://mac.tailnet.ts.net');
+    expect(served.response.status).toBe(200);
+    expect(served.body).toEqual({ deviceId: expect.any(String), kind: 'human' });
+    const cookie = served.response.headers.get('set-cookie')!;
+    expect(cookie).toMatch(/^hyperneo_device=[A-Za-z0-9_-]{43}; /);
+    expect(cookie.split('; ').slice(1).sort()).toEqual(
+      ['HttpOnly', 'Max-Age=34560000', 'Path=/', 'SameSite=Strict', 'Secure'].sort()
+    );
+    expect(
+      repo.touchDevice(cookie.slice('hyperneo_device='.length, cookie.indexOf(';')), 'h', 1)
+    ).toMatchObject({ kind: 'human' });
+    const plain = await redeem('http://127.0.0.1:9283');
+    expect(plain.response.headers.get('set-cookie')).not.toContain('Secure');
+  });
+
   test('bad codes are limited to 5 a minute, 20 lock pairing for 15 minutes, and a local reset reopens it', async () => {
     const { db, call, pair, clock } = setup();
     for (let i = 0; i < 5; i++) expect((await pair('AAAAAAAAAA')).status).toBe(401);

@@ -2,6 +2,7 @@ import './styles.css';
 import './lib/theme.ts';
 import { render } from 'preact';
 import { App } from './App.tsx';
+import { PairPage } from './components/pairing/PairPage.tsx';
 
 if ('scrollRestoration' in history) {
   history.scrollRestoration = 'manual';
@@ -14,7 +15,7 @@ if (!root) {
 }
 
 function renderApp() {
-  render(<App />, root!);
+  render(location.pathname === '/pair' ? <PairPage /> : <App />, root!);
 }
 
 renderApp();
