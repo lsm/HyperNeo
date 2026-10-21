@@ -2426,6 +2426,9 @@ inputs, only the latest 64 settled receipts remain; the runtime stays usable
 across dedup retention rollover. A rejected permission followed by idle must stay
 `needs_you`; a follow-up submit is rejected before transport and preserves that
 blocked status. Unsettled inputs are capped at 64 without losing accepted receipts.
+Fresh-event-ID repeats of a user message must preserve its first interaction
+binding and any needs_you/failed/stopped status. A normal idle after aborted idle
+must keep stopped; only an explicit new submission starts subsequent work.
 Dedup retains at most 512 keys, evicting only keys unrelated to unsettled inputs;
 if all retained keys protect active evidence, the runtime becomes unreachable
 instead of forgetting that evidence and risking duplicate attribution. Snapshot

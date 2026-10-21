@@ -19,7 +19,7 @@ for (const dir of ['home', 'bin', 'workspace', 'evidence']) mkdirSync(join(run, 
 assert.equal(process.env.PATH?.split(':')[0], join(run, 'bin'));
 const fixture = fileURLToPath(new URL('../../../packages/daemon/tests/fixtures/copilot-sdk.ts', import.meta.url));
 const cliPath = join(run, 'bin/copilot');
-writeFileSync(cliPath, `#!/usr/bin/env bun\nprocess.argv.push('--initial-idle'); await import(${JSON.stringify(fixture)});\n`, { mode: 0o700 });
+writeFileSync(cliPath, `#!/usr/bin/env bun\nprocess.argv.push('--initial-idle', '--late-user-echo', '--idle-after-abort'); await import(${JSON.stringify(fixture)});\n`, { mode: 0o700 });
 writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
 const worker = await openCopilotWorker({ cliPath, expectedVersion: 'fixture-1', sessionId: '11111111-1111-4111-8111-111111111111', cwd: join(run, 'workspace'), stateDirectory: join(run, 'state'), model: 'synthetic-model', env: process.env, timeoutMs: 2000 });
 const evidence: unknown[] = [];
@@ -62,6 +62,16 @@ try {
   assert.equal(Object.keys(retained.state.inputs).length, 64);
   assert.equal(retained.state.inputs[held.receipt.inputId], undefined);
   assert.equal(retained.state.inputs[retained.receipt.inputId].replyAvailability, 'complete');
+  const interrupted = await rpc('verify.copilot', { action: 'hold' }) as typeof held;
+  await rpc('verify.copilot', { action: 'abort' });
+  let stopped = await rpc('verify.copilot', { action: 'snapshot' }) as typeof held.state;
+  for (let poll = 0; poll < 100 && stopped.status !== 'stopped'; poll++) {
+    await new Promise(done => setTimeout(done, 10));
+    stopped = await rpc('verify.copilot', { action: 'snapshot' }) as typeof stopped;
+  }
+  assert.equal(stopped.status, 'stopped');
+  assert.equal(stopped.inputs[interrupted.receipt.inputId].outcome, 'stopped');
+  assert.equal((await rpc('verify.copilot', { action: 'settled' }) as typeof held).state.status, 'done');
   const blocked = await rpc('verify.copilot', { action: 'permission' }) as typeof held;
   assert.equal(blocked.state.status, 'needs_you');
   assert.equal(blocked.state.inputs[blocked.receipt.inputId].replyAvailability, 'incomplete');
@@ -72,7 +82,7 @@ try {
   const calls = readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
   assert(calls.every(call => !call.secretPresent));
   evidence.push({ sdkProtocolCalls: calls });
-  console.log(`PASS: isolated daemon SDK RPC; empty idle queued, attributed replies, 64 settled receipts after dedup rollover, permission+idle blocked; adapters stay find-only. ${run}/evidence/observed.json`);
+  console.log(`PASS: isolated daemon SDK RPC; repeated echo keeps reply binding, empty idle queued, bounded receipts, post-abort idle stopped, explicit restart completes, permission stays blocked; adapters find-only. ${run}/evidence/observed.json`);
 } finally {
   ws?.close();
   await worker.close();
