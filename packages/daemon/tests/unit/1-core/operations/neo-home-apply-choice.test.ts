@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createNeoHomeOperations } from '../../../../src/lib/neo/home/operations.ts';
 import { NeoHomeRepository } from '../../../../src/lib/neo/home/repository.ts';
 import { createNeoQuestionOperations } from '../../../../src/lib/neo/question-operations.ts';
@@ -66,6 +66,7 @@ async function call(name: string, input: unknown, caller = human) {
   };
 }
 async function version(cwd: string, path: string, content: string) {
+  await mkdir(dirname(join(cwd, path)), { recursive: true });
   await writeFile(join(cwd, path), content);
   await git(cwd, 'add', '.');
   await git(cwd, 'commit', '-m', 'Synthetic version');
@@ -193,34 +194,39 @@ describe('Human-recorded conflict version saves', () => {
       expect((await state()).status).toBe('');
     }
   );
-  test('requires separate exact protected-file human yes and retains its decision/trailer', async () => {
-    const { question } = await conflict('direction.md');
-    await approve(question.id);
-    const input = {
-      path: 'direction.md',
-      content: remoteText,
-      message: 'Apply confirmed choice',
-      conflictQuestionId: question.id,
-    };
-    const before = await state();
-    expect(await call('neo.home.save', input)).toMatchObject({
-      ok: false,
-      reason: expect.stringContaining('confirmation_required'),
-    });
-    expect(await state()).toEqual(before);
-    const wrong = await confirmation(question.askId, 'direction.md', localText);
-    expect(await call('neo.home.save', { ...input, questionId: wrong })).toMatchObject({
-      ok: false,
-      reason: expect.stringContaining('confirmation_required'),
-    });
-    const yes = await confirmation(question.askId, 'direction.md', remoteText);
-    expect(await call('neo.home.save', { ...input, questionId: yes })).toMatchObject({ ok: true });
-    expect(await readFile(join(root, 'direction.md'), 'utf8')).toBe(remoteText);
-    expect(await readFile(join(root, 'decisions.md'), 'utf8')).toContain(yes);
-    expect(await git(root, 'log', '-1', '--format=%B')).toContain(
-      `Neo-Confirmed-By: question ${yes}`
-    );
-  });
+  test.each(['direction.md', 'projects/verify/mandate.md'])(
+    'requires exact protected-file human yes for %s',
+    async (path) => {
+      const { question } = await conflict(path);
+      await approve(question.id);
+      const input = {
+        path,
+        content: remoteText,
+        message: 'Apply confirmed choice',
+        conflictQuestionId: question.id,
+      };
+      const before = await state();
+      expect(await call('neo.home.save', input)).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('confirmation_required'),
+      });
+      expect(await state()).toEqual(before);
+      const wrong = await confirmation(question.askId, path, localText);
+      expect(await call('neo.home.save', { ...input, questionId: wrong })).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('confirmation_required'),
+      });
+      const yes = await confirmation(question.askId, path, remoteText);
+      expect(await call('neo.home.save', { ...input, questionId: yes })).toMatchObject({
+        ok: true,
+      });
+      expect(await readFile(join(root, path), 'utf8')).toBe(remoteText);
+      expect(await readFile(join(root, dirname(path), 'decisions.md'), 'utf8')).toContain(yes);
+      expect(await git(root, 'log', '-1', '--format=%B')).toContain(
+        `Neo-Confirmed-By: question ${yes}`
+      );
+    }
+  );
   test.each(['unanswered', 'wrong-content', 'review'])(
     'refuses %s without applying anything',
     async (mode) => {
@@ -336,11 +342,11 @@ describe('Neo reads after applying the choice in the same wake', () => {
 describe('Ignored human files during conflict application', () => {
   test('refuses rather than replacing an ignored file newly introduced by the remote merge', async () => {
     await writeFile(join(root, '.git', 'info', 'exclude'), 'private-note.txt\n');
-    await writeFile(join(root, 'private-note.txt'), 'Human private bytes\n');
     await writeFile(join(peer, 'private-note.txt'), 'Remote independent bytes\n');
     await git(peer, 'add', '.');
     await git(peer, 'commit', '-m', 'Remote document');
     const { question, local, other } = await conflict();
+    await writeFile(join(root, 'private-note.txt'), 'Human private bytes\n');
     await approve(question.id);
     const result = await call('neo.home.save', {
       path: 'notes.md',
@@ -352,5 +358,86 @@ describe('Ignored human files during conflict application', () => {
     expect(await readFile(join(root, 'private-note.txt'), 'utf8')).toBe('Human private bytes\n');
     expect(await git(root, 'rev-parse', 'HEAD')).toBe(local);
     expect(await git(remote, 'rev-parse', 'main')).toBe(other);
+  });
+});
+
+describe('Revision-bound application admission', () => {
+  test.each(['local', 'remote'])(
+    'refuses an already changed %s snapshot before staging',
+    async (side) => {
+      const { question } = await conflict();
+      await approve(question.id);
+      const target = side === 'local' ? root : peer;
+      await git(target, 'commit', '--allow-empty', '-m', 'Human newer snapshot');
+      if (side === 'remote') await git(peer, 'push', 'origin', 'main');
+      const before = await state();
+      expect(
+        await call('neo.home.save', {
+          path: 'notes.md',
+          content: remoteText,
+          message: 'Stale approval',
+          conflictQuestionId: question.id,
+        })
+      ).toMatchObject({ ok: false, reason: expect.stringContaining('stale_conflict') });
+      expect(await state()).toEqual(before);
+      expect(await readFile(join(root, 'notes.md'), 'utf8')).toBe(localText);
+    }
+  );
+  test('does not choose or authorize a second protected conflict implicitly', async () => {
+    await version(root, 'direction.md', 'Local protected direction\n');
+    await version(peer, 'direction.md', 'Remote protected direction\n');
+    const { question } = await conflict();
+    await approve(question.id);
+    const before = await state();
+    expect(
+      await call('neo.home.save', {
+        path: 'notes.md',
+        content: remoteText,
+        message: 'Only notes approved',
+        conflictQuestionId: question.id,
+      })
+    ).toMatchObject({ ok: false, reason: expect.stringContaining('choice_requires_review') });
+    expect(await state()).toEqual(before);
+    expect(await readFile(join(root, 'direction.md'), 'utf8')).toBe('Local protected direction\n');
+  });
+  test('does not turn a remote deletion choice into a file deletion', async () => {
+    await version(root, 'notes.md', localText);
+    await git(peer, 'rm', 'notes.md');
+    await git(peer, 'commit', '-m', 'Human remote deletion');
+    await git(peer, 'push', 'origin', 'main');
+    const read = await call('neo.home.read', { path: 'notes.md' });
+    await approve(read.questionId!);
+    const before = await state();
+    expect(
+      await call('neo.home.save', {
+        path: 'notes.md',
+        content: '',
+        message: 'Do not delete',
+        conflictQuestionId: read.questionId,
+      })
+    ).toMatchObject({ ok: false, reason: expect.stringContaining('choice_requires_file') });
+    expect(await state()).toEqual(before);
+    expect(await readFile(join(root, 'notes.md'), 'utf8')).toBe(localText);
+  });
+  test('retains an ignored human decision log instead of bypassing normal save checks', async () => {
+    const { question } = await conflict('direction.md');
+    await approve(question.id);
+    await writeFile(join(root, '.git', 'info', 'exclude'), 'decisions.md\n');
+    await writeFile(join(root, 'decisions.md'), 'Human private decision history\n');
+    const yes = await confirmation(question.askId, 'direction.md', remoteText);
+    const before = await state();
+    expect(
+      await call('neo.home.save', {
+        path: 'direction.md',
+        content: remoteText,
+        message: 'Respect ignored log',
+        conflictQuestionId: question.id,
+        questionId: yes,
+      })
+    ).toMatchObject({ ok: false, reason: expect.stringContaining('ignored_path') });
+    expect(await state()).toEqual(before);
+    expect(await readFile(join(root, 'decisions.md'), 'utf8')).toBe(
+      'Human private decision history\n'
+    );
   });
 });

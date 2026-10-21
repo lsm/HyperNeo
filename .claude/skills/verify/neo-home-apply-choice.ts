@@ -46,6 +46,10 @@ try {
   await git(peer, 'add', '.'); await git(peer, 'commit', '-m', 'Remote independent document');
  }
  const normal = await divergent('notes.md'); evidence.normal = normal;
+ if (mode === 'ignored') {
+  evidence.privateAfterConflictRead = await readFile(join(root, 'private-note.txt'), 'utf8').catch(() => null);
+  await writeFile(join(root, 'private-note.txt'), 'Human private bytes\n');
+ }
  const input = { path: normal.path, content: other, message: 'Apply recorded choice', conflictQuestionId: normal.questionId };
  if (mode === 'race') await writeFile(join(run, 'network-race'), '');
  const first = await rpc('neo.home.save', input); evidence.normalResult = first;
