@@ -30,6 +30,10 @@ def verify(output):
     instruction = section.strip().split("\n\n", 1)[0]
     if ".claude/skills/verify/journeys/" not in instruction:
         missing.append("Artifact design still sends authors to the shared skill")
+    delivery = skill.parents[2] / "docs/design/work-delivery-guarantees.md"
+    instruction = delivery.read_text().split("For each implementation slice", 1)[1]
+    if ".claude/skills/verify/journeys/" not in instruction.split("\n\n", 1)[0]:
+        missing.append("Work-delivery design still sends new journeys to the shared skill")
     evidence = {"checkedJourneyRoutes": len(routes), "design": str(design), "missing": missing}
     encoded = json.dumps(evidence, indent=2) + "\n"
     if output:
