@@ -7,11 +7,13 @@ import { CopyButton } from '../ui/CopyButton.tsx';
 import { MermaidFigureToolbar, getMermaidForTheme } from './MermaidViewer.tsx';
 import { decideMarkdownImage, isNavigatableHref } from './markdown-image.ts';
 import { LruCache } from '../../lib/lru-cache.ts';
+import { decideArtifactImage, decideArtifactLink } from '../../lib/artifact-link-policy.ts';
 
 interface MarkdownRendererProps {
   content: string;
   class?: string;
   trailing?: ComponentChildren;
+  artifactLinks?: boolean;
 }
 
 type MarkdownModules = {
@@ -247,6 +249,41 @@ function rehypeMarkdownImages() {
   };
 }
 
+function transformArtifactNodes(node: MarkdownImageNode) {
+  node.children?.forEach((child, index, children) => {
+    const properties = child.properties ?? {};
+    if (child.type === 'element' && child.tagName === 'img') {
+      const src = typeof properties.src === 'string' ? properties.src : '';
+      if (decideArtifactImage(src).kind === 'refused')
+        children[index] = { type: 'text', value: `[image: ${properties.alt ?? ''}]` };
+      return;
+    }
+    if (child.type === 'element' && child.tagName === 'a') {
+      const link = decideArtifactLink(typeof properties.href === 'string' ? properties.href : '');
+      if (link.kind === 'external') {
+        delete properties.href;
+        properties.dataExternalHref = link.url;
+        properties.role = 'link';
+        properties.tabIndex = 0;
+      }
+      if (link.kind === 'refused')
+        children[index] = {
+          type: 'element',
+          tagName: 'span',
+          properties: { dataRefusedLink: '', title: 'This link is not available in the preview' },
+          children: child.children,
+        };
+    }
+    transformArtifactNodes(children[index]);
+  });
+}
+
+function rehypeArtifactLinks() {
+  return (tree: MarkdownImageNode) => {
+    transformArtifactNodes(tree);
+  };
+}
+
 function percentEncodedToBytes(payload: string) {
   const bytes: number[] = [];
   for (let index = 0; index < payload.length; ) {
@@ -346,7 +383,11 @@ function openImageAtFullSize(src: string, owner: unknown) {
 
 type MarkdownProcessor = Awaited<ReturnType<typeof buildMarkdownProcessor>>;
 
-async function buildMarkdownProcessor(shouldRenderMath: boolean, shouldHighlightCode: boolean) {
+async function buildMarkdownProcessor(
+  shouldRenderMath: boolean,
+  shouldHighlightCode: boolean,
+  artifactLinks: boolean
+) {
   const modules = await getMarkdownModules();
   const rehypeKatex = shouldRenderMath ? await getRehypeKatex() : null;
   const rehypeHighlight = shouldHighlightCode ? await getRehypeHighlight() : null;
@@ -358,7 +399,7 @@ async function buildMarkdownProcessor(shouldRenderMath: boolean, shouldHighlight
     .use(modules.remarkMath, { singleDollarTextMath: false })
     .use(modules.remarkBreaks)
     .use(modules.remarkRehype)
-    .use(rehypeMarkdownImages);
+    .use(artifactLinks ? rehypeArtifactLinks : rehypeMarkdownImages);
 
   if (rehypeKatex) {
     processor.use(rehypeKatex);
@@ -371,19 +412,27 @@ async function buildMarkdownProcessor(shouldRenderMath: boolean, shouldHighlight
   return processor.use(modules.rehypeStringify).freeze();
 }
 
-function getMarkdownProcessor(shouldRenderMath: boolean, shouldHighlightCode: boolean) {
-  const key = `${shouldRenderMath}:${shouldHighlightCode}`;
+function getMarkdownProcessor(
+  shouldRenderMath: boolean,
+  shouldHighlightCode: boolean,
+  artifactLinks: boolean
+) {
+  const key = `${shouldRenderMath}:${shouldHighlightCode}:${artifactLinks}`;
   let processor = markdownProcessors.get(key);
   if (!processor) {
-    processor = buildMarkdownProcessor(shouldRenderMath, shouldHighlightCode);
+    processor = buildMarkdownProcessor(shouldRenderMath, shouldHighlightCode, artifactLinks);
     processor.catch(() => markdownProcessors.delete(key));
     markdownProcessors.set(key, processor);
   }
   return processor;
 }
 
-async function renderMarkdown(content: string) {
-  const cached = renderedMarkdownCache.get(content);
+const cacheKey = (content: string, artifactLinks: boolean) =>
+  artifactLinks ? `artifact:${content}` : content;
+
+async function renderMarkdown(content: string, artifactLinks: boolean) {
+  const key = cacheKey(content, artifactLinks);
+  const cached = renderedMarkdownCache.get(key);
   if (cached !== undefined) return cached;
 
   const escapedContent = escapeRawHtmlBlocks(content);
@@ -394,10 +443,14 @@ async function renderMarkdown(content: string) {
     loadKatexCss().catch(() => undefined);
   }
 
-  const processor = await getMarkdownProcessor(shouldRenderMath, shouldHighlightCode);
+  const processor = await getMarkdownProcessor(
+    shouldRenderMath,
+    shouldHighlightCode,
+    artifactLinks
+  );
   const file = await processor.process(escapedContent);
   const htmlStr = String(file).replace(/(^|>[^<]*)-->([^<]*<|$)/g, '$1--&gt;$2');
-  renderedMarkdownCache.set(content, htmlStr);
+  renderedMarkdownCache.set(key, htmlStr);
   return htmlStr;
 }
 
@@ -405,23 +458,25 @@ export default function MarkdownRenderer({
   content,
   class: className,
   trailing,
+  artifactLinks = false,
 }: MarkdownRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const trailingMount = useRef<HTMLElement | null>(null);
   const hasTrailing = trailing != null;
   const overlayOwner = useRef({});
-  const [html, setHtml] = useState<string | null>(() => renderedMarkdownCache.get(content) ?? null);
+  const key = cacheKey(content, artifactLinks);
+  const [html, setHtml] = useState<string | null>(() => renderedMarkdownCache.get(key) ?? null);
   const theme = resolvedTheme.value;
 
   useEffect(() => {
-    const cached = renderedMarkdownCache.get(content);
+    const cached = renderedMarkdownCache.get(key);
     if (cached !== undefined) {
       setHtml(cached);
       return;
     }
     let cancelled = false;
     const rafId = requestAnimationFrame(() => {
-      renderMarkdown(content)
+      renderMarkdown(content, artifactLinks)
         .then((renderedHtml) => {
           if (!cancelled) {
             setHtml(renderedHtml);
@@ -437,7 +492,7 @@ export default function MarkdownRenderer({
       cancelled = true;
       cancelAnimationFrame(rafId);
     };
-  }, [content, theme]);
+  }, [content, artifactLinks, theme]);
 
   useEffect(
     () => () => {

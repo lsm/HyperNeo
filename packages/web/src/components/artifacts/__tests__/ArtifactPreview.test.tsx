@@ -68,7 +68,8 @@ describe('ArtifactPreview', () => {
     expect(document.body.textContent).not.toContain('/synthetic/private');
 
     fireEvent.click(screen.getByRole('button', { name: 'Source' }));
-    expect(screen.getByText(markdown).tagName).toBe('PRE');
+    expect(document.querySelector('pre')?.textContent).toBe(markdown);
+    expect(screen.queryByRole('heading', { name: 'Weekly report' })).toBeNull();
   });
 
   it('labels an uncommitted capture as a worktree snapshot with its hash', async () => {
