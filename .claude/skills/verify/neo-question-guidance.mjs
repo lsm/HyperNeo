@@ -58,6 +58,8 @@ try {
       const bounds = await body.boundingBox();
       assert(bounds.x >= 0 && bounds.x + bounds.width <= width + 1);
     }
+    if (width === 390) await page.waitForFunction(() => Math.abs(document.querySelector('.neo-scene-sheet').getBoundingClientRect().x) < 0.1);
+    await page.waitForFunction(() => document.querySelectorAll('[role=alert]').length === 0);
     await page.screenshot({ path: `${run}/evidence/neo-question-guidance-${width}.png`, fullPage: true });
     await card.locator(`[id="neo-ref-question-${questions[0].id}"]`).getByRole('button', { name: 'Preview first', exact: true }).click();
     await card.locator('[data-ask-details-toggle]').click();
