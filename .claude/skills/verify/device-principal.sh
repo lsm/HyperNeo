@@ -51,11 +51,6 @@ echo "redeem before Allow: $(redeem "$(echo "$SECOND" | field "['code']")" Lapto
 echo "unpaired browser Allow: $(as - "http://127.0.0.1:$PORT" device.pair.approve "{\"codeId\":\"$SECOND_ID\"}")"
 echo "paired phone Allow:     $(as "$PHONE_CRED" - device.pair.approve "{\"codeId\":\"$SECOND_ID\"}")"
 echo "redeem after Allow: deviceId returned=$(redeem "$(echo "$SECOND" | field "['code']")" Laptop | python3 -c "import json,sys;print('deviceId' in json.load(sys.stdin))")"
-THIRD_ID=$(cli_code human Tablet | field "['codeId']")
-RESET=$("${ENV[@]}" HYPERNEO_SESSION_DOOR="$RUN/data/session-door.sock" bun run packages/cli/main.ts pair --reset-human)
-echo "lost phone, pair --reset-human: unpaired=$(echo "$RESET" | field "['unpaired']")"
-echo "old phone Allow after reset: $(as "$PHONE_CRED" - device.pair.approve "{\"codeId\":\"$THIRD_ID\"}")"
-echo "next human code from the CLI: $(cli_code human 'New phone' | field "['approval']")"
-echo "paired devices: $(sqlite3 -readonly "$RUN/data/daemon.db" "SELECT group_concat(name || ':' || kind || IIF(revoked_at IS NULL, '', ':unpaired'), ', ') FROM paired_devices")"
+echo "paired devices: $(sqlite3 -readonly "$RUN/data/daemon.db" "SELECT group_concat(name || ':' || kind, ', ') FROM paired_devices")"
 echo "credentials in database or log: $( (sqlite3 -readonly "$RUN/data/daemon.db" .dump; cat "$RUN/daemon.log") | grep -c -e "$RELAY_CRED" -e "$PHONE_CRED" || true)"
 echo "run dir: $RUN"

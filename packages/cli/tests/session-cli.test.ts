@@ -47,9 +47,6 @@ describe('hyperneo send, question and build', () => {
     expect(planSessionCommand(['pair', '--reset-lockout'], 'cli')).toEqual({
       value: { name: 'device.pair.reset_lockout', input: {} },
     });
-    expect(planSessionCommand(['pair', '--reset-human'], 'cli')).toEqual({
-      value: { name: 'device.pair.reset_humans', input: {} },
-    });
     expect(planSessionCommand(['pair', '--kind'], 'cli')).toHaveProperty('reason');
   });
 

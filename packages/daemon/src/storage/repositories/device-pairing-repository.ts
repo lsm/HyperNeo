@@ -78,16 +78,6 @@ export class DevicePairingRepository {
       .get(id);
   }
 
-  revokeHumanDevices(now: number): number {
-    return Number(
-      this.db
-        .prepare(
-          "UPDATE paired_devices SET revoked_at = ? WHERE kind = 'human' AND revoked_at IS NULL"
-        )
-        .run(now).changes
-    );
-  }
-
   countHumanDevices(): number {
     return (
       this.db

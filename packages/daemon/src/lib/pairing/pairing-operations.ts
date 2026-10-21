@@ -113,18 +113,6 @@ export function createDevicePairingOperations({
       },
     }),
     defineOperation({
-      name: 'device.pair.reset_humans',
-      description:
-        'Unpair every human device, for a lost or reset phone, so the next code from the local CLI pairs without Allow.',
-      policy: { safetyClass: 'human_only' },
-      inputSchema: z.object({}).strict(),
-      resultSchema: z.union([z.object({ ok: z.literal(true), unpaired: z.number() }), Refused]),
-      execute: async (_input, caller) => {
-        if (!isLocalUser(caller) && !fromDoor(caller)) return refused;
-        return { ok: true as const, unpaired: pairing().revokeHumanDevices(now()) };
-      },
-    }),
-    defineOperation({
       name: 'device.pair.reset_lockout',
       description: 'Reopen pairing after too many bad codes locked it.',
       policy: { safetyClass: 'human_only' },
