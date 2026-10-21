@@ -216,8 +216,13 @@ itself (see Enforcement). Goals and journals stay in the DB; their milestones re
   noninteractive and bounded to 30 seconds.
 - Sync: `neo.home.save` runs `git pull --rebase` before committing and pushes after. On a
   conflict it aborts the rebase, keeps the local file, and returns `conflict`; Neo tells
-  the human in one question with both versions. Reads (`neo.home.read`, or Neo's `Read`)
-  pull at most once per wake.
+  the human in one question with both versions. Curated reads (`neo.home.read`)
+  attempt pull/rebase at most once per runtime-bound Neo wake, sharing failure as
+  well as success. Human RPC reads attempt fresh sync. Local-only reads retain human
+  edits; a remote-backed dirty home refuses sync unchanged. The weak cache binds to
+  the runtime turn's stable closure, not a caller-supplied wake token, and caches
+  only the sync attempt, never document contents. Native `Read` and its existing
+  policy stay unchanged. The conflict question is a separate follow-up.
 
 ## 2. Scheduler subsystem (fs3)
 

@@ -58,7 +58,12 @@ export function createNeoHomeOperations(
     .input(['input', 'caller'])
     .pipe(owner, 'caller', 'result:outcome')
     .pipe(requireHomePath, 'input', 'result:outcome')
-    .pipe((input: HomeReadInput) => home.read(input), 'outcome', 'outcome')
+    .pipe(
+      (input: HomeReadInput, caller: OperationCaller) =>
+        home.read(input, caller.source === 'mcp' ? caller.neoTurn?.isLive : undefined),
+      ['outcome', 'caller'],
+      'outcome'
+    )
     .endAsync('outcome') as (
     input: HomeReadInput,
     caller: OperationCaller
@@ -67,7 +72,7 @@ export function createNeoHomeOperations(
     defineOperation({
       name: 'neo.home.read',
       description:
-        'Read a complete local curated home document and its SHA-256, including human edits. Never initializes or commits. Refuses internal, ignored or symlink paths and non-UTF-8 content. Root Neo or the local user only.',
+        'Read a complete curated home document and its SHA-256. With origin/upstream, synchronizes using bounded noninteractive pull/rebase at most once per runtime Neo wake, sharing failures too; human RPC reads attempt fresh sync. Local-only reads include human edits; remote-backed dirty changes refuse synchronization unchanged. Never initializes or authors a commit. Refuses internal, ignored or symlink paths and non-UTF-8 content. Root Neo or the local user only.',
       inputSchema: HomeReadInput,
       resultSchema: HomeReadResult,
       policy: { safetyClass: 'read', roles: ['neo'] },

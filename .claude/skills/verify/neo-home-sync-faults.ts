@@ -29,9 +29,10 @@ const upload = `${run}/held-upload`;
 await writeFile(upload, `#!/bin/sh\nprintf '%s|%s|%s' "$GIT_TERMINAL_PROMPT" "$GIT_ASKPASS" "$GIT_SSH_COMMAND" > "${envFile}"\n: > "${ready}"\nwhile [ ! -f "${release}" ]; do sleep 0.05; done\n${mode === 'race' ? 'exec /usr/bin/git-upload-pack "$@"' : 'exit 42'}\n`, { mode: 0o755 });
 await git(['config', 'remote.origin.uploadpack', upload]);
 const evidence: Record<string,unknown> = { mode, phase };
+if (mode === 'deadline') Object.assign(evidence, { beforeStatus: await git(['status']), beforeHead: await git(['rev-parse', 'HEAD']) });
 const started = Date.now();
 const pending = rpc('neo.home.save', { path: 'digest.md', content: 'Pending content.\n', message: 'Synthetic network check' });
-const releaseTimer = setTimeout(() => { void writeFile(release, 'automatic fixture release'); }, mode === 'deadline' ? 35000 : 5000);
+const releaseTimer = setTimeout(() => { void writeFile(release, 'automatic fixture release'); }, mode === 'deadline' ? 65000 : 5000);
 try {
   for (let i = 0; i < 300; i++) {
     if (await readFile(ready).then(() => true, () => false)) break;
@@ -48,12 +49,14 @@ try {
     await writeFile(release, 'human rebase is paused');
   }
   const result = await pending;
-  Object.assign(evidence, { result, elapsedMs: Date.now() - started, networkEnv: await readFile(envFile, 'utf8'), queuedRead: queuedRead ? await queuedRead : null, afterStatus: await git(['status']), afterHead: await git(['rev-parse', 'HEAD']), localContent: mode === 'race' ? await readFile(`${root}/local.md`, 'utf8') : null });
+  const saveSettledAt = Date.now();
+  const queuedReadResult = queuedRead ? await queuedRead : null;
+  Object.assign(evidence, { result, saveElapsedMs: saveSettledAt - started, queuedReadAfterSaveMs: Date.now() - saveSettledAt, elapsedMs: Date.now() - started, networkEnv: await readFile(envFile, 'utf8'), queuedRead: queuedReadResult, afterStatus: await git(['status']), afterHead: await git(['rev-parse', 'HEAD']), localContent: mode === 'race' ? await readFile(`${root}/local.md`, 'utf8') : null });
   await writeFile(`${run}/evidence/neo-home-sync-${mode}-${phase}.json`, JSON.stringify(evidence, null, 2));
   if (mode === 'race') {
     if (result.ok || !result.reason?.includes('sync_failed') || evidence.beforeStatus !== evidence.afterStatus || evidence.beforeHead !== evidence.afterHead || evidence.localContent !== 'Human edits at the stop.') throw new Error('Save aborted or altered the concurrent human rebase');
-  } else if (result.ok || !result.reason?.includes('timed out') || Number(evidence.elapsedMs) >= 33000 || !(evidence.queuedRead as {ok:boolean})?.ok || evidence.networkEnv !== '0|/usr/bin/false|ssh -oBatchMode=yes') throw new Error('Network deadline/prompt suppression or queue recovery failed');
-  console.log(`PASS: ${mode} RPC preserves human state or releases the home queue at the noninteractive network deadline.`);
+  } else if (result.ok || !result.reason?.includes('timed out') || Number(evidence.saveElapsedMs) >= 33000 || Number(evidence.queuedReadAfterSaveMs) >= 33000 || Number(evidence.elapsedMs) >= 65000 || queuedReadResult?.ok || !queuedReadResult?.reason?.includes('timed out') || evidence.beforeStatus !== evidence.afterStatus || evidence.beforeHead !== evidence.afterHead || evidence.networkEnv !== '0|/usr/bin/false|ssh -oBatchMode=yes') throw new Error('Network deadline/prompt suppression or queue recovery failed');
+  console.log(`PASS: ${mode} RPC preserves human state or releases save and its queued fresh read at their noninteractive network deadlines.`);
 } finally {
   clearTimeout(releaseTimer); await writeFile(release, 'fixture cleanup'); await pending;
 }
