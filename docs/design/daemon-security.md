@@ -58,7 +58,7 @@ The upgrade attaches `{deviceId, kind}` to the connection. `CallContext` carries
    - the local CLI, `hyperneo pair [--kind human|relay|daemon] [--name …]`, over the `0600` session door;
    - or Settings → Devices → "Add device" on an already paired human device.
 2. The code is 10 base32 characters, single use and valid for 10 minutes. It is shown as text, plus a QR code holding `https://<host>/pair#<code>`. The `#` keeps the code out of server logs and the `Referer` header.
-3. The new device posts `{code, name, kind}` to an unauthenticated `POST /pair`. Codes allow 5 failed attempts per daemon per minute, and the whole flow fails closed after 20.
+3. The new device posts `{code, name}` to an unauthenticated `POST /pair`. The device's kind (and so its principal) is fixed when the code is created and stored with it; `POST /pair` accepts no `kind`, so whoever redeems a relay or daemon code can never become `human`. Codes allow 5 failed attempts per daemon per minute. After 20 failures in an hour, `POST /pair` refuses everything for 15 minutes and then reopens. `hyperneo pair --reset-lockout` (over the 0600 session door) clears the lock at once, so someone on the network who floods bad codes can delay pairing but can't block it, and the first device can always pair from the machine itself.
 4. On success the daemon returns the credential once:
    - in the response body, for native clients;
    - or as `Set-Cookie`, for the web.
@@ -102,7 +102,8 @@ Every HTTP request and `/ws` upgrade must pass a Host and an Origin check.
 ## 3. Loopback by default
 
 - A new default bind of `127.0.0.1`, with `::1` too where the runtime supports it.
-- Binding anything else takes an explicit opt-in: `--host <addr> --expose`, or Settings → Network → "Listen on" with a warning. The daemon refuses to bind a non-loopback address while pairing enforcement is off.
+- Binding anything else takes an explicit opt-in: `--host <addr> --expose`, or Settings → Network → "Listen on" with a warning.
+- Compatibility: daemons that already set `HOST`/`--host` today keep starting on that address, with a startup warning, until the human makes the Listen-on change in migration step 5. Only after that change, or for a new `--expose`, does the daemon refuse to bind a non-loopback address while pairing enforcement is off.
 - The phone keeps its route: `tailscale serve --https=443 http://127.0.0.1:9283`. Serve connects to loopback, so the existing `https://<machine>.ts.net` URL keeps working. Its MagicDNS name goes into Allowed hosts.
 - Other machines move to `wss://<machine>.ts.net/ws` through Serve, the same way.
 
