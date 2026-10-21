@@ -260,4 +260,9 @@ export const en = {
   'artifact.openGitHub': 'Open on GitHub',
   'artifact.changedFiles': 'Changed files ({count})',
   'artifact.filesTruncated': 'Showing {shown} of {total} files.',
+  'artifact.scriptsDisabled': 'Scripts disabled',
+  'artifact.htmlFrame': 'Static HTML preview',
+  'artifact.externalLinks': 'External links',
+  'artifact.htmlSourceOnly': 'HTML preview unavailable. View the original source.',
+  'artifact.loadingSource': 'Loading source…',
 } as const;

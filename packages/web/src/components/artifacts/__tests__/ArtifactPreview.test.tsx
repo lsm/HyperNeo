@@ -115,7 +115,11 @@ describe('ArtifactPreview', () => {
       () => reply({ accepted: false, reason: 'unavailable' }),
       'This file is no longer available to you.',
     ],
-    ['unsupported format', () => reply(meta(undefined, 'html')), 'This format has no preview yet.'],
+    [
+      'unsupported format',
+      () => reply(meta(undefined, 'image')),
+      'This format has no preview yet.',
+    ],
     [
       'preview limit',
       () => reply(meta(undefined, 'markdown', 3 * 1024 * 1024)),

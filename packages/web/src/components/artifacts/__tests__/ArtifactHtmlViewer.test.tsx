@@ -70,6 +70,18 @@ describe('locked-down HTML artifact viewer', () => {
     expect(container.querySelector('script')).toBeNull();
   });
 
+  it('requires explicit host confirmation for an HTML document link', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    render(<ArtifactPreview artifactId="html" onBack={() => {}} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Docs' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Docs' }));
+    expect(open).not.toHaveBeenCalled();
+    expect(screen.getByText('https://example.com/docs')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Open link' }));
+    expect(open).toHaveBeenCalledWith('https://example.com/docs', '_blank', 'noopener,noreferrer');
+    open.mockRestore();
+  });
+
   it('removes the iframe and source buffers immediately on disconnect', async () => {
     const { container } = render(<ArtifactPreview artifactId="html" onBack={() => {}} />);
     await waitFor(() => expect(container.querySelector('iframe')).toBeTruthy());

@@ -35,7 +35,15 @@ const register = (path) => {
  const result = rpc('artifact.file.register', { requestId: `html-viewer-${path}`, context: { kind: 'todo', id: 'todo' }, path, title: path === 'hostile.html' ? 'Static layout report' : 'Deep HTML source' });
  assert(result.accepted, JSON.stringify(result)); return result.artifact.artifactId;
 };
-const ids = { hostile: register('hostile.html'), deep: register('deep.html') };
+if (phase === 'prepare') {
+ rpc('rpc:providers.create', { params: { providerId: 'anthropic', displayName: 'Synthetic proxy', kind: 'built_in', authType: 'api_key', isEnabled: true, isDefault: true, sortOrder: 0 }, credentials: { apiKey: 'sk-devproxy-test-key' } });
+ const opened = rpc('neo.open', {}); assert(opened.ok, JSON.stringify(opened));
+ const hostileId = register('hostile.html'); const deepId = register('deep.html');
+ const metadata = rpc('artifact.file.get', { artifactId: hostileId }); assert(metadata.accepted);
+ writeFileSync(join(run, 'evidence', 'html-viewer-refs.json'), JSON.stringify({ root: opened.sessionId, ref: metadata.metadata.artifact, ids: { hostile: hostileId, deep: deepId } }));
+ console.log('prepared registered HTML refs via RPC'); process.exit(0);
+}
+const ids = JSON.parse(readFileSync(join(run, 'evidence', 'html-viewer-refs.json'), 'utf8')).ids;
 const { chromium } = createRequire(import.meta.url)('playwright');
 const browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}) });
 const base = `http://127.0.0.1:${port}`; const attempts = []; const evidence = { ids, widths: {} };
@@ -49,7 +57,12 @@ try {
   });
   const page = await context.newPage(); const dialogs = []; page.on('dialog', async (d) => { dialogs.push(d.message()); await d.dismiss(); });
   try {
-   await page.goto(`${base}/neo?artifact=${ids.hostile}`);
+   await page.goto(`${base}/neo`);
+   const card = page.getByRole('button', { name: 'Open preview: Static layout report' });
+   await card.waitFor(); await card.scrollIntoViewIfNeeded();
+   const scrollTop = await page.locator('main.neo-scroll').evaluate((node) => node.scrollTop);
+   await card.click(); const openedUrl = page.url();
+   await page.getByRole('dialog').waitFor();
    const section = page.getByRole('region', { name: 'File preview' });
    await section.getByRole('heading', { name: 'Static layout report' }).waitFor();
    await page.waitForTimeout(150);
@@ -65,9 +78,18 @@ try {
    assert.equal(await frame.evaluate(() => window.__htmlSentinel), undefined);
    assert.equal(await frame.evaluate(() => { try { void parent.document.body; return 'accessible'; } catch { return 'denied'; } }), 'denied');
    await frame.getByText('More detail', { exact: true }).click(); await frame.getByText('Native HTML details still work.').waitFor({ state: 'visible' });
-   await frame.getByText('Authored navigation', { exact: true }).click();
-   assert.equal(page.url(), `${base}/neo?artifact=${ids.hostile}`); assert.equal(context.pages().length, 1); assert.deepEqual(dialogs, []); assert.deepEqual(attempts, []);
+   assert((await frame.locator('body').innerText()).includes('Authored navigation'));
+   assert.equal(page.url(), openedUrl); assert.equal(context.pages().length, 1); assert.deepEqual(dialogs, []); assert.deepEqual(attempts, []);
    const bounds = await frameElement.boundingBox(); assert(bounds && bounds.width <= width && bounds.x >= 0);
+   const preparedDocument = await frameElement.getAttribute('srcdoc');
+   await frameElement.evaluate((node) => { node.srcdoc = `<h1>Sandbox boundary probe</h1><script>window.__htmlSentinel='probe';parent.__htmlSentinel='probe';top.location='https://evil.example/top';window.open('https://evil.example/popup')</script><a target="_top" href="https://evil.example/top-click">Try top</a><a target="_blank" href="https://evil.example/popup-click">Try popup</a><form target="_top" action="https://evil.example/form"><button>Try form</button></form><button onclick="window.__htmlSentinel='handler'">Try handler</button>`; });
+   await frame.getByRole('heading', { name: 'Sandbox boundary probe' }).waitFor();
+   for (const name of ['Try top', 'Try popup', 'Try form', 'Try handler']) await frame.getByText(name, { exact: true }).click();
+   assert.equal(await frame.evaluate(() => window.__htmlSentinel), undefined);
+   assert.equal(await page.evaluate(() => window.__htmlSentinel), undefined);
+   assert.equal(page.url(), openedUrl); assert.equal(context.pages().length, 1); assert.deepEqual(dialogs, []); assert.deepEqual(attempts, []);
+   await frameElement.evaluate((node, document) => { node.srcdoc = document; }, preparedDocument);
+   await frame.getByRole('heading', { name: 'Static layout report' }).waitFor();
    await page.screenshot({ path: join(run, 'evidence', `html-viewer-preview-${width}.png`) });
    await page.getByRole('button', { name: 'Reference docs', exact: true }).click();
    await page.getByText('Open this link in a new tab?').waitFor(); assert.equal(context.pages().length, 1);
@@ -78,12 +100,26 @@ try {
    assert.equal(await page.locator('iframe').count(), 0); assert.equal(await page.locator('pre').innerText(), hostile);
    assert.equal(await page.evaluate(() => window.__htmlSentinel), undefined);
    await page.screenshot({ path: join(run, 'evidence', `html-viewer-source-${width}.png`) });
+   await page.getByRole('button', { name: 'Back', exact: true }).click();
+   await page.getByRole('dialog').waitFor({ state: 'detached' });
+   assert.equal(await page.locator('main.neo-scroll').evaluate((node) => node.scrollTop), scrollTop);
+   assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Open preview: Static layout report');
+   if (width === 390) {
+    await card.click(); await page.locator('iframe').waitFor();
+    execFileSync(join(verify, 'stop.sh'), [run]);
+    await page.getByRole('status').filter({ hasText: 'The daemon that owns this file is not reachable.' }).waitFor({ timeout: 30000 });
+    assert.equal(await page.locator('iframe,pre').count(), 0);
+    await page.screenshot({ path: join(run, 'evidence', 'html-viewer-disconnected-390.png') });
+    execFileSync(join(verify, 'launch.sh'), [port, run], { stdio: 'ignore' });
+    await page.locator('iframe').waitFor({ timeout: 60000 });
+    await page.getByRole('button', { name: 'Back', exact: true }).click();
+   }
    await page.goto(`${base}/neo?artifact=${ids.deep}`);
    await page.getByText('HTML preview unavailable. View the original source.', { exact: true }).waitFor();
    await page.getByRole('button', { name: 'Source', exact: true }).click(); await page.locator('pre').filter({ hasText: 'Deep source' }).waitFor();
    assert.equal(await page.locator('iframe').count(), 0);
    await page.screenshot({ path: join(run, 'evidence', `html-viewer-source-only-${width}.png`) });
-   evidence.widths[width] = { staticLayout: true, raster: true, scriptsDisabled: true, opaqueOrigin: true, noNavigation: true, noRemoteAssets: true, sourceEscaped: true, sourceOnlyFallback: true, dialogs, iframeWidth: bounds.width };
+   evidence.widths[width] = { staticLayout: true, raster: true, scriptsDisabled: true, opaqueOrigin: true, sandboxWithoutCsp: true, noNavigation: true, noRemoteAssets: true, sourceEscaped: true, sourceOnlyFallback: true, backFocusScroll: true, disconnectClears: width === 390, dialogs, iframeWidth: bounds.width };
   } catch (error) { await page.screenshot({ path: join(run, 'evidence', `html-viewer-failure-${width}.png`) }); throw error; }
   finally { await context.close(); }
  }

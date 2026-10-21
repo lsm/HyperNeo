@@ -11,6 +11,8 @@ import {
   type ArtifactPreviewState,
 } from '../../lib/artifact-preview-client.ts';
 import { t } from '../../lib/i18n/index.ts';
+import { ArtifactHtmlDocument } from './ArtifactHtmlDocument.tsx';
+import { ArtifactHtmlSource } from './ArtifactHtmlSource.tsx';
 import MarkdownRenderer, { clearArtifactRenderCache } from '../chat/MarkdownRenderer.tsx';
 
 type Shown = ArtifactPreviewState | { state: 'loading' };
@@ -45,6 +47,7 @@ export function artifactStateMessage(state: Exclude<Shown['state'], 'ready'>) {
         revoked: 'artifact.revoked',
         forbidden: 'artifact.forbidden',
         unsupported: 'artifact.unsupported',
+        html_source: 'artifact.htmlSourceOnly',
       } as const
     )[state]
   );
@@ -162,7 +165,7 @@ export function ArtifactPreview({
         }
         onBack={onBack}
       >
-        {shown.state === 'ready' && (
+        {(shown.state === 'ready' || shown.state === 'html_source') && (
           <div class="flex gap-1">
             {toggle('preview', t('artifact.preview'))}
             {toggle('source', t('artifact.source'))}
@@ -174,10 +177,18 @@ export function ArtifactPreview({
         onClick={activateLink}
         onKeyDown={activateLink}
       >
-        {shown.state !== 'ready' ? (
+        {shown.state === 'html_source' && view === 'source' ? (
+          <ArtifactHtmlSource metadata={shown.metadata} onUnavailable={setShown} />
+        ) : shown.state !== 'ready' ? (
           <p class="text-sm text-fg-muted" role="status">
             {artifactStateMessage(shown.state)}
           </p>
+        ) : shown.html ? (
+          view === 'preview' ? (
+            <ArtifactHtmlDocument html={shown.html} />
+          ) : (
+            <ArtifactHtmlSource metadata={shown.metadata} onUnavailable={setShown} />
+          )
         ) : view === 'preview' ? (
           <MarkdownRenderer content={shown.text} artifactLinks />
         ) : (
