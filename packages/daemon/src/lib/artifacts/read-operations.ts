@@ -205,7 +205,7 @@ export function createArtifactReadOperations(
           accepted: z.literal(true),
           sha256: z.string().regex(/^[a-f0-9]{64}$/),
           document: z.string(),
-          links: z.array(z.strictObject({ text: z.string(), href: z.string() })),
+          links: z.array(z.strictObject({ text: z.string().max(200), href: z.string() })).max(200),
           scriptsRemoved: z.boolean(),
         }),
       ]),

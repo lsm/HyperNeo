@@ -33,6 +33,7 @@ const PROPERTIES: Record<string, readonly string[]> = {
   time: ['dateTime'],
 };
 const RASTER = /^data:image\/(?:png|jpeg|gif|webp);base64,[a-z0-9+/=\s]*$/i;
+const LINK_LIMIT = 200;
 const CSS_URL = /url\(\s*(['"]?)([^'")]*)\1\s*\)/gi;
 
 export interface ArtifactHtmlLink {
@@ -47,9 +48,14 @@ export interface PreparedArtifactHtml {
 }
 
 function cleanCss(css: string): string {
-  if (/\\|expression\s*\(|javascript:|behavior\s*:|-moz-binding|image-set|@font-face/i.test(css))
+  const source = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  if (
+    /[\\<]|\/\*|expression\s*\(|javascript:|behavior\s*:|-moz-binding|image-set|@font-face/i.test(
+      source
+    )
+  )
     return '';
-  const cleaned = css
+  const cleaned = source
     .replace(/@import[^;]*(?:;|$)/gi, '')
     .replace(CSS_URL, (match, _quote, target: string) =>
       RASTER.test(target.trim()) ? match : 'none'
@@ -99,7 +105,8 @@ function cleanElement(
     const href = element.properties.href;
     if (typeof href === 'string' && /^\s*javascript:/i.test(href)) removed.scripts = true;
     const target = linkTarget(href);
-    if (target) links.push({ text: textOf(element).trim(), href: target });
+    if (target && links.length < LINK_LIMIT)
+      links.push({ text: textOf(element).trim().slice(0, LINK_LIMIT), href: target });
   }
   const children = cleanChildren(
     'content' in element && element.content ? element.content.children : element.children,
@@ -136,7 +143,11 @@ function find(root: Node, tag: string): Element | null {
 export function prepareArtifactHtml(html: string): PreparedArtifactHtml {
   const tree = fromHtml(html);
   const links: ArtifactHtmlLink[] = [];
-  const removed = { scripts: false };
+  const removed = {
+    scripts: ['html', 'head', 'body'].some((tag) =>
+      Object.keys(find(tree, tag)?.properties ?? {}).some((name) => /^on/i.test(name))
+    ),
+  };
   const head = cleanChildren(find(tree, 'head')?.children ?? [], links, removed).filter(
     (child) => child.type === 'element' && (child.tagName === 'title' || child.tagName === 'style')
   );
