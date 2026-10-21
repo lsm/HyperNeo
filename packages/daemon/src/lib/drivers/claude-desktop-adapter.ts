@@ -67,6 +67,8 @@ const DELIVERY_POLL_MS = 2_000;
 const DELIVERY_POLLS = 15;
 const OPEN_WAIT_MS = 60_000;
 const OPEN_POLL_MS = 2_000;
+const IMPORT_WAIT_MS = 60_000;
+const DESKTOP_HANDOFFS = 2;
 
 const RecordSchema = z.object({
   sessionId: z.string().startsWith('local_'),
@@ -1201,7 +1203,8 @@ export async function startClaudeSession(
   folder: string,
   request: StartRequest,
   deps: ClaudeDesktopAdapterDeps,
-  cache: ClaudeRecordCache
+  cache: ClaudeRecordCache,
+  context?: WorkCallContext
 ): Promise<Result<WorkStarted>> {
   const cliSessionId = deps.newId();
   const sessionId = `local_${cliSessionId}`;
@@ -1221,7 +1224,9 @@ export async function startClaudeSession(
     placement.kind === 'worktree' && worktree
       ? join(placement.repo, '.claude', 'worktrees', worktree)
       : (prepared?.value.directory ?? folder);
-  const started = await runClaudeTurn(
+  const bootstrap = claudeBootstrapPrompt(request.title);
+  let cliDone = false;
+  const opened = await runClaudeTurn(
     [
       'claude',
       '-p',
@@ -1233,21 +1238,19 @@ export async function startClaudeSession(
       permissionMode,
       ...(worktree ? ['--worktree', worktree] : []),
       '--',
-      request.message,
+      bootstrap,
     ],
     prepared?.value.directory ?? folder,
     { cliSessionId, cwd, originCwd: folder },
-    request.message,
+    bootstrap,
     deps,
     BOOTSTRAP_TIMEOUT_MS / DELIVERY_POLL_MS,
     () => {
-      try {
-        launchInClaudeDesktop(cliSessionId, cwd, deps);
-      } catch {}
+      cliDone = true;
     }
   );
-  if (!started.ok) return started;
-  const record: ClaudeDesktopRecord = {
+  if (!opened.ok) return opened;
+  const provisional: ClaudeDesktopRecord = {
     sessionId,
     cliSessionId,
     cwd,
@@ -1256,30 +1259,93 @@ export async function startClaudeSession(
     lastActivityAt: deps.now(),
     permissionMode,
   };
-  cache.set(`${STARTED_KEY}${sessionId}`, { modifiedAt: 0, records: [record] });
+  cache.set(`${STARTED_KEY}${sessionId}`, { modifiedAt: 0, records: [provisional] });
+  const place = { machine: deps.machine, folder, name: request.place.name };
+  const needsYou = (why: string): Result<WorkStarted> => ({
+    ok: true,
+    value: {
+      ...toClaudeWork(provisional, new Map(), deps.machine),
+      place,
+      status: 'needs_you',
+      watchHint: `${why} The task was not started. Open Claude Desktop, then ask Neo to start it again.`,
+    },
+  });
+  if (!(await waitFor(() => cliDone, BOOTSTRAP_TIMEOUT_MS, deps)))
+    return needsYou('The opening Claude turn did not finish in time.');
+  let record: ClaudeDesktopRecord | null = null;
+  for (let handoff = 0; handoff < DESKTOP_HANDOFFS && !record; handoff++) {
+    try {
+      launchInClaudeDesktop(cliSessionId, cwd, deps);
+    } catch {
+      return needsYou('Claude Desktop could not be opened.');
+    }
+    record = await awaitDesktopRecord(cliSessionId, deps);
+  }
+  if (!record) return needsYou('Claude Desktop did not import the new session.');
+  const live = await waitUntilLive(cliSessionId, deps);
+  const owner = live ? requireClaudePeerOwner(cliSessionId, live) : null;
+  if (!live || !owner || 'reason' in owner || owner.value.owner !== 'desktop')
+    return needsYou('Claude Desktop did not open the new session.');
+  const sent = await sendOwnedClaudeMessage(
+    { ...record, cliSessionId },
+    live,
+    request.message,
+    deps,
+    context
+  );
+  if (!sent.ok) return needsYou(`Claude Desktop did not take the task: ${sent.detail}`);
   return {
     ok: true,
     value: {
       ...toClaudeWork(record, new Map(), deps.machine),
-      place: { machine: deps.machine, folder, name: request.place.name },
+      place,
       status: 'running',
-      receipt: {
-        executionId: cliSessionId,
-        inputId: started.value.inputId ?? cliSessionId,
-      },
+      receipt: sent.value.receipt ?? { executionId: cliSessionId, inputId: cliSessionId },
     },
   };
 }
 
+export function claudeBootstrapPrompt(title: string): string {
+  return `Session opened by Neo for "${title}". Reply OK and stop; the task follows in Claude Desktop.`;
+}
+
+async function waitFor(
+  done: () => boolean,
+  limitMs: number,
+  deps: Pick<ClaudeDesktopAdapterDeps, 'now' | 'sleep'>
+): Promise<boolean> {
+  const until = deps.now() + limitMs;
+  while (!done()) {
+    if (deps.now() >= until) return false;
+    await deps.sleep(OPEN_POLL_MS);
+  }
+  return true;
+}
+
+async function awaitDesktopRecord(
+  cliSessionId: string,
+  deps: ClaudeDesktopAdapterDeps
+): Promise<ClaudeDesktopRecord | null> {
+  const until = deps.now() + IMPORT_WAIT_MS;
+  for (;;) {
+    const found = (await readClaudeDesktopRecords(deps.sessionsDir, new Map())).find(
+      (candidate) => candidate.cliSessionId === cliSessionId && candidate.desktopRegistered
+    );
+    if (found || deps.now() >= until) return found ?? null;
+    await deps.sleep(OPEN_POLL_MS);
+  }
+}
+
 const runClaudeDesktopStart = (superpipe({})('claude-desktop-start-work') as PipelineAPI)
-  .input(['request', 'deps', 'cache'])
+  .input(['request', 'deps', 'cache', 'context'])
   .pipe(admitClaudeStartConfiguration, 'request', 'result:outcome')
   .pipe(selectClaudeStartFolder, ['outcome', 'deps'], 'result:outcome')
-  .pipe(startClaudeSession, ['outcome', 'request', 'deps', 'cache'], 'outcome')
+  .pipe(startClaudeSession, ['outcome', 'request', 'deps', 'cache', 'context'], 'outcome')
   .endAsync('outcome') as (
   request: StartRequest,
   deps: ClaudeDesktopAdapterDeps,
-  cache: ClaudeRecordCache
+  cache: ClaudeRecordCache,
+  context: WorkCallContext
 ) => Promise<Result<WorkStarted>>;
 
 export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): WorkAdapter {
@@ -1328,7 +1394,7 @@ export function createClaudeDesktopAdapter(deps: ClaudeDesktopAdapterDeps): Work
         cache,
         query.text && !query.spaceId && deps.searchChats ? await deps.searchChats(query.text) : []
       ),
-    start: (request) => runClaudeDesktopStart(request, deps, cache),
+    start: (request, context) => runClaudeDesktopStart(request, deps, cache, context),
     send: (ref, message, context) => runClaudeDesktopSend(ref, message, deps, cache, context),
     steer: (ref, message, context) => runClaudeDesktopSend(ref, message, deps, cache, context),
     status: (ref, since, receipt) => runClaudeDesktopStatus(ref, reused, cache, since, receipt),
