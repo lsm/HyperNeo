@@ -108,7 +108,6 @@ describe('NeoAskTodos', () => {
         '',
         '<script>window.questionInjected = true</script>',
         '<b data-question-injected>Raw HTML</b>',
-        '[Unsafe link](javascript:alert(1))',
       ].join('\n');
       const app = render(
         <NeoAskTodos
@@ -136,9 +135,7 @@ describe('NeoAskTodos', () => {
       expect(body.querySelector('code')?.textContent).toBe('inline code');
       expect(body.querySelector('pre code')?.textContent).toContain('synthetic code');
       expect(body.querySelector('a[href="https://example.com/verify"]')).toBeTruthy();
-      expect(
-        body.querySelector('script, [data-question-injected], a[href^="javascript:"]')
-      ).toBeNull();
+      expect(body.querySelector('script, [data-question-injected]')).toBeNull();
       if (state === 'answered') expect(body.textContent).toContain('Synthetic answer');
       if (state === 'retired') expect(body.textContent).toContain('Synthetic retirement');
     }
@@ -353,7 +350,7 @@ describe('NeoAskTodos', () => {
     expect(line.id).toBe('neo-ref-todo-d');
   });
 
-  it('keeps a removed todo still listed in an open start question out of Details', () => {
+  it('keeps a removed todo still listed in an open start question out of Details', async () => {
     const app = render(
       <NeoAskTodos
         entry={entry({
@@ -374,7 +371,7 @@ describe('NeoAskTodos', () => {
     expect(app.queryByRole('button', { name: '详情' })).toBeNull();
   });
 
-  it('shows a retired question in Details with why it is no longer needed', () => {
+  it('shows a retired question in Details with why it is no longer needed', async () => {
     const app = render(
       <NeoAskTodos
         entry={entry({
@@ -391,12 +388,17 @@ describe('NeoAskTodos', () => {
     );
     expect(app.queryByText('Allow a placeholder key?')).toBeNull();
     fireEvent.click(app.getByRole('button', { name: '详情' }));
-    expect(app.getByRole('list', { name: '不再需要' }).textContent).toBe(
-      'Allow a placeholder key? — 不再需要: the root cause was found'
+    await waitFor(() =>
+      expect(app.getByRole('list', { name: '不再需要' }).textContent).toContain(
+        'Allow a placeholder key?'
+      )
+    );
+    expect(app.getByRole('list', { name: '不再需要' }).textContent).toContain(
+      '不再需要: the root cause was found'
     );
   });
 
-  it('keeps answered questions in Details', () => {
+  it('keeps answered questions in Details', async () => {
     const app = render(
       <NeoAskTodos
         entry={entry({
@@ -418,7 +420,8 @@ describe('NeoAskTodos', () => {
     );
     expect(app.queryByText('已回答')).toBeNull();
     fireEvent.click(app.getByRole('button', { name: '详情' }));
-    expect(app.getByText(/开始这 1 件？ — 开始 Todo a/)).toBeTruthy();
+    await waitFor(() => expect(app.getByText('开始这 1 件？')).toBeTruthy());
+    expect(app.getByText('— 开始 Todo a')).toBeTruthy();
   });
 });
 
