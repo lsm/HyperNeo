@@ -305,6 +305,9 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
         submitting--;
       }
     },
+    peekStatus(): WorkerState['status'] {
+      return state.status;
+    },
     async snapshot(): Promise<WorkerState> {
       if (!closed && ['queued', 'running', 'needs_you'].includes(state.status)) {
         try {

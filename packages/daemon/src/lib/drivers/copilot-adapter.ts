@@ -345,25 +345,26 @@ export function createCopilotAdapter(
       const result = await guard(async () => {
         const loaded = lookup({ adapter: discovery.id, id });
         if ('reason' in loaded) return loaded.reason;
-        const record = await refresh(loaded.value);
+        const record = loaded.value;
+        const owner = closed ? undefined : live.get(id);
+        const status = owner?.peekStatus() ?? record.snapshot.status;
         const folder =
           (await deps.projectFolder?.(record.directory)) ??
           record.work.place.folder ??
           record.directory;
         const unavailable =
-          record.snapshot.status === 'unreachable' ||
-          (!live.has(id) && !['done', 'failed', 'stopped'].includes(record.snapshot.status));
+          status === 'unreachable' || (!owner && !['done', 'failed', 'stopped'].includes(status));
         return {
           ok: true,
           value: {
             ...record.work,
             place: { ...record.work.place, folder, name: basename(folder) || folder },
             status:
-              record.snapshot.status === 'unreachable'
+              status === 'unreachable'
                 ? record.pendingSubmission
                   ? 'queued'
                   : record.work.status
-                : record.snapshot.status,
+                : status,
             ...(unavailable
               ? {
                   watchHint:

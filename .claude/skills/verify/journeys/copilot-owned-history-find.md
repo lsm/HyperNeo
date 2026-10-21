@@ -61,3 +61,27 @@ impersonates the pinned runtime, including its COPILOT_HOME session-state event
 log. It performs no real Copilot call or credential-file access. The adapter only
 reads known owned transcripts; it never edits the CLI's own store or adopts an
 external session. Shared SKILL.md and journey discovery remain unchanged.
+
+Review regressions have separate helper modes, each requiring a fresh run:
+
+```bash
+for MODE in search peek external-failure; do
+  RUN=$(mktemp -d /private/tmp/hn-copilot-find-review-XXXXXX)
+  mkdir -p "$RUN/home"
+  env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin" \
+    NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+    bun .claude/skills/verify/copilot-history-find.ts 9386 "$RUN" "$MODE"
+done
+```
+
+- `search`: an older external title match survives twenty-five newer sessions in
+  the same place, because text reaches ACP filtering before the result window.
+- `peek`: after starting synthetic held work, the fixture withholds ping replies.
+  Browsing find must send no ping/shutdown, leave its ownership record byte-for-byte
+  unchanged and retain the live PID. Releasing the fixture gate and sending a
+  follow-up must complete the original receipt; browsing never stops the worker.
+- `external-failure`: after restart, a cold ACP list fails explicitly. The stored
+  owned result remains discoverable as done, with a watchHint saying external
+  discovery is unavailable and the list contains owned work only. No resume occurs.
+  If no owned results are available either, find retains its adapter-unreachable
+  failure rather than presenting an apparently successful empty list.

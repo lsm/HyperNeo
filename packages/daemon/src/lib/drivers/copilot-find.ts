@@ -54,11 +54,23 @@ export function createCopilotFind(
     return owned;
   };
   const load = async (query: FindQuery) => {
-    const [external, owned] = await Promise.all([
-      discovery.find({ ...query, text: undefined }),
+    const [external, owned] = await Promise.allSettled([
+      Promise.resolve().then(() => discovery.find(query)),
       loadOwned(),
     ]);
-    return { external, owned };
+    if (owned.status === 'rejected') throw owned.reason;
+    if (external.status === 'rejected' && !owned.value.length) throw external.reason;
+    return {
+      external: external.status === 'fulfilled' ? external.value : [],
+      owned:
+        external.status === 'fulfilled'
+          ? owned.value
+          : owned.value.map((work) => ({
+              ...work,
+              watchHint:
+                `${work.watchHint ?? ''} External Copilot discovery unavailable; this list contains owned work only.`.trim(),
+            })),
+    };
   };
   const combine = (loaded: { external: PlaceGroup[]; owned: WorkSummary[] }, query: FindQuery) => {
     const external = loaded.external.map((group) => {
