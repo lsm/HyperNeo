@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
+import { ARTIFACT_DEFAULT_LIMITS, type ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../storage/sqlite-compat.ts';
@@ -19,6 +19,7 @@ import {
 import { authorizeArtifactCaller, type ArtifactContext } from './file-policy.ts';
 import { loadRegistrationBinding } from './registration-binding.ts';
 import { readArtifactChunk } from './read-snapshot.ts';
+import { prepareArtifactHtml } from './html-preview.ts';
 
 const unavailable = () => ({ accepted: false as const, reason: 'unavailable' as const });
 const ListInput = z.strictObject({
@@ -101,6 +102,31 @@ export function createArtifactReadOperations(
     const result = await readChunk(join(data, 'artifacts'), row, input.offset, input.maxBytes);
     return 'value' in authorizeRow(row, caller) ? result : unavailable();
   }
+  async function html(row: StoredArtifactFile, caller: OperationCaller) {
+    if (JSON.parse(row.receipt).artifact.kind !== 'html')
+      return { accepted: false as const, reason: 'unsupported_type' as const };
+    if (row.byte_length > ARTIFACT_DEFAULT_LIMITS.documentPreviewBytes)
+      return { accepted: false as const, reason: 'size_limit' as const };
+    const chunks: Buffer[] = [];
+    for (let offset = 0; ; ) {
+      const chunk = await readChunk(
+        join(data, 'artifacts'),
+        row,
+        offset,
+        ARTIFACT_DEFAULT_LIMITS.readBytes
+      );
+      if (!chunk.accepted) return chunk;
+      chunks.push(Buffer.from(chunk.data, 'base64'));
+      offset = chunk.nextOffset;
+      if (chunk.complete) break;
+    }
+    if (!('value' in authorizeRow(row, caller))) return unavailable();
+    return {
+      accepted: true as const,
+      sha256: row.sha256,
+      ...prepareArtifactHtml(new TextDecoder().decode(Buffer.concat(chunks))),
+    };
+  }
   const get = (superpipe({})('artifact-file-get') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(load, 'input', 'result:access')
@@ -121,6 +147,15 @@ export function createArtifactReadOperations(
     .pipe(authorizeRow, ['access', 'caller'], 'result:access')
     .pipe(bytes, ['access', 'input', 'caller'], 'access')
     .endAsync('access') as (input: ReadInput, caller: OperationCaller) => Promise<unknown>;
+  const preview = (superpipe({})('artifact-file-html') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(load, 'input', 'result:access')
+    .pipe(authorizeRow, ['access', 'caller'], 'result:access')
+    .pipe(html, ['access', 'caller'], 'access')
+    .endAsync('access') as (
+    input: { artifactId: string },
+    caller: OperationCaller
+  ) => Promise<unknown>;
   return [
     defineOperation({
       name: 'artifact.file.get',
@@ -158,6 +193,24 @@ export function createArtifactReadOperations(
       resultSchema: ArtifactReadResultSchema,
       policy: { safetyClass: 'read' },
       execute: read,
+    }),
+    defineOperation({
+      name: 'artifact.file.html',
+      description:
+        'Get a currently authorized registered HTML snapshot (at most 2 MiB) as an inert preview document: parsed and rebuilt from an element/attribute allowlist, with no scripts, handlers, forms, frames, SVG/MathML, remote loads or authored meta/base, and the host CSP first in head. Render it only in an opaque-origin sandboxed frame. Web links come back separately in links for the host to offer outside the frame; scriptsRemoved says to show the scripts-disabled notice.',
+      inputSchema: ArtifactReadInputSchema.pick({ artifactId: true }),
+      resultSchema: z.union([
+        ArtifactRefusalSchema,
+        z.strictObject({
+          accepted: z.literal(true),
+          sha256: z.string().regex(/^[a-f0-9]{64}$/),
+          document: z.string(),
+          links: z.array(z.strictObject({ text: z.string(), href: z.string() })),
+          scriptsRemoved: z.boolean(),
+        }),
+      ]),
+      policy: { safetyClass: 'read' },
+      execute: preview,
     }),
   ];
 }

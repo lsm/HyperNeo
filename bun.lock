@@ -43,6 +43,8 @@
         "@hyperneo/shared": "workspace:*",
         "@modelcontextprotocol/sdk": "1.30.0",
         "croner": "10.0.1",
+        "hast-util-from-html": "2.0.3",
+        "hast-util-to-html": "9.0.5",
         "simple-git": "3.36.0",
         "superpipe": "0.18.0",
         "ws": "8.21.3",
