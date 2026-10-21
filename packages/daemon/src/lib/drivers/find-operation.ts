@@ -1,3 +1,4 @@
+import { runLagPhase } from '../event-loop-activity.ts';
 import { basename, isAbsolute, join, normalize } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -188,7 +189,11 @@ export async function findLocally(
   adapters: readonly WorkAdapter[],
   query: FindQuery
 ): Promise<SourceOutcome> {
-  const settled = await Promise.allSettled(adapters.map(async (adapter) => adapter.find(query)));
+  const settled = await Promise.allSettled(
+    adapters.map(async (adapter) =>
+      runLagPhase(`work:find:${adapter.id}`, () => adapter.find(query))
+    )
+  );
   return settled.reduce<SourceOutcome>(
     (outcome, result, index) =>
       result.status === 'fulfilled'
