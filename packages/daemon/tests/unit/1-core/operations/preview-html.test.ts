@@ -1,4 +1,9 @@
 import { describe, expect, test } from 'bun:test';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   ARTIFACT_HTML_CSP,
   prepareArtifactHtml,
@@ -82,5 +87,39 @@ describe('artifact HTML preview document', () => {
       { text: 'PR one', href: 'https://github.com/lsm/HyperNeo/pull/1' },
       { text: 'mail', href: 'mailto:a@example.com' },
     ]);
+  });
+
+  test('serves a registered hostile page only as the prepared document, under current authority', () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'preview-html-')));
+    mkdirSync(join(root, 'home'));
+    try {
+      const output = execFileSync(
+        'bun',
+        [
+          fileURLToPath(
+            new URL('../../../../../../.claude/skills/verify/preview-html.ts', import.meta.url)
+          ),
+          root,
+        ],
+        {
+          cwd: root,
+          env: { PATH: process.env.PATH, HOME: join(root, 'home'), NODE_ENV: 'test' },
+          encoding: 'utf8',
+          timeout: 60000,
+        }
+      );
+      expect(JSON.parse(output)).toEqual({
+        inertDocument: true,
+        cspFirst: true,
+        textKept: true,
+        scriptsNoticed: true,
+        hostLinks: true,
+        typeRefused: true,
+        sizeRefused: true,
+        authorityRechecked: true,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
