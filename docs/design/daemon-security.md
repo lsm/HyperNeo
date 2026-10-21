@@ -190,6 +190,9 @@ door too, so an agent on that Mac could turn enforcement off. That widens nothin
 run as the human's user with a shell. Each switch-off is logged and shown in Settings → Devices. From another
 machine the human reaches it over SSH on the tailnet:
 `ssh <user>@<mac>.<tailnet>.ts.net hyperneo security enforce off`. After S9 the same command also
-puts the listen address back to what it was before the Listen-on change. Before S8 merges, the
+puts the listen address back to what it was before the Listen-on change. That restored address
+is treated like the compatibility case in section 3, not as a new non-loopback bind: the daemon
+starts on it with a startup warning instead of refusing it while enforcement is off. Turning
+enforcement and loopback back on is again the human's Settings change. Before S8 merges, the
 human checks once, from another machine, that this SSH route works (Remote Login or Tailscale
 SSH enabled on the Mac).
