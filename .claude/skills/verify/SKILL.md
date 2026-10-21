@@ -2463,14 +2463,15 @@ setup above. The helper creates a synthetic local home git repository and origin
 (no network), a session goal and 21 journal entries through actual RPC. Only
 works_note is seeded directly in the synthetic DB: G8 owns its write/compaction.
 
-Open `/neo` at 1280/390px, expand Schedules and select the goal title. Metrics,
+Open `/neo` at 1280/390px and test both entry points: expand Schedules and select
+the goal title, then open the title in Goals (inside Your work on mobile). Metrics,
 done-test, next steps and what-works must be visible. Its mandate link must match
 the synthetic origin and recorded revision; no external navigation is performed.
 Load older journal entries: all 21 must remain newest-first, with entry-id paging,
 and opening the newest entry must show its action, worked/failed text and actual
-PR evidence href. Inspect `evidence/goal-definition-{1280,390}.png`,
-`goal-detail-{1280,390}.png` and
-`goal-detail-web.json`; long content scrolls inside the existing schedule strip.
+PR evidence href. Inspect `evidence/goal-definition-{schedule,goals}-{1280,390}.png`,
+`goal-detail-{schedule,goals}-{1280,390}.png` and
+`goal-detail-web.json`; long content scrolls inside the schedule strip or work panel.
 
 Component contracts cover page-read failure/retry, stale selection, no-remote text
 and non-web evidence. Daemon contracts cover the read-only worksNote projection

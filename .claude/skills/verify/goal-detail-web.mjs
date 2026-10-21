@@ -15,11 +15,12 @@ async function settle(page) {
 }
 try {
   const page=await browser.newPage({viewport:{width:1280,height:1000},locale:'en-US'});
-  for(const width of [1280,390]) {
+  for(const width of [1280,390]) for(const entrypoint of ['schedule','goals']) {
     await page.setViewportSize({width,height:1000});
     await page.goto(`http://127.0.0.1:${port}/neo`);
-    const strip=page.locator(`[data-session-schedules="${seed.root}"]`);
-    await strip.locator('summary').click();
+    if(entrypoint === 'goals' && width === 390) await page.getByRole('button',{name:'Your work',exact:true}).click();
+    const strip=entrypoint === 'schedule' ? page.locator(`[data-session-schedules="${seed.root}"]`) : page.getByRole('region',{name:'Goals',exact:true});
+    if(entrypoint === 'schedule') await strip.locator('summary').click();
     await strip.getByRole('button',{name:'Publish useful guide',exact:true}).click();
     await strip.getByText('Concrete examples work',{exact:true}).waitFor();
     for(const text of ['readers: 30','useful: true','Write examples','Guide for adopters'])
@@ -27,7 +28,7 @@ try {
     await strip.getByText('Done when: One hundred readers',{exact:true}).waitFor();
     await strip.getByText('Guide for adopters',{exact:true}).scrollIntoViewIfNeeded();
     await settle(page);
-    await page.screenshot({path:`${run}/evidence/goal-definition-${width}.png`,fullPage:true});
+    await page.screenshot({path:`${run}/evidence/goal-definition-${entrypoint}-${width}.png`,fullPage:true});
     const mandate=strip.getByRole('link',{name:'mandate.md#adoption',exact:true});
     assert.equal(await mandate.getAttribute('href'),`https://github.com/example/synthetic-neo-home/blob/${seed.rev}/mandate.md#adoption`);
     const journal=strip.getByRole('region',{name:'Journal',exact:true});
@@ -45,8 +46,8 @@ try {
     await evidence.scrollIntoViewIfNeeded();
     await settle(page);
     const box=await strip.boundingBox();assert(box&&box.x>=0&&box.x+box.width<=width+1,JSON.stringify(box));
-    await page.screenshot({path:`${run}/evidence/goal-detail-${width}.png`,fullPage:true});
-    observed.push({width,mandate:await mandate.getAttribute('href'),evidence:await evidence.getAttribute('href'),orderedJournalIds:ids,metrics:true,worksNote:true});
+    await page.screenshot({path:`${run}/evidence/goal-detail-${entrypoint}-${width}.png`,fullPage:true});
+    observed.push({width,entrypoint,mandate:await mandate.getAttribute('href'),evidence:await evidence.getAttribute('href'),orderedJournalIds:ids,metrics:true,worksNote:true});
   }
   writeFileSync(`${run}/evidence/goal-detail-web.json`,JSON.stringify(observed,null,2));
   console.log(`PASS: real desktop/mobile goal details, remote mandate link, what-works and 21 paged journal entries. ${run}/evidence/goal-detail-web.json`);
