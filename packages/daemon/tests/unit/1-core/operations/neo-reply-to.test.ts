@@ -1,3 +1,4 @@
+import { runMigration432 } from '../../../../src/storage/schema/m432-neo-question-document.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
 import {
@@ -45,6 +46,7 @@ describe('neo.message.send replyTo', () => {
     runMigration398(mailbox.db);
     runMigration420(mailbox.db);
     runMigration427(mailbox.db);
+    runMigration432(mailbox.db);
     createNeoPublicationTable(mailbox.db);
     runMigration344(mailbox.db);
     for (const id of [root, holder])

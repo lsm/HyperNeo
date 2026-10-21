@@ -60,6 +60,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'todo.open': '打开',
   'todo.openTitle': '打开 {title}',
   'todo.startTitle': '开始 {title}',
+  'question.document': '查看完整版本',
   'question.reply': '在聊天里回复',
   'question.confirm': '确定',
   'question.start': '开始',

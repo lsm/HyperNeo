@@ -6,6 +6,7 @@ import type {
   NeoTodoEntry,
 } from '@hyperneo/shared/types/neo-ask';
 import { useEffect, useRef, useState } from 'preact/hooks';
+import { Modal } from '../components/ui/Modal.tsx';
 import { Dropdown } from '../components/ui/Dropdown.tsx';
 import { IconButton } from '../components/ui/IconButton.tsx';
 import {
@@ -128,6 +129,21 @@ function TodoRow({
   );
 }
 
+function QuestionDocument({ question }: { question: NeoQuestion }) {
+  const [open, setOpen] = useState(false);
+  if (!question.document) return null;
+  return (
+    <>
+      <button type="button" class={neoPlainClass} onClick={() => setOpen(true)}>
+        {t('question.document')}
+      </button>
+      <Modal isOpen={open} onClose={() => setOpen(false)} title={t('question.document')} size="xl">
+        <pre class="whitespace-pre-wrap break-words text-sm text-fg">{question.document}</pre>
+      </Modal>
+    </>
+  );
+}
+
 function QuestionBox({
   question,
   todos,
@@ -173,6 +189,7 @@ function QuestionBox({
         content={neoQuestionText(question)}
         class="neo-markdown neo-markdown-assistant min-w-0 text-sm leading-relaxed"
       />
+      <QuestionDocument question={question} />
       {question.kind === 'start' &&
         listed.map((todo) => (
           <TodoRow
@@ -379,6 +396,7 @@ export function NeoAskTodos({
                       content={neoQuestionText(question)}
                       class="neo-markdown neo-markdown-assistant min-w-0 text-sm leading-relaxed"
                     />
+                    <QuestionDocument question={question} />
                     <p>
                       — {neoQuestionAnswerLabel(question, todos)}
                       {question.answeredAt
@@ -403,6 +421,7 @@ export function NeoAskTodos({
                       content={neoQuestionText(question)}
                       class="neo-markdown neo-markdown-assistant min-w-0 text-sm leading-relaxed"
                     />
+                    <QuestionDocument question={question} />
                     <p>
                       {t('question.retired', { question: '' })}
                       {question.retiredReason ? `: ${question.retiredReason}` : ''}

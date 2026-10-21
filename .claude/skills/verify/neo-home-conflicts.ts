@@ -47,7 +47,10 @@ try {
  if (phase === 'before') { assert.equal(questions.length, 0); console.log('REPRODUCED: real RPC refuses a conflict but creates no human question.'); }
  else {
   assert.equal(questions.length, 1);
-  const q = questions[0]; assert.equal(q.state, 'open'); assert(String(q.text).length < 1800);
+  const q = questions[0];
+  assert.equal((evidence.first as { questionId: string }).questionId, q.id);
+  assert.equal((evidence.second as { questionId: string }).questionId, q.id);
+  assert.equal(q.state, 'open'); assert(String(q.text).length < 1800);
   assert(String(q.text).includes('direction.md')); assert(String(q.text).includes('not apply'));
   assert(String(q.document).includes(local)); assert(String(q.document).includes(other));
   assert(String(q.document).includes(localHead)); assert(String(q.document).includes(remoteHead));

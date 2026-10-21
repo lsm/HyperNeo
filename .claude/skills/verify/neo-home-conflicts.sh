@@ -22,3 +22,6 @@ for _ in $(seq 1 80); do
 done
 lsof -nP -a -p "$pid" -iTCP:"$PORT" -sTCP:LISTEN >/dev/null
 "${clean[@]}" bun .claude/skills/verify/neo-home-conflicts.ts "$PORT" "$RUN" "$PHASE"
+if [[ "${4:-}" = web ]]; then
+ node .claude/skills/verify/neo-home-conflicts.mjs "$PORT" "$RUN"
+fi

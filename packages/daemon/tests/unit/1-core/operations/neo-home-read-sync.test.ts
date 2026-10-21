@@ -265,3 +265,25 @@ describe('Home sync conflict questions', () => {
     expect(await git(root, 'rev-parse', 'HEAD')).toBe(localHead);
   });
 });
+
+describe('Conflict document filenames', () => {
+  test('keeps a leading-space path and both add/add versions intact', async () => {
+    const path = ' notes.md';
+    await writeFile(join(root, path), 'Local complete text\n');
+    await git(root, 'add', '--', path);
+    await git(root, 'commit', '-m', 'Local notes');
+    await writeFile(join(peer, path), 'Remote complete text\n');
+    await git(peer, 'add', '--', path);
+    await git(peer, 'commit', '-m', 'Remote notes');
+    await git(peer, 'push', 'origin', 'main');
+    expect(await read()).toMatchObject({ ok: false, reason: expect.stringContaining('conflict') });
+    const store = new NeoAskTodoRepository(db.getDatabase());
+    const questions = store.listAsks(undefined, 100).flatMap((ask) => store.listQuestions(ask.id));
+    expect(questions).toHaveLength(1);
+    expect(questions[0].document).toContain('File: " notes.md"');
+    expect(questions[0].document).toContain('Local complete text\n');
+    expect(questions[0].document).toContain('Remote complete text\n');
+    expect(await readFile(join(root, path), 'utf8')).toBe('Local complete text\n');
+    expect(await git(root, 'status', '--porcelain')).toBe('');
+  });
+});

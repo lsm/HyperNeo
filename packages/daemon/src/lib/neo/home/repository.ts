@@ -18,6 +18,8 @@ import {
 import { dirname, join } from 'node:path';
 import type { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
+import { neoDerivedId } from '../derived-id.ts';
+import type { HomeConflict, HomeFailure } from './conflicts.ts';
 import type { HomeReadInput, HomeReadResult } from './read.ts';
 import type { HomeSavePlan, HomeSaveResult } from './save.ts';
 
@@ -25,7 +27,7 @@ export type HomeResult =
   | { ok: true; path: string; projects: { id: string; homePath: string }[] }
   | { ok: false; reason: string };
 
-type HomeSyncResult = { value: string | null } | { reason: { ok: false; reason: string } };
+type HomeSyncResult = { value: string | null } | { reason: HomeFailure };
 
 export class NeoHomeRepository {
   private pending: Promise<unknown> = Promise.resolve();
@@ -86,7 +88,7 @@ export class NeoHomeRepository {
       : undefined;
     try {
       const [text, error, code] = await Promise.all([
-        new Response(child.stdout).text(),
+        new Response(child.stdout).arrayBuffer(),
         new Response(child.stderr).text(),
         child.exited,
       ]);
@@ -94,7 +96,8 @@ export class NeoHomeRepository {
         ? `network timed out after ${this.networkTimeoutMs}ms`
         : error.trim();
       if (code && !allowFailure) throw new Error(`home ${args.join(' ')}: ${diagnostic}`);
-      return { code, text: text.trim(), error: diagnostic };
+      const bytes = Buffer.from(text);
+      return { code, bytes, text: bytes.toString('utf8').trim(), error: diagnostic };
     } finally {
       clearTimeout(timer);
     }
@@ -126,6 +129,7 @@ export class NeoHomeRepository {
           reason: { ok: false, reason: 'sync_failed: finish the existing rebase before saving.' },
         };
     }
+    const local = (await this.git(['rev-parse', 'HEAD'])).text;
     const action = `neo-home-sync:${crypto.randomUUID()}`;
     const pulled = await this.git(
       ['-c', 'core.logAllRefUpdates=true', 'pull', '--rebase', 'origin', branch],
@@ -137,10 +141,67 @@ export class NeoHomeRepository {
       const latest = await this.git(['reflog', 'show', '-1', '--format=%gs', 'HEAD'], true);
       if (latest.code || !latest.text.startsWith(`${action} (`))
         return { reason: { ok: false, reason: `sync_failed: ${pulled.error}` } };
-      const aborted = await this.git(['rebase', '--abort'], true);
+      const remote = (await this.git(['rev-parse', 'FETCH_HEAD'])).text;
+      const paths = (await this.git(['diff', '--name-only', '--diff-filter=U', '-z'])).bytes
+        .toString('utf8')
+        .split('\0')
+        .filter(Boolean);
+      let conflict: HomeConflict | undefined;
+      let aborted: Awaited<ReturnType<NeoHomeRepository['git']>>;
+      try {
+        if (paths.length) {
+          const versions = await Promise.all(
+            paths.map(async (path) => {
+              const full = async (revision: string) => {
+                const blob = await this.git(['show', `${revision}:${path}`], true);
+                if (blob.code) return '(file absent)';
+                const text = blob.bytes.toString('utf8');
+                return Buffer.from(text, 'utf8').equals(blob.bytes)
+                  ? text
+                  : `Base64 bytes: ${blob.bytes.toString('base64')}`;
+              };
+              return `File: ${JSON.stringify(path)}\n\nLocal (${local})\n${await full(local)}\n\nRemote (${remote})\n${await full(remote)}`;
+            })
+          );
+          const diff = (
+            await this.git([
+              'diff',
+              '--no-ext-diff',
+              '--no-textconv',
+              '--unified=2',
+              local,
+              remote,
+              '--',
+              ...paths,
+            ])
+          ).text;
+          const lines = diff.split('\n');
+          const excerpt = [
+            ...lines.slice(0, 4),
+            ...lines.filter((line) => line.startsWith('-')).slice(1, 4),
+            ...lines.filter((line) => line.startsWith('+')).slice(1, 4),
+          ]
+            .map((line) => line.slice(0, 120))
+            .join('\n');
+          conflict = {
+            id: neoDerivedId(JSON.stringify([this.root, local, remote])),
+            text: `Home sync conflict: ${paths
+              .map((path) => JSON.stringify(path))
+              .join(', ')
+              .slice(
+                0,
+                350
+              )}\n\nLocal → remote (excerpt):\n\n${'`'.repeat(8)}diff\n${excerpt.slice(0, 1000).replaceAll('`', '\u02cb')}\n${'`'.repeat(8)}\n\nWhich version should we use? View full versions before choosing. Your answer records a choice; it does not apply a change yet.`,
+            document: versions.join('\n\n────────────────\n\n'),
+          };
+        }
+      } finally {
+        aborted = await this.git(['rebase', '--abort'], true);
+      }
       return {
         reason: {
           ok: false,
+          ...(!aborted.code && conflict ? { conflict } : {}),
           reason: aborted.code
             ? `sync_failed: ${pulled.error}; ${aborted.error}`
             : `conflict: rebase aborted; local files preserved. ${pulled.error}`,
