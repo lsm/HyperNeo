@@ -141,7 +141,7 @@ describe('neo.preferences.set', () => {
   let updated: unknown[];
   let created: unknown[];
   let recovering: boolean;
-  let switchFailure: 'refused' | 'throws' | undefined;
+  let switchFailure: 'refused' | 'throws' | 'pending' | undefined;
 
   beforeEach(async () => {
     db = await createTestDb();
@@ -164,6 +164,8 @@ describe('neo.preferences.set', () => {
         }),
         requestModelSwitch: async (model: string, provider: string) => {
           switched.push([sessionId, model, provider]);
+          if (switchFailure === 'pending')
+            return { success: true, model, pending: { model, provider, requestedAt: 1 } };
           if (switchFailure === 'throws') throw new Error('Synthetic unavailable primary');
           if (switchFailure === 'refused')
             return {
@@ -313,7 +315,7 @@ describe('neo.preferences.set', () => {
     ]);
   });
 
-  test.each(['refused', 'throws'] as const)(
+  test.each(['refused', 'throws', 'pending'] as const)(
     'preserves the fallback model/thinking pair when primary restoration %s',
     async (failure) => {
       const fallback = {
@@ -337,6 +339,26 @@ describe('neo.preferences.set', () => {
         model: 'claude-opus',
         thinkingLevel: 'think24k',
       });
+      if (failure === 'pending') {
+        switchFailure = 'refused';
+        await service.saveModelPreference({
+          model: 'claude-opus',
+          provider: 'anthropic',
+          thinkingLevel: 'think24k',
+        });
+        expect(db.getSession('neo:root')?.config).toMatchObject(fallback);
+        switchFailure = undefined;
+        await service.saveModelPreference({
+          model: 'claude-opus',
+          provider: 'anthropic',
+          thinkingLevel: 'think24k',
+        });
+        expect(db.getSession('neo:root')?.config).toMatchObject({
+          model: 'claude-opus',
+          provider: 'anthropic',
+          thinkingLevel: 'think24k',
+        });
+      }
     }
   );
 
