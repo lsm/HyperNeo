@@ -7,8 +7,10 @@ import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createFindWorkOperation } from '../../../packages/daemon/src/lib/drivers/find-operation.ts';
+import { placeKey } from '../../../packages/daemon/src/lib/drivers/places.ts';
 import type { PlaceGroup } from '../../../packages/daemon/src/lib/drivers/types.ts';
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
+import { mirrorNeoWorkspaceProjectsAsync } from '../../../packages/daemon/src/lib/neo/project-mirror-async.ts';
 import { mirrorNeoWorkspaceProjects } from '../../../packages/daemon/src/lib/neo/project-mirror.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 
@@ -53,7 +55,8 @@ const slowPath = groups[0].place.folder!;
 const nativeFs = { ...fs };
 const exists = fs.existsSync;
 let armed = false,
-  delayed = 0;
+  delayed = 0,
+  concurrentEditMs: number | null = null;
 mock.module('node:fs', () => ({
   ...nativeFs,
   existsSync: (path: fs.PathLike) => {
@@ -66,6 +69,12 @@ mock.module('node:fs', () => ({
 }));
 const marker = join(run, 'probe-go');
 const probeCode = `import { existsSync } from 'node:fs'; const ws=new WebSocket('ws://127.0.0.1:${port}/ws'); let at; ws.onopen=()=>{console.log('READY'); const timer=setInterval(()=>{if(existsSync(${JSON.stringify(marker)})){clearInterval(timer);at=performance.now();ws.send(JSON.stringify({id:'health',type:'REQ',method:'system.health',data:{},sessionId:'global',version:'1.0.0',timestamp:new Date().toISOString()}));}},1);}; ws.onmessage=e=>{const r=JSON.parse(e.data);if(r.requestId==='health'){console.log(JSON.stringify({ms:performance.now()-at,data:r.data}));ws.close();process.exit(0);}};`;
+const workerEntry = join(run, 'mirror-worker.ts');
+const workerDelay = join(run, 'worker-delay.json');
+fs.writeFileSync(
+  workerEntry,
+  `import { mock } from 'bun:test'; import * as fs from 'node:fs'; const native={...fs}; let calls=0; mock.module('node:fs',()=>({...native,existsSync:(path)=>{if(path===${JSON.stringify(slowPath)}&&!calls){calls++;Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,1400);native.writeFileSync(${JSON.stringify(workerDelay)},JSON.stringify({calls}));}return native.existsSync(path);}})); import ${JSON.stringify(new URL('../../../packages/daemon/src/lib/neo/project-mirror-worker.ts', import.meta.url).href)};`
+);
 const probe = spawn(process.execPath, ['-e', probeCode], {
   stdio: ['pipe', 'pipe', 'pipe'],
   env: process.env,
@@ -91,12 +100,26 @@ const originalRegistry = app.sessionManager.getOperationRegistry();
 const find = createFindWorkOperation({
   adapters: () => [{ id: 'fixture', capabilities: ['find'], find: () => groups }],
   remote: { list: () => [], invoke: async () => null },
-  mirrorProjects: (found) => {
+  mirrorProjects: async (found) => {
     fs.writeFileSync(marker, 'go');
     armed = true;
+    const started = performance.now();
+    const edit = setTimeout(() => {
+      const project = repo.getProject('p0')!;
+      assert(repo.saveProject({ ...project, context: 'Concurrent synthetic edit' }, project.revision));
+      concurrentEditMs = performance.now() - started;
+    }, 200);
     try {
-      mirrorNeoWorkspaceProjects(app.db.getDatabase(), found);
+      if (mode === 'verify')
+        await mirrorNeoWorkspaceProjectsAsync(
+          app.db.getDbPath(),
+          found,
+          () => new Worker(workerEntry, { type: 'module' })
+        );
+      else mirrorNeoWorkspaceProjects(app.db.getDatabase(), found);
+      await wait(0);
     } finally {
+      clearTimeout(edit);
       armed = false;
     }
   },
@@ -119,6 +142,7 @@ try {
     const timer = setTimeout(() => fail(new Error('find timeout')), 15000);
     ws.onmessage = (event) => {
       const r = JSON.parse(event.data.toString());
+      fs.writeFileSync(join(run, 'rpc-wire.json'), JSON.stringify(r, null, 2));
       if (r.requestId === 'find') {
         clearTimeout(timer);
         if (r.error) fail(new Error(JSON.stringify(r.error)));
@@ -144,15 +168,36 @@ try {
   const health = JSON.parse(probeOutput.trim().split('\n').at(-1)!);
   assert.equal(result.places.length, 40);
   assert.equal(repo.listProjects().length, 40);
+  assert.equal(repo.getProject('p0')?.context, 'Concurrent synthetic edit');
+  const aliases = app.db
+    .getDatabase()
+    .prepare(
+      "SELECT alias, project_id AS id FROM neo_project_workspaces WHERE alias LIKE 'folder:%' ORDER BY alias"
+    )
+    .all();
+  assert.deepEqual(
+    aliases,
+    groups
+      .map((g, i) => ({ alias: `folder:${placeKey(g.place)}`, id: `p${i}` }))
+      .sort((a, b) => a.alias.localeCompare(b.alias))
+  );
+  const observedDelay =
+    mode === 'verify' ? JSON.parse(fs.readFileSync(workerDelay, 'utf8')).calls : delayed;
   assert.equal(health.data.status, 'ok');
+  const initialMaxLagMs = maxLagMs;
+  const nativeAt = performance.now();
+  if (mode === 'verify') await mirrorNeoWorkspaceProjectsAsync(app.db.getDbPath(), groups);
+  const nativeWorkerMs = mode === 'verify' ? performance.now() - nativeAt : null;
   const report = {
     surface:
       'actual work.find operation.invoke RPC with synthetic adapter + real mirror, external WebSocket health probe',
     mode,
-    maxLagMs,
+    maxLagMs: initialMaxLagMs,
+    nativeWorkerMs,
+    concurrentEditMs,
     findMs,
     healthMs: health.ms,
-    delayed,
+    delayed: observedDelay,
     projects: repo.listProjects().length,
     groups: result.places.length,
     fixture:
@@ -160,12 +205,13 @@ try {
   };
   fs.writeFileSync(join(run, 'observed.json'), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
-  assert.equal(delayed, 1, 'fixture must reach real mirror filesystem boundary');
+  assert.equal(observedDelay, 1, 'fixture must reach real mirror filesystem boundary');
   if (mode === 'verify') {
-    assert(maxLagMs < 1000);
+    assert(initialMaxLagMs < 1000);
     assert(health.ms < 250);
+    assert(concurrentEditMs !== null && concurrentEditMs < 1000);
   } else {
-    assert(maxLagMs >= 1000);
+    assert(initialMaxLagMs >= 1000);
     assert(health.ms >= 1000);
   }
 } finally {

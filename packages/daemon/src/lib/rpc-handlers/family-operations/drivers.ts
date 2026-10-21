@@ -6,7 +6,7 @@ import {
   workStartPreparation,
   type WorkExecutionPreparer,
 } from '../../drivers/start-preparation.ts';
-import { mirrorNeoWorkspaceProjects } from '../../neo/project-mirror.ts';
+import { mirrorNeoWorkspaceProjectsAsync } from '../../neo/project-mirror-async.ts';
 import { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
 import { existsSync, mkdirSync, statSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
@@ -546,8 +546,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
           : []
       );
     },
-    mirrorProjects: (groups: readonly PlaceGroup[]) => {
-      if (mirrorNeoWorkspaceProjects(db(), groups))
+    mirrorProjects: async (groups: readonly PlaceGroup[]) => {
+      if (await mirrorNeoWorkspaceProjectsAsync(context.deps.db.getDbPath(), groups))
         context.deps.messageHub.event('neo.changed', {});
     },
   };
