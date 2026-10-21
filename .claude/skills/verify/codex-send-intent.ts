@@ -30,6 +30,8 @@ INSERT INTO threads VALUES ('synthetic', 'Synthetic', '', '', '/tmp/synthetic', 
 db.close();
 let owner = 'refused';
 let active = true;
+let loaded = true;
+let resumeError = false;
 let uncertain = false;
 let refuse = false;
 let startError = false;
@@ -63,10 +65,12 @@ const server = new WebSocketServer({ server: http });
 server.on('connection', (socket) => socket.on('message', (bytes) => {
   const request = JSON.parse(String(bytes));
   calls.push({ server: request.method, params: request.params });
-  const result = request.method === 'thread/turns/list' ? { data: active ? [{ id: 'server-active', status: 'inProgress' }] : [{ id: 'completed-turn', status: 'completed' }] }
+  if (request.method === 'thread/resume' && !resumeError) loaded = true;
+  const result = request.method === 'thread/resume' ? { thread: { id: 'synthetic', status: { type: 'idle' }, turns: [] } }
+    : request.method === 'thread/turns/list' ? { data: active ? [{ id: 'server-active', status: 'inProgress' }] : [{ id: 'completed-turn', status: 'completed' }] }
     : request.method === 'turn/start' ? { turn: { id: 'server-started', status: 'inProgress', items: [] } }
     : request.method === 'turn/steer' ? { turnId: 'server-active' } : { queuedSubmission: { id: 'synthetic-queue' } };
-  socket.send(JSON.stringify({ id: request.id, ...(serverStartError && request.method === 'turn/start' ? { error: { message: 'start unavailable' } } : uncertain && request.method === 'turn/steer' ? { error: { message: 'connection closed' } } : { result }) }));
+  socket.send(JSON.stringify({ id: request.id, ...(resumeError && request.method === 'thread/resume' ? { error: { code: -32600, message: 'rollout unavailable' } } : !loaded && request.method === 'turn/start' ? { error: { code: -32600, message: 'thread not found: synthetic' } } : serverStartError && request.method === 'turn/start' ? { error: { message: 'start unavailable' } } : uncertain && request.method === 'turn/steer' ? { error: { message: 'connection closed' } } : { result }) }));
 }));
 await new Promise<void>((done) => http.listen(join(home, 'app-server-control/app-server-control.sock'), done));
 let ws: WebSocket | undefined;
@@ -105,7 +109,7 @@ try {
     assert.equal(first.value.queuedSubmissionId, undefined);
     assert.equal((await send('steer')).value.steeredIntoTurnId, 'server-active');
     assert.equal((await send('queue')).value.queuedSubmissionId, 'synthetic-queue');
-    active = false;
+    active = false; loaded = false;
     const before = calls.length;
     assert.equal((await send('steer')).reason, 'not_delivered');
     assert(!calls.slice(before).some((call) => (call as { server?: string }).server === 'thread/queue/add'));
@@ -119,6 +123,13 @@ try {
       const request = call as { server?: string; params?: { threadId?: string; input?: { text: string }[] } };
       return request.server === 'turn/start' && request.params?.threadId === 'synthetic' && request.params.input?.[0].text.includes('synthetic marker');
     }));
+    loaded = false; resumeError = true;
+    const resumeBefore = calls.length;
+    const resumeFailed = await send();
+    assert.equal(resumeFailed.reason, 'not_delivered');
+    assert.match(resumeFailed.detail, /rollout unavailable/);
+    assert(!calls.slice(resumeBefore).some((call) => ['turn/start', 'thread/queue/add'].includes((call as { server: string }).server)));
+    resumeError = false;
     serverStartError = true;
     const serverRefused = await send();
     assert.equal(serverRefused.reason, 'not_delivered');

@@ -723,6 +723,7 @@ describe('codex-desktop adapter status and send', () => {
         call: async (method) => {
           if (method === 'thread/turns/list') return { data: [{ id: 't1', status: 'inProgress' }] };
           if (method === 'turn/steer') throw new Error(error);
+          if (method === 'thread/resume') return { thread: { id: 'busy', turns: [] } };
           if (method === 'turn/start') return { turn: { id: 'new-turn' } };
           throw new Error('Must not queue');
         },
@@ -1095,6 +1096,46 @@ describe('codex-desktop adapter status and send', () => {
     expect(connected).toBe(false);
   });
 
+  test.each([false, true])(
+    'resumes saved idle work before sending, or reports resume failure: %s',
+    async (resumeFails) => {
+      const calls: Array<[string, Record<string, unknown>]> = [];
+      let loaded = false;
+      const driver = adapter(0, '', async () => ({
+        call: async (method, params) => {
+          calls.push([method, params]);
+          if (method === 'thread/turns/list')
+            return { data: [{ id: 'finished', status: 'completed' }] };
+          if (method === 'thread/resume') {
+            if (resumeFails) throw new Error('thread/resume: rollout unavailable');
+            loaded = true;
+            return { thread: { id: 'idle', status: { type: 'idle' }, turns: [] } };
+          }
+          if (method === 'turn/start') {
+            if (!loaded)
+              throw new Error('turn/start: {"code":-32600,"message":"thread not found: idle"}');
+            return { turn: { id: 'resumed-turn', status: 'inProgress', items: [] } };
+          }
+          throw new Error('Must not queue');
+        },
+        close: () => {},
+      }));
+      const result = await driver.send!(ref('idle'), 'continue saved work', user);
+      expect(result).toEqual(
+        resumeFails
+          ? { ok: false, reason: 'not_delivered', detail: 'thread/resume: rollout unavailable' }
+          : { ok: true, value: { delivered: true, startedTurnId: 'resumed-turn' } }
+      );
+      expect(calls.map(([method]) => method)).toEqual([
+        'thread/turns/list',
+        'thread/resume',
+        ...(!resumeFails ? ['turn/start'] : []),
+      ]);
+      expect(calls[1]).toEqual(['thread/resume', { threadId: 'idle', excludeTurns: true }]);
+      expect(spawned).toEqual([]);
+    }
+  );
+
   test.each([{ turns: [] }, { turns: [{ id: 'finished', status: 'completed' }] }])(
     'idle send starts its marked input rather than accepting a stored queue receipt: %j',
     async ({ turns }) => {
@@ -1103,6 +1144,7 @@ describe('codex-desktop adapter status and send', () => {
         call: async (method, params) => {
           calls.push([method, params]);
           if (method === 'thread/turns/list') return { data: turns };
+          if (method === 'thread/resume') return { thread: { id: 'idle', turns: [] } };
           if (method === 'turn/start') return { turn: { id: 'started' } };
           throw new Error('Must not queue');
         },
@@ -1118,6 +1160,7 @@ describe('codex-desktop adapter status and send', () => {
       });
       expect(calls).toEqual([
         ['thread/turns/list', { threadId: 'idle', limit: 1 }],
+        ['thread/resume', { threadId: 'idle', excludeTurns: true }],
         [
           'turn/start',
           {
