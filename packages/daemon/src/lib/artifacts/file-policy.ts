@@ -72,7 +72,7 @@ export function authorizeArtifactCaller(
   return isLocalUser(caller) || neo || worker ? { value: binding } : refused('unavailable');
 }
 
-function unsafePath(path: string): boolean {
+export function unsafePath(path: string): boolean {
   return (
     !path ||
     /[\u0000-\u001f\u007f\\:]/.test(path) ||
@@ -81,7 +81,7 @@ function unsafePath(path: string): boolean {
   );
 }
 
-function sensitivePath(path: string): boolean {
+export function sensitivePath(path: string): boolean {
   if (
     /(?:^|\/)(?:\.claude\/settings(?:\.local)?\.json|\.codex\/(?:config\.toml|auth\.json)|\.config\/gcloud)(?:$|\/)/i.test(
       posix.normalize(path)

@@ -8,7 +8,7 @@ for p in "$PORT" 8000; do
   if lsof -nP -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1; then echo "port $p is busy"; exit 1; fi
 done
 mkdir -p "$RUN/home" "$RUN/data" "$RUN/bin" "$RUN/evidence"
-cp "$REPO/.claude/skills/verify/gh-stub.sh" "$RUN/bin/gh"
+cp "$REPO/.claude/skills/verify/${VERIFY_GH_STUB:-gh-stub.sh}" "$RUN/bin/gh"
 clean_env=(env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin"
   TMPDIR="${TMPDIR:-/tmp}" NODE_ENV=test HYPERNEO_USE_DEV_PROXY=1
   ${VERIFY_LOG_LEVEL:+LOG_LEVEL=$VERIFY_LOG_LEVEL})
