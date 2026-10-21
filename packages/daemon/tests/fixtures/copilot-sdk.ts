@@ -36,8 +36,8 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
       reply({ sessionId });
       break;
     case 'session.send': {
-      const id = `input-${++input}`;
       const prompt = msg.params?.prompt;
+      const id = prompt === 'hostile' ? '__proto__' : `input-${++input}`;
       if (prompt === 'crash') {
         reply({ messageId: id });
         setTimeout(() => process.exit(1), 5);

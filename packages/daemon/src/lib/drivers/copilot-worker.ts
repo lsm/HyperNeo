@@ -35,12 +35,14 @@ function projectEvent(state: WorkerState, event: SessionEvent): WorkerState {
     case 'user.message': {
       const { messageId, interactionId } = event.data;
       if (!messageId) break;
-      const input = next.inputs[messageId] ?? {
+      const input = (Object.hasOwn(next.inputs, messageId)
+        ? next.inputs[messageId]
+        : undefined) ?? {
         state: 'pending',
         replyReport: '',
         replyAvailability: 'incomplete',
       };
-      next.inputs[messageId] = { ...input, state: 'observed', interactionId };
+      next.inputs = { ...next.inputs, [messageId]: { ...input, state: 'observed', interactionId } };
       next.status = 'running';
       break;
     }
@@ -54,7 +56,7 @@ function projectEvent(state: WorkerState, event: SessionEvent): WorkerState {
       )
         break;
       const matches = Object.values(next.inputs).filter(
-        (input) => input.interactionId === data.interactionId
+        (input) => !input.outcome && input.interactionId === data.interactionId
       );
       if (matches.length === 1 && typeof data.content === 'string')
         matches[0].replyReport += data.content;
@@ -78,6 +80,8 @@ function projectEvent(state: WorkerState, event: SessionEvent): WorkerState {
       break;
     case 'session.error':
       next.status = 'failed';
+      for (const input of Object.values(next.inputs))
+        if (input.state === 'observed' && !input.outcome) input.outcome = 'failed';
       break;
   }
   return next;
@@ -156,8 +160,16 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
       timeoutMs
     );
     unsubscribe = session.on((event) => {
+      if (
+        !['user.message', 'assistant.message', 'session.idle', 'session.error'].includes(event.type)
+      )
+        return;
       if (closed || state.status === 'unreachable' || !event.id || seen.has(event.id)) return;
+      const messageKey =
+        event.type === 'assistant.message' ? `message:${event.data.messageId}` : event.id;
+      if (seen.has(messageKey)) return;
       seen.add(event.id);
+      seen.add(messageKey);
       state = applyEvent(state, event);
     });
   } catch (error) {
@@ -172,13 +184,18 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
       requireOpen();
       try {
         const inputId = await bounded(session.send({ prompt, mode: 'enqueue' }), timeoutMs);
+        requireOpen();
         if (!inputId) throw new Error('Copilot did not return an input id');
         submitted.add(inputId);
-        state.inputs[inputId] ??= {
-          state: 'pending',
-          replyReport: '',
-          replyAvailability: 'incomplete',
-        };
+        if (!Object.hasOwn(state.inputs, inputId))
+          state.inputs = {
+            ...state.inputs,
+            [inputId]: {
+              state: 'pending',
+              replyReport: '',
+              replyAvailability: 'incomplete',
+            },
+          };
         if (state.inputs[inputId].state === 'pending' && state.status !== 'running')
           state.status = 'queued';
         return { executionId: config.sessionId, inputId };

@@ -2169,3 +2169,43 @@ termination of arbitrary child tools:
 cd packages/daemon
 bunx vitest run tests/unit/1-core/drivers/copilot-discovery.test.ts
 ```
+
+## Copilot runtime construction (worker slice 2)
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-copilot-owner-XXXXXX)
+mkdir -p "$RUN/home"
+env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin" \
+  NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/copilot-worker.ts 9382 "$RUN"
+```
+
+Use a fresh synthetic HOME/data directory and free non-8399 port. This Build-only
+slice deliberately does not register a worker. The helper starts the actual
+pinned Copilot SDK against a synthetic framed-JSON-RPC executable, then starts an
+isolated daemon. A test-only `verify.copilot` WebSocket RPC exercises construction
+and per-input evidence while `system.health` confirms daemon responsiveness.
+The first input stays incomplete through internal turn-end/assistant-idle events;
+final replies bind to consumed input IDs, duplicate authoritative messages do not
+duplicate the report, unrelated messages stay out, and session idle settles the
+matched replies. Public `work.adapters` must still advertise Copilot as find-only.
+`evidence/observed.json` saves actual RPC replies and SDK protocol traffic.
+
+The helper closes its socket, owned SDK runtime and daemon in `finally`. It uses
+only synthetic data, a fresh HOME/DB, a mock GitHub CLI and a fixture executable;
+no auth/token files, real sessions, real Copilot, model/provider or GUI is used.
+This proves construction inside the daemon process through a test-only door,
+not public worker start/send/status/stop, restart recovery or production runtime
+compatibility. Those are later Wire slices, with their own operation journeys.
+
+Run the focused process tests from `packages/daemon` with
+`bunx vitest run tests/unit/1-core/drivers/copilot-worker.test.ts`.
+They additionally check permission rejection, error followed by idle, pending or
+empty replies, pre-ACK events, immutable snapshots, abort terminal evidence, EOF,
+lost ACK without replay, incompatible version/protocol and bounded shutdown.
+Shutdown uses the SDK's graceful/force-stop mechanisms; the fixture PID is observed
+to disappear, which is not proof of containment for arbitrary descendant tools.
+Runtime version is supplied explicitly and checked before session creation. The
+fixture reports `fixture-1`/protocol 3 against pinned SDK 1.0.13; it is not a claim
+that any untested real CLI/SDK pair is supported. Final wiring must select and
+verify the runtime pair and admission/model/effort policy before exposing it.

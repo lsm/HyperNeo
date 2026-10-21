@@ -106,6 +106,8 @@ describe('Copilot worker construction', () => {
         replyAvailability: 'incomplete',
       });
       expect(state.status).not.toBe('done');
+      const hostile = await worker.submit('hostile');
+      expect(Object.hasOwn((await worker.snapshot()).inputs, hostile.inputId)).toBe(true);
     } finally {
       await worker.close();
     }
