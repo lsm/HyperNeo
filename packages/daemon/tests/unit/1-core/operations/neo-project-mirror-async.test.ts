@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { vi } from 'vitest';
 import { mirrorNeoWorkspaceProjectsAsync } from '../../../../src/lib/neo/project-mirror-async';
 
 class FixtureWorker {
@@ -14,6 +15,36 @@ class FixtureWorker {
   }
 }
 const turn = () => new Promise((done) => setTimeout(done, 0));
+
+test('an unresponsive worker times out and releases the next mirror', async () => {
+  vi.useFakeTimers();
+  const workers: FixtureWorker[] = [];
+  const spawn = () => {
+    const worker = new FixtureWorker();
+    workers.push(worker);
+    return worker.asWorker();
+  };
+  try {
+    const first = mirrorNeoWorkspaceProjectsAsync('/synthetic/timeout.db', [], spawn).then(
+      (value) => ({ value }),
+      (error: Error) => ({ error: error.message })
+    );
+    const next = mirrorNeoWorkspaceProjectsAsync('/synthetic/timeout.db', [], spawn);
+    await vi.advanceTimersByTimeAsync(30_000);
+    const stoppedBeforeReply = workers[0].stopped;
+    workers[0].onmessage!({ data: { changed: false } });
+    const outcome = await first;
+    await vi.advanceTimersByTimeAsync(0);
+    workers[1].onmessage!({ data: { changed: false } });
+    expect(await next).toBe(false);
+    expect(outcome).toEqual({ error: 'Project mirror worker timed out' });
+    expect(stoppedBeforeReply).toBe(true);
+    expect(workers.every((worker) => worker.stopped)).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
 
 test('same-database mirrors complete in order and retain a false result', async () => {
   const workers: FixtureWorker[] = [];
