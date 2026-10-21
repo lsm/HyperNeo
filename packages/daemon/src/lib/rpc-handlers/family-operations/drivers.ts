@@ -1,5 +1,5 @@
 import { createCopilotAdapter } from '../../drivers/copilot-adapter.ts';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { ensureCodexDesktopProject } from '../../drivers/codex-desktop-project.ts';
 import { neoWorkerPermissionMode } from '@hyperneo/shared/types/settings';
 import { sleep } from '../../utils/sleep.ts';
@@ -301,7 +301,7 @@ function acpAgentAdapters(
     if (agent.id !== 'copilot-cli') return adapters;
     const adapter = createCopilotAdapter(adapters[0], {
       cliPath: command,
-      directory: join(dirname(context.deps.config.dbPath), 'copilot-workers'),
+      directory: join(dirname(resolve(context.deps.config.dbPath)), 'copilot-workers'),
       machine: hostname(),
       env: process.env,
       homeDir: homedir(),

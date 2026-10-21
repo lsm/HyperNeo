@@ -1,12 +1,13 @@
 import * as fs from 'node:fs';
 import { join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { openCopilotWorker } from './copilot-worker.ts';
+import { CopilotModelUnavailableError, openCopilotWorker } from './copilot-worker.ts';
 import { selectLocalStartFolder, type StartFolderDeps } from './start-folder.ts';
 import { workStartPreparation } from './start-preparation.ts';
 import { reject } from './work-operations.ts';
 import type * as W from './types.ts';
 
+type Receipt = W.WorkStarted['receipt'];
 type Worker = Awaited<ReturnType<typeof openCopilotWorker>>;
 type Snapshot = Awaited<ReturnType<Worker['snapshot']>>;
 type Record = { work: W.WorkStarted; snapshot: Snapshot; directory: string };
@@ -113,6 +114,8 @@ export function createCopilotAdapter(
       }
       await worker?.close().catch((failure) => failures.push(failure));
       live.delete(location.id);
+      if (error instanceof CopilotModelUnavailableError && error.cause === undefined)
+        return reject('unsupported_model', error.message);
       return reject(
         'unreachable',
         `copilot-cli:${location.id}: ${failures.map(String).join('; ')}. Check work.status; do not replay this start automatically.`
@@ -186,10 +189,7 @@ export function createCopilotAdapter(
     .pipe(lookup, 'ref', 'result:detail')
     .pipe(refresh, 'detail', 'record')
     .pipe(detail, ['record', 'receipt'], 'detail')
-    .endAsync('detail') as (
-    ref: W.WorkRef,
-    receipt?: W.WorkStarted['receipt']
-  ) => Promise<W.Result<W.WorkDetail>>;
+    .endAsync('detail') as (ref: W.WorkRef, receipt?: Receipt) => Promise<W.Result<W.WorkDetail>>;
   const stop = (superpipe({})('copilot-stop') as PipelineAPI)
     .input(['ref'])
     .pipe(lookup, 'ref', 'result:stopped')
@@ -222,11 +222,7 @@ export function createCopilotAdapter(
           try {
             save(record);
           } finally {
-            try {
-              await owned.close();
-            } finally {
-              live.delete(id);
-            }
+            await owned.close().finally(() => live.delete(id));
           }
         }
       },
@@ -243,7 +239,7 @@ export function createCopilotAdapter(
       void pending.finally(() => starts.delete(pending));
       return pending;
     },
-    status: (ref: W.WorkRef, _since?: number, receipt?: W.WorkStarted['receipt']) =>
+    status: (ref: W.WorkRef, _since?: number, receipt?: Receipt) =>
       guard(() => status(ref, receipt)),
     stop: (ref: W.WorkRef) => guard(() => stop(ref)),
     async close() {

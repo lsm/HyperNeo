@@ -3,6 +3,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { isAbsolute } from 'node:path';
 import { buildAcpSafeEnv } from '../acp/acp-command.ts';
 import type { WorkDelivery } from './types.ts';
+export class CopilotModelUnavailableError extends Error {}
 type WorkInputReceipt = NonNullable<WorkDelivery['receipt']>;
 
 type InputState = {
@@ -170,7 +171,7 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
     if (!(await bounded(client.getAuthStatus(), timeoutMs)).isAuthenticated)
       throw new Error('Copilot login required: run copilot login in your terminal.');
     if (!(await bounded(client.listModels(), timeoutMs)).some((model) => model.id === config.model))
-      throw new Error('Unsupported Copilot model; catalog must confirm the exact ID.');
+      throw new CopilotModelUnavailableError('Unsupported Copilot model ID.');
     session = await bounded(
       client.createSession({
         sessionId: config.sessionId,
@@ -273,7 +274,7 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
       }
     },
     async snapshot(): Promise<WorkerState> {
-      if (!closed && state.status !== 'unreachable') {
+      if (!closed && ['queued', 'running', 'needs_you'].includes(state.status)) {
         try {
           await bounded(client.ping(), timeoutMs);
         } catch {

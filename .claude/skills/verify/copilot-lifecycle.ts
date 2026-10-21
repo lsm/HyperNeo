@@ -87,6 +87,7 @@ try {
   installFixture('--no-models');
   assert.equal((await rpc('work.start', { adapter: 'copilot-cli', place: complete.place, title: 'No catalog', model: 'synthetic-model', message: 'never delivered' }) as { ok: boolean }).ok, false);
   if (mode === 'model' || mode === 'all') {
+    installFixture();
     const refused = await rpc('work.start', { adapter: 'copilot-cli', place: complete.place, title: 'Unknown model', model: 'unknown-model', message: 'never delivered' }) as { ok: boolean; reason: string };
     assert.equal(refused.ok, false); assert.equal(refused.reason, 'unsupported_model');
     const calls = readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
