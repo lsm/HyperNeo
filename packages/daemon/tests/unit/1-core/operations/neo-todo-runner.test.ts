@@ -172,6 +172,46 @@ describe('idle open asks', () => {
 });
 
 describe('neo todo runner', () => {
+  test('refuses the external effect if accepting its durable input fails', async () => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      h.db.exec(
+        "CREATE TRIGGER reject_input BEFORE INSERT ON work_delivery_inputs BEGIN SELECT RAISE(ABORT, 'synthetic storage refusal'); END"
+      );
+      await expect(h.runner.start(todo.id)).rejects.toThrow('synthetic storage refusal');
+      expect(
+        h.calls.filter((call) => call.name === 'work.start' || call.name === 'work.send')
+      ).toEqual([]);
+      expect(h.sessions.inputs.list(todo.id)).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a dispatch exception retains an unresolved input with its original deadline', async () => {
+    const h = setup(null, ':memory:', (name) => {
+      if (name === 'work.start') throw new Error('synthetic lost reply');
+    });
+    try {
+      const todo = h.add();
+      await expect(h.runner.start(todo.id)).rejects.toThrow('synthetic lost reply');
+      const inputs = h.sessions.inputs.list(todo.id);
+      expect(inputs).toHaveLength(1);
+      expect(inputs[0]).toMatchObject({
+        todoId: todo.id,
+        originSessionId: 'neo',
+        outcome: null,
+        observedAt: null,
+      });
+      expect(h.sessions.inputs.due(inputs[0].deadlineAt - 1)).toEqual([]);
+      expect(h.sessions.inputs.due(inputs[0].deadlineAt)).toEqual(inputs);
+      expect(h.sessions.inputs.due(inputs[0].deadlineAt + 100000)).toEqual(inputs);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('every dispatched input has a durable intent before the tool sees it', async () => {
     const seen: unknown[] = [];
     const h = setup(null, ':memory:', (name) => {

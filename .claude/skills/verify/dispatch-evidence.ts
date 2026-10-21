@@ -33,7 +33,7 @@ state.prepare(`INSERT INTO threads VALUES ('synthetic-thread', 'Synthetic worker
 state.close();
 const evidence: unknown[] = [];
 let mode = 'queue';
-const beforeEffects: { method: string; inputs: Record<string, unknown>[] }[] = [];
+const beforeEffects: { method: string; inputs: Record<string, unknown>[]; message?: string }[] = [];
 const readInputs = () => {
   const db = new Database(join(run, 'data/daemon.db'), { readonly: true });
   try {
@@ -46,7 +46,7 @@ chmodSync(join(run, 'home/.claude/sessions'), 0o700);
 const inboxPath = join(run, `home/.claude/sessions/${process.pid}.sock`);
 writeFileSync(join(run, `home/.claude/sessions/${process.pid}.json`), JSON.stringify({ sessionId: cliSession, pid: process.pid, procStart: 1, entrypoint: 'cli', version: '2.1.295', messagingSocketPath: inboxPath }));
 writeFileSync(join(run, 'bin/claude'), `#!/bin/sh\nprintf '%s' '${JSON.stringify([{ sessionId: cliSession, status: 'idle', pid: process.pid }])}'\n`, { mode: 0o700 });
-const inbox = createServer(socket => { socket.on('data', bytes => evidence.push({ cliInboxBytes: bytes.toString() })); socket.on('end', () => socket.end()); });
+const inbox = createServer(socket => { socket.on('data', bytes => { evidence.push({ cliInboxBytes: bytes.toString() }); if (obligations) { const inputs = readInputs(); beforeEffects.push({ method: 'claude/inbox', inputs }); evidence.push({ beforeExternalEffect: 'claude/inbox', inputs }); } }); socket.on('end', () => socket.end()); });
 await new Promise<void>((done, fail) => { inbox.once('error', fail); inbox.listen(inboxPath, done); });
 chmodSync(inboxPath, 0o600);
 const peer = Bun.serve({
@@ -59,7 +59,7 @@ const peer = Bun.serve({
       evidence.push({ peer: message });
       if (obligations && ['thread/queue/add', 'turn/steer'].includes(message.method)) {
         const inputs = readInputs();
-        beforeEffects.push({ method: message.method, inputs });
+        beforeEffects.push({ method: message.method, inputs, message: message.params.input[0].text });
         evidence.push({ beforeExternalEffect: message.method, inputs });
       }
       const result = message.method === 'thread/turns/list'
@@ -77,6 +77,7 @@ const dbPath = join(run, 'data/daemon.db');
 let todoId = '';
 let unconfirmedId = '';
 let unconfirmedInput: string | undefined;
+let initialInputs: unknown;
 try {
   for (const phase of ['initial', 'restart']) {
     const app = await createDaemonApp({ config: getConfig({ port, host: '127.0.0.1', dbPath }), verbose: false });
@@ -100,15 +101,18 @@ try {
         const started = await invoke('neo.todo.add', { askId: 'synthetic-ask', title: 'Synthetic queue', doneWhen: 'Facts retained', instruction: 'Only a synthetic queued instruction', target: { verb: 'send', ref }, start: true });
         assert.equal(started.todo.state, 'doing', JSON.stringify(started.todo));
         todoId = started.todo.id;
-        if (obligations) assert(beforeEffects.some(event => event.method === 'thread/queue/add' && event.inputs.some(row => row.todo_id === todoId && row.outcome === null && row.message === event.inputs[0].message)), 'durable accepted input must exist before external queue insertion');
+        if (obligations) assert(beforeEffects.some(event => event.method === 'thread/queue/add' && event.inputs.some(row => row.todo_id === todoId && row.outcome === null && event.message?.includes(String(row.message)))), 'durable accepted input must exist before external queue insertion');
         const unconfirmed = await invoke('neo.todo.add', { askId: 'synthetic-ask', title: 'Synthetic inbox', doneWhen: 'Facts retained', instruction: 'Unconfirmed synthetic instruction', target: { verb: 'send', ref: { adapter: 'claude-code', id: cliSession } }, start: true });
         assert.equal(unconfirmed.todo.state, 'doing', JSON.stringify(unconfirmed.todo));
         unconfirmedId = unconfirmed.todo.id;
+        if (obligations) assert(beforeEffects.some(event => event.method === 'claude/inbox' && event.inputs.some(row => row.todo_id === unconfirmedId && row.outcome === null)));
       }
       if (obligations) {
         const inputs = readInputs();
         evidence.push({ phase, deliveryInputs: inputs });
         assert.equal(inputs.length, 2);
+        if (phase === 'initial') initialInputs = inputs;
+        else assert.deepEqual(inputs, initialInputs, 'restart must not reset input evidence or deadlines');
         for (const row of inputs) {
           assert.equal(Number(row.deadline_at) - Number(row.accepted_at), 30000);
           assert(row.outcome);
