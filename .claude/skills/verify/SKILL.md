@@ -134,6 +134,10 @@ Async worktree and adapter spans include awaits and are not exclusive main-threa
 blocking time. The synthetic reproduction proves a concrete blocking hazard;
 it does not attribute the historical 02:23:43 eight-second gap.
 
+## Neo primary restoration refusal
+
+See [the isolated model/thinking alignment journey](journeys/neo-model-alignment.md).
+
 ## Neo coordinator model fallback (backend)
 
 Run `bash .claude/skills/verify/neo-model-fallback.sh "$RUN"` with a fresh absolute

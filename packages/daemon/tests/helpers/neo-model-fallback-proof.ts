@@ -6,13 +6,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
 
-export async function proveNeoModelFallback(fallbackProvider: 'anthropic' | 'glm') {
+export async function proveNeoModelFallback(
+  fallbackProvider: 'anthropic' | 'glm',
+  refusePrimary = false
+) {
   const run = await mkdtemp(join(tmpdir(), 'neo-model-fallback-'));
   let primary = 'sonnet';
   let fallback = 'opus';
   const requests: Record<string, unknown>[] = [];
   const evidence: Record<string, unknown> = { run, primary, fallback, requests };
   let unavailable = true;
+  let primaryRemoved = false;
+  let restorePrimary: (() => void) | undefined;
   let sequence = 1;
   const published = new Set<number>();
   const fixture = createServer(async (req, res) => {
@@ -68,6 +73,20 @@ export async function proveNeoModelFallback(fallbackProvider: 'anthropic' | 'glm
         })
       );
       return;
+    }
+    if (refusePrimary && active && String(body.model).includes(fallback) && !primaryRemoved) {
+      primaryRemoved = true;
+      const { getProviderRegistry } = await import('../../src/lib/providers/factory.ts');
+      const { getAvailableModels, setModelsCache } = await import('../../src/lib/model-service.ts');
+      const registry = getProviderRegistry();
+      const provider = registry.get('anthropic');
+      const models = getAvailableModels('global');
+      restorePrimary = () => {
+        if (provider) registry.register(provider);
+        setModelsCache(new Map([['global', models]]));
+      };
+      registry.unregister('anthropic');
+      setModelsCache(new Map([['global', models.filter((m) => m.provider !== 'anthropic')]]));
     }
     const publishing = active && !published.has(sequence);
     if (publishing) published.add(sequence);
@@ -279,6 +298,20 @@ export async function proveNeoModelFallback(fallbackProvider: 'anthropic' | 'glm
     )
       await new Promise((resolve) => setTimeout(resolve, 100));
     await new Promise((resolve) => setTimeout(resolve, 500));
+    if (refusePrimary) {
+      evidence.afterRefusedRestore = daemon.db.getSession(sessionId)?.config;
+      expect(evidence.afterRefusedRestore).toMatchObject({
+        model: fallback,
+        provider: fallbackProvider,
+        thinkingLevel: 'think8k',
+      });
+      const live = await daemon.sessionManager.getSessionForControl(sessionId);
+      expect(live?.getSessionData().config).toMatchObject({
+        model: fallback,
+        provider: fallbackProvider,
+        thinkingLevel: 'think8k',
+      });
+    }
     unavailable = false;
     sequence = 2;
     evidence.secondSent = await call('neo.message.send', {
@@ -304,12 +337,12 @@ export async function proveNeoModelFallback(fallbackProvider: 'anthropic' | 'glm
     expect(
       requests
         .filter((r) => r.sequence === 2 && r.active)
-        .every((r) => String(r.model).includes(primary))
+        .every((r) => String(r.model).includes(refusePrimary ? fallback : primary))
     ).toBe(true);
     expect(
       JSON.stringify(requests.find((r) => r.sequence === 2 && r.active)),
       JSON.stringify(requests)
-    ).toMatch(/24000|"effort":"high"/);
+    ).toMatch(refusePrimary ? /8000|"effort":"low"/ : /24000|"effort":"high"/);
     evidence.settings = daemon.db.getGlobalSettings().neo?.preferences;
     expect(evidence.settings).toMatchObject(preference);
     evidence.snapshot = (await call('neo.snapshot')).preferences;
@@ -318,13 +351,17 @@ export async function proveNeoModelFallback(fallbackProvider: 'anthropic' | 'glm
     if (process.env.VERIFY_EVIDENCE_DIR) {
       await mkdir(process.env.VERIFY_EVIDENCE_DIR, { recursive: true });
       await writeFile(
-        join(process.env.VERIFY_EVIDENCE_DIR, `neo-model-fallback-${fallbackProvider}.json`),
+        join(
+          process.env.VERIFY_EVIDENCE_DIR,
+          `neo-model-fallback-${fallbackProvider}${refusePrimary ? '-refused' : ''}.json`
+        ),
         JSON.stringify(evidence, null, 2)
       );
     }
     await transport?.close();
     await daemon?.cleanup();
     restoreGlm?.();
+    restorePrimary?.();
     await new Promise<void>((resolve) => fixture.close(() => resolve()));
     for (const [key, value] of prior) {
       if (value === undefined) delete process.env[key];
