@@ -3,6 +3,8 @@ import type { Job, JobQueueRepository } from '../../storage/repositories/job-que
 import { routeDriveTurnOutcome } from '../agent/handler-outcome-routing.ts';
 import {
   asMessageDeliveryPayload,
+  MESSAGE_DELIVERY_PARK_MS,
+  type DeliveryOutcome,
   type DeliveryLoadResult,
   type MessageDeliverySession,
 } from '../agent/message-delivery.ts';
@@ -77,15 +79,24 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     }
 
     if (!claimCurrent()) return { outcome: 'stale_attempt' };
-    const result = await session.driveDeliveryTurn(
-      payload.messageUuid,
-      content,
-      payload.parentToolUseId,
-      false,
-      claimCurrent,
-      signal,
-      reportStage ? { reportStage } : undefined
-    );
+    let result: DeliveryOutcome;
+    try {
+      result = await session.driveDeliveryTurn(
+        payload.messageUuid,
+        content,
+        payload.parentToolUseId,
+        false,
+        claimCurrent,
+        signal,
+        reportStage ? { reportStage } : undefined
+      );
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== 'Interrupted by user') throw error;
+      if (!claimCurrent()) return { outcome: 'stale_attempt' };
+      const retryAt = Date.now() + MESSAGE_DELIVERY_PARK_MS;
+      deps.jobQueue.requeueParked(job.id, retryAt, job.claimToken);
+      return { parked: 'user_interrupt', retryAt };
+    }
     const route = routeDriveTurnOutcome(result);
     if ('deadLetter' in route) {
       throw new DeadLetterImmediatelyError(route.deadLetter);

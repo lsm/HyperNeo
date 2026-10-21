@@ -1,3 +1,4 @@
+import { copilotOwnsSession } from '../../drivers/copilot-find.ts';
 import { createCopilotAdapter } from '../../drivers/copilot-adapter.ts';
 import { dirname, resolve } from 'node:path';
 import { ensureCodexDesktopProject } from '../../drivers/codex-desktop-project.ts';
@@ -287,13 +288,20 @@ function acpAgentAdapters(
   return ACP_AGENTS.flatMap((agent) => {
     const command = findAcpAgentBinary(agent.bin);
     if (!command) return [];
+    const directory = join(dirname(resolve(context.deps.config.dbPath)), 'copilot-workers');
     const adapters = [
       createAcpAgentAdapter({
         agent,
         machine: hostname(),
         now: Date.now,
         listSessions: reuseAcpSessionList(() => listAcpAgentSessions(command, agent), Date.now),
-        ownSessions,
+        ownSessions: () => {
+          const ids = ownSessions();
+          return {
+            has: (id: string) =>
+              ids.has(id) || (agent.id === 'copilot-cli' && copilotOwnsSession(directory, id)),
+          };
+        },
         projectFolder: gitWorktreeProject,
         ...(agent.app && existsSync(agent.app.path) ? { link: agent.app.link } : {}),
       }),
@@ -301,7 +309,8 @@ function acpAgentAdapters(
     if (agent.id !== 'copilot-cli') return adapters;
     const adapter = createCopilotAdapter(adapters[0], {
       cliPath: command,
-      directory: join(dirname(resolve(context.deps.config.dbPath)), 'copilot-workers'),
+      directory,
+      projectFolder: gitWorktreeProject,
       machine: hostname(),
       env: process.env,
       homeDir: homedir(),
@@ -575,7 +584,15 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     before: number,
     after: number,
     cursor?: WorkTurnPage['nextCursor']
-  ) => readWorkTurnPage(db(), sessionId, around, before, after, cursor);
+  ) => {
+    for (const adapter of adapters) {
+      const page = adapter.readTurns?.(sessionId, around, before, after, cursor);
+      if (page) return page;
+    }
+    return cursor?.copilot
+      ? null
+      : readWorkTurnPage(db(), sessionId, around, before, after, cursor);
+  };
   return [
     createFindWorkOperation(deps),
     ...createWorkVerbOperations(deps),

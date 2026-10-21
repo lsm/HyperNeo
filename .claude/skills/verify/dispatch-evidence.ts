@@ -14,6 +14,7 @@ const [portText, runText] = process.argv.slice(2);
 assert(runText);
 const run = resolve(runText);
 const port = Number(portText);
+const obligations = process.argv.includes('--obligations');
 assert(Number.isInteger(port) && port > 0 && port < 65536 && port !== 8399);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -31,13 +32,21 @@ state.exec(`CREATE TABLE threads (id TEXT PRIMARY KEY, name TEXT, title TEXT, fi
 state.prepare(`INSERT INTO threads VALUES ('synthetic-thread', 'Synthetic worker', '', '', ?, 'vscode', 0, 1, ?, NULL)`).run(join(run, 'workspace'), rollout);
 state.close();
 const evidence: unknown[] = [];
-let mode = 'queue';
+let mode = 'idle';
+const beforeEffects: { method: string; inputs: Record<string, unknown>[]; message?: string }[] = [];
+const readInputs = () => {
+  const db = new Database(join(run, 'data/daemon.db'), { readonly: true });
+  try {
+    if (!db.prepare("SELECT name FROM sqlite_master WHERE name = 'work_delivery_inputs'").get()) return [];
+    return db.prepare('SELECT * FROM work_delivery_inputs ORDER BY rowid').all() as Record<string, unknown>[];
+  } finally { db.close(); }
+};
 const cliSession = '10000000-0000-4000-8000-000000000003';
 chmodSync(join(run, 'home/.claude/sessions'), 0o700);
 const inboxPath = join(run, `home/.claude/sessions/${process.pid}.sock`);
 writeFileSync(join(run, `home/.claude/sessions/${process.pid}.json`), JSON.stringify({ sessionId: cliSession, pid: process.pid, procStart: 1, entrypoint: 'cli', version: '2.1.295', messagingSocketPath: inboxPath }));
 writeFileSync(join(run, 'bin/claude'), `#!/bin/sh\nprintf '%s' '${JSON.stringify([{ sessionId: cliSession, status: 'idle', pid: process.pid }])}'\n`, { mode: 0o700 });
-const inbox = createServer(socket => { socket.on('data', bytes => evidence.push({ cliInboxBytes: bytes.toString() })); socket.on('end', () => socket.end()); });
+const inbox = createServer(socket => { socket.on('data', bytes => { evidence.push({ cliInboxBytes: bytes.toString() }); if (obligations) { const inputs = readInputs(); beforeEffects.push({ method: 'claude/inbox', inputs }); evidence.push({ beforeExternalEffect: 'claude/inbox', inputs }); } }); socket.on('end', () => socket.end()); });
 await new Promise<void>((done, fail) => { inbox.once('error', fail); inbox.listen(inboxPath, done); });
 chmodSync(inboxPath, 0o600);
 const peer = Bun.serve({
@@ -48,10 +57,15 @@ const peer = Bun.serve({
       const message = JSON.parse(String(data));
       if (!('id' in message)) return;
       evidence.push({ peer: message });
+      if (obligations && ['turn/start', 'turn/steer'].includes(message.method)) {
+        const inputs = readInputs();
+        beforeEffects.push({ method: message.method, inputs, message: message.params.input[0].text });
+        evidence.push({ beforeExternalEffect: message.method, inputs });
+      }
       const result = message.method === 'thread/turns/list'
         ? { data: mode === 'steer' ? [{ id: 'synthetic-turn', status: 'inProgress' }] : [] }
-        : message.method === 'thread/queue/add'
-          ? { queuedSubmission: { id: 'synthetic-queue' } }
+        : message.method === 'turn/start'
+          ? { turn: { id: 'synthetic-started' } }
           : message.method === 'turn/steer' ? { turnId: 'synthetic-turn' } : {};
       socket.send(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }));
     },
@@ -63,6 +77,7 @@ const dbPath = join(run, 'data/daemon.db');
 let todoId = '';
 let unconfirmedId = '';
 let unconfirmedInput: string | undefined;
+let initialInputs: unknown;
 try {
   for (const phase of ['initial', 'restart']) {
     const app = await createDaemonApp({ config: getConfig({ port, host: '127.0.0.1', dbPath }), verbose: false });
@@ -83,12 +98,25 @@ try {
         db.exec(`INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES ('${sessionId}','Synthetic Neo','/tmp','2026-10-20T00:00:00Z','2026-10-20T00:00:00Z','active','{}','{}')`);
         new NeoRepository(db).reserveBinding({ sessionId, kind: 'neo', projectId: null });
         new NeoAskTodoRepository(db).openAsk({ id: 'synthetic-ask', projectId: null, sessionId, originMessageId: null, title: 'Synthetic evidence', request: 'Retain peer acknowledgement', createdAt: 1 });
-        const started = await invoke('neo.todo.add', { askId: 'synthetic-ask', title: 'Synthetic queue', doneWhen: 'Facts retained', instruction: 'Only a synthetic queued instruction', target: { verb: 'send', ref }, start: true });
+        const started = await invoke('neo.todo.add', { askId: 'synthetic-ask', title: 'Synthetic idle turn', doneWhen: 'Facts retained', instruction: 'Only a synthetic opening instruction', target: { verb: 'send', ref }, start: true });
         assert.equal(started.todo.state, 'doing', JSON.stringify(started.todo));
         todoId = started.todo.id;
+        if (obligations) assert(beforeEffects.some(event => event.method === 'turn/start' && event.inputs.some(row => row.todo_id === todoId && row.outcome === null && event.message?.includes(String(row.message)))), 'durable accepted input must exist before external turn start');
         const unconfirmed = await invoke('neo.todo.add', { askId: 'synthetic-ask', title: 'Synthetic inbox', doneWhen: 'Facts retained', instruction: 'Unconfirmed synthetic instruction', target: { verb: 'send', ref: { adapter: 'claude-code', id: cliSession } }, start: true });
         assert.equal(unconfirmed.todo.state, 'doing', JSON.stringify(unconfirmed.todo));
         unconfirmedId = unconfirmed.todo.id;
+        if (obligations) assert(beforeEffects.some(event => event.method === 'claude/inbox' && event.inputs.some(row => row.todo_id === unconfirmedId && row.outcome === null)));
+      }
+      if (obligations) {
+        const inputs = readInputs();
+        evidence.push({ phase, deliveryInputs: inputs });
+        assert.equal(inputs.length, 2);
+        if (phase === 'initial') initialInputs = inputs;
+        else assert.deepEqual(inputs, initialInputs, 'restart must not reset input evidence or deadlines');
+        for (const row of inputs) {
+          assert.equal(Number(row.deadline_at) - Number(row.accepted_at), 30000);
+          assert(row.outcome);
+        }
       }
       const pending = sessions.readSent(unconfirmedId);
       evidence.push({ phase, unconfirmed: pending });
@@ -99,10 +127,10 @@ try {
       if (phase === 'initial') unconfirmedInput = pending.delivery.receipt.inputId;
       else assert.equal(pending.delivery.receipt.inputId, unconfirmedInput);
       assert.equal(sessions.readStartedAt(unconfirmedId), null);
-      const queued = sessions.readSent(todoId);
-      evidence.push({ phase, queued });
-      assert.deepEqual(queued?.delivery, { delivered: false, queuedSubmissionId: 'synthetic-queue' });
-      assert.equal(sessions.readStartedAt(todoId), null, 'queue acknowledgement is not a turn start');
+      const opening = sessions.readSent(todoId);
+      evidence.push({ phase, opening });
+      assert.deepEqual(opening?.delivery, { delivered: true, startedTurnId: 'synthetic-started' });
+      assert.equal(sessions.readStartedAt(todoId), 1, 'existing session baseline remains separate from the turn acknowledgement');
       if (phase === 'restart') {
         mode = 'steer';
         await invoke('neo.todo.continue', { todoId, message: 'Synthetic follow-up only' });
@@ -112,10 +140,21 @@ try {
       }
     } finally { await app.cleanup(); }
   }
+  if (obligations) {
+    const inputs = readInputs();
+    evidence.push({ reopenedInputs: inputs });
+    assert.equal(inputs.length, 3);
+    const own = inputs.filter(row => row.todo_id === todoId);
+    assert.equal(own.length, 2);
+    assert.notEqual(own[0].id, own[1].id);
+    assert.deepEqual(JSON.parse(String(own[0].outcome)).delivery, { delivered: true, startedTurnId: 'synthetic-started' });
+    assert.deepEqual(JSON.parse(String(own[1].outcome)).delivery, { delivered: true, steeredIntoTurnId: 'synthetic-turn' });
+    assert(beforeEffects.at(-1)?.inputs.some(row => row.outcome === null && String(row.message).includes('Synthetic follow-up only')));
+  }
   const reopened = new Database(dbPath, { readonly: true });
   try { assert.deepEqual(new NeoTodoSessionRepository(reopened).readSent(todoId)?.delivery, { delivered: true, steeredIntoTurnId: 'synthetic-turn' }); }
   finally { reopened.close(); }
-  console.log(`PASS: real daemon MCP todo dispatch retains queue/unconfirmed/steer facts across daemon restart and read-only DB reopen. ${run}/evidence/observed.json`);
+  console.log(`PASS: ${obligations ? "write-ahead input history/deadlines plus " : ""}real daemon MCP todo dispatch retains start/unconfirmed/steer facts across daemon restart and read-only DB reopen. ${run}/evidence/observed.json`);
 } finally {
   peer.stop(true);
   await new Promise<void>(done => inbox.close(() => done()));

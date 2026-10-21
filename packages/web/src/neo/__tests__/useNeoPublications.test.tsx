@@ -431,6 +431,50 @@ describe('Neo authored publication state', () => {
     expect(io.connection.size).toBe(0);
   });
 
+  it('keeps the earlier pages a reader loaded when a new reply arrives', async () => {
+    const rows = (from: number, to: number) =>
+      Array.from({ length: to - from + 1 }, (_, index) => row(from + index));
+    let newest = 200;
+    io.request.mockImplementation(async (_method: string, { input }) =>
+      input.before === Number.MAX_SAFE_INTEGER
+        ? { ok: true, conversationId: id, items: rows(151, 200), nextAfter: 200 }
+        : input.before
+          ? {
+              ok: true,
+              conversationId: id,
+              items: rows(input.before - 50, input.before - 1),
+              nextAfter: input.before - 1,
+            }
+          : {
+              ok: true,
+              conversationId: id,
+              items: rows(input.after + 1, newest),
+              nextAfter: newest,
+            }
+    );
+    function EarlierProbe() {
+      const state = useNeoPublications(`neo:${id}`);
+      return (
+        <>
+          <p data-testid="items">{state.items.map((item) => item.sequence).join(',')}</p>
+          <button onClick={state.loadEarlier}>Earlier</button>
+        </>
+      );
+    }
+    render(<EarlierProbe />);
+    const shown = () => screen.getByTestId('items').textContent?.split(',').map(Number) ?? [];
+    await waitFor(() => expect(shown()[0]).toBe(151));
+    for (const oldest of [101, 51]) {
+      fireEvent.click(screen.getByRole('button', { name: 'Earlier' }));
+      await waitFor(() => expect(shown()[0]).toBe(oldest));
+    }
+    newest = 201;
+    await changed();
+    await waitFor(() => expect(shown().at(-1)).toBe(201));
+    expect(shown()[0]).toBe(51);
+    expect(shown()).toHaveLength(151);
+  });
+
   it('retains at most 500 items and honestly marks omitted earlier history', async () => {
     io.request.mockImplementation(async (_method: string, { input }) => page(input.after, 50));
     render(<Probe />);

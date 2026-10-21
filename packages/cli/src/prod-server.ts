@@ -151,15 +151,19 @@ export async function startProdServer(config: Config) {
 
     async fetch(req, server) {
       const url = new URL(req.url);
+      daemonContext.observeRequest(req);
 
       if (req.method === 'OPTIONS') {
         return createCorsPreflightResponse();
       }
 
+      if (url.pathname === '/pair' && req.method === 'POST') return daemonContext.handlePair(req);
+
       if (isWebSocketPath(url.pathname)) {
         const upgraded = server.upgrade(req, {
           data: {
             connectionSessionId: 'global',
+            device: daemonContext.authenticateUpgrade(req, server.requestIP(req)?.address ?? null),
           },
         });
 

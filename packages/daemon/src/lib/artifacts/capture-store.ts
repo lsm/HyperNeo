@@ -99,8 +99,13 @@ export async function createArtifactCaptureStore(
       });
       return result.accepted ? result.value : result;
     },
-    async capture(sourceRoot: string, segments: string[]) {
-      const result = await withArtifactDescriptor(sourceRoot, segments, async (fd, initial) => {
+    async capture(sourceRoot: string | Uint8Array, segments: string[] = []) {
+      if (typeof sourceRoot !== 'string') {
+        const admission = admitArtifactStorage(sourceRoot.byteLength, limits, used, reserved);
+        if (typeof admission !== 'number') return admission;
+      }
+      const bytes = typeof sourceRoot === 'string' ? null : Buffer.from(sourceRoot);
+      const consume = async (fd: number | null, initial: Stats | { size: number }) => {
         const admission = admitArtifactStorage(initial.size, limits, used, reserved);
         if (typeof admission !== 'number') return admission;
         reserved += admission;
@@ -113,7 +118,11 @@ export async function createArtifactCaptureStore(
           let sha256: string | null;
           try {
             await syncDirectory(join(root, 'staging'));
-            sha256 = await copyDescriptor(fd, initial, snapshot);
+            sha256 = bytes
+              ? await snapshot
+                  .writeFile(bytes)
+                  .then(() => createHash('sha256').update(bytes).digest('hex'))
+              : await copyDescriptor(fd!, initial as Stats, snapshot);
             if (sha256 === null)
               return { accepted: false as const, reason: 'source_changed' as const };
             await snapshot.chmod(0o444);
@@ -155,7 +164,10 @@ export async function createArtifactCaptureStore(
           used += Math.max(added, leftover?.size ?? 0);
           reserved -= admission;
         }
-      });
+      };
+      const result = bytes
+        ? { accepted: true as const, value: await consume(null, { size: bytes.length }) }
+        : await withArtifactDescriptor(sourceRoot as string, segments, consume);
       return result.accepted ? result.value : result;
     },
   };

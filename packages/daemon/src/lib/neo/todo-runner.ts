@@ -15,7 +15,6 @@ import {
   messageOpening,
   neoCardSent,
   type NeoDriverTarget,
-  readDriverOutcome,
   readDriverActivity,
   readDriverFollowUp,
   readDriverLive,
@@ -27,6 +26,7 @@ import {
 import type { NeoPack, NeoTodoCheckResult } from './packs/types.ts';
 import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
 import { readNeoTodoCompletion, sameNeoTodoCheck } from './todo-completion.ts';
+import { dispatchNeoInput } from './dispatch-input.ts';
 import { neoMoveTodo, neoTodoRepo } from './todo-repo.ts';
 
 type Rejection = { ok: false; reason: string };
@@ -297,7 +297,15 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           }))
         : null;
     const baseline = probe ? probe.baseline : Date.now();
-    const result = readDriverOutcome(target, await deps.invoke(caller(ask), call.name, call.input));
+    const result = await dispatchNeoInput(
+      sessions.inputs,
+      todo.id,
+      ask.sessionId,
+      target,
+      call,
+      deps.invoke,
+      caller(ask)
+    );
     if (!('ref' in result) && !result.reason) sessions.recordStartInterrupted(todo.id);
     if (!('ref' in result))
       return {
@@ -305,7 +313,14 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         todo: await finish(
           todo,
           ask,
-          planNeoTodoFailure(todo, `Could not start: ${result.failure}`, Date.now()),
+          result.reason === 'needs_you'
+            ? planNeoTodoBlocked(
+                todo,
+                'failure',
+                `Could not start: ${result.failure}`,
+                'Ask the human to open Claude Desktop, then retry this todo.'
+              )
+            : planNeoTodoFailure(todo, `Could not start: ${result.failure}`, Date.now()),
           Date.now()
         ),
       };
@@ -454,7 +469,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       const result = todo.check
         ? await readNeoTodoCompletion(deps.packs(), todo)
         : await pack.check(todo);
-      const live = store.listCheckable().find((item) => item.id === todo.id);
+      const live = store.getCheckable(todo.id);
       if (live?.check && sameNeoTodoCheck(todo, live))
         await finish(
           live,
@@ -616,9 +631,14 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       ).reason;
     const baseline = readDriverSendBaseline(status, Date.now(), !!ref.daemon);
     const sent = readDriverSent(status, text, todo.createdAt);
-    const delivered = readDriverOutcome(
+    const delivered = await dispatchNeoInput(
+      sessions.inputs,
+      todo.id,
+      ask.sessionId,
       { verb: 'send', ref },
-      await deps.invoke(caller(ask), 'work.send', { ref, message: text })
+      { name: 'work.send', input: { ref, message: text } },
+      deps.invoke,
+      caller(ask)
     );
     if (!('ref' in delivered)) return { ok: false as const, reason: delivered.failure };
     sessions.recordStartedAt(

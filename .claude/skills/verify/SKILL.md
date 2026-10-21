@@ -47,6 +47,28 @@ VERIFY_PORT=9311 bun .claude/skills/verify/rpc.ts rpc:providers.create \
   '{"params":{"providerId":"anthropic","displayName":"Anthropic (dev proxy)","kind":"built_in","authType":"api_key","isEnabled":true,"isDefault":true,"sortOrder":0},"credentials":{"apiKey":"sk-devproxy-test-key"}}'
 ```
 
+## In-process RPC proofs
+
+Some journeys provide a `PROOF` helper that owns its daemon and mock servers.
+Use this shared setup with the helper path named in that journey:
+
+```bash
+for port in 8000 8001; do
+  if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "verification port $port is busy"; exit 1
+  fi
+done
+RUN=$(mktemp -d /private/tmp/hyperneo-rpc-proof-XXXXXX)
+mkdir -p "$RUN/home"
+env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_USE_DEV_PROXY=1 \
+  HYPERNEO_DATA_DIR="$RUN/data" LOG_LEVEL=warn bun "$PROOF" "$RUN"
+```
+
+The helper creates its own GitHub stub, uses an ephemeral daemon port, seeds
+only its synthetic DB, and closes its resources in finally. Keep its evidence
+before removing the run directory. The journey names the checks and any
+additional ports; do not also start `launch.sh` for these helpers.
+
 ## Doctor
 
 ```bash
@@ -69,7 +91,9 @@ UI is served, that RPC answers, and that the mock model API is up. It ends with
   `seed-ledger.sh` (journey 4),
   `merge-check.sh` (journey 24), `archive-guard-check.sh` (journey 10) and
   `seed-start-question.sh` (journey 14), `quote-summary-check.mjs` (journey 18),
-  `seed-schedule-interrupt.ts` (journey 22), and `external-reply-check.ts` (journey 23).
+  `seed-schedule-interrupt.ts` (journey 22), and `external-reply-check.ts` (journey 23). Artifact preview helpers
+  (including `preview-media-web.mjs seed`) delegate DB fixture creation to
+  `preview-register.ts seed`, only in the fresh synthetic run.
 - Web UI: open `http://127.0.0.1:<port>/neo` (Neo) or
   `/session/<sessionId>` (a session) in the browser; read the page text and take
   a screenshot.

@@ -44,7 +44,8 @@ function setup(packs: NeoPack[] = []) {
           return stopFails.value ? 'stop_failed: driver offline' : null;
         },
       },
-      () => packs
+      () => packs,
+      () => null
     ).map((op) => [op.name, op])
   );
   const call = async (name: string, input: unknown, caller = owner) =>
@@ -89,7 +90,8 @@ describe('neo.todo operations', () => {
       {} as NeoAskTodoRepository,
       {} as NeoTodoSessionRepository,
       {} as NeoTodoControls,
-      () => []
+      () => [],
+      () => null
     ).find((op) => op.name === 'neo.todo.add')!;
     const input = { askId: 'ask', title: 'T', doneWhen: 'D', instruction: 'Do' };
     const ref = { adapter: 'hyperneo', id: 'dev-1' };

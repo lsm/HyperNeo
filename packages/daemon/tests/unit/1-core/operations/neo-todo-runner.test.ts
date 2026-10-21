@@ -24,7 +24,11 @@ const ref = { adapter: 'hyperneo', id: 'worker-1' };
 const completed = (value: unknown): OperationOutcome =>
   ({ kind: 'completed', value }) as OperationOutcome;
 
-function setup(packDone: boolean | null = null, dbPath = ':memory:') {
+function setup(
+  packDone: boolean | null = null,
+  dbPath = ':memory:',
+  beforeInvoke?: (name: string) => void
+) {
   const db = new Database(dbPath);
   runMigrations(db, () => {});
   createTables(db);
@@ -70,6 +74,7 @@ function setup(packDone: boolean | null = null, dbPath = ':memory:') {
     store,
     sessions,
     invoke: async (_caller, name, input) => {
+      beforeInvoke?.(name);
       calls.push({ name, input });
       if (name === 'work.start')
         return completed({ ok: true, value: { ref, lastActivityAt: 1_000, link: '/session/w' } });
@@ -167,6 +172,94 @@ describe('idle open asks', () => {
 });
 
 describe('neo todo runner', () => {
+  test('refuses the external effect if accepting its durable input fails', async () => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      h.db.exec(
+        "CREATE TRIGGER reject_input BEFORE INSERT ON work_delivery_inputs BEGIN SELECT RAISE(ABORT, 'synthetic storage refusal'); END"
+      );
+      await expect(h.runner.start(todo.id)).rejects.toThrow('synthetic storage refusal');
+      expect(
+        h.calls.filter((call) => call.name === 'work.start' || call.name === 'work.send')
+      ).toEqual([]);
+      expect(h.sessions.inputs.list(todo.id)).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a dispatch exception retains an unresolved input with its original deadline', async () => {
+    const h = setup(null, ':memory:', (name) => {
+      if (name === 'work.start') throw new Error('synthetic lost reply');
+    });
+    try {
+      const todo = h.add();
+      await expect(h.runner.start(todo.id)).rejects.toThrow('synthetic lost reply');
+      const inputs = h.sessions.inputs.list(todo.id);
+      expect(inputs).toHaveLength(1);
+      expect(inputs[0]).toMatchObject({
+        todoId: todo.id,
+        originSessionId: 'neo',
+        outcome: null,
+        observedAt: null,
+      });
+      expect(h.sessions.inputs.due(inputs[0].deadlineAt - 1)).toEqual([]);
+      expect(h.sessions.inputs.due(inputs[0].deadlineAt)).toEqual(inputs);
+      expect(h.sessions.inputs.due(inputs[0].deadlineAt + 100000)).toEqual(inputs);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('every dispatched input has a durable intent before the tool sees it', async () => {
+    const seen: unknown[] = [];
+    const h = setup(null, ':memory:', (name) => {
+      if (name !== 'work.start' && name !== 'work.send') return;
+      const exists = h.db
+        .prepare("SELECT name FROM sqlite_master WHERE name = 'work_delivery_inputs'")
+        .get();
+      seen.push(
+        exists ? h.db.prepare('SELECT * FROM work_delivery_inputs ORDER BY rowid').all() : []
+      );
+    });
+    try {
+      const todo = h.add();
+      await h.runner.start(todo.id);
+      h.setStatus({
+        ok: true,
+        value: { ref, status: 'done', lastActivityAt: 1000, recentInputs: [] },
+      });
+      h.setSend({ ok: true, value: { delivered: false, queuedSubmissionId: 'queue-next' } });
+      await h.runner.proceed(todo.id, 'A separate next instruction');
+      expect(seen).toMatchObject([
+        [{ todo_id: todo.id, origin_session_id: 'neo', outcome: null }],
+        [{ todo_id: todo.id }, { todo_id: todo.id, origin_session_id: 'neo', outcome: null }],
+      ]);
+      const inputs = h.db.prepare('SELECT * FROM work_delivery_inputs ORDER BY rowid').all() as {
+        id: string;
+        message: string;
+        accepted_at: number;
+        deadline_at: number;
+        outcome: string;
+      }[];
+      expect(new Set(inputs.map((row) => row.id)).size).toBe(2);
+      expect(inputs[0].message).toContain('Build the rows.');
+      expect(inputs[1].message).toContain('A separate next instruction');
+      for (const row of inputs) expect(row.deadline_at - row.accepted_at).toBe(30000);
+      expect(JSON.parse(inputs[1].outcome)).toMatchObject({
+        ref,
+        delivery: { delivered: false, queuedSubmissionId: 'queue-next' },
+      });
+      h.store.updateTodo(h.store.getTodo(todo.id)!, { state: 'failed' }, Date.now());
+      expect(h.db.prepare('SELECT count(*) AS n FROM work_delivery_inputs').get()).toEqual({
+        n: 2,
+      });
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('unconfirmed peer acceptance survives database close and reopen without inventing a start', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'todo-dispatch-'));
     const dbPath = join(dir, 'synthetic.db');
@@ -462,6 +555,75 @@ describe('neo todo runner', () => {
       reason: 'Could not start: unavailable: login expired',
     });
     expect(told).toEqual(['Todo "Rows" failed: Could not start: unavailable: login expired']);
+  });
+
+  test('a start whose input was accepted but now waits on a prompt keeps its session', async () => {
+    const { db, store, add } = setup();
+    const todo = add();
+    const accepted = createNeoTodoRunner({
+      store,
+      sessions: new NeoTodoSessionRepository(db),
+      invoke: async () =>
+        completed({
+          ok: true,
+          value: {
+            ref: { adapter: 'copilot', id: 's1' },
+            title: 'Rows',
+            place: { machine: 'laptop', name: 'repo' },
+            status: 'needs_you',
+            lastActivityAt: 1,
+            receipt: { executionId: 's1', inputId: 'in-1' },
+          },
+        }),
+      packs: () => [],
+      tell: async () => {},
+      tellAsk: async () => {},
+      changed: () => {},
+    });
+    const result = await accepted.start(todo.id);
+    expect(result.ok && result.todo).toMatchObject({ state: 'doing', blockedBy: null });
+    expect(new NeoTodoSessionRepository(db).doingTodoOn({ adapter: 'copilot', id: 's1' })?.id).toBe(
+      todo.id
+    );
+  });
+
+  test('a start that needs the human blocks the todo with its plain hint, and retry starts it again', async () => {
+    const { db, store, runner, add, told } = setup();
+    const todo = add();
+    const hint =
+      'Claude Desktop did not import the new session. The task was not started. Open Claude Desktop, then ask Neo to start it again.';
+    const waiting = createNeoTodoRunner({
+      store,
+      sessions: new NeoTodoSessionRepository(db),
+      invoke: async () =>
+        completed({
+          ok: true,
+          value: {
+            ref: { adapter: 'claude-desktop', id: 'local_u1' },
+            title: 'Rows',
+            place: { machine: 'laptop', name: 'repo' },
+            status: 'needs_you',
+            lastActivityAt: 1,
+            watchHint: hint,
+          },
+        }),
+      packs: () => [],
+      tell: async (_ask, _todo, note) => {
+        told.push(note);
+      },
+      tellAsk: async () => {},
+      changed: () => {},
+    });
+    const result = await waiting.start(todo.id);
+    expect(result.ok && result.todo).toMatchObject({
+      state: 'blocked',
+      blockedBy: 'failure',
+      blockedReason: `Could not start: ${hint}`,
+      nextAction: 'Ask the human to open Claude Desktop, then retry this todo.',
+    });
+    expect(told).toEqual([expect.stringContaining(hint)]);
+    expect(await runner.retry(todo.id)).toMatchObject({ ok: true });
+    expect(store.getTodo(todo.id)).toMatchObject({ state: 'doing', blockedBy: null });
   });
 });
 

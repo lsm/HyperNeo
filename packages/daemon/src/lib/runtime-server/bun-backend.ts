@@ -22,6 +22,7 @@ interface BunServer {
   port: number;
   stop(closeActiveConnections?: boolean): void;
   upgrade(req: Request, options: { data: unknown }): boolean;
+  requestIP(req: Request): { address: string } | null;
 }
 
 export async function createBunServer(options: ServerOptions): Promise<ServerHandle> {
@@ -37,8 +38,8 @@ export async function createBunServer(options: ServerOptions): Promise<ServerHan
           const msg = typeof message === 'string' ? message : new Uint8Array(message);
           return websocket.message?.(ws as unknown as RuntimeSocket, msg);
         },
-        close(ws: BunWebSocket) {
-          return websocket.close?.(ws as unknown as RuntimeSocket);
+        close(ws: BunWebSocket, code: number, reason: string) {
+          return websocket.close?.(ws as unknown as RuntimeSocket, code, reason);
         },
         error(ws: BunWebSocket, error: unknown) {
           return websocket.error?.(ws as unknown as RuntimeSocket, error);
@@ -55,7 +56,7 @@ export async function createBunServer(options: ServerOptions): Promise<ServerHan
         const ok = bunServer.upgrade(upgradeReq, { data });
         return ok ? new Response(null, { status: 101 }) : null;
       };
-      return fetch(req, upgrade);
+      return fetch(req, upgrade, { remoteAddress: bunServer.requestIP(req)?.address ?? null });
     },
     ...(bunHandlers ? { websocket: bunHandlers } : {}),
     error: onError

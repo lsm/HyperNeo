@@ -107,7 +107,8 @@ describe('neo.todo.add repo', () => {
         retry: async () => ({ ok: false as const, reason: 'no' }),
         stop: async () => null,
       },
-      () => [coding]
+      () => [coding],
+      () => null
     ).find((op) => op.name === 'neo.todo.add')!;
     const call = async (input: unknown) =>
       (await add.execute(add.inputSchema.parse(input), {
@@ -146,7 +147,8 @@ describe('neo.ask.open repo', () => {
       () => null,
       () => true,
       () => [],
-      () => [coding]
+      () => [coding],
+      () => null
     ).find((op) => op.name === 'neo.ask.open')!;
     const receipt = (await open.execute(
       open.inputSchema.parse({
@@ -208,7 +210,13 @@ describe('repo child cards', () => {
       'neo.ask.open'
     );
     const add = op(
-      createNeoTodoOperations(store, sessions, controls, () => [coding]),
+      createNeoTodoOperations(
+        store,
+        sessions,
+        controls,
+        () => [coding],
+        () => null
+      ),
       'neo.todo.add'
     );
     return { db, store, open, add };

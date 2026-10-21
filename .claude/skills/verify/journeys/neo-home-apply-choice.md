@@ -27,12 +27,12 @@ remote, after staging. Save must return stale_conflict with original local and
 remote heads intact and both human files unchanged. The marker must prove the
 intervention occurred; a missing marker is a failure, not a pass.
 
-Ignored mode creates an ignored human file **after** the conflict question. Origin
-introduces the same path. Save must refuse without replacing that human file or
-moving either head. The recipe records what the earlier conflict read did to the
-pre-existing synthetic ignored file separately; that existing pull/rebase issue
-is outside application and is reported to Neo. Do not attribute it to save or
-use its already-lost bytes as an application baseline.
+Ignored mode creates an ignored human file before the conflict question while
+origin introduces the same path. The conflict read must preserve those bytes
+(the separate sync-preservation fix is now on dev). The helper asserts that
+pre-save observation, then writes the same synthetic human bytes again to keep
+the application baseline explicit. Save must refuse without replacing that file
+or moving either head. The evidence retains both read-time and save-time bytes.
 
 Evidence: `$RUN/evidence/neo-home-apply-choice.json` contains actual RPC replies,
 commit IDs, both human answer paths and preservation assertions. All three modes

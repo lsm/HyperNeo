@@ -11,6 +11,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { pickRoute } from '../../../../src/lib/drivers/work-operations';
 import { createCopilotAdapter } from '../../../../src/lib/drivers/copilot-adapter';
 import type { StartRequest, WorkCallContext } from '../../../../src/lib/drivers/types';
 
@@ -60,6 +61,15 @@ async function start(fixture: ReturnType<typeof setup>, message = fixture.reques
 }
 
 describe('owned Copilot lifecycle', () => {
+  test('explains strict steering refusal without sending or starting a runtime', () => {
+    const { adapter, run } = setup();
+    expect(adapter.capabilities).not.toContain('steer');
+    const result = pickRoute('steer', { adapter: adapter.id }, [adapter]);
+    expect(result).toMatchObject({
+      reason: { ok: false, reason: 'unsupported', detail: expect.stringContaining('same-turn') },
+    });
+    expect(existsSync(join(run, 'calls.jsonl'))).toBe(false);
+  });
   test.each(['settled', 'error', 'late-settled'])(
     'reaps %s runtime without a status or stop call',
     async (message) => {
@@ -278,7 +288,14 @@ describe('owned Copilot lifecycle', () => {
 
   test('start returns a receipt; status uses its actual reply and owned execution directory', async () => {
     const fixture = setup();
-    expect(fixture.adapter.capabilities).toEqual(['find', 'start', 'status', 'stop']);
+    expect(fixture.adapter.capabilities).toEqual([
+      'find',
+      'start',
+      'send',
+      'queue',
+      'status',
+      'stop',
+    ]);
     const work = await start(fixture, 'settled');
     const detail = await fixture.adapter.status!(work.ref, undefined, work.receipt);
     expect(detail).toMatchObject({

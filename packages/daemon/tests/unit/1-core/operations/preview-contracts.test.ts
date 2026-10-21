@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
-import type { NeoPublicationArtifactInput } from '@hyperneo/shared/types/neo-publication';
-import type { NeoTodoArtifactProjection } from '@hyperneo/shared/types/neo-ask';
+import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
+import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { ARTIFACT_DEFAULT_LIMITS, ARTIFACT_REFUSALS } from '@hyperneo/shared/types/artifact-file';
 import {
   ArtifactLimitsSchema,
@@ -22,8 +22,8 @@ const reference: ArtifactRef = {
 
 describe('artifact file contracts', () => {
   test('keeps optional publication/card references backward compatible', () => {
-    const publication: Pick<NeoPublicationArtifactInput, 'artifacts'> = { artifacts: [reference] };
-    const card: Pick<NeoTodoArtifactProjection, 'artifacts'> = {};
+    const publication: Pick<NeoPublicationInput, 'artifacts'> = { artifacts: [reference] };
+    const card: Pick<NeoTodo, 'artifacts'> = {};
     expect(ArtifactRefSchema.parse(reference)).toEqual(reference);
     expect(ArtifactProjectionSchema.parse(publication)).toEqual(publication);
     expect(ArtifactProjectionSchema.parse(card)).toEqual({});

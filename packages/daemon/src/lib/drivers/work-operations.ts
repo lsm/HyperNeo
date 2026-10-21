@@ -145,6 +145,7 @@ export const WorkAdaptersResultSchema = workResultSchema(
     z.object({
       id: z.string(),
       capabilities: z.array(RoutedCapabilitySchema),
+      unsupportedCapabilities: z.partialRecord(RoutedCapabilitySchema, z.string()).optional(),
     })
   )
 );
@@ -203,7 +204,8 @@ export function pickRoute<Verb extends RoutedVerb>(
         verb === 'rename' ? 'not_supported' : 'unsupported',
         verb === 'rename'
           ? `The ${adapter.id} adapter has no supported rename API.`
-          : `The ${adapter.id} adapter cannot ${verb} work.`
+          : (adapter.unsupportedCapabilities?.[verb] ??
+              `The ${adapter.id} adapter cannot ${verb} work.`)
       ),
     };
   }
@@ -556,6 +558,9 @@ async function listWorkAdapters(
     ok: true,
     value: deps.adapters().map((adapter) => ({
       id: adapter.id,
+      ...(adapter.unsupportedCapabilities
+        ? { unsupportedCapabilities: adapter.unsupportedCapabilities }
+        : {}),
       capabilities: adapter.capabilities.flatMap((capability) => {
         const routed = RoutedCapabilitySchema.safeParse(capability);
         return routed.success && (routed.data === 'find' || adapter[routed.data])
@@ -580,7 +585,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.adapters',
       description:
-        'List work adapters on this daemon, or the attached daemon named by daemon, with their available capabilities: find, start, rename, send, steer, queue, withdraw, status, stop, archive. steer means work.send accepts mode steer on that adapter; it is listed only when declared and implemented. Archive uses neo.session.archive and requires a human request in a live turn. Use only capabilities listed for the chosen adapter.',
+        'List work adapters on this daemon, or the attached daemon named by daemon, with their available capabilities: find, start, rename, send, steer, queue, withdraw, status, stop, archive. steer means work.send accepts mode steer on that adapter; it is listed only when declared and implemented. Optional unsupportedCapabilities maps unavailable capabilities to their limitation; explicit unsupported requests return that explanation. Archive uses neo.session.archive and requires a human request in a live turn. Use only capabilities listed for the chosen adapter.',
       inputSchema: z.object({ daemon: z.string().min(1).optional() }),
       resultSchema: WorkAdaptersResultSchema,
       policy: { safetyClass: 'read' },
@@ -598,7 +603,7 @@ export function createWorkVerbOperations(deps: WorkVerbDeps): OperationDefinitio
     defineOperation({
       name: 'work.send',
       description:
-        'Send a message to existing work by the ref from work.find, work.start or work.status. For Codex, choose mode steer for instant feedback or a change of direction; it returns not_delivered with a reason if steering is unavailable, never queues. Choose mode queue for the next task after the current turn. Default mode auto preserves each adapter’s normal send behavior; on Codex it steers first and queues only when unavailable. Explicit steer and queue require those capabilities on the target adapter; otherwise they return unsupported without sending. HyperNeo sessions and Space agents support auto, not explicit steer; use auto for those targets. Other adapters retain their own steer and queue delivery semantics. Codex first steers into the running turn via its Desktop owner, or app-server when Desktop does not own it; steeredIntoTurnId confirms that turn. In Codex auto mode, when steering is unavailable, it queues instead and returns queuedSubmissionId. Use work.queue to explicitly wait for the next turn. An uncertain steer is not retried or also queued. delivered false normally means accepted and queued behind the current turn; with unconfirmed true, only the transport write succeeded and peer acceptance is unknown. Optional receipt contains opaque executionId and inputId for that submission, scoped to the requested work ref and its daemon; it is not proof of completion or result attribution. ok false names why it was not accepted: not_found, not_open (archived or ended work), not_delivered, claude_cli_login_expired (tell the user to run `claude auth login`; retrying will not help), unsupported or unreachable. Only Neo or the user can change work on another daemon; other agents get unsupported.',
+        'Send a message to existing work by the ref from work.find, work.start or work.status. For Codex, choose mode steer for instant feedback or a change of direction; it returns not_delivered with a reason if steering is unavailable, never queues. Choose mode queue for the next task after the current turn. Copilot strict steer is unsupported: immediate input can fall back to a later turn. Copilot auto and queue enqueue input; delivered false plus receipt/queuedSubmissionId means accepted and waiting for consumption. Use receipt-bound work.status for its reply. Default mode auto preserves each adapter’s normal send behavior; on Codex it steers a running turn or starts an idle turn. Explicit steer and queue require those capabilities on the target adapter; otherwise they return unsupported without sending. HyperNeo sessions and Space agents support auto, not explicit steer; use auto for those targets. Other adapters retain their own steer and queue delivery semantics. Codex first steers into the running turn via its Desktop owner, or app-server when Desktop does not own it; steeredIntoTurnId confirms that turn. In Codex auto mode, an idle thread starts a turn and returns startedTurnId with delivered true; if starting is unavailable or unconfirmed, it returns not_delivered without queueing. Use work.queue to explicitly wait for the next turn. An uncertain steer is not retried or also queued. delivered false normally means accepted and queued behind the current turn; with unconfirmed true, only the transport write succeeded and peer acceptance is unknown. Optional receipt contains opaque executionId and inputId for that submission, scoped to the requested work ref and its daemon; it is not proof of completion or result attribution. ok false names why it was not accepted: not_found, not_open (archived or ended work), not_delivered, claude_cli_login_expired (tell the user to run `claude auth login`; retrying will not help), unsupported or unreachable. Only Neo or the user can change work on another daemon; other agents get unsupported.',
       inputSchema: SendWorkInputSchema,
       resultSchema: SendWorkResultSchema,
       policy: { safetyClass: 'mutate' },

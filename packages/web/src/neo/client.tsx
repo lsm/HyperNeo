@@ -4,13 +4,22 @@ import { render } from 'preact';
 import { ConnectionOverlay } from '../components/ConnectionOverlay.tsx';
 import { NeoLive } from './NeoLive.tsx';
 import { NeoExamples } from './NeoExamples.tsx';
+import { ArtifactPreview } from '../components/artifacts/ArtifactPreview.tsx';
 import { useViewportSafety } from '../hooks/useViewportSafety.ts';
 import { useNeoLanguageSetting } from './useNeoLanguageSetting.ts';
 
 function NeoPage() {
   useViewportSafety();
   useNeoLanguageSetting();
-  if (new URLSearchParams(location.search).has('examples')) return <NeoExamples />;
+  const params = new URLSearchParams(location.search);
+  if (params.has('examples')) return <NeoExamples />;
+  const artifactId = params.get('artifact');
+  if (artifactId)
+    return (
+      <div class="neo-shell h-dvh">
+        <ArtifactPreview artifactId={artifactId} onBack={() => location.assign('/neo')} />
+      </div>
+    );
   return (
     <>
       <ConnectionOverlay />

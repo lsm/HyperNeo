@@ -1,5 +1,11 @@
+import { createArtifactReadOperations } from '../artifacts/read-operations.ts';
+import { createArtifactReferenceResolve } from '../artifacts/resolve-operation.ts';
 import { createArtifactRegistration } from '../artifacts/register-operation.ts';
 import { createBuildOperation } from '../system/build-operation.ts';
+import { daemonPairingLimiter } from '../pairing/pairing-limiter.ts';
+import { createDevicePairingOperations } from '../pairing/pairing-operations.ts';
+import { announceDeviceRevoked } from '../pairing/upgrade-auth.ts';
+import { DevicePairingRepository } from '../../storage/repositories/device-pairing-repository.ts';
 import type { Database } from '../../storage/database.ts';
 import { transitionStandaloneTask } from '../../storage/tasks/transition-task.ts';
 import { listTaskCores } from '../../storage/tasks/list-tasks.ts';
@@ -106,7 +112,15 @@ export function createDatabaseOperationCatalog(
     [
       ...extra,
       createArtifactRegistration(() => db.getDatabase()),
+      ...createArtifactReadOperations(() => db.getDatabase()),
+      createArtifactReferenceResolve(() => db.getDatabase()),
       createBuildOperation(() => db.getDatabase().prepare('SELECT 1').get()),
+      ...createDevicePairingOperations({
+        repo: () => new DevicePairingRepository(db.getDatabase()),
+        limiter: daemonPairingLimiter,
+        now: Date.now,
+        revoked: announceDeviceRevoked,
+      }),
       createDaemonSnapshotOperation({
         readResources: (input) => new DaemonInventoryRepository(db.getDatabase()).read(input),
         readCapabilities: (caller) =>

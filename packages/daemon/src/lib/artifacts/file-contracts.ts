@@ -3,6 +3,7 @@ import {
   ARTIFACT_KINDS,
   ARTIFACT_REFUSALS,
   type ArtifactLimits,
+  type ArtifactFileMetadata,
   type ArtifactProjection,
   type ArtifactReadResult,
   type ArtifactRef,
@@ -40,6 +41,19 @@ export const ArtifactRefSchema: z.ZodType<ArtifactRef> = z.strictObject({
   kind: z.enum(ARTIFACT_KINDS),
   byteLength: byteCount,
 });
+
+export function unregisteredArtifact(
+  refs: readonly ArtifactRef[],
+  registered: readonly (ArtifactRef | null)[]
+): ArtifactRef | null {
+  const fields = ['daemonId', 'artifactId', 'title', 'kind', 'byteLength'] as const;
+  return (
+    refs.find((ref, index) => {
+      const known = registered[index];
+      return !known || fields.some((field) => known[field] !== ref[field]);
+    }) ?? null
+  );
+}
 
 export const ArtifactProjectionSchema: z.ZodType<ArtifactProjection> = z.strictObject({
   artifacts: z.array(ArtifactRefSchema).max(16).optional(),
@@ -90,3 +104,29 @@ export const ArtifactReadResultSchema: z.ZodType<ArtifactReadResult> = z.union([
         value.complete === (value.nextOffset === value.byteLength)
     ),
 ]);
+
+export const ArtifactFileMetadataSchema: z.ZodType<ArtifactFileMetadata> = z.strictObject({
+  context: z.strictObject({ kind: z.enum(['todo', 'ask']), id: z.string().min(1).max(200) }),
+  artifact: ArtifactRefSchema,
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  createdAt: byteCount,
+  sourcePath: z.string(),
+  producer: z.strictObject({ adapter: z.string().min(1), id: z.string().min(1) }),
+  revision: z
+    .discriminatedUnion('kind', [
+      z.strictObject({
+        kind: z.literal('worktree'),
+        baseCommit: z
+          .string()
+          .regex(/^[a-f0-9]{40}$/)
+          .optional(),
+      }),
+      z.strictObject({
+        kind: z.literal('commit'),
+        repository: z.string().regex(/^github\.com\/[a-z0-9_.-]+\/[a-z0-9_.-]+$/),
+        commitSha: z.string().regex(/^[a-f0-9]{40}$/),
+        blobSha: z.string().regex(/^[a-f0-9]{40}$/),
+      }),
+    ])
+    .optional(),
+});

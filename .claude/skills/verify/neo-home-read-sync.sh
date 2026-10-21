@@ -9,7 +9,7 @@ cp "$REPO/.claude/skills/verify/gh-stub.sh" "$RUN/bin/gh"
 cat > "$RUN/bin/git" <<'SH'
 #!/bin/sh
 for arg do
- if [ "$arg" = pull ]; then printf 'pull\n' >> "$VERIFY_PULLS"; fi
+ if [ "$arg" = fetch ]; then printf 'pull\n' >> "$VERIFY_PULLS"; fi
 done
 exec /usr/bin/git "$@"
 SH

@@ -16,7 +16,7 @@ and per-input evidence while `system.health` confirms daemon responsiveness.
 The first input stays incomplete through internal turn-end/assistant-idle events;
 final replies bind to consumed input IDs, duplicate authoritative messages do not
 duplicate the report, unrelated messages stay out, and session idle settles the
-matched replies. Public `work.adapters` now advertises `find/start/status/stop`.
+matched replies. Public `work.adapters` now advertises `find/start/send/queue/status/stop`.
 An idle before the first input must remain queued. After 270 additional settled
 inputs, only the latest 64 settled receipts remain; the runtime stays usable
 across dedup retention rollover. A rejected permission followed by idle must stay
@@ -44,7 +44,7 @@ only synthetic data, a fresh HOME/DB, a mock GitHub CLI and a fixture executable
 no auth/token files, real sessions, real Copilot, model/provider or GUI is used.
 This proves construction inside the daemon process through a test-only door,
 not public worker operations or production runtime compatibility. The lifecycle
-journey below covers start/status/stop; send/queue remain later slices.
+journey covers start/status/stop; the send/queue journey covers owned follow-ups and terminal resume.
 
 Run the focused process tests from `packages/daemon` with
 `bunx vitest run tests/unit/1-core/drivers/copilot-worker.test.ts`.

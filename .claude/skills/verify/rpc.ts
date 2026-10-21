@@ -4,7 +4,10 @@ if (!port || !name) {
   console.error('usage: VERIFY_PORT=<port> bun rpc.ts <operation | rpc:method> [json] [eventSeconds]');
   process.exit(2);
 }
-const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+const headers: Record<string, string> = {};
+if (process.env.VERIFY_CREDENTIAL) headers.authorization = `Bearer ${process.env.VERIFY_CREDENTIAL}`;
+if (process.env.VERIFY_ORIGIN) headers.origin = process.env.VERIFY_ORIGIN;
+const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, { headers } as unknown as string[]);
 await new Promise((resolve, reject) => {
   ws.onopen = resolve;
   ws.onerror = reject;

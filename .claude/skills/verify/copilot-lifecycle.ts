@@ -57,8 +57,28 @@ const status = async (work: WorkStarted) => {
 };
 try {
   await connect();
-  const catalog = await rpc('work.adapters', {}) as { value: { id: string; capabilities: string[] }[] };
-  assert.deepEqual(catalog.value.find(adapter => adapter.id === 'copilot-cli')?.capabilities, ['find', 'start', 'status', 'stop']);
+  const catalog = await rpc('work.adapters', {}) as { value: { id: string; capabilities: string[]; unsupportedCapabilities?: { steer?: string } }[] };
+  assert.deepEqual(catalog.value.find(adapter => adapter.id === 'copilot-cli')?.capabilities, ['find', 'start', 'send', 'queue', 'status', 'stop']);
+  if (mode === 'steer') {
+    const adapter = catalog.value.find(adapter => adapter.id === 'copilot-cli')!;
+    assert.match(adapter.unsupportedCapabilities?.steer ?? '', /same-turn/);
+    const active = await start('hold');
+    const traffic = () => readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8');
+    for (const ref of [active.ref, { adapter: 'copilot-cli', id: crypto.randomUUID() }]) {
+      const before = traffic();
+      const rejected = await rpc('work.send', { ref, message: 'NEVER_QUEUE_STEER', mode: 'steer' }) as { ok: boolean; reason: string; detail: string };
+      assert.equal(rejected.ok, false);
+      assert.equal(rejected.reason, 'unsupported');
+      assert.equal(rejected.detail, adapter.unsupportedCapabilities!.steer);
+      assert.equal(traffic(), before, 'steer must not reach the runtime');
+    }
+    assert.equal((await status(active)).status, 'running');
+    assert.deepEqual(await rpc('work.stop', { ref: active.ref }), { ok: true, value: { stopped: true } });
+    const before = traffic();
+    const rejected = await rpc('work.send', { ref: active.ref, message: 'NEVER_RESUME_STEER', mode: 'steer' }) as { reason: string };
+    assert.equal(rejected.reason, 'unsupported');
+    assert.equal(traffic(), before, 'steer must not resume stopped work');
+  }
   if (mode === 'reap' || mode === 'all') {
     for (const message of ['settled', 'error', 'late-settled']) {
       const work = await start(message);
@@ -142,7 +162,7 @@ try {
     assert.equal(concurrent.value.status, 'stopped', 'status overlapping runtime close must retain stopped');
   } finally { writeFileSync(join(run, 'workspace/release-shutdown'), 'release'); assert.deepEqual(await stopping, { ok: true, value: { stopped: true } }); }
   assert.equal((await status(stopped)).status, 'stopped');
-  assert.equal((await rpc('work.send', { ref: stopped.ref, message: 'do not send' }) as { reason: string }).reason, 'unsupported');
+  assert.equal((await rpc('work.send', { ref: stopped.ref, message: 'do not send', mode: 'steer' }) as { reason: string }).reason, 'unsupported');
   assert.equal((await rpc('work.stop', { ref: { adapter: 'copilot-cli', id: crypto.randomUUID() } }) as { reason: string }).reason, 'not_found');
   installFixture('--logged-out');
   const loggedOut = await rpc('work.start', { adapter: 'copilot-cli', place: complete.place, title: 'No login', model: 'synthetic-model', message: 'never delivered' }) as { ok: boolean; detail: string };
@@ -189,7 +209,7 @@ try {
   assert.equal((await status(stopped)).status, 'stopped');
   const recovered = await rpc('work.status', { ref: active.ref, receipt: active.receipt }) as { ok: boolean; reason: string };
   assert.equal(recovered.ok, false); assert.equal(recovered.reason, 'unreachable');
-  assert.equal(readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').trim().split('\n').filter(line => JSON.parse(line).method === 'session.send').length, mode === 'all' ? 10 : mode === 'reap' ? 8 : ['stop-terminal', 'abort-window'].includes(mode) ? 6 : 5);
+  assert.equal(readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').trim().split('\n').filter(line => JSON.parse(line).method === 'session.send').length, mode === 'all' ? 10 : mode === 'reap' ? 8 : ['stop-terminal', 'abort-window', 'steer'].includes(mode) ? 6 : 5);
   console.log(`PASS public Copilot work.start/status/stop: relative DB, durable terminal replies, concurrent stop/status, model rejection, denied permission, abort evidence and no replay. ${run}/evidence/observed.json`);
 } finally {
   ws?.close(); await app?.cleanup();

@@ -48,6 +48,7 @@ try {
  const normal = await divergent('notes.md'); evidence.normal = normal;
  if (mode === 'ignored') {
   evidence.privateAfterConflictRead = await readFile(join(root, 'private-note.txt'), 'utf8').catch(() => null);
+  if (phase === 'after') assert.equal(evidence.privateAfterConflictRead, 'Human private bytes\n');
   await writeFile(join(root, 'private-note.txt'), 'Human private bytes\n');
  }
  const input = { path: normal.path, content: other, message: 'Apply recorded choice', conflictQuestionId: normal.questionId };

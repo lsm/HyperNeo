@@ -1,6 +1,6 @@
 import { describe, expect, mock, spyOn, test } from 'bun:test';
 import { hostname } from 'node:os';
-import { NEO_WORK_BLOCKER, NEO_WORK_GOAL_REMAINING } from '@hyperneo/prompts';
+import { NEO_WORK_BLOCKER, NEO_WORK_GOAL, NEO_WORK_GOAL_REMAINING } from '@hyperneo/prompts';
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoAsk, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
@@ -74,7 +74,7 @@ describe('driverWorkCall', () => {
     const goal = { workId: 'w1', goal: 'A full iOS app', doneWhen: null };
     for (const target of [startTarget, sendTarget])
       expect(driverWorkCall(target, work, goal).input.message).toContain(
-        'Neo routed this to you: do it here, not by handing it to another session or chat.\nWhat the human asked: A full iOS app'
+        `${NEO_WORK_GOAL}\nWhat the human asked: A full iOS app`
       );
   });
 
@@ -115,7 +115,7 @@ describe('withWorkGoal', () => {
   test('appends the goal and checklist, and gives every brief the blocker line', () => {
     const goal = { workId: 'w1', goal: 'A full iOS app', doneWhen: '- runs in the simulator' };
     expect(withWorkGoal('Build the chat screen.', goal)).toBe(
-      `Build the chat screen.\n\nNeo routed this to you: do it here, not by handing it to another session or chat.\nWhat the human asked: A full iOS app\nDone when:\n- runs in the simulator\n${NEO_WORK_GOAL_REMAINING}\n${NEO_WORK_BLOCKER}`
+      `Build the chat screen.\n\n${NEO_WORK_GOAL}\nWhat the human asked: A full iOS app\nDone when:\n- runs in the simulator\n${NEO_WORK_GOAL_REMAINING}\n${NEO_WORK_BLOCKER}`
     );
     expect(withWorkGoal('Build the chat screen.', null)).toBe(
       `Build the chat screen.\n\n${NEO_WORK_BLOCKER}`
@@ -208,6 +208,18 @@ describe('driverWorkCaller', () => {
 });
 
 describe('readDriverOutcome', () => {
+  test('Copilot pending receipt is accepted queued work with its original attribution', () => {
+    const ref = { adapter: 'copilot-cli', id: 'owned-session' };
+    const receipt = { executionId: ref.id, inputId: 'queued-input' };
+    const delivery = { delivered: false, queuedSubmissionId: receipt.inputId, receipt };
+    expect(
+      readDriverOutcome(
+        { verb: 'send', ref },
+        { kind: 'completed', value: { ok: true, value: delivery } }
+      )
+    ).toEqual({ ref, delivery, queued: true, receipt });
+  });
+
   test('retains reported effort and ignores malformed effort without inventing a value', () => {
     const ref = { adapter: 'codex-desktop', id: 't1' };
     for (const effort of ['medium', undefined, null, 3, { value: 'high' }]) {

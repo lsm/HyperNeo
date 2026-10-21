@@ -16,6 +16,9 @@ import {
 } from './todo-completion.ts';
 import { planNeoTodoAwaitingStart } from './todo-runner.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
+import { ArtifactRefSchema, unregisteredArtifact } from '../artifacts/file-contracts.ts';
+import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
 
 type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
@@ -134,6 +137,7 @@ const Edit = z.object({
   doneWhen: Text.optional(),
   done: z.enum(['met', 'reported']).optional(),
   evidence: Text.optional(),
+  artifacts: z.array(ArtifactRefSchema).min(1).max(16).optional(),
 });
 
 const Remove = z.object({
@@ -161,6 +165,7 @@ export const NeoTodoSchema = z.object({
   addedAfterStart: z.boolean(),
   report: z.string().nullable(),
   evidence: z.string().nullable(),
+  artifacts: z.array(ArtifactRefSchema).readonly().optional(),
   createdAt: z.number(),
   updatedAt: z.number(),
   startedAt: z.number().nullable(),
@@ -192,6 +197,8 @@ export function planNeoTodoEdit(
   if (todo.state === 'removed') return fail('todo_removed: this todo was removed.');
   if (input.done && !input.evidence)
     return fail('evidence_missing: ticking a todo needs evidence.');
+  if (input.artifacts && !input.done)
+    return fail('evidence_missing: artifacts are evidence; pass them with done.');
   return {
     value: {
       todo,
@@ -201,9 +208,22 @@ export function planNeoTodoEdit(
         ...(input.done ? { state: 'done', finishedAt: now } : {}),
         ...(input.done === 'met' ? { evidence: input.evidence } : {}),
         ...(input.done === 'reported' ? { report: input.evidence } : {}),
+        ...(input.artifacts ? { artifacts: input.artifacts } : {}),
       },
     },
   };
+}
+
+export function requireNeoTodoArtifacts(
+  plan: { todo: NeoTodo; patch: NeoTodoPatch },
+  registered: readonly (ArtifactRef | null)[]
+): Gate<{ todo: NeoTodo; patch: NeoTodoPatch }> {
+  const unknown = unregisteredArtifact(plan.patch.artifacts ?? [], registered);
+  return unknown
+    ? fail(
+        `invalid_artifact_reference: artifact "${unknown.artifactId}" is not one you can attach as given; pass the reference artifact.file.register or artifact.file.get returned.`
+      )
+    : { value: plan };
 }
 
 export function planNeoTodoRemove(
@@ -244,7 +264,8 @@ export function createNeoTodoOperations(
   todos: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
   controls: NeoTodoControls,
-  packs: () => readonly NeoPack[]
+  packs: () => readonly NeoPack[],
+  artifact: ArtifactRefReader
 ) {
   const completion = (plan: { todo: NeoTodo; patch: NeoTodoPatch }) =>
     plan.patch.state === 'done' ? readNeoTodoCompletion(packs(), plan.todo) : null;
@@ -344,6 +365,13 @@ export function createNeoTodoOperations(
       'result:outcome'
     )
     .pipe(planNeoTodoEdit, ['outcome', 'input'], 'result:outcome')
+    .pipe(
+      (plan: { patch: NeoTodoPatch }, caller: OperationCaller) =>
+        (plan.patch.artifacts ?? []).map((ref) => artifact(ref.artifactId, caller)),
+      ['outcome', 'caller'],
+      'registered'
+    )
+    .pipe(requireNeoTodoArtifacts, ['outcome', 'registered'], 'result:outcome')
     .pipe(withUrls, ['outcome', 'input'], 'result:outcome')
     .pipe(completion, 'outcome', 'completion')
     .pipe(requireNeoTodoMayFinish, ['outcome', 'completion'], 'result:outcome')
@@ -408,7 +436,7 @@ export function createNeoTodoOperations(
     defineOperation({
       name: 'neo.todo.edit',
       description:
-        'Change a todo on an open ask you own: title or doneWhen; addUrls appends PR URLs to its existing PR-merge check and updates doneWhen, refusing URLs another live todo on this ask tracks. Prefer editing to adding a duplicate PR todo. Or tick it done with evidence (done met for what you read, reported for a claim you cannot read).',
+        'Change a todo on an open ask you own: title or doneWhen; addUrls appends PR URLs to its existing PR-merge check and updates doneWhen, refusing URLs another live todo on this ask tracks. Prefer editing to adding a duplicate PR todo. Or tick it done with evidence (done met for what you read, reported for a claim you cannot read); attach a document or evidence file as the reference artifact.file.register returned in artifacts, with one sentence of evidence, not the pasted document.',
       inputSchema: Edit,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

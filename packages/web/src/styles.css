@@ -788,6 +788,12 @@ html {
   color: var(--prose-link-hover);
 }
 
+.prose [data-preview-reference]:not(a) {
+  color: var(--prose-link);
+  text-decoration: underline dotted;
+  cursor: pointer;
+}
+
 .prose a.markdown-image-link {
   text-decoration: none;
 }
