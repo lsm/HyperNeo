@@ -51,14 +51,9 @@ const treeSchema = z.object({
 });
 
 async function json(target: Target, suffix: string, blob = false) {
+  const endpoint = `repos/${target.repository.slice('github.com/'.length)}/git/${suffix}`;
   const result = await runGhJson(
-    [
-      'gh',
-      'api',
-      '--hostname',
-      'github.com',
-      `repos/${target.repository.slice('github.com/'.length)}/git/${suffix}`,
-    ],
+    ['gh', 'api', '--hostname', 'github.com', endpoint],
     homedir(),
     spawnProcess,
     {
@@ -68,7 +63,14 @@ async function json(target: Target, suffix: string, blob = false) {
       ...(blob ? { maxBufferBytes: Math.ceil(limit * 1.5) + 8192 } : {}),
     }
   );
-  return result.ok ? result.data : null;
+  const data = result.ok ? result.data : null;
+  return data &&
+    typeof data === 'object' &&
+    'url' in data &&
+    typeof data.url === 'string' &&
+    data.url.toLowerCase() === `https://api.github.com/${endpoint}`.toLowerCase()
+    ? data
+    : null;
 }
 
 async function locate(target: Target) {

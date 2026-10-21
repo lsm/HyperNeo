@@ -13,7 +13,8 @@ root invocations require its installed binary and absolute config/root paths.
 
 The reader accepts full commit SHA only, uses the existing bounded gh lookup,
 checks the returned commit/tree IDs, walks nonrecursive tree objects by exact
-segment, and admits regular blob modes only. Never follow a symlink, submodule,
+segment and requires each returned API object URL to match its requested endpoint.
+It admits regular blob modes only. Never follow a symlink, submodule,
 download_url or authored URL. Enforce 64 components, 64 MiB decoded bytes, metadata
 one-MiB responses and a blob-only bounded JSON envelope large enough for Base64.
 Malformed/truncated responses refuse; no bytes are silently shortened. Require
