@@ -88,6 +88,17 @@ export async function createArtifactCaptureStore(
         entries: (await inventory(root)).entries,
       };
     },
+    async hashSource(sourceRoot: string, segments: string[]) {
+      const result = await withArtifactDescriptor(sourceRoot, segments, async (fd, initial) => {
+        const admission = admitArtifactStorage(initial.size, limits, 0, 0);
+        if (typeof admission !== 'number') return admission;
+        const sha256 = await copyDescriptor(fd, initial);
+        return sha256
+          ? { accepted: true as const, sha256 }
+          : { accepted: false as const, reason: 'source_changed' as const };
+      });
+      return result.accepted ? result.value : result;
+    },
     async capture(sourceRoot: string, segments: string[]) {
       const result = await withArtifactDescriptor(sourceRoot, segments, async (fd, initial) => {
         const admission = admitArtifactStorage(initial.size, limits, used, reserved);

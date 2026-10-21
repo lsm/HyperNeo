@@ -1,0 +1,196 @@
+import { createHash, randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
+import fs from 'node:fs/promises';
+import { join } from 'node:path';
+import superpipe, { type PipelineAPI } from 'superpipe';
+import { z } from 'zod';
+import type { ArtifactRef, ArtifactRefusal } from '@hyperneo/shared/types/artifact-file';
+import type { Database } from '../../storage/sqlite-compat.ts';
+import { ArtifactFileRepository } from '../../storage/repositories/artifact-file-repository.ts';
+import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import { getDataDir } from '../data-dir.ts';
+import { createArtifactCaptureStore } from './capture-store.ts';
+import { ArtifactRefSchema, ArtifactRefusalSchema } from './file-contracts.ts';
+import { admitArtifactCapture } from './file-policy.ts';
+import { loadRegistrationBinding } from './registration-binding.ts';
+import { withStoredArtifactDescriptor } from '../runtime-artifact-open.ts';
+import { readSync } from 'node:fs';
+
+export const RegisterArtifactInput = z.strictObject({
+  requestId: z.string().min(1).max(200),
+  context: z.strictObject({ kind: z.enum(['todo', 'ask']), id: z.string().min(1).max(200) }),
+  path: z.string().min(1).max(4096),
+  title: z.string().trim().min(1).max(200),
+});
+type Input = z.infer<typeof RegisterArtifactInput>;
+const textKinds = new Map<string, ArtifactRef['kind']>([
+  ['md', 'markdown'],
+  ['markdown', 'markdown'],
+  ['html', 'html'],
+  ['htm', 'html'],
+  ['json', 'json'],
+  ['log', 'log'],
+  ['txt', 'text'],
+]);
+const instances = new WeakMap<Database, ReturnType<typeof registrationService>>();
+const refused = (reason: ArtifactRefusal['reason']): ArtifactRefusal => ({
+  accepted: false,
+  reason,
+});
+
+function storedKind(root: string, hash: string, path: string) {
+  return withStoredArtifactDescriptor(root, hash, (fd) => {
+    const head = Buffer.alloc(1024);
+    const count = readSync(fd, head, 0, head.length, 0);
+    const bytes = head.subarray(0, count);
+    const extension = path.split('.').at(-1)?.toLowerCase();
+    if (['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(extension ?? '')) {
+      const magic = bytes.toString('hex');
+      return (extension === 'png' && magic.startsWith('89504e470d0a1a0a')) ||
+        (['jpg', 'jpeg'].includes(extension!) && magic.startsWith('ffd8ff')) ||
+        (extension === 'gif' && /^GIF8[79]a/.test(bytes.toString())) ||
+        (extension === 'webp' &&
+          bytes.toString('ascii', 0, 4) === 'RIFF' &&
+          bytes.toString('ascii', 8, 12) === 'WEBP')
+        ? ('image' as const)
+        : null;
+    }
+    try {
+      new TextDecoder('utf-8', { fatal: true }).decode(bytes, { stream: true });
+      if (bytes.includes(0)) return null;
+      return textKinds.get(extension ?? '') ?? null;
+    } catch {
+      return null;
+    }
+  });
+}
+
+function registrationService(db: Database, data: string, home: string) {
+  const registry = new ArtifactFileRepository(db);
+  const root = join(data, 'artifacts');
+  let store: ReturnType<typeof createArtifactCaptureStore> | undefined;
+  let lane = Promise.resolve();
+  const policy = {
+    daemonId: registry.daemonId,
+    home,
+    loadBinding: (context: Input['context']) =>
+      loadRegistrationBinding(db, registry.daemonId, context),
+  };
+  async function prepare(input: Input, caller: OperationCaller) {
+    const plan = await admitArtifactCapture(input.context, input.path, caller, policy);
+    return 'accepted' in plan ? { reason: plan } : { value: plan };
+  }
+  type Plan = Extract<Awaited<ReturnType<typeof prepare>>, { value: unknown }>['value'];
+  async function capture(plan: Plan, input: Input, caller: OperationCaller) {
+    const binding = policy.loadBinding(input.context);
+    if (!binding) return refused('unavailable');
+    const producer = JSON.stringify({
+      adapter: 'hyperneo',
+      id: binding.workerSessionId ?? binding.neoSessionId,
+    });
+    const fingerprint = createHash('sha256')
+      .update(JSON.stringify([plan, producer, input.title]))
+      .digest('hex');
+    async function finish(receipt: () => unknown) {
+      const current = await prepare(input, caller);
+      if ('reason' in current) return current.reason;
+      if (
+        JSON.stringify(current.value) !== JSON.stringify(plan) ||
+        JSON.stringify(policy.loadBinding(input.context)) !== JSON.stringify(binding)
+      )
+        return refused('unavailable');
+      return receipt();
+    }
+    const previous = registry.receipt(input.context, input.requestId);
+    if (previous && previous.fingerprint !== fingerprint) return refused('source_changed');
+    const owner = await (store ??= createArtifactCaptureStore(root));
+    if (previous) {
+      const hash = await owner.hashSource(plan.root, plan.relativePath.split('/'));
+      if (hash.accepted)
+        return hash.sha256 === previous.sha256
+          ? finish(() => JSON.parse(previous.receipt))
+          : refused('source_changed');
+      if (hash.reason === 'unsafe_path') {
+        const absent = await fs.lstat(join(plan.root, plan.relativePath)).then(
+          () => false,
+          (error: NodeJS.ErrnoException) => error.code === 'ENOENT'
+        );
+        if (absent) return finish(() => JSON.parse(previous.receipt));
+      }
+      return hash;
+    }
+    const snapshot = await owner.capture(plan.root, plan.relativePath.split('/'));
+    if (!snapshot.accepted) return snapshot;
+    const kind = await storedKind(root, snapshot.sha256, plan.relativePath);
+    if (!kind.accepted) return kind;
+    if (!kind.value) return refused('unsupported_type');
+    return finish(() =>
+      registry.save(
+        input.context,
+        input.requestId,
+        fingerprint,
+        snapshot.sha256,
+        {
+          daemonId: registry.daemonId,
+          artifactId: randomUUID(),
+          title: input.title,
+          kind: kind.value!,
+          byteLength: snapshot.byteLength,
+        },
+        producer,
+        plan.relativePath
+      )
+    );
+  }
+  const register = (superpipe({})('artifact-file-register') as PipelineAPI)
+    .input(['input', 'caller'])
+    .pipe(prepare, ['input', 'caller'], 'result:registration')
+    .pipe(capture, ['registration', 'input', 'caller'], 'registration')
+    .endAsync('registration') as (input: Input, caller: OperationCaller) => Promise<unknown>;
+  return async (input: Input, caller: OperationCaller) => {
+    const previous = lane;
+    let release = () => {};
+    lane = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await register(input, caller);
+    } finally {
+      release();
+    }
+  };
+}
+
+export function createArtifactRegistration(
+  database: () => Database,
+  data = getDataDir(),
+  home = homedir()
+) {
+  return defineOperation({
+    name: 'artifact.file.register',
+    description:
+      'Snapshot a regular file in a persisted work/ask workspace. Supply a stable requestId, context, path and short title. Publishes only an immutable reference; source and stored bytes are retained. No new filesystem roots or sharing rights.',
+    inputSchema: RegisterArtifactInput,
+    resultSchema: z.union([
+      ArtifactRefusalSchema,
+      z.strictObject({
+        accepted: z.literal(false),
+        reason: z.literal('size_limit'),
+        actualBytes: z.number().int().nonnegative(),
+        limitBytes: z.number().int().positive(),
+      }),
+      z.strictObject({ accepted: z.literal(true), artifact: ArtifactRefSchema }),
+    ]),
+    policy: { safetyClass: 'mutate' },
+    async execute(input, caller) {
+      const db = database();
+      let service = instances.get(db);
+      if (!service) {
+        service = registrationService(db, data, home);
+        instances.set(db, service);
+      }
+      return service(input, caller);
+    },
+  });
+}
