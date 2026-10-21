@@ -34,7 +34,13 @@ function RunTime({ at }: { at: number | null }) {
     </time>
   );
 }
-function GoalDefinition({ ownerSessionId, goalId }: { ownerSessionId: string; goalId: string }) {
+export function GoalDefinition({
+  ownerSessionId,
+  goalId,
+}: {
+  ownerSessionId: string;
+  goalId: string;
+}) {
   const [goal, setGoal] = useState<SessionGoal | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {

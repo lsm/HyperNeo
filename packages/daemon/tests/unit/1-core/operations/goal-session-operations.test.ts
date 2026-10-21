@@ -63,6 +63,34 @@ function setup(packs: NeoPack[] = []) {
   return { db, call, audited, scheduler, goals, schedules };
 }
 
+describe('session goal detail reads', () => {
+  test('get and list project the persisted what-works note without changing it', async () => {
+    const { db, call } = setup();
+    try {
+      const created = await call('goal.session.create', {
+        title: 'Publish guide',
+        doneTest: 'Public',
+      });
+      expect(created.goal.worksNote).toBeNull();
+      db.prepare('UPDATE space_goals SET works_note = ? WHERE id = ?').run(
+        'Concrete examples work',
+        created.goal.id
+      );
+      expect((await call('goal.session.get', { goalId: created.goal.id })).goal.worksNote).toBe(
+        'Concrete examples work'
+      );
+      expect((await call('goal.session.list', {})).goals[0].worksNote).toBe(
+        'Concrete examples work'
+      );
+      expect(
+        db.prepare('SELECT works_note FROM space_goals WHERE id = ?').get(created.goal.id)
+      ).toEqual({ works_note: 'Concrete examples work' });
+    } finally {
+      db.close();
+    }
+  });
+});
+
 describe('goal-owned schedules', () => {
   test.each(['completed', 'archived', 'schedule_deleted', 'goal_deleted'] as const)(
     '%s during fact collection retires the wake without a failed delivery',

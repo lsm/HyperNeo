@@ -32,7 +32,8 @@ const git = async (...args: string[]) => {
 };
 const read = async (
   path: string,
-  caller: OperationCaller = { source: 'rpc', principal: 'local' }
+  caller: OperationCaller = { source: 'rpc', principal: 'local' },
+  includeRemote = false
 ) => {
   const registry = createOperationRegistry(
     createNeoHomeOperations(
@@ -44,7 +45,12 @@ const read = async (
       home
     )
   );
-  const outcome = await invokeOperation(registry, 'neo.home.read', { path }, caller);
+  const outcome = await invokeOperation(
+    registry,
+    'neo.home.read',
+    { path, ...(includeRemote ? { includeRemote: true } : {}) },
+    caller
+  );
   if (outcome.kind !== 'completed') throw new Error(outcome.message);
   return outcome.value as {
     ok: boolean;
@@ -52,6 +58,7 @@ const read = async (
     path?: string;
     content?: string;
     sha256?: string;
+    remoteUrl?: string | null;
   };
 };
 beforeEach(async () => {
@@ -73,6 +80,26 @@ afterEach(async () => {
 });
 
 describe('Neo home read', () => {
+  test.each([
+    ['git@github.com:example/neo-home.git', 'https://github.com/example/neo-home'],
+    [
+      'https://synthetic-user:synthetic-pass@example.invalid/team/neo.git',
+      'https://example.invalid/team/neo',
+    ],
+    ['/tmp/synthetic-remote.git', null],
+  ])(
+    'opt-in read projects a browser remote without network or userinfo: %s',
+    async (remote, expected) => {
+      await git('remote', 'add', 'origin', remote);
+      const head = await git('rev-parse', 'HEAD');
+      expect((await read('direction.md', undefined, true)).remoteUrl).toBe(expected);
+      expect((await read('direction.md')).remoteUrl).toBeUndefined();
+      expect(await git('rev-parse', 'HEAD')).toBe(head);
+    }
+  );
+  test('opt-in local read reports that no remote is configured', async () => {
+    expect((await read('direction.md', undefined, true)).remoteUrl).toBeNull();
+  });
   test('returns all local UTF-8 text and its hash, preserving human edits and HEAD', async () => {
     const content = '\ufeff  Human direction 🦊\n' + 'Full text.\n'.repeat(60000) + '\n';
     await writeFile(join(root, 'direction.md'), content);
