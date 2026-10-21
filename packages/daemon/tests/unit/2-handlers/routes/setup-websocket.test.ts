@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import { createWebSocketHandlers } from '../../../../src/routes/setup-websocket';
-import { MessageType } from '@hyperneo/shared';
+import { MessageType, subscribeToStructuredLogs, type StructuredLogEvent } from '@hyperneo/shared';
 
 interface MockWebSocket {
   data: {
@@ -56,6 +56,27 @@ describe('createWebSocketHandlers', () => {
     mockTransport.verifyChannelMembership.mockClear();
     mockTransport.handleClientMessage.mockClear();
     mockSessionManager.getSessionAsync.mockClear();
+  });
+
+  it('records the client identity and close code without logging peer text', () => {
+    const logs: StructuredLogEvent[] = [];
+    const unsubscribe = subscribeToStructuredLogs((event) => {
+      if (event.module === 'hyperneo:daemon:websocket') logs.push(event);
+    });
+    const ws = { data: { connectionSessionId: 'global' }, send: mock(), readyState: 1 };
+    try {
+      handlers.open(ws);
+      handlers.close(ws, 1001, 'PRIVATE_CLIENT_TEXT');
+      expect(logs.map((event) => event.message)).toEqual([
+        'client.websocket.open',
+        'client.websocket.close',
+      ]);
+      expect(logs[0].metadata.clientId).toBe('client-123');
+      expect(logs[1].metadata).toMatchObject({ clientId: 'client-123', code: 1001 });
+      expect(JSON.stringify(logs)).not.toContain('PRIVATE_CLIENT_TEXT');
+    } finally {
+      unsubscribe();
+    }
   });
 
   describe('open handler', () => {
