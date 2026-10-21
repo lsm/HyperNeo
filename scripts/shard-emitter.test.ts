@@ -47,7 +47,7 @@ test('shard hashes match POSIX cksum for UTF-8 and multi-byte lengths', () => {
     const paths = [
       'a.test.ts',
       '中文.test.ts',
-      `${'a'.repeat(120)}/${'b'.repeat(120)}/long.test.ts`,
+      `${'a'.repeat(128)}/${'b'.repeat(128)}/long.test.ts`,
     ];
     for (const path of paths) {
       const full = join(root, path);
