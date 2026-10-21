@@ -50,6 +50,7 @@ function withTodoText(snapshot: NeoSnapshot, limit: number): NeoSnapshot {
       })),
       questions: entry.questions.map((question) => ({
         ...question,
+        document: undefined,
         text: question.text.slice(0, Math.max(limit, 80)),
       })),
     })),

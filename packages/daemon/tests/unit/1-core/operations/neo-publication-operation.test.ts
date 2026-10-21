@@ -45,6 +45,13 @@ const draft = {
   fullText: '**Two differences** need a closer look. Nothing was published.',
   links: [],
 };
+const report = {
+  daemonId: '30000000-0000-4000-8000-000000000001',
+  artifactId: 'layout-report',
+  title: 'Layout report',
+  kind: 'html' as const,
+  byteLength: 86016,
+};
 const caller = (sessionId = root.sessionId, messageId = ask.messageId, human = true) => ({
   source: 'mcp' as const,
   sessionId,
@@ -136,6 +143,8 @@ describe('runtime-bound publication operation', () => {
         isHuman(input) &&
         mailbox.sdkMessageRepo.getUserSendStatus(input.sessionId, input.messageId) === 'consumed',
       notify,
+      artifact: (artifactId, who) =>
+        artifactId === report.artifactId && who.sessionId === root.sessionId ? report : null,
     };
     const publishRaw = createNeoPublisher(runtime);
     publish = ((input: unknown, who: OperationCaller) => {
@@ -144,6 +153,28 @@ describe('runtime-bound publication operation', () => {
     }) as typeof publishRaw;
   });
   afterEach(() => mailbox.close());
+
+  test('a delivered message carries the registered artifact references it was published with', async () => {
+    const result = await invoke({ ...draft, artifacts: [report] });
+    expect(result).toMatchObject({
+      kind: 'completed',
+      value: { accepted: true, publication: { artifacts: [report] } },
+    });
+    expect(ledger.list(conversationId)![0].artifacts).toEqual([report]);
+  });
+
+  test('a reference the daemon does not show this producer is refused before delivery', async () => {
+    for (const artifacts of [
+      [{ ...report, artifactId: 'missing' }],
+      [{ ...report, byteLength: 1 }],
+    ])
+      expect(await invoke({ ...draft, artifacts })).toMatchObject({
+        kind: 'completed',
+        value: { accepted: false, reason: 'invalid_artifact_reference' },
+      });
+    expect(ledger.list(conversationId)).toEqual([]);
+    expect(notify).not.toHaveBeenCalled();
+  });
 
   test('returns the answered human message and the delivered publication, without yielding', async () => {
     const yieldTurn = vi.fn();

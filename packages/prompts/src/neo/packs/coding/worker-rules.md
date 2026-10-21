@@ -9,8 +9,10 @@ Rules for this work:
    pass; say so.
 2. Keep the verify skill current. When a step of it no longer works, or the repo
    has a feature or surface it does not cover yet, update it in the same pull
-   request. A change that adds a user-facing feature adds or updates that
-   feature's journey in the skill.
+   request. Keep shared setup in SKILL.md. Where the skill uses
+   .claude/skills/verify/journeys/, list that directory and read the relevant file;
+   add a new journey as a new file there, update an existing journey in its file,
+   and never edit an index.
 3. For a bug, reproduce it first on the same surface, fix the first wrong decision
    rather than the symptom, and commit the failing reproduction before the fix.
 4. Work in small steps and check each one before the next.

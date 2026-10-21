@@ -54,7 +54,7 @@ async function startRemoteDaemon(knownSessionId: string): Promise<RemoteDaemon> 
   const transport = new WebSocketServerTransport({ name: 'remote-daemon-b', router });
   hub.registerTransport(transport);
   await transport.initialize();
-  setupOperationHandlers(hub, registry);
+  setupOperationHandlers(hub, registry, (clientId) => transport.deviceOf(clientId));
 
   const handlers = createWebSocketHandlers(transport, noSessionManager);
   const server: ServerHandle = await createHttpWsServer({

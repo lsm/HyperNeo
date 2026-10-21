@@ -64,7 +64,8 @@ describe('shared operation delivery parity', () => {
         listTasks: (input) => listTaskCores(mailbox.db, input),
         editTask: (input) => editStandaloneTaskWithDependencies(mailbox.db, input, () => {}),
         transitionTask: (input) => transitionStandaloneTask(mailbox.db, input, () => {}),
-      })
+      }),
+      () => null
     );
     await Promise.all(transports.map((transport) => transport.initialize()));
   });

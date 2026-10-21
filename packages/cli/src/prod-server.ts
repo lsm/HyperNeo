@@ -156,10 +156,13 @@ export async function startProdServer(config: Config) {
         return createCorsPreflightResponse();
       }
 
+      if (url.pathname === '/pair' && req.method === 'POST') return daemonContext.handlePair(req);
+
       if (isWebSocketPath(url.pathname)) {
         const upgraded = server.upgrade(req, {
           data: {
             connectionSessionId: 'global',
+            device: daemonContext.authenticateUpgrade(req, server.requestIP(req)?.address ?? null),
           },
         });
 

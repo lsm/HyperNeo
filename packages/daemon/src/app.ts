@@ -7,6 +7,10 @@ import { homedir } from 'os';
 import { parsePositiveInt, type Config } from './config.ts';
 import type { WebSocketData } from './types/websocket.ts';
 import { createHttpWsServer, type ServerHandle } from './lib/runtime-server/index.ts';
+import { createPairRoute } from './lib/pairing/pair-route.ts';
+import { createUpgradeAuthenticator, type UpgradeIdentity } from './lib/pairing/upgrade-auth.ts';
+import { daemonPairingLimiter } from './lib/pairing/pairing-limiter.ts';
+import { DevicePairingRepository } from './storage/repositories/device-pairing-repository.ts';
 import { Database } from './storage/database.ts';
 import { SessionManager } from './lib/session-manager.ts';
 import {
@@ -332,6 +336,8 @@ export interface CreateDaemonAppOptions {
 
 export interface DaemonAppContext {
   server: ServerHandle;
+  handlePair: (req: Request) => Promise<Response>;
+  authenticateUpgrade: (req: Request, remoteAddress: string | null) => UpgradeIdentity | null;
   db: Database;
   messageHub: MessageHub;
   sessionManager: SessionManager;
@@ -1034,6 +1040,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     startupTimer.start('rpc handlers + space runtime provision');
     const rpcHandlers = setupRPCHandlers({
+      deviceOf: (clientId) => transport.deviceOf(clientId),
       watchSessionRepo: async (owner, repo) =>
         (await githubEventExtension?.watchSessionRepo(owner, repo)) ?? null,
       followSessionTopics: (source) => sessionTopicSources.push(source),
@@ -1095,12 +1102,22 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const spaceRuntimeReadyPromise = spaceRuntimeService.ready();
 
     const wsHandlers = createWebSocketHandlers(transport, sessionManager);
+    const pairing = new DevicePairingRepository(db.getDatabase());
+    const handlePair = createPairRoute({
+      repo: pairing,
+      limiter: daemonPairingLimiter,
+      now: Date.now,
+    });
+    const authenticateUpgrade = createUpgradeAuthenticator({
+      devices: () => pairing,
+      now: Date.now,
+    });
 
     const server = await createHttpWsServer({
       hostname: config.host,
       port: config.port,
 
-      async fetch(req, upgrade) {
+      async fetch(req, upgrade, client) {
         const url = new URL(req.url);
 
         if (req.method === 'OPTIONS') {
@@ -1116,6 +1133,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         if (url.pathname === '/ws') {
           const upgradeResponse = upgrade(req, {
             connectionSessionId: 'global',
+            device: authenticateUpgrade(req, client?.remoteAddress ?? null),
           });
 
           if (upgradeResponse) {
@@ -1142,6 +1160,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
             }
           );
         }
+
+        if (url.pathname === '/pair' && req.method === 'POST') return handlePair(req);
 
         const extensionRoute = extensionManager
           .getRegisteredRoutes()
@@ -1682,6 +1702,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     return {
       server,
+      handlePair,
+      authenticateUpgrade,
       db,
       messageHub,
       sessionManager,

@@ -18,7 +18,7 @@ export interface NeoPublicationRevision {
   readonly awaiting?: string;
 }
 
-export interface NeoPublicationInput {
+export interface NeoPublicationInput extends ArtifactProjection {
   readonly conversationId: string;
   readonly publicationId: string;
   readonly askOrigin: NeoInputOrigin;
@@ -54,5 +54,3 @@ export type NeoPublicationAppendResult =
 export type NeoPublicationChangeResult =
   | { accepted: true; created: boolean; publication: NeoPublication }
   | { accepted: false; reason: 'not_found' | 'publication_conflict' };
-
-export type NeoPublicationArtifactInput = NeoPublicationInput & ArtifactProjection;

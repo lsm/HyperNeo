@@ -23,6 +23,7 @@ export type NeoTodoPatch = Partial<
     | 'replacedBy'
     | 'report'
     | 'evidence'
+    | 'artifacts'
     | 'startedAt'
     | 'finishedAt'
     | 'blockedReason'
@@ -40,6 +41,7 @@ const TODO_COLUMNS: Record<keyof NeoTodoPatch, string> = {
   replacedBy: 'replaced_by',
   report: 'report',
   evidence: 'evidence',
+  artifacts: 'artifacts_json',
   startedAt: 'started_at',
   finishedAt: 'finished_at',
   blockedReason: 'blocked_reason',
@@ -54,18 +56,26 @@ const ASK_SELECT = `SELECT id, goal_id AS goalId, project_id AS projectId, repo,
 const TODO_SELECT = `SELECT id, ask_id AS askId, position, title, done_when AS doneWhen,
   check_json AS checkJson, instruction, named, repo, state, reason, blocked_reason AS blockedReason,
   next_action AS nextAction, blocked_by AS blockedBy, replaced_by AS replacedBy,
-  added_after_start AS addedAfterStart, report, evidence, created_at AS createdAt,
+  added_after_start AS addedAfterStart, report, evidence, artifacts_json AS artifactsJson, created_at AS createdAt,
   updated_at AS updatedAt, started_at AS startedAt, finished_at AS finishedAt FROM neo_todos`;
 
 export type NeoQuestionDraft = Pick<
   NeoQuestion,
-  'text' | 'kind' | 'options' | 'multiple' | 'noLabel' | 'yesLabel' | 'startTodos' | 'confirm'
+  | 'text'
+  | 'kind'
+  | 'options'
+  | 'multiple'
+  | 'noLabel'
+  | 'yesLabel'
+  | 'startTodos'
+  | 'confirm'
+  | 'document'
 >;
 
 const QUESTION_SELECT = `SELECT id, ask_id AS askId, text, kind, options, multiple, no_label AS noLabel,
   yes_label AS yesLabel, start_todos AS startTodos, state, answer, answered_by AS answeredBy,
   answered_at AS answeredAt, retired_reason AS retiredReason, replaced_by AS replacedBy,
-  confirm_json AS confirmJson, created_at AS createdAt FROM neo_questions`;
+  confirm_json AS confirmJson, document, created_at AS createdAt FROM neo_questions`;
 
 type QuestionRow = Omit<
   NeoQuestion,
@@ -89,14 +99,22 @@ const toQuestion = ({ confirmJson, ...row }: QuestionRow): NeoQuestion => ({
   answer: parsed<NeoQuestionAnswer>(row.answer),
 });
 
-type TodoRow = Omit<NeoTodo, 'check' | 'named' | 'addedAfterStart'> & {
+type TodoRow = Omit<NeoTodo, 'check' | 'named' | 'addedAfterStart' | 'artifacts'> & {
   checkJson: string | null;
+  artifactsJson: string | null;
   named: string | null;
   addedAfterStart: number;
 };
 
-const toTodo = ({ checkJson, named, addedAfterStart, ...row }: TodoRow): NeoTodo => ({
+const toTodo = ({
+  checkJson,
+  artifactsJson,
+  named,
+  addedAfterStart,
+  ...row
+}: TodoRow): NeoTodo => ({
   ...row,
+  ...(artifactsJson ? { artifacts: JSON.parse(artifactsJson) as NeoTodo['artifacts'] } : {}),
   check: parsed<NeoTodoCheck>(checkJson),
   named: parsed<Record<string, unknown>>(named),
   addedAfterStart: addedAfterStart === 1,
@@ -222,6 +240,20 @@ export class NeoAskTodoRepository {
     return row ? toTodo(row) : null;
   }
 
+  getTodos(ids: readonly string[]): NeoTodo[] {
+    return (
+      this.db
+        .prepare(`${TODO_SELECT} WHERE id IN (SELECT value FROM json_each(?))`)
+        .all(JSON.stringify(ids)) as TodoRow[]
+    ).map(toTodo);
+  }
+
+  getAsks(ids: readonly string[]): NeoAsk[] {
+    return this.db
+      .prepare(`${ASK_SELECT} WHERE id IN (SELECT value FROM json_each(?))`)
+      .all(JSON.stringify(ids)) as NeoAsk[];
+  }
+
   listTodos(askId: string): NeoTodo[] {
     return (
       this.db
@@ -313,7 +345,9 @@ export class NeoAskTodoRepository {
         )
         .run(
           ...keys.map((key) =>
-            key === 'check' ? JSON.stringify(patch.check ?? null) : (patch[key] ?? null)
+            key === 'check' || key === 'artifacts'
+              ? JSON.stringify(patch[key] ?? null)
+              : (patch[key] ?? null)
           ),
           now,
           todo.id
@@ -352,6 +386,16 @@ export class NeoAskTodoRepository {
     ).map(toTodo);
   }
 
+  getCheckable(id: string): NeoTodo | null {
+    const row = this.db
+      .prepare(
+        `${TODO_SELECT} WHERE id = ? AND state IN ('todo', 'doing', 'blocked')
+           AND ask_id IN (SELECT id FROM neo_asks WHERE status = 'open')`
+      )
+      .get(id) as TodoRow | null;
+    return row ? toTodo(row) : null;
+  }
+
   getQuestion(id: string): NeoQuestion | null {
     const row = this.db.prepare(`${QUESTION_SELECT} WHERE id = ?`).get(id) as QuestionRow | null;
     return row ? toQuestion(row) : null;
@@ -378,7 +422,7 @@ export class NeoAskTodoRepository {
     this.db
       .prepare(
         `INSERT INTO neo_questions (id, ask_id, text, kind, options, multiple, no_label, yes_label,
-           start_todos, confirm_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           start_todos, confirm_json, document, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -391,6 +435,7 @@ export class NeoAskTodoRepository {
         draft.yesLabel,
         draft.startTodos ? JSON.stringify(draft.startTodos) : null,
         draft.confirm ? JSON.stringify(draft.confirm) : null,
+        draft.document ?? null,
         now
       );
     this.touchAsk(askId, now);
