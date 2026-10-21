@@ -1,8 +1,8 @@
 # Home sync conflict question and full versions
 
-This slice presents the conflict. Applying a recorded version choice through
-`neo.home.save`, including protected-file confirmation and stale-version refusal,
-is the next H3 slice. The card explicitly says answering does not apply a change.
+This journey presents the conflict. Application is covered separately by
+`neo-home-apply-choice.md`, including protected-file confirmation and stale-version
+refusal. The card explicitly says answering alone does not apply a change.
 Security #7975, native Read and command-line safety parsing are outside this slice.
 
 Run from the worktree root. Build the web UI, then run the retained helper with a
@@ -46,6 +46,6 @@ there is still only one question and no file application. Migration contracts
 preserve legacy answers; trimming a large MCP snapshot keeps the question while
 full versions remain retrievable using `neo.question.get`.
 
-Not verified here: provider-driven model behavior, the later choice-application
-slice, phone hardware or real network remotes. Nothing resolves a conflict or
+Not verified here: provider-driven model behavior, the separate choice-application
+path, phone hardware or real network remotes. Nothing resolves a conflict or
 changes either saved version in this journey.

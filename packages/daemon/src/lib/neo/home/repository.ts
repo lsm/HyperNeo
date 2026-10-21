@@ -205,7 +205,7 @@ export class NeoHomeRepository {
               .slice(
                 0,
                 350
-              )}\n\nLocal → remote (excerpt):\n\n${'`'.repeat(8)}diff\n${excerpt.slice(0, 1000).replaceAll('`', '\u02cb')}\n${'`'.repeat(8)}\n\nWhich version should we use? View full versions before choosing. Your answer records a choice; it does not apply a change yet.`,
+              )}\n\nLocal → remote (excerpt):\n\n${'`'.repeat(8)}diff\n${excerpt.slice(0, 1000).replaceAll('`', '\u02cb')}\n${'`'.repeat(8)}\n\nWhich version should we use? View full versions before choosing. Your answer records a choice; it does not apply a change by itself. Ask Neo to save the chosen version; protected documents require separate confirmation.`,
             document: versions.join('\n\n────────────────\n\n'),
           };
         }
@@ -346,8 +346,12 @@ export class NeoHomeRepository {
     });
   }
 
-  save(input: HomeSavePlan): Promise<HomeSaveResult> {
-    return this.sequence(() => this.write(input));
+  save(input: HomeSavePlan, wake?: object): Promise<HomeSaveResult> {
+    return this.sequence(async () => {
+      const result = await this.write(input);
+      if (result.ok && wake) this.readSyncs.set(wake, Promise.resolve({ value: null }));
+      return result;
+    });
   }
 
   private async hasSymbolicLink(path: string): Promise<boolean> {
@@ -421,10 +425,19 @@ export class NeoHomeRepository {
           })
         ).some((name) => name !== '.coordinators');
     if (dirty) return { ok: false, reason: 'dirty: review existing home changes before saving.' };
-    if (input.resolution)
+    if (input.resolution) {
+      if (!metadata)
+        return { ok: false, reason: 'stale_conflict: the home repository is missing.' };
+      for (const path of paths)
+        if (!(await this.git(['check-ignore', '-q', '--', path], true)).code)
+          return {
+            ok: false,
+            reason: 'ignored_path: this document or decision log is git-ignored.',
+          };
       return applyHomeChoice(this.root, input, (args, failure, network, cwd) =>
         this.git(args, failure, network, undefined, cwd)
       );
+    }
     const initialized = await this.initialize();
     if (!initialized.ok) return initialized;
     const synced = await this.synchronize();

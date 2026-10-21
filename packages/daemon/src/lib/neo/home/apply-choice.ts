@@ -74,6 +74,12 @@ export async function applyHomeChoice(
       const blob = (await inStage(['hash-object', '-w', '--no-filters', file])).text;
       await inStage(['update-index', '--add', '--cacheinfo', fileMode, blob, path]);
     };
+    for (const path of [
+      input.path,
+      ...(input.confirmation ? [join(dirname(input.path), 'decisions.md')] : []),
+    ])
+      if (!(await inStage(['check-ignore', '-q', '--', path], true)).code)
+        return refuse('ignored_path: this document or decision log is git-ignored.');
     await put(input.path, content.bytes, mode);
     if (input.confirmation) {
       const log = join(dirname(input.path), 'decisions.md');
@@ -93,6 +99,9 @@ export async function applyHomeChoice(
     const message = `${input.message}\n\nNeo-Conflict-Choice: question ${input.resolution!.questionId}${input.confirmation ? `\nNeo-Confirmed-By: question ${input.confirmation.questionId}` : ''}`;
     await inStage(['commit', '-m', message]);
     const commit = (await inStage(['rev-parse', 'HEAD'])).text;
+    const latest = await git(['ls-remote', '--exit-code', 'origin', remoteBranch], true, true);
+    if (latest.code || latest.text.split(/\s/)[0] !== remote)
+      return refuse('stale_conflict: remote changed while preparing the choice; nothing applied.');
     const current = (await git(['rev-parse', 'HEAD'])).text;
     const currentBranch = (await git(['symbolic-ref', 'HEAD'], true)).text;
     if (
@@ -103,10 +112,10 @@ export async function applyHomeChoice(
       return refuse(
         'stale_conflict: local history or human edits changed while preparing the choice.'
       );
-    const latest = await git(['ls-remote', '--exit-code', 'origin', remoteBranch], true, true);
-    if (latest.code || latest.text.split(/\s/)[0] !== remote)
-      return refuse('stale_conflict: remote changed while preparing the choice; nothing applied.');
-    const installed = await git(['merge', '--ff-only', '--no-edit', commit], true);
+    const installed = await git(
+      ['merge', '--ff-only', '--no-edit', '--no-overwrite-ignore', commit],
+      true
+    );
     if (installed.code)
       return refuse(`stale_conflict: local changed before publication. ${installed.error}`);
     const pushed = await git(
