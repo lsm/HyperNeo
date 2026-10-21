@@ -25,6 +25,7 @@ const codex = join(run, 'home/.codex');
 const rollout = join(codex, 'synthetic.jsonl');
 writeFileSync(rollout, `${JSON.stringify({ type: 'event_msg', payload: { type: 'task_complete', last_agent_message: 'Earlier task only.' } })}\n`);
 const state = new Database(join(codex, 'state_5.sqlite'));
+state.exec(`CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, updated_at_ms INTEGER); CREATE TABLE project_roots (project_id TEXT, position INTEGER, path TEXT)`);
 state.exec(`CREATE TABLE threads (id TEXT PRIMARY KEY, name TEXT, title TEXT, first_user_message TEXT, cwd TEXT, source TEXT, archived INTEGER, updated_at_ms INTEGER, rollout_path TEXT, git_branch TEXT)`);
 state.prepare(`INSERT INTO threads VALUES ('synthetic-thread', 'Synthetic worker', '', '', ?, 'vscode', 0, 1, ?, NULL)`).run(join(run, 'workspace'), rollout);
 state.close();
@@ -72,6 +73,7 @@ try {
         new NeoRepository(db).reserveBinding({ sessionId, kind: 'neo', projectId: null });
         new NeoAskTodoRepository(db).openAsk({ id: 'synthetic-ask', projectId: null, sessionId, originMessageId: null, title: 'Synthetic evidence', request: 'Retain peer acknowledgement', createdAt: 1 });
         const started = await invoke('neo.todo.add', { askId: 'synthetic-ask', title: 'Synthetic queue', doneWhen: 'Facts retained', instruction: 'Only a synthetic queued instruction', target: { verb: 'send', ref }, start: true });
+        assert.equal(started.todo.state, 'doing', JSON.stringify(started.todo));
         todoId = started.todo.id;
       }
       const queued = sessions.readSent(todoId);
