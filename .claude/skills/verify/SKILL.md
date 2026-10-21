@@ -2540,3 +2540,21 @@ This Build slice does not register `artifact.file.*`, accept publication artifac
 persist references or expose preview UI. Publication/card wiring is slice 12;
 UI/browser and human iOS containment evidence remains in its assigned slices.
 No unattended GUI, provider, credentials, real files or live database are used.
+
+
+## In-app previews: capture policy (slice 3)
+
+Run `preview-policy.test.ts` with the daemon Vitest runner. It covers each pure
+admission gate and their composition, authorization before path classification,
+missing/foreign/mismatched bindings, owner/role spoofing, component containment,
+explicit evidence roots, traversal/encoding refusals, sensitive names and broad
+root denial. It never opens a source file. Root-relative plans must be passed to
+the anchored opener in slice 4; a successful policy result is not a safe-open proof.
+
+Repeat slice 1's isolated capture/restart journey and headless Markdown component
+suite. The helper now supplies a trusted synthetic context-binding fixture to the
+policy pipeline, requires an admitted plan for its published report, and refuses
+a sensitive path and a foreign worker. It still checks complete bytes through the
+actual existing daemon read door after restart. No production binding adapter or
+new operation is wired here: the persisted todo/ask adapter belongs to slice 6.
+No credentials or live files are read; no unattended GUI is involved.
