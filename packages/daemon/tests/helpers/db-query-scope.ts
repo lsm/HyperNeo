@@ -28,6 +28,8 @@ export const EXCLUDED_TABLE_NAMES: string[] = [
   'legacy_neo_asks',
   'neo_asks',
   'neo_todos',
+  'paired_devices',
+  'pairing_codes',
   'goal_journal',
   'neo_session_messages',
   'neo_todo_sessions',

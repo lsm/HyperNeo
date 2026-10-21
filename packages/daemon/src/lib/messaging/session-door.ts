@@ -5,8 +5,15 @@ import { join } from 'node:path';
 import { getDataDir } from '../data-dir.ts';
 import { invokeOperation } from '../operations/invoke.ts';
 import type { OperationCaller, OperationRegistry } from '../operations/registry.ts';
+import { SESSION_DOOR_PRINCIPAL } from '../pairing/pairing-operations.ts';
 
-const DOOR_OPERATIONS = new Set(['message.send', 'neo.question.get', 'system.build']);
+const DOOR_OPERATIONS = new Set([
+  'message.send',
+  'neo.question.get',
+  'system.build',
+  'device.pair.create',
+  'device.pair.reset_lockout',
+]);
 const MAX_BODY_BYTES = 256 * 1024;
 
 export function sessionDoorPath(): string {
@@ -24,7 +31,13 @@ export function planSessionDoorCall(
       reason: `not_allowed: the session door runs only ${[...DOOR_OPERATIONS].join(', ')}.`,
     };
   const { from: _from, ...rest } = (input ?? {}) as Record<string, unknown>;
-  return { value: { name, input: rest, caller: { source: 'mcp', sessionId: sender.trim() } } };
+  return {
+    value: {
+      name,
+      input: rest,
+      caller: { source: 'mcp', principal: SESSION_DOOR_PRINCIPAL, sessionId: sender.trim() },
+    },
+  };
 }
 
 function doorAnswers(path: string): Promise<boolean> {

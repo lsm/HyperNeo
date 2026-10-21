@@ -83,7 +83,13 @@ describe('the session door', () => {
   });
 
   test('every other registered operation is rejected by the socket allowlist', async () => {
-    const allowed = new Set(['message.send', 'neo.question.get', 'system.build']);
+    const allowed = new Set([
+      'message.send',
+      'neo.question.get',
+      'system.build',
+      'device.pair.create',
+      'device.pair.reset_lockout',
+    ]);
     for (const name of [...OPERATION_NAMES, 'system.health', 'unknown.operation']) {
       if (allowed.has(name)) continue;
       expect(await post(door.path, { sender: 'worker-1', name, input: {} })).toMatchObject({
