@@ -65,7 +65,7 @@ external session. Shared SKILL.md and journey discovery remain unchanged.
 Review regressions have separate helper modes, each requiring a fresh run:
 
 ```bash
-for MODE in search peek external-failure boundary; do
+for MODE in search peek external-failure boundary emoji; do
   RUN=$(mktemp -d /private/tmp/hn-copilot-find-review-XXXXXX)
   mkdir -p "$RUN/home"
   env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin" \
@@ -92,3 +92,6 @@ done
   stable turn ID with explicit text clipping. Receipt-bound status remains intact.
   Process cases also cover windows of deltas, subagent and malformed records, plus
   strict cursor progress over an oversized line so empty pages cannot loop.
+- `emoji`: a turn whose 4,000th UTF-16 unit is the first half of an emoji is
+  clipped to the 3,999 whole characters before it (textComplete:false), so the
+  preview never ends in half a surrogate pair or a replacement character.

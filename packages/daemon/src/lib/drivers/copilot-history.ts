@@ -90,11 +90,12 @@ export function readCopilotHistory(
       if (!role || !id || typeof text !== 'string' || !Number.isFinite(at) || seen.has(messageId))
         continue;
       seen.add(messageId);
+      const clip = text.length > 4000 && /[\uD800-\uDBFF]/.test(text[3999]) ? 3999 : 4000;
       turns.push({
         messageId,
         role,
         at,
-        text: text.slice(0, 4000),
+        text: text.slice(0, clip),
         textComplete: text.length <= 4000,
         position: start + offset,
       });

@@ -73,6 +73,17 @@ try {
     assert.equal(page.value.nextCursor.before, boundary);
     const status = await rpc('work.status', { ref: work.ref, receipt: work.receipt }) as Result<{ lastReply?: string }>;
     assert(status.ok && status.value.lastReply === 'HISTORY_REPLY');
+  } else if (mode === 'emoji') {
+    const work = await start('history');
+    const file = join(run, 'data/copilot-workers', work.ref.id, 'session-state', work.ref.id, 'events.jsonl');
+    appendFileSync(file, JSON.stringify({ type: 'assistant.message', timestamp: new Date().toISOString(), data: { messageId: 'emoji-edge', content: `${'a'.repeat(3999)}😀 and more` } }) + '\n');
+    const page = await rpc('work.read', { sessionId: work.ref.id, before: 0, after: 0 }) as Result<import('../../../packages/daemon/src/storage/work-turn-page.ts').WorkTurnPage>;
+    assert(page.ok, JSON.stringify(page));
+    const turn = page.value.turns.at(-1);
+    assert.equal(turn?.messageId, 'assistant:emoji-edge');
+    assert.equal(turn?.textComplete, false);
+    assert(!/[\uD800-\uDFFF\uFFFD]$/.test(turn?.text ?? ''), `clipped text ends in ${JSON.stringify(turn?.text.slice(-2))}`);
+    assert.equal(turn?.text, 'a'.repeat(3999));
   } else if (mode === 'search') {
     writeFileSync(join(run, 'home/copilot-list.json'), JSON.stringify([
       ...Array.from({ length: 25 }, (_, n) => ({ sessionId: `new-${n}`, cwd: '/synthetic/copilot-project', title: `New item ${n}`, updatedAt: new Date().toISOString() })),
