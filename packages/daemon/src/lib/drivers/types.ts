@@ -245,6 +245,7 @@ export type WorkRenamed = { renamed: true; title: string };
 export interface WorkAdapter {
   readonly id: string;
   readonly capabilities: readonly WorkVerb[];
+  readonly unsupportedCapabilities?: Partial<Record<WorkVerb, string>>;
   readonly supportsStartEffort?: boolean;
   readonly supportsStartPreparation?: boolean;
   find(query: FindQuery): PlaceGroup[] | Promise<PlaceGroup[]>;

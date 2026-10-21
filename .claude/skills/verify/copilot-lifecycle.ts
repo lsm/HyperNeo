@@ -209,7 +209,7 @@ try {
   assert.equal((await status(stopped)).status, 'stopped');
   const recovered = await rpc('work.status', { ref: active.ref, receipt: active.receipt }) as { ok: boolean; reason: string };
   assert.equal(recovered.ok, false); assert.equal(recovered.reason, 'unreachable');
-  assert.equal(readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').trim().split('\n').filter(line => JSON.parse(line).method === 'session.send').length, mode === 'all' ? 10 : mode === 'reap' ? 8 : ['stop-terminal', 'abort-window'].includes(mode) ? 6 : 5);
+  assert.equal(readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').trim().split('\n').filter(line => JSON.parse(line).method === 'session.send').length, mode === 'all' ? 10 : mode === 'reap' ? 8 : ['stop-terminal', 'abort-window', 'steer'].includes(mode) ? 6 : 5);
   console.log(`PASS public Copilot work.start/status/stop: relative DB, durable terminal replies, concurrent stop/status, model rejection, denied permission, abort evidence and no replay. ${run}/evidence/observed.json`);
 } finally {
   ws?.close(); await app?.cleanup();
