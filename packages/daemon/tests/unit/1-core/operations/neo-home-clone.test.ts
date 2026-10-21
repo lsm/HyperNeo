@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import {
   chmod,
   mkdir,
@@ -10,7 +10,7 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises';
-import { existsSync, mkdirSync, watch, writeFileSync } from 'node:fs';
+import fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { NeoHomeRepository } from '../../../../src/lib/neo/home/repository.ts';
@@ -232,12 +232,16 @@ exit "$status"
   });
   test('rollback preserves a human file inside a directory published by the clone', async () => {
     let intervened = false;
-    const observer = watch(root, (_event, name) => {
-      if (intervened || String(name) !== 'projects' || !existsSync(join(root, 'projects'))) return;
-      intervened = true;
-      writeFileSync(join(root, 'projects', 'human.txt'), 'Human nested file');
-      mkdirSync(join(root, '.git'));
-      writeFileSync(join(root, '.git', 'human.txt'), 'Human metadata');
+    const original = fs.mkdir;
+    const observer = spyOn(fs, 'mkdir').mockImplementation(async (...args) => {
+      const result = await original(...args);
+      if (!intervened && String(args[0]) === join(root, 'projects')) {
+        intervened = true;
+        await writeFile(join(root, 'projects', 'human.txt'), 'Human nested file');
+        await original(join(root, '.git'));
+        await writeFile(join(root, '.git', 'human.txt'), 'Human metadata');
+      }
+      return result;
     });
     try {
       expect(await call({ remoteUrl: remote })).toMatchObject({
@@ -254,7 +258,7 @@ exit "$status"
         'z-collision.txt',
       ]);
     } finally {
-      observer.close();
+      observer.mockRestore();
     }
   });
   test('an inaccessible or empty remote leaves the original home untouched', async () => {
