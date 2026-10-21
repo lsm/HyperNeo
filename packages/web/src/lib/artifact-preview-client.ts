@@ -10,7 +10,7 @@ import { invokeOperation } from './operations.ts';
 export type ArtifactPreviewState =
   | { state: 'ready'; metadata: ArtifactFileMetadata; text: string }
   | { state: 'limit' | 'unsupported'; metadata: ArtifactFileMetadata }
-  | { state: 'forbidden' | 'revoked' | 'daemon_unavailable' };
+  | { state: 'forbidden' | 'revoked' | 'daemon_unavailable' | 'needs_update' };
 
 type Refused = { accepted: false; reason: string };
 type MetadataGate = { value: ArtifactFileMetadata } | { reason: ArtifactPreviewState };
@@ -32,8 +32,11 @@ const refusedState = (reason: string) =>
 export async function loadArtifactMetadata(hub: MessageHub, artifactId: string) {
   const result = await invokeOperation<
     { accepted: true; metadata: ArtifactFileMetadata } | Refused
-  >(hub, 'artifact.file.get', { artifactId }).catch(() => null);
+  >(hub, 'artifact.file.get', { artifactId }).catch((error: { code?: string }) =>
+    error?.code === 'METHOD_NOT_FOUND' ? 'needs_update' : null
+  );
   if (!result) return { reason: { state: 'daemon_unavailable' } } as MetadataGate;
+  if (result === 'needs_update') return { reason: { state: 'needs_update' } } as MetadataGate;
   return result.accepted ? { value: result.metadata } : { reason: refusedState(result.reason) };
 }
 

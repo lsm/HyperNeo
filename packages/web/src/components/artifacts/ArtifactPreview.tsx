@@ -32,6 +32,7 @@ const formatBytes = (bytes: number) =>
 const MESSAGES = {
   loading: 'Loading preview…',
   daemon_unavailable: 'The daemon that owns this file is not reachable.',
+  needs_update: 'Preview needs an updated daemon.',
   revoked: 'This file is no longer available to you.',
   forbidden: 'This reference points outside what the preview may open.',
   unsupported: 'This format has no preview yet.',
