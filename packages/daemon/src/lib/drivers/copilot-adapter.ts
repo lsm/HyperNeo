@@ -98,8 +98,9 @@ export function createCopilotAdapter(
       live.set(location.id, worker);
       record.work.receipt = await worker.submit(request.message);
       record.snapshot = await worker.snapshot();
-      record.work.status =
-        record.snapshot.status === 'unreachable' ? 'queued' : record.snapshot.status;
+      if (record.snapshot.status === 'unreachable')
+        throw new Error('Copilot disconnected after accepting input.');
+      record.work.status = record.snapshot.status;
       save(record);
       return { ok: true, value: record.work };
     } catch (error) {

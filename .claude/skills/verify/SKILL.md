@@ -2757,7 +2757,8 @@ start returns a session reference and input receipt; status returns its complete
 reply, denied permission remains needs_you, and stop waits for aborted idle before
 reporting stopped. All fixture runtime PIDs must disappear on daemon cleanup.
 Missing auth reports the human step `copilot login`; an empty model catalog refuses
-start. Restarting with only this synthetic DB/ownership directory reports unfinished
+start. Disconnect after the first ACK must return unreachable with the session ID,
+never queued success. Restarting with only this synthetic DB/ownership directory reports unfinished
 work as unreachable and never resends. External sessions are not adopted or stopped.
 Evidence: `evidence/observed.json`, including operation replies and fixture protocol
 traffic. The helper closes its WebSocket and daemon in `finally`.
@@ -2765,7 +2766,8 @@ traffic. The helper closes its WebSocket and daemon in `finally`.
 Rerun the discovery and construction journeys after changing the lifecycle surface;
 they now expect lifecycle capabilities but preserve external read-only boundaries.
 Focused `copilot-adapter.test.ts` additionally covers ACK-only abort refusal, lost
-first ACK identity, foreign receipts, canonical execution folders, model/effort and
+first ACK identity, disconnect after ACK, foreign receipts, canonical execution
+folders, model/effort and
 preparation refusal. Run it serially with the worker and discovery tests using the
 daemon Vitest runner. No real Copilot, account session, credentials, provider or
 unattended GUI is used. This is protocol/operation proof with synthetic data.
