@@ -140,6 +140,7 @@ describe('neo.preferences.set', () => {
   let switched: unknown[];
   let updated: unknown[];
   let created: unknown[];
+  let recovering: boolean;
 
   beforeEach(async () => {
     db = await createTestDb();
@@ -152,8 +153,13 @@ describe('neo.preferences.set', () => {
     switched = [];
     updated = [];
     created = [];
+    recovering = false;
     const sessions = {
       getSessionForControl: async (sessionId: string) => ({
+        isLimitRecoveryPending: () => false,
+        getRateLimitWatchdogState: () => ({
+          lastUserMessage: recovering ? { uuid: 'limited-turn' } : null,
+        }),
         requestModelSwitch: async (model: string, provider: string) => {
           switched.push([sessionId, model, provider]);
           return { success: true, model };
@@ -285,5 +291,15 @@ describe('neo.preferences.set', () => {
         }),
       }),
     ]);
+  });
+
+  test('does not realign a fallback while its retried input is active, then realigns after recovery', async () => {
+    recovering = true;
+    const preference = { model: 'deepseek-v4-flash', provider: 'deepseek', thinkingLevel: 'off' };
+    await invoke('neo.preferences.set', preference);
+    expect(switched).toEqual([]);
+    recovering = false;
+    await invoke('neo.preferences.set', preference);
+    expect(switched).toEqual([['neo:root', 'deepseek-v4-flash', 'deepseek']]);
   });
 });
