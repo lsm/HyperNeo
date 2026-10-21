@@ -126,6 +126,25 @@ describe('Copilot worker construction', () => {
     }
   });
 
+  test('a fresh submission replaces done with queued before its ACK', async () => {
+    const cfg = config();
+    const worker = await openCopilotWorker(cfg);
+    try {
+      await worker.submit('settled');
+      const sending = worker.submit('ping-ack');
+      await eventually(
+        async () => readFileSync(join(cfg.cwd, 'calls.jsonl'), 'utf8').includes('ping-ack'),
+        Boolean
+      );
+      const state = await worker.snapshot();
+      await sending;
+      expect(state.status).toBe('queued');
+      expect((await worker.snapshot()).status).toBe('done');
+    } finally {
+      await worker.close();
+    }
+  });
+
   test('an idle before any submitted work preserves queued status', async () => {
     const worker = await openCopilotWorker(config('fixture-1', '--initial-idle'));
     try {

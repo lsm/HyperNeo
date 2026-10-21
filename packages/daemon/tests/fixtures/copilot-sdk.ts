@@ -5,6 +5,7 @@ let buffer = Buffer.alloc(0);
 let sessionId = '';
 let input = 0;
 let eventId = 0;
+let pendingAck: (() => void) | undefined;
 const send = (message: unknown) => {
   const data = JSON.stringify(message);
   process.stdout.write(`Content-Length: ${Buffer.byteLength(data)}\r\n\r\n${data}`);
@@ -112,7 +113,7 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
         );
         event('session.idle', {});
       }
-      if (prompt === 'settled' || prompt === 'late-ack') {
+      if (prompt === 'settled' || prompt === 'late-ack' || prompt === 'ping-ack') {
         event('assistant.message', {
           messageId: `reply-${input}`,
           content: `REPLY_${input}`,
@@ -158,7 +159,8 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
         !String(prompt).endsWith('-queued')
       )
         event('user.message', { messageId: id, interactionId: 'rewritten', content: prompt });
-      if (prompt === 'late-ack') setTimeout(() => reply({ messageId: id }), 20);
+      if (prompt === 'ping-ack') pendingAck = () => reply({ messageId: id });
+      else if (prompt === 'late-ack') setTimeout(() => reply({ messageId: id }), 20);
       else if (prompt !== 'lost-ack') reply({ messageId: id });
       break;
     }
@@ -176,6 +178,10 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
     case 'ping':
       if (process.argv.includes('--initial-idle') && input === 0) event('session.idle', {});
       reply({ message: 'ok', timestamp: Date.now() });
+      if (pendingAck) {
+        setTimeout(pendingAck, 5);
+        pendingAck = undefined;
+      }
       break;
     case 'runtime.shutdown':
       if (process.argv.includes('--hang-stop')) break;
