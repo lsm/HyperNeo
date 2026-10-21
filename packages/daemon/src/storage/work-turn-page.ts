@@ -17,6 +17,9 @@ import { readWorkTurns, type WorkTurn } from './work-turns.ts';
 export const WorkReadCursor = z.object({
   sessionId: z.string().min(1),
   before: z.number().int().positive().safe(),
+  copilot: z
+    .object({ stamp: z.string().max(100), size: z.number().int().nonnegative().safe() })
+    .optional(),
   resume: z
     .object({
       seq: z.number().int().positive().safe(),

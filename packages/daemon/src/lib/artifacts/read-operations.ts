@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../storage/sqlite-compat.ts';
@@ -32,6 +33,23 @@ const rowContext = (row: StoredArtifactFile): ArtifactContext => ({
   id: row.context_id,
 });
 
+function authorizesContext(db: Database, context: ArtifactContext, caller: OperationCaller) {
+  const daemonId = new ArtifactFileReadRepository(db).daemonId();
+  const binding = daemonId ? loadRegistrationBinding(db, daemonId, context) : null;
+  return !!binding && 'value' in authorizeArtifactCaller(binding, caller);
+}
+
+export type ArtifactRefReader = (artifactId: string, caller: OperationCaller) => ArtifactRef | null;
+
+export function createArtifactRefReader(database: () => Database): ArtifactRefReader {
+  return (artifactId, caller) => {
+    const row = new ArtifactFileReadRepository(database()).get(artifactId);
+    return row && authorizesContext(database(), rowContext(row), caller)
+      ? (JSON.parse(row.receipt).artifact as ArtifactRef)
+      : null;
+  };
+}
+
 export function createArtifactReadOperations(
   database: () => Database,
   data = getDataDir(),
@@ -39,9 +57,7 @@ export function createArtifactReadOperations(
 ) {
   const repo = () => new ArtifactFileReadRepository(database());
   function authorizeContext(context: ArtifactContext, caller: OperationCaller) {
-    const daemonId = repo().daemonId();
-    const binding = daemonId ? loadRegistrationBinding(database(), daemonId, context) : null;
-    return binding && 'value' in authorizeArtifactCaller(binding, caller)
+    return authorizesContext(database(), context, caller)
       ? { value: context }
       : { reason: unavailable() };
   }

@@ -1,0 +1,136 @@
+import { describe, expect, test } from 'bun:test';
+import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type { NeoPack, NeoTodoCheckResult } from '../../../../src/lib/neo/packs/types.ts';
+import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
+import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
+import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
+import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
+import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
+import { Database } from '../../../../src/storage/sqlite-compat.ts';
+
+const check = (url: string) => ({ pack: 'coding', kind: 'pr_merged', params: { urls: [url] } });
+const merged: NeoTodoCheckResult = { done: true, evidence: '#1 merged' };
+const BROAD_SCAN_MS = 8;
+
+function setup(result: NeoTodoCheckResult = merged) {
+  const db = new Database(':memory:');
+  runMigrations(db, () => {});
+  createTables(db);
+  const store = new NeoAskTodoRepository(db);
+  store.openAsk({
+    id: 'ask',
+    projectId: null,
+    sessionId: 'neo',
+    originMessageId: 'm1',
+    title: 'Card',
+    request: 'Ship it',
+    createdAt: 1,
+  });
+  let during: (todo: NeoTodo) => void = () => {};
+  const pack = {
+    id: 'coding',
+    describe: 'coding',
+    instructions: () => null,
+    todos: {
+      schema: () => {},
+      check: async (todo: NeoTodo) => {
+        during(todo);
+        return result;
+      },
+      statusLine: () => null,
+      topics: () => [],
+      event: () => [],
+    },
+  } satisfies NeoPack;
+  const told: string[] = [];
+  const runner = createNeoTodoRunner({
+    store,
+    sessions: new NeoTodoSessionRepository(db),
+    invoke: async () => ({ kind: 'completed', value: null }) as OperationOutcome,
+    packs: () => [pack],
+    tell: async (_ask, _todo, note) => {
+      told.push(note);
+    },
+    tellAsk: async () => {},
+    changed: () => {},
+  });
+  const add = (url = 'https://github.com/o/r/pull/1') => {
+    const todo = store.addTodo(
+      crypto.randomUUID(),
+      'ask',
+      {
+        title: 'Ship',
+        doneWhen: 'Merged',
+        check: check(url),
+        instruction: 'Ship it.',
+        named: null,
+      },
+      1
+    );
+    return store.updateTodo(todo, { state: 'doing', startedAt: 1 }, 1);
+  };
+  return {
+    db,
+    store,
+    runner,
+    told,
+    add,
+    whileChecking: (fn: (todo: NeoTodo) => void) => {
+      during = fn;
+    },
+  };
+}
+
+describe('a todo check revalidates the one todo it checked', () => {
+  test('a refresh over 231 checked todos stays inside the 250 ms lag budget when a broad scan is slow', async () => {
+    const { store, runner, add } = setup({ done: false, evidence: null });
+    for (let i = 0; i < 231; i++) add(`https://github.com/o/r/pull/${i}`);
+    const listCheckable = store.listCheckable.bind(store);
+    store.listCheckable = () => {
+      const until = performance.now() + BROAD_SCAN_MS;
+      while (performance.now() < until);
+      return listCheckable();
+    };
+    const started = performance.now();
+    await runner.refresh(() => {});
+    expect(performance.now() - started).toBeLessThan(250);
+  });
+
+  test('an unchanged todo takes the result of its check', async () => {
+    const { store, runner, add } = setup();
+    const todo = add();
+    await runner.refresh(() => {});
+    expect(store.getTodo(todo.id)).toMatchObject({ state: 'done', evidence: '#1 merged' });
+  });
+
+  test('a todo removed while its check runs keeps its removal', async () => {
+    const { store, runner, told, add, whileChecking } = setup();
+    const todo = add();
+    whileChecking((checked) =>
+      store.updateTodo(store.getTodo(checked.id)!, { state: 'removed', reason: 'Not needed' }, 2)
+    );
+    await runner.refresh(() => {});
+    expect(store.getTodo(todo.id)).toMatchObject({ state: 'removed', evidence: null });
+    expect(told).toEqual([]);
+  });
+
+  test('a todo whose ask closes while its check runs is not finished', async () => {
+    const { db, store, runner, add, whileChecking } = setup();
+    const todo = add();
+    whileChecking(() => db.prepare("UPDATE neo_asks SET status = 'done' WHERE id = 'ask'").run());
+    await runner.refresh(() => {});
+    expect(store.getTodo(todo.id)).toMatchObject({ state: 'doing', evidence: null });
+  });
+
+  test('a todo whose check is edited while the old check runs ignores the old result', async () => {
+    const { db, store, runner, add, whileChecking } = setup();
+    const todo = add();
+    whileChecking((checked) =>
+      db
+        .prepare('UPDATE neo_todos SET check_json = ? WHERE id = ?')
+        .run(JSON.stringify(check('https://github.com/o/r/pull/2')), checked.id)
+    );
+    await runner.refresh(() => {});
+    expect(store.getTodo(todo.id)).toMatchObject({ state: 'doing', evidence: null });
+  });
+});

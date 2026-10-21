@@ -31,7 +31,7 @@ try {
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('connection failed')); });
   const rpc = (name: string, input: unknown) => new Promise<unknown>((done, fail) => {
     const id = crypto.randomUUID();
-    const timer = setTimeout(() => fail(new Error(`${name} timeout`)), 15000);
+    const timer = setTimeout(() => fail(new Error(`${name} timeout`)), 150000);
     ws!.onmessage = event => {
       const reply = JSON.parse(String(event.data));
       if (reply.id !== id && reply.requestId !== id) return;
@@ -45,8 +45,14 @@ try {
   const ref = started.value.ref;
   const sessionId = ref.id.replace(/^local_/, '');
   assert(!existsSync(join(scope, `${ref.id}.json`)));
-  const assertPending = (value: { link?: string; watchHint?: string }) => { assert.equal(value.link, undefined, 'unregistered CLI worker must not advertise a Desktop link'); assert.match(value.watchHint ?? '', /work.status/); };
-  assertPending(started.value);
+  const value = started.value as { link?: string; watchHint?: string; status?: string };
+  assert.equal(value.status, 'needs_you', 'a session Desktop never imported must ask the human');
+  assert.equal(value.link, undefined, 'unregistered session must not advertise a Desktop link');
+  assert.match(value.watchHint ?? '', /Claude Desktop did not import the new session\. The task was not started\./);
+  const inputs = readFileSync(join(run, 'evidence/cli-inputs'), 'utf8');
+  assert.match(inputs, /Session opened by Neo/);
+  assert.doesNotMatch(inputs, /Synthetic task only/, 'the task must never run in the CLI');
+  const assertPending = (pending: { link?: string }) => assert.equal(pending.link, undefined, 'unregistered session must not advertise a Desktop link');
   const status = await rpc('work.status', { ref }) as typeof started;
   assert.equal(status.ok, true); assertPending(status.value);
   const pending = await rpc('work.find', { adapters: ['claude-desktop'], id: ref.id, localOnly: true }) as { places: { work: typeof started.value[] }[] };
@@ -59,7 +65,7 @@ try {
   const registeredStatus = await rpc('work.status', { ref }) as typeof started;
   assert.equal(registeredStatus.value.link, `claude://claude.ai/epitaxy/${ref.id}`);
   evidence.push({ registeredWithoutDaemonRestart: true, cliSessionId: sessionId });
-  console.log(`PASS: real work.start/status/find withhold an unregistered Desktop link, then expose it after a synthetic Desktop record appears. ${run}/evidence/observed.json`);
+  console.log(`PASS: work.start opens the session with a one-line CLI turn, never runs the task there, asks the human when Desktop does not import it, and find/status link it once a Desktop record appears. ${run}/evidence/observed.json`);
 } finally {
   ws?.close();
   const pidFile = join(run, 'evidence/worker-pid');

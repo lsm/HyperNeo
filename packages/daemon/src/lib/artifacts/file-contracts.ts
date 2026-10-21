@@ -42,6 +42,19 @@ export const ArtifactRefSchema: z.ZodType<ArtifactRef> = z.strictObject({
   byteLength: byteCount,
 });
 
+export function unregisteredArtifact(
+  refs: readonly ArtifactRef[],
+  registered: readonly (ArtifactRef | null)[]
+): ArtifactRef | null {
+  const fields = ['daemonId', 'artifactId', 'title', 'kind', 'byteLength'] as const;
+  return (
+    refs.find((ref, index) => {
+      const known = registered[index];
+      return !known || fields.some((field) => known[field] !== ref[field]);
+    }) ?? null
+  );
+}
+
 export const ArtifactProjectionSchema: z.ZodType<ArtifactProjection> = z.strictObject({
   artifacts: z.array(ArtifactRefSchema).max(16).optional(),
 });

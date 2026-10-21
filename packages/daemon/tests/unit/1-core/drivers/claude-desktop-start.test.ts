@@ -1,9 +1,17 @@
 import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-preparation';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  claudeBootstrapPrompt,
   createClaudeDesktopAdapter,
   selectClaudeStartFolder,
 } from '../../../../src/lib/drivers/claude-desktop-adapter';
@@ -40,6 +48,8 @@ describe('claude-desktop start', () => {
   let clock: number;
   let effects: string[];
   let killed: string[];
+  let inbox: string[];
+  let handoffs: number;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'claude-start-'));
@@ -48,6 +58,8 @@ describe('claude-desktop start', () => {
     clock = 1_000;
     effects = [];
     killed = [];
+    inbox = [];
+    handoffs = 0;
   });
 
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
@@ -59,8 +71,18 @@ describe('claude-desktop start', () => {
       silent?: boolean;
       checkout?: { repo: string; linked: boolean };
       permissionMode?: string;
+      desktop?: 'opens' | 'never' | 'cli-owned' | 'second';
     } = {}
   ) {
+    let live: {
+      sessionId: string;
+      pid: number;
+      owner: 'desktop' | 'cli';
+      status: string;
+      name: string;
+    }[] = [];
+    const transcriptOf = (cwd: string) =>
+      join(dir, 'projects', cwd.replace(/[/.]/g, '-'), 'u1.jsonl');
     return createClaudeDesktopAdapter({
       ...(options.permissionMode ? { permissionMode: () => options.permissionMode! } : {}),
       sessionsDir: join(dir, 'sessions'),
@@ -69,7 +91,21 @@ describe('claude-desktop start', () => {
       machine: 'laptop',
       liveSessions: async () => {
         effects.push('liveSessions');
-        return [];
+        return live;
+      },
+      sendInbox: async (sessionId, message) => {
+        inbox.push(message);
+        const record = JSON.parse(
+          readFileSync(join(dir, 'sessions/account/scope/local_u1.json'), 'utf8')
+        ) as { cwd: string };
+        appendFileSync(
+          transcriptOf(record.cwd),
+          `${JSON.stringify({ type: 'user', uuid: 'u-task', timestamp: '2026-10-18T20:01:00.000Z', message: { content: message } })}\n`
+        );
+        return {
+          ok: true,
+          value: { delivered: true, receipt: { executionId: sessionId, inputId: 'u-task' } },
+        };
       },
       spawn: (args, spawnOptions) => {
         spawned.push(args);
@@ -81,12 +117,41 @@ describe('claude-desktop start', () => {
           : (spawnOptions?.cwd ?? '');
         const transcripts = join(dir, 'projects', cwd.replace(/[/.]/g, '-'));
         mkdirSync(transcripts, { recursive: true });
+        const desktop = options.desktop ?? 'opens';
+        if (args.includes('--desktop')) handoffs++;
+        if (
+          args.includes('--desktop') &&
+          desktop !== 'never' &&
+          (desktop !== 'second' || handoffs === 2)
+        ) {
+          const scope = join(dir, 'sessions/account/scope');
+          mkdirSync(scope, { recursive: true });
+          writeFileSync(
+            join(scope, 'local_u1.json'),
+            JSON.stringify({
+              sessionId: 'local_u1',
+              cliSessionId: 'u1',
+              cwd,
+              title: 'Bigger font',
+              lastActivityAt: clock,
+            })
+          );
+          live = [
+            {
+              sessionId: 'u1',
+              pid: 42,
+              owner: desktop === 'cli-owned' ? 'cli' : 'desktop',
+              status: 'idle',
+              name: 'Bigger font',
+            },
+          ];
+        }
         if (args[1] === '-p' && !code && !options.silent)
           appendFileSync(
             join(transcripts, 'u1.jsonl'),
             `${JSON.stringify({
               type: 'user',
-              uuid: 'u-task',
+              uuid: 'u-open',
               timestamp: '2026-10-18T20:00:00.000Z',
               message: { content: args.at(-1) },
             })}\n`
@@ -139,7 +204,7 @@ describe('claude-desktop start', () => {
     }
   );
 
-  test('the first task requests Desktop handoff without claiming registration', async () => {
+  test('the CLI only opens the session; Desktop gets the task once it lists and opens it', async () => {
     expect(await adapter().start?.(request, user)).toEqual({
       ok: true,
       value: {
@@ -148,8 +213,7 @@ describe('claude-desktop start', () => {
         place,
         status: 'running',
         lastActivityAt: 1_000,
-        watchHint:
-          'Watch this Claude Code session via Neo with work.status using this work ref. It is not registered in Claude Desktop yet.',
+        link: 'claude://claude.ai/epitaxy/local_u1',
         receipt: { executionId: 'u1', inputId: 'u-task' },
       },
     });
@@ -164,12 +228,42 @@ describe('claude-desktop start', () => {
         '--permission-mode',
         'bypassPermissions',
         '--',
-        'Raise the body font to 16px.',
+        claudeBootstrapPrompt('Bigger font'),
       ],
       ['script', '-q', '/dev/null', 'claude', '--desktop', '--resume', 'u1'],
     ]);
-    expect(effects).not.toContain('liveSessions');
+    expect(inbox).toEqual(['Raise the body font to 16px.']);
   });
+
+  test('hands off to Desktop once more when the first handoff is not imported', async () => {
+    expect(await adapter({ desktop: 'second' }).start?.(request, user)).toMatchObject({
+      ok: true,
+      value: { status: 'running', link: 'claude://claude.ai/epitaxy/local_u1' },
+    });
+    expect(handoffs).toBe(2);
+    expect(inbox).toEqual(['Raise the body font to 16px.']);
+  });
+
+  test.each([
+    ['never', 'Claude Desktop did not import the new session.', 120_000],
+    ['cli-owned', 'Claude Desktop did not open the new session.', 0],
+  ] as const)(
+    'when Desktop %s, the task is never run and the human is asked, within a bounded wait',
+    async (desktop, why, waited) => {
+      expect(await adapter({ desktop }).start?.(request, user)).toMatchObject({
+        ok: true,
+        value: {
+          ref: { adapter: 'claude-desktop', id: 'local_u1' },
+          status: 'needs_you',
+          watchHint: `${why} The task was not started. Open Claude Desktop, then ask Neo to start it again.`,
+        },
+      });
+      expect(inbox).toEqual([]);
+      expect(spawned.flat()).not.toContain('Raise the body font to 16px.');
+      expect(clock - 1_000).toBeGreaterThanOrEqual(waited);
+      expect(clock - 1_000).toBeLessThan(waited + 120_000);
+    }
+  );
 
   test('the worker permission mode setting runs the first turn; Desktop gets no flag', async () => {
     expect(await adapter({ permissionMode: 'acceptEdits' }).start?.(request, user)).toMatchObject({
@@ -180,7 +274,7 @@ describe('claude-desktop start', () => {
   });
 
   test('status finds the started session before Desktop registers it', async () => {
-    const driver = adapter();
+    const driver = adapter({ desktop: 'never' });
     const started = await driver.start?.(request, user);
     expect(started).toMatchObject({ ok: true });
     expect(
@@ -189,7 +283,7 @@ describe('claude-desktop start', () => {
   });
 
   test('only a real Desktop record enables links in find and status', async () => {
-    const driver = adapter();
+    const driver = adapter({ desktop: 'never' });
     const started = await driver.start!(request, user);
     const ref = { adapter: 'claude-desktop', id: 'local_u1' };
     const find = () => driver.find({ includeClosed: true, limit: 20 });

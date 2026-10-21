@@ -29,6 +29,5 @@ if (process.argv.includes('agents')) {
     `${JSON.stringify({ type: 'user', uuid: 'synthetic-input', cwd: process.cwd(), timestamp: new Date().toISOString(), message: { content: process.argv.at(-1) } })}\n`
   );
   writeFileSync(state, id);
-  appendFileSync(join(run, 'evidence/worker-pid'), `${process.pid}\n`);
-  setInterval(() => {}, 1000);
+  appendFileSync(join(run, 'evidence/cli-inputs'), `${process.argv.at(-1)}\n`);
 } else process.exit(1);
