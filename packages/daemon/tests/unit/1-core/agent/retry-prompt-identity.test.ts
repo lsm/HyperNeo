@@ -12,6 +12,7 @@ describe('RetryPromptIdentity', () => {
       parent_tool_use_id: null,
       message: { role: 'user', content: 'Original human input' },
     } as SDKUserMessage;
+    expect(ids.incoming(input)).toBe(input);
     expect(ids.outgoing(input)).toBe(input);
     ids.retry(input.uuid!);
     const wire = ids.outgoing(input);
