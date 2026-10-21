@@ -1,0 +1,216 @@
+import { CopilotClient, RuntimeConnection, type SessionEvent } from '@github/copilot-sdk';
+import superpipe, { type PipelineAPI } from 'superpipe';
+import { isAbsolute } from 'node:path';
+import { buildAcpSafeEnv } from '../acp/acp-command.ts';
+import type { WorkDelivery } from './types.ts';
+type WorkInputReceipt = NonNullable<WorkDelivery['receipt']>;
+
+type InputState = {
+  state: 'pending' | 'observed';
+  interactionId?: string;
+  replyReport: string;
+  outcome?: 'done' | 'stopped' | 'failed';
+  replyAvailability: 'incomplete' | 'complete';
+};
+type WorkerState = {
+  status: 'queued' | 'running' | 'needs_you' | 'done' | 'failed' | 'stopped' | 'unreachable';
+  inputs: Record<string, InputState>;
+};
+type Session = Awaited<ReturnType<CopilotClient['createSession']>>;
+export interface CopilotWorkerConfig {
+  cliPath: string;
+  expectedVersion: string;
+  sessionId: string;
+  cwd: string;
+  stateDirectory: string;
+  model: string;
+  env: NodeJS.ProcessEnv;
+  timeoutMs?: number;
+}
+
+function projectEvent(state: WorkerState, event: SessionEvent): WorkerState {
+  const next = structuredClone(state);
+  if (event.agentId) return next;
+  switch (event.type) {
+    case 'user.message': {
+      const { messageId, interactionId } = event.data;
+      if (!messageId) break;
+      const input = next.inputs[messageId] ?? {
+        state: 'pending',
+        replyReport: '',
+        replyAvailability: 'incomplete',
+      };
+      next.inputs[messageId] = { ...input, state: 'observed', interactionId };
+      next.status = 'running';
+      break;
+    }
+    case 'assistant.message': {
+      const data = event.data;
+      if (
+        !data.interactionId ||
+        data.parentToolCallId ||
+        data.toolRequests?.length ||
+        (data.phase && data.phase !== 'final_answer')
+      )
+        break;
+      const matches = Object.values(next.inputs).filter(
+        (input) => input.interactionId === data.interactionId
+      );
+      if (matches.length === 1 && typeof data.content === 'string')
+        matches[0].replyReport += data.content;
+      break;
+    }
+    case 'session.idle':
+      if (event.data.aborted) {
+        next.status = 'stopped';
+        for (const input of Object.values(next.inputs))
+          if (input.state === 'observed' && !input.outcome) input.outcome = 'stopped';
+      } else if (!['failed', 'needs_you'].includes(next.status)) {
+        for (const input of Object.values(next.inputs))
+          if (input.state === 'observed' && input.replyReport && !input.outcome) {
+            input.replyAvailability = 'complete';
+            input.outcome = 'done';
+          }
+        next.status = Object.values(next.inputs).every((input) => input.outcome)
+          ? 'done'
+          : 'running';
+      }
+      break;
+    case 'session.error':
+      next.status = 'failed';
+      break;
+  }
+  return next;
+}
+
+const applyEvent = (superpipe({})('copilot-worker-event') as PipelineAPI)
+  .input(['state', 'event'])
+  .pipe(projectEvent, ['state', 'event'], 'state')
+  .end('state') as (state: WorkerState, event: SessionEvent) => WorkerState;
+
+function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('Copilot worker timeout')), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+export async function openCopilotWorker(config: CopilotWorkerConfig) {
+  if (![config.cliPath, config.cwd, config.stateDirectory].every(isAbsolute))
+    throw new Error('Copilot worker paths must be absolute');
+  const timeoutMs = config.timeoutMs ?? 10_000;
+  const client = new CopilotClient({
+    connection: RuntimeConnection.forStdio({
+      path: config.cliPath,
+      args: [
+        '--no-remote',
+        '--no-remote-export',
+        '--disable-builtin-mcps',
+        '--no-custom-instructions',
+      ],
+      env: buildAcpSafeEnv(config.env),
+    }),
+    mode: 'empty',
+    baseDirectory: config.stateDirectory,
+    workingDirectory: config.cwd,
+    logLevel: 'error',
+  });
+  let closing: Promise<void> | undefined;
+  let unsubscribe = () => {};
+  let closed = false;
+  let state: WorkerState = { status: 'queued', inputs: {} };
+  const seen = new Set<string>();
+  const submitted = new Set<string>();
+  const close = () =>
+    (closing ??= (async () => {
+      closed = true;
+      unsubscribe();
+      state.status = 'unreachable';
+      try {
+        const errors = await bounded(client.stop(), timeoutMs);
+        if (errors.length) await client.forceStop();
+      } catch {
+        await client.forceStop();
+      }
+    })());
+  let session: Session;
+  try {
+    await bounded(client.start(), timeoutMs);
+    const status = await bounded(client.getStatus(), timeoutMs);
+    if (status.version !== config.expectedVersion)
+      throw new Error('Unsupported Copilot worker runtime version');
+    session = await bounded(
+      client.createSession({
+        sessionId: config.sessionId,
+        workingDirectory: config.cwd,
+        model: config.model,
+        availableTools: [],
+        onPermissionRequest: () => {
+          state.status = 'needs_you';
+          return { kind: 'reject' };
+        },
+      }),
+      timeoutMs
+    );
+    unsubscribe = session.on((event) => {
+      if (closed || state.status === 'unreachable' || !event.id || seen.has(event.id)) return;
+      seen.add(event.id);
+      state = applyEvent(state, event);
+    });
+  } catch (error) {
+    await close();
+    throw error;
+  }
+  const requireOpen = () => {
+    if (closed || state.status === 'unreachable') throw new Error('Copilot worker is disconnected');
+  };
+  return {
+    async submit(prompt: string): Promise<WorkInputReceipt> {
+      requireOpen();
+      try {
+        const inputId = await bounded(session.send({ prompt, mode: 'enqueue' }), timeoutMs);
+        if (!inputId) throw new Error('Copilot did not return an input id');
+        submitted.add(inputId);
+        state.inputs[inputId] ??= {
+          state: 'pending',
+          replyReport: '',
+          replyAvailability: 'incomplete',
+        };
+        if (state.inputs[inputId].state === 'pending' && state.status !== 'running')
+          state.status = 'queued';
+        return { executionId: config.sessionId, inputId };
+      } catch (error) {
+        state.status = 'unreachable';
+        throw error;
+      }
+    },
+    async snapshot(): Promise<WorkerState> {
+      if (!closed && state.status !== 'unreachable') {
+        try {
+          await bounded(client.ping(), timeoutMs);
+        } catch {
+          state.status = 'unreachable';
+        }
+      }
+      return structuredClone({
+        ...state,
+        inputs: Object.fromEntries(
+          Object.entries(state.inputs).filter(([id]) => submitted.has(id))
+        ),
+      });
+    },
+    async abort() {
+      requireOpen();
+      try {
+        await bounded(session.abort(), timeoutMs);
+      } catch (error) {
+        state.status = 'unreachable';
+        throw error;
+      }
+    },
+    close,
+  };
+}
