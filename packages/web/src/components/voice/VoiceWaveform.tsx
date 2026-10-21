@@ -5,6 +5,7 @@ const BAR_PITCH_WIDE = 5;
 const BAR_PITCH_NARROW = 4;
 const MAX_SECONDS = 300;
 const FLOOR = 0.03;
+const SAMPLE_MS = 1000 / 60;
 
 interface VoiceWaveformProps {
   getLevel: () => number;
@@ -73,7 +74,8 @@ export function VoiceWaveform({
   useEffect(() => {
     let raf = 0;
     let active = true;
-    let tick = 0;
+    let lastSample: number | undefined;
+    let lastFrame: number | undefined;
     const reduced =
       typeof window !== 'undefined' &&
       window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
@@ -89,7 +91,7 @@ export function VoiceWaveform({
       };
     }
 
-    const paint = () => {
+    const paint = (delta: number) => {
       const hist = histRef.current;
       const vals = valsRef.current;
       for (let i = 0; i < barCount; i++) {
@@ -97,26 +99,29 @@ export function VoiceWaveform({
         if (!bar) continue;
         const target = hist[i] ?? 0;
         const cur = vals[i];
-        vals[i] = cur + (target - cur) * (target > cur ? 0.85 : 0.16);
+        const blend = 1 - (1 - (target > cur ? 0.85 : 0.16)) ** (delta / SAMPLE_MS);
+        vals[i] = cur + (target - cur) * blend;
         const v = Math.min(1, Math.max(FLOOR, vals[i]));
         bar.style.transform = `scaleY(${v})`;
         bar.style.opacity = isTranscribing ? '0.45' : '1';
       }
     };
 
-    const loop = () => {
+    const loop = (now: number) => {
       if (!active) return;
+      const delta = lastFrame === undefined ? SAMPLE_MS : now - lastFrame;
+      lastFrame = now;
       if (!isRecording || isTranscribing) {
-        paint();
+        paint(delta);
         return;
       }
-      tick = (tick + 1) % 3;
-      if (tick === 0) {
+      if (lastSample === undefined || now - lastSample >= SAMPLE_MS - 0.5) {
+        lastSample = now;
         const level = getLevel();
         histRef.current.push(level);
         if (histRef.current.length > barCount) histRef.current.shift();
       }
-      paint();
+      paint(delta);
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
