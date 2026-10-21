@@ -1,4 +1,4 @@
-import { Logger } from './logger.ts';
+import { Logger, emitStructuredLogEvent } from './logger.ts';
 
 const DEFAULT_MESSAGE_SEARCH_MERGE_TIMEOUT_MS = 30_000;
 
@@ -7,6 +7,7 @@ const log = new Logger('Database');
 type MergeWorkerResponse = {
   ok: boolean;
   error?: string;
+  lifecycle?: { openedAt: number; mergeMs: number; closeMs: number; closedAt: number };
 };
 
 export type MessageSearchMergeStatus =
@@ -45,7 +46,15 @@ export function runMessageSearchMerge(
         type: 'module',
       });
       worker.onmessage = (event: MessageEvent<MergeWorkerResponse>) => {
-        const { ok, error } = event.data;
+        const { ok, error, lifecycle } = event.data;
+        if (lifecycle)
+          emitStructuredLogEvent({
+            level: 'debug',
+            source: 'logger',
+            module: 'hyperneo:daemon:sqlite.worker',
+            args: ['sqlite.worker.lifecycle'],
+            metadata: { event: 'message_search_merge', ...lifecycle, receivedAt: Date.now(), ok },
+          });
         if (!ok && error && !/no such table/i.test(error)) {
           log.warn('message_search_fts background merge failed:', error);
           finish('failed');

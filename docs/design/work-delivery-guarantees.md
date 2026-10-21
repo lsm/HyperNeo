@@ -194,7 +194,8 @@ belongs to the implementation slices, and no implementation fix is claimed here.
 For each implementation slice commit its failing observable regression first.
 Use fresh synthetic HOME/data, scripted CLI/IPC peers, isolated real daemon RPC
 and snapshot/UI projections following `.claude/skills/verify/SKILL.md`; add a
-repeatable journey there in that slice. Never use unattended GUI tests. Required
+repeatable journey file in `.claude/skills/verify/journeys/` in that slice, never
+edit an index. Never use unattended GUI tests. Required
 journeys: idle queue activation; busy queue ordering/expiry; acknowledgement without
 start; start without output; output before delayed acknowledgement; restart at
 each effect/commit boundary; lost/duplicate events; safe retry and ambiguous-send
