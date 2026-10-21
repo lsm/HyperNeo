@@ -124,7 +124,7 @@ DOMException [NotSupportedError]: Failed to load script "https://example.com/s.j
     at file:///Users/lsm/focus/worktrees/web-previews-17/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/browser/utilities/BrowserFrameNavigator.js:250:31
 
  Test Files  16 passed (16)
-      Tests  332 passed (332)
-   Start at  15:11:11
-   Duration  1.86s (environment 32%, setup 26%, transform 22%, tests 15%, import 4%, worker 1%)
+      Tests  338 passed (338)
+   Start at  15:24:12
+   Duration  1.22s (environment 31%, setup 25%, transform 23%, tests 15%, import 5%, worker 1%)
 

@@ -1,6 +1,6 @@
 import type { ArtifactFileMetadata } from '@hyperneo/shared/types/artifact-file';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { downloadArtifact } from '../../lib/artifact-media-client.ts';
+import { ArtifactReadRefusal, downloadArtifact } from '../../lib/artifact-media-client.ts';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { t } from '../../lib/i18n/index.ts';
 
@@ -19,7 +19,9 @@ export function ArtifactDownload({
     },
     [metadata]
   );
+  const [failed, setFailed] = useState(false);
   const start = async () => {
+    setFailed(false);
     const controller = new AbortController();
     active.current = controller;
     setProgress(0);
@@ -37,8 +39,11 @@ export function ArtifactDownload({
       anchor.download = metadata.sourcePath.split('/').at(-1) || 'artifact';
       anchor.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch {
-      if (!controller.signal.aborted) onUnavailable();
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        if (error instanceof ArtifactReadRefusal) onUnavailable();
+        else setFailed(true);
+      }
     } finally {
       if (active.current === controller) {
         active.current = null;
@@ -46,17 +51,30 @@ export function ArtifactDownload({
       }
     }
   };
-  return progress === null ? (
-    <button type="button" class="rounded-md bg-surface-raised px-3 py-1 text-sm" onClick={start}>
-      {t('artifact.download')}
-    </button>
-  ) : (
-    <button
-      type="button"
-      class="rounded-md bg-surface-raised px-3 py-1 text-sm"
-      onClick={() => active.current?.abort()}
-    >
-      {t('artifact.cancel')} ({progress} / {metadata.artifact.byteLength} B)
-    </button>
+  return (
+    <div class="flex flex-wrap items-center gap-2">
+      {failed && (
+        <p role="status" class="text-xs text-fg-muted">
+          {t('artifact.downloadFailed')}
+        </p>
+      )}
+      {progress === null ? (
+        <button
+          type="button"
+          class="rounded-md bg-surface-raised px-3 py-1 text-sm"
+          onClick={start}
+        >
+          {t(failed ? 'artifact.retryDownload' : 'artifact.download')}
+        </button>
+      ) : (
+        <button
+          type="button"
+          class="rounded-md bg-surface-raised px-3 py-1 text-sm"
+          onClick={() => active.current?.abort()}
+        >
+          {t('artifact.cancel')} ({progress} / {metadata.artifact.byteLength} B)
+        </button>
+      )}
+    </div>
   );
 }

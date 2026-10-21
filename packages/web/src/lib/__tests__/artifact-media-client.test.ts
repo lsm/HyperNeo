@@ -12,7 +12,7 @@ async function fixture(kind = 'json', data = bytes) {
     sha256,
     sourcePath: 'report.json',
   } as ArtifactFileMetadata;
-  const request = vi.fn(async (_method, params) => {
+  const request = vi.fn(async (_method, params): Promise<unknown> => {
     if (params.name === 'artifact.file.get') return { accepted: true, metadata };
     const { offset, maxBytes } = params.input;
     const end = Math.min(offset + maxBytes, data.length);
@@ -44,6 +44,15 @@ describe('artifact media previews and downloads', () => {
       expect(await readArtifactPreview(hub, 'a')).toEqual({ state: 'daemon_unavailable' });
     }
   );
+  it('removes access only for a typed daemon refusal rather than an error message', async () => {
+    const { hub, metadata, request } = await fixture();
+    request.mockResolvedValueOnce({ accepted: true, metadata });
+    request.mockResolvedValueOnce({ accepted: false, reason: 'unavailable' });
+    expect(await readArtifactPreview(hub, 'a')).toEqual({ state: 'revoked' });
+    request.mockResolvedValueOnce({ accepted: true, metadata });
+    request.mockRejectedValueOnce(new Error('unavailable'));
+    expect(await readArtifactPreview(hub, 'a')).toEqual({ state: 'daemon_unavailable' });
+  });
   it('shows bounded log head and tail with the exact omitted byte count', async () => {
     const data = new TextEncoder().encode('HEAD\n' + 'x'.repeat(400000) + '\nTAIL');
     const { hub, request } = await fixture('log', data);

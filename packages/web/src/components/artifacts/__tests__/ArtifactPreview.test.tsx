@@ -108,6 +108,18 @@ describe('ArtifactPreview', () => {
     expect(screen.getByText('the docs')).toBeTruthy();
     expect(screen.queryByText('This file is no longer available to you.')).toBeNull();
   });
+  it('removes a loaded preview when download authorization is revoked', async () => {
+    reply(meta(), chunk);
+    render(<ArtifactPreview artifactId="a1" onBack={() => {}} />);
+    await waitFor(() => expect(screen.getByText('the docs')).toBeTruthy());
+    request.mockResolvedValueOnce({ accepted: false, reason: 'unavailable' });
+    fireEvent.click(screen.getByRole('button', { name: 'Download complete file' }));
+    await waitFor(() =>
+      expect(screen.getByText('This file is no longer available to you.')).toBeTruthy()
+    );
+    expect(screen.queryByText('the docs')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry download' })).toBeNull();
+  });
   it('labels an uncommitted capture as a worktree snapshot with its hash', async () => {
     reply(meta({ kind: 'worktree' }), chunk);
     render(<ArtifactPreview artifactId="a1" onBack={() => {}} />);

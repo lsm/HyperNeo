@@ -6,7 +6,7 @@ import {
 } from '@hyperneo/shared/types/artifact-file';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { type ArtifactHtml, readArtifactHtml } from './artifact-html-client.ts';
-import { readMediaPreview } from './artifact-media-client.ts';
+import { ArtifactReadRefusal, readMediaPreview } from './artifact-media-client.ts';
 import { invokeOperation } from './operations.ts';
 
 export type ArtifactPreviewState =
@@ -97,7 +97,11 @@ export const readArtifactPreview = (superpipe({})('artifact-preview-read') as Pi
         ? readArtifactHtml(hub, metadata)
         : metadata.artifact.kind === 'markdown'
           ? readText(hub, metadata)
-          : readMediaPreview(hub, metadata).catch((error: Error) => refusedState(error.message)),
+          : readMediaPreview(hub, metadata).catch((error: unknown) =>
+              error instanceof ArtifactReadRefusal
+                ? refusedState(error.reason)
+                : { state: 'daemon_unavailable' as const }
+            ),
     ['hub', 'preview'],
     'preview'
   )

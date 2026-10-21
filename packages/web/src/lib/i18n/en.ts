@@ -244,6 +244,8 @@ export const en = {
   'artifact.snapshot': 'snapshot {hash}',
   'artifact.linkPrompt': 'Open this link in a new tab?',
   'artifact.openLink': 'Open link',
+  'artifact.downloadFailed': 'Download failed. Your preview is still open.',
+  'artifact.retryDownload': 'Retry download',
   'artifact.download': 'Download complete file',
   'artifact.copyVisible': 'Copy visible',
   'artifact.zoom': 'Original size',

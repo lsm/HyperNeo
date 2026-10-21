@@ -38,3 +38,13 @@ stops subsequent reads; an already in-flight authenticated RPC may finish but it
 bytes are discarded. Image buffers/object URLs and download buffers live only in
 the mounted connected view. No iOS or human-guided device security proof is
 claimed by this headless web journey. Stop only the owned daemon/mock/browser.
+
+Run with `VERIFY_FAULTS=1` to proxy only this synthetic browser's WebSocket and
+replace one artifact read request with a transient RPC error, keeping the real
+connection alive. The actual preview must show daemon-unavailable, never revoked.
+A second injected error during Download must preserve the loaded JSON and show
+an inline Retry download. Retry must save the exact original bytes. Screenshots
+capture both states at both widths; the original red UI output is retained.
+Typed authorization refusals still clear the preview (component/client tests).
+The helper also proves the current daemon rejects SVG registration with
+unsupported_type; this slice claims raster previews only, with no SVG Source.

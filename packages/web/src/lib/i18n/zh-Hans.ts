@@ -243,6 +243,8 @@ export const zhHans: Record<keyof typeof en, string> = {
   'artifact.snapshot': '快照 {hash}',
   'artifact.linkPrompt': '在新标签页打开这个链接？',
   'artifact.openLink': '打开链接',
+  'artifact.downloadFailed': '下载失败。预览仍然打开。',
+  'artifact.retryDownload': '重试下载',
   'artifact.download': '下载完整文件',
   'artifact.copyVisible': '复制可见文本',
   'artifact.zoom': '原始尺寸',

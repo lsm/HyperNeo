@@ -2,10 +2,17 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import type { MessageHub } from '@hyperneo/shared';
 import {
   type ArtifactFileMetadata,
+  type ArtifactRefusal,
   type ArtifactReadResult,
   ARTIFACT_DEFAULT_LIMITS as limits,
 } from '@hyperneo/shared/types/artifact-file';
 import { invokeOperation } from './operations.ts';
+
+export class ArtifactReadRefusal extends Error {
+  constructor(readonly reason: ArtifactRefusal['reason']) {
+    super(reason);
+  }
+}
 
 export async function readArtifactRange(
   hub: MessageHub,
@@ -18,7 +25,7 @@ export async function readArtifactRange(
     offset,
     maxBytes,
   });
-  if (!chunk.accepted) throw new Error(chunk.reason);
+  if (!chunk.accepted) throw new ArtifactReadRefusal(chunk.reason);
   const bytes = Uint8Array.from(atob(chunk.data), (char) => char.charCodeAt(0));
   if (
     chunk.sha256 !== metadata.sha256 ||
