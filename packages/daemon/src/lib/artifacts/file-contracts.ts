@@ -99,4 +99,21 @@ export const ArtifactFileMetadataSchema: z.ZodType<ArtifactFileMetadata> = z.str
   createdAt: byteCount,
   sourcePath: z.string(),
   producer: z.strictObject({ adapter: z.string().min(1), id: z.string().min(1) }),
+  revision: z
+    .discriminatedUnion('kind', [
+      z.strictObject({
+        kind: z.literal('worktree'),
+        baseCommit: z
+          .string()
+          .regex(/^[a-f0-9]{40}$/)
+          .optional(),
+      }),
+      z.strictObject({
+        kind: z.literal('commit'),
+        repository: z.string().regex(/^github\.com\/[a-z0-9_.-]+\/[a-z0-9_.-]+$/),
+        commitSha: z.string().regex(/^[a-f0-9]{40}$/),
+        blobSha: z.string().regex(/^[a-f0-9]{40}$/),
+      }),
+    ])
+    .optional(),
 });

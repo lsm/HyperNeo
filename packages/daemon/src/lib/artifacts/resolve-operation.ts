@@ -13,6 +13,8 @@ import { ArtifactRefSchema, ArtifactRefusalSchema } from './file-contracts.ts';
 import { createArtifactRegistration } from './register-operation.ts';
 import { planStoredReference } from './reference-plan.ts';
 import { ArtifactPrSummarySchema, readBoundPrSummary } from './pr-summary.ts';
+import { readBoundGitBlob } from './git-blob.ts';
+import { captureGitArtifact } from './git-capture.ts';
 
 const context = z.strictObject({ kind: z.enum(['todo', 'ask']), id: z.string().min(1).max(200) });
 const inputSchema = z.strictObject({
@@ -23,6 +25,12 @@ const inputSchema = z.strictObject({
   }),
   reference: z.string().min(1).max(4096),
   context: context.optional(),
+  file: z
+    .strictObject({
+      path: z.string().min(1).max(4096),
+      headSha: z.string().regex(/^[a-f0-9]{40}$/),
+    })
+    .optional(),
   requestId: z
     .string()
     .uuid()
@@ -36,13 +44,14 @@ export function createArtifactReferenceResolve(
   data = getDataDir(),
   home = homedir(),
   capture = createArtifactRegistration(database, data, home).execute,
-  readPr = readBoundPrSummary
+  readPr = readBoundPrSummary,
+  readGit = readBoundGitBlob
 ) {
   async function plan(input: Input, caller: OperationCaller) {
     const db = database();
     const daemonId = new ArtifactFileRepository(db).daemonId;
     const sources = new ArtifactReferenceSourceRepository(db, daemonId);
-    return planStoredReference(
+    const selected = await planStoredReference(
       { source: input.sourceMessageOrCard, reference: input.reference, context: input.context },
       caller,
       {
@@ -51,28 +60,50 @@ export function createArtifactReferenceResolve(
         loadSource: async (key) => sources.load(key),
       }
     );
+    if (!selected.accepted || !input.file) return selected;
+    if (selected.kind !== 'github-pr') return unavailable();
+    const pr = await readPr(selected);
+    return pr &&
+      pr.headSha === input.file.headSha &&
+      pr.files.some((file) => file.path === input.file!.path)
+      ? {
+          accepted: true as const,
+          kind: 'git-blob' as const,
+          context: selected.context,
+          repository: selected.repository,
+          sha: pr.headSha,
+          path: input.file.path,
+        }
+      : { accepted: false as const, reason: 'source_changed' };
   }
   async function prepare(input: Input, caller: OperationCaller) {
     const result = await plan(input, caller);
     if (!result.accepted) return { reason: result };
-    return result.kind !== 'git-blob'
-      ? { value: result }
-      : { reason: { accepted: false as const, reason: 'unsupported_type' } };
+    return { value: result };
   }
   type Plan = Extract<Awaited<ReturnType<typeof prepare>>, { value: unknown }>['value'];
   async function snapshot(selected: Plan, input: Input, caller: OperationCaller) {
     const result =
-      selected.kind === 'github-pr'
-        ? await readPr(selected).then((pr) => (pr ? { accepted: true, pr } : unavailable()))
-        : ((await capture(
-            {
-              requestId: input.requestId,
-              context: selected.context,
-              path: join(selected.root, selected.relativePath),
-              title: selected.relativePath.split('/').at(-1)!.slice(0, 200),
-            },
-            caller
-          )) as { accepted: boolean; reason?: string });
+      selected.kind === 'git-blob'
+        ? ((await captureGitArtifact(
+            database(),
+            data,
+            selected,
+            input.requestId,
+            async () => JSON.stringify(await plan(input, caller)) === JSON.stringify(selected),
+            readGit
+          )) as { accepted: boolean; reason?: string })
+        : selected.kind === 'github-pr'
+          ? await readPr(selected).then((pr) => (pr ? { accepted: true, pr } : unavailable()))
+          : ((await capture(
+              {
+                requestId: input.requestId,
+                context: selected.context,
+                path: join(selected.root, selected.relativePath),
+                title: selected.relativePath.split('/').at(-1)!.slice(0, 200),
+              },
+              caller
+            )) as { accepted: boolean; reason?: string });
     const current = await plan(input, caller);
     if (JSON.stringify(current) !== JSON.stringify(selected)) return unavailable();
     return !result.accepted && 'reason' in result && result.reason === 'unsafe_path'
@@ -93,7 +124,7 @@ export function createArtifactReferenceResolve(
   return defineOperation({
     name: 'artifact.reference.resolve',
     description:
-      'Paired-human tap: resolve an exact stored message/publication/todo reference to a local immutable snapshot or a bound GitHub PR summary. Optional context chooses only among authorized source bindings. No raw-path grants, arbitrary URL fetch, Git file bytes or agent invocation. File reads use anchored no-follow descriptors.',
+      'Paired-human tap: resolve an exact stored message/publication/todo reference to an immutable file snapshot or bound GitHub PR summary. PR file selection requires its displayed headSha and listed path. Optional context chooses only among authorized source bindings. No raw-path grants, arbitrary URL fetch or agent invocation. File reads use anchored no-follow descriptors.',
     inputSchema,
     resultSchema: z.union([
       ArtifactRefusalSchema,

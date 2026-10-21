@@ -63,4 +63,12 @@ export interface ArtifactFileMetadata {
   readonly createdAt: number;
   readonly sourcePath: string;
   readonly producer: { readonly adapter: string; readonly id: string };
+  readonly revision?:
+    | { readonly kind: 'worktree'; readonly baseCommit?: string }
+    | {
+        readonly kind: 'commit';
+        readonly repository: string;
+        readonly commitSha: string;
+        readonly blobSha: string;
+      };
 }
