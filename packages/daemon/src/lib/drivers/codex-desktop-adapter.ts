@@ -142,12 +142,17 @@ interface CodexPlace extends CodexFolderRow {
 }
 
 function readCodexStateOnce<T>(path: string, read: (db: Database) => T): T {
-  const db = new Database(path, { readonly: true });
+  const db = runLagPhase(
+    'scanner:codex_desktop:open',
+    () => new Database(path, { readonly: true })
+  );
   try {
-    db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
-    return read(db);
+    runLagPhase('scanner:codex_desktop:configure', () =>
+      db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`)
+    );
+    return runLagPhase('scanner:codex_desktop:query', () => read(db));
   } finally {
-    db.close();
+    runLagPhase('scanner:codex_desktop:close', () => db.close());
   }
 }
 
@@ -162,41 +167,53 @@ export function withCodexState<T>(statePath: string, read: (db: Database) => T):
 
 export function readCodexSnapshot(statePath: string, includeClosed: boolean): CodexSnapshot {
   return withCodexState(statePath, (db) => ({
-    roots: db
-      .prepare(
-        `SELECT p.id AS projectId, COALESCE(p.name, '') AS name, r.path AS folder,
+    roots: runLagPhase(
+      'scanner:codex_desktop:roots',
+      () =>
+        db
+          .prepare(
+            `SELECT p.id AS projectId, COALESCE(p.name, '') AS name, r.path AS folder,
              COALESCE(p.updated_at_ms, 0) AS lastActiveAt
              FROM projects p JOIN project_roots r ON r.project_id = p.id WHERE r.path IS NOT NULL`
-      )
-      .all() as CodexRootRow[],
-    folders: db
-      .prepare(
-        `SELECT cwd AS folder, SUM(COALESCE(archived, 0) = 0) AS openCount,
+          )
+          .all() as CodexRootRow[]
+    ),
+    folders: runLagPhase(
+      'scanner:codex_desktop:folders',
+      () =>
+        db
+          .prepare(
+            `SELECT cwd AS folder, SUM(COALESCE(archived, 0) = 0) AS openCount,
              SUM(COALESCE(archived, 0) != 0) AS archivedCount,
              COALESCE(MAX(updated_at_ms), 0) AS lastActiveAt FROM threads WHERE ${OWN_THREADS} GROUP BY cwd`
-      )
-      .all() as CodexFolderRow[],
-    threads: db
-      .prepare(
-        `SELECT * FROM (
+          )
+          .all() as CodexFolderRow[]
+    ),
+    threads: runLagPhase(
+      'scanner:codex_desktop:threads',
+      () =>
+        db
+          .prepare(
+            `SELECT * FROM (
              SELECT ${THREAD_COLUMNS} FROM threads WHERE ${OWN_THREADS} AND COALESCE(archived, 0) = 0
              UNION ALL
              SELECT * FROM (SELECT ${THREAD_COLUMNS} FROM threads
                WHERE ${OWN_THREADS} AND ? = 1 AND COALESCE(archived, 0) != 0
                ORDER BY updatedAt DESC LIMIT ${CLOSED_THREADS}))
            ORDER BY updatedAt DESC`
-      )
-      .all(includeClosed ? 1 : 0) as CodexThreadRow[],
+          )
+          .all(includeClosed ? 1 : 0) as CodexThreadRow[]
+    ),
   }));
 }
 
-export function codexProjectFolder(
+export async function codexProjectFolder(
   folder: string,
   roots: readonly CodexRootRow[],
   worktreesDir: string
-): string {
+): Promise<string> {
   if (!folder.startsWith(`${worktreesDir}/`)) return folder;
-  const project = gitWorktreeProject(folder);
+  const project = await gitWorktreeProject(folder);
   return roots.some((root) => root.folder === project) ? project : folder;
 }
 
@@ -242,19 +259,26 @@ export function matchCodexThreads(
   return matchChatsBy(chats, (chat) => (chat.kind === 'codex' ? chat.sessionId : null));
 }
 
+async function resolveCodexFolders(snapshot: CodexSnapshot, deps: CodexDesktopAdapterDeps) {
+  return runLagPhase('scanner:codex_desktop:worktrees', () =>
+    Promise.all(
+      [...new Set([...snapshot.folders, ...snapshot.threads].map((row) => row.folder))].map(
+        async (folder) =>
+          [folder, await codexProjectFolder(folder, snapshot.roots, deps.worktreesDir)] as const
+      )
+    ).then((entries) => new Map(entries))
+  );
+}
+
 export function buildCodexGroups(
   snapshot: CodexSnapshot,
   query: FindQuery,
   deps: Omit<CodexDesktopAdapterDeps, 'statePath'>,
-  matched: ReadonlyMap<string, WorkChatMatch> = new Map()
+  matched: ReadonlyMap<string, WorkChatMatch>,
+  folders: ReadonlyMap<string, string>
 ): PlaceGroup[] {
   const text = query.text?.toLowerCase();
   const now = deps.now();
-  const folders = new Map(
-    [...new Set([...snapshot.folders, ...snapshot.threads].map((row) => row.folder))].map(
-      (folder) => [folder, codexProjectFolder(folder, snapshot.roots, deps.worktreesDir)]
-    )
-  );
   return codexPlaces(snapshot, folders)
     .filter((place) => !query.folder || place.folder === query.folder)
     .filter((place) => query.includeClosed || place.openCount > 0 || place.known)
@@ -314,12 +338,26 @@ const runCodexFind = (superpipe({})('codex-find-work') as PipelineAPI)
   .pipe(skipSpaceQuery, 'query', 'result:groups')
   .pipe(loadCodexSnapshot, ['query', 'deps'], 'snapshot')
   .pipe(matchCodexThreads, 'chats', 'matched')
-  .pipe(buildCodexGroups, ['snapshot', 'query', 'deps', 'matched'], 'groups')
-  .end('groups') as (
+  .pipe(resolveCodexFolders, ['snapshot', 'deps'], 'folders')
+  .pipe(
+    (
+      snapshot: CodexSnapshot,
+      query: FindQuery,
+      deps: CodexDesktopAdapterDeps,
+      matched: ReadonlyMap<string, WorkChatMatch>,
+      folders: ReadonlyMap<string, string>
+    ) =>
+      runLagPhase('scanner:codex_desktop:groups', () =>
+        buildCodexGroups(snapshot, query, deps, matched, folders)
+      ),
+    ['snapshot', 'query', 'deps', 'matched', 'folders'],
+    'groups'
+  )
+  .endAsync('groups') as (
   query: FindQuery,
   deps: CodexDesktopAdapterDeps,
   chats: readonly WorkChatMatch[]
-) => PlaceGroup[];
+) => Promise<PlaceGroup[]>;
 
 export function readCodexThread(statePath: string, id: string): CodexThreadDetail | null {
   return withCodexState(statePath, (db) => {
@@ -567,13 +605,13 @@ export async function readCodexTurn(
   }
 }
 
-export function describeCodexThread(
+export async function describeCodexThread(
   detail: CodexThreadDetail,
   state: CodexTurnState,
   deps: CodexDesktopAdapterDeps
-): Result<WorkDetail> {
+): Promise<Result<WorkDetail>> {
   const { thread, roots } = detail;
-  const folder = codexProjectFolder(thread.folder, roots, deps.worktreesDir);
+  const folder = await codexProjectFolder(thread.folder, roots, deps.worktreesDir);
   const root = roots.find((candidate) => candidate.folder === folder);
   return {
     ok: true,

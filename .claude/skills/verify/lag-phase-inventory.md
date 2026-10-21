@@ -15,6 +15,10 @@ survive; a completion during the delayed tick can still name a long operation.
 | Claude transcript feed | durable job, 60 s | `job:work.feed.claude` | `lib/drivers/claude-feed.ts`, `scheduleClaudeFeed` |
 | Neo session/work status refresh | durable job, 60 s | `job:neo.work.driver.refresh` | `lib/neo/driver-refresh.ts` |
 | Codex Desktop scan | on demand, including status refresh | `scanner:codex_desktop` | `lib/drivers/codex-desktop-adapter.ts`, `loadCodexSnapshot` |
+| Codex external SQLite | each state read | `scanner:codex_desktop:open/configure/query/close`; snapshot `roots/folders/threads` | `lib/drivers/codex-desktop-adapter.ts`, `readCodexStateOnce`, `readCodexSnapshot`; synchronous spans |
+| Codex worktree resolution and grouping | each discovery | `scanner:codex_desktop:worktrees/groups` | `lib/drivers/codex-desktop-adapter.ts`; worktrees includes async I/O, groups is synchronous |
+| Worktree pointer metadata/content | lookup when needed | `scanner:worktree:metadata/read` | `lib/drivers/acp-agent-adapter.ts`, `gitWorktreeProject`; async spans, cache validated by metadata |
+| Per-adapter local discovery | each work.find | `work:find:<adapter id>` | `lib/drivers/find-operation.ts`, `findLocally`; includes async waits and failures |
 | Claude Desktop scan | on demand, including status refresh | `scanner:claude_desktop` | `lib/drivers/claude-desktop-adapter.ts`, `loadClaudeDesktopRecords` |
 | Claude Code scan | on demand, including status refresh | `scanner:claude_code` | `lib/drivers/claude-code-adapter.ts`, `scan` |
 | Model provider retry | recursive 60 s timeout while pending | `timer:model_provider_retry` | `lib/model-service.ts`, `armProviderRetryTimer` |
