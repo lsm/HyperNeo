@@ -377,6 +377,70 @@ describe('Copilot owned input delivery', () => {
     expect(f.calls().filter((c) => c.method === 'session.send')).toHaveLength(1);
   });
 
+  test.each([
+    ['--logged-out', 'copilot login'],
+    ['--wrong-version', 'runtime version'],
+    ['--resume-error', 'Synthetic resume rejection'],
+  ])(
+    'pre-submit %s failure does not imply accepted input and permits explicit retry',
+    async (flag, diagnostic) => {
+      const f = fixture();
+      const work = await f.start('settled');
+      await settled(f, work);
+      f.install(flag);
+      const refused = await f.send(work, 'settled');
+      expect(refused).toMatchObject({
+        ok: false,
+        reason: 'unreachable',
+        detail: expect.stringContaining(diagnostic),
+      });
+      if (refused.ok) throw new Error('expected refusal');
+      expect(refused.detail).not.toContain('input may be accepted');
+      expect(refused.detail).not.toContain('do not replay');
+      expect(f.calls().filter((c) => c.method === 'session.send')).toHaveLength(1);
+      expect(await settled(f, work)).toMatchObject({ value: { lastReply: 'REPLY_1' } });
+      f.install();
+      const retried = await f.send(work, 'settled');
+      expect(retried.ok).toBe(true);
+      if (!retried.ok) throw new Error('retry rejected');
+      expect(await settled(f, work, retried.value.receipt)).toMatchObject({
+        value: { lastReply: 'REPLY_2' },
+      });
+      expect(f.calls().filter((c) => c.method === 'session.send')).toHaveLength(2);
+    }
+  );
+
+  test('post-ACK record failure retains the do-not-replay warning', async () => {
+    const f = fixture();
+    const work = await f.start('settled');
+    await settled(f, work);
+    const sending = f.send(work, 'held-ack');
+    try {
+      for (
+        let poll = 0;
+        poll < 200 &&
+        !f.calls().some((c) => c.method === 'session.send' && c.params.prompt === 'held-ack');
+        poll++
+      )
+        await new Promise((done) => setTimeout(done, 5));
+      expect(
+        f.calls().some((c) => c.method === 'session.send' && c.params.prompt === 'held-ack')
+      ).toBe(true);
+      mkdirSync(join(f.run, 'owned', `${work.ref.id}.json.tmp`));
+    } finally {
+      writeFileSync(join(f.run, 'release-ack'), 'release');
+    }
+    const refused = await sending;
+    expect(refused).toMatchObject({
+      ok: false,
+      reason: 'unreachable',
+      detail: expect.stringContaining('input may be accepted; do not replay'),
+    });
+    await f.restart();
+    expect(await f.send(work, 'settled')).toMatchObject({ ok: false, reason: 'unreachable' });
+    expect(f.calls().filter((c) => c.method === 'session.send')).toHaveLength(2);
+  });
+
   test('lost follow-up ACK never replays, but earlier complete evidence survives', async () => {
     const f = fixture();
     const work = await f.start('settled');

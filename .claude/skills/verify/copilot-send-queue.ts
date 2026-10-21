@@ -199,6 +199,32 @@ try {
     assert(!existsSync(join(run, 'data/copilot-workers/receipts')));
     assert(!calls().some(call => call.method === 'session.resume' && call.params.sessionId === completed.ref.id));
   }
+  if (mode === 'preflight' || mode === 'all') {
+    for (const [flag, diagnostic] of [['--logged-out', 'copilot login'], ['--wrong-version', 'runtime version'], ['--resume-error', 'Synthetic resume rejection']]) {
+      installFixture(); const work = await start('settled'); await done(work); installFixture(flag);
+      const count = calls().filter(call => call.method === 'session.send').length;
+      const refused = await rpc('work.send', { ref: work.ref, message: 'settled' }) as { ok: boolean; reason: string; detail: string };
+      assert.equal(refused.ok, false); assert.equal(refused.reason, 'unreachable'); assert(refused.detail.includes(diagnostic));
+      assert(!refused.detail.includes('input may be accepted')); assert(!refused.detail.includes('do not replay'));
+      assert.equal(calls().filter(call => call.method === 'session.send').length, count);
+      assert.equal((await done(work)).lastReply, 'REPLY_1');
+      installFixture(); const retry = await deliver(work, 'settled');
+      assert.equal((await done(withReceipt(work, retry.receipt))).lastReply, 'REPLY_2');
+      assert.equal(calls().filter(call => call.method === 'session.send').length, count + 1);
+    }
+    const work = await start('settled'); await done(work);
+    const sending = rpc('work.send', { ref: work.ref, message: 'held-ack' });
+    try {
+      for (let poll = 0; poll < 200 && !calls().some(call => call.method === 'session.send' && call.params.prompt === 'held-ack'); poll++) await new Promise(done => setTimeout(done, 5));
+      assert(calls().some(call => call.method === 'session.send' && call.params.prompt === 'held-ack'));
+      mkdirSync(join(run, 'data/copilot-workers', `${work.ref.id}.json.tmp`));
+    } finally { writeFileSync(join(run, 'workspace/release-ack'), 'release'); }
+    const refused = await sending as { ok: boolean; reason: string; detail: string };
+    assert.equal(refused.ok, false); assert.equal(refused.reason, 'unreachable'); assert(refused.detail.includes('input may be accepted; do not replay'));
+    await restart();
+    const orphan = await rpc('work.send', { ref: work.ref, message: 'do not replay' }) as { ok: boolean; reason: string };
+    assert.equal(orphan.ok, false); assert.equal(orphan.reason, 'unreachable');
+  }
   const catalog = await rpc('work.adapters', {}) as { value: { id: string; capabilities: string[] }[] };
   assert.deepEqual(catalog.value.find(adapter => adapter.id === 'copilot-cli')?.capabilities, ['find', 'start', 'send', 'queue', 'status', 'stop']);
   ws!.close(); await app!.cleanup(); app = undefined;

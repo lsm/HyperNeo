@@ -41,7 +41,11 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
       break;
     case 'status.get':
       reply({
-        version: process.argv.includes('--production-version') ? '1.0.83' : 'fixture-1',
+        version: process.argv.includes('--wrong-version')
+          ? 'unsupported-fixture'
+          : process.argv.includes('--production-version')
+            ? '1.0.83'
+            : 'fixture-1',
         protocolVersion: 3,
       });
       break;
@@ -71,11 +75,16 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
       break;
     case 'session.resume':
       sessionId = String(msg.params?.sessionId);
-      if (!existsSync(fixtureState())) {
+      if (process.argv.includes('--resume-error') || !existsSync(fixtureState())) {
         send({
           jsonrpc: '2.0',
           id: msg.id,
-          error: { code: -32000, message: 'Missing fixture session' },
+          error: {
+            code: -32000,
+            message: process.argv.includes('--resume-error')
+              ? 'Synthetic resume rejection'
+              : 'Missing fixture session',
+          },
         });
         break;
       }
@@ -257,7 +266,13 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
         !String(prompt).endsWith('-queued')
       )
         event('user.message', { messageId: id, interactionId: 'rewritten', content: prompt });
-      if (prompt === 'ping-ack') pendingAck = () => reply({ messageId: id });
+      if (prompt === 'held-ack') {
+        const timer = setInterval(() => {
+          if (!existsSync(join(process.cwd(), 'release-ack'))) return;
+          clearInterval(timer);
+          reply({ messageId: id });
+        }, 5);
+      } else if (prompt === 'ping-ack') pendingAck = () => reply({ messageId: id });
       else if (prompt === 'late-ack') setTimeout(() => reply({ messageId: id }), 20);
       else if (prompt !== 'lost-ack') reply({ messageId: id });
       break;
