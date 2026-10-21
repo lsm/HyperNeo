@@ -105,10 +105,12 @@ try {
   for (const pid of new Set<number>(calls.map(call => call.pid))) assert.throws(() => process.kill(pid, 0), `owned runtime ${pid} survived cleanup`);
   observations.push({ cleanupPidsGone: [...new Set(calls.map(call => call.pid))], calls });
   await connect();
+  assert.equal((await status(complete)).status, 'done');
+  assert.equal((await status(complete)).lastReply, 'REPLY_1');
   const recovered = await rpc('work.status', { ref: active.ref, receipt: active.receipt }) as { ok: boolean; reason: string };
   assert.equal(recovered.ok, false); assert.equal(recovered.reason, 'unreachable');
   assert.equal(readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').trim().split('\n').filter(line => JSON.parse(line).method === 'session.send').length, 5);
-  console.log(`PASS public Copilot work.start/status/stop: reply, denied permission, abort evidence, cleanup and no restart replay. ${run}/evidence/observed.json`);
+  console.log(`PASS public Copilot work.start/status/stop: relative DB, durable terminal reply after CLI death/restart, unsupported model, denied permission, abort evidence and no replay. ${run}/evidence/observed.json`);
 } finally {
   ws?.close(); await app?.cleanup();
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(observations, null, 2));
