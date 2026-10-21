@@ -2025,6 +2025,33 @@ later slices. Review-author login is read now to enforce designated-bot approval
 unknown/stale authors never count. This journey proves the nudge decision and
 snapshot, not live GitHub transport, actual delivery or later worker merge checks.
 
+## Web schedule strip (G7b)
+
+Build the web and launch a fresh isolated daemon as above. Run
+`bun .claude/skills/verify/session-schedule-web.ts <port> "$RUN"`, then the
+headless `.claude/skills/verify/session-schedule-web.mjs <port> "$RUN"` with a
+Node runtime that can resolve Playwright. `VERIFY_BROWSER` may name a local
+Chromium executable, always launched headless with a fresh profile.
+
+The helper creates only synthetic Neo/session goals and reminders through RPC;
+last-outcome/skip/nudge values are explicit DB fixtures, not proof of wake delivery.
+The browser opens both `/neo` and `/session/<id>` at 1280/390px. Each strip starts
+folded and shows only its own target's rows. Expand it, inspect interval/cron,
+next/last timestamps, skip reason and nudge distance (or “Nudge due” after the
+threshold), then open the goal title's read-only definition. Pause/resume must update
+both UI and a fresh real RPC read.
+The helper also opens a synthetic Space session route: no strip or schedule list
+RPC may be present there, including after focus. `reproduce` as the final browser
+argument skips the long visible-refresh check but retains both boundary assertions.
+Screenshots: `evidence/schedules-{neo,session}-{1280,390}.png` and
+`evidence/schedules-space.png`; assertions and
+observed text: `evidence/schedule-web.json`. Inspect screenshots as well.
+
+The strip refreshes every 30s while visible, on window focus and explicit refresh,
+and after controls. Goal titles use a disclosure until G6 adds the full goal panel;
+this journey does not claim a journal or cross-page goal link. No GUI, model,
+provider, real data or GitHub is used. Stop the daemon/mock with `stop.sh`.
+
 ### Immutable settings proposal answers
 
 ```bash
@@ -2061,6 +2088,21 @@ migration. A number already reserved in own-pr-number is checked for collisions
 instead. Supply own-pr-number only when updating that same PR. It uses GitHub,
 not the isolated daemon or a live database; do not run it under the stub-gh PATH.
 Unpublished reservations still need coordination with their owner.
+
+### Unknown schedule counts
+
+On another fresh run, seed with `session-schedule-web.ts`, then run the headless
+`session-schedule-summary.mjs <port> "$RUN"` with the same Node/Playwright setup.
+It holds and refuses only the first schedule-list reply at the WebSocket boundary;
+all other calls and the successful retry use the actual isolated daemon. While the
+strip is collapsed, both pending and failed reads must show only “Schedules”,
+without a fabricated zero. Retry must show the actual count of two. Component
+contracts separately check a successful empty read shows zero.
+
+Evidence: `evidence/schedule-summary.json` and
+`schedule-summary-{loading,failed,recovered}.png`. This is controlled fault
+injection into the real web surface, not a claim that the daemon itself failed.
+The helper closes its headless browser; stop the daemon/mock with `stop.sh`.
 
 ## Source-labelled schedule list (G7 contract)
 
@@ -2134,6 +2176,46 @@ tests also cover an empty pack list, direct-call freshness, duplicate watch
 suppression and no followed todos. A controlled wait proves amplification of
 slow settings, not the cause of any historical live off-CPU event. The helper
 closes its own socket, timer, monitor, Neo service and daemon in `finally`.
+
+
+### Human-approved standing-rule edits
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-rule-answers-XXXXXX)
+mkdir -p "$RUN/home"
+env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
+  bun .claude/skills/verify/neo-rule-answers.ts 9355 "$RUN"
+```
+
+This helper starts a real isolated daemon and uses its MCP and WebSocket
+`operation.invoke` doors. A system-triggered direct `neo.rule.save` is refused.
+After a stored human message is consumed and delivered in that active turn, an
+explicit `human:<messageId>` triggerId and that message's exact citation allow
+the direct path, matching #7904's input attribution.
+
+The preferred `neo.rule.ask {askId,requestId,add?,remove?}` path generates a yes/no
+question and atomically binds its immutable exact edit. No answer leaves the
+rules unchanged. Human yes applies only the stored edit; an agent cannot answer,
+replace the proposal after consent or pass new edit fields to the questionId-only
+`neo.rule.applyAnswer`. Both the human consent and resulting `neo.snapshot`
+standingRules survive restart. Successful chat consent must also deliver the
+updated `state.settings` event over the connected WebSocket; the helper waits
+for the exact new rule in this projection, rather than accepting a DB read as
+proof that connected clients updated. Pending proposal retries reuse requestId; closed
+questions require a new requestId. Evidence is retained even on failure in
+`evidence/observed.json`; each daemon and socket closes in `finally`.
+
+Unit contracts also replace one of twenty rules while keeping the other nineteen,
+refuse guessed/queued/nonhuman direct-save triggers, and roll back consent and
+all edits on infrastructure failure. A stale proposal (a missing removal or a
+changed rule cap) records the human answer without changing rules. Chat sends
+remain accepted and notify Neo; `neo.rule.applyAnswer` returns the typed refusal.
+The real helper exercises a stale chat yes through `neo.message.send`, and the
+unit journey checks notification and retry idempotency for both stale cases.
+Only synthetic fixtures are used. This journey
+proves the daemon operation and snapshot surfaces; GUI rendering, model choices,
+notification completion and deployment are not verified. Neo's default guidance
+asks for consent first; the existing direct human-message path remains available.
 
 ## Workspace project mirroring responsiveness
 

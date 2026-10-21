@@ -6,6 +6,7 @@ import { SessionStore } from '../../lib/session-store.ts';
 import { NeoLive } from '../NeoLive.tsx';
 
 const seams = vi.hoisted(() => ({ useNeo: vi.fn(), request: vi.fn(), event: vi.fn() }));
+vi.mock('../../components/SessionSchedules.tsx', () => ({ SessionSchedules: () => null }));
 vi.mock('../useNeo.ts', () => ({ useNeo: seams.useNeo }));
 vi.mock('../useNeoVoiceSettings.ts', () => ({ useNeoVoiceSettings: () => false }));
 vi.mock('../../hooks/useVoiceRecorder.ts', () => ({

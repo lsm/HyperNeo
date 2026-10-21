@@ -110,7 +110,7 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
   publication_superseded:
     'This turn’s session or conversation changed after the reply was prepared, so it cannot publish. Publish from the current live turn.',
   question_closed:
-    'This settings question is already answered or retired. Read it with neo.question.get; use a new requestId if the human needs a new question.',
+    'This question is already answered or retired. Read it with neo.question.get; use a new requestId if the human needs a new question.',
   recipient_is_coordinator:
     'Neo sessions do not report on cards; working sessions do. Report from the card’s working session.',
   recipient_mismatch:

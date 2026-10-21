@@ -10,6 +10,7 @@ let NeoLive: typeof import('../NeoLive.tsx').NeoLive;
 
 beforeEach(async () => {
   vi.resetModules();
+  vi.doMock('../../components/SessionSchedules.tsx', () => ({ SessionSchedules: () => null }));
   vi.doMock('../useNeo.ts', () => ({ useNeo: useNeoMock }));
   vi.doMock('../../lib/state.ts', () => ({
     connectionState: { value: 'connected', subscribe: () => () => {} },

@@ -8,6 +8,7 @@ import { readNeoAttachment, attachmentMessage, restoreNeoImages } from '../neo-a
 
 const sendMessage = vi.hoisted(() => vi.fn());
 const useNeoMock = vi.hoisted(() => vi.fn());
+vi.mock('../../components/SessionSchedules.tsx', () => ({ SessionSchedules: () => null }));
 vi.mock('../useNeo.ts', () => ({ useNeo: useNeoMock }));
 vi.mock('../NeoConversation.tsx', () => ({ NeoConversation: () => null }));
 vi.mock('../../islands/ToastContainer.tsx', () => ({ default: () => null }));
