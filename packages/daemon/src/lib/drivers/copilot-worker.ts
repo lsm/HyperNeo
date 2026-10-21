@@ -236,7 +236,7 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
       if (state.status === 'needs_you') throw new Error('Copilot worker is awaiting permission');
       if (submitting + Object.values(state.inputs).filter((input) => !input.outcome).length >= 64)
         throw new Error('Copilot worker has 64 unsettled inputs');
-      if (['failed', 'stopped'].includes(state.status)) state.status = 'queued';
+      if (['done', 'failed', 'stopped'].includes(state.status)) state.status = 'queued';
       submitting++;
       try {
         const inputId = await bounded(session.send({ prompt, mode: 'enqueue' }), timeoutMs);
