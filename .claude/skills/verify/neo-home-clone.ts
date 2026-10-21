@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { existsSync, mkdirSync, watch, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 import { spawnProcess } from '../../../packages/daemon/src/lib/runtime-spawn/index.ts';
@@ -22,6 +23,10 @@ await mkdir(source);
 await writeFile(join(source, '.gitignore'), '.coordinators/\n');
 await writeFile(join(source, 'README.md'), '# Synthetic shared home\n');
 await writeFile(join(source, 'direction.md'), 'Human direction from the first machine\n');
+if (mode === 'nested') {
+  await mkdir(join(source, 'projects'));
+  await writeFile(join(source, 'projects', 'shared.md'), 'Remote document');
+}
 await git(source, ['init', '--initial-branch=main', '--quiet']);
 await git(source, ['add', '.']);
 await git(source, ['commit', '-m', 'First machine shared home']);
@@ -33,6 +38,7 @@ await writeFile(privateFile, 'Private second-machine transcript');
 const evidence: Record<string, unknown> = { run, source, remote, root, mode };
 let daemon: Awaited<ReturnType<typeof import('../../../packages/daemon/src/app.ts').createDaemonApp>> | undefined;
 let transport: WebSocketClientTransport | undefined;
+let observer: ReturnType<typeof watch> | undefined;
 try {
   const { createDaemonApp } = await import('../../../packages/daemon/src/app.ts');
   const { getConfig } = await import('../../../packages/daemon/src/config.ts');
@@ -42,6 +48,20 @@ try {
   transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${daemon.server.port}/ws`, autoReconnect: false });
   hub.registerTransport(transport); await transport.initialize();
   const call = (name: string, input: unknown) => hub.request<Record<string, unknown>>('operation.invoke', { name, input });
+  if (mode === 'existing') {
+    await call('neo.home.init', {});
+    evidence.beforeHead = await git(root, ['rev-parse', 'HEAD']);
+  }
+  if (mode === 'nested') {
+    evidence.intervened = false;
+    observer = watch(root, (_event, name) => {
+      if (evidence.intervened || String(name) !== 'projects' || !existsSync(join(root, 'projects'))) return;
+      evidence.intervened = true;
+      writeFileSync(join(root, 'projects', 'human.txt'), 'Human nested file');
+      mkdirSync(join(root, '.git'));
+      writeFileSync(join(root, '.git', 'human.txt'), 'Human metadata');
+    });
+  }
   const remoteUrl = mode === 'missing' ? join(run, 'missing.git') : remote;
   evidence.reply = await call('neo.home.init', { remoteUrl });
   evidence.contents = await readFile(join(root, 'direction.md'), 'utf8').catch(() => null);
@@ -49,7 +69,21 @@ try {
   evidence.transcript = await readFile(privateFile, 'utf8');
   evidence.entries = await readdir(root);
   assert.equal(evidence.transcript, 'Private second-machine transcript');
-  if (mode === 'missing') {
+  if (mode === 'nested') {
+    evidence.humanFile = await readFile(join(root, 'projects', 'human.txt'), 'utf8').catch(() => null);
+    assert.equal(evidence.intervened, true, 'human intervention was not observed; inconclusive race fixture');
+    assert.equal((evidence.reply as { ok: boolean }).ok, false);
+    assert.match(String((evidence.reply as { reason: string }).reason), /clone_failed/);
+    assert.equal(evidence.humanFile, 'Human nested file');
+    assert.deepEqual(await readdir(join(root, 'projects')), ['human.txt']);
+    assert.equal(await readFile(join(root, '.git', 'human.txt'), 'utf8'), 'Human metadata');
+    assert.deepEqual((evidence.entries as string[]).sort(), ['.coordinators', '.git', 'projects']);
+  } else if (mode === 'existing') {
+    evidence.afterHead = await git(root, ['rev-parse', 'HEAD']);
+    assert.equal(evidence.beforeHead, evidence.afterHead);
+    assert.equal((evidence.reply as { ok: boolean }).ok, false);
+    assert.match(String((evidence.reply as { reason: string }).reason), /local_home_exists.*no origin.*fresh data directory/);
+  } else if (mode === 'missing') {
     assert.equal((evidence.reply as { ok: boolean }).ok, false);
     assert.match(String((evidence.reply as { reason: string }).reason), /clone_failed/);
     assert.deepEqual(evidence.entries, ['.coordinators']);
@@ -76,6 +110,7 @@ try {
   console.log(`PASS: isolated home clone ${mode}. ${run}/evidence/neo-home-clone.json`);
 } finally {
   await writeFile(join(run, 'evidence', 'neo-home-clone.json'), JSON.stringify(evidence, null, 2));
+  observer?.close();
   await transport?.close();
   await daemon?.cleanup();
 }

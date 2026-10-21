@@ -10,6 +10,7 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises';
+import { existsSync, mkdirSync, watch, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { NeoHomeRepository } from '../../../../src/lib/neo/home/repository.ts';
@@ -215,6 +216,46 @@ exit "$status"
     );
     expect((await readdir(root)).sort()).toEqual(['.coordinators', 'z-human.txt']);
     expect((await readdir(fixture)).filter((name) => name.startsWith('.neo-clone-'))).toEqual([]);
+  });
+  test('explains how to select a shared home after local initialization without rewriting history', async () => {
+    expect(await call({})).toMatchObject({ ok: true });
+    const head = await git(root, 'rev-parse', 'HEAD');
+    const result = await call({ remoteUrl: remote });
+    expect(result).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('local_home_exists'),
+    });
+    expect(result).toMatchObject({ reason: expect.stringContaining('no origin') });
+    expect(result).toMatchObject({ reason: expect.stringContaining('fresh data directory') });
+    expect(await git(root, 'rev-parse', 'HEAD')).toBe(head);
+    expect(await readFile(join(root, 'direction.md'), 'utf8')).toBe('');
+  });
+  test('rollback preserves a human file inside a directory published by the clone', async () => {
+    let intervened = false;
+    const observer = watch(root, (_event, name) => {
+      if (intervened || String(name) !== 'projects' || !existsSync(join(root, 'projects'))) return;
+      intervened = true;
+      writeFileSync(join(root, 'projects', 'human.txt'), 'Human nested file');
+      mkdirSync(join(root, '.git'));
+      writeFileSync(join(root, '.git', 'human.txt'), 'Human metadata');
+    });
+    try {
+      expect(await call({ remoteUrl: remote })).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('clone_failed'),
+      });
+      expect(intervened).toBe(true);
+      expect(await readFile(join(root, 'projects', 'human.txt'), 'utf8')).toBe('Human nested file');
+      expect(await readdir(join(root, 'projects'))).toEqual(['human.txt']);
+      expect(await readFile(join(root, '.git', 'human.txt'), 'utf8')).toBe('Human metadata');
+      expect((await readdir(root)).sort()).toEqual([
+        '.coordinators',
+        'projects',
+        'z-collision.txt',
+      ]);
+    } finally {
+      observer.close();
+    }
   });
   test('an inaccessible or empty remote leaves the original home untouched', async () => {
     expect(await call({ remoteUrl: join(fixture, 'missing.git') })).toMatchObject({

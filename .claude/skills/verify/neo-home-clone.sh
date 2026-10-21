@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-RUN=${1:?usage: neo-home-clone.sh <fresh-absolute-run-dir> [shared|missing]}
+RUN=${1:?usage: neo-home-clone.sh <fresh-absolute-run-dir> [shared|missing|existing|nested]}
 case "$RUN" in /*) ;; *) echo 'Use an absolute run directory' >&2; exit 2 ;; esac
 [[ ! -e "$RUN" ]]
 REPO=$(cd "$(dirname "$0")/../../.." && pwd)
