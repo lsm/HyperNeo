@@ -527,9 +527,10 @@ export default function MarkdownRenderer({
 
     let mermaidCancelled = false;
     const mermaidMounts: Array<HTMLElement> = [];
-    renderMermaidBlocks(containerRef.current, mermaidMounts, () => mermaidCancelled).catch(
-      () => undefined
-    );
+    if (!artifactLinks)
+      renderMermaidBlocks(containerRef.current, mermaidMounts, () => mermaidCancelled).catch(
+        () => undefined
+      );
 
     const tables = containerRef.current.querySelectorAll('table');
     tables.forEach((table) => {
@@ -570,7 +571,7 @@ export default function MarkdownRenderer({
       if (mount) render(null, mount);
       trailingMount.current = null;
     };
-  }, [html, theme, hasTrailing]);
+  }, [html, theme, hasTrailing, artifactLinks]);
 
   useLayoutEffect(() => {
     if (trailingMount.current) render(trailing ?? null, trailingMount.current);

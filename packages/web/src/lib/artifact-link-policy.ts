@@ -21,11 +21,14 @@ export function gateFragment(href: string): LinkGate {
 }
 
 export function gateExternalUrl(href: string): LinkGate {
-  if (!URL.canParse(href)) return { reason: refused };
-  const url = new URL(href);
-  if (!externalProtocols.has(url.protocol) || url.username || url.password)
+  try {
+    const url = new URL(href);
+    return externalProtocols.has(url.protocol) && !url.username && !url.password
+      ? { value: url.href }
+      : { reason: refused };
+  } catch {
     return { reason: refused };
-  return { value: url.href };
+  }
 }
 
 export const decideArtifactLink = (superpipe({})('artifact-link-decision') as PipelineAPI)
