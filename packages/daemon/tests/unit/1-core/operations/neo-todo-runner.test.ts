@@ -612,7 +612,6 @@ describe('neo todo runner uncertainty', () => {
       store,
       sessions,
       invoke: async (_caller, name, input) => {
-        beforeInvoke?.(name);
         calls.push({ name, input });
         return { kind: 'failed', code: 'execution_failed', message: 'socket hang up' } as never;
       },
