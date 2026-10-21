@@ -9,6 +9,7 @@ import type {
 import {
   createNeoDoneTodosOperation,
   neoAskEntryState,
+  neoSnapshotAskEntries,
   neoTodoStatusLine,
   projectNeoAskEntries,
 } from '../../../../src/lib/neo/ask-entries.ts';
@@ -317,12 +318,18 @@ describe('projectNeoAskEntries todo order and done todos', () => {
     expect(entry.state).toBe('doing');
   });
 
-  test('more than three done todos leave the card and only their count stays', () => {
+  test('more than three done todos leave the snapshot card, keep their pack rows, and stay for restart', () => {
     const { store, sessions, opened } = seed(['done', 'done', 'doing', 'done', 'done']);
-    const [entry] = projectNeoAskEntries([opened], store, sessions, []);
-    expect(entry.todos.map((todo) => todo.id)).toEqual(['t2']);
-    expect(entry.doneCount).toBe(4);
-    expect(entry.state).toBe('doing');
+    const entries = projectNeoAskEntries([opened], store, sessions, []);
+    expect(entries[0].todos.map((todo) => todo.id)).toEqual(['t2', 't0', 't1', 't3', 't4']);
+    const shown = neoSnapshotAskEntries(entries);
+    expect(shown.todoAsks[0].todos.map((todo) => todo.id)).toEqual(['t2']);
+    expect(shown.todoAsks[0].doneCount).toBe(4);
+    expect(shown.todoAsks[0].state).toBe('doing');
+    expect(shown.pinned).toEqual(['t2', 't0', 't1', 't3', 't4']);
+    store.settleAsk(opened, 'done', 'Shipped', 3);
+    const settled = projectNeoAskEntries([store.getAsk('ask')!], store, sessions, []);
+    expect(neoSnapshotAskEntries(settled).pinned).toEqual([]);
   });
 
   test('neo.ask.doneTodos pages the done todos in list order', async () => {
@@ -347,7 +354,10 @@ describe('projectNeoAskEntries todo order and done todos', () => {
     const second = await read({ askId: 'ask', offset: 3, limit: 3 });
     expect(second).toMatchObject({ ok: true, doneCount: 4, nextOffset: null });
     expect(second.ok && second.todos.map((todo) => todo.id)).toEqual(['t4']);
-    expect(await read({ askId: 'missing' })).toEqual({ ok: false, reason: 'Ask not found.' });
+    expect(await read({ askId: 'missing' })).toEqual({
+      ok: false,
+      reason: 'not_found: no such ask.',
+    });
   });
 });
 

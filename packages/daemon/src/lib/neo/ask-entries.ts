@@ -87,18 +87,23 @@ const NEO_TODO_LIST_ORDER: Record<NeoTodo['state'], number> = {
   removed: 5,
 };
 
-export function neoTodosListed(todos: readonly NeoTodo[]): {
-  todos: NeoTodo[];
-  doneCount: number;
+function neoTodoListOrder<T extends NeoTodo>(todos: readonly T[]): T[] {
+  return [...todos].sort((a, b) => NEO_TODO_LIST_ORDER[a.state] - NEO_TODO_LIST_ORDER[b.state]);
+}
+
+export function neoSnapshotAskEntries(entries: readonly NeoAskEntry[]): {
+  todoAsks: NeoAskEntry[];
+  pinned: string[];
 } {
-  const doneCount = todos.filter((todo) => todo.state === 'done').length;
-  const ordered = [...todos].sort(
-    (a, b) => NEO_TODO_LIST_ORDER[a.state] - NEO_TODO_LIST_ORDER[b.state]
-  );
   return {
-    doneCount,
-    todos:
-      doneCount > NEO_DONE_TODOS_SHOWN ? ordered.filter((todo) => todo.state !== 'done') : ordered,
+    todoAsks: entries.map((entry) =>
+      entry.doneCount > NEO_DONE_TODOS_SHOWN
+        ? { ...entry, todos: entry.todos.filter((todo) => todo.state !== 'done') }
+        : entry
+    ),
+    pinned: entries
+      .filter((entry) => entry.ask.status === 'open')
+      .flatMap((entry) => entry.todos.map((todo) => todo.id)),
   };
 }
 
@@ -129,21 +134,15 @@ export function projectNeoAskEntries(
   const ids = asks.map((ask) => ask.id);
   const allTodos = store.listTodosForAsks(ids);
   const allQuestions = store.listQuestionsForAsks(ids);
-  const listed = new Map(
-    asks.map((ask) => [ask.id, neoTodosListed(allTodos.filter((todo) => todo.askId === ask.id))])
-  );
-  const links = sessions.readLinksForTodos(
-    [...listed.values()].flatMap((entry) => entry.todos.map((todo) => todo.id))
-  );
+  const links = sessions.readLinksForTodos(allTodos.map((todo) => todo.id));
   return asks.map((ask) => {
     const todos = allTodos.filter((todo) => todo.askId === ask.id);
     const questions = allQuestions.filter((question) => question.askId === ask.id);
-    const shown = listed.get(ask.id)!;
     return {
       ask,
       state: neoAskEntryState(ask, todos, questions),
-      todos: projectNeoTodoEntries(shown.todos, todos, links, packs),
-      doneCount: shown.doneCount,
+      todos: projectNeoTodoEntries(neoTodoListOrder(todos), todos, links, packs),
+      doneCount: todos.filter((todo) => todo.state === 'done').length,
       questions: questions.map((question) => {
         if (question.kind !== 'start' || !question.startTodos?.length) return question;
         const line = neoStartQuestionLine(
@@ -199,7 +198,7 @@ type Rejection = { ok: false; reason: string };
 type DonePage = { ok: true; todos: NeoTodoEntry[]; doneCount: number; nextOffset: number | null };
 
 export function requireNeoAskFound(ask: NeoAsk | null): { value: NeoAsk } | { reason: Rejection } {
-  return ask ? { value: ask } : { reason: { ok: false, reason: 'Ask not found.' } };
+  return ask ? { value: ask } : { reason: { ok: false, reason: 'not_found: no such ask.' } };
 }
 
 export function pageNeoDoneTodos(

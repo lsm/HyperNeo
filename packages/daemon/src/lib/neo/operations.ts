@@ -89,6 +89,7 @@ import { SessionGoalRepository } from '../../storage/repositories/session-goal-r
 import {
   createNeoDoneTodosOperation,
   NeoAskEntrySchema,
+  neoSnapshotAskEntries,
   projectNeoAskEntries,
 } from './ask-entries.ts';
 import {
@@ -435,11 +436,8 @@ export function createNeoOperations(service: NeoService) {
     const repositories = service.repo.repositories();
     const asks = service.todos.listAsks(scope, caller.source === 'rpc' ? 50 : 10);
     const unlisted = service.todos.countAsks(scope) - asks.length;
-    const todoAsks = projectNeoAskEntries(
-      asks,
-      service.todos,
-      service.todoSessions,
-      service.installedPacks()
+    const { todoAsks, pinned } = neoSnapshotAskEntries(
+      projectNeoAskEntries(asks, service.todos, service.todoSessions, service.installedPacks())
     );
     return {
       ok: true as const,
@@ -485,9 +483,7 @@ export function createNeoOperations(service: NeoService) {
         const rows = pack.snapshotRows?.(
           scope ? service.repo.allRepositories(scope) : null,
           Date.now(),
-          todoAsks
-            .filter((entry) => entry.ask.status === 'open')
-            .flatMap((entry) => entry.todos.map((todo) => todo.id))
+          pinned
         );
         return rows?.length ? [{ pack: pack.id, rows }] : [];
       }),
