@@ -163,14 +163,27 @@ Built on `tests/helpers/daemon-server.ts` (spawned daemon on port 0) and `standa
 | S5 | `hyperneo pair` / `devices revoke`; `daemon.attach` with a pairing code and the secret table | ~150 |
 | S6 | Settings → Devices (list, revoke, re-pair, unpaired-connections report) and the **Allow** prompt for pending codes, on the web and in Neo iOS | ~200 |
 | S7 | Origin/Host allowlist and Allowed hosts setting; drop CORS `*` (logging only until S8) | ~100 |
-| S8 | "Require pairing" enforce toggle with the step 2 check | ~60 |
-| S9 | Loopback default bind, `--expose` and the Listen-on setting | ~80 |
+| iOS | **lsm/neo-ios, not this repo:** the Pair screen, Keychain storage and the Bearer header on every `/ws` upgrade, plus the relay's Bearer header. It must be merged **and installed on the human's phone** before S8 or S9 lands | — |
+| S8 | "Require pairing" enforce toggle with the step 2 check, plus the rollback switch below | ~60 |
+| S9 | Loopback default bind, `--expose` and the Listen-on setting; the rollback switch also restores the previous listen address | ~80 |
 | S10 | Session door: create the socket with a 0077 umask so it is never wider than 0600 | ~20 |
 
-Outside this repo, done by the Neo iOS session in lsm/neo-ios: the iOS Pair screen,
-Keychain storage and Bearer header, plus the relay Bearer header. Both must land between S5
-and S8.
+The iOS row can start now: S1 already serves `POST /pair`, and from S2 on the daemon reads the Bearer header without refusing anything.
 
-Order: S1 → S2 → S3 → S5 → S4 → S6 → S7 → S10, then migration steps 2 and 3, then S8
-(step 4), then S9 (step 5). S8 and S9 change what the live daemon does, so each waits for
-the human's go.
+Order: S1 → S2 → S3 → S5 → S4 → S6 → S7 → S10, then migration steps 2 (the iOS build on the phone) and 3, then S8
+(step 4), then S9 (step 5).
+
+**Hold on enforcement.** The laptop daemon deploys automatically when a PR merges, and the
+human is often away from it with only the phone. So no slice that refuses connections, enforces
+Origin/Host, or binds to loopback by default (S8, S9, and any S7 change beyond logging) may
+merge until Neo confirms that the iOS pairing build is merged and installed on the phone. After
+that, S8 and S9 each still wait for the human's go.
+
+**Rollback switch.** S8 ships one documented step that turns enforcement off without the
+phone: `hyperneo security enforce off`. It talks to the daemon over the local session door, a
+Unix socket that pairing never gates, so it works from any shell on that Mac. From another
+machine the human reaches it over SSH on the tailnet:
+`ssh <user>@<mac>.<tailnet>.ts.net hyperneo security enforce off`. After S9 the same command also
+puts the listen address back to what it was before the Listen-on change. Before S8 merges, the
+human checks once, from another machine, that this SSH route works (Remote Login or Tailscale
+SSH enabled on the Mac).
