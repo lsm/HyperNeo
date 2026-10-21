@@ -2,6 +2,7 @@ import argparse
 import json
 from pathlib import Path
 import re
+import subprocess
 
 
 def verify(output):
@@ -34,7 +35,15 @@ def verify(output):
     instruction = delivery.read_text().split("For each implementation slice", 1)[1]
     if ".claude/skills/verify/journeys/" not in instruction.split("\n\n", 1)[0]:
         missing.append("Work-delivery design still sends new journeys to the shared skill")
-    evidence = {"checkedJourneyRoutes": len(routes), "design": str(design), "missing": missing}
+    prompts = json.loads(subprocess.run([
+        "bun", "--eval",
+        "import { NEO_PACK_CODING_WORKER_RULES as workerRules, NEO_PACK_CODING_INSTRUCTIONS as instructions } from './packages/prompts/src/mod.ts'; console.log(JSON.stringify({ workerRules, instructions }));",
+    ], cwd=skill.parents[2], check=True, capture_output=True, text=True).stdout)
+    for name, text in prompts.items():
+        for required in [".claude/skills/verify/journeys/", "shared setup", "never edit an index"]:
+            if required not in text:
+                missing.append(f"Coding {name} omits authoring guidance: {required}")
+    evidence = {"checkedJourneyRoutes": len(routes), "design": str(design), "codingPrompts": prompts, "missing": missing}
     encoded = json.dumps(evidence, indent=2) + "\n"
     if output:
         Path(output).write_text(encoded)
