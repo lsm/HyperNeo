@@ -122,7 +122,6 @@ describe('artifact HTML preview document', () => {
     for (const page of [
       '<body onload="steal()"><p>S</p></body>',
       '<html onclick="steal()"><p>S</p>',
-      ,
       '<template><script>x()</script></template><p>S</p>',
       '<svg><g onclick="x()"></g></svg><p>S</p>',
     ])

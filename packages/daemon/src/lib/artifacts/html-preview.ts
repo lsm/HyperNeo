@@ -63,6 +63,21 @@ function cleanCss(css: string): string {
   return /url\s*\(|@import|:\/\//i.test(cleaned.replace(CSS_URL, '')) ? '' : cleaned;
 }
 
+function scripted(node: Node): boolean {
+  if (node.type === 'element') {
+    if (
+      SCRIPTED.has(node.tagName.toLowerCase()) ||
+      Object.entries(node.properties).some(
+        ([name, value]) =>
+          /^on/i.test(name) || (typeof value === 'string' && /^\s*javascript:/i.test(value))
+      ) ||
+      ('content' in node && node.content && scripted(node.content))
+    )
+      return true;
+  }
+  return 'children' in node && node.children.some(scripted);
+}
+
 function textOf(node: Node): string {
   if (node.type === 'text') return node.value;
   return 'children' in node ? node.children.map(textOf).join('') : '';
@@ -98,7 +113,7 @@ function cleanElement(
   const tag = element.tagName.toLowerCase();
   if (Object.keys(element.properties).some((name) => /^on/i.test(name))) removed.scripts = true;
   if (DROPPED.has(tag)) {
-    if (SCRIPTED.has(tag)) removed.scripts = true;
+    if (scripted(element)) removed.scripts = true;
     return [];
   }
   if (tag === 'a') {
