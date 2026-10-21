@@ -130,7 +130,8 @@ function ScheduleStrip({ sessionId, readonly }: { sessionId: string; readonly?: 
       data-session-schedules={sessionId}
     >
       <summary class="cursor-pointer px-3 py-2">
-        <span class="font-medium text-fg">{t('schedules.title')}</span> · {rows.length}
+        <span class="font-medium text-fg">{t('schedules.title')}</span>
+        {!loading && !error && <> · {rows.length}</>}
       </summary>
       <div class="max-h-64 space-y-2 overflow-y-auto px-3 pb-3">
         <Button

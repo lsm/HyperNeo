@@ -31,6 +31,9 @@ try {
   })]).finally(() => clearTimeout(timeout));
   const strip = page.locator(`[data-session-schedules="${surface.sessionId}"]`);
   await strip.waitFor();
+  await page.evaluate(async () => { await document.fonts.ready; });
+  await page.waitForFunction(() => document.getAnimations().every(animation =>
+    animation.playState !== 'running' || animation.effect?.getTiming().iterations === Infinity));
   const summary = strip.locator('summary');
   const loading = (await summary.innerText()).trim();
   assert.equal(await strip.getAttribute('open'),null);
