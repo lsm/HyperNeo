@@ -28,19 +28,20 @@ rpc() { VERIFY_PORT=$PORT bun .claude/skills/verify/rpc.ts "$@"; }
 FIRST=$(cli pair --name Laptop)
 echo "1 first CLI code: $(echo "$FIRST" | field "['approval']")"
 echo "  POST /pair -> $(pair "$(echo "$FIRST" | field "['code']")" Laptop) $(show)"
+LAPTOP=$(python3 -c "import json;print(json.load(open('$RUN/pair.json'))['credential'])")
 NEXT=$(cli pair --name Phone)
 CODE=$(echo "$NEXT" | field "['code']")
 echo "2 second CLI code: $(echo "$NEXT" | field "['approval']")"
 echo "  POST /pair before Allow -> $(pair "$CODE" Phone) $(show)"
 echo "  pending (codes hidden): $(rpc device.pair.pending '{}' | field "['reply']['pending'][0]['kind']")"
-echo "  approve -> $(rpc device.pair.approve "{\"codeId\":\"$(echo "$NEXT" | field "['codeId']")\"}" | field "['reply']['ok']")"
+echo "  approve from the paired laptop -> $(VERIFY_CREDENTIAL=$LAPTOP rpc device.pair.approve "{\"codeId\":\"$(echo "$NEXT" | field "['codeId']")\"}" | field "['reply']['ok']")"
 echo "  POST /pair after Allow -> $(pair "$CODE" Phone) $(show)"
 CRED=$(python3 -c "import json;print(json.load(open('$RUN/pair.json'))['credential'])")
 echo "  POST /pair again with the used code -> $(pair "$CODE" Phone) $(show)"
 echo -n "3 six bad codes ->"; for _ in 1 2 3 4 5 6; do echo -n " $(pair AAAAAAAAAA Guess)"; done; echo
 echo "  CLI reset-lockout -> $(cli pair --reset-lockout | field "['ok']")"
 echo "4 devices: $(sqlite3 -readonly "$RUN/data/daemon.db" "SELECT group_concat(name || ':' || kind, ', ') FROM paired_devices")"
-echo "  raw credential in the database: $(sqlite3 -readonly "$RUN/data/daemon.db" .dump | grep -c "$CRED" || true)"
+echo "  raw credential in the database: $(sqlite3 -readonly "$RUN/data/daemon.db" .dump | grep -c -e "$CRED" -e "$LAPTOP" || true)"
 echo "  pairing code in daemon log: $(grep -c "$CODE" "$RUN/daemon.log" || true)"
 echo "5 unpaired WebSocket still served: $(rpc rpc:hello '{}' >/dev/null 2>&1 && echo yes || rpc device.pair.pending '{}' | field "['reply']['ok']")"
 echo "run dir: $RUN"

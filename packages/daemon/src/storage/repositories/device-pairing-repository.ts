@@ -72,12 +72,18 @@ export class DevicePairingRepository {
       .run(...key, now, now, UNPAIRED_ROW_CAP);
   }
 
-  countDevices(): number {
-    return (
-      this.db
-        .prepare('SELECT COUNT(*) AS n FROM paired_devices WHERE revoked_at IS NULL')
-        .get() as { n: number }
-    ).n;
+  isActiveDevice(id: string): boolean {
+    return !!this.db
+      .prepare('SELECT 1 FROM paired_devices WHERE id = ? AND revoked_at IS NULL')
+      .get(id);
+  }
+
+  countDevices(): { all: number; humans: number } {
+    return this.db
+      .prepare(
+        'SELECT COUNT(*) AS "all", COUNT(*) FILTER (WHERE kind = \'human\') AS humans FROM paired_devices WHERE revoked_at IS NULL'
+      )
+      .get() as { all: number; humans: number };
   }
 
   createCode(
