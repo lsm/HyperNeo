@@ -83,3 +83,15 @@ by those reads and no SDK resume is sent. This case characterizes the existing
 snapshot fallback and also runs in the default journey. Neo's consumer test pins
 that delivered:false with a Copilot receipt/queue ID produces accepted queued
 work and retains attribution; operation help now states this enqueue behavior.
+
+Mode `preflight` injects login-required, incompatible-version and resume-rejected
+responses before any follow-up is submitted. Each reports its actual diagnostic
+without claiming accepted input or prohibiting replay; the fixture receives no
+send, the old reply remains readable, and an explicit retry after fixing only
+the synthetic runtime succeeds once. No real logout/login or account is used.
+The same mode holds an ACK behind `release-ack`, makes the synthetic ownership
+record temporary path unwritable after send begins, then releases ACK. That
+post-ACK persistence failure must retain the do-not-replay warning and prevent
+restart resubmission even after pendingSubmission was cleared in memory. The
+warning uses the attempted-submit phase, while the persisted intent remains the
+restart guard. These cases are also included in the default public journey.

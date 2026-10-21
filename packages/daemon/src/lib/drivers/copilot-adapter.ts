@@ -244,10 +244,12 @@ export function createCopilotAdapter(
     const id = record.work.ref.id;
     let owned = live.get(id);
     const resumed = !owned;
+    let submitAttempted = false;
     try {
       owned ??= await open(record, true);
       record.pendingSubmission = true;
       save(record);
+      submitAttempted = true;
       const receipt = await owned.submit(message);
       record.snapshot = await owned.snapshot();
       if (record.snapshot.status === 'unreachable') throw new Error('Copilot lost after input ACK');
@@ -277,7 +279,10 @@ export function createCopilotAdapter(
       }
       if (error instanceof CopilotModelUnavailableError && error.cause === undefined)
         return reject('unsupported_model', error.message);
-      return reject('unreachable', `${errorMessage(error)}; input may be accepted; do not replay.`);
+      return reject(
+        'unreachable',
+        errorMessage(error) + (submitAttempted ? '; input may be accepted; do not replay.' : '')
+      );
     }
   };
   const send = (superpipe({})('copilot-send') as PipelineAPI)
