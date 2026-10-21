@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 let buffer = Buffer.alloc(0);
@@ -13,7 +13,19 @@ const send = (message: unknown) => {
   const data = JSON.stringify(message);
   process.stdout.write(`Content-Length: ${Buffer.byteLength(data)}\r\n\r\n${data}`);
 };
-const event = (type: string, data: unknown, id = `event-${++eventId}`, agentId?: string) =>
+const event = (type: string, data: unknown, id = `event-${++eventId}`, agentId?: string) => {
+  const history = join(process.env.COPILOT_HOME!, 'session-state', sessionId);
+  mkdirSync(history, { recursive: true });
+  appendFileSync(
+    join(history, 'events.jsonl'),
+    JSON.stringify({
+      id,
+      type,
+      data,
+      timestamp: new Date().toISOString(),
+      ...(agentId ? { agentId } : {}),
+    }) + '\n'
+  );
   send({
     jsonrpc: '2.0',
     method: 'session.event',
@@ -29,6 +41,7 @@ const event = (type: string, data: unknown, id = `event-${++eventId}`, agentId?:
       },
     },
   });
+};
 function receive(msg: { id?: number; method: string; params?: Record<string, unknown> }) {
   appendFileSync(
     join(process.cwd(), 'calls.jsonl'),
@@ -148,6 +161,28 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
           interactionId: `interaction-${input}`,
           delivery: 'idle',
         });
+      if (prompt === 'history') {
+        event('tool.execution_start', {
+          toolCallId: 'tool-1',
+          toolName: 'synthetic',
+          arguments: { path: 'fixture.txt' },
+        });
+        event('tool.execution_complete', {
+          toolCallId: 'tool-1',
+          success: true,
+          result: { content: 'SYNTHETIC_TOOL_RESULT' },
+        });
+        const data = {
+          messageId: `reply-${input}`,
+          interactionId: `interaction-${input}`,
+          content: 'HISTORY_REPLY',
+          phase: 'final_answer',
+        };
+        event('assistant.message', data);
+        event('assistant.message', data);
+        event('unknown.fixture', { content: 'NOT_VISIBLE' });
+        event('session.idle', {});
+      }
       if (prompt === 'hold') {
         event('assistant.message_delta', { messageId: 'partial', deltaContent: 'UNRELATED_DELTA' });
         event('assistant.message', {
@@ -292,6 +327,7 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
       );
       break;
     case 'ping':
+      if (existsSync(join(process.cwd(), 'block-ping'))) break;
       if (process.argv.includes('--crash-on-ping')) process.exit(1);
       if (process.argv.includes('--initial-idle') && input === 0) event('session.idle', {});
       reply({ message: 'ok', timestamp: Date.now() });
