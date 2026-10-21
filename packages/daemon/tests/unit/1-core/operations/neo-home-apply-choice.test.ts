@@ -111,15 +111,20 @@ async function state() {
 async function race(mode: string) {
   const action = mode.startsWith('remote')
     ? `printf 'Remote racing edit\\n' > '${peer}/racing.md'; /usr/bin/git -C '${peer}' add .; /usr/bin/git -C '${peer}' commit -m human-race >/dev/null; /usr/bin/git -C '${peer}' push origin main >/dev/null 2>&1`
-    : mode === 'local-edit'
-      ? `printf 'Uncommitted human edit\\n' > '${root}/notes.md'`
-      : `printf 'Local racing commit\\n' > '${root}/racing.md'; /usr/bin/git -C '${root}' add .; /usr/bin/git -C '${root}' commit -m human-race >/dev/null`;
-  const trigger = mode.endsWith('-late')
-    ? mode.startsWith('remote')
-      ? 'push'
-      : 'merge'
-    : 'commit';
-  const where = mode.endsWith('-late') ? '=' : '!=';
+    : mode === 'local-network'
+      ? `printf 'Human edit during network check\\n' > '${root}/human.md'`
+      : mode === 'local-edit'
+        ? `printf 'Uncommitted human edit\\n' > '${root}/notes.md'`
+        : `printf 'Local racing commit\\n' > '${root}/racing.md'; /usr/bin/git -C '${root}' add .; /usr/bin/git -C '${root}' commit -m human-race >/dev/null`;
+  const trigger =
+    mode === 'local-network'
+      ? 'ls-remote'
+      : mode.endsWith('-late')
+        ? mode.startsWith('remote')
+          ? 'push'
+          : 'merge'
+        : 'commit';
+  const where = mode.endsWith('-late') || mode === 'local-network' ? '=' : '!=';
   await mkdir(join(run, 'bin'));
   await writeFile(
     join(run, 'bin', 'git'),
@@ -275,5 +280,27 @@ describe('Human-recorded conflict version saves', () => {
     await git(root, 'merge-base', '--is-ancestor', other, head);
     expect(await git(remote, 'rev-parse', 'main')).toBe(await git(peer, 'rev-parse', 'HEAD'));
     expect(await readFile(join(peer, 'racing.md'), 'utf8')).toBe('Remote racing edit\n');
+  });
+});
+
+describe('A human edit during the remote snapshot check', () => {
+  test('refuses after the network wait without applying or dropping an unrelated human edit', async () => {
+    const { question, local, other } = await conflict();
+    await approve(question.id);
+    await race('local-network');
+    const result = await call('neo.home.save', {
+      path: 'notes.md',
+      content: remoteText,
+      message: 'Network race',
+      conflictQuestionId: question.id,
+    });
+    expect(await readFile(join(run, 'raced'), 'utf8')).toBe('');
+    expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('stale_conflict') });
+    expect(await readFile(join(root, 'human.md'), 'utf8')).toBe(
+      'Human edit during network check\n'
+    );
+    expect(await readFile(join(root, 'notes.md'), 'utf8')).toBe(localText);
+    expect(await git(root, 'rev-parse', 'HEAD')).toBe(local);
+    expect(await git(remote, 'rev-parse', 'main')).toBe(other);
   });
 });

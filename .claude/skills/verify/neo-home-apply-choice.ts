@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { Database } from 'bun:sqlite';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 
-const [port, run, phase] = process.argv.slice(2);
+const [port, run, phase, mode] = process.argv.slice(2);
 assert.notEqual(port, '8399'); assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home')); assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 await writeFile(join(run, 'gitconfig'), '[user]\n name = Synthetic Neo\n email = verify@example.invalid\n[commit]\n gpgsign = false\n');
@@ -41,8 +41,20 @@ try {
  await rpc('neo.open', {}); assert.equal((await rpc('neo.home.init', { remoteUrl: remote })).ok, true);
  const normal = await divergent('notes.md'); evidence.normal = normal;
  const input = { path: normal.path, content: other, message: 'Apply recorded choice', conflictQuestionId: normal.questionId };
+ if (mode === 'race') await writeFile(join(run, 'network-race'), '');
  const first = await rpc('neo.home.save', input); evidence.normalResult = first;
- if (phase === 'before') {
+ if (mode === 'race') {
+  assert.equal(await readFile(join(run, 'raced'), 'utf8'), '');
+  assert.equal(await readFile(join(root, 'human.md'), 'utf8'), 'Human edit during network check\n');
+  assert.equal(first.ok, phase === 'before');
+  if (phase === 'after') {
+   assert(String(first.reason).includes('stale_conflict'));
+   assert.equal(await readFile(join(root, normal.path), 'utf8'), local);
+   assert.equal(await git(root, 'rev-parse', 'HEAD'), normal.localHead);
+   assert.equal(await git(remote, 'rev-parse', 'main'), normal.remoteHead);
+  }
+  console.log(phase === 'before' ? 'REPRODUCED: a human edit during remote inspection still allowed application.' : 'PASS: human edit during remote inspection refuses application and preserves both heads and human bytes.');
+ } else if (phase === 'before') {
   assert.equal(first.ok, false); assert(String(first.reason).includes('conflict'));
   assert.equal(await readFile(join(root, normal.path), 'utf8'), local);
   console.log('REPRODUCED: actual human choice is recorded but neo.home.save still refuses the conflict.');
