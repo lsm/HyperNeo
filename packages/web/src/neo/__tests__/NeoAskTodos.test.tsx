@@ -576,6 +576,25 @@ describe('done todos on a card', () => {
     expect(many.queryByRole('button', { name: /done — show more/ })).toBeNull();
   });
 
+  it('pages the rest when the snapshot sent only some of the done todos', async () => {
+    const onLoadDone = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      todos: [done('d2'), done('d3'), done('d4'), done('d5')],
+      doneCount: 5,
+      nextOffset: null,
+    });
+    const app = render(
+      <NeoAskTodos
+        entry={entry({ todos: [todo('a'), done('d1')], doneCount: 5 })}
+        onAnswer={vi.fn()}
+        onLoadDone={onLoadDone}
+      />
+    );
+    fireEvent.click(app.getByRole('button', { name: '5 done — show more' }));
+    await waitFor(() => expect(rows(app)).toEqual(['a', 'd1', 'd2', 'd3', 'd4', 'd5']));
+    expect(onLoadDone).toHaveBeenCalledWith('ask', 1);
+  });
+
   it('says when done todos could not be read and lets the reader try again', async () => {
     const onLoadDone = vi
       .fn()

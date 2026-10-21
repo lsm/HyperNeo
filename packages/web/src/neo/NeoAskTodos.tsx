@@ -348,10 +348,11 @@ export function NeoAskTodos({
     asked.flatMap((question) => (question.kind === 'start' ? (question.startTodos ?? []) : []))
   );
   const sent = todos.filter((todo) => todo.state === 'done');
-  const shownDone =
-    doneOpen || entry.doneCount <= NEO_DONE_SHOWN
-      ? [...sent, ...paged.filter((todo) => !sent.some((other) => other.id === todo.id))]
-      : [];
+  const knownDone = [
+    ...sent,
+    ...paged.filter((todo) => !sent.some((other) => other.id === todo.id)),
+  ];
+  const shownDone = doneOpen || entry.doneCount <= NEO_DONE_SHOWN ? knownDone : [];
   const hiddenDone = entry.doneCount - shownDone.length;
   const live = [
     ...todos.filter((todo) => todo.state !== 'removed' && todo.state !== 'done'),
@@ -359,10 +360,10 @@ export function NeoAskTodos({
   ];
   const showMoreDone = () => {
     setDoneOpen(true);
-    if (sent.length > 0 || !onLoadDone || paging) return;
+    if (knownDone.length >= entry.doneCount || !onLoadDone || paging) return;
     setPaging(true);
     setDoneError(null);
-    void onLoadDone(ask.id, paged.length)
+    void onLoadDone(ask.id, knownDone.length)
       .then((page) => {
         if (page.ok) setPaged((current) => [...current, ...page.todos]);
         else setDoneError(t('ask.moreDoneRefused', { reason: page.reason }));
