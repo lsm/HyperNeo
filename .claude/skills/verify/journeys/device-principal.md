@@ -8,14 +8,16 @@ TMPDIR=/tmp/claude-501 .claude/skills/verify/device-principal.sh 9316
 ```
 
 The script starts an isolated daemon through the CLI front door (`env -i`,
-NODE_ENV=test, its own HOME, data dir and database, no provider key). It pairs a relay
-and then a phone from the CLI, makes a second human code, and calls operations over
+NODE_ENV=test, its own HOME, data dir and database, no provider key). It pairs a phone
+from the CLI, then a relay that the phone allows, makes a second human code, and calls operations over
 `/ws` unpaired, as the relay and as the phone. Credentials and codes stay in shell
 variables.
 
 End state:
-- The first human code from the CLI is `approved` even though a relay is already
-  paired: the human can always pair a first human device from the Mac.
+- The first code from the CLI, with nothing paired, is `approved`. The relay code
+  made after that is `pending`, and the paired phone's Allow answers `ok`. (With only
+  a relay paired, the CLI refuses human codes with `no_human_device: … Pair the phone
+  first`; a unit test covers it.)
 - The unpaired client still calls `device.pair.pending`: nothing changes for unpaired
   connections.
 - The relay calls `client.list` and `neo.snapshot` (what the push relay reads) and is

@@ -34,10 +34,13 @@ as() {
     python3 -c "import json,sys;r=json.load(sys.stdin)['reply'];print((r['error'].get('message') if isinstance(r['error'], dict) else r['error']) if 'error' in r else ('ok' if r.get('ok', True) else r.get('reason')))"
 }
 
-RELAY_CRED=$(redeem "$(cli_code relay 'Push relay' | field "['code']")" 'Push relay' | field "['credential']")
 FIRST=$(cli_code human Phone)
-echo "first human code from the CLI with only a relay paired: $(echo "$FIRST" | field "['approval']")"
+echo "first code from the CLI, nothing paired: $(echo "$FIRST" | field "['approval']")"
 PHONE_CRED=$(redeem "$(echo "$FIRST" | field "['code']")" Phone | field "['credential']")
+RELAY=$(cli_code relay 'Push relay')
+echo "relay code from the CLI once the phone is paired: $(echo "$RELAY" | field "['approval']")"
+echo "paired phone allows the relay: $(as "$PHONE_CRED" - device.pair.approve "{\"codeId\":\"$(echo "$RELAY" | field "['codeId']")\"}")"
+RELAY_CRED=$(redeem "$(echo "$RELAY" | field "['code']")" 'Push relay' | field "['credential']")
 
 echo "unpaired client, device.pair.pending: $(as - - device.pair.pending)"
 echo "paired relay, client.list:           $(as "$RELAY_CRED" - client.list)"

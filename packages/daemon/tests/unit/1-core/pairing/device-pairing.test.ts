@@ -4,6 +4,7 @@ import { createPairRoute } from '../../../../src/lib/pairing/pair-route.ts';
 import {
   ALLOW_NEEDS_PAIRED_HUMAN,
   createDevicePairingOperations,
+  NO_HUMAN_DEVICE,
 } from '../../../../src/lib/pairing/pairing-operations.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
 import { DevicePairingRepository } from '../../../../src/storage/repositories/device-pairing-repository.ts';
@@ -134,14 +135,18 @@ describe('device pairing', () => {
     db.close();
   });
 
-  test('paired relays and daemons leave the first human device free to pair from the CLI', async () => {
+  test('any paired device ends the first-device window; with no human device the CLI says pair the phone first', async () => {
     const { db, call, pair } = setup();
     const relay = await call('device.pair.create', { kind: 'relay' }, door);
     expect((await pair(relay.code, 'Relay')).status).toBe(200);
-    const first = await call('device.pair.create', { kind: 'human' }, door);
-    expect(first.approval).toBe('approved');
-    expect((await pair(first.code, 'Phone')).status).toBe(200);
-    expect((await call('device.pair.create', { kind: 'human' }, door)).approval).toBe('pending');
+    expect(await call('device.pair.create', { kind: 'human' }, door)).toEqual({
+      ok: false,
+      reason: NO_HUMAN_DEVICE,
+    });
+    expect(await call('device.pair.create', { kind: 'human' }, human)).toEqual({
+      ok: false,
+      reason: NO_HUMAN_DEVICE,
+    });
     db.close();
   });
 
