@@ -72,10 +72,12 @@ export class DevicePairingRepository {
       .run(...key, now, now, UNPAIRED_ROW_CAP);
   }
 
-  countDevices(): number {
+  countHumanDevices(): number {
     return (
       this.db
-        .prepare('SELECT COUNT(*) AS n FROM paired_devices WHERE revoked_at IS NULL')
+        .prepare(
+          "SELECT COUNT(*) AS n FROM paired_devices WHERE kind = 'human' AND revoked_at IS NULL"
+        )
         .get() as { n: number }
     ).n;
   }

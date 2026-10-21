@@ -16,15 +16,21 @@ export interface PairingOperationDeps {
   readonly now: () => number;
 }
 
+export const ALLOW_NEEDS_PAIRED_HUMAN =
+  'not_paired: only a paired human device can allow a code. Allow it on the phone or browser you paired first.';
+
 const fromDoor = (caller: OperationCaller) =>
   caller.source === 'mcp' && caller.principal === SESSION_DOOR_PRINCIPAL;
 
+const isPairedHuman = (caller: OperationCaller) =>
+  isLocalUser(caller) && caller.device?.kind === 'human';
+
 export function planPairingCode(
   caller: OperationCaller,
-  pairedDevices: number
+  pairedHumans: number
 ): { approved: boolean } | null {
-  if (isLocalUser(caller)) return { approved: true };
-  if (fromDoor(caller)) return { approved: pairedDevices === 0 };
+  if (isPairedHuman(caller)) return { approved: true };
+  if (isLocalUser(caller) || fromDoor(caller)) return { approved: pairedHumans === 0 };
   return null;
 }
 
@@ -37,7 +43,7 @@ export function createDevicePairingOperations({
     defineOperation({
       name: 'device.pair.create',
       description:
-        'Make a single-use pairing code, valid 10 minutes, for a new device of the given kind. The local CLI makes the first device’s code; once any device is paired, a CLI code waits for the human to allow it on a paired device.',
+        'Make a single-use pairing code, valid 10 minutes, for a new device of the given kind. The local CLI makes the first human device’s code; once a human device is paired, other codes wait for the human to allow it on a paired device.',
       policy: { safetyClass: 'human_only' },
       inputSchema: z
         .object({ kind: Kind, name: z.string().trim().min(1).max(80).optional() })
@@ -53,7 +59,7 @@ export function createDevicePairingOperations({
         Refused,
       ]),
       execute: async (input, caller) => {
-        const plan = planPairingCode(caller, pairing().countDevices());
+        const plan = planPairingCode(caller, pairing().countHumanDevices());
         if (!plan) return refused;
         const made = pairing().createCode(input.kind, input.name ?? null, plan.approved, now());
         return {
@@ -98,6 +104,7 @@ export function createDevicePairingOperations({
       resultSchema: z.union([z.object({ ok: z.literal(true) }), Refused]),
       execute: async (input, caller) => {
         if (!isLocalUser(caller)) return refused;
+        if (!isPairedHuman(caller)) return { ok: false as const, reason: ALLOW_NEEDS_PAIRED_HUMAN };
         return pairing().approve(input.codeId, now())
           ? { ok: true as const }
           : { ok: false as const, reason: 'not_pending: no pending code with that id.' };

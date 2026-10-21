@@ -1040,6 +1040,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     startupTimer.start('rpc handlers + space runtime provision');
     const rpcHandlers = setupRPCHandlers({
+      deviceOf: (clientId) => transport.deviceOf(clientId),
       watchSessionRepo: async (owner, repo) =>
         (await githubEventExtension?.watchSessionRepo(owner, repo)) ?? null,
       followSessionTopics: (source) => sessionTopicSources.push(source),
