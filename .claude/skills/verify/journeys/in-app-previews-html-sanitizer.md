@@ -3,7 +3,7 @@
 `artifact.file.html {artifactId}` returns a registered HTML snapshot (at most
 2 MiB, same authority as `artifact.file.read`) as an inert preview document, so
 web and iOS can render the same bytes. The daemon parses the page
-(`hast-util-from-html`) and rebuilds it from an element/attribute allowlist
+(`parse5`, converted with `hast-util-from-parse5`) and rebuilds it from an element/attribute allowlist
 (`packages/daemon/src/lib/artifacts/html-preview.ts`):
 
 - removed with their content: scripts, noscript, templates, frames, objects,
@@ -14,9 +14,11 @@ web and iOS can render the same bytes. The daemon parses the page
   non-raster `url()` becomes `none`, and a stylesheet with comments left open,
   `<`, escapes, `@import`, `expression()`, `image-set`, `@font-face` or
   `javascript:` is dropped whole. CSS is scanned in single linear passes;
-- a pre-scan estimates nesting before parsing (parse5 is quadratic in depth);
-  past 512 levels the result is `size_limit`, so the host offers Source/Download.
-  Pages built mostly of inline SVG can hit this, since `/>` isn't counted as closing;
+- parse5 is quadratic in nesting depth, so it parses with a tree adapter that
+  records each inserted node's real depth (template content included) and stops
+  past 512 levels; an exact depth walk follows. Too deep returns `size_limit`, so
+  the host offers Source/Download. Closing tags hidden in attributes, comments or
+  scripts can't fool it, because it measures the tree parse5 actually builds;
 - the head is rebuilt: charset, then the host CSP from the design, then only the
   page's `title` and cleaned `style`. Comments and the doctype are regenerated.
 

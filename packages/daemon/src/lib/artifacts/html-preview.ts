@@ -1,7 +1,8 @@
-import { fromHtml } from 'hast-util-from-html';
+import { fromParse5 } from 'hast-util-from-parse5';
 import { toHtml } from 'hast-util-to-html';
+import { defaultTreeAdapter, parse, type DefaultTreeAdapterMap } from 'parse5';
 
-type Root = ReturnType<typeof fromHtml>;
+type Root = ReturnType<typeof fromParse5> & { type: 'root' };
 type Child = Root['children'][number];
 type Element = Extract<Child, { type: 'element' }>;
 type Content = Element['children'][number];
@@ -35,11 +36,6 @@ const PROPERTIES: Record<string, readonly string[]> = {
 const RASTER = /^data:image\/(?:png|jpeg|gif|webp);base64,[a-z0-9+/=\s]*$/i;
 const LINK_LIMIT = 200;
 const MAX_NESTING = 512;
-const UNNESTED = new Set(
-  'area base br col embed hr img input link meta param source track wbr p li dt dd tr td th option optgroup thead tbody tfoot colgroup caption rp rt html head body'.split(
-    ' '
-  )
-);
 
 export interface ArtifactHtmlLink {
   readonly text: string;
@@ -197,21 +193,57 @@ function find(root: Root, tag: string): Element | null {
   );
 }
 
-function nesting(html: string): number {
-  const tag = /<(\/?)([a-z][a-z0-9-]*)/gi;
-  let depth = 0;
-  let deepest = 0;
-  for (let match = tag.exec(html); match; match = tag.exec(html)) {
-    if (UNNESTED.has(match[2].toLowerCase())) continue;
-    depth = match[1] ? Math.max(0, depth - 1) : depth + 1;
-    deepest = Math.max(deepest, depth);
+type Parse5Node = DefaultTreeAdapterMap['node'];
+
+class TooDeep extends Error {}
+
+function parseBounded(html: string): Root | null {
+  const depth = new WeakMap<Parse5Node, number>();
+  const templates = new WeakMap<Parse5Node, Parse5Node>();
+  const levelOf = (node: Parse5Node): number => {
+    const template = templates.get(node);
+    return template ? levelOf(template) + 1 : (depth.get(node) ?? 0);
+  };
+  const place = (parent: Parse5Node, node: Parse5Node) => {
+    const level = levelOf(parent) + 1;
+    if (level > MAX_NESTING) throw new TooDeep();
+    depth.set(node, level);
+  };
+  const treeAdapter: typeof defaultTreeAdapter = {
+    ...defaultTreeAdapter,
+    appendChild(parent, node) {
+      place(parent, node);
+      defaultTreeAdapter.appendChild(parent, node);
+    },
+    insertBefore(parent, node, reference) {
+      place(parent, node);
+      defaultTreeAdapter.insertBefore(parent, node, reference);
+    },
+    setTemplateContent(template, content) {
+      templates.set(content, template);
+      defaultTreeAdapter.setTemplateContent(template, content);
+    },
+  };
+  let document: DefaultTreeAdapterMap['document'];
+  try {
+    document = parse(html, { treeAdapter });
+  } catch (error) {
+    if (error instanceof TooDeep) return null;
+    throw error;
   }
-  return deepest;
+  const stack: [Parse5Node, number][] = [[document, 0]];
+  for (let next = stack.pop(); next; next = stack.pop()) {
+    const [node, level] = next;
+    if (level > MAX_NESTING) return null;
+    if ('content' in node) stack.push([node.content, level + 1]);
+    if ('childNodes' in node) for (const child of node.childNodes) stack.push([child, level + 1]);
+  }
+  return fromParse5(document) as Root;
 }
 
 export function prepareArtifactHtml(html: string): PreparedArtifactHtml | null {
-  if (nesting(html) > MAX_NESTING) return null;
-  const tree = fromHtml(html);
+  const tree = parseBounded(html);
+  if (!tree) return null;
   const links: ArtifactHtmlLink[] = [];
   const removed = {
     scripts: ['html', 'head', 'body'].some((tag) =>
