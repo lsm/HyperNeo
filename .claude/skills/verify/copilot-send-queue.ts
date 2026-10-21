@@ -79,6 +79,8 @@ try {
     const second = await deliver(work, 'settled');
     assert.notEqual(second.receipt!.inputId, work.receipt!.inputId);
     assert.equal((await done(withReceipt(work, second.receipt))).lastReply, 'REPLY_2');
+    const latest = await rpc('work.status', { ref: work.ref }) as Result<WorkDetail>; assert(latest.ok);
+    assert.equal(latest.value.lastReply, 'REPLY_2'); assert.deepEqual(latest.value.startReceipt, work.receipt);
     assert.deepEqual((await done(work)).inputEvidence, before.inputEvidence);
     await restart();
     assert.equal((await done(withReceipt(work, second.receipt))).lastReply, 'REPLY_2');
@@ -124,6 +126,8 @@ try {
     const completed = await start('settled'); await done(completed);
     const lost = await rpc('work.send', { ref: completed.ref, message: 'lost-ack' }) as { ok: boolean; reason: string };
     assert.equal(lost.ok, false); assert.equal(lost.reason, 'unreachable');
+    const uncertainStatus = await rpc('work.status', { ref: completed.ref }) as { ok: boolean; reason: string };
+    assert.equal(uncertainStatus.ok, false); assert.equal(uncertainStatus.reason, 'unreachable');
     await restart();
     const uncertain = await rpc('work.send', { ref: completed.ref, message: 'do not replay' }) as { ok: boolean; reason: string };
     assert.equal(uncertain.ok, false); assert.equal(uncertain.reason, 'unreachable');

@@ -104,6 +104,10 @@ describe('Copilot owned input delivery', () => {
     if (!result.ok) throw new Error(JSON.stringify(result));
     expect(result.value.receipt?.inputId).not.toBe(work.receipt?.inputId);
     const second = await settled(f, work, result.value.receipt);
+    expect(await f.adapter.status!(work.ref)).toMatchObject({
+      ok: true,
+      value: { lastReply: 'REPLY_2', startReceipt: work.receipt },
+    });
     expect(second).toMatchObject({
       value: { lastReply: 'REPLY_2', inputEvidence: { replyAvailability: 'complete' } },
     });
@@ -288,6 +292,7 @@ describe('Copilot owned input delivery', () => {
     const work = await f.start('settled');
     await settled(f, work);
     expect(await f.send(work, 'lost-ack')).toMatchObject({ ok: false, reason: 'unreachable' });
+    expect(await f.adapter.status!(work.ref)).toMatchObject({ ok: false, reason: 'unreachable' });
     await f.restart();
     expect(await f.send(work, 'settled')).toMatchObject({ ok: false, reason: 'unreachable' });
     expect(await settled(f, work)).toMatchObject({ value: { lastReply: 'REPLY_1' } });
