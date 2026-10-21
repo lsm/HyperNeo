@@ -38,20 +38,15 @@ export class NeoHomeRepository {
     private readonly networkTimeoutMs = 30_000
   ) {}
 
-  private async git(args: string[], allowFailure = false, network = false, action?: string) {
-    return this.command(
-      ['git', '-c', 'core.hooksPath=/dev/null', ...args],
-      allowFailure,
-      network,
-      action
-    );
+  private async git(args: string[], allowFailure = false, network = false) {
+    return this.command(['git', '-c', 'core.hooksPath=/dev/null', ...args], allowFailure, network);
   }
 
   github(args: string[]) {
     return this.command(['gh', ...args], true, true);
   }
 
-  private async command(args: string[], allowFailure = false, network = false, action?: string) {
+  private async command(args: string[], allowFailure = false, network = false) {
     const child = spawnProcess(args, {
       cwd: this.root,
       stdout: 'pipe',
@@ -70,7 +65,6 @@ export class NeoHomeRepository {
             SSH_ASKPASS: '/usr/bin/false',
             SSH_ASKPASS_REQUIRE: 'force',
             GIT_SSH_COMMAND: 'ssh -oBatchMode=yes',
-            ...(action ? { GIT_REFLOG_ACTION: action } : {}),
           }
         : undefined,
     });
@@ -130,26 +124,31 @@ export class NeoHomeRepository {
         };
     }
     const local = (await this.git(['rev-parse', 'HEAD'])).text;
-    const action = `neo-home-sync:${crypto.randomUUID()}`;
-    const pulled = await this.git(
-      ['-c', 'core.logAllRefUpdates=true', 'pull', '--rebase', 'origin', branch],
-      true,
-      true,
-      action
-    );
-    if (pulled.code) {
-      const latest = await this.git(['reflog', 'show', '-1', '--format=%gs', 'HEAD'], true);
-      if (latest.code || !latest.text.startsWith(`${action} (`))
-        return { reason: { ok: false, reason: `sync_failed: ${pulled.error}` } };
-      let conflict: HomeConflict | undefined;
-      let aborted: Awaited<ReturnType<NeoHomeRepository['git']>>;
-      try {
-        const remote = (await this.git(['rev-parse', 'FETCH_HEAD'])).text;
-        const paths = (await this.git(['diff', '--name-only', '--diff-filter=U', '-z'])).bytes
+    const fetched = await this.git(['fetch', 'origin', branch], true, true);
+    if (fetched.code) return { reason: { ok: false, reason: `sync_failed: ${fetched.error}` } };
+    const remote = (await this.git(['rev-parse', 'FETCH_HEAD'])).text;
+    const staging = await mkdtemp(join(dirname(this.root), '.neo-home-sync-'));
+    try {
+      const added = await this.git(['worktree', 'add', '--detach', staging, local], true);
+      if (added.code) return { reason: { ok: false, reason: `sync_failed: ${added.error}` } };
+      const rebased = await this.git(['-C', staging, 'rebase', remote], true, true);
+      const candidate = (await this.git(['-C', staging, 'rev-parse', 'HEAD'])).text;
+      const diverged =
+        !rebased.code &&
+        (await this.git(['merge-base', '--is-ancestor', local, candidate], true)).code === 1;
+      if (rebased.code || diverged) {
+        let conflict: HomeConflict | undefined;
+        const paths = (
+          await this.git(
+            diverged
+              ? ['diff', '--name-only', '-z', local, remote]
+              : ['-C', staging, 'diff', '--name-only', '--diff-filter=U', '-z']
+          )
+        ).bytes
           .toString('utf8')
           .split('\0')
           .filter(Boolean);
-        if (paths.length) {
+        if (paths.length || diverged) {
           const versions = await Promise.all(
             paths.map(async (path) => {
               const full = async (revision: string) => {
@@ -185,30 +184,67 @@ export class NeoHomeRepository {
             .join('\n');
           conflict = {
             id: neoDerivedId(JSON.stringify([this.root, local, remote])),
-            text: `Home sync conflict: ${paths
+            text: `Home sync ${diverged ? 'history ' : ''}conflict: ${paths
               .map((path) => JSON.stringify(path))
               .join(', ')
               .slice(
                 0,
                 350
               )}\n\nLocal → remote (excerpt):\n\n${'`'.repeat(8)}diff\n${excerpt.slice(0, 1000).replaceAll('`', '\u02cb')}\n${'`'.repeat(8)}\n\nWhich version should we use? View full versions before choosing. Your answer records a choice; it does not apply a change yet.`,
-            document: versions.join('\n\n────────────────\n\n'),
+            document: versions.length
+              ? versions.join('\n\n────────────────\n\n')
+              : `Local (${local})\n\nRemote (${remote})\n\nNo document differences; the branch histories diverge. Review the preserved histories with the human before reconciling.`,
           };
         }
-      } finally {
-        aborted = await this.git(['rebase', '--abort'], true);
+        return {
+          reason: {
+            ok: false,
+            ...(conflict ? { conflict } : {}),
+            reason: `${conflict ? 'conflict' : 'sync_failed'}: isolated rebase not applied; local files preserved. ${diverged ? 'Branch histories diverge; review the question before reconciling.' : rebased.error}`,
+          },
+        };
       }
-      return {
-        reason: {
-          ok: false,
-          ...(!aborted.code && conflict ? { conflict } : {}),
-          reason: aborted.code
-            ? `sync_failed: ${pulled.error}; ${aborted.error}`
-            : `conflict: rebase aborted; local files preserved. ${pulled.error}`,
-        },
-      };
+      for (const state of ['rebase-merge', 'rebase-apply'])
+        if (
+          await lstat(join(this.root, '.git', state)).catch((error) => {
+            if (error.code !== 'ENOENT') throw error;
+            return null;
+          })
+        )
+          return {
+            reason: {
+              ok: false,
+              reason: 'sync_failed: a home rebase began during synchronization; no update applied.',
+            },
+          };
+      if (
+        (await this.git(['rev-parse', 'HEAD'])).text !== local ||
+        (await this.git(['status', '--porcelain'])).text
+      )
+        return {
+          reason: {
+            ok: false,
+            reason: 'dirty: home changed during synchronization; no update applied.',
+          },
+        };
+      const applied = await this.git(
+        ['merge', '--ff-only', '--no-overwrite-ignore', '--no-autostash', candidate],
+        true
+      );
+      return applied.code
+        ? {
+            reason: {
+              ok: false,
+              reason: `sync_failed: unsafe home update refused; no cleanup or rollback attempted. ${applied.error}`,
+            },
+          }
+        : { value: branch };
+    } finally {
+      await this.git(['worktree', 'remove', '--force', staging], true);
+      await rmdir(staging).catch((error) => {
+        if (error.code !== 'ENOENT' && error.code !== 'ENOTEMPTY') throw error;
+      });
     }
-    return { value: branch };
   }
 
   private sequence<T>(run: () => Promise<T>): Promise<T> {
