@@ -25,7 +25,13 @@ function git(...args: string[]) {
 git('init','--quiet');
 writeFileSync(`${home}/mandate.md`, '# Adoption\nMake guides useful.\n');
 git('add','mandate.md'); git('commit','--quiet','-m','Synthetic mandate');
+const bare = `${run}/synthetic-neo-home.git`;
+execFileSync('git', ['clone','--quiet','--bare',home,bare]);
+writeFileSync(`${run}/bin/synthetic-ssh`, `#!/bin/sh\nfor last; do :; done\ncase "$last" in git-upload-pack*) exec git-upload-pack '${bare}';; esac\nexit 1\n`, { mode: 0o755 });
+git('config','core.sshCommand',`${run}/bin/synthetic-ssh`);
 git('remote','add','origin','git@github.com:example/synthetic-neo-home.git');
+git('fetch','--quiet','origin');
+git('branch','--set-upstream-to',`origin/${git('branch','--show-current')}`);
 const rev = git('rev-parse','HEAD');
 const created = await rpc('goal.session.create', {ownerSessionId:root,title:'Publish useful guide',
   description:'Guide for adopters',type:'measurable',metrics:{readers:30,useful:true},
@@ -45,6 +51,7 @@ const db = new Database(`${run}/data/daemon.db`);
 try { db.exec('PRAGMA busy_timeout=5000');db.query('UPDATE space_goals SET works_note = ? WHERE id = ?').run('Concrete examples work',goalId); }
 finally { db.close(); }
 assert.equal((await rpc('goal.session.get',{ownerSessionId:root,goalId})).goal.worksNote,'Concrete examples work');
-assert.equal((await rpc('neo.home.read',{path:'mandate.md',includeRemote:true})).remoteUrl,'https://github.com/example/synthetic-neo-home');
+const homeRead = await rpc('neo.home.read',{path:'mandate.md',includeRemote:true});
+assert.equal(homeRead.remoteUrl,'https://github.com/example/synthetic-neo-home',JSON.stringify(homeRead));
 writeFileSync(`${run}/evidence/goal-detail-seed.json`,JSON.stringify({root,goalId,ids,rev,worksNote:'Synthetic DB fixture; G8 owns writing/compaction.'},null,2));
 console.log(`Seeded real goal/home/journal reads: ${run}/evidence/goal-detail-seed.json`);

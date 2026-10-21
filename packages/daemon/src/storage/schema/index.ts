@@ -1,3 +1,4 @@
+import { runMigration432 } from './m432-artifact-files.ts';
 import { runMigration429 } from './m429-neo-rule-proposals.ts';
 import { runMigration428 } from './m428-pack-preference-proposals.ts';
 import { createNeoPackPreferencesTable } from './m426-neo-pack-preferences.ts';
@@ -1153,4 +1154,5 @@ function createIndexes(db: BunDatabase): void {
   createNeoPackPreferencesTable(db);
   runMigration428(db);
   runMigration429(db);
+  runMigration432(db);
 }

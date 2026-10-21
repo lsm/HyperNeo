@@ -7,6 +7,9 @@ import type {
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
+import { unregisteredArtifact } from '../artifacts/file-contracts.ts';
+import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import type { NeoAskOrigin } from './ask-origin.ts';
 import {
   NeoPublicationSchema,
@@ -60,6 +63,7 @@ interface NeoPublicationRuntime {
   inputTrigger(input: NeoAskOrigin): string | null;
   isDeliveredHumanInput(input: NeoAskOrigin): boolean;
   notify(): void;
+  artifact: ArtifactRefReader;
 }
 
 export function admitPublicationDraft(input: unknown): { value: Draft } | { reason: Rejection } {
@@ -67,6 +71,38 @@ export function admitPublicationDraft(input: unknown): { value: Draft } | { reas
   return parsed.success
     ? { value: parsed.data }
     : { reason: { accepted: false, reason: 'invalid_publication' } };
+}
+
+const TOPIC_LABEL =
+  /^(?:#{1,6}\s+(.+?)\s*#*|\*\*([^*\n]+?)\*\*\s*(?:[:：].*)?|\*\*([^*\n]+?[:：])\*\*.*)\s*$/;
+
+function publicationTopics(fullText: string): string[] {
+  const labels: string[] = [];
+  let fenced = false;
+  for (const line of fullText.split('\n')) {
+    if (line.trimStart().startsWith('```')) fenced = !fenced;
+    const match = fenced ? null : TOPIC_LABEL.exec(line);
+    const label = (match?.[1] ?? match?.[2] ?? match?.[3])?.replace(/[:：]\s*$/, '').trim();
+    if (label && !labels.includes(label)) labels.push(label);
+  }
+  return labels;
+}
+
+export function requireShortTextCoversTopics(
+  draft: Draft
+): { value: Draft } | { reason: Rejection } {
+  const topics = publicationTopics(draft.fullText);
+  const short = draft.shortText.toLocaleLowerCase();
+  const missing = topics.filter((topic) => !short.includes(topic.toLocaleLowerCase()));
+  return topics.length < 2 || !missing.length
+    ? { value: draft }
+    : {
+        reason: {
+          accepted: false,
+          reason: 'multiple_topics',
+          detail: `fullText has ${topics.length} topic labels (${topics.join('; ')}) but shortText does not name ${missing.join('; ')}. publish each topic separately, each with its own shortText; or, if they are sections of one topic, name every label in shortText.`,
+        },
+      };
 }
 
 function publicationIdFor(input: NeoAskOrigin, requestId: string): string {
@@ -141,6 +177,23 @@ export function requirePublicationLinks(
     : { value: proof };
 }
 
+export function requirePublicationArtifacts(
+  proof: Proof,
+  draft: Draft,
+  registered: readonly (ArtifactRef | null)[]
+): { value: Proof } | { reason: Rejection } {
+  const unknown = unregisteredArtifact(draft.artifacts ?? [], registered);
+  return unknown
+    ? {
+        reason: {
+          accepted: false,
+          reason: 'invalid_artifact_reference',
+          detail: `artifact "${unknown.artifactId}" is not one you can publish as given; pass the reference artifact.file.register or artifact.file.get returned`,
+        },
+      }
+    : { value: proof };
+}
+
 export function requirePublicationLifetime(
   proof: Proof,
   caller: OperationCaller,
@@ -168,6 +221,7 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
   return (superpipe({})('neo-publication-publish') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitPublicationDraft, 'input', 'result:publication')
+    .pipe(requireShortTextCoversTopics, 'publication', 'result:publication')
     .pipe((draft: Draft) => draft, 'publication', 'draft')
     .pipe(
       (caller: OperationCaller) => runtime.getBinding(caller.sessionId ?? ''),
@@ -201,6 +255,13 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
       'links'
     )
     .pipe(requirePublicationLinks, ['publication', 'links'], 'result:publication')
+    .pipe(
+      (draft: Draft, caller: OperationCaller) =>
+        (draft.artifacts ?? []).map((ref) => runtime.artifact(ref.artifactId, caller)),
+      ['draft', 'caller'],
+      'registered'
+    )
+    .pipe(requirePublicationArtifacts, ['publication', 'draft', 'registered'], 'result:publication')
     .pipe(
       (proof: Proof, caller: OperationCaller) =>
         requirePublicationLifetime(
@@ -255,7 +316,7 @@ export function createNeoPublicationOperation(publish: ReturnType<typeof createN
   return defineOperation({
     name: 'neo.publication.publish',
     description:
-      'Deliver a message in this conversation. Use a new requestId per message and reuse it only when retrying that send. To answer a human input, copy its triggerId from the daemon human-input envelope, including messages arriving mid-turn. Choose the input this message answers; one publication does not answer every delivered input. The runtime validates this turn and derives publication identity, original request and producer. Scene references must exist and belong to the request. The answered field identifies the human message answered by this delivery and its publication/revision; null means no human message was resolved. It does not complete background work or require another post.',
+      'Deliver a message in this conversation. Use a new requestId per message and reuse it only when retrying that send. To answer a human input, copy its triggerId from the daemon human-input envelope, including messages arriving mid-turn. Choose the input this message answers; one publication does not answer every delivered input. The runtime validates this turn and derives publication identity, original request and producer. Scene references must exist and belong to the request. For a document or evidence file, pass the reference artifact.file.register returned in artifacts and say in one sentence what it is; do not paste the document. The human opens it in the app. The answered field identifies the human message answered by this delivery and its publication/revision; null means no human message was resolved. It does not complete background work or require another post.',
     policy: { safetyClass: 'mutate', roles: ['neo'] },
     inputSchema: Draft,
     resultSchema: NeoPublicationResultSchema,

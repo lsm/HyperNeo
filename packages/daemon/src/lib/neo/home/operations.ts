@@ -6,6 +6,7 @@ import { neoFolderPath } from '../folder.ts';
 import type { NeoService } from '../service.ts';
 import { NeoHomeRepository, type HomeResult } from './repository.ts';
 import { requireHomeConfirmation } from './confirmation.ts';
+import { reportHomeConflict } from './conflicts.ts';
 import { HomeReadInput, HomeReadResult } from './read.ts';
 import { HomeSaveInput, HomeSaveResult, requireHomePath, requireHomeSave } from './save.ts';
 
@@ -23,7 +24,20 @@ export function createNeoHomeOperations(
   const init = (superpipe({})('neo.home.init') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(owner, 'caller', 'result:outcome')
-    .pipe(() => home.init(), 'outcome', 'outcome')
+    .pipe(
+      (input: { remoteUrl?: string }, caller: OperationCaller) =>
+        input.remoteUrl && !isLocalUser(caller)
+          ? {
+              reason: {
+                ok: false,
+                reason: 'human_selection_required: ask the local user to select the home remote.',
+              },
+            }
+          : { value: input },
+      ['input', 'caller'],
+      'result:outcome'
+    )
+    .pipe((input: { remoteUrl?: string }) => home.init(input.remoteUrl), 'outcome', 'outcome')
     .endAsync('outcome') as (input: unknown, caller: OperationCaller) => Promise<HomeResult>;
   const save = (superpipe({})('neo.home.save') as PipelineAPI)
     .input(['input', 'caller'])
@@ -37,6 +51,11 @@ export function createNeoHomeOperations(
       'result:outcome'
     )
     .pipe((input) => home.save(input), 'outcome', 'outcome')
+    .pipe(
+      (result) => reportHomeConflict(result, service.todos, service.defaultSessionId()),
+      'outcome',
+      'outcome'
+    )
     .endAsync('outcome') as (
     input: HomeSaveInput,
     caller: OperationCaller
@@ -45,7 +64,17 @@ export function createNeoHomeOperations(
     .input(['input', 'caller'])
     .pipe(owner, 'caller', 'result:outcome')
     .pipe(requireHomePath, 'input', 'result:outcome')
-    .pipe((input: HomeReadInput) => home.read(input), 'outcome', 'outcome')
+    .pipe(
+      (input: HomeReadInput, caller: OperationCaller) =>
+        home.read(input, caller.source === 'mcp' ? caller.neoTurn?.isLive : undefined),
+      ['outcome', 'caller'],
+      'outcome'
+    )
+    .pipe(
+      (result) => reportHomeConflict(result, service.todos, service.defaultSessionId()),
+      'outcome',
+      'outcome'
+    )
     .endAsync('outcome') as (
     input: HomeReadInput,
     caller: OperationCaller
@@ -54,7 +83,7 @@ export function createNeoHomeOperations(
     defineOperation({
       name: 'neo.home.read',
       description:
-        'Read a complete local curated home document and its SHA-256, including human edits. includeRemote optionally adds the browser origin URL without fetching. Never initializes or commits. Refuses internal, ignored or symlink paths and non-UTF-8 content. Root Neo or the local user only.',
+        'Read a complete curated home document and its SHA-256. With origin/upstream, synchronizes using bounded noninteractive pull/rebase at most once per runtime Neo wake, sharing failures too; human RPC reads attempt fresh sync. Local-only reads include human edits; remote-backed dirty changes refuse synchronization unchanged. A sync conflict returns questionId for one human choice with a full-version document; answering records but does not apply it. includeRemote optionally adds the browser origin URL without fetching. Never initializes or authors a commit. Refuses internal, ignored or symlink paths and non-UTF-8 content. Root Neo or the local user only.',
       inputSchema: HomeReadInput,
       resultSchema: HomeReadResult,
       policy: { safetyClass: 'read', roles: ['neo'] },
@@ -63,7 +92,7 @@ export function createNeoHomeOperations(
     defineOperation({
       name: 'neo.home.save',
       description:
-        'Save one curated document and commit locally. With a configured origin/upstream, pulls with rebase before writing and pushes afterward. Network steps are noninteractive and stop after 30 seconds. A conflict aborts the rebase and preserves local files; push_failed retains the named local commit for retry. Refuses credential-like content, internal/ignored paths and dirty home changes. Direction and mandate require questionId: a matching human yes on a root-Neo question bound to the exact path and content SHA-256. Appends the confirmed decision and commits both files with Neo-Confirmed-By. Root Neo or the local user only; direct filesystem access requires an environment boundary.',
+        'Save one curated document and commit locally. With a configured origin/upstream, pulls with rebase before writing and pushes afterward. Network steps are noninteractive and stop after 30 seconds. A conflict aborts the rebase, preserves local files and returns questionId for one human choice with a full-version document; answering records but does not apply that choice; push_failed retains the named local commit for retry. Refuses credential-like content, internal/ignored paths and dirty home changes. Direction and mandate require questionId: a matching human yes on a root-Neo question bound to the exact path and content SHA-256. Appends the confirmed decision and commits both files with Neo-Confirmed-By. Root Neo or the local user only; direct filesystem access requires an environment boundary.',
       inputSchema: HomeSaveInput,
       resultSchema: HomeSaveResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
@@ -72,8 +101,8 @@ export function createNeoHomeOperations(
     defineOperation({
       name: 'neo.home.init',
       description:
-        'Initialize the local Neo home repository, ignore coordinator transcripts, and assign stable project folders. After first setup, call neo.home.github with the current root askId to offer its private remote once. Uses the configured git identity; fix identity/signing configuration and retry if commit fails. Root Neo or the local user only.',
-      inputSchema: z.object({}),
+        'Initialize the local Neo home repository, ignore coordinator transcripts, and assign stable project folders. The local human may supply remoteUrl once to clone an existing shared home; origin/upstream remember the selection. Preserves local transcripts and refuses existing documents or a different origin. Clone is noninteractive with a 30-second timeout. After first setup, call neo.home.github with the current root askId to offer its private remote once. Uses the configured git identity; fix identity/signing configuration and retry if commit fails. Root Neo or the local user only.',
+      inputSchema: z.object({ remoteUrl: z.string().trim().min(1).optional() }),
       resultSchema: z.union([
         z.object({ ok: z.literal(false), reason: z.string() }),
         z.object({

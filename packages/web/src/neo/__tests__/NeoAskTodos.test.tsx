@@ -1,12 +1,14 @@
-import type { NeoAskEntry, NeoQuestion, NeoTodoEntry } from '@hyperneo/shared/types/neo-ask';
+import type { NeoAskEntry, NeoQuestionEntry, NeoTodoEntry } from '@hyperneo/shared/types/neo-ask';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NeoAskTodos, neoQuestionAnswerLabel } from '../NeoAskTodos.tsx';
+import { messageTime } from '../NeoMessage.tsx';
 import { neoAskEntryGroup } from '../neo-asks.ts';
 import { locale } from '../../lib/i18n/index.ts';
 
 beforeEach(() => {
   locale.value = 'zh-Hans';
+  sessionStorage.clear();
 });
 
 afterEach(() => {
@@ -43,7 +45,7 @@ const todo = (id: string, patch: Partial<NeoTodoEntry> = {}): NeoTodoEntry => ({
   ...patch,
 });
 
-const question = (id: string, patch: Partial<NeoQuestion>): NeoQuestion => ({
+const question = (id: string, patch: Partial<NeoQuestionEntry>): NeoQuestionEntry => ({
   id,
   askId: 'ask',
   text: `Question ${id}`,
@@ -81,11 +83,104 @@ const entry = (patch: Partial<NeoAskEntry>): NeoAskEntry => ({
   },
   state: 'todo',
   todos: [],
+  doneCount: 0,
   questions: [],
   ...patch,
 });
 
 describe('NeoAskTodos', () => {
+  const detailed = () =>
+    entry({
+      todos: ['a', 'b', 'c'].map((id) =>
+        todo(id, {
+          status: `Working on ${id}: ${'A long status line. '.repeat(15)}`,
+          report: `Report ${id}: ${'Detailed synthetic report. '.repeat(12)}`,
+          evidence: `Evidence ${id}: ${'Observed synthetic result. '.repeat(12)}`,
+        })
+      ),
+    });
+
+  it('collapses three detailed todos by default, opens one, and expands or collapses all including the first', () => {
+    locale.value = 'en';
+    const data = detailed();
+    const app = render(<NeoAskTodos entry={data} onAnswer={vi.fn()} />);
+    for (const item of data.todos) {
+      expect(app.getByText(item.title)).toBeTruthy();
+      expect(app.queryByText(item.report!.trim())).toBeNull();
+      expect(app.queryByText(item.evidence!.trim())).toBeNull();
+    }
+    const first = app.getByRole('button', { name: 'Show details: Todo a' });
+    expect(first.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(first);
+    expect(app.getByText(data.todos[0].report!.trim())).toBeTruthy();
+    expect(app.getByText(data.todos[0].evidence!.trim())).toBeTruthy();
+    expect(app.queryByText(data.todos[1].report!.trim())).toBeNull();
+    expect(app.queryByText(data.todos[2].report!.trim())).toBeNull();
+    fireEvent.click(app.getByRole('button', { name: 'Expand all' }));
+    for (const item of data.todos) expect(app.getByText(item.report!.trim())).toBeTruthy();
+    fireEvent.click(app.getByRole('button', { name: 'Collapse all' }));
+    for (const item of data.todos) {
+      expect(app.queryByText(item.report!.trim())).toBeNull();
+      expect(
+        app
+          .getByRole('button', { name: `Show details: ${item.title}` })
+          .getAttribute('aria-expanded')
+      ).toBe('false');
+    }
+  });
+
+  it('remembers each card within the session across switches and remounts without auto-opening new todos', () => {
+    locale.value = 'en';
+    const data = detailed();
+    const other = { ...data, ask: { ...data.ask, id: 'other', title: 'Other card' } };
+    const app = render(<NeoAskTodos entry={data} onAnswer={vi.fn()} />);
+    fireEvent.click(app.getByRole('button', { name: 'Show details: Todo a' }));
+    app.rerender(<NeoAskTodos entry={other} onAnswer={vi.fn()} />);
+    expect(app.queryByText(data.todos[0].report!.trim())).toBeNull();
+    fireEvent.click(app.getByRole('button', { name: 'Show details: Todo b' }));
+    app.rerender(<NeoAskTodos entry={data} onAnswer={vi.fn()} />);
+    expect(app.getByText(data.todos[0].report!.trim())).toBeTruthy();
+    expect(app.queryByText(data.todos[1].report!.trim())).toBeNull();
+    app.unmount();
+    const again = render(
+      <NeoAskTodos entry={{ ...data, todos: [...data.todos, todo('new')] }} onAnswer={vi.fn()} />
+    );
+    expect(again.getByText(data.todos[0].report!.trim())).toBeTruthy();
+    expect(again.getByRole('button', { name: 'Show details: Todo new' }).tagName).toBe('BUTTON');
+  });
+
+  it('omits report and evidence duplicates of each other or the displayed status', () => {
+    locale.value = 'en';
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          todos: [
+            todo('a', { status: 'Doing', report: ' Same details ', evidence: 'Same details' }),
+            todo('b', { status: 'Done', report: ' Done ', evidence: '  ' }),
+          ],
+        })}
+        onAnswer={vi.fn()}
+      />
+    );
+    fireEvent.click(app.getByRole('button', { name: 'Expand all' }));
+    expect(app.getAllByText('Same details')).toHaveLength(1);
+    expect(app.getAllByText('Done')).toHaveLength(1);
+  });
+
+  it('keeps Open separate from the disclosure and matches the iOS all-control translations', () => {
+    const data = detailed();
+    data.todos[0].link = '/session/worker';
+    const onOpen = vi.fn();
+    const app = render(<NeoAskTodos entry={data} onAnswer={vi.fn()} onOpen={onOpen} />);
+    expect(app.getByRole('button', { name: '全部展开' })).toBeTruthy();
+    fireEvent.click(app.getByRole('button', { name: '打开 Todo a' }));
+    expect(onOpen).toHaveBeenCalledWith('/session/worker', 'Todo a');
+    expect(app.queryByText(data.todos[0].report!.trim())).toBeNull();
+    fireEvent.click(app.getByRole('button', { name: '全部展开' }));
+    fireEvent.click(app.getByRole('button', { name: '全部收起' }));
+    expect(app.queryByText(data.todos[0].report!.trim())).toBeNull();
+  });
+
   it.each(['open', 'answered', 'retired'] as const)(
     'renders safe question Markdown in the %s state with the real chat renderer',
     async (state) => {
@@ -140,6 +235,28 @@ describe('NeoAskTodos', () => {
       if (state === 'retired') expect(body.textContent).toContain('Synthetic retirement');
     }
   );
+
+  it('dates an answer from an earlier day and shows only the time for today', () => {
+    const earlier = new Date(2026, 0, 2, 9, 5).getTime();
+    const today = Date.now();
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          questions: [
+            question('old', { state: 'answered', answer: 'yes', answeredAt: earlier }),
+            question('new', { state: 'answered', answer: 'yes', answeredAt: today }),
+          ],
+        })}
+        onAnswer={vi.fn()}
+      />
+    );
+    fireEvent.click(app.container.querySelector('[data-ask-details-toggle]')!);
+    const line = (id: string) =>
+      app.container.querySelector(`#neo-ref-question-${id} > p`)?.textContent ?? '';
+    expect(line('old')).toContain(messageTime(earlier)!.label);
+    expect(line('old')).toMatch(/1月|Jan/);
+    expect(line('new')).toContain(messageTime(today)!.label);
+  });
 
   it('lists the todos of a start question with ticks and starts only the ticked ones', () => {
     const onAnswer = vi.fn();
@@ -229,18 +346,66 @@ describe('NeoAskTodos', () => {
       <NeoAskTodos
         entry={entry({
           questions: [
-            question('one', { kind: 'choice', options: ['A', 'B'] }),
-            question('many', { kind: 'choice', options: ['iPhone', 'iPad'], multiple: true }),
+            question('one', {
+              kind: 'choice',
+              options: ['Keep', 'Cards'],
+              optionLabels: ['A', 'B'],
+            }),
+            question('many', {
+              kind: 'choice',
+              options: ['iPhone', 'iPad'],
+              optionLabels: ['A', 'B'],
+              multiple: true,
+            }),
           ],
         })}
         onAnswer={onAnswer}
       />
     );
-    fireEvent.click(app.getByRole('button', { name: 'B' }));
-    expect(onAnswer).toHaveBeenCalledWith('one', ['B']);
-    fireEvent.click(app.getByRole('checkbox', { name: 'iPad' }));
+    fireEvent.click(app.getByRole('button', { name: 'B Cards' }));
+    expect(onAnswer).toHaveBeenCalledWith('one', ['Cards']);
+    fireEvent.click(app.getByRole('checkbox', { name: 'B iPad' }));
     fireEvent.click(app.getByRole('button', { name: '确定' }));
     expect(onAnswer).toHaveBeenLastCalledWith('many', ['iPad']);
+  });
+
+  it('letters each choice in order and wraps long options inside the card', () => {
+    const long = [
+      '保留现在的列表布局，只把每一行的间距、字号和状态标签重新调整一遍，让长标题在手机上也能完整显示而不被截断',
+      'Switch every card to the compact table layout with sortable columns, sticky headers, and a much longer description',
+      'https://example.test/a-very-long-unbroken-option-token-that-must-still-wrap-inside-the-card',
+    ];
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          questions: [
+            question('one', { kind: 'choice', options: long, optionLabels: ['A', 'B', 'C'] }),
+            question('many', {
+              kind: 'choice',
+              options: long,
+              optionLabels: ['A', 'B', 'C'],
+              multiple: true,
+            }),
+          ],
+        })}
+        onAnswer={() => {}}
+      />
+    );
+    const one = app.container.querySelector('[data-ask-question="one"]')!;
+    const buttons = [...one.querySelectorAll('[data-choice-option]')];
+    expect(buttons.map((button) => button.textContent)).toEqual(
+      long.map((option, index) => `${'ABC'[index]}${option}`)
+    );
+    for (const button of buttons) {
+      expect(button.className).not.toMatch(/shrink-0|truncate|whitespace-nowrap|line-clamp/);
+      expect(button.className).toContain('min-w-0');
+      expect(button.className).toContain('max-w-full');
+      expect(button.className).toContain('[overflow-wrap:anywhere]');
+    }
+    const many = app.container.querySelector('[data-ask-question="many"]')!;
+    expect(
+      [...many.querySelectorAll('[data-choice-option]')].map((label) => label.textContent)
+    ).toEqual(long.map((option, index) => `${'ABC'[index]}${option}`));
   });
 
   it('draws each todo state with its line and opens a session', () => {
@@ -290,6 +455,7 @@ describe('NeoAskTodos', () => {
     );
     const reason = app.getByText('卡住了：CI 一直红');
     expect(reason.className).toContain('text-warning');
+    fireEvent.click(app.getByRole('button', { name: '显示详情：Todo a' }));
     const rowA = app.container.querySelector('[data-ask-todo="a"]')!;
     expect(rowA.querySelector('[data-todo-next-action]')?.textContent).toBe('下一步：修好测试再推');
     expect(rowA.textContent).not.toContain('check');
@@ -436,6 +602,18 @@ describe('neoQuestionAnswerLabel', () => {
     expect(neoQuestionAnswerLabel(question('q', { kind: 'choice', answer: [] }), [])).toBe(
       '都不要'
     );
+    expect(
+      neoQuestionAnswerLabel(
+        question('q', {
+          kind: 'choice',
+          options: ['Keep', 'Cards', 'Table'],
+          optionLabels: ['A', 'B', 'C'],
+          answer: ['Keep', 'Table'],
+          answeredBy: 'chat',
+        }),
+        []
+      )
+    ).toBe('A. Keep、C. Table');
   });
 });
 
@@ -470,4 +648,41 @@ describe('NeoAskTodos in English', () => {
     expect(app.getByRole('button', { name: 'Ask actions' })).toBeTruthy();
     expect(app.container.textContent).not.toMatch(/[\u4e00-\u9fff]/);
   });
+});
+
+describe('Question full-version document', () => {
+  it.each(['open', 'answered', 'retired'] as const)(
+    'keeps the %s card short and opens literal full text',
+    async (state) => {
+      locale.value = 'en';
+      const document =
+        'Local version\n' +
+        'Full original line  \n'.repeat(80) +
+        '<script>unsafe()</script>\nRemote version';
+      const view = render(
+        <NeoAskTodos
+          entry={entry({
+            questions: [
+              question('document', {
+                text: 'direction.md: compact diff',
+                state,
+                document,
+              } as Partial<NeoQuestionEntry>),
+            ],
+          })}
+          onAnswer={() => {}}
+        />
+      );
+      if (state !== 'open')
+        fireEvent.click(view.container.querySelector('[data-ask-details-toggle]')!);
+      expect(view.queryByRole('dialog')).toBeNull();
+      fireEvent.click(view.getByRole('button', { name: 'View full versions' }));
+      const dialog = await view.findByRole('dialog');
+      expect(dialog.querySelector('pre')?.textContent).toBe(document);
+      expect(dialog.querySelector('script')).toBeNull();
+      expect(dialog.textContent).toContain('Remote version');
+      fireEvent.click(view.getByRole('button', { name: /close/i }));
+      await waitFor(() => expect(view.queryByRole('dialog')).toBeNull());
+    }
+  );
 });

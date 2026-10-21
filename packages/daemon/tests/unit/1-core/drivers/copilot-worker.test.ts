@@ -49,6 +49,25 @@ async function eventually(read: () => Promise<unknown>, matches: (value: unknown
 }
 
 describe('Copilot worker construction', () => {
+  test.each([
+    ['--logged-out', 'copilot login'],
+    ['--no-models', 'model'],
+  ])('refuses %s before creating a session', async (flag, diagnostic) => {
+    const options = config('fixture-1', flag);
+    let worker: Awaited<ReturnType<typeof openCopilotWorker>> | undefined;
+    try {
+      await expect(
+        (async () => {
+          worker = await openCopilotWorker(options);
+        })()
+      ).rejects.toThrow(diagnostic);
+      const calls = readFileSync(join(options.cwd, 'calls.jsonl'), 'utf8');
+      expect(calls).not.toContain('session.create');
+    } finally {
+      await worker?.close();
+    }
+  });
+
   test('ignores evicted stale echoes during ACK wait without losing replies or capacity', async () => {
     const worker = await openCopilotWorker(config());
     try {

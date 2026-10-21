@@ -148,6 +148,7 @@ export async function runGhJson(
     hostHint?: string;
     resourceHint?: 'core' | 'graphql';
     stripGHRepo?: boolean;
+    maxBufferBytes?: number;
   }
 ): Promise<ConnectorOutcome> {
   const timeoutMs = options?.timeoutMs ?? DEFAULT_GH_LOOKUP_TIMEOUT_MS;
@@ -176,7 +177,7 @@ export async function runGhJson(
   }, timeoutMs);
 
   const [stdoutResult, stderrResult, exitCode] = await Promise.all([
-    collectWithMaxBuffer(proc.stdout, MAX_BUFFER_BYTES),
+    collectWithMaxBuffer(proc.stdout, options?.maxBufferBytes ?? MAX_BUFFER_BYTES),
     collectWithMaxBuffer(proc.stderr, MAX_BUFFER_BYTES),
     proc.exited,
   ]);
@@ -220,12 +221,12 @@ export async function runGhJson(
     return { ok: false, error: errorText };
   }
 
-  const parsed = parseJsonAny(stdoutResult.text);
+  const parsed = stdoutResult.truncated ? undefined : parseJsonAny(stdoutResult.text);
   if (parsed === undefined) {
     if (stdoutResult.truncated) {
       return {
         ok: false,
-        error: `gh response exceeded the ${MAX_BUFFER_BYTES}-byte buffer and was truncated`,
+        error: `gh response exceeded the ${options?.maxBufferBytes ?? MAX_BUFFER_BYTES}-byte buffer and was truncated`,
       };
     }
     return {

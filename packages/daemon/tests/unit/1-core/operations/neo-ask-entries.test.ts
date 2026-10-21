@@ -1,7 +1,15 @@
 import { describe, expect, test } from 'bun:test';
-import type { NeoAsk, NeoAskEntry, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type {
+  NeoAsk,
+  NeoAskEntry,
+  NeoQuestion,
+  NeoTodo,
+  NeoTodoEntry,
+} from '@hyperneo/shared/types/neo-ask';
 import {
+  createNeoDoneTodosOperation,
   neoAskEntryState,
+  neoSnapshotAskEntries,
   neoTodoStatusLine,
   projectNeoAskEntries,
 } from '../../../../src/lib/neo/ask-entries.ts';
@@ -240,8 +248,24 @@ describe('projectNeoAskEntries', () => {
     ask('q1', ['t1'], 'Start "Rows"?');
     ask('q2', ['t1', 't2'], 'Start these 2?');
     ask('q3', ['t2'], '要不要先把图标做了？');
+    store.askQuestion(
+      'q4',
+      'ask',
+      {
+        text: 'Which layout?',
+        kind: 'choice',
+        options: ['List', 'Cards', 'Table'],
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos: null,
+      },
+      1
+    );
     const [entry] = projectNeoAskEntries([opened], store, sessions, []);
-    expect(entry.questions).toMatchObject([
+    expect(entry.questions[3]).toMatchObject({ id: 'q4', optionLabels: ['A', 'B', 'C'] });
+    expect(entry.questions[0]).not.toHaveProperty('optionLabels');
+    expect(entry.questions.slice(0, 3)).toMatchObject([
       {
         id: 'q1',
         text: 'Start "Rows"?',
@@ -261,6 +285,112 @@ describe('projectNeoAskEntries', () => {
       startTodos: ['t1'],
       text: 'Start "Rows"?',
       textCodes: [{ code: 'question.startOne', params: { title: 'Rows' } }],
+    });
+  });
+});
+
+describe('projectNeoAskEntries todo order and done todos', () => {
+  function seed(states: NeoTodo['state'][]) {
+    const db = new Database(':memory:');
+    runMigrations(db, () => {});
+    createTables(db);
+    const store = new NeoAskTodoRepository(db);
+    const sessions = new NeoTodoSessionRepository(db);
+    const opened = store.openAsk({
+      id: 'ask',
+      projectId: null,
+      sessionId: 'neo',
+      originMessageId: null,
+      title: 'Sidebar',
+      request: 'Sort the sidebar',
+      createdAt: 1,
+    });
+    const draft = { doneWhen: 'Merged', check: null, instruction: null, named: null };
+    states.forEach((state, index) => {
+      const row = store.addTodo(`t${index}`, 'ask', { ...draft, title: `T${index}` }, 1);
+      if (state !== 'todo')
+        store.updateTodo(
+          row,
+          { state, ...(state === 'blocked' ? { blockedReason: 'Stuck' } : {}) },
+          2
+        );
+    });
+    return { store, sessions, opened };
+  }
+
+  test('lists blocked, failed, doing, not started, done, then removed, and counts done todos', () => {
+    const { store, sessions, opened } = seed([
+      'done',
+      'todo',
+      'removed',
+      'doing',
+      'failed',
+      'blocked',
+      'done',
+    ]);
+    const [entry] = projectNeoAskEntries([opened], store, sessions, []);
+    expect(entry.todos.map((todo) => todo.id)).toEqual(['t5', 't4', 't3', 't1', 't0', 't6', 't2']);
+    expect(entry.doneCount).toBe(2);
+    expect(entry.state).toBe('doing');
+  });
+
+  test('up to twenty done todos stay on the snapshot card while clients learn to page them', () => {
+    const twenty = seed(['doing', ...Array.from({ length: 20 }, () => 'done' as const)]);
+    const kept = neoSnapshotAskEntries(
+      projectNeoAskEntries([twenty.opened], twenty.store, twenty.sessions, []),
+      20
+    );
+    expect(kept.todoAsks[0].todos).toHaveLength(21);
+    expect(kept.todoAsks[0].doneCount).toBe(20);
+  });
+
+  test('more than twenty done todos leave the snapshot card, keep their pack rows, and stay for restart', () => {
+    const { store, sessions, opened } = seed([
+      'doing',
+      ...Array.from({ length: 21 }, () => 'done' as const),
+    ]);
+    const entries = projectNeoAskEntries([opened], store, sessions, []);
+    expect(entries[0].todos).toHaveLength(22);
+    const shown = neoSnapshotAskEntries(entries, 20);
+    expect(shown.todoAsks[0].todos.map((todo) => todo.id)).toEqual(['t0']);
+    expect(shown.todoAsks[0].doneCount).toBe(21);
+    expect(shown.todoAsks[0].state).toBe('doing');
+    expect(shown.pinned).toHaveLength(22);
+    store.settleAsk(opened, 'done', 'Shipped', 3);
+    const settled = projectNeoAskEntries([store.getAsk('ask')!], store, sessions, []);
+    expect(neoSnapshotAskEntries(settled).pinned).toEqual([]);
+  });
+
+  test('neo.ask.doneTodos pages the done todos in list order', async () => {
+    const { store, sessions } = seed(['done', 'done', 'doing', 'done', 'done']);
+    const op = createNeoDoneTodosOperation(
+      store,
+      sessions,
+      () => [],
+      (caller) => ({ value: caller })
+    );
+    type Page =
+      | { ok: true; todos: NeoTodoEntry[]; doneCount: number; nextOffset: number | null }
+      | { ok: false; reason: string };
+    const read = async (input: unknown) =>
+      (await op.execute(op.inputSchema.parse(input), {
+        source: 'mcp',
+        sessionId: 'neo',
+        role: 'neo',
+      })) as Page;
+    const first = await read({ askId: 'ask', limit: 3 });
+    expect(first).toMatchObject({ ok: true, doneCount: 4, nextOffset: 3 });
+    expect(first.ok && first.todos.map((todo) => [todo.id, todo.status])).toEqual([
+      ['t0', 'Done'],
+      ['t1', 'Done'],
+      ['t3', 'Done'],
+    ]);
+    const second = await read({ askId: 'ask', offset: 3, limit: 3 });
+    expect(second).toMatchObject({ ok: true, doneCount: 4, nextOffset: null });
+    expect(second.ok && second.todos.map((todo) => todo.id)).toEqual(['t4']);
+    expect(await read({ askId: 'missing' })).toEqual({
+      ok: false,
+      reason: 'not_found: no such ask.',
     });
   });
 });
@@ -302,6 +432,7 @@ describe('fitNeoSnapshotBudget with todoAsks', () => {
           remoteLink: null,
         },
       ],
+      doneCount: 0,
       questions: [],
     });
     const snapshot: NeoSnapshot = {

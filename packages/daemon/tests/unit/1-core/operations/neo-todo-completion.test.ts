@@ -77,7 +77,8 @@ function setup(stop: () => Promise<string | null> = async () => null) {
         retry: async () => ({ ok: false as const, reason: 'not failed' }),
         stop,
       },
-      () => [coding]
+      () => [coding],
+      () => null
     ).map((op) => [op.name, op])
   );
   const call = async (name: string, input: unknown) =>

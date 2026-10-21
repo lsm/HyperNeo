@@ -185,3 +185,64 @@ test('batched reads retain scope, row order and missing-link behavior', async ()
       .find((todo) => todo.id === 'without-session')
   ).toMatchObject({ link: null, remoteLink: null });
 });
+
+test.each([3, 4, 20, 21])(
+  'RPC keeps up to twenty done todos while MCP keeps three without losing asks (%i done)',
+  async (doneCount) => {
+    const root = 'neo:done-threshold';
+    db.createSession(createTestSession(root));
+    service.repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
+    service.repo.saveProject({ id: 'threshold', title: 'Synthetic', summary: '', context: '' }, 0);
+    for (let i = 0; i < 10; i++) {
+      const ask = service.todos.openAsk({
+        id: `threshold-${i}`,
+        projectId: 'threshold',
+        sessionId: root,
+        originMessageId: null,
+        title: `Synthetic ask ${i}`,
+        request: 'Synthetic request',
+        createdAt: i,
+      });
+      for (let j = 0; j < doneCount; j++) {
+        const todo = service.todos.addTodo(
+          `threshold-${i}-${j}`,
+          ask.id,
+          {
+            title: 'Synthetic todo',
+            doneWhen: 'Synthetic completion',
+            check: null,
+            named: null,
+            instruction: null,
+          },
+          i
+        );
+        service.todos.updateTodo(todo, { state: 'done', report: 'x'.repeat(500) }, i);
+      }
+      if (i === 0) service.todos.settleAsk(ask, 'done', 'Synthetic outcome', i);
+    }
+    const [rpc, mcp] = (
+      await Promise.all([
+        snapshot({ projectId: 'threshold' }),
+        invokeOperation(
+          registry,
+          'neo.snapshot',
+          { projectId: 'threshold' },
+          { source: 'mcp', role: 'neo', sessionId: root }
+        ),
+      ])
+    ).map(read);
+    expect(mcp.todoAsks).toHaveLength(10);
+    expect(mcp.todoAsks.every((entry) => entry.doneCount === doneCount)).toBe(true);
+    expect(
+      mcp.todoAsks.every((entry) => entry.todos.length === (doneCount <= 3 ? doneCount : 0))
+    ).toBe(true);
+    expect(mcp.trimmed).toBeUndefined();
+    expect(mcp.omitted).toBeUndefined();
+    expect(Buffer.byteLength(JSON.stringify(mcp), 'utf8')).toBeLessThan(40_000);
+    expect(rpc.todoAsks).toHaveLength(10);
+    expect(rpc.todoAsks.every((entry) => entry.doneCount === doneCount)).toBe(true);
+    expect(
+      rpc.todoAsks.every((entry) => entry.todos.length === (doneCount <= 20 ? doneCount : 0))
+    ).toBe(true);
+  }
+);

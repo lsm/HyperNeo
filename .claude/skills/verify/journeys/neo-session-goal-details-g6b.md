@@ -8,8 +8,9 @@ headless `.claude/skills/verify/goal-detail-web.mjs <port> "$RUN"` with a Node
 runtime that resolves Playwright. Set `NODE_PATH` to its module directory when
 needed; `VERIFY_BROWSER` may select a local Chromium executable, always launched
 headless with a fresh profile. The helper creates a synthetic local home git
-repository and origin (no network), a session goal and 21 journal entries through
-actual RPC. Only
+repository whose GitHub-style origin is served from a local bare clone through a
+repo-local `core.sshCommand` (no network), tracked so home reads can sync, plus a
+session goal and 21 journal entries through actual RPC. Only
 works_note is seeded directly in the synthetic DB: G8 owns its write/compaction.
 
 Open `/neo` at 1280/390px and test both entry points: expand Schedules and select

@@ -207,11 +207,29 @@ itself (see Enforcement). Goals and journals stay in the DB; their milestones re
   human rather than replaying repository creation; successful retries reuse the
   saved receipt. Later explicit re-proposal is separate from this once-only path.
 - One shared repo across machines: the second daemon (iMac/laptop) clones the remote
-  into its own `Neo/` on init when the remote exists (the human picks it once).
+  into its own `Neo/` on init when the remote exists. The local human picks it once
+  with `neo.home.init {remoteUrl}`; Git origin/upstream persist that selection.
+  Clone preserves local `.coordinators/`, refuses pre-existing curated documents or
+  a different origin, and never rewrites the selected remote. Plain `{}` keeps local
+  initialization. A local history without origin is preserved with guidance to
+  use a fresh data directory or ask the human to reconcile it. Clone is
+  noninteractive and bounded to 30 seconds.
 - Sync: `neo.home.save` runs `git pull --rebase` before committing and pushes after. On a
   conflict it aborts the rebase, keeps the local file, and returns `conflict`; Neo tells
-  the human in one question with both versions. Reads (`neo.home.read`, or Neo's `Read`)
-  pull at most once per wake.
+  the human in one question with both versions. Curated reads (`neo.home.read`)
+  attempt pull/rebase at most once per runtime-bound Neo wake, sharing failure as
+  well as success. Human RPC reads attempt fresh sync. Local-only reads retain human
+  edits; a remote-backed dirty home refuses sync unchanged. The weak cache binds to
+  the runtime turn's stable closure, not a caller-supplied wake token, and caches
+  only the sync attempt, never document contents. Native `Read` and its existing
+  policy stay unchanged. A conflict returns `questionId` for one persisted question
+  bound to the local and fetched remote revisions. Its card shows the path and a
+  compact diff; View full versions opens the complete preserved texts as a
+  read-only document, including after an answer. Retrying the same revisions
+  reuses the question. Answering records a preference without applying it in this
+  presentation slice. The next H3 slice must apply that recorded choice through
+  `neo.home.save`, retaining protected-file confirmation and refusing stale
+  versions; it must never auto-resolve or discard human edits.
 
 ## 2. Scheduler subsystem (fs3)
 

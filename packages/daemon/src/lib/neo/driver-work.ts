@@ -144,14 +144,22 @@ export function readDriverOutcome(
   if (!reply.data.ok)
     return { failure: `${reply.data.reason}: ${reply.data.detail}`, reason: reply.data.reason };
   if ('ref' in reply.data.value) {
-    const { ref, link, model, effort, lastActivityAt, receipt } = reply.data.value as {
+    const { ref, link, model, effort, lastActivityAt, receipt, status, watchHint } = reply.data
+      .value as {
       ref: WorkRef;
       link?: unknown;
       model?: unknown;
       effort?: unknown;
       lastActivityAt?: unknown;
       receipt?: unknown;
+      status?: unknown;
+      watchHint?: unknown;
     };
+    if (status === 'needs_you' && receipt === undefined)
+      return {
+        failure: typeof watchHint === 'string' ? watchHint : 'The new session needs the human.',
+        reason: 'needs_you',
+      };
     const started = WorkInputReceiptSchema.safeParse(receipt);
     return {
       ref,

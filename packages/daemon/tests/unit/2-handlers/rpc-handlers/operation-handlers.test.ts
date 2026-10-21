@@ -42,7 +42,8 @@ describe('operation.invoke RPC registration', () => {
         listTasks: (input) => listTaskCores(taskDb, input),
         editTask: createStandaloneTaskMetadataEditor(taskDb, () => {}),
         transitionTask: (input) => transitionStandaloneTask(taskDb, input, () => {}),
-      })
+      }),
+      () => null
     );
     await Promise.all(transports.map((transport) => transport.initialize()));
   });

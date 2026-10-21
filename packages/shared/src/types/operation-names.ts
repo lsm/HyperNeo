@@ -2,6 +2,7 @@ import { AGENT_OPERATION_NAMES } from './operation-names/agent.ts';
 import { CLIENT_OPERATION_NAMES } from './operation-names/client.ts';
 import { CORE_OPERATION_NAMES } from './operation-names/core.ts';
 import { DAEMON_OPERATION_NAMES } from './operation-names/daemon.ts';
+import { DEVICE_OPERATION_NAMES } from './operation-names/device.ts';
 import { EXTERNAL_EVENT_OPERATION_NAMES } from './operation-names/external-event.ts';
 import { EVOLUTION_OPERATION_NAMES } from './operation-names/evolution.ts';
 import { GOAL_OPERATION_NAMES } from './operation-names/goal.ts';
@@ -21,6 +22,7 @@ export const OPERATION_NAME_FAMILIES = {
   client: CLIENT_OPERATION_NAMES,
   core: CORE_OPERATION_NAMES,
   daemon: DAEMON_OPERATION_NAMES,
+  device: DEVICE_OPERATION_NAMES,
   event: EXTERNAL_EVENT_OPERATION_NAMES,
   evolution: EVOLUTION_OPERATION_NAMES,
   goal: GOAL_OPERATION_NAMES,
@@ -41,6 +43,7 @@ export const OPERATION_NAMES = [
   ...CLIENT_OPERATION_NAMES,
   ...CORE_OPERATION_NAMES,
   ...DAEMON_OPERATION_NAMES,
+  ...DEVICE_OPERATION_NAMES,
   ...EXTERNAL_EVENT_OPERATION_NAMES,
   ...EVOLUTION_OPERATION_NAMES,
   ...GOAL_OPERATION_NAMES,

@@ -305,7 +305,14 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         todo: await finish(
           todo,
           ask,
-          planNeoTodoFailure(todo, `Could not start: ${result.failure}`, Date.now()),
+          result.reason === 'needs_you'
+            ? planNeoTodoBlocked(
+                todo,
+                'failure',
+                `Could not start: ${result.failure}`,
+                'Ask the human to open Claude Desktop, then retry this todo.'
+              )
+            : planNeoTodoFailure(todo, `Could not start: ${result.failure}`, Date.now()),
           Date.now()
         ),
       };
@@ -454,7 +461,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       const result = todo.check
         ? await readNeoTodoCompletion(deps.packs(), todo)
         : await pack.check(todo);
-      const live = store.listCheckable().find((item) => item.id === todo.id);
+      const live = store.getCheckable(todo.id);
       if (live?.check && sameNeoTodoCheck(todo, live))
         await finish(
           live,

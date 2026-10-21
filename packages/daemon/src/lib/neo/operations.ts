@@ -84,9 +84,15 @@ import {
 } from './session-track.ts';
 import { createNeoQuestionOperations } from './question-operations.ts';
 import { createNeoTodoOperations, type NeoTodoControls } from './todo-operations.ts';
+import { createArtifactRefReader } from '../artifacts/read-operations.ts';
 import { createNeoAskRecordOperations } from './ask-record-operations.ts';
 import { SessionGoalRepository } from '../../storage/repositories/session-goal-repository.ts';
-import { NeoAskEntrySchema, projectNeoAskEntries } from './ask-entries.ts';
+import {
+  createNeoDoneTodosOperation,
+  NeoAskEntrySchema,
+  neoSnapshotAskEntries,
+  projectNeoAskEntries,
+} from './ask-entries.ts';
 import {
   createPackPreferenceOperations,
   listPackPreferences,
@@ -431,11 +437,9 @@ export function createNeoOperations(service: NeoService) {
     const repositories = service.repo.repositories();
     const asks = service.todos.listAsks(scope, caller.source === 'rpc' ? 50 : 10);
     const unlisted = service.todos.countAsks(scope) - asks.length;
-    const todoAsks = projectNeoAskEntries(
-      asks,
-      service.todos,
-      service.todoSessions,
-      service.installedPacks()
+    const { todoAsks, pinned } = neoSnapshotAskEntries(
+      projectNeoAskEntries(asks, service.todos, service.todoSessions, service.installedPacks()),
+      detailed ? 20 : undefined
     );
     return {
       ok: true as const,
@@ -481,9 +485,7 @@ export function createNeoOperations(service: NeoService) {
         const rows = pack.snapshotRows?.(
           scope ? service.repo.allRepositories(scope) : null,
           Date.now(),
-          todoAsks
-            .filter((entry) => entry.ask.status === 'open')
-            .flatMap((entry) => entry.todos.map((todo) => todo.id))
+          pinned
         );
         return rows?.length ? [{ pack: pack.id, rows }] : [];
       }),
@@ -755,8 +757,18 @@ export function createNeoOperations(service: NeoService) {
     ),
     createNeoPreferenceOperation(service),
     ...createPackPreferenceOperations(service.db.getDatabase(), () => service.installedPacks()),
-    ...createNeoTodoOperations(service.todos, service.todoSessions, todoControls, () =>
-      service.installedPacks()
+    ...createNeoTodoOperations(
+      service.todos,
+      service.todoSessions,
+      todoControls,
+      () => service.installedPacks(),
+      createArtifactRefReader(() => service.db.getDatabase())
+    ),
+    createNeoDoneTodosOperation(
+      service.todos,
+      service.todoSessions,
+      () => service.installedPacks(),
+      (caller) => admitNeoCaller(service, caller, 'neo.ask.doneTodos')
     ),
     ...createNeoAskRecordOperations(
       service.todos,
@@ -850,7 +862,7 @@ export function createNeoOperations(service: NeoService) {
     defineOperation({
       name: 'neo.snapshot',
       description:
-        'Read durable project summaries and todo asks. Pass projectId to load that project’s full context. todoAsks holds each ask with its todos (state, report, evidence) and open questions; packRows holds pack facts, such as the coding pack’s pull request ledger with each PR’s state and owner. A list that does not hold every ask says so in omitted ({asks}: how many were left out), so never answer all or none from it. A snapshot over 40 KB is trimmed and carries a trimmed note saying what was cut. Every snapshot carries rev; pass it back as sinceRev and an unchanged snapshot answers only {unchanged: true, rev}, so read again only after something happened.',
+        'Read durable project summaries and todo asks. Pass projectId to load that project’s full context. todoAsks holds each ask with its todos (state, report, evidence), ordered blocked, failed, doing, not started, done, then removed, and open questions; doneCount is how many of its todos are done, and an ask with more than 3 done todos (20 for RPC clients) lists none of its done todos, so read them with neo.ask.doneTodos; packRows holds pack facts, such as the coding pack’s pull request ledger with each PR’s state and owner. A list that does not hold every ask says so in omitted ({asks}: how many were left out), so never answer all or none from it. A snapshot over 40 KB is trimmed and carries a trimmed note saying what was cut. Every snapshot carries rev; pass it back as sinceRev and an unchanged snapshot answers only {unchanged: true, rev}, so read again only after something happened.',
       inputSchema: Scope,
       resultSchema: Snapshot,
       policy: { safetyClass: 'read', roles: ['neo'] },

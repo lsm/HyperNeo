@@ -1,3 +1,6 @@
+import { copilotOwnsSession } from '../../drivers/copilot-find.ts';
+import { createCopilotAdapter } from '../../drivers/copilot-adapter.ts';
+import { dirname, resolve } from 'node:path';
 import { ensureCodexDesktopProject } from '../../drivers/codex-desktop-project.ts';
 import { neoWorkerPermissionMode } from '@hyperneo/shared/types/settings';
 import { sleep } from '../../utils/sleep.ts';
@@ -278,21 +281,44 @@ function claudeDesktopAdapters(
   return [withClaudeRemoteControl(createClaudeDesktopAdapter(deps), deps)];
 }
 
-function acpAgentAdapters(ownSessions: () => ReadonlySet<string>): WorkAdapter[] {
+function acpAgentAdapters(
+  ownSessions: () => ReadonlySet<string>,
+  context: FamilyOperationContext
+): WorkAdapter[] {
   return ACP_AGENTS.flatMap((agent) => {
     const command = findAcpAgentBinary(agent.bin);
     if (!command) return [];
-    return [
+    const directory = join(dirname(resolve(context.deps.config.dbPath)), 'copilot-workers');
+    const adapters = [
       createAcpAgentAdapter({
         agent,
         machine: hostname(),
         now: Date.now,
         listSessions: reuseAcpSessionList(() => listAcpAgentSessions(command, agent), Date.now),
-        ownSessions,
+        ownSessions: () => {
+          const ids = ownSessions();
+          return {
+            has: (id: string) =>
+              ids.has(id) || (agent.id === 'copilot-cli' && copilotOwnsSession(directory, id)),
+          };
+        },
         projectFolder: gitWorktreeProject,
         ...(agent.app && existsSync(agent.app.path) ? { link: agent.app.link } : {}),
       }),
     ];
+    if (agent.id !== 'copilot-cli') return adapters;
+    const adapter = createCopilotAdapter(adapters[0], {
+      cliPath: command,
+      directory,
+      projectFolder: gitWorktreeProject,
+      machine: hostname(),
+      env: process.env,
+      homeDir: homedir(),
+      folderExists: existsSync,
+      makeFolder: (folder) => mkdirSync(folder),
+    });
+    context.driverCleanup?.push(() => adapter.close());
+    return [adapter];
   });
 }
 
@@ -515,7 +541,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     ),
     ...claudeCodeAdapters(searchChats, () => readHyperneoSdkSessions(db()), context.claudeInbox),
     ...acpAgentAdapters(
-      () => new Set(context.deps.db.listAcpSessionIds().map((session) => session.acpSessionId))
+      () => new Set(context.deps.db.listAcpSessionIds().map((session) => session.acpSessionId)),
+      context
     ),
   ];
   const deps = {
@@ -557,7 +584,15 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     before: number,
     after: number,
     cursor?: WorkTurnPage['nextCursor']
-  ) => readWorkTurnPage(db(), sessionId, around, before, after, cursor);
+  ) => {
+    for (const adapter of adapters) {
+      const page = adapter.readTurns?.(sessionId, around, before, after, cursor);
+      if (page) return page;
+    }
+    return cursor?.copilot
+      ? null
+      : readWorkTurnPage(db(), sessionId, around, before, after, cursor);
+  };
   return [
     createFindWorkOperation(deps),
     ...createWorkVerbOperations(deps),

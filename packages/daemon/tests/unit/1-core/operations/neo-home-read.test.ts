@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNeoHomeOperations } from '../../../../src/lib/neo/home/operations.ts';
 import { NeoHomeRepository } from '../../../../src/lib/neo/home/repository.ts';
+import { homeRemoteUrl } from '../../../../src/lib/neo/home/read.ts';
 import {
   createOperationRegistry,
   type OperationCaller,
@@ -87,16 +88,35 @@ describe('Neo home read', () => {
       'https://example.invalid/team/neo',
     ],
     ['/tmp/synthetic-remote.git', null],
-  ])(
-    'opt-in read projects a browser remote without network or userinfo: %s',
-    async (remote, expected) => {
-      await git('remote', 'add', 'origin', remote);
-      const head = await git('rev-parse', 'HEAD');
-      expect((await read('direction.md', undefined, true)).remoteUrl).toBe(expected);
-      expect((await read('direction.md')).remoteUrl).toBeUndefined();
-      expect(await git('rev-parse', 'HEAD')).toBe(head);
-    }
-  );
+  ])('projects an origin remote as a browser URL without userinfo: %s', (remote, expected) => {
+    expect(homeRemoteUrl(remote)).toBe(expected);
+  });
+  test('opt-in read of a tracked home adds its remote and leaves HEAD alone', async () => {
+    const remote = join(fixture, 'remote.git');
+    await git('clone', '--quiet', '--bare', root, remote);
+    await git('remote', 'add', 'origin', remote);
+    await git('fetch', '--quiet', 'origin');
+    await git('branch', '--set-upstream-to', `origin/${await git('branch', '--show-current')}`);
+    const head = await git('rev-parse', 'HEAD');
+    expect(await read('direction.md', undefined, true)).toMatchObject({
+      ok: true,
+      remoteUrl: null,
+    });
+    expect((await read('direction.md')).remoteUrl).toBeUndefined();
+    expect(await git('rev-parse', 'HEAD')).toBe(head);
+  });
+  test('opt-in read shows the configured origin, not a local transport rewrite', async () => {
+    const remote = join(fixture, 'remote.git');
+    await git('clone', '--quiet', '--bare', root, remote);
+    await git('config', `url.${remote}.insteadOf`, 'git@github.com:example/neo-home.git');
+    await git('remote', 'add', 'origin', 'git@github.com:example/neo-home.git');
+    await git('fetch', '--quiet', 'origin');
+    await git('branch', '--set-upstream-to', `origin/${await git('branch', '--show-current')}`);
+    expect(await read('direction.md', undefined, true)).toMatchObject({
+      ok: true,
+      remoteUrl: 'https://github.com/example/neo-home',
+    });
+  });
   test('opt-in local read reports that no remote is configured', async () => {
     expect((await read('direction.md', undefined, true)).remoteUrl).toBeNull();
   });

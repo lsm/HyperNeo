@@ -1,3 +1,4 @@
+import type { HomeFailure } from './conflicts.ts';
 import { z } from 'zod';
 
 export const HomeSaveInput = z.object({
@@ -7,14 +8,14 @@ export const HomeSaveInput = z.object({
   questionId: z.string().min(1).optional(),
 });
 export const HomeSaveResult = z.union([
-  z.object({ ok: z.literal(false), reason: z.string() }),
+  z.object({ ok: z.literal(false), reason: z.string(), questionId: z.string().optional() }),
   z.object({ ok: z.literal(true), path: z.string(), commit: z.string() }),
 ]);
 export type HomeSaveInput = z.infer<typeof HomeSaveInput>;
 export type HomeSavePlan = HomeSaveInput & {
   confirmation?: { questionId: string; entry: string };
 };
-export type HomeSaveResult = z.infer<typeof HomeSaveResult>;
+export type HomeSaveResult = z.infer<typeof HomeSaveResult> | HomeFailure;
 
 export function requireHomePath<T extends { path: string }>(input: T) {
   const parts = input.path.split('/');

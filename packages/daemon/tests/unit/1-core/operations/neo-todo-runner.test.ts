@@ -463,6 +463,75 @@ describe('neo todo runner', () => {
     });
     expect(told).toEqual(['Todo "Rows" failed: Could not start: unavailable: login expired']);
   });
+
+  test('a start whose input was accepted but now waits on a prompt keeps its session', async () => {
+    const { db, store, add } = setup();
+    const todo = add();
+    const accepted = createNeoTodoRunner({
+      store,
+      sessions: new NeoTodoSessionRepository(db),
+      invoke: async () =>
+        completed({
+          ok: true,
+          value: {
+            ref: { adapter: 'copilot', id: 's1' },
+            title: 'Rows',
+            place: { machine: 'laptop', name: 'repo' },
+            status: 'needs_you',
+            lastActivityAt: 1,
+            receipt: { executionId: 's1', inputId: 'in-1' },
+          },
+        }),
+      packs: () => [],
+      tell: async () => {},
+      tellAsk: async () => {},
+      changed: () => {},
+    });
+    const result = await accepted.start(todo.id);
+    expect(result.ok && result.todo).toMatchObject({ state: 'doing', blockedBy: null });
+    expect(new NeoTodoSessionRepository(db).doingTodoOn({ adapter: 'copilot', id: 's1' })?.id).toBe(
+      todo.id
+    );
+  });
+
+  test('a start that needs the human blocks the todo with its plain hint, and retry starts it again', async () => {
+    const { db, store, runner, add, told } = setup();
+    const todo = add();
+    const hint =
+      'Claude Desktop did not import the new session. The task was not started. Open Claude Desktop, then ask Neo to start it again.';
+    const waiting = createNeoTodoRunner({
+      store,
+      sessions: new NeoTodoSessionRepository(db),
+      invoke: async () =>
+        completed({
+          ok: true,
+          value: {
+            ref: { adapter: 'claude-desktop', id: 'local_u1' },
+            title: 'Rows',
+            place: { machine: 'laptop', name: 'repo' },
+            status: 'needs_you',
+            lastActivityAt: 1,
+            watchHint: hint,
+          },
+        }),
+      packs: () => [],
+      tell: async (_ask, _todo, note) => {
+        told.push(note);
+      },
+      tellAsk: async () => {},
+      changed: () => {},
+    });
+    const result = await waiting.start(todo.id);
+    expect(result.ok && result.todo).toMatchObject({
+      state: 'blocked',
+      blockedBy: 'failure',
+      blockedReason: `Could not start: ${hint}`,
+      nextAction: 'Ask the human to open Claude Desktop, then retry this todo.',
+    });
+    expect(told).toEqual([expect.stringContaining(hint)]);
+    expect(await runner.retry(todo.id)).toMatchObject({ ok: true });
+    expect(store.getTodo(todo.id)).toMatchObject({ state: 'doing', blockedBy: null });
+  });
 });
 
 describe('neo todo runner follow-ups', () => {

@@ -1,5 +1,6 @@
 import type { NeoPublication, NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import { z } from 'zod';
+import { ArtifactRefSchema } from '../artifacts/file-contracts.ts';
 
 const text = (max: number) =>
   z
@@ -14,8 +15,10 @@ export const NeoPublicationSchema = z
     publicationId: z.string().uuid(),
     askOrigin: origin,
     producerInput: origin,
-    shortText: text(2000),
-    fullText: text(16000),
+    shortText: text(2000).describe(
+      'What the human reads first; it must stand alone. One topic per publication: publish unrelated topics separately, and when fullText covers more than one topic, name each one here.'
+    ),
+    fullText: text(16000).describe('The details of the topic(s) shortText names.'),
     links: z
       .array(
         z
@@ -28,6 +31,7 @@ export const NeoPublicationSchema = z
       )
       .max(16)
       .default([]),
+    artifacts: z.array(ArtifactRefSchema).max(16).optional(),
     triggerId: text(200).optional(),
     askSummary: text(300).optional(),
     awaiting: text(500).optional(),

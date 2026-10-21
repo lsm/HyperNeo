@@ -50,7 +50,7 @@ test.each(['list', 'followed', 'pack', 'end'])(
       segment === 'list'
         ? service.cardEvents.listActive.bind(service.cardEvents)
         : segment === 'followed'
-          ? service.todos.getTodo.bind(service.todos)
+          ? service.todos.getTodos.bind(service.todos)
           : segment === 'pack'
             ? db.getGlobalSettings.bind(db)
             : service.cardEvents.end.bind(service.cardEvents);
@@ -58,7 +58,7 @@ test.each(['list', 'followed', 'pack', 'end'])(
       segment === 'list'
         ? spyOn(service.cardEvents, 'listActive')
         : segment === 'followed'
-          ? spyOn(service.todos, 'getTodo')
+          ? spyOn(service.todos, 'getTodos')
           : segment === 'pack'
             ? spyOn(db, 'getGlobalSettings')
             : spyOn(service.cardEvents, 'end');
@@ -77,7 +77,7 @@ test.each(['list', 'followed', 'pack', 'end'])(
         segment === 'list'
           ? 'neo:card_topics:list_active'
           : segment === 'followed'
-            ? 'neo:card_topics:followed_todo:keep'
+            ? 'neo:card_topics:followed_snapshot'
             : segment === 'pack'
               ? 'neo:packs:eligibility_read'
               : 'neo:card_topics:end:remove';

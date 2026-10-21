@@ -1,3 +1,5 @@
+import { emitStructuredLogEvent } from '../lib/logger.ts';
+import type { UpgradeIdentity } from '../lib/pairing/upgrade-auth.ts';
 import type { RuntimeSocket } from '../lib/runtime-server/index.ts';
 import { createErrorResponseMessage, MessageType, generateUUID } from '@hyperneo/shared';
 import { DEFAULT_MAX_OUTBOUND_MESSAGE_SIZE } from '@hyperneo/shared/message-hub/router';
@@ -14,6 +16,7 @@ interface WebSocketData {
   connectionSessionId: string;
   clientId?: string;
   joinedChannels?: Set<string>;
+  device?: UpgradeIdentity | null;
 }
 
 function sendCapped(ws: RuntimeSocket<WebSocketData>, message: HubMessage): void {
@@ -54,6 +57,13 @@ export function createWebSocketHandlers(
       const clientId = transport.registerClient(ws, GLOBAL_SESSION_ID);
 
       ws.data.clientId = clientId;
+      emitStructuredLogEvent({
+        level: 'info',
+        source: 'logger',
+        module: 'hyperneo:daemon:websocket',
+        args: ['client.websocket.open'],
+        metadata: { clientId },
+      });
     },
 
     async message(ws: RuntimeSocket<WebSocketData>, message: string | Buffer) {
@@ -161,8 +171,15 @@ export function createWebSocketHandlers(
       }
     },
 
-    close(ws: RuntimeSocket<WebSocketData>) {
+    close(ws: RuntimeSocket<WebSocketData>, code?: number, _reason?: string) {
       const clientId = ws.data.clientId;
+      emitStructuredLogEvent({
+        level: 'info',
+        source: 'logger',
+        module: 'hyperneo:daemon:websocket',
+        args: ['client.websocket.close'],
+        metadata: { clientId, code: code ?? null },
+      });
       if (clientId) {
         transport.unregisterClient(clientId);
       }

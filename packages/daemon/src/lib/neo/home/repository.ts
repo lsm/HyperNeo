@@ -1,9 +1,25 @@
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
-import { lstat, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  readlink,
+  rm,
+  rmdir,
+  symlink,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
+import { neoDerivedId } from '../derived-id.ts';
+import type { HomeConflict, HomeFailure } from './conflicts.ts';
 import { homeRemoteUrl, type HomeReadInput, type HomeReadResult } from './read.ts';
 import type { HomeSavePlan, HomeSaveResult } from './save.ts';
 
@@ -11,8 +27,11 @@ export type HomeResult =
   | { ok: true; path: string; projects: { id: string; homePath: string }[] }
   | { ok: false; reason: string };
 
+type HomeSyncResult = { value: string | null } | { reason: HomeFailure };
+
 export class NeoHomeRepository {
   private pending: Promise<unknown> = Promise.resolve();
+  private readonly readSyncs = new WeakMap<object, Promise<HomeSyncResult>>();
   constructor(
     readonly root: string,
     private readonly projects: NeoRepository,
@@ -69,7 +88,7 @@ export class NeoHomeRepository {
       : undefined;
     try {
       const [text, error, code] = await Promise.all([
-        new Response(child.stdout).text(),
+        new Response(child.stdout).arrayBuffer(),
         new Response(child.stderr).text(),
         child.exited,
       ]);
@@ -77,16 +96,19 @@ export class NeoHomeRepository {
         ? `network timed out after ${this.networkTimeoutMs}ms`
         : error.trim();
       if (code && !allowFailure) throw new Error(`home ${args.join(' ')}: ${diagnostic}`);
-      return { code, text: text.trim(), error: diagnostic };
+      const bytes = Buffer.from(text);
+      return { code, bytes, text: bytes.toString('utf8').trim(), error: diagnostic };
     } finally {
       clearTimeout(timer);
     }
   }
 
-  private async synchronize(): Promise<
-    { value: string | null } | { reason: { ok: false; reason: string } }
-  > {
+  private async synchronize(requireClean = false): Promise<HomeSyncResult> {
     if ((await this.git(['remote', 'get-url', 'origin'], true)).code) return { value: null };
+    if (requireClean && (await this.git(['status', '--porcelain'])).text)
+      return {
+        reason: { ok: false, reason: 'dirty: review existing home changes before synchronizing.' },
+      };
     const upstream = await this.git(['rev-parse', '--symbolic-full-name', '@{upstream}'], true);
     const prefix = 'refs/remotes/origin/';
     if (upstream.code || !upstream.text.startsWith(prefix))
@@ -107,6 +129,7 @@ export class NeoHomeRepository {
           reason: { ok: false, reason: 'sync_failed: finish the existing rebase before saving.' },
         };
     }
+    const local = (await this.git(['rev-parse', 'HEAD'])).text;
     const action = `neo-home-sync:${crypto.randomUUID()}`;
     const pulled = await this.git(
       ['-c', 'core.logAllRefUpdates=true', 'pull', '--rebase', 'origin', branch],
@@ -118,10 +141,67 @@ export class NeoHomeRepository {
       const latest = await this.git(['reflog', 'show', '-1', '--format=%gs', 'HEAD'], true);
       if (latest.code || !latest.text.startsWith(`${action} (`))
         return { reason: { ok: false, reason: `sync_failed: ${pulled.error}` } };
-      const aborted = await this.git(['rebase', '--abort'], true);
+      let conflict: HomeConflict | undefined;
+      let aborted: Awaited<ReturnType<NeoHomeRepository['git']>>;
+      try {
+        const remote = (await this.git(['rev-parse', 'FETCH_HEAD'])).text;
+        const paths = (await this.git(['diff', '--name-only', '--diff-filter=U', '-z'])).bytes
+          .toString('utf8')
+          .split('\0')
+          .filter(Boolean);
+        if (paths.length) {
+          const versions = await Promise.all(
+            paths.map(async (path) => {
+              const full = async (revision: string) => {
+                const blob = await this.git(['show', `${revision}:${path}`], true);
+                if (blob.code) return '(file absent)';
+                const text = blob.bytes.toString('utf8');
+                return Buffer.from(text, 'utf8').equals(blob.bytes)
+                  ? text
+                  : `Base64 bytes: ${blob.bytes.toString('base64')}`;
+              };
+              return `File: ${JSON.stringify(path)}\n\nLocal (${local})\n${await full(local)}\n\nRemote (${remote})\n${await full(remote)}`;
+            })
+          );
+          const diff = (
+            await this.git([
+              'diff',
+              '--no-ext-diff',
+              '--no-textconv',
+              '--unified=2',
+              local,
+              remote,
+              '--',
+              ...paths,
+            ])
+          ).text;
+          const lines = diff.split('\n');
+          const excerpt = [
+            ...lines.slice(0, 4),
+            ...lines.filter((line) => line.startsWith('-')).slice(1, 4),
+            ...lines.filter((line) => line.startsWith('+')).slice(1, 4),
+          ]
+            .map((line) => line.slice(0, 120))
+            .join('\n');
+          conflict = {
+            id: neoDerivedId(JSON.stringify([this.root, local, remote])),
+            text: `Home sync conflict: ${paths
+              .map((path) => JSON.stringify(path))
+              .join(', ')
+              .slice(
+                0,
+                350
+              )}\n\nLocal → remote (excerpt):\n\n${'`'.repeat(8)}diff\n${excerpt.slice(0, 1000).replaceAll('`', '\u02cb')}\n${'`'.repeat(8)}\n\nWhich version should we use? View full versions before choosing. Your answer records a choice; it does not apply a change yet.`,
+            document: versions.join('\n\n────────────────\n\n'),
+          };
+        }
+      } finally {
+        aborted = await this.git(['rebase', '--abort'], true);
+      }
       return {
         reason: {
           ok: false,
+          ...(!aborted.code && conflict ? { conflict } : {}),
           reason: aborted.code
             ? `sync_failed: ${pulled.error}; ${aborted.error}`
             : `conflict: rebase aborted; local files preserved. ${pulled.error}`,
@@ -137,8 +217,85 @@ export class NeoHomeRepository {
     return result;
   }
 
-  init(): Promise<HomeResult> {
-    return this.sequence(() => this.initialize());
+  init(remoteUrl?: string): Promise<HomeResult> {
+    return this.sequence(async () => {
+      if (remoteUrl) {
+        const cloned = await this.clone(remoteUrl);
+        if (cloned) return cloned;
+      }
+      return this.initialize();
+    });
+  }
+
+  private async clone(remoteUrl: string): Promise<{ ok: false; reason: string } | null> {
+    await mkdir(this.root, { recursive: true });
+    const existing = await readdir(this.root);
+    if (existing.includes('.git')) {
+      const origin = await this.git(['remote', 'get-url', 'origin'], true);
+      if (origin.code)
+        return {
+          ok: false,
+          reason:
+            'local_home_exists: this local history has no origin. Keep it; clone into a fresh data directory, or have the human reconcile it with the shared remote before retrying.',
+        };
+      return origin.text === remoteUrl
+        ? null
+        : { ok: false, reason: 'remote_exists: keep the existing home and its origin.' };
+    }
+    if (existing.some((name) => name !== '.coordinators'))
+      return {
+        ok: false,
+        reason: 'home_exists: choose an empty home; existing files are preserved.',
+      };
+    const staging = await mkdtemp(join(dirname(this.root), '.neo-clone-'));
+    const created: { path: string; directory: boolean }[] = [];
+    const publish = async (source: string, target: string): Promise<void> => {
+      const entry = await lstat(source);
+      if (entry.isDirectory()) {
+        await mkdir(target);
+        created.push({ path: target, directory: true });
+        for (const name of await readdir(source))
+          await publish(join(source, name), join(target, name));
+      } else {
+        if (entry.isSymbolicLink()) await symlink(await readlink(source), target);
+        else await copyFile(source, target, constants.COPYFILE_EXCL);
+        created.push({ path: target, directory: false });
+      }
+    };
+    try {
+      const cloned = await this.git(
+        ['clone', '--no-hardlinks', '--', remoteUrl, staging],
+        true,
+        true
+      );
+      if (cloned.code) return { ok: false, reason: `clone_failed: ${cloned.error}` };
+      if ((await this.git(['-C', staging, 'rev-parse', '--verify', 'HEAD'], true)).code)
+        return {
+          ok: false,
+          reason: 'empty_remote: select a home with a committed default branch.',
+        };
+      const entries = await readdir(staging, { withFileTypes: true });
+      if (entries.some((entry) => entry.name === '.coordinators'))
+        return {
+          ok: false,
+          reason: 'private_transcripts: remove coordinator transcripts from the remote first.',
+        };
+      for (const entry of entries.sort(
+        (a, b) => Number(a.name === '.git') - Number(b.name === '.git')
+      )) {
+        await publish(join(staging, entry.name), join(this.root, entry.name));
+      }
+      return null;
+    } catch (error) {
+      for (const entry of created.reverse())
+        await (entry.directory ? rmdir(entry.path) : unlink(entry.path)).catch(() => {});
+      return {
+        ok: false,
+        reason: `clone_failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    } finally {
+      await rm(staging, { recursive: true, force: true }).catch(() => {});
+    }
   }
 
   createGithub(repository: string, reserve: () => boolean) {
@@ -191,11 +348,15 @@ export class NeoHomeRepository {
     return false;
   }
 
-  read(input: HomeReadInput): Promise<HomeReadResult> {
-    return this.sequence(() => this.readDocument(input.path, input.includeRemote));
+  read(input: HomeReadInput, wake?: object): Promise<HomeReadResult> {
+    return this.sequence(() => this.readDocument(input.path, wake, input.includeRemote));
   }
 
-  private async readDocument(path: string, includeRemote = false): Promise<HomeReadResult> {
+  private async readDocument(
+    path: string,
+    wake?: object,
+    includeRemote = false
+  ): Promise<HomeReadResult> {
     if (await this.hasSymbolicLink(path))
       return { ok: false, reason: 'invalid_path: symbolic link.' };
     const metadata = await lstat(join(this.root, '.git')).catch((error) => {
@@ -204,6 +365,13 @@ export class NeoHomeRepository {
     });
     if (!metadata) return { ok: false, reason: 'not_found: home is not initialized.' };
     if (!metadata.isDirectory()) return { ok: false, reason: 'invalid_path: home git directory.' };
+    const remembered = wake && this.readSyncs.get(wake);
+    const attempt = remembered || this.synchronize(true);
+    if (wake && !remembered) this.readSyncs.set(wake, attempt);
+    const synced = await attempt;
+    if ('reason' in synced) return synced.reason;
+    if (await this.hasSymbolicLink(path))
+      return { ok: false, reason: 'invalid_path: symbolic link.' };
     if (!(await this.git(['check-ignore', '-q', '--', path], true)).code)
       return { ok: false, reason: 'ignored_path: this document is git-ignored.' };
     const target = join(this.root, path);

@@ -165,7 +165,7 @@ describe('neo.question operations', () => {
     await call('neo.question.answer', { questionId: reply.id, answer: 'Say hi' }, human);
     expect(told).toEqual([
       'The human answered "Use HyperNeo dev-1 instead?": yes (Use HyperNeo dev-1).',
-      'The human answered "Which?": B.',
+      'The human answered "Which?": B (B).',
       'The human answered "Which ones?": none.',
       'The human answered "What should it say?": Say hi.',
     ]);
@@ -362,6 +362,32 @@ describe('neoQuestionAnsweredNote', () => {
         []
       )
     ).toBe('The human answered "Start?": start none.');
+  });
+
+  test('names a picked option by its letter', () => {
+    expect(
+      neoQuestionAnsweredNote(
+        {
+          id: 'q',
+          askId: 'a',
+          text: 'Which layout?',
+          kind: 'choice',
+          options: ['List', 'Cards', 'Table'],
+          multiple: true,
+          noLabel: null,
+          yesLabel: null,
+          startTodos: null,
+          state: 'answered',
+          answer: ['List', 'Table'],
+          answeredBy: 'button',
+          answeredAt: 1,
+          retiredReason: null,
+          replacedBy: null,
+          createdAt: 1,
+        },
+        []
+      )
+    ).toBe('The human answered "Which layout?": A (List), C (Table).');
   });
 });
 

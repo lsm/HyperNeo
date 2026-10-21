@@ -3,6 +3,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { isAbsolute } from 'node:path';
 import { buildAcpSafeEnv } from '../acp/acp-command.ts';
 import type { WorkDelivery } from './types.ts';
+export class CopilotModelUnavailableError extends Error {}
 type WorkInputReceipt = NonNullable<WorkDelivery['receipt']>;
 
 type InputState = {
@@ -26,6 +27,8 @@ export interface CopilotWorkerConfig {
   model: string;
   env: NodeJS.ProcessEnv;
   timeoutMs?: number;
+  resume?: boolean;
+  onInput?: (id: string, input: InputState) => void;
 }
 
 function projectEvent(state: WorkerState, event: SessionEvent): WorkerState {
@@ -126,17 +129,42 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
   let closed = false;
   let state: WorkerState = { status: 'queued', inputs: {} };
   const seen = new Map<string, string | undefined>();
+  const terminal = Promise.withResolvers<void>();
   const submitted = new Set<string>();
+  const persisted = new Map<string, InputState>();
   const settled = new Set<string>();
   const pending: SessionEvent[] = [];
   let flush = () => {};
   let submitting = 0;
   const prune = () => {
+    try {
+      if (config.onInput)
+        for (const id of submitted) {
+          const input = state.inputs[id];
+          const previous = persisted.get(id);
+          if (
+            previous &&
+            previous.state === input.state &&
+            previous.interactionId === input.interactionId &&
+            previous.replyReport === input.replyReport &&
+            previous.outcome === input.outcome &&
+            previous.replyAvailability === input.replyAvailability
+          )
+            continue;
+          config.onInput(id, input);
+          persisted.set(id, { ...input });
+        }
+    } catch {
+      state.status = 'unreachable';
+      terminal.resolve();
+      return;
+    }
     for (const id of submitted) if (state.inputs[id].outcome) settled.add(id);
     while (settled.size > 64) {
       const id = settled.values().next().value!;
       delete state.inputs[id];
       submitted.delete(id);
+      persisted.delete(id);
       settled.delete(id);
     }
     for (const [key, id] of seen) {
@@ -167,14 +195,20 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
     const status = await bounded(client.getStatus(), timeoutMs);
     if (status.version !== config.expectedVersion)
       throw new Error('Unsupported Copilot worker runtime version');
+    if (!(await bounded(client.getAuthStatus(), timeoutMs)).isAuthenticated)
+      throw new Error('Copilot login required: run copilot login in your terminal.');
+    if (!(await bounded(client.listModels(), timeoutMs)).some((model) => model.id === config.model))
+      throw new CopilotModelUnavailableError('Unsupported Copilot model ID.');
+    const policy = {
+      workingDirectory: config.cwd,
+      model: config.model,
+      availableTools: [],
+      onPermissionRequest: () => ({ kind: 'reject' as const }),
+    };
     session = await bounded(
-      client.createSession({
-        sessionId: config.sessionId,
-        workingDirectory: config.cwd,
-        model: config.model,
-        availableTools: [],
-        onPermissionRequest: () => ({ kind: 'reject' }),
-      }),
+      config.resume
+        ? client.resumeSession(config.sessionId, { ...policy, continuePendingWork: false })
+        : client.createSession({ ...policy, sessionId: config.sessionId }),
       timeoutMs
     );
     const receive = (event: SessionEvent) => {
@@ -200,6 +234,7 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
       seen.set(messageKey, inputId);
       state = applyEvent(state, event);
       prune();
+      if (['done', 'failed', 'stopped'].includes(state.status)) terminal.resolve();
     };
     flush = () => {
       for (const event of pending.splice(0)) receive(event);
@@ -231,6 +266,7 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
     if (closed || state.status === 'unreachable') throw new Error('Copilot worker is disconnected');
   };
   return {
+    terminal: terminal.promise,
     async submit(prompt: string): Promise<WorkInputReceipt> {
       requireOpen();
       if (state.status === 'needs_you') throw new Error('Copilot worker is awaiting permission');
@@ -260,6 +296,7 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
         )
           state.status = 'queued';
         prune();
+        requireOpen();
         return { executionId: config.sessionId, inputId };
       } catch (error) {
         state.status = 'unreachable';
@@ -268,8 +305,11 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
         submitting--;
       }
     },
+    peekStatus(): WorkerState['status'] {
+      return state.status;
+    },
     async snapshot(): Promise<WorkerState> {
-      if (!closed && state.status !== 'unreachable') {
+      if (!closed && ['queued', 'running', 'needs_you'].includes(state.status)) {
         try {
           await bounded(client.ping(), timeoutMs);
         } catch {
