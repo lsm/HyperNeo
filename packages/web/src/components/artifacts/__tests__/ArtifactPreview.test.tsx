@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { connectionState } from '../../../lib/state.ts';
 import { ArtifactPreview } from '../ArtifactPreview.tsx';
+import MarkdownRenderer from '../../chat/MarkdownRenderer.tsx';
 
 const { request, getHub } = vi.hoisted(() => {
   const request = vi.fn();
@@ -132,7 +133,8 @@ describe('ArtifactPreview', () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(request).toHaveBeenCalledTimes(2);
-    expect(screen.getByText('Loading preview…')).toBeTruthy();
+    expect(screen.getByText('The daemon that owns this file is not reachable.')).toBeTruthy();
+    expect(screen.queryByText('Loading preview…')).toBeNull();
     act(() => {
       connectionState.value = 'connected';
     });
@@ -159,5 +161,17 @@ describe('ArtifactPreview', () => {
     render(<ArtifactPreview artifactId="a1" onBack={onBack} />);
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it('forgets the rendered Markdown when the connection goes away', async () => {
+    reply(meta(), chunk);
+    render(<ArtifactPreview artifactId="a1" onBack={() => {}} />);
+    await waitFor(() => expect(screen.getByText('the docs')).toBeTruthy());
+    act(() => {
+      connectionState.value = 'disconnected';
+    });
+    cleanup();
+    const again = render(<MarkdownRenderer content={markdown} artifactLinks />);
+    expect(again.container.querySelector('.prose')?.childElementCount).toBe(0);
   });
 });
