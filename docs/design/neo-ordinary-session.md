@@ -46,6 +46,26 @@ timeout waits for that query promise to settle
 ([packages/daemon/src/lib/agent/agent-session.ts:3069](https://github.com/lsm/HyperNeo/blob/162f5d1b0efc9b645d4e91738ef2360da0e54f2d/packages/daemon/src/lib/agent/agent-session.ts#L3069)). Terminal-result teardown
 cannot help a replay that produces no terminal result.
 
+The human reported a third post-restart stall on 2026-10-21: after the 22:31Z
+deploy restart, job `2a5fb437` (`origin: space_inject`) reached `query_ready`,
+generation 1, then renewed its lease every 100 seconds while Neo was idle, with
+four inputs behind it. `client.interrupt`, with #8069 merged, preserved those
+inputs but did not release the job. Only the 22:35Z daemon restart cleared it;
+all four inputs were consumed within 20 seconds. These incident facts are
+human-reported, not a new local reproduction.
+
+The spent-turn admission wait is a code-confirmed unbounded decision: it arms
+its timeout only in `spentTurn.catch(...).then(arm)`. If the query promise never
+settles, neither does that timeout start. See
+[packages/daemon/src/lib/agent/agent-session.ts:3069](https://github.com/lsm/HyperNeo/blob/162f5d1b0efc9b645d4e91738ef2360da0e54f2d/packages/daemon/src/lib/agent/agent-session.ts#L3069)
+and [packages/daemon/src/lib/agent/agent-session.ts:3089](https://github.com/lsm/HyperNeo/blob/162f5d1b0efc9b645d4e91738ef2360da0e54f2d/packages/daemon/src/lib/agent/agent-session.ts#L3089).
+This explains how admission can remain at `query_ready` despite continued lease
+renewal; proving which promise was retained in this third incident still needs
+the synthetic scenario below. Delete this wait in the **first implementation
+slice**, before schemas, clients or the rest of the holder removal. Do not
+introduce a new timeout/watchdog: make the existing ordinary admission deadline
+unconditional on the spent turn's lifetime.
+
 The retained failing reproduction is commit `423886cc4d` on
 `fix/neo-recovery-uuid-replay`; no fix PR was opened for #8068. Its synthetic
 RPC/real-SDK evidence is `/tmp/hyperneo-recovery-uuid-before-3/evidence/neo-recovery-uuid.json`
@@ -112,7 +132,7 @@ holder alive indirectly. Prompt and MCP content may remain Neo-specific.
 | [packages/daemon/src/lib/agent/agent-session.ts:370](https://github.com/lsm/HyperNeo/blob/162f5d1b0efc9b645d4e91738ef2360da0e54f2d/packages/daemon/src/lib/agent/agent-session.ts#L370), [packages/daemon/src/lib/agent/agent-session.ts:384](https://github.com/lsm/HyperNeo/blob/162f5d1b0efc9b645d4e91738ef2360da0e54f2d/packages/daemon/src/lib/agent/agent-session.ts#L384) | `replyAtNeoTurnEnd` and `createNeoTurnMcpServer`; explicit publications use the normal session MCP caller. |
 | [packages/daemon/src/lib/agent/agent-session.ts:438](https://github.com/lsm/HyperNeo/blob/162f5d1b0efc9b645d4e91738ef2360da0e54f2d/packages/daemon/src/lib/agent/agent-session.ts#L438), [packages/daemon/src/lib/agent/agent-session.ts:1127](https://github.com/lsm/HyperNeo/blob/162f5d1b0efc9b645d4e91738ef2360da0e54f2d/packages/daemon/src/lib/agent/agent-session.ts#L1127), [packages/daemon/src/lib/agent/coordinator-handoff.ts:1](https://github.com/lsm/HyperNeo/blob/162f5d1b0efc9b645d4e91738ef2360da0e54f2d/packages/daemon/src/lib/agent/coordinator-handoff.ts#L1) | Prefix-gated query-success callback, `handoffCoordinatorInput`, entire 67-line successor-admission module. Preserve shared query liveness. |
 | [packages/daemon/src/lib/agent/agent-session.ts:1793](https://github.com/lsm/HyperNeo/blob/162f5d1b0efc9b645d4e91738ef2360da0e54f2d/packages/daemon/src/lib/agent/agent-session.ts#L1793) | Neo early return in runtime MCP synchronization. |
-| [packages/daemon/src/lib/agent/agent-session.ts:3069](https://github.com/lsm/HyperNeo/blob/162f5d1b0efc9b645d4e91738ef2360da0e54f2d/packages/daemon/src/lib/agent/agent-session.ts#L3069), [packages/daemon/src/lib/agent/agent-session.ts:3089](https://github.com/lsm/HyperNeo/blob/162f5d1b0efc9b645d4e91738ef2360da0e54f2d/packages/daemon/src/lib/agent/agent-session.ts#L3089) | Spent-turn-dependent admission timeout delay. Use common bounded admission behavior. |
+| [packages/daemon/src/lib/agent/agent-session.ts:3069](https://github.com/lsm/HyperNeo/blob/162f5d1b0efc9b645d4e91738ef2360da0e54f2d/packages/daemon/src/lib/agent/agent-session.ts#L3069), [packages/daemon/src/lib/agent/agent-session.ts:3089](https://github.com/lsm/HyperNeo/blob/162f5d1b0efc9b645d4e91738ef2360da0e54f2d/packages/daemon/src/lib/agent/agent-session.ts#L3089) | **First implementation slice (P0):** delete the `spentTurn` selection and `.then(arm)` timeout deferral. Use the existing common bounded admission behavior immediately, even if the prior query promise never settles. |
 | [packages/daemon/src/lib/agent/agent-session.ts:3255](https://github.com/lsm/HyperNeo/blob/162f5d1b0efc9b645d4e91738ef2360da0e54f2d/packages/daemon/src/lib/agent/agent-session.ts#L3255), [packages/daemon/src/lib/agent/agent-session.ts:3272](https://github.com/lsm/HyperNeo/blob/162f5d1b0efc9b645d4e91738ef2360da0e54f2d/packages/daemon/src/lib/agent/agent-session.ts#L3272), [packages/daemon/src/lib/agent/agent-session.ts:3290](https://github.com/lsm/HyperNeo/blob/162f5d1b0efc9b645d4e91738ef2360da0e54f2d/packages/daemon/src/lib/agent/agent-session.ts#L3290) | `steerNeoInput`, `requeueNeoInput` and `markHolderInputConsumed`. Keep shared redelivery/consumption primitives wherever other callers need them. |
 | [packages/daemon/src/lib/agent/message-queue.ts:62](https://github.com/lsm/HyperNeo/blob/162f5d1b0efc9b645d4e91738ef2360da0e54f2d/packages/daemon/src/lib/agent/message-queue.ts#L62), [packages/daemon/src/lib/agent/message-queue.ts:441](https://github.com/lsm/HyperNeo/blob/162f5d1b0efc9b645d4e91738ef2360da0e54f2d/packages/daemon/src/lib/agent/message-queue.ts#L441), [packages/daemon/src/lib/agent/message-queue.ts:611](https://github.com/lsm/HyperNeo/blob/162f5d1b0efc9b645d4e91738ef2360da0e54f2d/packages/daemon/src/lib/agent/message-queue.ts#L611), [packages/daemon/src/lib/agent/message-queue.ts:821](https://github.com/lsm/HyperNeo/blob/162f5d1b0efc9b645d4e91738ef2360da0e54f2d/packages/daemon/src/lib/agent/message-queue.ts#L821), [packages/daemon/src/lib/agent/message-queue.ts:956](https://github.com/lsm/HyperNeo/blob/162f5d1b0efc9b645d4e91738ef2360da0e54f2d/packages/daemon/src/lib/agent/message-queue.ts#L956), [packages/daemon/src/lib/agent/query-runner.ts:419](https://github.com/lsm/HyperNeo/blob/162f5d1b0efc9b645d4e91738ef2360da0e54f2d/packages/daemon/src/lib/agent/query-runner.ts#L419) | Neo-only steer flag/admission option, `steer`, `steersUntil`, `waitForSteer`, `acceptsSteer`. Source audit finds their production consumers only in the holder feed. Preserve ordinary queue wake/stop and user steering semantics. |
 | [packages/daemon/src/lib/neo/service.ts:162](https://github.com/lsm/HyperNeo/blob/162f5d1b0efc9b645d4e91738ef2360da0e54f2d/packages/daemon/src/lib/neo/service.ts#L162), [packages/daemon/src/lib/neo/service.ts:305](https://github.com/lsm/HyperNeo/blob/162f5d1b0efc9b645d4e91738ef2360da0e54f2d/packages/daemon/src/lib/neo/service.ts#L305), [packages/daemon/src/lib/neo/service.ts:325](https://github.com/lsm/HyperNeo/blob/162f5d1b0efc9b645d4e91738ef2360da0e54f2d/packages/daemon/src/lib/neo/service.ts#L325), [packages/daemon/src/lib/neo/service.ts:981](https://github.com/lsm/HyperNeo/blob/162f5d1b0efc9b645d4e91738ef2360da0e54f2d/packages/daemon/src/lib/neo/service.ts#L981) | Processing-status cache used to steer/hold delivery, both steer subscriptions and `steerQueuedInputs`. Retain UI notification responsibilities, without steering. |
@@ -295,11 +315,15 @@ work origin 16. Re-measure with `git diff origin/dev...HEAD --numstat`; split a 
 if its actual diff exceeds 200. A necessary smaller deletion is preferable to
 padding it. Follow the repository Pin → Build/Wire → Delete ladder; no mixed
 construction/deletion PR. Dependencies are explicit below; no dead module is
-left for knip between merges.
+left for knip between merges. P0 is the first production change: commit its
+failing synthetic reproduction before its deletion in the same PR. No schema,
+client or holder-removal prerequisite may delay it. The retained recovery-UUID
+branch remains unchanged; reuse its evidence and copy/adapt the reproduction
+only in the approved owning slice.
 
 | Slice | Purpose / boundary | Production budget and gate |
 | --- | --- | --- |
-| P0 | Pin shared delivery parity and adopt the retained recovery reproduction into shared tests/journey. Include mid-turn human, task/system FIFO and restart with queued inputs. | 0; retain the failing commit as evidence until its owning slice is green; do not merge a permanently red test-only PR. |
+| P0 — first | Delete the spent-turn-dependent admission timeout deferral (`agent-session.ts:3069–3073,3089–3090`), using the existing ordinary deadline. Remove only private spent-prompt bookkeeping made unused by that deletion. Commit a failing reproduction first: deploy restart with an admission stuck at `query_ready`, an unsettled spent-query promise and four queued inputs, including `space_inject`. | About 10–20 production lines; do not pad a deletion to 100. Existing admission must settle within its normal deadline; queued inputs must reach the model without a nudge or another daemon restart. Include ordinary/Neo parity and mid-turn human checks; no green claim from timeout firing alone. |
 | P1 | Pin existing SDK transcript location in ordinary persisted session metadata, using shared path resolution. | 100–150; both sessions resume the same synthetic SDK history after restart. |
 | P2 | Build the versioned explicit-reference schema and indexed link persistence. | 100–200; additive migration/idempotent object+link transaction, no writer switch. |
 | P3 | Build the shared input-ID envelope and read/delivery receipt projection. | 100–200; input UUID remains stable through retries/restart; no Neo binding predicate. |
@@ -316,7 +340,7 @@ left for knip between merges.
 | P14 | Delete obsolete attribution machinery after explicit contracts are live: response stamping (45 lines), old envelope, origin/human/last-input bookkeeping and their last call sites. Thin the still-live holder to lifecycle/steer ownership only. | 100–200; delete each method with its last call site; input metadata now comes from P4. |
 | P15 | Delete Neo-only system-note deferral and seed-job injection, once generic feed delivery is pinned. Keep already queued seed inputs. | 100–150; busy system notes and the retained seed drain normally. |
 | P16 | Delete the one-kickoff query branch and remaining holder shell; the already-existing ordinary iterator becomes unconditional. Include specialized terminal close and disposal. | 100–200 after P11–P14 thinning; delete the remaining class with its last construction/import. |
-| P17 | Delete now-obsolete successor handoff (67), query-success callback and spent-timeout wait. | 100–150; idle/restart inputs drain without a successor coordinator. |
+| P17 | Delete now-obsolete successor handoff (67) and query-success callback. The spent-timeout wait was already removed in P0. | 100–150; idle/restart inputs drain without a successor coordinator. |
 | P18 | Delete steer subscriptions, Neo requeue/consumption shortcuts and steer-only queue lane together with their last consumers. | 100–200; split into caller-closure deletions before P16 if needed; never leave an unused module/private method. |
 | P19a | Delete remaining query settings/tool overrides; declarative prompt/MCP contributions already use standard settings. | 100–200; matched settings yield the same lifecycle/options except prompt/MCP. |
 | P19b | Delete SDK path exceptions after P1 pins ordinary metadata and every listed caller uses it. | 100–150; resume/rewind/deletion keep the same synthetic transcript. |
@@ -372,6 +396,16 @@ using the same scenario and assertions; differences are limited to prompt/MCP:
   daemon against its own synthetic DB/SDK history; no nudge. Observe every
   eligible marker reaching the model and leaving pending delivery. Include a
   replayed previously seen SDK UUID and the queued legacy context seed case.
+- Deploy restart with an admission stuck at `query_ready` plus queued inputs:
+  reproduce job `2a5fb437`'s shape with synthetic `space_inject` delivery,
+  generation 1, an idle session, an unsettled spent-turn query promise and four
+  inputs behind it. Observe the pre-fix admission outliving its normal timeout;
+  continued lease renewal is not progress. Invoke `client.interrupt` and confirm
+  queue preservation separately from releasing the stuck admission. After P0,
+  observe the ordinary admission deadline actually bound the wait and all four
+  markers reach actual model requests without a second restart or nudge.
+  Retain RPC/job-stage/deadline/consumption evidence. A clock-only unit test or
+  inputs surviving interrupt alone does not pass this restart journey.
 - Interrupt and transient retry: run delivery-2's scenario at the retry limit;
   queued inputs survive and drain through the common generation. Explicit
   teardown still has its documented cancellation semantics.
