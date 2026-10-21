@@ -130,6 +130,15 @@ try {
     assert.equal((await done(completed)).lastReply, 'REPLY_1');
     assert.equal(calls().filter(call => call.method === 'session.send' && call.params.prompt === 'lost-ack').length, 1);
   }
+  if (mode === 'receipt' || mode === 'all') {
+    const work = await start('settled'); await done(work);
+    const unknown = await rpc('work.status', { ref: work.ref, receipt: { executionId: work.ref.id, inputId: '__proto__' } }) as { ok: boolean; reason: string };
+    assert.equal(unknown.ok, false); assert.equal(unknown.reason, 'not_found');
+    installFixture('--no-models');
+    const refused = await rpc('work.send', { ref: work.ref, message: 'never delivered' }) as { ok: boolean; reason: string };
+    assert.equal(refused.ok, false); assert.equal(refused.reason, 'unsupported_model');
+    assert.equal((await done(work)).lastReply, 'REPLY_1'); installFixture('--idle-after-abort');
+  }
   if (mode === 'persist' || mode === 'all') {
     const work = await start('late-settled');
     const pid = calls().findLast(call => call.method === 'session.send').pid;

@@ -260,6 +260,29 @@ describe('Copilot owned input delivery', () => {
     });
   });
 
+  test('unknown prototype-like receipt never fabricates consumption evidence', async () => {
+    const f = fixture();
+    const work = await f.start('settled');
+    await settled(f, work);
+    expect(
+      await f.adapter.status!(work.ref, undefined, {
+        executionId: work.ref.id,
+        inputId: '__proto__',
+      })
+    ).toMatchObject({ ok: false, reason: 'not_found' });
+  });
+
+  test('resume model admission refuses before resume or send and preserves old evidence', async () => {
+    const f = fixture();
+    const work = await f.start('settled');
+    await settled(f, work);
+    f.install('--no-models');
+    expect(await f.send(work, 'settled')).toMatchObject({ ok: false, reason: 'unsupported_model' });
+    expect(await settled(f, work)).toMatchObject({ value: { lastReply: 'REPLY_1' } });
+    expect(f.calls().filter((c) => c.method === 'session.resume')).toHaveLength(0);
+    expect(f.calls().filter((c) => c.method === 'session.send')).toHaveLength(1);
+  });
+
   test('lost follow-up ACK never replays, but earlier complete evidence survives', async () => {
     const f = fixture();
     const work = await f.start('settled');
