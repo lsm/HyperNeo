@@ -1,3 +1,4 @@
+vi.mock('../NeoGoals.tsx', () => ({ NeoGoals: () => null }));
 import type { ChatMessage, SessionState } from '@hyperneo/shared';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
