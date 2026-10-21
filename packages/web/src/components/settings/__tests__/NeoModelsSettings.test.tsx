@@ -121,3 +121,37 @@ test('preserves an inherited fallback chain when only primary thinking is edited
     })
   );
 });
+
+test('lists only runnable providers and limits thinking to the server catalog', async () => {
+  auth.mockResolvedValue({
+    providers: models.map((model) => ({
+      id: model.provider,
+      isAuthenticated: model.provider !== 'openrouter',
+    })),
+  });
+  const ui = await editor();
+  expect(ui.getByText(/Usable fallback providers:/).textContent).not.toContain('OpenRouter');
+  expect(
+    [...ui.getByLabelText('Neo fallback 2 thinking').querySelectorAll('option')].map(
+      (option) => option.value
+    )
+  ).toEqual(['off', 'think32k']);
+});
+
+test('selects a primary when Neo preferences have never been saved', async () => {
+  (globalSettings as { value: GlobalSettings | null }).value = { settingSources: [] };
+  render(<ModelsSettings />);
+  const ui = within(await screen.findByRole('region', { name: 'Neo models' }));
+  const change = ui.getByRole('button', { name: 'Change Neo primary' });
+  await waitFor(() => expect(change.hasAttribute('disabled')).toBe(false));
+  fireEvent.click(change);
+  fireEvent.click(await screen.findByRole('button', { name: 'opus', exact: true }));
+  fireEvent.change(ui.getByLabelText('Neo primary thinking'), { target: { value: 'think24k' } });
+  fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'neo.preferences.set',
+      input: primary,
+    })
+  );
+});
