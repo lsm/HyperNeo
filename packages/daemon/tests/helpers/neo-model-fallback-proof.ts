@@ -82,6 +82,7 @@ export async function proveNeoModelFallback(
       const provider = registry.get('anthropic');
       const models = getAvailableModels('global');
       restorePrimary = () => {
+        registry.unregister('anthropic');
         if (provider) registry.register(provider);
         setModelsCache(new Map([['global', models]]));
       };

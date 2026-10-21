@@ -32,4 +32,10 @@ runner output. These are real SDK/daemon receipts against a synthetic local
 provider; they do not establish a real account's model availability or UI rendering.
 
 The focused neo-model-preference unit suite additionally covers refused and
-throwing switches without thinking writes, and the existing success/recovery path.
+throwing switches restoring the previous thinking, and the existing success/recovery path.
+
+Restoration keeps the original pre-switch thinking preparation: the model switch
+may restart a query before returning, so moving the update after it regresses the
+existing high-effort restoration cases. Refused or throwing switches roll that
+preparation back before alignment settles; successful switches keep the prepared
+primary thinking. The journey checks actual outgoing effort, not only final config.

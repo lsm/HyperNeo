@@ -331,8 +331,8 @@ describe('neo.preferences.set', () => {
         thinkingLevel: 'think24k',
       });
       expect(switched).toEqual([['neo:root', 'claude-opus', 'anthropic']]);
-      expect(updated).toEqual([]);
       expect(db.getSession('neo:root')?.config).toMatchObject(fallback);
+      expect(updated).toHaveLength(2);
       expect(db.getGlobalSettings().neo?.preferences).toMatchObject({
         model: 'claude-opus',
         thinkingLevel: 'think24k',

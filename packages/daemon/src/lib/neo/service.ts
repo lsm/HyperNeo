@@ -434,14 +434,24 @@ export class NeoService {
     if (!live) return;
     if (live.isLimitRecoveryPending?.() || live.getRateLimitWatchdogState?.().lastUserMessage)
       return;
+    const previousThinking = live.getSessionData().config.thinkingLevel;
     if (plan.thinking)
       await this.sessions.updateSession(sessionId, {
         config: { ...live.getSessionData().config, thinkingLevel: preference.thinkingLevel },
       });
     if (plan.model) {
-      const switched = await live.requestModelSwitch(preference.model, preference.provider);
-      if (!switched.success)
-        return this.log.warn(`Neo session ${sessionId} keeps its model: ${switched.error ?? ''}`);
+      let restored = false;
+      try {
+        const switched = await live.requestModelSwitch(preference.model, preference.provider);
+        restored = switched.success;
+        if (!restored)
+          this.log.warn(`Neo session ${sessionId} keeps its model: ${switched.error ?? ''}`);
+      } finally {
+        if (!restored && plan.thinking)
+          await this.sessions.updateSession(sessionId, {
+            config: { ...live.getSessionData().config, thinkingLevel: previousThinking },
+          });
+      }
     }
   }
 
