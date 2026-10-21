@@ -69,4 +69,15 @@ describe('MarkdownRenderer artifact links', () => {
       )
     );
   });
+
+  it('does not serve a chat render of "artifact:<text>" to the artifact render of <text>', async () => {
+    const link = '[spoof](https://example.com/spoof)';
+    const chat = render(<MarkdownRenderer content={`artifact:${link}`} />);
+    await waitFor(() => expect(chat.container.querySelector('a')).toBeTruthy());
+    cleanup();
+    const container = await renderArtifact(link);
+    const anchor = container.querySelector('a');
+    expect(anchor?.getAttribute('href')).toBeNull();
+    expect(anchor?.getAttribute('data-external-href')).toBe('https://example.com/spoof');
+  });
 });

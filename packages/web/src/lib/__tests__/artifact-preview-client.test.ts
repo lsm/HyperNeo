@@ -96,6 +96,7 @@ describe('previewStateForRefusal', () => {
     ['size_limit', 'limit'],
     ['unsupported_type', 'unsupported'],
     ['owning_daemon_unavailable', 'daemon_unavailable'],
+    ['safe_open_unavailable', 'daemon_unavailable'],
     ['unavailable', 'revoked'],
     ['source_changed', 'revoked'],
   ])('maps %s to the %s state', (reason, state) => {
