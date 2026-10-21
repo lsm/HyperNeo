@@ -38,7 +38,7 @@ const refused = (reason: ArtifactRefusal['reason']): ArtifactRefusal => ({
   reason,
 });
 
-function storedKind(root: string, hash: string, path: string) {
+export function storedKind(root: string, hash: string, path: string) {
   return withStoredArtifactDescriptor(root, hash, (fd) => {
     const head = Buffer.alloc(1024);
     const count = readSync(fd, head, 0, head.length, 0);
@@ -107,14 +107,18 @@ function registrationService(db: Database, data: string, home: string) {
       const hash = await owner.hashSource(plan.root, plan.relativePath.split('/'));
       if (hash.accepted)
         return hash.sha256 === previous.sha256
-          ? finish(() => JSON.parse(previous.receipt))
+          ? finish(() => ({ accepted: true, artifact: JSON.parse(previous.receipt).artifact }))
           : refused('source_changed');
       if (hash.reason === 'unsafe_path') {
         const absent = await fs.lstat(join(plan.root, plan.relativePath)).then(
           () => false,
           (error: NodeJS.ErrnoException) => error.code === 'ENOENT'
         );
-        if (absent) return finish(() => JSON.parse(previous.receipt));
+        if (absent)
+          return finish(() => ({
+            accepted: true,
+            artifact: JSON.parse(previous.receipt).artifact,
+          }));
       }
       return hash;
     }
@@ -137,7 +141,8 @@ function registrationService(db: Database, data: string, home: string) {
           byteLength: snapshot.byteLength,
         },
         producer,
-        plan.relativePath
+        plan.relativePath,
+        { kind: 'worktree' }
       )
     );
   }

@@ -55,15 +55,17 @@ export function createArtifactReadOperations(
       : { reason: unavailable() };
   }
   function metadata(row: StoredArtifactFile) {
+    const receipt = JSON.parse(row.receipt);
     return {
       accepted: true as const,
       metadata: {
         context: rowContext(row),
-        artifact: JSON.parse(row.receipt).artifact,
+        artifact: receipt.artifact,
         sha256: row.sha256,
         createdAt: row.created_at,
         sourcePath: row.source_path,
         producer: JSON.parse(row.producer_ref),
+        ...(receipt.revision ? { revision: receipt.revision } : {}),
       },
     };
   }

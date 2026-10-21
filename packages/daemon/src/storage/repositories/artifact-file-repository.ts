@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
+import type { ArtifactRef, ArtifactFileMetadata } from '@hyperneo/shared/types/artifact-file';
 import type { Database } from '../sqlite-compat.ts';
 import type { ArtifactContext } from '../../lib/artifacts/file-policy.ts';
 
@@ -28,7 +28,8 @@ export class ArtifactFileRepository {
     sha256: string,
     artifact: ArtifactRef,
     producer: string,
-    sourcePath: string
+    sourcePath: string,
+    revision?: ArtifactFileMetadata['revision']
   ) {
     this.db
       .prepare(`INSERT INTO artifact_files VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
@@ -40,7 +41,7 @@ export class ArtifactFileRepository {
         fingerprint,
         sha256,
         artifact.byteLength,
-        JSON.stringify({ accepted: true, artifact }),
+        JSON.stringify({ accepted: true, artifact, ...(revision ? { revision } : {}) }),
         producer,
         sourcePath,
         Date.now()

@@ -48,7 +48,7 @@ describe('immutable bound Git capture', () => {
         noSymlink: true,
         bounded: true,
         sharedQuota: true,
-        notExposed: true,
+        registrationRequired: true,
         restart: true,
       });
     } finally {

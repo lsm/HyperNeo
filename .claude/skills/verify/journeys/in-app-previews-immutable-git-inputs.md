@@ -4,7 +4,9 @@ Slice 11 measured 327 production lines added/31 removed and exceeded its declare
 300-line contract before push. This Build part adds only immutable Git input and
 shared storage primitives. Part 11b wires resolver selection and durable receipt
 provenance after this part merges. Slice 11/iOS prerequisite is not complete here.
-The resolver must still return unsupported_type for an explicit Git document.
+At this Build commit the resolver returned unsupported_type for an explicit Git
+document. Slice 11b supersedes that assertion with registered-ID-only exposure;
+see in-app-previews-git-resolution.md for the current operation journey.
 
 Run preview-git-capture.test.ts plus prior preview/native/store/contract tests,
 Neo PR summaries and existing gh lookup/preset tests. The first test run fails on
