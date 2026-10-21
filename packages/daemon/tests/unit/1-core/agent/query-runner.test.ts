@@ -2130,7 +2130,10 @@ describe('QueryRunner', () => {
       }
     });
 
-    it('delivers the startup retry input to the replacement SDK instead of the closed SDK', async () => {
+    it.each([
+      ['startup', 'SDK startup timeout - query aborted'],
+      ['transient connection', 'stream closed'],
+    ])('delivers %s retry input to the replacement SDK', async (_kind, errorMessage) => {
       const queue = new MessageQueue();
       const previousQuery = (query as unknown as ReturnType<typeof mock>).getMockImplementation();
       buildSpy.mockResolvedValue({ model: 'claude-sonnet-4-20250514' });
@@ -2152,7 +2155,7 @@ describe('QueryRunner', () => {
                 void input.next().then((next) => {
                   if (!next.done) observe({ recipient: 'closed SDK', uuid: next.value.uuid });
                 });
-                throw new Error('SDK startup timeout - query aborted');
+                throw new Error(errorMessage);
               }
               const next = await input.next();
               observe({ recipient: 'replacement SDK', uuid: next.value?.uuid });
@@ -3273,7 +3276,7 @@ describe('QueryRunner', () => {
       expect(runnerPrivate._lastConsumedUserMessage).toBeNull();
     });
 
-    it('transient arm resnapshot suppresses close and recursion when superseded during displayErrorAsAssistantMessage', async () => {
+    it('transient arm resnapshot suppresses close, re-enqueue and recursion when superseded during displayErrorAsAssistantMessage', async () => {
       const consumedUuid = 'consumed-uuid';
       const consumedContent = [{ type: 'text' as const, text: 'C' }];
       buildSpy.mockRejectedValue(new Error('TypeError: fetch failed'));
@@ -3302,7 +3305,7 @@ describe('QueryRunner', () => {
       await runnerPrivate.runQuery(1, 0, { rateLimitCooldownScheduled: false });
 
       expect(buildSpy).toHaveBeenCalledTimes(1);
-      expect(enqueueWithIdSpy).toHaveBeenCalledWith(consumedUuid, consumedContent);
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
       expect(closeSpy).not.toHaveBeenCalled();
       expect(ctx.queryObject).not.toBeNull();
       expect(runnerPrivate._lastConsumedUserMessage).toBeNull();
@@ -4453,10 +4456,11 @@ describe('QueryRunner', () => {
         'timer.clear',
         'firstMsg.reset',
         'idle:suppress',
-        'enqueue:lm1',
         'display',
         'query.close',
         'exit.reset',
+        'queue.start',
+        'enqueue:lm1',
         'build#2',
         'queue.clear',
         'terminal.begin',
@@ -4490,6 +4494,7 @@ describe('QueryRunner', () => {
         'display',
         'query.close',
         'exit.reset',
+        'queue.start',
         'build#2',
         'queue.clear',
         'terminal.begin',

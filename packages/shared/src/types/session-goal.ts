@@ -11,6 +11,7 @@ export interface SessionGoal {
   metrics: SpaceGoalMetrics;
   doneTest: string | null;
   summary: string;
+  worksNote: string | null;
   progress: number;
   nextSteps: string[];
   mandateRef: string | null;

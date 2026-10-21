@@ -18,6 +18,7 @@ const goal: SessionGoal = {
   metrics: { readers: 30 },
   doneTest: null,
   summary: '',
+  worksNote: null,
   progress: 30,
   nextSteps: [],
   mandateRef: null,
@@ -49,6 +50,8 @@ beforeEach(() => {
   effect = 'Reached thirty readers';
   request.mockReset().mockImplementation(async (_method, { name, input }) => {
     if (name === 'goal.session.list') return { accepted: true, goals };
+    if (name === 'goal.session.get')
+      return { accepted: true, goal: { ...goal, worksNote: 'Concrete examples work' } };
     if (name === 'schedule.session.list')
       return {
         ok: true,
@@ -58,7 +61,10 @@ beforeEach(() => {
         ],
       };
     if (name === 'goal.journal.list')
-      return { accepted: true, entries: input.goalId === 'guide' ? [{ effect }] : [] };
+      return {
+        accepted: true,
+        entries: input.limit === 1 && input.goalId === 'guide' ? [{ effect }] : [],
+      };
     throw new Error(`Unexpected operation ${name}`);
   });
 });
@@ -88,6 +94,23 @@ describe('NeoGoals', () => {
     ])
       expect(screen.getByText(text)).toBeTruthy();
     expect(container.querySelector('time')?.dateTime).toBe(new Date(at).toISOString());
+  });
+  it('opens the selected goal’s scoped details from its title and closes them again', async () => {
+    render(<NeoGoals sessionId="root" />);
+    await screen.findByText(effect);
+    expect(screen.queryByText('Public guide')).toBeNull();
+    const title = screen.getByRole('button', { name: 'Publish guide' });
+    fireEvent.click(title);
+    await screen.findByText('Concrete examples work');
+    expect(screen.getByText('Public guide')).toBeTruthy();
+    expect(title.getAttribute('aria-expanded')).toBe('true');
+    expect(request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'goal.session.get',
+      input: { ownerSessionId: 'root', goalId: 'guide' },
+    });
+    fireEvent.click(title);
+    expect(screen.queryByText('Public guide')).toBeNull();
+    expect(title.getAttribute('aria-expanded')).toBe('false');
   });
   it('does not claim an empty list while loading and shows a real empty result', async () => {
     let finish!: (value: unknown) => void;

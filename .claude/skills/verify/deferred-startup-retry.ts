@@ -8,6 +8,8 @@ import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/s
 import { createMockApiServer } from '../../../packages/daemon/tests/helpers/mock-api-server.ts';
 
 const run = resolve(process.argv[2]);
+const retryKind = process.argv[3] ?? 'startup';
+assert(['startup', 'transient'].includes(retryKind));
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert.equal(process.env.NODE_ENV, 'test');
@@ -19,10 +21,10 @@ mkdirSync(join(run, 'evidence'), { recursive: true });
 mkdirSync(join(run, 'bin'), { recursive: true });
 copyFileSync('.claude/skills/verify/gh-stub.sh', join(run, 'bin/gh'));
 process.env.PATH = join(run, 'bin') + ':' + process.env.PATH;
-const markers = ['STARTUP_RETRY_INPUT', 'DEFERRED_AFTER_RETRY'];
+const markers = [retryKind === 'transient' ? 'TRANSIENT_RETRY_INPUT' : 'STARTUP_RETRY_INPUT', 'DEFERRED_AFTER_RETRY'];
 const inputs: Array<{ attempt: number; type: string; uuid?: string }> = [];
 const requests: string[] = [];
-const evidence: Record<string, unknown> = { run, requests, inputs };
+const evidence: Record<string, unknown> = { run, retryKind, requests, inputs };
 const mock = await createMockApiServer({ port: 8001 });
 await mock.start();
 
@@ -77,6 +79,7 @@ try {
   const agent = app.sessionManager.getCachedSession(sessionId)!;
   const build = agent.optionsBuilder.build.bind(agent.optionsBuilder);
   let attempt = 0;
+  let breakFirstStream: (() => void) | undefined;
   agent.optionsBuilder.build = async (...args) => ({
     ...await build(...args),
     spawnClaudeCodeProcess: (opts) => {
@@ -85,6 +88,7 @@ try {
         number === 1 ? ['-e', 'process.stdin.resume(); setInterval(() => {}, 1000)'] : opts.args,
         { cwd: opts.cwd, env: opts.env, stdio: ['pipe', 'pipe', 'pipe'], signal: opts.signal });
       child.stderr.on('data', (chunk) => appendFileSync(join(run, `sdk-${number}.stderr.log`), chunk));
+      if (number === 1) breakFirstStream = () => child.stdout.destroy(new Error('stream closed'));
       const input = new PassThrough();
       let pending = '';
       input.on('data', (chunk) => {
@@ -105,6 +109,11 @@ try {
   await until(() => inputs.some((input) => input.attempt === 1 && input.uuid === current.messageId), 'first SDK never received kickoff');
   evidence.deferredReceipt = await hub.request('message.send', { sessionId, content: markers[1], deliveryMode: 'defer' });
   await until(async () => (await hub.request<{ total: number }>('session.messages.byStatus', { sessionId, status: 'deferred' })).total === 1, 'follow-up was not deferred while busy');
+  if (retryKind === 'transient') {
+    assert(breakFirstStream);
+    breakFirstStream();
+    await until(async () => JSON.stringify(await hub.request('message.sdkMessages', { sessionId })).includes('The connection was interrupted. Retrying'), 'transient retry notice was not published');
+  }
   await until(() => inputs.some((input) => input.attempt === 2 && input.uuid === current.messageId), 'replacement SDK never received the retry input');
   await until(() => markers.every((marker) => requests.some((body) => body.includes(marker))), 'both inputs did not reach the mock model');
   const consumed = await hub.request<{ total: number }>('session.messages.byStatus', { sessionId, status: 'consumed' });

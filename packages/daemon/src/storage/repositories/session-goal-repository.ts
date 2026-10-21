@@ -30,7 +30,7 @@ const COLUMNS: Record<keyof SessionGoalPatch, string> = {
 const JSON_FIELDS = new Set<keyof SessionGoalPatch>(['metrics', 'nextSteps']);
 
 const SELECT = `SELECT id, owner_session_id AS ownerSessionId, title, description, status, type,
-  priority, metrics, done_test AS doneTest, summary, progress, next_steps AS nextSteps,
+  priority, metrics, done_test AS doneTest, summary, works_note AS worksNote, progress, next_steps AS nextSteps,
   mandate_ref AS mandateRef, mandate_rev AS mandateRev, created_at AS createdAt,
   updated_at AS updatedAt, completed_at AS completedAt, revision FROM space_goals`;
 

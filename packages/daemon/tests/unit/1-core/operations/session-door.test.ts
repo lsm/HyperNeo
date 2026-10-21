@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { request } from 'node:http';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { request, Server } from 'node:http';
+import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { OPERATION_NAMES } from '@hyperneo/shared/types/operation-names';
@@ -80,6 +80,44 @@ describe('the session door', () => {
     expect(value.startedAt).toBeLessThanOrEqual(Date.now());
     expect(value.uptime).toBeGreaterThanOrEqual(0);
     expect(mailbox.rows()).toEqual([]);
+  });
+
+  test('the socket is owner-only before chmod and startup restores the ambient umask', async () => {
+    const path = join(dir, 'creation.sock');
+    const emit = Server.prototype.emit;
+    const modes: number[] = [];
+    const observer = spyOn(Server.prototype, 'emit').mockImplementation(function (
+      this: Server,
+      event: string | symbol,
+      ...args: unknown[]
+    ) {
+      if (event === 'listening' && this.address() === path) modes.push(statSync(path).mode & 0o777);
+      return emit.call(this, event, ...args);
+    });
+    const previous = process.umask(0o022);
+    let created: Awaited<ReturnType<typeof startSessionDoor>> | undefined;
+    try {
+      created = await startSessionDoor(() => createOperationRegistry([]), path);
+      expect(modes).toEqual([0o600]);
+      expect(statSync(path).mode & 0o777).toBe(0o600);
+      expect(process.umask()).toBe(0o022);
+    } finally {
+      process.umask(previous);
+      observer.mockRestore();
+      await created?.close();
+    }
+  });
+
+  test('failed socket startup restores the ambient umask', async () => {
+    const previous = process.umask(0o027);
+    try {
+      await expect(
+        startSessionDoor(() => createOperationRegistry([]), join(dir, 'absent', 'door.sock'))
+      ).rejects.toThrow(/listen/);
+      expect(process.umask()).toBe(0o027);
+    } finally {
+      process.umask(previous);
+    }
   });
 
   test('every other registered operation is rejected by the socket allowlist', async () => {
