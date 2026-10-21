@@ -159,6 +159,37 @@ describe('artifact capture policy', () => {
       ).toEqual({ accepted: false, reason: 'outside_roots' });
     }
   });
+  test.each([
+    '/private/var/tmp',
+    '/private/var/tmp/',
+    '/synthetic/home/.claude/projects',
+    '/synthetic/home/.codex/cache/reports',
+    '/synthetic/home/.config/app/reports',
+    '/synthetic/evidence/copy/.claude/projects',
+    '/synthetic/evidence/copy/.codex/cache',
+    '/synthetic/evidence/copy/.config/app',
+  ])('refuses excluded root %s with a source actually inside it', async (root) => {
+    for (const candidate of [
+      { ...binding, workspacePath: root, approvedEvidenceRoots: [] },
+      { ...binding, approvedEvidenceRoots: [root] },
+    ]) {
+      expect(
+        await admit(`${root}/report.md`, worker, { ...deps, loadBinding: () => candidate })
+      ).toEqual({ accepted: false, reason: 'outside_roots' });
+    }
+  });
+  test.each(['/private/var/tmp/approved-evidence', '/synthetic/evidence/.codex-sibling/reports'])(
+    'retains a specific approved nonsensitive root %s',
+    async (root) => {
+      expect(
+        await admit(`${root}/report.md`, worker, {
+          ...deps,
+          loadBinding: () => ({ ...binding, workspacePath: root, approvedEvidenceRoots: [] }),
+        })
+      ).toEqual({ context, root, relativePath: 'report.md' });
+    }
+  );
+
   test('never accepts worker roots/owner IDs as context authority', async () => {
     const forged = { ...context, root: '/tmp', ownerSessionId: 'worker-bound' };
     const seen: unknown[] = [];

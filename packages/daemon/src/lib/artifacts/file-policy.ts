@@ -115,10 +115,13 @@ function eligibleRoot(root: string, home: string): boolean {
     posix.isAbsolute(root) &&
     !unsafePath(root) &&
     !sensitivePath(root) &&
-    !['.codex', '.claude', '.config'].includes(posix.basename(posix.normalize(root))) &&
+    !posix
+      .normalize(root)
+      .split('/')
+      .some((part) => ['.codex', '.claude', '.config'].includes(part.toLowerCase())) &&
     !within(root, home) &&
-    !['/', '/tmp', '/private/tmp', '/var/tmp', posix.join(home, '.codex')].includes(
-      posix.normalize(root)
+    !['/', '/tmp', '/private/tmp', '/var/tmp', '/private/var/tmp'].some(
+      (blocked) => posix.relative(blocked, root) === ''
     )
   );
 }
