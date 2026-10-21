@@ -33,6 +33,7 @@ let active = true;
 let uncertain = false;
 let refuse = false;
 let startError = false;
+let serverStartError = false;
 const calls: unknown[] = [];
 const logs: unknown[] = [];
 const replies: unknown[] = [];
@@ -65,7 +66,7 @@ server.on('connection', (socket) => socket.on('message', (bytes) => {
   const result = request.method === 'thread/turns/list' ? { data: active ? [{ id: 'server-active', status: 'inProgress' }] : [{ id: 'completed-turn', status: 'completed' }] }
     : request.method === 'turn/start' ? { turn: { id: 'server-started', status: 'inProgress', items: [] } }
     : request.method === 'turn/steer' ? { turnId: 'server-active' } : { queuedSubmission: { id: 'synthetic-queue' } };
-  socket.send(JSON.stringify({ id: request.id, ...(uncertain && request.method === 'turn/steer' ? { error: { message: 'connection closed' } } : { result }) }));
+  socket.send(JSON.stringify({ id: request.id, ...(serverStartError && request.method === 'turn/start' ? { error: { message: 'start unavailable' } } : uncertain && request.method === 'turn/steer' ? { error: { message: 'connection closed' } } : { result }) }));
 }));
 await new Promise<void>((done) => http.listen(join(home, 'app-server-control/app-server-control.sock'), done));
 let ws: WebSocket | undefined;
@@ -114,6 +115,15 @@ try {
     assert.equal(idle.value.startedTurnId, 'server-started');
     assert.equal(idle.value.queuedSubmissionId, undefined);
     assert(!calls.slice(before).some((call) => (call as { server?: string }).server === 'thread/queue/add'));
+    assert(calls.slice(before).some((call) => {
+      const request = call as { server?: string; params?: { threadId?: string; input?: { text: string }[] } };
+      return request.server === 'turn/start' && request.params?.threadId === 'synthetic' && request.params.input?.[0].text.includes('synthetic marker');
+    }));
+    serverStartError = true;
+    const serverRefused = await send();
+    assert.equal(serverRefused.reason, 'not_delivered');
+    assert.match(serverRefused.detail, /start unavailable/);
+    serverStartError = false;
     active = true; uncertain = true;
     const unknown = calls.length;
     assert.equal((await send()).reason, 'not_delivered');
