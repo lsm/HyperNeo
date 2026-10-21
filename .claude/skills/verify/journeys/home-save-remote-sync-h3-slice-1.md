@@ -33,15 +33,25 @@ own unique Git reflog action, and cleanup requires that ownership marker.
 Existing conflict contracts still require the operation to abort its own rebase.
 
 For deadline/queue recovery, run the same helper with `deadline after` in another
-fresh run. Upload-pack stays pending until the daemon's actual 30-second network
-deadline; its process group must stop, save returns a timeout and a queued read
-then succeeds. The helper auto-releases its fixture at 35 seconds on old code so
-the baseline cannot hang forever. It records the noninteractive Git/SSH settings,
-elapsed time and queued read in `evidence/neo-home-sync-<mode>-after.json`.
-Use `before` instead of `after` on the regression commit to retain the failing
-race and 35-second baseline. Unit contracts use a shorter injected deadline for
+fresh run. Alternatively, the RPC-only launcher owns a fresh synthetic HOME,
+DB and daemon without building the web or starting a model fixture:
+
+```bash
+bash .claude/skills/verify/neo-home-deadline.sh "$RUN" after 9397
+```
+
+Upload-pack stays pending until the daemon's actual 30-second network deadline;
+its process group must stop and save returns a timeout. With read-once-per-wake
+sync, a queued human read then makes its own fresh pull and must also time out,
+without returning stale local text. Each network attempt must finish within 33 s
+of becoming active, with both requests settling within 65 s total; HEAD/status stay unchanged. The helper auto-releases
+its synthetic transport at 65 seconds so a broken deadline cannot hang forever.
+It records noninteractive Git/SSH settings, separate save/read elapsed times and
+both results in `evidence/neo-home-sync-<mode>-after.json`.
+On the retained regression commit, `before` records the old 35-second fixture
+release and the now-invalid assertion that the queued read succeeds. Unit contracts use a shorter injected deadline for
 both pull and push; RPC exercises the production default. Stop with `stop.sh`.
 
 This slice syncs saves to an existing configured origin/upstream. GitHub's
-once-only private-repo proposal/create, second-machine clone, read-once-per-wake
-sync and conflict-question presentation are later H3 slices.
+once-only private-repo proposal/create, second-machine clone and read-once-per-wake
+sync have their own journeys. Conflict-question presentation remains a later H3 slice.
