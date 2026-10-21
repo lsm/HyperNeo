@@ -12,6 +12,7 @@ import { getDataDir } from '../data-dir.ts';
 import { ArtifactRefSchema, ArtifactRefusalSchema } from './file-contracts.ts';
 import { createArtifactRegistration } from './register-operation.ts';
 import { planStoredReference } from './reference-plan.ts';
+import { ArtifactPrSummarySchema, readBoundPrSummary } from './pr-summary.ts';
 
 const context = z.strictObject({ kind: z.enum(['todo', 'ask']), id: z.string().min(1).max(200) });
 const inputSchema = z.strictObject({
@@ -34,7 +35,8 @@ export function createArtifactReferenceResolve(
   database: () => Database,
   data = getDataDir(),
   home = homedir(),
-  capture = createArtifactRegistration(database, data, home).execute
+  capture = createArtifactRegistration(database, data, home).execute,
+  readPr = readBoundPrSummary
 ) {
   async function plan(input: Input, caller: OperationCaller) {
     const db = database();
@@ -53,24 +55,29 @@ export function createArtifactReferenceResolve(
   async function prepare(input: Input, caller: OperationCaller) {
     const result = await plan(input, caller);
     if (!result.accepted) return { reason: result };
-    return result.kind === 'worktree'
+    return result.kind !== 'git-blob'
       ? { value: result }
       : { reason: { accepted: false as const, reason: 'unsupported_type' } };
   }
   type Plan = Extract<Awaited<ReturnType<typeof prepare>>, { value: unknown }>['value'];
   async function snapshot(selected: Plan, input: Input, caller: OperationCaller) {
-    const result = (await capture(
-      {
-        requestId: input.requestId,
-        context: selected.context,
-        path: join(selected.root, selected.relativePath),
-        title: selected.relativePath.split('/').at(-1)!.slice(0, 200),
-      },
-      caller
-    )) as { accepted: boolean; reason?: string };
+    const result =
+      selected.kind === 'github-pr'
+        ? await readPr(selected).then((pr) => (pr ? { accepted: true, pr } : unavailable()))
+        : ((await capture(
+            {
+              requestId: input.requestId,
+              context: selected.context,
+              path: join(selected.root, selected.relativePath),
+              title: selected.relativePath.split('/').at(-1)!.slice(0, 200),
+            },
+            caller
+          )) as { accepted: boolean; reason?: string });
     const current = await plan(input, caller);
     if (JSON.stringify(current) !== JSON.stringify(selected)) return unavailable();
-    return !result.accepted && result.reason === 'unsafe_path' ? unavailable() : result;
+    return !result.accepted && 'reason' in result && result.reason === 'unsafe_path'
+      ? unavailable()
+      : result;
   }
   const resolve = (superpipe({})('artifact-reference-resolve') as PipelineAPI)
     .input(['input', 'caller'])
@@ -86,7 +93,7 @@ export function createArtifactReferenceResolve(
   return defineOperation({
     name: 'artifact.reference.resolve',
     description:
-      'Paired-human tap: resolve an exact reference from a stored message/publication/todo and snapshot a local bound file. Optional context chooses only among the source’s authorized bindings. No raw-path grants, GitHub/Git reads or agent invocation. Reads use anchored no-follow descriptors and immutable registered snapshots.',
+      'Paired-human tap: resolve an exact stored message/publication/todo reference to a local immutable snapshot or a bound GitHub PR summary. Optional context chooses only among authorized source bindings. No raw-path grants, arbitrary URL fetch, Git file bytes or agent invocation. File reads use anchored no-follow descriptors.',
     inputSchema,
     resultSchema: z.union([
       ArtifactRefusalSchema,
@@ -106,6 +113,7 @@ export function createArtifactReferenceResolve(
         limitBytes: z.number().int().positive(),
       }),
       z.strictObject({ accepted: z.literal(true), artifact: ArtifactRefSchema }),
+      z.strictObject({ accepted: z.literal(true), pr: ArtifactPrSummarySchema }),
     ]),
     policy: { safetyClass: 'mutate' },
     execute: resolve,
