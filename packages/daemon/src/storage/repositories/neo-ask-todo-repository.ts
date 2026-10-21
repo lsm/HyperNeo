@@ -374,6 +374,16 @@ export class NeoAskTodoRepository {
     ).map(toTodo);
   }
 
+  getCheckable(id: string): NeoTodo | null {
+    const row = this.db
+      .prepare(
+        `${TODO_SELECT} WHERE id = ? AND state IN ('todo', 'doing', 'blocked')
+           AND ask_id IN (SELECT id FROM neo_asks WHERE status = 'open')`
+      )
+      .get(id) as TodoRow | null;
+    return row ? toTodo(row) : null;
+  }
+
   getQuestion(id: string): NeoQuestion | null {
     const row = this.db.prepare(`${QUESTION_SELECT} WHERE id = ?`).get(id) as QuestionRow | null;
     return row ? toQuestion(row) : null;

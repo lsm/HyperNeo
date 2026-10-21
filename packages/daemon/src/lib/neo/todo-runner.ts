@@ -454,7 +454,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       const result = todo.check
         ? await readNeoTodoCompletion(deps.packs(), todo)
         : await pack.check(todo);
-      const live = store.listCheckable().find((item) => item.id === todo.id);
+      const live = store.getCheckable(todo.id);
       if (live?.check && sameNeoTodoCheck(todo, live))
         await finish(
           live,
