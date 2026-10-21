@@ -5,7 +5,7 @@ import { VoiceRecordingRepository } from '../../storage/repositories/voice-recor
 import type { VoiceTranscribeOutcome } from './transcribe-pipeline.ts';
 
 type Recording = { owner: string; id: string; hash: string };
-type Submit = () => Promise<VoiceTranscribeOutcome>;
+type Submit = (beforeDispatch: () => void) => Promise<VoiceTranscribeOutcome>;
 type Request = { recordingId?: string; audioBase64: string; mimeType: string };
 
 export class VoiceRecordingTranscription {
@@ -25,7 +25,7 @@ export class VoiceRecordingTranscription {
       });
     const running = this.active.get(key);
     if (running) return running;
-    if (saved)
+    if (saved?.dispatched)
       return Promise.resolve(
         saved.outcome ?? {
           action: 'failed',
@@ -33,9 +33,16 @@ export class VoiceRecordingTranscription {
             'Recording submission is unconfirmed after interruption; it will not be submitted again automatically',
         }
       );
-    if (!this.repository.reserve(owner, id, hash)) return this.run(recording, submit);
+    if (!saved && !this.repository.reserve(owner, id, hash)) return this.run(recording, submit);
+    let dispatched = false;
+    const beforeDispatch = () => {
+      if (dispatched) return;
+      if (!this.repository.markDispatched(owner, id))
+        throw new Error('Recording submission is already dispatched; retry for its saved result');
+      dispatched = true;
+    };
     const pending = Promise.resolve()
-      .then(submit)
+      .then(() => submit(beforeDispatch))
       .catch(
         (error: unknown): VoiceTranscribeOutcome => ({
           action: 'failed',
@@ -43,7 +50,7 @@ export class VoiceRecordingTranscription {
         })
       )
       .then((outcome) => {
-        this.repository.finish(owner, id, outcome);
+        this.repository.finish(owner, id, outcome, dispatched);
         return outcome;
       })
       .finally(() => this.active.delete(key));

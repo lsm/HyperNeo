@@ -6,6 +6,7 @@ export function runMigration438(db: Database): void {
     recording_id TEXT NOT NULL,
     audio_sha256 TEXT NOT NULL,
     outcome_json TEXT,
+    dispatched_at INTEGER,
     created_at INTEGER NOT NULL,
     completed_at INTEGER,
     PRIMARY KEY (owner, recording_id)

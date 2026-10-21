@@ -34,12 +34,15 @@ describe('voice recording retries through registered RPC handlers', () => {
   let requests: number;
   let handler: Handler;
 
-  const register = (credentials?: ProviderCredentialManager) => {
+  const register = (
+    credentials?: ProviderCredentialManager,
+    settings = new SettingsManager(db)
+  ) => {
     const handlers = new Map<string, Handler>();
     const hub = {
       onRequest: (name: string, value: Handler) => handlers.set(name, value),
     } as unknown as MessageHub;
-    registerVoiceHandlers(hub, new SettingsManager(db), credentials, {
+    registerVoiceHandlers(hub, settings, credentials, {
       db: db.getDatabase(),
       deviceOf: () => ({ deviceId: 'synthetic-phone', kind: 'human' }),
     });
@@ -142,9 +145,9 @@ describe('voice recording retries through registered RPC handlers', () => {
       .digest('hex');
     db.getDatabase()
       .prepare(
-        'INSERT INTO voice_recordings (owner, recording_id, audio_sha256, created_at) VALUES (?, ?, ?, ?)'
+        'INSERT INTO voice_recordings (owner, recording_id, audio_sha256, created_at, dispatched_at) VALUES (?, ?, ?, ?, ?)'
       )
-      .run('synthetic-phone', id, hash, Date.now());
+      .run('synthetic-phone', id, hash, Date.now(), Date.now());
     await expect(handler(input, context('after-interruption'))).rejects.toThrow('unconfirmed');
     await expect(handler(input, context('another-retry'))).rejects.toThrow('unconfirmed');
     expect(requests).toBe(0);
@@ -260,6 +263,89 @@ describe('voice recording retries through registered RPC handlers', () => {
     expect(requests).toBe(0);
     settings.updateGlobalSettings({ voice });
     expect(await handler(input, context())).toEqual({ text: 'synthetic result 1' });
+    expect(requests).toBe(1);
+  });
+
+  it('can resume a reservation interrupted before any dispatch', async () => {
+    const hash = createHash('sha256')
+      .update(Buffer.from(input.audioBase64, 'base64'))
+      .digest('hex');
+    db.getDatabase()
+      .prepare(
+        'INSERT INTO voice_recordings (owner, recording_id, audio_sha256, created_at) VALUES (?, ?, ?, ?)'
+      )
+      .run('synthetic-phone', id, hash, Date.now());
+    expect(await handler(input, context('after-preflight-interruption'))).toEqual({
+      text: 'synthetic result 1',
+    });
+    expect(requests).toBe(1);
+  });
+
+  it('allows only one independently registered handler to dispatch without poisoning its result', async () => {
+    const settings = new SettingsManager(db);
+    settings.updateGlobalSettings({
+      voice: {
+        ...settings.getGlobalSettings().voice!,
+        apiKeyEndpoint: 'http://127.0.0.1:1/v1/audio/transcriptions',
+      },
+    });
+    let allowCredentials: () => void = () => {};
+    let sawCredentials: () => void = () => {};
+    let sawPeer: () => void = () => {};
+    let releaseAsr: () => void = () => {};
+    let sawAsr: () => void = () => {};
+    let lookups = 0;
+    const asrStarted = new Promise<void>((resolve) => {
+      sawAsr = resolve;
+    });
+    const credentialGate = new Promise<void>((resolve) => {
+      allowCredentials = resolve;
+    });
+    const credentialStarted = new Promise<void>((resolve) => {
+      sawCredentials = resolve;
+    });
+    const peerPrepared = new Promise<void>((resolve) => {
+      sawPeer = resolve;
+    });
+    const asrGate = new Promise<void>((resolve) => {
+      releaseAsr = resolve;
+    });
+    const credentials = {
+      getCredentials: async () => {
+        if (++lookups === 1) {
+          sawCredentials();
+          await credentialGate;
+        } else await asrStarted;
+        return null;
+      },
+    } as unknown as ProviderCredentialManager;
+    handler = register(credentials);
+    const peerSettings = new SettingsManager(db);
+    const read = vi.spyOn(peerSettings, 'getGlobalSettings').mockImplementation(() => {
+      sawPeer();
+      return db.getGlobalSettings();
+    });
+    const peer = register(credentials, peerSettings);
+    vi.stubGlobal('fetch', async () => {
+      requests++;
+      sawAsr();
+      await asrGate;
+      return Response.json({ text: 'one accepted result' });
+    });
+    const first = handler(input, context('first-client'));
+    await credentialStarted;
+    const competing = peer(input, context('second-client')).catch((error: Error) => error.message);
+    await peerPrepared;
+    allowCredentials();
+    try {
+      expect(await competing).toContain('already dispatched');
+      expect(requests).toBe(1);
+    } finally {
+      releaseAsr();
+      await first;
+      read.mockRestore();
+    }
+    expect(await peer(input, context('later-retry'))).toEqual({ text: 'one accepted result' });
     expect(requests).toBe(1);
   });
 

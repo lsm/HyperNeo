@@ -212,11 +212,11 @@ async function transcribeViaPipeline(
   recordings?: VoiceRecordingTranscription,
   owner = 'local'
 ): Promise<VoiceTranscribeResponse> {
-  const submit = () =>
+  const submit = (beforeDispatch?: () => void) =>
     runVoiceTranscribe({
       data,
       context,
-      deps: { settingsManager, credentialManager, limiters: transcriptionLimiters },
+      deps: { settingsManager, credentialManager, limiters: transcriptionLimiters, beforeDispatch },
     });
   const outcome =
     data?.recordingId === undefined
