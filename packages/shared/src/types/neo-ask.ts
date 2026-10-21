@@ -1,3 +1,5 @@
+import type { ArtifactProjection } from './artifact-file.ts';
+
 export type NeoAskStatus = 'open' | 'done' | 'dropped';
 
 export interface NeoAsk {
@@ -114,3 +116,5 @@ export interface NeoAskEntry {
   todos: NeoTodoEntry[];
   questions: NeoQuestionEntry[];
 }
+
+export type NeoTodoArtifactProjection = NeoTodo & ArtifactProjection;
