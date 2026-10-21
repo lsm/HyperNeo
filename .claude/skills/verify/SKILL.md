@@ -2321,6 +2321,42 @@ proves the daemon operation and snapshot surfaces; GUI rendering, model choices,
 notification completion and deployment are not verified. Neo's default guidance
 asks for consent first; the existing direct human-message path remains available.
 
+## Snapshot batch responsiveness
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-snapshot-batch-XXXXXX)
+env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/neo-snapshot-batch.ts verify 9382 "$RUN"
+```
+
+This starts a fresh isolated daemon with 181 synthetic asks. Its top 50 contain
+231 todos and 66 answered questions, with instruction/report sizes shaped like
+the observed snapshot. An external client sends four overlapping `neo.snapshot`
+requests over the real `operation.invoke` WebSocket door. Another independent
+client probes `system.health` when the first child/link query begins. No model,
+provider keys, credentials, copied live rows, GitHub or GUI are involved.
+
+The helper injects a controlled 4 ms wait per child/link statement to model the
+amplification of slow reads. On regression commit `6040b602e6`, `reproduce`
+records four builds and 1,324 child/link reads, max lag above 1 s and a health
+reply above 1 s. Fixed `verify` requires one build, three child/link queries,
+max lag below 1 s and health below 250 ms. Each of the four replies must retain
+50 asks, 231 todos, 66 questions and the exact selected session link.
+
+`observed.json` records query/build counts, max main-loop lag, independent health
+latency, burst duration and reply byte sizes. Other snapshot/pack reads remain
+included in the separate total-read count; this change does not claim every
+snapshot query is constant or explain the physical cause of historical waits.
+The helper restores its synthetic query observer and closes both client child
+processes, the timer and daemon in `finally`.
+
+Focused contracts also exercise eight overlapping reads, later-write freshness,
+scope isolation, per-request revision responses, failed-build recovery, RPC/MCP
+view separation and admission, child ordering and missing links. In-flight RPC
+builds share only the same requested scope until synchronous construction ends;
+there is no retained snapshot cache. MCP reads keep their existing per-turn
+handling. `neo.open` must still reply before deferred work discovery starts.
+
 ## Workspace project mirroring responsiveness
 
 ```bash
@@ -2479,6 +2515,21 @@ and opt-in home remote metadata (no userinfo; local remotes remain null). Ordina
 home reads retain their old shape and do not fetch remotes. This proves real read
 RPCs and headless rendering, not G8 compaction or external hosting. The browser
 closes itself; stop the isolated daemon/mock with `stop.sh`.
+
+### Goal detail read states
+
+On a fresh synthetic goal-detail seed, run the headless
+`goal-detail-review.mjs <port> "$RUN"`. It updates the goal through actual RPC
+with a null metric and a missing mandate document. The browser delays only the
+first full journal read; the response itself and every other RPC use the real
+isolated daemon. Pending journal reads must show loading without Retry. Once
+released, entries appear, unknown metrics use an em dash (zero/false stay intact),
+and a refused optional home read leaves the loaded goal readable with a plain
+mandate reference and no goal-error alert. Inspect `goal-review.json`,
+`goal-review-loading.png` and `goal-review-metadata.png`. Component contracts also
+cover an optional metadata transport fault and retry after a failed first page.
+The helper closes its browser; stop the daemon/mock with `stop.sh`.
+
 ## In-app previews: compatibility pins (slice 1)
 
 This tests-only slice preserves existing chat reference text, immutable handoff
@@ -2511,16 +2562,20 @@ size and SHA-256 and refuse a foreign daemon reference. Evidence is retained in
 restart, not the future registration door, scoped preview authorization, a removed
 Git worktree, iOS or HTML containment. No credentials, provider/model or live DB.
 
-### Goal detail read states
+## In-app previews: shared contracts (slice 2)
 
-On a fresh synthetic goal-detail seed, run the headless
-`goal-detail-review.mjs <port> "$RUN"`. It updates the goal through actual RPC
-with a null metric and a missing mandate document. The browser delays only the
-first full journal read; the response itself and every other RPC use the real
-isolated daemon. Pending journal reads must show loading without Retry. Once
-released, entries appear, unknown metrics use an em dash (zero/false stay intact),
-and a refused optional home read leaves the loaded goal readable with a plain
-mandate reference and no goal-error alert. Inspect `goal-review.json`,
-`goal-review-loading.png` and `goal-review-metadata.png`. Component contracts also
-cover an optional metadata transport fault and retry after a failed first page.
-The helper closes its browser; stop the daemon/mock with `stop.sh`.
+Run `preview-contracts.test.ts` with the daemon unit runner. It must reject
+malformed/extra authority fields, unsafe byte counts, unknown refusal reasons,
+oversized decoded chunks (including padding edge cases), invalid hashes and
+inconsistent completion metadata. Old publication/todo projections omit the
+optional `artifacts` field. Valid references contain identity and display hints
+only; they authorize nothing. Limits are initial defaults, not worker overrides.
+
+Repeat slice 1's isolated daemon capture/restart journey. Its helper now validates
+a path-free preview reference and each actual handoff chunk against the new
+schemas, without changing the existing operation door. Complete bytes/hash must
+still match. Repeat the headless actual Markdown renderer component suite.
+This Build slice does not register `artifact.file.*`, accept publication artifacts,
+persist references or expose preview UI. Publication/card wiring is slice 12;
+UI/browser and human iOS containment evidence remains in its assigned slices.
+No unattended GUI, provider, credentials, real files or live database are used.
