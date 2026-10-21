@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'preact/hooks';
 import { connectionManager } from '../../lib/connection-manager';
+import { updateGlobalSettings } from '../../lib/api-helpers.ts';
 import { invokeOperation } from '../../lib/operations.ts';
+import { globalSettings } from '../../lib/state.ts';
 import { formatRelativeTime } from '../../lib/utils.ts';
 import { Button } from '../ui/Button.tsx';
 import { FORM_CONTROL_CLASS } from '../ui/FormField.tsx';
@@ -23,6 +25,14 @@ interface Pending {
   name: string | null;
   expiresAt: number;
 }
+interface WouldRefuse {
+  reason: 'host_not_allowed' | 'origin_not_allowed';
+  kind: 'http' | 'ws' | 'preflight';
+  host: string | null;
+  origin: string | null;
+  count: number;
+  lastSeenAt: number;
+}
 interface Unpaired {
   client: 'browser' | 'native';
   origin: string | null;
@@ -41,7 +51,21 @@ type View =
   | { kind: 'loading' }
   | { kind: 'unpaired' }
   | { kind: 'failed'; reason: string }
-  | { kind: 'ready'; devices: Device[]; pending: Pending[]; unpaired: Unpaired[] };
+  | {
+      kind: 'ready';
+      devices: Device[];
+      pending: Pending[];
+      unpaired: Unpaired[];
+      wouldRefuse: WouldRefuse[];
+    };
+
+const REFUSAL_LABEL = {
+  host_not_allowed: 'Host not allowed',
+  origin_not_allowed: 'Origin not allowed',
+  http: 'Page or file',
+  ws: 'WebSocket',
+  preflight: 'CORS preflight',
+} as const;
 
 const KIND_LABEL: Record<Kind, string> = {
   human: 'Phone or browser',
@@ -63,15 +87,17 @@ async function loadView(): Promise<View> {
     return devices.reason.startsWith('not_paired')
       ? { kind: 'unpaired' }
       : { kind: 'failed', reason: devices.reason };
-  const [pending, unpaired] = await Promise.all([
+  const [pending, unpaired, wouldRefuse] = await Promise.all([
     call<{ pending: Pending[] }>('device.pair.pending'),
     call<{ connections: Unpaired[] }>('device.unpaired.list'),
+    call<{ requests: WouldRefuse[] }>('device.would_refuse.list'),
   ]);
   return {
     kind: 'ready',
     devices: devices.devices,
     pending: pending.ok ? pending.pending : [],
     unpaired: unpaired.ok ? unpaired.connections : [],
+    wouldRefuse: wouldRefuse.ok ? wouldRefuse.requests : [],
   };
 }
 
@@ -84,6 +110,14 @@ export function DevicesSettings() {
   const [error, setError] = useState<string | null>(null);
   const [newKind, setNewKind] = useState<Kind>('human');
   const [newName, setNewName] = useState('');
+  const [hosts, setHosts] = useState<string[]>(globalSettings.value?.allowedHosts ?? []);
+  const [newHost, setNewHost] = useState('');
+  const saveHosts = async (next: string[]) => {
+    setError(null);
+    const saved = await updateGlobalSettings({ allowedHosts: next }).catch(() => null);
+    if (saved?.success) setHosts(saved.settings.allowedHosts ?? []);
+    else setError('Could not save the allowed hosts.');
+  };
 
   const reload = () =>
     loadView()
@@ -306,6 +340,70 @@ export function DevicesSettings() {
                 </div>
                 <div class="text-xs text-fg-muted">
                   {item.credentialRejected ? 'Unknown credential' : 'No credential'} · {item.count}{' '}
+                  {item.count === 1 ? 'time' : 'times'}
+                </div>
+              </div>
+            ))}
+          </SettingsGroup>
+        )}
+      </SettingsSection>
+      <SettingsSection
+        title="Allowed hosts"
+        description="Names this daemon answers to besides localhost, such as its Tailscale MagicDNS name. Requests to other hosts or from other sites are only logged until pairing is required."
+      >
+        <SettingsGroup>
+          {hosts.map((host) => (
+            <div key={host} class="flex items-center gap-3 px-4 py-2">
+              <span class="min-w-0 flex-1 truncate font-mono text-sm text-fg-soft">{host}</span>
+              <Button
+                size="sm"
+                variant="secondary"
+                aria-label={`Remove ${host}`}
+                onClick={() => saveHosts(hosts.filter((item) => item !== host))}
+              >
+                Remove
+              </Button>
+            </div>
+          ))}
+        </SettingsGroup>
+        <form
+          class="flex gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const host = newHost.trim().toLowerCase();
+            setNewHost('');
+            if (host && !hosts.includes(host)) void saveHosts([...hosts, host]);
+          }}
+        >
+          <label class="block flex-1">
+            <span class="sr-only">Allowed host</span>
+            <input
+              class={FORM_CONTROL_CLASS}
+              placeholder="mac.tailnet.ts.net"
+              value={newHost}
+              onInput={(event) => setNewHost(event.currentTarget.value)}
+            />
+          </label>
+          <Button type="submit" disabled={!newHost.trim()}>
+            Add host
+          </Button>
+        </form>
+      </SettingsSection>
+      <SettingsSection
+        title="Would be refused"
+        description="Requests the Origin and Host checks will refuse once pairing is required. Add a host above if it is yours."
+      >
+        {view.wouldRefuse.length === 0 ? (
+          <div class="px-1 text-xs text-fg-faint">None seen.</div>
+        ) : (
+          <SettingsGroup>
+            {view.wouldRefuse.map((item) => (
+              <div key={`${item.reason}${item.kind}${item.host}${item.origin}`} class="px-4 py-3">
+                <div class="truncate text-sm text-fg-soft">
+                  {[item.host, item.origin].filter(Boolean).join(' · ')}
+                </div>
+                <div class="text-xs text-fg-muted">
+                  {REFUSAL_LABEL[item.reason]} · {REFUSAL_LABEL[item.kind]} · {item.count}{' '}
                   {item.count === 1 ? 'time' : 'times'}
                 </div>
               </div>

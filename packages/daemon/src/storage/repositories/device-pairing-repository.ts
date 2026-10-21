@@ -72,6 +72,51 @@ export class DevicePairingRepository {
       .run(...key, now, now, UNPAIRED_ROW_CAP);
   }
 
+  recordWouldRefuse(
+    seen: { reason: string; kind: string; host: string | null; origin: string | null },
+    now: number
+  ): void {
+    const key = [
+      seen.reason,
+      seen.kind,
+      seen.host?.slice(0, UNPAIRED_FIELD_MAX) ?? null,
+      seen.origin?.slice(0, UNPAIRED_FIELD_MAX) ?? null,
+    ];
+    const seenAgain = this.db
+      .prepare(
+        `UPDATE would_refuse_requests SET count = count + 1, last_seen_at = ?
+         WHERE reason = ? AND kind = ? AND IFNULL(host, '') = IFNULL(?, '')
+           AND IFNULL(origin, '') = IFNULL(?, '')`
+      )
+      .run(now, ...key);
+    if (seenAgain.changes > 0) return;
+    this.db
+      .prepare(
+        `INSERT INTO would_refuse_requests (reason, kind, host, origin, first_seen_at, last_seen_at)
+         SELECT ?, ?, ?, ?, ?, ?
+         WHERE (SELECT COUNT(*) FROM would_refuse_requests) < ?`
+      )
+      .run(...key, now, now, UNPAIRED_ROW_CAP);
+  }
+
+  listWouldRefuse(): {
+    reason: 'host_not_allowed' | 'origin_not_allowed';
+    kind: 'http' | 'ws' | 'preflight';
+    host: string | null;
+    origin: string | null;
+    count: number;
+    firstSeenAt: number;
+    lastSeenAt: number;
+  }[] {
+    return this.db
+      .prepare(
+        `SELECT reason, kind, host, origin, count, first_seen_at AS firstSeenAt,
+           last_seen_at AS lastSeenAt
+         FROM would_refuse_requests ORDER BY last_seen_at DESC, rowid DESC`
+      )
+      .all() as ReturnType<DevicePairingRepository['listWouldRefuse']>;
+  }
+
   isActiveDevice(id: string): boolean {
     return !!this.db
       .prepare('SELECT 1 FROM paired_devices WHERE id = ? AND revoked_at IS NULL')

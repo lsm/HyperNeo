@@ -24,6 +24,17 @@ vi.mock('../../../lib/connection-manager', () => ({
   },
 }));
 
+const { settings, mockUpdate } = vi.hoisted(() => ({
+  settings: { value: { allowedHosts: ['lan.local'] } as { allowedHosts?: string[] } | null },
+  mockUpdate: vi.fn(async (updates: { allowedHosts: string[] }) => ({
+    success: true,
+    settings: updates,
+  })),
+}));
+
+vi.mock('../../../lib/state.ts', () => ({ globalSettings: settings }));
+vi.mock('../../../lib/api-helpers.ts', () => ({ updateGlobalSettings: mockUpdate }));
+
 import { DevicesSettings } from '../DevicesSettings.tsx';
 
 type Invocation = { name: string; input: Record<string, unknown> };
@@ -85,6 +96,21 @@ function daemon(state: { paired: boolean; pending?: unknown[] }) {
           },
         ],
       };
+    if (name === 'device.would_refuse.list')
+      return {
+        ok: true,
+        requests: [
+          {
+            reason: 'host_not_allowed',
+            kind: 'ws',
+            host: 'nas.lan:9283',
+            origin: null,
+            count: 7,
+            firstSeenAt: 1,
+            lastSeenAt: Date.now(),
+          },
+        ],
+      };
     if (name === 'device.pair.approve' && input.codeId === 'expired')
       return { ok: false, reason: 'not_pending: no pending code with that id.' };
     if (name === 'device.pair.approve') {
@@ -111,6 +137,7 @@ function daemon(state: { paired: boolean; pending?: unknown[] }) {
 describe('DevicesSettings', () => {
   beforeEach(() => {
     mockRequest.mockReset();
+    mockUpdate.mockClear();
   });
   afterEach(() => cleanup());
 
@@ -147,6 +174,24 @@ describe('DevicesSettings', () => {
     expect(invoked('device.pair.approve')).toEqual([
       { name: 'device.pair.approve', input: { codeId: 'code-1' } },
     ]);
+  });
+
+  it('shows requests the Origin/Host checks would refuse, and edits the allowed hosts', async () => {
+    daemon({ paired: true });
+    render(<DevicesSettings />);
+    await waitFor(() => screen.getByText('Host not allowed · WebSocket · 7 times'));
+    expect(screen.getByText('lan.local')).toBeTruthy();
+    fireEvent.input(screen.getByLabelText('Allowed host'), {
+      target: { value: ' Mac.Tailnet.ts.net ' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add host' }));
+    await waitFor(() =>
+      expect(mockUpdate).toHaveBeenCalledWith({ allowedHosts: ['lan.local', 'mac.tailnet.ts.net'] })
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove lan.local' }));
+    await waitFor(() =>
+      expect(mockUpdate).toHaveBeenLastCalledWith({ allowedHosts: ['mac.tailnet.ts.net'] })
+    );
   });
 
   it('marks this browser and offers no way to revoke or re-pair it from itself', async () => {

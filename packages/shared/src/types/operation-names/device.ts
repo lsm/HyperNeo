@@ -6,4 +6,5 @@ export const DEVICE_OPERATION_NAMES = [
   'device.pair.reset_lockout',
   'device.revoke',
   'device.unpaired.list',
+  'device.would_refuse.list',
 ] as const;
