@@ -1,6 +1,6 @@
 # Daemon security: pairing, Origin/Host checks, loopback by default
 
-Status: proposal for #7975, awaiting the human's approval. Nothing here is built yet.
+Status: approved for #7975. S1 is merged; later slices are not built yet.
 Nobody has checked the phone's saved address, the live listen address or the Tailscale
 ACLs. This design does not touch them; the migration below decides when they change.
 
