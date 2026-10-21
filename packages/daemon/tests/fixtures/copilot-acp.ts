@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 
@@ -31,6 +31,12 @@ input.on('line', (line) => {
       });
       break;
     case 'session/list':
+      if (existsSync(join(home, 'copilot-list.json'))) {
+        reply(msg.id, {
+          sessions: JSON.parse(readFileSync(join(home, 'copilot-list.json'), 'utf8')),
+        });
+        break;
+      }
       reply(
         msg.id,
         msg.params?.cursor
