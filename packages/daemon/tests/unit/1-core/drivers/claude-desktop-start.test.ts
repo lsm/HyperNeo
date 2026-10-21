@@ -200,6 +200,8 @@ describe('claude-desktop start', () => {
         status: 'running',
         lastActivityAt: 1_000,
         receipt: { executionId: 'u1', inputId: 'u-open' },
+        watchHint:
+          'Watch this Claude Code session via Neo with work.status using this work ref. It is not registered in Claude Desktop yet.',
       },
     });
     expect(spawned).toEqual([

@@ -779,6 +779,7 @@ describe('claude-desktop adapter against the app session records', () => {
         delivered: true,
         receipt: { executionId: 'cli-b2', inputId: 'in-b2' },
         confirmedAt: Date.parse('2026-10-18T01:00:00.000Z'),
+        remoteControl: false,
       },
     };
 
