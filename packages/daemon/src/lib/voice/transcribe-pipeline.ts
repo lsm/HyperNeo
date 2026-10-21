@@ -50,6 +50,7 @@ export function createVoiceTranscribeLimiters(): VoiceTranscribeLimiters {
 }
 
 export interface VoiceTranscribeDeps {
+  beforeDispatch?: () => void;
   settingsManager: Pick<SettingsManager, 'getGlobalSettings'>;
   credentialManager?: Pick<ProviderCredentialManager, 'getCredentials'>;
   limiters: VoiceTranscribeLimiters;
@@ -335,7 +336,8 @@ async function fetchTranscription(ctx: VoiceTranscribeCtx): Promise<VoiceTranscr
     ctx.allowPrivateNetwork!,
     ctx.allowInsecureTls!,
     ctx.controller.signal,
-    ctx.tlsCaPem
+    ctx.tlsCaPem,
+    ctx.deps.beforeDispatch
   );
   return { ...ctx, response };
 }

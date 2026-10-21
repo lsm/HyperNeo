@@ -1,3 +1,7 @@
+import type { Database } from '../../storage/sqlite-compat.ts';
+import { VoiceRecordingRepository } from '../../storage/repositories/voice-recording-repository.ts';
+import type { UpgradeIdentity } from '../pairing/upgrade-auth.ts';
+import { VoiceRecordingTranscription, runRecordedVoice } from '../voice/recording-transcription.ts';
 import {
   createEventMessage,
   type CallContext,
@@ -10,6 +14,7 @@ import { VoiceStream, type VoiceStreamText } from '../voice/stream-relay.ts';
 import { createVoiceTranscribeLimiters, runVoiceTranscribe } from '../voice/transcribe-pipeline.ts';
 
 interface VoiceTranscribeRequest {
+  recordingId?: string;
   audioBase64: string;
   mimeType: 'audio/wav';
 }
@@ -45,7 +50,7 @@ export function admitVoiceStreamStart(
 export function expireIdleVoiceStreams(now: number): void {
   for (const [id, owned] of voiceStreams)
     if (now - owned.touchedAt > VOICE_STREAM_IDLE_MS) {
-      owned.stream.close();
+      owned.stream.close('idle_timeout');
       voiceStreams.delete(id);
     }
 }
@@ -63,11 +68,23 @@ export function resetVoiceTranscriptionLimitsForTests(): void {
 export function registerVoiceHandlers(
   messageHub: MessageHub,
   settingsManager: SettingsManager,
-  credentialManager?: ProviderCredentialManager
+  credentialManager?: ProviderCredentialManager,
+  recording?: { db: Database; deviceOf: (clientId: string) => UpgradeIdentity | null }
 ): void {
+  const recordings = recording
+    ? new VoiceRecordingTranscription(new VoiceRecordingRepository(recording.db))
+    : undefined;
   messageHub.onRequest<VoiceTranscribeRequest, VoiceTranscribeResponse>(
     'voice.transcribe',
-    (data, context) => transcribeViaPipeline(settingsManager, credentialManager, data, context)
+    (data, context) =>
+      transcribeViaPipeline(
+        settingsManager,
+        credentialManager,
+        data,
+        context,
+        recordings,
+        context?.clientId ? (recording?.deviceOf(context.clientId)?.deviceId ?? 'local') : 'local'
+      )
   );
 
   messageHub.onRequest<{ encoding?: string; sampleRate?: number }>(
@@ -89,6 +106,7 @@ export function registerVoiceHandlers(
       try {
         const streamId = crypto.randomUUID();
         const started = await VoiceStream.start(streamId, {
+          clientId,
           voice: () => settingsManager.getGlobalSettings().voice,
           credentialManager,
           transcribeWav: (audioBase64) =>
@@ -108,12 +126,12 @@ export function registerVoiceHandlers(
         if ('error' in started) throw new Error(started.error);
         const router = messageHub.getRouter?.();
         if (context?.clientId && router && !router.getClientById(context.clientId)) {
-          started.stream.close();
+          started.stream.close('client_disconnected');
           throw new Error('The client disconnected while the voice stream was starting');
         }
         for (const [id, owned] of voiceStreams)
           if (owned.clientId === clientId) {
-            owned.stream.close();
+            owned.stream.close('replaced');
             voiceStreams.delete(id);
           }
         voiceStreams.set(streamId, { stream: started.stream, clientId, touchedAt: Date.now() });
@@ -163,7 +181,7 @@ export function registerVoiceHandlers(
     voiceStreamStarts.delete(clientId);
     for (const [id, owned] of voiceStreams)
       if (owned.clientId === clientId) {
-        owned.stream.close();
+        owned.stream.close('client_disconnected');
         voiceStreams.delete(id);
       }
   });
@@ -190,13 +208,20 @@ async function transcribeViaPipeline(
   settingsManager: SettingsManager,
   credentialManager: ProviderCredentialManager | undefined,
   data: VoiceTranscribeRequest,
-  context: CallContext | undefined
+  context: CallContext | undefined,
+  recordings?: VoiceRecordingTranscription,
+  owner = 'local'
 ): Promise<VoiceTranscribeResponse> {
-  const outcome = await runVoiceTranscribe({
-    data,
-    context,
-    deps: { settingsManager, credentialManager, limiters: transcriptionLimiters },
-  });
+  const submit = (beforeDispatch?: () => void) =>
+    runVoiceTranscribe({
+      data,
+      context,
+      deps: { settingsManager, credentialManager, limiters: transcriptionLimiters, beforeDispatch },
+    });
+  const outcome =
+    data?.recordingId === undefined
+      ? await submit()
+      : await runRecordedVoice(data, owner, recordings, submit);
   if (outcome.action === 'transcribed') return { text: outcome.text };
   throw new Error(outcome.action === 'denied' ? outcome.message : outcome.error);
 }

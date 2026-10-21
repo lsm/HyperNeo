@@ -1,3 +1,4 @@
+import WebSocket from 'ws';
 import { describe, expect, it } from 'bun:test';
 import { createNodeServer } from '../../../src/lib/runtime-server/node-backend';
 import type { ServerHandle } from '../../../src/lib/runtime-server/types';
@@ -10,6 +11,30 @@ async function withNodeServer(
 }
 
 describe('runtime-server node backend', () => {
+  it('forwards the real WebSocket close code and reason to the runtime handler', async () => {
+    let closed: unknown[] = [];
+    let done: () => void = () => {};
+    const observed = new Promise<void>((resolve) => {
+      done = resolve;
+    });
+    const server = await withNodeServer((request, upgrade) => upgrade(request, {})!, {
+      close: (...args) => {
+        closed = args;
+        done();
+      },
+    });
+    const socket = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
+    try {
+      await new Promise((resolve) => socket.once('open', resolve));
+      socket.close(1001, 'synthetic departure');
+      await observed;
+      expect(closed.slice(1)).toEqual([1001, 'synthetic departure']);
+    } finally {
+      socket.terminate();
+      server.stop(true);
+    }
+  });
+
   it('streams response bodies incrementally instead of buffering until completion', async () => {
     let streamEndStarted = 0;
     const server = await withNodeServer(async () => {

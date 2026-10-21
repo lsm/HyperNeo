@@ -1,0 +1,33 @@
+{
+  "ids": {
+    "report.json": "fe99db7b-5416-4c80-a54b-c9d55c0058a6",
+    "large.log": "14380e0c-a348-48e4-a8e6-a1742239b316",
+    "chart.png": "d4e25bb8-0a03-40ae-a125-8b8d76b7ea99",
+    "oversized.png": "1909bf28-0e4f-44a9-a81c-f47cb2d30443"
+  },
+  "observed": {
+    "390": {
+      "formattedJson": true,
+      "inertMarkup": true,
+      "copy": false,
+      "secureContext": false,
+      "imagePixels": 576,
+      "oversizedRefused": true,
+      "omittedBytes": 1017893,
+      "downloadBytes": 1280037,
+      "sha256": "7874a66f45368b0f57d4a8da6b4d3a3a53ab636add99167c19807a391138c16c"
+    },
+    "1280": {
+      "formattedJson": true,
+      "inertMarkup": true,
+      "copy": false,
+      "secureContext": false,
+      "imagePixels": 576,
+      "oversizedRefused": true,
+      "omittedBytes": 1017893,
+      "downloadBytes": 1280037,
+      "sha256": "7874a66f45368b0f57d4a8da6b4d3a3a53ab636add99167c19807a391138c16c"
+    }
+  },
+  "offOrigin": []
+}

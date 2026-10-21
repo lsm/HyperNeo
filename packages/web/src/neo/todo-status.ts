@@ -15,3 +15,14 @@ export function neoTodoStatus(todo: Pick<NeoTodoEntry, 'status' | 'statusCodes'>
 export function neoQuestionText(question: Pick<NeoQuestionEntry, 'text' | 'textCodes'>): string {
   return neoCodedText(question.text, question.textCodes);
 }
+
+export function neoTodoDetail(todo: NeoTodoEntry): string[] {
+  const status = neoTodoStatus(todo).trim();
+  return [
+    ...new Set(
+      [todo.report, todo.evidence]
+        .map((text) => text?.trim())
+        .filter((text): text is string => !!text && text !== status)
+    ),
+  ];
+}
