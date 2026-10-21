@@ -226,10 +226,16 @@ itself (see Enforcement). Goals and journals stay in the DB; their milestones re
   bound to the local and fetched remote revisions. Its card shows the path and a
   compact diff; View full versions opens the complete preserved texts as a
   read-only document, including after an answer. Retrying the same revisions
-  reuses the question. Answering records a preference without applying it in this
-  presentation slice. The next H3 slice must apply that recorded choice through
-  `neo.home.save`, retaining protected-file confirmation and refusing stale
-  versions; it must never auto-resolve or discard human edits.
+  reuses the question. Answering records a preference; `neo.home.save` with
+  `conflictQuestionId` applies a current human Keep local/Use remote choice to one
+  regular conflicting document using the exact chosen bytes. Direction/mandate
+  still require a separate actual human yes bound to path/SHA through `questionId`.
+  A staged merge retains both histories, refuses changed snapshots and human edits,
+  and publishes with a remote revision lease. A remote race during push retains
+  the named local merge as `push_failed`; it never overwrites changed remote history
+  or rolls back over human edits. Multi-file/deletion choices and Review together
+  refuse for further human review. A successful save updates that runtime wake’s
+  sync receipt so the next read sees the applied document without another pull.
 
 ## 2. Scheduler subsystem (fs3)
 

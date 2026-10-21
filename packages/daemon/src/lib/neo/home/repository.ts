@@ -19,6 +19,7 @@ import { dirname, join } from 'node:path';
 import type { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
 import { neoDerivedId } from '../derived-id.ts';
+import { applyHomeChoice } from './apply-choice.ts';
 import type { HomeConflict, HomeFailure } from './conflicts.ts';
 import { homeRemoteUrl, type HomeReadInput, type HomeReadResult } from './read.ts';
 import type { HomeSavePlan, HomeSaveResult } from './save.ts';
@@ -38,17 +39,22 @@ export class NeoHomeRepository {
     private readonly networkTimeoutMs = 30_000
   ) {}
 
-  private async git(args: string[], allowFailure = false, network = false) {
-    return this.command(['git', '-c', 'core.hooksPath=/dev/null', ...args], allowFailure, network);
+  private async git(args: string[], allowFailure = false, network = false, cwd = this.root) {
+    return this.command(
+      ['git', '-c', 'core.hooksPath=/dev/null', ...args],
+      allowFailure,
+      network,
+      cwd
+    );
   }
 
   github(args: string[]) {
     return this.command(['gh', ...args], true, true);
   }
 
-  private async command(args: string[], allowFailure = false, network = false) {
+  private async command(args: string[], allowFailure = false, network = false, cwd = this.root) {
     const child = spawnProcess(args, {
-      cwd: this.root,
+      cwd,
       stdout: 'pipe',
       stderr: 'pipe',
       detached: network,
@@ -190,7 +196,7 @@ export class NeoHomeRepository {
               .slice(
                 0,
                 350
-              )}\n\nLocal → remote (excerpt):\n\n${'`'.repeat(8)}diff\n${excerpt.slice(0, 1000).replaceAll('`', '\u02cb')}\n${'`'.repeat(8)}\n\nWhich version should we use? View full versions before choosing. Your answer records a choice; it does not apply a change yet.`,
+              )}\n\nLocal → remote (excerpt):\n\n${'`'.repeat(8)}diff\n${excerpt.slice(0, 1000).replaceAll('`', '\u02cb')}\n${'`'.repeat(8)}\n\nWhich version should we use? View full versions before choosing. Your answer records a choice; it does not apply a change by itself. Ask Neo to save the chosen version; protected documents require separate confirmation.`,
             document: versions.length
               ? versions.join('\n\n────────────────\n\n')
               : `Local (${local})\n\nRemote (${remote})\n\nNo document differences; the branch histories diverge. Review the preserved histories with the human before reconciling.`,
@@ -368,8 +374,12 @@ export class NeoHomeRepository {
     });
   }
 
-  save(input: HomeSavePlan): Promise<HomeSaveResult> {
-    return this.sequence(() => this.write(input));
+  save(input: HomeSavePlan, wake?: object): Promise<HomeSaveResult> {
+    return this.sequence(async () => {
+      const result = await this.write(input);
+      if (result.ok && wake) this.readSyncs.set(wake, Promise.resolve({ value: null }));
+      return result;
+    });
   }
 
   private async hasSymbolicLink(path: string): Promise<boolean> {
@@ -459,6 +469,19 @@ export class NeoHomeRepository {
           })
         ).some((name) => name !== '.coordinators');
     if (dirty) return { ok: false, reason: 'dirty: review existing home changes before saving.' };
+    if (input.resolution) {
+      if (!metadata)
+        return { ok: false, reason: 'stale_conflict: the home repository is missing.' };
+      for (const path of paths)
+        if (!(await this.git(['check-ignore', '-q', '--', path], true)).code)
+          return {
+            ok: false,
+            reason: 'ignored_path: this document or decision log is git-ignored.',
+          };
+      return applyHomeChoice(this.root, input, (args, failure, network, cwd) =>
+        this.git(args, failure, network, cwd)
+      );
+    }
     const initialized = await this.initialize();
     if (!initialized.ok) return initialized;
     const synced = await this.synchronize();
