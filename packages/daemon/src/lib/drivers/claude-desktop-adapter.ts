@@ -969,12 +969,16 @@ export async function openIdleClaudeSession(
   if (running(liveSessions)) return { value: liveSessions };
   const recheck = await deps.liveSessions().catch(() => liveSessions);
   if (running(recheck)) return { value: recheck };
+  const folder = record.cwd ?? record.originCwd ?? deps.homeDir;
+  if (!deps.folderExists(folder))
+    return {
+      reason: reject(
+        'unreachable',
+        `${record.title} is not open in Claude Desktop, and its folder ${folder} no longer exists, so it cannot be reopened.`
+      ),
+    };
   try {
-    launchInClaudeDesktop(
-      record.cliSessionId,
-      record.cwd ?? record.originCwd ?? deps.homeDir,
-      deps
-    );
+    launchInClaudeDesktop(record.cliSessionId, folder, deps);
   } catch (error) {
     return {
       reason: reject(
@@ -1284,8 +1288,12 @@ export async function startClaudeSession(
   }
   if (!record) return needsYou('Claude Desktop did not import the new session.');
   const live = await waitUntilLive(cliSessionId, deps);
-  const owner = live ? requireClaudePeerOwner(cliSessionId, live) : null;
-  if (!live || !owner || 'reason' in owner || owner.value.owner !== 'desktop')
+  if (!live)
+    return needsYou(
+      `Claude Desktop imported the new session but will not run it until you open it: claude://claude.ai/epitaxy/${sessionId}.`
+    );
+  const owner = requireClaudePeerOwner(cliSessionId, live);
+  if ('reason' in owner || owner.value.owner !== 'desktop')
     return needsYou('Claude Desktop did not open the new session.');
   const sent = await sendOwnedClaudeMessage(
     { ...record, cliSessionId },
