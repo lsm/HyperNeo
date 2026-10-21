@@ -109,13 +109,13 @@ describe('ACP agent helpers', () => {
     expect(findAcpAgentBinary('copilot', '/nowhere')).toBeNull();
   });
 
-  test('gitWorktreeProject maps a linked worktree to its main repository', () => {
+  test('gitWorktreeProject maps a linked worktree to its main repository', async () => {
     const root = mkdtempSync(join(tmpdir(), 'acp-wt-'));
     const worktree = join(root, 'wt');
     mkdirSync(worktree);
     writeFileSync(join(worktree, '.git'), `gitdir: ${root}/repo/.git/worktrees/wt\n`);
-    expect(gitWorktreeProject(worktree)).toBe(`${root}/repo`);
-    expect(gitWorktreeProject(root)).toBe(root);
+    expect(await gitWorktreeProject(worktree)).toBe(`${root}/repo`);
+    expect(await gitWorktreeProject(root)).toBe(root);
   });
 
   test('copilotSessionFolder reads the starting folder from the session log', async () => {
