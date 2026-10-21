@@ -226,6 +226,27 @@ describe('SessionSchedules', () => {
       expect(rows[0].dueCount).toBe(dueCount);
     }
   );
+  it('keeps the count unknown while loading or failed, then shows an actual empty result', async () => {
+    let reject!: (error: Error) => void;
+    request.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, fail) => {
+          reject = fail;
+        })
+    );
+    const { container } = render(<SessionSchedules sessionId="root" />);
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+    const summary = container.querySelector('summary')!;
+    expect(summary.textContent?.trim()).toBe('Schedules');
+    reject(new Error('Read unavailable'));
+    await screen.findByText('Read unavailable');
+    expect(summary.textContent?.trim()).toBe('Schedules');
+    rows = [];
+    fireEvent.click(summary);
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh schedules' }));
+    await screen.findByText('No schedules');
+    expect(summary.textContent?.trim()).toBe('Schedules · 0');
+  });
   it('localizes the visible strip and controls', async () => {
     locale.value = 'zh-Hans';
     render(<SessionSchedules sessionId="root" />);
