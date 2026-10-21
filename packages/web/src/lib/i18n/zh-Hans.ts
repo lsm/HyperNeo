@@ -50,6 +50,8 @@ export const zhHans: Record<keyof typeof en, string> = {
   'ask.markDone': '标记做完',
   'ask.drop': '放弃这件事',
   'ask.moreDone': '{count} 项已完成 — 展开',
+  'ask.moreDoneFailed': '已完成的待办没读出来。',
+  'ask.moreDoneRefused': '已完成的待办没读出来：{reason}',
   'ask.todos': '待办',
   'ask.removed': '已移除',
   'ask.answered': '已回答',

@@ -576,6 +576,31 @@ describe('done todos on a card', () => {
     expect(many.queryByRole('button', { name: /done — show more/ })).toBeNull();
   });
 
+  it('says when done todos could not be read and lets the reader try again', async () => {
+    const onLoadDone = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Not connected'))
+      .mockResolvedValueOnce({ ok: false, reason: 'not_found: no such ask.' });
+    const app = render(
+      <NeoAskTodos
+        entry={entry({ todos: [todo('a')], doneCount: 3 })}
+        onAnswer={vi.fn()}
+        onLoadDone={onLoadDone}
+      />
+    );
+    fireEvent.click(app.getByRole('button', { name: '3 done — show more' }));
+    await waitFor(() =>
+      expect(app.getByRole('alert').textContent).toBe('Couldn’t load the done todos.')
+    );
+    fireEvent.click(app.getByRole('button', { name: '3 done — show more' }));
+    await waitFor(() =>
+      expect(app.getByRole('alert').textContent).toBe(
+        'Couldn’t load the done todos: not_found: no such ask.'
+      )
+    );
+    expect(rows(app)).toEqual(['a']);
+  });
+
   it('pages done todos the snapshot left out through neo.ask.doneTodos', async () => {
     const onLoadDone = vi
       .fn()

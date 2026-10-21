@@ -48,6 +48,8 @@ export const en = {
   'ask.markDone': 'Mark done',
   'ask.drop': 'Drop this ask',
   'ask.moreDone': '{count} done — show more',
+  'ask.moreDoneFailed': 'Couldn’t load the done todos.',
+  'ask.moreDoneRefused': 'Couldn’t load the done todos: {reason}',
   'ask.todos': 'Todos',
   'ask.removed': 'Removed',
   'ask.answered': 'Answered',

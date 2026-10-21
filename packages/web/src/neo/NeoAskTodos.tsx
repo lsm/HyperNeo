@@ -339,6 +339,7 @@ export function NeoAskTodos({
   const [doneOpen, setDoneOpen] = useState(false);
   const [paged, setPaged] = useState<NeoTodoEntry[]>([]);
   const [paging, setPaging] = useState(false);
+  const [doneError, setDoneError] = useState<string | null>(null);
   const { ask, todos } = entry;
   const asked = entry.questions.filter((question) => question.state === 'open');
   const answered = entry.questions.filter((question) => question.state === 'answered');
@@ -360,10 +361,13 @@ export function NeoAskTodos({
     setDoneOpen(true);
     if (sent.length > 0 || !onLoadDone || paging) return;
     setPaging(true);
+    setDoneError(null);
     void onLoadDone(ask.id, paged.length)
       .then((page) => {
         if (page.ok) setPaged((current) => [...current, ...page.todos]);
+        else setDoneError(t('ask.moreDoneRefused', { reason: page.reason }));
       })
+      .catch(() => setDoneError(t('ask.moreDoneFailed')))
       .finally(() => setPaging(false));
   };
   const removed = todos.filter((todo) => todo.state === 'removed' && !inQuestion.has(todo.id));
@@ -432,6 +436,11 @@ export function NeoAskTodos({
         >
           {t('ask.moreDone', { count: hiddenDone })}
         </button>
+      )}
+      {doneError && (
+        <p role="alert" class="mt-1 text-xs text-danger">
+          {doneError}
+        </p>
       )}
       {open && hasDetails && (
         <div data-ask-details class="mt-3 space-y-3 text-sm text-fg-muted">
