@@ -42,6 +42,8 @@ import { Logger } from '../logger.ts';
 import { getProviderCatalogEpoch, resolveSessionContextModelInfo } from '../model-service.ts';
 import { getProviderContextManager } from '../providers/factory.ts';
 import { sessionSdkPath } from '../neo/session-policy.ts';
+import { neoModelFallbacks } from '../neo/model-fallback.ts';
+import { isRetryableProviderError } from './transient-error-patterns.ts';
 import { isTurnEndAckEligible, selectPersistedAckRow } from './ack-selection.ts';
 import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker.ts';
 import { contextBudgetThreshold } from './context-budget-decision.ts';
@@ -1565,7 +1567,14 @@ export class SDKMessageHandler {
       terminalReason,
       rateLimitInfo: this.lastRateLimitInfo ?? undefined,
     });
-    if (!assessment.isLimit) return null;
+    if (
+      !assessment.isLimit &&
+      !(
+        neoModelFallbacks(this.ctx.db, this.ctx.session.id)?.length &&
+        isRetryableProviderError(errorText)
+      )
+    )
+      return null;
     return {
       errorText,
       hint: {

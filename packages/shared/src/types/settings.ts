@@ -76,6 +76,7 @@ export interface FileOnlySettings {
 export interface FallbackModelEntry {
   model: string;
   provider: string;
+  thinkingLevel?: ThinkingLevel;
 }
 
 export interface VoiceSettings {
@@ -101,6 +102,7 @@ export interface NeoModelPreference {
   model: string;
   provider: string;
   thinkingLevel: ThinkingLevel;
+  fallbacks?: (FallbackModelEntry & { thinkingLevel: ThinkingLevel })[];
 }
 
 export const NEO_WORKER_PERMISSION_MODES = [
