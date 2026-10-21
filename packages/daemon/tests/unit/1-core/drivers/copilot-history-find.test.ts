@@ -5,7 +5,9 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   renameSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -28,8 +30,8 @@ type Readable = WorkAdapter & {
 const fixtures: ReturnType<typeof setup>[] = [];
 const context = { from: 'chat', caller: { source: 'rpc' } } as WorkCallContext;
 const query = { includeClosed: true, limit: 20 };
-function setup() {
-  const run = mkdtempSync(join(tmpdir(), 'copilot-history-'));
+function setup(projectFolder?: string) {
+  const run = realpathSync(mkdtempSync(join(tmpdir(), 'copilot-history-')));
   mkdirSync(join(run, 'home'));
   const cliPath = join(run, 'copilot');
   const source = fileURLToPath(new URL('../../../fixtures/copilot-sdk.ts', import.meta.url));
@@ -47,12 +49,13 @@ function setup() {
     now: Date.now,
     listSessions: async () => external,
     ownSessions: () => new Set(),
-    projectFolder: () => run,
+    projectFolder: () => projectFolder ?? run,
   });
   const deps = {
     cliPath,
     directory: join(run, 'owned'),
     machine: 'test',
+    projectFolder: () => projectFolder ?? run,
     env: { HOME: join(run, 'home'), PATH: process.env.PATH ?? '' },
     homeDir: join(run, 'home'),
     folderExists: existsSync,
@@ -147,6 +150,12 @@ describe('Copilot owned history and discovery', () => {
       'assistant:long-10',
       'assistant:long-11',
     ]);
+    const original = readFileSync(file);
+    writeFileSync(file, '{}\n');
+    expect(f.read(work, undefined, 1, 1, first?.nextCursor)?.availability).toBe(
+      'reply_unavailable'
+    );
+    writeFileSync(file, original);
     renameSync(file, file + '.preserved');
     writeFileSync(file, '{}\n');
     expect(f.read(work, undefined, 1, 1, first?.nextCursor)?.availability).toBe(
@@ -195,5 +204,78 @@ describe('Copilot owned history and discovery', () => {
     expect(orphan?.status).toBe('needs_you');
     expect(orphan?.watchHint).toContain('unavailable');
     expect(readFileSync(join(f.run, 'calls.jsonl'), 'utf8')).not.toContain('session.resume');
+  });
+  test('bounded byte pages handle UTF-8, malformed records and oversized lines without mutating history', async () => {
+    const f = setup();
+    const work = await f.start();
+    const file = f.history(work);
+    appendFileSync(
+      file,
+      JSON.stringify({
+        type: 'assistant.message',
+        timestamp: new Date().toISOString(),
+        data: { messageId: 'oversized', content: '界'.repeat(100000) },
+      }) + '\n'
+    );
+    appendFileSync(
+      file,
+      'malformed\n' +
+        JSON.stringify({
+          type: 'unknown.fixture',
+          timestamp: new Date().toISOString(),
+          data: { content: 'DO_NOT_SHOW' },
+        }) +
+        '\n'
+    );
+    appendFileSync(
+      file,
+      JSON.stringify({
+        type: 'assistant.message',
+        timestamp: new Date().toISOString(),
+        data: { messageId: 'tail', content: '尾部' },
+      }) + '\n'
+    );
+    const original = readFileSync(file);
+    const page = f.read(work, undefined, 1, 1);
+    expect(page?.turns.map((t) => t.text)).toEqual(['尾部']);
+    expect(page?.availability).toBe('incomplete');
+    expect(page?.nextCursor).toBeDefined();
+    expect(readFileSync(file)).toEqual(original);
+    const detail = await f.adapter.status!(work.ref, undefined, work.receipt);
+    expect(detail).toMatchObject({
+      ok: true,
+      value: {
+        lastReply: 'HISTORY_REPLY',
+        inputEvidence: { replyReport: 'HISTORY_REPLY', replyAvailability: 'complete' },
+      },
+    });
+    renameSync(file, file + '.preserved');
+    symlinkSync(file + '.preserved', file);
+    expect(f.read(work)?.availability).toBe('reply_unavailable');
+  });
+
+  test('find keeps grouped project and execution folder distinct and never completes uncertain accepted work', async () => {
+    const f = setup('/synthetic/grouped-project');
+    const work = await f.start();
+    const path = join(f.run, 'owned', `${work.ref.id}.json`);
+    await f.restart();
+    const record = JSON.parse(readFileSync(path, 'utf8'));
+    record.pendingSubmission = true;
+    record.snapshot.status = 'unreachable';
+    writeFileSync(path, JSON.stringify(record));
+    const items = (
+      await f.adapter.find({ ...query, folder: '/synthetic/grouped-project' })
+    ).flatMap((g) => g.work);
+    expect(items.find((w) => w.ref.id === work.ref.id)).toMatchObject({
+      status: 'queued',
+      place: { folder: '/synthetic/grouped-project' },
+      watchHint: expect.stringContaining('unavailable'),
+    });
+    expect(await f.adapter.status!(work.ref)).toMatchObject({ ok: false, reason: 'unreachable' });
+    expect(await f.adapter.status!(work.ref, undefined, work.receipt)).toMatchObject({
+      ok: true,
+      value: { execution: { directory: f.run }, lastReply: 'HISTORY_REPLY' },
+    });
+    expect(await f.adapter.find({ ...query, spaceId: 'external-space' })).toEqual([]);
   });
 });
