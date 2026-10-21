@@ -392,6 +392,10 @@ export function createCopilotAdapter(
       );
     },
     capabilities: ['find', 'start', 'send', 'queue', 'status', 'stop'] as const,
+    unsupportedCapabilities: {
+      steer:
+        'Copilot strict same-turn steering is unsupported: immediate input can fall back to a later turn; the pinned protocol has no expected-active-turn precondition. Use auto or queue for explicit enqueue delivery.',
+    },
     start: (request: W.StartRequest) => {
       const pending = guard(() => start(request));
       starts.add(pending);
