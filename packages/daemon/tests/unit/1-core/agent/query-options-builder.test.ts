@@ -104,6 +104,7 @@ describe('QueryOptionsBuilder', () => {
         updateSession: updateSessionSpy,
         getSDKMessages: getSDKMessagesSpy,
         getSession: getSessionSpy,
+        getGlobalSettings: () => ({ settingSources: [] }),
       } as QueryOptionsBuilderContext['db'],
     };
 
@@ -1432,6 +1433,45 @@ describe('QueryOptionsBuilder', () => {
       const result = builder.addSessionStateOptions(options);
 
       expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 24000 });
+    });
+
+    it('applies configured Neo effort across a provider without an effort catalog', () => {
+      const sqlite = new BunDatabase(':memory:');
+      try {
+        createNeoTables(sqlite);
+        mockSession.id = `neo:${generateUUID()}`;
+        sqlite
+          .prepare(
+            'INSERT INTO neo_session_bindings (session_id,concern_id,kind) VALUES (?,NULL,?)'
+          )
+          .run(mockSession.id, 'neo');
+        mockSession.config.provider = 'glm';
+        mockSession.config.model = 'glm-5';
+        mockSession.config.thinkingLevel = 'think8k';
+        const configured = new QueryOptionsBuilder({
+          ...mockContext,
+          db: {
+            ...mockContext.db!,
+            getDatabase: () => sqlite,
+            getGlobalSettings: () => ({
+              settingSources: [],
+              neo: {
+                preferences: {
+                  model: 'opus',
+                  provider: 'anthropic',
+                  thinkingLevel: 'think24k',
+                  fallbacks: [],
+                },
+              },
+            }),
+          },
+        });
+        expect(configured.addSessionStateOptions({}).effort).toBe('low');
+        mockSession.id = generateUUID();
+        expect(builder.addSessionStateOptions({}).effort).toBeUndefined();
+      } finally {
+        sqlite.close();
+      }
     });
 
     it('sends adaptive thinking with an effort level to models that support effort', async () => {

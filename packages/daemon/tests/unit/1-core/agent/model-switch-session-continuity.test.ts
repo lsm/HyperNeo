@@ -317,6 +317,20 @@ describe('ModelSwitchHandler — session continuity (sdkSessionId)', () => {
     expect(restartSpy).not.toHaveBeenCalled();
   });
 
+  it('defers recovery query startup so the retry can apply thinking before re-enqueueing', async () => {
+    const stop = mock(async () => {});
+    const handler = new ModelSwitchHandler(
+      createContext({ lifecycleManager: { stop, restart: restartSpy } as unknown as QLMType })
+    );
+    const sdkId = mockSession.sdkSessionId;
+    const result = await handler.switchModel('opus', 'anthropic', false, undefined, true);
+    expect(result.success).toBe(true);
+    expect(mockSession.config.model).toBe('opus');
+    expect(mockSession.sdkSessionId).toBe(sdkId);
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(restartSpy).not.toHaveBeenCalled();
+  });
+
   it('clears acpSessionId when switching away from ACP', async () => {
     mockSession.config.model = 'acp-default';
     mockSession.config.provider = 'acp';

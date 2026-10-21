@@ -200,6 +200,12 @@ itself (see Enforcement). Goals and journals stay in the DB; their milestones re
   private GitHub repo `<owner>/neo-home`? On yes the daemon runs `gh repo create --private`
   and pushes. On no, or without GitHub, the repo stays local; Neo can ask again later
   only if the human raises it.
+- After local setup, `neo.home.github {askId}` offers that proposal once on the
+  current root-Neo ask. `neo.home.github {questionId}` accepts only its recorded
+  human yes, using the repository name bound by the daemon. Creation is reserved
+  durably before the external call. If its result is uncertain, reconcile with the
+  human rather than replaying repository creation; successful retries reuse the
+  saved receipt. Later explicit re-proposal is separate from this once-only path.
 - One shared repo across machines: the second daemon (iMac/laptop) clones the remote
   into its own `Neo/` on init when the remote exists (the human picks it once).
 - Sync: `neo.home.save` runs `git pull --rebase` before committing and pushes after. On a

@@ -91,6 +91,23 @@ describe('worker handoff artifact operation contract', () => {
     expect(readdirSync(join(root, 'handoffs', sessionId, 'published'))).toHaveLength(1);
   });
 
+  test('keeps both complete snapshots when the producer replaces a draft', async () => {
+    const first = (await publish()).reference as Record<string, unknown>;
+    const replacement = '  Synthetic replacement 🦊\n\n';
+    writeFileSync(join(drafts(), 'report.md'), replacement);
+    const second = (await publish()).reference as Record<string, unknown>;
+    expect(second.artifactId).not.toBe(first.artifactId);
+    expect(second.sha256).toBe(createHash('sha256').update(replacement).digest('hex'));
+    expect(second.byteLength).toBe(Buffer.byteLength(replacement));
+    expect(readFileSync(join(drafts(), 'report.md'), 'utf8')).toBe(replacement);
+    expect(readFileSync(first.path as string, 'utf8')).toBe(text);
+    const read = await invoke('handoff.read', { reference: second });
+    expect(Buffer.from(read.data as string, 'base64').toString()).toBe(replacement);
+    expect(read.complete).toBe(true);
+    expect(await publish()).toEqual({ kind: 'published', reference: second });
+    expect(readdirSync(join(root, 'handoffs', sessionId, 'published'))).toHaveLength(2);
+  });
+
   test.each(['idle', 'waiting_for_input', 'error'])(
     'a registered %s worker may preserve its report',
     async (state) => {

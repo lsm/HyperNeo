@@ -1,3 +1,5 @@
+import type { ArtifactProjection } from './artifact-file.ts';
+
 import type { NeoInputOrigin } from './neo-message.ts';
 
 export interface NeoPublicationLink {
@@ -52,3 +54,5 @@ export type NeoPublicationAppendResult =
 export type NeoPublicationChangeResult =
   | { accepted: true; created: boolean; publication: NeoPublication }
   | { accepted: false; reason: 'not_found' | 'publication_conflict' };
+
+export type NeoPublicationArtifactInput = NeoPublicationInput & ArtifactProjection;

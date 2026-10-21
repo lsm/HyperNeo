@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { VoiceWaveform } from '../voice/VoiceWaveform.tsx';
 
@@ -103,5 +103,37 @@ describe('VoiceWaveform', () => {
       return match ? Number.parseFloat(match[1]) : 0;
     });
     expect(Math.max(...scales)).toBeGreaterThan(0.5);
+  });
+});
+
+describe('Voice waveform cadence', () => {
+  it.each([30, 60, 120])('keeps microphone sampling time-based at %s Hz', async (hz) => {
+    stubClientWidth(200);
+    let next: FrameRequestCallback | undefined;
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      next = callback;
+      return 1;
+    });
+    const getLevel = vi.fn(() => 0.5);
+    render(
+      <VoiceWaveform
+        getLevel={getLevel}
+        isRecording={true}
+        isTranscribing={false}
+        onCancel={() => {}}
+      />
+    );
+    await act(async () => {});
+    for (let frame = 0; frame <= hz; frame++) {
+      const callback = next;
+      next = undefined;
+      callback?.((frame * 1000) / hz);
+    }
+    expect(getLevel.mock.calls.length).toBeGreaterThanOrEqual(Math.min(hz, 60) - 1);
+    expect(getLevel.mock.calls.length).toBeLessThanOrEqual(62);
+    const bars = [...screen.getByTestId('voice-bars').children] as HTMLElement[];
+    expect(
+      Math.max(...bars.map((bar) => Number(bar.style.transform.slice(7, -1))))
+    ).toBeGreaterThan(0.4);
   });
 });

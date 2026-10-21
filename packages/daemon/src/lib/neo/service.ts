@@ -432,15 +432,17 @@ export class NeoService {
     if (!preference || !plan) return;
     const live = await this.sessions.getSessionForControl(sessionId);
     if (!live) return;
+    if (live.isLimitRecoveryPending?.() || live.getRateLimitWatchdogState?.().lastUserMessage)
+      return;
+    if (plan.thinking)
+      await this.sessions.updateSession(sessionId, {
+        config: { ...live.getSessionData().config, thinkingLevel: preference.thinkingLevel },
+      });
     if (plan.model) {
       const switched = await live.requestModelSwitch(preference.model, preference.provider);
       if (!switched.success)
         return this.log.warn(`Neo session ${sessionId} keeps its model: ${switched.error ?? ''}`);
     }
-    if (plan.thinking)
-      await this.sessions.updateSession(sessionId, {
-        config: { ...live.getSessionData().config, thinkingLevel: preference.thinkingLevel },
-      });
   }
 
   readonly snapshotReads = new Map<string, NeoSnapshotRead>();

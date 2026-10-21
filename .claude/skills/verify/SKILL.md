@@ -50,6 +50,43 @@ HOME/data dir and TMPDIR. The Bun runner aliases `bun:sqlite` back into the
 compatibility module and cannot run this online configuration; the standalone
 mid-turn helper above runs directly under Bun. Both checks retain receipt replay.
 
+## Neo coordinator model fallback (backend)
+
+Run `bash .claude/skills/verify/neo-model-fallback.sh "$RUN"` with a fresh absolute
+synthetic run directory. The real isolated daemon and actual SDK use ephemeral
+loopback ports, never 8399. A local Anthropic-shaped fixture returns a usage-limit
+billing error for the configured primary and accepts the next model. A second
+case uses the real GLM provider with its discovery/probe HTTP client redirected
+to the loopback fixture and a session-scoped loopback base URL; the SDK itself
+sends the GLM request through that provider. No Z.ai endpoint is contacted. Synthetic
+SDK credentials exist only inside this fixture process; no real provider or
+credential discovery is used. GitHub stays stubbed. The SDK and daemon transcript
+lookup share the same synthetic directory so recovery resumes the real history.
+
+The human-only `neo.preferences.set` RPC must persist an ordered fallback list.
+The original input must produce a visible `neo.publication.read` garden reply on
+the fallback, whose actual API request carries its configured low effort (or
+8,000-token thinking budget). Both Anthropic and GLM cases must carry this
+fallback effort; GLM requests must use the separate `/glm/v1/messages` endpoint.
+The fixture then restores the primary and submits
+a second human turn: that turn must complete on the primary with its configured
+high effort (or 24,000-token thinking budget), demonstrating that
+suppression lasts only through recovery. Evidence is retained even on failure in
+`evidence/neo-model-fallback-{anthropic,glm}.json`; the helper closes the socket, SDK, daemon and
+local model server in `finally`. On the pre-fix test commit, the first turn only
+shows its usage-limit error and cannot complete the expected reply.
+
+Focused contracts additionally cover ordered persistence, per-model thinking
+clamping, unknown-model refusal, explicit empty chains and primary-only edits
+preserving the chain. Existing general fallback selection remains in effect when
+Neo's setting is absent. Retryable provider errors use the same watchdog only
+for a configured Neo chain; ordinary sessions retain their provider retry policy.
+OpenAI/Copilot and OpenRouter are accepted through the same catalog/provider
+switching path but are not verified by these two fixture cases.
+Web Settings editing is a separate follow-up to this backend slice; no GUI or
+real provider outage/reset clock is verified here. The next-turn restored-primary
+case is synthetic evidence of recovery, not a live account availability probe.
+
 ## Rules
 
 - Never start, stop or mutate the human's daemon. Isolated runs never use port
@@ -63,6 +100,32 @@ mid-turn helper above runs directly under Bun. Both checks retain receipt replay
 - GitHub is a stub: `gh` on the daemon's `PATH` answers `gh pr view` from
   `<run>/pr.json`, refuses everything else (including `gh auth token`) and logs
   every call to `<run>/evidence/gh.log`. Nothing reaches github.com.
+
+## Neo animation stability (headless)
+
+Build web, then Launch on a free non-8399 port with a fresh synthetic run directory.
+In that same shell (with a stop.sh EXIT trap), run:
+
+```bash
+NODE_PATH=<directory containing playwright> node .claude/skills/verify/neo-animation-check.mjs 9378 "$RUN" verify
+```
+
+If Playwright's matching browser is unavailable, set `VERIFY_BROWSER` to an installed
+Chromium executable. This always launches headlessly, never the desktop browser.
+The helper validates the isolated daemon log, opens Neo over RPC, seeds 18 synthetic
+publications in that DB and enables voice with a loopback endpoint. At desktop and
+mobile widths it drives the real built `/neo` page, injecting only synthetic
+`neo.working` events on its browser WebSocket, and starts/cancels a fake microphone.
+It replaces browser analyser output with synthetic local audio levels; no transcription
+or model turn is needed. Rail/message bounding boxes must not move, and observing the
+rail and its children must receive zero resize callbacks during four busy toggles.
+Voice sampling median must be below 25 ms, with over 60 samples in 1.8 seconds;
+frame counts and p95 timing are recorded, not a hardware-independent FPS guarantee.
+Evidence: `evidence/neo-animation-verify.json` and `neo-animation-{1280,390}.png`.
+Before fixing, `reproduce` records 45 px message movement, four resizes, and about
+50 ms audio sampling gaps on a 60 Hz browser. The focused VoiceWaveform suite also
+drives synthetic 30/60/120 Hz timestamps to check refresh-independent sampling.
+This proves web behavior under synthetic input; it does not verify iOS or 5G service.
 
 ## Recovery expiry responsiveness
 
@@ -369,6 +432,36 @@ both pull and push; RPC exercises the production default. Stop with `stop.sh`.
 This slice syncs saves to an existing configured origin/upstream. GitHub's
 once-only private-repo proposal/create, second-machine clone, read-once-per-wake
 sync and conflict-question presentation are later H3 slices.
+
+### Private GitHub home proposal (H3 slice 2)
+
+On a fresh isolated daemon from Launch, run
+`bun .claude/skills/verify/neo-home-github.ts <port> "$RUN" verify`.
+The helper replaces only the isolated daemon's stub `bin/gh`. Its allowlist answers
+auth status and the synthetic owner lookup; private creation connects and pushes
+to a local bare Git repository. Every other GitHub command fails. Never run this
+with the real HOME, remotes, credentials or GitHub executable on the daemon PATH.
+
+The actual RPC must refuse missing/open consent before any create call, show the
+daemon-bound repository in the question, accept its recorded human yes, and call
+private creation exactly once. The initial commit must reach only the synthetic
+remote, with upstream configured and clean status. Repeated proposal/application
+calls return the stored receipt. Stop and restart this same isolated daemon, then
+run the helper with `restart`: the persisted question/creation receipt must avoid
+another external submission. Evidence: `evidence/neo-home-github-<mode>.json` and
+`evidence/home-gh.log`.
+
+In separate fresh runs, `decline` verifies human no stays local and reuses its
+question, and `unavailable` verifies failed auth is probed once with no question or
+creation. On pre-feature dev, `before` records the unknown-operation baseline.
+Focused contracts additionally refuse agent answers, foreign/retired/unrelated
+consent, replacement repository fields, existing origin and dirty files, and
+reserve once across concurrent calls and an uncertain external failure. Such a
+failure may have created the repository remotely: reconcile with the human rather
+than replay creation. No actual GitHub creation, credentials, model or GUI are
+verified. The first proposal is explicitly requested with the current root askId
+after setup; re-proposal on a later human request, cloning and wake reads remain
+later work. Stop the daemon/mock with `stop.sh` in the same shell as launch.
 
 ### Goal-cycle prompt delivery (P1)
 
@@ -2265,6 +2358,42 @@ proves the daemon operation and snapshot surfaces; GUI rendering, model choices,
 notification completion and deployment are not verified. Neo's default guidance
 asks for consent first; the existing direct human-message path remains available.
 
+## Snapshot batch responsiveness
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-snapshot-batch-XXXXXX)
+env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/neo-snapshot-batch.ts verify 9382 "$RUN"
+```
+
+This starts a fresh isolated daemon with 181 synthetic asks. Its top 50 contain
+231 todos and 66 answered questions, with instruction/report sizes shaped like
+the observed snapshot. An external client sends four overlapping `neo.snapshot`
+requests over the real `operation.invoke` WebSocket door. Another independent
+client probes `system.health` when the first child/link query begins. No model,
+provider keys, credentials, copied live rows, GitHub or GUI are involved.
+
+The helper injects a controlled 4 ms wait per child/link statement to model the
+amplification of slow reads. On regression commit `6040b602e6`, `reproduce`
+records four builds and 1,324 child/link reads, max lag above 1 s and a health
+reply above 1 s. Fixed `verify` requires one build, three child/link queries,
+max lag below 1 s and health below 250 ms. Each of the four replies must retain
+50 asks, 231 todos, 66 questions and the exact selected session link.
+
+`observed.json` records query/build counts, max main-loop lag, independent health
+latency, burst duration and reply byte sizes. Other snapshot/pack reads remain
+included in the separate total-read count; this change does not claim every
+snapshot query is constant or explain the physical cause of historical waits.
+The helper restores its synthetic query observer and closes both client child
+processes, the timer and daemon in `finally`.
+
+Focused contracts also exercise eight overlapping reads, later-write freshness,
+scope isolation, per-request revision responses, failed-build recovery, RPC/MCP
+view separation and admission, child ordering and missing links. In-flight RPC
+builds share only the same requested scope until synchronous construction ends;
+there is no retained snapshot cache. MCP reads keep their existing per-turn
+handling. `neo.open` must still reply before deferred work discovery starts.
+
 ## Workspace project mirroring responsiveness
 
 ```bash
@@ -2346,6 +2475,28 @@ cd packages/daemon
 bunx vitest run tests/unit/1-core/drivers/copilot-discovery.test.ts
 ```
 
+## Neo goal list (G6a)
+
+Build the web, launch a fresh isolated daemon, then run
+`bun .claude/skills/verify/neo-goals-web.ts <port> "$RUN"` and the headless
+`neo-goals-web.mjs <port> "$RUN"` with the same Node/Playwright/VERIFY_BROWSER
+setup as the web schedule journey. Synthetic goals and journal entries are made
+through real RPC: measured, paused, closed and another session's private goal.
+No provider is configured and no model is called.
+
+On `/neo` at 1280px, the Goals section must sit beside Your work. At 390px, open
+Your work to reveal it. Both show only the root's two current goals, a 30% progress
+bar, a done-test, the next wake matching the real schedule RPC, no wake for the
+paused goal, and only the latest journal effect. A new journal entry through RPC
+must appear on explicit refresh. Completing both goals through RPC and refreshing
+must remove them and show the successful empty state. Inspect
+`evidence/neo-goals-{1280,390,empty}.png` and `neo-goals-web.json`.
+
+Component contracts cover loading/error versus empty, retry, journal refusal,
+focus refresh, stale owner reads and Chinese labels. Goal detail, home links,
+what-works notes and paginated journal evidence remain G6b; this journey does not
+claim them. Stop the isolated daemon/mock with `stop.sh`; the browser closes itself.
+
 ## Claude Desktop link registration
 
 ```bash
@@ -2375,3 +2526,124 @@ observe the running CLI-only session in Neo, then after a genuine Desktop import
 ask Neo to refresh find/status and have the human open the returned link. Do not
 resume a second owner of a still-running CLI session, automate the GUI or restart
 the human's Desktop app as part of this journey.
+
+## In-app previews: compatibility pins (slice 1)
+
+This tests-only slice preserves existing chat reference text, immutable handoff
+bytes, and mutable workflow facts. It does not expose `artifact.file.*` yet.
+Run the focused `handoff-artifacts.test.ts`, `artifact-operations.test.ts` and
+web `MarkdownRenderer.test.tsx` suites. The web suite runs headlessly in happy-dom
+against the actual renderer: repo/PR anchors stay intact, inline/fenced paths stay
+text, and raw script examples stay inert. This is component evidence, not browser
+containment or a shipped preview journey. No unattended GUI is used.
+
+Build web and use Launch with a fresh run directory and free port, then run:
+
+```bash
+env -i HOME="$RUN/home" PATH="$(dirname "$(command -v bun)"):/usr/bin:/bin" \
+  NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/preview-pin.ts 9386 "$RUN" capture
+.claude/skills/verify/stop.sh "$RUN"
+.claude/skills/verify/launch.sh 9386 "$RUN"
+env -i HOME="$RUN/home" PATH="$(dirname "$(command -v bun)"):/usr/bin:/bin" \
+  NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/preview-pin.ts 9386 "$RUN" restart
+.claude/skills/verify/stop.sh "$RUN"
+```
+
+The fixture uses the existing capture shell to seed a synthetic handoff, retains
+its source under a renamed fixture directory, then reads all chunks through the
+real daemon `handoff.read` operation door. Both runs require identical full bytes,
+size and SHA-256 and refuse a foreign daemon reference. Evidence is retained in
+`evidence/preview-pin-*.json`. This proves source-path independence and process
+restart, not the future registration door, scoped preview authorization, a removed
+Git worktree, iOS or HTML containment. No credentials, provider/model or live DB.
+
+## Shard enumeration CI responsiveness
+
+The user surface here is the shard CLI and CI coverage report, so no daemon or
+browser is needed. Run `bun run test:ci-balance-report` and
+`bash scripts/lib/shard-split.sh --self-test`, then
+`./scripts/test-daemon.sh --verify`. The bounded-latency fixture inserts 30 ms into
+each external checksum invocation: 128 files must still enumerate in two seconds.
+Before batching this fails with `ETIMEDOUT`; it models process overhead, not actual
+CI runner latency. UTF-8 and paths over 255 bytes must match system POSIX `cksum`.
+The raw-byte CLI fixture must preserve invalid UTF-8 bytes in both the checksum
+and emitted path; decoding through a JavaScript string fails this regression.
+
+To compare every assignment against the original emitter at unchanged file/weight
+inputs, run this from the current worktree (no live data, providers or GUI):
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-shard-parity-XXXXXX)
+git show 72fee50872:scripts/lib/shard-split.sh > "$RUN/baseline.sh"
+for suite in daemon online; do
+  for variant in baseline current; do
+    bash -c '
+      source "scripts/test-$1.sh"
+      if [ "$2" = baseline ]; then source "$3/baseline.sh"; fi
+      if [ "$1" = daemon ]; then
+        for shard in "${SHARDS[@]}"; do
+          printf "%s\n" "$shard"; shard_paths "$shard"
+        done
+      else
+        online_all_modules | while IFS= read -r module; do
+          printf "%s\n" "$module"; online_module_paths "$module"
+        done
+      fi
+    ' shard-parity "$suite" "$variant" "$RUN" > "$RUN/$suite-$variant.txt"
+  done
+  cmp "$RUN/$suite-baseline.txt" "$RUN/$suite-current.txt"
+done
+```
+
+Both `cmp` calls must succeed. Retain the output files with the real CLI/report
+logs and timings. This checks identical hashes, bucket membership and ordering
+for the current source population, not model/session delivery or CI runner health.
+
+## In-app previews: shared contracts (slice 2)
+
+Run `preview-contracts.test.ts` with the daemon unit runner. It must reject
+malformed/extra authority fields, unsafe byte counts, unknown refusal reasons,
+oversized decoded chunks (including padding edge cases), invalid hashes and
+inconsistent completion metadata. Old publication/todo projections omit the
+optional `artifacts` field. Valid references contain identity and display hints
+only; they authorize nothing. Limits are initial defaults, not worker overrides.
+
+Repeat slice 1's isolated daemon capture/restart journey. Its helper now validates
+a path-free preview reference and each actual handoff chunk against the new
+schemas, without changing the existing operation door. Complete bytes/hash must
+still match. Repeat the headless actual Markdown renderer component suite.
+This Build slice does not register `artifact.file.*`, accept publication artifacts,
+persist references or expose preview UI. Publication/card wiring is slice 12;
+UI/browser and human iOS containment evidence remains in its assigned slices.
+No unattended GUI, provider, credentials, real files or live database are used.
+
+
+## In-app previews: capture policy (slice 3)
+
+Run `preview-policy.test.ts` with the daemon Vitest runner. It covers each pure
+admission gate and their composition, authorization before path classification,
+missing/foreign/mismatched bindings, owner/role spoofing, component containment,
+explicit evidence roots, traversal/encoding refusals, sensitive names and broad
+root denial. It never opens a source file. Root-relative plans must be passed to
+the anchored opener in slice 4; a successful policy result is not a safe-open proof.
+
+Repeat slice 1's isolated capture/restart journey and headless Markdown component
+suite. The helper now supplies a trusted synthetic context-binding fixture to the
+policy pipeline, requires an admitted plan for its published report, and refuses
+a sensitive path and a foreign worker. It still checks complete bytes through the
+actual existing daemon read door after restart. No production binding adapter or
+new operation is wired here: the persisted todo/ask adapter belongs to slice 6.
+No credentials or live files are read; no unattended GUI is involved.
+
+For the slice-3 review regression, root-denial tests must put the candidate source
+inside each excluded root (workspace and evidence variants), including macOS
+`/private/var/tmp` and nested `.claude`/`.codex`/`.config` components. Keep positive
+controls for a narrowly approved temporary evidence directory and similarly named
+nonsensitive siblings; blocking a broad temp root must not block isolated fixtures.
+
+These names are defense in depth only. This module neither opens files nor
+registers a reader. Registration must remain unwired until the anchored descriptor
+opener and immutable hash capture exist (slices 4–6). Reads must use authorized
+registry receipts, never this plan or a re-resolved path as a grant (slice 7).

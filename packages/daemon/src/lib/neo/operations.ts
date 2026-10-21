@@ -173,6 +173,15 @@ const SnapshotOk = z.object({
       model: z.string(),
       provider: z.string(),
       thinkingLevel: z.enum(THINKING_LEVELS),
+      fallbacks: z
+        .array(
+          z.object({
+            model: z.string(),
+            provider: z.string(),
+            thinkingLevel: z.enum(THINKING_LEVELS),
+          })
+        )
+        .optional(),
       saved: z.boolean(),
     })
     .nullable()
@@ -381,6 +390,7 @@ export function neoReorganizeRuntime(service: NeoService): NeoReorganizeRuntime 
 }
 
 export function createNeoOperations(service: NeoService) {
+  const snapshots = new Map<string, Promise<ReturnType<typeof buildSnapshot>>>();
   function path<I, O>(name: string, action: (input: I, caller: OperationCaller) => O | Promise<O>) {
     return (superpipe({})(name) as PipelineAPI)
       .input(['input', 'caller'])
@@ -392,11 +402,24 @@ export function createNeoOperations(service: NeoService) {
       .pipe(action, ['input', 'admission'], 'admission')
       .endAsync('admission') as (input: I, caller: OperationCaller) => Promise<O | Rejection>;
   }
-  function snapshot(caller: OperationCaller, requested?: string) {
-    const built = buildSnapshot(caller, requested);
-    return caller.source !== 'rpc'
-      ? neoSnapshotOmitted(fitNeoSnapshotBudget(built, NEO_MCP_SNAPSHOT_BUDGET), built)
-      : built;
+  async function snapshot(caller: OperationCaller, requested?: string) {
+    if (caller.source !== 'rpc') {
+      const built = buildSnapshot(caller, requested);
+      return neoSnapshotOmitted(fitNeoSnapshotBudget(built, NEO_MCP_SNAPSHOT_BUDGET), built);
+    }
+    const key = requested ?? '';
+    let pending = snapshots.get(key);
+    if (!pending) {
+      pending = new Promise<void>((done) => setTimeout(done, 0)).then(() => {
+        try {
+          return buildSnapshot(caller, requested);
+        } finally {
+          snapshots.delete(key);
+        }
+      });
+      snapshots.set(key, pending);
+    }
+    return pending;
   }
   function buildSnapshot(caller: OperationCaller, requested: string | undefined) {
     const scope = requested
@@ -578,8 +601,8 @@ export function createNeoOperations(service: NeoService) {
     input: z.infer<typeof SaveRules>,
     caller: OperationCaller
   ) => z.infer<typeof RulesResult>;
-  const read = path('neo.snapshot', (input: z.infer<typeof Scope>, caller) => {
-    const read = neoSnapshotRevision(snapshot(caller, input.projectId), input.sinceRev);
+  const read = path('neo.snapshot', async (input: z.infer<typeof Scope>, caller) => {
+    const read = neoSnapshotRevision(await snapshot(caller, input.projectId), input.sinceRev);
     const turn = caller.source === 'mcp' ? caller.neoTurn?.messageId : undefined;
     if (!caller.sessionId || !turn) return read;
     const key = [caller.sessionId, turn, input.projectId].join('\n');
@@ -598,6 +621,8 @@ export function createNeoOperations(service: NeoService) {
       : null;
     if (projectId && !service.repo.getProject(projectId))
       return { ok: false as const, reason: 'Project not found.' };
+    const sessionId = await service.open();
+    const view = await snapshot(caller);
     setTimeout(
       () =>
         void invokeOperation(
@@ -608,8 +633,7 @@ export function createNeoOperations(service: NeoService) {
         ).catch(() => null),
       0
     );
-    const sessionId = await service.open();
-    return { ...snapshot(caller), sessionId };
+    return { ...view, sessionId };
   });
   const save = (superpipe({})('neo.project.save') as PipelineAPI)
     .input(['input', 'caller'])

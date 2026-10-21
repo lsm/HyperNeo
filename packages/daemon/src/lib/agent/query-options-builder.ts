@@ -1,3 +1,4 @@
+import { neoModelFallbacks } from '../neo/model-fallback.ts';
 import { fillPrompt, MINIMAL_WORKTREE_PROMPT, WORKTREE_ISOLATION_PROMPT } from '@hyperneo/prompts';
 import type {
   CanUseTool,
@@ -635,8 +636,13 @@ export class QueryOptionsBuilder {
     } catch {}
     const thinkingLevel = this.getEffectiveThinkingLevel();
     const effort =
-      thinkingModes === 'granular' && effortLevels?.length
-        ? effortForThinkingLevel(thinkingLevel, effortLevels)
+      thinkingModes === 'granular' &&
+      (effortLevels?.length ||
+        (this.ctx.db && neoModelFallbacks(this.ctx.db, this.ctx.session.id) !== undefined))
+        ? effortForThinkingLevel(
+            thinkingLevel,
+            effortLevels?.length ? effortLevels : ['low', 'medium', 'high']
+          )
         : undefined;
     let thinkingConfig: ThinkingConfig | undefined = effort
       ? { type: 'adaptive' }
