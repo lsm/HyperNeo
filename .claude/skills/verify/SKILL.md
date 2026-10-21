@@ -2329,3 +2329,28 @@ observe the running CLI-only session in Neo, then after a genuine Desktop import
 ask Neo to refresh find/status and have the human open the returned link. Do not
 resume a second owner of a still-running CLI session, automate the GUI or restart
 the human's Desktop app as part of this journey.
+
+## Session goal details (G6b)
+
+Build the web and launch a fresh isolated daemon. Run
+`bun .claude/skills/verify/goal-detail-web.ts <port> "$RUN"`, followed by the
+headless `goal-detail-web.mjs <port> "$RUN"` with the Node/Playwright/VERIFY_BROWSER
+setup above. The helper creates a synthetic local home git repository and origin
+(no network), a session goal and 21 journal entries through actual RPC. Only
+works_note is seeded directly in the synthetic DB: G8 owns its write/compaction.
+
+Open `/neo` at 1280/390px, expand Schedules and select the goal title. Metrics,
+done-test, next steps and what-works must be visible. Its mandate link must match
+the synthetic origin and recorded revision; no external navigation is performed.
+Load older journal entries: all 21 must remain newest-first, with entry-id paging,
+and opening the newest entry must show its action, worked/failed text and actual
+PR evidence href. Inspect `evidence/goal-definition-{1280,390}.png`,
+`goal-detail-{1280,390}.png` and
+`goal-detail-web.json`; long content scrolls inside the existing schedule strip.
+
+Component contracts cover page-read failure/retry, stale selection, no-remote text
+and non-web evidence. Daemon contracts cover the read-only worksNote projection
+and opt-in home remote metadata (no userinfo; local remotes remain null). Ordinary
+home reads retain their old shape and do not fetch remotes. This proves real read
+RPCs and headless rendering, not G8 compaction or external hosting. The browser
+closes itself; stop the isolated daemon/mock with `stop.sh`.

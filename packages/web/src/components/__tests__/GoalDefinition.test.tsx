@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GoalDefinition } from '../SessionSchedules.tsx';
 import { locale } from '../../lib/i18n/index.ts';
@@ -82,9 +82,11 @@ describe('GoalDefinition', () => {
     const { container } = render(<GoalDefinition ownerSessionId="root" goalId="guide" />);
     await screen.findByText('Effect 20');
     fireEvent.click(screen.getAllByText('Effect 20')[0]);
-    expect(screen.getByRole('link', { name: 'Merged guide' }).getAttribute('href')).toBe(
-      'https://github.com/example/repo/pull/1'
-    );
+    expect(
+      within(container.querySelector('[data-journal-entry="entry-20"]')!)
+        .getByRole('link', { name: 'Merged guide' })
+        .getAttribute('href')
+    ).toBe('https://github.com/example/repo/pull/1');
     expect(screen.queryByRole('link', { name: 'Plain text evidence' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Older entries' }));
     await screen.findByText('Effect 0');

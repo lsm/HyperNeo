@@ -54,7 +54,7 @@ export function createNeoHomeOperations(
     defineOperation({
       name: 'neo.home.read',
       description:
-        'Read a complete local curated home document and its SHA-256, including human edits. Never initializes or commits. Refuses internal, ignored or symlink paths and non-UTF-8 content. Root Neo or the local user only.',
+        'Read a complete local curated home document and its SHA-256, including human edits. includeRemote optionally adds the browser origin URL without fetching. Never initializes or commits. Refuses internal, ignored or symlink paths and non-UTF-8 content. Root Neo or the local user only.',
       inputSchema: HomeReadInput,
       resultSchema: HomeReadResult,
       policy: { safetyClass: 'read', roles: ['neo'] },

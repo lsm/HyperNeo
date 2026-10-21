@@ -37,11 +37,16 @@ beforeEach(() => {
   rows = [{ ...row }];
   request.mockReset().mockImplementation(async (_method, { name, input }) => {
     if (name === 'schedule.session.list') return { ok: true, schedules: rows };
+    if (name === 'goal.journal.list') return { accepted: true, entries: [] };
     if (name === 'goal.session.get')
       return {
         accepted: true,
         goal: {
           title: 'Ship guide',
+          metrics: {},
+          nextSteps: [],
+          worksNote: null,
+          mandateRef: null,
           description: 'Publish for adopters.',
           doneTest: 'Guide is public',
         },
