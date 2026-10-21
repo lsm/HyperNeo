@@ -10,9 +10,13 @@ web and iOS can render the same bytes. The daemon parses the page
   embeds, SVG, MathML, form controls, media, authored `meta`/`link`/`base`;
 - unknown elements, anchors and forms are unwrapped and keep their text; every
   `on*` attribute, `href`, `srcset` and any attribute off the allowlist is dropped;
-- images survive only as `data:` PNG/JPEG/GIF/WebP; CSS keeps inline layout but
-  loses `@import` and non-raster `url()`, and a stylesheet with escapes,
-  `expression()`, `image-set`, `@font-face` or `javascript:` is dropped whole;
+- images survive only as `data:` PNG/JPEG/GIF/WebP; CSS keeps inline layout,
+  non-raster `url()` becomes `none`, and a stylesheet with comments left open,
+  `<`, escapes, `@import`, `expression()`, `image-set`, `@font-face` or
+  `javascript:` is dropped whole. CSS is scanned in single linear passes;
+- a pre-scan estimates nesting before parsing (parse5 is quadratic in depth);
+  past 512 levels the result is `size_limit`, so the host offers Source/Download.
+  Pages built mostly of inline SVG can hit this, since `/>` isn't counted as closing;
 - the head is rebuilt: charset, then the host CSP from the design, then only the
   page's `title` and cleaned `style`. Comments and the doctype are regenerated.
 

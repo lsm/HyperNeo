@@ -121,11 +121,10 @@ export function createArtifactReadOperations(
       if (chunk.complete) break;
     }
     if (!('value' in authorizeRow(row, caller))) return unavailable();
-    return {
-      accepted: true as const,
-      sha256: row.sha256,
-      ...prepareArtifactHtml(new TextDecoder().decode(Buffer.concat(chunks))),
-    };
+    const prepared = prepareArtifactHtml(new TextDecoder().decode(Buffer.concat(chunks)));
+    return prepared
+      ? { accepted: true as const, sha256: row.sha256, ...prepared }
+      : { accepted: false as const, reason: 'size_limit' as const };
   }
   const get = (superpipe({})('artifact-file-get') as PipelineAPI)
     .input(['input', 'caller'])

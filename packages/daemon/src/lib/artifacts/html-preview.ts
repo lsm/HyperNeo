@@ -34,7 +34,12 @@ const PROPERTIES: Record<string, readonly string[]> = {
 };
 const RASTER = /^data:image\/(?:png|jpeg|gif|webp);base64,[a-z0-9+/=\s]*$/i;
 const LINK_LIMIT = 200;
-const CSS_URL = /url\(\s*(['"]?)([^'")]*)\1\s*\)/gi;
+const MAX_NESTING = 512;
+const UNNESTED = new Set(
+  'area base br col embed hr img input link meta param source track wbr p li dt dd tr td th option optgroup thead tbody tfoot colgroup caption rp rt html head body'.split(
+    ' '
+  )
+);
 
 export interface ArtifactHtmlLink {
   readonly text: string;
@@ -47,40 +52,75 @@ export interface PreparedArtifactHtml {
   readonly scriptsRemoved: boolean;
 }
 
+function stripComments(css: string): string | null {
+  let out = '';
+  let at = 0;
+  for (;;) {
+    const open = css.indexOf('/*', at);
+    if (open < 0) return out + css.slice(at);
+    const close = css.indexOf('*/', open + 2);
+    if (close < 0) return null;
+    out += css.slice(at, open);
+    at = close + 2;
+  }
+}
+
 function cleanCss(css: string): string {
-  const source = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const source = stripComments(css);
   if (
-    /[\\<]|\/\*|expression\s*\(|javascript:|behavior\s*:|-moz-binding|image-set|@font-face/i.test(
+    source === null ||
+    /[\\<]|@import|expression\s*\(|javascript:|behavior\s*:|-moz-binding|image-set|@font-face/i.test(
       source
     )
   )
     return '';
-  const cleaned = source
-    .replace(/@import[^;]*(?:;|$)/gi, '')
-    .replace(CSS_URL, (match, _quote, target: string) =>
-      RASTER.test(target.trim()) ? match : 'none'
-    );
-  return /url\s*\(|@import|:\/\//i.test(cleaned.replace(CSS_URL, '')) ? '' : cleaned;
+  const opener = /url\(/gi;
+  let out = '';
+  let at = 0;
+  for (let match = opener.exec(source); match; match = opener.exec(source)) {
+    const close = source.indexOf(')', opener.lastIndex);
+    if (close < 0) return '';
+    const target = source
+      .slice(opener.lastIndex, close)
+      .trim()
+      .replace(/^(['"])(.*)\1$/s, '$2');
+    out += source.slice(at, match.index);
+    out += RASTER.test(target) ? source.slice(match.index, close + 1) : 'none';
+    at = opener.lastIndex = close + 1;
+  }
+  out += source.slice(at);
+  return out.includes('://') ? '' : out;
 }
 
 function scripted(node: Node): boolean {
-  if (node.type === 'element') {
-    if (
-      SCRIPTED.has(node.tagName.toLowerCase()) ||
-      Object.entries(node.properties).some(
-        ([name, value]) =>
-          /^on/i.test(name) || (typeof value === 'string' && /^\s*javascript:/i.test(value))
-      ) ||
-      ('content' in node && node.content && scripted(node.content))
-    )
-      return true;
+  const stack: Node[] = [node];
+  for (let next = stack.pop(); next; next = stack.pop()) {
+    if (next.type === 'element') {
+      if (
+        SCRIPTED.has(next.tagName.toLowerCase()) ||
+        Object.entries(next.properties).some(
+          ([name, value]) =>
+            /^on/i.test(name) || (typeof value === 'string' && /^\s*javascript:/i.test(value))
+        )
+      )
+        return true;
+      if ('content' in next && next.content) stack.push(next.content);
+    }
+    if ('children' in next) for (const child of next.children) stack.push(child);
   }
-  return 'children' in node && node.children.some(scripted);
+  return false;
 }
 
 function textOf(node: Node): string {
-  if (node.type === 'text') return node.value;
-  return 'children' in node ? node.children.map(textOf).join('') : '';
+  let text = '';
+  const stack: Node[] = [node];
+  for (let next = stack.pop(); next; next = stack.pop()) {
+    if (next.type === 'text') text += next.value;
+    else if ('children' in next)
+      for (let index = next.children.length - 1; index >= 0; index--)
+        stack.push(next.children[index]);
+  }
+  return text;
 }
 
 function linkTarget(href: unknown): string | null {
@@ -145,17 +185,32 @@ function cleanElement(
   return [{ ...element, tagName: tag, properties, children }];
 }
 
-function find(root: Node, tag: string): Element | null {
-  if (root.type === 'element' && root.tagName === tag) return root;
-  if (!('children' in root)) return null;
-  for (const child of root.children) {
-    const found = find(child, tag);
-    if (found) return found;
-  }
-  return null;
+function find(root: Root, tag: string): Element | null {
+  const html = root.children.find(
+    (child): child is Element => child.type === 'element' && child.tagName === 'html'
+  );
+  if (tag === 'html' || !html) return html ?? null;
+  return (
+    html.children.find(
+      (child): child is Element => child.type === 'element' && child.tagName === tag
+    ) ?? null
+  );
 }
 
-export function prepareArtifactHtml(html: string): PreparedArtifactHtml {
+function nesting(html: string): number {
+  const tag = /<(\/?)([a-z][a-z0-9-]*)/gi;
+  let depth = 0;
+  let deepest = 0;
+  for (let match = tag.exec(html); match; match = tag.exec(html)) {
+    if (UNNESTED.has(match[2].toLowerCase())) continue;
+    depth = match[1] ? Math.max(0, depth - 1) : depth + 1;
+    deepest = Math.max(deepest, depth);
+  }
+  return deepest;
+}
+
+export function prepareArtifactHtml(html: string): PreparedArtifactHtml | null {
+  if (nesting(html) > MAX_NESTING) return null;
   const tree = fromHtml(html);
   const links: ArtifactHtmlLink[] = [];
   const removed = {

@@ -12,6 +12,12 @@ import {
 const pixel =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
+function prepare(html: string) {
+  const prepared = prepareArtifactHtml(html);
+  expect(prepared).not.toBeNull();
+  return prepared!;
+}
+
 function head(document: string) {
   return document.slice(document.indexOf('<head>'), document.indexOf('</head>'));
 }
@@ -38,7 +44,7 @@ function expectInert(document: string) {
 
 describe('artifact HTML preview document', () => {
   test('keeps a static report readable: text, layout styles and embedded raster images', () => {
-    const prepared = prepareArtifactHtml(
+    const prepared = prepare(
       `<!doctype html><html><head><title>Layout report</title><style>.ok{color:#123}</style></head>
       <body><h1 class="ok" style="margin:4px">Layout report</h1><table><tr><td colspan="2">Cell</td></tr></table>
       <img alt="Chart" src="${pixel}" width="1" height="1"><p>Done &amp; checked</p></body></html>`
@@ -110,27 +116,27 @@ describe('artifact HTML preview document', () => {
       '<template><script>x()</script></template><noscript><img src="https://evil.example"></noscript><p>Kept</p>',
     ],
   ])('neutralizes %s', (_name, html) => {
-    const prepared = prepareArtifactHtml(html);
+    const prepared = prepare(html);
     expectInert(prepared.document);
     expect(prepared.document).toContain('Kept');
   });
 
   test('says when scripts were removed so the host can show the notice', () => {
-    expect(prepareArtifactHtml('<script>x()</script><p>Chart</p>').scriptsRemoved).toBe(true);
-    expect(prepareArtifactHtml('<button onclick="x()">Go</button>').scriptsRemoved).toBe(true);
-    expect(prepareArtifactHtml('<p>Static</p>').scriptsRemoved).toBe(false);
+    expect(prepare('<script>x()</script><p>Chart</p>').scriptsRemoved).toBe(true);
+    expect(prepare('<button onclick="x()">Go</button>').scriptsRemoved).toBe(true);
+    expect(prepare('<p>Static</p>').scriptsRemoved).toBe(false);
     for (const page of [
       '<body onload="steal()"><p>S</p></body>',
       '<html onclick="steal()"><p>S</p>',
       '<template><script>x()</script></template><p>S</p>',
       '<svg><g onclick="x()"></g></svg><p>S</p>',
     ])
-      expect(prepareArtifactHtml(page).scriptsRemoved).toBe(true);
+      expect(prepare(page).scriptsRemoved).toBe(true);
   });
 
   test('keeps child selectors and quoted ampersands in a stylesheet intact', () => {
     expect(
-      prepareArtifactHtml('<style>ul>li{color:red}p::after{content:"&"}</style><p>K</p>').document
+      prepare('<style>ul>li{color:red}p::after{content:"&"}</style><p>K</p>').document
     ).toContain('<style>ul>li{color:red}p::after{content:"&"}</style>');
   });
 
@@ -139,22 +145,31 @@ describe('artifact HTML preview document', () => {
     (piece) => {
       const css = piece.repeat(Math.ceil((256 * 1024) / piece.length));
       const started = performance.now();
-      const prepared = prepareArtifactHtml(`<style>${css}</style><p style="${css}">Kept</p>`);
+      const prepared = prepare(`<style>${css}</style><p style="${css}">Kept</p>`);
       expect(performance.now() - started).toBeLessThan(1000);
       expectInert(prepared.document);
       expect(prepared.document).toContain('Kept');
     }
   );
 
+  test('refuses nesting deeper than a preview supports, quickly, and keeps ordinary depth', () => {
+    const started = performance.now();
+    expect(prepareArtifactHtml(`${'<div>'.repeat(400000)}Kept`)).toBeNull();
+    expect(prepareArtifactHtml(`${'<x/>'.repeat(400000)}Kept`)).toBeNull();
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(prepare(`${'<div>'.repeat(300)}Kept`).document).toContain('Kept');
+    expect(prepare(`<ul>${'<li>x'.repeat(100000)}</ul>`).document).toContain('<li>x</li>');
+  });
+
   test('bounds the host link list a page can produce', () => {
     const anchor = `<a href="https://example.com/x">${'t'.repeat(500)}</a>`;
-    const prepared = prepareArtifactHtml(anchor.repeat(300));
+    const prepared = prepare(anchor.repeat(300));
     expect(prepared.links).toHaveLength(200);
     expect(prepared.links.every((link) => link.text.length === 200)).toBe(true);
   });
 
   test('turns safe web links into host actions outside the frame, keeping their text', () => {
-    const prepared = prepareArtifactHtml(
+    const prepared = prepare(
       '<p><a href="https://github.com/lsm/HyperNeo/pull/1">PR one</a> and <a href="mailto:a@example.com">mail</a> and <a href="#top">top</a> and <a href="ftp://x">ftp</a></p>'
     );
     expectInert(prepared.document);
