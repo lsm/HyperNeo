@@ -391,7 +391,11 @@ export class NeoHomeRepository {
       content,
       sha256: createHash('sha256').update(bytes).digest('hex'),
       ...(includeRemote
-        ? { remoteUrl: homeRemoteUrl((await this.git(['remote', 'get-url', 'origin'], true)).text) }
+        ? {
+            remoteUrl: homeRemoteUrl(
+              (await this.git(['config', '--get', 'remote.origin.url'], true)).text
+            ),
+          }
         : {}),
     };
   }
