@@ -91,7 +91,12 @@ export async function startSessionDoor(
   });
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
-    server.listen(path, resolve);
+    const previous = process.umask(0o177);
+    try {
+      server.listen(path, resolve);
+    } finally {
+      process.umask(previous);
+    }
   });
   await chmod(path, 0o600);
   return {
