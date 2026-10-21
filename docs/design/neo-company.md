@@ -222,7 +222,14 @@ itself (see Enforcement). Goals and journals stay in the DB; their milestones re
   edits; a remote-backed dirty home refuses sync unchanged. The weak cache binds to
   the runtime turn's stable closure, not a caller-supplied wake token, and caches
   only the sync attempt, never document contents. Native `Read` and its existing
-  policy stay unchanged. The conflict question is a separate follow-up.
+  policy stay unchanged. A conflict returns `questionId` for one persisted question
+  bound to the local and fetched remote revisions. Its card shows the path and a
+  compact diff; View full versions opens the complete preserved texts as a
+  read-only document, including after an answer. Retrying the same revisions
+  reuses the question. Answering records a preference without applying it in this
+  presentation slice. The next H3 slice must apply that recorded choice through
+  `neo.home.save`, retaining protected-file confirmation and refusing stale
+  versions; it must never auto-resolve or discard human edits.
 
 ## 2. Scheduler subsystem (fs3)
 
