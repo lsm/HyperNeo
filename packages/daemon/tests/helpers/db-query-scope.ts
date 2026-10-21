@@ -33,6 +33,7 @@ export const EXCLUDED_TABLE_NAMES: string[] = [
   'neo_pack_preferences',
   'neo_pack_preference_proposals',
   'neo_rule_proposals',
+  'neo_home_github',
   'pack_facts',
   'neo_ask_work',
   'neo_work_prs',
