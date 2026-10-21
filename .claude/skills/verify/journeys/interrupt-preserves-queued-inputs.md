@@ -24,6 +24,9 @@ client.interrupt and the helper fails with `interrupt failed queued input: 3 !==
 The focused handler test additionally starts at the delivery retry limit and
 observes a pending job with unchanged retry count after interruption.
 Explicit teardown (`skipDeferredReplay:true`) retains its cancellation behavior.
+The rejected-provider-key callback uses this explicit teardown, so it fails
+queued inputs once instead of replaying them against the rejected credential;
+`provider-auth-interrupt.test.ts` checks this against real delivery rows.
 
 This proves RPC interruption, durable queue preservation and model receipt.
 Browser rendering and real provider traffic are not exercised.
