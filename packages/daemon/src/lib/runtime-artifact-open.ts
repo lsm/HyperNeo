@@ -1,1 +1,1 @@
-export { withArtifactDescriptor } from './acp/acp-safe-fs.ts';
+export { withArtifactDescriptor, withStoredArtifactDescriptor } from './acp/acp-safe-fs.ts';

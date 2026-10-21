@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+
 let buffer = Buffer.alloc(0);
 let sessionId = '';
 let input = 0;
@@ -37,7 +38,29 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
       reply({ protocolVersion: process.argv.includes('--bad-protocol') ? 99 : 3 });
       break;
     case 'status.get':
-      reply({ version: 'fixture-1', protocolVersion: 3 });
+      reply({
+        version: process.argv.includes('--production-version') ? '1.0.83' : 'fixture-1',
+        protocolVersion: 3,
+      });
+      break;
+    case 'auth.getStatus':
+      reply({ isAuthenticated: !process.argv.includes('--logged-out') });
+      break;
+    case 'models.list':
+      reply({
+        models: process.argv.includes('--no-models')
+          ? []
+          : [
+              {
+                id: 'synthetic-model',
+                name: 'Synthetic',
+                capabilities: {
+                  supports: { vision: false, reasoningEffort: false },
+                  limits: { max_context_window_tokens: 10000 },
+                },
+              },
+            ],
+      });
       break;
     case 'session.create':
       sessionId = String(msg.params?.sessionId);
@@ -122,6 +145,20 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
         });
         event('session.idle', {});
       }
+      if (prompt === 'late-settled') {
+        const timer = setInterval(() => {
+          if (!existsSync(join(process.cwd(), 'release-settlement'))) return;
+          clearInterval(timer);
+          event('assistant.message', {
+            messageId: `reply-${input}`,
+            content: 'LATE_COMPLETE_REPLY',
+            interactionId: `interaction-${input}`,
+            phase: 'final_answer',
+          });
+          event('session.idle', {});
+          appendFileSync(join(process.cwd(), 'settlement-emitted'), 'ready');
+        }, 5);
+      }
       if (prompt === 'stale-echo') {
         event('user.message', {
           messageId: 'input-1',
@@ -167,15 +204,19 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
     case 'session.abort':
       reply({});
       if (process.argv.includes('--abort-ack-only')) break;
-      setTimeout(() => {
-        event('abort', { reason: 'user_initiated' });
-        event('session.idle', { aborted: true });
-        if (process.argv.includes('--late-user-echo'))
-          event('user.message', { messageId: `input-${input}`, interactionId: 'rewritten' });
-        if (process.argv.includes('--idle-after-abort')) event('session.idle', {});
-      }, 15);
+      setTimeout(
+        () => {
+          event('abort', { reason: 'user_initiated' });
+          event('session.idle', { aborted: true });
+          if (process.argv.includes('--late-user-echo'))
+            event('user.message', { messageId: `input-${input}`, interactionId: 'rewritten' });
+          if (process.argv.includes('--idle-after-abort')) event('session.idle', {});
+        },
+        process.argv.includes('--delayed-abort') ? 2250 : 15
+      );
       break;
     case 'ping':
+      if (process.argv.includes('--crash-on-ping')) process.exit(1);
       if (process.argv.includes('--initial-idle') && input === 0) event('session.idle', {});
       reply({ message: 'ok', timestamp: Date.now() });
       if (pendingAck) {
@@ -185,6 +226,15 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
       break;
     case 'runtime.shutdown':
       if (process.argv.includes('--hang-stop')) break;
+      if (process.argv.includes('--slow-stop')) {
+        const timer = setInterval(() => {
+          if (!existsSync(join(process.cwd(), 'release-shutdown'))) return;
+          clearInterval(timer);
+          reply({});
+          setTimeout(() => process.exit(0), 5);
+        }, 5);
+        break;
+      }
       reply({});
       setTimeout(() => process.exit(0), 5);
       break;

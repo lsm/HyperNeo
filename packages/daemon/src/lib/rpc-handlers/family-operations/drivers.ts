@@ -1,3 +1,5 @@
+import { createCopilotAdapter } from '../../drivers/copilot-adapter.ts';
+import { dirname, resolve } from 'node:path';
 import { ensureCodexDesktopProject } from '../../drivers/codex-desktop-project.ts';
 import { neoWorkerPermissionMode } from '@hyperneo/shared/types/settings';
 import { sleep } from '../../utils/sleep.ts';
@@ -278,11 +280,14 @@ function claudeDesktopAdapters(
   return [withClaudeRemoteControl(createClaudeDesktopAdapter(deps), deps)];
 }
 
-function acpAgentAdapters(ownSessions: () => ReadonlySet<string>): WorkAdapter[] {
+function acpAgentAdapters(
+  ownSessions: () => ReadonlySet<string>,
+  context: FamilyOperationContext
+): WorkAdapter[] {
   return ACP_AGENTS.flatMap((agent) => {
     const command = findAcpAgentBinary(agent.bin);
     if (!command) return [];
-    return [
+    const adapters = [
       createAcpAgentAdapter({
         agent,
         machine: hostname(),
@@ -293,6 +298,18 @@ function acpAgentAdapters(ownSessions: () => ReadonlySet<string>): WorkAdapter[]
         ...(agent.app && existsSync(agent.app.path) ? { link: agent.app.link } : {}),
       }),
     ];
+    if (agent.id !== 'copilot-cli') return adapters;
+    const adapter = createCopilotAdapter(adapters[0], {
+      cliPath: command,
+      directory: join(dirname(resolve(context.deps.config.dbPath)), 'copilot-workers'),
+      machine: hostname(),
+      env: process.env,
+      homeDir: homedir(),
+      folderExists: existsSync,
+      makeFolder: (folder) => mkdirSync(folder),
+    });
+    context.driverCleanup?.push(() => adapter.close());
+    return [adapter];
   });
 }
 
@@ -515,7 +532,8 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
     ),
     ...claudeCodeAdapters(searchChats, () => readHyperneoSdkSessions(db()), context.claudeInbox),
     ...acpAgentAdapters(
-      () => new Set(context.deps.db.listAcpSessionIds().map((session) => session.acpSessionId))
+      () => new Set(context.deps.db.listAcpSessionIds().map((session) => session.acpSessionId)),
+      context
     ),
   ];
   const deps = {

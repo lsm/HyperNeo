@@ -50,6 +50,7 @@ export interface SafeFsReadOptions {
 
 export interface SafeFsBackendModule {
   withArtifactDescriptor: typeof withArtifactDescriptor;
+  withStoredArtifactDescriptor: typeof withStoredArtifactDescriptor;
   readFileWithinWorkspace: (
     workspace: string,
     segments: string[],
@@ -450,10 +451,11 @@ export async function writeFileWithinWorkspace(
   }
 }
 
-export async function withArtifactDescriptor<Value>(
+async function withRegularArtifactDescriptor<Value>(
   root: string,
   segments: string[],
-  consume: (fd: number, initial: Stats) => Value | Promise<Value>
+  consume: (fd: number, initial: Stats) => Value | Promise<Value>,
+  maxLinks: number
 ): Promise<
   | { accepted: true; value: Value }
   | { accepted: false; reason: 'safe_open_unavailable' | 'unsafe_path' }
@@ -488,10 +490,27 @@ export async function withArtifactDescriptor<Value>(
     );
     if (fileFd < 0) return { accepted: false, reason: 'unsafe_path' };
     const initial = fstatSync(fileFd);
-    if (!initial.isFile() || initial.nlink !== 1) return { accepted: false, reason: 'unsafe_path' };
+    if (!initial.isFile() || initial.nlink < 1 || initial.nlink > maxLinks)
+      return { accepted: false, reason: 'unsafe_path' };
     return { accepted: true, value: await consume(fileFd, initial) };
   } finally {
     closeFile(symbols, fileFd);
     closeFile(symbols, directoryFd);
   }
+}
+
+export function withArtifactDescriptor<Value>(
+  root: string,
+  segments: string[],
+  consume: (fd: number, initial: Stats) => Value | Promise<Value>
+) {
+  return withRegularArtifactDescriptor(root, segments, consume, 1);
+}
+
+export function withStoredArtifactDescriptor<Value>(
+  root: string,
+  sha256: string,
+  consume: (fd: number, initial: Stats) => Value | Promise<Value>
+) {
+  return withRegularArtifactDescriptor(root, ['blobs', sha256], consume, 2);
 }

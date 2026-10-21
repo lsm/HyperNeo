@@ -40,6 +40,7 @@ import type { SessionScheduler } from '../../scheduler/session-schedules.ts';
 import type { NeoPack } from '../../neo/packs/types.ts';
 
 export interface FamilyOperationContext {
+  readonly driverCleanup?: (() => Promise<void>)[];
   readonly sessionScheduler: SessionScheduler;
   readonly neoPacks: () => readonly NeoPack[];
   readonly claudeInbox?: ReturnType<typeof createClaudeInboxDriver>;
