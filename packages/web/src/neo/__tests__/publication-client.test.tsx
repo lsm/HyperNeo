@@ -334,6 +334,26 @@ describe('presentPublicationPage revisions', () => {
     });
   });
 
+  it('keeps the registered artifacts a publication carries', () => {
+    const artifacts = [
+      { daemonId: 'd1', artifactId: 'a1', title: 'Layout report', kind: 'html', byteLength: 86016 },
+    ];
+    expect(presentPublicationPage(response([{ ...item(), artifacts }]), page)).toEqual({
+      value: { state: 'ready', items: [{ ...item(), artifacts }], nextAfter: 1 },
+    });
+  });
+
+  it.each([
+    { artifacts: {} },
+    { artifacts: [{ daemonId: 'd1', artifactId: 'a1', title: 'x', kind: 'exe', byteLength: 1 }] },
+    { artifacts: [{ daemonId: 'd1', artifactId: '', title: 'x', kind: 'html', byteLength: 1 }] },
+    { artifacts: [{ daemonId: 'd1', artifactId: 'a1', title: 'x', kind: 'html', byteLength: -1 }] },
+  ])('rejects malformed artifact references %j', (fields) => {
+    expect(presentPublicationPage(response([{ ...item(), ...fields }]), page)).toEqual({
+      reason: { state: 'unavailable' },
+    });
+  });
+
   it('does not require revision metadata for an unchanged historical message', () => {
     expect(presentPublicationPage(response([original]), page)).toEqual({
       value: { state: 'ready', items: [original], nextAfter: 1 },
