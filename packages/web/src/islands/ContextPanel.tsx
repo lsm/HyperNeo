@@ -51,6 +51,7 @@ const SETTINGS_SECTIONS: Array<{
     icon: 'server',
     accent: 'text-cat-violet bg-cat-violet/15',
   },
+  { id: 'devices', label: 'Devices', icon: 'devices', accent: 'text-cat-cyan bg-cat-cyan/15' },
   {
     id: 'remote-daemons',
     label: 'Remote Daemons',
@@ -80,6 +81,17 @@ function SectionIcon({ type }: { type: string }) {
             stroke-linejoin="round"
             stroke-width={2}
             d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+          />
+        </svg>
+      );
+    case 'devices':
+      return (
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width={2}
+            d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"
           />
         </svg>
       );

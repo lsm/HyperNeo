@@ -140,6 +140,7 @@ export function createDevicePairingOperations({
               lastSeenAt: z.number().nullable(),
               lastSeenHost: z.string().nullable(),
               revokedAt: z.number().nullable(),
+              current: z.boolean(),
             })
           ),
         }),
@@ -149,7 +150,43 @@ export function createDevicePairingOperations({
         if (!isLocalUser(caller) && !fromDoor(caller)) return refused;
         if (!fromDoor(caller) && !isPairedHuman(caller))
           return { ok: false as const, reason: NEEDS_PAIRED_HUMAN };
-        return { ok: true as const, devices: pairing().listDevices() };
+        return {
+          ok: true as const,
+          devices: pairing()
+            .listDevices()
+            .map((device) => ({ ...device, current: device.id === caller.device?.deviceId })),
+        };
+      },
+    }),
+    defineOperation({
+      name: 'device.unpaired.list',
+      description:
+        'List connections seen without a paired device credential (kind, origin, host, address, counts); never a credential.',
+      policy: { safetyClass: 'human_only' },
+      inputSchema: z.object({}).strict(),
+      resultSchema: z.union([
+        z.object({
+          ok: z.literal(true),
+          connections: z.array(
+            z.object({
+              client: z.enum(['browser', 'native']),
+              origin: z.string().nullable(),
+              host: z.string().nullable(),
+              remoteAddress: z.string().nullable(),
+              credentialRejected: z.boolean(),
+              count: z.number(),
+              firstSeenAt: z.number(),
+              lastSeenAt: z.number(),
+            })
+          ),
+        }),
+        Refused,
+      ]),
+      execute: async (_input, caller) => {
+        if (!isLocalUser(caller) && !fromDoor(caller)) return refused;
+        if (!fromDoor(caller) && !isPairedHuman(caller))
+          return { ok: false as const, reason: NEEDS_PAIRED_HUMAN };
+        return { ok: true as const, connections: pairing().listUnpaired() };
       },
     }),
     defineOperation({
