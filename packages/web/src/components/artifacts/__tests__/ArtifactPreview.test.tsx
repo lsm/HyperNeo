@@ -3,10 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { connectionState } from '../../../lib/state.ts';
 import { ArtifactPreview } from '../ArtifactPreview.tsx';
 
-const request = vi.hoisted(() => vi.fn());
-vi.mock('../../../lib/connection-manager.ts', () => ({
-  connectionManager: { getHub: async () => ({ request }) },
-}));
+const { request, getHub } = vi.hoisted(() => {
+  const request = vi.fn();
+  return { request, getHub: vi.fn(async () => ({ request })) };
+});
+vi.mock('../../../lib/connection-manager.ts', () => ({ connectionManager: { getHub } }));
 
 const markdown = '# Weekly report\n\nRead [the docs](https://example.com/docs).';
 const bytes = new TextEncoder().encode(markdown);
@@ -127,10 +128,29 @@ describe('ArtifactPreview', () => {
     expect(screen.queryByText('the docs')).toBeNull();
     expect(screen.getByText('The daemon that owns this file is not reachable.')).toBeTruthy();
     act(() => {
+      connectionState.value = 'connecting';
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(screen.getByText('Loading preview…')).toBeTruthy();
+    act(() => {
       connectionState.value = 'connected';
     });
     await waitFor(() => expect(screen.getByText('the docs')).toBeTruthy());
     expect(request).toHaveBeenCalledTimes(4);
+  });
+
+  it('starts the connection on first open and reads once it is connected', async () => {
+    connectionState.value = 'connecting';
+    reply(meta(), chunk);
+    render(<ArtifactPreview artifactId="a1" onBack={() => {}} />);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(request).not.toHaveBeenCalled();
+    expect(getHub).toHaveBeenCalled();
+    act(() => {
+      connectionState.value = 'connected';
+    });
+    await waitFor(() => expect(screen.getByText('the docs')).toBeTruthy());
   });
 
   it('goes back when Back is pressed', async () => {
