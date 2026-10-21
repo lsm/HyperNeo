@@ -2,7 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { RegisterArtifactInput } from '../../../../src/lib/artifacts/register-operation.ts';
 
 describe('artifact registration', () => {
@@ -23,13 +24,20 @@ describe('artifact registration', () => {
       }).success
     ).toBe(false);
   });
-  test('registers durable authorized immutable receipts across retries and restart', () => {
+  test('registers durable receipts from an unrelated working directory', () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'preview-register-')));
     mkdirSync(join(root, 'home'));
+    const previousWorkingDirectory = process.cwd();
     try {
+      process.chdir(root);
       const output = execFileSync(
         'bun',
-        [resolve('../../.claude/skills/verify/preview-register.ts'), root],
+        [
+          fileURLToPath(
+            new URL('../../../../../../.claude/skills/verify/preview-register.ts', import.meta.url)
+          ),
+          root,
+        ],
         {
           env: { PATH: process.env.PATH, HOME: join(root, 'home'), NODE_ENV: 'test' },
           encoding: 'utf8',
@@ -46,6 +54,7 @@ describe('artifact registration', () => {
         registryExcluded: true,
       });
     } finally {
+      process.chdir(previousWorkingDirectory);
       rmSync(root, { recursive: true, force: true });
     }
   });

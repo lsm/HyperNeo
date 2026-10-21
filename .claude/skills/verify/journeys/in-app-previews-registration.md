@@ -5,6 +5,8 @@ and contract tests. Registration's native proof creates only synthetic work/ask,
 session, SQLite and workspace fixtures. It first failed on the missing operation;
 a separate regression failed when revocation during a retry returned a receipt.
 The final implementation rechecks current bindings before every successful result.
+The native test changes to an unrelated synthetic working directory before launch;
+its helper is anchored to the test file URL, so runner cwd cannot change resolution.
 
 It verifies descriptor-only capture, immutable registry rows, changed-content IDs,
 source/hash conflicts for reused requests, identical retry after source removal,
