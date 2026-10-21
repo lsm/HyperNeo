@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, renameSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -58,24 +58,54 @@ async function restart() { ws?.close(); await app!.cleanup(); app = undefined; a
 try {
   await connect();
   const work = await start('history');
+  const blocked = await start('permission');
+  const recordFile = join(run, 'data/copilot-workers', `${work.ref.id}.json`);
+  const originalRecord = JSON.parse(readFileSync(recordFile, 'utf8'));
+  const duplicates = Array.from({ length: 25 }, () => {
+    const id = crypto.randomUUID();
+    const record = structuredClone(originalRecord); record.work.ref.id = id; record.work.lastActivityAt = 1;
+    writeFileSync(join(run, 'data/copilot-workers', `${id}.json`), JSON.stringify(record));
+    return { sessionId: id, cwd: '/synthetic/copilot-project', title: 'Owned duplicate', updatedAt: new Date().toISOString() };
+  });
   writeFileSync(join(run, 'home/copilot-list.json'), JSON.stringify([
-    { sessionId: work.ref.id, cwd: join(run, 'workspace'), title: 'Wrong external title', updatedAt: new Date().toISOString() },
-    { sessionId: 'external-read-only', cwd: join(run, 'workspace'), title: 'External task', updatedAt: '2026-01-01T00:00:00Z' },
+    ...duplicates,
+    { sessionId: blocked.ref.id, cwd: '/synthetic/copilot-project', title: 'Wrong blocked title', updatedAt: '2026-01-01T00:00:00Z' },
+    { sessionId: work.ref.id, cwd: '/synthetic/copilot-project', title: 'Wrong external title', updatedAt: new Date().toISOString() },
+    { sessionId: 'external-read-only', cwd: '/synthetic/copilot-project', title: 'External task', updatedAt: '2026-01-01T00:00:00Z' },
   ]));
   const read = await rpc('work.read', { sessionId: work.ref.id, before: 10, after: 10 }) as Result<{ turns: { messageId: string; role: string; text: string }[] }>;
   assert(read.ok, JSON.stringify(read));
   assert.deepEqual(read.value.turns.map(t => t.role), ['user', 'tool', 'tool', 'assistant']);
   assert.equal(read.value.turns.at(-1)?.text, 'HISTORY_REPLY');
-  const found = await rpc('work.find', { adapters: ['copilot-cli'], folder: join(run, 'workspace'), includeClosed: true, localOnly: true }) as { places: { work: { ref: { id: string }; status: string; title: string }[] }[] };
+  const found = await rpc('work.find', { adapters: ['copilot-cli'], includeClosed: true, localOnly: true }) as { places: { work: { ref: { id: string }; status: string; title: string }[] }[] };
   const items = found.places.flatMap(p => p.work);
   assert.deepEqual(items.filter(w => w.ref.id === work.ref.id).map(w => [w.title, w.status]), [['Synthetic Copilot work', 'done']]);
+  assert.equal(items.find(w => w.ref.id === blocked.ref.id)?.status, 'needs_you');
   assert.equal(items.filter(w => w.ref.id === 'external-read-only').length, 1);
   const prior = calls().length;
   await restart();
   assert.deepEqual(await rpc('work.read', { sessionId: work.ref.id, before: 10, after: 10 }), read);
   assert(!calls().slice(prior).some(c => ['session.resume', 'session.create', 'session.send'].includes(c.method)));
+  const transcript = join(run, 'data/copilot-workers', work.ref.id, 'session-state', work.ref.id, 'events.jsonl');
+  for (let n = 0; n < 30; n++) appendFileSync(transcript, JSON.stringify({ type: 'assistant.message', timestamp: new Date().toISOString(), data: { messageId: `page-${n}`, content: 'P'.repeat(5000) } }) + '\n');
+  appendFileSync(transcript, '{"partial":');
+  const page = await rpc('work.read', { sessionId: work.ref.id, before: 1, after: 1 }) as Result<import('../../../packages/daemon/src/storage/work-turn-page.ts').WorkTurnPage>;
+  assert(page.ok && page.value.nextCursor, JSON.stringify(page));
+  assert.equal(page.value.turns[0].messageId, 'assistant:page-27');
+  assert.equal(page.value.turns[0].text.length, 4000);
+  assert.equal(page.value.turns[0].textComplete, false);
+  const older = await rpc('work.read', { sessionId: work.ref.id, before: 1, after: 1, cursor: page.value.nextCursor }) as typeof page;
+  assert(older.ok); assert.equal(older.value.turns.at(-1)?.messageId, 'assistant:page-26');
+  renameSync(transcript, transcript + '.preserved'); writeFileSync(transcript, '{}\n');
+  const stale = await rpc('work.read', { sessionId: work.ref.id, cursor: page.value.nextCursor }) as typeof page;
+  assert(stale.ok && stale.value.availability === 'reply_unavailable');
+  const receipt = await rpc('work.status', { ref: work.ref, receipt: work.receipt }) as Result<{ lastReply?: string }>;
+  assert(receipt.ok && receipt.value.lastReply === 'HISTORY_REPLY');
   const external = await rpc('work.send', { ref: { adapter: 'copilot-cli', id: 'external-read-only' }, message: 'must not send' }) as Result<unknown>;
   assert(!external.ok && external.reason === 'not_found');
+  const acpCalls = readFileSync(join(run, 'home/evidence/calls.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line).method);
+  assert(acpCalls.every(method => ['initialize', 'session/list'].includes(method)));
+  observations.push({ acpCalls });
   console.log(`PASS: owned Copilot work.read/find through isolated daemon; evidence ${run}/evidence/observed.json`);
 } finally {
   ws?.close(); await app?.cleanup();
