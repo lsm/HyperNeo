@@ -254,7 +254,7 @@ describe('Copilot worker construction', () => {
     const worker = await openCopilotWorker(config('fixture-1', '--idle-after-abort'));
     try {
       const receipt = await worker.submit('hold');
-      await worker.submit('queued');
+      const queued = await worker.submit('queued');
       await worker.abort();
       await eventually(
         () => worker.snapshot(),
@@ -263,8 +263,13 @@ describe('Copilot worker construction', () => {
       const state = await worker.snapshot();
       expect(state.status).toBe('stopped');
       expect(state.inputs[receipt.inputId].outcome).toBe('stopped');
+      expect(state.inputs[queued.inputId]).toMatchObject({
+        outcome: 'stopped',
+        state: 'pending',
+        replyAvailability: 'incomplete',
+      });
       await worker.submit('settled');
-      expect((await worker.snapshot()).status).toBe('running');
+      expect((await worker.snapshot()).status).toBe('done');
     } finally {
       await worker.close();
     }
@@ -307,6 +312,70 @@ describe('Copilot worker construction', () => {
       const state = await worker.snapshot();
       expect(state.status).toBe('needs_you');
       expect(state.inputs[receipt.inputId].state).toBe('pending');
+    } finally {
+      await worker.close();
+    }
+  });
+
+  for (const terminal of ['abort', 'error'])
+    test(`${terminal} settles queued receipts and releases their admission capacity`, async () => {
+      const worker = await openCopilotWorker(config());
+      try {
+        const queued = [];
+        for (let index = 0; index < 63; index++) queued.push(await worker.submit('queued'));
+        if (terminal === 'abort') {
+          await worker.submit('hold');
+          await worker.abort();
+          await eventually(
+            () => worker.snapshot(),
+            (v) => (v as { status: string }).status === 'stopped'
+          );
+        } else await worker.submit('error');
+        const state = await worker.snapshot();
+        for (const receipt of queued)
+          expect(state.inputs[receipt.inputId]).toMatchObject({
+            state: 'pending',
+            outcome: terminal === 'abort' ? 'stopped' : 'failed',
+            replyAvailability: 'incomplete',
+          });
+        await worker.submit('settled');
+        expect((await worker.snapshot()).status).toBe('done');
+        expect(Object.keys((await worker.snapshot()).inputs)).toHaveLength(64);
+      } finally {
+        await worker.close();
+      }
+    });
+
+  for (const terminal of ['abort', 'error'])
+    test(`${terminal} before an unconsumed input ACK settles that receipt too`, async () => {
+      const worker = await openCopilotWorker(config());
+      try {
+        const receipt = await worker.submit(`${terminal}-queued`);
+        const state = await worker.snapshot();
+        expect(state.inputs[receipt.inputId]).toMatchObject({
+          state: 'pending',
+          outcome: terminal === 'abort' ? 'stopped' : 'failed',
+          replyAvailability: 'incomplete',
+        });
+        await worker.submit('settled');
+        expect((await worker.snapshot()).status).toBe('done');
+      } finally {
+        await worker.close();
+      }
+    });
+
+  test('abort ACK alone does not retire a queued input', async () => {
+    const worker = await openCopilotWorker(config('fixture-1', '--abort-ack-only'));
+    try {
+      const receipt = await worker.submit('queued');
+      await worker.abort();
+      const state = await worker.snapshot();
+      expect(state.status).toBe('queued');
+      expect(state.inputs[receipt.inputId]).toMatchObject({
+        state: 'pending',
+        replyAvailability: 'incomplete',
+      });
+      expect(state.inputs[receipt.inputId].outcome).toBeUndefined();
     } finally {
       await worker.close();
     }

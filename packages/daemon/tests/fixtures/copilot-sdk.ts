@@ -43,7 +43,12 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
         setTimeout(() => process.exit(1), 5);
         break;
       }
-      if (prompt !== 'queued' && prompt !== 'permission-queued')
+      if (
+        prompt !== 'queued' &&
+        prompt !== 'permission-queued' &&
+        prompt !== 'error-queued' &&
+        prompt !== 'abort-queued'
+      )
         event('user.message', {
           content: prompt,
           messageId: id,
@@ -109,10 +114,11 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
             phase: 'final_answer',
           });
       }
-      if (prompt === 'error') {
+      if (prompt === 'error' || prompt === 'error-queued') {
         event('session.error', { errorType: 'fixture', message: 'Synthetic error' });
         event('session.idle', {});
       }
+      if (prompt === 'abort-queued') event('session.idle', { aborted: true });
       if (prompt === 'empty') event('session.idle', {});
       if (process.argv.includes('--late-user-echo') && prompt !== 'permission-queued')
         event('user.message', { messageId: id, interactionId: 'rewritten', content: prompt });
@@ -121,6 +127,7 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
     }
     case 'session.abort':
       reply({});
+      if (process.argv.includes('--abort-ack-only')) break;
       setTimeout(() => {
         event('abort', { reason: 'user_initiated' });
         event('session.idle', { aborted: true });

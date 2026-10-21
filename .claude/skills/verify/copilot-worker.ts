@@ -28,7 +28,7 @@ let ws: WebSocket | undefined;
 try {
   app = await createDaemonApp({ config: getConfig({ port, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
   app.messageHub.onRequest('verify.copilot', async (data: { action: string }) => {
-    if (['hold', 'settled', 'permission'].includes(data.action)) return { receipt: await worker.submit(data.action), state: await worker.snapshot() };
+    if (['hold', 'settled', 'permission', 'queued', 'error'].includes(data.action)) return { receipt: await worker.submit(data.action), state: await worker.snapshot() };
     if (data.action === 'finish') return { receipt: await worker.submit('finish'), state: await worker.snapshot() };
     if (data.action === 'abort') { await worker.abort(); return worker.snapshot(); }
     return worker.snapshot();
@@ -62,6 +62,7 @@ try {
   assert.equal(Object.keys(retained.state.inputs).length, 64);
   assert.equal(retained.state.inputs[held.receipt.inputId], undefined);
   assert.equal(retained.state.inputs[retained.receipt.inputId].replyAvailability, 'complete');
+  const queued = await rpc('verify.copilot', { action: 'queued' }) as typeof held;
   const interrupted = await rpc('verify.copilot', { action: 'hold' }) as typeof held;
   await rpc('verify.copilot', { action: 'abort' });
   let stopped = await rpc('verify.copilot', { action: 'snapshot' }) as typeof held.state;
@@ -71,6 +72,13 @@ try {
   }
   assert.equal(stopped.status, 'stopped');
   assert.equal(stopped.inputs[interrupted.receipt.inputId].outcome, 'stopped');
+  assert.equal(stopped.inputs[queued.receipt.inputId].outcome, 'stopped');
+  assert.equal(stopped.inputs[queued.receipt.inputId].replyAvailability, 'incomplete');
+  assert.equal((await rpc('verify.copilot', { action: 'settled' }) as typeof held).state.status, 'done');
+  const beforeError = await rpc('verify.copilot', { action: 'queued' }) as typeof held;
+  const failed = await rpc('verify.copilot', { action: 'error' }) as typeof held;
+  assert.equal(failed.state.inputs[beforeError.receipt.inputId].outcome, 'failed');
+  assert.equal(failed.state.inputs[beforeError.receipt.inputId].replyAvailability, 'incomplete');
   assert.equal((await rpc('verify.copilot', { action: 'settled' }) as typeof held).state.status, 'done');
   const blocked = await rpc('verify.copilot', { action: 'permission' }) as typeof held;
   assert.equal(blocked.state.status, 'needs_you');

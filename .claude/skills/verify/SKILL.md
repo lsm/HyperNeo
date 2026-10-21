@@ -2429,6 +2429,9 @@ blocked status. Unsettled inputs are capped at 64 without losing accepted receip
 Fresh-event-ID repeats of a user message must preserve its first interaction
 binding and any needs_you/failed/stopped status. A normal idle after aborted idle
 must keep stopped; only an explicit new submission starts subsequent work.
+Terminal abort/error settles pending and consumed receipts alike, without claiming
+pending input was consumed or its reply completed. Their capacity must be released;
+an ACK arriving after terminal evidence must inherit the stopped/failed outcome.
 Dedup retains at most 512 keys, evicting only keys unrelated to unsettled inputs;
 if all retained keys protect active evidence, the runtime becomes unreachable
 instead of forgetting that evidence and risking duplicate attribution. Snapshot
