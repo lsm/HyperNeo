@@ -304,3 +304,53 @@ describe('A human edit during the remote snapshot check', () => {
     expect(await git(remote, 'rev-parse', 'main')).toBe(other);
   });
 });
+
+describe('Neo reads after applying the choice in the same wake', () => {
+  test('returns the applied bytes instead of the cached pre-save conflict', async () => {
+    const { question } = await conflict();
+    const caller: OperationCaller = {
+      ...owner,
+      neoTurn: { messageId: 'synthetic-wake', human: true, isLive: () => true },
+    };
+    expect((await call('neo.home.read', { path: 'notes.md' }, caller)).ok).toBe(false);
+    await approve(question.id);
+    expect(
+      await call(
+        'neo.home.save',
+        {
+          path: 'notes.md',
+          content: remoteText,
+          message: 'Apply within wake',
+          conflictQuestionId: question.id,
+        },
+        caller
+      )
+    ).toMatchObject({ ok: true });
+    expect(await call('neo.home.read', { path: 'notes.md' }, caller)).toMatchObject({
+      ok: true,
+      content: remoteText,
+    });
+  });
+});
+
+describe('Ignored human files during conflict application', () => {
+  test('refuses rather than replacing an ignored file newly introduced by the remote merge', async () => {
+    await writeFile(join(root, '.git', 'info', 'exclude'), 'private-note.txt\n');
+    await writeFile(join(root, 'private-note.txt'), 'Human private bytes\n');
+    await writeFile(join(peer, 'private-note.txt'), 'Remote independent bytes\n');
+    await git(peer, 'add', '.');
+    await git(peer, 'commit', '-m', 'Remote document');
+    const { question, local, other } = await conflict();
+    await approve(question.id);
+    const result = await call('neo.home.save', {
+      path: 'notes.md',
+      content: remoteText,
+      message: 'Keep ignored file',
+      conflictQuestionId: question.id,
+    });
+    expect(result.ok).toBe(false);
+    expect(await readFile(join(root, 'private-note.txt'), 'utf8')).toBe('Human private bytes\n');
+    expect(await git(root, 'rev-parse', 'HEAD')).toBe(local);
+    expect(await git(remote, 'rev-parse', 'main')).toBe(other);
+  });
+});

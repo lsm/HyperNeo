@@ -39,11 +39,26 @@ async function divergent(path: string) {
 }
 try {
  await rpc('neo.open', {}); assert.equal((await rpc('neo.home.init', { remoteUrl: remote })).ok, true);
+ if (mode === 'ignored') {
+  await writeFile(join(root, '.git', 'info', 'exclude'), 'private-note.txt\n');
+  await writeFile(join(root, 'private-note.txt'), 'Human private bytes\n');
+  await writeFile(join(peer, 'private-note.txt'), 'Remote independent bytes\n');
+  await git(peer, 'add', '.'); await git(peer, 'commit', '-m', 'Remote independent document');
+ }
  const normal = await divergent('notes.md'); evidence.normal = normal;
  const input = { path: normal.path, content: other, message: 'Apply recorded choice', conflictQuestionId: normal.questionId };
  if (mode === 'race') await writeFile(join(run, 'network-race'), '');
  const first = await rpc('neo.home.save', input); evidence.normalResult = first;
- if (mode === 'race') {
+ if (mode === 'ignored') {
+  evidence.privateBytes = await readFile(join(root, 'private-note.txt'), 'utf8');
+  assert.equal(first.ok, phase === 'before');
+  assert.equal(evidence.privateBytes, phase === 'before' ? 'Remote independent bytes\n' : 'Human private bytes\n');
+  if (phase === 'after') {
+   assert.equal(await git(root, 'rev-parse', 'HEAD'), normal.localHead);
+   assert.equal(await git(remote, 'rev-parse', 'main'), normal.remoteHead);
+  }
+  console.log(phase === 'before' ? 'REPRODUCED: merge replaced the ignored human file with remote bytes.' : 'PASS: merge refuses an ignored human-file collision without applying the choice.');
+ } else if (mode === 'race') {
   assert.equal(await readFile(join(run, 'raced'), 'utf8'), '');
   assert.equal(await readFile(join(root, 'human.md'), 'utf8'), 'Human edit during network check\n');
   assert.equal(first.ok, phase === 'before');
