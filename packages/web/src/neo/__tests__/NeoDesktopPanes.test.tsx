@@ -9,6 +9,7 @@ import { testAskEntry, testTodo } from './neo-test-views.ts';
 import { locale } from '../../lib/i18n/index.ts';
 
 const useNeoMock = vi.hoisted(() => vi.fn());
+vi.mock('../../components/SessionSchedules.tsx', () => ({ SessionSchedules: () => null }));
 vi.mock('../useNeo.ts', () => ({ useNeo: useNeoMock }));
 vi.mock('../NeoComposer.tsx', () => ({
   NeoComposer: (props: { draft: string; onDraft: (value: string) => void }) => (
