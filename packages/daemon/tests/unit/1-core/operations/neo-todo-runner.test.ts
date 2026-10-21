@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
@@ -21,8 +24,8 @@ const ref = { adapter: 'hyperneo', id: 'worker-1' };
 const completed = (value: unknown): OperationOutcome =>
   ({ kind: 'completed', value }) as OperationOutcome;
 
-function setup(packDone: boolean | null = null) {
-  const db = new Database(':memory:');
+function setup(packDone: boolean | null = null, dbPath = ':memory:') {
+  const db = new Database(dbPath);
   runMigrations(db, () => {});
   createTables(db);
   const store = new NeoAskTodoRepository(db);
@@ -164,6 +167,96 @@ describe('idle open asks', () => {
 });
 
 describe('neo todo runner', () => {
+  test('unconfirmed peer acceptance survives database close and reopen without inventing a start', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'todo-dispatch-'));
+    const dbPath = join(dir, 'synthetic.db');
+    const delivery = {
+      delivered: false,
+      unconfirmed: true,
+      receipt: { executionId: 'worker-1', inputId: 'input-1' },
+    };
+    let id = '';
+    try {
+      const h = setup(null, dbPath);
+      try {
+        const todo = h.add();
+        id = todo.id;
+        h.db
+          .prepare('UPDATE neo_todo_sessions SET target = ? WHERE todo_id = ?')
+          .run(JSON.stringify({ verb: 'send', ref }), id);
+        h.setStatus({
+          ok: true,
+          value: { ref, status: 'done', lastActivityAt: 1000, recentInputs: [] },
+        });
+        h.setSend({ ok: true, value: delivery });
+        await h.runner.start(id);
+      } finally {
+        h.db.close();
+      }
+      const db = new Database(dbPath);
+      try {
+        const sessions = new NeoTodoSessionRepository(db);
+        expect(sessions.readSent(id)).toMatchObject({ delivery, receipt: delivery.receipt });
+        expect(sessions.readStartedAt(id)).toBeNull();
+        db.prepare('UPDATE neo_todo_sessions SET sent_receipt = ? WHERE todo_id = ?').run(
+          JSON.stringify({ ref: JSON.stringify(ref), receipt: delivery.receipt }),
+          id
+        );
+        expect(sessions.readSent(id)).toMatchObject({ receipt: delivery.receipt });
+        expect(sessions.readSent(id)).not.toHaveProperty('delivery');
+        db.prepare('UPDATE neo_todo_sessions SET sent_receipt = ? WHERE todo_id = ?').run(
+          JSON.stringify({
+            ref: JSON.stringify(ref),
+            receipt: delivery.receipt,
+            delivery: { delivered: 'not a boolean' },
+          }),
+          id
+        );
+        expect(sessions.readSent(id)).toMatchObject({ receipt: delivery.receipt });
+        expect(sessions.readSent(id)).not.toHaveProperty('delivery');
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test.each([
+    { delivered: false, queuedSubmissionId: 'queue-1' },
+    {
+      delivered: false,
+      unconfirmed: true,
+      receipt: { executionId: 'worker-1', inputId: 'input-1' },
+    },
+    { delivered: true, steeredIntoTurnId: 'turn-1' },
+  ])('retains the latest dispatch facts through start and continue: %j', async (delivery) => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      h.db
+        .prepare('UPDATE neo_todo_sessions SET target = ? WHERE todo_id = ?')
+        .run(JSON.stringify({ verb: 'send', ref }), todo.id);
+      h.setStatus({
+        ok: true,
+        value: { ref, status: 'done', lastActivityAt: 1000, recentInputs: [] },
+      });
+      h.setSend({ ok: true, value: delivery });
+      await h.runner.start(todo.id);
+      expect(new NeoTodoSessionRepository(h.db).readSent(todo.id)).toMatchObject({ delivery });
+      const next = { delivered: false, queuedSubmissionId: 'queue-2' };
+      h.setSend({ ok: true, value: next });
+      await h.runner.proceed(todo.id, 'Next synthetic instruction');
+      expect(new NeoTodoSessionRepository(h.db).readSent(todo.id)).toMatchObject({
+        delivery: next,
+      });
+      h.sessions.recordRef(todo.id, { adapter: 'hyperneo', id: 'different-worker' });
+      expect(h.sessions.readSent(todo.id)).not.toHaveProperty('delivery');
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('follows a stopped todo session for a later PR report without writing legacy work', async () => {
     const { db, store, sessions, runner, add, setStatus, calls, told } = setup();
     const todo = add({ pack: 'coding', kind: 'pr_merged', params: {} });

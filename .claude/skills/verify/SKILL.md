@@ -11,6 +11,58 @@ lives next to this file in `.claude/skills/verify/`. Run commands from the repo
 root of your worktree. Also read matching recipes in `journeys/*.md`; discover
 them by filename and content, without an index.
 
+## SQLite worker closure and opt-in native stall capture
+
+On macOS with Xcode command-line tools, use a fresh owned absolute directory:
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-sqlite-close-XXXXXX)
+bash .claude/skills/verify/sqlite-worker-close.sh verify 9384 "$RUN"
+RUN=$(mktemp -d /private/tmp/hn-sqlite-sample-XXXXXX)
+HYPERNEO_NATIVE_LAG_PROFILE=1 \
+  bash .claude/skills/verify/sqlite-worker-close.sh sample 9384 "$RUN"
+```
+
+The shell compiles a native interposer inside that run directory and launches an
+isolated daemon with a blank environment, its own HOME/data/DB and port. It delays
+only an explicit WAL checkpoint on the helper's synthetic worker database by
+1,800 ms. A retained prepared statement and worker termination expose Bun's
+process-wide database-registry mutex: an independent WebSocket client requests a
+new statement on the daemon's different database while that checkpoint runs.
+No real settings, DB, provider, credentials or daemon are used.
+
+`reproduce` on the regression commit records about 1,817 ms heartbeat lag and
+1,816 ms RPC latency. Fixed `verify` requires the retained statement to be closed,
+no termination checkpoint, unchanged results (219 and 7966), and heartbeat lag,
+query and RPC each below 250 ms. The measured fixed values were 1.01 ms lag,
+0.027 ms query and 0.77 ms RPC. This is a controlled native hazard reproduction,
+not attribution of the historical off-CPU gaps or proof every stall is fixed.
+
+`sample` deliberately uses upstream Bun's default close for its synthetic worker
+to keep the old hazard reproducible without changing production code. It starts
+the real watchdog explicitly (test daemons normally skip it). A timestamped
+`stack.native-*.txt` must be triggered before the blocked RPC recovers and contain
+a native Call graph; inspect both the blocked main thread and checkpoint worker.
+The helper awaits the one-second sampler and stops its clients, worker, watchdog
+and daemon. Output includes the exact trigger/recovery times and maximum lag.
+
+For an authorized deployment, `HYPERNEO_NATIVE_LAG_PROFILE=1` enables the same
+Darwin-only capture on the existing watchdog worker: a 100 ms heartbeat/check,
+a one-second native sample after a heartbeat is at least 1 s late, once per
+unrecovered episode and only one sampler in flight. Files extend the configured
+watchdog stack path with the trigger timestamp. Default is off; the existing
+60 s stall action, startup arming, suspension handling and shutdown fuse are
+unchanged. Capture begins during the block, rather than from the recovered
+main-thread slow-tick callback. Native stacks are local diagnostic artifacts;
+do not enable the flag on a real daemon without the coordinator's authorization.
+
+Focused `sqlite-worker-close.test.ts` invokes real Bun children to check retained
+statement invalidation, an actual FTS merge's post-close receipt and unchanged
+search results, and opt-in/off native capture without a stall action at 2 s.
+`sqlite.worker.lifecycle` carries merge/close durations, opened/closed wall times
+and parent receipt time, with no DB path or content. Those lifecycle spans and a
+checkpoint stack support correlation; whole-tick counters remain tick-scoped.
+
 ## Explicit mid-turn Answered linking (handoff PR5)
 
 ```bash
@@ -50,6 +102,38 @@ text blocks. Run that test with CI's Node Vitest runner and
 HOME/data dir and TMPDIR. The Bun runner aliases `bun:sqlite` back into the
 compatibility module and cannot run this online configuration; the standalone
 mid-turn helper above runs directly under Bun. Both checks retain receipt replay.
+
+## Worktree project resolution responsiveness
+
+Use an owned fresh run directory; the helper requires its own HOME/data and port.
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-worktree-resolution-XXXXXX)
+env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/worktree-resolution-lag.ts verify 9383 "$RUN"
+```
+
+The actual `work.find` RPC runs the real Codex adapter against a synthetic Codex
+SQLite state and mirrors the resulting project into the isolated daemon database.
+Its sole worktree has a `.git` FIFO: an independent Python writer waits until a
+reader opens it, then releases a valid pointer after 1.4 seconds. An external
+WebSocket client probes `system.health` while the read is pending. The returned
+project must be the main repository, and the thread keeps its worktree location.
+`observed.json` records response time, maximum main-loop lag and health latency.
+The failing `reproduce` journey reports about 1,405 ms loop lag and 1,406 ms health
+latency. After async resolution, the same journey reports about 1.7 ms lag and
+0.56 ms health latency, while discovery still awaits the full storage delay.
+All helper-owned clients, writer and daemon stop in `finally`. No real Codex
+store, `.git` pointer, credentials, provider, GUI or port 8399 is used.
+
+The focused `worktree-resolution.test.ts` also checks that concurrent and repeated
+lookups of an unchanged regular pointer perform only one content read. Changed
+metadata, a missing pointer, read errors and replacement must refresh/recover.
+Phase tests cover Codex SQLite open/configure/query/close,
+worktree resolution, grouping and each adapter's async success/failure boundary.
+Async worktree and adapter spans include awaits and are not exclusive main-thread
+blocking time. The synthetic reproduction proves a concrete blocking hazard;
+it does not attribute the historical 02:23:43 eight-second gap.
 
 ## Neo coordinator model fallback (backend)
 
@@ -132,6 +216,26 @@ is used. The Settings PR contains no new fallback execution policy.
 - GitHub is a stub: `gh` on the daemon's `PATH` answers `gh pr view` from
   `<run>/pr.json`, refuses everything else (including `gh auth token`) and logs
   every call to `<run>/evidence/gh.log`. Nothing reaches github.com.
+
+## Neo question-card Markdown (headless)
+
+Build web and Launch a fresh isolated synthetic daemon on a free non-8399 port.
+In the same shell, with a `stop.sh` EXIT trap, run:
+
+```bash
+NODE_PATH=<directory containing playwright> node .claude/skills/verify/neo-question-markdown.mjs 9379 "$RUN"
+```
+
+Set `VERIFY_BROWSER` to an installed Chromium executable if needed. The helper
+opens Neo over RPC and seeds only its own temporary DB with open, answered and
+retired questions. It drives the actual built `/neo` page headlessly at 1280 and
+390 pixels, opens Details, and checks real lists, bold, code, tables, links and
+single line breaks in each state. Raw HTML must remain escaped, question bounds
+must fit the viewport, and answer controls and historical metadata must remain.
+Evidence: `evidence/neo-question-markdown.json` and screenshots at both widths.
+No provider, model, credentials, live data or desktop GUI is used. Stop the daemon
+and mock with `stop.sh`. The focused `NeoAskTodos.test.tsx` uses the real chat
+renderer; its three formatting contracts fail on the test-first commit.
 
 ## Neo animation stability (headless)
 
@@ -2739,3 +2843,36 @@ These names are defense in depth only. This module neither opens files nor
 registers a reader. Registration must remain unwired until the anchored descriptor
 opener and immutable hash capture exist (slices 4–6). Reads must use authorized
 registry receipts, never this plan or a re-resolved path as a grant (slice 7).
+
+## Todo dispatch acknowledgement retention (delivery slice 1)
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-dispatch-evidence-XXXXXX)
+mkdir -p "$RUN/home"
+env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin" \
+  NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/dispatch-evidence.ts 9387 "$RUN"
+```
+
+The real isolated daemon's MCP `neo.todo.add` and `neo.todo.continue` operations
+use the production Codex and Claude CLI adapters. Synthetic Unix-socket peers
+return a Codex queue ID, confirm a steer turn ID, or accept Claude inbox bytes
+without confirming consumption. CLI discovery and registrations are synthetic;
+`claude` and `gh` are stubbed. No real app/CLI, credentials, provider, live DB,
+GUI or port 8399 is used.
+
+The helper closes and restarts the daemon, then opens only its synthetic DB
+read-only. Queue/unconfirmed acknowledgements must remain distinct from a turn
+start, every input/queue ID must survive, and continue must replace the previous
+acknowledgement with the actual steer result. `evidence/observed.json` retains
+operation replies, peer calls and recovered repository evidence. Before the fix,
+this journey reaches a successful queue insertion and doing todo, then fails
+because the acknowledgement was discarded. It is not enough for the todo-add
+operation alone to return `ok:true`; its embedded todo must also have started.
+
+Run the focused `neo-todo-runner`, `neo-driver-work` and `neo-input-attribution`
+unit suites too: old receipt envelopes remain readable, malformed delivery data
+cannot create facts, ref changes invalidate evidence, and unconfirmed acceptance
+survives actual DB close/reopen. This slice proves retention of the latest send,
+not an append-only obligation history, delivery deadlines, retries, idle queue
+activation, first worker output, canonical owner recovery or new UI states.

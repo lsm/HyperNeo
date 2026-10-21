@@ -25,20 +25,20 @@ describe('codexProjectFolder', () => {
     { name: 'b', folder: '/focus/b/neokai', lastActiveAt: 1 },
   ];
 
-  test('does not infer history from a matching folder name', () => {
-    expect(codexProjectFolder('/codex/worktrees/5096/dolmen', roots, '/codex/worktrees')).toBe(
-      '/codex/worktrees/5096/dolmen'
-    );
+  test('does not infer history from a matching folder name', async () => {
+    expect(
+      await codexProjectFolder('/codex/worktrees/5096/dolmen', roots, '/codex/worktrees')
+    ).toBe('/codex/worktrees/5096/dolmen');
   });
 
-  test('keeps the worktree when no root or several roots share its name', () => {
-    expect(codexProjectFolder('/codex/worktrees/1/neokai', roots, '/codex/worktrees')).toBe(
+  test('keeps the worktree when no root or several roots share its name', async () => {
+    expect(await codexProjectFolder('/codex/worktrees/1/neokai', roots, '/codex/worktrees')).toBe(
       '/codex/worktrees/1/neokai'
     );
-    expect(codexProjectFolder('/codex/worktrees/1/other', roots, '/codex/worktrees')).toBe(
+    expect(await codexProjectFolder('/codex/worktrees/1/other', roots, '/codex/worktrees')).toBe(
       '/codex/worktrees/1/other'
     );
-    expect(codexProjectFolder('/focus/elsewhere', roots, '/codex/worktrees')).toBe(
+    expect(await codexProjectFolder('/focus/elsewhere', roots, '/codex/worktrees')).toBe(
       '/focus/elsewhere'
     );
   });

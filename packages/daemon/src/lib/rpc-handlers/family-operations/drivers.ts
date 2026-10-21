@@ -95,7 +95,7 @@ export async function createDriverSession(
   availableModels: () => Promise<readonly ModelInfo[]> = readAvailableModels
 ): Promise<string> {
   const { gitRoot } = await sessionManager.getWorktreeManager().detectGitSupport(workspacePath);
-  const placement = planWorkPlacement(checkoutAt(gitRoot));
+  const placement = planWorkPlacement(await checkoutAt(gitRoot));
   const create = (config?: { model: string; provider?: Provider }) =>
     sessionManager.createSession({
       workspacePath,
@@ -118,8 +118,8 @@ export async function createDriverSession(
   }
 }
 
-function checkoutAt(gitRoot: string | null): GitCheckout | null {
-  const repo = gitRoot ? gitWorktreeProject(gitRoot) : null;
+async function checkoutAt(gitRoot: string | null): Promise<GitCheckout | null> {
+  const repo = gitRoot ? await gitWorktreeProject(gitRoot) : null;
   return gitRoot && repo ? { repo, linked: repo !== gitRoot } : null;
 }
 
