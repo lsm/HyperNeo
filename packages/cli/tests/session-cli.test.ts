@@ -7,6 +7,12 @@ import { vi } from 'vitest';
 import { planSessionCommand, resolveSender, runSessionCommand } from '../src/session-cli';
 
 describe('hyperneo send, question and build', () => {
+  test('lost-phone reset uses only its explicit local command', () => {
+    expect(planSessionCommand(['devices', 'reset-human'], 'cli')).toEqual({
+      value: { name: 'device.reset_human', input: {} },
+    });
+    expect(planSessionCommand(['devices', 'reset-human', 'extra'], 'cli')).toHaveProperty('reason');
+  });
   test('the sender is the HyperNeo session first, then the Codex thread, then Claude Code', () => {
     expect(
       resolveSender({
