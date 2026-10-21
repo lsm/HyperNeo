@@ -14,11 +14,19 @@ export interface RuntimeWebSocketHandler<TData = unknown> {
 
 export type UpgradeFn = <TData>(req: Request, data: TData) => Response | null;
 
+export interface RequestClient {
+  readonly remoteAddress: string | null;
+}
+
 export interface ServerOptions {
   hostname: string;
   port: number;
   idleTimeoutSeconds?: number;
-  fetch: (req: Request, upgrade: UpgradeFn) => Response | undefined | Promise<Response | undefined>;
+  fetch: (
+    req: Request,
+    upgrade: UpgradeFn,
+    client?: RequestClient
+  ) => Response | undefined | Promise<Response | undefined>;
   websocket?: RuntimeWebSocketHandler;
   onError?: (error: unknown) => Response | Promise<Response>;
 }
