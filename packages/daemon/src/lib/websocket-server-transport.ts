@@ -1,6 +1,6 @@
 import type { RuntimeSocket } from './runtime-server/index.ts';
 import { Logger } from './logger.ts';
-import type { UpgradeIdentity } from './pairing/upgrade-auth.ts';
+import { onDeviceRevoked, type UpgradeIdentity } from './pairing/upgrade-auth.ts';
 import type { HubMessage, IMessageTransport, ConnectionState } from '@hyperneo/shared';
 import type { HubMessageWithMetadata } from '@hyperneo/shared/message-hub/protocol';
 import type { MessageHubRouter, ClientConnection } from '@hyperneo/shared';
@@ -26,6 +26,7 @@ export class WebSocketServerTransport implements IMessageTransport {
 
   private wsToClientId: Map<RuntimeSocket, string> = new Map();
   private clientIdToWs: Map<string, RuntimeSocket> = new Map();
+  private readonly stopRevocations = onDeviceRevoked((deviceId) => this.closeDevice(deviceId));
 
   private clientQueues: Map<string, number> = new Map();
 
@@ -118,6 +119,7 @@ export class WebSocketServerTransport implements IMessageTransport {
 
   async close(): Promise<void> {
     this.stopStaleConnectionChecker();
+    this.stopRevocations();
 
     const clientIds = Array.from(this.clientIdToWs.keys());
     for (const clientId of clientIds) {
@@ -179,6 +181,12 @@ export class WebSocketServerTransport implements IMessageTransport {
     }
 
     return clientId;
+  }
+
+  closeDevice(deviceId: string): void {
+    for (const ws of this.clientIdToWs.values())
+      if ((ws.data as { device?: UpgradeIdentity | null })?.device?.deviceId === deviceId)
+        ws.close(1008, 'Device revoked');
   }
 
   deviceOf(clientId: string): UpgradeIdentity | null {

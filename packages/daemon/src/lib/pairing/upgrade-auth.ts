@@ -5,6 +5,17 @@ import type {
 
 export const DEVICE_COOKIE = 'hyperneo_device';
 
+const revocationListeners = new Set<(deviceId: string) => void>();
+
+export function announceDeviceRevoked(deviceId: string): void {
+  for (const listener of revocationListeners) listener(deviceId);
+}
+
+export function onDeviceRevoked(listener: (deviceId: string) => void): () => void {
+  revocationListeners.add(listener);
+  return () => revocationListeners.delete(listener);
+}
+
 export interface UpgradeIdentity {
   deviceId: string;
   kind: DeviceKind;

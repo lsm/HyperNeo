@@ -31,7 +31,9 @@ const echo = (name: string) =>
 
 function connectedAs(device: UpgradeIdentity | null) {
   const handler = createOperationRpcHandler(
-    createOperationRegistry([echo('client.list'), echo('neo.snapshot'), echo('session.archive')]),
+    createOperationRegistry(
+      ['client.list', 'neo.snapshot', 'session.archive', 'message.send', 'work.status'].map(echo)
+    ),
     (call) => (call.clientId === 'socket-1' && device ? { device } : {})
   );
   return (name: string) => handler({ name, input: {} }, context);
@@ -66,8 +68,10 @@ describe('operation callers from paired devices', () => {
     await refused(call('session.archive'));
   });
 
-  test('a paired daemon has no operations until daemon.attach lands', async () => {
+  test('a paired daemon keeps the calls daemons make on each other and nothing else', async () => {
     const call = connectedAs({ deviceId: 'imac', kind: 'daemon' });
+    expect(await call('message.send')).toEqual({ principal: 'local', kind: 'daemon' });
+    expect(await call('work.status')).toEqual({ principal: 'local', kind: 'daemon' });
     await refused(call('client.list'));
     await refused(call('session.archive'));
   });
