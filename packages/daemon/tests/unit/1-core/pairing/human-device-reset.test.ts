@@ -97,7 +97,10 @@ test('one replacement human consumes recovery; old codes and extra recovery code
 test('ordinary revoke never enables recovery and repeated empty resets each retain a notice', async () => {
   const phone = pair('human', 'Phone');
   expect(await call('device.revoke', { deviceId: phone.device.id })).toMatchObject({ ok: true });
-  expect(await call('device.pair.create', { kind: 'human' })).toMatchObject({ ok: false });
+  expect(await call('device.pair.create', { kind: 'human' })).toMatchObject({
+    ok: false,
+    reason: expect.stringContaining('hyperneo devices reset-human'),
+  });
   expect(await call('device.reset_human')).toMatchObject({ ok: true });
   expect(await call('device.reset_human')).toMatchObject({ ok: true });
   expect(notices()).toHaveLength(2);
