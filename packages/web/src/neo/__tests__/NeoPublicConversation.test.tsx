@@ -162,6 +162,29 @@ describe('durable public conversation presentation', () => {
     expect(screen.queryByLabelText('Edit and send again')).toBeNull();
   });
 
+  it.each(['Short ending.', 'A long ending that fills the available line. '.repeat(16)])(
+    'keeps collapsed and expanded controls right-aligned for %s without body toggles',
+    async (ending) => {
+      const value = publication({
+        shortText: `Preview ${ending}`,
+        fullText: `Full details\n\n${ending}`,
+      });
+      const { container } = render(
+        <NeoPublicConversation conversation={conversation([], [value])} />
+      );
+      const more = await screen.findByRole('button', { name: /more$/ });
+      expect(getComputedStyle(more).cssFloat).toBe('right');
+      fireEvent.click(screen.getByText(value.shortText));
+      expect(container.querySelector('[data-publication-details]')).toBeNull();
+      fireEvent.click(more);
+      const less = await screen.findByRole('button', { name: /less$/ });
+      expect(getComputedStyle(less).cssFloat).toBe('right');
+      fireEvent.click(screen.getByText(ending, { exact: true }));
+      expect(container.querySelector('[data-publication-details]')).toBeTruthy();
+      expect(less.getAttribute('aria-expanded')).toBe('true');
+    }
+  );
+
   it('keeps the short reply, shows the full one under it on demand, and copies the full one', async () => {
     const value = publication({ shortText: 'The comparison is ready. Nothing has been executed.' });
     const { container } = render(
