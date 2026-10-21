@@ -131,13 +131,29 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
   const seen = new Map<string, string | undefined>();
   const terminal = Promise.withResolvers<void>();
   const submitted = new Set<string>();
+  const persisted = new Map<string, InputState>();
   const settled = new Set<string>();
   const pending: SessionEvent[] = [];
   let flush = () => {};
   let submitting = 0;
   const prune = () => {
     try {
-      for (const id of submitted) config.onInput?.(id, state.inputs[id]);
+      if (config.onInput)
+        for (const id of submitted) {
+          const input = state.inputs[id];
+          const previous = persisted.get(id);
+          if (
+            previous &&
+            previous.state === input.state &&
+            previous.interactionId === input.interactionId &&
+            previous.replyReport === input.replyReport &&
+            previous.outcome === input.outcome &&
+            previous.replyAvailability === input.replyAvailability
+          )
+            continue;
+          config.onInput(id, input);
+          persisted.set(id, { ...input });
+        }
     } catch {
       state.status = 'unreachable';
       terminal.resolve();
@@ -148,6 +164,7 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
       const id = settled.values().next().value!;
       delete state.inputs[id];
       submitted.delete(id);
+      persisted.delete(id);
       settled.delete(id);
     }
     for (const [key, id] of seen) {

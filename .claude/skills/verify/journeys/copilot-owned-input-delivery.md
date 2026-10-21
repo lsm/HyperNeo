@@ -62,3 +62,14 @@ implements only its synthetic protocol. Tools remain unavailable and permissions
 reject on create and resume. No arbitrary external or unfinished session is
 loaded. Receipt files intentionally retain durable evidence; bounded history
 listing/retention policy and owned work.find overlay belong to slice 5.
+
+Use mode `writes` for receipt I/O behavior. Hold open descriptors to a completed
+receipt and an unrelated pending receipt, emit twelve synthetic assistant message
+fragments for the active input, then compare descriptor/path inode identities.
+Neither unchanged file may be replaced, while the active input retains all
+fragments. Abort must replace the pending receipt to persist its changed outcome,
+leave the completed file untouched, and preserve that full completed report after
+restart. Keeping the descriptors open prevents inode reuse from hiding a rewrite.
+The default journey includes this case. The owner's persistence cache advances
+only after successful writes and is pruned with its bounded receipt cache; no
+unchanged full reports are serialized or rewritten by the persistence callback.
