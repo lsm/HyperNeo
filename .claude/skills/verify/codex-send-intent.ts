@@ -32,6 +32,7 @@ let owner = 'refused';
 let active = true;
 let uncertain = false;
 let refuse = false;
+let startError = false;
 const calls: unknown[] = [];
 const logs: unknown[] = [];
 const replies: unknown[] = [];
@@ -44,9 +45,10 @@ const desktop = createServer((socket) => {
       const size = buffer.readUInt32LE(0);
       const request = JSON.parse(buffer.subarray(4, size + 4).toString());
       buffer = buffer.subarray(size + 4);
-      calls.push({ desktop: request.method });
+      calls.push({ desktop: request.method, version: request.version, params: request.params });
       const response = request.method === 'initialize' ? { resultType: 'success', result: { clientId: 'synthetic-client' } }
         : request.method === 'thread-owner-discovery' ? owner === 'owned' ? { resultType: 'success', handledByClientId: 'fixture-owner' } : { resultType: 'error', error: 'request-version-mismatch' }
+        : request.method === 'thread-follower-start-turn' ? startError ? { resultType: 'error', error: 'start unavailable' } : { resultType: 'success', result: { result: { turn: { id: 'desktop-started' } } } }
         : refuse ? { resultType: 'error', error: 'NoActiveTurn' } : { resultType: 'success', result: { result: { turnId: 'desktop-active' } } };
       const body = Buffer.from(JSON.stringify({ type: 'response', requestId: request.requestId, ...response }));
       const header = Buffer.alloc(4); header.writeUInt32LE(body.length);
@@ -60,7 +62,8 @@ const server = new WebSocketServer({ server: http });
 server.on('connection', (socket) => socket.on('message', (bytes) => {
   const request = JSON.parse(String(bytes));
   calls.push({ server: request.method, params: request.params });
-  const result = request.method === 'thread/turns/list' ? { data: active ? [{ id: 'server-active', status: 'inProgress' }] : [] }
+  const result = request.method === 'thread/turns/list' ? { data: active ? [{ id: 'server-active', status: 'inProgress' }] : [{ id: 'completed-turn', status: 'completed' }] }
+    : request.method === 'turn/start' ? { turn: { id: 'server-started', status: 'inProgress', items: [] } }
     : request.method === 'turn/steer' ? { turnId: 'server-active' } : { queuedSubmission: { id: 'synthetic-queue' } };
   socket.send(JSON.stringify({ id: request.id, ...(uncertain && request.method === 'turn/steer' ? { error: { message: 'connection closed' } } : { result }) }));
 }));
@@ -105,7 +108,12 @@ try {
     const before = calls.length;
     assert.equal((await send('steer')).reason, 'not_delivered');
     assert(!calls.slice(before).some((call) => (call as { server?: string }).server === 'thread/queue/add'));
-    assert.equal((await send()).value.queuedSubmissionId, 'synthetic-queue');
+    const idle = await send();
+    assert.equal(idle.ok, true);
+    assert.equal(idle.value.delivered, true);
+    assert.equal(idle.value.startedTurnId, 'server-started');
+    assert.equal(idle.value.queuedSubmissionId, undefined);
+    assert(!calls.slice(before).some((call) => (call as { server?: string }).server === 'thread/queue/add'));
     active = true; uncertain = true;
     const unknown = calls.length;
     assert.equal((await send()).reason, 'not_delivered');
@@ -116,6 +124,17 @@ try {
     const rejected = await send('steer');
     assert.equal(rejected.reason, 'not_delivered');
     assert.match(rejected.detail, /NoActiveTurn/);
+    const ownedBefore = calls.length;
+    const started = await send();
+    assert.equal(started.value.delivered, true);
+    assert.equal(started.value.startedTurnId, 'desktop-started');
+    assert.equal(started.value.queuedSubmissionId, undefined);
+    startError = true;
+    const impossible = await send();
+    assert.equal(impossible.ok, false);
+    assert.equal(impossible.reason, 'not_delivered');
+    assert.match(impossible.detail, /start unavailable/);
+    assert(!calls.slice(ownedBefore).some((call) => (call as { server?: string }).server === 'thread/queue/add'));
     assert(logs.length > 0, 'retained routing diagnostics required');
   }
   console.log(`${action} PASS: ${run}/evidence/observed.json`);
