@@ -603,5 +603,7 @@ export default function MarkdownRenderer({
     if (trailingMount.current) render(trailing ?? null, trailingMount.current);
   });
 
-  return <div ref={containerRef} class={`prose ${className || ''}`} />;
+  return (
+    <div ref={containerRef} class={`prose ${hasTrailing ? 'flow-root' : ''} ${className || ''}`} />
+  );
 }

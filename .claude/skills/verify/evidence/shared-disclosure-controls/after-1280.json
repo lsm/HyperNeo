@@ -1,0 +1,150 @@
+[
+  {
+    "name": "short-collapsed",
+    "layout": {
+      "button": {
+        "left": 227.453125,
+        "right": 265.90625,
+        "top": 480,
+        "bottom": 496,
+        "width": 38.453125,
+        "height": 16
+      },
+      "paragraph": {
+        "left": 41,
+        "right": 265.90625,
+        "top": 480,
+        "bottom": 507.1875,
+        "width": 224.90625,
+        "height": 27.1875
+      },
+      "float": "right",
+      "lastGlyph": {
+        "left": 211.015625,
+        "right": 215.453125,
+        "top": 484,
+        "bottom": 502
+      }
+    }
+  },
+  {
+    "name": "short-expanded",
+    "layout": {
+      "button": {
+        "left": 193.4375,
+        "right": 225.453125,
+        "top": 475.484375,
+        "bottom": 491.484375,
+        "width": 32.015625,
+        "height": 16
+      },
+      "paragraph": {
+        "left": 53,
+        "right": 225.453125,
+        "top": 475.484375,
+        "bottom": 499.28125,
+        "width": 172.453125,
+        "height": 23.796875
+      },
+      "float": "right",
+      "lastGlyph": {
+        "left": 136.03125,
+        "right": 140.0625,
+        "top": 478.484375,
+        "bottom": 495.484375
+      }
+    }
+  },
+  {
+    "name": "body-selection",
+    "selected": "Short endin"
+  },
+  {
+    "name": "long-collapsed",
+    "layout": {
+      "button": {
+        "left": 604.9375,
+        "right": 643.390625,
+        "top": 667.5625,
+        "bottom": 683.5625,
+        "width": 38.453125,
+        "height": 16
+      },
+      "paragraph": {
+        "left": 41,
+        "right": 643.390625,
+        "top": 613.1875,
+        "bottom": 694.75,
+        "width": 602.390625,
+        "height": 81.5625
+      },
+      "float": "right",
+      "lastGlyph": {
+        "left": 299.390625,
+        "right": 303.828125,
+        "top": 671.5625,
+        "bottom": 689.5625
+      }
+    }
+  },
+  {
+    "name": "long-expanded",
+    "layout": {
+      "button": {
+        "left": 599.375,
+        "right": 631.390625,
+        "top": 670.609375,
+        "bottom": 686.609375,
+        "width": 32.015625,
+        "height": 16
+      },
+      "paragraph": {
+        "left": 53,
+        "right": 631.390625,
+        "top": 385.046875,
+        "bottom": 670.609375,
+        "width": 578.390625,
+        "height": 285.5625
+      },
+      "float": "right",
+      "lastGlyph": {
+        "left": 602.0625,
+        "right": 606.078125,
+        "top": 649.8125,
+        "bottom": 666.8125
+      }
+    }
+  },
+  {
+    "name": "human-expanded",
+    "layout": {
+      "button": {
+        "left": 652,
+        "right": 684.015625,
+        "top": 358.5625,
+        "bottom": 374.5625,
+        "width": 32.015625,
+        "height": 16
+      },
+      "paragraph": {
+        "left": 482.40625,
+        "right": 684.015625,
+        "top": -178,
+        "bottom": 374.5625,
+        "width": 201.609375,
+        "height": 552.5625
+      },
+      "float": "right",
+      "lastGlyph": {
+        "left": 679.5,
+        "right": 683.9375,
+        "top": 335.375,
+        "bottom": 353.375
+      }
+    }
+  },
+  {
+    "name": "todo-body-click",
+    "toggledByBody": 0
+  }
+]

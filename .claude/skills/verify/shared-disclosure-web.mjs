@@ -13,13 +13,22 @@ export async function verifySharedDisclosure(page, { port, run, width, phase }) 
     const layout = await button.evaluate((node) => {
       const paragraph = node.closest('p') ?? node.parentElement;
       const rect = (el) => { const b=el.getBoundingClientRect(); return { left:b.left,right:b.right,top:b.top,bottom:b.bottom,width:b.width,height:b.height }; };
-      return { button:rect(node), paragraph:rect(paragraph), float:getComputedStyle(node).cssFloat };
+      const walker=document.createTreeWalker(paragraph,NodeFilter.SHOW_TEXT); let last;
+      for(let text=walker.nextNode();text;text=walker.nextNode()) if(text.textContent.trim() && !text.parentElement.closest('button')) last=text;
+      let lastGlyph=null;
+      if(last) { const range=document.createRange(); const end=last.textContent.trimEnd().length; range.setStart(last,end-1); range.setEnd(last,end); const r=range.getBoundingClientRect(); lastGlyph={left:r.left,right:r.right,top:r.top,bottom:r.bottom}; }
+      return { button:rect(node), paragraph:rect(paragraph), float:getComputedStyle(node).cssFloat, lastGlyph };
     });
     record({ name, layout });
     await page.screenshot({ path:`${dir}/${name}-${width}.png` });
     if (phase === 'after') {
       assert.equal(layout.float, 'right');
       assert(Math.abs(layout.button.right - layout.paragraph.right) <= 2, JSON.stringify(layout));
+      if (layout.lastGlyph) {
+        const sameLine=layout.button.top < layout.lastGlyph.bottom && layout.button.bottom > layout.lastGlyph.top;
+        const room=layout.lastGlyph.right + layout.button.width + 12 <= layout.paragraph.right;
+        assert(room ? sameLine : layout.button.top >= layout.lastGlyph.top, JSON.stringify({room,sameLine,...layout}));
+      }
     }
   }
   await page.setViewportSize({width,height:1000});
@@ -29,13 +38,19 @@ export async function verifySharedDisclosure(page, { port, run, width, phase }) 
     const more = article.getByRole('button', { name:/more$/ });
     await more.waitFor();
     await position(more, `${item.name}-collapsed`);
-    await more.click();
+    await more.focus(); await page.keyboard.press('Enter');
     const less = article.getByRole('button', { name:/less$/ });
     await less.waitFor();
     await position(less, `${item.name}-expanded`);
     await article.locator('[data-publication-details] p').last().click({ position:{x:8,y:8} });
     assert.equal(await article.locator('[data-publication-details]').count(),1);
-    await less.click();
+    if(item.name === 'short') {
+      const p=article.locator('[data-publication-details] p').last(); const box=await p.boundingBox();
+      await page.mouse.move(box.x+3,box.y+10); await page.mouse.down(); await page.mouse.move(box.x+75,box.y+10,{steps:8}); await page.mouse.up();
+      const selected=await page.evaluate(()=>getSelection()?.toString()??''); assert(selected.length>0);
+      assert.equal(await article.locator('[data-publication-details]').count(),1); record({name:'body-selection',selected});
+    }
+    await less.focus(); await page.keyboard.press('Space');
     assert.equal(await article.locator('[data-publication-details]').count(),0);
   }
   const human = page.locator('article[data-public-entry]').filter({hasText:'Synthetic human message'});
@@ -50,7 +65,8 @@ export async function verifySharedDisclosure(page, { port, run, width, phase }) 
   record({ name:'todo-body-click',toggledByBody });
   if (phase === 'after') assert.equal(toggledByBody,0);
   if (toggledByBody) await row.getByRole('button',{name:'Hide details: Synthetic step 1'}).click();
-  await row.getByRole('button',{name:'Show details: Synthetic step 1'}).click();
+  await row.getByRole('button',{name:'Show details: Synthetic step 1'}).focus(); await page.keyboard.press('Enter');
+  await row.locator('[data-todo-details]').waitFor();
   await page.screenshot({path:`${dir}/todo-expanded-${width}.png`});
   await row.getByRole('button',{name:'Hide details: Synthetic step 1'}).click();
   const details = card.locator('[data-ask-details-toggle]');

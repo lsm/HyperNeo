@@ -123,12 +123,12 @@ describe('NeoAskTodos', () => {
     fireEvent.click(app.getByText('Todo a'));
     expect(app.queryByText(data.todos[0].report!.trim())).toBeNull();
     const more = app.getByRole('button', { name: 'Show details: Todo a' });
-    expect(getComputedStyle(more).cssFloat).toBe('right');
+    expect(getComputedStyle(more).getPropertyValue('float')).toBe('right');
     fireEvent.click(more);
     fireEvent.click(app.getByText('Todo a'));
     expect(app.getByText(data.todos[0].report!.trim())).toBeTruthy();
     const less = app.getByRole('button', { name: 'Hide details: Todo a' });
-    expect(getComputedStyle(less).cssFloat).toBe('right');
+    expect(getComputedStyle(less).getPropertyValue('float')).toBe('right');
     fireEvent.click(less);
     expect(app.queryByText(data.todos[0].report!.trim())).toBeNull();
   });
