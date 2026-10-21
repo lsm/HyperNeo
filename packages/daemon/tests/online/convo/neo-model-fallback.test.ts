@@ -8,8 +8,8 @@ import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
 
 test('Neo completes a limited primary turn on its fallback thinking level and returns to the recovered primary', async () => {
   const run = await mkdtemp(join(tmpdir(), 'neo-model-fallback-'));
-  const primary = 'claude-haiku-4-5-20251001';
-  const fallback = 'claude-sonnet-4-5-20250929';
+  let primary = 'sonnet';
+  let fallback = 'opus';
   const requests: Record<string, unknown>[] = [];
   const evidence: Record<string, unknown> = { run, primary, fallback, requests };
   let unavailable = true;
@@ -183,6 +183,17 @@ test('Neo completes a limited primary turn on its fallback thinking level and re
       hub.request<Record<string, unknown>>('operation.invoke', { name, input });
     const opened = await call('neo.open');
     const sessionId = String(opened.sessionId);
+    const catalog = await hub.request<{ models: { id: string; provider: string }[] }>(
+      'models.list',
+      { sessionId: 'global' }
+    );
+    primary = catalog.models.find(
+      (model) => model.provider === 'anthropic' && model.id.includes('sonnet')
+    )!.id;
+    fallback = catalog.models.find(
+      (model) => model.provider === 'anthropic' && model.id.includes('opus')
+    )!.id;
+    Object.assign(evidence, { primary, fallback });
     const preference = {
       model: primary,
       provider: 'anthropic',
@@ -190,6 +201,7 @@ test('Neo completes a limited primary turn on its fallback thinking level and re
       fallbacks: [{ model: fallback, provider: 'anthropic', thinkingLevel: 'think8k' }],
     };
     evidence.saved = await call('neo.preferences.set', preference);
+    expect(evidence.saved).toMatchObject({ ok: true });
     const requestId = randomUUID();
     evidence.sent = await call('neo.message.send', {
       sessionId,
@@ -212,7 +224,11 @@ test('Neo completes a limited primary turn on its fallback thinking level and re
     expect(selected, JSON.stringify(requests)).toBeDefined();
     expect(JSON.stringify(selected)).toMatch(/8000|"effort":"low"/);
     const idle = Date.now() + 15000;
-    while (daemon.db.getSession(sessionId)?.processingState?.status !== 'idle' && Date.now() < idle)
+    while (
+      (await daemon.sessionManager.getSessionForControl(sessionId))?.getProcessingState().status !==
+        'idle' &&
+      Date.now() < idle
+    )
       await new Promise((resolve) => setTimeout(resolve, 100));
     await new Promise((resolve) => setTimeout(resolve, 500));
     unavailable = false;
