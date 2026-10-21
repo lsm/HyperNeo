@@ -106,7 +106,7 @@ Every HTTP request and `/ws` upgrade must pass a Host and an Origin check.
 
 - A new default bind of `127.0.0.1`, with `::1` too where the runtime supports it.
 - Binding anything else takes an explicit opt-in: `--host <addr> --expose`, or Settings → Network → "Listen on" with a warning.
-- Compatibility: daemons that already set `HOST`/`--host` today keep starting on that address, with a startup warning, until the human makes the Listen-on change in migration step 5. Only after that change, or for a new `--expose`, does the daemon refuse to bind a non-loopback address while pairing enforcement is off.
+- Compatibility: daemons that already set `HOST`/`--host` today keep starting on that address, with a startup warning, until the human makes the Listen-on change in migration step 5. Only after that change, or for a new `--expose`, does the daemon refuse to bind a non-loopback address while pairing enforcement is off. The one exception is the address the rollback switch restores (below): the daemon starts on it with a warning, including a default-config daemon whose previous address was `0.0.0.0`.
 - The phone keeps its route: `tailscale serve --https=443 http://127.0.0.1:9283`. Serve connects to loopback, so the existing `https://<machine>.ts.net` URL keeps working. Its MagicDNS name goes into Allowed hosts.
 - Other machines move to `wss://<machine>.ts.net/ws` through Serve, the same way.
 
@@ -146,7 +146,7 @@ Built on `tests/helpers/daemon-server.ts` (spawned daemon on port 0) and `standa
 - A pairing code works once, expires after 10 minutes, and locks out after too many failed attempts.
 - The cookie and the Bearer header both authenticate. A revoked device's open socket closes within one second.
 - A cross-site Origin gets 403. An unknown Host (DNS rebinding) gets 403. A native client with no Origin but with a Bearer credential is accepted.
-- `relay` and `peer` principals are refused by `requireLocalUser` and `human_only` operations. A peer's forwarded `message.send` still works.
+- `relay` and `peer` principals are refused by `requireLocalUser` and `human_only` operations, except the relay's three reads (`neo.snapshot`, `neo.publication.read`, `client.list`), which are admitted by name. A peer's forwarded `message.send` still works.
 - The default bind is loopback. A non-loopback bind without `--expose` refuses to start.
 - The session door socket is never world-accessible, including the moment between `listen` and `chmod`.
 - Verify journey: `pair-device.sh` on an isolated daemon pairs a CLI device and a web cookie, opens `/ws` with each, revokes one, and checks the refusal.
