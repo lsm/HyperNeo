@@ -58,3 +58,13 @@ GC entries is not evidence that GC did not happen. `heapBeforeBytes`,
 A drop supports collection as a hypothesis, not proof of cause. Heap samples
 that take over 1 ms disable normal-tick sampling for that monitor instance;
 block reports still sample and disclose `blocks_only` and the old sample's age.
+
+FTS worker completion emits `sqlite.worker.lifecycle` only after its SQLite
+connection closes: `mergeMs`, `closeMs`, `openedAt`, `closedAt`, and parent
+`receivedAt`. The Bun compatibility connection force-finalizes retained statements
+before returning from close; worker termination must not defer that owned handle.
+The Darwin-only opt-in `HYPERNEO_NATIVE_LAG_PROFILE=1` adds a 100 ms watchdog
+heartbeat/check and samples native stacks in the watchdog worker after 1 s of
+missed heartbeats. Its trigger timestamp is part of the stack filename; normal
+60 s stall actions and startup arming remain separate. See the SQLite worker
+closure journey for the isolated delayed-checkpoint proof and capture limits.
