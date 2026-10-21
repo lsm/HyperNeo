@@ -165,7 +165,7 @@ describe('owned Copilot lifecycle', () => {
   test('concurrent status cannot overwrite stopped evidence while its runtime closes', async () => {
     const fixture = setup('--slow-stop');
     const work = await start(fixture);
-    const other = await start(fixture, 'settled');
+    const other = await start(fixture, 'hold');
     const stopping = fixture.adapter.stop!(work.ref, context);
     try {
       for (let poll = 0; poll < 200; poll++) {
@@ -185,7 +185,7 @@ describe('owned Copilot lifecycle', () => {
             );
           }),
         ]);
-        expect(independent).toMatchObject({ ok: true, value: { status: 'done' } });
+        expect(independent).toMatchObject({ ok: true, value: { status: 'running' } });
       } finally {
         clearTimeout(timer!);
       }
@@ -238,31 +238,33 @@ describe('owned Copilot lifecycle', () => {
   test.each([
     ['settled', 'done'],
     ['error', 'failed'],
-  ] as const)('retains %s terminal evidence after its runtime dies', async (message, outcome) => {
-    const fixture = setup();
-    const work = await start(fixture, message);
-    const before = await fixture.adapter.status!(work.ref, undefined, work.receipt);
-    expect(before).toMatchObject({ ok: true, value: { status: outcome } });
-    const pid = JSON.parse(
-      readFileSync(join(fixture.run, 'calls.jsonl'), 'utf8').split('\n')[0]
-    ).pid;
-    process.kill(pid, 'SIGTERM');
-    for (let poll = 0; poll < 100; poll++) {
-      try {
-        process.kill(pid, 0);
-      } catch {
-        break;
+  ] as const)(
+    'retains %s terminal evidence after its runtime is reaped',
+    async (message, outcome) => {
+      const fixture = setup();
+      const work = await start(fixture, message);
+      const before = await fixture.adapter.status!(work.ref, undefined, work.receipt);
+      expect(before).toMatchObject({ ok: true, value: { status: outcome } });
+      const pid = JSON.parse(
+        readFileSync(join(fixture.run, 'calls.jsonl'), 'utf8').split('\n')[0]
+      ).pid;
+      for (let poll = 0; poll < 100; poll++) {
+        try {
+          process.kill(pid, 0);
+        } catch {
+          break;
+        }
+        await new Promise((done) => setTimeout(done, 10));
       }
-      await new Promise((done) => setTimeout(done, 10));
+      expect(() => process.kill(pid, 0)).toThrow();
+      expect(await fixture.adapter.status!(work.ref, undefined, work.receipt)).toEqual(before);
+      expect(await fixture.adapter.status!(work.ref, undefined, work.receipt)).toEqual(before);
+      await fixture.adapter.close();
+      const restarted = createCopilotAdapter(fixture.discovery, fixture.deps);
+      owners.push(restarted);
+      expect(await restarted.status!(work.ref, undefined, work.receipt)).toEqual(before);
     }
-    expect(() => process.kill(pid, 0)).toThrow();
-    expect(await fixture.adapter.status!(work.ref, undefined, work.receipt)).toEqual(before);
-    expect(await fixture.adapter.status!(work.ref, undefined, work.receipt)).toEqual(before);
-    await fixture.adapter.close();
-    const restarted = createCopilotAdapter(fixture.discovery, fixture.deps);
-    owners.push(restarted);
-    expect(await restarted.status!(work.ref, undefined, work.receipt)).toEqual(before);
-  });
+  );
 
   test('disconnect after first ACK preserves identity and cannot report queued success', async () => {
     const fixture = setup('--crash-on-ping');

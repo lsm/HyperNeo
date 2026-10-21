@@ -47,8 +47,8 @@ process containment or a failed OS-level shutdown.
 
 Run `copilot-lifecycle.ts <port> "$RUN"` for all cases, or add `terminal`, `model`,
 or `relative` as the final argument for an isolated regression. The default run
-changes cwd to its fresh run directory, uses `data/daemon.db`, kills only its own
-completed fixture runtime, checks its full recorded reply, and rejects an unknown
+changes cwd to its fresh run directory, uses `data/daemon.db`, observes automatic
+reaping of its completed fixture runtime, checks its full recorded reply, and rejects an unknown
 model against the nonempty synthetic catalog. Calls for the rejected model must
 contain neither session creation nor a send. On the regression commit, each
 individual mode fails at its corresponding public operation. Terminal outcome
@@ -69,7 +69,18 @@ done, failed or stopped work returns `stopped: false`, without sending an abort 
 changing receipt evidence. The default proof releases a late completion after the
 start snapshot, then calls stop before another status refresh; it must preserve
 the full late reply. It also stops an already-completed and already-stopped ref,
-with only the original active task receiving abort. Add `stop-terminal` as the
+with only active tasks receiving abort. Add `stop-terminal` as the
 final helper argument to isolate the original terminal-stop reproduction.
 Focused tests preserve done/failed results through both aborted-idle and ACK-only
 fixtures, and repeat the no-op after restarting the adapter.
+
+Terminal events trigger a serialized snapshot/save/reap without requiring a
+status or stop request. Verify fixture PIDs disappear for immediate completion,
+error and completion arriving after start; receipt-bound evidence stays readable
+and terminal stop is still a no-op. The helper no longer kills a completed
+runtime itself: it observes automatic reaping before reading status. The
+`reap` mode isolates this check. `file` mode passes a file as the execution folder
+and expects `invalid_place` before spawning. `abort-window` mode delays aborted
+idle until 2.25 seconds after ACK; the production default must accept it within
+the same 10-second bound used by worker RPCs. A shorter configured timeout still
+bounds ACK-only refusal. All three cases also run in the default journey.

@@ -68,11 +68,11 @@ export function createCopilotAdapter(
     const preparation = workStartPreparation.admit(request.preparation, false);
     return 'reason' in preparation ? preparation : { value: request };
   };
-  const prepare = (folder: string) => {
+  const prepare = (folder: string): Gate<{ id: string; directory: string }> => {
     const directory = fs.realpathSync(folder);
-    if (!fs.statSync(directory).isDirectory())
-      throw new Error('Copilot execution needs a directory.');
-    return { id: crypto.randomUUID(), directory };
+    return fs.statSync(directory).isDirectory()
+      ? { value: { id: crypto.randomUUID(), directory } }
+      : { reason: reject('invalid_place', 'Copilot execution needs a directory.') };
   };
   const launch = async (
     location: { id: string; directory: string },
@@ -111,6 +111,7 @@ export function createCopilotAdapter(
         throw new Error('Copilot disconnected after accepting input.');
       record.work.status = record.snapshot.status;
       save(record);
+      void worker.terminal.then(() => guard(() => status(record.work.ref), location.id));
       return { ok: true, value: record.work };
     } catch (error) {
       const failures = [error];
@@ -136,14 +137,18 @@ export function createCopilotAdapter(
     .input(['request'])
     .pipe(admit, 'request', 'result:started')
     .pipe(selectFolder, 'started', 'result:started')
-    .pipe(prepare, 'started', 'location')
-    .pipe(launch, ['location', 'request'], 'started')
+    .pipe(prepare, 'started', 'result:started')
+    .pipe(launch, ['started', 'request'], 'started')
     .endAsync('started') as (request: W.StartRequest) => Promise<W.Result<W.WorkStarted>>;
   const refresh = async (record: Record) => {
     const owned = !closed && live.get(record.work.ref.id);
     if (owned) {
       record.snapshot = await owned.snapshot();
       save(record);
+      if (['done', 'failed', 'stopped'].includes(record.snapshot.status)) {
+        live.delete(record.work.ref.id);
+        await owned.close();
+      }
     }
     return record;
   };
@@ -205,7 +210,7 @@ export function createCopilotAdapter(
         if (!owned) return unavailable();
         try {
           await owned.abort();
-          const until = Date.now() + (deps.timeoutMs ?? 2000);
+          const until = Date.now() + (deps.timeoutMs ?? 10_000);
           do {
             record.snapshot = await owned.snapshot();
             if (record.snapshot.status === 'stopped' || record.snapshot.status === 'unreachable')

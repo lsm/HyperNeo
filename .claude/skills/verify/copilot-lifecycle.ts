@@ -108,7 +108,6 @@ try {
   if (mode === 'terminal' || mode === 'all') {
     const before = await status(complete);
     const pid = JSON.parse(readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').split('\n')[0]).pid;
-    process.kill(pid, 'SIGTERM');
     for (let poll = 0; poll < 100; poll++) {
       try { process.kill(pid, 0); } catch { break; }
       await new Promise(done => setTimeout(done, 10));
@@ -172,7 +171,7 @@ try {
     assert.deepEqual(await status(complete), before);
     assert.deepEqual(await rpc('work.stop', { ref: stopped.ref }), { ok: true, value: { stopped: false } });
     const calls = readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
-    assert.equal(calls.filter(call => call.method === 'session.abort').length, 1, 'only active work may receive abort');
+    assert.equal(calls.filter(call => call.method === 'session.abort').length, 2, 'only active work may receive abort');
   }
   installFixture('--crash-on-ping');
   const disconnected = await rpc('work.start', { adapter: 'copilot-cli', place: complete.place, title: 'Synthetic lost owner', model: 'synthetic-model', message: 'hold' }) as { ok: boolean; reason: string; detail: string };
