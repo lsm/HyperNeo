@@ -78,6 +78,11 @@
     "packages/shared": {
       "name": "@hyperneo/shared",
       "version": "0.45.2",
+      "dependencies": {
+        "remark-gfm": "4.0.1",
+        "remark-parse": "11.0.0",
+        "unified": "11.0.5",
+      },
       "devDependencies": {
         "@types/bun": "1.4.2",
         "vitest": "5.0.0",
