@@ -50,6 +50,43 @@ HOME/data dir and TMPDIR. The Bun runner aliases `bun:sqlite` back into the
 compatibility module and cannot run this online configuration; the standalone
 mid-turn helper above runs directly under Bun. Both checks retain receipt replay.
 
+## Neo coordinator model fallback (backend)
+
+Run `bash .claude/skills/verify/neo-model-fallback.sh "$RUN"` with a fresh absolute
+synthetic run directory. The real isolated daemon and actual SDK use ephemeral
+loopback ports, never 8399. A local Anthropic-shaped fixture returns a usage-limit
+billing error for the configured primary and accepts the next model. A second
+case uses the real GLM provider with its discovery/probe HTTP client redirected
+to the loopback fixture and a session-scoped loopback base URL; the SDK itself
+sends the GLM request through that provider. No Z.ai endpoint is contacted. Synthetic
+SDK credentials exist only inside this fixture process; no real provider or
+credential discovery is used. GitHub stays stubbed. The SDK and daemon transcript
+lookup share the same synthetic directory so recovery resumes the real history.
+
+The human-only `neo.preferences.set` RPC must persist an ordered fallback list.
+The original input must produce a visible `neo.publication.read` garden reply on
+the fallback, whose actual API request carries its configured low effort (or
+8,000-token thinking budget). Both Anthropic and GLM cases must carry this
+fallback effort; GLM requests must use the separate `/glm/v1/messages` endpoint.
+The fixture then restores the primary and submits
+a second human turn: that turn must complete on the primary with its configured
+high effort (or 24,000-token thinking budget), demonstrating that
+suppression lasts only through recovery. Evidence is retained even on failure in
+`evidence/neo-model-fallback-{anthropic,glm}.json`; the helper closes the socket, SDK, daemon and
+local model server in `finally`. On the pre-fix test commit, the first turn only
+shows its usage-limit error and cannot complete the expected reply.
+
+Focused contracts additionally cover ordered persistence, per-model thinking
+clamping, unknown-model refusal, explicit empty chains and primary-only edits
+preserving the chain. Existing general fallback selection remains in effect when
+Neo's setting is absent. Retryable provider errors use the same watchdog only
+for a configured Neo chain; ordinary sessions retain their provider retry policy.
+OpenAI/Copilot and OpenRouter are accepted through the same catalog/provider
+switching path but are not verified by these two fixture cases.
+Web Settings editing is a separate follow-up to this backend slice; no GUI or
+real provider outage/reset clock is verified here. The next-turn restored-primary
+case is synthetic evidence of recovery, not a live account availability probe.
+
 ## Rules
 
 - Never start, stop or mutate the human's daemon. Isolated runs never use port
@@ -2562,6 +2599,48 @@ size and SHA-256 and refuse a foreign daemon reference. Evidence is retained in
 restart, not the future registration door, scoped preview authorization, a removed
 Git worktree, iOS or HTML containment. No credentials, provider/model or live DB.
 
+## Shard enumeration CI responsiveness
+
+The user surface here is the shard CLI and CI coverage report, so no daemon or
+browser is needed. Run `bun run test:ci-balance-report` and
+`bash scripts/lib/shard-split.sh --self-test`, then
+`./scripts/test-daemon.sh --verify`. The bounded-latency fixture inserts 30 ms into
+each external checksum invocation: 128 files must still enumerate in two seconds.
+Before batching this fails with `ETIMEDOUT`; it models process overhead, not actual
+CI runner latency. UTF-8 and paths over 255 bytes must match system POSIX `cksum`.
+The raw-byte CLI fixture must preserve invalid UTF-8 bytes in both the checksum
+and emitted path; decoding through a JavaScript string fails this regression.
+
+To compare every assignment against the original emitter at unchanged file/weight
+inputs, run this from the current worktree (no live data, providers or GUI):
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-shard-parity-XXXXXX)
+git show 72fee50872:scripts/lib/shard-split.sh > "$RUN/baseline.sh"
+for suite in daemon online; do
+  for variant in baseline current; do
+    bash -c '
+      source "scripts/test-$1.sh"
+      if [ "$2" = baseline ]; then source "$3/baseline.sh"; fi
+      if [ "$1" = daemon ]; then
+        for shard in "${SHARDS[@]}"; do
+          printf "%s\n" "$shard"; shard_paths "$shard"
+        done
+      else
+        online_all_modules | while IFS= read -r module; do
+          printf "%s\n" "$module"; online_module_paths "$module"
+        done
+      fi
+    ' shard-parity "$suite" "$variant" "$RUN" > "$RUN/$suite-$variant.txt"
+  done
+  cmp "$RUN/$suite-baseline.txt" "$RUN/$suite-current.txt"
+done
+```
+
+Both `cmp` calls must succeed. Retain the output files with the real CLI/report
+logs and timings. This checks identical hashes, bucket membership and ordering
+for the current source population, not model/session delivery or CI runner health.
+
 ## In-app previews: shared contracts (slice 2)
 
 Run `preview-contracts.test.ts` with the daemon unit runner. It must reject
@@ -2579,3 +2658,32 @@ This Build slice does not register `artifact.file.*`, accept publication artifac
 persist references or expose preview UI. Publication/card wiring is slice 12;
 UI/browser and human iOS containment evidence remains in its assigned slices.
 No unattended GUI, provider, credentials, real files or live database are used.
+
+
+## In-app previews: capture policy (slice 3)
+
+Run `preview-policy.test.ts` with the daemon Vitest runner. It covers each pure
+admission gate and their composition, authorization before path classification,
+missing/foreign/mismatched bindings, owner/role spoofing, component containment,
+explicit evidence roots, traversal/encoding refusals, sensitive names and broad
+root denial. It never opens a source file. Root-relative plans must be passed to
+the anchored opener in slice 4; a successful policy result is not a safe-open proof.
+
+Repeat slice 1's isolated capture/restart journey and headless Markdown component
+suite. The helper now supplies a trusted synthetic context-binding fixture to the
+policy pipeline, requires an admitted plan for its published report, and refuses
+a sensitive path and a foreign worker. It still checks complete bytes through the
+actual existing daemon read door after restart. No production binding adapter or
+new operation is wired here: the persisted todo/ask adapter belongs to slice 6.
+No credentials or live files are read; no unattended GUI is involved.
+
+For the slice-3 review regression, root-denial tests must put the candidate source
+inside each excluded root (workspace and evidence variants), including macOS
+`/private/var/tmp` and nested `.claude`/`.codex`/`.config` components. Keep positive
+controls for a narrowly approved temporary evidence directory and similarly named
+nonsensitive siblings; blocking a broad temp root must not block isolated fixtures.
+
+These names are defense in depth only. This module neither opens files nor
+registers a reader. Registration must remain unwired until the anchored descriptor
+opener and immutable hash capture exist (slices 4–6). Reads must use authorized
+registry receipts, never this plan or a re-resolved path as a grant (slice 7).

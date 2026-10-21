@@ -58,12 +58,12 @@
 # Portability
 # -----------
 # Written for bash 3.2 (macOS default /bin/bash): no associative arrays, no
-# globstar. The hash uses POSIX `cksum`, whose CRC algorithm is specified by
-# POSIX and identical across BSD (macOS) and GNU (Linux) — so the same path
-# hashes to the same integer everywhere. The packer is an awk program (awk
+# globstar. A single Node process batches raw path bytes using the POSIX
+# cksum CRC and length folding; self-tests compare with the system cksum.
+# The same path hashes identically on macOS and Linux. The packer uses awk (awk
 # associative arrays are fine; the bash 3.2 ban is on BASH associative arrays).
 #
-# Dependencies: bash 3.2+, cksum (POSIX), awk, sort, cut, wc.
+# Dependencies: bash 3.2+, node, cksum (POSIX, self-test only), awk, sort, cut, wc.
 #
 # Usage
 # -----
@@ -118,23 +118,14 @@ __shard_emit() {
 	local repo_root="$1"
 	shift
 	local globs=("$@")
-	local glob f rel hash
+	local glob f
 
 	for glob in "${globs[@]}"; do
-		# Unquoted: let bash expand the glob. The `[ -f ]` guard below skips
-		# non-matches (a literal pattern left over when nothing matches) and
-		# directories, so no nullglob/shopt is needed — this keeps the helper
-		# free of shell-option side effects.
 		for f in $glob; do
 			[ -f "$f" ] || continue
-			# Hash the repo-root-relative path so the key is machine-independent.
-			rel="${f#"$repo_root"/}"
-			hash=$(__shard_stable_hash "$rel")
-			# Zero-pad the hash to 10 digits (cksum crc max is 4294967295) so
-			# the upcoming `sort` orders it numerically, not lexically.
-			printf '%010d\t%s\n' "$hash" "$rel"
+			printf '%s\0' "${f#"$repo_root"/}"
 		done
-	done
+	done | node "$(dirname "${BASH_SOURCE[0]}")/shard-hash.mjs"
 }
 
 # Internal: read "<hash>\t<rel>" lines on stdin and print

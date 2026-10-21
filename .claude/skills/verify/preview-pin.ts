@@ -1,3 +1,4 @@
+import { admitArtifactCapture } from '../../../packages/daemon/src/lib/artifacts/file-policy.ts';
 import { ArtifactRefSchema, ArtifactReadResultSchema } from '../../../packages/daemon/src/lib/artifacts/file-contracts.ts';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
@@ -42,6 +43,16 @@ const previewRef = ArtifactRefSchema.parse({
   daemonId: reference.daemonId, artifactId: reference.artifactId, title: reference.name,
   kind: 'markdown', byteLength: reference.byteLength,
 });
+const context = { kind: 'todo' as const, id: 'synthetic-policy-context' };
+const policy = { daemonId: reference.daemonId, home: join(run, 'home'), loadBinding: () => ({
+  context, daemonId: reference.daemonId, neoSessionId: null, workerSessionId: reference.sessionId,
+  workspacePath: reference.path.slice(0, reference.path.lastIndexOf('/')), approvedEvidenceRoots: [],
+}) };
+const caller = { source: 'mcp' as const, role: 'direct_task_worker' as const, sessionId: reference.sessionId };
+const admitted = await admitArtifactCapture(context, reference.path, caller, policy);
+assert('root' in admitted && admitted.relativePath === reference.name);
+assert.deepEqual(await admitArtifactCapture(context, '.env', caller, policy), { accepted: false, reason: 'sensitive_path' });
+assert.deepEqual(await admitArtifactCapture(context, reference.path, { ...caller, sessionId: 'foreign-worker' }, policy), { accepted: false, reason: 'unavailable' });
 const chunks: Buffer[] = [];
 let offset = 0;
 let complete = false;
@@ -65,7 +76,7 @@ assert.equal(bytes.length, reference.byteLength);
 assert.equal(createHash('sha256').update(bytes).digest('hex'), reference.sha256);
 assert.deepEqual(await rpc('handoff.read', { reference: { ...reference, daemonId: randomUUID() } }), { kind: 'unavailable' });
 writeFileSync(join(run, 'evidence', `preview-pin-${phase}-read.json`), JSON.stringify({
-  phase, reference, previewRef, byteLength: bytes.length, chunks: chunks.length,
+  phase, reference, previewRef, policyAdmitted: admitted, byteLength: bytes.length, chunks: chunks.length,
   exactBytes: true, foreignDaemonDenied: true,
 }, null, 2));
 console.log(`PASS: ${phase} reads complete immutable bytes through isolated daemon RPC`);

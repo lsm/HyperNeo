@@ -38,6 +38,8 @@ import type { ProcessingStateManager } from './processing-state-manager.ts';
 import { QueryAttemptRegistry, type QueryAttemptToken } from './query-attempt-token.ts';
 import { NeoCoordinatorTurn } from '../neo/coordinator-turn.ts';
 import { neoCoordinatorBinding } from '../neo/session-policy.ts';
+import { neoModelFallbacks } from '../neo/model-fallback.ts';
+import { RetryPromptIdentity } from './retry-prompt-identity.ts';
 import { stampNeoResponseInput } from '../neo/response-input.ts';
 import { createNeoAskOriginResolver } from '../neo/ask-origin.ts';
 import { QuestionInputScope, type QuestionInputOriginSource } from './question-input-origin.ts';
@@ -406,6 +408,7 @@ export interface QueryRunnerContext {
 }
 
 export class QueryRunner {
+  readonly retryPromptIdentity = new RetryPromptIdentity();
   private promptSpentGeneration: number | null = null;
   private turnEndedGeneration: number | null = null;
 
@@ -1343,7 +1346,7 @@ export class QueryRunner {
             break;
           }
 
-          let message = result.value as SDKMessage;
+          let message = this.retryPromptIdentity.incoming(result.value as SDKMessage);
           this.streamSilence = noteStreamMessage(this.streamSilence, message, Date.now());
           if (!firstMessageArrived) {
             startupWatchMessages.push(message);
@@ -1512,6 +1515,7 @@ export class QueryRunner {
         isCleaningUp: this.ctx.isCleaningUp(),
         isSuperseded: this.ctx.getQueryGeneration() !== queryGeneration,
         hasRateLimitHandoff: !!this.ctx.onRateLimitExhausted,
+        useProviderFallback: !!neoModelFallbacks(this.ctx.db, session.id)?.length,
         recoveryState,
       };
       const routeDecision = decideQueryRetry({ errorSignal: retrySignal, env: retryEnv });
@@ -1688,12 +1692,7 @@ export class QueryRunner {
         });
       }
 
-      if (
-        !isQueryInterrupted &&
-        !this.ctx.isCleaningUp() &&
-        retryAttempt < maxProviderRetries &&
-        isRetryableProviderError(errorMessage)
-      ) {
+      if (routeDecision.route.action === 'provider_backoff') {
         const delayMs = getProviderRetryDelayMs(retryAttempt);
         logger.warn(
           `Provider error (5xx/overloaded/unavailable) detected; retrying in ${delayMs}ms ` +
@@ -2275,7 +2274,7 @@ export class QueryRunner {
           content: (message.message?.content ?? '') as unknown as string | MessageContent[],
           internal: isInternal,
         });
-      yield holderTurn?.inputEnvelope(message) ?? message;
+      yield this.retryPromptIdentity.outgoing(holderTurn?.inputEnvelope(message) ?? message);
       this.streamSilence = noteStreamFed(this.streamSilence, Date.now());
       onSent();
       if (holderTurn) {
