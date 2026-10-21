@@ -4,10 +4,13 @@ import type {
   NeoAskEntryState,
   NeoQuestion,
   NeoTodo,
+  NeoTodoEntry,
 } from '@hyperneo/shared/types/neo-ask';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
+import { defineOperation } from '../operations/registry.ts';
 import type { NeoPack } from './packs/types.ts';
 import { neoStartQuestionLine } from './start-question.ts';
 import {
@@ -73,6 +76,49 @@ export function neoAskEntryState(
   return live.length && live.every((todo) => todo.state === 'done') ? 'done' : 'todo';
 }
 
+export const NEO_DONE_TODOS_SHOWN = 3;
+
+const NEO_TODO_LIST_ORDER: Record<NeoTodo['state'], number> = {
+  blocked: 0,
+  failed: 1,
+  doing: 2,
+  todo: 3,
+  done: 4,
+  removed: 5,
+};
+
+export function neoTodosListed(todos: readonly NeoTodo[]): {
+  todos: NeoTodo[];
+  doneCount: number;
+} {
+  const doneCount = todos.filter((todo) => todo.state === 'done').length;
+  const ordered = [...todos].sort(
+    (a, b) => NEO_TODO_LIST_ORDER[a.state] - NEO_TODO_LIST_ORDER[b.state]
+  );
+  return {
+    doneCount,
+    todos:
+      doneCount > NEO_DONE_TODOS_SHOWN ? ordered.filter((todo) => todo.state !== 'done') : ordered,
+  };
+}
+
+function projectNeoTodoEntries(
+  shown: readonly NeoTodo[],
+  todos: readonly NeoTodo[],
+  links: ReturnType<NeoTodoSessionRepository['readLinksForTodos']>,
+  packs: readonly NeoPack[]
+): NeoTodoEntry[] {
+  return shown.map((todo) => ({
+    ...todo,
+    ...neoTodoStatusLine(
+      todo,
+      todos,
+      packs.find((pack) => pack.id === todo.check?.pack)?.todos?.statusLine(todo) ?? null
+    ),
+    ...(links.get(todo.id) ?? { link: null, remoteLink: null }),
+  }));
+}
+
 export function projectNeoAskEntries(
   asks: readonly NeoAsk[],
   store: NeoAskTodoRepository,
@@ -83,22 +129,21 @@ export function projectNeoAskEntries(
   const ids = asks.map((ask) => ask.id);
   const allTodos = store.listTodosForAsks(ids);
   const allQuestions = store.listQuestionsForAsks(ids);
-  const links = sessions.readLinksForTodos(allTodos.map((todo) => todo.id));
+  const listed = new Map(
+    asks.map((ask) => [ask.id, neoTodosListed(allTodos.filter((todo) => todo.askId === ask.id))])
+  );
+  const links = sessions.readLinksForTodos(
+    [...listed.values()].flatMap((entry) => entry.todos.map((todo) => todo.id))
+  );
   return asks.map((ask) => {
     const todos = allTodos.filter((todo) => todo.askId === ask.id);
     const questions = allQuestions.filter((question) => question.askId === ask.id);
+    const shown = listed.get(ask.id)!;
     return {
       ask,
       state: neoAskEntryState(ask, todos, questions),
-      todos: todos.map((todo) => ({
-        ...todo,
-        ...neoTodoStatusLine(
-          todo,
-          todos,
-          packs.find((pack) => pack.id === todo.check?.pack)?.todos?.statusLine(todo) ?? null
-        ),
-        ...(links.get(todo.id) ?? { link: null, remoteLink: null }),
-      })),
+      todos: projectNeoTodoEntries(shown.todos, todos, links, packs),
+      doneCount: shown.doneCount,
       questions: questions.map((question) => {
         if (question.kind !== 'start' || !question.startTodos?.length) return question;
         const line = neoStartQuestionLine(
@@ -113,6 +158,13 @@ export function projectNeoAskEntries(
 }
 
 const Nullable = z.string().nullable();
+
+const NeoTodoEntrySchema = NeoTodoSchema.extend({
+  status: z.string(),
+  statusCodes: NeoStatusCodesSchema,
+  link: Nullable,
+  remoteLink: Nullable,
+});
 
 export const NeoAskEntrySchema = z.object({
   ask: z.object({
@@ -132,13 +184,79 @@ export const NeoAskEntrySchema = z.object({
     settledAt: z.number().nullable(),
   }),
   state: z.enum(['waiting', 'doing', 'done', 'dropped', 'todo']),
-  todos: z.array(
-    NeoTodoSchema.extend({
-      status: z.string(),
-      statusCodes: NeoStatusCodesSchema,
-      link: Nullable,
-      remoteLink: Nullable,
-    })
-  ),
+  todos: z.array(NeoTodoEntrySchema),
+  doneCount: z.number(),
   questions: z.array(NeoQuestionSchema.extend({ textCodes: NeoStatusCodesSchema })),
 });
+
+const DoneTodos = z.object({
+  askId: z.string().trim().min(1),
+  offset: z.number().int().min(0).default(0),
+  limit: z.number().int().min(1).max(50).default(20),
+});
+
+type Rejection = { ok: false; reason: string };
+type DonePage = { ok: true; todos: NeoTodoEntry[]; doneCount: number; nextOffset: number | null };
+
+export function requireNeoAskFound(ask: NeoAsk | null): { value: NeoAsk } | { reason: Rejection } {
+  return ask ? { value: ask } : { reason: { ok: false, reason: 'Ask not found.' } };
+}
+
+export function pageNeoDoneTodos(
+  todos: readonly NeoTodo[],
+  input: z.infer<typeof DoneTodos>
+): { page: NeoTodo[]; doneCount: number; nextOffset: number | null } {
+  const done = todos.filter((todo) => todo.state === 'done');
+  const end = input.offset + input.limit;
+  return {
+    page: done.slice(input.offset, end),
+    doneCount: done.length,
+    nextOffset: end < done.length ? end : null,
+  };
+}
+
+export function createNeoDoneTodosOperation(
+  store: NeoAskTodoRepository,
+  sessions: NeoTodoSessionRepository,
+  packs: () => readonly NeoPack[]
+) {
+  const read = (superpipe({})('neo.ask.doneTodos') as PipelineAPI)
+    .input(['input'])
+    .pipe((input: z.infer<typeof DoneTodos>) => store.getAsk(input.askId), 'input', 'outcome')
+    .pipe(requireNeoAskFound, 'outcome', 'result:outcome')
+    .pipe((ask: NeoAsk) => store.listTodos(ask.id), 'outcome', 'todos')
+    .pipe(pageNeoDoneTodos, ['todos', 'input'], 'paged')
+    .pipe(
+      (paged: ReturnType<typeof pageNeoDoneTodos>, todos: NeoTodo[]): DonePage => ({
+        ok: true,
+        todos: projectNeoTodoEntries(
+          paged.page,
+          todos,
+          sessions.readLinksForTodos(paged.page.map((todo) => todo.id)),
+          packs()
+        ),
+        doneCount: paged.doneCount,
+        nextOffset: paged.nextOffset,
+      }),
+      ['paged', 'todos'],
+      'outcome'
+    )
+    .end('outcome') as (input: z.infer<typeof DoneTodos>) => DonePage | Rejection;
+  return defineOperation({
+    name: 'neo.ask.doneTodos',
+    description:
+      'Read the done todos of an ask, a page at a time, in list order. An ask with more than 3 done todos lists none of them in neo.snapshot and carries only doneCount; read them here when you need to check finished work. Pass offset from nextOffset for the next page; nextOffset is null on the last page.',
+    inputSchema: DoneTodos,
+    resultSchema: z.union([
+      z.object({ ok: z.literal(false), reason: z.string() }),
+      z.object({
+        ok: z.literal(true),
+        todos: z.array(NeoTodoEntrySchema),
+        doneCount: z.number(),
+        nextOffset: z.number().nullable(),
+      }),
+    ]),
+    policy: { safetyClass: 'read', roles: ['neo'] },
+    execute: async (input) => read(input),
+  });
+}

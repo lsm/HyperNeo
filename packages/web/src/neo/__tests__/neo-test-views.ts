@@ -54,6 +54,7 @@ export function testAskEntry(
     },
     state: 'todo',
     todos: [],
+    doneCount: 0,
     questions: [],
     ...patch,
   };

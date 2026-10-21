@@ -115,6 +115,7 @@ export interface NeoAskEntry {
   ask: NeoAsk;
   state: NeoAskEntryState;
   todos: NeoTodoEntry[];
+  doneCount: number;
   questions: NeoQuestionEntry[];
 }
 

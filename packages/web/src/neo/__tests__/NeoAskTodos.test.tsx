@@ -81,6 +81,7 @@ const entry = (patch: Partial<NeoAskEntry>): NeoAskEntry => ({
   },
   state: 'todo',
   todos: [],
+  doneCount: 0,
   questions: [],
   ...patch,
 });
