@@ -107,7 +107,7 @@ beforeEach(async () => {
   const shim = join(fixture, 'bin', 'git');
   await writeFile(
     shim,
-    `#!/bin/sh\nfor arg do\n if [ "$arg" = pull ]; then printf 'pull\\n' >> '${fixture}/pulls'; fi\ndone\nexec /usr/bin/git "$@"\n`
+    `#!/bin/sh\nfor arg do\n if [ "$arg" = fetch ]; then printf 'pull\\n' >> '${fixture}/pulls'; fi\ndone\nexec /usr/bin/git "$@"\n`
   );
   await chmod(shim, 0o755);
   process.env.PATH = `${join(fixture, 'bin')}:${process.env.PATH}`;

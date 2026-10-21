@@ -61,4 +61,4 @@ await git(root, 'config', '--unset', 'remote.origin.receivepack');
 const retried = await rpc(next);
 Object.assign(evidence, { pushFailed, retainedCommit, retainedCount, retried, finalCount: await git(root, 'rev-list', '--count', 'HEAD'), finalRemoteHead: await git(remote, 'rev-parse', 'main'), finalStatus: await git(root, 'status', '--porcelain') }); await saveEvidence();
 if (pushFailed.ok || !pushFailed.reason?.includes('push_failed') || !pushFailed.reason.includes(retainedCommit) || !retried.ok || retried.commit !== retainedCommit || retainedCount !== evidence.finalCount || retainedCommit !== evidence.finalRemoteHead || evidence.finalStatus) throw new Error('Failed push lost the commit or retry added another');
-console.log('PASS: real RPC pulls peer changes, pushes exact committed content, aborts conflicting rebase preserving local files, and retries a retained failed-push commit without duplication.');
+console.log('PASS: real RPC fetches peer changes, pushes exact committed content, refuses conflicts without changing the original home, and retries a retained failed-push commit without duplication.');
