@@ -77,6 +77,8 @@ try {
   assert(read.ok, JSON.stringify(read));
   assert.deepEqual(read.value.turns.map(t => t.role), ['user', 'tool', 'tool', 'assistant']);
   assert.equal(read.value.turns.at(-1)?.text, 'HISTORY_REPLY');
+  const space = await rpc('work.find', { adapters: ['copilot-cli'], spaceId: 'unrelated-space', localOnly: true }) as { places: unknown[] };
+  assert.deepEqual(space.places, []);
   const found = await rpc('work.find', { adapters: ['copilot-cli'], includeClosed: true, localOnly: true }) as { places: { work: { ref: { id: string }; status: string; title: string }[] }[] };
   const items = found.places.flatMap(p => p.work);
   assert.deepEqual(items.filter(w => w.ref.id === work.ref.id).map(w => [w.title, w.status]), [['Synthetic Copilot work', 'done']]);
