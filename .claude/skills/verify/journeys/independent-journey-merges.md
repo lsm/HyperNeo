@@ -5,6 +5,7 @@ then run:
 
 ```bash
 python3 .claude/skills/verify/journey-merge-check.py --output /tmp/journey-merges.json
+python3 .claude/skills/verify/journey-links-check.py --output /tmp/journey-links.json
 ```
 
 The helper copies only this skill and its journey files into a temporary Git
@@ -12,6 +13,8 @@ repository. It creates two synthetic branches, each adding its own journey,
 then runs `git merge-tree --write-tree` in both orders. Both merges must exit 0,
 retain both new files byte-for-byte and leave the shared `SKILL.md` unchanged.
 The JSON records each merge result. The temporary repository is removed on exit.
+The second check follows the standalone recipes' cross-file helper/setup links
+and checks that the artifact design directs new recipes to this directory.
 
 On the tests-first reproduction commit, both branches instead append to the
 shared skill, matching the old workflow. Both merge orders must conflict in

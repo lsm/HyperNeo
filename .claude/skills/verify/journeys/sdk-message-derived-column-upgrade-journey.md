@@ -20,7 +20,7 @@ or 4 MiB, with a larger single message kept whole. No body is moved or trimmed.
 Startup heartbeat covers the entire initialization, so distinguish existing
 startup costs from measured chunk times and report any budget violation.
 
-Then launch an isolated daemon as above and run
+Then launch an isolated daemon using [Launch](../SKILL.md#launch) and run
 `bash .claude/skills/verify/sdk-message-columns-door.sh <port> "$RUN"`.
 This sends through `message.send`, observes the same `messages.bySession`
 subscription as the web transcript, and checks stored metadata/body agreement

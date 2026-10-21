@@ -1,6 +1,6 @@
 ## Web schedule strip (G7b)
 
-Build the web and launch a fresh isolated daemon as above. Run
+Build the web and launch a fresh isolated daemon using [Launch](../SKILL.md#launch). Run
 `bun .claude/skills/verify/session-schedule-web.ts <port> "$RUN"`, then the
 headless `.claude/skills/verify/session-schedule-web.mjs <port> "$RUN"` with a
 Node runtime that can resolve Playwright. `VERIFY_BROWSER` may name a local

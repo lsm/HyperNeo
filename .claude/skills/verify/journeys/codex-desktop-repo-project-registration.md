@@ -15,7 +15,7 @@ dialog by hand. Open the thread and confirm its first reply renders without a
 restart. Start a second task in that repo: there must still be one project. Keep
 the thread IDs, project root and the human's result as evidence.
 
-For the staged opening helper below, create the workspace first with
+For the [staged opening helper](codex-desktop-opening-journey-human-operated-gui.md), create the workspace first with
 `mkdir -p "$RUN/workspace"`, then manually open
 `codex://threads/new?path=<RUN>/workspace` to register it before running `prepare`. The helper refuses to open the registration URL automatically;
 retry preparation after the human registered the workspace. Native create/select
