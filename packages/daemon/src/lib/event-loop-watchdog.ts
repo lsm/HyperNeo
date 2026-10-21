@@ -79,7 +79,12 @@ export async function startEventLoopWatchdog(
     return null;
   }
   const stallMs = options.stallMs ?? EVENT_LOOP_WATCHDOG_STALL_MS;
-  const heartbeatMs = options.heartbeatMs ?? EVENT_LOOP_WATCHDOG_HEARTBEAT_MS;
+  const nativeProfileMs =
+    process.platform === 'darwin' && process.env.HYPERNEO_NATIVE_LAG_PROFILE === '1'
+      ? 1000
+      : undefined;
+  const heartbeatMs =
+    options.heartbeatMs ?? (nativeProfileMs ? 100 : EVENT_LOOP_WATCHDOG_HEARTBEAT_MS);
   const shutdownFuseMs = options.shutdownFuseMs ?? EVENT_LOOP_WATCHDOG_SHUTDOWN_FUSE_MS;
   const killMode = options.killMode ?? 'observe';
 
@@ -87,11 +92,12 @@ export async function startEventLoopWatchdog(
   try {
     const checkIntervalMs = Math.min(
       Math.max(20, Math.floor(Math.min(stallMs, shutdownFuseMs) / 4)),
-      EVENT_LOOP_WATCHDOG_MAX_CHECK_INTERVAL_MS
+      nativeProfileMs ? 100 : EVENT_LOOP_WATCHDOG_MAX_CHECK_INTERVAL_MS
     );
     worker = new Worker(await resolveWorkerUrl(), {
       workerData: {
         pid: process.pid,
+        nativeProfileMs,
         stallMs,
         checkIntervalMs,
         killMode,

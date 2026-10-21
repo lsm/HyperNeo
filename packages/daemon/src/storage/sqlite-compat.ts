@@ -109,7 +109,7 @@ if (isBun) {
       this.queryObserver?.close();
       this.queryObserver = null;
       this.statementCache.clear();
-      super.close();
+      super.close(true);
     }
   }
   Database = CachedDatabase as unknown as typeof NodeDatabase;

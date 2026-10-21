@@ -34,3 +34,42 @@ describe('SQLite connection closure under Bun', () => {
     }
   });
 });
+
+describe('opt-in native lag sampling', () => {
+  for (const enabled of ['0', '1'])
+    test(`captures only when enabled (${enabled}), without lowering the stall action threshold`, async () => {
+      const root = mkdtempSync(join(tmpdir(), 'native-profile-'));
+      const file = fileURLToPath(
+        new URL('../../../helpers/event-loop-native-profile.ts', import.meta.url)
+      );
+      const child = spawn('bun', [file, root], {
+        env: {
+          PATH: process.env.PATH,
+          HOME: root,
+          NODE_ENV: 'test',
+          HYPERNEO_NATIVE_LAG_PROFILE: enabled,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let output = '';
+      child.stdout.on('data', (d) => {
+        output += d;
+      });
+      child.stderr.on('data', (d) => {
+        output += d;
+      });
+      try {
+        const code = await new Promise<number | null>((done, fail) => {
+          child.once('exit', done);
+          child.once('error', fail);
+        });
+        expect({ code, failed: output.includes('AssertionError') }).toEqual({
+          code: 0,
+          failed: false,
+        });
+      } finally {
+        child.kill();
+        rmSync(root, { recursive: true, force: true });
+      }
+    }, 15000);
+});
