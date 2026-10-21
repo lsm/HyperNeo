@@ -10,7 +10,7 @@ ACLs. This design does not touch them; the migration below decides when they cha
 - **`/ws` upgrade.** The daemon (`app.ts:1116`) and all three CLI front doors upgrade `/ws` with no check of any kind: `prod-server.ts:159`, `dev-server.ts:210`, `prod-server-embedded.ts:141`. Preflight answers `Access-Control-Allow-Origin: *`.
 - **Caller identity.** Every RPC caller becomes the local human. `rpc-adapter.ts:24` stamps `principal: 'local'`, which passes `requireLocalUser` and the inline `principal === 'local'` gates. About 200 raw `onRequest` handlers take no caller at all.
 - **Peer daemons.** A peer daemon attaches by a bare `ws://`/`wss://` URL with no token (`remote-daemons/registry.ts:22`), and the receiving daemon treats its calls as the local human.
-- **Session door.** The unix socket `session-door.sock` is chmod'ed to `0600` only after `listen`, and it takes the sender session from the request body.
+- **Session door.** The unix socket `session-door.sock` is created under a briefly scoped `0177` umask, so it starts at `0600`; the prior process umask is restored immediately after bind. It takes the sender session from the request body.
 - **GitHub webhook.** The only route with real authentication: `POST /webhook/github/space` checks an HMAC signature.
 
 ## Threat model
@@ -168,7 +168,7 @@ Built on `tests/helpers/daemon-server.ts` (spawned daemon on port 0) and `standa
 | iOS | **lsm/neo-ios, not this repo:** the Pair screen, Keychain storage and the Bearer header on every `/ws` upgrade, plus the relay's Bearer header. It must be merged **and installed on the human's phone** before S8 or S9 lands | — |
 | S8 | "Require pairing" enforce toggle with the step 2 check, plus the rollback switch below | ~60 |
 | S9 | Loopback default bind, `--expose` and the Listen-on setting; the rollback switch also restores the previous listen address | ~80 |
-| S10 | Session door: create the socket with a 0077 umask so it is never wider than 0600 | ~20 |
+| S10 | Session door: create the socket with a briefly scoped 0177 umask so it starts at 0600 | ~20 |
 
 The iOS row can start now: S1 already serves `POST /pair`, and from S2 on the daemon reads the Bearer header without refusing anything.
 
