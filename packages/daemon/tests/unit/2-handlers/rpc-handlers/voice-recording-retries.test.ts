@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -39,7 +40,7 @@ describe('voice recording retries through registered RPC handlers', () => {
     } as unknown as MessageHub;
     registerVoiceHandlers(hub, new SettingsManager(db), undefined, {
       db: db.getDatabase(),
-      deviceOf: () => ({ deviceId: 'synthetic-phone', kind: 'native' }),
+      deviceOf: () => ({ deviceId: 'synthetic-phone', kind: 'human' }),
     });
     return handlers.get('voice.transcribe')!;
   };
@@ -132,6 +133,44 @@ describe('voice recording retries through registered RPC handlers', () => {
   it('refuses malformed ids before external submission', async () => {
     await expect(handler({ ...input, recordingId: '' }, context())).rejects.toThrow('recordingId');
     expect(requests).toBe(0);
+  });
+
+  it('never re-submits an interrupted durable reservation with no saved result', async () => {
+    const hash = createHash('sha256')
+      .update(Buffer.from(input.audioBase64, 'base64'))
+      .digest('hex');
+    db.getDatabase()
+      .prepare(
+        'INSERT INTO voice_recordings (owner, recording_id, audio_sha256, created_at) VALUES (?, ?, ?, ?)'
+      )
+      .run('synthetic-phone', id, hash, Date.now());
+    await expect(handler(input, context('after-interruption'))).rejects.toThrow('unconfirmed');
+    await expect(handler(input, context('another-retry'))).rejects.toThrow('unconfirmed');
+    expect(requests).toBe(0);
+  });
+
+  it('does not share a saved transcript with a different paired device', async () => {
+    await handler(input, context());
+    const handlers = new Map<string, Handler>();
+    const hub = {
+      onRequest: (name: string, value: Handler) => handlers.set(name, value),
+    } as unknown as MessageHub;
+    registerVoiceHandlers(hub, new SettingsManager(db), undefined, {
+      db: db.getDatabase(),
+      deviceOf: () => ({ deviceId: 'other-phone', kind: 'human' }),
+    });
+    expect(await handlers.get('voice.transcribe')!(input, context('other-client'))).toEqual({
+      text: 'synthetic result 2',
+    });
+    expect(requests).toBe(2);
+  });
+
+  it('matches recording id case while comparing the submitted audio bytes', async () => {
+    const first = await handler(input, context());
+    expect(
+      await handler({ ...input, recordingId: id.toUpperCase() }, context('reconnected-phone'))
+    ).toEqual(first);
+    expect(requests).toBe(1);
   });
 
   it('preserves legacy request behavior when recordingId is omitted', async () => {
