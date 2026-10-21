@@ -21,7 +21,8 @@ export function previewStateForRefusal(reason: string) {
   if (forbiddenReasons.has(reason)) return 'forbidden';
   if (reason === 'size_limit') return 'limit';
   if (reason === 'unsupported_type') return 'unsupported';
-  if (reason === 'owning_daemon_unavailable') return 'daemon_unavailable';
+  if (reason === 'owning_daemon_unavailable' || reason === 'safe_open_unavailable')
+    return 'daemon_unavailable';
   return 'revoked';
 }
 

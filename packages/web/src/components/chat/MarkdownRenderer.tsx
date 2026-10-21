@@ -31,6 +31,7 @@ type RehypeKatex = typeof import('rehype-katex').default;
 
 const RENDERED_MARKDOWN_CACHE_LIMIT = 200;
 const renderedMarkdownCache = new LruCache<string, string>(RENDERED_MARKDOWN_CACHE_LIMIT);
+const renderedArtifactCache = new LruCache<string, string>(RENDERED_MARKDOWN_CACHE_LIMIT);
 const markdownProcessors = new Map<string, Promise<MarkdownProcessor>>();
 
 let markdownModulesPromise: Promise<MarkdownModules> | null = null;
@@ -427,12 +428,12 @@ function getMarkdownProcessor(
   return processor;
 }
 
-const cacheKey = (content: string, artifactLinks: boolean) =>
-  artifactLinks ? `artifact:${content}` : content;
+const renderCache = (artifactLinks: boolean) =>
+  artifactLinks ? renderedArtifactCache : renderedMarkdownCache;
 
 async function renderMarkdown(content: string, artifactLinks: boolean) {
-  const key = cacheKey(content, artifactLinks);
-  const cached = renderedMarkdownCache.get(key);
+  const cache = renderCache(artifactLinks);
+  const cached = cache.get(content);
   if (cached !== undefined) return cached;
 
   const escapedContent = escapeRawHtmlBlocks(content);
@@ -450,7 +451,7 @@ async function renderMarkdown(content: string, artifactLinks: boolean) {
   );
   const file = await processor.process(escapedContent);
   const htmlStr = String(file).replace(/(^|>[^<]*)-->([^<]*<|$)/g, '$1--&gt;$2');
-  renderedMarkdownCache.set(key, htmlStr);
+  cache.set(content, htmlStr);
   return htmlStr;
 }
 
@@ -464,12 +465,13 @@ export default function MarkdownRenderer({
   const trailingMount = useRef<HTMLElement | null>(null);
   const hasTrailing = trailing != null;
   const overlayOwner = useRef({});
-  const key = cacheKey(content, artifactLinks);
-  const [html, setHtml] = useState<string | null>(() => renderedMarkdownCache.get(key) ?? null);
+  const [html, setHtml] = useState<string | null>(
+    () => renderCache(artifactLinks).get(content) ?? null
+  );
   const theme = resolvedTheme.value;
 
   useEffect(() => {
-    const cached = renderedMarkdownCache.get(key);
+    const cached = renderCache(artifactLinks).get(content);
     if (cached !== undefined) {
       setHtml(cached);
       return;
