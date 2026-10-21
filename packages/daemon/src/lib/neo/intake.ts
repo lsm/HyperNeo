@@ -4,7 +4,11 @@ import type { Session } from '@hyperneo/shared';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { NeoAsk, NeoQuestion, NeoReplyTo, NeoTodo } from '@hyperneo/shared/types/neo-ask';
-import { neoReplyExcerpt } from '@hyperneo/shared/types/neo-ask';
+import {
+  neoChoiceByLetter,
+  neoLabelledOptions,
+  neoReplyExcerpt,
+} from '@hyperneo/shared/types/neo-ask';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -103,7 +107,7 @@ export function neoIntakeMessage(
       ? [{ type: 'text' as const, text: input.content }]
       : input.content;
   const fact =
-    (reply?.ask?.sessionId === sessionId ? neoReplyFact(reply) : null) ??
+    (reply?.ask?.sessionId === sessionId ? neoReplyFact(reply, neoAskText(input.content)) : null) ??
     neoQuoteFact(input.replyTo);
   const facts = [localTime, fact].flatMap((text) =>
     text ? [{ type: 'text' as const, text }] : []
@@ -148,7 +152,10 @@ export function readNeoReply(
   return { replyTo, question, todo, ask: askId ? store.getAsk(askId) : null };
 }
 
-export function neoReplyFact(reply: NeoReply | null): string | null {
+export function neoReplyFact(reply: NeoReply | null, words = ''): string | null {
+  const picked = neoChoiceByLetter(words, reply?.question ?? null);
+  if (reply?.question && picked)
+    return `The human answered your question "${reply.question.text}" with ${neoLabelledOptions(reply.question.options ?? [], picked)}:`;
   if (reply?.question?.kind === 'start')
     return `The human replied about your start question "${reply.question.text}" (it stays open; only its Start button starts todos):`;
   if (reply?.question) return `The human answered your question "${reply.question.text}":`;
@@ -221,7 +228,12 @@ export function recordNeoReplyAnswer(
     reply.question.kind !== 'start' &&
     reply.ask?.sessionId === sessionId
   )
-    store.answerQuestion(reply.question, words, 'chat', Date.now());
+    store.answerQuestion(
+      reply.question,
+      neoChoiceByLetter(words, reply.question) ?? words,
+      'chat',
+      Date.now()
+    );
   return receipt;
 }
 

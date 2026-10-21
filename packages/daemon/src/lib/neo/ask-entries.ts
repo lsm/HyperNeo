@@ -6,6 +6,7 @@ import type {
   NeoTodo,
   NeoTodoEntry,
 } from '@hyperneo/shared/types/neo-ask';
+import { neoOptionLabels } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
@@ -144,6 +145,8 @@ export function projectNeoAskEntries(
       todos: projectNeoTodoEntries(neoTodoListOrder(todos), todos, links, packs),
       doneCount: todos.filter((todo) => todo.state === 'done').length,
       questions: questions.map((question) => {
+        if (question.kind === 'choice' && question.options)
+          return { ...question, optionLabels: neoOptionLabels(question.options) };
         if (question.kind !== 'start' || !question.startTodos?.length) return question;
         const line = neoStartQuestionLine(
           question.startTodos.map((id) => ({ title: todos.find((todo) => todo.id === id)?.title }))
@@ -185,7 +188,12 @@ export const NeoAskEntrySchema = z.object({
   state: z.enum(['waiting', 'doing', 'done', 'dropped', 'todo']),
   todos: z.array(NeoTodoEntrySchema),
   doneCount: z.number(),
-  questions: z.array(NeoQuestionSchema.extend({ textCodes: NeoStatusCodesSchema })),
+  questions: z.array(
+    NeoQuestionSchema.extend({
+      textCodes: NeoStatusCodesSchema,
+      optionLabels: z.array(z.string()).optional(),
+    })
+  ),
 });
 
 const DoneTodos = z.object({

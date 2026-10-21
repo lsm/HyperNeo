@@ -265,7 +265,7 @@ describe('projectNeoAskEntries', () => {
     const [entry] = projectNeoAskEntries([opened], store, sessions, []);
     expect(entry.questions[3]).toMatchObject({ id: 'q4', optionLabels: ['A', 'B', 'C'] });
     expect(entry.questions[0]).not.toHaveProperty('optionLabels');
-    expect(entry.questions).toMatchObject([
+    expect(entry.questions.slice(0, 3)).toMatchObject([
       {
         id: 'q1',
         text: 'Start "Rows"?',

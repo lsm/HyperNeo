@@ -81,6 +81,42 @@ export interface NeoQuestion {
   createdAt: number;
 }
 
+export function neoOptionLabels(options: readonly string[]): string[] {
+  return options.map((_, index) => String.fromCharCode(65 + index));
+}
+
+export function neoLabelledOptions(options: readonly string[], picked: readonly string[]): string {
+  return picked
+    .map((option) => {
+      const index = options.indexOf(option);
+      return index < 0 ? option : `${String.fromCharCode(65 + index)} (${option})`;
+    })
+    .join(', ');
+}
+
+const LETTER_REPLY =
+  /^(?:我?选(?:择|项)?|option|choice|pick)?\s*([a-f](?:\s*(?:[,，、&和与]|and)\s*[a-f])*)\s*(?:吧|好了)?\s*[.。!！]?$/i;
+
+export function neoChoiceByLetter(
+  words: string,
+  question: Pick<NeoQuestion, 'kind' | 'options' | 'multiple'> | null
+): string[] | null {
+  const letters = words
+    .trim()
+    .match(LETTER_REPLY)?.[1]
+    .split(/\s*(?:[,，、&和与]|and)\s*/i);
+  if (question?.kind !== 'choice' || !question.options || !letters) return null;
+  const picked = [
+    ...new Set(
+      letters.map((letter) => question.options?.[letter.toUpperCase().charCodeAt(0) - 65])
+    ),
+  ];
+  return picked.every((option) => option !== undefined) &&
+    (question.multiple || picked.length === 1)
+    ? (picked as string[])
+    : null;
+}
+
 export interface NeoReplyTo {
   kind: 'question' | 'todo' | 'message' | 'ask';
   id: string;
@@ -109,6 +145,7 @@ export type NeoAskEntryState = 'waiting' | 'doing' | 'done' | 'dropped' | 'todo'
 
 export interface NeoQuestionEntry extends NeoQuestion {
   textCodes?: NeoStatusCode[];
+  optionLabels?: string[];
 }
 
 export interface NeoAskEntry {

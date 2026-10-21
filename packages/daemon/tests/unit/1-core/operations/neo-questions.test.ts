@@ -165,7 +165,7 @@ describe('neo.question operations', () => {
     await call('neo.question.answer', { questionId: reply.id, answer: 'Say hi' }, human);
     expect(told).toEqual([
       'The human answered "Use HyperNeo dev-1 instead?": yes (Use HyperNeo dev-1).',
-      'The human answered "Which?": B.',
+      'The human answered "Which?": B (B).',
       'The human answered "Which ones?": none.',
       'The human answered "What should it say?": Say hi.',
     ]);
