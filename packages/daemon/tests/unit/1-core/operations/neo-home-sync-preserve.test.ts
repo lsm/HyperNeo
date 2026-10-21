@@ -109,10 +109,16 @@ test.each(['neo.home.read', 'neo.home.save'] as const)(
   }
 );
 
-test.each(['ignored', 'untracked'])(
+test.each(['ignored', 'untracked', 'tracked'])(
   'the final publication refuses a late %s file without rollback',
   async (kind) => {
-    const path = kind === 'ignored' ? 'private/report.bin' : 'untracked.bin';
+    const path =
+      kind === 'ignored'
+        ? 'private/report.bin'
+        : kind === 'tracked'
+          ? 'direction.md'
+          : 'untracked.bin';
+    await git(root, 'config', 'merge.autoStash', 'true');
     await mkdir(dirname(join(peer, path)), { recursive: true });
     await writeFile(join(peer, path), 'Remote collision');
     await git(peer, 'add', '-f', '--', path);
