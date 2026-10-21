@@ -20,6 +20,7 @@ import {
 } from './NeoCardParts.tsx';
 import { neoSessionKind } from './work-driver.ts';
 import { NeoIcon } from './NeoIcon.tsx';
+import { messageTime } from './NeoMessage.tsx';
 import { t } from '../lib/i18n/index.ts';
 import { neoQuestionText, neoTodoStatus } from './todo-status.ts';
 
@@ -400,10 +401,7 @@ export function NeoAskTodos({
                     <p>
                       — {neoQuestionAnswerLabel(question, todos)}
                       {question.answeredAt
-                        ? ` · ${new Date(question.answeredAt).toLocaleTimeString([], {
-                            hour: 'numeric',
-                            minute: '2-digit',
-                          })}`
+                        ? ` · ${messageTime(question.answeredAt)?.label ?? ''}`
                         : ''}
                     </p>
                   </li>
