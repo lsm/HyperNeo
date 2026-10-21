@@ -56,21 +56,26 @@ describe('Copilot worker construction', () => {
     }
   });
 
-  test('retains only 64 settled receipts without discarding pending work', async () => {
+  test('retains 64 recent completions without discarding unsettled work', async () => {
     const worker = await openCopilotWorker(config());
     try {
-      const pending = await worker.submit('queued');
+      const pending = await worker.submit('hold');
       const first = await worker.submit('settled');
       let latest = first;
       for (let index = 0; index < 270; index++) latest = await worker.submit('settled');
       const state = await worker.snapshot();
       expect(Object.keys(state.inputs)).toHaveLength(65);
       expect(state.inputs[first.inputId]).toBeUndefined();
-      expect(state.inputs[pending.inputId].state).toBe('pending');
+      expect(state.inputs[pending.inputId].replyAvailability).toBe('incomplete');
       expect(state.inputs[latest.inputId]).toMatchObject({
         outcome: 'done',
         replyAvailability: 'complete',
         replyReport: 'REPLY_272',
+      });
+      await worker.submit('finish');
+      expect((await worker.snapshot()).inputs[pending.inputId]).toMatchObject({
+        outcome: 'done',
+        replyReport: 'FIRST_REPLY',
       });
     } finally {
       await worker.close();
