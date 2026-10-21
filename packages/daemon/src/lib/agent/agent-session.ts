@@ -209,6 +209,7 @@ import {
   type EventSubscriptionSetupContext,
 } from './event-subscription-setup.ts';
 import { resolveFallbackChain } from './fallback-recovery.ts';
+import { neoModelFallbacks } from '../neo/model-fallback.ts';
 import type { IdleOwnerScope } from './idle-waiter-admission-pipeline.ts';
 import { InterruptHandler, type InterruptHandlerContext } from './interrupt-handler.ts';
 import type { LimitRetryHint } from './limit-error-classifier.ts';
@@ -628,6 +629,8 @@ export class AgentSession
         model: this.session.config.model ?? 'sonnet',
       }),
       resolveChain: async () => {
+        const neoFallbacks = neoModelFallbacks(this.db, this.session.id);
+        if (neoFallbacks !== undefined) return neoFallbacks;
         const gs = this.settingsManager.getGlobalSettings();
         const provider = (this.session.config.provider as string | undefined) ?? 'anthropic';
         const rawModel = this.session.config.model ?? 'sonnet';
@@ -1430,7 +1433,13 @@ export class AgentSession
         });
       }
 
-      const result = await this.handleModelSwitch(entry.model, entry.provider);
+      const result = await this.modelSwitchHandler.switchModel(
+        entry.model,
+        entry.provider,
+        false,
+        undefined,
+        true
+      );
       if (this.rateLimitWatchdog.isSuperseded(episodeGeneration) || querySuperseded()) {
         this.logger.info('Fallback switch aborted after model switch (episode superseded).');
         return false;
@@ -1442,6 +1451,9 @@ export class AgentSession
         );
         return false;
       }
+
+      if (entry.thinkingLevel !== undefined)
+        await this.sessionConfigHandler.updateConfig({ thinkingLevel: entry.thinkingLevel });
 
       return await this.executeRateLimitAutoRetry(
         lastUserMessage,
@@ -1497,6 +1509,8 @@ export class AgentSession
         return false;
       }
 
+      if (this.queryRunner instanceof QueryRunner)
+        this.queryRunner.retryPromptIdentity.retry(lastUserMessage.uuid);
       const retryOutcome = await this.startQueryAndEnqueue(
         lastUserMessage.uuid,
         lastUserMessage.content,

@@ -50,6 +50,36 @@ HOME/data dir and TMPDIR. The Bun runner aliases `bun:sqlite` back into the
 compatibility module and cannot run this online configuration; the standalone
 mid-turn helper above runs directly under Bun. Both checks retain receipt replay.
 
+## Neo coordinator model fallback (backend)
+
+Run `bash .claude/skills/verify/neo-model-fallback.sh "$RUN"` with a fresh absolute
+synthetic run directory. The real isolated daemon and actual SDK use ephemeral
+loopback ports, never 8399. A local Anthropic-shaped fixture returns a usage-limit
+billing error for the configured primary and accepts the next model. Synthetic
+SDK credentials exist only inside this fixture process; no real provider or
+credential discovery is used. GitHub stays stubbed. The SDK and daemon transcript
+lookup share the same synthetic directory so recovery resumes the real history.
+
+The human-only `neo.preferences.set` RPC must persist an ordered fallback list.
+The original input must produce a visible `neo.publication.read` garden reply on
+the fallback, whose actual API request carries its configured low effort (or
+8,000-token thinking budget). The fixture then restores the primary and submits
+a second human turn: that turn must complete on the primary with its configured
+high effort (or 24,000-token thinking budget), demonstrating that
+suppression lasts only through recovery. Evidence is retained even on failure in
+`evidence/neo-model-fallback.json`; the helper closes the socket, SDK, daemon and
+local model server in `finally`. On the pre-fix test commit, the first turn only
+shows its usage-limit error and cannot complete the expected reply.
+
+Focused contracts additionally cover ordered persistence, per-model thinking
+clamping, unknown-model refusal, explicit empty chains and primary-only edits
+preserving the chain. Existing general fallback selection remains in effect when
+Neo's setting is absent. Retryable provider errors use the same watchdog only
+for a configured Neo chain; ordinary sessions retain their provider retry policy.
+Web Settings editing is a separate follow-up to this backend slice; no GUI or
+real provider outage/reset clock is verified here. The next-turn restored-primary
+case is synthetic evidence of recovery, not a live account availability probe.
+
 ## Rules
 
 - Never start, stop or mutate the human's daemon. Isolated runs never use port
