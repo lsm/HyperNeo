@@ -43,14 +43,14 @@ test('Neo completes a limited primary turn on its fallback thinking level and re
       tool.name.endsWith('hyperneo-operations__invoke')
     );
     const active = !!invoke && JSON.stringify(body.messages).includes('fictional fallback garden');
-    if (active)
-      requests.push({
-        sequence,
-        model: body.model,
-        thinking: body.thinking ?? null,
-        output: body.output_config ?? null,
-        unavailable,
-      });
+    requests.push({
+      active,
+      sequence,
+      model: body.model,
+      thinking: body.thinking ?? null,
+      output: body.output_config ?? null,
+      unavailable,
+    });
     if (active && String(body.model).includes(primary) && unavailable) {
       res.statusCode = 402;
       res.setHeader('content-type', 'application/json');
@@ -140,6 +140,7 @@ test('Neo completes a limited primary turn on its fallback thinking level and re
     HYPERNEO_DATA_DIR: join(run, 'data'),
     HYPERNEO_WORKSPACE_PATH: run,
     CLAUDE_CONFIG_DIR: join(run, 'sdk'),
+    TEST_SDK_SESSION_DIR: join(run, 'sdk'),
     ANTHROPIC_BASE_URL: `http://127.0.0.1:${address.port}`,
     ANTHROPIC_API_KEY: 'sk-fictional-acceptance-only',
     ANTHROPIC_AUTH_TOKEN: 'fictional-acceptance-only',
@@ -197,7 +198,7 @@ test('Neo completes a limited primary turn on its fallback thinking level and re
     const preference = {
       model: primary,
       provider: 'anthropic',
-      thinkingLevel: 'off',
+      thinkingLevel: 'think24k',
       fallbacks: [{ model: fallback, provider: 'anthropic', thinkingLevel: 'think8k' }],
     };
     evidence.saved = await call('neo.preferences.set', preference);
@@ -211,18 +212,29 @@ test('Neo completes a limited primary turn on its fallback thinking level and re
     const read = () => call('neo.publication.read', { conversationId: sessionId.slice(4) });
     let page = await read();
     const deadline = Date.now() + 45000;
-    while (!(page.items as unknown[])?.length && Date.now() < deadline) {
+    while (
+      !(page.items as { shortText: string }[])?.some(
+        (item) => item.shortText === 'Garden reply 1'
+      ) &&
+      Date.now() < deadline
+    ) {
       await new Promise((resolve) => setTimeout(resolve, 100));
       page = await read();
     }
     evidence.first = page;
-    expect((page.items as { shortText: string }[])?.[0]?.shortText, JSON.stringify(evidence)).toBe(
-      'Garden reply 1'
-    );
+    expect(
+      (page.items as { shortText: string }[])?.some((item) => item.shortText === 'Garden reply 1'),
+      JSON.stringify(evidence)
+    ).toBe(true);
     expect(requests.some((r) => String(r.model).includes(primary) && r.unavailable)).toBe(true);
     const selected = requests.find((r) => String(r.model).includes(fallback));
     expect(selected, JSON.stringify(requests)).toBeDefined();
     expect(JSON.stringify(selected)).toMatch(/8000|"effort":"low"/);
+    expect(
+      (page.items as { shortText: string; askOrigin: { messageId: string } }[]).find(
+        (item) => item.shortText === 'Garden reply 1'
+      )?.askOrigin.messageId
+    ).toBe(requestId);
     const idle = Date.now() + 15000;
     while (
       (await daemon.sessionManager.getSessionForControl(sessionId))?.getProcessingState().status !==
@@ -240,7 +252,12 @@ test('Neo completes a limited primary turn on its fallback thinking level and re
     });
     const nextDeadline = Date.now() + 30000;
     page = await read();
-    while ((page.items as unknown[]).length < 2 && Date.now() < nextDeadline) {
+    while (
+      !(page.items as { shortText: string }[])?.some(
+        (item) => item.shortText === 'Garden reply 2'
+      ) &&
+      Date.now() < nextDeadline
+    ) {
       await new Promise((resolve) => setTimeout(resolve, 100));
       page = await read();
     }
@@ -249,8 +266,14 @@ test('Neo completes a limited primary turn on its fallback thinking level and re
       (page.items as { shortText: string }[]).some((item) => item.shortText === 'Garden reply 2')
     ).toBe(true);
     expect(
-      requests.filter((r) => r.sequence === 2).every((r) => String(r.model).includes(primary))
+      requests
+        .filter((r) => r.sequence === 2 && r.active)
+        .every((r) => String(r.model).includes(primary))
     ).toBe(true);
+    expect(
+      JSON.stringify(requests.find((r) => r.sequence === 2 && r.active)),
+      JSON.stringify(requests)
+    ).toMatch(/24000|"effort":"high"/);
     evidence.settings = daemon.db.getGlobalSettings().neo?.preferences;
     expect(evidence.settings).toMatchObject(preference);
   } finally {
