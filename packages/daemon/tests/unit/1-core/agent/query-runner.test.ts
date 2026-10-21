@@ -2132,6 +2132,7 @@ describe('QueryRunner', () => {
 
     it('delivers the startup retry input to the replacement SDK instead of the closed SDK', async () => {
       const queue = new MessageQueue();
+      const previousQuery = (query as unknown as ReturnType<typeof mock>).getMockImplementation();
       buildSpy.mockResolvedValue({ model: 'claude-sonnet-4-20250514' });
       let attempt = 0;
       let observe!: (value: { recipient: string; uuid?: string }) => void;
@@ -2171,6 +2172,7 @@ describe('QueryRunner', () => {
         ctx.queryAbortController?.abort();
         await ctx.queryPromise;
         queue.clear();
+        (query as unknown as ReturnType<typeof mock>).mockImplementation(previousQuery!);
       }
     });
 

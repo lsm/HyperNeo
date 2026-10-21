@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { PassThrough } from 'node:stream';
 import { createServer } from 'node:http';
@@ -12,6 +12,7 @@ assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HYPERNEO_USE_DEV_PROXY, '1');
+assert.equal(process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS, '15000');
 for (const key of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'OPENAI_API_KEY'])
   assert(!process.env[key], key);
 mkdirSync(join(run, 'evidence'), { recursive: true });
@@ -83,6 +84,7 @@ try {
       const child = spawn(number === 1 ? process.execPath : opts.command,
         number === 1 ? ['-e', 'process.stdin.resume(); setInterval(() => {}, 1000)'] : opts.args,
         { cwd: opts.cwd, env: opts.env, stdio: ['pipe', 'pipe', 'pipe'], signal: opts.signal });
+      child.stderr.on('data', (chunk) => appendFileSync(join(run, `sdk-${number}.stderr.log`), chunk));
       const input = new PassThrough();
       let pending = '';
       input.on('data', (chunk) => {

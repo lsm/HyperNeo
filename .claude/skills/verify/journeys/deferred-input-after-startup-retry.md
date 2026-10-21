@@ -2,7 +2,7 @@
 
 Set `PROOF=.claude/skills/verify/deferred-startup-retry.ts` and use the
 **In-process RPC proofs** setup in SKILL.md, adding
-`HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS=7000` to the isolated environment.
+`HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS=15000` to the isolated environment.
 Ports 8000 and 8001 must be free.
 
 The helper creates a synthetic session through RPC and sends a kickoff input.
@@ -28,3 +28,10 @@ retry idle. A blocked old input stream can steal the retried kickoff, leaving
 the replacement SDK silent through a second startup timeout. This proof
 requires the replacement to receive the input before any terminal recovery
 can start a third subprocess.
+
+Reproduction commit `3d746f55d` fails the unit assertion with recipient
+`closed SDK` rather than `replacement SDK`. Its RPC proof fails with
+`replacement SDK never received the retry input`; the second subprocess has
+only control requests. After the fix, attempt 2 receives kickoff and the
+deferred follow-up, and both markers reach the model with final counts
+`consumed=2`, `deferred=0`. The original online case and its timeouts stay intact.
