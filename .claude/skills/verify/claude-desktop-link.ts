@@ -63,7 +63,7 @@ try {
 } finally {
   ws?.close();
   const pidFile = join(run, 'evidence/worker-pid');
-  if (existsSync(pidFile)) { try { process.kill(Number(readFileSync(pidFile, 'utf8')), 'SIGTERM'); } catch {} }
+  if (existsSync(pidFile)) for (const pid of readFileSync(pidFile, 'utf8').trim().split('\n')) { try { process.kill(Number(pid), 'SIGTERM'); } catch {} }
   await app.cleanup();
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
 }
