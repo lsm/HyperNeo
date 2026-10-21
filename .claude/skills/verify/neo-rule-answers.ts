@@ -78,6 +78,25 @@ for (const phase of ['initial', 'restart']) {
       await rpc('neo.rule.save', { remove: ['An intervening human rule.'], add: edit.add });
     }
     assert.deepEqual((await rpc('neo.snapshot', {})).standingRules, edit.add);
+    if (phase === 'initial') {
+      const chatRule = 'A synthetic rule confirmed in chat.';
+      const chatProposal = await mcp('neo.rule.ask', { askId: 'synthetic-ask', requestId: 'chat-broadcast', add: [chatRule], remove: edit.add });
+      assert.equal(chatProposal.ok, true);
+      const broadcast = new Promise<void>((done, fail) => {
+        const timer = setTimeout(() => { ws!.removeEventListener('message', observed); fail(new Error('No updated state.settings broadcast after chat consent')); }, 2000);
+        const observed = (event: MessageEvent) => {
+          const update = JSON.parse(String(event.data));
+          if (update.type !== 'EVENT' || update.method !== 'state.settings') return;
+          evidence.push({ phase, settingsBroadcast: update });
+          if (JSON.stringify(update.data.settings?.neo?.standingRules) !== JSON.stringify([chatRule])) return;
+          clearTimeout(timer); ws!.removeEventListener('message', observed); done();
+        };
+        ws!.addEventListener('message', observed);
+      });
+      assert.equal((await rpc('neo.message.send', { sessionId: 'neo:10000000-0000-4000-8000-000000000002', requestId: crypto.randomUUID(), content: 'yes', replyTo: { kind: 'question', id: chatProposal.questionId } })).ok, true);
+      await broadcast;
+      await rpc('neo.rule.save', { remove: [chatRule], add: edit.add });
+    }
     assert.equal((await mcp('neo.rule.applyAnswer', { questionId, add: ['Tampered.'] })).code, 'invalid_input');
     assert.equal((await mcp('neo.rule.ask', { askId: 'synthetic-ask', requestId: 'accepted', add: ['Tampered.'] })).ok, false);
     assert.equal((await mcp('neo.rule.applyAnswer', { questionId })).ok, true);

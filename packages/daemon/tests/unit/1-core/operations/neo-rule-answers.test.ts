@@ -1,6 +1,6 @@
 import { createNeoIntakeOperation } from '../../../../src/lib/neo/intake.ts';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import type { MessageHub } from '@hyperneo/shared';
+import type { GlobalSettings, MessageHub } from '@hyperneo/shared';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -16,6 +16,7 @@ import type { SessionManager } from '../../../../src/lib/session/session-manager
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 let db: Awaited<ReturnType<typeof createTestDb>>;
 let service: NeoService;
+let published: GlobalSettings[];
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
 const agent: OperationCaller = {
   source: 'mcp',
@@ -26,11 +27,13 @@ const edit = { add: ['Ask before publishing.'], remove: ['Old synthetic rule.'] 
 beforeEach(async () => {
   db = await createTestDb();
   db.createSession(createTestSession('neo:10000000-0000-4000-8000-000000000002'));
+  published = [];
   service = new NeoService(
     db,
     {} as SessionManager,
     { event: mock(() => {}) } as unknown as MessageHub,
-    new InternalEventBus<DaemonInternalEventMap>()
+    new InternalEventBus<DaemonInternalEventMap>(),
+    (settings) => published.push(settings)
   );
   service.deliverForward = async () => {};
   service.repo.reserveBinding({
@@ -89,6 +92,33 @@ describe('human-approved standing rules', () => {
     });
     expect(saved()).toEqual(['Keep this rule.', 'A later human rule.']);
   });
+  test.each(['button', 'chat'])(
+    '%s consent publishes current settings to connected clients once',
+    async (surface) => {
+      const id = await propose();
+      const result =
+        surface === 'button'
+          ? await invoke('neo.question.answer', { questionId: id, answer: 'yes' }, human)
+          : await invoke(
+              'neo.message.send',
+              {
+                sessionId: 'neo:10000000-0000-4000-8000-000000000002',
+                requestId: crypto.randomUUID(),
+                content: 'yes',
+                replyTo: { kind: 'question', id },
+              },
+              human
+            );
+      expect(result).toMatchObject({ value: { ok: true } });
+      expect(published.map((settings) => settings.neo?.standingRules)).toEqual([
+        ['Keep this rule.', ...edit.add],
+      ]);
+      expect(await invoke('neo.rule.applyAnswer', { questionId: id })).toMatchObject({
+        value: { ok: true },
+      });
+      expect(published).toHaveLength(1);
+    }
+  );
   test('post-answer payload injection and proposal rebinding are refused', async () => {
     const id = await propose();
     await invoke('neo.question.answer', { questionId: id, answer: 'yes' }, human);
