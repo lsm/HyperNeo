@@ -728,36 +728,95 @@ describe('claude-desktop adapter against the app session records', () => {
       );
     });
 
-    test('resumes it headless and confirms the turn in its transcript', async () => {
-      const resumed = adapter([], 0, () =>
-        appendFileSync(
-          transcript,
-          `${JSON.stringify({ type: 'user', uuid: 'in-b2', timestamp: '2026-10-18T01:00:00.000Z', message: { content: 'run the audit' } })}\n`
-        )
+    const context = { from: 'session:origin', caller: { source: 'internal' as const } };
+    const openingAdapter = (opens: boolean) => {
+      let launched = false;
+      const inbox: string[] = [];
+      const driver = adapter(
+        () =>
+          opens && launched
+            ? [
+                {
+                  sessionId: 'cli-b2',
+                  status: 'idle',
+                  name: 'woodpecker',
+                  owner: 'desktop',
+                  pid: 9,
+                },
+              ]
+            : [],
+        0,
+        () => {
+          launched = true;
+        },
+        undefined,
+        async (_id, message) => {
+          inbox.push(message);
+          appendFileSync(
+            transcript,
+            `${JSON.stringify({ type: 'user', uuid: 'in-b2', timestamp: '2026-10-18T01:00:00.000Z', message: { content: message } })}\n`
+          );
+          return {
+            ok: true,
+            value: {
+              delivered: false,
+              unconfirmed: true,
+              receipt: { executionId: 'cli-b2', inputId: 'in-b2' },
+            },
+          };
+        }
       );
-      expect(await resumed.send?.(ref, 'run the audit', user)).toEqual({
+      return { driver, inbox };
+    };
+
+    test('opens it in Claude Desktop, waits until it runs there, and delivers through the inbox', async () => {
+      const { driver, inbox } = openingAdapter(true);
+      expect(await driver.send?.(ref, 'run the audit', context)).toEqual({
         ok: true,
         value: {
           delivered: true,
           receipt: { executionId: 'cli-b2', inputId: 'in-b2' },
           confirmedAt: Date.parse('2026-10-18T01:00:00.000Z'),
+          remoteControl: false,
         },
       });
-      expect(spawned).toEqual([
-        {
-          args: [
-            'claude',
-            '-p',
-            '--resume',
-            'cli-b2',
-            '--permission-mode',
-            'auto',
-            '--',
-            'run the audit',
-          ],
-          cwd: '/focus/ops',
-        },
+      expect(spawned.map((entry) => entry.args)).toEqual([
+        ['script', '-q', '/dev/null', 'claude', '--desktop', '--resume', 'cli-b2'],
       ]);
+      expect(inbox).toEqual(['run the audit']);
+    });
+
+    test('says Remote Control is on when the session has a claude.ai link', async () => {
+      writeFileSync(
+        join(dir, 'acct-b', 'scope-2', 'local_b2.json'),
+        JSON.stringify(
+          record('b2', {
+            cwd: '/focus/ops',
+            title: 'woodpecker',
+            lastActivityAt: 5,
+            bridgeSessionIds: ['session_abc123'],
+          })
+        )
+      );
+      const { driver } = openingAdapter(true);
+      expect(await driver.send?.(ref, 'run the audit', context)).toMatchObject({
+        ok: true,
+        value: { remoteControl: true },
+      });
+    });
+
+    test('never runs it headless: when Desktop does not open it, the send says so within a bounded wait', async () => {
+      const { driver, inbox } = openingAdapter(false);
+      expect(await driver.send?.(ref, 'run the audit', context)).toEqual({
+        ok: false,
+        reason: 'unreachable',
+        detail:
+          'woodpecker is not open in Claude Desktop, and Desktop did not open it in time. Open it there, then send again: claude://claude.ai/epitaxy/local_b2',
+      });
+      expect(spawned.flatMap((entry) => entry.args)).not.toContain('-p');
+      expect(inbox).toEqual([]);
+      expect(clock).toBeGreaterThanOrEqual(60_000);
+      expect(clock).toBeLessThan(70_000);
     });
 
     test('uses the inbox instead when the session starts running before the resume', async () => {
@@ -774,33 +833,6 @@ describe('claude-desktop adapter against the app session records', () => {
       expect(spawned.map((entry) => entry.args)).not.toContainEqual(
         expect.arrayContaining(['--resume'])
       );
-    });
-
-    test('sends a session that cannot approve tools headless to Desktop instead', async () => {
-      writeFileSync(
-        join(dir, 'acct-b', 'scope-2', 'local_b2.json'),
-        JSON.stringify(record('b2', { cwd: '/focus/ops', title: 'woodpecker', lastActivityAt: 5 }))
-      );
-      expect(await adapter([]).send?.(ref, 'run the audit', user)).toEqual({
-        ok: false,
-        reason: 'unreachable',
-        detail:
-          'woodpecker is not running, and in default permission mode a headless turn cannot get tool approvals. Open it in Claude Desktop: claude://claude.ai/epitaxy/local_b2',
-      });
-      expect(spawned).toEqual([]);
-    });
-
-    test('does not count an older copy of the message, and reports a failed resume', async () => {
-      expect(await adapter([]).send?.(ref, 'run the audit', user)).toMatchObject({
-        ok: false,
-        reason: 'not_delivered',
-      });
-      expect(await adapter([], 1).send?.(ref, 'run the audit', user)).toMatchObject({
-        ok: false,
-      });
-      expect(
-        await adapter([]).send?.({ adapter: 'claude-desktop', id: 'local_a2' }, 'next', user)
-      ).toMatchObject({ ok: false, reason: 'not_open' });
     });
   });
 
