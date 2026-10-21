@@ -70,8 +70,6 @@ function projectEvent(state: WorkerState, event: SessionEvent): WorkerState {
     case 'session.idle':
       if (event.data.aborted) {
         next.status = 'stopped';
-        for (const input of Object.values(next.inputs))
-          if (input.state === 'observed' && !input.outcome) input.outcome = 'stopped';
       } else if (
         Object.keys(next.inputs).length &&
         !['failed', 'needs_you', 'stopped'].includes(next.status)
@@ -88,10 +86,10 @@ function projectEvent(state: WorkerState, event: SessionEvent): WorkerState {
       break;
     case 'session.error':
       next.status = 'failed';
-      for (const input of Object.values(next.inputs))
-        if (input.state === 'observed' && !input.outcome) input.outcome = 'failed';
       break;
   }
+  if (next.status === 'stopped' || next.status === 'failed')
+    for (const input of Object.values(next.inputs)) if (!input.outcome) input.outcome = next.status;
   return next;
 }
 
@@ -244,6 +242,9 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
             ...state.inputs,
             [inputId]: {
               state: 'pending',
+              ...(state.status === 'stopped' || state.status === 'failed'
+                ? { outcome: state.status }
+                : {}),
               replyReport: '',
               replyAvailability: 'incomplete',
             },
