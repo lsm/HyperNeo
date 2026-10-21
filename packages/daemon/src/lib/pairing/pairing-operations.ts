@@ -190,6 +190,36 @@ export function createDevicePairingOperations({
       },
     }),
     defineOperation({
+      name: 'device.would_refuse.list',
+      description:
+        'List requests the Origin/Host checks would refuse once pairing is required (reason, kind, host, origin, counts). Nothing is refused yet.',
+      policy: { safetyClass: 'human_only' },
+      inputSchema: z.object({}).strict(),
+      resultSchema: z.union([
+        z.object({
+          ok: z.literal(true),
+          requests: z.array(
+            z.object({
+              reason: z.enum(['host_not_allowed', 'origin_not_allowed']),
+              kind: z.enum(['http', 'ws', 'preflight']),
+              host: z.string().nullable(),
+              origin: z.string().nullable(),
+              count: z.number(),
+              firstSeenAt: z.number(),
+              lastSeenAt: z.number(),
+            })
+          ),
+        }),
+        Refused,
+      ]),
+      execute: async (_input, caller) => {
+        if (!isLocalUser(caller) && !fromDoor(caller)) return refused;
+        if (!fromDoor(caller) && !isPairedHuman(caller))
+          return { ok: false as const, reason: NEEDS_PAIRED_HUMAN };
+        return { ok: true as const, requests: pairing().listWouldRefuse() };
+      },
+    }),
+    defineOperation({
       name: 'device.revoke',
       description:
         'Revoke a paired device: its credential stops working and its open connections close. Revoking never reopens pairing without Allow.',

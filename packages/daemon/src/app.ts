@@ -8,6 +8,7 @@ import { parsePositiveInt, type Config } from './config.ts';
 import type { WebSocketData } from './types/websocket.ts';
 import { createHttpWsServer, type ServerHandle } from './lib/runtime-server/index.ts';
 import { createPairRoute } from './lib/pairing/pair-route.ts';
+import { createRequestObserver } from './lib/pairing/origin-host.ts';
 import { createUpgradeAuthenticator, type UpgradeIdentity } from './lib/pairing/upgrade-auth.ts';
 import { daemonPairingLimiter } from './lib/pairing/pairing-limiter.ts';
 import { DevicePairingRepository } from './storage/repositories/device-pairing-repository.ts';
@@ -339,6 +340,7 @@ export interface DaemonAppContext {
   server: ServerHandle;
   handlePair: (req: Request) => Promise<Response>;
   authenticateUpgrade: (req: Request, remoteAddress: string | null) => UpgradeIdentity | null;
+  observeRequest: (req: Request) => void;
   db: Database;
   messageHub: MessageHub;
   sessionManager: SessionManager;
@@ -1114,6 +1116,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       devices: () => pairing,
       now: Date.now,
     });
+    const observeRequest = createRequestObserver({
+      devices: () => pairing,
+      allowedHosts: () => settingsManager.getGlobalSettings().allowedHosts ?? [],
+      exempt: (req) =>
+        extensionManager
+          .getRegisteredRoutes()
+          .some((route) => route.path === new URL(req.url).pathname),
+      now: Date.now,
+    });
 
     const server = await createHttpWsServer({
       hostname: config.host,
@@ -1121,6 +1132,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
       async fetch(req, upgrade, client) {
         const url = new URL(req.url);
+        observeRequest(req);
 
         if (req.method === 'OPTIONS') {
           return new Response(null, {
@@ -1706,6 +1718,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       server,
       handlePair,
       authenticateUpgrade,
+      observeRequest,
       db,
       messageHub,
       sessionManager,

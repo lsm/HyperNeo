@@ -331,6 +331,34 @@ describe('device pairing', () => {
     db.close();
   });
 
+  test('a paired human or the CLI reads the requests Origin/Host checks would refuse', async () => {
+    const { db, call, pair, repo } = setup();
+    repo.recordWouldRefuse(
+      { reason: 'host_not_allowed', kind: 'ws', host: 'mac.ts.net', origin: null },
+      5
+    );
+    expect(await call('device.would_refuse.list', {}, human)).toEqual({
+      ok: false,
+      reason: NEEDS_PAIRED_HUMAN,
+    });
+    const phone = await pair((await call('device.pair.create', { kind: 'human' }, door)).code);
+    expect(await call('device.would_refuse.list', {}, pairedHuman(phone.body.deviceId))).toEqual({
+      ok: true,
+      requests: [
+        {
+          reason: 'host_not_allowed',
+          kind: 'ws',
+          host: 'mac.ts.net',
+          origin: null,
+          count: 1,
+          firstSeenAt: 5,
+          lastSeenAt: 5,
+        },
+      ],
+    });
+    db.close();
+  });
+
   test('bad codes are limited to 5 a minute, 20 lock pairing for 15 minutes, and a local reset reopens it', async () => {
     const { db, call, pair, clock } = setup();
     for (let i = 0; i < 5; i++) expect((await pair('AAAAAAAAAA')).status).toBe(401);
