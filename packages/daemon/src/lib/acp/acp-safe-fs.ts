@@ -30,3 +30,10 @@ export async function writeFileWithinWorkspace(
   const backend = await getSafeFsBackend();
   return backend.writeFileWithinWorkspace(workspace, segments, content, signal);
 }
+
+export const withArtifactDescriptor: SafeFsBackendModule['withArtifactDescriptor'] = async (
+  ...args
+) => {
+  const backend = await getSafeFsBackend();
+  return backend.withArtifactDescriptor(...args);
+};
