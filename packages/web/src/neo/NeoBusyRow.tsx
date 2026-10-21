@@ -12,13 +12,17 @@ export function NeoBusyRow({ words }: { words: readonly string[] }) {
     return () => window.clearInterval(timer);
   }, [words]);
   return (
-    <div role="status" class="neo-progress" aria-live="off" aria-label={words[0]}>
-      <span class="neo-progress-dots" aria-hidden="true">
-        <i />
-        <i />
-        <i />
-      </span>
-      <span>{words[index % words.length]}</span>
+    <div class="neo-progress-slot">
+      {words.length > 0 && (
+        <div role="status" class="neo-progress" aria-live="off" aria-label={words[0]}>
+          <span class="neo-progress-dots" aria-hidden="true">
+            <i />
+            <i />
+            <i />
+          </span>
+          <span class="truncate">{words[index % words.length]}</span>
+        </div>
+      )}
     </div>
   );
 }
