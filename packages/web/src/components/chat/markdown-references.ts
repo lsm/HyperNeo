@@ -22,10 +22,10 @@ export function markPreviewReferences(container: HTMLElement, references: readon
     if (!code.closest('pre') && wanted.has(text)) mark(code, text);
   });
   const pattern = new RegExp(
-    `(?<=^|[\\s('"“])(${[...wanted]
+    `(?<=(?:^|\\s)[('"“]*)(${[...wanted]
       .sort((a, b) => b.length - a.length)
       .map(escape)
-      .join('|')})(?=$|[\\s),.!?;:'"”])`,
+      .join('|')})(?=[),.!?;:'"”]*(?:\\s|$))`,
     'g'
   );
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
