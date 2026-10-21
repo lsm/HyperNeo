@@ -76,7 +76,7 @@ export function neoAskEntryState(
   return live.length && live.every((todo) => todo.state === 'done') ? 'done' : 'todo';
 }
 
-export const NEO_DONE_TODOS_SHOWN = 20;
+export const NEO_DONE_TODOS_SHOWN = 3;
 
 const NEO_TODO_LIST_ORDER: Record<NeoTodo['state'], number> = {
   blocked: 0,
@@ -91,13 +91,16 @@ function neoTodoListOrder<T extends NeoTodo>(todos: readonly T[]): T[] {
   return [...todos].sort((a, b) => NEO_TODO_LIST_ORDER[a.state] - NEO_TODO_LIST_ORDER[b.state]);
 }
 
-export function neoSnapshotAskEntries(entries: readonly NeoAskEntry[]): {
+export function neoSnapshotAskEntries(
+  entries: readonly NeoAskEntry[],
+  doneTodosShown = NEO_DONE_TODOS_SHOWN
+): {
   todoAsks: NeoAskEntry[];
   pinned: string[];
 } {
   return {
     todoAsks: entries.map((entry) =>
-      entry.doneCount > NEO_DONE_TODOS_SHOWN
+      entry.doneCount > doneTodosShown
         ? { ...entry, todos: entry.todos.filter((todo) => todo.state !== 'done') }
         : entry
     ),
@@ -249,7 +252,7 @@ export function createNeoDoneTodosOperation(
   return defineOperation({
     name: 'neo.ask.doneTodos',
     description:
-      'Read the done todos of an ask, a page at a time, in list order. An ask with more than 20 done todos lists none of them in neo.snapshot and carries only doneCount; read them here when you need to check finished work. Pass offset from nextOffset for the next page; nextOffset is null on the last page.',
+      'Read the done todos of an ask, a page at a time, in list order. An ask with more than 3 done todos (20 for RPC clients) lists none of them in neo.snapshot and carries only doneCount; read them here when you need to check finished work. Pass offset from nextOffset for the next page; nextOffset is null on the last page.',
     inputSchema: DoneTodos,
     resultSchema: z.union([
       z.object({ ok: z.literal(false), reason: z.string() }),

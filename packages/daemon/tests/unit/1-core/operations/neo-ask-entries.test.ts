@@ -321,7 +321,8 @@ describe('projectNeoAskEntries todo order and done todos', () => {
   test('up to twenty done todos stay on the snapshot card while clients learn to page them', () => {
     const twenty = seed(['doing', ...Array.from({ length: 20 }, () => 'done' as const)]);
     const kept = neoSnapshotAskEntries(
-      projectNeoAskEntries([twenty.opened], twenty.store, twenty.sessions, [])
+      projectNeoAskEntries([twenty.opened], twenty.store, twenty.sessions, []),
+      20
     );
     expect(kept.todoAsks[0].todos).toHaveLength(21);
     expect(kept.todoAsks[0].doneCount).toBe(20);
@@ -334,7 +335,7 @@ describe('projectNeoAskEntries todo order and done todos', () => {
     ]);
     const entries = projectNeoAskEntries([opened], store, sessions, []);
     expect(entries[0].todos).toHaveLength(22);
-    const shown = neoSnapshotAskEntries(entries);
+    const shown = neoSnapshotAskEntries(entries, 20);
     expect(shown.todoAsks[0].todos.map((todo) => todo.id)).toEqual(['t0']);
     expect(shown.todoAsks[0].doneCount).toBe(21);
     expect(shown.todoAsks[0].state).toBe('doing');
