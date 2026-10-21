@@ -143,6 +143,13 @@ describe('GoalDefinition', () => {
       expect(screen.queryByRole('link', { name: 'mandate.md#adoption' })).toBeNull();
     }
   );
+  it('still reports a refused goal read without requesting optional metadata', async () => {
+    request.mockResolvedValueOnce({ accepted: false, reason: 'Goal unavailable' });
+    render(<GoalDefinition ownerSessionId="root" goalId="guide" />);
+    expect((await screen.findByRole('alert')).textContent).toBe('Goal unavailable');
+    expect(screen.queryByText('Guide for adopters')).toBeNull();
+    expect(request.mock.calls.some(([, data]) => data.name === 'neo.home.read')).toBe(false);
+  });
   it('pages newest-first with the last entry id and retains prior pages', async () => {
     const { container } = render(<GoalDefinition ownerSessionId="root" goalId="guide" />);
     await screen.findByText('Effect 20');
