@@ -96,6 +96,33 @@ export class DevicePairingRepository {
       .all() as ReturnType<DevicePairingRepository['listDevices']>;
   }
 
+  listUnpaired(): {
+    client: 'browser' | 'native';
+    origin: string | null;
+    host: string | null;
+    remoteAddress: string | null;
+    credentialRejected: boolean;
+    count: number;
+    firstSeenAt: number;
+    lastSeenAt: number;
+  }[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT client, origin, host, remote_address AS remoteAddress,
+             credential_rejected AS credentialRejected, count, first_seen_at AS firstSeenAt,
+             last_seen_at AS lastSeenAt
+           FROM unpaired_connections ORDER BY last_seen_at DESC, rowid DESC`
+        )
+        .all() as (Omit<
+        ReturnType<DevicePairingRepository['listUnpaired']>[number],
+        'credentialRejected'
+      > & {
+        credentialRejected: number;
+      })[]
+    ).map((row) => ({ ...row, credentialRejected: row.credentialRejected === 1 }));
+  }
+
   revokeDevice(id: string, now: number): boolean {
     return (
       this.db

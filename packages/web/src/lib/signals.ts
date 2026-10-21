@@ -92,6 +92,7 @@ export type SettingsSection =
   | 'voice'
   | 'exa'
   | 'app-mcp-servers'
+  | 'devices'
   | 'remote-daemons'
   | 'skills'
   | 'models'
