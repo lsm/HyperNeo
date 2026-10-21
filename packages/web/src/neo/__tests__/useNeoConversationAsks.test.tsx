@@ -304,6 +304,47 @@ describe('useNeoConversationAsks resource shell', () => {
     expect(texts().cursor).toBe('Cursor: 1');
   });
 
+  it('keeps the earlier pages a reader loaded when a new ask arrives', async () => {
+    const asks = (from: number, to: number) =>
+      Array.from({ length: to - from + 1 }, (_, index) => ask(from + index));
+    let newest = 200;
+    fake.respond = (name, input) => {
+      if (name !== 'neo.conversation.asks.read') return Promise.resolve({});
+      const page = input as { after: number; before?: number };
+      return Promise.resolve(
+        page.before === Number.MAX_SAFE_INTEGER
+          ? pageOf(asks(151, 200))
+          : page.before
+            ? pageOf(asks(page.before - 50, page.before - 1))
+            : pageOf(asks(page.after + 1, newest), conversationId, newest)
+      );
+    };
+    online();
+    function EarlierProbe() {
+      const state = useNeoConversationAsks(root);
+      return (
+        <>
+          <p data-testid="asks">{state.items.map((item) => item.sequence).join(',')}</p>
+          <button onClick={state.loadEarlier}>Earlier</button>
+        </>
+      );
+    }
+    render(<EarlierProbe />);
+    const shown = () => screen.getByTestId('asks').textContent?.split(',').map(Number) ?? [];
+    await waitFor(() => expect(shown()[0]).toBe(151));
+    for (const oldest of [101, 51]) {
+      fireEvent.click(screen.getByRole('button', { name: 'Earlier' }));
+      await waitFor(() => expect(shown()[0]).toBe(oldest));
+    }
+    newest = 201;
+    await act(async () => {
+      fake.changed.forEach((callback) => callback());
+    });
+    await waitFor(() => expect(shown().at(-1)).toBe(201));
+    expect(shown()[0]).toBe(51);
+    expect(shown()).toHaveLength(151);
+  });
+
   it('marks a failure that lands while a newer ask arrives', async () => {
     serve(
       pageOf([ask(1)]),
