@@ -6,6 +6,7 @@ import type {
   NeoTodo,
   NeoTodoEntry,
 } from '@hyperneo/shared/types/neo-ask';
+import { neoOptionLabels } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
@@ -91,13 +92,16 @@ function neoTodoListOrder<T extends NeoTodo>(todos: readonly T[]): T[] {
   return [...todos].sort((a, b) => NEO_TODO_LIST_ORDER[a.state] - NEO_TODO_LIST_ORDER[b.state]);
 }
 
-export function neoSnapshotAskEntries(entries: readonly NeoAskEntry[]): {
+export function neoSnapshotAskEntries(
+  entries: readonly NeoAskEntry[],
+  doneTodosShown = NEO_DONE_TODOS_SHOWN
+): {
   todoAsks: NeoAskEntry[];
   pinned: string[];
 } {
   return {
     todoAsks: entries.map((entry) =>
-      entry.doneCount > NEO_DONE_TODOS_SHOWN
+      entry.doneCount > doneTodosShown
         ? { ...entry, todos: entry.todos.filter((todo) => todo.state !== 'done') }
         : entry
     ),
@@ -144,6 +148,8 @@ export function projectNeoAskEntries(
       todos: projectNeoTodoEntries(neoTodoListOrder(todos), todos, links, packs),
       doneCount: todos.filter((todo) => todo.state === 'done').length,
       questions: questions.map((question) => {
+        if (question.kind === 'choice' && question.options)
+          return { ...question, optionLabels: neoOptionLabels(question.options) };
         if (question.kind !== 'start' || !question.startTodos?.length) return question;
         const line = neoStartQuestionLine(
           question.startTodos.map((id) => ({ title: todos.find((todo) => todo.id === id)?.title }))
@@ -185,7 +191,12 @@ export const NeoAskEntrySchema = z.object({
   state: z.enum(['waiting', 'doing', 'done', 'dropped', 'todo']),
   todos: z.array(NeoTodoEntrySchema),
   doneCount: z.number(),
-  questions: z.array(NeoQuestionSchema.extend({ textCodes: NeoStatusCodesSchema })),
+  questions: z.array(
+    NeoQuestionSchema.extend({
+      textCodes: NeoStatusCodesSchema,
+      optionLabels: z.array(z.string()).optional(),
+    })
+  ),
 });
 
 const DoneTodos = z.object({
@@ -249,7 +260,7 @@ export function createNeoDoneTodosOperation(
   return defineOperation({
     name: 'neo.ask.doneTodos',
     description:
-      'Read the done todos of an ask, a page at a time, in list order. An ask with more than 3 done todos lists none of them in neo.snapshot and carries only doneCount; read them here when you need to check finished work. Pass offset from nextOffset for the next page; nextOffset is null on the last page.',
+      'Read the done todos of an ask, a page at a time, in list order. An ask with more than 3 done todos (20 for RPC clients) lists none of them in neo.snapshot and carries only doneCount; read them here when you need to check finished work. Pass offset from nextOffset for the next page; nextOffset is null on the last page.',
     inputSchema: DoneTodos,
     resultSchema: z.union([
       z.object({ ok: z.literal(false), reason: z.string() }),

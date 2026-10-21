@@ -16,7 +16,7 @@ export async function steerCodexDesktopTurn(
   text: string,
   messageId: string,
   mode: 'auto' | 'steer' = 'auto'
-): Promise<CodexSendGate<'app-server' | 'queue'>> {
+): Promise<CodexSendGate<'app-server'>> {
   if (!socketPath) {
     log.warn('work.send route', {
       threadId,
@@ -67,15 +67,29 @@ export async function steerCodexDesktopTurn(
           response.error ?? ''
         )
       ) {
-        log.warn('work.send route', {
-          threadId,
-          messageId,
-          path: mode === 'steer' ? 'not_delivered' : 'queue',
-          reason: response.error,
-        });
-        return mode === 'steer'
-          ? { reason: reject('not_delivered', response.error ?? 'Desktop refused steering.') }
-          : { value: 'queue' };
+        if (mode === 'steer')
+          return { reason: reject('not_delivered', response.error ?? 'Desktop refused steering.') };
+        const started = await call(
+          'thread-follower-start-turn',
+          {
+            conversationId: threadId,
+            turnStart: {
+              request: { threadId, input: [{ type: 'text', text, text_elements: [] }] },
+              context: { inheritThreadSettings: true },
+            },
+          },
+          2,
+          owner.handledByClientId
+        );
+        const startedTurnId = started.result?.result?.turn?.id;
+        return started.resultType === 'success' && startedTurnId
+          ? { reason: { ok: true, value: { delivered: true, startedTurnId } } }
+          : {
+              reason: reject(
+                'not_delivered',
+                started.error ?? 'Desktop did not confirm starting a turn.'
+              ),
+            };
       }
       const turnId = response.result?.result?.turnId;
       log.warn('work.send desktop result', {

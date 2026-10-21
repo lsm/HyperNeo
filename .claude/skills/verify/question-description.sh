@@ -9,8 +9,8 @@ bun "$(dirname "$0")/rpc.ts" operations.describe '{"name":"neo.question.ask"}' \
 bun -e '
 const { reply } = await Bun.file(process.argv[1]).json();
 const guidance = `Every card also has Reply in chat, where the human can answer in their own words, so never add an "other" or "something else" option.`;
-if (!reply?.found || !reply.description.includes(`choice: 2-6 options, multiple for pick-any. ${guidance}`)) {
-  console.error("FAIL: discovered neo.question.ask does not explain the built-in chat reply after yesno/choice.");
+if (!reply?.found || !reply.description.includes(`choice: 2-6 options, multiple for pick-any; the card labels them A, B, C… in order and the human may answer by letter, so never put letters in the option text. ${guidance}`)) {
+  console.error("FAIL: discovered neo.question.ask does not explain option letters and the built-in chat reply after yesno/choice.");
   process.exit(1);
 }
 console.log(`PASS: discovered neo.question.ask: ${reply.description}`);

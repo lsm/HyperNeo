@@ -15,6 +15,7 @@ describe('registered artifact reads', () => {
       'artifact.file.get',
       'artifact.file.list',
       'artifact.file.read',
+      'artifact.file.html',
     ]);
     expect(entries.every((entry) => entry.policy?.safetyClass === 'read')).toBe(true);
   });

@@ -1,6 +1,6 @@
 # Daemon security: pairing, Origin/Host checks, loopback by default
 
-Status: proposal for #7975, awaiting the human's approval. Nothing here is built yet.
+Status: approved for #7975. S1 is merged; later slices are not built yet.
 Nobody has checked the phone's saved address, the live listen address or the Tailscale
 ACLs. This design does not touch them; the migration below decides when they change.
 
@@ -51,8 +51,8 @@ The upgrade attaches `{deviceId, kind}` to the connection. `CallContext` carries
 | kind | principal | may call |
 | --- | --- | --- |
 | human | `local` | everything, as today |
-| relay | `relay` | read subscriptions plus `client.register`; no `human_only` operations |
-| daemon | `peer` | `operations.list` and forwarded `message.send`; never `requireLocalUser` operations |
+| relay | `relay` | read subscriptions plus the operations the push relay reads: `neo.snapshot`, `neo.publication.read`, `client.list`; nothing else |
+| daemon | `peer` | the operations daemons call on each other today: `operations.list`, forwarded `message.send`, and Neo's cross-machine `work.adapters`, `work.find`, `work.queue`, `work.read`, `work.rename`, `work.send`, `work.start`, `work.status`, `work.stop`, `work.withdraw`; nothing else |
 
 **Pairing a new device.**
 1. A **pairing code** is created only from an already trusted place:
@@ -76,7 +76,8 @@ reach loopback too.
 - "Revoke" sets `revoked_at` and closes that device's open sockets at once.
 - "Re-pair" issues a new credential and revokes the old one.
 - Credentials don't expire on a timer, but a device unseen for 90 days is flagged for review.
-- `hyperneo devices revoke <id>` does the same from the terminal, for a lost phone when no paired UI is at hand.
+- `hyperneo devices` lists them and `hyperneo devices revoke <id>` revokes one from the terminal, for a lost phone when no paired UI is at hand.
+- Revoking never reopens the first-device window: the CLI's no-Allow path counts every device ever paired, revoked or not, so an agent that reaches the CLI can revoke devices but cannot pair itself.
 
 **Where each client stores its credential.**
 
@@ -106,7 +107,7 @@ Every HTTP request and `/ws` upgrade must pass a Host and an Origin check.
 
 - A new default bind of `127.0.0.1`, with `::1` too where the runtime supports it.
 - Binding anything else takes an explicit opt-in: `--host <addr> --expose`, or Settings → Network → "Listen on" with a warning.
-- Compatibility: daemons that already set `HOST`/`--host` today keep starting on that address, with a startup warning, until the human makes the Listen-on change in migration step 5. Only after that change, or for a new `--expose`, does the daemon refuse to bind a non-loopback address while pairing enforcement is off.
+- Compatibility: daemons that already set `HOST`/`--host` today keep starting on that address, with a startup warning, until the human makes the Listen-on change in migration step 5. Only after that change, or for a new `--expose`, does the daemon refuse to bind a non-loopback address while pairing enforcement is off. The one exception is the address the rollback switch restores (below): the daemon starts on it with a warning, including a default-config daemon whose previous address was `0.0.0.0`.
 - The phone keeps its route: `tailscale serve --https=443 http://127.0.0.1:9283`. Serve connects to loopback, so the existing `https://<machine>.ts.net` URL keeps working. Its MagicDNS name goes into Allowed hosts.
 - Other machines move to `wss://<machine>.ts.net/ws` through Serve, the same way.
 
@@ -146,8 +147,9 @@ Built on `tests/helpers/daemon-server.ts` (spawned daemon on port 0) and `standa
 - A pairing code works once, expires after 10 minutes, and locks out after too many failed attempts.
 - The cookie and the Bearer header both authenticate. A revoked device's open socket closes within one second.
 - A cross-site Origin gets 403. An unknown Host (DNS rebinding) gets 403. A native client with no Origin but with a Bearer credential is accepted.
-- `relay` and `peer` principals are refused by `requireLocalUser` and `human_only` operations. A peer's forwarded `message.send` still works.
+- `relay` and `peer` principals are refused by `requireLocalUser` and `human_only` operations, except the relay's three reads (`neo.snapshot`, `neo.publication.read`, `client.list`), which are admitted by name. A peer keeps exactly the operations in its row (forwarded `message.send` and the cross-machine `work.*` calls) and is refused everything else.
 - The default bind is loopback. A non-loopback bind without `--expose` refuses to start.
+- After `hyperneo security enforce off`, the restored address (including `0.0.0.0`) starts with a warning and stays across restarts while enforcement is off.
 - The session door socket is never world-accessible, including the moment between `listen` and `chmod`.
 - Verify journey: `pair-device.sh` on an isolated daemon pairs a CLI device and a web cookie, opens `/ws` with each, revokes one, and checks the refusal.
 - iOS: unit tests in neo-ios for Keychain storage and the Bearer header. The Neo iOS session checks the on-device flow by hand.
@@ -163,14 +165,36 @@ Built on `tests/helpers/daemon-server.ts` (spawned daemon on port 0) and `standa
 | S5 | `hyperneo pair` / `devices revoke`; `daemon.attach` with a pairing code and the secret table | ~150 |
 | S6 | Settings → Devices (list, revoke, re-pair, unpaired-connections report) and the **Allow** prompt for pending codes, on the web and in Neo iOS | ~200 |
 | S7 | Origin/Host allowlist and Allowed hosts setting; drop CORS `*` (logging only until S8) | ~100 |
-| S8 | "Require pairing" enforce toggle with the step 2 check | ~60 |
-| S9 | Loopback default bind, `--expose` and the Listen-on setting | ~80 |
+| iOS | **lsm/neo-ios, not this repo:** the Pair screen, Keychain storage and the Bearer header on every `/ws` upgrade, plus the relay's Bearer header. It must be merged **and installed on the human's phone** before S8 or S9 lands | — |
+| S8 | "Require pairing" enforce toggle with the step 2 check, plus the rollback switch below | ~60 |
+| S9 | Loopback default bind, `--expose` and the Listen-on setting; the rollback switch also restores the previous listen address | ~80 |
 | S10 | Session door: create the socket with a 0077 umask so it is never wider than 0600 | ~20 |
 
-Outside this repo, done by the Neo iOS session in lsm/neo-ios: the iOS Pair screen,
-Keychain storage and Bearer header, plus the relay Bearer header. Both must land between S5
-and S8.
+The iOS row can start now: S1 already serves `POST /pair`, and from S2 on the daemon reads the Bearer header without refusing anything.
 
-Order: S1 → S2 → S3 → S5 → S4 → S6 → S7 → S10, then migration steps 2 and 3, then S8
-(step 4), then S9 (step 5). S8 and S9 change what the live daemon does, so each waits for
-the human's go.
+Order: S1 → S2 → S3 → S5 → S4 → S6 → S7 → S10, then migration steps 2 (the iOS build on the phone) and 3, then S8
+(step 4), then S9 (step 5).
+
+**Hold on enforcement.** The laptop daemon deploys automatically when a PR merges, and the
+human is often away from it with only the phone. So no slice that refuses connections, enforces
+Origin/Host, or binds to loopback by default (S8, S9, and any S7 change beyond logging) may
+merge until Neo confirms that the iOS pairing build is merged and installed on the phone. After
+that, S8 and S9 each still wait for the human's go.
+
+**Rollback switch.** S8 ships one documented step that turns enforcement off without the
+phone: `hyperneo security enforce off`. It calls a new operation, `device.enforce.off`, over the
+local session door, a Unix socket that pairing never gates, so it works from any shell on that
+Mac. The door runs only its allowlist and stamps callers `principal: 'session-door'`, which
+`isLocalUser` refuses, so S8 adds `device.enforce.off` to `DOOR_OPERATIONS` and lets it accept
+door callers, the same `fromDoor` exception `device.pair.reset_lockout` has. The exception only
+turns enforcement off; turning it on stays human-only in Settings. Agent sessions are handed the
+door too, so an agent on that Mac could turn enforcement off. That widens nothing: they already
+run as the human's user with a shell. Each switch-off is logged and shown in Settings → Devices. From another
+machine the human reaches it over SSH on the tailnet:
+`ssh <user>@<mac>.<tailnet>.ts.net hyperneo security enforce off`. After S9 the same command also
+puts the listen address back to what it was before the Listen-on change. That restored address
+is treated like the compatibility case in section 3, not as a new non-loopback bind: the daemon
+starts on it with a startup warning instead of refusing it while enforcement is off. Turning
+enforcement and loopback back on is again the human's Settings change. Before S8 merges, the
+human checks once, from another machine, that this SSH route works (Remote Login or Tailscale
+SSH enabled on the Mac).

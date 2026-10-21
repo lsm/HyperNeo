@@ -72,12 +72,44 @@ export class DevicePairingRepository {
       .run(...key, now, now, UNPAIRED_ROW_CAP);
   }
 
-  countDevices(): number {
+  isActiveDevice(id: string): boolean {
+    return !!this.db
+      .prepare('SELECT 1 FROM paired_devices WHERE id = ? AND revoked_at IS NULL')
+      .get(id);
+  }
+
+  listDevices(): {
+    id: string;
+    name: string;
+    kind: DeviceKind;
+    createdAt: number;
+    lastSeenAt: number | null;
+    lastSeenHost: string | null;
+    revokedAt: number | null;
+  }[] {
+    return this.db
+      .prepare(
+        `SELECT id, name, kind, created_at AS createdAt, last_seen_at AS lastSeenAt,
+           last_seen_host AS lastSeenHost, revoked_at AS revokedAt
+         FROM paired_devices ORDER BY created_at, rowid`
+      )
+      .all() as ReturnType<DevicePairingRepository['listDevices']>;
+  }
+
+  revokeDevice(id: string, now: number): boolean {
     return (
       this.db
-        .prepare('SELECT COUNT(*) AS n FROM paired_devices WHERE revoked_at IS NULL')
-        .get() as { n: number }
-    ).n;
+        .prepare('UPDATE paired_devices SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL')
+        .run(now, id).changes > 0
+    );
+  }
+
+  countDevices(): { all: number; humans: number } {
+    return this.db
+      .prepare(
+        'SELECT COUNT(*) AS "all", COUNT(*) FILTER (WHERE kind = \'human\' AND revoked_at IS NULL) AS humans FROM paired_devices'
+      )
+      .get() as { all: number; humans: number };
   }
 
   createCode(

@@ -45,7 +45,7 @@ async function hubPair() {
   const transports = InProcessTransport.createPair();
   client.registerTransport(transports[0]);
   server.registerTransport(transports[1]);
-  const unregister = setupOperationHandlers(server, echoRegistry());
+  const unregister = setupOperationHandlers(server, echoRegistry(), () => null);
   await Promise.all(transports.map((transport) => transport.initialize()));
   const close = async () => {
     unregister();

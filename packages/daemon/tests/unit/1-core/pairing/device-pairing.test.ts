@@ -1,7 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import { createPairingLimiter } from '../../../../src/lib/pairing/pairing-limiter.ts';
 import { createPairRoute } from '../../../../src/lib/pairing/pair-route.ts';
-import { createDevicePairingOperations } from '../../../../src/lib/pairing/pairing-operations.ts';
+import {
+  ALLOW_NEEDS_PAIRED_HUMAN,
+  createDevicePairingOperations,
+  NEEDS_PAIRED_HUMAN,
+  NO_HUMAN_DEVICE,
+} from '../../../../src/lib/pairing/pairing-operations.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
 import { DevicePairingRepository } from '../../../../src/storage/repositories/device-pairing-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -18,7 +23,13 @@ function setup(start = 1_000_000) {
   const repo = new DevicePairingRepository(db);
   const limiter = createPairingLimiter();
   const route = createPairRoute({ repo, limiter, now: clock.now });
-  const ops = createDevicePairingOperations({ repo: () => repo, limiter, now: clock.now });
+  const revoked: string[] = [];
+  const ops = createDevicePairingOperations({
+    repo: () => repo,
+    limiter,
+    now: clock.now,
+    revoked: (deviceId) => revoked.push(deviceId),
+  });
   const call = (name: string, input: unknown, caller: OperationCaller) => {
     const op = ops.find((item) => item.name === name)!;
     return op.execute(op.inputSchema.parse(input), caller) as Promise<Record<string, any>>;
@@ -33,10 +44,15 @@ function setup(start = 1_000_000) {
     );
     return { status: response.status, body: (await response.json()) as Record<string, any> };
   };
-  return { db, clock, repo, call, pair };
+  return { db, clock, repo, call, pair, revoked };
 }
 
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
+const pairedHuman = (deviceId: string): OperationCaller => ({
+  source: 'rpc',
+  principal: 'local',
+  device: { deviceId, kind: 'human' },
+});
 const door: OperationCaller = { source: 'mcp', principal: 'session-door', sessionId: 'cli' };
 const agent: OperationCaller = { source: 'mcp', sessionId: 'neo:root', role: 'neo' };
 
@@ -88,7 +104,8 @@ describe('device pairing', () => {
     const { db, call, pair } = setup();
     const first = await call('device.pair.create', { kind: 'human' }, door);
     expect(first.approval).toBe('approved');
-    expect((await pair(first.code, 'Laptop')).status).toBe(200);
+    const laptop = await pair(first.code, 'Laptop');
+    expect(laptop.status).toBe(200);
     const next = await call('device.pair.create', { kind: 'human' }, door);
     expect(next.approval).toBe('pending');
     expect(await pair(next.code, 'Agent')).toMatchObject({
@@ -106,8 +123,120 @@ describe('device pairing', () => {
     expect(await call('device.pair.approve', { codeId: next.codeId }, door)).toMatchObject({
       ok: false,
     });
-    expect(await call('device.pair.approve', { codeId: next.codeId }, human)).toEqual({ ok: true });
+    expect(await call('device.pair.approve', { codeId: next.codeId }, human)).toEqual({
+      ok: false,
+      reason: ALLOW_NEEDS_PAIRED_HUMAN,
+    });
+    expect(
+      await call('device.pair.approve', { codeId: next.codeId }, pairedHuman('phone'))
+    ).toEqual({
+      ok: false,
+      reason: ALLOW_NEEDS_PAIRED_HUMAN,
+    });
+    expect(
+      await call('device.pair.approve', { codeId: next.codeId }, pairedHuman(laptop.body.deviceId))
+    ).toEqual({
+      ok: true,
+    });
     expect((await pair(next.code, 'Phone')).status).toBe(200);
+    db.close();
+  });
+
+  test('any paired device ends the first-device window; with no human device the CLI says pair the phone first', async () => {
+    const { db, call, pair } = setup();
+    const relay = await call('device.pair.create', { kind: 'relay' }, door);
+    expect((await pair(relay.code, 'Relay')).status).toBe(200);
+    expect(await call('device.pair.create', { kind: 'human' }, door)).toEqual({
+      ok: false,
+      reason: NO_HUMAN_DEVICE,
+    });
+    expect(await call('device.pair.create', { kind: 'human' }, human)).toEqual({
+      ok: false,
+      reason: NO_HUMAN_DEVICE,
+    });
+    db.close();
+  });
+
+  test('a phone unpaired after it connected can no longer Allow from that connection', async () => {
+    const { db, call, pair } = setup();
+    const phone = await pair((await call('device.pair.create', { kind: 'human' }, door)).code);
+    const waiting = await call('device.pair.create', { kind: 'human' }, door);
+    db.prepare('UPDATE paired_devices SET revoked_at = 1').run();
+    expect(
+      await call(
+        'device.pair.approve',
+        { codeId: waiting.codeId },
+        pairedHuman(phone.body.deviceId)
+      )
+    ).toEqual({ ok: false, reason: ALLOW_NEEDS_PAIRED_HUMAN });
+    db.close();
+  });
+
+  test('once a human device is paired, a code made in an unpaired browser waits for its Allow', async () => {
+    const { db, call, pair } = setup();
+    expect((await call('device.pair.create', { kind: 'human' }, human)).approval).toBe('approved');
+    const first = await call('device.pair.create', { kind: 'human' }, door);
+    const phone = await pair(first.code, 'Phone');
+    expect((await call('device.pair.create', { kind: 'human' }, human)).approval).toBe('pending');
+    expect(
+      (await call('device.pair.create', { kind: 'human' }, pairedHuman(phone.body.deviceId)))
+        .approval
+    ).toBe('approved');
+    db.close();
+  });
+
+  test('the CLI lists paired devices without secrets and revokes one, closing its connections', async () => {
+    const { db, call, pair, revoked } = setup();
+    const phone = await pair((await call('device.pair.create', { kind: 'human' }, door)).code);
+    const relayCode = await call('device.pair.create', { kind: 'relay' }, door);
+    const phoneCaller = pairedHuman(phone.body.deviceId);
+    await call('device.pair.approve', { codeId: relayCode.codeId }, phoneCaller);
+    const relay = await pair(relayCode.code, 'Relay');
+    const listed = await call('device.list', {}, door);
+    expect(listed.devices).toEqual([
+      expect.objectContaining({
+        id: phone.body.deviceId,
+        name: 'Phone',
+        kind: 'human',
+        revokedAt: null,
+      }),
+      expect.objectContaining({
+        id: relay.body.deviceId,
+        name: 'Relay',
+        kind: 'relay',
+        revokedAt: null,
+      }),
+    ]);
+    expect(JSON.stringify(listed)).not.toContain(relay.body.credential);
+    expect(await call('device.revoke', { deviceId: relay.body.deviceId }, agent)).toMatchObject({
+      ok: false,
+    });
+    expect(await call('device.revoke', { deviceId: relay.body.deviceId }, human)).toEqual({
+      ok: false,
+      reason: NEEDS_PAIRED_HUMAN,
+    });
+    expect(await call('device.revoke', { deviceId: relay.body.deviceId }, door)).toEqual({
+      ok: true,
+    });
+    expect(revoked).toEqual([relay.body.deviceId]);
+    expect(await call('device.revoke', { deviceId: relay.body.deviceId }, phoneCaller)).toEqual({
+      ok: false,
+      reason: 'not_found: no paired device with that id.',
+    });
+    expect((await call('device.list', {}, phoneCaller)).devices[1].revokedAt).toBeNumber();
+    db.close();
+  });
+
+  test('revoking the only phone does not reopen pairing without Allow', async () => {
+    const { db, call, pair } = setup();
+    const phone = await pair((await call('device.pair.create', { kind: 'human' }, door)).code);
+    expect(await call('device.revoke', { deviceId: phone.body.deviceId }, door)).toEqual({
+      ok: true,
+    });
+    expect(await call('device.pair.create', { kind: 'human' }, door)).toEqual({
+      ok: false,
+      reason: NO_HUMAN_DEVICE,
+    });
     db.close();
   });
 

@@ -15,7 +15,7 @@ and kinds only: codes and credentials stay in shell variables.
 End state:
 - The first CLI code is `approved` and pairs (`200 human`, 43-char credential).
 - The second CLI code is `pending`: `POST /pair` answers `403 awaiting_approval`
-  until `device.pair.approve`, then `200`; the used code then answers `401`.
+  until the paired laptop calls `device.pair.approve` (its Bearer credential; since S3 only a paired human device can Allow), then `200`; the used code then answers `401`.
 - Bad codes: `401` until 5 failures in the minute (the used-code retry counts),
   then `429`; `hyperneo pair --reset-lockout` reopens pairing.
 - `paired_devices` holds `Laptop:human, Phone:human`; the raw credential appears

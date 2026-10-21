@@ -248,8 +248,24 @@ describe('projectNeoAskEntries', () => {
     ask('q1', ['t1'], 'Start "Rows"?');
     ask('q2', ['t1', 't2'], 'Start these 2?');
     ask('q3', ['t2'], '要不要先把图标做了？');
+    store.askQuestion(
+      'q4',
+      'ask',
+      {
+        text: 'Which layout?',
+        kind: 'choice',
+        options: ['List', 'Cards', 'Table'],
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos: null,
+      },
+      1
+    );
     const [entry] = projectNeoAskEntries([opened], store, sessions, []);
-    expect(entry.questions).toMatchObject([
+    expect(entry.questions[3]).toMatchObject({ id: 'q4', optionLabels: ['A', 'B', 'C'] });
+    expect(entry.questions[0]).not.toHaveProperty('optionLabels');
+    expect(entry.questions.slice(0, 3)).toMatchObject([
       {
         id: 'q1',
         text: 'Start "Rows"?',
@@ -318,15 +334,28 @@ describe('projectNeoAskEntries todo order and done todos', () => {
     expect(entry.state).toBe('doing');
   });
 
-  test('more than three done todos leave the snapshot card, keep their pack rows, and stay for restart', () => {
-    const { store, sessions, opened } = seed(['done', 'done', 'doing', 'done', 'done']);
+  test('up to twenty done todos stay on the snapshot card while clients learn to page them', () => {
+    const twenty = seed(['doing', ...Array.from({ length: 20 }, () => 'done' as const)]);
+    const kept = neoSnapshotAskEntries(
+      projectNeoAskEntries([twenty.opened], twenty.store, twenty.sessions, []),
+      20
+    );
+    expect(kept.todoAsks[0].todos).toHaveLength(21);
+    expect(kept.todoAsks[0].doneCount).toBe(20);
+  });
+
+  test('more than twenty done todos leave the snapshot card, keep their pack rows, and stay for restart', () => {
+    const { store, sessions, opened } = seed([
+      'doing',
+      ...Array.from({ length: 21 }, () => 'done' as const),
+    ]);
     const entries = projectNeoAskEntries([opened], store, sessions, []);
-    expect(entries[0].todos.map((todo) => todo.id)).toEqual(['t2', 't0', 't1', 't3', 't4']);
-    const shown = neoSnapshotAskEntries(entries);
-    expect(shown.todoAsks[0].todos.map((todo) => todo.id)).toEqual(['t2']);
-    expect(shown.todoAsks[0].doneCount).toBe(4);
+    expect(entries[0].todos).toHaveLength(22);
+    const shown = neoSnapshotAskEntries(entries, 20);
+    expect(shown.todoAsks[0].todos.map((todo) => todo.id)).toEqual(['t0']);
+    expect(shown.todoAsks[0].doneCount).toBe(21);
     expect(shown.todoAsks[0].state).toBe('doing');
-    expect(shown.pinned).toEqual(['t2', 't0', 't1', 't3', 't4']);
+    expect(shown.pinned).toHaveLength(22);
     store.settleAsk(opened, 'done', 'Shipped', 3);
     const settled = projectNeoAskEntries([store.getAsk('ask')!], store, sessions, []);
     expect(neoSnapshotAskEntries(settled).pinned).toEqual([]);

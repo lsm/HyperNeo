@@ -205,6 +205,7 @@ describe('claude-desktop adapter against the app session records', () => {
           delivered: true,
           receipt: { executionId: 'cli-a1', inputId: 'in-1' },
           confirmedAt,
+          remoteControl: false,
         },
       });
       expect(spawned).toEqual([]);
@@ -231,6 +232,7 @@ describe('claude-desktop adapter against the app session records', () => {
           delivered: true,
           receipt: { executionId: 'cli-a1', inputId: 'u-relay' },
           confirmedAt,
+          remoteControl: false,
         },
       });
       expect(spawned[0].args.slice(0, 11)).toEqual([
@@ -256,7 +258,7 @@ describe('claude-desktop adapter against the app session records', () => {
       );
       expect(await queued.send?.(ref, 'load "orders"\nthen stop', context)).toEqual({
         ok: true,
-        value: { delivered: true, confirmedAt },
+        value: { delivered: true, confirmedAt, remoteControl: false },
       });
       const lost = adapter(undefined, 1, undefined, undefined, async () => reply);
       expect(await lost.send?.(ref, 'load "orders"', context)).toEqual({
@@ -300,6 +302,7 @@ describe('claude-desktop adapter against the app session records', () => {
           delivered: true,
           receipt: { executionId: 'cli-c1', inputId: 'in-c1' },
           confirmedAt: 0,
+          remoteControl: false,
         },
       });
       expect(spawned).toEqual([]);
@@ -395,6 +398,7 @@ describe('claude-desktop adapter against the app session records', () => {
       status: 'needs_you',
       lastActivityAt: 30,
       link: 'claude://claude.ai/epitaxy/local_a1',
+      remoteControl: false,
     });
   });
 
@@ -614,6 +618,7 @@ describe('claude-desktop adapter against the app session records', () => {
         status: 'needs_you',
         lastActivityAt: 30,
         link: 'claude://claude.ai/epitaxy/local_a1',
+        remoteControl: false,
         execution: { directory: '/focus/dolmen/.claude/worktrees/w1', machine: 'laptop' },
         waitingFor: 'permission prompt',
         lastReply: 'Loaded 3 tables.',
@@ -728,36 +733,115 @@ describe('claude-desktop adapter against the app session records', () => {
       );
     });
 
-    test('resumes it headless and confirms the turn in its transcript', async () => {
-      const resumed = adapter([], 0, () =>
+    const context = { from: 'session:origin', caller: { source: 'internal' as const } };
+    const resumeAs = (mode: string, firstTurn?: { entrypoint: string; permissionMode: string }) => {
+      writeFileSync(
+        join(dir, 'acct-b', 'scope-2', 'local_b2.json'),
+        JSON.stringify(
+          record('b2', {
+            cwd: '/focus/ops',
+            title: 'woodpecker',
+            lastActivityAt: 5,
+            permissionMode: mode,
+          })
+        )
+      );
+      if (firstTurn)
+        writeFileSync(
+          transcript,
+          `${JSON.stringify({ type: 'user', uuid: 'first', ...firstTurn, message: { content: 'the task' } })}\n${JSON.stringify({ type: 'user', uuid: 'older', message: { content: 'run the audit' } })}\n`
+        );
+      return adapter([], 0, () =>
         appendFileSync(
           transcript,
           `${JSON.stringify({ type: 'user', uuid: 'in-b2', timestamp: '2026-10-18T01:00:00.000Z', message: { content: 'run the audit' } })}\n`
         )
       );
-      expect(await resumed.send?.(ref, 'run the audit', user)).toEqual({
-        ok: true,
-        value: {
-          delivered: true,
-          receipt: { executionId: 'cli-b2', inputId: 'in-b2' },
-          confirmedAt: Date.parse('2026-10-18T01:00:00.000Z'),
-        },
+    };
+    const resumed = (mode: string) => [
+      {
+        args: [
+          'claude',
+          '-p',
+          '--resume',
+          'cli-b2',
+          '--permission-mode',
+          mode,
+          '--',
+          'run the audit',
+        ],
+        cwd: '/focus/ops',
+      },
+    ];
+    const delivered = {
+      ok: true,
+      value: {
+        delivered: true,
+        receipt: { executionId: 'cli-b2', inputId: 'in-b2' },
+        confirmedAt: Date.parse('2026-10-18T01:00:00.000Z'),
+        remoteControl: false,
+      },
+    };
+
+    test('runs the message as a CLI turn on the session, in its own mode, and confirms it', async () => {
+      expect(await resumeAs('auto').send?.(ref, 'run the audit', context)).toEqual(delivered);
+      expect(spawned).toEqual(resumed('auto'));
+    });
+
+    test('a session Neo started headless keeps the mode it started in after Desktop relabels it', async () => {
+      const driver = resumeAs('acceptEdits', {
+        entrypoint: 'sdk-cli',
+        permissionMode: 'bypassPermissions',
       });
-      expect(spawned).toEqual([
-        {
-          args: [
-            'claude',
-            '-p',
-            '--resume',
-            'cli-b2',
-            '--permission-mode',
-            'auto',
-            '--',
-            'run the audit',
-          ],
-          cwd: '/focus/ops',
-        },
-      ]);
+      expect(await driver.send?.(ref, 'run the audit', context)).toEqual(delivered);
+      expect(spawned).toEqual(resumed('bypassPermissions'));
+    });
+
+    test.each([
+      ['acceptEdits', { entrypoint: 'claude-desktop', permissionMode: 'acceptEdits' }],
+      ['default', undefined],
+      ['acceptEdits', { entrypoint: 'sdk-cli', permissionMode: 'acceptEdits' }],
+    ] as const)(
+      'a session in %s that did not start headless in a free mode is sent to Desktop, never escalated',
+      async (mode, firstTurn) => {
+        expect(await resumeAs(mode, firstTurn).send?.(ref, 'run the audit', context)).toEqual({
+          ok: false,
+          reason: 'unreachable',
+          detail: `woodpecker is not running, and in ${mode} permission mode a headless turn cannot get tool approvals. Open it in Claude Desktop: claude://claude.ai/epitaxy/local_b2`,
+        });
+        expect(spawned).toEqual([]);
+      }
+    );
+
+    test('says plainly when the session folder is gone, without running anything', async () => {
+      writeFileSync(
+        join(dir, 'acct-b', 'scope-2', 'local_b2.json'),
+        JSON.stringify(
+          record('b2', {
+            cwd: '/gone',
+            title: 'woodpecker',
+            lastActivityAt: 5,
+            permissionMode: 'auto',
+          })
+        )
+      );
+      expect(await adapter([]).send?.(ref, 'run the audit', context)).toEqual({
+        ok: false,
+        reason: 'unreachable',
+        detail:
+          'woodpecker is not open in Claude Desktop, and its folder /gone no longer exists, so it cannot be reopened.',
+      });
+      expect(spawned).toEqual([]);
+    });
+
+    test('reports a resume whose message never reaches the transcript, or that fails', async () => {
+      expect(await adapter([]).send?.(ref, 'run the audit', context)).toMatchObject({
+        ok: false,
+        reason: 'not_delivered',
+      });
+      expect(await adapter([], 1).send?.(ref, 'run the audit', context)).toMatchObject({
+        ok: false,
+      });
     });
 
     test('uses the inbox instead when the session starts running before the resume', async () => {
@@ -774,33 +858,6 @@ describe('claude-desktop adapter against the app session records', () => {
       expect(spawned.map((entry) => entry.args)).not.toContainEqual(
         expect.arrayContaining(['--resume'])
       );
-    });
-
-    test('sends a session that cannot approve tools headless to Desktop instead', async () => {
-      writeFileSync(
-        join(dir, 'acct-b', 'scope-2', 'local_b2.json'),
-        JSON.stringify(record('b2', { cwd: '/focus/ops', title: 'woodpecker', lastActivityAt: 5 }))
-      );
-      expect(await adapter([]).send?.(ref, 'run the audit', user)).toEqual({
-        ok: false,
-        reason: 'unreachable',
-        detail:
-          'woodpecker is not running, and in default permission mode a headless turn cannot get tool approvals. Open it in Claude Desktop: claude://claude.ai/epitaxy/local_b2',
-      });
-      expect(spawned).toEqual([]);
-    });
-
-    test('does not count an older copy of the message, and reports a failed resume', async () => {
-      expect(await adapter([]).send?.(ref, 'run the audit', user)).toMatchObject({
-        ok: false,
-        reason: 'not_delivered',
-      });
-      expect(await adapter([], 1).send?.(ref, 'run the audit', user)).toMatchObject({
-        ok: false,
-      });
-      expect(
-        await adapter([]).send?.({ adapter: 'claude-desktop', id: 'local_a2' }, 'next', user)
-      ).toMatchObject({ ok: false, reason: 'not_open' });
     });
   });
 

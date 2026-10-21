@@ -1,4 +1,5 @@
 import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
+import NodeWebSocket from 'ws';
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 5000;
 const DEFAULT_PROBE_REQUEST_TIMEOUT_MS = 4000;
@@ -40,9 +41,16 @@ export interface DaemonAttachment {
   url: string;
 }
 
+export interface RemoteDaemonSecrets {
+  save(daemonId: string, url: string, credential: string, now: number): void;
+  credentialFor(daemonId: string, url: string): string | null;
+  remove(daemonId: string): void;
+}
+
 export class RemoteDaemonRegistry {
   private readonly urls = new Map<string, string>();
   private persist: ((attachments: DaemonAttachment[]) => void) | null = null;
+  private secrets: RemoteDaemonSecrets | null = null;
   private readonly attempts = new Map<string, RemoteAttempt>();
   private readonly connectFailures = new Map<string, { at: number; reason: string }>();
   private readonly connectTimeoutMs: number;
@@ -59,13 +67,16 @@ export class RemoteDaemonRegistry {
 
   restore(
     attachments: readonly DaemonAttachment[],
-    persist: (attachments: DaemonAttachment[]) => void
+    persist: (attachments: DaemonAttachment[]) => void,
+    secrets: RemoteDaemonSecrets
   ): void {
     for (const { daemonId, url } of attachments) this.urls.set(daemonId, url);
     this.persist = persist;
+    this.secrets = secrets;
   }
 
-  attach(daemonId: string, url: string): void {
+  attach(daemonId: string, url: string, credential?: string): void {
+    if (credential) this.secrets?.save(daemonId, url, credential, this.now());
     this.urls.set(daemonId, url);
     this.forget(daemonId);
     this.persist?.(this.list());
@@ -77,6 +88,7 @@ export class RemoteDaemonRegistry {
 
   detach(daemonId: string): boolean {
     const wasAttached = this.urls.delete(daemonId);
+    this.secrets?.remove(daemonId);
     this.forget(daemonId);
     if (wasAttached) this.persist?.(this.list());
     return wasAttached;
@@ -85,8 +97,15 @@ export class RemoteDaemonRegistry {
   private open(daemonId: string, url: string): RemoteAttempt {
     const existing = this.attempts.get(daemonId);
     if (existing) return existing;
-    const attempt = this.createAttempt(url);
+    const attempt = this.createAttempt(url, this.secrets?.credentialFor(daemonId, url) ?? null);
     this.attempts.set(daemonId, attempt);
+    attempt.connection
+      .then(() =>
+        attempt.transport.onConnectionChange((state) => {
+          if (state !== 'connected') this.discard(daemonId, attempt);
+        })
+      )
+      .catch(() => {});
     attempt.connection.catch((error: unknown) => {
       if (this.attempts.get(daemonId) === attempt) {
         this.attempts.delete(daemonId);
@@ -101,9 +120,21 @@ export class RemoteDaemonRegistry {
     return attempt;
   }
 
-  private createAttempt(url: string): RemoteAttempt {
+  private createAttempt(url: string, credential: string | null): RemoteAttempt {
     const hub = new MessageHub({ defaultSessionId: 'global' });
-    const transport = new WebSocketClientTransport({ url, autoReconnect: false, pingInterval: 0 });
+    const transport = new WebSocketClientTransport({
+      url,
+      autoReconnect: false,
+      pingInterval: 0,
+      ...(credential
+        ? {
+            createSocket: (socketUrl: string) =>
+              new NodeWebSocket(socketUrl, {
+                headers: { authorization: `Bearer ${credential}` },
+              }) as unknown as WebSocket,
+          }
+        : {}),
+    });
     hub.registerTransport(transport);
     const opening = transport.initialize();
     opening.catch(() => {});
@@ -114,7 +145,7 @@ export class RemoteDaemonRegistry {
   }
 
   async probe(url: string): Promise<void> {
-    const attempt = this.createAttempt(url);
+    const attempt = this.createAttempt(url, null);
     try {
       const connection = await attempt.connection;
       await connection.hub.request(

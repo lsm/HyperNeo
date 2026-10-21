@@ -1,8 +1,9 @@
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
+import { ArtifactCards } from '../components/artifacts/ArtifactCards.tsx';
 import type {
   NeoAskEntry,
-  NeoQuestion,
   NeoQuestionAnswer,
+  NeoQuestionEntry,
   NeoTodoEntry,
 } from '@hyperneo/shared/types/neo-ask';
 import { useEffect, useRef, useState } from 'preact/hooks';
@@ -42,7 +43,18 @@ const marks = {
   removed: ['', 'text-fg-faint'],
 } as const;
 
-export function neoQuestionAnswerLabel(question: NeoQuestion, todos: readonly NeoTodoEntry[]) {
+const choiceClass =
+  'flex min-w-0 max-w-full items-start gap-2 rounded-lg border border-line px-2.5 py-1.5 text-left text-xs font-semibold text-fg [overflow-wrap:anywhere] hover:border-accent/40 hover:text-accent focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50';
+
+function choiceLetter(question: NeoQuestionEntry, option: string) {
+  return question.optionLabels?.[question.options?.indexOf(option) ?? -1] ?? '';
+}
+
+function ChoiceLetter({ label }: { label: string }) {
+  return label ? <span class="shrink-0 text-accent">{label}</span> : null;
+}
+
+export function neoQuestionAnswerLabel(question: NeoQuestionEntry, todos: readonly NeoTodoEntry[]) {
   const answer = question.answer;
   if (answer === null) return '';
   if (question.kind === 'yesno' && question.answeredBy === 'button')
@@ -55,7 +67,14 @@ export function neoQuestionAnswerLabel(question: NeoQuestion, todos: readonly Ne
             .join(t('list.separator')),
         })
       : t('question.notNow');
-  return Array.isArray(answer) ? answer.join(t('list.separator')) || t('question.none') : answer;
+  return Array.isArray(answer)
+    ? answer
+        .map((option) => {
+          const label = question.kind === 'choice' ? choiceLetter(question, option) : '';
+          return label ? `${label}. ${option}` : option;
+        })
+        .join(t('list.separator')) || t('question.none')
+    : answer;
 }
 
 function TodoRow({
@@ -110,6 +129,7 @@ function TodoRow({
             ? neoTodoStatus(todo)
             : t('todo.doneWhen', { doneWhen: todo.doneWhen })}
         </span>
+        <ArtifactCards artifacts={todo.artifacts} />
         {number === undefined && todo.state === 'blocked' && todo.nextAction && (
           <span data-todo-next-action class="block break-words text-xs text-fg-muted">
             {t('todo.nextAction', { action: todo.nextAction })}
@@ -131,7 +151,7 @@ function TodoRow({
   );
 }
 
-function QuestionDocument({ question }: { question: NeoQuestion }) {
+function QuestionDocument({ question }: { question: NeoQuestionEntry }) {
   const [open, setOpen] = useState(false);
   if (!question.document) return null;
   return (
@@ -153,7 +173,7 @@ function QuestionBox({
   onAnswer,
   onReply,
 }: {
-  question: NeoQuestion;
+  question: NeoQuestionEntry;
   todos: readonly NeoTodoEntry[];
   disabled?: boolean;
   onAnswer: (answer: NeoQuestionAnswer) => void;
@@ -205,14 +225,39 @@ function QuestionBox({
       {question.kind === 'choice' && question.multiple && (
         <div class="mt-2 space-y-1">
           {(question.options ?? []).map((option) => (
-            <label key={option} class="flex items-center gap-2 text-sm">
+            <label
+              key={option}
+              data-choice-option
+              class="flex min-w-0 max-w-full items-start gap-2 text-sm [overflow-wrap:anywhere]"
+            >
               <input
                 type="checkbox"
+                class="mt-1 shrink-0"
+                aria-label={`${choiceLetter(question, option)} ${option}`.trim()}
                 checked={picked.includes(option)}
                 onChange={(event) => toggle(option, (event.target as HTMLInputElement).checked)}
               />
-              {option}
+              <ChoiceLetter label={choiceLetter(question, option)} />
+              <span class="min-w-0">{option}</span>
             </label>
+          ))}
+        </div>
+      )}
+      {question.kind === 'choice' && !question.multiple && (
+        <div class="mt-2 flex flex-col items-stretch gap-1.5">
+          {(question.options ?? []).map((option) => (
+            <button
+              key={option}
+              type="button"
+              data-choice-option
+              class={choiceClass}
+              aria-label={`${choiceLetter(question, option)} ${option}`.trim()}
+              disabled={disabled}
+              onClick={() => onAnswer([option])}
+            >
+              <ChoiceLetter label={choiceLetter(question, option)} />
+              <span class="min-w-0">{option}</span>
+            </button>
           ))}
         </div>
       )}
@@ -238,19 +283,6 @@ function QuestionBox({
             </button>
           </>
         )}
-        {question.kind === 'choice' &&
-          !question.multiple &&
-          (question.options ?? []).map((option) => (
-            <button
-              key={option}
-              type="button"
-              class={neoSecondaryClass}
-              disabled={disabled}
-              onClick={() => onAnswer([option])}
-            >
-              {option}
-            </button>
-          ))}
         {question.kind === 'choice' && question.multiple && (
           <button
             type="button"
@@ -298,7 +330,7 @@ export function NeoAskTodos({
   entry: NeoAskEntry;
   disabled?: boolean;
   onAnswer: (questionId: string, answer: NeoQuestionAnswer) => void;
-  onReply?: (question: NeoQuestion) => void;
+  onReply?: (question: NeoQuestionEntry) => void;
   onOpen?: (link: string, title: string) => void;
   onSettle?: (status: 'done' | 'dropped') => void;
   onLoadDone?: (askId: string, offset: number) => Promise<NeoDoneTodosPage>;

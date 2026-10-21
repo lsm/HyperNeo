@@ -67,8 +67,6 @@ const DELIVERY_POLL_MS = 2_000;
 const DELIVERY_POLLS = 15;
 const OPEN_WAIT_MS = 60_000;
 const OPEN_POLL_MS = 2_000;
-const IMPORT_WAIT_MS = 60_000;
-const DESKTOP_HANDOFFS = 2;
 
 const RecordSchema = z.object({
   sessionId: z.string().startsWith('local_'),
@@ -149,7 +147,6 @@ async function listDir(dir: string): Promise<string[]> {
 
 export type ClaudeRecordCache = Map<string, { modifiedAt: number; records: ClaudeDesktopRecord[] }>;
 const STARTED_KEY = 'started:';
-const HEADLESS_PERMISSION_MODES = new Set(['bypassPermissions', 'auto']);
 
 async function readRecord(path: string, cache: ClaudeRecordCache): Promise<ClaudeDesktopRecord[]> {
   try {
@@ -282,6 +279,7 @@ function toClaudeWork(
             'Watch this Claude Code session via Neo with work.status using this work ref. It is not registered in Claude Desktop yet.',
         }),
     ...(remoteLink ? { remoteLink } : {}),
+    ...(record.desktopRegistered ? { remoteControl: !!remoteLink } : {}),
   };
 }
 
@@ -959,6 +957,39 @@ async function sendOwnedClaudeMessage(
   );
 }
 
+const HEADLESS_PERMISSION_MODES = new Set(['bypassPermissions', 'auto']);
+
+export function claudeHeadlessStartMode(lines: readonly string[]): string | null {
+  for (const line of lines) {
+    const row = (() => {
+      try {
+        return JSON.parse(line) as { type?: string; entrypoint?: string; permissionMode?: string };
+      } catch {
+        return null;
+      }
+    })();
+    if (row?.type !== 'user') continue;
+    return row.entrypoint === 'sdk-cli' &&
+      row.permissionMode &&
+      HEADLESS_PERMISSION_MODES.has(row.permissionMode)
+      ? row.permissionMode
+      : null;
+  }
+  return null;
+}
+
+async function readHeadLines(path: string | null): Promise<string[]> {
+  if (!path) return [];
+  const file = await open(path, 'r').catch(() => null);
+  if (!file) return [];
+  try {
+    const { buffer, bytesRead } = await file.read(Buffer.alloc(65_536), 0, 65_536, 0);
+    return buffer.subarray(0, bytesRead).toString('utf8').split('\n').slice(0, -1);
+  } finally {
+    await file.close();
+  }
+}
+
 export async function resumeIdleClaudeSession(
   record: ClaudeDesktopRecord & { cliSessionId: string },
   liveSessions: readonly ClaudeLiveSession[],
@@ -968,7 +999,20 @@ export async function resumeIdleClaudeSession(
   const running = (sessions: readonly ClaudeLiveSession[]) =>
     sessions.some((session) => session.sessionId === record.cliSessionId && session.pid);
   if (running(liveSessions)) return { value: liveSessions };
-  if (!record.permissionMode || !HEADLESS_PERMISSION_MODES.has(record.permissionMode))
+  const folder = record.cwd ?? record.originCwd ?? deps.homeDir;
+  if (!deps.folderExists(folder))
+    return {
+      reason: reject(
+        'unreachable',
+        `${record.title} is not open in Claude Desktop, and its folder ${folder} no longer exists, so it cannot be reopened.`
+      ),
+    };
+  const path = await locateClaudeTranscript(deps.projectsDir, record);
+  const mode =
+    record.permissionMode && HEADLESS_PERMISSION_MODES.has(record.permissionMode)
+      ? record.permissionMode
+      : claudeHeadlessStartMode(await readHeadLines(path));
+  if (!mode)
     return {
       reason: reject(
         'unreachable',
@@ -978,17 +1022,8 @@ export async function resumeIdleClaudeSession(
   const recheck = await deps.liveSessions().catch(() => liveSessions);
   if (running(recheck)) return { value: recheck };
   const turn = await runClaudeTurn(
-    [
-      'claude',
-      '-p',
-      '--resume',
-      record.cliSessionId,
-      '--permission-mode',
-      record.permissionMode,
-      '--',
-      message,
-    ],
-    record.cwd ?? record.originCwd ?? deps.homeDir,
+    ['claude', '-p', '--resume', record.cliSessionId, '--permission-mode', mode, '--', message],
+    folder,
     record,
     message,
     deps,
@@ -1030,6 +1065,18 @@ export const sendClaudeMessage = (superpipe({})('claude-owner-send') as Pipeline
   context?: WorkCallContext
 ) => Promise<Result<WorkDelivery>>;
 
+export async function withRemoteControl(
+  sent: Result<WorkDelivery>,
+  record: ClaudeDesktopRecord,
+  deps: ClaudeDesktopAdapterDeps
+): Promise<Result<WorkDelivery>> {
+  if (!sent.ok) return sent;
+  const fresh = (await readClaudeDesktopRecords(deps.sessionsDir, new Map())).find(
+    (candidate) => candidate.sessionId === record.sessionId
+  );
+  return { ok: true, value: { ...sent.value, remoteControl: !!claudeRemoteLink(fresh ?? record) } };
+}
+
 const runClaudeDesktopSend = (superpipe({})('claude-desktop-send-work') as PipelineAPI)
   .input(['ref', 'message', 'deps', 'cache', 'context'])
   .pipe(loadClaudeDesktopRecords, ['deps', 'cache'], 'records')
@@ -1039,6 +1086,7 @@ const runClaudeDesktopSend = (superpipe({})('claude-desktop-send-work') as Pipel
   .pipe(probeLiveClaudeSessions, 'deps', 'result:outcome')
   .pipe((live: readonly ClaudeLiveSession[]) => live, 'outcome', 'liveSessions')
   .pipe(sendClaudeMessage, ['record', 'liveSessions', 'message', 'deps', 'context'], 'outcome')
+  .pipe(withRemoteControl, ['outcome', 'record', 'deps'], 'outcome')
   .endAsync('outcome') as (
   ref: WorkRef,
   message: string,
@@ -1203,8 +1251,7 @@ export async function startClaudeSession(
   folder: string,
   request: StartRequest,
   deps: ClaudeDesktopAdapterDeps,
-  cache: ClaudeRecordCache,
-  context?: WorkCallContext
+  cache: ClaudeRecordCache
 ): Promise<Result<WorkStarted>> {
   const cliSessionId = deps.newId();
   const sessionId = `local_${cliSessionId}`;
@@ -1224,9 +1271,7 @@ export async function startClaudeSession(
     placement.kind === 'worktree' && worktree
       ? join(placement.repo, '.claude', 'worktrees', worktree)
       : (prepared?.value.directory ?? folder);
-  const bootstrap = claudeBootstrapPrompt(request.title);
-  let cliDone = false;
-  const opened = await runClaudeTurn(
+  const started = await runClaudeTurn(
     [
       'claude',
       '-p',
@@ -1238,19 +1283,21 @@ export async function startClaudeSession(
       permissionMode,
       ...(worktree ? ['--worktree', worktree] : []),
       '--',
-      bootstrap,
+      request.message,
     ],
     prepared?.value.directory ?? folder,
     { cliSessionId, cwd, originCwd: folder },
-    bootstrap,
+    request.message,
     deps,
     BOOTSTRAP_TIMEOUT_MS / DELIVERY_POLL_MS,
     () => {
-      cliDone = true;
+      try {
+        launchInClaudeDesktop(cliSessionId, cwd, deps);
+      } catch {}
     }
   );
-  if (!opened.ok) return opened;
-  const provisional: ClaudeDesktopRecord = {
+  if (!started.ok) return started;
+  const record: ClaudeDesktopRecord = {
     sessionId,
     cliSessionId,
     cwd,
@@ -1259,88 +1306,26 @@ export async function startClaudeSession(
     lastActivityAt: deps.now(),
     permissionMode,
   };
-  cache.set(`${STARTED_KEY}${sessionId}`, { modifiedAt: 0, records: [provisional] });
-  const place = { machine: deps.machine, folder, name: request.place.name };
-  const needsYou = (why: string): Result<WorkStarted> => ({
-    ok: true,
-    value: {
-      ...toClaudeWork(provisional, new Map(), deps.machine),
-      place,
-      status: 'needs_you',
-      watchHint: `${why} The task was not started. Open Claude Desktop, then ask Neo to start it again.`,
-    },
-  });
-  if (!(await waitFor(() => cliDone, BOOTSTRAP_TIMEOUT_MS, deps)))
-    return needsYou('The opening Claude turn did not finish in time.');
-  let record: ClaudeDesktopRecord | null = null;
-  for (let handoff = 0; handoff < DESKTOP_HANDOFFS && !record; handoff++) {
-    try {
-      launchInClaudeDesktop(cliSessionId, cwd, deps);
-    } catch {
-      return needsYou('Claude Desktop could not be opened.');
-    }
-    record = await awaitDesktopRecord(cliSessionId, deps);
-  }
-  if (!record) return needsYou('Claude Desktop did not import the new session.');
-  const live = await waitUntilLive(cliSessionId, deps);
-  const owner = live ? requireClaudePeerOwner(cliSessionId, live) : null;
-  if (!live || !owner || 'reason' in owner || owner.value.owner !== 'desktop')
-    return needsYou('Claude Desktop did not open the new session.');
-  const sent = await sendOwnedClaudeMessage(
-    { ...record, cliSessionId },
-    live,
-    request.message,
-    deps,
-    context
-  );
-  if (!sent.ok) return needsYou(`Claude Desktop did not take the task: ${sent.detail}`);
+  cache.set(`${STARTED_KEY}${sessionId}`, { modifiedAt: 0, records: [record] });
   return {
     ok: true,
     value: {
       ...toClaudeWork(record, new Map(), deps.machine),
-      place,
+      place: { machine: deps.machine, folder, name: request.place.name },
       status: 'running',
-      receipt: sent.value.receipt ?? { executionId: cliSessionId, inputId: cliSessionId },
+      receipt: {
+        executionId: cliSessionId,
+        inputId: started.value.inputId ?? cliSessionId,
+      },
     },
   };
-}
-
-export function claudeBootstrapPrompt(title: string): string {
-  return `Session opened by Neo for "${title}". Reply OK and stop; the task follows in Claude Desktop.`;
-}
-
-async function waitFor(
-  done: () => boolean,
-  limitMs: number,
-  deps: Pick<ClaudeDesktopAdapterDeps, 'now' | 'sleep'>
-): Promise<boolean> {
-  const until = deps.now() + limitMs;
-  while (!done()) {
-    if (deps.now() >= until) return false;
-    await deps.sleep(OPEN_POLL_MS);
-  }
-  return true;
-}
-
-async function awaitDesktopRecord(
-  cliSessionId: string,
-  deps: ClaudeDesktopAdapterDeps
-): Promise<ClaudeDesktopRecord | null> {
-  const until = deps.now() + IMPORT_WAIT_MS;
-  for (;;) {
-    const found = (await readClaudeDesktopRecords(deps.sessionsDir, new Map())).find(
-      (candidate) => candidate.cliSessionId === cliSessionId && candidate.desktopRegistered
-    );
-    if (found || deps.now() >= until) return found ?? null;
-    await deps.sleep(OPEN_POLL_MS);
-  }
 }
 
 const runClaudeDesktopStart = (superpipe({})('claude-desktop-start-work') as PipelineAPI)
   .input(['request', 'deps', 'cache', 'context'])
   .pipe(admitClaudeStartConfiguration, 'request', 'result:outcome')
   .pipe(selectClaudeStartFolder, ['outcome', 'deps'], 'result:outcome')
-  .pipe(startClaudeSession, ['outcome', 'request', 'deps', 'cache', 'context'], 'outcome')
+  .pipe(startClaudeSession, ['outcome', 'request', 'deps', 'cache'], 'outcome')
   .endAsync('outcome') as (
   request: StartRequest,
   deps: ClaudeDesktopAdapterDeps,

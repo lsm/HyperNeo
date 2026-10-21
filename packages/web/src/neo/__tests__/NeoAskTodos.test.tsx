@@ -1,4 +1,4 @@
-import type { NeoAskEntry, NeoQuestion, NeoTodoEntry } from '@hyperneo/shared/types/neo-ask';
+import type { NeoAskEntry, NeoQuestionEntry, NeoTodoEntry } from '@hyperneo/shared/types/neo-ask';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NeoAskTodos, neoQuestionAnswerLabel } from '../NeoAskTodos.tsx';
@@ -44,7 +44,7 @@ const todo = (id: string, patch: Partial<NeoTodoEntry> = {}): NeoTodoEntry => ({
   ...patch,
 });
 
-const question = (id: string, patch: Partial<NeoQuestion>): NeoQuestion => ({
+const question = (id: string, patch: Partial<NeoQuestionEntry>): NeoQuestionEntry => ({
   id,
   askId: 'ask',
   text: `Question ${id}`,
@@ -253,18 +253,66 @@ describe('NeoAskTodos', () => {
       <NeoAskTodos
         entry={entry({
           questions: [
-            question('one', { kind: 'choice', options: ['A', 'B'] }),
-            question('many', { kind: 'choice', options: ['iPhone', 'iPad'], multiple: true }),
+            question('one', {
+              kind: 'choice',
+              options: ['Keep', 'Cards'],
+              optionLabels: ['A', 'B'],
+            }),
+            question('many', {
+              kind: 'choice',
+              options: ['iPhone', 'iPad'],
+              optionLabels: ['A', 'B'],
+              multiple: true,
+            }),
           ],
         })}
         onAnswer={onAnswer}
       />
     );
-    fireEvent.click(app.getByRole('button', { name: 'B' }));
-    expect(onAnswer).toHaveBeenCalledWith('one', ['B']);
-    fireEvent.click(app.getByRole('checkbox', { name: 'iPad' }));
+    fireEvent.click(app.getByRole('button', { name: 'B Cards' }));
+    expect(onAnswer).toHaveBeenCalledWith('one', ['Cards']);
+    fireEvent.click(app.getByRole('checkbox', { name: 'B iPad' }));
     fireEvent.click(app.getByRole('button', { name: '确定' }));
     expect(onAnswer).toHaveBeenLastCalledWith('many', ['iPad']);
+  });
+
+  it('letters each choice in order and wraps long options inside the card', () => {
+    const long = [
+      '保留现在的列表布局，只把每一行的间距、字号和状态标签重新调整一遍，让长标题在手机上也能完整显示而不被截断',
+      'Switch every card to the compact table layout with sortable columns, sticky headers, and a much longer description',
+      'https://example.test/a-very-long-unbroken-option-token-that-must-still-wrap-inside-the-card',
+    ];
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          questions: [
+            question('one', { kind: 'choice', options: long, optionLabels: ['A', 'B', 'C'] }),
+            question('many', {
+              kind: 'choice',
+              options: long,
+              optionLabels: ['A', 'B', 'C'],
+              multiple: true,
+            }),
+          ],
+        })}
+        onAnswer={() => {}}
+      />
+    );
+    const one = app.container.querySelector('[data-ask-question="one"]')!;
+    const buttons = [...one.querySelectorAll('[data-choice-option]')];
+    expect(buttons.map((button) => button.textContent)).toEqual(
+      long.map((option, index) => `${'ABC'[index]}${option}`)
+    );
+    for (const button of buttons) {
+      expect(button.className).not.toMatch(/shrink-0|truncate|whitespace-nowrap|line-clamp/);
+      expect(button.className).toContain('min-w-0');
+      expect(button.className).toContain('max-w-full');
+      expect(button.className).toContain('[overflow-wrap:anywhere]');
+    }
+    const many = app.container.querySelector('[data-ask-question="many"]')!;
+    expect(
+      [...many.querySelectorAll('[data-choice-option]')].map((label) => label.textContent)
+    ).toEqual(long.map((option, index) => `${'ABC'[index]}${option}`));
   });
 
   it('draws each todo state with its line and opens a session', () => {
@@ -460,6 +508,18 @@ describe('neoQuestionAnswerLabel', () => {
     expect(neoQuestionAnswerLabel(question('q', { kind: 'choice', answer: [] }), [])).toBe(
       '都不要'
     );
+    expect(
+      neoQuestionAnswerLabel(
+        question('q', {
+          kind: 'choice',
+          options: ['Keep', 'Cards', 'Table'],
+          optionLabels: ['A', 'B', 'C'],
+          answer: ['Keep', 'Table'],
+          answeredBy: 'chat',
+        }),
+        []
+      )
+    ).toBe('A. Keep、C. Table');
   });
 });
 
@@ -585,7 +645,7 @@ describe('Question full-version document', () => {
                 text: 'direction.md: compact diff',
                 state,
                 document,
-              } as Partial<NeoQuestion>),
+              } as Partial<NeoQuestionEntry>),
             ],
           })}
           onAnswer={() => {}}

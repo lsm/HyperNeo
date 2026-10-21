@@ -109,12 +109,36 @@ function isEndedTurnWrite(operation: OperationDefinition, caller: OperationCalle
   return !!caller.neoTurn && !caller.neoTurn.isLive() && operation.policy?.safetyClass !== 'read';
 }
 
+const DEVICE_OPERATIONS: Record<'relay' | 'daemon', ReadonlySet<string>> = {
+  relay: new Set(['neo.snapshot', 'neo.publication.read', 'client.list']),
+  daemon: new Set([
+    'operations.list',
+    'message.send',
+    'work.adapters',
+    'work.find',
+    'work.queue',
+    'work.read',
+    'work.rename',
+    'work.send',
+    'work.start',
+    'work.status',
+    'work.stop',
+    'work.withdraw',
+  ]),
+};
+
+function isDeviceAdmitted(operation: OperationDefinition, caller: OperationCaller): boolean {
+  const kind = caller.device?.kind;
+  return !kind || kind === 'human' || DEVICE_OPERATIONS[kind].has(operation.name);
+}
+
 export function isOperationAdmitted(
   operation: OperationDefinition,
   caller: OperationCaller
 ): boolean {
   return (
     !isEndedTurnWrite(operation, caller) &&
+    isDeviceAdmitted(operation, caller) &&
     (operation.policy?.caller !== 'local_user' || isLocalUser(caller))
   );
 }

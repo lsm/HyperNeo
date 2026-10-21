@@ -4,6 +4,7 @@ import type {
   NeoQuestionAnswer,
   NeoTodo,
 } from '@hyperneo/shared/types/neo-ask';
+import { neoLabelledOptions } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type {
@@ -221,7 +222,7 @@ export function neoQuestionAnsweredNote(question: NeoQuestion, todos: NeoTodo[])
               .map((id) => todos.find((todo) => todo.id === id)?.title ?? id)
               .join(', ') || 'none'
           }`
-        : [answer].flat().join(', ') || 'none';
+        : neoLabelledOptions(question.options ?? [], [answer].flat()) || 'none';
   return `The human answered "${question.text}": ${said}.`;
 }
 
@@ -362,7 +363,7 @@ export function createNeoQuestionOperations(
     defineOperation({
       name: 'neo.question.ask',
       description:
-        'Ask the human one question on an open ask you own. A home proposal uses kind yesno with confirm:{path,sha256}; the question text must show that exact path and 64-character lowercase content hash alongside the proposed change. This records the proposal, not permission to save. kind yesno: noLabel (left, keep things as they are) and yesLabel (right, the change it names). choice: 2-6 options, multiple for pick-any. Every card also has Reply in chat, where the human can answer in their own words, so never add an "other" or "something else" option. reply: answered in chat. start: rewords the start question the daemon opens on this ask for todos waiting to start; the human unticks any they do not want, and answering starts the ticked ones. It never opens a second one. Ask only what you cannot read yourself; never a bookkeeping question. replaces names an open question on the same ask: it is retired as replaced by this one in the same step.',
+        'Ask the human one question on an open ask you own. A home proposal uses kind yesno with confirm:{path,sha256}; the question text must show that exact path and 64-character lowercase content hash alongside the proposed change. This records the proposal, not permission to save. kind yesno: noLabel (left, keep things as they are) and yesLabel (right, the change it names). choice: 2-6 options, multiple for pick-any; the card labels them A, B, C… in order and the human may answer by letter, so never put letters in the option text. Every card also has Reply in chat, where the human can answer in their own words, so never add an "other" or "something else" option. reply: answered in chat. start: rewords the start question the daemon opens on this ask for todos waiting to start; the human unticks any they do not want, and answering starts the ticked ones. It never opens a second one. Ask only what you cannot read yourself; never a bookkeeping question. replaces names an open question on the same ask: it is retired as replaced by this one in the same step.',
       inputSchema: Ask,
       resultSchema: QuestionResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

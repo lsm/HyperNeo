@@ -919,7 +919,7 @@ async function tryDesktopCodexSend(
   message: string,
   deps: CodexDesktopAdapterDeps,
   mode: 'auto' | 'steer'
-): Promise<CodexSendGate<'app-server' | 'queue'>> {
+): Promise<CodexSendGate<'app-server'>> {
   return steerCodexDesktopTurn(
     deps.desktopSocketPath,
     detail.thread.id,
@@ -930,41 +930,34 @@ async function tryDesktopCodexSend(
 }
 
 async function tryServerCodexSend(
-  route: 'app-server' | 'queue',
+  route: 'app-server',
   detail: CodexThreadDetail,
   message: string,
   deps: CodexDesktopAdapterDeps,
   mode: 'auto' | 'steer'
-): Promise<CodexSendGate<CodexThreadDetail>> {
-  if (route === 'queue')
-    return mode === 'steer'
-      ? { reason: reject('not_delivered', 'Desktop refused steering: no steerable active turn.') }
-      : { value: detail };
-  sendLog.warn('work.send route', { threadId: detail.thread.id, path: 'app-server-steer', mode });
-  let dispatched = false;
+): Promise<CodexSendGate<never>> {
+  sendLog.warn('work.send route', { threadId: detail.thread.id, path: route, mode });
   const result = await withCodexMessageServer<WorkDelivery>(deps, async (server) => {
     const turn = admitCodexSteerTurn(
       await server.call('thread/turns/list', { threadId: detail.thread.id, limit: 1 })
     );
-    if ('reason' in turn) return turn.reason;
-    dispatched = true;
-    return callCodexSteer(server, detail.thread.id, turn.value, message);
+    if ('value' in turn) {
+      try {
+        return await callCodexSteer(server, detail.thread.id, turn.value, message);
+      } catch (error) {
+        if (mode === 'steer' || !/NoActiveTurn|no active turn/.test(String(error))) throw error;
+      }
+    } else if (mode === 'steer') return turn.reason;
+    const started = z.object({ turn: z.object({ id: z.string().min(1) }) }).parse(
+      await server.call('turn/start', {
+        threadId: detail.thread.id,
+        input: [{ type: 'text', text: message, text_elements: [] }],
+      })
+    );
+    return { ok: true, value: { delivered: true, startedTurnId: started.turn.id } };
   });
-  sendLog.warn('work.send app-server result', {
-    threadId: detail.thread.id,
-    mode,
-    dispatched,
-    result,
-  });
-  if (mode === 'steer' && !result.ok) return { reason: reject('not_delivered', result.detail) };
-  return mode === 'auto' &&
-    !result.ok &&
-    (!dispatched ||
-      /NoActiveTurn|no active turn|expected.*turn.*(?:mismatch|match)|activeTurnNotSteerable|-32601/.test(
-        result.detail
-      ))
-    ? { value: detail }
-    : { reason: result };
+  sendLog.warn('work.send app-server result', { threadId: detail.thread.id, mode, result });
+  return { reason: !result.ok ? reject('not_delivered', result.detail) : result };
 }
 
 export function codexWithdrawal(queuedSubmissionId: string, withdrawn: boolean): WorkWithdrawal {
@@ -1017,7 +1010,6 @@ const runCodexSend = (superpipe({})('codex-send-work') as PipelineAPI)
   .pipe((detail: CodexThreadDetail) => detail, 'outcome', 'detail')
   .pipe(tryDesktopCodexSend, ['detail', 'message', 'deps', 'mode'], 'result:outcome')
   .pipe(tryServerCodexSend, ['outcome', 'detail', 'message', 'deps', 'mode'], 'result:outcome')
-  .pipe(queueCodexMessage, ['outcome', 'message', 'deps'], 'outcome')
   .endAsync('outcome') as (
   ref: WorkRef,
   message: string,

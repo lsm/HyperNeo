@@ -37,6 +37,7 @@ import '../../../../docs/branding/hyperneo-visual-identity/brand-tokens.css';
 import './neo.css';
 import type { NeoQuote } from './neo-intake.ts';
 import { t } from '../lib/i18n/index.ts';
+import { ArtifactPreviewPanel } from '../components/artifacts/ArtifactPreviewPanel.tsx';
 import { neoQuestionText } from './todo-status.ts';
 
 export function NeoLive() {
@@ -724,6 +725,7 @@ export function NeoLive() {
         </div>
       </footer>
       <ToastContainer />
+      <ArtifactPreviewPanel />
     </div>
   );
 }
