@@ -2319,6 +2319,15 @@ The first input stays incomplete through internal turn-end/assistant-idle events
 final replies bind to consumed input IDs, duplicate authoritative messages do not
 duplicate the report, unrelated messages stay out, and session idle settles the
 matched replies. Public `work.adapters` must still advertise Copilot as find-only.
+An idle before the first input must remain queued. After 270 additional settled
+inputs, only the latest 64 settled receipts remain; the runtime stays usable
+across dedup retention rollover. A rejected permission followed by idle must stay
+`needs_you`. Unsettled inputs are capped at 64 without losing accepted receipts.
+Dedup retains at most 512 keys, evicting only keys unrelated to unsettled inputs;
+if all retained keys protect active evidence, the runtime becomes unreachable
+instead of forgetting that evidence and risking duplicate attribution. Snapshot
+history is bounded, not durable receipt storage; later wiring must persist reports
+before eviction and provide its own durable lookup/restart contract.
 `evidence/observed.json` saves actual RPC replies and SDK protocol traffic.
 
 The helper closes its socket, owned SDK runtime and daemon in `finally`. It uses

@@ -35,6 +35,10 @@ function projectEvent(state: WorkerState, event: SessionEvent): WorkerState {
     case 'user.message': {
       const { messageId, interactionId } = event.data;
       if (!messageId) break;
+      if (!Object.hasOwn(next.inputs, messageId) && Object.keys(next.inputs).length >= 128) {
+        next.status = 'unreachable';
+        break;
+      }
       const input = (Object.hasOwn(next.inputs, messageId)
         ? next.inputs[messageId]
         : undefined) ?? {
@@ -67,7 +71,10 @@ function projectEvent(state: WorkerState, event: SessionEvent): WorkerState {
         next.status = 'stopped';
         for (const input of Object.values(next.inputs))
           if (input.state === 'observed' && !input.outcome) input.outcome = 'stopped';
-      } else if (!['failed', 'needs_you'].includes(next.status)) {
+      } else if (
+        Object.keys(next.inputs).length &&
+        !['failed', 'needs_you'].includes(next.status)
+      ) {
         for (const input of Object.values(next.inputs))
           if (input.state === 'observed' && input.replyReport && !input.outcome) {
             input.replyAvailability = 'complete';
@@ -126,8 +133,28 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
   let unsubscribe = () => {};
   let closed = false;
   let state: WorkerState = { status: 'queued', inputs: {} };
-  const seen = new Set<string>();
+  const seen = new Map<string, string | undefined>();
   const submitted = new Set<string>();
+  const settled = new Set<string>();
+  let submitting = 0;
+  const prune = () => {
+    for (const id of submitted) if (state.inputs[id].outcome) settled.add(id);
+    while (settled.size > 64) {
+      const id = settled.values().next().value!;
+      delete state.inputs[id];
+      submitted.delete(id);
+      settled.delete(id);
+    }
+    for (const [key, id] of seen) {
+      if (seen.size <= 512) break;
+      const input = id && Object.hasOwn(state.inputs, id) ? state.inputs[id] : undefined;
+      if (!input || input.outcome) seen.delete(key);
+    }
+    if (seen.size > 512) {
+      seen.clear();
+      state.status = 'unreachable';
+    }
+  };
   const close = () =>
     (closing ??= (async () => {
       closed = true;
@@ -165,12 +192,27 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
       )
         return;
       if (closed || state.status === 'unreachable' || !event.id || seen.has(event.id)) return;
+      if (
+        event.type === 'user.message' &&
+        !submitting &&
+        !Object.hasOwn(state.inputs, event.data.messageId ?? '')
+      )
+        return;
       const messageKey =
         event.type === 'assistant.message' ? `message:${event.data.messageId}` : event.id;
       if (seen.has(messageKey)) return;
-      seen.add(event.id);
-      seen.add(messageKey);
+      const inputId =
+        event.type === 'user.message'
+          ? event.data.messageId
+          : event.type === 'assistant.message'
+            ? Object.keys(state.inputs).find(
+                (id) => state.inputs[id].interactionId === event.data.interactionId
+              )
+            : undefined;
+      seen.set(event.id, inputId);
+      seen.set(messageKey, inputId);
       state = applyEvent(state, event);
+      prune();
     });
   } catch (error) {
     await close();
@@ -182,6 +224,9 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
   return {
     async submit(prompt: string): Promise<WorkInputReceipt> {
       requireOpen();
+      if (submitting + Object.values(state.inputs).filter((input) => !input.outcome).length >= 64)
+        throw new Error('Copilot worker has 64 unsettled inputs');
+      submitting++;
       try {
         const inputId = await bounded(session.send({ prompt, mode: 'enqueue' }), timeoutMs);
         requireOpen();
@@ -198,10 +243,13 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
           };
         if (state.inputs[inputId].state === 'pending' && state.status !== 'running')
           state.status = 'queued';
+        prune();
         return { executionId: config.sessionId, inputId };
       } catch (error) {
         state.status = 'unreachable';
         throw error;
+      } finally {
+        submitting--;
       }
     },
     async snapshot(): Promise<WorkerState> {
