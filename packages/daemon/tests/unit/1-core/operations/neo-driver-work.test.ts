@@ -208,6 +208,18 @@ describe('driverWorkCaller', () => {
 });
 
 describe('readDriverOutcome', () => {
+  test('Copilot pending receipt is accepted queued work with its original attribution', () => {
+    const ref = { adapter: 'copilot-cli', id: 'owned-session' };
+    const receipt = { executionId: ref.id, inputId: 'queued-input' };
+    const delivery = { delivered: false, queuedSubmissionId: receipt.inputId, receipt };
+    expect(
+      readDriverOutcome(
+        { verb: 'send', ref },
+        { kind: 'completed', value: { ok: true, value: delivery } }
+      )
+    ).toEqual({ ref, delivery, queued: true, receipt });
+  });
+
   test('retains reported effort and ignores malformed effort without inventing a value', () => {
     const ref = { adapter: 'codex-desktop', id: 't1' };
     for (const effort of ['medium', undefined, null, 3, { value: 'high' }]) {

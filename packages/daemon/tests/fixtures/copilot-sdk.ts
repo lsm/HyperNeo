@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { appendFileSync, existsSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 let buffer = Buffer.alloc(0);
@@ -7,6 +7,8 @@ let sessionId = '';
 let input = 0;
 let eventId = 0;
 let pendingAck: (() => void) | undefined;
+const serial: { id: string; interaction: string; prompt: string }[] = [];
+const fixtureState = () => join(process.cwd(), `${sessionId}.fixture.json`);
 const send = (message: unknown) => {
   const data = JSON.stringify(message);
   process.stdout.write(`Content-Length: ${Buffer.byteLength(data)}\r\n\r\n${data}`);
@@ -39,7 +41,11 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
       break;
     case 'status.get':
       reply({
-        version: process.argv.includes('--production-version') ? '1.0.83' : 'fixture-1',
+        version: process.argv.includes('--wrong-version')
+          ? 'unsupported-fixture'
+          : process.argv.includes('--production-version')
+            ? '1.0.83'
+            : 'fixture-1',
         protocolVersion: 3,
       });
       break;
@@ -64,11 +70,67 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
       break;
     case 'session.create':
       sessionId = String(msg.params?.sessionId);
+      if (process.argv.includes('--durable-inputs')) writeFileSync(fixtureState(), '0');
+      reply({ sessionId });
+      break;
+    case 'session.resume':
+      sessionId = String(msg.params?.sessionId);
+      if (process.argv.includes('--resume-error') || !existsSync(fixtureState())) {
+        send({
+          jsonrpc: '2.0',
+          id: msg.id,
+          error: {
+            code: -32000,
+            message: process.argv.includes('--resume-error')
+              ? 'Synthetic resume rejection'
+              : 'Missing fixture session',
+          },
+        });
+        break;
+      }
+      input = Number(readFileSync(fixtureState(), 'utf8'));
       reply({ sessionId });
       break;
     case 'session.send': {
       const prompt = msg.params?.prompt;
       const id = prompt === 'hostile' ? '__proto__' : `input-${++input}`;
+      if (process.argv.includes('--durable-inputs')) writeFileSync(fixtureState(), String(input));
+      if (String(prompt).startsWith('serial:')) {
+        serial.push({ id, interaction: `interaction-${input}`, prompt: String(prompt) });
+        if (serial.length === 1) {
+          event('user.message', {
+            messageId: id,
+            interactionId: serial[0].interaction,
+            content: prompt,
+            delivery: 'idle',
+          });
+          const timer = setInterval(() => {
+            if (!existsSync(join(process.cwd(), 'release-serial'))) return;
+            clearInterval(timer);
+            for (const [index, queued] of serial.splice(0).entries()) {
+              if (index)
+                event('user.message', {
+                  messageId: queued.id,
+                  interactionId: queued.interaction,
+                  content: queued.prompt,
+                  delivery: 'queued',
+                });
+              event('assistant.message', {
+                messageId: `reply-${queued.id}`,
+                interactionId: queued.interaction,
+                content:
+                  queued.prompt === 'serial:long'
+                    ? 'LONG_REPLY'.repeat(3000)
+                    : `REPLY_${queued.prompt}`,
+                phase: 'final_answer',
+              });
+            }
+            event('session.idle', {});
+          }, 5);
+        }
+        reply({ messageId: id });
+        break;
+      }
       if (prompt === 'crash') {
         reply({ messageId: id });
         setTimeout(() => process.exit(1), 5);
@@ -173,6 +235,14 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
         });
         event('session.idle', {});
       }
+      if (prompt === 'fragments')
+        for (let index = 0; index < 12; index++)
+          event('assistant.message', {
+            messageId: `fragment-${input}-${index}`,
+            interactionId: 'interaction-1',
+            content: `FRAGMENT_${index};`,
+            phase: 'final_answer',
+          });
       if (prompt === 'dedup-pressure') {
         for (let index = 0; index < 270; index++)
           event('assistant.message', {
@@ -196,7 +266,13 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
         !String(prompt).endsWith('-queued')
       )
         event('user.message', { messageId: id, interactionId: 'rewritten', content: prompt });
-      if (prompt === 'ping-ack') pendingAck = () => reply({ messageId: id });
+      if (prompt === 'held-ack') {
+        const timer = setInterval(() => {
+          if (!existsSync(join(process.cwd(), 'release-ack'))) return;
+          clearInterval(timer);
+          reply({ messageId: id });
+        }, 5);
+      } else if (prompt === 'ping-ack') pendingAck = () => reply({ messageId: id });
       else if (prompt === 'late-ack') setTimeout(() => reply({ messageId: id }), 20);
       else if (prompt !== 'lost-ack') reply({ messageId: id });
       break;

@@ -39,7 +39,7 @@ try {
   });
   const adapters = await rpc('work.adapters', {});
   assert(adapters && typeof adapters === 'object' && 'value' in adapters);
-  assert.deepEqual((adapters.value as { id: string; capabilities: string[] }[]).find(a => a.id === 'copilot-cli'), { id: 'copilot-cli', capabilities: ['find', 'start', 'status', 'stop'] });
+  assert.deepEqual((adapters.value as { id: string; capabilities: string[] }[]).find(a => a.id === 'copilot-cli'), { id: 'copilot-cli', capabilities: ['find', 'start', 'send', 'queue', 'status', 'stop'] });
   const find = await rpc('work.find', { adapters: ['copilot-cli'], folder: copilotFolder, includeClosed: true, localOnly: true });
   assert(find && typeof find === 'object' && 'places' in find);
   const work = (find.places as { work: { ref: { id: string; adapter: string }; title: string }[] }[]).flatMap(p => p.work);
@@ -54,7 +54,7 @@ try {
     const result = await rpc(name, input);
     assert(result && typeof result === 'object' && 'ok' in result && 'reason' in result);
     assert.equal(result.ok, false);
-    assert.equal(result.reason, name === 'work.send' ? 'unsupported' : 'not_found');
+    assert.equal(result.reason, 'not_found');
   }
   const calls = readFileSync(join(home, 'evidence/calls.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line).method);
   assert.deepEqual(calls, ['initialize', 'session/list', 'session/list']);

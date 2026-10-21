@@ -58,7 +58,7 @@ const status = async (work: WorkStarted) => {
 try {
   await connect();
   const catalog = await rpc('work.adapters', {}) as { value: { id: string; capabilities: string[] }[] };
-  assert.deepEqual(catalog.value.find(adapter => adapter.id === 'copilot-cli')?.capabilities, ['find', 'start', 'status', 'stop']);
+  assert.deepEqual(catalog.value.find(adapter => adapter.id === 'copilot-cli')?.capabilities, ['find', 'start', 'send', 'queue', 'status', 'stop']);
   if (mode === 'reap' || mode === 'all') {
     for (const message of ['settled', 'error', 'late-settled']) {
       const work = await start(message);
@@ -142,7 +142,7 @@ try {
     assert.equal(concurrent.value.status, 'stopped', 'status overlapping runtime close must retain stopped');
   } finally { writeFileSync(join(run, 'workspace/release-shutdown'), 'release'); assert.deepEqual(await stopping, { ok: true, value: { stopped: true } }); }
   assert.equal((await status(stopped)).status, 'stopped');
-  assert.equal((await rpc('work.send', { ref: stopped.ref, message: 'do not send' }) as { reason: string }).reason, 'unsupported');
+  assert.equal((await rpc('work.send', { ref: stopped.ref, message: 'do not send', mode: 'steer' }) as { reason: string }).reason, 'unsupported');
   assert.equal((await rpc('work.stop', { ref: { adapter: 'copilot-cli', id: crypto.randomUUID() } }) as { reason: string }).reason, 'not_found');
   installFixture('--logged-out');
   const loggedOut = await rpc('work.start', { adapter: 'copilot-cli', place: complete.place, title: 'No login', model: 'synthetic-model', message: 'never delivered' }) as { ok: boolean; detail: string };
