@@ -7,6 +7,9 @@ import { homedir } from 'os';
 import { parsePositiveInt, type Config } from './config.ts';
 import type { WebSocketData } from './types/websocket.ts';
 import { createHttpWsServer, type ServerHandle } from './lib/runtime-server/index.ts';
+import { createPairRoute } from './lib/pairing/pair-route.ts';
+import { daemonPairingLimiter } from './lib/pairing/pairing-limiter.ts';
+import { DevicePairingRepository } from './storage/repositories/device-pairing-repository.ts';
 import { Database } from './storage/database.ts';
 import { SessionManager } from './lib/session-manager.ts';
 import {
@@ -332,6 +335,7 @@ export interface CreateDaemonAppOptions {
 
 export interface DaemonAppContext {
   server: ServerHandle;
+  handlePair: (req: Request) => Promise<Response>;
   db: Database;
   messageHub: MessageHub;
   sessionManager: SessionManager;
@@ -1095,6 +1099,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const spaceRuntimeReadyPromise = spaceRuntimeService.ready();
 
     const wsHandlers = createWebSocketHandlers(transport, sessionManager);
+    const handlePair = createPairRoute({
+      repo: new DevicePairingRepository(db.getDatabase()),
+      limiter: daemonPairingLimiter,
+      now: Date.now,
+    });
 
     const server = await createHttpWsServer({
       hostname: config.host,
@@ -1142,6 +1151,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
             }
           );
         }
+
+        if (url.pathname === '/pair' && req.method === 'POST') return handlePair(req);
 
         const extensionRoute = extensionManager
           .getRegisteredRoutes()
@@ -1682,6 +1693,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     return {
       server,
+      handlePair,
       db,
       messageHub,
       sessionManager,

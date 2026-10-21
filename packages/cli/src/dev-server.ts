@@ -207,6 +207,8 @@ export async function startDevServer(config: Config) {
         return createCorsPreflightResponse();
       }
 
+      if (url.pathname === '/pair' && req.method === 'POST') return daemonContext.handlePair(req);
+
       if (isWebSocketPath(url.pathname)) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const upgraded = (server as any).upgrade(req, {

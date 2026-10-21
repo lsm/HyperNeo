@@ -1,4 +1,5 @@
 import { runMigration433 } from './m433-neo-question-document.ts';
+import { runMigration435 } from './m435-device-pairing.ts';
 import { runMigration432 } from './m432-artifact-files.ts';
 import { runMigration430 } from './m430-neo-home-github.ts';
 import { runMigration429 } from './m429-neo-rule-proposals.ts';
@@ -919,6 +920,7 @@ export function runMigrations(
   run(migrationMarkerKey(430), () => runMigration430(db));
   run(migrationMarkerKey(432), () => runMigration432(db));
   run(migrationMarkerKey(433), () => runMigration433(db));
+  run(migrationMarkerKey(435), () => runMigration435(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

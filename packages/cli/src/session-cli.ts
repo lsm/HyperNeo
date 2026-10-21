@@ -6,7 +6,10 @@ type Env = Record<string, string | undefined>;
 export const SESSION_CLI_USAGE = `Usage:
   hyperneo send <session-id> <text>   Message another session (inside a HyperNeo, Codex or Claude Code session)
   hyperneo question <question-id>     Read a Neo question and whether the human answered it
-  hyperneo build                      Read daemon build and health through the owner-only session socket`;
+  hyperneo build                      Read daemon build and health through the owner-only session socket
+  hyperneo pair [--kind human|relay|daemon] [--name <name>]
+                                      Make a 10-minute pairing code; after the first device, it waits for Allow on a paired device
+  hyperneo pair --reset-lockout       Reopen pairing after too many bad codes`;
 
 export function resolveSender(env: Env): string | null {
   if (env.HYPERNEO_SESSION_ID) return env.HYPERNEO_SESSION_ID;
@@ -32,9 +35,26 @@ export function planSessionCommand(
     };
   if (command === 'build' && !target && !rest.length)
     return { value: { name: 'system.build', input: {} } };
+  if (command === 'pair') return planPairCommand(args.slice(1));
   if (command === 'question' && target && !rest.length)
     return { value: { name: 'neo.question.get', input: { questionId: target } } };
   return { reason: SESSION_CLI_USAGE };
+}
+
+function planPairCommand(
+  args: string[]
+): { value: { name: string; input: unknown } } | { reason: string } {
+  if (args.length === 1 && args[0] === '--reset-lockout')
+    return { value: { name: 'device.pair.reset_lockout', input: {} } };
+  const input: { kind: string; name?: string } = { kind: 'human' };
+  for (let i = 0; i < args.length; i += 2) {
+    const [flag, value] = [args[i], args[i + 1]];
+    if (!value) return { reason: SESSION_CLI_USAGE };
+    if (flag === '--kind') input.kind = value;
+    else if (flag === '--name') input.name = value;
+    else return { reason: SESSION_CLI_USAGE };
+  }
+  return { value: { name: 'device.pair.create', input } };
 }
 
 function post(socketPath: string, body: unknown): Promise<{ status: number; body: unknown }> {
@@ -58,7 +78,7 @@ function post(socketPath: string, body: unknown): Promise<{ status: number; body
 }
 
 export async function runSessionCommand(args: string[], env: Env = process.env): Promise<number> {
-  const sender = resolveSender(env);
+  const sender = resolveSender(env) ?? (args[0] === 'pair' ? 'cli' : null);
   if (!sender) {
     console.error(
       'hyperneo send: no sender. Run it inside a HyperNeo, Codex or Claude Code session (HYPERNEO_SESSION_ID, CODEX_THREAD_ID or CLAUDE_CODE_SESSION_ID).'

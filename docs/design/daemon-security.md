@@ -19,7 +19,8 @@ Protects against:
 - anyone on the LAN, Tailscale tailnet or Internet path who can reach the port;
 - a web page in any browser on a machine that can reach the daemon, which could otherwise open `/ws` itself (cross-site WebSocket hijacking or DNS rebinding);
 - a stolen or lost phone or laptop, by letting the human revoke it;
-- a peer daemon acting as the human.
+- a peer daemon acting as the human;
+- an AI session on this machine pairing a device for itself, even under prompt injection. Agent sessions are handed the session door, so once any device is paired, every new pairing code needs the human's Allow on a paired device.
 
 Out of scope:
 - a process running as the same OS user, which can already read the database and drive the CLI;
@@ -57,6 +58,8 @@ The upgrade attaches `{deviceId, kind}` to the connection. `CallContext` carries
 1. A **pairing code** is created only from an already trusted place:
    - the local CLI, `hyperneo pair [--kind human|relay|daemon] [--name …]`, over the `0600` session door;
    - or Settings → Devices → "Add device" on an already paired human device.
+
+   **Allow.** A code made from the CLI is ready to use only while no device is paired yet, which is how the first device pairs. Once any device is paired, a CLI code is created *pending*. It redeems only after the human taps **Allow** on an already paired human device (`device.pair.pending` lists pending codes, never the codes themselves; `device.pair.approve` allows one). A code made in Settings on a paired human device is that device's own Allow. Until it is allowed, `POST /pair` answers `403 awaiting_approval` without counting a failure. AI sessions, which only reach the CLI path, can request a code but can't make it usable.
 2. The code is 10 base32 characters, single use and valid for 10 minutes. It is shown as text, plus a QR code holding `https://<host>/pair#<code>`. The `#` keeps the code out of server logs and the `Referer` header.
 3. The new device posts `{code, name}` to an unauthenticated `POST /pair`. The device's kind (and so its principal) is fixed when the code is created and stored with it; `POST /pair` accepts no `kind`, so whoever redeems a relay or daemon code can never become `human`. Codes allow 5 failed attempts per daemon per minute. After 20 failures in an hour, `POST /pair` refuses everything for 15 minutes and then reopens. `hyperneo pair --reset-lockout` (over the 0600 session door) clears the lock at once, so someone on the network who floods bad codes can delay pairing but can't block it, and the first device can always pair from the machine itself.
 4. On success the daemon returns the credential once:
@@ -153,12 +156,12 @@ Built on `tests/helpers/daemon-server.ts` (spawned daemon on port 0) and `standa
 
 | # | Slice | Prod lines |
 | --- | --- | --- |
-| S1 | `paired_devices` table, hashing, pairing-code operations, `POST /pair` with its limits | ~200 |
+| S1 | `paired_devices` table, hashing, pairing-code operations (including the pending/Allow state and the first-device rule), `POST /pair` with its limits | ~250 |
 | S2 | `authenticateUpgrade`, shared by `app.ts` and the three CLI front doors; report mode only | ~150 |
-| S3 | Caller principal from the device kind (`local`/`relay`/`peer`); gate updates | ~150 |
+| S3 | Caller principal from the device kind (`local`/`relay`/`peer`); gate updates, including `device.pair.approve` requiring a paired human device | ~150 |
 | S4 | Web pairing screen and cookie | ~200 |
 | S5 | `hyperneo pair` / `devices revoke`; `daemon.attach` with a pairing code and the secret table | ~150 |
-| S6 | Settings → Devices (list, revoke, re-pair, unpaired-connections report) | ~200 |
+| S6 | Settings → Devices (list, revoke, re-pair, unpaired-connections report) and the **Allow** prompt for pending codes, on the web and in Neo iOS | ~200 |
 | S7 | Origin/Host allowlist and Allowed hosts setting; drop CORS `*` (logging only until S8) | ~100 |
 | S8 | "Require pairing" enforce toggle with the step 2 check | ~60 |
 | S9 | Loopback default bind, `--expose` and the Listen-on setting | ~80 |

@@ -1,0 +1,142 @@
+import { describe, expect, test } from 'bun:test';
+import { createPairingLimiter } from '../../../../src/lib/pairing/pairing-limiter.ts';
+import { createPairRoute } from '../../../../src/lib/pairing/pair-route.ts';
+import { createDevicePairingOperations } from '../../../../src/lib/pairing/pairing-operations.ts';
+import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
+import { DevicePairingRepository } from '../../../../src/storage/repositories/device-pairing-repository.ts';
+import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
+import { Database } from '../../../../src/storage/sqlite-compat.ts';
+
+const MINUTE = 60_000;
+
+function setup(start = 1_000_000) {
+  const db = new Database(':memory:');
+  runMigrations(db, () => {});
+  createTables(db);
+  let now = start;
+  const clock = { now: () => now, advance: (ms: number) => (now += ms) };
+  const repo = new DevicePairingRepository(db);
+  const limiter = createPairingLimiter();
+  const route = createPairRoute({ repo, limiter, now: clock.now });
+  const ops = createDevicePairingOperations({ repo, limiter, now: clock.now });
+  const call = (name: string, input: unknown, caller: OperationCaller) => {
+    const op = ops.find((item) => item.name === name)!;
+    return op.execute(op.inputSchema.parse(input), caller) as Promise<Record<string, any>>;
+  };
+  const pair = async (code: string, name = 'Phone') => {
+    const response = await route(
+      new Request('http://127.0.0.1/pair', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ code, name }),
+      })
+    );
+    return { status: response.status, body: (await response.json()) as Record<string, any> };
+  };
+  return { db, clock, repo, call, pair };
+}
+
+const human: OperationCaller = { source: 'rpc', principal: 'local' };
+const door: OperationCaller = { source: 'mcp', principal: 'session-door', sessionId: 'cli' };
+const agent: OperationCaller = { source: 'mcp', sessionId: 'neo:root', role: 'neo' };
+
+describe('device pairing', () => {
+  test('a code pairs one device once, with the kind fixed when the code was made', async () => {
+    const { db, call, pair } = setup();
+    const made = await call('device.pair.create', { kind: 'relay', name: 'Push relay' }, door);
+    expect(made.ok).toBe(true);
+    expect(made.code).toMatch(/^[A-Z2-7]{10}$/);
+    const first = await pair(made.code, 'Relay on iMac');
+    expect(first.status).toBe(200);
+    expect(first.body).toMatchObject({ kind: 'relay', deviceId: expect.any(String) });
+    expect(first.body.credential).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect((await pair(made.code)).status).toBe(401);
+    const stored = JSON.stringify(db.prepare('SELECT * FROM paired_devices').all());
+    expect(stored).not.toContain(first.body.credential);
+    expect(JSON.stringify(db.prepare('SELECT * FROM pairing_codes').all())).not.toContain(
+      made.code
+    );
+    expect(db.prepare('SELECT name, kind FROM paired_devices').all()).toEqual([
+      { name: 'Relay on iMac', kind: 'relay' },
+    ]);
+    db.close();
+  });
+
+  test('a code expires after 10 minutes, and spaces or lower case in a typed code still match', async () => {
+    const { db, call, pair, clock } = setup();
+    const late = await call('device.pair.create', { kind: 'human' }, human);
+    clock.advance(10 * MINUTE + 1);
+    expect((await pair(late.code)).status).toBe(401);
+    const typed = await call('device.pair.create', { kind: 'human' }, human);
+    const spaced = `${typed.code.slice(0, 5)} ${typed.code.slice(5)}`.toLowerCase();
+    expect((await pair(spaced)).status).toBe(200);
+    db.close();
+  });
+
+  test('only the local human or the session door can make or clear codes; an agent cannot', async () => {
+    const { db, call } = setup();
+    expect(await call('device.pair.create', { kind: 'human' }, agent)).toEqual({
+      ok: false,
+      reason: 'This action needs the user.',
+    });
+    expect(await call('device.pair.reset_lockout', {}, agent)).toMatchObject({ ok: false });
+    expect(await call('device.pair.create', { kind: 'daemon' }, door)).toMatchObject({ ok: true });
+    db.close();
+  });
+
+  test('the CLI pairs the first device alone; after that its codes wait for Allow on a paired device', async () => {
+    const { db, call, pair } = setup();
+    const first = await call('device.pair.create', { kind: 'human' }, door);
+    expect(first.approval).toBe('approved');
+    expect((await pair(first.code, 'Laptop')).status).toBe(200);
+    const next = await call('device.pair.create', { kind: 'human' }, door);
+    expect(next.approval).toBe('pending');
+    expect(await pair(next.code, 'Agent')).toMatchObject({
+      status: 403,
+      body: { error: 'awaiting_approval' },
+    });
+    const pending = await call('device.pair.pending', {}, human);
+    expect(pending.pending).toEqual([
+      { id: next.codeId, kind: 'human', name: null, expiresAt: next.expiresAt },
+    ]);
+    expect(JSON.stringify(pending)).not.toContain(next.code);
+    expect(await call('device.pair.approve', { codeId: next.codeId }, agent)).toMatchObject({
+      ok: false,
+    });
+    expect(await call('device.pair.approve', { codeId: next.codeId }, door)).toMatchObject({
+      ok: false,
+    });
+    expect(await call('device.pair.approve', { codeId: next.codeId }, human)).toEqual({ ok: true });
+    expect((await pair(next.code, 'Phone')).status).toBe(200);
+    db.close();
+  });
+
+  test('bad codes are limited to 5 a minute, 20 lock pairing for 15 minutes, and a local reset reopens it', async () => {
+    const { db, call, pair, clock } = setup();
+    for (let i = 0; i < 5; i++) expect((await pair('AAAAAAAAAA')).status).toBe(401);
+    const limited = await pair('AAAAAAAAAA');
+    expect(limited).toMatchObject({ status: 429, body: { error: 'pairing_rate_limited' } });
+    for (let round = 0; round < 3; round++) {
+      clock.advance(MINUTE);
+      for (let i = 0; i < 5; i++) await pair('AAAAAAAAAA');
+    }
+    const good = await call('device.pair.create', { kind: 'human' }, human);
+    clock.advance(MINUTE);
+    expect(await pair(good.code)).toMatchObject({ status: 429, body: { error: 'pairing_locked' } });
+    clock.advance(15 * MINUTE - 2 * MINUTE);
+    expect((await pair(good.code)).status).toBe(429);
+    expect(await call('device.pair.reset_lockout', {}, door)).toEqual({ ok: true });
+    const fresh = await call('device.pair.create', { kind: 'human' }, human);
+    expect((await pair(fresh.code)).status).toBe(200);
+    db.close();
+  });
+
+  test('pairing answers only POST with a code and a name, and never echoes the code', async () => {
+    const { db, pair } = setup();
+    const bad = await pair('');
+    expect(bad).toMatchObject({ status: 400, body: { error: 'invalid_request' } });
+    const wrong = await pair('BBBBBBBBBB');
+    expect(JSON.stringify(wrong.body)).not.toContain('BBBBBBBBBB');
+    db.close();
+  });
+});
