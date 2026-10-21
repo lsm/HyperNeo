@@ -60,8 +60,8 @@ real account quotas/cost, Desktop/IDE visibility, tool execution and process-tre
 containment remain unverified. The fixture impersonates the pinned CLI and
 implements only its synthetic protocol. Tools remain unavailable and permissions
 reject on create and resume. No arbitrary external or unfinished session is
-loaded. Receipt files intentionally retain durable evidence; bounded history
-listing/retention policy and owned work.find overlay belong to slice 5.
+loaded. Receipt files intentionally retain durable evidence; bounded history reads and owned work.find overlay are covered by
+copilot-owned-history-find.md. No history/receipt retention deletion policy is introduced.
 
 Use mode `writes` for receipt I/O behavior. Hold open descriptors to a completed
 receipt and an unrelated pending receipt, emit twelve synthetic assistant message

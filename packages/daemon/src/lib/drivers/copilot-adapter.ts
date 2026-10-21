@@ -1,11 +1,13 @@
 import * as fs from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { CopilotModelUnavailableError, openCopilotWorker } from './copilot-worker.ts';
 import { selectLocalStartFolder, type StartFolderDeps } from './start-folder.ts';
 import { workStartPreparation } from './start-preparation.ts';
 import { reject } from './work-operations.ts';
 import { errorMessage } from '../utils/error-message.ts';
+import { copilotOwnsSession, createCopilotFind } from './copilot-find.ts';
+import { readCopilotHistory } from './copilot-history.ts';
 import type * as W from './types.ts';
 
 type Receipt = W.WorkStarted['receipt'];
@@ -25,6 +27,7 @@ interface Deps extends StartFolderDeps {
   machine: string;
   env: NodeJS.ProcessEnv;
   timeoutMs?: number;
+  projectFolder?: (folder: string) => string | Promise<string>;
 }
 
 export function createCopilotAdapter(
@@ -334,8 +337,59 @@ export function createCopilotAdapter(
       'stopped'
     )
     .endAsync('stopped') as (ref: W.WorkRef) => Promise<W.Result<{ stopped: boolean }>>;
+  const find = createCopilotFind(
+    discovery,
+    deps.directory,
+    (id) => copilotOwnsSession(deps.directory, id),
+    async (id) => {
+      const result = await guard(async () => {
+        const loaded = lookup({ adapter: discovery.id, id });
+        if ('reason' in loaded) return loaded.reason;
+        const record = await refresh(loaded.value);
+        const folder =
+          (await deps.projectFolder?.(record.directory)) ??
+          record.work.place.folder ??
+          record.directory;
+        const unavailable =
+          record.snapshot.status === 'unreachable' ||
+          (!live.has(id) && !['done', 'failed', 'stopped'].includes(record.snapshot.status));
+        return {
+          ok: true,
+          value: {
+            ...record.work,
+            place: { ...record.work.place, folder, name: basename(folder) || folder },
+            status:
+              record.snapshot.status === 'unreachable'
+                ? record.pendingSubmission
+                  ? 'queued'
+                  : record.work.status
+                : record.snapshot.status,
+            ...(unavailable
+              ? {
+                  watchHint:
+                    'Copilot owner unavailable; status is last known. Read stored history with work.read; do not replay uncertain input.',
+                }
+              : {}),
+          },
+        };
+      }, id);
+      return result.ok ? result.value : undefined;
+    }
+  );
   return {
     ...discovery,
+    find,
+    readTurns: (id, around, before, after, cursor) => {
+      if (!copilotOwnsSession(deps.directory, id)) return null;
+      return readCopilotHistory(
+        join(deps.directory, id, 'session-state', id, 'events.jsonl'),
+        id,
+        around,
+        before,
+        after,
+        cursor
+      );
+    },
     capabilities: ['find', 'start', 'send', 'queue', 'status', 'stop'] as const,
     start: (request: W.StartRequest) => {
       const pending = guard(() => start(request));

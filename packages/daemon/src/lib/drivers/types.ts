@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { WorkTurnPage } from '../../storage/work-turn-page.ts';
 import { workStartConfiguration } from './start-configuration.ts';
 import { workStartPreparation } from './start-preparation.ts';
 import type { OperationCaller } from '../operations/registry.ts';
@@ -235,6 +236,13 @@ export interface WorkAdapter {
   readonly supportsStartEffort?: boolean;
   readonly supportsStartPreparation?: boolean;
   find(query: FindQuery): PlaceGroup[] | Promise<PlaceGroup[]>;
+  readonly readTurns?: (
+    sessionId: string,
+    around: string | undefined,
+    before: number,
+    after: number,
+    cursor?: WorkTurnPage['nextCursor']
+  ) => WorkTurnPage | null;
   readonly start?: (
     request: StartRequest,
     context: WorkCallContext
