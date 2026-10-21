@@ -21,7 +21,7 @@ afterEach(async () => {
   for (const run of runs.splice(0)) rmSync(run, { recursive: true, force: true });
 });
 const context = { from: 'chat', caller: { source: 'rpc' } } as WorkCallContext;
-function setup(flag = '') {
+function setup(flag = '', options: { timeoutMs?: number } = { timeoutMs: 1500 }) {
   const run = mkdtempSync(join(tmpdir(), 'copilot-adapter-'));
   runs.push(run);
   mkdirSync(join(run, 'home'));
@@ -38,7 +38,7 @@ function setup(flag = '') {
     machine: 'test',
     homeDir: join(run, 'home'),
     env: { HOME: join(run, 'home'), PATH: process.env.PATH ?? '' },
-    timeoutMs: 1500,
+    timeoutMs: options.timeoutMs,
     folderExists: existsSync,
     makeFolder: (path: string) => mkdirSync(path),
   };
@@ -60,6 +60,64 @@ async function start(fixture: ReturnType<typeof setup>, message = fixture.reques
 }
 
 describe('owned Copilot lifecycle', () => {
+  test.each(['settled', 'error', 'late-settled'])(
+    'reaps %s runtime without a status or stop call',
+    async (message) => {
+      const fixture = setup();
+      const work = await start(fixture, message);
+      const pid = JSON.parse(
+        readFileSync(join(fixture.run, 'calls.jsonl'), 'utf8').split('\n')[0]
+      ).pid;
+      if (message === 'late-settled')
+        writeFileSync(join(fixture.run, 'release-settlement'), 'release');
+      for (let poll = 0; poll < 200; poll++) {
+        try {
+          process.kill(pid, 0);
+        } catch {
+          break;
+        }
+        await new Promise((done) => setTimeout(done, 5));
+      }
+      expect(() => process.kill(pid, 0)).toThrow();
+      expect(await fixture.adapter.status!(work.ref, undefined, work.receipt)).toMatchObject({
+        ok: true,
+        value: { status: message === 'error' ? 'failed' : 'done' },
+      });
+      expect(await fixture.adapter.stop!(work.ref, context)).toEqual({
+        ok: true,
+        value: { stopped: false },
+      });
+      expect(readFileSync(join(fixture.run, 'calls.jsonl'), 'utf8')).not.toContain('session.abort');
+    }
+  );
+
+  test('refuses a file execution folder as invalid_place before spawning a runtime', async () => {
+    const fixture = setup();
+    const folder = join(fixture.run, 'file');
+    writeFileSync(folder, 'not a directory');
+    expect(
+      await fixture.adapter.start!(
+        { ...fixture.request, place: { ...fixture.request.place, folder } },
+        context
+      )
+    ).toMatchObject({ ok: false, reason: 'invalid_place' });
+    expect(existsSync(join(fixture.run, 'calls.jsonl'))).toBe(false);
+    expect(existsSync(fixture.deps.directory)).toBe(false);
+  });
+
+  test('default abort confirmation accepts terminal evidence later than two seconds', async () => {
+    const fixture = setup('--delayed-abort', {});
+    const work = await start(fixture);
+    expect(await fixture.adapter.stop!(work.ref, context)).toEqual({
+      ok: true,
+      value: { stopped: true },
+    });
+    expect(await fixture.adapter.status!(work.ref, undefined, work.receipt)).toMatchObject({
+      ok: true,
+      value: { status: 'stopped' },
+    });
+  });
+
   test.each([
     ['settled', '', 'done'],
     ['settled', '--abort-ack-only', 'done'],

@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { appendFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+
 let buffer = Buffer.alloc(0);
 let sessionId = '';
 let input = 0;
@@ -203,13 +204,16 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
     case 'session.abort':
       reply({});
       if (process.argv.includes('--abort-ack-only')) break;
-      setTimeout(() => {
-        event('abort', { reason: 'user_initiated' });
-        event('session.idle', { aborted: true });
-        if (process.argv.includes('--late-user-echo'))
-          event('user.message', { messageId: `input-${input}`, interactionId: 'rewritten' });
-        if (process.argv.includes('--idle-after-abort')) event('session.idle', {});
-      }, 15);
+      setTimeout(
+        () => {
+          event('abort', { reason: 'user_initiated' });
+          event('session.idle', { aborted: true });
+          if (process.argv.includes('--late-user-echo'))
+            event('user.message', { messageId: `input-${input}`, interactionId: 'rewritten' });
+          if (process.argv.includes('--idle-after-abort')) event('session.idle', {});
+        },
+        process.argv.includes('--delayed-abort') ? 2250 : 15
+      );
       break;
     case 'ping':
       if (process.argv.includes('--crash-on-ping')) process.exit(1);

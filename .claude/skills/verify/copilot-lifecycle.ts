@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -59,6 +59,42 @@ try {
   await connect();
   const catalog = await rpc('work.adapters', {}) as { value: { id: string; capabilities: string[] }[] };
   assert.deepEqual(catalog.value.find(adapter => adapter.id === 'copilot-cli')?.capabilities, ['find', 'start', 'status', 'stop']);
+  if (mode === 'reap' || mode === 'all') {
+    for (const message of ['settled', 'error', 'late-settled']) {
+      const work = await start(message);
+      const calls = readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      const pid = calls.findLast(call => call.method === 'session.send').pid;
+      if (message === 'late-settled') writeFileSync(join(run, 'workspace/release-settlement'), 'release');
+      for (let poll = 0; poll < 200; poll++) {
+        try { process.kill(pid, 0); } catch { break; }
+        await new Promise(done => setTimeout(done, 5));
+      }
+      assert.throws(() => process.kill(pid, 0), `${message} runtime was not reaped without status/stop`);
+      const evidence = await status(work);
+      assert.equal(evidence.status, message === 'error' ? 'failed' : 'done');
+      assert.deepEqual(await rpc('work.stop', { ref: work.ref }), { ok: true, value: { stopped: false } });
+      assert.deepEqual(await status(work), evidence);
+      if (message === 'late-settled') {
+        unlinkSync(join(run, 'workspace/release-settlement')); unlinkSync(join(run, 'workspace/settlement-emitted'));
+      }
+    }
+  }
+  if (mode === 'file' || mode === 'all') {
+    const folder = join(run, 'not-a-folder');
+    writeFileSync(folder, 'file');
+    const refused = await rpc('work.start', { adapter: 'copilot-cli', place: { machine: hostname(), folder, name: 'Synthetic file' }, title: 'Invalid execution folder', model: 'synthetic-model', message: 'never delivered' }) as { ok: boolean; reason: string };
+    assert.equal(refused.ok, false); assert.equal(refused.reason, 'invalid_place');
+    assert(!existsSync(join(run, 'not-a-folder/calls.jsonl')), 'folder admission must precede runtime spawn');
+  }
+  if (mode === 'abort-window' || mode === 'all') {
+    installFixture('--delayed-abort');
+    const work = await start('hold');
+    const started = Date.now();
+    assert.deepEqual(await rpc('work.stop', { ref: work.ref }), { ok: true, value: { stopped: true } });
+    assert(Date.now() - started > 2000, 'fixture must exercise the default two-second boundary');
+    assert.equal((await status(work)).status, 'stopped');
+    installFixture('--idle-after-abort');
+  }
   if (mode === 'stop-terminal') {
     const finished = await start('settled');
     const before = await status(finished);
@@ -154,7 +190,7 @@ try {
   assert.equal((await status(stopped)).status, 'stopped');
   const recovered = await rpc('work.status', { ref: active.ref, receipt: active.receipt }) as { ok: boolean; reason: string };
   assert.equal(recovered.ok, false); assert.equal(recovered.reason, 'unreachable');
-  assert.equal(readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').trim().split('\n').filter(line => JSON.parse(line).method === 'session.send').length, mode === 'all' ? 6 : mode === 'stop-terminal' ? 6 : 5);
+  assert.equal(readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').trim().split('\n').filter(line => JSON.parse(line).method === 'session.send').length, mode === 'all' ? 10 : mode === 'reap' ? 8 : ['stop-terminal', 'abort-window'].includes(mode) ? 6 : 5);
   console.log(`PASS public Copilot work.start/status/stop: relative DB, durable terminal replies, concurrent stop/status, model rejection, denied permission, abort evidence and no replay. ${run}/evidence/observed.json`);
 } finally {
   ws?.close(); await app?.cleanup();
