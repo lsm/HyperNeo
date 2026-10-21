@@ -191,3 +191,38 @@ test.each(['same-file', 'directory-collision'])(
     expect(await git(root, 'status', '--porcelain')).toBe('');
   }
 );
+
+test.each(['separate-files', 'same-tree'])(
+  'diverged nonconflicting histories offer one actionable question: %s',
+  async (kind) => {
+    if (kind === 'separate-files') {
+      await writeFile(join(root, 'local.md'), 'Complete local text\n');
+      await git(root, 'add', 'local.md');
+      await writeFile(join(peer, 'remote.md'), 'Complete remote text\n');
+      await git(peer, 'add', 'remote.md');
+    }
+    await git(root, 'commit', '--allow-empty', '-m', 'Local history');
+    await git(peer, 'commit', '--allow-empty', '-m', 'Remote history');
+    await git(peer, 'push', 'origin', 'main');
+    const local = await git(root, 'rev-parse', 'HEAD');
+    const remoteHead = await git(peer, 'rev-parse', 'HEAD');
+    const reflog = await git(root, 'reflog', 'show', '--format=%H %gs', 'HEAD');
+    const first = (await call('neo.home.read')) as { ok: boolean; questionId?: string };
+    expect(first).toMatchObject({ ok: false, questionId: expect.any(String) });
+    expect(await call('neo.home.read')).toMatchObject({ questionId: first.questionId });
+    const store = new NeoAskTodoRepository(db.getDatabase());
+    const questions = store.listAsks(undefined, 100).flatMap((ask) => store.listQuestions(ask.id));
+    expect(questions).toHaveLength(1);
+    expect(questions[0].document).toContain(local);
+    expect(questions[0].document).toContain(remoteHead);
+    if (kind === 'separate-files') {
+      expect(questions[0].document).toContain('Complete local text\n');
+      expect(questions[0].document).toContain('Complete remote text\n');
+      expect(await readFile(join(root, 'local.md'), 'utf8')).toBe('Complete local text\n');
+      expect(await readFile(join(root, 'remote.md')).catch(() => null)).toBeNull();
+    }
+    expect(await git(root, 'rev-parse', 'HEAD')).toBe(local);
+    expect(await git(root, 'reflog', 'show', '--format=%H %gs', 'HEAD')).toBe(reflog);
+    expect(await git(remote, 'rev-parse', 'main')).toBe(remoteHead);
+  }
+);

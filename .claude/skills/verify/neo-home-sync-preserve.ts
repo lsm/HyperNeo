@@ -7,7 +7,7 @@ import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/s
 
 const [run, scenario, expectation] = process.argv.slice(2);
 assert(run?.startsWith('/private/tmp/'));
-assert(['conflict', 'fast-forward', 'info-exclude', 'directory', 'conflict-race', 'ignored-race', 'untracked-race', 'publish-ignored-race', 'publish-untracked-race', 'publish-tracked-race', 'healthy'].includes(scenario));
+assert(['conflict', 'fast-forward', 'info-exclude', 'directory', 'conflict-race', 'ignored-race', 'untracked-race', 'publish-ignored-race', 'publish-untracked-race', 'publish-tracked-race', 'healthy', 'diverged', 'diverged-same-tree'].includes(scenario));
 assert(['reproduce', 'verify'].includes(expectation));
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -49,7 +49,17 @@ try {
     await writeFile(join(root, 'direction.md'), 'Human local choice\n');
     await git(root, 'add', 'direction.md'); await git(root, 'commit', '-m', 'Human local choice');
   }
-  if (scenario === 'healthy') {
+  if (scenario.startsWith('diverged')) {
+    if (scenario === 'diverged') {
+      await writeFile(join(root, 'local.md'), 'Human local text\n');
+      await git(root, 'add', 'local.md');
+      await writeFile(join(peer, 'remote.md'), 'Peer remote text\n');
+      await git(peer, 'add', 'remote.md');
+    }
+    await git(root, 'commit', '--allow-empty', '-m', 'Local history');
+    await git(peer, 'commit', '--allow-empty', '-m', 'Peer history');
+  }
+  if (scenario === 'healthy' || scenario.startsWith('diverged')) {
     await mkdir(join(root, 'ignored'), { recursive: true });
     await writeFile(join(root, privatePath), bytes);
   } else {
@@ -58,8 +68,11 @@ try {
     await writeFile(join(peer, remotePath), 'Remote colliding content\n');
     await git(peer, 'add', '-f', '--', remotePath);
   }
-  await writeFile(join(peer, 'direction.md'), 'Remote direction\n');
-  await git(peer, 'add', 'direction.md'); await git(peer, 'commit', '-m', 'Remote update'); await git(peer, 'push', 'origin', 'main');
+  if (!scenario.startsWith('diverged')) {
+    await writeFile(join(peer, 'direction.md'), 'Remote direction\n');
+    await git(peer, 'add', 'direction.md'); await git(peer, 'commit', '-m', 'Remote update');
+  }
+  await git(peer, 'push', 'origin', 'main');
   const remoteHead = await git(peer, 'rev-parse', 'HEAD');
   const localHead = await git(root, 'rev-parse', 'HEAD');
   const localReflog = await git(root, 'reflog', 'show', '--format=%H %gs', 'HEAD');
@@ -92,6 +105,17 @@ try {
   evidence.localReflogUnchanged = localReflog === await git(root, 'reflog', 'show', '--format=%H %gs', 'HEAD');
   evidence.remoteHeadUnchanged = remoteHead === await git(remote, 'rev-parse', 'main');
   evidence.localDirection = await readFile(join(root, 'direction.md'), 'utf8');
+  if (scenario.startsWith('diverged')) {
+    const reply = evidence.reply as { questionId?: string };
+    if (reply.questionId) evidence.question = await rpc('neo.question.get', { questionId: reply.questionId });
+    if (expectation === 'reproduce') assert.equal(reply.questionId, undefined);
+    else {
+      assert.equal(typeof reply.questionId, 'string');
+      const question = JSON.stringify(evidence.question);
+      assert(question.includes(localHead)); assert(question.includes(remoteHead));
+      if (scenario === 'diverged') { assert(question.includes('Human local text')); assert(question.includes('Peer remote text')); }
+    }
+  }
   if (scenario === 'healthy') {
     assert.equal((evidence.reply as { ok: boolean }).ok, true);
     assert.equal(evidence.localDirection, 'Remote direction\n'); assert.deepEqual(after, bytes);
