@@ -63,6 +63,7 @@ describe('owned Copilot lifecycle', () => {
   test('concurrent status cannot overwrite stopped evidence while its runtime closes', async () => {
     const fixture = setup('--slow-stop');
     const work = await start(fixture);
+    const other = await start(fixture, 'settled');
     const stopping = fixture.adapter.stop!(work.ref, context);
     try {
       for (let poll = 0; poll < 200; poll++) {
@@ -71,6 +72,21 @@ describe('owned Copilot lifecycle', () => {
         await new Promise((done) => setTimeout(done, 5));
       }
       expect(readFileSync(join(fixture.run, 'calls.jsonl'), 'utf8')).toContain('runtime.shutdown');
+      let timer: ReturnType<typeof setTimeout>;
+      try {
+        const independent = await Promise.race([
+          fixture.adapter.status!(other.ref, undefined, other.receipt),
+          new Promise<never>((_, fail) => {
+            timer = setTimeout(
+              () => fail(new Error('unrelated session blocked by shutdown')),
+              1000
+            );
+          }),
+        ]);
+        expect(independent).toMatchObject({ ok: true, value: { status: 'done' } });
+      } finally {
+        clearTimeout(timer!);
+      }
       const reading = fixture.adapter.status!(work.ref, undefined, work.receipt);
       await new Promise((done) => setTimeout(done, 5));
       writeFileSync(join(fixture.run, 'release-shutdown'), 'release');
@@ -86,6 +102,34 @@ describe('owned Copilot lifecycle', () => {
     expect(await fixture.adapter.stop!(work.ref, context)).toEqual({
       ok: true,
       value: { stopped: true },
+    });
+  });
+
+  test('daemon cleanup drains a stop that already detached its live runtime', async () => {
+    const fixture = setup('--slow-stop');
+    const work = await start(fixture);
+    const stopping = fixture.adapter.stop!(work.ref, context);
+    let closing: Promise<void> | undefined;
+    try {
+      for (let poll = 0; poll < 200; poll++) {
+        if (readFileSync(join(fixture.run, 'calls.jsonl'), 'utf8').includes('runtime.shutdown'))
+          break;
+        await new Promise((done) => setTimeout(done, 5));
+      }
+      expect(readFileSync(join(fixture.run, 'calls.jsonl'), 'utf8')).toContain('runtime.shutdown');
+      let closed = false;
+      closing = fixture.adapter.close().then(() => {
+        closed = true;
+      });
+      await new Promise((done) => setTimeout(done, 5));
+      expect(closed).toBe(false);
+    } finally {
+      writeFileSync(join(fixture.run, 'release-shutdown'), 'release');
+      await Promise.all([stopping, closing]);
+    }
+    expect(await fixture.adapter.status!(work.ref, undefined, work.receipt)).toMatchObject({
+      ok: true,
+      value: { status: 'stopped' },
     });
   });
 

@@ -5,6 +5,7 @@ import { CopilotModelUnavailableError, openCopilotWorker } from './copilot-worke
 import { selectLocalStartFolder, type StartFolderDeps } from './start-folder.ts';
 import { workStartPreparation } from './start-preparation.ts';
 import { reject } from './work-operations.ts';
+import { errorMessage } from '../utils/error-message.ts';
 import type * as W from './types.ts';
 
 type Receipt = W.WorkStarted['receipt'];
@@ -25,6 +26,7 @@ export function createCopilotAdapter(
   deps: Deps
 ): W.WorkAdapter & { close: () => Promise<void> } {
   const live = new Map<string, Worker>();
+  const transactions = new Map<string, Promise<unknown>>();
   const starts = new Set<Promise<W.Result<W.WorkStarted>>>();
   let closed = false;
   const path = (id: string) => join(deps.directory, `${id}.json`);
@@ -44,12 +46,18 @@ export function createCopilotAdapter(
     }
   };
   const unavailable = () => reject('unreachable', 'No live Copilot owner; do not replay.');
-  const guard = async <T>(effect: () => Promise<W.Result<T>>): Promise<W.Result<T>> => {
-    try {
-      return await effect();
-    } catch (error) {
-      return reject('unreachable', error instanceof Error ? error.message : String(error));
+  const guard = <T>(effect: () => Promise<W.Result<T>>, id?: string) => {
+    const previous = id ? transactions.get(id) : undefined;
+    const pending = (previous ?? Promise.resolve())
+      .then(effect)
+      .catch((error: unknown) => reject('unreachable', errorMessage(error)));
+    if (id) {
+      transactions.set(id, pending);
+      void pending.then(() => {
+        if (transactions.get(id) === pending) transactions.delete(id);
+      });
     }
+    return pending;
   };
   const admit = (request: W.StartRequest): Gate<W.StartRequest> => {
     if (closed) return { reason: reject('unreachable', 'Copilot owner is shutting down.') };
@@ -122,20 +130,17 @@ export function createCopilotAdapter(
       );
     }
   };
+  const selectFolder = (request: W.StartRequest) =>
+    selectLocalStartFolder(request, deps, 'Copilot needs a local folder.');
   const start = (superpipe({})('copilot-start') as PipelineAPI)
     .input(['request'])
     .pipe(admit, 'request', 'result:started')
-    .pipe(
-      (request: W.StartRequest) =>
-        selectLocalStartFolder(request, deps, 'Copilot work needs a local folder.'),
-      'started',
-      'result:started'
-    )
+    .pipe(selectFolder, 'started', 'result:started')
     .pipe(prepare, 'started', 'location')
     .pipe(launch, ['location', 'request'], 'started')
     .endAsync('started') as (request: W.StartRequest) => Promise<W.Result<W.WorkStarted>>;
   const refresh = async (record: Record) => {
-    const owned = live.get(record.work.ref.id);
+    const owned = !closed && live.get(record.work.ref.id);
     if (owned) {
       record.snapshot = await owned.snapshot();
       save(record);
@@ -163,24 +168,20 @@ export function createCopilotAdapter(
         startReceipt: work.receipt,
         execution: { directory: record.directory, machine: deps.machine },
         ...(input?.replyReport ? { lastReply: input.replyReport } : {}),
-        ...(receipt && input
-          ? {
-              inputEvidence:
-                input.state === 'pending'
-                  ? { receipt, state: 'pending' as const }
-                  : {
-                      receipt,
-                      state: 'observed' as const,
-                      exchange: [],
-                      exchangeCut: true,
-                      replyReport: input.replyReport,
-                      replyAvailability: input.replyAvailability,
-                    },
-            }
-          : {}),
-        ...(snapshot.status === 'needs_you'
-          ? { waitingFor: 'Copilot permission denied. No tools are approved by this adapter.' }
-          : {}),
+        inputEvidence:
+          receipt && input
+            ? input.state === 'pending'
+              ? { receipt, state: 'pending' }
+              : {
+                  receipt,
+                  state: 'observed',
+                  exchange: [],
+                  exchangeCut: true,
+                  replyReport: input.replyReport,
+                  replyAvailability: input.replyAvailability,
+                }
+            : undefined,
+        waitingFor: snapshot.status === 'needs_you' ? 'Permission denied.' : undefined,
       },
     };
   };
@@ -195,6 +196,7 @@ export function createCopilotAdapter(
     .pipe(lookup, 'ref', 'result:stopped')
     .pipe(
       async (record: Record): Promise<W.Result<{ stopped: boolean }>> => {
+        if (closed) return unavailable();
         const id = record.work.ref.id;
         const owned = live.get(id);
         if (!owned)
@@ -219,10 +221,11 @@ export function createCopilotAdapter(
           }
           return { ok: true, value: { stopped: true } };
         } finally {
+          live.delete(id);
           try {
             save(record);
           } finally {
-            await owned.close().finally(() => live.delete(id));
+            await owned.close();
           }
         }
       },
@@ -239,21 +242,18 @@ export function createCopilotAdapter(
       void pending.finally(() => starts.delete(pending));
       return pending;
     },
-    status: (ref: W.WorkRef, _since?: number, receipt?: Receipt) =>
-      guard(() => status(ref, receipt)),
-    stop: (ref: W.WorkRef) => guard(() => stop(ref)),
+    status: (ref, _since, receipt) => guard(() => status(ref, receipt), ref.id),
+    stop: (ref) => guard(() => stop(ref), ref.id),
     async close() {
       closed = true;
-      await Promise.allSettled(starts);
+      await Promise.allSettled([...starts, ...transactions.values()]);
       const closing = [...live.values()];
       live.clear();
       const results = await Promise.allSettled(closing.map((owned) => owned.close()));
-      const errors = results.filter((result) => result.status === 'rejected');
-      if (errors.length)
-        throw new AggregateError(
-          errors.map((error) => error.reason),
-          'Copilot cleanup failed'
-        );
+      const errors = results
+        .filter((result) => result.status === 'rejected')
+        .map((result) => result.reason);
+      if (errors.length) throw new AggregateError(errors, 'Copilot cleanup failed');
     },
   };
 }

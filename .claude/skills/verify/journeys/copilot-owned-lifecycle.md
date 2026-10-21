@@ -53,3 +53,13 @@ model against the nonempty synthetic catalog. Calls for the rejected model must
 contain neither session creation nor a send. On the regression commit, each
 individual mode fails at its corresponding public operation. Terminal outcome
 snapshots do not need a live runtime ping; queued/running/needs_you still do.
+
+For the concurrent stop/status regression, the fixture holds runtime shutdown until
+its synthetic `release-shutdown` file appears. While stop is in flight, issue
+receipt-bound status and an independent catalog RPC, then release only that
+fixture. Both concurrent and later status must report stopped, including after
+daemon restart. Status/stop transactions serialize per session; other sessions
+remain independent. Cleanup drains in-flight transactions before closing remaining
+runtimes. Focused tests also hold shutdown while daemon cleanup starts, then verify
+cleanup waits for the owned process. This proves the synthetic race at the public
+operation door, without real sessions or GUI automation.
