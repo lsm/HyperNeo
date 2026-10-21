@@ -225,7 +225,12 @@ export function codingTodoOpenBranchPrs(
   const branch = new Set(
     claims
       .filter((row) => row.todoId === todo.id && row.claim === 'branch')
-      .filter((row) => !claims.some((rival) => rival.todoId !== todo.id && rival.url === row.url))
+      .filter(
+        (row) =>
+          !claims.some(
+            (rival) => rival.todoId !== todo.id && rival.url === row.url && outranks(rival, row)
+          )
+      )
       .map((row) => row.url)
   );
   return prs.filter((pr) => {

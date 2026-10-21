@@ -484,7 +484,7 @@ describe('coding todo pack waiting', () => {
     expect(pack.waiting!(row)).toBe(false);
     db.close();
   });
-  test('a todo whose reported PRs merged still waits on a later PR its branch opened', async () => {
+  test('a todo whose reported PRs merged still waits on a later PR its branch opened, even when a retry claims it too', async () => {
     let later: NeoWorkPr['state'] = 'OPEN';
     const { db, pack, todo, todos } = setup(async () => [
       pr(1, 'MERGED', { createdAt: 10, mergedAt: 20 }),
@@ -498,6 +498,7 @@ describe('coding todo pack waiting', () => {
       4
     );
     pack.openedPrs!(row, [pr(3, 'OPEN').url]);
+    pack.openedPrs!(todo(null), [pr(3, 'OPEN').url]);
     await pack.check(row);
     expect(pack.waiting!(row)).toBe(true);
     expect(pack.statusLine(row)?.status).toContain('#3 open');
