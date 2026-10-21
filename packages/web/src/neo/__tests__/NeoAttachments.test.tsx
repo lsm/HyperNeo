@@ -1,3 +1,4 @@
+vi.mock('../NeoGoals.tsx', () => ({ NeoGoals: () => null }));
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

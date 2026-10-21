@@ -72,7 +72,7 @@ export function createNeoHomeOperations(
     defineOperation({
       name: 'neo.home.init',
       description:
-        'Initialize the local Neo home repository, ignore coordinator transcripts, and assign stable project folders. Uses the configured git identity; fix identity/signing configuration and retry if commit fails. Root Neo or the local user only.',
+        'Initialize the local Neo home repository, ignore coordinator transcripts, and assign stable project folders. After first setup, call neo.home.github with the current root askId to offer its private remote once. Uses the configured git identity; fix identity/signing configuration and retry if commit fails. Root Neo or the local user only.',
       inputSchema: z.object({}),
       resultSchema: z.union([
         z.object({ ok: z.literal(false), reason: z.string() }),

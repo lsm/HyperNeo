@@ -1,3 +1,4 @@
+import { NeoGoals } from './NeoGoals.tsx';
 import { SessionSchedules } from '../components/SessionSchedules.tsx';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { getBannerLevel } from '../components/ConnectionOverlay.tsx';
@@ -570,6 +571,7 @@ export function NeoLive() {
               </button>
             </div>
           )}
+          <NeoGoals sessionId={neo.sessionId} />
           {publicConversation && workCount === 0 && (
             <p role="status" class="mt-6 text-sm text-fg-muted">
               {t('live.noWork')}

@@ -170,9 +170,11 @@ export function NeoConversation({
           .map((ask) => (
             <PendingAsk key={ask.requestId} ask={ask} onRetry={onRetryAsk} onEdit={onEditAsk} />
           ))}
-        {busy !== undefined
-          ? !!busy?.length && <NeoBusyRow words={busy} />
-          : progressLabel && !onProgress && <NeoBusyRow words={[progressLabel]} />}
+        <NeoBusyRow
+          words={
+            busy !== undefined ? (busy ?? []) : progressLabel && !onProgress ? [progressLabel] : []
+          }
+        />
         {pending && epoch && (
           <QuestionPrompt
             pendingHeading="A quick choice"

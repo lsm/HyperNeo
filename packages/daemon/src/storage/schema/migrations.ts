@@ -1,3 +1,4 @@
+import { runMigration430 } from './m430-neo-home-github.ts';
 import { runMigration429 } from './m429-neo-rule-proposals.ts';
 import { runMigration427 } from './m427-neo-question-confirm.ts';
 import { runMigration428 } from './m428-pack-preference-proposals.ts';
@@ -913,6 +914,7 @@ export function runMigrations(
   run(migrationMarkerKey(427), () => runMigration427(db));
   run(migrationMarkerKey(428), () => runMigration428(db));
   run(migrationMarkerKey(429), () => runMigration429(db));
+  run(migrationMarkerKey(430), () => runMigration430(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }
