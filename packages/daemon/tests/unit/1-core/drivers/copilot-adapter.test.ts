@@ -60,6 +60,16 @@ async function start(fixture: ReturnType<typeof setup>, message = fixture.reques
 }
 
 describe('owned Copilot lifecycle', () => {
+  test('disconnect after first ACK preserves identity and cannot report queued success', async () => {
+    const fixture = setup('--crash-on-ping');
+    const result = await fixture.adapter.start!(fixture.request, context);
+    expect(result).toMatchObject({ ok: false, reason: 'unreachable' });
+    expect(JSON.stringify(result)).toMatch(/copilot-cli:[0-9a-f-]{36}/);
+    expect(
+      readFileSync(join(fixture.run, 'calls.jsonl'), 'utf8').match(/"method":"session.send"/g)
+    ).toHaveLength(1);
+  });
+
   test('start returns a receipt; status uses its actual reply and owned execution directory', async () => {
     const fixture = setup();
     expect(fixture.adapter.capabilities).toEqual(['find', 'start', 'status', 'stop']);

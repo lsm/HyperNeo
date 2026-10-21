@@ -74,6 +74,10 @@ try {
   assert.equal(loggedOut.ok, false); assert.match(loggedOut.detail, /copilot login/);
   installFixture('--no-models');
   assert.equal((await rpc('work.start', { adapter: 'copilot-cli', place: complete.place, title: 'No catalog', model: 'synthetic-model', message: 'never delivered' }) as { ok: boolean }).ok, false);
+  installFixture('--crash-on-ping');
+  const disconnected = await rpc('work.start', { adapter: 'copilot-cli', place: complete.place, title: 'Synthetic lost owner', model: 'synthetic-model', message: 'hold' }) as { ok: boolean; reason: string; detail: string };
+  assert.equal(disconnected.ok, false, 'a disconnected snapshot cannot return queued success');
+  assert.equal(disconnected.reason, 'unreachable'); assert.match(disconnected.detail, /copilot-cli:[0-9a-f-]{36}/);
   installFixture();
   const active = await start('hold');
   ws!.close(); await app!.cleanup(); app = undefined;
@@ -83,7 +87,7 @@ try {
   await connect();
   const recovered = await rpc('work.status', { ref: active.ref, receipt: active.receipt }) as { ok: boolean; reason: string };
   assert.equal(recovered.ok, false); assert.equal(recovered.reason, 'unreachable');
-  assert.equal(readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').trim().split('\n').filter(line => JSON.parse(line).method === 'session.send').length, 4);
+  assert.equal(readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').trim().split('\n').filter(line => JSON.parse(line).method === 'session.send').length, 5);
   console.log(`PASS public Copilot work.start/status/stop: reply, denied permission, abort evidence, cleanup and no restart replay. ${run}/evidence/observed.json`);
 } finally {
   ws?.close(); await app?.cleanup();
