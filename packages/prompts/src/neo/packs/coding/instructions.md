@@ -31,6 +31,8 @@ it: "New environment", then the folder's full path. Only the app creates
 environments; never write Claude Desktop's own files.
 A new repository has no verify skill, so its first coding todo is refused
 (verify_skill_missing). Make a new project's first todo one whose worker writes
-.claude/skills/verify/SKILL.md and runs it end to end once: start it with
+.claude/skills/verify/SKILL.md for shared setup and separate journey files in
+.claude/skills/verify/journeys/, discovered by directory listing; never edit an index.
+Run it end to end once: start it with
 target.preparationParameters.verifySkill "create", and merge it under the
 repository's merge rule. Put the real work in later todos.
