@@ -1,3 +1,4 @@
+import { createNeoIntakeOperation } from '../../../../src/lib/neo/intake.ts';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
@@ -16,11 +17,15 @@ import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 let db: Awaited<ReturnType<typeof createTestDb>>;
 let service: NeoService;
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
-const agent: OperationCaller = { source: 'mcp', sessionId: 'neo:root', role: 'neo' };
+const agent: OperationCaller = {
+  source: 'mcp',
+  sessionId: 'neo:10000000-0000-4000-8000-000000000002',
+  role: 'neo',
+};
 const edit = { add: ['Ask before publishing.'], remove: ['Old synthetic rule.'] };
 beforeEach(async () => {
   db = await createTestDb();
-  db.createSession(createTestSession('neo:root'));
+  db.createSession(createTestSession('neo:10000000-0000-4000-8000-000000000002'));
   service = new NeoService(
     db,
     {} as SessionManager,
@@ -28,12 +33,16 @@ beforeEach(async () => {
     new InternalEventBus<DaemonInternalEventMap>()
   );
   service.deliverForward = async () => {};
-  service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', projectId: null });
+  service.repo.reserveBinding({
+    sessionId: 'neo:10000000-0000-4000-8000-000000000002',
+    kind: 'neo',
+    projectId: null,
+  });
   db.updateGlobalSettings({ neo: { standingRules: ['Old synthetic rule.', 'Keep this rule.'] } });
   service.todos.openAsk({
     id: 'ask',
     projectId: null,
-    sessionId: 'neo:root',
+    sessionId: 'neo:10000000-0000-4000-8000-000000000002',
     originMessageId: null,
     title: 'Settings',
     request: 'Synthetic proposal',
@@ -173,6 +182,53 @@ describe('human-approved standing rules', () => {
     });
     expect(saved()).toEqual(before);
   });
+  test.each(['missing-removal', 'cap'])(
+    'a chat yes to a %s stale proposal remains accepted and notifies Neo',
+    async (kind) => {
+      if (kind === 'cap')
+        db.updateGlobalSettings({
+          neo: { standingRules: Array.from({ length: 19 }, (_, i) => `Rule ${i}.`) },
+        });
+      const change = kind === 'cap' ? { add: ['First extra rule.'], remove: [] } : edit;
+      const first = await propose('first', change);
+      const second = await propose(
+        'second',
+        kind === 'cap' ? { add: ['Second extra rule.'], remove: [] } : edit
+      );
+      await invoke('neo.question.answer', { questionId: first, answer: 'yes' }, human);
+      const before = saved();
+      const notified: string[] = [];
+      const operation = createNeoIntakeOperation(db, service.repo, (sessionId) =>
+        notified.push(sessionId)
+      );
+      const requestId = crypto.randomUUID();
+      const input = {
+        sessionId: 'neo:10000000-0000-4000-8000-000000000002',
+        requestId,
+        content: 'yes',
+        replyTo: { kind: 'question', id: second },
+      };
+      const send = () =>
+        invokeOperation(createOperationRegistry([operation]), 'neo.message.send', input, human);
+      expect(await send()).toMatchObject({ value: { ok: true, created: true } });
+      expect(notified).toEqual(['neo:10000000-0000-4000-8000-000000000002']);
+      expect(
+        db
+          .getSDKMessageRepo()
+          .getStoredPromptsByUuid('neo:10000000-0000-4000-8000-000000000002', requestId)
+      ).toHaveLength(1);
+      expect(service.todos.getQuestion(second)).toMatchObject({
+        state: 'answered',
+        answer: 'yes',
+        answeredBy: 'chat',
+      });
+      expect(await invoke('neo.rule.applyAnswer', { questionId: second })).toMatchObject({
+        value: { ok: false },
+      });
+      expect(saved()).toEqual(before);
+      expect(await send()).toMatchObject({ value: { ok: true, created: false } });
+    }
+  );
   test('application failure rolls back consent and all rule edits', async () => {
     const before = saved();
     const id = await propose();

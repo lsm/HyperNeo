@@ -31,7 +31,7 @@ for (const phase of ['initial', 'restart']) {
       ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name, input }, timestamp: new Date().toISOString(), version: '1.0.0' }));
     });
     let turn: NeoCoordinatorTurn | undefined;
-    const handler = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId: 'synthetic-root', role: 'neo', neoTurn: turn?.identity() }));
+    const handler = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId: 'neo:10000000-0000-4000-8000-000000000002', role: 'neo', neoTurn: turn?.identity() }));
     const mcp = async (name: string, input: unknown) => {
       const result = await handler({ name, input }); evidence.push({ phase, name, input, mcp: result });
       return JSON.parse(result.content[0].text);
@@ -39,15 +39,15 @@ for (const phase of ['initial', 'restart']) {
     if (phase === 'initial') {
       const db = app.db.getDatabase();
       db.exec(`INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata)
-        VALUES ('synthetic-root','Synthetic Neo','/tmp','2026-10-20T00:00:00Z','2026-10-20T00:00:00Z','active','{}','{}')`);
-      new NeoAskTodoRepository(db).openAsk({ id: 'synthetic-ask', projectId: null, sessionId: 'synthetic-root', originMessageId: null, title: 'Synthetic settings', request: 'Verify immutable proposal', createdAt: 1 });
-      new NeoRepository(db).reserveBinding({ sessionId: 'synthetic-root', kind: 'neo', projectId: null });
+        VALUES ('neo:10000000-0000-4000-8000-000000000002','Synthetic Neo','/tmp','2026-10-20T00:00:00Z','2026-10-20T00:00:00Z','active','{}','{}')`);
+      new NeoAskTodoRepository(db).openAsk({ id: 'synthetic-ask', projectId: null, sessionId: 'neo:10000000-0000-4000-8000-000000000002', originMessageId: null, title: 'Synthetic settings', request: 'Verify immutable proposal', createdAt: 1 });
+      new NeoRepository(db).reserveBinding({ sessionId: 'neo:10000000-0000-4000-8000-000000000002', kind: 'neo', projectId: null });
       assert.equal((await mcp('neo.rule.save', { add: edit.add, from: edit.add[0] })).ok, false);
       const repo = app.db.getSDKMessageRepo();
       for (const [uuid, inputKind, content] of [['event', 'system', 'Synthetic event'], ['human-rule', 'human', edit.add[0]]])
-        repo.saveSDKMessage('synthetic-root', { type: 'user', uuid, session_id: 'synthetic-root', parent_tool_use_id: null, inputKind, message: { role: 'user', content } } as any);
-      repo.markDeliveryConsumedByUuid('synthetic-root', 'human-rule');
-      turn = new NeoCoordinatorTurn(app.db, 'synthetic-root', { isLive: () => true });
+        repo.saveSDKMessage('neo:10000000-0000-4000-8000-000000000002', { type: 'user', uuid, session_id: 'neo:10000000-0000-4000-8000-000000000002', parent_tool_use_id: null, inputKind, message: { role: 'user', content } } as any);
+      repo.markDeliveryConsumedByUuid('neo:10000000-0000-4000-8000-000000000002', 'human-rule');
+      turn = new NeoCoordinatorTurn(app.db, 'neo:10000000-0000-4000-8000-000000000002', { isLive: () => true });
       turn.bind('event'); turn.noteSteered('human-rule');
       assert.equal((await mcp('neo.rule.save', { add: edit.add, from: edit.add[0], triggerId: 'human:human-rule' })).ok, true);
       turn.dispose(); turn = undefined;
@@ -55,7 +55,7 @@ for (const phase of ['initial', 'restart']) {
       const declined = await mcp('neo.rule.ask', { askId: 'synthetic-ask', requestId: 'declined', ...edit });
       assert.equal(declined.ok, true);
       assert.equal((await rpc('neo.question.answer', { questionId: declined.questionId, answer: 'no' })).ok, true);
-      assert.deepEqual((await rpc('neo.snapshot', {})).standingRules, edit.remove);
+    assert.deepEqual((await rpc('neo.snapshot', {})).standingRules, edit.remove);
       assert.equal((await mcp('neo.rule.applyAnswer', { questionId: declined.questionId })).ok, false);
       const proposed = await mcp('neo.rule.ask', { askId: 'synthetic-ask', requestId: 'accepted', ...edit });
       assert.equal(proposed.ok, true); questionId = proposed.questionId;
@@ -66,6 +66,17 @@ for (const phase of ['initial', 'restart']) {
       assert.equal((await rpc('neo.question.answer', { questionId, answer: 'yes' })).ok, true);
     }
     assert.equal((await rpc('neo.question.get', { questionId })).answeredByHuman, true);
+      if (phase === 'initial') {
+      const stale = await mcp('neo.rule.ask', { askId: 'synthetic-ask', requestId: 'stale', add: ['Next synthetic rule.'], remove: edit.add });
+      assert.equal(stale.ok, true);
+      await rpc('neo.rule.save', { remove: edit.add, add: ['An intervening human rule.'] });
+      const sent = await rpc('neo.message.send', { sessionId: 'neo:10000000-0000-4000-8000-000000000002', requestId: crypto.randomUUID(), content: 'yes', replyTo: { kind: 'question', id: stale.questionId } });
+      assert.equal(sent.ok, true); assert.equal(sent.created, true);
+      assert.equal((await rpc('neo.question.get', { questionId: stale.questionId })).answeredByHuman, true);
+      assert.equal((await mcp('neo.rule.applyAnswer', { questionId: stale.questionId })).ok, false);
+      assert.deepEqual((await rpc('neo.snapshot', {})).standingRules, ['An intervening human rule.']);
+      await rpc('neo.rule.save', { remove: ['An intervening human rule.'], add: edit.add });
+    }
     assert.deepEqual((await rpc('neo.snapshot', {})).standingRules, edit.add);
     assert.equal((await mcp('neo.rule.applyAnswer', { questionId, add: ['Tampered.'] })).code, 'invalid_input');
     assert.equal((await mcp('neo.rule.ask', { askId: 'synthetic-ask', requestId: 'accepted', add: ['Tampered.'] })).ok, false);
