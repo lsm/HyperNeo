@@ -38,12 +38,20 @@ export function createCodingPack(deps: {
     ...CODING_PACK_BRIEF,
     preferences: {
       mergePolicy: {
+        label: { en: 'Merge policy', 'zh-Hans': '合并规则' },
+        valueLabels: {
+          review_bot: { en: 'CI and review bot approval', 'zh-Hans': 'CI 通过且审查机器人批准' },
+          ci_only: { en: 'CI passes', 'zh-Hans': 'CI 通过' },
+          human: { en: 'Human approval', 'zh-Hans': '人工批准' },
+        },
         scope: 'repo',
         type: { kind: 'enum', values: ['review_bot', 'ci_only', 'human'] },
         default: 'human',
         ask: 'How are pull requests reviewed in this repository?',
       },
       reviewBot: {
+        label: { en: 'Review bot', 'zh-Hans': '审查机器人' },
+        valueLabels: {},
         scope: 'repo',
         type: { kind: 'login' },
         default: 'hyperneo-ai-test',
@@ -51,6 +59,13 @@ export function createCodingPack(deps: {
         askWhen: { key: 'mergePolicy', equals: 'review_bot' },
       },
       humanSignoff: {
+        label: { en: 'Human sign-off paths or labels', 'zh-Hans': '人工审批路径或标签' },
+        valueLabels: {
+          '[]': {
+            en: 'No extra human sign-off paths or labels',
+            'zh-Hans': '无额外人工审批路径或标签',
+          },
+        },
         scope: 'repo',
         type: { kind: 'globs' },
         default: [],

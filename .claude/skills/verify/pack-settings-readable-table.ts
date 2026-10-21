@@ -69,7 +69,7 @@ try {
       { pack: 'coding', scope: { kind: 'repo', key: 'synthetic/one' }, key: 'mergePolicy', value: 'review_bot' },
       { pack: 'coding', scope: { kind: 'repo', key: 'synthetic/two' }, key: 'mergePolicy', value: 'human' },
       { pack: 'coding', scope: { kind: 'repo', key: 'synthetic/one' }, key: 'reviewBot', value: 'synthetic-bot' },
-      { pack: 'coding', scope: { kind: 'repo', key: 'synthetic/one' }, key: 'humanSignoff', value: ['docs/**', 'label:needs-human'] },
+      { pack: 'coding', scope: { kind: 'repo', key: 'synthetic/one' }, key: 'humanSignoff', value: ['docs/**', 'label:needs-human', 'docs/a|b/**', 'docs/`draft`/**', 'docs\\windows/**'] },
     ];
     const receipt = await mcp('pack.preferences.ask', { askId, requestId: askId, values });
     assert(receipt.ok);
@@ -80,6 +80,7 @@ try {
     app.db.updateGlobalSettings({ language: language === 'en' ? 'zh-Hans' : 'en' });
     assert.equal((await mcp('pack.preferences.ask', { askId, requestId: askId, values })).questionId, question.id);
     assert.equal((await rpc('neo.question.get', { questionId: question.id })).question.text, question.text);
+    app.db.updateGlobalSettings({ language });
     writeFileSync(join(run, 'fixture.json'), JSON.stringify({ askId, question: store.getQuestion(question.id), language }));
     const browser = Bun.spawn([process.env.VERIFY_NODE!, '.claude/skills/verify/pack-settings-readable-table.mjs', String(port), run], { stdout: 'inherit', stderr: 'inherit' });
     assert.equal(await browser.exited, 0, 'headless question render failed');

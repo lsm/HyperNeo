@@ -77,6 +77,76 @@ async function propose() {
 const saved = () => invoke('pack.preferences.list', {});
 
 describe('immutable human settings proposals', () => {
+  test('renders global and project settings without losing false, zero or literal paths', async () => {
+    db.updateGlobalSettings({ language: 'en' });
+    service.filePacks = [
+      {
+        id: 'synthetic',
+        describe: 'Synthetic',
+        instructions: () => null,
+        preferences: {
+          flag: {
+            scope: 'project',
+            type: { kind: 'boolean' },
+            default: true,
+            ask: 'Flag?',
+            label: { en: 'Enabled', 'zh-Hans': '启用' },
+            valueLabels: {
+              false: { en: 'Off', 'zh-Hans': '关闭' },
+              true: { en: 'On', 'zh-Hans': '开启' },
+            },
+          },
+          count: {
+            scope: 'project',
+            type: { kind: 'number' },
+            default: 1,
+            ask: 'Count?',
+            label: { en: 'Count', 'zh-Hans': '数量' },
+            valueLabels: {},
+          },
+        },
+      },
+    ];
+    const proposal = [
+      { pack: 'coding', scope: { kind: 'global', key: '' }, key: 'mergePolicy', value: 'human' },
+      {
+        pack: 'synthetic',
+        scope: { kind: 'project', key: 'Synthetic' },
+        key: 'flag',
+        value: false,
+      },
+      { pack: 'synthetic', scope: { kind: 'project', key: 'Synthetic' }, key: 'count', value: 0 },
+      {
+        pack: 'coding',
+        scope: { kind: 'repo', key: 'synthetic/one' },
+        key: 'humanSignoff',
+        value: ['docs/a|b/**', 'docs/`draft`/**', 'docs\\windows/**'],
+      },
+    ];
+    const result = await invoke('pack.preferences.ask', {
+      askId: 'ask',
+      requestId: 'literal-settings',
+      values: proposal,
+    });
+    expect(result).toMatchObject({ value: { ok: true } });
+    const questionId = (result as { value: { questionId: string } }).value.questionId;
+    const text = service.todos.getQuestion(questionId)!.text;
+    expect(text).toContain('### All repositories');
+    expect(text).toContain('### Project: Synthetic');
+    expect(text).toContain('| Enabled | Off |');
+    expect(text).toContain('| Count | ` 0 ` |');
+    expect(text).toContain('docs/a\\|b/**');
+    expect(text).toContain('`` docs/`draft`/** ``');
+    expect(text).toContain('docs\\windows/**');
+    await invoke('neo.question.answer', { questionId, answer: 'yes' }, human);
+    expect(await saved()).toMatchObject({
+      value: {
+        preferences: expect.arrayContaining(
+          proposal.map((value) => expect.objectContaining(value))
+        ),
+      },
+    });
+  });
   test('one human tap applies exactly the bound proposal atomically with human provenance', async () => {
     const questionId = await propose();
     expect(await saved()).toMatchObject({ value: { preferences: [] } });

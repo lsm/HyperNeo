@@ -11,11 +11,17 @@ try {
   for (const width of [1280, 390]) {
     const page = await browser.newPage({ viewport: { width, height: 1100 } });
     await page.goto(`http://127.0.0.1:${port}/neo`);
-    if (width === 390) await page.getByRole('button', { name: /^(Your work|你的工作|工作)/ }).click();
+    if (width === 390) await page.getByRole('button', { name: /^(Your work|你的事)/ }).click();
     const card = page.locator(`[data-ask="${askId}"]:visible`);
     await card.waitFor();
     const body = card.locator(`[id="neo-ref-question-${question.id}"]`);
     await body.waitFor();
+    await page.waitForFunction((id) => {
+      let element = document.getElementById(`neo-ref-question-${id}`);
+      if (!element) return false;
+      for (; element; element = element.parentElement) if (Number(getComputedStyle(element).opacity) < 0.99) return false;
+      return true;
+    }, question.id);
     if (width === 390) await page.waitForFunction(() => Math.abs(document.querySelector('.neo-scene-sheet').getBoundingClientRect().x) < 0.1);
     await page.screenshot({ path: `${run}/evidence/table-${language}-${width}.png`, fullPage: true });
     const observation = { width, text: await body.innerText(), tables: await body.locator('table').count(), headings: await body.locator('h3').allTextContents(), rows: await body.locator('tbody tr').allTextContents() };
@@ -27,6 +33,8 @@ try {
     assert(observation.text.includes(language === 'en' ? 'CI and review bot approval' : 'CI 通过且审查机器人批准'));
     assert(observation.text.includes('synthetic-bot'));
     assert(observation.text.includes('docs/**'));
+    const literals = await body.locator('code').allTextContents();
+    for (const value of ['synthetic-bot', 'docs/**', 'label:needs-human', 'docs/a|b/**', 'docs/`draft`/**', 'docs\\windows/**']) assert(literals.includes(value), JSON.stringify(literals));
     assert(!observation.text.includes('review_bot'));
     const bounds = await body.boundingBox();
     assert(bounds.x >= 0 && bounds.x + bounds.width <= width + 1);
