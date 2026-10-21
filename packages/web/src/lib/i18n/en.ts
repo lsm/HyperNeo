@@ -244,6 +244,12 @@ export const en = {
   'artifact.snapshot': 'snapshot {hash}',
   'artifact.linkPrompt': 'Open this link in a new tab?',
   'artifact.openLink': 'Open link',
+  'artifact.download': 'Download complete file',
+  'artifact.copyVisible': 'Copy visible',
+  'artifact.zoom': 'Original size',
+  'artifact.omitted': '{count} bytes omitted. Showing head and tail. Download the complete file.',
+  'artifact.imageLimit':
+    'Image preview exceeds 32 MB or 16 megapixels. Download the complete file.',
   'artifact.cancel': 'Cancel',
   'artifact.choose': 'Which work is this from?',
   'artifact.choiceTodo': 'Todo {id}',

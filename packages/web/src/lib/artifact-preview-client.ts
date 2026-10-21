@@ -5,11 +5,20 @@ import {
   type ArtifactReadResult,
 } from '@hyperneo/shared/types/artifact-file';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { readArtifactHtml, type ArtifactHtml } from './artifact-html-client.ts';
+import { type ArtifactHtml, readArtifactHtml } from './artifact-html-client.ts';
+import { readMediaPreview } from './artifact-media-client.ts';
 import { invokeOperation } from './operations.ts';
 
 export type ArtifactPreviewState =
-  | { state: 'ready'; metadata: ArtifactFileMetadata; text: string; html?: ArtifactHtml }
+  | {
+      state: 'ready';
+      metadata: ArtifactFileMetadata;
+      text: string;
+      html?: ArtifactHtml;
+      image?: Blob;
+      sourceText?: string;
+      omittedBytes?: number;
+    }
   | { state: 'html_source'; metadata: ArtifactFileMetadata }
   | { state: 'limit' | 'unsupported'; metadata: ArtifactFileMetadata }
   | { state: 'forbidden' | 'revoked' | 'daemon_unavailable' | 'needs_update' };
@@ -43,13 +52,14 @@ export async function loadArtifactMetadata(hub: MessageHub, artifactId: string) 
 }
 
 export function gatePreviewableKind(metadata: ArtifactFileMetadata): MetadataGate {
-  return ['markdown', 'html'].includes(metadata.artifact.kind)
+  return ['markdown', 'html', 'image', 'json', 'log', 'text'].includes(metadata.artifact.kind)
     ? { value: metadata }
     : { reason: { state: 'unsupported', metadata } };
 }
 
 export function gatePreviewLimit(metadata: ArtifactFileMetadata): MetadataGate {
-  return metadata.artifact.byteLength > ARTIFACT_DEFAULT_LIMITS.documentPreviewBytes
+  return ['markdown', 'html'].includes(metadata.artifact.kind) &&
+    metadata.artifact.byteLength > ARTIFACT_DEFAULT_LIMITS.documentPreviewBytes
     ? { reason: { state: 'limit', metadata } }
     : { value: metadata };
 }
@@ -83,7 +93,11 @@ export const readArtifactPreview = (superpipe({})('artifact-preview-read') as Pi
   .pipe(gatePreviewLimit, 'preview', 'result:preview')
   .pipe(
     (hub: MessageHub, metadata: ArtifactFileMetadata) =>
-      metadata.artifact.kind === 'html' ? readArtifactHtml(hub, metadata) : readText(hub, metadata),
+      metadata.artifact.kind === 'html'
+        ? readArtifactHtml(hub, metadata)
+        : metadata.artifact.kind === 'markdown'
+          ? readText(hub, metadata)
+          : readMediaPreview(hub, metadata).catch((error: Error) => refusedState(error.message)),
     ['hub', 'preview'],
     'preview'
   )

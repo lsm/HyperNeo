@@ -1,8 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { connectionState } from '../../../lib/state.ts';
-import { ArtifactPreview } from '../ArtifactPreview.tsx';
 import MarkdownRenderer from '../../chat/MarkdownRenderer.tsx';
+import { ArtifactPreview } from '../ArtifactPreview.tsx';
 
 const { request, getHub } = vi.hoisted(() => {
   const request = vi.fn();
@@ -74,6 +74,28 @@ describe('ArtifactPreview', () => {
     expect(screen.queryByRole('heading', { name: 'Weekly report' })).toBeNull();
   });
 
+  it('shows formatted JSON as escaped text and preserves original Source without starting a download', async () => {
+    const raw = '{"note":"<img src=x onerror=evil()>"}';
+    const data = Buffer.from(raw);
+    reply(meta(undefined, 'json', data.length), {
+      ...chunk,
+      data: data.toString('base64'),
+      nextOffset: data.length,
+      byteLength: data.length,
+    });
+    render(<ArtifactPreview artifactId="a1" onBack={() => {}} />);
+    await waitFor(() =>
+      expect(document.querySelector('pre')?.textContent).toBe(
+        JSON.stringify(JSON.parse(raw), null, 2)
+      )
+    );
+    expect(document.querySelector('section img')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Download complete file' })).toBeTruthy();
+    expect(request).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Source', exact: true }));
+    expect(document.querySelector('pre')?.textContent).toBe(raw);
+    expect(request).toHaveBeenCalledTimes(2);
+  });
   it('labels an uncommitted capture as a worktree snapshot with its hash', async () => {
     reply(meta({ kind: 'worktree' }), chunk);
     render(<ArtifactPreview artifactId="a1" onBack={() => {}} />);
@@ -114,11 +136,6 @@ describe('ArtifactPreview', () => {
       'revoked access',
       () => reply({ accepted: false, reason: 'unavailable' }),
       'This file is no longer available to you.',
-    ],
-    [
-      'unsupported format',
-      () => reply(meta(undefined, 'image')),
-      'This format has no preview yet.',
     ],
     [
       'preview limit',

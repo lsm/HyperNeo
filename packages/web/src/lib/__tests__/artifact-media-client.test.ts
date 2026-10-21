@@ -47,6 +47,43 @@ describe('artifact media previews and downloads', () => {
     }
     expect(request.mock.calls.slice(1).reduce((n, c) => n + c[1].input.maxBytes, 0)).toBe(262144);
   });
+  it('previews raster bytes but refuses SVG and excessive pixels before browser decoding', async () => {
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAIAAABvFaqvAAAAH0lEQVR4nGN41mNDFcQwatCoQaMGjRo0atCoQQNvEADxaMeuOCcmmgAAAABJRU5ErkJggg==',
+      'base64'
+    );
+    const normal = await fixture('image', new Uint8Array(png));
+    const result = await readArtifactPreview(normal.hub, 'a');
+    expect(result.state).toBe('ready');
+    if (result.state === 'ready') expect(result.image?.type).toBe('image/png');
+    png.writeUInt32BE(100000, 16);
+    png.writeUInt32BE(100000, 20);
+    const big = await fixture('image', new Uint8Array(png));
+    expect((await readArtifactPreview(big.hub, 'a')).state).toBe('limit');
+    const svg = await fixture('image', new TextEncoder().encode('<svg onload="evil()"/>'));
+    expect((await readArtifactPreview(svg.hub, 'a')).state).toBe('unsupported');
+  });
+  it('does not request the next chunk until the consumer is ready', async () => {
+    const { hub, metadata, request } = await fixture('log', new Uint8Array(600000));
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const writing = vi.fn(async () => {
+      await pending;
+    });
+    const transfer = downloadArtifact(hub, metadata, new AbortController().signal, writing);
+    await vi.waitFor(() => expect(writing).toHaveBeenCalledTimes(1));
+    expect(request).toHaveBeenCalledTimes(1);
+    release();
+    await transfer;
+    expect(request).toHaveBeenCalledTimes(3);
+  });
+  it('reauthorizes even an empty download', async () => {
+    const { hub, metadata, request } = await fixture('log', new Uint8Array());
+    await downloadArtifact(hub, metadata, new AbortController().signal, async () => {});
+    expect(request).toHaveBeenCalledTimes(1);
+  });
   it('downloads all chunks, verifies the hash, and awaits the consumer before reading again', async () => {
     const data = new Uint8Array(600000).fill(42);
     const { hub, metadata, request } = await fixture('log', data);

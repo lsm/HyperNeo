@@ -69,7 +69,9 @@ UI is served, that RPC answers, and that the mock model API is up. It ends with
   `seed-ledger.sh` (journey 4),
   `merge-check.sh` (journey 24), `archive-guard-check.sh` (journey 10) and
   `seed-start-question.sh` (journey 14), `quote-summary-check.mjs` (journey 18),
-  `seed-schedule-interrupt.ts` (journey 22), and `external-reply-check.ts` (journey 23).
+  `seed-schedule-interrupt.ts` (journey 22), and `external-reply-check.ts` (journey 23). Artifact preview helpers
+  (including `preview-media-web.mjs seed`) delegate DB fixture creation to
+  `preview-register.ts seed`, only in the fresh synthetic run.
 - Web UI: open `http://127.0.0.1:<port>/neo` (Neo) or
   `/session/<sessionId>` (a session) in the browser; read the page text and take
   a screenshot.
