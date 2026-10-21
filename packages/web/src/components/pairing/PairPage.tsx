@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { Button } from '../ui/Button.tsx';
 import { FormField, formControlClass } from '../ui/FormField.tsx';
 
@@ -23,7 +23,14 @@ function pairFailureMessage(
 }
 
 export function PairPage() {
-  const [code, setCode] = useState(() => decodeURIComponent(location.hash.slice(1)));
+  const [code, setCode] = useState(() => location.hash.slice(1));
+  useEffect(() => {
+    const follow = () => {
+      if (location.hash) setCode(location.hash.slice(1));
+    };
+    addEventListener('hashchange', follow);
+    return () => removeEventListener('hashchange', follow);
+  }, []);
   const [name, setName] = useState('Browser');
   const [state, setState] = useState<PairState>({ kind: 'idle' });
 

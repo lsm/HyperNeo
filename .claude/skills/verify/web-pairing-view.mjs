@@ -23,7 +23,6 @@ try {
   const wrong = await page.getByText('That code is wrong or expired.', { exact: false }).innerText();
   await shot(page, 'wrong-code');
   await page.goto(`${base}/pair#${code}`);
-  await page.reload();
   await page.getByLabel('Name for this browser').fill(`Browser ${width}`);
   await pair.click();
   const result = {};

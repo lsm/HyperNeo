@@ -41,6 +41,15 @@ describe('PairPage', () => {
     expect(view.getByRole('link', { name: 'Open HyperNeo' }).getAttribute('href')).toBe('/');
   });
 
+  it('takes a new code from a later link in the same tab, and shows a mangled one as typed', async () => {
+    const view = openPairPage('#%GG', answer(200, {}));
+    const code = () => (view.getByLabelText('Pairing code') as HTMLInputElement).value;
+    expect(code()).toBe('%GG');
+    location.hash = '#NEWCODE234';
+    dispatchEvent(new HashChangeEvent('hashchange'));
+    await waitFor(() => expect(code()).toBe('NEWCODE234'));
+  });
+
   it('says to tap Allow on a paired device while the code waits for it', async () => {
     const view = openPairPage('#ABCDE23456', answer(403, { error: 'awaiting_approval' }));
     pressPair(view);
