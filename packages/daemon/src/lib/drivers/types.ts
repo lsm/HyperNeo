@@ -45,6 +45,12 @@ export const WorkSummarySchema = z.object({
   status: WorkStatusSchema,
   lastActivityAt: z.number(),
   link: z.string().optional(),
+  watchHint: z
+    .string()
+    .describe(
+      'Where the human can watch work when a harness app link is not available; relay this guidance instead of inventing a link.'
+    )
+    .optional(),
   model: z.string().optional(),
   effort: z.string().optional(),
   remoteLink: z.string().optional(),
