@@ -207,7 +207,11 @@ itself (see Enforcement). Goals and journals stay in the DB; their milestones re
   human rather than replaying repository creation; successful retries reuse the
   saved receipt. Later explicit re-proposal is separate from this once-only path.
 - One shared repo across machines: the second daemon (iMac/laptop) clones the remote
-  into its own `Neo/` on init when the remote exists (the human picks it once).
+  into its own `Neo/` on init when the remote exists. The local human picks it once
+  with `neo.home.init {remoteUrl}`; Git origin/upstream persist that selection.
+  Clone preserves local `.coordinators/`, refuses pre-existing curated documents or
+  a different origin, and never rewrites the selected remote. Plain `{}` keeps local
+  initialization. Clone is noninteractive and bounded to 30 seconds.
 - Sync: `neo.home.save` runs `git pull --rebase` before committing and pushes after. On a
   conflict it aborts the rebase, keeps the local file, and returns `conflict`; Neo tells
   the human in one question with both versions. Reads (`neo.home.read`, or Neo's `Read`)

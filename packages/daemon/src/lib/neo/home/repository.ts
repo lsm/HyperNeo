@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
-import { lstat, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
@@ -137,8 +137,83 @@ export class NeoHomeRepository {
     return result;
   }
 
-  init(): Promise<HomeResult> {
-    return this.sequence(() => this.initialize());
+  init(remoteUrl?: string): Promise<HomeResult> {
+    return this.sequence(async () => {
+      if (remoteUrl) {
+        const cloned = await this.clone(remoteUrl);
+        if (cloned) return cloned;
+      }
+      return this.initialize();
+    });
+  }
+
+  private async clone(remoteUrl: string): Promise<{ ok: false; reason: string } | null> {
+    await mkdir(this.root, { recursive: true });
+    const existing = await readdir(this.root);
+    if (existing.includes('.git')) {
+      const origin = await this.git(['remote', 'get-url', 'origin'], true);
+      return !origin.code && origin.text === remoteUrl
+        ? null
+        : { ok: false, reason: 'remote_exists: keep the existing home and its origin.' };
+    }
+    if (existing.some((name) => name !== '.coordinators'))
+      return {
+        ok: false,
+        reason: 'home_exists: choose an empty home; existing files are preserved.',
+      };
+    const staging = await mkdtemp(join(dirname(this.root), '.neo-clone-'));
+    const created: string[] = [];
+    try {
+      const cloned = await this.git(
+        ['clone', '--no-hardlinks', '--', remoteUrl, staging],
+        true,
+        true
+      );
+      if (cloned.code) return { ok: false, reason: `clone_failed: ${cloned.error}` };
+      if ((await this.git(['-C', staging, 'rev-parse', '--verify', 'HEAD'], true)).code)
+        return {
+          ok: false,
+          reason: 'empty_remote: select a home with a committed default branch.',
+        };
+      const entries = await readdir(staging, { withFileTypes: true });
+      if (entries.some((entry) => entry.name === '.coordinators'))
+        return {
+          ok: false,
+          reason: 'private_transcripts: remove coordinator transcripts from the remote first.',
+        };
+      for (const entry of entries.sort(
+        (a, b) => Number(a.name === '.git') - Number(b.name === '.git')
+      )) {
+        const target = join(this.root, entry.name);
+        if (entry.isDirectory()) {
+          await mkdir(target);
+          created.push(target);
+          for (const name of await readdir(join(staging, entry.name)))
+            await cp(join(staging, entry.name, name), join(target, name), {
+              recursive: true,
+              force: false,
+              errorOnExist: true,
+              verbatimSymlinks: true,
+            });
+        } else {
+          await cp(join(staging, entry.name), target, {
+            force: false,
+            errorOnExist: true,
+            verbatimSymlinks: true,
+          });
+          created.push(target);
+        }
+      }
+      return null;
+    } catch (error) {
+      for (const path of created) await rm(path, { recursive: true, force: true }).catch(() => {});
+      return {
+        ok: false,
+        reason: `clone_failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    } finally {
+      await rm(staging, { recursive: true, force: true }).catch(() => {});
+    }
   }
 
   createGithub(repository: string, reserve: () => boolean) {

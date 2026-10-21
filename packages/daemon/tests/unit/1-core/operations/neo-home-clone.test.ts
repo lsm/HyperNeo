@@ -1,5 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  readlink,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { NeoHomeRepository } from '../../../../src/lib/neo/home/repository.ts';
@@ -69,7 +79,7 @@ beforeEach(async () => {
     '[user]\n name = Synthetic Neo\n email = verify@example.invalid\n[commit]\n gpgsign = false\n'
   );
   previous = new Map(
-    ['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM'].map((key) => [key, process.env[key]])
+    ['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM', 'PATH'].map((key) => [key, process.env[key]])
   );
   process.env.GIT_CONFIG_GLOBAL = config;
   process.env.GIT_CONFIG_NOSYSTEM = '1';
@@ -119,6 +129,7 @@ describe('Second-machine home configuration', () => {
   test('remembers the same selection and refuses a different origin without changing files or history', async () => {
     expect(await call({ remoteUrl: remote })).toMatchObject({ ok: true });
     const head = await git(root, 'rev-parse', 'HEAD');
+    home = new NeoHomeRepository(root, new NeoRepository(db.getDatabase()));
     expect(await call({ remoteUrl: remote })).toMatchObject({ ok: true });
     expect(await call({})).toMatchObject({ ok: true });
     expect(await call({ remoteUrl: join(fixture, 'another.git') })).toMatchObject({
@@ -144,6 +155,66 @@ describe('Second-machine home configuration', () => {
     });
     expect(await readFile(join(root, 'notes.txt'), 'utf8')).toBe('Human local notes');
     expect((await readdir(root)).sort()).toEqual(['.coordinators', 'notes.txt']);
+  });
+  test('preserves relative document links without following them during clone', async () => {
+    const source = join(fixture, 'source');
+    await symlink('direction.md', join(source, 'direction-link'));
+    await symlink('../direction.md', join(source, 'projects', 'direction-link'));
+    await git(source, 'add', '.');
+    await git(source, 'commit', '-m', 'Document links');
+    await git(source, 'push', remote, 'main');
+    expect(await call({ remoteUrl: remote })).toMatchObject({ ok: true });
+    expect(await readlink(join(root, 'direction-link'))).toBe('direction.md');
+    expect(await readlink(join(root, 'projects', 'direction-link'))).toBe('../direction.md');
+    expect(await git(root, 'status', '--porcelain')).toBe('');
+  });
+  test('refuses remote coordinator transcripts without replacing local transcripts', async () => {
+    const source = join(fixture, 'source');
+    await mkdir(join(source, '.coordinators'), { recursive: true });
+    await writeFile(join(source, '.coordinators', 'remote.txt'), 'Remote private transcript');
+    await git(source, 'add', '-f', '.coordinators/remote.txt');
+    await git(source, 'commit', '-m', 'Synthetic unsafe transcript fixture');
+    await git(source, 'push', remote, 'main');
+    expect(await call({ remoteUrl: remote })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('private_transcripts'),
+    });
+    expect(await readdir(root)).toEqual(['.coordinators']);
+    expect(await readFile(join(root, '.coordinators', 'second', 'transcript.md'), 'utf8')).toBe(
+      'Private second-machine transcript'
+    );
+  });
+  test('a file arriving during clone is preserved while only newly published files roll back', async () => {
+    const source = join(fixture, 'source');
+    await writeFile(join(source, 'z-human.txt'), 'Shared remote version');
+    await git(source, 'add', '.');
+    await git(source, 'commit', '-m', 'Synthetic collision fixture');
+    await git(source, 'push', remote, 'main');
+    const bin = join(fixture, 'bin');
+    await mkdir(bin);
+    const executable = join(bin, 'git');
+    await writeFile(
+      executable,
+      `#!/bin/sh
+/usr/bin/git "$@"
+status=$?
+if [ "$3" = clone ] && [ "$status" = 0 ]; then
+  printf 'Human file created during clone' > '${root}/z-human.txt'
+fi
+exit "$status"
+`
+    );
+    await chmod(executable, 0o755);
+    process.env.PATH = `${bin}:${process.env.PATH}`;
+    expect(await call({ remoteUrl: remote })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('clone_failed'),
+    });
+    expect(await readFile(join(root, 'z-human.txt'), 'utf8')).toBe(
+      'Human file created during clone'
+    );
+    expect((await readdir(root)).sort()).toEqual(['.coordinators', 'z-human.txt']);
+    expect((await readdir(fixture)).filter((name) => name.startsWith('.neo-clone-'))).toEqual([]);
   });
   test('an inaccessible or empty remote leaves the original home untouched', async () => {
     expect(await call({ remoteUrl: join(fixture, 'missing.git') })).toMatchObject({

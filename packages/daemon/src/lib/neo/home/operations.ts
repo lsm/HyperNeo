@@ -23,7 +23,20 @@ export function createNeoHomeOperations(
   const init = (superpipe({})('neo.home.init') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(owner, 'caller', 'result:outcome')
-    .pipe(() => home.init(), 'outcome', 'outcome')
+    .pipe(
+      (input: { remoteUrl?: string }, caller: OperationCaller) =>
+        input.remoteUrl && !isLocalUser(caller)
+          ? {
+              reason: {
+                ok: false,
+                reason: 'human_selection_required: ask the local user to select the home remote.',
+              },
+            }
+          : { value: input },
+      ['input', 'caller'],
+      'result:outcome'
+    )
+    .pipe((input: { remoteUrl?: string }) => home.init(input.remoteUrl), 'outcome', 'outcome')
     .endAsync('outcome') as (input: unknown, caller: OperationCaller) => Promise<HomeResult>;
   const save = (superpipe({})('neo.home.save') as PipelineAPI)
     .input(['input', 'caller'])
@@ -72,8 +85,8 @@ export function createNeoHomeOperations(
     defineOperation({
       name: 'neo.home.init',
       description:
-        'Initialize the local Neo home repository, ignore coordinator transcripts, and assign stable project folders. After first setup, call neo.home.github with the current root askId to offer its private remote once. Uses the configured git identity; fix identity/signing configuration and retry if commit fails. Root Neo or the local user only.',
-      inputSchema: z.object({}),
+        'Initialize the local Neo home repository, ignore coordinator transcripts, and assign stable project folders. The local human may supply remoteUrl once to clone an existing shared home; origin/upstream remember the selection. Preserves local transcripts and refuses existing documents or a different origin. Clone is noninteractive with a 30-second timeout. After first setup, call neo.home.github with the current root askId to offer its private remote once. Uses the configured git identity; fix identity/signing configuration and retry if commit fails. Root Neo or the local user only.',
+      inputSchema: z.object({ remoteUrl: z.string().trim().min(1).optional() }),
       resultSchema: z.union([
         z.object({ ok: z.literal(false), reason: z.string() }),
         z.object({

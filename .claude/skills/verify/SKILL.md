@@ -5,6 +5,8 @@ description: Prove a HyperNeo change works by running an isolated daemon and web
 
 # Verify HyperNeo
 
+For second-machine home clone/configuration, follow [the clone journey](neo-home-clone.md).
+
 Run the change where a user would meet it: an isolated daemon, its RPC door and
 its web UI. Lint, types and unit tests are not proof. Every helper named here
 lives next to this file in `.claude/skills/verify/`. Run commands from the repo
