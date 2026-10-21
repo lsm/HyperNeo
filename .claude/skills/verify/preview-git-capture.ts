@@ -19,10 +19,10 @@ const prefix = 'repos/lsm/hyperneo/git/';
 const commitKey = `${prefix}commits/${sha}`; const rootKey = `${prefix}trees/${treeSha}`; const directoryKey = `${prefix}trees/${directorySha}`; const blobKey = `${prefix}blobs/${blobSha}`;
 const entry = { path: 'report.md', mode: '100644', type: 'blob', sha: blobSha, size: bytes.length };
 const original = {
- [commitKey]: { sha, tree: { sha: treeSha } },
- [rootKey]: { sha: treeSha, truncated: false, tree: [{ path: 'docs', mode: '040000', type: 'tree', sha: directorySha }] },
- [directoryKey]: { sha: directorySha, truncated: false, tree: [entry] },
- [blobKey]: { sha: blobSha, encoding: 'base64', size: bytes.length, content: bytes.toString('base64') },
+ [commitKey]: { url: `https://api.github.com/${commitKey}`, sha, tree: { sha: treeSha } },
+ [rootKey]: { url: `https://api.github.com/${rootKey}`, sha: treeSha, truncated: false, tree: [{ path: 'docs', mode: '040000', type: 'tree', sha: directorySha }] },
+ [directoryKey]: { url: `https://api.github.com/${directoryKey}`, sha: directorySha, truncated: false, tree: [entry] },
+ [blobKey]: { url: `https://api.github.com/${blobKey}`, sha: blobSha, encoding: 'base64', size: bytes.length, content: bytes.toString('base64') },
 };
 const fixture = (value: unknown) => writeFileSync(join(root, 'git-fixtures.json'), JSON.stringify(value));
 if (phase !== 'probe') {
@@ -42,7 +42,12 @@ let before = calls().length;
 for (const invalid of [{ ...target, sha: 'HEAD' }, { ...target, repository: 'other.example/lsm/hyperneo' }, { ...target, path: '../report.md' }, { ...target, path: '.ssh/key.md' }, { ...target, path: 'docs%2freport.md' }]) assert.deepEqual(await readBoundGitBlob(invalid), unavailable);
 assert.equal(calls().length, before);
 for (const changed of [
- { ...original, [commitKey]: { sha: 'd'.repeat(40), tree: { sha: treeSha } } },
+ { ...original, [commitKey]: { ...original[commitKey], sha: 'd'.repeat(40) } },
+ { ...original, [commitKey]: { ...original[commitKey], url: 'https://api.github.com/repos/other/repo/git/commits/' + sha } },
+ { ...original, [rootKey]: { ...original[rootKey], url: 'https://other.example/tree' } },
+ { ...original, [blobKey]: { ...original[blobKey], url: 'https://api.github.com/repos/other/repo/git/blobs/' + blobSha } },
+ { ...original, [rootKey]: { ...original[rootKey], sha: 'd'.repeat(40) } },
+ { ...original, [directoryKey]: { ...original[directoryKey], tree: [] } },
  { ...original, [rootKey]: { ...original[rootKey], truncated: true } },
  { ...original, [rootKey]: { ...original[rootKey], tree: [{ path: 'docs', type: 'blob', mode: '120000', sha: directorySha }] } },
  ...['120000', '160000', '040000'].map((mode) => ({ ...original, [directoryKey]: { ...original[directoryKey], tree: [{ ...entry, mode }] } })),
@@ -50,13 +55,13 @@ for (const changed of [
  { ...original, [blobKey]: { ...original[blobKey], content: Buffer.from('wrong bytes').toString('base64') } },
  { ...original, [blobKey]: { ...original[blobKey], content: `${original[blobKey].content}!` } },
  { ...original, [blobKey]: { ...original[blobKey], sha: 'd'.repeat(40) } },
-]) { fixture(changed); assert.deepEqual(await readBoundGitBlob(target), unavailable); }
+]) { fixture(changed); const result = await readBoundGitBlob(target); assert.equal(result.accepted, false); assert.deepEqual(result, unavailable); }
 fixture({ ...original, [directoryKey]: { ...original[directoryKey], tree: [{ ...entry, size: 64 * 1024 * 1024 + 1 }] } });
 before = calls().length; assert.deepEqual(await readBoundGitBlob(target), { accepted: false, reason: 'size_limit', actualBytes: 64 * 1024 * 1024 + 1, limitBytes: 64 * 1024 * 1024 }); assert.equal(calls().length - before, 3);
 fixture({ ...original, [rootKey]: { ...original[rootKey], tree: [{ ...original[rootKey].tree[0], path: 'x'.repeat(1100000) }] } }); assert.deepEqual(await readBoundGitBlob(target), unavailable);
 fixture({ ...original, [rootKey]: { rawText: JSON.stringify(original[rootKey]) + ' '.repeat(1100000) } }); assert.deepEqual(await readBoundGitBlob(target), unavailable);
 const emptySha = createHash('sha1').update('blob 0\0').digest('hex');
-fixture({ ...original, [directoryKey]: { ...original[directoryKey], tree: [{ ...entry, size: 0, sha: emptySha }] }, [`${prefix}blobs/${emptySha}`]: { sha: emptySha, encoding: 'base64', size: 0, content: '' } });
+fixture({ ...original, [directoryKey]: { ...original[directoryKey], tree: [{ ...entry, size: 0, sha: emptySha }] }, [`${prefix}blobs/${emptySha}`]: { url: `https://api.github.com/${prefix}blobs/${emptySha}`, sha: emptySha, encoding: 'base64', size: 0, content: '' } });
 const empty = await readBoundGitBlob(target); assert(empty.accepted); assert.equal(empty.bytes.length, 0);
 fixture(original);
 const data = join(root, 'data'); let db = new Database(join(data, 'daemon.db'));
