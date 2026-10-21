@@ -95,10 +95,7 @@ try {
   evidence.remainingPending = live.getSessionData().metadata?.pendingModelSwitch ?? null;
   assert.deepEqual(evidence.afterLateRefusal, fallback);
   assert.equal(evidence.remainingPending, null);
-  setModelsCache(new Map([['global', models]]));
-  evidence.retryReply = await call('neo.preferences.set', primary);
-  evidence.afterSuccessfulRetry = pair();
-  assert.deepEqual(evidence.afterSuccessfulRetry, primary);
+  evidence.afterLateState = live.getProcessingState();
   evidence.saved = app.db.getGlobalSettings().neo?.preferences;
   assert.deepEqual(evidence.saved, primary);
   evidence.health = await hub.request('system.health', {});

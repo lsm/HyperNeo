@@ -443,8 +443,8 @@ export class NeoService {
       let restored = false;
       try {
         const switched = await live.requestModelSwitch(preference.model, preference.provider);
-        restored = switched.success;
-        if (!restored)
+        restored = switched.success && !switched.pending;
+        if (!switched.success)
           this.log.warn(`Neo session ${sessionId} keeps its model: ${switched.error ?? ''}`);
       } finally {
         if (!restored && plan.thinking)

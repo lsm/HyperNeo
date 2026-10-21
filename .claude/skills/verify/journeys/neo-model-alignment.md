@@ -55,8 +55,8 @@ session's processing state busy through its state manager, without starting an S
 query. Saving primary/24k through RPC must return success with an actual pending
 switch while both live and stored config stay GLM/8k. Remove the synthetic primary
 from the catalog, then let the real idle callback consume and refuse that pending
-switch: GLM/8k must remain and pending metadata must clear. Making the catalog
-available and saving again must commit primary/24k. observed.json keeps receipts,
+switch: GLM/8k must remain and pending metadata must clear. The three SDK journeys
+above verify successful restoration separately. observed.json keeps receipts,
 state and health; the helper closes its client and daemon. It stubs GitHub and
 uses no provider keys or network model calls. This proves real queued-switch
 application/refusal under synthetic busy state, not an in-flight SDK race. The
