@@ -81,7 +81,13 @@ describe('immutable human settings proposals', () => {
     const questionId = await propose();
     expect(await saved()).toMatchObject({ value: { preferences: [] } });
     const question = service.todos.getQuestion(questionId)!;
-    for (const value of values) expect(question.text).toContain(JSON.stringify(value));
+    expect(question.text).not.toContain(JSON.stringify(values[0]));
+    expect(
+      db
+        .getDatabase()
+        .prepare('SELECT values_json FROM neo_pack_preference_proposals WHERE question_id=?')
+        .get(questionId)
+    ).toEqual({ values_json: JSON.stringify(values) });
     expect(await invoke('pack.preferences.applyAnswer', { questionId })).toMatchObject({
       value: { ok: false },
     });
@@ -105,6 +111,89 @@ describe('immutable human settings proposals', () => {
       value: { preference: { value: 'human' } },
     });
   });
+  test.each([
+    [
+      'en',
+      'Apply these settings?',
+      'Setting',
+      'Value',
+      'Merge policy',
+      'CI and review bot approval',
+      'Review bot',
+      'CI passes',
+      'Keep current settings',
+      'Apply these settings',
+    ],
+    [
+      'zh-Hans',
+      '应用这些设置？',
+      '设置',
+      '值',
+      '合并规则',
+      'CI 通过且审查机器人批准',
+      '审查机器人',
+      'CI 通过',
+      '保留当前设置',
+      '应用这些设置',
+    ],
+  ] as const)(
+    'renders the bound repo-grouped proposal in %s',
+    async (language, title, setting, value, policy, review, bot, ci, noLabel, yesLabel) => {
+      db.updateGlobalSettings({ language });
+      const questionId = await propose();
+      const question = service.todos.getQuestion(questionId)!;
+      expect(question.text).toBe(
+        [
+          title,
+          '',
+          '### synthetic/one',
+          '',
+          `| ${setting} | ${value} |`,
+          '| --- | --- |',
+          `| ${policy} | ${review} |`,
+          `| ${bot} | \` synthetic-bot \` |`,
+          '',
+          '### synthetic/two',
+          '',
+          `| ${setting} | ${value} |`,
+          '| --- | --- |',
+          `| ${policy} | ${ci} |`,
+        ].join('\n')
+      );
+      expect(question).toMatchObject({ noLabel, yesLabel });
+      db.updateGlobalSettings({ language: language === 'en' ? 'zh-Hans' : 'en' });
+      expect(await propose()).toBe(questionId);
+      expect(service.todos.getQuestion(questionId)!.text).toBe(question.text);
+      expect(
+        await invoke('neo.question.answer', { questionId, answer: 'yes' }, human)
+      ).toMatchObject({ value: { ok: true } });
+      expect(await saved()).toMatchObject({
+        value: { preferences: values.map((v) => ({ ...v, setBy: 'human' })) },
+      });
+    }
+  );
+
+  test('labels every merge choice and empty sign-off paths without raw enum names', async () => {
+    db.updateGlobalSettings({ language: 'zh-Hans' });
+    const proposal = [
+      ...values.slice(0, 1),
+      { ...values[0], scope: { kind: 'repo', key: 'synthetic/two' }, value: 'human' },
+      { ...values[0], key: 'humanSignoff', value: [] },
+    ];
+    const reply = await invoke('pack.preferences.ask', {
+      askId: 'ask',
+      requestId: 'labels',
+      values: proposal,
+    });
+    const id = (reply as { value: { questionId: string } }).value.questionId;
+    const text = service.todos.getQuestion(id)!.text;
+    expect(text).toContain('| 合并规则 | 人工批准 |');
+    expect(text).toContain('| 人工审批路径或标签 | 无额外人工审批路径或标签 |');
+    expect(text).not.toContain('review_bot');
+    expect(text).not.toContain('humanSignoff');
+    expect(text).not.toContain('[]');
+  });
+
   test('agent post-answer payload injection and rebinding are refused', async () => {
     const questionId = await propose();
     await invoke('neo.question.answer', { questionId, answer: 'yes' }, human);
