@@ -257,6 +257,32 @@ describe('MarkdownRenderer', () => {
       });
     });
 
+    it('preserves preview reference text without interpreting paths inside code', async () => {
+      const content = [
+        '[Design](docs/design/synthetic-preview.md)',
+        '[PR](https://github.com/acme/widgets/pull/7)',
+        '`/synthetic/workspace/report.html`',
+        '```sh\ncat /synthetic/workspace/report.html\n```',
+        '<script>syntheticSentinel()</script>',
+      ].join('\n\n');
+      const { container } = render(<MarkdownRenderer content={content} />);
+      await waitFor(() => {
+        expect(container.querySelectorAll('a')).toHaveLength(2);
+        expect(container.querySelector('pre code')?.textContent).toBe(
+          'cat /synthetic/workspace/report.html\n'
+        );
+      });
+      expect(
+        Array.from(container.querySelectorAll('a')).map((link) => link.getAttribute('href'))
+      ).toEqual(['docs/design/synthetic-preview.md', 'https://github.com/acme/widgets/pull/7']);
+      expect(container.querySelector('p code')?.textContent).toBe(
+        '/synthetic/workspace/report.html'
+      );
+      expect(container.querySelector('code a')).toBeNull();
+      expect(container.querySelector('script')).toBeNull();
+      expect(container.textContent).toContain('<script>syntheticSentinel()</script>');
+    });
+
     it('should render inline code', async () => {
       const { container } = render(<MarkdownRenderer content="Use `npm install`" />);
       await waitFor(() => {
