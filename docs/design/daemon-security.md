@@ -52,7 +52,7 @@ The upgrade attaches `{deviceId, kind}` to the connection. `CallContext` carries
 | --- | --- | --- |
 | human | `local` | everything, as today |
 | relay | `relay` | read subscriptions plus the operations the push relay reads: `neo.snapshot`, `neo.publication.read`, `client.list`; nothing else |
-| daemon | `peer` | `operations.list` and forwarded `message.send`; never `requireLocalUser` operations |
+| daemon | `peer` | the operations daemons call on each other today: `operations.list`, forwarded `message.send`, and Neo's cross-machine `work.adapters`, `work.find`, `work.queue`, `work.read`, `work.rename`, `work.send`, `work.start`, `work.status`, `work.stop`, `work.withdraw`; nothing else |
 
 **Pairing a new device.**
 1. A **pairing code** is created only from an already trusted place:
@@ -76,7 +76,8 @@ reach loopback too.
 - "Revoke" sets `revoked_at` and closes that device's open sockets at once.
 - "Re-pair" issues a new credential and revokes the old one.
 - Credentials don't expire on a timer, but a device unseen for 90 days is flagged for review.
-- `hyperneo devices revoke <id>` does the same from the terminal, for a lost phone when no paired UI is at hand.
+- `hyperneo devices` lists them and `hyperneo devices revoke <id>` revokes one from the terminal, for a lost phone when no paired UI is at hand.
+- Revoking never reopens the first-device window: the CLI's no-Allow path counts every device ever paired, revoked or not, so an agent that reaches the CLI can revoke devices but cannot pair itself.
 
 **Where each client stores its credential.**
 
@@ -146,7 +147,7 @@ Built on `tests/helpers/daemon-server.ts` (spawned daemon on port 0) and `standa
 - A pairing code works once, expires after 10 minutes, and locks out after too many failed attempts.
 - The cookie and the Bearer header both authenticate. A revoked device's open socket closes within one second.
 - A cross-site Origin gets 403. An unknown Host (DNS rebinding) gets 403. A native client with no Origin but with a Bearer credential is accepted.
-- `relay` and `peer` principals are refused by `requireLocalUser` and `human_only` operations, except the relay's three reads (`neo.snapshot`, `neo.publication.read`, `client.list`), which are admitted by name. A peer's forwarded `message.send` still works.
+- `relay` and `peer` principals are refused by `requireLocalUser` and `human_only` operations, except the relay's three reads (`neo.snapshot`, `neo.publication.read`, `client.list`), which are admitted by name. A peer keeps exactly the operations in its row (forwarded `message.send` and the cross-machine `work.*` calls) and is refused everything else.
 - The default bind is loopback. A non-loopback bind without `--expose` refuses to start.
 - After `hyperneo security enforce off`, the restored address (including `0.0.0.0`) starts with a warning and stays across restarts while enforcement is off.
 - The session door socket is never world-accessible, including the moment between `listen` and `chmod`.

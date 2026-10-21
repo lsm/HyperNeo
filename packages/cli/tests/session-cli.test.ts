@@ -48,6 +48,13 @@ describe('hyperneo send, question and build', () => {
       value: { name: 'device.pair.reset_lockout', input: {} },
     });
     expect(planSessionCommand(['pair', '--kind'], 'cli')).toHaveProperty('reason');
+    expect(planSessionCommand(['devices'], 'cli')).toEqual({
+      value: { name: 'device.list', input: {} },
+    });
+    expect(planSessionCommand(['devices', 'revoke', 'device-1'], 'cli')).toEqual({
+      value: { name: 'device.revoke', input: { deviceId: 'device-1' } },
+    });
+    expect(planSessionCommand(['devices', 'revoke'], 'cli')).toHaveProperty('reason');
   });
 
   test('build prints bounded failed health and exits unsuccessfully', async () => {

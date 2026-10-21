@@ -1,3 +1,4 @@
+import { hostname } from 'node:os';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { renderRemoteAddressExample } from '../mailbox/address.ts';
@@ -16,6 +17,7 @@ export const AttachDaemonInputSchema = z.object({
       (url) => url.startsWith('ws://') || url.startsWith('wss://'),
       'URL must be a ws:// or wss:// MessageHub endpoint'
     ),
+  code: z.string().trim().min(1).max(40).optional(),
 });
 
 export const AttachDaemonResultSchema = z.discriminatedUnion('kind', [
@@ -46,11 +48,45 @@ export function requireRpcAttachCaller(
       };
 }
 
-export function attachRemoteDaemon(
+export type RedeemCode = (
+  url: string,
+  code: string
+) => Promise<{ credential: string } | { reason: string }>;
+
+export const redeemRemotePairingCode: RedeemCode = async (url, code) => {
+  const endpoint = new URL('/pair', url.replace(/^ws/, 'http'));
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code, name: `HyperNeo on ${hostname()}` }),
+  }).catch((error: unknown) => ({ error }));
+  if ('error' in response)
+    return { reason: `could not reach ${endpoint.origin}: ${String(response.error)}` };
+  const body = (await response.json().catch(() => ({}))) as {
+    credential?: unknown;
+    error?: unknown;
+  };
+  return response.ok && typeof body.credential === 'string'
+    ? { credential: body.credential }
+    : { reason: `pairing refused (${response.status} ${String(body.error ?? 'no reason')})` };
+};
+
+export async function pairRemoteDaemon(
   input: AttachInput,
+  redeem: RedeemCode
+): Promise<{ value: AttachInput & { credential?: string } } | { reason: AttachResult }> {
+  if (!input.code) return { value: input };
+  const paired = await redeem(input.url, input.code);
+  return 'credential' in paired
+    ? { value: { ...input, credential: paired.credential } }
+    : { reason: { kind: 'rejected', reason: `${input.daemonId}: ${paired.reason}` } };
+}
+
+export function attachRemoteDaemon(
+  input: AttachInput & { credential?: string },
   registry: RemoteDaemonRegistry
 ): AttachResult {
-  registry.attach(input.daemonId, input.url);
+  registry.attach(input.daemonId, input.url, input.credential);
   return {
     kind: 'attached',
     daemonId: input.daemonId,
@@ -60,23 +96,28 @@ export function attachRemoteDaemon(
 }
 
 const runAttachDaemon = (superpipe({})('attach-remote-daemon') as PipelineAPI)
-  .input(['input', 'caller', 'registry'])
+  .input(['input', 'caller', 'registry', 'redeem'])
   .pipe(requireRpcAttachCaller, ['input', 'caller'], 'result:outcome')
+  .pipe(pairRemoteDaemon, ['outcome', 'redeem'], 'result:outcome')
   .pipe(attachRemoteDaemon, ['outcome', 'registry'], 'outcome')
   .endAsync('outcome') as (
   input: AttachInput,
   caller: OperationCaller,
-  registry: RemoteDaemonRegistry
+  registry: RemoteDaemonRegistry,
+  redeem: RedeemCode
 ) => Promise<AttachResult>;
 
-export function createAttachDaemonOperation(registry: RemoteDaemonRegistry) {
+export function createAttachDaemonOperation(
+  registry: RemoteDaemonRegistry,
+  redeem: RedeemCode = redeemRemotePairingCode
+) {
   return defineOperation({
     name: 'daemon.attach',
     policy: { safetyClass: 'human_only' },
     description:
-      'Attach a remote HyperNeo daemon by MessageHub websocket URL so its sessions become addressable as "daemon:<daemonId>::session:<sessionId>". Only a caller on the RPC door can attach a daemon; agent callers are rejected. The attachment is saved in global settings, restored when this daemon process restarts, and replaced when the same id is attached again. No connection is opened until the first forwarded call.',
+      'Attach a remote HyperNeo daemon by MessageHub websocket URL so its sessions become addressable as "daemon:<daemonId>::session:<sessionId>". Only a caller on the RPC door can attach a daemon; agent callers are rejected. The attachment is saved in global settings, restored when this daemon process restarts, and replaced when the same id is attached again. With `code`, a pairing code made on the remote daemon, this daemon pairs with it first and sends that credential on every connection; the credential is stored apart from settings and never returned. No connection is opened until the first forwarded call.',
     inputSchema: AttachDaemonInputSchema,
     resultSchema: AttachDaemonResultSchema,
-    execute: (input, caller) => runAttachDaemon(input, caller, registry),
+    execute: (input, caller) => runAttachDaemon(input, caller, registry, redeem),
   });
 }

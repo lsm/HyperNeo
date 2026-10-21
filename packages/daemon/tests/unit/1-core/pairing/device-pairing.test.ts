@@ -4,6 +4,7 @@ import { createPairRoute } from '../../../../src/lib/pairing/pair-route.ts';
 import {
   ALLOW_NEEDS_PAIRED_HUMAN,
   createDevicePairingOperations,
+  NEEDS_PAIRED_HUMAN,
   NO_HUMAN_DEVICE,
 } from '../../../../src/lib/pairing/pairing-operations.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
@@ -22,7 +23,13 @@ function setup(start = 1_000_000) {
   const repo = new DevicePairingRepository(db);
   const limiter = createPairingLimiter();
   const route = createPairRoute({ repo, limiter, now: clock.now });
-  const ops = createDevicePairingOperations({ repo: () => repo, limiter, now: clock.now });
+  const revoked: string[] = [];
+  const ops = createDevicePairingOperations({
+    repo: () => repo,
+    limiter,
+    now: clock.now,
+    revoked: (deviceId) => revoked.push(deviceId),
+  });
   const call = (name: string, input: unknown, caller: OperationCaller) => {
     const op = ops.find((item) => item.name === name)!;
     return op.execute(op.inputSchema.parse(input), caller) as Promise<Record<string, any>>;
@@ -37,7 +44,7 @@ function setup(start = 1_000_000) {
     );
     return { status: response.status, body: (await response.json()) as Record<string, any> };
   };
-  return { db, clock, repo, call, pair };
+  return { db, clock, repo, call, pair, revoked };
 }
 
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
@@ -175,6 +182,61 @@ describe('device pairing', () => {
       (await call('device.pair.create', { kind: 'human' }, pairedHuman(phone.body.deviceId)))
         .approval
     ).toBe('approved');
+    db.close();
+  });
+
+  test('the CLI lists paired devices without secrets and revokes one, closing its connections', async () => {
+    const { db, call, pair, revoked } = setup();
+    const phone = await pair((await call('device.pair.create', { kind: 'human' }, door)).code);
+    const relayCode = await call('device.pair.create', { kind: 'relay' }, door);
+    const phoneCaller = pairedHuman(phone.body.deviceId);
+    await call('device.pair.approve', { codeId: relayCode.codeId }, phoneCaller);
+    const relay = await pair(relayCode.code, 'Relay');
+    const listed = await call('device.list', {}, door);
+    expect(listed.devices).toEqual([
+      expect.objectContaining({
+        id: phone.body.deviceId,
+        name: 'Phone',
+        kind: 'human',
+        revokedAt: null,
+      }),
+      expect.objectContaining({
+        id: relay.body.deviceId,
+        name: 'Relay',
+        kind: 'relay',
+        revokedAt: null,
+      }),
+    ]);
+    expect(JSON.stringify(listed)).not.toContain(relay.body.credential);
+    expect(await call('device.revoke', { deviceId: relay.body.deviceId }, agent)).toMatchObject({
+      ok: false,
+    });
+    expect(await call('device.revoke', { deviceId: relay.body.deviceId }, human)).toEqual({
+      ok: false,
+      reason: NEEDS_PAIRED_HUMAN,
+    });
+    expect(await call('device.revoke', { deviceId: relay.body.deviceId }, door)).toEqual({
+      ok: true,
+    });
+    expect(revoked).toEqual([relay.body.deviceId]);
+    expect(await call('device.revoke', { deviceId: relay.body.deviceId }, phoneCaller)).toEqual({
+      ok: false,
+      reason: 'not_found: no paired device with that id.',
+    });
+    expect((await call('device.list', {}, phoneCaller)).devices[1].revokedAt).toBeNumber();
+    db.close();
+  });
+
+  test('revoking the only phone does not reopen pairing without Allow', async () => {
+    const { db, call, pair } = setup();
+    const phone = await pair((await call('device.pair.create', { kind: 'human' }, door)).code);
+    expect(await call('device.revoke', { deviceId: phone.body.deviceId }, door)).toEqual({
+      ok: true,
+    });
+    expect(await call('device.pair.create', { kind: 'human' }, door)).toEqual({
+      ok: false,
+      reason: NO_HUMAN_DEVICE,
+    });
     db.close();
   });
 

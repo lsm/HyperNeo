@@ -4,6 +4,7 @@ import { createArtifactRegistration } from '../artifacts/register-operation.ts';
 import { createBuildOperation } from '../system/build-operation.ts';
 import { daemonPairingLimiter } from '../pairing/pairing-limiter.ts';
 import { createDevicePairingOperations } from '../pairing/pairing-operations.ts';
+import { announceDeviceRevoked } from '../pairing/upgrade-auth.ts';
 import { DevicePairingRepository } from '../../storage/repositories/device-pairing-repository.ts';
 import type { Database } from '../../storage/database.ts';
 import { transitionStandaloneTask } from '../../storage/tasks/transition-task.ts';
@@ -118,6 +119,7 @@ export function createDatabaseOperationCatalog(
         repo: () => new DevicePairingRepository(db.getDatabase()),
         limiter: daemonPairingLimiter,
         now: Date.now,
+        revoked: announceDeviceRevoked,
       }),
       createDaemonSnapshotOperation({
         readResources: (input) => new DaemonInventoryRepository(db.getDatabase()).read(input),
