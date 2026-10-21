@@ -71,7 +71,7 @@ describe('claude-desktop start', () => {
       silent?: boolean;
       checkout?: { repo: string; linked: boolean };
       permissionMode?: string;
-      desktop?: 'opens' | 'never' | 'cli-owned' | 'second';
+      desktop?: 'opens' | 'never' | 'cli-owned' | 'second' | 'imported';
     } = {}
   ) {
     let live: {
@@ -136,15 +136,16 @@ describe('claude-desktop start', () => {
               lastActivityAt: clock,
             })
           );
-          live = [
-            {
-              sessionId: 'u1',
-              pid: 42,
-              owner: desktop === 'cli-owned' ? 'cli' : 'desktop',
-              status: 'idle',
-              name: 'Bigger font',
-            },
-          ];
+          if (desktop !== 'imported')
+            live = [
+              {
+                sessionId: 'u1',
+                pid: 42,
+                owner: desktop === 'cli-owned' ? 'cli' : 'desktop',
+                status: 'idle',
+                name: 'Bigger font',
+              },
+            ];
         }
         if (args[1] === '-p' && !code && !options.silent)
           appendFileSync(
@@ -248,6 +249,11 @@ describe('claude-desktop start', () => {
   test.each([
     ['never', 'Claude Desktop did not import the new session.', 120_000],
     ['cli-owned', 'Claude Desktop did not open the new session.', 0],
+    [
+      'imported',
+      'Claude Desktop imported the new session but will not run it until you open it: claude://claude.ai/epitaxy/local_u1.',
+      60_000,
+    ],
   ] as const)(
     'when Desktop %s, the task is never run and the human is asked, within a bounded wait',
     async (desktop, why, waited) => {

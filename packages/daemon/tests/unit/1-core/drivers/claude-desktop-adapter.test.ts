@@ -909,6 +909,38 @@ describe('claude-desktop adapter against the app session records', () => {
       expect(clock).toBe(0);
     });
 
+    test('says plainly when the session folder is gone, without launching anything', async () => {
+      let launches = 0;
+      const driver = createClaudeDesktopAdapter({
+        sessionsDir: dir,
+        projectsDir: join(dir, 'projects'),
+        machine: 'laptop',
+        liveSessions: async () => [],
+        folderExists: (folder) => folder !== '/focus/ops',
+        makeFolder: () => {},
+        homeDir: '/Users/test',
+        gitCheckout: async () => null,
+        newId: () => 'unused',
+        sleep: async (ms) => {
+          clock += ms;
+        },
+        now: () => clock,
+        spawn: () => {
+          launches++;
+          throw new Error("ENOENT: no such file or directory, posix_spawn 'script'");
+        },
+      });
+      clock = 0;
+      expect(await driver.send?.(ref, 'run the audit', context)).toEqual({
+        ok: false,
+        reason: 'unreachable',
+        detail:
+          'woodpecker is not open in Claude Desktop, and its folder /focus/ops no longer exists, so it cannot be reopened.',
+      });
+      expect(launches).toBe(0);
+      expect(clock).toBe(0);
+    });
+
     test('never runs it headless: when Desktop does not open it, the send says so within a bounded wait', async () => {
       const { driver, inbox } = openingAdapter(false);
       expect(await driver.send?.(ref, 'run the audit', context)).toEqual({
