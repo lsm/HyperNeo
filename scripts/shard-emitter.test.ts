@@ -77,3 +77,18 @@ test('shard hashes match POSIX cksum for UTF-8 and multi-byte lengths', () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('checksum CLI preserves non-UTF-8 path bytes', () => {
+  const path = Buffer.concat([
+    Buffer.from('fixture/'),
+    Buffer.from([0xff, 0x80, 0xc0]),
+    Buffer.from('.test.ts'),
+  ]);
+  const checksum = execFileSync('cksum', [], { input: path, encoding: 'utf8' }).split(' ')[0];
+  const output = execFileSync('node', [resolve('scripts/lib/shard-hash.mjs')], {
+    input: Buffer.concat([path, Buffer.from([0])]),
+  });
+  expect(output).toEqual(
+    Buffer.concat([Buffer.from(`${checksum.padStart(10, '0')}\t`), path, Buffer.from('\n')])
+  );
+});
