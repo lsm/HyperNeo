@@ -19,7 +19,7 @@ export interface ReferenceBinding extends ArtifactContextBinding {
 }
 export interface StoredReferenceSource {
   readonly key: SourceKey;
-  readonly text: string;
+  readonly text: string | readonly string[];
   readonly bindings: readonly ReferenceBinding[];
 }
 interface Dependencies {
@@ -71,9 +71,9 @@ async function stored(request: Request, deps: Dependencies) {
     source.key.revisionId !== request.source.revisionId
   )
     return { reason: refuse() };
-  const candidate = previewReferenceCandidates(source.text).find(
-    (item) => item.reference === request.reference
-  );
+  const candidate = (typeof source.text === 'string' ? [source.text] : source.text)
+    .flatMap(previewReferenceCandidates)
+    .find((item) => item.reference === request.reference);
   return candidate ? { value: { candidate, bindings: source.bindings } } : { reason: refuse() };
 }
 
