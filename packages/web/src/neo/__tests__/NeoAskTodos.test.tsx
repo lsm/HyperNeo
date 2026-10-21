@@ -8,6 +8,7 @@ import { locale } from '../../lib/i18n/index.ts';
 
 beforeEach(() => {
   locale.value = 'zh-Hans';
+  sessionStorage.clear();
 });
 
 afterEach(() => {
@@ -88,6 +89,80 @@ const entry = (patch: Partial<NeoAskEntry>): NeoAskEntry => ({
 });
 
 describe('NeoAskTodos', () => {
+  const detailed = () =>
+    entry({
+      todos: ['a', 'b', 'c'].map((id) =>
+        todo(id, {
+          status: `Working on ${id}: ${'A long status line. '.repeat(15)}`,
+          report: `Report ${id}: ${'Detailed synthetic report. '.repeat(12)}`,
+          evidence: `Evidence ${id}: ${'Observed synthetic result. '.repeat(12)}`,
+        })
+      ),
+    });
+
+  it('collapses three detailed todos by default, opens one, and expands or collapses all including the first', () => {
+    locale.value = 'en';
+    const data = detailed();
+    const app = render(<NeoAskTodos entry={data} onAnswer={vi.fn()} />);
+    for (const item of data.todos) {
+      expect(app.getByText(item.title)).toBeTruthy();
+      expect(app.queryByText(item.report!)).toBeNull();
+      expect(app.queryByText(item.evidence!)).toBeNull();
+    }
+    const first = app.getByRole('button', { name: 'Show details: Todo a' });
+    expect(first.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(first);
+    expect(app.getByText(data.todos[0].report!)).toBeTruthy();
+    expect(app.getByText(data.todos[0].evidence!)).toBeTruthy();
+    expect(app.queryByText(data.todos[1].report!)).toBeNull();
+    expect(app.queryByText(data.todos[2].report!)).toBeNull();
+    fireEvent.click(app.getByRole('button', { name: 'Expand all' }));
+    for (const item of data.todos) expect(app.getByText(item.report!)).toBeTruthy();
+    fireEvent.click(app.getByRole('button', { name: 'Collapse all' }));
+    for (const item of data.todos) {
+      expect(app.queryByText(item.report!)).toBeNull();
+      expect(
+        app
+          .getByRole('button', { name: `Show details: ${item.title}` })
+          .getAttribute('aria-expanded')
+      ).toBe('false');
+    }
+  });
+
+  it('remembers each card within the session across switches and remounts without auto-opening new todos', () => {
+    locale.value = 'en';
+    const data = detailed();
+    const other = { ...data, ask: { ...data.ask, id: 'other', title: 'Other card' } };
+    const app = render(<NeoAskTodos entry={data} onAnswer={vi.fn()} />);
+    fireEvent.click(app.getByRole('button', { name: 'Show details: Todo a' }));
+    app.rerender(<NeoAskTodos entry={other} onAnswer={vi.fn()} />);
+    expect(app.queryByText(data.todos[0].report!)).toBeNull();
+    fireEvent.click(app.getByRole('button', { name: 'Show details: Todo b' }));
+    app.rerender(<NeoAskTodos entry={data} onAnswer={vi.fn()} />);
+    expect(app.getByText(data.todos[0].report!)).toBeTruthy();
+    expect(app.queryByText(data.todos[1].report!)).toBeNull();
+    app.unmount();
+    const again = render(
+      <NeoAskTodos entry={{ ...data, todos: [...data.todos, todo('new')] }} onAnswer={vi.fn()} />
+    );
+    expect(again.getByText(data.todos[0].report!)).toBeTruthy();
+    expect(again.getByRole('button', { name: 'Show details: Todo new' }).tagName).toBe('BUTTON');
+  });
+
+  it('keeps Open separate from the disclosure and matches the iOS all-control translations', () => {
+    const data = detailed();
+    data.todos[0].link = '/session/worker';
+    const onOpen = vi.fn();
+    const app = render(<NeoAskTodos entry={data} onAnswer={vi.fn()} onOpen={onOpen} />);
+    expect(app.getByRole('button', { name: '全部展开' })).toBeTruthy();
+    fireEvent.click(app.getByRole('button', { name: '打开 Todo a' }));
+    expect(onOpen).toHaveBeenCalledWith('/session/worker', 'Todo a');
+    expect(app.queryByText(data.todos[0].report!)).toBeNull();
+    fireEvent.click(app.getByRole('button', { name: '全部展开' }));
+    fireEvent.click(app.getByRole('button', { name: '全部收起' }));
+    expect(app.queryByText(data.todos[0].report!)).toBeNull();
+  });
+
   it.each(['open', 'answered', 'retired'] as const)(
     'renders safe question Markdown in the %s state with the real chat renderer',
     async (state) => {
