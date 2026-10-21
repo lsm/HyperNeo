@@ -2138,7 +2138,12 @@ questions require a new requestId. Evidence is retained even on failure in
 
 Unit contracts also replace one of twenty rules while keeping the other nineteen,
 refuse guessed/queued/nonhuman direct-save triggers, and roll back consent and
-all edits if application fails. Only synthetic fixtures are used. This journey
+all edits on infrastructure failure. A stale proposal (a missing removal or a
+changed rule cap) records the human answer without changing rules. Chat sends
+remain accepted and notify Neo; `neo.rule.applyAnswer` returns the typed refusal.
+The real helper exercises a stale chat yes through `neo.message.send`, and the
+unit journey checks notification and retry idempotency for both stale cases.
+Only synthetic fixtures are used. This journey
 proves the daemon operation and snapshot surfaces; GUI rendering, model choices,
 notification completion and deployment are not verified. Neo's default guidance
 asks for consent first; the existing direct human-message path remains available.

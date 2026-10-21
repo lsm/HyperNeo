@@ -136,7 +136,7 @@ describe('human-approved standing rules', () => {
     ).toMatchObject({ value: { ok: false, reason: 'question_closed' } });
     expect(await propose('new-request')).not.toBe(id);
   });
-  test('a stale cap cannot discard another rule or record consent for a failed edit', async () => {
+  test('a stale cap records consent without discarding another rule', async () => {
     const id = await propose('cap-change', {
       add: [...edit.add, 'One more rule.'],
       remove: edit.remove,
@@ -148,9 +148,12 @@ describe('human-approved standing rules', () => {
     db.updateGlobalSettings({ neo: { standingRules: current } });
     expect(
       await invoke('neo.question.answer', { questionId: id, answer: 'yes' }, human)
-    ).toMatchObject({ kind: 'failed' });
+    ).toMatchObject({ value: { ok: true } });
     expect(saved()).toEqual(current);
-    expect(service.todos.getQuestion(id)?.state).toBe('open');
+    expect(service.todos.getQuestion(id)?.state).toBe('answered');
+    expect(await invoke('neo.rule.applyAnswer', { questionId: id })).toMatchObject({
+      value: { ok: false, reason: expect.stringContaining('At most 20 rules') },
+    });
   });
   test('an unbound human yes and a changed question body cannot authorize rule edits', async () => {
     const before = saved();

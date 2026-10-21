@@ -437,7 +437,6 @@ export class NeoAskTodoRepository {
         if (answer === 'yes') {
           applyPackPreferenceAnswer(this.db, question.id);
           const rules = applyNeoRuleAnswer(this.db, question.id);
-          if (!rules.ok && rules.reason !== 'no_bound_proposal') throw new Error(rules.reason);
           rulesChanged = rules.ok && rules.changed;
         }
       }
