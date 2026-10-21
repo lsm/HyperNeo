@@ -2133,6 +2133,7 @@ describe('QueryRunner', () => {
     it.each([
       ['startup', 'SDK startup timeout - query aborted'],
       ['transient connection', 'stream closed'],
+      ['stream-stall', 'Model stream stalled'],
     ])('delivers %s retry input to the replacement SDK', async (_kind, errorMessage) => {
       const queue = new MessageQueue();
       const previousQuery = (query as unknown as ReturnType<typeof mock>).getMockImplementation();
@@ -2155,6 +2156,8 @@ describe('QueryRunner', () => {
                 void input.next().then((next) => {
                   if (!next.done) observe({ recipient: 'closed SDK', uuid: next.value.uuid });
                 });
+                if (_kind === 'stream-stall')
+                  yield { type: 'system', subtype: 'init' } as SDKMessage;
                 throw new Error(errorMessage);
               }
               const next = await input.next();
