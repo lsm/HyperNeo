@@ -230,6 +230,15 @@ export class NeoAskTodoRepository {
     ).map(toTodo);
   }
 
+  listTodosForAsks(askIds: readonly string[]): NeoTodo[] {
+    return (
+      this.db
+        .prepare(`${TODO_SELECT} WHERE ask_id IN (SELECT value FROM json_each(?))
+          ORDER BY ask_id, position, created_at`)
+        .all(JSON.stringify(askIds)) as TodoRow[]
+    ).map(toTodo);
+  }
+
   addTodo(
     id: string,
     askId: string,
@@ -353,6 +362,15 @@ export class NeoAskTodoRepository {
       this.db
         .prepare(`${QUESTION_SELECT} WHERE ask_id = ? ORDER BY created_at, rowid`)
         .all(askId) as QuestionRow[]
+    ).map(toQuestion);
+  }
+
+  listQuestionsForAsks(askIds: readonly string[]): NeoQuestion[] {
+    return (
+      this.db
+        .prepare(`${QUESTION_SELECT} WHERE ask_id IN (SELECT value FROM json_each(?))
+          ORDER BY ask_id, created_at, rowid`)
+        .all(JSON.stringify(askIds)) as QuestionRow[]
     ).map(toQuestion);
   }
 

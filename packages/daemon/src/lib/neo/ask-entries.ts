@@ -79,9 +79,14 @@ export function projectNeoAskEntries(
   sessions: NeoTodoSessionRepository,
   packs: readonly NeoPack[]
 ): NeoAskEntry[] {
+  if (!asks.length) return [];
+  const ids = asks.map((ask) => ask.id);
+  const allTodos = store.listTodosForAsks(ids);
+  const allQuestions = store.listQuestionsForAsks(ids);
+  const links = sessions.readLinksForTodos(allTodos.map((todo) => todo.id));
   return asks.map((ask) => {
-    const todos = store.listTodos(ask.id);
-    const questions = store.listQuestions(ask.id);
+    const todos = allTodos.filter((todo) => todo.askId === ask.id);
+    const questions = allQuestions.filter((question) => question.askId === ask.id);
     return {
       ask,
       state: neoAskEntryState(ask, todos, questions),
@@ -92,7 +97,7 @@ export function projectNeoAskEntries(
           todos,
           packs.find((pack) => pack.id === todo.check?.pack)?.todos?.statusLine(todo) ?? null
         ),
-        ...sessions.readLinks(todo.id),
+        ...(links.get(todo.id) ?? { link: null, remoteLink: null }),
       })),
       questions: questions.map((question) => {
         if (question.kind !== 'start' || !question.startTodos?.length) return question;
