@@ -3,6 +3,7 @@ import {
   ARTIFACT_KINDS,
   ARTIFACT_REFUSALS,
   type ArtifactLimits,
+  type ArtifactFileMetadata,
   type ArtifactProjection,
   type ArtifactReadResult,
   type ArtifactRef,
@@ -90,3 +91,12 @@ export const ArtifactReadResultSchema: z.ZodType<ArtifactReadResult> = z.union([
         value.complete === (value.nextOffset === value.byteLength)
     ),
 ]);
+
+export const ArtifactFileMetadataSchema: z.ZodType<ArtifactFileMetadata> = z.strictObject({
+  context: z.strictObject({ kind: z.enum(['todo', 'ask']), id: z.string().min(1).max(200) }),
+  artifact: ArtifactRefSchema,
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  createdAt: byteCount,
+  sourcePath: z.string(),
+  producer: z.strictObject({ adapter: z.string().min(1), id: z.string().min(1) }),
+});
