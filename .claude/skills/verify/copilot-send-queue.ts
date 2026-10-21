@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -75,6 +75,7 @@ try {
   if (mode === 'resume' || mode === 'all') {
     const work = await start('settled');
     const before = await done(work);
+    rmSync(join(run, 'data/copilot-workers/receipts'), { recursive: true });
     await restart();
     const second = await deliver(work, 'settled');
     assert.notEqual(second.receipt!.inputId, work.receipt!.inputId);

@@ -95,6 +95,7 @@ describe('Copilot owned input delivery', () => {
     const f = fixture();
     const work = await f.start('settled');
     const first = await settled(f, work);
+    rmSync(join(f.run, 'owned/receipts'), { recursive: true });
     await f.restart();
     const result = await f.send(work, 'settled');
     expect(result).toMatchObject({
