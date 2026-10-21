@@ -164,6 +164,41 @@ describe('idle open asks', () => {
 });
 
 describe('neo todo runner', () => {
+  test.each([
+    { delivered: false, queuedSubmissionId: 'queue-1' },
+    {
+      delivered: false,
+      unconfirmed: true,
+      receipt: { executionId: 'worker-1', inputId: 'input-1' },
+    },
+    { delivered: true, steeredIntoTurnId: 'turn-1' },
+  ])('retains the latest dispatch facts through start and continue: %j', async (delivery) => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      h.db
+        .prepare('UPDATE neo_todo_sessions SET target = ? WHERE todo_id = ?')
+        .run(JSON.stringify({ verb: 'send', ref }), todo.id);
+      h.setStatus({
+        ok: true,
+        value: { ref, status: 'done', lastActivityAt: 1000, recentInputs: [] },
+      });
+      h.setSend({ ok: true, value: delivery });
+      await h.runner.start(todo.id);
+      expect(new NeoTodoSessionRepository(h.db).readSent(todo.id)).toMatchObject({ delivery });
+      const next = { delivered: false, queuedSubmissionId: 'queue-2' };
+      h.setSend({ ok: true, value: next });
+      await h.runner.proceed(todo.id, 'Next synthetic instruction');
+      expect(new NeoTodoSessionRepository(h.db).readSent(todo.id)).toMatchObject({
+        delivery: next,
+      });
+      h.sessions.recordRef(todo.id, { adapter: 'hyperneo', id: 'different-worker' });
+      expect(h.sessions.readSent(todo.id)).not.toHaveProperty('delivery');
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('follows a stopped todo session for a later PR report without writing legacy work', async () => {
     const { db, store, sessions, runner, add, setStatus, calls, told } = setup();
     const todo = add({ pack: 'coding', kind: 'pr_merged', params: {} });
