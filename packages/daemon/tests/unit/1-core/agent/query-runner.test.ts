@@ -2130,7 +2130,10 @@ describe('QueryRunner', () => {
       }
     });
 
-    it('delivers the startup retry input to the replacement SDK instead of the closed SDK', async () => {
+    it.each([
+      ['startup', 'SDK startup timeout - query aborted'],
+      ['transient connection', 'stream closed'],
+    ])('delivers %s retry input to the replacement SDK', async (_kind, errorMessage) => {
       const queue = new MessageQueue();
       const previousQuery = (query as unknown as ReturnType<typeof mock>).getMockImplementation();
       buildSpy.mockResolvedValue({ model: 'claude-sonnet-4-20250514' });
@@ -2152,7 +2155,7 @@ describe('QueryRunner', () => {
                 void input.next().then((next) => {
                   if (!next.done) observe({ recipient: 'closed SDK', uuid: next.value.uuid });
                 });
-                throw new Error('SDK startup timeout - query aborted');
+                throw new Error(errorMessage);
               }
               const next = await input.next();
               observe({ recipient: 'replacement SDK', uuid: next.value?.uuid });
