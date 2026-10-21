@@ -35,6 +35,7 @@ const hostile = `<!doctype html><html><head><meta http-equiv="refresh" content="
 writeFileSync(join(workspace, 'hostile.html'), hostile);
 writeFileSync(join(workspace, 'big.html'), `<p>${'x'.repeat(2 * 1024 * 1024)}</p>`);
 writeFileSync(join(workspace, 'notes.md'), '# Not HTML\n');
+writeFileSync(join(workspace, 'deep.html'), `${'<div>'.repeat(200000)}Kept`);
 const register = async (path: string) => (await call('artifact.file.register', { requestId: path, context: { kind: 'todo', id: 'todo' }, path, title: path })).artifact.artifactId;
 const page = await call('artifact.file.html', { artifactId: await register('hostile.html') });
 assert.equal(page.accepted, true, JSON.stringify(page));
@@ -49,6 +50,7 @@ assert.deepEqual(page.links, [{ text: 'repo', href: 'https://github.com/lsm/Hype
 assert.deepEqual(await call('artifact.file.html', { artifactId: await register('notes.md') }), { accepted: false, reason: 'unsupported_type' });
 assert.deepEqual(await call('artifact.file.html', { artifactId: await register('big.html') }), { accepted: false, reason: 'size_limit' });
 assert.deepEqual(await call('artifact.file.html', { artifactId: 'missing' }), { accepted: false, reason: 'unavailable' });
+assert.deepEqual(await call('artifact.file.html', { artifactId: await register('deep.html') }), { accepted: false, reason: 'size_limit' });
 const id = (await call('artifact.file.register', { requestId: 'hostile.html', context: { kind: 'todo', id: 'todo' }, path: 'hostile.html', title: 'hostile.html' })).artifact.artifactId;
 assert.deepEqual(await call('artifact.file.html', { artifactId: id }, { ...worker, sessionId: 'foreign' }), { accepted: false, reason: 'unavailable' });
-console.log(JSON.stringify({ inertDocument: true, cspFirst: true, textKept: true, scriptsNoticed: true, hostLinks: true, typeRefused: true, sizeRefused: true, authorityRechecked: true }));
+console.log(JSON.stringify({ inertDocument: true, cspFirst: true, textKept: true, scriptsNoticed: true, hostLinks: true, typeRefused: true, sizeRefused: true, depthRefused: true, authorityRechecked: true }));

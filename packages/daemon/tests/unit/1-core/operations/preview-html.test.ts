@@ -134,6 +134,18 @@ describe('artifact HTML preview document', () => {
     ).toContain('<style>ul>li{color:red}p::after{content:"&"}</style>');
   });
 
+  test.each(['/* ', 'url(', "url('", '@import ', 'expression ', 'url(data:image/png;base64,'])(
+    'cleans a 256 KiB stylesheet of repeated %s in linear time',
+    (piece) => {
+      const css = piece.repeat(Math.ceil((256 * 1024) / piece.length));
+      const started = performance.now();
+      const prepared = prepareArtifactHtml(`<style>${css}</style><p style="${css}">Kept</p>`);
+      expect(performance.now() - started).toBeLessThan(1000);
+      expectInert(prepared.document);
+      expect(prepared.document).toContain('Kept');
+    }
+  );
+
   test('bounds the host link list a page can produce', () => {
     const anchor = `<a href="https://example.com/x">${'t'.repeat(500)}</a>`;
     const prepared = prepareArtifactHtml(anchor.repeat(300));
@@ -180,6 +192,7 @@ describe('artifact HTML preview document', () => {
         hostLinks: true,
         typeRefused: true,
         sizeRefused: true,
+        depthRefused: true,
         authorityRechecked: true,
       });
     } finally {
