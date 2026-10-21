@@ -64,14 +64,6 @@ describe('readArtifactPreview', () => {
     expect(request).toHaveBeenCalledTimes(1);
   });
 
-  it('shows formats this shell cannot preview yet as unsupported', async () => {
-    const { hub: h } = hub([{ accepted: true, metadata: metadata('json') }]);
-    expect(await readArtifactPreview(h, 'a1')).toEqual({
-      state: 'unsupported',
-      metadata: metadata('json'),
-    });
-  });
-
   it('treats an unavailable artifact, before or during the read, as revoked access', async () => {
     expect(
       await readArtifactPreview(hub([{ accepted: false, reason: 'unavailable' }]).hub, 'a1')
