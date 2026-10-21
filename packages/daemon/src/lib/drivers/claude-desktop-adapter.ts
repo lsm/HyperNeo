@@ -68,6 +68,7 @@ const DELIVERY_POLLS = 15;
 const OPEN_WAIT_MS = 60_000;
 const OPEN_POLL_MS = 2_000;
 const IMPORT_WAIT_MS = 60_000;
+const DESKTOP_HANDOFFS = 2;
 
 const RecordSchema = z.object({
   sessionId: z.string().startsWith('local_'),
@@ -1271,12 +1272,15 @@ export async function startClaudeSession(
   });
   if (!(await waitFor(() => cliDone, BOOTSTRAP_TIMEOUT_MS, deps)))
     return needsYou('The opening Claude turn did not finish in time.');
-  try {
-    launchInClaudeDesktop(cliSessionId, cwd, deps);
-  } catch {
-    return needsYou('Claude Desktop could not be opened.');
+  let record: ClaudeDesktopRecord | null = null;
+  for (let handoff = 0; handoff < DESKTOP_HANDOFFS && !record; handoff++) {
+    try {
+      launchInClaudeDesktop(cliSessionId, cwd, deps);
+    } catch {
+      return needsYou('Claude Desktop could not be opened.');
+    }
+    record = await awaitDesktopRecord(cliSessionId, deps);
   }
-  const record = await awaitDesktopRecord(cliSessionId, deps);
   if (!record) return needsYou('Claude Desktop did not import the new session.');
   const live = await waitUntilLive(cliSessionId, deps);
   const owner = live ? requireClaudePeerOwner(cliSessionId, live) : null;

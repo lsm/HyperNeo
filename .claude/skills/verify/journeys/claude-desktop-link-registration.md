@@ -12,8 +12,8 @@ Use fresh synthetic HOME/data and a free non-8399 port. The real isolated daemon
 calls a synthetic CLI that records each input and exits, and a Desktop-launch
 `script` stub that fails, so Desktop never imports the session. Public `work.start`
 must run only the one-line opening turn in the CLI (`evidence/cli-inputs` holds
-"Session opened by Neo…", never the task), wait its bounded import window (about
-a minute), and return `needs_you` with no link and the watch hint "Claude Desktop
+"Session opened by Neo…", never the task), wait its bounded import window (two
+handoffs of up to a minute each), and return `needs_you` with no link and the watch hint "Claude Desktop
 did not import the new session. The task was not started. …". `work.status` and
 `work.find` show no link either. The helper then writes a synthetic Desktop-store
 record and repeats find/status: the link must appear without restarting the daemon.

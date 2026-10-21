@@ -49,6 +49,7 @@ describe('claude-desktop start', () => {
   let effects: string[];
   let killed: string[];
   let inbox: string[];
+  let handoffs: number;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'claude-start-'));
@@ -58,6 +59,7 @@ describe('claude-desktop start', () => {
     effects = [];
     killed = [];
     inbox = [];
+    handoffs = 0;
   });
 
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
@@ -69,7 +71,7 @@ describe('claude-desktop start', () => {
       silent?: boolean;
       checkout?: { repo: string; linked: boolean };
       permissionMode?: string;
-      desktop?: 'opens' | 'never' | 'cli-owned';
+      desktop?: 'opens' | 'never' | 'cli-owned' | 'second';
     } = {}
   ) {
     let live: {
@@ -116,7 +118,12 @@ describe('claude-desktop start', () => {
         const transcripts = join(dir, 'projects', cwd.replace(/[/.]/g, '-'));
         mkdirSync(transcripts, { recursive: true });
         const desktop = options.desktop ?? 'opens';
-        if (args.includes('--desktop') && desktop !== 'never') {
+        if (args.includes('--desktop')) handoffs++;
+        if (
+          args.includes('--desktop') &&
+          desktop !== 'never' &&
+          (desktop !== 'second' || handoffs === 2)
+        ) {
           const scope = join(dir, 'sessions/account/scope');
           mkdirSync(scope, { recursive: true });
           writeFileSync(
@@ -228,8 +235,17 @@ describe('claude-desktop start', () => {
     expect(inbox).toEqual(['Raise the body font to 16px.']);
   });
 
+  test('hands off to Desktop once more when the first handoff is not imported', async () => {
+    expect(await adapter({ desktop: 'second' }).start?.(request, user)).toMatchObject({
+      ok: true,
+      value: { status: 'running', link: 'claude://claude.ai/epitaxy/local_u1' },
+    });
+    expect(handoffs).toBe(2);
+    expect(inbox).toEqual(['Raise the body font to 16px.']);
+  });
+
   test.each([
-    ['never', 'Claude Desktop did not import the new session.', 60_000],
+    ['never', 'Claude Desktop did not import the new session.', 120_000],
     ['cli-owned', 'Claude Desktop did not open the new session.', 0],
   ] as const)(
     'when Desktop %s, the task is never run and the human is asked, within a bounded wait',
