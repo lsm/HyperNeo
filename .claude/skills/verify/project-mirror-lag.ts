@@ -17,15 +17,20 @@ import { NeoRepository } from '../../../packages/daemon/src/storage/repositories
 const [mode, portText, runText] = process.argv.slice(2);
 const port = Number(portText),
   run = resolve(runText);
-assert(['reproduce', 'verify'].includes(mode));
+assert(['reproduce', 'verify', 'memory'].includes(mode));
 assert(port > 0 && port !== 8399);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert(!fs.existsSync(join(run, 'data')));
 fs.mkdirSync(join(run, 'home'), { recursive: true });
+if (mode === 'memory') process.chdir(run);
 const app = await createDaemonApp({
-  config: getConfig({ port, host: '127.0.0.1', dbPath: join(run, 'data/mirror.db') }),
+  config: getConfig({
+    port,
+    host: '127.0.0.1',
+    dbPath: mode === 'memory' ? ':memory:' : join(run, 'data/mirror.db'),
+  }),
   verbose: false,
 });
 const repo = new NeoRepository(app.db.getDatabase());
@@ -102,7 +107,7 @@ const find = createFindWorkOperation({
   remote: { list: () => [], invoke: async () => null },
   mirrorProjects: async (found) => {
     fs.writeFileSync(marker, 'go');
-    armed = true;
+    armed = mode !== 'memory';
     const started = performance.now();
     const edit = setTimeout(() => {
       const project = repo.getProject('p0')!;
@@ -110,14 +115,14 @@ const find = createFindWorkOperation({
       concurrentEditMs = performance.now() - started;
     }, 200);
     try {
-      if (mode === 'verify')
+      if (mode !== 'reproduce')
         await mirrorNeoWorkspaceProjectsAsync(
-          app.db.getDbPath(),
+          app.db,
           found,
           () => new Worker(workerEntry, { type: 'module' })
         );
       else mirrorNeoWorkspaceProjects(app.db.getDatabase(), found);
-      await wait(0);
+      await wait(mode === 'memory' ? 220 : 0);
     } finally {
       clearTimeout(edit);
       armed = false;
@@ -168,6 +173,7 @@ try {
   const health = JSON.parse(probeOutput.trim().split('\n').at(-1)!);
   assert.equal(result.places.length, 40);
   assert.equal(repo.listProjects().length, 40);
+  assert(!fs.existsSync(join(run, ':memory:')));
   assert.equal(repo.getProject('p0')?.context, 'Concurrent synthetic edit');
   const aliases = app.db
     .getDatabase()
@@ -186,7 +192,7 @@ try {
   assert.equal(health.data.status, 'ok');
   const initialMaxLagMs = maxLagMs;
   const nativeAt = performance.now();
-  if (mode === 'verify') await mirrorNeoWorkspaceProjectsAsync(app.db.getDbPath(), groups);
+  if (mode === 'verify') await mirrorNeoWorkspaceProjectsAsync(app.db, groups);
   const nativeWorkerMs = mode === 'verify' ? performance.now() - nativeAt : null;
   const report = {
     surface:
@@ -201,12 +207,14 @@ try {
     projects: repo.listProjects().length,
     groups: result.places.length,
     fixture:
-      '40 synthetic tool projects, one1.4s controlled existsSync wait on own workspace; no live data/GitHub/model',
+      mode === 'memory'
+        ? '40 synthetic tool projects, private memory DB, no injected FS wait; 220ms fixture edit barrier'
+        : '40 synthetic tool projects, one1.4s controlled existsSync wait on own workspace; no live data/GitHub/model',
   };
   fs.writeFileSync(join(run, 'observed.json'), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
-  assert.equal(observedDelay, 1, 'fixture must reach real mirror filesystem boundary');
-  if (mode === 'verify') {
+  assert.equal(observedDelay, mode === 'memory' ? 0 : 1);
+  if (mode !== 'reproduce') {
     assert(initialMaxLagMs < 1000);
     assert(health.ms < 250);
     assert(concurrentEditMs !== null && concurrentEditMs < 1000);

@@ -14,6 +14,12 @@ class FixtureWorker {
     return this as unknown as Worker;
   }
 }
+const database = (path: string) => ({
+  getDbPath: () => path,
+  getDatabase: () => {
+    throw new Error('File fixture must use its worker');
+  },
+});
 const turn = () => new Promise((done) => setTimeout(done, 0));
 
 test('an unresponsive worker times out and releases the next mirror', async () => {
@@ -25,13 +31,18 @@ test('an unresponsive worker times out and releases the next mirror', async () =
     return worker.asWorker();
   };
   try {
-    const first = mirrorNeoWorkspaceProjectsAsync('/synthetic/timeout.db', [], spawn).then(
+    const first = mirrorNeoWorkspaceProjectsAsync(
+      database('/synthetic/timeout.db'),
+      [],
+      spawn
+    ).then(
       (value) => ({ value }),
       (error: Error) => ({ error: error.message })
     );
-    const next = mirrorNeoWorkspaceProjectsAsync('/synthetic/timeout.db', [], spawn);
+    const next = mirrorNeoWorkspaceProjectsAsync(database('/synthetic/timeout.db'), [], spawn);
     await vi.advanceTimersByTimeAsync(30_000);
     const stoppedBeforeReply = workers[0].stopped;
+    const workersAfterTimeout = workers.length;
     workers[0].onmessage!({ data: { changed: false } });
     const outcome = await first;
     await vi.advanceTimersByTimeAsync(0);
@@ -39,6 +50,7 @@ test('an unresponsive worker times out and releases the next mirror', async () =
     expect(await next).toBe(false);
     expect(outcome).toEqual({ error: 'Project mirror worker timed out' });
     expect(stoppedBeforeReply).toBe(true);
+    expect(workersAfterTimeout).toBe(2);
     expect(workers.every((worker) => worker.stopped)).toBe(true);
     expect(vi.getTimerCount()).toBe(0);
   } finally {
@@ -53,8 +65,8 @@ test('same-database mirrors complete in order and retain a false result', async 
     workers.push(w);
     return w.asWorker();
   };
-  const first = mirrorNeoWorkspaceProjectsAsync('/synthetic/serial.db', [], spawn);
-  const second = mirrorNeoWorkspaceProjectsAsync('/synthetic/serial.db', [], spawn);
+  const first = mirrorNeoWorkspaceProjectsAsync(database('/synthetic/serial.db'), [], spawn);
+  const second = mirrorNeoWorkspaceProjectsAsync(database('/synthetic/serial.db'), [], spawn);
   await turn();
   expect(workers).toHaveLength(1);
   workers[0].onmessage!({ data: { changed: false } });
@@ -74,7 +86,7 @@ test.each(['reply', 'event', 'post', 'spawn'])(
       w.postMessage = () => {
         throw new Error('synthetic failure');
       };
-    const result = mirrorNeoWorkspaceProjectsAsync(`/synthetic/${kind}.db`, [], () => {
+    const result = mirrorNeoWorkspaceProjectsAsync(database(`/synthetic/${kind}.db`), [], () => {
       if (kind === 'spawn') throw new Error('synthetic failure');
       return w.asWorker();
     });
@@ -85,7 +97,7 @@ test.each(['reply', 'event', 'post', 'spawn'])(
     await rejection;
     if (kind !== 'spawn') expect(w.stopped).toBe(true);
     const next = new FixtureWorker();
-    const retried = mirrorNeoWorkspaceProjectsAsync(`/synthetic/${kind}.db`, [], () =>
+    const retried = mirrorNeoWorkspaceProjectsAsync(database(`/synthetic/${kind}.db`), [], () =>
       next.asWorker()
     );
     await turn();

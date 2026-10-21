@@ -547,7 +547,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       );
     },
     mirrorProjects: async (groups: readonly PlaceGroup[]) => {
-      if (await mirrorNeoWorkspaceProjectsAsync(context.deps.db.getDbPath(), groups))
+      if (await mirrorNeoWorkspaceProjectsAsync(context.deps.db, groups))
         context.deps.messageHub.event('neo.changed', {});
     },
   };

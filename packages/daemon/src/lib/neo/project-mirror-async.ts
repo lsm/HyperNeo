@@ -1,27 +1,33 @@
 import { resolve } from 'node:path';
+import type { Database } from '../../storage/database.ts';
 import type { PlaceGroup } from '../drivers/types.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
+import { mirrorNeoWorkspaceProjects } from './project-mirror.ts';
 
 const pending = new Map<string, Promise<boolean>>();
 const createWorker = () =>
   new Worker(new URL('./project-mirror-worker.ts', import.meta.url).href, { type: 'module' });
 
 export function mirrorNeoWorkspaceProjectsAsync(
-  dbPath: string,
+  db: Pick<Database, 'getDbPath' | 'getDatabase'>,
   groups: readonly PlaceGroup[],
   spawn: () => Worker = createWorker
 ): Promise<boolean> {
-  const path = resolve(dbPath);
+  if (db.getDbPath() === ':memory:')
+    return Promise.resolve(mirrorNeoWorkspaceProjects(db.getDatabase(), groups));
+  const path = resolve(db.getDbPath());
   const run = (pending.get(path) ?? Promise.resolve())
     .catch(() => {})
     .then(
       () =>
         new Promise<boolean>((done, fail) => {
           let worker: Worker | undefined;
+          let timer: ReturnType<typeof setTimeout> | undefined;
           let settled = false;
           const finish = (changed: boolean, error?: Error) => {
             if (settled) return;
             settled = true;
+            clearTimeout(timer);
             worker?.terminate();
             if (error) fail(error);
             else done(changed);
@@ -33,6 +39,10 @@ export function mirrorNeoWorkspaceProjectsAsync(
               else finish(event.data.changed);
             };
             worker.onerror = (event) => finish(false, new Error(event.message));
+            timer = setTimeout(
+              () => finish(false, new Error('Project mirror worker timed out')),
+              30_000
+            );
             worker.postMessage({ dbPath: path, groups });
           } catch (error) {
             finish(false, error instanceof Error ? error : new Error(String(error)));

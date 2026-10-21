@@ -2243,6 +2243,17 @@ results, serialize same-database mirrors, surface failures and allow later retry
 Every owned worker, probe, socket, timer and daemon closes before exit. No live
 DB, existing workspace, credentials, provider, GitHub or GUI is used.
 
+Repeat with `memory` instead of `verify` in another fresh directory. That mode
+uses the daemon's supported private `:memory:` database and retains its original
+connection synchronously, since another connection cannot share it. Without an
+injected filesystem wait, the real RPC must still mirror all projects and aliases,
+preserve the concurrent edit and create no `:memory:` file in its own working
+directory. Its 220 ms edit barrier is fixture time, not a production latency.
+The unresponsive-worker contract advances a fake clock 30 seconds, requires an
+explicit timeout error and termination, and confirms the queued mirror proceeds
+and completion clears its timer. This is technical worker failure protection;
+the private memory fallback does not claim off-thread filesystem responsiveness.
+
 For the associated wake-query attribution, run `wake-live-size.ts verify 9379
 "$RUN"` in another fresh isolated HOME/data directory using the same environment.
 It seeds 107,991 synthetic SDK headers and 2,112 origins across 13 sessions,
