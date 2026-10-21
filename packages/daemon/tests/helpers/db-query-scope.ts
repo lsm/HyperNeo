@@ -36,6 +36,7 @@ export const EXCLUDED_TABLE_NAMES: string[] = [
   'goal_journal',
   'neo_session_messages',
   'neo_todo_sessions',
+  'work_delivery_inputs',
   'neo_questions',
   'neo_pack_preferences',
   'neo_pack_preference_proposals',
