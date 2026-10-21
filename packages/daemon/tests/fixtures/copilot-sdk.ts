@@ -124,6 +124,8 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
       setTimeout(() => {
         event('abort', { reason: 'user_initiated' });
         event('session.idle', { aborted: true });
+        if (process.argv.includes('--late-user-echo'))
+          event('user.message', { messageId: `input-${input}`, interactionId: 'rewritten' });
         if (process.argv.includes('--idle-after-abort')) event('session.idle', {});
       }, 15);
       break;

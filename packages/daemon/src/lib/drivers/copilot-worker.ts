@@ -46,8 +46,9 @@ function projectEvent(state: WorkerState, event: SessionEvent): WorkerState {
         replyReport: '',
         replyAvailability: 'incomplete',
       };
+      if (input.state === 'observed') break;
       next.inputs = { ...next.inputs, [messageId]: { ...input, state: 'observed', interactionId } };
-      next.status = 'running';
+      if (!['failed', 'needs_you', 'stopped'].includes(next.status)) next.status = 'running';
       break;
     }
     case 'assistant.message': {
@@ -73,7 +74,7 @@ function projectEvent(state: WorkerState, event: SessionEvent): WorkerState {
           if (input.state === 'observed' && !input.outcome) input.outcome = 'stopped';
       } else if (
         Object.keys(next.inputs).length &&
-        !['failed', 'needs_you'].includes(next.status)
+        !['failed', 'needs_you', 'stopped'].includes(next.status)
       ) {
         for (const input of Object.values(next.inputs))
           if (input.state === 'observed' && input.replyReport && !input.outcome) {
@@ -199,7 +200,11 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
       )
         return;
       const messageKey =
-        event.type === 'assistant.message' ? `message:${event.data.messageId}` : event.id;
+        event.type === 'assistant.message'
+          ? `message:${event.data.messageId}`
+          : event.type === 'user.message' && event.data.messageId
+            ? `user:${event.data.messageId}`
+            : event.id;
       if (seen.has(messageKey)) return;
       const inputId =
         event.type === 'user.message'
@@ -227,6 +232,7 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
       if (state.status === 'needs_you') throw new Error('Copilot worker is awaiting permission');
       if (submitting + Object.values(state.inputs).filter((input) => !input.outcome).length >= 64)
         throw new Error('Copilot worker has 64 unsettled inputs');
+      if (['failed', 'stopped'].includes(state.status)) state.status = 'queued';
       submitting++;
       try {
         const inputId = await bounded(session.send({ prompt, mode: 'enqueue' }), timeoutMs);
@@ -242,7 +248,10 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
               replyAvailability: 'incomplete',
             },
           };
-        if (state.inputs[inputId].state === 'pending' && state.status !== 'running')
+        if (
+          state.inputs[inputId].state === 'pending' &&
+          !['running', 'needs_you', 'failed', 'stopped'].includes(state.status)
+        )
           state.status = 'queued';
         prune();
         return { executionId: config.sessionId, inputId };
