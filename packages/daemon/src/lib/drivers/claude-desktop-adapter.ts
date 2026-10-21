@@ -103,7 +103,7 @@ const LiveSessionSchema = z.object({
     .transform((waitingFor) => waitingFor?.slice(0, 200) || undefined),
 });
 
-export type ClaudeDesktopRecord = z.infer<typeof RecordSchema>;
+export type ClaudeDesktopRecord = z.infer<typeof RecordSchema> & { desktopRegistered?: true };
 type ClaudeTranscriptLocation = Pick<ClaudeDesktopRecord, 'cliSessionId' | 'cwd' | 'originCwd'>;
 export interface ClaudeLiveSession {
   sessionId: string;
@@ -155,7 +155,9 @@ async function readRecord(path: string, cache: ClaudeRecordCache): Promise<Claud
     const cached = cache.get(path);
     if (cached?.modifiedAt === modifiedAt) return cached.records;
     const record = RecordSchema.safeParse(JSON.parse(await readFile(path, 'utf8')));
-    const records = record.success ? [record.data] : [];
+    const records: ClaudeDesktopRecord[] = record.success
+      ? [{ ...record.data, desktopRegistered: true }]
+      : [];
     cache.set(path, { modifiedAt, records });
     return records;
   } catch {
@@ -271,7 +273,12 @@ function toClaudeWork(
       : { machine, name: 'Chats' },
     status: claudeDesktopWorkStatus(record, live),
     lastActivityAt: record.lastActivityAt,
-    link: `claude://claude.ai/epitaxy/${record.sessionId}`,
+    ...(record.desktopRegistered
+      ? { link: `claude://claude.ai/epitaxy/${record.sessionId}` }
+      : {
+          watchHint:
+            'Watch this Claude Code session via Neo with work.status using this work ref. It is not registered in Claude Desktop yet.',
+        }),
     ...(remoteLink ? { remoteLink } : {}),
   };
 }

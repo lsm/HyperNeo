@@ -1,6 +1,6 @@
 import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-preparation';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -139,7 +139,7 @@ describe('claude-desktop start', () => {
     }
   );
 
-  test('the task itself is the first turn, then the session opens in Desktop', async () => {
+  test('the first task requests Desktop handoff without claiming registration', async () => {
     expect(await adapter().start?.(request, user)).toEqual({
       ok: true,
       value: {
@@ -148,7 +148,8 @@ describe('claude-desktop start', () => {
         place,
         status: 'running',
         lastActivityAt: 1_000,
-        link: 'claude://claude.ai/epitaxy/local_u1',
+        watchHint:
+          'Watch this Claude Code session via Neo with work.status using this work ref. It is not registered in Claude Desktop yet.',
         receipt: { executionId: 'u1', inputId: 'u-task' },
       },
     });
@@ -185,6 +186,40 @@ describe('claude-desktop start', () => {
     expect(
       await driver.status!({ adapter: 'claude-desktop', id: 'local_u1' }, undefined)
     ).toMatchObject({ ok: true, value: { ref: { id: 'local_u1' }, title: 'Bigger font' } });
+  });
+
+  test('only a real Desktop record enables links in find and status', async () => {
+    const driver = adapter();
+    const started = await driver.start!(request, user);
+    const ref = { adapter: 'claude-desktop', id: 'local_u1' };
+    const find = () => driver.find({ includeClosed: true, limit: 20 });
+    expect(started.ok && started.value.link).toBeUndefined();
+    const before = (await find())
+      .flatMap((group) => group.work)
+      .find((work) => work.ref.id === ref.id)!;
+    expect(before.link).toBeUndefined();
+    expect(before.watchHint).toContain('work.status');
+    const pending = await driver.status!(ref);
+    expect(pending.ok && pending.value.link).toBeUndefined();
+    const scope = join(dir, 'sessions/account/scope');
+    mkdirSync(scope, { recursive: true });
+    writeFileSync(
+      join(scope, 'local_u1.json'),
+      JSON.stringify({
+        sessionId: ref.id,
+        cliSessionId: 'u1',
+        cwd: place.folder,
+        title: request.title,
+        lastActivityAt: clock,
+      })
+    );
+    const registered = (await find())
+      .flatMap((group) => group.work)
+      .find((work) => work.ref.id === ref.id)!;
+    expect(registered.link).toBe('claude://claude.ai/epitaxy/local_u1');
+    expect(registered.watchHint).toBeUndefined();
+    const ready = await driver.status!(ref);
+    expect(ready.ok && ready.value.link).toBe(registered.link);
   });
 
   test('uses the prepared directory for CLI creation and desktop without --worktree', async () => {
