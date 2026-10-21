@@ -180,8 +180,14 @@ merge until Neo confirms that the iOS pairing build is merged and installed on t
 that, S8 and S9 each still wait for the human's go.
 
 **Rollback switch.** S8 ships one documented step that turns enforcement off without the
-phone: `hyperneo security enforce off`. It talks to the daemon over the local session door, a
-Unix socket that pairing never gates, so it works from any shell on that Mac. From another
+phone: `hyperneo security enforce off`. It calls a new operation, `device.enforce.off`, over the
+local session door, a Unix socket that pairing never gates, so it works from any shell on that
+Mac. The door runs only its allowlist and stamps callers `principal: 'session-door'`, which
+`isLocalUser` refuses, so S8 adds `device.enforce.off` to `DOOR_OPERATIONS` and lets it accept
+door callers, the same `fromDoor` exception `device.pair.reset_lockout` has. The exception only
+turns enforcement off; turning it on stays human-only in Settings. Agent sessions are handed the
+door too, so an agent on that Mac could turn enforcement off. That widens nothing: they already
+run as the human's user with a shell. Each switch-off is logged and shown in Settings → Devices. From another
 machine the human reaches it over SSH on the tailnet:
 `ssh <user>@<mac>.<tailnet>.ts.net hyperneo security enforce off`. After S9 the same command also
 puts the listen address back to what it was before the Listen-on change. Before S8 merges, the
