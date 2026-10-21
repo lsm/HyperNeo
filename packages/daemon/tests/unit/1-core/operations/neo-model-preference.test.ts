@@ -230,6 +230,44 @@ describe('neo.preferences.set', () => {
     ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('invalid_model') } });
   });
 
+  test('persists ordered fallbacks with their supported thinking and preserves them on primary-only edits', async () => {
+    const fallbacks = [
+      { model: 'claude-opus', provider: 'anthropic', thinkingLevel: 'think16k' },
+      { model: 'deepseek-v4-flash', provider: 'deepseek', thinkingLevel: 'think16k' },
+    ];
+    const first = await invoke('neo.preferences.set', {
+      model: 'claude-opus',
+      provider: 'anthropic',
+      thinkingLevel: 'off',
+      fallbacks,
+    });
+    const expected = [fallbacks[0], { ...fallbacks[1], thinkingLevel: 'off' }];
+    expect(first).toMatchObject({ value: { ok: true, preferences: { fallbacks: expected } } });
+    expect(db.getGlobalSettings().neo?.preferences).toMatchObject({ fallbacks: expected });
+    await invoke('neo.preferences.set', {
+      model: 'claude-opus',
+      provider: 'anthropic',
+      thinkingLevel: 'think8k',
+    });
+    expect(db.getGlobalSettings().neo?.preferences).toMatchObject({ fallbacks: expected });
+    expect(
+      await invoke('neo.preferences.set', {
+        model: 'claude-opus',
+        provider: 'anthropic',
+        thinkingLevel: 'off',
+        fallbacks: [{ model: 'gone', provider: 'anthropic', thinkingLevel: 'off' }],
+      })
+    ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('invalid_model') } });
+    expect(db.getGlobalSettings().neo?.preferences).toMatchObject({ fallbacks: expected });
+    await invoke('neo.preferences.set', {
+      model: 'claude-opus',
+      provider: 'anthropic',
+      thinkingLevel: 'off',
+      fallbacks: [],
+    });
+    expect(db.getGlobalSettings().neo?.preferences).toMatchObject({ fallbacks: [] });
+  });
+
   test('a new Neo session starts on the preference, thinking included', async () => {
     await invoke('neo.preferences.set', {
       model: 'claude-opus',
