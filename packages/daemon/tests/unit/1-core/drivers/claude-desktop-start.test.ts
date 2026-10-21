@@ -11,7 +11,6 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  claudeBootstrapPrompt,
   createClaudeDesktopAdapter,
   selectClaudeStartFolder,
 } from '../../../../src/lib/drivers/claude-desktop-adapter';
@@ -71,7 +70,7 @@ describe('claude-desktop start', () => {
       silent?: boolean;
       checkout?: { repo: string; linked: boolean };
       permissionMode?: string;
-      desktop?: 'opens' | 'never' | 'cli-owned' | 'second' | 'imported';
+      desktop?: 'imported' | 'never';
     } = {}
   ) {
     let live: {
@@ -117,13 +116,9 @@ describe('claude-desktop start', () => {
           : (spawnOptions?.cwd ?? '');
         const transcripts = join(dir, 'projects', cwd.replace(/[/.]/g, '-'));
         mkdirSync(transcripts, { recursive: true });
-        const desktop = options.desktop ?? 'opens';
+        const desktop = options.desktop ?? 'imported';
         if (args.includes('--desktop')) handoffs++;
-        if (
-          args.includes('--desktop') &&
-          desktop !== 'never' &&
-          (desktop !== 'second' || handoffs === 2)
-        ) {
+        if (args.includes('--desktop') && desktop !== 'never') {
           const scope = join(dir, 'sessions/account/scope');
           mkdirSync(scope, { recursive: true });
           writeFileSync(
@@ -136,16 +131,6 @@ describe('claude-desktop start', () => {
               lastActivityAt: clock,
             })
           );
-          if (desktop !== 'imported')
-            live = [
-              {
-                sessionId: 'u1',
-                pid: 42,
-                owner: desktop === 'cli-owned' ? 'cli' : 'desktop',
-                status: 'idle',
-                name: 'Bigger font',
-              },
-            ];
         }
         if (args[1] === '-p' && !code && !options.silent)
           appendFileSync(
@@ -205,7 +190,7 @@ describe('claude-desktop start', () => {
     }
   );
 
-  test('the CLI only opens the session; Desktop gets the task once it lists and opens it', async () => {
+  test('the task runs as the first CLI turn; Desktop imports the session when that turn exits', async () => {
     expect(await adapter().start?.(request, user)).toEqual({
       ok: true,
       value: {
@@ -214,9 +199,7 @@ describe('claude-desktop start', () => {
         place,
         status: 'running',
         lastActivityAt: 1_000,
-        link: 'claude://claude.ai/epitaxy/local_u1',
-        remoteControl: false,
-        receipt: { executionId: 'u1', inputId: 'u-task' },
+        receipt: { executionId: 'u1', inputId: 'u-open' },
       },
     });
     expect(spawned).toEqual([
@@ -230,47 +213,21 @@ describe('claude-desktop start', () => {
         '--permission-mode',
         'bypassPermissions',
         '--',
-        claudeBootstrapPrompt('Bigger font'),
+        'Raise the body font to 16px.',
       ],
       ['script', '-q', '/dev/null', 'claude', '--desktop', '--resume', 'u1'],
     ]);
-    expect(inbox).toEqual(['Raise the body font to 16px.']);
+    expect(inbox).toEqual([]);
   });
 
-  test('hands off to Desktop once more when the first handoff is not imported', async () => {
-    expect(await adapter({ desktop: 'second' }).start?.(request, user)).toMatchObject({
+  test('the task still runs when Desktop never imports the session', async () => {
+    expect(await adapter({ desktop: 'never' }).start?.(request, user)).toMatchObject({
       ok: true,
-      value: { status: 'running', link: 'claude://claude.ai/epitaxy/local_u1' },
+      value: { status: 'running', receipt: { executionId: 'u1', inputId: 'u-open' } },
     });
-    expect(handoffs).toBe(2);
-    expect(inbox).toEqual(['Raise the body font to 16px.']);
+    expect(handoffs).toBe(1);
+    expect(clock).toBe(1_000);
   });
-
-  test.each([
-    ['never', 'Claude Desktop did not import the new session.', 120_000],
-    ['cli-owned', 'Claude Desktop did not open the new session.', 0],
-    [
-      'imported',
-      'Claude Desktop imported the new session but will not run it until you open it: claude://claude.ai/epitaxy/local_u1.',
-      60_000,
-    ],
-  ] as const)(
-    'when Desktop %s, the task is never run and the human is asked, within a bounded wait',
-    async (desktop, why, waited) => {
-      expect(await adapter({ desktop }).start?.(request, user)).toMatchObject({
-        ok: true,
-        value: {
-          ref: { adapter: 'claude-desktop', id: 'local_u1' },
-          status: 'needs_you',
-          watchHint: `${why} The task was not started. Open Claude Desktop, then ask Neo to start it again.`,
-        },
-      });
-      expect(inbox).toEqual([]);
-      expect(spawned.flat()).not.toContain('Raise the body font to 16px.');
-      expect(clock - 1_000).toBeGreaterThanOrEqual(waited);
-      expect(clock - 1_000).toBeLessThan(waited + 120_000);
-    }
-  );
 
   test('the worker permission mode setting runs the first turn; Desktop gets no flag', async () => {
     expect(await adapter({ permissionMode: 'acceptEdits' }).start?.(request, user)).toMatchObject({
