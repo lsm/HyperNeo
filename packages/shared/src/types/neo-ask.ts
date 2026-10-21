@@ -95,7 +95,7 @@ export function neoLabelledOptions(options: readonly string[], picked: readonly 
 }
 
 const LETTER_REPLY =
-  /^(?:我?选(?:择|项)?|option|choice|pick)?\s*([a-f](?:\s*(?:[,，、&和与]|and)\s*[a-f])*)\s*(?:吧|好了)?\s*[.。!！]?$/i;
+  /^(?:我?选(?:择|项)?|option|choice|pick)?\s*([a-f](?:(?:\s*[,，、&和与]\s*|\s+and\s+)[a-f])*)\s*(?:吧|好了)?\s*[.。!！]?$/i;
 
 export function neoChoiceByLetter(
   words: string,
@@ -104,7 +104,7 @@ export function neoChoiceByLetter(
   const letters = words
     .trim()
     .match(LETTER_REPLY)?.[1]
-    .split(/\s*(?:[,，、&和与]|and)\s*/i);
+    .split(/\s*[,，、&和与]\s*|\s+and\s+/i);
   if (question?.kind !== 'choice' || !question.options || !letters) return null;
   const picked = [
     ...new Set(
