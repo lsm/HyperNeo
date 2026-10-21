@@ -32,7 +32,7 @@ try {
       assert.equal(await section.getByText(title,{ exact:true }).count(),0);
     const progress=section.getByRole('progressbar',{ name:'Publish guide',exact:true });
     assert.equal(await progress.getAttribute('aria-valuenow'),'30');
-    await section.getByText('Release is public',{ exact:true }).waitFor();
+    await section.getByText('Done test: Release is public',{ exact:true }).waitFor();
     await section.getByText('No wake scheduled',{ exact:true }).waitFor();
     const schedules=rpc('schedule.session.list',{ target:{ adapter:'hyperneo',id:seed.root } }).schedules;
     const next=schedules.find(row => row.sourceId === seed.measured).nextRunAt;
