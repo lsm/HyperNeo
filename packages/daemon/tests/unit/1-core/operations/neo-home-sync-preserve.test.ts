@@ -35,7 +35,7 @@ beforeEach(async () => {
   peer = join(fixture, 'peer');
   remote = join(fixture, 'remote.git');
   previous = new Map(
-    ['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM'].map((key) => [key, process.env[key]])
+    ['PATH', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM'].map((key) => [key, process.env[key]])
   );
   process.env.GIT_CONFIG_GLOBAL = join(fixture, 'gitconfig');
   process.env.GIT_CONFIG_NOSYSTEM = '1';
@@ -56,6 +56,7 @@ beforeEach(async () => {
   expect(await home.init(remote)).toMatchObject({ ok: true });
 });
 afterEach(async () => {
+  await writeFile(join(fixture, 'release'), 'go');
   db?.close();
   for (const [key, value] of previous) {
     if (value === undefined) delete process.env[key];
@@ -105,6 +106,54 @@ test.each(['neo.home.read', 'neo.home.save'] as const)(
     expect(await git(root, 'rev-parse', 'HEAD')).toBe(head);
     expect(await git(root, 'reflog', 'show', '--format=%H %gs', 'HEAD')).toBe(reflog);
     expect(await readFile(join(root, 'notes.md')).catch(() => null)).toBeNull();
+  }
+);
+
+test.each(['ignored', 'untracked'])(
+  'the final publication refuses a late %s file without rollback',
+  async (kind) => {
+    const path = kind === 'ignored' ? 'private/report.bin' : 'untracked.bin';
+    await mkdir(dirname(join(peer, path)), { recursive: true });
+    await writeFile(join(peer, path), 'Remote collision');
+    await git(peer, 'add', '-f', '--', path);
+    await git(peer, 'commit', '-m', 'Remote collision');
+    await git(peer, 'push', 'origin', 'main');
+    const head = await git(root, 'rev-parse', 'HEAD');
+    const reflog = await git(root, 'reflog', 'show', '--format=%H %gs', 'HEAD');
+    const ready = join(fixture, 'ready'),
+      release = join(fixture, 'release');
+    await mkdir(join(fixture, 'bin'));
+    await writeFile(
+      join(fixture, 'bin/git'),
+      `#!/bin/sh\nfor arg do\n if [ "$arg" = merge ]; then\n  : > '${ready}'\n  while [ ! -f '${release}' ]; do sleep 0.02; done\n fi\ndone\nexec /usr/bin/git "$@"\n`,
+      { mode: 0o755 }
+    );
+    process.env.PATH = `${join(fixture, 'bin')}:${process.env.PATH}`;
+    const pending = call('neo.home.read');
+    try {
+      for (let n = 0; n < 500; n++) {
+        if (
+          await readFile(ready).then(
+            () => true,
+            () => false
+          )
+        )
+          break;
+        await new Promise((done) => setTimeout(done, 10));
+      }
+      await readFile(ready);
+      const bytes = Buffer.from('Late human bytes\0' + 'Unabridged result'.repeat(1000));
+      await mkdir(dirname(join(root, path)), { recursive: true });
+      await writeFile(join(root, path), bytes);
+      await writeFile(release, 'go');
+      expect(await pending).toMatchObject({ ok: false });
+      expect(await readFile(join(root, path))).toEqual(bytes);
+      expect(await git(root, 'rev-parse', 'HEAD')).toBe(head);
+      expect(await git(root, 'reflog', 'show', '--format=%H %gs', 'HEAD')).toBe(reflog);
+    } finally {
+      await writeFile(release, 'go');
+      await pending;
+    }
   }
 );
 
