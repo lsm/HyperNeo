@@ -1432,6 +1432,7 @@ describe('QueryOptionsBuilder', () => {
       const result = builder.addSessionStateOptions(options);
 
       expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 24000 });
+      expect(result.env?.CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING).toBe('1');
     });
 
     it('sends adaptive thinking with an effort level to models that support effort', async () => {
