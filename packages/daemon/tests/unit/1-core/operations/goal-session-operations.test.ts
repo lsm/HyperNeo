@@ -91,6 +91,123 @@ describe('session goal detail reads', () => {
   });
 });
 
+describe('goal what-works compaction', () => {
+  test('ten new journal entries request compaction; rewriting the note advances its cursor without deleting history', async () => {
+    const { db, call, schedules } = setup();
+    try {
+      const goal = (await call('goal.session.create', { title: 'Guide', doneTest: 'Published' }))
+        .goal;
+      const append = (runId: string) =>
+        call('goal.journal.append', {
+          goalId: goal.id,
+          runId,
+          done: runId,
+          effect: 'A reader tried it',
+          worked: 'Concrete examples',
+        });
+      for (let i = 0; i < 9; i++) await append(`cycle-${i}`);
+      const before = await call('goal.facts', { goalId: goal.id });
+      expect(schedules.message(goal.id, { summary: 'changed', nudge: false })).not.toContain(
+        'rewrite'
+      );
+      await append('cycle-9');
+      const due = await call('goal.facts', { goalId: goal.id });
+      expect(due.facts.digest).not.toBe(before.facts.digest);
+      expect(due.facts.lines).toContain('What-works compaction due');
+      expect(await call('goal.facts', { goalId: goal.id })).toEqual(due);
+      expect(schedules.message(goal.id, { summary: 'changed', nudge: false })).toContain(
+        'goal.session.update'
+      );
+      expect(schedules.message(goal.id, { summary: 'changed', nudge: false })).toContain(
+        'worksNote'
+      );
+      db.exec('UPDATE goal_journal SET created_at=5');
+      expect(
+        await call('goal.session.update', {
+          goalId: goal.id,
+          worksNote: 'Small examples bring readers',
+        })
+      ).toMatchObject({ accepted: true, goal: { worksNote: 'Small examples bring readers' } });
+      expect(
+        db.prepare('SELECT works_note_through FROM space_goals WHERE id=?').get(goal.id)
+      ).toEqual({ works_note_through: 10 });
+      const events = db
+        .prepare(
+          "SELECT source,new_state FROM space_goal_events WHERE goal_id=? AND event_type='journal_compacted'"
+        )
+        .all(goal.id) as { source: string; new_state: string }[];
+      expect(events).toHaveLength(1);
+      expect(events[0].source).toBe('neo');
+      expect(JSON.parse(events[0].new_state)).toMatchObject({
+        worksNote: 'Small examples bring readers',
+        worksNoteThrough: 10,
+      });
+      expect((await call('goal.journal.list', { goalId: goal.id })).entries).toHaveLength(10);
+      expect((await call('goal.facts', { goalId: goal.id })).facts.lines).not.toContain(
+        'What-works compaction due'
+      );
+      expect(schedules.message(goal.id, { summary: 'changed', nudge: false })).toContain(
+        'Small examples bring readers'
+      );
+      expect(schedules.message(goal.id, { summary: 'changed', nudge: false })).not.toContain(
+        'rewrite'
+      );
+      await append('cycle-9');
+      for (let i = 10; i < 19; i++) await append(`cycle-${i}`);
+      expect(schedules.message(goal.id, { summary: 'changed', nudge: false })).not.toContain(
+        'rewrite'
+      );
+      await append('cycle-19');
+      expect(schedules.message(goal.id, { summary: 'changed', nudge: false })).toContain('rewrite');
+    } finally {
+      db.close();
+    }
+  });
+  test('a nudge requests a rewrite even without ten entries and foreign sessions cannot compact', async () => {
+    const { db, call, schedules } = setup();
+    try {
+      const goal = (await call('goal.session.create', { title: 'Guide', doneTest: 'Published' }))
+        .goal;
+      expect(schedules.message(goal.id, { summary: '', nudge: true })).toContain('rewrite');
+      expect(
+        await call(
+          'goal.session.update',
+          { goalId: goal.id, worksNote: 'Not mine' },
+          { source: 'mcp', role: 'neo', sessionId: 'neo:other' }
+        )
+      ).toEqual({ accepted: false, reason: 'goal_not_found' });
+      expect((await call('goal.session.get', { goalId: goal.id })).goal.worksNote).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+  test('audit failure rolls the note and cursor back together', async () => {
+    const { db, call } = setup();
+    try {
+      const goal = (await call('goal.session.create', { title: 'Guide', doneTest: 'Published' }))
+        .goal;
+      await call('goal.journal.append', {
+        goalId: goal.id,
+        done: 'Read',
+        effect: 'Learned',
+        worked: 'Examples',
+      });
+      db.exec(
+        "CREATE TRIGGER refuse_compaction BEFORE INSERT ON space_goal_events WHEN NEW.event_type='journal_compacted' BEGIN SELECT RAISE(ABORT,'synthetic audit failure'); END"
+      );
+      await expect(
+        call('goal.session.update', { goalId: goal.id, worksNote: 'Examples help' })
+      ).rejects.toThrow('synthetic audit failure');
+      expect(
+        db.prepare('SELECT works_note,works_note_through FROM space_goals WHERE id=?').get(goal.id)
+      ).toEqual({ works_note: null, works_note_through: null });
+      expect((await call('goal.journal.list', { goalId: goal.id })).entries).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+});
+
 describe('goal-owned schedules', () => {
   test.each(['completed', 'archived', 'schedule_deleted', 'goal_deleted'] as const)(
     '%s during fact collection retires the wake without a failed delivery',
