@@ -248,7 +248,23 @@ describe('projectNeoAskEntries', () => {
     ask('q1', ['t1'], 'Start "Rows"?');
     ask('q2', ['t1', 't2'], 'Start these 2?');
     ask('q3', ['t2'], '要不要先把图标做了？');
+    store.askQuestion(
+      'q4',
+      'ask',
+      {
+        text: 'Which layout?',
+        kind: 'choice',
+        options: ['List', 'Cards', 'Table'],
+        multiple: false,
+        noLabel: null,
+        yesLabel: null,
+        startTodos: null,
+      },
+      1
+    );
     const [entry] = projectNeoAskEntries([opened], store, sessions, []);
+    expect(entry.questions[3]).toMatchObject({ id: 'q4', optionLabels: ['A', 'B', 'C'] });
+    expect(entry.questions[0]).not.toHaveProperty('optionLabels');
     expect(entry.questions).toMatchObject([
       {
         id: 'q1',
