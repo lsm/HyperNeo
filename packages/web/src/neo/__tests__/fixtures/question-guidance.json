@@ -1,0 +1,16 @@
+[
+  {
+    "title": "Choose the rollout",
+    "text": "Choose the rollout\n\n- **Preview first**: review the synthetic page before release.\n- Release now: publish the already approved version.",
+    "keyChoice": "Preview first",
+    "bullets": 2,
+    "tableRows": 0
+  },
+  {
+    "title": "Choose the delivery",
+    "text": "Choose the delivery\n\n| Choice | Next step |\n| --- | --- |\n| **Preview first** | Review the synthetic page |\n| Release now | Publish the approved version |",
+    "keyChoice": "Preview first",
+    "bullets": 0,
+    "tableRows": 3
+  }
+]
