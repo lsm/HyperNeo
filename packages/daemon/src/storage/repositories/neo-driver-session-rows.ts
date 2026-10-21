@@ -7,14 +7,26 @@ import {
 } from '../../lib/neo/driver-work.ts';
 import type { Database } from '../sqlite-compat.ts';
 
-function storedInputReceipt(raw: string | null, ref: string | null): DriverSent['receipt'] {
-  if (!raw || !ref) return undefined;
+function storedInputEvidence(
+  raw: string | null,
+  ref: string | null
+): Pick<DriverSent, 'receipt' | 'delivery'> {
+  if (!raw || !ref) return {};
   try {
-    const stored = JSON.parse(raw) as { ref?: unknown; receipt?: unknown } | null;
+    const stored = JSON.parse(raw) as {
+      ref?: unknown;
+      receipt?: unknown;
+      delivery?: unknown;
+    } | null;
+    if (stored?.ref !== ref) return {};
     const receipt = WorkDeliverySchema.shape.receipt.safeParse(stored?.receipt);
-    return stored?.ref === ref && receipt.success ? receipt.data : undefined;
+    const delivery = WorkDeliverySchema.safeParse(stored?.delivery);
+    return {
+      ...(receipt.success && receipt.data ? { receipt: receipt.data } : {}),
+      ...(delivery.success ? { delivery: delivery.data } : {}),
+    };
   } catch {
-    return undefined;
+    return {};
   }
 }
 
@@ -131,9 +143,9 @@ export class NeoDriverSessionRows {
         }
       | null
       | undefined;
-    const receipt = row ? storedInputReceipt(row.receipt, row.ref) : undefined;
+    const evidence = row ? storedInputEvidence(row.receipt, row.ref) : {};
     return row && row.inputBefore !== null && row.opening
-      ? { inputBefore: row.inputBefore, opening: row.opening, ...(receipt ? { receipt } : {}) }
+      ? { inputBefore: row.inputBefore, opening: row.opening, ...evidence }
       : null;
   }
 
@@ -190,13 +202,15 @@ export class NeoDriverSessionRows {
     this.db
       .prepare(
         `UPDATE ${this.table} SET input_before = ?1, sent_opening = ?2,
-          sent_receipt = CASE WHEN ?3 IS NULL THEN NULL
-            ELSE json_object('ref', ref, 'receipt', json(?3)) END WHERE ${this.key} = ?4`
+          sent_receipt = CASE WHEN ?3 IS NULL AND ?4 IS NULL THEN NULL
+            ELSE json_object('ref', ref, 'receipt', json(?3), 'delivery', json(?4)) END
+          WHERE ${this.key} = ?5`
       )
       .run(
         sent?.inputBefore ?? null,
         sent?.opening ?? null,
         sent?.receipt ? JSON.stringify(sent.receipt) : null,
+        sent?.delivery ? JSON.stringify(sent.delivery) : null,
         id
       );
   }
