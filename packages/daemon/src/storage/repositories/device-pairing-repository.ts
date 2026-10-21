@@ -13,6 +13,8 @@ export interface PairedDevice {
 const CODE_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 const CODE_LENGTH = 10;
 export const PAIRING_CODE_TTL_MS = 10 * 60_000;
+export const UNPAIRED_FIELD_MAX = 255;
+export const UNPAIRED_ROW_CAP = 500;
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 
@@ -45,23 +47,29 @@ export class DevicePairingRepository {
     },
     now: number
   ): void {
+    const key = [
+      seen.client,
+      seen.origin?.slice(0, UNPAIRED_FIELD_MAX) ?? null,
+      seen.host?.slice(0, UNPAIRED_FIELD_MAX) ?? null,
+      seen.remoteAddress?.slice(0, UNPAIRED_FIELD_MAX) ?? null,
+      seen.credentialRejected ? 1 : 0,
+    ];
+    const seenAgain = this.db
+      .prepare(
+        `UPDATE unpaired_connections SET count = count + 1, last_seen_at = ?
+         WHERE client = ? AND IFNULL(origin, '') = IFNULL(?, '') AND IFNULL(host, '') = IFNULL(?, '')
+           AND IFNULL(remote_address, '') = IFNULL(?, '') AND credential_rejected = ?`
+      )
+      .run(now, ...key);
+    if (seenAgain.changes > 0) return;
     this.db
       .prepare(
         `INSERT INTO unpaired_connections
            (client, origin, host, remote_address, credential_rejected, first_seen_at, last_seen_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT (client, IFNULL(origin, ''), IFNULL(host, ''), IFNULL(remote_address, ''), credential_rejected)
-         DO UPDATE SET count = count + 1, last_seen_at = excluded.last_seen_at`
+         SELECT ?, ?, ?, ?, ?, ?, ?
+         WHERE (SELECT COUNT(*) FROM unpaired_connections) < ?`
       )
-      .run(
-        seen.client,
-        seen.origin,
-        seen.host,
-        seen.remoteAddress,
-        seen.credentialRejected ? 1 : 0,
-        now,
-        now
-      );
+      .run(...key, now, now, UNPAIRED_ROW_CAP);
   }
 
   countDevices(): number {

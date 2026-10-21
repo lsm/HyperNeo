@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { createUpgradeAuthenticator } from '../../../../src/lib/pairing/upgrade-auth.ts';
-import { DevicePairingRepository } from '../../../../src/storage/repositories/device-pairing-repository.ts';
+import {
+  DevicePairingRepository,
+  UNPAIRED_FIELD_MAX,
+  UNPAIRED_ROW_CAP,
+} from '../../../../src/storage/repositories/device-pairing-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
@@ -94,6 +98,24 @@ describe('upgrade authentication (report only)', () => {
     expect(JSON.stringify(db.prepare('SELECT * FROM unpaired_connections').all())).not.toContain(
       'not-a-real-credential'
     );
+    db.close();
+  });
+
+  test('unpaired rows stay bounded however many distinct headers a peer sends', () => {
+    const { db, authenticate, upgrade, unpaired, tick } = setup();
+    const huge = `https://${'a'.repeat(10_000)}.example`;
+    authenticate(upgrade({ origin: huge }), '10.0.0.1');
+    const [first] = unpaired() as { origin: string }[];
+    expect(first.origin.length).toBe(UNPAIRED_FIELD_MAX);
+    for (let i = 0; i < UNPAIRED_ROW_CAP + 50; i += 1)
+      authenticate(upgrade({ origin: `https://flood-${i}.example` }), '10.0.0.2');
+    const total = () =>
+      (db.prepare('SELECT COUNT(*) AS n FROM unpaired_connections').get() as { n: number }).n;
+    expect(total()).toBe(UNPAIRED_ROW_CAP);
+    tick();
+    authenticate(upgrade({ origin: huge }), '10.0.0.1');
+    expect(unpaired()[0]).toMatchObject({ count: 2, last: 2_000 });
+    expect(total()).toBe(UNPAIRED_ROW_CAP);
     db.close();
   });
 
