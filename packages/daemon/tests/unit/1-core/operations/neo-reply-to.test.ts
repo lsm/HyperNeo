@@ -190,6 +190,57 @@ describe('neo.message.send replyTo', () => {
     expect(store.getQuestion('q1')?.state).toBe('open');
   });
 
+  test('a letter reply to a choice question answers with that option, like a tap', async () => {
+    const choice = (id: string, multiple: boolean) =>
+      store.askQuestion(
+        id,
+        'ask',
+        {
+          text: 'Which layout?',
+          kind: 'choice',
+          options: ['保留旧的列表布局，只调整间距', 'Cards', 'Use the compact table everywhere'],
+          multiple,
+          noLabel: null,
+          yesLabel: null,
+          startTodos: null,
+        },
+        1
+      );
+    const replies: [string, string[]][] = [
+      ['A', ['保留旧的列表布局，只调整间距']],
+      ['选A', ['保留旧的列表布局，只调整间距']],
+      ['B吧', ['Cards']],
+      ['option C', ['Use the compact table everywhere']],
+      ['c.', ['Use the compact table everywhere']],
+    ];
+    for (const [index, [words, answer]] of replies.entries()) {
+      choice(`c${index}`, false);
+      const id = crypto.randomUUID();
+      await send(id, words, { kind: 'question', id: `c${index}` });
+      expect(store.getQuestion(`c${index}`)).toMatchObject({ answer, answeredBy: 'chat' });
+      expect(prompt(id).message.content[0].text).toBe(
+        `The human answered your question "Which layout?" with ${words.match(/[a-c]/i)?.[0].toUpperCase()} (${answer[0]}):`
+      );
+    }
+    choice('many', true);
+    await send(crypto.randomUUID(), 'A、C', { kind: 'question', id: 'many' });
+    expect(store.getQuestion('many')?.answer).toEqual([
+      '保留旧的列表布局，只调整间距',
+      'Use the compact table everywhere',
+    ]);
+    choice('both', true);
+    await send(crypto.randomUUID(), 'a and b', { kind: 'question', id: 'both' });
+    expect(store.getQuestion('both')?.answer).toEqual(['保留旧的列表布局，只调整间距', 'Cards']);
+    choice('glued', true);
+    await send(crypto.randomUUID(), 'banda', { kind: 'question', id: 'glued' });
+    expect(store.getQuestion('glued')?.answer).toBe('banda');
+    for (const [index, words] of ['A、C', 'bad', 'D', 'a bit of both'].entries()) {
+      choice(`raw${index}`, false);
+      await send(crypto.randomUUID(), words, { kind: 'question', id: `raw${index}` });
+      expect(store.getQuestion(`raw${index}`)?.answer).toBe(words);
+    }
+  });
+
   test('a reply about a todo goes to root Neo without answering anything', async () => {
     const id = crypto.randomUUID();
     await send(id, 'Use the new session', { kind: 'todo', id: 't1' });
