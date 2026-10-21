@@ -2531,6 +2531,8 @@ browser is needed. Run `bun run test:ci-balance-report` and
 each external checksum invocation: 128 files must still enumerate in two seconds.
 Before batching this fails with `ETIMEDOUT`; it models process overhead, not actual
 CI runner latency. UTF-8 and paths over 255 bytes must match system POSIX `cksum`.
+The raw-byte CLI fixture must preserve invalid UTF-8 bytes in both the checksum
+and emitted path; decoding through a JavaScript string fails this regression.
 
 To compare every assignment against the original emitter at unchanged file/weight
 inputs, run this from the current worktree (no live data, providers or GUI):
