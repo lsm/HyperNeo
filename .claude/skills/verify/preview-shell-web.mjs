@@ -144,6 +144,11 @@ try {
       assert.equal(await page.getByRole('heading', { name: 'Synthetic weekly report' }).count(), 0);
       await page.screenshot({ path: join(run, 'evidence', `preview-shell-daemon-${width}.png`) });
       observed.daemonStopped = 'text dropped, daemon unavailable shown';
+      execFileSync(join(verify, 'launch.sh'), [port, run], { stdio: 'ignore' });
+      await page
+        .getByRole('heading', { name: 'Synthetic weekly report', exact: true })
+        .waitFor({ timeout: 90_000 });
+      observed.daemonRestarted = 'reread after the transport reconnected, no reload';
     }
     await context.close();
   }

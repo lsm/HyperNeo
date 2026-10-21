@@ -51,7 +51,9 @@ export function ArtifactPreview({
   artifactId: string;
   onBack: () => void;
 }) {
-  const lost = ['disconnected', 'error', 'failed'].includes(connectionState.value);
+  const connection = connectionState.value;
+  const connected = connection === 'connected';
+  const lost = ['disconnected', 'error', 'failed'].includes(connection);
   const [shown, setShown] = useState<Shown>({ state: 'loading' });
   const [view, setView] = useState<'preview' | 'source'>('preview');
   const [pendingUrl, setPendingUrl] = useState<string | null>(null);
@@ -59,7 +61,10 @@ export function ArtifactPreview({
   useEffect(() => {
     setShown(lost ? { state: 'daemon_unavailable' } : { state: 'loading' });
     setPendingUrl(null);
-    if (lost) return;
+    if (!connected) {
+      if (!lost) connectionManager.getHub().catch(() => undefined);
+      return;
+    }
     let current = true;
     connectionManager
       .getHub()
@@ -69,7 +74,7 @@ export function ArtifactPreview({
     return () => {
       current = false;
     };
-  }, [artifactId, lost]);
+  }, [artifactId, connected, lost]);
 
   const metadata = 'metadata' in shown ? shown.metadata : null;
   const activateLink = (event: Event) => {

@@ -29,7 +29,8 @@ the confirm bar with the full URL and opens nothing; Open link opens one popup.
 The only off-origin requests are those two confirmed popups. Source shows the raw
 text. The large file shows the 2 MB limit state, HTML shows the no-preview state,
 an unknown ID shows the no-longer-available state. At 390px, stopping the daemon
-drops the rendered text and shows the daemon-unreachable state.
+drops the rendered text and shows the daemon-unreachable state; relaunching it
+on the same run dir brings the text back without a page reload.
 
 Screenshots and `preview-shell-web.json` land in `$RUN/evidence/`. Unit tests:
 `artifact-link-policy`, `artifact-preview-client`, `ArtifactPreview` and
