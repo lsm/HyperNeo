@@ -1,5 +1,6 @@
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
+import { ARTIFACT_KINDS, type ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { invokeOperation } from '../lib/operations.ts';
 
@@ -25,6 +26,31 @@ const text = (value: unknown, max: number): value is string =>
   typeof value === 'string' && value.length <= max && !!value.trim();
 const counter = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+
+function artifactRefs(value: unknown): ArtifactRef[] | null {
+  if (!Array.isArray(value) || value.length > 16) return null;
+  const refs: ArtifactRef[] = [];
+  for (const entry of value) {
+    const ref = object(entry);
+    if (
+      !ref ||
+      !text(ref.daemonId, 200) ||
+      !text(ref.artifactId, 200) ||
+      !text(ref.title, 300) ||
+      !ARTIFACT_KINDS.includes(ref.kind as ArtifactRef['kind']) ||
+      !counter(ref.byteLength)
+    )
+      return null;
+    refs.push({
+      daemonId: ref.daemonId,
+      artifactId: ref.artifactId,
+      title: ref.title,
+      kind: ref.kind as ArtifactRef['kind'],
+      byteLength: ref.byteLength,
+    });
+  }
+  return refs;
+}
 
 export function admitPublicationCursor(page: Cursor): { value: Cursor } | { reason: Unavailable } {
   return uuid.test(page.conversationId) &&
@@ -115,6 +141,8 @@ function publication(value: unknown, page: Cursor): NeoPublication | null {
     (row.revisions !== undefined && !Array.isArray(row.revisions))
   )
     return null;
+  const artifacts = row.artifacts === undefined ? undefined : artifactRefs(row.artifacts);
+  if (artifacts === null) return null;
   const revisions: NonNullable<NeoPublication['revisions']>[number][] = [];
   const revisionIds = new Set([row.revisionId ?? row.publicationId]);
   for (const value of (row.revisions ?? []) as unknown[]) {
@@ -156,6 +184,7 @@ function publication(value: unknown, page: Cursor): NeoPublication | null {
     ...(answerOrigin ? { answerOrigin } : {}),
     ...(typeof row.revisionId === 'string' ? { revisionId: row.revisionId } : {}),
     ...(row.revisions !== undefined ? { revisions } : {}),
+    ...(artifacts ? { artifacts } : {}),
   };
 }
 
