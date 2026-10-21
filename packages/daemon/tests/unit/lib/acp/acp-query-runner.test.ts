@@ -23,7 +23,7 @@ import {
 import { readFileWithinWorkspace } from '../../../../src/lib/acp/acp-safe-fs';
 import { AcpMcpProxyBridge } from '../../../../src/lib/acp/mcp-proxy-bridge';
 import type { AskUserQuestionHandler } from '../../../../src/lib/agent/ask-user-question-handler';
-import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
+import { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import { QueryAttemptRegistry } from '../../../../src/lib/agent/query-attempt-token';
 import type { QueryOptionsBuilder } from '../../../../src/lib/agent/query-options-builder';
@@ -2704,6 +2704,47 @@ describe('AcpQueryRunner', () => {
       expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
       expect(ctx.stateManager.beginTerminalIdle).not.toHaveBeenCalled();
       expect(ctx.stateManager.setIdle).not.toHaveBeenCalled();
+    });
+
+    test('delivers a transient retry through the real queue to the replacement ACP client', async () => {
+      const queue = new MessageQueue();
+      const prompts: Array<{ client: string; content: unknown }> = [];
+      const firstClient = createMockClient();
+      firstClient.sendPrompt = mock(async function* (prompt, callbacks) {
+        prompts.push({ client: 'first', content: prompt });
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        throw new Error('TypeError: fetch failed');
+      });
+      const secondClient = createMockClient();
+      secondClient.canLoadSession.mockImplementation(() => true);
+      const reply = secondClient.sendPrompt.getMockImplementation()!;
+      secondClient.sendPrompt = mock(async function* (prompt, callbacks) {
+        prompts.push({ client: 'replacement', content: prompt });
+        yield* reply(prompt, callbacks);
+      });
+      const { ctx } = createRunnerFixture({
+        client: firstClient,
+        onSDKMessage: async (message) => {
+          if (message.type === 'result' && message.subtype === 'success') queue.stop();
+        },
+      });
+      ctx.messageQueue = queue;
+      const clients = [firstClient, secondClient];
+      const runner = new AcpQueryRunner(ctx, () => clients.shift() as unknown as AcpClient);
+      void queue.enqueueWithId('real-queue-input', 'ACP_RETRY_INPUT').catch(() => {});
+      try {
+        await runner.start();
+        await ctx.queryPromise;
+        expect(prompts.map((prompt) => prompt.client)).toEqual(['first', 'replacement']);
+        expect(
+          prompts.every((prompt) => JSON.stringify(prompt.content).includes('ACP_RETRY_INPUT'))
+        ).toBe(true);
+        expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+      } finally {
+        queue.stop();
+        queue.clear();
+      }
     });
 
     test('retries transient connection errors once with prompt re-delivery', async () => {

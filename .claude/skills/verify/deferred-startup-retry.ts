@@ -9,7 +9,7 @@ import { createMockApiServer } from '../../../packages/daemon/tests/helpers/mock
 
 const run = resolve(process.argv[2]);
 const retryKind = process.argv[3] ?? 'startup';
-assert(['startup', 'transient'].includes(retryKind));
+assert(['startup', 'transient', 'stall'].includes(retryKind));
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert.equal(process.env.NODE_ENV, 'test');
@@ -21,13 +21,14 @@ mkdirSync(join(run, 'evidence'), { recursive: true });
 mkdirSync(join(run, 'bin'), { recursive: true });
 copyFileSync('.claude/skills/verify/gh-stub.sh', join(run, 'bin/gh'));
 process.env.PATH = join(run, 'bin') + ':' + process.env.PATH;
-const markers = [retryKind === 'transient' ? 'TRANSIENT_RETRY_INPUT' : 'STARTUP_RETRY_INPUT', 'DEFERRED_AFTER_RETRY'];
+const markers = [retryKind === 'stall' ? 'STALL_RETRY_INPUT' : retryKind === 'transient' ? 'TRANSIENT_RETRY_INPUT' : 'STARTUP_RETRY_INPUT', 'DEFERRED_AFTER_RETRY'];
 const inputs: Array<{ attempt: number; type: string; uuid?: string }> = [];
 const requests: string[] = [];
 const evidence: Record<string, unknown> = { run, retryKind, requests, inputs };
 const mock = await createMockApiServer({ port: 8001 });
 await mock.start();
 
+let attempt = 0;
 const proxy = createServer(async (req, res) => {
   const chunks: Buffer[] = [];
   for await (const chunk of req) chunks.push(Buffer.from(chunk));
@@ -35,6 +36,11 @@ const proxy = createServer(async (req, res) => {
   const modelRequest = req.url?.includes('/messages') && !req.url.includes('count_tokens');
   if (modelRequest) {
     requests.push(JSON.stringify({ markers: markers.filter((marker) => body.includes(marker)) }));
+    if (retryKind === 'stall' && attempt === 1 && body.includes(markers[0])) {
+      res.setHeader('content-type', 'text/event-stream');
+      res.flushHeaders();
+      return;
+    }
   }
   try {
     const upstream = await fetch(mock.serverUrl + req.url, {
@@ -78,14 +84,13 @@ try {
   evidence.sessionId = sessionId;
   const agent = app.sessionManager.getCachedSession(sessionId)!;
   const build = agent.optionsBuilder.build.bind(agent.optionsBuilder);
-  let attempt = 0;
   let breakFirstStream: (() => void) | undefined;
   agent.optionsBuilder.build = async (...args) => ({
     ...await build(...args),
     spawnClaudeCodeProcess: (opts) => {
       const number = ++attempt;
-      const child = spawn(number === 1 ? process.execPath : opts.command,
-        number === 1 ? ['-e', 'process.stdin.resume(); setInterval(() => {}, 1000)'] : opts.args,
+      const child = spawn(number === 1 && retryKind !== 'stall' ? process.execPath : opts.command,
+        number === 1 && retryKind !== 'stall' ? ['-e', 'process.stdin.resume(); setInterval(() => {}, 1000)'] : opts.args,
         { cwd: opts.cwd, env: opts.env, stdio: ['pipe', 'pipe', 'pipe'], signal: opts.signal });
       child.stderr.on('data', (chunk) => appendFileSync(join(run, `sdk-${number}.stderr.log`), chunk));
       if (number === 1) breakFirstStream = () => child.stdout.destroy(new Error('stream closed'));
@@ -114,6 +119,7 @@ try {
     breakFirstStream();
     await until(async () => JSON.stringify(await hub.request('message.sdkMessages', { sessionId })).includes('The connection was interrupted. Retrying'), 'transient retry notice was not published');
   }
+  if (retryKind === 'stall') await until(async () => JSON.stringify(await hub.request('message.sdkMessages', { sessionId })).includes('The model sent nothing'), 'stream-stall retry notice was not published');
   await until(() => inputs.some((input) => input.attempt === 2 && input.uuid === current.messageId), 'replacement SDK never received the retry input');
   await until(() => markers.every((marker) => requests.some((body) => body.includes(marker))), 'both inputs did not reach the mock model');
   const consumed = await hub.request<{ total: number }>('session.messages.byStatus', { sessionId, status: 'consumed' });
