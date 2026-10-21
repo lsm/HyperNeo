@@ -56,4 +56,19 @@ describe('MarkdownRenderer preview references', () => {
     expect(bare.getAttribute('aria-label')).toBe('Open preview: notes.md');
     expect(screen.getByText('Read', { exact: false }).textContent).toContain('notes.md.');
   });
+
+  it('marks a bare path only as a whole token, not inside a longer name', async () => {
+    const onReference = vi.fn();
+    const { container } = render(
+      <MarkdownRenderer
+        content="Keep notes.md.bak and notes.md,draft aside; read (notes.md)."
+        references={['notes.md']}
+        onReference={onReference}
+      />
+    );
+    await waitFor(() => expect(container.textContent).toContain('notes.md.bak'));
+    const marked = Array.from(container.querySelectorAll('[data-preview-reference]'));
+    expect(marked.map((element) => element.textContent)).toEqual(['notes.md']);
+    expect(marked[0].parentElement?.textContent).toContain('(notes.md).');
+  });
 });
