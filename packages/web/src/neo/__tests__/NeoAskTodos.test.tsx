@@ -2,6 +2,7 @@ import type { NeoAskEntry, NeoQuestion, NeoTodoEntry } from '@hyperneo/shared/ty
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NeoAskTodos, neoQuestionAnswerLabel } from '../NeoAskTodos.tsx';
+import { messageTime } from '../NeoMessage.tsx';
 import { neoAskEntryGroup } from '../neo-asks.ts';
 import { locale } from '../../lib/i18n/index.ts';
 
@@ -140,6 +141,28 @@ describe('NeoAskTodos', () => {
       if (state === 'retired') expect(body.textContent).toContain('Synthetic retirement');
     }
   );
+
+  it('dates an answer from an earlier day and shows only the time for today', () => {
+    const earlier = new Date(2026, 0, 2, 9, 5).getTime();
+    const today = Date.now();
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          questions: [
+            question('old', { state: 'answered', answer: 'yes', answeredAt: earlier }),
+            question('new', { state: 'answered', answer: 'yes', answeredAt: today }),
+          ],
+        })}
+        onAnswer={vi.fn()}
+      />
+    );
+    fireEvent.click(app.container.querySelector('[data-ask-details-toggle]')!);
+    const line = (id: string) =>
+      app.container.querySelector(`#neo-ref-question-${id} > p`)?.textContent ?? '';
+    expect(line('old')).toContain(messageTime(earlier)!.label);
+    expect(line('old')).toMatch(/1月|Jan/);
+    expect(line('new')).toContain(messageTime(today)!.label);
+  });
 
   it('lists the todos of a start question with ticks and starts only the ticked ones', () => {
     const onAnswer = vi.fn();
