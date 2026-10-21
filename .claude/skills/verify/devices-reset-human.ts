@@ -64,6 +64,10 @@ try {
     const reset = await cli('devices', 'reset-human');
     evidence.reset = reset;
     assert.equal(reset.ok, true);
+    const guidance = await publicClient.call('device.pair.create', { kind: 'human' });
+    assert.equal(guidance.ok, false);
+    assert(guidance.reason.includes('hyperneo devices reset-human'));
+    evidence.networkPairGuidance = guidance.reason;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       evidence.closeCode = await Promise.race([paired.closure, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('revoked phone socket stayed open')), 2000); })]);
