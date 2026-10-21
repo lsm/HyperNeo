@@ -96,6 +96,18 @@ describe('ArtifactPreview', () => {
     expect(document.querySelector('pre')?.textContent).toBe(raw);
     expect(request).toHaveBeenCalledTimes(2);
   });
+  it('keeps the loaded preview and offers retry when download RPC fails', async () => {
+    reply(meta(), chunk);
+    render(<ArtifactPreview artifactId="a1" onBack={() => {}} />);
+    await waitFor(() => expect(screen.getByText('the docs')).toBeTruthy());
+    request.mockRejectedValueOnce(new Error('synthetic transient read error'));
+    fireEvent.click(screen.getByRole('button', { name: 'Download complete file' }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Retry download' })).toBeTruthy()
+    );
+    expect(screen.getByText('the docs')).toBeTruthy();
+    expect(screen.queryByText('This file is no longer available to you.')).toBeNull();
+  });
   it('labels an uncommitted capture as a worktree snapshot with its hash', async () => {
     reply(meta({ kind: 'worktree' }), chunk);
     render(<ArtifactPreview artifactId="a1" onBack={() => {}} />);

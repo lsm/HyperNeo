@@ -35,6 +35,15 @@ describe('artifact media previews and downloads', () => {
     if (result.state === 'ready')
       expect(result.text).toBe('{\n  "safe": "<script>inert</script>"\n}');
   });
+  it.each(['json', 'log', 'image'])(
+    'distinguishes transient %s read failure from revoked access',
+    async (kind) => {
+      const { hub, metadata, request } = await fixture(kind);
+      request.mockResolvedValueOnce({ accepted: true, metadata });
+      request.mockRejectedValueOnce(new Error('synthetic temporary read failure'));
+      expect(await readArtifactPreview(hub, 'a')).toEqual({ state: 'daemon_unavailable' });
+    }
+  );
   it('shows bounded log head and tail with the exact omitted byte count', async () => {
     const data = new TextEncoder().encode('HEAD\n' + 'x'.repeat(400000) + '\nTAIL');
     const { hub, request } = await fixture('log', data);

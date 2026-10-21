@@ -15,6 +15,7 @@ if (phase === 'seed') {
   execFileSync('bun', [join(verify, 'preview-register.ts'), run, 'seed'], { stdio: 'inherit' });
   writeFileSync(join(run, 'workspace', 'report.json'), '{"title":"Synthetic JSON","markup":"<script>window.__mediaSentinel=1</script>"}');
   writeFileSync(join(run, 'workspace', 'large.log'), `HEAD synthetic log\n${'line 0123456789\n'.repeat(80000)}TAIL synthetic log`);
+  writeFileSync(join(run, 'workspace', 'drawing.svg'), '<svg xmlns="http://www.w3.org/2000/svg" onload="window.__mediaSentinel=2"><text>Inert SVG source</text></svg>');
   writeFileSync(join(run, 'workspace', 'chart.png'), Buffer.from(pixel, 'base64'));
   const big = Buffer.from(pixel, 'base64'); big.writeUInt32BE(100000, 16); big.writeUInt32BE(100000, 20);
   writeFileSync(join(run, 'workspace', 'oversized.png'), big);
@@ -24,6 +25,9 @@ const rpc = (name, input) => {
   const out = execFileSync('bun', [join(verify, 'rpc.ts'), name, JSON.stringify(input)], { env: { ...process.env, VERIFY_PORT: port }, encoding: 'utf8' });
   const reply = JSON.parse(out).reply; assert(!reply.error, out); return reply.value ?? reply;
 };
+const svgResult = rpc('artifact.file.register', { requestId: 'media-svg-refusal', context: { kind: 'todo', id: 'todo' }, path: 'drawing.svg', title: 'Synthetic SVG' });
+assert.equal(svgResult.accepted, false); assert.equal(svgResult.reason, 'unsupported_type');
+writeFileSync(join(run, 'evidence', 'svg-registration.json'), JSON.stringify(svgResult));
 const ids = {};
 for (const name of ['report.json', 'large.log', 'chart.png', 'oversized.png']) {
   const result = rpc('artifact.file.register', { requestId: `media-${name}`, context: { kind: 'todo', id: 'todo' }, path: name, title: name });
@@ -41,7 +45,36 @@ try {
       offOrigin.push(route.request().url()); return route.abort();
     });
     const page = await context.newPage();
+    let failRead = false;
+    await page.routeWebSocket('**/*', ws => {
+      const server = ws.connectToServer();
+      ws.onMessage(message => {
+        const msg = JSON.parse(message.toString());
+        if (failRead && msg.type === 'REQ' && msg.method === 'operation.invoke' && msg.data?.name === 'artifact.file.read') {
+          failRead = false;
+          ws.send(JSON.stringify({ ...msg, id: crypto.randomUUID(), requestId: msg.id, type: 'RSP', data: undefined, error: 'Synthetic temporary RPC failure' }));
+        } else server.send(message);
+      });
+    });
     const open = name => page.goto(`${base}/neo?artifact=${ids[name]}`);
+    if (process.env.VERIFY_FAULTS === '1') {
+      failRead = true;
+      await open('report.json');
+      await page.waitForFunction(() => { const status = document.querySelector('[role=status]'); return status && status.textContent.trim() !== 'Loading preview…'; });
+      await page.screenshot({ path: join(run, 'evidence', `media-transient-${width}.png`) });
+      assert.equal(await page.getByRole('status').innerText(), 'The daemon that owns this file is not reachable.');
+      await open('report.json'); await page.locator('pre').waitFor();
+      failRead = true;
+      await page.getByRole('button', { name: 'Download complete file' }).click();
+      await page.getByRole('button', { name: 'Retry download' }).waitFor();
+      assert((await page.locator('pre').innerText()).includes('Synthetic JSON'));
+      await page.screenshot({ path: join(run, 'evidence', `media-download-retry-${width}.png`) });
+      const retried = page.waitForEvent('download');
+      await page.getByRole('button', { name: 'Retry download' }).click();
+      const download = await retried;
+      const path = join(run, 'evidence', `retried-${width}.json`); await download.saveAs(path);
+      assert.equal(readFileSync(path, 'utf8'), readFileSync(join(run, 'workspace', 'report.json'), 'utf8'));
+    }
     await open('report.json'); await page.locator('pre').waitFor();
     assert.equal(await page.locator('pre').innerText(), JSON.stringify(JSON.parse(readFileSync(join(run, 'workspace', 'report.json'))), null, 2));
     assert.equal(await page.evaluate(() => window.__mediaSentinel), undefined);
