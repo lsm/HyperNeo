@@ -78,6 +78,66 @@ describe('GoalDefinition', () => {
       input: { ownerSessionId: 'root', goalId: 'guide' },
     });
   });
+  it('shows loading before offering retry and offers retry only after a failed first page', async () => {
+    const normal = request.getMockImplementation()!;
+    let resolve!: (value: unknown) => void;
+    let reject!: (error: Error) => void;
+    request.mockImplementation((method, data) =>
+      data.name === 'goal.journal.list'
+        ? new Promise((done, fail) => {
+            resolve = done;
+            reject = fail;
+          })
+        : normal(method, data)
+    );
+    render(<GoalDefinition ownerSessionId="root" goalId="guide" />);
+    const journal = await screen.findByRole('region', { name: 'Journal' });
+    await waitFor(() => expect(reject).toBeTypeOf('function'));
+    expect(within(journal).getByRole('status').textContent).toBe('Loading…');
+    expect(within(journal).queryByRole('button', { name: 'Retry journal' })).toBeNull();
+    await act(async () => reject(new Error('Journal offline')));
+    fireEvent.click(await within(journal).findByRole('button', { name: 'Retry journal' }));
+    await act(async () => resolve({ accepted: true, entries: [] }));
+    await within(journal).findByText('No journal entries yet');
+  });
+  it('uses an em dash for unknown metrics and preserves zero and false', async () => {
+    request.mockImplementationOnce(async () => ({
+      accepted: true,
+      goal: { ...goal, metrics: { pending: null, readers: 0, useful: false } },
+    }));
+    render(<GoalDefinition ownerSessionId="root" goalId="guide" />);
+    await screen.findByText('pending: —');
+    expect(screen.getByText('readers: 0')).toBeTruthy();
+    expect(screen.getByText('useful: false')).toBeTruthy();
+  });
+  it.each(['refusal', 'fault'])(
+    'keeps a loaded goal readable when optional home metadata returns a %s',
+    async (failure) => {
+      const normal = request.getMockImplementation()!;
+      let finish!: () => void;
+      request.mockImplementation((method, data) =>
+        data.name === 'neo.home.read'
+          ? new Promise((resolve, reject) => {
+              finish = () =>
+                failure === 'refusal'
+                  ? resolve({ ok: false, reason: 'not_found: optional home document is absent' })
+                  : reject(new Error('Optional metadata offline'));
+            })
+          : normal(method, data)
+      );
+      render(<GoalDefinition ownerSessionId="root" goalId="guide" />);
+      await screen.findByText('Concrete examples work');
+      await waitFor(() => expect(finish).toBeTypeOf('function'));
+      await act(async () => {
+        finish();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(screen.getByText('Guide for adopters')).toBeTruthy();
+      expect(screen.getByText('mandate.md#adoption')).toBeTruthy();
+      expect(screen.queryByRole('link', { name: 'mandate.md#adoption' })).toBeNull();
+    }
+  );
   it('pages newest-first with the last entry id and retains prior pages', async () => {
     const { container } = render(<GoalDefinition ownerSessionId="root" goalId="guide" />);
     await screen.findByText('Effect 20');
