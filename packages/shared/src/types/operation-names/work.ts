@@ -4,6 +4,7 @@ export const WORK_OPERATION_NAMES = [
   'work.project.addFolder',
   'work.queue',
   'work.read',
+  'work.rename',
   'work.send',
   'work.start',
   'work.status',

@@ -128,6 +128,15 @@ async function readGitCheckout(folder: string): Promise<GitCheckout | null> {
 export function hyperneoSessionControl(context: FamilyOperationContext): HyperneoSessionControl {
   const { sessionManager, internalEventBus, db, jobQueue } = context.deps;
   return {
+    rename: async (ref, title) => {
+      const session = sessionManager.getSessionFromDB(ref.id);
+      if (!session) return reject('not_found', 'The session is gone.');
+      await sessionManager.updateSession(ref.id, {
+        title,
+        metadata: { ...session.metadata, titleSetBy: 'user', titleGenerated: true },
+      });
+      return { ok: true, value: { renamed: true, title } };
+    },
     withdraw: (sessionId, id, from) =>
       withdrawOwnedInput(sessionId, id, from, {
         jobs: jobQueue,
@@ -330,6 +339,19 @@ export function spaceTaskControl(context: FamilyOperationContext): SpaceTaskCont
     return outcome.kind === 'completed' ? outcome.value : outcome.message;
   };
   return {
+    rename: async (target, title, caller) => {
+      const result = await invoke(
+        target.agentId ? 'agent.update' : 'task.update',
+        target.agentId
+          ? { spaceId: target.spaceId, agentId: target.agentId, name: title }
+          : { taskId: target.taskId, title },
+        caller
+      );
+      const reason = taskOperationRejection(result);
+      return reason
+        ? reject('not_delivered', reason)
+        : { ok: true, value: { renamed: true, title } };
+    },
     create: async (spaceId, title, description, caller) => {
       const created = await invoke('task.create', { spaceId, title, description }, caller);
       const reason = taskOperationRejection(created);

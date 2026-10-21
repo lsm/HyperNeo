@@ -221,6 +221,30 @@ RPC door, not a GUI or remote pull. It uses no provider/model, real credentials,
 real DB or GitHub requests. H2 confirmation and H3 sync remain later slices.
 Stop the isolated daemon and mock with `stop.sh`.
 
+## Work names through supported harness APIs
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-rename-proof-XXXXXX)
+env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  LOG_LEVEL=warn bun .claude/skills/verify/work-rename.ts verify 9385 "$RUN"
+```
+
+The helper boots a fresh isolated daemon with a synthetic Codex app-server Unix
+socket and synthetic thread DB under its temporary HOME. `operations.describe`
+must expose `work.rename`. Neo's real MCP adapter and WebSocket RPC rename only
+the synthetic thread via `thread/name/set`; the fixture owns its synthetic DB
+update and emits `thread/name/updated`. Subsequent `work.status` sees the name
+without restarting. Synthetic HyperNeo, Space task and Space agent renames go
+through the existing session lifecycle, task.update and agent.update APIs; the
+session title is marked user-set to prevent automatic title replacement. A
+synthetic Claude Desktop installation returns not_supported. Invalid multiline
+titles must not reach Codex. RPC responses and peer calls are retained in
+`evidence/observed.json`. On the reproduction commit, use `reproduce` instead:
+it must show discovery has no rename operation. All owned servers and daemon
+stop in finally. No human threads, real credentials, provider/model, private app
+writes or port 8399 are involved. This proves daemon/MCP and protocol behavior;
+actual Codex Desktop GUI rendering is not exercised.
+
 ## Codex send intent through a synthetic daemon
 
 ```bash
@@ -2147,3 +2171,38 @@ Only synthetic fixtures are used. This journey
 proves the daemon operation and snapshot surfaces; GUI rendering, model choices,
 notification completion and deployment are not verified. Neo's default guidance
 asks for consent first; the existing direct human-message path remains available.
+
+## Copilot discovery boundary (worker slice 1)
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-copilot-pin-XXXXXX)
+mkdir -p "$RUN/home"
+env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin" \
+  NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/copilot-discovery.ts 9381 "$RUN"
+```
+
+Use a fresh synthetic HOME/data directory and free non-8399 port. The helper
+places a synthetic `copilot` executable first on PATH, launches the real isolated
+daemon, and calls its WebSocket `operation.invoke` door. `work.adapters` must
+advertise only `find`; `work.find` must recover the fixture session's cwd from
+its synthetic `events.jsonl`, page the ACP list and return the requested project.
+A send, receipt-bound status and stop must return `unsupported`: discovery's
+age-based status is not evidence that a submitted input completed. This pins the
+pre-worker boundary; later worker slices deliberately extend it with new evidence.
+The mock records exactly initialize and two list requests, proving no work was
+sent or stopped. `evidence/observed.json` saves operation replies and the call log.
+The helper closes its socket and daemon in `finally`. No real Copilot executable,
+auth/token files, provider, model, GitHub, existing transcript or GUI is used.
+
+Focused synthetic process tests additionally verify that the existing ACP client
+loads a session, filters an unrelated session's message, accepts one streamed
+response, and observes a cancelled prompt without removing history. They also
+reject an incompatible ACP protocol. This characterizes the current ACP client,
+not SDK worker delivery/receipt normalization, model discovery, IDE attachment or
+termination of arbitrary child tools:
+
+```bash
+cd packages/daemon
+bunx vitest run tests/unit/1-core/drivers/copilot-discovery.test.ts
+```
