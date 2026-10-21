@@ -43,6 +43,13 @@ beforeEach(async () => {
     process.env.GIT_CONFIG_GLOBAL,
     '[user]\n name = Synthetic Neo\n email = test@example.invalid\n[commit]\n gpgsign = false\n'
   );
+  await mkdir(join(fixture, 'bin'));
+  await writeFile(
+    join(fixture, 'bin/git'),
+    `#!/bin/sh\nfor arg do\n if [ "$arg" = merge ] && [ -f '${fixture}/armed' ]; then\n  : > '${fixture}/ready'\n  while [ ! -f '${fixture}/release' ]; do sleep 0.02; done\n fi\ndone\nexec /usr/bin/git "$@"\n`,
+    { mode: 0o755 }
+  );
+  process.env.PATH = `${join(fixture, 'bin')}:${process.env.PATH}`;
   await mkdir(peer);
   await git(peer, 'init', '--quiet', '--initial-branch=main');
   await writeFile(join(peer, '.gitignore'), '.coordinators/\nprivate/\n');
@@ -128,13 +135,7 @@ test.each(['ignored', 'untracked', 'tracked'])(
     const reflog = await git(root, 'reflog', 'show', '--format=%H %gs', 'HEAD');
     const ready = join(fixture, 'ready'),
       release = join(fixture, 'release');
-    await mkdir(join(fixture, 'bin'));
-    await writeFile(
-      join(fixture, 'bin/git'),
-      `#!/bin/sh\nfor arg do\n if [ "$arg" = merge ]; then\n  : > '${ready}'\n  while [ ! -f '${release}' ]; do sleep 0.02; done\n fi\ndone\nexec /usr/bin/git "$@"\n`,
-      { mode: 0o755 }
-    );
-    process.env.PATH = `${join(fixture, 'bin')}:${process.env.PATH}`;
+    await writeFile(join(fixture, 'armed'), 'go');
     const pending = call('neo.home.read');
     try {
       for (let n = 0; n < 500; n++) {
