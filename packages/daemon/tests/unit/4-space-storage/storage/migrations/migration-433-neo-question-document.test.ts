@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { Database } from '../../../../../src/storage/sqlite-compat.ts';
-import { runMigration432 } from '../../../../../src/storage/schema/m432-neo-question-document.ts';
+import { runMigration433 } from '../../../../../src/storage/schema/m433-neo-question-document.ts';
 
 describe('Question document upgrade', () => {
   test('preserves the existing question and answer through repeat upgrades', () => {
@@ -8,8 +8,8 @@ describe('Question document upgrade', () => {
     try {
       db.exec(`CREATE TABLE neo_questions(id TEXT PRIMARY KEY, text TEXT, answer TEXT);
         INSERT INTO neo_questions VALUES ('human', 'Original human question', 'yes')`);
-      runMigration432(db);
-      runMigration432(db);
+      runMigration433(db);
+      runMigration433(db);
       expect(db.prepare('SELECT * FROM neo_questions').get()).toEqual({
         id: 'human',
         text: 'Original human question',

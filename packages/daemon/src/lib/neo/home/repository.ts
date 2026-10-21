@@ -141,14 +141,14 @@ export class NeoHomeRepository {
       const latest = await this.git(['reflog', 'show', '-1', '--format=%gs', 'HEAD'], true);
       if (latest.code || !latest.text.startsWith(`${action} (`))
         return { reason: { ok: false, reason: `sync_failed: ${pulled.error}` } };
-      const remote = (await this.git(['rev-parse', 'FETCH_HEAD'])).text;
-      const paths = (await this.git(['diff', '--name-only', '--diff-filter=U', '-z'])).bytes
-        .toString('utf8')
-        .split('\0')
-        .filter(Boolean);
       let conflict: HomeConflict | undefined;
       let aborted: Awaited<ReturnType<NeoHomeRepository['git']>>;
       try {
+        const remote = (await this.git(['rev-parse', 'FETCH_HEAD'])).text;
+        const paths = (await this.git(['diff', '--name-only', '--diff-filter=U', '-z'])).bytes
+          .toString('utf8')
+          .split('\0')
+          .filter(Boolean);
         if (paths.length) {
           const versions = await Promise.all(
             paths.map(async (path) => {
