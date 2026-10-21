@@ -305,7 +305,14 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         todo: await finish(
           todo,
           ask,
-          planNeoTodoFailure(todo, `Could not start: ${result.failure}`, Date.now()),
+          result.reason === 'needs_you'
+            ? planNeoTodoBlocked(
+                todo,
+                'failure',
+                `Could not start: ${result.failure}`,
+                'Ask the human to open Claude Desktop, then retry this todo.'
+              )
+            : planNeoTodoFailure(todo, `Could not start: ${result.failure}`, Date.now()),
           Date.now()
         ),
       };
