@@ -148,6 +148,7 @@ Built on `tests/helpers/daemon-server.ts` (spawned daemon on port 0) and `standa
 - A cross-site Origin gets 403. An unknown Host (DNS rebinding) gets 403. A native client with no Origin but with a Bearer credential is accepted.
 - `relay` and `peer` principals are refused by `requireLocalUser` and `human_only` operations, except the relay's three reads (`neo.snapshot`, `neo.publication.read`, `client.list`), which are admitted by name. A peer's forwarded `message.send` still works.
 - The default bind is loopback. A non-loopback bind without `--expose` refuses to start.
+- After `hyperneo security enforce off`, the restored address (including `0.0.0.0`) starts with a warning and stays across restarts while enforcement is off.
 - The session door socket is never world-accessible, including the moment between `listen` and `chmod`.
 - Verify journey: `pair-device.sh` on an isolated daemon pairs a CLI device and a web cookie, opens `/ws` with each, revokes one, and checks the refusal.
 - iOS: unit tests in neo-ios for Keychain storage and the Bearer header. The Neo iOS session checks the on-device flow by hand.
