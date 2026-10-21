@@ -2432,6 +2432,10 @@ must keep stopped; only an explicit new submission starts subsequent work.
 Terminal abort/error settles pending and consumed receipts alike, without claiming
 pending input was consumed or its reply completed. Their capacity must be released;
 an ACK arriving after terminal evidence must inherit the stopped/failed outcome.
+After retention rollover, a stale user echo during another send must not steal
+reply attribution or admission capacity. Up to 512 relevant pre-ACK events wait
+for receipt identities, then replay only against acknowledged inputs. Overflow
+fails closed. Construction errors retain shutdown failure as their cause.
 Dedup retains at most 512 keys, evicting only keys unrelated to unsettled inputs;
 if all retained keys protect active evidence, the runtime becomes unreachable
 instead of forgetting that evidence and risking duplicate attribution. Snapshot

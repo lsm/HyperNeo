@@ -3,6 +3,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CopilotClient } from '@github/copilot-sdk';
+import { vi } from 'vitest';
 import { openCopilotWorker } from '../../../../src/lib/drivers/copilot-worker';
 
 const runs: string[] = [];
@@ -47,6 +49,57 @@ async function eventually(read: () => Promise<unknown>, matches: (value: unknown
 }
 
 describe('Copilot worker construction', () => {
+  test('ignores evicted stale echoes during ACK wait without losing replies or capacity', async () => {
+    const worker = await openCopilotWorker(config());
+    try {
+      for (let index = 0; index < 270; index++) await worker.submit('settled');
+      const receipt = await worker.submit('stale-echo');
+      const state = await worker.snapshot();
+      expect(state.status).toBe('done');
+      expect(state.inputs[receipt.inputId]).toMatchObject({
+        replyReport: 'STALE_SAFE_REPLY',
+        outcome: 'done',
+      });
+      for (let index = 0; index < 64; index++) await worker.submit('queued');
+      expect(
+        Object.values((await worker.snapshot()).inputs).filter((input) => !input.outcome)
+      ).toHaveLength(64);
+    } finally {
+      await worker.close();
+    }
+  });
+
+  test('construction preserves its primary error when both shutdown methods reject', async () => {
+    let client: CopilotClient | undefined;
+    const shutdownError = new Error('forced shutdown failed');
+    vi.spyOn(CopilotClient.prototype, 'stop').mockImplementation(async function (
+      this: CopilotClient
+    ) {
+      client = this;
+      throw new Error('graceful shutdown failed');
+    });
+    vi.spyOn(CopilotClient.prototype, 'forceStop').mockRejectedValue(shutdownError);
+    try {
+      await expect(openCopilotWorker(config('unsupported-version'))).rejects.toMatchObject({
+        message: 'Unsupported Copilot worker runtime version',
+        cause: shutdownError,
+      });
+    } finally {
+      vi.restoreAllMocks();
+      await client?.forceStop();
+    }
+  });
+
+  test('fails closed rather than retaining more than 512 pre-ACK events', async () => {
+    const worker = await openCopilotWorker(config());
+    try {
+      await expect(worker.submit('ack-pressure')).rejects.toThrow('disconnected');
+      expect((await worker.snapshot()).status).toBe('unreachable');
+    } finally {
+      await worker.close();
+    }
+  });
+
   test('an idle before any submitted work preserves queued status', async () => {
     const worker = await openCopilotWorker(config('fixture-1', '--initial-idle'));
     try {

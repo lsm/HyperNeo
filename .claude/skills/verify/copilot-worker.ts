@@ -28,7 +28,7 @@ let ws: WebSocket | undefined;
 try {
   app = await createDaemonApp({ config: getConfig({ port, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
   app.messageHub.onRequest('verify.copilot', async (data: { action: string }) => {
-    if (['hold', 'settled', 'permission', 'queued', 'error'].includes(data.action)) return { receipt: await worker.submit(data.action), state: await worker.snapshot() };
+    if (['hold', 'settled', 'permission', 'queued', 'error', 'stale-echo'].includes(data.action)) return { receipt: await worker.submit(data.action), state: await worker.snapshot() };
     if (data.action === 'finish') return { receipt: await worker.submit('finish'), state: await worker.snapshot() };
     if (data.action === 'abort') { await worker.abort(); return worker.snapshot(); }
     return worker.snapshot();
@@ -62,6 +62,9 @@ try {
   assert.equal(Object.keys(retained.state.inputs).length, 64);
   assert.equal(retained.state.inputs[held.receipt.inputId], undefined);
   assert.equal(retained.state.inputs[retained.receipt.inputId].replyAvailability, 'complete');
+  const replay = await rpc('verify.copilot', { action: 'stale-echo' }) as typeof held;
+  assert.equal(replay.state.status, 'done');
+  assert.equal(replay.state.inputs[replay.receipt.inputId].replyReport, 'STALE_SAFE_REPLY');
   const queued = await rpc('verify.copilot', { action: 'queued' }) as typeof held;
   assert.equal(queued.state.inputs[queued.receipt.inputId].state, 'pending');
   const interrupted = await rpc('verify.copilot', { action: 'hold' }) as typeof held;

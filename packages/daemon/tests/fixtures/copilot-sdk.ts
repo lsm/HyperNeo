@@ -105,6 +105,20 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
         });
         event('session.idle', {});
       }
+      if (prompt === 'stale-echo') {
+        event('user.message', {
+          messageId: 'input-1',
+          interactionId: `interaction-${input}`,
+          content: 'old',
+        });
+        event('assistant.message', {
+          messageId: `reply-${input}`,
+          interactionId: `interaction-${input}`,
+          content: 'STALE_SAFE_REPLY',
+          phase: 'final_answer',
+        });
+        event('session.idle', {});
+      }
       if (prompt === 'dedup-pressure') {
         for (let index = 0; index < 270; index++)
           event('assistant.message', {
@@ -114,6 +128,8 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
             phase: 'final_answer',
           });
       }
+      if (prompt === 'ack-pressure')
+        for (let index = 0; index < 513; index++) event('session.idle', {});
       if (prompt === 'error' || prompt === 'error-queued') {
         event('session.error', { errorType: 'fixture', message: 'Synthetic error' });
         event('session.idle', {});
