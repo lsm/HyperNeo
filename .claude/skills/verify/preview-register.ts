@@ -1,0 +1,110 @@
+import assert from 'node:assert/strict';
+import { mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync, symlinkSync, truncateSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
+import { createTables, runMigrations } from '../../../packages/daemon/src/storage/schema/index.ts';
+import { createArtifactRegistration } from '../../../packages/daemon/src/lib/artifacts/register-operation.ts';
+import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
+import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
+import fs from 'node:fs/promises';
+import { spyOn } from 'bun:test';
+import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
+import type { OperationCaller } from '../../../packages/daemon/src/lib/operations/registry.ts';
+import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
+import { getScopeConfig } from '../../../packages/daemon/src/lib/db-query/scope-config.ts';
+const root = realpathSync(resolve(process.argv[2] ?? ''));
+assert.equal(process.env.NODE_ENV, 'test');
+assert.equal(process.env.HOME, join(root, 'home'));
+const data = join(root, 'data');
+const workspace = join(root, 'workspace');
+mkdirSync(data, { recursive: true });
+mkdirSync(workspace);
+const db = new Database(join(data, process.argv[3] === 'seed' ? 'daemon.db' : 'registry.db'));
+runMigrations(db, () => {});
+createTables(db);
+runMigrations(db, () => {});
+const neo = new NeoAskTodoRepository(db);
+neo.openAsk({ id: 'ask', projectId: null, sessionId: 'neo', originMessageId: 'm', title: 'Synthetic', request: 'Synthetic', createdAt: 1 });
+neo.addTodo('todo', 'ask', { title: 'Report', doneWhen: '', check: null, instruction: '', named: null }, 1);
+const sessions = new NeoTodoSessionRepository(db);
+sessions.create('todo', { verb: 'start', adapter: 'hyperneo', place: { machine: 'local', name: 'Synthetic', folder: workspace } });
+sessions.recordRef('todo', { adapter: 'hyperneo', id: 'worker' });
+db.prepare(`INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES ('worker','Synthetic',?,'now','now','active','{}','{}')`).run(workspace);
+const operation = createArtifactRegistration(() => db, data, join(root, 'home'));
+const input = { requestId: 'request', context: { kind: 'todo', id: 'todo' }, path: 'report.md', title: 'Report' };
+const worker = { source: 'mcp' as const, role: 'direct_task_worker' as const, sessionId: 'worker' };
+const catalog = createOperationRegistry([operation]);
+const register = async (params = input, caller: OperationCaller = worker) => {
+ const result = await invokeOperation(catalog, 'artifact.file.register', params, caller);
+ assert.equal(result.kind, 'completed', JSON.stringify(result));
+ return (result as { kind: 'completed'; value: Record<string, unknown> }).value;
+};
+writeFileSync(join(workspace, 'report.md'), '# Synthetic 🦊\nComplete bytes\n');
+if (process.argv[3] === 'seed') { db.close(); console.log('seeded synthetic registration fixture'); process.exit(0); }
+assert.deepEqual(await register(input, { ...worker, sessionId: 'other' }), { accepted: false, reason: 'unavailable' });
+const first = await register();
+assert.equal(first.accepted, true);
+const reference = first.artifact as { artifactId: string; daemonId: string };
+assert(reference.artifactId);
+assert(reference.daemonId);
+assert(!JSON.stringify(first).includes(workspace));
+assert.equal((db.prepare('SELECT COUNT(*) AS n FROM artifact_files').get() as { n: number }).n, 1);
+assert.deepEqual(await register(), first);
+writeFileSync(join(workspace, 'report.md'), '# Changed bytes\n');
+assert.deepEqual(await register(), { accepted: false, reason: 'source_changed' });
+const second = await register({ ...input, requestId: 'request2' });
+assert.equal(second.accepted, true);
+assert.notDeepEqual(second.artifact, first.artifact);
+assert.deepEqual(await register({ ...input, path: 'elsewhere.md' }), { accepted: false, reason: 'source_changed' });
+renameSync(join(workspace, 'report.md'), join(workspace, 'retained-source.md'));
+assert.deepEqual(await register(), first);
+assert.deepEqual(await register(input, { ...worker, sessionId: 'other' }), { accepted: false, reason: 'unavailable' });
+const originalLstat = fs.lstat;
+const revokeDuringRetry = spyOn(fs, 'lstat').mockImplementation(async (...args) => {
+  if (String(args[0]) === join(workspace, 'report.md')) sessions.recordRef('todo', { adapter: 'hyperneo', id: 'replacement' });
+  return originalLstat(...args);
+});
+try { assert.deepEqual(await register(), { accepted: false, reason: 'unavailable' }); }
+finally { revokeDuringRetry.mockRestore(); sessions.recordRef('todo', { adapter: 'hyperneo', id: 'worker' }); }
+writeFileSync(join(workspace, 'parallel.md'), '# Parallel\n');
+const same = { ...input, path: 'parallel.md', requestId: 'parallel' };
+const secondCatalogOperation = createArtifactRegistration(() => db, data, join(root, 'home'));
+const parallel = await Promise.all([register(same), secondCatalogOperation.execute(same, worker), register(same), secondCatalogOperation.execute(same, worker)]);
+assert(parallel.every((receipt) => JSON.stringify(receipt) === JSON.stringify(parallel[0])));
+const rows = db.prepare('SELECT * FROM artifact_files').all();
+assert.equal(rows.length, 3);
+assert.throws(() => db.prepare('UPDATE artifact_files SET sha256 = ?').run('invalid'), /immutable_artifact_file/);
+assert.throws(() => db.prepare('DELETE FROM artifact_files').run(), /immutable_artifact_file/);
+writeFileSync(join(root, 'outside.md'), '# Outside');
+symlinkSync(join(root, 'outside.md'), join(workspace, 'symlink.md'));
+assert.deepEqual(await register({ ...input, requestId: 'symlink', path: 'symlink.md' }), { accepted: false, reason: 'unsafe_path' });
+writeFileSync(join(workspace, 'invalid.png'), '# This is not a PNG');
+assert.deepEqual(await register({ ...input, requestId: 'invalid', path: 'invalid.png' }), { accepted: false, reason: 'unsupported_type' });
+writeFileSync(join(workspace, 'binary.txt'), Buffer.from([0xff, 0, 1]));
+assert.deepEqual(await register({ ...input, requestId: 'binary', path: 'binary.txt' }), { accepted: false, reason: 'unsupported_type' });
+writeFileSync(join(workspace, 'oversized.txt'), '');
+truncateSync(join(workspace, 'oversized.txt'), 64 * 1024 * 1024 + 1);
+assert.deepEqual(await register({ ...input, requestId: 'oversized', path: 'oversized.txt' }), {
+  accepted: false, reason: 'size_limit', actualBytes: 64 * 1024 * 1024 + 1, limitBytes: 64 * 1024 * 1024,
+});
+assert.deepEqual(await register(input, { source: 'mcp', role: 'neo', sessionId: 'wrong-neo' }), { accepted: false, reason: 'unavailable' });
+assert.deepEqual(await register(input, { source: 'mcp', role: 'neo', sessionId: 'neo' }), first);
+assert.deepEqual(await register(input, { source: 'rpc', principal: 'local' }), first);
+
+for (const scope of ['global', 'room', 'space'] as const) {
+  assert(!getScopeConfig(scope).some((entry) => entry.tableName.startsWith('artifact_file')));
+}
+const metadata = db.prepare('SELECT sha256, byte_length FROM artifact_files WHERE artifact_id = ?').get(reference.artifactId) as { sha256: string; byte_length: number };
+assert.equal(readFileSync(join(data, 'artifacts', 'blobs', metadata.sha256)).length, metadata.byte_length);
+db.close();
+const reopened = new Database(join(data, 'registry.db'));
+runMigrations(reopened, () => {});
+const restarted = createArtifactRegistration(() => reopened, data, join(root, 'home'));
+assert.deepEqual(await restarted.execute(input, worker), first);
+reopened.prepare(`UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = 'todo'`).run(JSON.stringify({ adapter: 'hyperneo', id: 'replacement' }));
+assert.deepEqual(await restarted.execute(input, worker), { accepted: false, reason: 'unavailable' });
+reopened.close();
+const evidence = { durableReceipt: true, retryAfterRemoval: true, changedHashRefused: true, authorizationRechecked: true,
+ concurrentIdempotent: true, migratedTwice: true, registryExcluded: true, first, metadata };
+writeFileSync(join(root, 'register-evidence.json'), JSON.stringify(evidence, null, 2));
+console.log(JSON.stringify(evidence));
