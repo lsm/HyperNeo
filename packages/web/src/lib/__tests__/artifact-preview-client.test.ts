@@ -81,6 +81,11 @@ describe('readArtifactPreview', () => {
     expect(await readArtifactPreview(midway.hub, 'a1')).toEqual({ state: 'revoked' });
   });
 
+  it('asks for an updated daemon when the daemon has no artifact operations', async () => {
+    const unknown = Object.assign(new Error('Unknown operation'), { code: 'METHOD_NOT_FOUND' });
+    expect(await readArtifactPreview(hub([unknown]).hub, 'a1')).toEqual({ state: 'needs_update' });
+  });
+
   it('reports a failed daemon request as an unavailable daemon', async () => {
     expect(await readArtifactPreview(hub([new Error('socket closed')]).hub, 'a1')).toEqual({
       state: 'daemon_unavailable',

@@ -103,6 +103,14 @@ describe('ArtifactPreview', () => {
       'The daemon that owns this file is not reachable.',
     ],
     [
+      'an old daemon',
+      () =>
+        request.mockRejectedValue(
+          Object.assign(new Error('Unknown operation'), { code: 'METHOD_NOT_FOUND' })
+        ),
+      'Preview needs an updated daemon.',
+    ],
+    [
       'revoked access',
       () => reply({ accepted: false, reason: 'unavailable' }),
       'This file is no longer available to you.',
