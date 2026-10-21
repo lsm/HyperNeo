@@ -14,6 +14,7 @@ export interface PairingOperationDeps {
   readonly repo: () => DevicePairingRepository;
   readonly limiter: PairingLimiter;
   readonly now: () => number;
+  readonly revoked: (deviceId: string) => void;
 }
 
 export const ALLOW_NEEDS_PAIRED_HUMAN =
@@ -21,6 +22,9 @@ export const ALLOW_NEEDS_PAIRED_HUMAN =
 
 const fromDoor = (caller: OperationCaller) =>
   caller.source === 'mcp' && caller.principal === SESSION_DOOR_PRINCIPAL;
+
+export const NEEDS_PAIRED_HUMAN =
+  'not_paired: only a paired human device or the local CLI can manage devices.';
 
 export const NO_HUMAN_DEVICE =
   'no_human_device: only relays or daemons are paired, so nobody could allow this code. Pair the phone first; recovery comes later.';
@@ -40,6 +44,7 @@ export function createDevicePairingOperations({
   repo: pairing,
   limiter,
   now,
+  revoked,
 }: PairingOperationDeps) {
   const isPairedHuman = (caller: OperationCaller) =>
     isLocalUser(caller) &&
@@ -115,6 +120,53 @@ export function createDevicePairingOperations({
         return pairing().approve(input.codeId, now())
           ? { ok: true as const }
           : { ok: false as const, reason: 'not_pending: no pending code with that id.' };
+      },
+    }),
+    defineOperation({
+      name: 'device.list',
+      description:
+        'List paired devices with their kind, last sighting and whether they were revoked; never a credential.',
+      policy: { safetyClass: 'human_only' },
+      inputSchema: z.object({}).strict(),
+      resultSchema: z.union([
+        z.object({
+          ok: z.literal(true),
+          devices: z.array(
+            z.object({
+              id: z.string(),
+              name: z.string(),
+              kind: Kind,
+              createdAt: z.number(),
+              lastSeenAt: z.number().nullable(),
+              lastSeenHost: z.string().nullable(),
+              revokedAt: z.number().nullable(),
+            })
+          ),
+        }),
+        Refused,
+      ]),
+      execute: async (_input, caller) => {
+        if (!isLocalUser(caller) && !fromDoor(caller)) return refused;
+        if (!fromDoor(caller) && !isPairedHuman(caller))
+          return { ok: false as const, reason: NEEDS_PAIRED_HUMAN };
+        return { ok: true as const, devices: pairing().listDevices() };
+      },
+    }),
+    defineOperation({
+      name: 'device.revoke',
+      description:
+        'Revoke a paired device: its credential stops working and its open connections close. Revoking never reopens pairing without Allow.',
+      policy: { safetyClass: 'human_only' },
+      inputSchema: z.object({ deviceId: z.string().min(1) }).strict(),
+      resultSchema: z.union([z.object({ ok: z.literal(true) }), Refused]),
+      execute: async (input, caller) => {
+        if (!isLocalUser(caller) && !fromDoor(caller)) return refused;
+        if (!fromDoor(caller) && !isPairedHuman(caller))
+          return { ok: false as const, reason: NEEDS_PAIRED_HUMAN };
+        if (!pairing().revokeDevice(input.deviceId, now()))
+          return { ok: false as const, reason: 'not_found: no paired device with that id.' };
+        revoked(input.deviceId);
+        return { ok: true as const };
       },
     }),
     defineOperation({

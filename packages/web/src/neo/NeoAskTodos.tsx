@@ -23,7 +23,7 @@ import { neoSessionKind } from './work-driver.ts';
 import { NeoIcon } from './NeoIcon.tsx';
 import { messageTime } from './NeoMessage.tsx';
 import { t } from '../lib/i18n/index.ts';
-import { neoQuestionText, neoTodoStatus } from './todo-status.ts';
+import { neoQuestionText, neoTodoDetail, neoTodoStatus } from './todo-status.ts';
 
 const states = {
   waiting: ['ask.state.waiting', 'text-warning bg-warning/10'],
@@ -76,20 +76,49 @@ export function neoQuestionAnswerLabel(question: NeoQuestionEntry, todos: readon
     : answer;
 }
 
+function readExpanded(key: string): string[] {
+  try {
+    const value: unknown = JSON.parse(sessionStorage.getItem(key) ?? '[]');
+    return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function useExpandedTodos(sessionId: string, askId: string) {
+  const key = `neo.todoDetails:${JSON.stringify([sessionId, askId])}`;
+  const [stored, setStored] = useState(() => ({ key, ids: readExpanded(key) }));
+  const expanded = stored.key === key ? stored.ids : readExpanded(key);
+  const setExpanded = (ids: string[]) => {
+    setStored({ key, ids });
+    try {
+      sessionStorage.setItem(key, JSON.stringify(ids));
+    } catch {}
+  };
+  return { expanded, setExpanded };
+}
+
 function TodoRow({
   todo,
   number,
   checked,
   onCheck,
   onOpen,
+  expanded = false,
+  onToggle,
 }: {
   todo: NeoTodoEntry;
+  expanded?: boolean;
+  onToggle?: () => void;
   number?: number;
   checked?: boolean;
   onCheck?: (checked: boolean) => void;
   onOpen?: (link: string, title: string) => void;
 }) {
   const [mark, color] = marks[todo.state];
+  const Summary = onToggle ? 'button' : 'div';
+  const detailId = `neo-todo-detail-${todo.id}`;
+  const detail = neoTodoDetail(todo);
   return (
     <div
       id={`neo-ref-todo-${todo.id}`}
@@ -111,28 +140,57 @@ function TodoRow({
         </span>
       )}
       <div class="min-w-0 flex-1">
-        <span
-          class={`break-words ${todo.state === 'removed' ? 'text-fg-faint line-through' : 'text-fg'}`}
+        <Summary
+          type={onToggle ? 'button' : undefined}
+          onClick={onToggle}
+          aria-label={
+            onToggle
+              ? t(expanded ? 'todo.hideDetails' : 'todo.showDetails', { title: todo.title })
+              : undefined
+          }
+          aria-expanded={onToggle ? expanded : undefined}
+          aria-controls={onToggle ? detailId : undefined}
+          class="block w-full min-w-0 text-left focus-visible:outline-accent"
         >
-          {todo.title}
-        </span>
-        {todo.addedAfterStart && todo.state !== 'removed' && (
-          <span class="ml-1.5 rounded border border-accent px-1 text-xs font-semibold text-accent">
-            {t('todo.new')}
+          {onToggle && (
+            <span aria-hidden="true" class="float-right ml-2 text-fg-faint">
+              {expanded ? '⌄' : '›'}
+            </span>
+          )}
+          <span
+            class={`break-words ${todo.state === 'removed' ? 'text-fg-faint line-through' : 'text-fg'}`}
+          >
+            {todo.title}
           </span>
-        )}
-        <span
-          class={`block break-words text-xs ${number === undefined && todo.state === 'blocked' ? 'text-warning' : 'text-fg-muted'}`}
-        >
-          {number === undefined
-            ? neoTodoStatus(todo)
-            : t('todo.doneWhen', { doneWhen: todo.doneWhen })}
-        </span>
-        <ArtifactCards artifacts={todo.artifacts} />
-        {number === undefined && todo.state === 'blocked' && todo.nextAction && (
-          <span data-todo-next-action class="block break-words text-xs text-fg-muted">
-            {t('todo.nextAction', { action: todo.nextAction })}
+          {todo.addedAfterStart && todo.state !== 'removed' && (
+            <span class="ml-1.5 rounded border border-accent px-1 text-xs font-semibold text-accent">
+              {t('todo.new')}
+            </span>
+          )}
+          <span
+            data-todo-status
+            class={`block ${onToggle && !expanded ? 'truncate' : 'break-words'} text-xs ${number === undefined && todo.state === 'blocked' ? 'text-warning' : 'text-fg-muted'}`}
+          >
+            {number === undefined
+              ? neoTodoStatus(todo)
+              : t('todo.doneWhen', { doneWhen: todo.doneWhen })}
           </span>
+        </Summary>
+        {(!onToggle || expanded) && (
+          <div id={detailId} data-todo-details={onToggle ? '' : undefined}>
+            {onToggle &&
+              detail.map((text) => (
+                <p key={text} class="mt-1 whitespace-pre-wrap break-words text-xs text-fg-muted">
+                  {text}
+                </p>
+              ))}
+            <ArtifactCards artifacts={todo.artifacts} />
+            {number === undefined && todo.state === 'blocked' && todo.nextAction && (
+              <span data-todo-next-action class="block break-words text-xs text-fg-muted">
+                {t('todo.nextAction', { action: todo.nextAction })}
+              </span>
+            )}
+          </div>
         )}
       </div>
       {todo.link && todo.state !== 'removed' && onOpen && (
@@ -334,6 +392,7 @@ export function NeoAskTodos({
 }) {
   const [open, setOpen] = useState(false);
   const { ask, todos } = entry;
+  const { expanded, setExpanded } = useExpandedTodos(ask.sessionId, ask.id);
   const asked = entry.questions.filter((question) => question.state === 'open');
   const answered = entry.questions.filter((question) => question.state === 'answered');
   const retired = entry.questions.filter((question) => question.state === 'retired');
@@ -341,6 +400,8 @@ export function NeoAskTodos({
     asked.flatMap((question) => (question.kind === 'start' ? (question.startTodos ?? []) : []))
   );
   const live = todos.filter((todo) => todo.state !== 'removed');
+  const listed = live.filter((todo) => !inQuestion.has(todo.id));
+  const allExpanded = listed.every((todo) => expanded.includes(todo.id));
   const removed = todos.filter((todo) => todo.state === 'removed' && !inQuestion.has(todo.id));
   const hasDetails =
     answered.length > 0 || retired.length > 0 || !!ask.outcome || removed.length > 0;
@@ -389,13 +450,32 @@ export function NeoAskTodos({
           onReply={onReply ? () => onReply(question) : undefined}
         />
       ))}
-      {live.some((todo) => !inQuestion.has(todo.id)) && (
+      {listed.length > 0 && (
         <div class="mt-3" aria-label={t('ask.todos')}>
-          {live
-            .filter((todo) => !inQuestion.has(todo.id))
-            .map((todo) => (
-              <TodoRow key={todo.id} todo={todo} onOpen={onOpen} />
-            ))}
+          <div class="mb-1 flex justify-end">
+            <button
+              type="button"
+              class={neoPlainClass}
+              onClick={() => setExpanded(allExpanded ? [] : listed.map((todo) => todo.id))}
+            >
+              {t(allExpanded ? 'todo.collapseAll' : 'todo.expandAll')}
+            </button>
+          </div>
+          {listed.map((todo) => (
+            <TodoRow
+              key={todo.id}
+              todo={todo}
+              onOpen={onOpen}
+              expanded={expanded.includes(todo.id)}
+              onToggle={() =>
+                setExpanded(
+                  expanded.includes(todo.id)
+                    ? expanded.filter((id) => id !== todo.id)
+                    : [...expanded, todo.id]
+                )
+              }
+            />
+          ))}
         </div>
       )}
       {open && hasDetails && (

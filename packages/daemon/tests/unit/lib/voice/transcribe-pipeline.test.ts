@@ -1,5 +1,6 @@
 /// <reference types="bun" />
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { fetchTranscriptionWithRedirects } from '../../../../src/lib/voice/transcribe-fetch.ts';
 import type { GlobalSettings } from '@hyperneo/shared';
 import type { ProviderCredentialManager } from '../../../../src/lib/credentials/provider-credential-manager.ts';
 import {
@@ -191,6 +192,26 @@ describe('voice transcribe pipeline', () => {
       error:
         'Voice transcription endpoint targets a private, loopback, or link-local address. Enable private/LAN endpoints in Voice settings for trusted local ASR backends.',
     });
+  });
+
+  it('does not claim dispatch or send an already-aborted request', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const beforeDispatch = mock(() => {});
+    await expect(
+      fetchTranscriptionWithRedirects(
+        new URL('http://127.0.0.1:1/v1/audio/transcriptions'),
+        {},
+        new FormData(),
+        true,
+        false,
+        controller.signal,
+        undefined,
+        beforeDispatch
+      )
+    ).rejects.toThrow();
+    expect(beforeDispatch).not.toHaveBeenCalled();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
   it('normalizes HTTP error responses', async () => {

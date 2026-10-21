@@ -696,14 +696,14 @@ describe('codex-desktop adapter status and send', () => {
     expect(driver.capabilities).toEqual(
       expect.arrayContaining(['steer', 'queue', 'withdraw', 'send', 'stop'])
     );
-    for (const method of ['queue', 'send'] as const) {
+    for (const method of ['queue'] as const) {
       expect(await driver[method]!(ref('busy'), 'after this', user)).toEqual({
         ok: true,
         value: { delivered: false, queuedSubmissionId: 'queue-1' },
       });
     }
     expect(calls.filter(([method]) => method !== 'thread/turns/list')).toEqual(
-      Array.from({ length: 2 }, () => [
+      Array.from({ length: 1 }, () => [
         'thread/queue/add',
         {
           threadId: 'busy',
@@ -713,17 +713,19 @@ describe('codex-desktop adapter status and send', () => {
       ])
     );
     expect(spawned).toEqual([]);
-    expect(closed).toBe(3);
+    expect(closed).toBe(1);
   });
 
   test.each(['NoActiveTurn', 'turn/steer: method not found (-32601)'])(
-    'work.send queues when the active server turn cannot be steered: %s',
+    'work.send starts after NoActiveTurn and refuses an unsupported steer: %s',
     async (error) => {
       const driver = adapter(0, '', async () => ({
         call: async (method) => {
           if (method === 'thread/turns/list') return { data: [{ id: 't1', status: 'inProgress' }] };
           if (method === 'turn/steer') throw new Error(error);
-          return { queuedSubmission: { id: 'q1' } };
+          if (method === 'thread/resume') return { thread: { id: 'busy', turns: [] } };
+          if (method === 'turn/start') return { turn: { id: 'new-turn' } };
+          throw new Error('Must not queue');
         },
         close: () => {},
       }));
@@ -732,10 +734,11 @@ describe('codex-desktop adapter status and send', () => {
         reason: 'not_delivered',
         detail: expect.stringContaining(error),
       });
-      expect(await driver.send!(ref('busy'), 'later', user)).toEqual({
-        ok: true,
-        value: { delivered: false, queuedSubmissionId: 'q1' },
-      });
+      expect(await driver.send!(ref('busy'), 'later', user)).toMatchObject(
+        error === 'NoActiveTurn'
+          ? { ok: true, value: { delivered: true, startedTurnId: 'new-turn' } }
+          : { ok: false, reason: 'not_delivered' }
+      );
     }
   );
 
@@ -1002,7 +1005,7 @@ describe('codex-desktop adapter status and send', () => {
     }
   );
 
-  test.each(['send', 'queue'] as const)(
+  test.each(['queue'] as const)(
     'preserves CLI availability when %s cannot connect before submission',
     async (method) => {
       const driver = adapter(
@@ -1031,7 +1034,7 @@ describe('codex-desktop adapter status and send', () => {
       close: () => {},
     }));
     const receipt = { executionId: 'busy', inputId: 'native-input' };
-    expect(await driver.send!(ref('busy'), 'next step', user)).toEqual({
+    expect(await driver.queue!(ref('busy'), 'next step', user)).toEqual({
       ok: true,
       value: { delivered: true, queuedSubmissionId: 'native-queue', receipt },
     });
@@ -1093,52 +1096,94 @@ describe('codex-desktop adapter status and send', () => {
     expect(connected).toBe(false);
   });
 
-  test('marks agent sends without confusing their delivery with a previous marked message', async () => {
-    appendFileSync(
-      join(dir, 'finished.jsonl'),
-      `\n${heard('old request\n[HyperNeo agent input]')}`
-    );
-    const agent = {
-      from: 'session:neo',
-      caller: { source: 'internal' as const, role: 'neo' as const },
-    };
-    expect(await adapter().send?.(ref('idle'), 'new request', agent)).toEqual({
-      ok: true,
-      value: { delivered: false },
-    });
-    expect(spawned.at(-1)).toEqual([
-      'codex',
-      'queue',
-      '--thread=idle',
-      '--message=new request\n[HyperNeo agent input]',
-    ]);
-  });
+  test.each([false, true])(
+    'resumes saved idle work before sending, or reports resume failure: %s',
+    async (resumeFails) => {
+      const calls: Array<[string, Record<string, unknown>]> = [];
+      let loaded = false;
+      const driver = adapter(0, '', async () => ({
+        call: async (method, params) => {
+          calls.push([method, params]);
+          if (method === 'thread/turns/list')
+            return { data: [{ id: 'finished', status: 'completed' }] };
+          if (method === 'thread/resume') {
+            if (resumeFails) throw new Error('thread/resume: rollout unavailable');
+            loaded = true;
+            return { thread: { id: 'idle', status: { type: 'idle' }, turns: [] } };
+          }
+          if (method === 'turn/start') {
+            if (!loaded)
+              throw new Error('turn/start: {"code":-32600,"message":"thread not found: idle"}');
+            return { turn: { id: 'resumed-turn', status: 'inProgress', items: [] } };
+          }
+          throw new Error('Must not queue');
+        },
+        close: () => {},
+      }));
+      const result = await driver.send!(ref('idle'), 'continue saved work', user);
+      expect(result).toEqual(
+        resumeFails
+          ? { ok: false, reason: 'not_delivered', detail: 'thread/resume: rollout unavailable' }
+          : { ok: true, value: { delivered: true, startedTurnId: 'resumed-turn' } }
+      );
+      expect(calls.map(([method]) => method)).toEqual([
+        'thread/turns/list',
+        'thread/resume',
+        ...(!resumeFails ? ['turn/start'] : []),
+      ]);
+      expect(calls[1]).toEqual(['thread/resume', { threadId: 'idle', excludeTurns: true }]);
+      expect(spawned).toEqual([]);
+    }
+  );
 
-  test('send queues the message and reports it delivered once the rollout shows it', async () => {
-    expect(await adapter().send?.(ref('busy'), '-v after this', user)).toEqual({
-      ok: true,
-      value: { delivered: false },
-    });
-    appendFileSync(join(dir, 'finished.jsonl'), `\n${heard('next step\nwith detail')}`);
-    expect(await adapter().send?.(ref('idle'), 'next step\nwith detail', user)).toEqual({
-      ok: true,
-      value: { delivered: true },
-    });
-    expect(spawned).toEqual([
-      ['codex', 'queue', '--thread=busy', '--message=-v after this'],
-      ['codex', 'queue', '--thread=idle', '--message=next step\nwith detail'],
-    ]);
-  });
+  test.each([{ turns: [] }, { turns: [{ id: 'finished', status: 'completed' }] }])(
+    'idle send starts its marked input rather than accepting a stored queue receipt: %j',
+    async ({ turns }) => {
+      const calls: Array<[string, Record<string, unknown>]> = [];
+      const driver = adapter(0, '', async () => ({
+        call: async (method, params) => {
+          calls.push([method, params]);
+          if (method === 'thread/turns/list') return { data: turns };
+          if (method === 'thread/resume') return { thread: { id: 'idle', turns: [] } };
+          if (method === 'turn/start') return { turn: { id: 'started' } };
+          throw new Error('Must not queue');
+        },
+        close: () => {},
+      }));
+      const agent = {
+        from: 'session:neo',
+        caller: { source: 'internal' as const, role: 'neo' as const },
+      };
+      expect(await driver.send!(ref('idle'), 'new request', agent)).toEqual({
+        ok: true,
+        value: { delivered: true, startedTurnId: 'started' },
+      });
+      expect(calls).toEqual([
+        ['thread/turns/list', { threadId: 'idle', limit: 1 }],
+        ['thread/resume', { threadId: 'idle', excludeTurns: true }],
+        [
+          'turn/start',
+          {
+            threadId: 'idle',
+            input: [
+              { type: 'text', text: 'new request\n[HyperNeo agent input]', text_elements: [] },
+            ],
+          },
+        ],
+      ]);
+      expect(spawned).toEqual([]);
+    }
+  );
 
-  test('send refuses archived threads and reports a failed queue', async () => {
+  test('send refuses archived threads and unavailable turn delivery', async () => {
     expect(await adapter().send?.(ref('old'), 'hi', user)).toMatchObject({
       ok: false,
       reason: 'not_open',
     });
-    expect(await adapter(1, 'no such thread\n').send?.(ref('idle'), 'hi', user)).toEqual({
+    expect(await adapter(1, 'no such thread\n').send?.(ref('idle'), 'hi', user)).toMatchObject({
       ok: false,
       reason: 'not_delivered',
-      detail: 'no such thread',
     });
+    expect(spawned).toEqual([]);
   });
 });

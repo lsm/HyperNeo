@@ -1,0 +1,31 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:29:30). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 /Users/lsm/focus/worktrees/web-previews-17/packages/web
+
+ ❯ src/lib/__tests__/artifact-media-client.test.ts (9 tests | 1 failed | 8 skipped) 5ms
+   ❯ artifact media previews and downloads (9)
+     × verifies downloads when Web Crypto is unavailable on plain HTTP 4ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/lib/__tests__/artifact-media-client.test.ts > artifact media previews and downloads > verifies downloads when Web Crypto is unavailable on plain HTTP
+TypeError: Cannot read properties of undefined (reading 'subtle')
+ ❯ downloadArtifact src/lib/artifact-media-client.ts:56:31
+     54|   } while (offset < metadata.artifact.byteLength);
+     55|   signal.throwIfAborted();
+     56|   const digest = await crypto.subtle.digest('SHA-256', await new Blob(…
+       |                               ^
+     57|   signal.throwIfAborted();
+     58|   if (
+ ❯ src/lib/__tests__/artifact-media-client.test.ts:101:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 8 skipped (9)
+   Start at  15:10:46
+   Duration  408ms (environment 52%, setup 34%, transform 10%, tests 1%, import 1%, worker 1%)
+

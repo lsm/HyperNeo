@@ -111,7 +111,20 @@ function isEndedTurnWrite(operation: OperationDefinition, caller: OperationCalle
 
 const DEVICE_OPERATIONS: Record<'relay' | 'daemon', ReadonlySet<string>> = {
   relay: new Set(['neo.snapshot', 'neo.publication.read', 'client.list']),
-  daemon: new Set(),
+  daemon: new Set([
+    'operations.list',
+    'message.send',
+    'work.adapters',
+    'work.find',
+    'work.queue',
+    'work.read',
+    'work.rename',
+    'work.send',
+    'work.start',
+    'work.status',
+    'work.stop',
+    'work.withdraw',
+  ]),
 };
 
 function isDeviceAdmitted(operation: OperationDefinition, caller: OperationCaller): boolean {

@@ -306,25 +306,53 @@ describe('withCodexDesktopIpc', () => {
       });
     });
 
-    test.each([
-      'no-client-found',
-      'Cannot steer conversation thread-1 because its active turn already ended',
-      'NoActiveTurn',
-      'activeTurnNotSteerable',
-    ])('queues after Desktop explicitly refuses steering: %s', async (error) => {
-      const f = await fixture((message, _socket, send) =>
-        send({
-          type: 'response',
-          requestId: message.requestId,
-          ...(message.method === 'thread-owner-discovery'
-            ? { resultType: 'success', handledByClientId: 'desktop-owner' }
-            : { resultType: 'error', error }),
-        })
-      );
-      expect(await steerCodexDesktopTurn(f.path, 'thread-1', 'later', 'input-1')).toEqual({
-        value: 'queue',
-      });
-    });
+    test.each([false, true])(
+      'starts idle Desktop input or reports its refusal: %s',
+      async (refused) => {
+        const f = await fixture((message, _socket, send) =>
+          send({
+            type: 'response',
+            requestId: message.requestId,
+            ...(message.method === 'thread-owner-discovery'
+              ? { resultType: 'success', handledByClientId: 'desktop-owner' }
+              : message.method === 'thread-follower-start-turn' && !refused
+                ? { resultType: 'success', result: { result: { turn: { id: 'new-turn' } } } }
+                : {
+                    resultType: 'error',
+                    error:
+                      message.method === 'thread-follower-start-turn'
+                        ? 'start unavailable'
+                        : 'NoActiveTurn',
+                  }),
+          })
+        );
+        const result = await steerCodexDesktopTurn(f.path, 'thread-1', 'later', 'input-1');
+        expect(result).toMatchObject({
+          reason: refused
+            ? {
+                ok: false,
+                reason: 'not_delivered',
+                detail: expect.stringContaining('start unavailable'),
+              }
+            : { ok: true, value: { delivered: true, startedTurnId: 'new-turn' } },
+        });
+        expect(f.seen.at(-1)).toMatchObject({
+          method: 'thread-follower-start-turn',
+          version: 2,
+          targetClientId: 'desktop-owner',
+          params: {
+            conversationId: 'thread-1',
+            turnStart: {
+              request: {
+                threadId: 'thread-1',
+                input: [{ type: 'text', text: 'later', text_elements: [] }],
+              },
+              context: { inheritThreadSettings: true },
+            },
+          },
+        });
+      }
+    );
 
     test('uses app-server only when Desktop has no owner', async () => {
       const f = await fixture((message, _socket, send) =>

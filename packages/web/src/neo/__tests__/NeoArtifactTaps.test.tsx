@@ -45,6 +45,7 @@ const conversation = (item: NeoPublication) =>
 
 beforeEach(() => {
   artifactPreviewStack.value = [];
+  sessionStorage.clear();
 });
 afterEach(cleanup);
 
@@ -130,6 +131,10 @@ describe('Neo artifact taps', () => {
     };
     render(<NeoAskTodos entry={entry} onAnswer={() => {}} />);
     const row = document.querySelector('[data-ask-todo="t1"]') as HTMLElement;
+    expect(within(row).queryByRole('button', { name: 'Open preview: Layout report' })).toBeNull();
+    fireEvent.click(
+      within(row).getByRole('button', { name: 'Show details: Write the layout report' })
+    );
     fireEvent.click(within(row).getByRole('button', { name: 'Open preview: Layout report' }));
     expect(artifactPreviewStack.value).toEqual([{ kind: 'artifact', artifactId: 'a-report' }]);
   });

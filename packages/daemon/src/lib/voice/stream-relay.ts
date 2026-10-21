@@ -7,6 +7,8 @@ import { resolveTranscriptionEndpoint, withTimeout } from './transcribe-fetch.ts
 import { resolveApiKey, type VoiceTranscribeOutcome } from './transcribe-pipeline.ts';
 import { joinFinals, streamProtocol, type StreamProtocol } from './stream-protocols.ts';
 
+import { voiceDiagnostic, voiceSocketReason, voiceSocketErrorCode } from './diagnostics.ts';
+
 const STREAM_SAMPLE_RATE = 16_000;
 const CONNECT_TIMEOUT_MS = 5_000;
 const START_TIMEOUT_MS = 8_000;
@@ -20,6 +22,7 @@ export interface VoiceStreamText {
 }
 
 export interface VoiceStreamDeps {
+  clientId?: string;
   voice: () => VoiceSettings | undefined;
   credentialManager?: Pick<ProviderCredentialManager, 'getCredentials'>;
   transcribeWav: (wavBase64: string) => Promise<VoiceTranscribeOutcome>;
@@ -83,6 +86,7 @@ export function pcm16Wav(pcm: Uint8Array): Uint8Array {
 }
 
 async function openAsrSocket(
+  streamId: string,
   voice: VoiceSettings,
   url: URL,
   protocol: StreamProtocol,
@@ -120,7 +124,24 @@ async function openAsrSocket(
       handshakeTimeout: CONNECT_TIMEOUT_MS,
     } as WebSocket.ClientOptions);
     return await new Promise((resolve) => {
-      socket.on('error', (error) => resolve({ reason: error?.message || 'connection failed' }));
+      socket.on('error', (error) => {
+        voiceDiagnostic('voice.asr.error', {
+          streamId,
+          clientId: deps.clientId,
+          reason: 'socket_error',
+          code: voiceSocketErrorCode(error),
+        });
+        resolve({ reason: error?.message || 'connection failed' });
+      });
+      socket.on('close', (code, reason) =>
+        voiceDiagnostic('voice.asr.close', {
+          streamId,
+          clientId: deps.clientId,
+          code,
+          reason: voiceSocketReason(code),
+          peerReasonBytes: reason.byteLength,
+        })
+      );
       socket.once('open', () => {
         for (const message of protocol.opening()) socket.send(message);
         resolve({ value: socket });
@@ -132,12 +153,13 @@ async function openAsrSocket(
 }
 
 async function openAsrSocketWithin(
+  streamId: string,
   voice: VoiceSettings,
   url: URL,
   protocol: StreamProtocol,
   deps: VoiceStreamDeps
 ): Promise<Gate<WebSocket>> {
-  const opening = openAsrSocket(voice, url, protocol, deps);
+  const opening = openAsrSocket(streamId, voice, url, protocol, deps);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const expired = new Promise<Gate<WebSocket>>((resolve) => {
     timer = setTimeout(
@@ -175,6 +197,9 @@ export const planVoiceStream = (superpipe({})('voice-stream-start') as PipelineA
   | string;
 
 export class VoiceStream {
+  private readonly startedAt = Date.now();
+  private via: 'streaming' | 'batch' = 'batch';
+  private fallbackReason: string | undefined;
   private chunks: Uint8Array[] = [];
   private cancelled = false;
   private bytes = 0;
@@ -198,9 +223,30 @@ export class VoiceStream {
     { stream: VoiceStream; via: 'streaming' | 'batch'; fallback?: string } | { error: string }
   > {
     const plan = planVoiceStream(deps.voice());
-    if (typeof plan === 'string') return { error: plan };
+    if (typeof plan === 'string') {
+      voiceDiagnostic('voice.stream.open', {
+        streamId: id,
+        clientId: deps.clientId,
+        status: 'refused',
+        fallbackReason: 'invalid_configuration',
+      });
+      return { error: plan };
+    }
+    const openedLog = (status: string, via?: string, fallbackReason?: string) =>
+      voiceDiagnostic('voice.stream.open', {
+        streamId: id,
+        clientId: deps.clientId,
+        status,
+        via,
+        mode: plan.mode,
+        route: plan.route ? (plan.voice.streamProtocol ?? 'deepgram') : 'batch',
+        streamOrigin: plan.route?.url.origin,
+        fallbackReason,
+      });
     const stream = new VoiceStream(id, deps);
     if (!plan.route) {
+      stream.fallbackReason = plan.mode === 'batch' ? undefined : 'no_streaming_route';
+      openedLog(plan.mode === 'streaming' ? 'refused' : 'started', 'batch', stream.fallbackReason);
       return plan.mode === 'streaming'
         ? { error: 'The voice endpoint has no streaming transcription route' }
         : {
@@ -209,11 +255,22 @@ export class VoiceStream {
             ...(plan.mode === 'auto' ? { fallback: 'no streaming route' } : {}),
           };
     }
-    const opened = await openAsrSocketWithin(plan.voice, plan.route.url, plan.route.protocol, deps);
-    if ('reason' in opened)
+    const opened = await openAsrSocketWithin(
+      id,
+      plan.voice,
+      plan.route.url,
+      plan.route.protocol,
+      deps
+    );
+    if ('reason' in opened) {
+      stream.fallbackReason = 'asr_unavailable';
+      openedLog(plan.mode === 'streaming' ? 'refused' : 'started', 'batch', stream.fallbackReason);
       return plan.mode === 'streaming'
         ? { error: `Streaming transcription is unavailable: ${opened.reason}` }
         : { stream, via: 'batch', fallback: opened.reason };
+    }
+    stream.via = 'streaming';
+    openedLog('started', 'streaming');
     stream.attach(opened.value, plan.route.protocol);
     return { stream, via: 'streaming' };
   }
@@ -256,9 +313,40 @@ export class VoiceStream {
   stop(): Promise<
     { text: string; via: 'streaming' | 'batch' } | { error: string; retryable?: true }
   > {
-    this.stopping ??= this.finish().finally(() => {
-      this.stopping = null;
-    });
+    if (!this.stopping) {
+      const stoppingAt = Date.now();
+      const audioBytes = this.bytes;
+      const record = (status: string, retryable = false) =>
+        voiceDiagnostic('voice.stream.stop', {
+          streamId: this.id,
+          clientId: this.deps.clientId,
+          via: this.via,
+          status,
+          retryable,
+          audioBytes,
+          audioDurationMs: (audioBytes / (STREAM_SAMPLE_RATE * 2)) * 1000,
+          durationMs: Date.now() - this.startedAt,
+          stopDurationMs: Date.now() - stoppingAt,
+          fallbackReason: this.fallbackReason,
+        });
+      this.stopping = this.finish()
+        .then(
+          (result) => {
+            record(
+              'error' in result ? 'failed' : 'completed',
+              'error' in result && result.retryable === true
+            );
+            return result;
+          },
+          (error: unknown) => {
+            record('failed');
+            throw error;
+          }
+        )
+        .finally(() => {
+          this.stopping = null;
+        });
+    }
     return this.stopping;
   }
 
@@ -284,6 +372,9 @@ export class VoiceStream {
         return { text, via: 'streaming' };
       }
     }
+    if (this.via === 'streaming')
+      this.fallbackReason = socket ? 'asr_incomplete' : 'asr_disconnected';
+    this.via = 'batch';
     if (this.bytes === 0) return { error: 'Audio data is empty' };
     const pcm = new Uint8Array(this.bytes);
     let offset = 0;
@@ -309,7 +400,16 @@ export class VoiceStream {
     this.close();
   }
 
-  close(): void {
+  close(reason = 'closed'): void {
+    voiceDiagnostic('voice.stream.close', {
+      streamId: this.id,
+      clientId: this.deps.clientId,
+      reason,
+      via: this.via,
+      audioBytes: this.bytes,
+      audioDurationMs: (this.bytes / (STREAM_SAMPLE_RATE * 2)) * 1000,
+      durationMs: Date.now() - this.startedAt,
+    });
     const socket = this.socket;
     this.socket = null;
     socket?.close(1000);

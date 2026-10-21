@@ -4,6 +4,7 @@ import { createPairRoute } from '../../../../src/lib/pairing/pair-route.ts';
 import {
   ALLOW_NEEDS_PAIRED_HUMAN,
   createDevicePairingOperations,
+  NEEDS_PAIRED_HUMAN,
   NO_HUMAN_DEVICE,
 } from '../../../../src/lib/pairing/pairing-operations.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
@@ -22,7 +23,13 @@ function setup(start = 1_000_000) {
   const repo = new DevicePairingRepository(db);
   const limiter = createPairingLimiter();
   const route = createPairRoute({ repo, limiter, now: clock.now });
-  const ops = createDevicePairingOperations({ repo: () => repo, limiter, now: clock.now });
+  const revoked: string[] = [];
+  const ops = createDevicePairingOperations({
+    repo: () => repo,
+    limiter,
+    now: clock.now,
+    revoked: (deviceId) => revoked.push(deviceId),
+  });
   const call = (name: string, input: unknown, caller: OperationCaller) => {
     const op = ops.find((item) => item.name === name)!;
     return op.execute(op.inputSchema.parse(input), caller) as Promise<Record<string, any>>;
@@ -37,7 +44,7 @@ function setup(start = 1_000_000) {
     );
     return { status: response.status, body: (await response.json()) as Record<string, any> };
   };
-  return { db, clock, repo, call, pair };
+  return { db, clock, repo, call, pair, revoked };
 }
 
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
@@ -176,6 +183,90 @@ describe('device pairing', () => {
         .approval
     ).toBe('approved');
     db.close();
+  });
+
+  test('the CLI lists paired devices without secrets and revokes one, closing its connections', async () => {
+    const { db, call, pair, revoked } = setup();
+    const phone = await pair((await call('device.pair.create', { kind: 'human' }, door)).code);
+    const relayCode = await call('device.pair.create', { kind: 'relay' }, door);
+    const phoneCaller = pairedHuman(phone.body.deviceId);
+    await call('device.pair.approve', { codeId: relayCode.codeId }, phoneCaller);
+    const relay = await pair(relayCode.code, 'Relay');
+    const listed = await call('device.list', {}, door);
+    expect(listed.devices).toEqual([
+      expect.objectContaining({
+        id: phone.body.deviceId,
+        name: 'Phone',
+        kind: 'human',
+        revokedAt: null,
+      }),
+      expect.objectContaining({
+        id: relay.body.deviceId,
+        name: 'Relay',
+        kind: 'relay',
+        revokedAt: null,
+      }),
+    ]);
+    expect(JSON.stringify(listed)).not.toContain(relay.body.credential);
+    expect(await call('device.revoke', { deviceId: relay.body.deviceId }, agent)).toMatchObject({
+      ok: false,
+    });
+    expect(await call('device.revoke', { deviceId: relay.body.deviceId }, human)).toEqual({
+      ok: false,
+      reason: NEEDS_PAIRED_HUMAN,
+    });
+    expect(await call('device.revoke', { deviceId: relay.body.deviceId }, door)).toEqual({
+      ok: true,
+    });
+    expect(revoked).toEqual([relay.body.deviceId]);
+    expect(await call('device.revoke', { deviceId: relay.body.deviceId }, phoneCaller)).toEqual({
+      ok: false,
+      reason: 'not_found: no paired device with that id.',
+    });
+    expect((await call('device.list', {}, phoneCaller)).devices[1].revokedAt).toBeNumber();
+    db.close();
+  });
+
+  test('revoking the only phone does not reopen pairing without Allow', async () => {
+    const { db, call, pair } = setup();
+    const phone = await pair((await call('device.pair.create', { kind: 'human' }, door)).code);
+    expect(await call('device.revoke', { deviceId: phone.body.deviceId }, door)).toEqual({
+      ok: true,
+    });
+    expect(await call('device.pair.create', { kind: 'human' }, door)).toEqual({
+      ok: false,
+      reason: NO_HUMAN_DEVICE,
+    });
+    db.close();
+  });
+
+  test('a browser gets its credential only as an HttpOnly cookie, Secure when its page is HTTPS', async () => {
+    const { repo } = setup();
+    const route = createPairRoute({ repo, limiter: createPairingLimiter(), now: () => 1_000_000 });
+    const redeem = async (origin: string) => {
+      const made = repo.createCode('human', null, true, 1_000_000);
+      const response = await route(
+        new Request(`${origin}/pair`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', origin },
+          body: JSON.stringify({ code: made.code, name: 'Browser' }),
+        })
+      );
+      return { response, body: (await response.json()) as Record<string, unknown> };
+    };
+    const served = await redeem('https://mac.tailnet.ts.net');
+    expect(served.response.status).toBe(200);
+    expect(served.body).toEqual({ deviceId: expect.any(String), kind: 'human' });
+    const cookie = served.response.headers.get('set-cookie')!;
+    expect(cookie).toMatch(/^hyperneo_device=[A-Za-z0-9_-]{43}; /);
+    expect(cookie.split('; ').slice(1).sort()).toEqual(
+      ['HttpOnly', 'Max-Age=34560000', 'Path=/', 'SameSite=Strict', 'Secure'].sort()
+    );
+    expect(
+      repo.touchDevice(cookie.slice('hyperneo_device='.length, cookie.indexOf(';')), 'h', 1)
+    ).toMatchObject({ kind: 'human' });
+    const plain = await redeem('http://127.0.0.1:9283');
+    expect(plain.response.headers.get('set-cookie')).not.toContain('Secure');
   });
 
   test('bad codes are limited to 5 a minute, 20 lock pairing for 15 minutes, and a local reset reopens it', async () => {
