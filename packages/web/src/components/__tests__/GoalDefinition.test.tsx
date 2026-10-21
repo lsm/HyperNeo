@@ -97,6 +97,11 @@ describe('GoalDefinition', () => {
     expect(within(journal).queryByRole('button', { name: 'Retry journal' })).toBeNull();
     await act(async () => reject(new Error('Journal offline')));
     fireEvent.click(await within(journal).findByRole('button', { name: 'Retry journal' }));
+    await waitFor(() =>
+      expect(
+        request.mock.calls.filter(([, data]) => data.name === 'goal.journal.list')
+      ).toHaveLength(2)
+    );
     await act(async () => resolve({ accepted: true, entries: [] }));
     await within(journal).findByText('No journal entries yet');
   });

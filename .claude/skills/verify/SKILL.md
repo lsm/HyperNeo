@@ -2510,3 +2510,17 @@ size and SHA-256 and refuse a foreign daemon reference. Evidence is retained in
 `evidence/preview-pin-*.json`. This proves source-path independence and process
 restart, not the future registration door, scoped preview authorization, a removed
 Git worktree, iOS or HTML containment. No credentials, provider/model or live DB.
+
+### Goal detail read states
+
+On a fresh synthetic goal-detail seed, run the headless
+`goal-detail-review.mjs <port> "$RUN"`. It updates the goal through actual RPC
+with a null metric and a missing mandate document. The browser delays only the
+first full journal read; the response itself and every other RPC use the real
+isolated daemon. Pending journal reads must show loading without Retry. Once
+released, entries appear, unknown metrics use an em dash (zero/false stay intact),
+and a refused optional home read leaves the loaded goal readable with a plain
+mandate reference and no goal-error alert. Inspect `goal-review.json`,
+`goal-review-loading.png` and `goal-review-metadata.png`. Component contracts also
+cover an optional metadata transport fault and retry after a failed first page.
+The helper closes its browser; stop the daemon/mock with `stop.sh`.

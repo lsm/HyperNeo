@@ -65,10 +65,8 @@ export function GoalDefinition({
               path: result.goal.mandateRef.split('#')[0],
               includeRemote: true,
             }
-          );
-          if (!alive) return;
-          if (!home.ok) throw new Error(home.reason);
-          setRemote(home.remoteUrl ?? null);
+          ).catch(() => null);
+          if (alive && home?.ok) setRemote(home.remoteUrl ?? null);
         }
       })
       .catch((cause) => {
@@ -93,7 +91,7 @@ export function GoalDefinition({
           <p class="whitespace-pre-wrap">{goal.description}</p>
           {Object.entries(goal.metrics).map(([name, value]) => (
             <p key={name}>
-              {name}: {String(value)}
+              {name}: {String(value ?? '—')}
             </p>
           ))}
           {goal.doneTest && (

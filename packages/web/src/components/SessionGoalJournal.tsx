@@ -115,7 +115,7 @@ export function GoalJournal({
         </p>
       )}
       {!loading && !error && !entries.length && <p>{t('schedules.emptyJournal')}</p>}
-      {more && (
+      {more && (entries.length > 0 || !!error) && (
         <Button
           variant="ghost"
           size="xs"
