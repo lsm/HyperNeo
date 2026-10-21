@@ -18,7 +18,7 @@ function setup(start = 1_000_000) {
   const repo = new DevicePairingRepository(db);
   const limiter = createPairingLimiter();
   const route = createPairRoute({ repo, limiter, now: clock.now });
-  const ops = createDevicePairingOperations({ repo, limiter, now: clock.now });
+  const ops = createDevicePairingOperations({ repo: () => repo, limiter, now: clock.now });
   const call = (name: string, input: unknown, caller: OperationCaller) => {
     const op = ops.find((item) => item.name === name)!;
     return op.execute(op.inputSchema.parse(input), caller) as Promise<Record<string, any>>;
@@ -137,6 +137,19 @@ describe('device pairing', () => {
     expect(bad).toMatchObject({ status: 400, body: { error: 'invalid_request' } });
     const wrong = await pair('BBBBBBBBBB');
     expect(JSON.stringify(wrong.body)).not.toContain('BBBBBBBBBB');
+    db.close();
+  });
+
+  test('an oversized or malformed pairing body is refused unread and counts against the limit', async () => {
+    const { db, call, clock } = setup();
+    const repo = new DevicePairingRepository(db);
+    const route = createPairRoute({ repo, limiter: createPairingLimiter(), now: clock.now });
+    const post = (body: string) =>
+      route(new Request('http://127.0.0.1/pair', { method: 'POST', body }));
+    expect((await post('x'.repeat(1_000_000))).status).toBe(413);
+    for (let i = 0; i < 4; i++) expect((await post('{not json')).status).toBe(400);
+    expect((await post('{"code":"AAAAAAAAAA","name":"x"}')).status).toBe(429);
+    expect((await call('device.pair.create', { kind: 'human' }, human)).ok).toBe(true);
     db.close();
   });
 });
