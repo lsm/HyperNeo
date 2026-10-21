@@ -2130,6 +2130,50 @@ describe('QueryRunner', () => {
       }
     });
 
+    it('delivers the startup retry input to the replacement SDK instead of the closed SDK', async () => {
+      const queue = new MessageQueue();
+      buildSpy.mockResolvedValue({ model: 'claude-sonnet-4-20250514' });
+      let attempt = 0;
+      let observe!: (value: { recipient: string; uuid?: string }) => void;
+      const received = new Promise<{ recipient: string; uuid?: string }>((resolve) => {
+        observe = resolve;
+      });
+      (query as unknown as ReturnType<typeof mock>).mockImplementation(
+        ({ prompt }: { prompt: AsyncIterable<SDKUserMessage> }) => {
+          const first = ++attempt === 1;
+          const input = prompt[Symbol.asyncIterator]();
+          return {
+            close: () => {},
+            interrupt: async () => {},
+            [Symbol.asyncIterator]: async function* () {
+              if (first) {
+                await input.next();
+                void input.next().then((next) => {
+                  if (!next.done) observe({ recipient: 'closed SDK', uuid: next.value.uuid });
+                });
+                throw new Error('SDK startup timeout - query aborted');
+              }
+              const next = await input.next();
+              observe({ recipient: 'replacement SDK', uuid: next.value?.uuid });
+              yield { type: 'result', subtype: 'success', uuid: 'retry-result' } as SDKMessage;
+            },
+          };
+        }
+      );
+      const ctx = createContext({ messageQueue: queue });
+      runner = new QueryRunner(ctx);
+      void queue.enqueueWithId('retry-input', 'Retry this input').catch(() => {});
+      runner.start();
+      try {
+        expect(await received).toEqual({ recipient: 'replacement SDK', uuid: 'retry-input' });
+      } finally {
+        queue.stop();
+        ctx.queryAbortController?.abort();
+        await ctx.queryPromise;
+        queue.clear();
+      }
+    });
+
     it('should always call messageQueue.clear() on startup timeout error', async () => {
       const ctx = createContext();
       runner = new QueryRunner(ctx);
