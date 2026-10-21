@@ -16,8 +16,16 @@ version mismatch while app-server has a steerable turn: default auto and explici
 steer must return `steeredIntoTurnId` without queueing. Explicit queue must return
 `queuedSubmissionId`. Idle explicit steer must return `not_delivered` without
 queueing; idle auto starts a turn with `startedTurnId` and `delivered: true`.
-The idle fixture returns a completed latest turn (as Desktop does), rather
-than pretending queue acceptance consumes input. A Desktop owner rejects
+The idle fixture returns a completed latest turn (as Desktop does), with saved
+history but no loaded app-server runtime. It rejects `turn/start` with -32600
+`thread not found: synthetic` until `thread/resume` loads the runtime.
+The production path must resume with `excludeTurns: true` before starting;
+the send still returns the confirmed turn ID. Resume failure returns
+`not_delivered` with its cause and makes no start or queue request.
+On regression commit `09c226b44`, this fixture reproduces the reported
+`thread not found` response through real WebSocket operation.invoke, then
+fails the idle success assertion. This prevents a fixture from silently treating
+persisted history as a loaded runtime. A Desktop owner rejects
 steering with `NoActiveTurn`, then accepts version 2 `thread-follower-start-turn`;
 its turn ID must survive the operation result schema. Refused owner starts
 return `not_delivered` with the reason and never enqueue. An uncertain server steer must never also queue.

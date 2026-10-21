@@ -723,6 +723,7 @@ describe('codex-desktop adapter status and send', () => {
         call: async (method) => {
           if (method === 'thread/turns/list') return { data: [{ id: 't1', status: 'inProgress' }] };
           if (method === 'turn/steer') throw new Error(error);
+          if (method === 'thread/resume') return { thread: { id: 'busy', turns: [] } };
           if (method === 'turn/start') return { turn: { id: 'new-turn' } };
           throw new Error('Must not queue');
         },
@@ -1143,6 +1144,7 @@ describe('codex-desktop adapter status and send', () => {
         call: async (method, params) => {
           calls.push([method, params]);
           if (method === 'thread/turns/list') return { data: turns };
+          if (method === 'thread/resume') return { thread: { id: 'idle', turns: [] } };
           if (method === 'turn/start') return { turn: { id: 'started' } };
           throw new Error('Must not queue');
         },
@@ -1158,6 +1160,7 @@ describe('codex-desktop adapter status and send', () => {
       });
       expect(calls).toEqual([
         ['thread/turns/list', { threadId: 'idle', limit: 1 }],
+        ['thread/resume', { threadId: 'idle', excludeTurns: true }],
         [
           'turn/start',
           {
