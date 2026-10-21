@@ -214,6 +214,7 @@ export async function startDevServer(config: Config) {
         const upgraded = (server as any).upgrade(req, {
           data: {
             connectionSessionId: 'global',
+            device: daemonContext.authenticateUpgrade(req, server.requestIP(req)?.address ?? null),
           },
         });
 

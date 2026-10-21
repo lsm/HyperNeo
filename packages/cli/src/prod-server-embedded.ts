@@ -131,7 +131,7 @@ export async function startProdServer(config: Config) {
     hostname: config.host,
     port: config.port,
 
-    async fetch(req, upgrade) {
+    async fetch(req, upgrade, client) {
       const url = new URL(req.url);
 
       if (req.method === 'OPTIONS') {
@@ -143,6 +143,7 @@ export async function startProdServer(config: Config) {
       if (isWebSocketPath(url.pathname)) {
         const upgradeResponse = upgrade(req, {
           connectionSessionId: 'global',
+          device: daemonContext.authenticateUpgrade(req, client?.remoteAddress ?? null),
         });
 
         if (upgradeResponse) {

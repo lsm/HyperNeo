@@ -23,6 +23,47 @@ export function normalizePairingCode(code: string): string {
 export class DevicePairingRepository {
   constructor(private readonly db: Database) {}
 
+  touchDevice(credential: string, host: string | null, now: number): PairedDevice | null {
+    return (
+      (this.db
+        .prepare(
+          `UPDATE paired_devices SET last_seen_at = ?, last_seen_host = ?
+           WHERE secret_hash = ? AND revoked_at IS NULL
+           RETURNING id, name, kind, created_at AS createdAt`
+        )
+        .get(now, host, hash(credential)) as PairedDevice | null) ?? null
+    );
+  }
+
+  recordUnpaired(
+    seen: {
+      client: 'browser' | 'native';
+      origin: string | null;
+      host: string | null;
+      remoteAddress: string | null;
+      credentialRejected: boolean;
+    },
+    now: number
+  ): void {
+    this.db
+      .prepare(
+        `INSERT INTO unpaired_connections
+           (client, origin, host, remote_address, credential_rejected, first_seen_at, last_seen_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (client, IFNULL(origin, ''), IFNULL(host, ''), IFNULL(remote_address, ''), credential_rejected)
+         DO UPDATE SET count = count + 1, last_seen_at = excluded.last_seen_at`
+      )
+      .run(
+        seen.client,
+        seen.origin,
+        seen.host,
+        seen.remoteAddress,
+        seen.credentialRejected ? 1 : 0,
+        now,
+        now
+      );
+  }
+
   countDevices(): number {
     return (
       this.db

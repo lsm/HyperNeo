@@ -1,3 +1,4 @@
+import type { UpgradeIdentity } from '../lib/pairing/upgrade-auth.ts';
 import type { RuntimeSocket } from '../lib/runtime-server/index.ts';
 import { createErrorResponseMessage, MessageType, generateUUID } from '@hyperneo/shared';
 import { DEFAULT_MAX_OUTBOUND_MESSAGE_SIZE } from '@hyperneo/shared/message-hub/router';
@@ -14,6 +15,7 @@ interface WebSocketData {
   connectionSessionId: string;
   clientId?: string;
   joinedChannels?: Set<string>;
+  device?: UpgradeIdentity | null;
 }
 
 function sendCapped(ws: RuntimeSocket<WebSocketData>, message: HubMessage): void {

@@ -100,7 +100,7 @@ export async function createNodeServer(options: ServerOptions): Promise<ServerHa
     const boundPort = (server.address() as { port: number } | null)?.port ?? options.port;
     const request = toRequest(req, hostname, boundPort, clientGone.signal);
 
-    Promise.resolve(fetch(request, upgrade))
+    Promise.resolve(fetch(request, upgrade, { remoteAddress: req.socket.remoteAddress ?? null }))
       .then((response) => {
         res.off('close', onClientGone);
         if (response) {
@@ -134,7 +134,9 @@ export async function createNodeServer(options: ServerOptions): Promise<ServerHa
 
       Promise.resolve(
         (async () => {
-          const r = await fetch(request, upgrade);
+          const r = await fetch(request, upgrade, {
+            remoteAddress: req.socket.remoteAddress ?? null,
+          });
           return r;
         })()
       )
