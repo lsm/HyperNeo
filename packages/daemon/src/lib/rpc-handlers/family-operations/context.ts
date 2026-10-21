@@ -42,6 +42,7 @@ import type { NeoPack } from '../../neo/packs/types.ts';
 export interface FamilyOperationContext {
   readonly driverCleanup?: (() => Promise<void>)[];
   readonly sessionScheduler: SessionScheduler;
+  readonly goalMandateChange?: (ref: string, revision: string | null) => Promise<string | null>;
   readonly neoPacks: () => readonly NeoPack[];
   readonly claudeInbox?: ReturnType<typeof createClaudeInboxDriver>;
   readonly claudeDesktopMods?: ReturnType<typeof createClaudeDesktopModsDriver>;

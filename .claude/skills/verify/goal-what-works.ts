@@ -6,7 +6,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 
-const [portText, runText] = process.argv.slice(2);
+const [portText, runText, mode = 'all'] = process.argv.slice(2);
 assert(runText);
 const run = resolve(runText), port = Number(portText);
 assert(port > 0 && port !== 8399);
@@ -35,6 +35,31 @@ try {
   const ownerSessionId = (await rpc('neo.open')).sessionId;
   assert(ownerSessionId);
   const db = app.db.getDatabase();
+  if (mode === 'wake' || mode === 'nudge') {
+    const goal = (await rpc('goal.session.create', {ownerSessionId,title:'Verify compaction wake',doneTest:'Guide published',nudgeEvery:1})).goal;
+    assert(goal);
+    const input={ownerSessionId,goalId:goal.id};
+    for(let i=0;i<(mode==='wake'?10:0);i++) await rpc('goal.journal.append',{...input,runId:`cycle-${i}`,done:`Cycle ${i}`,effect:'A reader tried it',worked:'Small examples'});
+    const facts=(await rpc('goal.facts',input)).facts;
+    const schedule=db.prepare("SELECT * FROM session_schedules WHERE source_id=? AND source_kind='goal'").get(goal.id) as any;
+    const due=Date.now();
+    if(mode==='nudge') db.prepare('UPDATE session_schedules SET facts_digest=? WHERE id=?').run(facts.digest,schedule.id);
+    db.prepare('UPDATE session_schedules SET next_run_at=? WHERE id=?').run(due,schedule.id);
+    app.jobQueue.reschedulePending(schedule.pending_job_id,due);
+    const messageId=`schedule:${schedule.id}:${due}`;
+    let payload:string | undefined;
+    for(let i=0;i<100&&!payload;i++) {
+      payload=(db.prepare("SELECT payload FROM job_queue WHERE queue='mailbox' AND json_extract(payload,'$.messageUuid')=?").get(messageId) as {payload:string}|null)?.payload;
+      if(!payload) await Bun.sleep(200);
+    }
+    evidence.mode=mode; evidence.facts=facts; evidence.mailbox=payload?JSON.parse(payload):null;
+    evidence.schedule=db.prepare('SELECT last_outcome,last_message_id FROM session_schedules WHERE id=?').get(schedule.id);
+    assert(payload,'Scheduled wake was not delivered to the actual mailbox');
+    assert(payload.includes('rewrite')&&payload.includes('worksNote'),'Model-facing wake omitted compaction instruction');
+    assert.equal(evidence.schedule.last_outcome,'fired');
+    if(mode==='nudge') assert(payload.includes('Nothing moved'));
+    console.log(`PASS: actual ${mode} schedule delivered a compaction request to Neo mailbox`);
+  } else {
   new NeoAskTodoRepository(db).openAsk({ id: 'synthetic-confirmation', sessionId: ownerSessionId, projectId: null, originMessageId: null, title: 'Review mandate', request: 'Synthetic G8 verification', createdAt: Date.now() });
   assert((await rpc('neo.home.init')).ok);
   const git = async (...args: string[]) => {
@@ -86,6 +111,7 @@ try {
   evidence.checks = { mandateDetected, compactionDetected, noteSaved: evidence.compacted.accepted === true, historyKept: evidence.journal.entries.length === 10, cursorSaved: evidence.cursor.works_note_through === 10, auditRecorded: evidence.events.length === 1, homeUntouched: evidence.finalHomeHead === changed.commit };
   assert(Object.values(evidence.checks).every(Boolean), JSON.stringify(evidence.checks));
   console.log(`PASS: actual RPC compaction, preserved journal and confirmed-only mandate reconciliation. ${run}/evidence/goal-what-works.json`);
+  }
 } finally {
   writeFileSync(join(run, 'evidence/goal-what-works.json'), JSON.stringify(evidence, null, 2));
   ws?.close(); await app.cleanup();

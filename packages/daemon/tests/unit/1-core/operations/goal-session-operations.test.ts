@@ -36,7 +36,10 @@ describe('ask goal-link upgrade', () => {
   });
 });
 
-function setup(packs: NeoPack[] = []) {
+function setup(
+  packs: NeoPack[] = [],
+  mandateChange?: (ref: string, revision: string | null) => Promise<string | null>
+) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
@@ -47,7 +50,8 @@ function setup(packs: NeoPack[] = []) {
     goals,
     new NeoAskTodoRepository(db),
     scheduler,
-    () => packs
+    () => packs,
+    mandateChange
   );
   scheduler.registerSource(schedules);
   const ops = createSessionGoalOperations({
@@ -85,6 +89,52 @@ describe('session goal detail reads', () => {
       expect(
         db.prepare('SELECT works_note FROM space_goals WHERE id = ?').get(created.goal.id)
       ).toEqual({ works_note: 'Concrete examples work' });
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe('goal mandate reconciliation facts', () => {
+  test('changed mandates remain read-only until the owner reconciles the returned revision', async () => {
+    const seen: { ref: string; revision: string | null }[] = [];
+    const revision = 'confirmed-home-commit';
+    const { db, call } = setup([], async (ref, base) => {
+      seen.push({ ref, revision: base });
+      return base === revision ? null : revision;
+    });
+    try {
+      const goal = (
+        await call('goal.session.create', {
+          title: 'Guide',
+          doneTest: 'Published',
+          mandateRef: 'projects/guide/mandate.md#readers',
+          mandateRev: 'old-home-commit',
+        })
+      ).goal;
+      const first = await call('goal.facts', { goalId: goal.id });
+      expect(
+        first.facts.lines.some(
+          (line: string) => line.startsWith('Mandate changed:') && line.includes(revision)
+        )
+      ).toBe(true);
+      expect(await call('goal.facts', { goalId: goal.id })).toEqual(first);
+      expect((await call('goal.session.get', { goalId: goal.id })).goal.mandateRev).toBe(
+        'old-home-commit'
+      );
+      expect(seen).toEqual([
+        { ref: goal.mandateRef, revision: 'old-home-commit' },
+        { ref: goal.mandateRef, revision: 'old-home-commit' },
+      ]);
+      await call('goal.session.update', { goalId: goal.id, mandateRev: revision });
+      const after = await call('goal.facts', { goalId: goal.id });
+      expect(after.facts.digest).not.toBe(first.facts.digest);
+      expect(after.facts.lines.some((line: string) => line.startsWith('Mandate changed:'))).toBe(
+        false
+      );
+      expect(db.prepare('SELECT facts_lines FROM space_goals WHERE id=?').get(goal.id)).toEqual({
+        facts_lines: null,
+      });
     } finally {
       db.close();
     }

@@ -14,7 +14,8 @@ export function registerGoalOperations(context: FamilyOperationContext): Operati
     goals,
     new NeoAskTodoRepository(context.deps.db.getDatabase()),
     context.sessionScheduler,
-    context.neoPacks
+    context.neoPacks,
+    context.goalMandateChange
   );
   context.sessionScheduler.registerSource(schedules);
   return [
