@@ -1,5 +1,16 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  existsSync,
+  fstatSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -171,6 +182,53 @@ describe('Copilot owned input delivery', () => {
         .map((c) => c.params.mode)
     ).toEqual(['enqueue', 'enqueue', 'enqueue']);
     expect(f.adapter.capabilities).not.toContain('steer');
+  });
+
+  test('streaming changes only the affected durable receipts', async () => {
+    const f = fixture();
+    const work = await f.start('hold');
+    const completed = await f.send(work, 'settled');
+    const pending = await f.send(work, 'queued', true);
+    if (!completed.ok || !pending.ok) throw new Error('missing receipts');
+    const file = (id: string) =>
+      join(f.run, 'owned/receipts', work.ref.id, `${encodeURIComponent(id)}.json`);
+    const completePath = file(completed.value.receipt!.inputId);
+    const pendingPath = file(pending.value.receipt!.inputId);
+    const completeFd = openSync(completePath, 'r');
+    const pendingFd = openSync(pendingPath, 'r');
+    try {
+      expect((await f.send(work, 'fragments')).ok).toBe(true);
+      const report = Array.from({ length: 12 }, (_, index) => `FRAGMENT_${index};`).join('');
+      expect(await f.adapter.status!(work.ref, undefined, work.receipt)).toMatchObject({
+        ok: true,
+        value: {
+          inputEvidence: {
+            state: 'observed',
+            replyReport: report,
+            replyAvailability: 'incomplete',
+          },
+        },
+      });
+      expect(statSync(completePath).ino).toBe(fstatSync(completeFd).ino);
+      expect(statSync(pendingPath).ino).toBe(fstatSync(pendingFd).ino);
+      expect(await f.adapter.stop!(work.ref, context)).toEqual({
+        ok: true,
+        value: { stopped: true },
+      });
+      expect(statSync(completePath).ino).toBe(fstatSync(completeFd).ino);
+      expect(statSync(pendingPath).ino).not.toBe(fstatSync(pendingFd).ino);
+      expect(await f.adapter.status!(work.ref, undefined, completed.value.receipt)).toMatchObject({
+        ok: true,
+        value: { lastReply: 'REPLY_2', inputEvidence: { replyAvailability: 'complete' } },
+      });
+      await f.restart();
+      expect(await settled(f, work, completed.value.receipt)).toMatchObject({
+        value: { lastReply: 'REPLY_2' },
+      });
+    } finally {
+      closeSync(completeFd);
+      closeSync(pendingFd);
+    }
   });
 
   test('durable receipts outlive the bounded worker cache', async () => {

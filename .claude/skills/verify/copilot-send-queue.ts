@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -159,6 +159,27 @@ try {
     await restart();
     const refused = await rpc('work.send', { ref: work.ref, message: 'do not replay' }) as { ok: boolean; reason: string };
     assert.equal(refused.ok, false); assert.equal(refused.reason, 'unreachable');
+  }
+  if (mode === 'writes' || mode === 'all') {
+    const work = await start('hold');
+    const completed = await deliver(work, 'settled');
+    const pending = await deliver(work, 'queued', true);
+    const file = (input: string) => join(run, 'data/copilot-workers/receipts', work.ref.id, `${encodeURIComponent(input)}.json`);
+    const completePath = file(completed.receipt!.inputId); const pendingPath = file(pending.receipt!.inputId);
+    const completeFd = openSync(completePath, 'r'); const pendingFd = openSync(pendingPath, 'r');
+    try {
+      await deliver(work, 'fragments');
+      const report = Array.from({ length: 12 }, (_, index) => `FRAGMENT_${index};`).join('');
+      assert.equal((await status(work)).lastReply, report);
+      observations.push({ beforeAbort: { completedSameInode: statSync(completePath).ino === fstatSync(completeFd).ino, pendingSameInode: statSync(pendingPath).ino === fstatSync(pendingFd).ino } });
+      assert.equal(statSync(completePath).ino, fstatSync(completeFd).ino, 'streaming must not rewrite an unchanged completed receipt');
+      assert.equal(statSync(pendingPath).ino, fstatSync(pendingFd).ino, 'streaming must not rewrite an unchanged pending receipt');
+      assert.deepEqual(await rpc('work.stop', { ref: work.ref }), { ok: true, value: { stopped: true } });
+      assert.equal(statSync(completePath).ino, fstatSync(completeFd).ino);
+      assert.notEqual(statSync(pendingPath).ino, fstatSync(pendingFd).ino, 'abort outcome must persist the changed pending receipt');
+      assert.equal((await done(withReceipt(work, completed.receipt))).lastReply, 'REPLY_2');
+      await restart(); assert.equal((await done(withReceipt(work, completed.receipt))).lastReply, 'REPLY_2');
+    } finally { closeSync(completeFd); closeSync(pendingFd); }
   }
   const catalog = await rpc('work.adapters', {}) as { value: { id: string; capabilities: string[] }[] };
   assert.deepEqual(catalog.value.find(adapter => adapter.id === 'copilot-cli')?.capabilities, ['find', 'start', 'send', 'queue', 'status', 'stop']);

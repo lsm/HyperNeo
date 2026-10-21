@@ -226,6 +226,14 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
         });
         event('session.idle', {});
       }
+      if (prompt === 'fragments')
+        for (let index = 0; index < 12; index++)
+          event('assistant.message', {
+            messageId: `fragment-${input}-${index}`,
+            interactionId: 'interaction-1',
+            content: `FRAGMENT_${index};`,
+            phase: 'final_answer',
+          });
       if (prompt === 'dedup-pressure') {
         for (let index = 0; index < 270; index++)
           event('assistant.message', {
