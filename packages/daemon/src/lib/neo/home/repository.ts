@@ -1,6 +1,20 @@
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
-import { cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  readlink,
+  rm,
+  rmdir,
+  symlink,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
@@ -152,7 +166,13 @@ export class NeoHomeRepository {
     const existing = await readdir(this.root);
     if (existing.includes('.git')) {
       const origin = await this.git(['remote', 'get-url', 'origin'], true);
-      return !origin.code && origin.text === remoteUrl
+      if (origin.code)
+        return {
+          ok: false,
+          reason:
+            'local_home_exists: this local history has no origin. Keep it; clone into a fresh data directory, or have the human reconcile it with the shared remote before retrying.',
+        };
+      return origin.text === remoteUrl
         ? null
         : { ok: false, reason: 'remote_exists: keep the existing home and its origin.' };
     }
@@ -162,7 +182,20 @@ export class NeoHomeRepository {
         reason: 'home_exists: choose an empty home; existing files are preserved.',
       };
     const staging = await mkdtemp(join(dirname(this.root), '.neo-clone-'));
-    const created: string[] = [];
+    const created: { path: string; directory: boolean }[] = [];
+    const publish = async (source: string, target: string): Promise<void> => {
+      const entry = await lstat(source);
+      if (entry.isDirectory()) {
+        await mkdir(target);
+        created.push({ path: target, directory: true });
+        for (const name of await readdir(source))
+          await publish(join(source, name), join(target, name));
+      } else {
+        if (entry.isSymbolicLink()) await symlink(await readlink(source), target);
+        else await copyFile(source, target, constants.COPYFILE_EXCL);
+        created.push({ path: target, directory: false });
+      }
+    };
     try {
       const cloned = await this.git(
         ['clone', '--no-hardlinks', '--', remoteUrl, staging],
@@ -184,29 +217,12 @@ export class NeoHomeRepository {
       for (const entry of entries.sort(
         (a, b) => Number(a.name === '.git') - Number(b.name === '.git')
       )) {
-        const target = join(this.root, entry.name);
-        if (entry.isDirectory()) {
-          await mkdir(target);
-          created.push(target);
-          for (const name of await readdir(join(staging, entry.name)))
-            await cp(join(staging, entry.name, name), join(target, name), {
-              recursive: true,
-              force: false,
-              errorOnExist: true,
-              verbatimSymlinks: true,
-            });
-        } else {
-          await cp(join(staging, entry.name), target, {
-            force: false,
-            errorOnExist: true,
-            verbatimSymlinks: true,
-          });
-          created.push(target);
-        }
+        await publish(join(staging, entry.name), join(this.root, entry.name));
       }
       return null;
     } catch (error) {
-      for (const path of created) await rm(path, { recursive: true, force: true }).catch(() => {});
+      for (const entry of created.reverse())
+        await (entry.directory ? rmdir(entry.path) : unlink(entry.path)).catch(() => {});
       return {
         ok: false,
         reason: `clone_failed: ${error instanceof Error ? error.message : String(error)}`,

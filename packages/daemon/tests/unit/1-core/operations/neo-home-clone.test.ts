@@ -254,11 +254,7 @@ exit "$status"
       expect(await readFile(join(root, 'projects', 'human.txt'), 'utf8')).toBe('Human nested file');
       expect(await readdir(join(root, 'projects'))).toEqual(['human.txt']);
       expect(await readFile(join(root, '.git', 'human.txt'), 'utf8')).toBe('Human metadata');
-      expect((await readdir(root)).sort()).toEqual([
-        '.coordinators',
-        'projects',
-        'z-collision.txt',
-      ]);
+      expect((await readdir(root)).sort()).toEqual(['.coordinators', '.git', 'projects']);
     } finally {
       observer.mockRestore();
       syncBuiltinESMExports();

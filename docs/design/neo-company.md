@@ -211,7 +211,9 @@ itself (see Enforcement). Goals and journals stay in the DB; their milestones re
   with `neo.home.init {remoteUrl}`; Git origin/upstream persist that selection.
   Clone preserves local `.coordinators/`, refuses pre-existing curated documents or
   a different origin, and never rewrites the selected remote. Plain `{}` keeps local
-  initialization. Clone is noninteractive and bounded to 30 seconds.
+  initialization. A local history without origin is preserved with guidance to
+  use a fresh data directory or ask the human to reconcile it. Clone is
+  noninteractive and bounded to 30 seconds.
 - Sync: `neo.home.save` runs `git pull --rebase` before committing and pushes after. On a
   conflict it aborts the rebase, keeps the local file, and returns `conflict`; Neo tells
   the human in one question with both versions. Reads (`neo.home.read`, or Neo's `Read`)
