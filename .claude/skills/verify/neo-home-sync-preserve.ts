@@ -119,7 +119,7 @@ try {
   if (scenario === 'healthy') {
     assert.equal((evidence.reply as { ok: boolean }).ok, true);
     assert.equal(evidence.localDirection, 'Remote direction\n'); assert.deepEqual(after, bytes);
-  } else if (expectation === 'reproduce' && scenario !== 'untracked-race') {
+  } else if (expectation === 'reproduce' && scenario !== 'untracked-race' && !scenario.startsWith('diverged')) {
     assert.notEqual(hash(after), hash(bytes));
   } else {
     assert.equal((evidence.reply as { ok: boolean }).ok, false);

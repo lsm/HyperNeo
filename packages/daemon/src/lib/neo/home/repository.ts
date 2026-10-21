@@ -132,15 +132,23 @@ export class NeoHomeRepository {
       const added = await this.git(['worktree', 'add', '--detach', staging, local], true);
       if (added.code) return { reason: { ok: false, reason: `sync_failed: ${added.error}` } };
       const rebased = await this.git(['-C', staging, 'rebase', remote], true, true);
-      if (rebased.code) {
+      const candidate = (await this.git(['-C', staging, 'rev-parse', 'HEAD'])).text;
+      const diverged =
+        !rebased.code &&
+        (await this.git(['merge-base', '--is-ancestor', local, candidate], true)).code === 1;
+      if (rebased.code || diverged) {
         let conflict: HomeConflict | undefined;
         const paths = (
-          await this.git(['-C', staging, 'diff', '--name-only', '--diff-filter=U', '-z'])
+          await this.git(
+            diverged
+              ? ['diff', '--name-only', '-z', local, remote]
+              : ['-C', staging, 'diff', '--name-only', '--diff-filter=U', '-z']
+          )
         ).bytes
           .toString('utf8')
           .split('\0')
           .filter(Boolean);
-        if (paths.length) {
+        if (paths.length || diverged) {
           const versions = await Promise.all(
             paths.map(async (path) => {
               const full = async (revision: string) => {
@@ -176,21 +184,23 @@ export class NeoHomeRepository {
             .join('\n');
           conflict = {
             id: neoDerivedId(JSON.stringify([this.root, local, remote])),
-            text: `Home sync conflict: ${paths
+            text: `Home sync ${diverged ? 'history ' : ''}conflict: ${paths
               .map((path) => JSON.stringify(path))
               .join(', ')
               .slice(
                 0,
                 350
               )}\n\nLocal → remote (excerpt):\n\n${'`'.repeat(8)}diff\n${excerpt.slice(0, 1000).replaceAll('`', '\u02cb')}\n${'`'.repeat(8)}\n\nWhich version should we use? View full versions before choosing. Your answer records a choice; it does not apply a change yet.`,
-            document: versions.join('\n\n────────────────\n\n'),
+            document: versions.length
+              ? versions.join('\n\n────────────────\n\n')
+              : `Local (${local})\n\nRemote (${remote})\n\nNo document differences; the branch histories diverge. Review the preserved histories with the human before reconciling.`,
           };
         }
         return {
           reason: {
             ok: false,
             ...(conflict ? { conflict } : {}),
-            reason: `${conflict ? 'conflict' : 'sync_failed'}: isolated rebase not applied; local files preserved. ${rebased.error}`,
+            reason: `${conflict ? 'conflict' : 'sync_failed'}: isolated rebase not applied; local files preserved. ${diverged ? 'Branch histories diverge; review the question before reconciling.' : rebased.error}`,
           },
         };
       }
@@ -217,7 +227,6 @@ export class NeoHomeRepository {
             reason: 'dirty: home changed during synchronization; no update applied.',
           },
         };
-      const candidate = (await this.git(['-C', staging, 'rev-parse', 'HEAD'])).text;
       const applied = await this.git(
         ['merge', '--ff-only', '--no-overwrite-ignore', '--no-autostash', candidate],
         true

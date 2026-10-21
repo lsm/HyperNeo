@@ -14,6 +14,8 @@ bash .claude/skills/verify/neo-home-sync-preserve.sh /private/tmp/home-preserve-
 bash .claude/skills/verify/neo-home-sync-preserve.sh /private/tmp/home-preserve-publish-untracked publish-untracked-race verify
 bash .claude/skills/verify/neo-home-sync-preserve.sh /private/tmp/home-preserve-publish-tracked publish-tracked-race verify
 bash .claude/skills/verify/neo-home-sync-preserve.sh /private/tmp/home-preserve-healthy healthy verify
+bash .claude/skills/verify/neo-home-sync-preserve.sh /private/tmp/home-preserve-history diverged verify
+bash .claude/skills/verify/neo-home-sync-preserve.sh /private/tmp/home-preserve-empty-history diverged-same-tree verify
 ```
 
 The runner starts from `env -i`, with NODE_ENV=test, an isolated HOME, Git identity,
@@ -37,6 +39,13 @@ human edits. The result must refuse, retain every human byte, and leave original
 HEAD, HEAD reflog and remote HEAD unchanged. Refusal must never abort or reset the
 original home. The healthy case must still read the peer update and retain an
 unrelated ignored result.
+
+Nonconflicting divergent histories (including different commits with identical
+trees) must refuse without changing the original HEAD/reflog and return a human
+question through the existing conflict channel. The full-version document names
+both original commit IDs and preserves complete differing file versions. Answering
+or applying that question is outside this journey. The pre-fix `diverged reproduce`
+case records the safe refusal with no question; fixed `verify` requires a question.
 
 `evidence/neo-home-sync-preserve.json` retains the actual RPC reply, complete bytes
 as base64, SHA-256, local HEADs, reflog comparison and remote-HEAD comparison, even
