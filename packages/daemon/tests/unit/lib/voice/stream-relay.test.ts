@@ -1,6 +1,10 @@
 import { vi } from 'vitest';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import type { VoiceSettings } from '@hyperneo/shared';
+import {
+  subscribeToStructuredLogs,
+  type StructuredLogEvent,
+  type VoiceSettings,
+} from '@hyperneo/shared';
 import { WebSocketServer, type WebSocket } from 'ws';
 import {
   VoiceStream,
@@ -111,8 +115,14 @@ describe('VoiceStream against a stub Deepgram server', () => {
   let onCloseStream: (socket: WebSocket) => void;
   let pushed: VoiceStreamText[];
   let batches: string[];
+  let logs: StructuredLogEvent[];
+  let unsubscribe: () => void;
 
   beforeEach(async () => {
+    logs = [];
+    unsubscribe = subscribeToStructuredLogs((event) => {
+      if (event.module === 'hyperneo:daemon:voice') logs.push(event);
+    });
     received = 0;
     pushed = [];
     batches = [];
@@ -126,7 +136,9 @@ describe('VoiceStream against a stub Deepgram server', () => {
     await new Promise((resolve) => server.once('listening', resolve));
     port = (server.address() as { port: number }).port;
     server.on('connection', (socket, request) => {
-      expect(request.url).toStartWith('/v1/listen?encoding=linear16&sample_rate=16000');
+      const url = new URL(request.url!, 'http://stub');
+      expect(url.pathname).toBe('/v1/listen');
+      expect(url.searchParams.get('sample_rate')).toBe('16000');
       socket.on('message', (data: Buffer, isBinary: boolean) => {
         if (!isBinary) {
           if (JSON.parse(data.toString()).type === 'CloseStream') onCloseStream(socket);
@@ -138,7 +150,10 @@ describe('VoiceStream against a stub Deepgram server', () => {
     });
   });
 
-  afterEach(() => new Promise((resolve) => server.close(resolve)));
+  afterEach(() => {
+    unsubscribe();
+    return new Promise((resolve) => server.close(resolve));
+  });
 
   const deps = (overrides: Partial<VoiceSettings> = {}) => ({
     voice: (): VoiceSettings => ({
@@ -171,6 +186,20 @@ describe('VoiceStream against a stub Deepgram server', () => {
     expect(pushed.at(-1)).toEqual({ streamId: 's1', text: 'heard 6400', isFinal: true });
     expect(pushed.some((text) => !text.isFinal)).toBe(true);
     expect(batches).toEqual([]);
+    expect(logs.find((event) => event.message === 'voice.stream.open')?.metadata).toMatchObject({
+      streamId: 's1',
+      via: 'streaming',
+      route: 'deepgram',
+      status: 'started',
+    });
+    expect(logs.find((event) => event.message === 'voice.stream.stop')?.metadata).toMatchObject({
+      streamId: 's1',
+      via: 'streaming',
+      status: 'completed',
+      audioBytes: 6400,
+      audioDurationMs: 200,
+    });
+    expect(JSON.stringify(logs)).not.toContain('heard 6400');
   });
 
   test('a recorded WLK session arrives whole after stop', async () => {
@@ -252,6 +281,23 @@ describe('VoiceStream against a stub Deepgram server', () => {
     expect(pushed).toEqual([{ streamId: 's1', text: 'batch text', isFinal: true }]);
   });
 
+  test('close reasons and endpoint query values cannot leak transcript or credentials into logs', async () => {
+    onAudio = (socket) => socket.close(1011, 'PRIVATE_TRANSCRIPT_TEXT');
+    const { stream } = await start({
+      streamEndpoint: `ws://127.0.0.1:${port}/v1/listen?token=PRIVATE_TOKEN`,
+    });
+    stream.write(new Uint8Array(2));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await stream.stop();
+    const close = logs.find((event) => event.message === 'voice.asr.close');
+    expect(close?.metadata).toMatchObject({
+      code: 1011,
+      reason: 'server_error',
+      peerReasonBytes: 23,
+    });
+    expect(JSON.stringify(logs)).not.toContain('PRIVATE_');
+  });
+
   test('a stream that never heard any text falls back to batch with the buffered audio', async () => {
     onAudio = () => {};
     onCloseStream = (socket) => socket.close(1000);
@@ -291,6 +337,18 @@ describe('VoiceStream against a stub Deepgram server', () => {
     stream.write(new Uint8Array([2, 0]));
     expect(await stream.stop()).toEqual({ text: 'batch text', via: 'batch' });
     expect([...Buffer.from(batches[0], 'base64').subarray(44)]).toEqual([1, 0, 2, 0]);
+    expect(logs.find((event) => event.message === 'voice.asr.close')?.metadata).toMatchObject({
+      streamId: 's1',
+      code: 1006,
+      reason: 'abnormal_closure',
+    });
+    expect(logs.find((event) => event.message === 'voice.stream.stop')?.metadata).toMatchObject({
+      via: 'batch',
+      audioBytes: 4,
+      fallbackReason: 'asr_disconnected',
+      status: 'completed',
+    });
+    expect(JSON.stringify(logs)).not.toContain('batch text');
   });
 
   test('a denied batch fallback keeps the audio so a retried stop transcribes all of it', async () => {
@@ -330,6 +388,15 @@ describe('VoiceStream against a stub Deepgram server', () => {
       deps({ mode: 'streaming', streamEndpoint: 'ws://127.0.0.1:1/v1/listen' })
     );
     expect(started).toMatchObject({ error: expect.stringContaining('unavailable') });
+    expect(logs.find((event) => event.message === 'voice.asr.error')?.metadata).toMatchObject({
+      streamId: 's1',
+      reason: 'socket_error',
+    });
+    expect(logs.find((event) => event.message === 'voice.stream.open')?.metadata).toMatchObject({
+      streamId: 's1',
+      status: 'refused',
+      fallbackReason: 'asr_unavailable',
+    });
   });
 
   test('refuses odd byte counts and disabled voice', async () => {

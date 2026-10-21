@@ -162,8 +162,8 @@ export async function createNodeServer(options: ServerOptions): Promise<ServerHa
               const msg = isBinary ? new Uint8Array(raw) : raw.toString();
               void websocket?.message?.(runtimeSocket, msg);
             });
-            ws.on('close', () => {
-              void websocket?.close?.(runtimeSocket);
+            ws.on('close', (code, reason) => {
+              void websocket?.close?.(runtimeSocket, code, reason.toString());
             });
             ws.on('error', (error: unknown) => {
               void websocket?.error?.(runtimeSocket, error);
