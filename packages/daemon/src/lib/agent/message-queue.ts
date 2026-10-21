@@ -978,13 +978,14 @@ export class MessageQueue {
   }
 
   private async waitForNextMessage(): Promise<QueuedMessage | null> {
-    while (this.running) {
+    const generation = this.generation;
+    while (this.running && this.generation === generation) {
       while (this.queue.length === 0) {
-        if (!this.running) return null;
+        if (!this.running || this.generation !== generation) return null;
         await new Promise<void>((resolve) => {
           this.waiters.push(resolve);
         });
-        if (!this.running) return null;
+        if (!this.running || this.generation !== generation) return null;
       }
 
       const bypassIndex =
@@ -1001,7 +1002,7 @@ export class MessageQueue {
         continue;
       }
 
-      if (!this.running) return null;
+      if (!this.running || this.generation !== generation) return null;
 
       const message = this.queue.splice(bypassIndex, 1)[0];
       if (message) {

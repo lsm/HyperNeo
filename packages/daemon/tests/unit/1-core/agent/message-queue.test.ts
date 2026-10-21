@@ -18,6 +18,29 @@ describe('MessageQueue', () => {
     queue = new MessageQueue();
   });
 
+  it('ends an empty old input stream when a replacement starts before the next input', async () => {
+    queue.start();
+    const old = queue.messageGenerator(testSessionId);
+    let ended = false;
+    const pending = old.next().then((step) => {
+      ended = step.done === true;
+    });
+    queue.start();
+    try {
+      await tick(0);
+      expect(ended).toBe(true);
+      const replacement = queue.messageGenerator(testSessionId);
+      void queue.enqueueWithId('replacement-input', 'Input for replacement').catch(() => {});
+      const next = await replacement.next();
+      expect(next.value?.message.uuid).toBe('replacement-input');
+      next.value?.onSent();
+    } finally {
+      queue.stop();
+      await pending;
+      queue.clear();
+    }
+  });
+
   describe('steers', () => {
     it('feeds only steered messages, holds them behind the delivery gate, and ends with the turn', async () => {
       queue.start();

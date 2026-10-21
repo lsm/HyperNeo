@@ -1,3 +1,5 @@
+import { runMigration431 } from './m431-work-delivery-inputs.ts';
+import { runMigration438 } from './m438-voice-recordings.ts';
 import { runMigration433 } from './m433-neo-question-document.ts';
 import { runMigration434 } from './m434-neo-todo-artifacts.ts';
 import { runMigration435 } from './m435-device-pairing.ts';
@@ -921,12 +923,14 @@ export function runMigrations(
   run(migrationMarkerKey(428), () => runMigration428(db));
   run(migrationMarkerKey(429), () => runMigration429(db));
   run(migrationMarkerKey(430), () => runMigration430(db));
+  run(migrationMarkerKey(431), () => runMigration431(db));
   run(migrationMarkerKey(432), () => runMigration432(db));
   run(migrationMarkerKey(433), () => runMigration433(db));
   run(migrationMarkerKey(434), () => runMigration434(db));
   run(migrationMarkerKey(435), () => runMigration435(db));
   run(migrationMarkerKey(436), () => runMigration436(db));
   run(migrationMarkerKey(437), () => runMigration437(db));
+  run(migrationMarkerKey(438), () => runMigration438(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

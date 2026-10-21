@@ -83,7 +83,8 @@ export class InterruptHandler {
       if (opts?.skipDeferredReplay === true) {
         this.ctx.suppressDeferredReplay?.(session.id);
       }
-      if (!opts?.preserveDeliveryJobs) {
+      const preserveDeliveryJobs = opts?.preserveDeliveryJobs ?? !opts?.skipDeferredReplay;
+      if (!preserveDeliveryJobs) {
         const failedDbIds: string[] = [];
         await withSessionLock(session.id, async () => {
           materializeMailboxFailuresForSession(session.id, {

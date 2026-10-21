@@ -431,7 +431,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.db,
     deps.credentialManager
   );
-  registerVoiceHandlers(deps.messageHub, deps.settingsManager, deps.credentialManager);
+  registerVoiceHandlers(deps.messageHub, deps.settingsManager, deps.credentialManager, {
+    db: deps.db.getDatabase(),
+    deviceOf: deps.deviceOf,
+  });
 
   const providerCredentialManager =
     deps.credentialManager ?? ProviderCredentialManager.create(deps.db.getDatabase());

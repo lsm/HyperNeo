@@ -12,7 +12,8 @@ export async function fetchTranscriptionWithRedirects(
   allowPrivateNetwork: boolean,
   allowInsecureTls: boolean,
   signal: AbortSignal,
-  tlsCaPem?: string
+  tlsCaPem?: string,
+  beforeDispatch?: () => void
 ): Promise<Response> {
   let logicalEndpoint = endpoint;
   let candidates = await resolveTranscriptionEndpoint(
@@ -29,6 +30,8 @@ export async function fetchTranscriptionWithRedirects(
     response = undefined;
     let fetchError: unknown;
     for (const candidate of candidates) {
+      signal.throwIfAborted();
+      beforeDispatch?.();
       try {
         response = await fetch(candidate.toString(), {
           method: requestMethod,

@@ -223,7 +223,12 @@ describe('device pairing', () => {
       ok: false,
       reason: 'not_found: no paired device with that id.',
     });
-    expect((await call('device.list', {}, phoneCaller)).devices[1].revokedAt).toBeNumber();
+    const seenByPhone = (await call('device.list', {}, phoneCaller)).devices;
+    expect(seenByPhone.map((device: { current: boolean }) => device.current)).toEqual([
+      true,
+      false,
+    ]);
+    expect(seenByPhone[1].revokedAt).toBeNumber();
     db.close();
   });
 
@@ -237,6 +242,92 @@ describe('device pairing', () => {
       ok: false,
       reason: NO_HUMAN_DEVICE,
     });
+    db.close();
+  });
+
+  test('a browser gets its credential only as an HttpOnly cookie, Secure when its page is HTTPS', async () => {
+    const { repo } = setup();
+    const route = createPairRoute({ repo, limiter: createPairingLimiter(), now: () => 1_000_000 });
+    const redeem = async (origin: string) => {
+      const made = repo.createCode('human', null, true, 1_000_000);
+      const response = await route(
+        new Request(`${origin}/pair`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', origin },
+          body: JSON.stringify({ code: made.code, name: 'Browser' }),
+        })
+      );
+      return { response, body: (await response.json()) as Record<string, unknown> };
+    };
+    const served = await redeem('https://mac.tailnet.ts.net');
+    expect(served.response.status).toBe(200);
+    expect(served.body).toEqual({ deviceId: expect.any(String), kind: 'human' });
+    const cookie = served.response.headers.get('set-cookie')!;
+    expect(cookie).toMatch(/^hyperneo_device=[A-Za-z0-9_-]{43}; /);
+    expect(cookie.split('; ').slice(1).sort()).toEqual(
+      ['HttpOnly', 'Max-Age=34560000', 'Path=/', 'SameSite=Strict', 'Secure'].sort()
+    );
+    expect(
+      repo.touchDevice(cookie.slice('hyperneo_device='.length, cookie.indexOf(';')), 'h', 1)
+    ).toMatchObject({ kind: 'human' });
+    const plain = await redeem('http://127.0.0.1:9283');
+    expect(plain.response.headers.get('set-cookie')).not.toContain('Secure');
+  });
+
+  test('a paired human or the CLI reads the unpaired connections seen, newest first', async () => {
+    const { db, call, pair, repo } = setup();
+    repo.recordUnpaired(
+      {
+        client: 'native',
+        origin: null,
+        host: 'mac:9283',
+        remoteAddress: '10.0.0.2',
+        credentialRejected: false,
+      },
+      1_000
+    );
+    repo.recordUnpaired(
+      {
+        client: 'browser',
+        origin: 'https://evil.example',
+        host: 'mac:9283',
+        remoteAddress: '10.0.0.3',
+        credentialRejected: true,
+      },
+      2_000
+    );
+    expect(await call('device.unpaired.list', {}, human)).toEqual({
+      ok: false,
+      reason: NEEDS_PAIRED_HUMAN,
+    });
+    const phone = await pair((await call('device.pair.create', { kind: 'human' }, door)).code);
+    const seen = await call('device.unpaired.list', {}, pairedHuman(phone.body.deviceId));
+    expect(seen).toEqual({
+      ok: true,
+      connections: [
+        {
+          client: 'browser',
+          origin: 'https://evil.example',
+          host: 'mac:9283',
+          remoteAddress: '10.0.0.3',
+          credentialRejected: true,
+          count: 1,
+          firstSeenAt: 2_000,
+          lastSeenAt: 2_000,
+        },
+        {
+          client: 'native',
+          origin: null,
+          host: 'mac:9283',
+          remoteAddress: '10.0.0.2',
+          credentialRejected: false,
+          count: 1,
+          firstSeenAt: 1_000,
+          lastSeenAt: 1_000,
+        },
+      ],
+    });
+    expect((await call('device.unpaired.list', {}, door)).ok).toBe(true);
     db.close();
   });
 

@@ -1,6 +1,7 @@
 import type { WorkRef } from '../../lib/drivers/types.ts';
 import type { NeoDriverTarget } from '../../lib/neo/driver-work.ts';
 import type { Database } from '../sqlite-compat.ts';
+import { WorkDeliveryInputRepository } from './work-delivery-input-repository.ts';
 import { NeoDriverSessionRows } from './neo-driver-session-rows.ts';
 
 export function neoSafeSessionLink(
@@ -28,8 +29,10 @@ function sessionLinks(row: StoredLinks | null | undefined) {
 }
 
 export class NeoTodoSessionRepository extends NeoDriverSessionRows {
+  readonly inputs: WorkDeliveryInputRepository;
   constructor(db: Database) {
     super(db, 'neo_todo_sessions', 'todo_id');
+    this.inputs = new WorkDeliveryInputRepository(db);
   }
 
   doingTodoOn(ref: WorkRef): { id: string; title: string } | null {

@@ -331,7 +331,7 @@ interface RetryTeardownOptions {
   snapshotLastConsumed?: boolean;
   notice?: string;
   guardAfterExit?: boolean;
-  restartQueueIfStopped?: boolean;
+  restartQueue?: boolean;
   requeueConsumedList?: boolean;
   requeueFedPrompts?: boolean;
   noticeAfterTeardown?: string;
@@ -1614,7 +1614,7 @@ export class QueryRunner {
           },
           terminateProcesses: true,
           guardAfterExit: true,
-          restartQueueIfStopped: true,
+          restartQueue: true,
           requeueConsumedList: true,
           noticeAfterTeardown: startupRetryNotice,
         });
@@ -1636,7 +1636,7 @@ export class QueryRunner {
           },
           terminateProcesses: true,
           guardAfterExit: true,
-          restartQueueIfStopped: true,
+          restartQueue: true,
           requeueFedPrompts: true,
         });
       }
@@ -1989,12 +1989,8 @@ export class QueryRunner {
       }
     };
 
-    const restartStoppedQueue = (state: RetryTeardownState): RetryTeardownState => {
-      if (
-        !messageQueue.isRunning() &&
-        !this.ctx.isCleaningUp() &&
-        stateManager.getState().status !== 'interrupted'
-      ) {
+    const restartQueue = (state: RetryTeardownState): RetryTeardownState => {
+      if (!this.ctx.isCleaningUp() && stateManager.getState().status !== 'interrupted') {
         messageQueue.start();
       }
       return state;
@@ -2086,7 +2082,7 @@ export class QueryRunner {
       displayRetryNotice: options.notice !== undefined ? displayRetryNotice : undefined,
       noticeAbandoned: noticeOrRequeueBeforeTeardown ? () => abandon('publication') : undefined,
       exitAwaitAbandoned: options.guardAfterExit ? () => abandon('exit await') : undefined,
-      restartStoppedQueue: options.restartQueueIfStopped ? restartStoppedQueue : undefined,
+      restartQueue: options.restartQueue ? restartQueue : undefined,
       requeueConsumedList: options.requeueConsumedList ? requeueConsumedList : undefined,
       requeueFedPrompts: options.requeueFedPrompts ? requeueFedPrompts : undefined,
       displayPostTeardownNotice:
@@ -2121,7 +2117,7 @@ export class QueryRunner {
       .pipe(closeQueryObject, 'state', 'state')
       .pipe(awaitProcessExit, 'state')
       .pipe('!?exitAwaitAbandoned', 'state')
-      .pipe('?restartStoppedQueue', 'state', 'state')
+      .pipe('?restartQueue', 'state', 'state')
       .pipe('?requeueConsumedList', 'state', 'state')
       .pipe('?requeueFedPrompts', 'state', 'state')
       .pipe('?displayPostTeardownNotice', 'state')

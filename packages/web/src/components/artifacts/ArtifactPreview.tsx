@@ -1,19 +1,22 @@
-import type { ComponentChildren } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
 import {
   ARTIFACT_DEFAULT_LIMITS,
   type ArtifactFileMetadata,
 } from '@hyperneo/shared/types/artifact-file';
-import { connectionManager } from '../../lib/connection-manager.ts';
-import { connectionState } from '../../lib/state.ts';
+import type { ComponentChildren } from 'preact';
+import { useEffect, useState } from 'preact/hooks';
 import {
-  readArtifactPreview,
   type ArtifactPreviewState,
+  readArtifactPreview,
 } from '../../lib/artifact-preview-client.ts';
+import { connectionManager } from '../../lib/connection-manager.ts';
 import { t } from '../../lib/i18n/index.ts';
+import { copyToClipboard } from '../../lib/utils.ts';
+import { connectionState } from '../../lib/state.ts';
+import MarkdownRenderer, { clearArtifactRenderCache } from '../chat/MarkdownRenderer.tsx';
+import { ArtifactDownload } from './ArtifactDownload.tsx';
 import { ArtifactHtmlDocument } from './ArtifactHtmlDocument.tsx';
 import { ArtifactHtmlSource } from './ArtifactHtmlSource.tsx';
-import MarkdownRenderer, { clearArtifactRenderCache } from '../chat/MarkdownRenderer.tsx';
+import { ArtifactImage } from './ArtifactImage.tsx';
 
 type Shown = ArtifactPreviewState | { state: 'loading' };
 
@@ -110,6 +113,7 @@ export function ArtifactPreview({
 
   useEffect(() => {
     setPendingUrl(null);
+    setView('preview');
     if (!connected) {
       clearArtifactRenderCache();
       setShown((previous) =>
@@ -165,11 +169,18 @@ export function ArtifactPreview({
         }
         onBack={onBack}
       >
-        {(shown.state === 'ready' || shown.state === 'html_source') && (
+        {((shown.state === 'ready' && !shown.image) || shown.state === 'html_source') && (
           <div class="flex gap-1">
             {toggle('preview', t('artifact.preview'))}
             {toggle('source', t('artifact.source'))}
           </div>
+        )}
+        {metadata && (
+          <ArtifactDownload
+            key={artifactId}
+            metadata={metadata}
+            onUnavailable={() => setShown({ state: 'revoked' })}
+          />
         )}
       </PreviewHeader>
       <div
@@ -181,7 +192,9 @@ export function ArtifactPreview({
           <ArtifactHtmlSource metadata={shown.metadata} onUnavailable={setShown} />
         ) : shown.state !== 'ready' ? (
           <p class="text-sm text-fg-muted" role="status">
-            {artifactStateMessage(shown.state)}
+            {shown.state === 'limit' && metadata?.artifact.kind === 'image'
+              ? t('artifact.imageLimit')
+              : artifactStateMessage(shown.state)}
           </p>
         ) : shown.html ? (
           view === 'preview' ? (
@@ -189,12 +202,30 @@ export function ArtifactPreview({
           ) : (
             <ArtifactHtmlSource metadata={shown.metadata} onUnavailable={setShown} />
           )
-        ) : view === 'preview' ? (
+        ) : shown.image ? (
+          <ArtifactImage blob={shown.image} title={shown.metadata.artifact.title} />
+        ) : view === 'preview' && shown.metadata.artifact.kind === 'markdown' ? (
           <MarkdownRenderer content={shown.text} artifactLinks />
         ) : (
-          <pre class="whitespace-pre-wrap break-words font-mono text-sm select-text">
-            {shown.text}
-          </pre>
+          <>
+            {!!shown.omittedBytes && (
+              <p role="status" class="mb-3 text-sm text-fg-muted">
+                {t('artifact.omitted', { count: shown.omittedBytes })}
+              </p>
+            )}
+            <button
+              type="button"
+              class="mb-3 rounded-md bg-surface-raised px-3 py-1 text-sm"
+              onClick={() =>
+                copyToClipboard(view === 'source' ? (shown.sourceText ?? shown.text) : shown.text)
+              }
+            >
+              {t('artifact.copyVisible')}
+            </button>
+            <pre class="whitespace-pre-wrap break-words font-mono text-sm select-text">
+              {view === 'source' ? (shown.sourceText ?? shown.text) : shown.text}
+            </pre>
+          </>
         )}
       </div>
       {pendingUrl && (

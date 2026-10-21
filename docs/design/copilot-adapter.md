@@ -217,3 +217,45 @@ If resource ownership, persistence, or transport cannot fit its slice, split Bui
 further before wiring. No speculative Desktop IPC, archive, queue withdrawal,
 cloud-agent or multi-tenant support in these slices. Request the human checkpoint
 on this design before opening any implementation PR.
+
+## Slice 6 decision: strict steer is explicitly unsupported
+
+2026-10-21, approved question `0c7b70e3-81c0-4480-8515-3c97905dcc44`.
+The answer to “can Copilot take extra input while running?” is **yes**; the answer
+for HyperNeo's strict, no-fallback `work.send mode: steer` is **unsupported** on
+our pinned SDK **1.0.13 / CLI 1.0.83**. This is a contract limitation, not a claim
+that Copilot lacks steering.
+
+Evidence reviewed without starting the real CLI or accessing an account:
+
+- [Official steering documentation](https://docs.github.com/en/enterprise-cloud@latest/copilot/how-tos/copilot-sdk/features/steering-and-queueing)
+  describes immediate delivery during a running turn and enqueue for subsequent
+  work. Acceptance alone does not establish consumption.
+- [Pinned SDK send source](https://github.com/github/copilot-sdk/blob/v1.0.13/nodejs/src/session.ts)
+  forwards `mode` to `session.send` and returns only `response.messageId`.
+  There is no expected-active-turn argument or atomic reject-if-turn-ended option.
+- [Pinned generated protocol](https://github.com/github/copilot-sdk/blob/v1.0.13/nodejs/src/generated/rpc.ts):
+  `SendMode`, `SendRequest`, `SendResult`, `QueueSendNowRequest/Result` and
+  `QueueSetDrainPausedRequest`. `sendNow` takes an already queued item ID and
+  returns a boolean, not the consuming turn. Pausing the queue is persistent,
+  exclusive and not released when a caller exits. A queue transaction would need
+  separate crash recovery and queue ownership work; it is not a strict send API.
+- [Pinned event schema](https://github.com/github/copilot-sdk/blob/v1.0.13/nodejs/src/generated/session-events.ts)
+  exposes `UserMessageData.delivery`, `messageId`, `interactionId`, and optional
+  `turnId`. These can prove consumption after acceptance; they cannot prevent a
+  late input becoming subsequent work. The earlier scratch experiment above used
+  a different version pair and does not prove this pinned pair's strict contract.
+- [CLI repository](https://github.com/github/copilot-cli) publishes documentation
+  and distribution instructions, not the native runtime scheduling implementation.
+  No claim here is based on inspecting that private implementation.
+
+Decision: withhold `steer`; publish `unsupportedCapabilities.steer` in
+`work.adapters` and use the same explanation for explicit steer rejection, before
+ownership lookup, resume or send. `auto` and `queue` still explicitly enqueue.
+A status precheck followed by immediate send would race turn completion. Reporting
+`not_delivered` after observing fallback would not undo the accepted task, so it
+would violate this adapter's no-silent-fallback boundary. Supporting best-effort
+immediate delivery would require a different public contract.
+
+Synthetic public proof is in journey `copilot-strict-steer-limitation.md`.
+Real runtime scheduling, account behavior and app handover remain unverified.

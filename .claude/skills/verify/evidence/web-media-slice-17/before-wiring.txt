@@ -1,0 +1,68 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:29:30). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 /Users/lsm/focus/worktrees/web-previews-17/packages/web
+
+ ❯ src/lib/__tests__/artifact-media-client.test.ts (8 tests | 3 failed | 5 skipped) 7ms
+   ❯ artifact media previews and downloads (8)
+     × formats bounded JSON for the reader without interpreting HTML 5ms
+     × shows bounded log head and tail with the exact omitted byte count 1ms
+     × previews raster bytes but refuses SVG and excessive pixels before browser decoding 0ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/lib/__tests__/artifact-media-client.test.ts > artifact media previews and downloads > formats bounded JSON for the reader without interpreting HTML
+AssertionError: expected 'unsupported' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "unsupported"
+
+ ❯ src/lib/__tests__/artifact-media-client.test.ts:34:26
+     32|     const { hub } = await fixture();
+     33|     const result = await readArtifactPreview(hub, 'a');
+     34|     expect(result.state).toBe('ready');
+       |                          ^
+     35|     if (result.state === 'ready')
+     36|       expect(result.text).toBe('{\n  "safe": "<script>inert</script>"\…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  src/lib/__tests__/artifact-media-client.test.ts > artifact media previews and downloads > shows bounded log head and tail with the exact omitted byte count
+AssertionError: expected 'unsupported' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "unsupported"
+
+ ❯ src/lib/__tests__/artifact-media-client.test.ts:42:26
+     40|     const { hub, request } = await fixture('log', data);
+     41|     const result = await readArtifactPreview(hub, 'a');
+     42|     expect(result.state).toBe('ready');
+       |                          ^
+     43|     if (result.state === 'ready') {
+     44|       expect(result.text.startsWith('HEAD')).toBe(true);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  src/lib/__tests__/artifact-media-client.test.ts > artifact media previews and downloads > previews raster bytes but refuses SVG and excessive pixels before browser decoding
+AssertionError: expected 'unsupported' to be 'ready' // Object.is equality
+
+Expected: "ready"
+Received: "unsupported"
+
+ ❯ src/lib/__tests__/artifact-media-client.test.ts:57:26
+     55|     const normal = await fixture('image', new Uint8Array(png));
+     56|     const result = await readArtifactPreview(normal.hub, 'a');
+     57|     expect(result.state).toBe('ready');
+       |                          ^
+     58|     if (result.state === 'ready') expect(result.image?.type).toBe('ima…
+     59|     png.writeUInt32BE(100000, 16);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 5 skipped (8)
+   Start at  14:44:54
+   Duration  406ms (environment 53%, setup 33%, transform 9%, tests 2%, import 1%, worker 1%)
+

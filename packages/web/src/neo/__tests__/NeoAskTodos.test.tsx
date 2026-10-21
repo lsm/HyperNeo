@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NeoAskTodos, neoQuestionAnswerLabel } from '../NeoAskTodos.tsx';
 import { messageTime } from '../NeoMessage.tsx';
-import { neoAskEntryGroup } from '../neo-asks.ts';
+import { neoAskEntriesInOrder, neoAskEntryGroup, neoDonePageMerge } from '../neo-asks.ts';
 import { locale } from '../../lib/i18n/index.ts';
 
 beforeEach(() => {
@@ -619,9 +619,204 @@ describe('neoQuestionAnswerLabel', () => {
 
 describe('neoAskEntryGroup', () => {
   it('puts waiting asks first and finished ones last', () => {
-    expect(neoAskEntryGroup({ state: 'waiting' })).toBe('attention');
-    expect(neoAskEntryGroup({ state: 'doing' })).toBe('running');
-    expect(neoAskEntryGroup({ state: 'dropped' })).toBe('outcomes');
+    expect(neoAskEntryGroup({ state: 'waiting', todos: [] })).toBe('attention');
+    expect(neoAskEntryGroup({ state: 'doing', todos: [] })).toBe('running');
+    expect(neoAskEntryGroup({ state: 'dropped', todos: [] })).toBe('outcomes');
+  });
+
+  it('moves a card holding a blocked todo to the very top', () => {
+    const blocked = entry({ state: 'doing', todos: [todo('b', { state: 'blocked' })] });
+    const waiting = entry({ state: 'waiting' });
+    expect(neoAskEntryGroup(blocked)).toBe('attention');
+    expect(neoAskEntryGroup({ ...blocked, state: 'done' })).toBe('outcomes');
+    expect(neoAskEntryGroup({ ...blocked, state: 'dropped' })).toBe('outcomes');
+    expect(neoAskEntriesInOrder([waiting, blocked, entry({ state: 'doing' })])).toEqual([
+      blocked,
+      waiting,
+      expect.objectContaining({ state: 'doing' }),
+    ]);
+  });
+});
+
+describe('neoDonePageMerge', () => {
+  const done = (n: number) => todo(`d${n}`, { state: 'done' });
+  const ids = (todos: readonly NeoTodoEntry[]) => todos.map((item) => item.id);
+
+  it('restarts from the first page without dropping done todos paged past it', () => {
+    const paged = Array.from({ length: 22 }, (_, n) => done(n + 1));
+    const page = Array.from({ length: 20 }, (_, n) => done(n));
+    const merged = neoDonePageMerge(paged, paged, page, true);
+    expect(ids(merged.paged)).toEqual([
+      ...Array.from({ length: 20 }, (_, n) => `d${n}`),
+      'd20',
+      'd21',
+      'd22',
+    ]);
+    expect(merged.stalled).toBe(false);
+  });
+});
+
+describe('done todos on a card', () => {
+  beforeEach(() => {
+    locale.value = 'en';
+  });
+  const done = (id: string) => todo(id, { state: 'done', status: 'Done', title: `Done ${id}` });
+  const rows = (app: ReturnType<typeof render>) =>
+    [...app.container.querySelectorAll('[data-ask-todo]')].map((row) =>
+      row.getAttribute('data-ask-todo')
+    );
+
+  it('shows up to three done todos and folds more behind one control', () => {
+    const few = render(
+      <NeoAskTodos
+        entry={entry({ todos: [todo('a'), done('d1'), done('d2')], doneCount: 2 })}
+        onAnswer={vi.fn()}
+      />
+    );
+    expect(rows(few)).toEqual(['a', 'd1', 'd2']);
+    cleanup();
+    const many = render(
+      <NeoAskTodos
+        entry={entry({
+          todos: [todo('a'), done('d1'), done('d2'), done('d3'), done('d4')],
+          doneCount: 4,
+        })}
+        onAnswer={vi.fn()}
+      />
+    );
+    expect(rows(many)).toEqual(['a']);
+    fireEvent.click(many.getByRole('button', { name: '4 done — show more' }));
+    expect(rows(many)).toEqual(['a', 'd1', 'd2', 'd3', 'd4']);
+    expect(many.queryByRole('button', { name: /done — show more/ })).toBeNull();
+  });
+
+  it('pages the rest when the snapshot sent only some of the done todos', async () => {
+    const onLoadDone = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      todos: [done('d2'), done('d3'), done('d4'), done('d5')],
+      doneCount: 5,
+      nextOffset: null,
+    });
+    const app = render(
+      <NeoAskTodos
+        entry={entry({ todos: [todo('a'), done('d1')], doneCount: 5 })}
+        onAnswer={vi.fn()}
+        onLoadDone={onLoadDone}
+      />
+    );
+    fireEvent.click(app.getByRole('button', { name: '5 done — show more' }));
+    await waitFor(() => expect(rows(app)).toEqual(['a', 'd1', 'd2', 'd3', 'd4', 'd5']));
+    expect(onLoadDone).toHaveBeenCalledWith('ask', 1);
+  });
+
+  it('keeps each done todo once when the done list shifts between pages', async () => {
+    const onLoadDone = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        todos: [done('d1'), done('d2')],
+        doneCount: 5,
+        nextOffset: 2,
+      })
+      .mockResolvedValueOnce({ ok: true, todos: [done('d2')], doneCount: 5, nextOffset: null })
+      .mockResolvedValueOnce({
+        ok: true,
+        todos: [done('d0'), done('d1'), done('d2'), done('d3'), done('d4')],
+        doneCount: 5,
+        nextOffset: null,
+      });
+    const app = render(
+      <NeoAskTodos
+        entry={entry({ todos: [todo('a')], doneCount: 5 })}
+        onAnswer={vi.fn()}
+        onLoadDone={onLoadDone}
+      />
+    );
+    fireEvent.click(app.getByRole('button', { name: '5 done — show more' }));
+    await waitFor(() => expect(rows(app)).toEqual(['a', 'd1', 'd2']));
+    fireEvent.click(app.getByRole('button', { name: '3 done — show more' }));
+    await waitFor(() => expect(onLoadDone).toHaveBeenCalledTimes(2));
+    expect(rows(app)).toEqual(['a', 'd1', 'd2']);
+    fireEvent.click(app.getByRole('button', { name: '3 done — show more' }));
+    await waitFor(() => expect(rows(app)).toEqual(['a', 'd0', 'd1', 'd2', 'd3', 'd4']));
+    expect(onLoadDone).toHaveBeenLastCalledWith('ask', 0);
+  });
+
+  it('lets the snapshot win over a paged done todo it now lists another way', async () => {
+    const onLoadDone = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      todos: [done('d1'), done('d2')],
+      doneCount: 5,
+      nextOffset: 2,
+    });
+    const app = render(
+      <NeoAskTodos
+        entry={entry({ todos: [todo('a')], doneCount: 5 })}
+        onAnswer={vi.fn()}
+        onLoadDone={onLoadDone}
+      />
+    );
+    fireEvent.click(app.getByRole('button', { name: '5 done — show more' }));
+    await waitFor(() => expect(rows(app)).toEqual(['a', 'd1', 'd2']));
+    app.rerender(
+      <NeoAskTodos
+        entry={entry({ todos: [todo('a'), todo('d1', { state: 'doing' })], doneCount: 4 })}
+        onAnswer={vi.fn()}
+        onLoadDone={onLoadDone}
+      />
+    );
+    expect(rows(app)).toEqual(['a', 'd1', 'd2']);
+  });
+
+  it('says when done todos could not be read and lets the reader try again', async () => {
+    const onLoadDone = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Not connected'))
+      .mockResolvedValueOnce({ ok: false, reason: 'not_found: no such ask.' });
+    const app = render(
+      <NeoAskTodos
+        entry={entry({ todos: [todo('a')], doneCount: 3 })}
+        onAnswer={vi.fn()}
+        onLoadDone={onLoadDone}
+      />
+    );
+    fireEvent.click(app.getByRole('button', { name: '3 done — show more' }));
+    await waitFor(() =>
+      expect(app.getByRole('alert').textContent).toBe('Couldn’t load the done todos.')
+    );
+    fireEvent.click(app.getByRole('button', { name: '3 done — show more' }));
+    await waitFor(() =>
+      expect(app.getByRole('alert').textContent).toBe(
+        'Couldn’t load the done todos: not_found: no such ask.'
+      )
+    );
+    expect(rows(app)).toEqual(['a']);
+  });
+
+  it('pages done todos the snapshot left out through neo.ask.doneTodos', async () => {
+    const onLoadDone = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        todos: [done('d1'), done('d2')],
+        doneCount: 3,
+        nextOffset: 2,
+      })
+      .mockResolvedValueOnce({ ok: true, todos: [done('d3')], doneCount: 3, nextOffset: null });
+    const app = render(
+      <NeoAskTodos
+        entry={entry({ todos: [todo('a')], doneCount: 3 })}
+        onAnswer={vi.fn()}
+        onLoadDone={onLoadDone}
+      />
+    );
+    fireEvent.click(app.getByRole('button', { name: '3 done — show more' }));
+    await waitFor(() => expect(rows(app)).toEqual(['a', 'd1', 'd2']));
+    expect(onLoadDone).toHaveBeenLastCalledWith('ask', 0);
+    fireEvent.click(app.getByRole('button', { name: '1 done — show more' }));
+    await waitFor(() => expect(rows(app)).toEqual(['a', 'd1', 'd2', 'd3']));
+    expect(onLoadDone).toHaveBeenLastCalledWith('ask', 2);
+    expect(app.queryByRole('button', { name: /done — show more/ })).toBeNull();
   });
 });
 
