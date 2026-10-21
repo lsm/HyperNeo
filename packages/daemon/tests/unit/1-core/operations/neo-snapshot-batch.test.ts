@@ -10,7 +10,7 @@ import {
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
-import { createTestDb } from '../../../helpers/database.ts';
+import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 import {
   observeNeoSnapshotQueries,
   seedNeoSnapshotFixture,
@@ -91,6 +91,7 @@ test('different scopes stay distinct and revision responses remain per request',
   expect(a.todoAsks.map((entry) => entry.ask.id)).toEqual(['ask-18']);
   expect(b.todoAsks.map((entry) => entry.ask.id)).toEqual(['ask-17']);
   expect(all.todoAsks).toHaveLength(50);
+  expect(observer.queries.filter((query) => query.child)).toHaveLength(9);
   observer.reset();
   const [same, full] = await Promise.all([snapshot({ sinceRev: all.rev }), snapshot()]);
   expect(same).toMatchObject({ kind: 'completed', value: { unchanged: true, rev: all.rev } });
@@ -122,4 +123,65 @@ test('a failed shared build reports failure and a later request can recover', as
     sql.prepare = original;
   }
   expect(read(await snapshot()).todoAsks).toHaveLength(50);
+});
+
+test('RPC sharing does not mix the MCP view or bypass caller admission', async () => {
+  const root = 'neo:synthetic';
+  db.createSession(createTestSession(root));
+  service.repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
+  service.repo.saveProject(
+    { id: 'private', title: 'Synthetic', summary: '', context: 'RPC context' },
+    0
+  );
+  const [rpc, mcp, refused] = await Promise.all([
+    snapshot(),
+    invokeOperation(registry, 'neo.snapshot', {}, { source: 'mcp', role: 'neo', sessionId: root }),
+    invokeOperation(
+      registry,
+      'neo.snapshot',
+      {},
+      { source: 'mcp', role: 'worker', sessionId: 'not-root' }
+    ),
+  ]);
+  expect(read(rpc).projects[0].context).toBe('RPC context');
+  expect(read(mcp).projects[0].context).toBe('');
+  expect(read(rpc).sessionMessages).toEqual([]);
+  expect(read(mcp).sessionMessages).toBeUndefined();
+  expect(refused).toMatchObject({ kind: 'completed', value: { ok: false } });
+});
+
+test('batched reads retain scope, row order and missing-link behavior', async () => {
+  expect(service.todos.listTodosForAsks(['ask-18']).map((todo) => todo.id)).toEqual([
+    'todo-0',
+    'todo-50',
+    'todo-100',
+    'todo-150',
+    'todo-200',
+  ]);
+  expect(service.todos.listQuestionsForAsks(['ask-18']).map((question) => question.id)).toEqual([
+    'question-0',
+    'question-50',
+  ]);
+  expect(service.todos.listTodosForAsks([])).toEqual([]);
+  expect(service.todos.listQuestionsForAsks(['missing'])).toEqual([]);
+  expect([...service.todoSessions.readLinksForTodos(['todo-0', 'missing'])]).toEqual([
+    ['todo-0', { link: '/session/synthetic-0', remoteLink: null }],
+  ]);
+  service.todos.addTodo(
+    'without-session',
+    'ask-18',
+    {
+      title: 'No session',
+      doneWhen: 'Synthetic completion',
+      check: null,
+      named: null,
+      instruction: null,
+    },
+    10000
+  );
+  expect(
+    read(await snapshot())
+      .todoAsks.flatMap((entry) => entry.todos)
+      .find((todo) => todo.id === 'without-session')
+  ).toMatchObject({ link: null, remoteLink: null });
 });
