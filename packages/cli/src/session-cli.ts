@@ -11,7 +11,8 @@ export const SESSION_CLI_USAGE = `Usage:
                                       Make a 10-minute pairing code; after the first device, it waits for Allow on a paired device
   hyperneo pair --reset-lockout       Reopen pairing after too many bad codes
   hyperneo devices                    List paired devices (never their credentials)
-  hyperneo devices revoke <id>        Revoke a paired device and close its connections`;
+  hyperneo devices revoke <id>        Revoke a paired device and close its connections
+  hyperneo devices reset-human        Lost-phone recovery: clear human devices, reopen one human pairing, and notify Neo`;
 
 export function resolveSender(env: Env): string | null {
   if (env.HYPERNEO_SESSION_ID) return env.HYPERNEO_SESSION_ID;
@@ -39,6 +40,8 @@ export function planSessionCommand(
     return { value: { name: 'system.build', input: {} } };
   if (command === 'pair') return planPairCommand(args.slice(1));
   if (command === 'devices' && !target) return { value: { name: 'device.list', input: {} } };
+  if (command === 'devices' && target === 'reset-human' && !rest.length)
+    return { value: { name: 'device.reset_human', input: {} } };
   if (command === 'devices' && target === 'revoke' && rest.length === 1 && rest[0])
     return { value: { name: 'device.revoke', input: { deviceId: rest[0] } } };
   if (command === 'question' && target && !rest.length)

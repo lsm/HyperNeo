@@ -233,6 +233,14 @@ export class DevicePairingRepository {
       .get(hash(normalizePairingCode(code)), now);
   }
 
+  humanRecoveryOpen(): boolean {
+    return !!this.db
+      .prepare(
+        'SELECT 1 FROM (SELECT recovered_at FROM human_device_resets ORDER BY rowid DESC LIMIT 1) WHERE recovered_at IS NULL'
+      )
+      .get();
+  }
+
   redeem(
     code: string,
     name: string,
@@ -248,6 +256,18 @@ export class DevicePairingRepository {
         )
         .get(now, hash(normalizePairingCode(code)), now) as { kind: DeviceKind } | null;
       if (!claimed) return null;
+      if (claimed.kind === 'human' && this.humanRecoveryOpen()) {
+        this.db
+          .prepare(
+            'UPDATE human_device_resets SET recovered_at = ? WHERE rowid = (SELECT MAX(rowid) FROM human_device_resets)'
+          )
+          .run(now);
+        this.db
+          .prepare(
+            "UPDATE pairing_codes SET approved_at = NULL WHERE kind = 'human' AND used_at IS NULL"
+          )
+          .run();
+      }
       this.db
         .prepare(
           'INSERT INTO paired_devices (id, name, kind, secret_hash, created_at) VALUES (?, ?, ?, ?, ?)'

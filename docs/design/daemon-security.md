@@ -77,7 +77,27 @@ reach loopback too.
 - "Re-pair" issues a new credential and revokes the old one.
 - Credentials don't expire on a timer, but a device unseen for 90 days is flagged for review.
 - `hyperneo devices` lists them and `hyperneo devices revoke <id>` revokes one from the terminal, for a lost phone when no paired UI is at hand.
-- Revoking never reopens the first-device window: the CLI's no-Allow path counts every device ever paired, revoked or not, so an agent that reaches the CLI can revoke devices but cannot pair itself.
+- Ordinary revocation never reopens the first-device window: the CLI's no-Allow path counts every device ever paired, revoked or not. The explicit lost-phone reset below is the human-approved exception.
+
+**Lost-phone recovery (human decision 95c60b17, 2026-10-21).** Run
+`hyperneo devices reset-human` on the daemon machine (or through SSH). This local
+session-door command revokes active human devices and closes their sockets,
+retains every device row and reset record, and expires all unused pairing codes.
+Relay and peer-daemon credentials remain valid. Recovery survives daemon restart;
+the next successfully paired human device consumes it. Extra human codes made
+in that window then become pending and require Allow. Ordinary revoke never
+opens this exception, and network RPC cannot invoke the reset.
+
+Every reset, including one with no active human devices, atomically saves a Neo
+publication with its timestamp and cleared device names/IDs; no codes,
+credentials or hashes are published. Long lists use several bounded notices.
+Publication failure rolls the reset back. Active web/relay listeners receive the
+publication-change event, and a replacement phone can read the durable notices.
+
+The human explicitly accepted the simple version's risk: an AI session with
+local shell/session-door access can run this command and bypass Allow. This is
+not a human-presence boundary; every such reset leaves the same human-visible
+notice. S8/S9 enforcement remains held, and CORS stays unchanged until S8.
 
 **Where each client stores its credential.**
 

@@ -20,22 +20,24 @@ export interface PairingOperationDeps {
 export const ALLOW_NEEDS_PAIRED_HUMAN =
   'not_paired: only a paired human device can allow a code. Allow it on the phone or browser you paired first.';
 
-const fromDoor = (caller: OperationCaller) =>
+export const fromDoor = (caller: OperationCaller) =>
   caller.source === 'mcp' && caller.principal === SESSION_DOOR_PRINCIPAL;
 
 export const NEEDS_PAIRED_HUMAN =
   'not_paired: only a paired human device or the local CLI can manage devices.';
 
 export const NO_HUMAN_DEVICE =
-  'no_human_device: only relays or daemons are paired, so nobody could allow this code. Pair the phone first; recovery comes later.';
+  'no_human_device: no active human device can Allow this code. For lost-phone recovery, run hyperneo devices reset-human on the daemon machine, then hyperneo pair. The reset notifies Neo.';
 
 export function planPairingCode(
   caller: OperationCaller,
   paired: { all: number; humans: number },
-  callerIsPairedHuman: boolean
+  callerIsPairedHuman: boolean,
+  recovery = false
 ): { approved: boolean } | { reason: string } | null {
   if (callerIsPairedHuman) return { approved: true };
   if (!isLocalUser(caller) && !fromDoor(caller)) return null;
+  if (fromDoor(caller) && recovery) return { approved: true };
   if (paired.all === 0) return { approved: true };
   return paired.humans === 0 ? { reason: NO_HUMAN_DEVICE } : { approved: false };
 }
@@ -54,7 +56,7 @@ export function createDevicePairingOperations({
     defineOperation({
       name: 'device.pair.create',
       description:
-        'Make a single-use pairing code, valid 10 minutes, for a new device of the given kind. The local CLI makes the first device’s code; once any device is paired, other codes wait for the human to allow it on a paired device.',
+        'Make a single-use pairing code, valid 10 minutes, for a new device of the given kind. The local CLI makes the first device’s code; later codes need Allow from a paired human. Explicit local devices reset-human recovery permits one replacement human pairing without Allow.',
       policy: { safetyClass: 'human_only' },
       inputSchema: z
         .object({ kind: Kind, name: z.string().trim().min(1).max(80).optional() })
@@ -70,7 +72,12 @@ export function createDevicePairingOperations({
         Refused,
       ]),
       execute: async (input, caller) => {
-        const plan = planPairingCode(caller, pairing().countDevices(), isPairedHuman(caller));
+        const plan = planPairingCode(
+          caller,
+          pairing().countDevices(),
+          isPairedHuman(caller),
+          input.kind === 'human' && pairing().humanRecoveryOpen()
+        );
         if (!plan) return refused;
         if ('reason' in plan) return { ok: false as const, reason: plan.reason };
         const made = pairing().createCode(input.kind, input.name ?? null, plan.approved, now());

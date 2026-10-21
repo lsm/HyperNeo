@@ -1,4 +1,5 @@
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import { onHumanDevicesReset } from '../pairing/human-device-reset.ts';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import { neoStateNote, restartNeo } from './restart.ts';
 import { projectNeoAskEntries } from './ask-entries.ts';
@@ -358,7 +359,9 @@ export class NeoService {
       },
       { subscriberName: 'neo-card-events', namespaceId: SESSION_EVENT_SCOPE }
     );
+    const offHumanReset = onHumanDevicesReset(this.notifyPublicationsChanged);
     this.unsubscribe = () => {
+      offHumanReset();
       offUpdated();
       offStatus();
       offDeleted();
