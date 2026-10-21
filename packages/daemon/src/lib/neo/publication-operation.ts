@@ -69,6 +69,38 @@ export function admitPublicationDraft(input: unknown): { value: Draft } | { reas
     : { reason: { accepted: false, reason: 'invalid_publication' } };
 }
 
+const TOPIC_LABEL =
+  /^(?:#{1,6}\s+(.+?)\s*#*|\*\*([^*\n]+?)\*\*\s*(?:[:：].*)?|\*\*([^*\n]+?[:：])\*\*.*)\s*$/;
+
+function publicationTopics(fullText: string): string[] {
+  const labels: string[] = [];
+  let fenced = false;
+  for (const line of fullText.split('\n')) {
+    if (line.trimStart().startsWith('```')) fenced = !fenced;
+    const match = fenced ? null : TOPIC_LABEL.exec(line);
+    const label = (match?.[1] ?? match?.[2] ?? match?.[3])?.replace(/[:：]\s*$/, '').trim();
+    if (label && !labels.includes(label)) labels.push(label);
+  }
+  return labels;
+}
+
+export function requireShortTextCoversTopics(
+  draft: Draft
+): { value: Draft } | { reason: Rejection } {
+  const topics = publicationTopics(draft.fullText);
+  const short = draft.shortText.toLocaleLowerCase();
+  const missing = topics.filter((topic) => !short.includes(topic.toLocaleLowerCase()));
+  return topics.length < 2 || !missing.length
+    ? { value: draft }
+    : {
+        reason: {
+          accepted: false,
+          reason: 'multiple_topics',
+          detail: `fullText has ${topics.length} topic labels (${topics.join('; ')}) but shortText does not name ${missing.join('; ')}. publish each topic separately, each with its own shortText; or, if they are sections of one topic, name every label in shortText.`,
+        },
+      };
+}
+
 function publicationIdFor(input: NeoAskOrigin, requestId: string): string {
   return neoDerivedId(
     JSON.stringify(['neo.publication.publish', input.sessionId, input.messageId, requestId])
@@ -168,6 +200,7 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
   return (superpipe({})('neo-publication-publish') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(admitPublicationDraft, 'input', 'result:publication')
+    .pipe(requireShortTextCoversTopics, 'publication', 'result:publication')
     .pipe((draft: Draft) => draft, 'publication', 'draft')
     .pipe(
       (caller: OperationCaller) => runtime.getBinding(caller.sessionId ?? ''),
