@@ -57,8 +57,28 @@ const status = async (work: WorkStarted) => {
 };
 try {
   await connect();
-  const catalog = await rpc('work.adapters', {}) as { value: { id: string; capabilities: string[] }[] };
+  const catalog = await rpc('work.adapters', {}) as { value: { id: string; capabilities: string[]; unsupportedCapabilities?: { steer?: string } }[] };
   assert.deepEqual(catalog.value.find(adapter => adapter.id === 'copilot-cli')?.capabilities, ['find', 'start', 'send', 'queue', 'status', 'stop']);
+  if (mode === 'steer') {
+    const adapter = catalog.value.find(adapter => adapter.id === 'copilot-cli')!;
+    assert.match(adapter.unsupportedCapabilities?.steer ?? '', /same-turn/);
+    const active = await start('hold');
+    const traffic = () => readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8');
+    for (const ref of [active.ref, { adapter: 'copilot-cli', id: crypto.randomUUID() }]) {
+      const before = traffic();
+      const rejected = await rpc('work.send', { ref, message: 'NEVER_QUEUE_STEER', mode: 'steer' }) as { ok: boolean; reason: string; detail: string };
+      assert.equal(rejected.ok, false);
+      assert.equal(rejected.reason, 'unsupported');
+      assert.equal(rejected.detail, adapter.unsupportedCapabilities!.steer);
+      assert.equal(traffic(), before, 'steer must not reach the runtime');
+    }
+    assert.equal((await status(active)).status, 'running');
+    assert.deepEqual(await rpc('work.stop', { ref: active.ref }), { ok: true, value: { stopped: true } });
+    const before = traffic();
+    const rejected = await rpc('work.send', { ref: active.ref, message: 'NEVER_RESUME_STEER', mode: 'steer' }) as { reason: string };
+    assert.equal(rejected.reason, 'unsupported');
+    assert.equal(traffic(), before, 'steer must not resume stopped work');
+  }
   if (mode === 'reap' || mode === 'all') {
     for (const message of ['settled', 'error', 'late-settled']) {
       const work = await start(message);
