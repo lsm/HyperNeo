@@ -30,22 +30,12 @@ export interface CopilotWorkerConfig {
 
 function projectEvent(state: WorkerState, event: SessionEvent): WorkerState {
   const next = structuredClone(state);
-  if (event.agentId) return next;
+  if (event.agentId && event.type !== 'permission.requested') return next;
   switch (event.type) {
     case 'user.message': {
       const { messageId, interactionId } = event.data;
       if (!messageId) break;
-      if (!Object.hasOwn(next.inputs, messageId) && Object.keys(next.inputs).length >= 128) {
-        next.status = 'unreachable';
-        break;
-      }
-      const input = (Object.hasOwn(next.inputs, messageId)
-        ? next.inputs[messageId]
-        : undefined) ?? {
-        state: 'pending',
-        replyReport: '',
-        replyAvailability: 'incomplete',
-      };
+      const input = next.inputs[messageId];
       if (input.state === 'observed') break;
       next.inputs = { ...next.inputs, [messageId]: { ...input, state: 'observed', interactionId } };
       if (!['failed', 'needs_you', 'stopped'].includes(next.status)) next.status = 'running';
@@ -83,6 +73,9 @@ function projectEvent(state: WorkerState, event: SessionEvent): WorkerState {
           ? 'done'
           : 'running';
       }
+      break;
+    case 'permission.requested':
+      next.status = 'needs_you';
       break;
     case 'session.error':
       next.status = 'failed';
@@ -135,6 +128,8 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
   const seen = new Map<string, string | undefined>();
   const submitted = new Set<string>();
   const settled = new Set<string>();
+  const pending: SessionEvent[] = [];
+  let flush = () => {};
   let submitting = 0;
   const prune = () => {
     for (const id of submitted) if (state.inputs[id].outcome) settled.add(id);
@@ -178,24 +173,13 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
         workingDirectory: config.cwd,
         model: config.model,
         availableTools: [],
-        onPermissionRequest: () => {
-          state.status = 'needs_you';
-          return { kind: 'reject' };
-        },
+        onPermissionRequest: () => ({ kind: 'reject' }),
       }),
       timeoutMs
     );
-    unsubscribe = session.on((event) => {
-      if (
-        !['user.message', 'assistant.message', 'session.idle', 'session.error'].includes(event.type)
-      )
-        return;
+    const receive = (event: SessionEvent) => {
       if (closed || state.status === 'unreachable' || !event.id || seen.has(event.id)) return;
-      if (
-        event.type === 'user.message' &&
-        !submitting &&
-        !Object.hasOwn(state.inputs, event.data.messageId ?? '')
-      )
+      if (event.type === 'user.message' && !Object.hasOwn(state.inputs, event.data.messageId ?? ''))
         return;
       const messageKey =
         event.type === 'assistant.message'
@@ -216,9 +200,31 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
       seen.set(messageKey, inputId);
       state = applyEvent(state, event);
       prune();
+    };
+    flush = () => {
+      for (const event of pending.splice(0)) receive(event);
+    };
+    unsubscribe = session.on((event) => {
+      if (
+        ![
+          'user.message',
+          'assistant.message',
+          'session.idle',
+          'session.error',
+          'permission.requested',
+        ].includes(event.type)
+      )
+        return;
+      if (!submitting) receive(event);
+      else if (pending.length < 512) pending.push(event);
+      else state.status = 'unreachable';
     });
   } catch (error) {
-    await close();
+    await close().catch((cleanup) => {
+      if (error instanceof Error)
+        error.cause =
+          error.cause === undefined ? cleanup : new AggregateError([error.cause, cleanup]);
+    });
     throw error;
   }
   const requireOpen = () => {
@@ -242,13 +248,12 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
             ...state.inputs,
             [inputId]: {
               state: 'pending',
-              ...(state.status === 'stopped' || state.status === 'failed'
-                ? { outcome: state.status }
-                : {}),
               replyReport: '',
               replyAvailability: 'incomplete',
             },
           };
+        if (submitting === 1) flush();
+        requireOpen();
         if (
           state.inputs[inputId].state === 'pending' &&
           !['running', 'needs_you', 'failed', 'stopped'].includes(state.status)
