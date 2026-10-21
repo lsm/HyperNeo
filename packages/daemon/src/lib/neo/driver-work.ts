@@ -135,6 +135,7 @@ export function readDriverOutcome(
       startedAt?: number;
       queued?: true;
       receipt?: WorkDelivery['receipt'];
+      delivery?: WorkDelivery;
     }
   | { failure: string; reason?: string } {
   if (outcome.kind === 'failed') return { failure: outcome.message };
@@ -165,6 +166,7 @@ export function readDriverOutcome(
   const { delivered, receipt, confirmedAt } = reply.data.value;
   return {
     ref: target.ref,
+    delivery: reply.data.value,
     ...(delivered === false ? { queued: true as const } : {}),
     ...(delivered && confirmedAt !== undefined ? { startedAt: confirmedAt } : {}),
     ...(receipt ? { receipt } : {}),
@@ -288,6 +290,7 @@ export function readDriverSendBaseline(
 }
 
 export interface DriverSent {
+  delivery?: WorkDelivery;
   inputBefore: number;
   opening: string;
   receipt?: WorkDelivery['receipt'];

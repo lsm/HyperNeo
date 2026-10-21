@@ -31,6 +31,7 @@ export interface QueryRetryEnvironment {
   isCleaningUp: boolean;
   isSuperseded: boolean;
   hasRateLimitHandoff: boolean;
+  useProviderFallback?: boolean;
   recoveryState: { rateLimitCooldownScheduled: boolean };
   rateLimitHandoffResult?: QueryRetryHandoffResult;
 }
@@ -200,6 +201,13 @@ export function classifyQueryRetryRoute(input: QueryRetryRouteInput): QueryRetry
     env.attempt === 0
   )
     return { action: 'transient_retry' };
+  if (
+    errorSignal.isRetryableProviderError &&
+    env.useProviderFallback &&
+    env.hasRateLimitHandoff &&
+    !isQueryInterrupted(errorSignal, env.lifecycle)
+  )
+    return { action: 'rate_limit_handoff', hint: { kind: 'rate_limit' } };
   if (
     !isQueryInterrupted(errorSignal, env.lifecycle) &&
     env.attempt < env.maxProviderRetries &&

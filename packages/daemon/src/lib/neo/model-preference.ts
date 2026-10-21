@@ -17,16 +17,19 @@ type Rejection = { ok: false; reason: string };
 type Gate<T> = { value: T } | { reason: Rejection };
 type RuntimeConfig = { model?: string; provider?: string; thinkingLevel?: string };
 
-const PreferenceInput = z.object({
+const ModelPreference = z.object({
   model: z.string().trim().min(1).max(200),
   provider: z.string().trim().min(1).max(80),
   thinkingLevel: z.string().trim().min(1).max(40),
+});
+const PreferenceInput = ModelPreference.extend({
+  fallbacks: z.array(ModelPreference).max(10).optional(),
 });
 const PreferenceResult = z.union([
   z.object({ ok: z.literal(false), reason: z.string() }),
   z.object({
     ok: z.literal(true),
-    preferences: z.object({ model: z.string(), provider: z.string(), thinkingLevel: z.string() }),
+    preferences: PreferenceInput,
   }),
 ]);
 
@@ -43,22 +46,33 @@ export function requireNeoPreferenceModel(
   input: z.infer<typeof PreferenceInput>,
   catalog: { models: readonly ModelInfo[] }
 ): Gate<NeoModelPreference> {
-  const model = catalog.models.find(
-    (item) => item.id === input.model && item.provider === input.provider
-  );
-  if (!model)
-    return {
-      reason: {
-        ok: false,
-        reason: `invalid_model: ${input.provider}/${input.model} is not available.`,
-      },
-    };
-  const levels = getThinkingLevelsForModel(model.provider, model.thinkingModes, model.effortLevels);
-  return {
-    value: {
+  const entries = [];
+  for (const entry of [input, ...(input.fallbacks ?? [])]) {
+    const model = catalog.models.find(
+      (item) => item.id === entry.model && item.provider === entry.provider
+    );
+    if (!model)
+      return {
+        reason: {
+          ok: false,
+          reason: `invalid_model: ${entry.provider}/${entry.model} is not available.`,
+        },
+      };
+    const levels = getThinkingLevelsForModel(
+      model.provider,
+      model.thinkingModes,
+      model.effortLevels
+    );
+    entries.push({
       model: model.id,
       provider: model.provider,
-      thinkingLevel: clampNeoThinking(levels, normalizeThinkingLevel(input.thinkingLevel)),
+      thinkingLevel: clampNeoThinking(levels, normalizeThinkingLevel(entry.thinkingLevel)),
+    });
+  }
+  return {
+    value: {
+      ...entries[0],
+      ...(input.fallbacks === undefined ? {} : { fallbacks: entries.slice(1) }),
     },
   };
 }
@@ -95,7 +109,10 @@ export function createNeoPreferenceOperation(service: NeoService) {
     .pipe(() => ({ models: getAvailableModels('global') }), 'input', 'catalog')
     .pipe(requireNeoPreferenceModel, ['input', 'catalog'], 'result:admission')
     .pipe(
-      async (preferences: NeoModelPreference) => {
+      async (input: NeoModelPreference) => {
+        const fallbacks =
+          input.fallbacks ?? service.db.getGlobalSettings().neo?.preferences?.fallbacks;
+        const preferences = { ...input, ...(fallbacks === undefined ? {} : { fallbacks }) };
         await service.saveModelPreference(preferences);
         return { ok: true as const, preferences };
       },
@@ -109,7 +126,7 @@ export function createNeoPreferenceOperation(service: NeoService) {
   return defineOperation({
     name: 'neo.preferences.set',
     description:
-      'Set the model, provider and thinking level every Neo session uses (root Neo and each project), for the user only. Thinking is clamped to what the model supports. Each session switches at its next idle point, never mid-turn; a session whose provider is unavailable keeps its current model.',
+      'Set the primary model, provider and thinking level for Neo and its projects, for the user only. Optional fallbacks is an ordered list of model/provider/thinkingLevel entries, each clamped to supported thinking. An empty list disables Neo fallbacks; omitting it preserves the saved chain or today’s general session chain. Recovery continues the same turn on the next available fallback; Neo prefers the primary again after recovery. User model changes wait for idle.',
     inputSchema: PreferenceInput,
     resultSchema: PreferenceResult,
     policy: { safetyClass: 'human_only' },

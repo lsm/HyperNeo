@@ -10,6 +10,58 @@ its web UI. Lint, types and unit tests are not proof. Every helper named here
 lives next to this file in `.claude/skills/verify/`. Run commands from the repo
 root of your worktree.
 
+## SQLite worker closure and opt-in native stall capture
+
+On macOS with Xcode command-line tools, use a fresh owned absolute directory:
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-sqlite-close-XXXXXX)
+bash .claude/skills/verify/sqlite-worker-close.sh verify 9384 "$RUN"
+RUN=$(mktemp -d /private/tmp/hn-sqlite-sample-XXXXXX)
+HYPERNEO_NATIVE_LAG_PROFILE=1 \
+  bash .claude/skills/verify/sqlite-worker-close.sh sample 9384 "$RUN"
+```
+
+The shell compiles a native interposer inside that run directory and launches an
+isolated daemon with a blank environment, its own HOME/data/DB and port. It delays
+only an explicit WAL checkpoint on the helper's synthetic worker database by
+1,800 ms. A retained prepared statement and worker termination expose Bun's
+process-wide database-registry mutex: an independent WebSocket client requests a
+new statement on the daemon's different database while that checkpoint runs.
+No real settings, DB, provider, credentials or daemon are used.
+
+`reproduce` on the regression commit records about 1,817 ms heartbeat lag and
+1,816 ms RPC latency. Fixed `verify` requires the retained statement to be closed,
+no termination checkpoint, unchanged results (219 and 7966), and heartbeat lag,
+query and RPC each below 250 ms. The measured fixed values were 1.01 ms lag,
+0.027 ms query and 0.77 ms RPC. This is a controlled native hazard reproduction,
+not attribution of the historical off-CPU gaps or proof every stall is fixed.
+
+`sample` deliberately uses upstream Bun's default close for its synthetic worker
+to keep the old hazard reproducible without changing production code. It starts
+the real watchdog explicitly (test daemons normally skip it). A timestamped
+`stack.native-*.txt` must be triggered before the blocked RPC recovers and contain
+a native Call graph; inspect both the blocked main thread and checkpoint worker.
+The helper awaits the one-second sampler and stops its clients, worker, watchdog
+and daemon. Output includes the exact trigger/recovery times and maximum lag.
+
+For an authorized deployment, `HYPERNEO_NATIVE_LAG_PROFILE=1` enables the same
+Darwin-only capture on the existing watchdog worker: a 100 ms heartbeat/check,
+a one-second native sample after a heartbeat is at least 1 s late, once per
+unrecovered episode and only one sampler in flight. Files extend the configured
+watchdog stack path with the trigger timestamp. Default is off; the existing
+60 s stall action, startup arming, suspension handling and shutdown fuse are
+unchanged. Capture begins during the block, rather than from the recovered
+main-thread slow-tick callback. Native stacks are local diagnostic artifacts;
+do not enable the flag on a real daemon without the coordinator's authorization.
+
+Focused `sqlite-worker-close.test.ts` invokes real Bun children to check retained
+statement invalidation, an actual FTS merge's post-close receipt and unchanged
+search results, and opt-in/off native capture without a stall action at 2 s.
+`sqlite.worker.lifecycle` carries merge/close durations, opened/closed wall times
+and parent receipt time, with no DB path or content. Those lifecycle spans and a
+checkpoint stack support correlation; whole-tick counters remain tick-scoped.
+
 ## Explicit mid-turn Answered linking (handoff PR5)
 
 ```bash
@@ -50,6 +102,106 @@ HOME/data dir and TMPDIR. The Bun runner aliases `bun:sqlite` back into the
 compatibility module and cannot run this online configuration; the standalone
 mid-turn helper above runs directly under Bun. Both checks retain receipt replay.
 
+## Worktree project resolution responsiveness
+
+Use an owned fresh run directory; the helper requires its own HOME/data and port.
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-worktree-resolution-XXXXXX)
+env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/worktree-resolution-lag.ts verify 9383 "$RUN"
+```
+
+The actual `work.find` RPC runs the real Codex adapter against a synthetic Codex
+SQLite state and mirrors the resulting project into the isolated daemon database.
+Its sole worktree has a `.git` FIFO: an independent Python writer waits until a
+reader opens it, then releases a valid pointer after 1.4 seconds. An external
+WebSocket client probes `system.health` while the read is pending. The returned
+project must be the main repository, and the thread keeps its worktree location.
+`observed.json` records response time, maximum main-loop lag and health latency.
+The failing `reproduce` journey reports about 1,405 ms loop lag and 1,406 ms health
+latency. After async resolution, the same journey reports about 1.7 ms lag and
+0.56 ms health latency, while discovery still awaits the full storage delay.
+All helper-owned clients, writer and daemon stop in `finally`. No real Codex
+store, `.git` pointer, credentials, provider, GUI or port 8399 is used.
+
+The focused `worktree-resolution.test.ts` also checks that concurrent and repeated
+lookups of an unchanged regular pointer perform only one content read. Changed
+metadata, a missing pointer, read errors and replacement must refresh/recover.
+Phase tests cover Codex SQLite open/configure/query/close,
+worktree resolution, grouping and each adapter's async success/failure boundary.
+Async worktree and adapter spans include awaits and are not exclusive main-thread
+blocking time. The synthetic reproduction proves a concrete blocking hazard;
+it does not attribute the historical 02:23:43 eight-second gap.
+
+## Neo coordinator model fallback (backend)
+
+Run `bash .claude/skills/verify/neo-model-fallback.sh "$RUN"` with a fresh absolute
+synthetic run directory. The real isolated daemon and actual SDK use ephemeral
+loopback ports, never 8399. A local Anthropic-shaped fixture returns a usage-limit
+billing error for the configured primary and accepts the next model. A second
+case uses the real GLM provider with its discovery/probe HTTP client redirected
+to the loopback fixture and a session-scoped loopback base URL; the SDK itself
+sends the GLM request through that provider. No Z.ai endpoint is contacted. Synthetic
+SDK credentials exist only inside this fixture process; no real provider or
+credential discovery is used. GitHub stays stubbed. The SDK and daemon transcript
+lookup share the same synthetic directory so recovery resumes the real history.
+
+The human-only `neo.preferences.set` RPC must persist an ordered fallback list.
+The original input must produce a visible `neo.publication.read` garden reply on
+the fallback, whose actual API request carries its configured low effort (or
+8,000-token thinking budget). Both Anthropic and GLM cases must carry this
+fallback effort; GLM requests must use the separate `/glm/v1/messages` endpoint.
+The fixture then restores the primary and submits
+a second human turn: that turn must complete on the primary with its configured
+high effort (or 24,000-token thinking budget), demonstrating that
+suppression lasts only through recovery. Evidence is retained even on failure in
+`evidence/neo-model-fallback-{anthropic,glm}.json`; the helper closes the socket, SDK, daemon and
+local model server in `finally`. On the pre-fix test commit, the first turn only
+shows its usage-limit error and cannot complete the expected reply.
+
+Focused contracts additionally cover ordered persistence, per-model thinking
+clamping, unknown-model refusal, explicit empty chains and primary-only edits
+preserving the chain. Existing general fallback selection remains in effect when
+Neo's setting is absent. Retryable provider errors use the same watchdog only
+for a configured Neo chain; ordinary sessions retain their provider retry policy.
+OpenAI/Copilot and OpenRouter are accepted through the same catalog/provider
+switching path but are not verified by these two fixture cases.
+Web Settings editing is a separate follow-up to this backend slice; no GUI or
+real provider outage/reset clock is verified here. The next-turn restored-primary
+case is synthetic evidence of recovery, not a live account availability probe.
+
+## Neo coordinator models in web Settings
+
+Build the web UI with `bun run --cwd packages/web build`, then run:
+
+```bash
+NODE_PATH=<directory-containing-playwright> \
+  bash .claude/skills/verify/neo-model-settings.sh "$RUN" 9381 9382
+```
+
+Use a fresh absolute synthetic run directory. Both ports must be free and neither
+may be 8399; the helper uses a separate local model fixture without port 8000.
+It starts from `env -i`, synthetic HOME/data/DB, NODE_ENV=test and a GitHub stub.
+The only synthetic provider credential is created through RPC in that test DB.
+Set `VERIFY_BROWSER` to an installed Chromium executable when Playwright's own
+headless browser is unavailable. The browser always runs headlessly.
+
+The actual built Settings > Models page must select a Neo primary, add two
+fallbacks through the shared model picker, set each thinking level, reorder and
+save. The helper checks persisted preferences through real `neo.snapshot` RPC,
+then reloads desktop/mobile pages and checks values, order, usable provider text
+and control bounds. Disabling fallbacks must persist an explicit empty chain
+after reload. Evidence: `evidence/neo-model-settings.json` and desktop/mobile PNGs.
+Browser and helper-owned daemon/mock close on success or failure.
+
+Focused Settings contracts also cover cross-provider catalog entries, server
+thinking options, unavailable providers, human-operation refusal retaining edits
+and primary-only edits preserving inherited fallback behavior. This web journey
+uses synthetic Anthropic models; actual Anthropic-to-GLM inference is proved by
+the backend model-fallback journey above. No real account quota or GUI session
+is used. The Settings PR contains no new fallback execution policy.
+
 ## Rules
 
 - Never start, stop or mutate the human's daemon. Isolated runs never use port
@@ -63,6 +215,26 @@ mid-turn helper above runs directly under Bun. Both checks retain receipt replay
 - GitHub is a stub: `gh` on the daemon's `PATH` answers `gh pr view` from
   `<run>/pr.json`, refuses everything else (including `gh auth token`) and logs
   every call to `<run>/evidence/gh.log`. Nothing reaches github.com.
+
+## Neo question-card Markdown (headless)
+
+Build web and Launch a fresh isolated synthetic daemon on a free non-8399 port.
+In the same shell, with a `stop.sh` EXIT trap, run:
+
+```bash
+NODE_PATH=<directory containing playwright> node .claude/skills/verify/neo-question-markdown.mjs 9379 "$RUN"
+```
+
+Set `VERIFY_BROWSER` to an installed Chromium executable if needed. The helper
+opens Neo over RPC and seeds only its own temporary DB with open, answered and
+retired questions. It drives the actual built `/neo` page headlessly at 1280 and
+390 pixels, opens Details, and checks real lists, bold, code, tables, links and
+single line breaks in each state. Raw HTML must remain escaped, question bounds
+must fit the viewport, and answer controls and historical metadata must remain.
+Evidence: `evidence/neo-question-markdown.json` and screenshots at both widths.
+No provider, model, credentials, live data or desktop GUI is used. Stop the daemon
+and mock with `stop.sh`. The focused `NeoAskTodos.test.tsx` uses the real chat
+renderer; its three formatting contracts fail on the test-first commit.
 
 ## Neo animation stability (headless)
 
@@ -2438,6 +2610,66 @@ cd packages/daemon
 bunx vitest run tests/unit/1-core/drivers/copilot-discovery.test.ts
 ```
 
+## Copilot runtime construction (worker slice 2)
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-copilot-owner-XXXXXX)
+mkdir -p "$RUN/home"
+env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin" \
+  NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/copilot-worker.ts 9382 "$RUN"
+```
+
+Use a fresh synthetic HOME/data directory and free non-8399 port. This Build-only
+slice deliberately does not register a worker. The helper starts the actual
+pinned Copilot SDK against a synthetic framed-JSON-RPC executable, then starts an
+isolated daemon. A test-only `verify.copilot` WebSocket RPC exercises construction
+and per-input evidence while `system.health` confirms daemon responsiveness.
+The first input stays incomplete through internal turn-end/assistant-idle events;
+final replies bind to consumed input IDs, duplicate authoritative messages do not
+duplicate the report, unrelated messages stay out, and session idle settles the
+matched replies. Public `work.adapters` must still advertise Copilot as find-only.
+An idle before the first input must remain queued. After 270 additional settled
+inputs, only the latest 64 settled receipts remain; the runtime stays usable
+across dedup retention rollover. A rejected permission followed by idle must stay
+`needs_you`; a follow-up submit is rejected before transport and preserves that
+blocked status. Unsettled inputs are capped at 64 without losing accepted receipts.
+Fresh-event-ID repeats of a user message must preserve its first interaction
+binding and any needs_you/failed/stopped status. A normal idle after aborted idle
+must keep stopped; only an explicit new submission starts subsequent work.
+Terminal abort/error settles pending and consumed receipts alike, without claiming
+pending input was consumed or its reply completed. Their capacity must be released;
+an ACK arriving after terminal evidence must inherit the stopped/failed outcome.
+After retention rollover, a stale user echo during another send must not steal
+reply attribution or admission capacity. Up to 512 relevant pre-ACK events wait
+for receipt identities, then replay only against acknowledged inputs. Overflow
+fails closed. Construction errors retain shutdown failure as their cause.
+Dedup retains at most 512 keys, evicting only keys unrelated to unsettled inputs;
+if all retained keys protect active evidence, the runtime becomes unreachable
+instead of forgetting that evidence and risking duplicate attribution. Snapshot
+history is bounded, not durable receipt storage; later wiring must persist reports
+before eviction and provide its own durable lookup/restart contract.
+`evidence/observed.json` saves actual RPC replies and SDK protocol traffic.
+
+The helper closes its socket, owned SDK runtime and daemon in `finally`. It uses
+only synthetic data, a fresh HOME/DB, a mock GitHub CLI and a fixture executable;
+no auth/token files, real sessions, real Copilot, model/provider or GUI is used.
+This proves construction inside the daemon process through a test-only door,
+not public worker start/send/status/stop, restart recovery or production runtime
+compatibility. Those are later Wire slices, with their own operation journeys.
+
+Run the focused process tests from `packages/daemon` with
+`bunx vitest run tests/unit/1-core/drivers/copilot-worker.test.ts`.
+They additionally check permission rejection, error followed by idle, pending or
+empty replies, pre-ACK events, immutable snapshots, abort terminal evidence, EOF,
+lost ACK without replay, incompatible version/protocol and bounded shutdown.
+Shutdown uses the SDK's graceful/force-stop mechanisms; the fixture PID is observed
+to disappear, which is not proof of containment for arbitrary descendant tools.
+Runtime version is supplied explicitly and checked before session creation. The
+fixture reports `fixture-1`/protocol 3 against pinned SDK 1.0.13; it is not a claim
+that any untested real CLI/SDK pair is supported. Final wiring must select and
+verify the runtime pair and admission/model/effort policy before exposing it.
+
 ## Neo goal list (G6a)
 
 Build the web, launch a fresh isolated daemon, then run
@@ -2522,6 +2754,47 @@ size and SHA-256 and refuse a foreign daemon reference. Evidence is retained in
 restart, not the future registration door, scoped preview authorization, a removed
 Git worktree, iOS or HTML containment. No credentials, provider/model or live DB.
 
+## Shard enumeration CI responsiveness
+
+The user surface here is the shard CLI and CI coverage report, so no daemon or
+browser is needed. Run `bun run test:ci-balance-report` and
+`bash scripts/lib/shard-split.sh --self-test`, then
+`./scripts/test-daemon.sh --verify`. The bounded-latency fixture inserts 30 ms into
+each external checksum invocation: 128 files must still enumerate in two seconds.
+Before batching this fails with `ETIMEDOUT`; it models process overhead, not actual
+CI runner latency. UTF-8 and paths over 255 bytes must match system POSIX `cksum`.
+The raw-byte CLI fixture must preserve invalid UTF-8 bytes in both the checksum
+and emitted path; decoding through a JavaScript string fails this regression.
+
+To compare every assignment against the original emitter at unchanged file/weight
+inputs, run this from the current worktree (no live data, providers or GUI):
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-shard-parity-XXXXXX)
+git show 72fee50872:scripts/lib/shard-split.sh > "$RUN/baseline.sh"
+for suite in daemon online; do
+  for variant in baseline current; do
+    bash -c '
+      source "scripts/test-$1.sh"
+      if [ "$2" = baseline ]; then source "$3/baseline.sh"; fi
+      if [ "$1" = daemon ]; then
+        for shard in "${SHARDS[@]}"; do
+          printf "%s\n" "$shard"; shard_paths "$shard"
+        done
+      else
+        online_all_modules | while IFS= read -r module; do
+          printf "%s\n" "$module"; online_module_paths "$module"
+        done
+      fi
+    ' shard-parity "$suite" "$variant" "$RUN" > "$RUN/$suite-$variant.txt"
+  done
+  cmp "$RUN/$suite-baseline.txt" "$RUN/$suite-current.txt"
+done
+```
+
+Both `cmp` calls must succeed. Retain the output files with the real CLI/report
+logs and timings. This checks identical hashes, bucket membership and ordering
+for the current source population, not model/session delivery or CI runner health.
 
 ## In-app previews: shared contracts (slice 2)
 
@@ -2570,34 +2843,35 @@ registers a reader. Registration must remain unwired until the anchored descript
 opener and immutable hash capture exist (slices 4–6). Reads must use authorized
 registry receipts, never this plan or a re-resolved path as a grant (slice 7).
 
-## In-app previews: native descriptor opener (slice 4)
-
-Run `preview-safe-open.test.ts` with the daemon Vitest runner. It launches a fresh
-Bun process to exercise actual libc `openat`, not a mocked filesystem. It requires
-exact binary bytes, no-follow root/parent/final opens, single-link regular files,
-nonblocking FIFO refusal, callback cleanup, and repeated descriptor-count checks.
-A separate process swaps a parent directory with an outside symlink during 1,000
-opens: every success must read the original bytes, never its synthetic sentinel.
-The CI Node runner also asserts `safe_open_unavailable` without calling a consumer.
-Run existing `acp-safe-fs.test.ts` under Bun to retain its original read/write API.
-
-For retained native evidence from the worktree root:
+## Todo dispatch acknowledgement retention (delivery slice 1)
 
 ```bash
-RUN=$(mktemp -d /private/tmp/hn-preview-open-XXXXXX)
+RUN=$(mktemp -d /private/tmp/hn-dispatch-evidence-XXXXXX)
 mkdir -p "$RUN/home"
-env -i HOME="$RUN/home" PATH="$(dirname "$(command -v bun)"):/usr/bin:/bin" \
-  NODE_ENV=test bun .claude/skills/verify/preview-safe-open.ts "$RUN"
+env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin" \
+  NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/dispatch-evidence.ts 9387 "$RUN"
 ```
 
-`safe-open-evidence.json` records runtime/platform, successes and refusals. Keep
-its synthetic fixtures. Repeat the existing isolated daemon capture/restart and
-headless Markdown component journeys for compatibility. The descriptor callback
-is internal and does not grant artifact access. There is no path-reader fallback;
-raw source registration stays unwired until complete hash capture and authorized
-registry receipts exist (slices 5–7). This slice reuses the Bun native ACP backend
-on macOS/Linux. No successful Deno/native Windows opener is claimed: an unavailable
-backend returns `safe_open_unavailable`, and no source consumer runs. A backend
-must independently pass these same proofs before enabling it on another runtime.
-No live DB, provider, credentials, source mutation or unattended GUI is involved;
-rename/symlink races operate only on newly created synthetic fixtures.
+The real isolated daemon's MCP `neo.todo.add` and `neo.todo.continue` operations
+use the production Codex and Claude CLI adapters. Synthetic Unix-socket peers
+return a Codex queue ID, confirm a steer turn ID, or accept Claude inbox bytes
+without confirming consumption. CLI discovery and registrations are synthetic;
+`claude` and `gh` are stubbed. No real app/CLI, credentials, provider, live DB,
+GUI or port 8399 is used.
+
+The helper closes and restarts the daemon, then opens only its synthetic DB
+read-only. Queue/unconfirmed acknowledgements must remain distinct from a turn
+start, every input/queue ID must survive, and continue must replace the previous
+acknowledgement with the actual steer result. `evidence/observed.json` retains
+operation replies, peer calls and recovered repository evidence. Before the fix,
+this journey reaches a successful queue insertion and doing todo, then fails
+because the acknowledgement was discarded. It is not enough for the todo-add
+operation alone to return `ok:true`; its embedded todo must also have started.
+
+Run the focused `neo-todo-runner`, `neo-driver-work` and `neo-input-attribution`
+unit suites too: old receipt envelopes remain readable, malformed delivery data
+cannot create facts, ref changes invalidate evidence, and unconfirmed acceptance
+survives actual DB close/reopen. This slice proves retention of the latest send,
+not an append-only obligation history, delivery deadlines, retries, idle queue
+activation, first worker output, canonical owner recovery or new UI states.

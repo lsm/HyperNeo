@@ -320,7 +320,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     sessions.recordSent(
       todo.id,
       probe
-        ? probe.sent && { ...probe.sent, receipt: result.receipt }
+        ? probe.sent && { ...probe.sent, receipt: result.receipt, delivery: result.delivery }
         : opening
           ? { inputBefore: 0, opening, ...(result.receipt ? { receipt: result.receipt } : {}) }
           : null
@@ -625,7 +625,10 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       todo.id,
       'queued' in delivered ? null : (delivered.startedAt ?? baseline)
     );
-    sessions.recordSent(todo.id, sent && { ...sent, receipt: delivered.receipt });
+    sessions.recordSent(
+      todo.id,
+      sent && { ...sent, receipt: delivered.receipt, delivery: delivered.delivery }
+    );
     const next = store.updateTodo(
       todo,
       { state: 'doing', report: null, evidence: null, finishedAt: null },

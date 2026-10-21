@@ -173,6 +173,15 @@ const SnapshotOk = z.object({
       model: z.string(),
       provider: z.string(),
       thinkingLevel: z.enum(THINKING_LEVELS),
+      fallbacks: z
+        .array(
+          z.object({
+            model: z.string(),
+            provider: z.string(),
+            thinkingLevel: z.enum(THINKING_LEVELS),
+          })
+        )
+        .optional(),
       saved: z.boolean(),
     })
     .nullable()

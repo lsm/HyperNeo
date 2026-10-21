@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { open } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { open, readFile, stat } from 'node:fs/promises';
+import { runLagPhase } from '../event-loop-activity.ts';
 import { homedir } from 'node:os';
 import { basename, delimiter, join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -76,16 +77,33 @@ export interface AcpAgentAdapterDeps {
   now: () => number;
   listSessions: () => Promise<readonly AcpAgentSession[]>;
   ownSessions: () => ReadonlySet<string>;
-  projectFolder: (folder: string) => string;
+  projectFolder: (folder: string) => string | Promise<string>;
   link?: (session: AcpAgentSession) => string;
 }
 
-export function gitWorktreeProject(folder: string): string {
+const worktreeProjects = new Map<string, { stamp: string; project: Promise<string> }>();
+
+export async function gitWorktreeProject(folder: string): Promise<string> {
   try {
-    const pointer = readFileSync(join(folder, '.git'), 'utf8').match(/^gitdir:\s*(.+)$/m)?.[1];
-    const at = pointer?.trim().lastIndexOf('/.git/worktrees/') ?? -1;
-    return pointer && at > 0 ? pointer.trim().slice(0, at) : folder;
+    const path = join(folder, '.git');
+    const info = await runLagPhase('scanner:worktree:metadata', () => stat(path));
+    const stamp = `${info.ino}:${info.mtimeMs}:${info.ctimeMs}:${info.size}`;
+    const cached = worktreeProjects.get(folder);
+    if (cached?.stamp === stamp) return cached.project;
+    const project = runLagPhase('scanner:worktree:read', () => readFile(path, 'utf8'))
+      .then((text) => {
+        const pointer = text.match(/^gitdir:\s*(.+)$/m)?.[1];
+        const at = pointer?.trim().lastIndexOf('/.git/worktrees/') ?? -1;
+        return pointer && at > 0 ? pointer.trim().slice(0, at) : folder;
+      })
+      .catch(() => {
+        if (worktreeProjects.get(folder)?.project === project) worktreeProjects.delete(folder);
+        return folder;
+      });
+    worktreeProjects.set(folder, { stamp, project });
+    return project;
   } catch {
+    worktreeProjects.delete(folder);
     return folder;
   }
 }
@@ -198,16 +216,27 @@ export async function loadAcpAgentSessions(deps: AcpAgentAdapterDeps) {
   );
 }
 
+async function resolveAcpFolders(sessions: readonly AcpAgentSession[], deps: AcpAgentAdapterDeps) {
+  return new Map(
+    await Promise.all(
+      [...new Set(sessions.map((session) => session.cwd))].map(
+        async (folder) => [folder, await deps.projectFolder(folder)] as const
+      )
+    )
+  );
+}
+
 export function buildAcpAgentGroups(
   sessions: readonly AcpAgentSession[],
   query: FindQuery,
-  deps: AcpAgentAdapterDeps
+  deps: AcpAgentAdapterDeps,
+  folders: ReadonlyMap<string, string>
 ): PlaceGroup[] {
   const text = query.text?.toLowerCase();
   const now = deps.now();
   const byFolder = new Map<string, AcpAgentSession[]>();
   for (const session of sessions) {
-    const folder = deps.projectFolder(session.cwd);
+    const folder = folders.get(session.cwd)!;
     if (query.folder && folder !== query.folder) continue;
     byFolder.set(folder, [...(byFolder.get(folder) ?? []), session]);
   }
@@ -245,7 +274,8 @@ const runAcpAgentFind = (superpipe({})('acp-agent-find-work') as PipelineAPI)
   .input(['query', 'deps'])
   .pipe(skipSpaceQuery, 'query', 'result:groups')
   .pipe(loadAcpAgentSessions, 'deps', 'sessions')
-  .pipe(buildAcpAgentGroups, ['sessions', 'query', 'deps'], 'groups')
+  .pipe(resolveAcpFolders, ['sessions', 'deps'], 'folders')
+  .pipe(buildAcpAgentGroups, ['sessions', 'query', 'deps', 'folders'], 'groups')
   .endAsync('groups') as (query: FindQuery, deps: AcpAgentAdapterDeps) => Promise<PlaceGroup[]>;
 
 export function createAcpAgentAdapter(deps: AcpAgentAdapterDeps): WorkAdapter {
