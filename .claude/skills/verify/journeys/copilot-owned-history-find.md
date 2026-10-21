@@ -65,7 +65,7 @@ external session. Shared SKILL.md and journey discovery remain unchanged.
 Review regressions have separate helper modes, each requiring a fresh run:
 
 ```bash
-for MODE in search peek external-failure; do
+for MODE in search peek external-failure boundary; do
   RUN=$(mktemp -d /private/tmp/hn-copilot-find-review-XXXXXX)
   mkdir -p "$RUN/home"
   env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin" \
@@ -85,3 +85,10 @@ done
   discovery is unavailable and the list contains owned work only. No resume occurs.
   If no owned results are available either, find retains its adapter-unreachable
   failure rather than presenting an apparently successful empty list.
+
+- `boundary`: a visible assistant turn straddles the 256-KiB leading boundary,
+  followed by an entire window of unknown records. The first page is empty; its
+  cursor must re-read the skipped leading line, and the next page must expose the
+  stable turn ID with explicit text clipping. Receipt-bound status remains intact.
+  Process cases also cover windows of deltas, subagent and malformed records, plus
+  strict cursor progress over an oversized line so empty pages cannot loop.

@@ -45,6 +45,7 @@ export function readCopilotHistory(
     if (!count) return unavailable;
     const last = bytes.lastIndexOf(10, count - 1);
     let position = start ? bytes.indexOf(10) + 1 : 0;
+    const firstLine = start + position;
     const turns: (WorkTurnPage['turns'][number] & { position: number })[] = [];
     const seen = new Set<string>();
     let incomplete = last !== count - 1;
@@ -103,7 +104,7 @@ export function readCopilotHistory(
     const selected = around
       ? turns.slice(Math.max(0, anchor - before), anchor + after + 1)
       : turns.slice(-Math.min(21, before + after + 1));
-    const boundary = selected[0]?.position ?? start;
+    const boundary = selected[0]?.position ?? (firstLine < end ? firstLine : start);
     const older = start > 0 || (selected.length > 0 && turns[0].position < boundary);
     return {
       turns: selected.map(({ position: _position, ...turn }) => turn),
