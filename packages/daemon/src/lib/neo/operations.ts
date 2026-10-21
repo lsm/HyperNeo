@@ -758,8 +758,11 @@ export function createNeoOperations(service: NeoService) {
     ...createNeoTodoOperations(service.todos, service.todoSessions, todoControls, () =>
       service.installedPacks()
     ),
-    createNeoDoneTodosOperation(service.todos, service.todoSessions, () =>
-      service.installedPacks()
+    createNeoDoneTodosOperation(
+      service.todos,
+      service.todoSessions,
+      () => service.installedPacks(),
+      (caller) => admitNeoCaller(service, caller, 'neo.ask.doneTodos')
     ),
     ...createNeoAskRecordOperations(
       service.todos,

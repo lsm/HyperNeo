@@ -10,7 +10,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
-import { defineOperation } from '../operations/registry.ts';
+import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { NeoPack } from './packs/types.ts';
 import { neoStartQuestionLine } from './start-question.ts';
 import {
@@ -217,12 +217,14 @@ export function pageNeoDoneTodos(
 export function createNeoDoneTodosOperation(
   store: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
-  packs: () => readonly NeoPack[]
+  packs: () => readonly NeoPack[],
+  admit: (caller: OperationCaller) => { value: OperationCaller } | { reason: Rejection }
 ) {
   const read = (superpipe({})('neo.ask.doneTodos') as PipelineAPI)
-    .input(['input'])
-    .pipe((input: z.infer<typeof DoneTodos>) => store.getAsk(input.askId), 'input', 'outcome')
-    .pipe(requireNeoAskFound, 'outcome', 'result:outcome')
+    .input(['input', 'caller'])
+    .pipe(admit, 'caller', 'result:outcome')
+    .pipe((input: z.infer<typeof DoneTodos>) => store.getAsk(input.askId), 'input', 'ask')
+    .pipe(requireNeoAskFound, 'ask', 'result:outcome')
     .pipe((ask: NeoAsk) => store.listTodos(ask.id), 'outcome', 'todos')
     .pipe(pageNeoDoneTodos, ['todos', 'input'], 'paged')
     .pipe(
@@ -240,7 +242,10 @@ export function createNeoDoneTodosOperation(
       ['paged', 'todos'],
       'outcome'
     )
-    .end('outcome') as (input: z.infer<typeof DoneTodos>) => DonePage | Rejection;
+    .end('outcome') as (
+    input: z.infer<typeof DoneTodos>,
+    caller: OperationCaller
+  ) => DonePage | Rejection;
   return defineOperation({
     name: 'neo.ask.doneTodos',
     description:
@@ -256,6 +261,6 @@ export function createNeoDoneTodosOperation(
       }),
     ]),
     policy: { safetyClass: 'read', roles: ['neo'] },
-    execute: async (input) => read(input),
+    execute: async (input, caller) => read(input, caller),
   });
 }

@@ -334,7 +334,12 @@ describe('projectNeoAskEntries todo order and done todos', () => {
 
   test('neo.ask.doneTodos pages the done todos in list order', async () => {
     const { store, sessions } = seed(['done', 'done', 'doing', 'done', 'done']);
-    const op = createNeoDoneTodosOperation(store, sessions, () => []);
+    const op = createNeoDoneTodosOperation(
+      store,
+      sessions,
+      () => [],
+      (caller) => ({ value: caller })
+    );
     type Page =
       | { ok: true; todos: NeoTodoEntry[]; doneCount: number; nextOffset: number | null }
       | { ok: false; reason: string };
