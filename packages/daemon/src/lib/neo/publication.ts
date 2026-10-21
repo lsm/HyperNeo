@@ -15,8 +15,10 @@ export const NeoPublicationSchema = z
     publicationId: z.string().uuid(),
     askOrigin: origin,
     producerInput: origin,
-    shortText: text(2000),
-    fullText: text(16000),
+    shortText: text(2000).describe(
+      'What the human reads first; it must stand alone. One topic per publication: publish unrelated topics separately, and when fullText covers more than one topic, name each one here.'
+    ),
+    fullText: text(16000).describe('The details of the topic(s) shortText names.'),
     links: z
       .array(
         z
