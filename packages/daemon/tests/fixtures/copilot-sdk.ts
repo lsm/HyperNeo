@@ -43,7 +43,7 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
         setTimeout(() => process.exit(1), 5);
         break;
       }
-      if (prompt !== 'queued')
+      if (prompt !== 'queued' && prompt !== 'permission-queued')
         event('user.message', {
           content: prompt,
           messageId: id,
@@ -84,7 +84,7 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
           interactionId: 'interaction-1',
           phase: 'final_answer',
         });
-      if (prompt === 'permission') {
+      if (prompt === 'permission' || prompt === 'permission-queued') {
         event('permission.requested', {
           requestId: 'permission-1',
           permissionRequest: { kind: 'read', path: '/outside' },
@@ -114,6 +114,8 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
         event('session.idle', {});
       }
       if (prompt === 'empty') event('session.idle', {});
+      if (process.argv.includes('--late-user-echo') && prompt !== 'permission-queued')
+        event('user.message', { messageId: id, interactionId: 'rewritten', content: prompt });
       if (prompt !== 'lost-ack') reply({ messageId: id });
       break;
     }
@@ -122,6 +124,7 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
       setTimeout(() => {
         event('abort', { reason: 'user_initiated' });
         event('session.idle', { aborted: true });
+        if (process.argv.includes('--idle-after-abort')) event('session.idle', {});
       }, 15);
       break;
     case 'ping':

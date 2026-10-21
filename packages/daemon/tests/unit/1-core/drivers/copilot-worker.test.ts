@@ -250,6 +250,68 @@ describe('Copilot worker construction', () => {
     }
   });
 
+  test('normal idle after abort preserves stopped until an explicit new submission', async () => {
+    const worker = await openCopilotWorker(config('fixture-1', '--idle-after-abort'));
+    try {
+      const receipt = await worker.submit('hold');
+      await worker.submit('queued');
+      await worker.abort();
+      await eventually(
+        () => worker.snapshot(),
+        (v) => (v as { status: string }).status === 'stopped'
+      );
+      const state = await worker.snapshot();
+      expect(state.status).toBe('stopped');
+      expect(state.inputs[receipt.inputId].outcome).toBe('stopped');
+      await worker.submit('settled');
+      expect((await worker.snapshot()).status).toBe('running');
+    } finally {
+      await worker.close();
+    }
+  });
+
+  for (const prompt of ['permission', 'error'])
+    test(`a late repeated user echo preserves ${prompt} status and the original interaction`, async () => {
+      const worker = await openCopilotWorker(config('fixture-1', '--late-user-echo'));
+      try {
+        const receipt = await worker.submit(prompt);
+        const state = await worker.snapshot();
+        expect(state.status).toBe(prompt === 'permission' ? 'needs_you' : 'failed');
+        expect(state.inputs[receipt.inputId].interactionId).toBe('interaction-1');
+      } finally {
+        await worker.close();
+      }
+    });
+
+  test('a repeated user message cannot orphan an in-flight reply', async () => {
+    const worker = await openCopilotWorker(config('fixture-1', '--late-user-echo'));
+    try {
+      const receipt = await worker.submit('hold');
+      await worker.submit('finish');
+      const state = await worker.snapshot();
+      expect(state.inputs[receipt.inputId]).toMatchObject({
+        interactionId: 'interaction-1',
+        replyReport: 'FIRST_REPLY',
+        outcome: 'done',
+      });
+      expect(state.status).toBe('done');
+    } finally {
+      await worker.close();
+    }
+  });
+
+  test('a permission request during an unconsumed send survives its ACK', async () => {
+    const worker = await openCopilotWorker(config());
+    try {
+      const receipt = await worker.submit('permission-queued');
+      const state = await worker.snapshot();
+      expect(state.status).toBe('needs_you');
+      expect(state.inputs[receipt.inputId].state).toBe('pending');
+    } finally {
+      await worker.close();
+    }
+  });
+
   test('rejects protocol drift and bounds shutdown of an unresponsive owned process', async () => {
     await expect(openCopilotWorker(config('fixture-1', '--bad-protocol'))).rejects.toThrow(
       'protocol'
