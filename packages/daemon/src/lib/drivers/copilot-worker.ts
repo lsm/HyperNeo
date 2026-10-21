@@ -224,6 +224,7 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
   return {
     async submit(prompt: string): Promise<WorkInputReceipt> {
       requireOpen();
+      if (state.status === 'needs_you') throw new Error('Copilot worker is awaiting permission');
       if (submitting + Object.values(state.inputs).filter((input) => !input.outcome).length >= 64)
         throw new Error('Copilot worker has 64 unsettled inputs');
       submitting++;
