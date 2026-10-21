@@ -107,7 +107,7 @@ try {
     const early = await deliver(work, 'settled');
     for (let index = 0; index < 66; index++) await deliver(work, 'settled');
     assert.equal((await status(withReceipt(work, early.receipt))).lastReply, 'REPLY_2');
-    await deliver(work, 'finish'); await done(work); await restart();
+    assert.deepEqual(await rpc('work.stop', { ref: work.ref }), { ok: true, value: { stopped: true } }); await done(work); await restart();
     assert.equal((await done(withReceipt(work, early.receipt))).lastReply, 'REPLY_2');
   }
   if (mode === 'unsafe' || mode === 'all') {
@@ -129,6 +129,22 @@ try {
     assert.equal(uncertain.ok, false); assert.equal(uncertain.reason, 'unreachable');
     assert.equal((await done(completed)).lastReply, 'REPLY_1');
     assert.equal(calls().filter(call => call.method === 'session.send' && call.params.prompt === 'lost-ack').length, 1);
+  }
+  if (mode === 'persist' || mode === 'all') {
+    const work = await start('late-settled');
+    const pid = calls().findLast(call => call.method === 'session.send').pid;
+    mkdirSync(join(run, 'data/copilot-workers/receipts', work.ref.id, `${work.receipt!.inputId}.json.tmp`));
+    writeFileSync(join(run, 'workspace/release-settlement'), 'release');
+    for (let poll = 0; poll < 200; poll++) {
+      try { process.kill(pid, 0); } catch { break; }
+      await new Promise(done => setTimeout(done, 5));
+    }
+    assert.throws(() => process.kill(pid, 0), 'persistence-failed runtime must be reaped');
+    const failed = await rpc('work.status', { ref: work.ref, receipt: work.receipt }) as { ok: boolean; reason: string };
+    assert.equal(failed.ok, false); assert.equal(failed.reason, 'unreachable');
+    await restart();
+    const refused = await rpc('work.send', { ref: work.ref, message: 'do not replay' }) as { ok: boolean; reason: string };
+    assert.equal(refused.ok, false); assert.equal(refused.reason, 'unreachable');
   }
   const catalog = await rpc('work.adapters', {}) as { value: { id: string; capabilities: string[] }[] };
   assert.deepEqual(catalog.value.find(adapter => adapter.id === 'copilot-cli')?.capabilities, ['find', 'start', 'send', 'queue', 'status', 'stop']);

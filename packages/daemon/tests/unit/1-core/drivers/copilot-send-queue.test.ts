@@ -107,7 +107,9 @@ describe('Copilot owned input delivery', () => {
     expect(second).toMatchObject({
       value: { lastReply: 'REPLY_2', inputEvidence: { replyAvailability: 'complete' } },
     });
-    expect(await settled(f, work)).toEqual(first);
+    expect(await settled(f, work)).toMatchObject({
+      value: { lastReply: 'REPLY_1', inputEvidence: first.value.inputEvidence },
+    });
     await f.restart();
     expect(await settled(f, work, result.value.receipt)).toEqual(second);
     const calls = f.calls();
@@ -177,8 +179,10 @@ describe('Copilot owned input delivery', () => {
       ok: true,
       value: { lastReply: 'REPLY_2', inputEvidence: { replyAvailability: 'complete' } },
     });
-    const done = await f.send(work, 'finish');
-    expect(done.ok).toBe(true);
+    expect(await f.adapter.stop!(work.ref, context)).toEqual({
+      ok: true,
+      value: { stopped: true },
+    });
     await settled(f, work);
     await f.restart();
     expect(await settled(f, work, first.value.receipt)).toMatchObject({
@@ -201,6 +205,59 @@ describe('Copilot owned input delivery', () => {
       )
     ).toMatchObject({ ok: false, reason: 'not_found' });
     expect(f.calls()).toHaveLength(before);
+  });
+
+  test('receipt persistence failure rejects new input and still closes its runtime', async () => {
+    const f = fixture();
+    const work = await f.start('settled');
+    await settled(f, work);
+    mkdirSync(join(f.run, 'owned/receipts', work.ref.id, 'input-2.json.tmp'));
+    expect(await f.send(work, 'settled')).toMatchObject({ ok: false, reason: 'unreachable' });
+    for (const pid of new Set<number>(f.calls().map((c) => c.pid)))
+      expect(() => process.kill(pid, 0)).toThrow();
+    await f.restart();
+    expect(await f.send(work, 'settled')).toMatchObject({ ok: false, reason: 'unreachable' });
+    expect(await settled(f, work)).toMatchObject({ value: { lastReply: 'REPLY_1' } });
+    for (const pid of new Set<number>(f.calls().map((c) => c.pid)))
+      expect(() => process.kill(pid, 0)).toThrow();
+    expect(f.calls().filter((c) => c.method === 'session.send')).toHaveLength(2);
+  });
+
+  test('late receipt persistence failure fails closed and reaps without a status poll', async () => {
+    const f = fixture();
+    const work = await f.start('late-settled');
+    mkdirSync(join(f.run, 'owned/receipts', work.ref.id, `${work.receipt!.inputId}.json.tmp`));
+    const pid = f.calls().find((c) => c.method === 'session.send').pid;
+    writeFileSync(join(f.run, 'release-settlement'), 'release');
+    for (let poll = 0; poll < 200; poll++) {
+      try {
+        process.kill(pid, 0);
+      } catch {
+        break;
+      }
+      await new Promise((done) => setTimeout(done, 5));
+    }
+    expect(() => process.kill(pid, 0)).toThrow();
+    expect(await f.adapter.status!(work.ref, undefined, work.receipt)).toMatchObject({
+      ok: false,
+      reason: 'unreachable',
+    });
+    await f.restart();
+    expect(await f.send(work, 'settled')).toMatchObject({ ok: false, reason: 'unreachable' });
+    expect(f.calls().filter((c) => c.method === 'session.send')).toHaveLength(1);
+  });
+
+  test('full admission capacity returns busy without consuming another send', async () => {
+    const f = fixture();
+    const work = await f.start('queued');
+    for (let index = 1; index < 64; index++)
+      expect((await f.send(work, 'queued', true)).ok).toBe(true);
+    expect(await f.send(work, 'queued', true)).toMatchObject({ ok: false, reason: 'busy' });
+    expect(f.calls().filter((c) => c.method === 'session.send')).toHaveLength(64);
+    expect(await f.adapter.status!(work.ref, undefined, work.receipt)).toMatchObject({
+      ok: true,
+      value: { inputEvidence: { state: 'pending' } },
+    });
   });
 
   test('lost follow-up ACK never replays, but earlier complete evidence survives', async () => {
