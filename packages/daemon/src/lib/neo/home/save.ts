@@ -6,6 +6,7 @@ export const HomeSaveInput = z.object({
   content: z.string(),
   message: z.string().trim().min(1).max(2000),
   questionId: z.string().min(1).optional(),
+  conflictQuestionId: z.string().min(1).optional(),
 });
 export const HomeSaveResult = z.union([
   z.object({ ok: z.literal(false), reason: z.string(), questionId: z.string().optional() }),
@@ -13,6 +14,7 @@ export const HomeSaveResult = z.union([
 ]);
 export type HomeSaveInput = z.infer<typeof HomeSaveInput>;
 export type HomeSavePlan = HomeSaveInput & {
+  resolution?: { questionId: string; version: 'local' | 'remote' };
   confirmation?: { questionId: string; entry: string };
 };
 export type HomeSaveResult = z.infer<typeof HomeSaveResult> | HomeFailure;

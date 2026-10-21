@@ -19,6 +19,7 @@ import { dirname, join } from 'node:path';
 import type { NeoRepository } from '../../../storage/repositories/neo-repository.ts';
 import { spawnProcess } from '../../runtime-spawn/index.ts';
 import { neoDerivedId } from '../derived-id.ts';
+import { applyHomeChoice } from './apply-choice.ts';
 import type { HomeConflict, HomeFailure } from './conflicts.ts';
 import type { HomeReadInput, HomeReadResult } from './read.ts';
 import type { HomeSavePlan, HomeSaveResult } from './save.ts';
@@ -38,12 +39,19 @@ export class NeoHomeRepository {
     private readonly networkTimeoutMs = 30_000
   ) {}
 
-  private async git(args: string[], allowFailure = false, network = false, action?: string) {
+  private async git(
+    args: string[],
+    allowFailure = false,
+    network = false,
+    action?: string,
+    cwd = this.root
+  ) {
     return this.command(
       ['git', '-c', 'core.hooksPath=/dev/null', ...args],
       allowFailure,
       network,
-      action
+      action,
+      cwd
     );
   }
 
@@ -51,9 +59,15 @@ export class NeoHomeRepository {
     return this.command(['gh', ...args], true, true);
   }
 
-  private async command(args: string[], allowFailure = false, network = false, action?: string) {
+  private async command(
+    args: string[],
+    allowFailure = false,
+    network = false,
+    action?: string,
+    cwd = this.root
+  ) {
     const child = spawnProcess(args, {
-      cwd: this.root,
+      cwd,
       stdout: 'pipe',
       stderr: 'pipe',
       detached: network,
@@ -407,6 +421,10 @@ export class NeoHomeRepository {
           })
         ).some((name) => name !== '.coordinators');
     if (dirty) return { ok: false, reason: 'dirty: review existing home changes before saving.' };
+    if (input.resolution)
+      return applyHomeChoice(this.root, input, (args, failure, network, cwd) =>
+        this.git(args, failure, network, undefined, cwd)
+      );
     const initialized = await this.initialize();
     if (!initialized.ok) return initialized;
     const synced = await this.synchronize();

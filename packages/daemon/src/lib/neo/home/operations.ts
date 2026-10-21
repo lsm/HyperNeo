@@ -6,7 +6,7 @@ import { neoFolderPath } from '../folder.ts';
 import type { NeoService } from '../service.ts';
 import { NeoHomeRepository, type HomeResult } from './repository.ts';
 import { requireHomeConfirmation } from './confirmation.ts';
-import { reportHomeConflict } from './conflicts.ts';
+import { reportHomeConflict, requireHomeChoice } from './conflicts.ts';
 import { HomeReadInput, HomeReadResult } from './read.ts';
 import { HomeSaveInput, HomeSaveResult, requireHomePath, requireHomeSave } from './save.ts';
 
@@ -47,6 +47,11 @@ export function createNeoHomeOperations(
     .pipe(
       (input: HomeSaveInput) =>
         requireHomeConfirmation(input, service.todos, service.defaultSessionId()),
+      'outcome',
+      'result:outcome'
+    )
+    .pipe(
+      (input) => requireHomeChoice(input, service.todos, service.defaultSessionId()),
       'outcome',
       'result:outcome'
     )

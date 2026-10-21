@@ -123,7 +123,7 @@ async function race(mode: string) {
   await mkdir(join(run, 'bin'));
   await writeFile(
     join(run, 'bin', 'git'),
-    `#!/bin/sh\nfor arg do\n if [ "$arg" = '${trigger}' ] && [ "$(pwd)" ${where} '${root}' ] && [ ! -e '${run}/raced' ]; then\n  touch '${run}/raced'\n  ${action}\n fi\ndone\nexec /usr/bin/git "$@"\n`
+    `#!/bin/sh\nfor arg do\n if [ "$arg" = '${trigger}' ] && [ "$(pwd -P)" ${where} "$(cd '${root}' && pwd -P)" ] && [ ! -e '${run}/raced' ]; then\n  touch '${run}/raced'\n  ${action}\n fi\ndone\nexec /usr/bin/git "$@"\n`
   );
   await chmod(join(run, 'bin', 'git'), 0o755);
   process.env.PATH = `${join(run, 'bin')}:${process.env.PATH}`;

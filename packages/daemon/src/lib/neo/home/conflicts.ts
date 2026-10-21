@@ -1,3 +1,5 @@
+import { readNeoQuestion } from '../question-operations.ts';
+import type { HomeSavePlan } from './save.ts';
 import type { NeoAskTodoRepository } from '../../../storage/repositories/neo-ask-todo-repository.ts';
 import { neoDerivedId } from '../derived-id.ts';
 
@@ -46,4 +48,50 @@ export function reportHomeConflict<T extends { ok: boolean }>(
     );
   }
   return { ...receipt, questionId } as T & { questionId: string };
+}
+
+export function homeConflictQuestionId(root: string, local: string, remote: string): string {
+  return neoDerivedId(
+    `home-conflict-question:${neoDerivedId(JSON.stringify([root, local, remote]))}`
+  );
+}
+
+export function requireHomeChoice(
+  input: HomeSavePlan,
+  store: NeoAskTodoRepository,
+  sessionId: string | undefined
+): { value: HomeSavePlan } | { reason: HomeFailure } {
+  if (!input.conflictQuestionId) return { value: input };
+  const question = store.getQuestion(input.conflictQuestionId);
+  const read = readNeoQuestion(question);
+  const choice = question?.answer;
+  if (
+    !question ||
+    !read.ok ||
+    !read.answeredByHuman ||
+    question.kind !== 'choice' ||
+    question.answeredAt === null ||
+    !question.answeredBy ||
+    !sessionId ||
+    store.getAsk(question.askId)?.sessionId !== sessionId ||
+    !Array.isArray(choice) ||
+    choice.length !== 1 ||
+    !['Keep local', 'Use remote'].includes(choice[0])
+  )
+    return {
+      reason: {
+        ok: false,
+        reason:
+          'human_choice_required: record the root-Neo question’s human Keep local or Use remote answer first; Review together needs further review.',
+      },
+    };
+  return {
+    value: {
+      ...input,
+      resolution: {
+        questionId: question.id,
+        version: choice[0] === 'Keep local' ? 'local' : 'remote',
+      },
+    },
+  };
 }
