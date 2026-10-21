@@ -1018,13 +1018,16 @@ export const sendClaudeMessage = (superpipe({})('claude-owner-send') as Pipeline
   context?: WorkCallContext
 ) => Promise<Result<WorkDelivery>>;
 
-export function withRemoteControl(
+export async function withRemoteControl(
   sent: Result<WorkDelivery>,
-  record: ClaudeDesktopRecord
-): Result<WorkDelivery> {
-  return sent.ok
-    ? { ok: true, value: { ...sent.value, remoteControl: !!claudeRemoteLink(record) } }
-    : sent;
+  record: ClaudeDesktopRecord,
+  deps: ClaudeDesktopAdapterDeps
+): Promise<Result<WorkDelivery>> {
+  if (!sent.ok) return sent;
+  const fresh = (await readClaudeDesktopRecords(deps.sessionsDir, new Map())).find(
+    (candidate) => candidate.sessionId === record.sessionId
+  );
+  return { ok: true, value: { ...sent.value, remoteControl: !!claudeRemoteLink(fresh ?? record) } };
 }
 
 const runClaudeDesktopSend = (superpipe({})('claude-desktop-send-work') as PipelineAPI)
@@ -1036,7 +1039,7 @@ const runClaudeDesktopSend = (superpipe({})('claude-desktop-send-work') as Pipel
   .pipe(probeLiveClaudeSessions, 'deps', 'result:outcome')
   .pipe((live: readonly ClaudeLiveSession[]) => live, 'outcome', 'liveSessions')
   .pipe(sendClaudeMessage, ['record', 'liveSessions', 'message', 'deps', 'context'], 'outcome')
-  .pipe(withRemoteControl, ['outcome', 'record'], 'outcome')
+  .pipe(withRemoteControl, ['outcome', 'record', 'deps'], 'outcome')
   .endAsync('outcome') as (
   ref: WorkRef,
   message: string,

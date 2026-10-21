@@ -810,6 +810,46 @@ describe('claude-desktop adapter against the app session records', () => {
       });
     });
 
+    test('reports Remote Control from the record Desktop rewrites when it opens the session', async () => {
+      const reopened = adapter(
+        () => [
+          { sessionId: 'cli-b2', status: 'idle', name: 'woodpecker', owner: 'desktop', pid: 9 },
+        ],
+        0,
+        () => {},
+        undefined,
+        async (_id, message) => {
+          writeFileSync(
+            join(dir, 'acct-b', 'scope-2', 'local_b2.json'),
+            JSON.stringify(
+              record('b2', {
+                cwd: '/focus/ops',
+                title: 'woodpecker',
+                lastActivityAt: 6,
+                bridgeSessionIds: ['session_after1'],
+              })
+            )
+          );
+          appendFileSync(
+            transcript,
+            `${JSON.stringify({ type: 'user', uuid: 'in-b2', timestamp: '2026-10-18T01:00:00.000Z', message: { content: message } })}\n`
+          );
+          return {
+            ok: true,
+            value: {
+              delivered: false,
+              unconfirmed: true,
+              receipt: { executionId: 'cli-b2', inputId: 'in-b2' },
+            },
+          };
+        }
+      );
+      expect(await reopened.send?.(ref, 'run the audit', context)).toMatchObject({
+        ok: true,
+        value: { remoteControl: true },
+      });
+    });
+
     test('delivers once Desktop runs it, even before the live listing names it', async () => {
       let launched = false;
       const driver = adapter(
