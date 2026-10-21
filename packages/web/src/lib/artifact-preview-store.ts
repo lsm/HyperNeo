@@ -20,8 +20,17 @@ export type ArtifactPreviewTarget =
 
 export const artifactPreviewStack = signal<readonly ArtifactPreviewTarget[]>([]);
 
+let opener: HTMLElement | null = null;
+
 export function openArtifactPreview(target: ArtifactPreviewTarget) {
+  opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   artifactPreviewStack.value = [target];
+}
+
+export function takeArtifactPreviewOpener() {
+  const element = opener;
+  opener = null;
+  return element;
 }
 
 export function pushArtifactPreview(target: ArtifactPreviewTarget) {

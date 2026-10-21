@@ -19,6 +19,8 @@ export const FOCUSABLE_SELECTOR =
   'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
 const modalStack: Array<() => void> = [];
+
+export const hasOpenModal = () => modalStack.length > 0;
 let openModalCount = 0;
 
 export function createFocusTrapHandler(

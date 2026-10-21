@@ -6,6 +6,7 @@ import {
   backArtifactPreview,
   pushArtifactPreview,
   replaceArtifactPreview,
+  takeArtifactPreviewOpener,
   type ArtifactPreviewTarget,
 } from '../../lib/artifact-preview-store.ts';
 import {
@@ -14,6 +15,7 @@ import {
 } from '../../lib/artifact-reference-client.ts';
 import { ArtifactPreview, artifactStateMessage, PreviewHeader } from './ArtifactPreview.tsx';
 import { ArtifactPrSummary } from './ArtifactPrSummary.tsx';
+import { hasOpenModal } from '../ui/Modal.tsx';
 
 type Reference = Extract<ArtifactPreviewTarget, { kind: 'reference' }>;
 
@@ -92,22 +94,20 @@ export function ArtifactPreviewPanel() {
   const top = stack.at(-1);
   const open = !!top;
   const dialog = useRef<HTMLDivElement>(null);
-  const opener = useRef<HTMLElement | null>(null);
   const resolved = useRef(new Map<string, ArtifactResolution>());
 
   useLayoutEffect(() => {
-    if (open) {
-      opener.current = document.activeElement as HTMLElement | null;
-      dialog.current?.focus({ preventScroll: true });
-      const onKey = (event: KeyboardEvent) => {
-        if (event.key === 'Escape') backArtifactPreview();
-      };
-      document.addEventListener('keydown', onKey);
-      return () => document.removeEventListener('keydown', onKey);
-    }
-    resolved.current.clear();
-    opener.current?.focus({ preventScroll: true });
-    opener.current = null;
+    if (!open) return;
+    dialog.current?.focus({ preventScroll: true });
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !hasOpenModal()) backArtifactPreview();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      resolved.current.clear();
+      takeArtifactPreviewOpener()?.focus({ preventScroll: true });
+    };
   }, [open]);
 
   if (!top) return null;
