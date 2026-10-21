@@ -188,7 +188,9 @@ export class NeoService {
     this.repo = new NeoRepository(db.getDatabase(), this.notifyChanged);
     this.publications = new NeoPublicationRepository(db.getDatabase());
     this.asks = new NeoConversationAskRepository(db.getDatabase());
-    this.todos = new NeoAskTodoRepository(db.getDatabase(), this.notifyChanged);
+    this.todos = new NeoAskTodoRepository(db.getDatabase(), this.notifyChanged, () =>
+      this.publishSettings?.(db.getGlobalSettings())
+    );
     this.todoSessions = new NeoTodoSessionRepository(db.getDatabase());
     this.todoPrs = new CodingTodoPrRepository(db.getDatabase());
     this.todoRunner = createNeoTodoRunner({
