@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { createNeoHomeOperations } from '../../../../src/lib/neo/home/operations.ts';
 import { NeoHomeRepository } from '../../../../src/lib/neo/home/repository.ts';
 import { createNeoQuestionOperations } from '../../../../src/lib/neo/question-operations.ts';
+import { readNeoReply, recordNeoReplyAnswer } from '../../../../src/lib/neo/intake.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
@@ -173,6 +174,59 @@ afterEach(async () => {
 });
 
 describe('Human-recorded conflict version saves', () => {
+  test.each(['Keep local', 'Use remote'])(
+    'applies a human chat reply recording the scalar %s',
+    async (answer) => {
+      const { question, local, other } = await conflict();
+      const requestId = crypto.randomUUID();
+      const replyTo = { kind: 'question' as const, id: question.id };
+      recordNeoReplyAnswer(
+        { ok: true, requestId, messageId: requestId, created: true },
+        readNeoReply(replyTo, store),
+        { sessionId: owner.sessionId!, requestId, content: answer, replyTo },
+        store,
+        owner.sessionId!
+      );
+      expect(store.getQuestion(question.id)?.answer).toBe(answer);
+      const content = answer === 'Keep local' ? localText : remoteText;
+      expect(
+        await call('neo.home.save', {
+          path: 'notes.md',
+          content,
+          message: 'Apply human chat choice',
+          conflictQuestionId: question.id,
+        })
+      ).toMatchObject({ ok: true });
+      expect(await readFile(join(root, 'notes.md'), 'utf8')).toBe(content);
+      await git(root, 'merge-base', '--is-ancestor', local, 'HEAD');
+      await git(root, 'merge-base', '--is-ancestor', other, 'HEAD');
+    }
+  );
+  test('explains that an unrelated choice question does not bind the current snapshots', async () => {
+    const { question } = await conflict();
+    const unrelated = await call(
+      'neo.question.ask',
+      {
+        askId: question.askId,
+        kind: 'choice',
+        text: 'Which version?',
+        options: ['Keep local', 'Use remote'],
+        multiple: false,
+      },
+      owner
+    );
+    await approve(unrelated.question.id);
+    const before = await state();
+    expect(
+      await call('neo.home.save', {
+        path: 'notes.md',
+        content: remoteText,
+        message: 'Wrong question',
+        conflictQuestionId: unrelated.question.id,
+      })
+    ).toMatchObject({ ok: false, reason: expect.stringContaining('question does not bind') });
+    expect(await state()).toEqual(before);
+  });
   test.each(['Use remote', 'Keep local'])(
     'applies %s as a merge preserving both histories',
     async (answer) => {

@@ -34,7 +34,15 @@ async function divergent(path: string) {
  const remoteHead = await git(peer, 'rev-parse', 'HEAD');
  const conflict = await rpc('neo.home.read', { path }); assert.equal(conflict.ok, false); assert(conflict.questionId);
  const question = db.prepare('SELECT * FROM neo_questions WHERE id=?').get(conflict.questionId) as Record<string, unknown>;
- const accepted = await rpc('neo.question.answer', { questionId: question.id, answer: ['Use remote'] }); assert.equal(accepted.ok, true);
+ const accepted = mode === 'chat'
+  ? await rpc('neo.message.send', { sessionId: (await rpc('neo.snapshot', {})).sessionId, requestId: crypto.randomUUID(), content: 'Use remote', replyTo: { kind: 'question', id: question.id } })
+  : await rpc('neo.question.answer', { questionId: question.id, answer: ['Use remote'] });
+ assert.equal(accepted.ok, true);
+ if (mode === 'chat') {
+  const read = await rpc('neo.question.get', { questionId: question.id });
+  assert.equal(read.answeredByHuman, true);
+  evidence.chatAnswer = read;
+ }
  return { path, localHead, remoteHead, questionId: question.id, askId: question.ask_id };
 }
 try {
@@ -52,6 +60,13 @@ try {
   await writeFile(join(root, 'private-note.txt'), 'Human private bytes\n');
  }
  const input = { path: normal.path, content: other, message: 'Apply recorded choice', conflictQuestionId: normal.questionId };
+ if (mode === 'chat' && phase === 'before') {
+  evidence.chatResult = await rpc('neo.home.save', input);
+  assert.equal((evidence.chatResult as { ok: boolean }).ok, false);
+  assert(String((evidence.chatResult as { reason: string }).reason).includes('human_choice_required'));
+  console.log('REPRODUCED: human chat choice was recorded but save rejected the scalar answer.');
+  process.exitCode = 0;
+ } else {
  if (mode === 'race') await writeFile(join(run, 'network-race'), '');
  const first = await rpc('neo.home.save', input); evidence.normalResult = first;
  if (mode === 'ignored') {
@@ -99,6 +114,7 @@ try {
   await git(root, 'merge-base', '--is-ancestor', protectedFile.localHead, 'HEAD'); await git(root, 'merge-base', '--is-ancestor', protectedFile.remoteHead, 'HEAD');
   assert.equal(await git(root, 'status', '--porcelain'), ''); evidence.finalHead = await git(root, 'rev-parse', 'HEAD');
   console.log('PASS: public RPC applies the normal choice, refuses protected choice alone, and applies it only after separate exact human yes; both histories survive.');
+ }
  }
 } finally {
  await writeFile(join(run, 'evidence', 'neo-home-apply-choice.json'), JSON.stringify(evidence, null, 2));
