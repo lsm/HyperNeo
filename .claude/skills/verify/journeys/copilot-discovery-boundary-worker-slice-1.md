@@ -11,9 +11,9 @@ env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/
 Use a fresh synthetic HOME/data directory and free non-8399 port. The helper
 places a synthetic `copilot` executable first on PATH, launches the real isolated
 daemon, and calls its WebSocket `operation.invoke` door. `work.adapters` must
-advertise `find/start/status/stop`; `work.find` recovers the fixture cwd from
+advertise `find/start/send/queue/status/stop`; `work.find` recovers the fixture cwd from
 its synthetic `events.jsonl`, page the ACP list and return the requested project.
-For an external session, send returns `unsupported`, and receipt-bound status
+For an external session, send returns `not_found`, and receipt-bound status
 and stop return `not_found`: discovery does not confer worker ownership. Its
 age-based status is not completion evidence. Owned lifecycle is verified below.
 The mock records exactly initialize and two list requests, proving no work was

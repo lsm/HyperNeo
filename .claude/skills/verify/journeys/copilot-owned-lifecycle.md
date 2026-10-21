@@ -10,7 +10,7 @@ env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/
 
 Use a fresh synthetic HOME/data directory and free non-8399 port. The actual
 isolated daemon uses the pinned SDK and synthetic framed-JSON-RPC executable.
-Through public `operation.invoke`, `work.adapters` exposes only find/start/status/stop;
+Through public `operation.invoke`, `work.adapters` exposes find/start/send/queue/status/stop;
 start returns a session reference and input receipt; status returns its complete
 reply, denied permission remains needs_you, and stop waits for aborted idle before
 reporting stopped. All fixture runtime PIDs must disappear on daemon cleanup.
@@ -37,12 +37,12 @@ unattended GUI is used. This is protocol/operation proof with synthetic data.
 The accepted runtime is exactly CLI 1.0.83, matching installed SDK 1.0.13 package
 metadata; the fixture impersonates that version. A real pair has not been run in
 this slice. Other versions fail before creating a session. Models require an exact
-runtime catalog ID; no default/effort is inferred. Preparation packs, send, queue,
-strict steering, durable resume/history and owned find overlay remain unwired.
+runtime catalog ID; no default/effort is inferred. Preparation packs, strict steering, history and owned find overlay remain unwired.
+Terminal resume and send/queue are covered by copilot-owned-input-delivery.md.
 All tools are unavailable and permission callbacks reject: this slice grants no
 coding-tool access. Ownership JSON lives beside the daemon DB, never in Copilot's
 own stores; it preserves IDs and read snapshots, not permission grants. A restart
-cannot recover a live owner. No claim covers real app visibility, arbitrary child
+cannot recover unfinished work; an explicit follow-up may resume a recorded terminal session. No claim covers real app visibility, arbitrary child
 process containment or a failed OS-level shutdown.
 
 Run `copilot-lifecycle.ts <port> "$RUN"` for all cases, or add `terminal`, `model`,
@@ -83,4 +83,5 @@ runtime itself: it observes automatic reaping before reading status. The
 and expects `invalid_place` before spawning. `abort-window` mode delays aborted
 idle until 2.25 seconds after ACK; the production default must accept it within
 the same 10-second bound used by worker RPCs. A shorter configured timeout still
-bounds ACK-only refusal. All three cases also run in the default journey.
+bounds ACK-only refusal. All three cases also run in the default journey. The unsupported-send check now
+uses explicit steer, which remains unadvertised and never falls back to queue.

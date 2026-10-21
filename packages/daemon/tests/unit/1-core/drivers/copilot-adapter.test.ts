@@ -278,7 +278,14 @@ describe('owned Copilot lifecycle', () => {
 
   test('start returns a receipt; status uses its actual reply and owned execution directory', async () => {
     const fixture = setup();
-    expect(fixture.adapter.capabilities).toEqual(['find', 'start', 'status', 'stop']);
+    expect(fixture.adapter.capabilities).toEqual([
+      'find',
+      'start',
+      'send',
+      'queue',
+      'status',
+      'stop',
+    ]);
     const work = await start(fixture, 'settled');
     const detail = await fixture.adapter.status!(work.ref, undefined, work.receipt);
     expect(detail).toMatchObject({

@@ -1,5 +1,5 @@
 import * as fs from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { CopilotModelUnavailableError, openCopilotWorker } from './copilot-worker.ts';
 import { selectLocalStartFolder, type StartFolderDeps } from './start-folder.ts';
@@ -11,7 +11,13 @@ import type * as W from './types.ts';
 type Receipt = W.WorkStarted['receipt'];
 type Worker = Awaited<ReturnType<typeof openCopilotWorker>>;
 type Snapshot = Awaited<ReturnType<Worker['snapshot']>>;
-type Record = { work: W.WorkStarted; snapshot: Snapshot; directory: string };
+type Record = {
+  work: W.WorkStarted;
+  snapshot: Snapshot;
+  directory: string;
+  pendingSubmission?: boolean;
+  latestReceipt?: Receipt;
+};
 type Gate<T> = { value: T } | { reason: ReturnType<typeof reject> };
 interface Deps extends StartFolderDeps {
   cliPath: string;
@@ -30,11 +36,33 @@ export function createCopilotAdapter(
   const starts = new Set<Promise<W.Result<W.WorkStarted>>>();
   let closed = false;
   const path = (id: string) => join(deps.directory, `${id}.json`);
-  const save = (record: Record) => {
-    fs.mkdirSync(deps.directory, { recursive: true, mode: 0o700 });
-    const file = path(record.work.ref.id);
-    fs.writeFileSync(`${file}.tmp`, JSON.stringify(record), { mode: 0o600 });
+  const write = (file: string, value: unknown) => {
+    fs.mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(`${file}.tmp`, JSON.stringify(value), { mode: 0o600 });
     fs.renameSync(`${file}.tmp`, file);
+  };
+  const save = (record: Record) => write(path(record.work.ref.id), record);
+  const inputPath = (id: string, input: string) =>
+    join(deps.directory, 'receipts', id, `${encodeURIComponent(input)}.json`);
+  const open = async (record: Record, resume = false) => {
+    if (resume)
+      for (const [id, input] of Object.entries(record.snapshot.inputs))
+        if (!fs.existsSync(inputPath(record.work.ref.id, id)))
+          write(inputPath(record.work.ref.id, id), input);
+    const worker = await openCopilotWorker({
+      cliPath: deps.cliPath,
+      expectedVersion: '1.0.83',
+      sessionId: record.work.ref.id,
+      cwd: record.directory,
+      stateDirectory: join(deps.directory, record.work.ref.id),
+      model: record.work.model!,
+      env: deps.env,
+      timeoutMs: deps.timeoutMs,
+      resume,
+      onInput: (id, input) => write(inputPath(record.work.ref.id, id), input),
+    });
+    live.set(record.work.ref.id, worker);
+    return worker;
   };
   const lookup = (ref: W.WorkRef): Gate<Record> => {
     if (!/^[0-9a-f-]{36}$/.test(ref.id))
@@ -94,17 +122,7 @@ export function createCopilotAdapter(
     let worker: Worker | undefined;
     try {
       save(record);
-      worker = await openCopilotWorker({
-        cliPath: deps.cliPath,
-        expectedVersion: '1.0.83',
-        sessionId: location.id,
-        cwd: location.directory,
-        stateDirectory: join(deps.directory, location.id),
-        model: request.model!,
-        env: deps.env,
-        timeoutMs: deps.timeoutMs,
-      });
-      live.set(location.id, worker);
+      worker = await open(record);
       record.work.receipt = await worker.submit(request.message);
       record.snapshot = await worker.snapshot();
       if (record.snapshot.status === 'unreachable')
@@ -145,31 +163,43 @@ export function createCopilotAdapter(
     if (owned) {
       record.snapshot = await owned.snapshot();
       save(record);
-      if (['done', 'failed', 'stopped'].includes(record.snapshot.status)) {
+      if (['done', 'failed', 'stopped', 'unreachable'].includes(record.snapshot.status)) {
         live.delete(record.work.ref.id);
         await owned.close();
       }
     }
     return record;
   };
-  const detail = (record: Record, receipt = record.work.receipt): W.Result<W.WorkDetail> => {
+  const detail = (record: Record, receipt?: Receipt): W.Result<W.WorkDetail> => {
+    if (record.pendingSubmission && !receipt) return unavailable();
+    receipt ??= record.latestReceipt ?? record.work.receipt;
     const { work, snapshot } = record;
-    if (
-      receipt &&
-      (receipt.executionId !== work.ref.id || !Object.hasOwn(snapshot.inputs, receipt.inputId))
-    )
+    if (receipt && receipt.executionId !== work.ref.id)
       return reject('not_found', 'Receipt does not belong to this owned input.');
+    let input =
+      receipt && Object.hasOwn(snapshot.inputs, receipt.inputId)
+        ? snapshot.inputs[receipt.inputId]
+        : undefined;
+    if (receipt) {
+      try {
+        input = JSON.parse(fs.readFileSync(inputPath(work.ref.id, receipt.inputId), 'utf8'));
+      } catch {}
+      if (!input) return reject('not_found', 'Receipt does not belong to this owned input.');
+    }
     if (
-      snapshot.status === 'unreachable' ||
-      (!live.has(work.ref.id) && !['done', 'failed', 'stopped'].includes(snapshot.status))
+      !input?.outcome &&
+      (snapshot.status === 'unreachable' ||
+        (!live.has(work.ref.id) && !['done', 'failed', 'stopped'].includes(snapshot.status)))
     )
       return unavailable();
-    const input = receipt ? snapshot.inputs[receipt.inputId] : undefined;
     return {
       ok: true,
       value: {
         ...work,
-        status: snapshot.status,
+        status:
+          snapshot.status === 'unreachable' || (!live.has(work.ref.id) && input?.outcome)
+            ? input!.outcome!
+            : snapshot.status,
         startReceipt: work.receipt,
         execution: { directory: record.directory, machine: deps.machine },
         ...(input?.replyReport ? { lastReply: input.replyReport } : {}),
@@ -196,6 +226,67 @@ export function createCopilotAdapter(
     .pipe(refresh, 'detail', 'record')
     .pipe(detail, ['record', 'receipt'], 'detail')
     .endAsync('detail') as (ref: W.WorkRef, receipt?: Receipt) => Promise<W.Result<W.WorkDetail>>;
+  const admitSend = (record: Record): Gate<Record> => {
+    if (closed || record.pendingSubmission || record.snapshot.status === 'unreachable')
+      return { reason: unavailable() };
+    if (record.snapshot.status === 'needs_you')
+      return { reason: reject('busy', 'Copilot is awaiting permission; follow-up refused.') };
+    if (
+      !live.has(record.work.ref.id) &&
+      !['done', 'failed', 'stopped'].includes(record.snapshot.status)
+    )
+      return { reason: unavailable() };
+    if (Object.values(record.snapshot.inputs).filter((input) => !input.outcome).length >= 64)
+      return { reason: reject('busy', 'Copilot has 64 unsettled inputs.') };
+    return { value: record };
+  };
+  const deliver = async (record: Record, message: string): Promise<W.Result<W.WorkDelivery>> => {
+    const id = record.work.ref.id;
+    let owned = live.get(id);
+    const resumed = !owned;
+    try {
+      owned ??= await open(record, true);
+      record.pendingSubmission = true;
+      save(record);
+      const receipt = await owned.submit(message);
+      record.snapshot = await owned.snapshot();
+      if (record.snapshot.status === 'unreachable') throw new Error('Copilot lost after input ACK');
+      delete record.pendingSubmission;
+      record.latestReceipt = receipt;
+      record.work.lastActivityAt = Date.now();
+      save(record);
+      if (resumed) void owned.terminal.then(() => guard(() => status(record.work.ref), id));
+      const observed = record.snapshot.inputs[receipt.inputId]?.state === 'observed';
+      return {
+        ok: true,
+        value: {
+          delivered: observed,
+          receipt,
+          ...(!observed ? { queuedSubmissionId: receipt.inputId } : {}),
+        },
+      };
+    } catch (error) {
+      live.delete(id);
+      try {
+        if (record.pendingSubmission) {
+          record.snapshot.status = 'unreachable';
+          save(record);
+        }
+      } finally {
+        await owned?.close();
+      }
+      if (error instanceof CopilotModelUnavailableError && error.cause === undefined)
+        return reject('unsupported_model', error.message);
+      return reject('unreachable', `${errorMessage(error)}; input may be accepted; do not replay.`);
+    }
+  };
+  const send = (superpipe({})('copilot-send') as PipelineAPI)
+    .input(['ref', 'message'])
+    .pipe(lookup, 'ref', 'result:delivery')
+    .pipe(refresh, 'delivery', 'delivery')
+    .pipe(admitSend, 'delivery', 'result:delivery')
+    .pipe(deliver, ['delivery', 'message'], 'delivery')
+    .endAsync('delivery') as (ref: W.WorkRef, message: string) => Promise<W.Result<W.WorkDelivery>>;
   const stop = (superpipe({})('copilot-stop') as PipelineAPI)
     .input(['ref'])
     .pipe(lookup, 'ref', 'result:stopped')
@@ -240,13 +331,15 @@ export function createCopilotAdapter(
     .endAsync('stopped') as (ref: W.WorkRef) => Promise<W.Result<{ stopped: boolean }>>;
   return {
     ...discovery,
-    capabilities: ['find', 'start', 'status', 'stop'] as const,
+    capabilities: ['find', 'start', 'send', 'queue', 'status', 'stop'] as const,
     start: (request: W.StartRequest) => {
       const pending = guard(() => start(request));
       starts.add(pending);
       void pending.finally(() => starts.delete(pending));
       return pending;
     },
+    send: (ref, message) => guard(() => send(ref, message), ref.id),
+    queue: (ref, message) => guard(() => send(ref, message), ref.id),
     status: (ref, _since, receipt) => guard(() => status(ref, receipt), ref.id),
     stop: (ref) => guard(() => stop(ref), ref.id),
     async close() {
