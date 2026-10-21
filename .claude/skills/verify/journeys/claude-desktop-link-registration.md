@@ -9,24 +9,30 @@ env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/
 ```
 
 Use fresh synthetic HOME/data and a free non-8399 port. The real isolated daemon
-calls a synthetic CLI that records each input and exits, and a Desktop-launch
-`script` stub that fails, so Desktop never imports the session. Public `work.start`
-must run only the one-line opening turn in the CLI (`evidence/cli-inputs` holds
-"Session opened by Neo…", never the task), wait its bounded import window (two
-handoffs of up to a minute each), and return `needs_you` with no link and the watch hint "Claude Desktop
-did not import the new session. The task was not started. …". `work.status` and
-`work.find` show no link either. The helper then writes a synthetic Desktop-store
-record and repeats find/status: the link must appear without restarting the daemon.
+calls a synthetic `claude` that behaves like `claude -p`: it writes each turn to
+the transcript with `entrypoint: sdk-cli` and its permission mode, records it in
+`evidence/cli-inputs`, and exits. `claude agents` lists nothing, as real Desktop
+runs no process for an imported, unused session. The Desktop-launch `script` stub
+fails, so Desktop never imports the session.
+
+Public `work.start` must run the task itself as the first CLI turn, in the
+worker's mode (`bypassPermissions Synthetic task only`), and return `running`
+with no link and a `work.status` watch hint. `work.status` and `work.find` show
+no link either. The helper then writes a synthetic Desktop-store record that, like
+real Desktop, relabels the session `acceptEdits`, and repeats find/status. The link
+must appear without restarting the daemon.
+
+Next, `work.send` to that idle session must be delivered as a `claude -p --resume`
+turn in the mode Neo started it in (`bypassPermissions Synthetic follow-up`).
+Finally, a human-created session (its first turn came from `claude-desktop`, and
+it is in `acceptEdits`) must return `unreachable` with its Desktop link, and must
+never run headless.
 
 `evidence/observed.json` retains every operation reply. The helper closes the
-socket, stops all fixture worker PIDs and cleans up the daemon in `finally`.
-Both `claude` and the Desktop-launch `script` are stubbed, as is `gh`; no real CLI,
-provider, auth/token files, human sessions, GitHub or GUI is used. This proves the
-no-hidden-task rule, the bounded wait and the record-discovery transition. The
-success path (Desktop imports and opens the session, then takes the task through
-its inbox) is unit-tested only; prove it with the human's hand test using a
-throwaway session. For a supervised live check, have the human
-observe the running CLI-only session in Neo, then after a genuine Desktop import
-ask Neo to refresh find/status and have the human open the returned link. Do not
-resume a second owner of a still-running CLI session, automate the GUI or restart
-the human's Desktop app as part of this journey.
+socket and cleans up the daemon in `finally`. Both `claude` and the Desktop-launch
+`script` are stubbed, as is `gh`. No real CLI, provider, auth/token files, human
+sessions, GitHub or GUI is used. This proves that starts and idle sends run with
+no click, the permission-mode rule, and the record-discovery transition. The real
+Desktop import and Remote Control are proven only by the human's hand test with
+a throwaway session. Do not automate the GUI or restart the human's Desktop app
+as part of this journey.

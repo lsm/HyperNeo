@@ -1,33 +1,25 @@
 #!/usr/bin/env bun
-import { mkdirSync, readFileSync, writeFileSync, existsSync, appendFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 const home = process.env.HOME!;
 const run = join(home, '..');
 const state = join(run, 'evidence/worker-session');
-if (process.argv.includes('agents')) {
-  process.stdout.write(
-    JSON.stringify(
-      existsSync(state)
-        ? [
-            {
-              sessionId: readFileSync(state, 'utf8'),
-              status: 'busy',
-              pid: Number(
-                readFileSync(join(run, 'evidence/worker-pid'), 'utf8').trim().split('\n').at(-1)
-              ),
-            },
-          ]
-        : []
-    )
-  );
-} else if (process.argv.includes('-p') && process.argv.includes('--session-id')) {
-  const id = process.argv[process.argv.indexOf('--session-id') + 1];
+const flag = (name: string) => process.argv[process.argv.indexOf(name) + 1];
+const turn = (id: string) => {
   const dir = join(home, '.claude/projects', process.cwd().replace(/[/.]/g, '-'));
   mkdirSync(dir, { recursive: true });
-  writeFileSync(
+  appendFileSync(
     join(dir, `${id}.jsonl`),
-    `${JSON.stringify({ type: 'user', uuid: 'synthetic-input', cwd: process.cwd(), timestamp: new Date().toISOString(), message: { content: process.argv.at(-1) } })}\n`
+    `${JSON.stringify({ type: 'user', uuid: `synthetic-${Date.now()}`, cwd: process.cwd(), entrypoint: 'sdk-cli', permissionMode: flag('--permission-mode'), timestamp: new Date().toISOString(), message: { content: process.argv.at(-1) } })}\n`
   );
-  writeFileSync(state, id);
-  appendFileSync(join(run, 'evidence/cli-inputs'), `${process.argv.at(-1)}\n`);
-} else process.exit(1);
+  appendFileSync(
+    join(run, 'evidence/cli-inputs'),
+    `${flag('--permission-mode')} ${process.argv.at(-1)}\n`
+  );
+};
+if (process.argv.includes('agents')) process.stdout.write('[]');
+else if (process.argv.includes('-p') && process.argv.includes('--session-id')) {
+  writeFileSync(state, flag('--session-id'));
+  turn(flag('--session-id'));
+} else if (process.argv.includes('-p') && process.argv.includes('--resume')) turn(flag('--resume'));
+else process.exit(1);
