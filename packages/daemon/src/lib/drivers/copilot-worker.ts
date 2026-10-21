@@ -167,6 +167,10 @@ export async function openCopilotWorker(config: CopilotWorkerConfig) {
     const status = await bounded(client.getStatus(), timeoutMs);
     if (status.version !== config.expectedVersion)
       throw new Error('Unsupported Copilot worker runtime version');
+    if (!(await bounded(client.getAuthStatus(), timeoutMs)).isAuthenticated)
+      throw new Error('Copilot login required: run copilot login in your terminal.');
+    if (!(await bounded(client.listModels(), timeoutMs)).some((model) => model.id === config.model))
+      throw new Error('Unsupported Copilot model; catalog must confirm the exact ID.');
     session = await bounded(
       client.createSession({
         sessionId: config.sessionId,

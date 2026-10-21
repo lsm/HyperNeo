@@ -1434,7 +1434,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     onError: (error) => log.warn('Claude Desktop mods bridge unavailable', error),
   });
   const sessionScheduler = new SessionScheduler(deps.db.getDatabase(), deps.jobQueue);
+  const driverCleanup: (() => Promise<void>)[] = [];
   const familyContext: FamilyOperationContext = {
+    driverCleanup,
     sessionScheduler,
     neoPacks: () => neoService.packs(),
     claudeDesktopMods,
@@ -1765,7 +1767,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     cleanup: async () => {
       try {
         try {
-          await claudeDesktopMods?.close();
+          try {
+            await Promise.all(driverCleanup.map((close) => close()));
+          } finally {
+            await claudeDesktopMods?.close();
+          }
         } finally {
           await claudeInbox.close();
         }

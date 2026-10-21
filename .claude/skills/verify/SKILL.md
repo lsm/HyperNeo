@@ -2484,11 +2484,11 @@ env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/
 Use a fresh synthetic HOME/data directory and free non-8399 port. The helper
 places a synthetic `copilot` executable first on PATH, launches the real isolated
 daemon, and calls its WebSocket `operation.invoke` door. `work.adapters` must
-advertise only `find`; `work.find` must recover the fixture session's cwd from
+advertise `find/start/status/stop`; `work.find` recovers the fixture cwd from
 its synthetic `events.jsonl`, page the ACP list and return the requested project.
-A send, receipt-bound status and stop must return `unsupported`: discovery's
-age-based status is not evidence that a submitted input completed. This pins the
-pre-worker boundary; later worker slices deliberately extend it with new evidence.
+For an external session, send returns `unsupported`, and receipt-bound status
+and stop return `not_found`: discovery does not confer worker ownership. Its
+age-based status is not completion evidence. Owned lifecycle is verified below.
 The mock records exactly initialize and two list requests, proving no work was
 sent or stopped. `evidence/observed.json` saves operation replies and the call log.
 The helper closes its socket and daemon in `finally`. No real Copilot executable,
@@ -2516,15 +2516,15 @@ env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/
   bun .claude/skills/verify/copilot-worker.ts 9382 "$RUN"
 ```
 
-Use a fresh synthetic HOME/data directory and free non-8399 port. This Build-only
-slice deliberately does not register a worker. The helper starts the actual
+Use a fresh synthetic HOME/data directory and free non-8399 port. This construction
+journey does not call the public worker start door. The helper starts the actual
 pinned Copilot SDK against a synthetic framed-JSON-RPC executable, then starts an
 isolated daemon. A test-only `verify.copilot` WebSocket RPC exercises construction
 and per-input evidence while `system.health` confirms daemon responsiveness.
 The first input stays incomplete through internal turn-end/assistant-idle events;
 final replies bind to consumed input IDs, duplicate authoritative messages do not
 duplicate the report, unrelated messages stay out, and session idle settles the
-matched replies. Public `work.adapters` must still advertise Copilot as find-only.
+matched replies. Public `work.adapters` now advertises `find/start/status/stop`.
 An idle before the first input must remain queued. After 270 additional settled
 inputs, only the latest 64 settled receipts remain; the runtime stays usable
 across dedup retention rollover. A rejected permission followed by idle must stay
@@ -2551,8 +2551,8 @@ The helper closes its socket, owned SDK runtime and daemon in `finally`. It uses
 only synthetic data, a fresh HOME/DB, a mock GitHub CLI and a fixture executable;
 no auth/token files, real sessions, real Copilot, model/provider or GUI is used.
 This proves construction inside the daemon process through a test-only door,
-not public worker start/send/status/stop, restart recovery or production runtime
-compatibility. Those are later Wire slices, with their own operation journeys.
+not public worker operations or production runtime compatibility. The lifecycle
+journey below covers start/status/stop; send/queue remain later slices.
 
 Run the focused process tests from `packages/daemon` with
 `bunx vitest run tests/unit/1-core/drivers/copilot-worker.test.ts`.
@@ -2563,8 +2563,8 @@ Shutdown uses the SDK's graceful/force-stop mechanisms; the fixture PID is obser
 to disappear, which is not proof of containment for arbitrary descendant tools.
 Runtime version is supplied explicitly and checked before session creation. The
 fixture reports `fixture-1`/protocol 3 against pinned SDK 1.0.13; it is not a claim
-that any untested real CLI/SDK pair is supported. Final wiring must select and
-verify the runtime pair and admission/model/effort policy before exposing it.
+that any untested real CLI/SDK pair is supported. Public wiring pins the SDK metadata runtime version and checks auth/model
+admission. Real CLI compatibility and effort support remain unverified.
 
 ## Neo goal list (G6a)
 
@@ -2738,3 +2738,45 @@ These names are defense in depth only. This module neither opens files nor
 registers a reader. Registration must remain unwired until the anchored descriptor
 opener and immutable hash capture exist (slices 4–6). Reads must use authorized
 registry receipts, never this plan or a re-resolved path as a grant (slice 7).
+
+
+## Copilot owned lifecycle (worker slice 3)
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-copilot-lifecycle-XXXXXX)
+mkdir -p "$RUN/home"
+env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin" \
+  NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+  bun .claude/skills/verify/copilot-lifecycle.ts 9384 "$RUN"
+```
+
+Use a fresh synthetic HOME/data directory and free non-8399 port. The actual
+isolated daemon uses the pinned SDK and synthetic framed-JSON-RPC executable.
+Through public `operation.invoke`, `work.adapters` exposes only find/start/status/stop;
+start returns a session reference and input receipt; status returns its complete
+reply, denied permission remains needs_you, and stop waits for aborted idle before
+reporting stopped. All fixture runtime PIDs must disappear on daemon cleanup.
+Missing auth reports the human step `copilot login`; an empty model catalog refuses
+start. Restarting with only this synthetic DB/ownership directory reports unfinished
+work as unreachable and never resends. External sessions are not adopted or stopped.
+Evidence: `evidence/observed.json`, including operation replies and fixture protocol
+traffic. The helper closes its WebSocket and daemon in `finally`.
+
+Rerun the discovery and construction journeys after changing the lifecycle surface;
+they now expect lifecycle capabilities but preserve external read-only boundaries.
+Focused `copilot-adapter.test.ts` additionally covers ACK-only abort refusal, lost
+first ACK identity, foreign receipts, canonical execution folders, model/effort and
+preparation refusal. Run it serially with the worker and discovery tests using the
+daemon Vitest runner. No real Copilot, account session, credentials, provider or
+unattended GUI is used. This is protocol/operation proof with synthetic data.
+
+The accepted runtime is exactly CLI 1.0.83, matching installed SDK 1.0.13 package
+metadata; the fixture impersonates that version. A real pair has not been run in
+this slice. Other versions fail before creating a session. Models require an exact
+runtime catalog ID; no default/effort is inferred. Preparation packs, send, queue,
+strict steering, durable resume/history and owned find overlay remain unwired.
+All tools are unavailable and permission callbacks reject: this slice grants no
+coding-tool access. Ownership JSON lives beside the daemon DB, never in Copilot's
+own stores; it preserves IDs and read snapshots, not permission grants. A restart
+cannot recover a live owner. No claim covers real app visibility, arbitrary child
+process containment or a failed OS-level shutdown.

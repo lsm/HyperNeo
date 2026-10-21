@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -63,7 +71,7 @@ describe('owned Copilot lifecycle', () => {
         status: 'done',
         title: 'Synthetic work',
         model: 'synthetic-model',
-        execution: { directory: fixture.run },
+        execution: { directory: realpathSync(fixture.run) },
         inputEvidence: { state: 'observed', replyReport: 'REPLY_1', replyAvailability: 'complete' },
       },
     });
