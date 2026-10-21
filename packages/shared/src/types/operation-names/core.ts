@@ -1,6 +1,6 @@
 export const CORE_OPERATION_NAMES = [
+  'artifact.file.register',
   'operations.describe',
   'operations.list',
   'system.build',
-  'artifact.file.register',
 ] as const;
