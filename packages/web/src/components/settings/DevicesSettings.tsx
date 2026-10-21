@@ -144,6 +144,7 @@ export function DevicesSettings() {
   const link = code ? `${location.origin}/pair#${code.code}` : '';
   return (
     <>
+      {error && <div class="px-1 text-xs text-danger">{error}</div>}
       <SettingsSection
         title="Waiting for Allow"
         description="Codes made on the Mac's CLI pair only after a paired device allows them."
@@ -176,7 +177,6 @@ export function DevicesSettings() {
         title="Devices"
         description="Paired phones, browsers, relays and daemons. Revoking closes a device's connections at once."
       >
-        {error && <div class="px-1 text-xs text-danger">{error}</div>}
         {code && (
           <div class="space-y-1 rounded-xl border border-accent/40 bg-accent/10 p-4 text-sm">
             <div class="font-mono text-lg tracking-widest text-fg">{code.code}</div>

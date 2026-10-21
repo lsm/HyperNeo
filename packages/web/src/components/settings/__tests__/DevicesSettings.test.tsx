@@ -85,6 +85,8 @@ function daemon(state: { paired: boolean; pending?: unknown[] }) {
           },
         ],
       };
+    if (name === 'device.pair.approve' && input.codeId === 'expired')
+      return { ok: false, reason: 'not_pending: no pending code with that id.' };
     if (name === 'device.pair.approve') {
       pending = [];
       return { ok: true };
@@ -154,6 +156,20 @@ describe('DevicesSettings', () => {
     expect(screen.getByText('This browser')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Revoke Desk browser' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Re-pair Desk browser' })).toBeNull();
+  });
+
+  it('shows a failed Allow above the sections, next to the code it was for', async () => {
+    daemon({
+      paired: true,
+      pending: [{ id: 'expired', kind: 'human', name: 'Old laptop', expiresAt: Date.now() }],
+    });
+    render(<DevicesSettings />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Allow Old laptop' }));
+    const failure = await screen.findByText('not_pending: no pending code with that id.');
+    const waiting = screen.getByText('Waiting for Allow');
+    expect(
+      failure.compareDocumentPosition(waiting) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
   });
 
   it('revokes a device after a second click', async () => {
