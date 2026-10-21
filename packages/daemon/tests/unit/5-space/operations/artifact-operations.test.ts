@@ -133,6 +133,51 @@ describe('artifact operations', () => {
     expect(stored[0]!.data).toEqual({ summary: 'shipping' });
   });
 
+  test('retains mutable workflow facts separately from immutable file snapshots', async () => {
+    const caller = worker(workerSession('s-preview-pin'));
+    const save = (summary: string) =>
+      invokeOperation(
+        operations,
+        'workflow.run.artifact.save',
+        {
+          shape: 'note',
+          summary,
+          data: { path: 'docs/synthetic-report.md', preview: { artifactId: 'synthetic-ref' } },
+        },
+        caller
+      );
+    const first = await save('original');
+    const second = await save('updated');
+    expect(first.kind).toBe('completed');
+    expect(second.kind).toBe('completed');
+    if (first.kind !== 'completed' || second.kind !== 'completed') throw new Error('save failed');
+    expect(second.value).toMatchObject({
+      success: true,
+      artifact: { runId: RUN, nodeId: 'node-a' },
+    });
+    const listed = await invokeOperation(operations, 'workflow.run.artifact.list', {}, caller);
+    expect(listed.kind).toBe('completed');
+    if (listed.kind !== 'completed') throw new Error('list failed');
+    expect(listed.value).toMatchObject({
+      success: true,
+      artifacts: [
+        {
+          type: 'note',
+          key: 'current',
+          data: {
+            summary: 'updated',
+            path: 'docs/synthetic-report.md',
+            preview: { artifactId: 'synthetic-ref' },
+          },
+        },
+      ],
+    });
+    const stored = artifactRepo.listByRun(RUN);
+    expect(stored).toHaveLength(1);
+    expect(first.value).toMatchObject({ artifact: { id: stored[0]!.id } });
+    expect(second.value).toMatchObject({ artifact: { id: stored[0]!.id } });
+  });
+
   test('records an audit entry carrying the resolved slot', async () => {
     const sessionId = workerSession('s-audit');
     await run(
