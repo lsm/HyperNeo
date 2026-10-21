@@ -975,9 +975,21 @@ export async function openIdleClaudeSession(
       record.cwd ?? record.originCwd ?? deps.homeDir,
       deps
     );
-  } catch {}
-  const opened = await waitUntilLive(record.cliSessionId, deps);
-  return opened && running(opened)
+  } catch (error) {
+    return {
+      reason: reject(
+        'unreachable',
+        `${record.title} is not open in Claude Desktop, and Claude Desktop could not be launched (${error instanceof Error ? error.message : String(error)}).`
+      ),
+    };
+  }
+  const until = deps.now() + OPEN_WAIT_MS;
+  let opened = recheck;
+  while (!running(opened) && deps.now() < until) {
+    await deps.sleep(OPEN_POLL_MS);
+    opened = await deps.liveSessions().catch(() => opened);
+  }
+  return running(opened)
     ? { value: opened }
     : {
         reason: reject(

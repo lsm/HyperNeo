@@ -810,6 +810,65 @@ describe('claude-desktop adapter against the app session records', () => {
       });
     });
 
+    test('delivers once Desktop runs it, even before the live listing names it', async () => {
+      let launched = false;
+      const driver = adapter(
+        () => (launched ? [{ sessionId: 'cli-b2', status: 'idle', owner: 'desktop', pid: 9 }] : []),
+        0,
+        () => {
+          launched = true;
+        },
+        undefined,
+        async (_id, message) => {
+          appendFileSync(
+            transcript,
+            `${JSON.stringify({ type: 'user', uuid: 'in-b2', timestamp: '2026-10-18T01:00:00.000Z', message: { content: message } })}\n`
+          );
+          return {
+            ok: true,
+            value: {
+              delivered: false,
+              unconfirmed: true,
+              receipt: { executionId: 'cli-b2', inputId: 'in-b2' },
+            },
+          };
+        }
+      );
+      expect(await driver.send?.(ref, 'run the audit', context)).toMatchObject({
+        ok: true,
+        value: { delivered: true },
+      });
+    });
+
+    test('says at once when Claude Desktop cannot be launched, without waiting', async () => {
+      const driver = createClaudeDesktopAdapter({
+        sessionsDir: dir,
+        projectsDir: join(dir, 'projects'),
+        machine: 'laptop',
+        liveSessions: async () => [],
+        folderExists: () => true,
+        makeFolder: () => {},
+        homeDir: '/Users/test',
+        gitCheckout: async () => null,
+        newId: () => 'unused',
+        sleep: async (ms) => {
+          clock += ms;
+        },
+        now: () => clock,
+        spawn: () => {
+          throw new Error('script: not found');
+        },
+      });
+      clock = 0;
+      expect(await driver.send?.(ref, 'run the audit', context)).toEqual({
+        ok: false,
+        reason: 'unreachable',
+        detail:
+          'woodpecker is not open in Claude Desktop, and Claude Desktop could not be launched (script: not found).',
+      });
+      expect(clock).toBe(0);
+    });
+
     test('never runs it headless: when Desktop does not open it, the send says so within a bounded wait', async () => {
       const { driver, inbox } = openingAdapter(false);
       expect(await driver.send?.(ref, 'run the audit', context)).toEqual({
