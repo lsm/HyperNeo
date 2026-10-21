@@ -3066,11 +3066,6 @@ export class AgentSession
     const aborted = waitForDeliveryAbort(signal);
     const consumption = waitForDeliveryConsumption(this.session.id, messageUuid);
     let failedPoll: ReturnType<typeof setInterval> | undefined;
-    const spentTurn =
-      this.queryRunner instanceof QueryRunner &&
-      !this.queryRunner.acceptsPrompt(this.getQueryGeneration())
-        ? this.queryPromise
-        : null;
     let waitSettled = false;
     const admissionTimeout = (): Promise<never> =>
       new Promise<never>((_, reject) => {
@@ -3086,8 +3081,7 @@ export class AgentSession
             );
           }, timeoutMs);
         };
-        if (spentTurn) void spentTurn.catch(() => undefined).then(arm);
-        else arm();
+        arm();
       });
     const failedBeforeAcceptance = (): Promise<never> =>
       new Promise<never>((_, reject) => {

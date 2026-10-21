@@ -409,12 +409,7 @@ export interface QueryRunnerContext {
 
 export class QueryRunner {
   readonly retryPromptIdentity = new RetryPromptIdentity();
-  private promptSpentGeneration: number | null = null;
   private turnEndedGeneration: number | null = null;
-
-  acceptsPrompt(queryGeneration: number): boolean {
-    return this.promptSpentGeneration !== queryGeneration;
-  }
 
   acceptsSteer(queryGeneration: number): boolean {
     return this.turnEndedGeneration !== queryGeneration;
@@ -2207,7 +2202,6 @@ export class QueryRunner {
       if (holderTurn) {
         startGuard?.();
         if (!holderTurn.bind(message.uuid ?? '')) {
-          this.promptSpentGeneration = queryGeneration;
           if (message.uuid) this.ctx.markHolderInputConsumed?.(message.uuid);
           onSent();
           return;
@@ -2267,7 +2261,6 @@ export class QueryRunner {
 
       startGuard?.();
       questionInputs?.recordInput(queuedMessage);
-      if (holderTurn) this.promptSpentGeneration = queryGeneration;
       if (this.turnEndedGeneration === queryGeneration)
         this.fedAfterTurnEnd.push({
           uuid: message.uuid ?? '',

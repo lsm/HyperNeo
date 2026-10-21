@@ -16,6 +16,7 @@
       "entry": [
         "main.ts",
         "vitest.online.config.ts",
+        "vitest.reproduction.config.ts",
         "scripts/**/*.ts",
         "tests/**/*.ts",
         "claude-desktop-bridge/hooks/register.ts"

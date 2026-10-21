@@ -93,9 +93,7 @@ describe('Neo coordinator turns', () => {
     const nextSent = queue.enqueueWithId('human-input', 'Next', false, { durable: true });
     const first = turn();
     const input = runner.createMessageGeneratorWrapper(1, undefined, first);
-    expect(runner.acceptsPrompt(1)).toBe(true);
     expect((await input.next()).value?.uuid).toBe('neo-project-event:club:event-1');
-    expect(runner.acceptsPrompt(1)).toBe(false);
     expect(first.identity()?.human).toBe(false);
     first.dispose();
     expect((await input.next()).done).toBe(true);
@@ -105,9 +103,7 @@ describe('Neo coordinator turns', () => {
     queue.start();
     const successor = turn();
     const next = runner.createMessageGeneratorWrapper(2, undefined, successor);
-    expect(runner.acceptsPrompt(2)).toBe(true);
     expect((await next.next()).value?.uuid).toBe('human-input');
-    expect(runner.acceptsPrompt(2)).toBe(false);
     expect(successor.identity()?.human).toBe(true);
     successor.dispose();
     expect((await next.next()).done).toBe(true);
