@@ -106,21 +106,21 @@ describe('NeoAskTodos', () => {
     const app = render(<NeoAskTodos entry={data} onAnswer={vi.fn()} />);
     for (const item of data.todos) {
       expect(app.getByText(item.title)).toBeTruthy();
-      expect(app.queryByText(item.report!)).toBeNull();
-      expect(app.queryByText(item.evidence!)).toBeNull();
+      expect(app.queryByText(item.report!.trim())).toBeNull();
+      expect(app.queryByText(item.evidence!.trim())).toBeNull();
     }
     const first = app.getByRole('button', { name: 'Show details: Todo a' });
     expect(first.getAttribute('aria-expanded')).toBe('false');
     fireEvent.click(first);
-    expect(app.getByText(data.todos[0].report!)).toBeTruthy();
-    expect(app.getByText(data.todos[0].evidence!)).toBeTruthy();
-    expect(app.queryByText(data.todos[1].report!)).toBeNull();
-    expect(app.queryByText(data.todos[2].report!)).toBeNull();
+    expect(app.getByText(data.todos[0].report!.trim())).toBeTruthy();
+    expect(app.getByText(data.todos[0].evidence!.trim())).toBeTruthy();
+    expect(app.queryByText(data.todos[1].report!.trim())).toBeNull();
+    expect(app.queryByText(data.todos[2].report!.trim())).toBeNull();
     fireEvent.click(app.getByRole('button', { name: 'Expand all' }));
-    for (const item of data.todos) expect(app.getByText(item.report!)).toBeTruthy();
+    for (const item of data.todos) expect(app.getByText(item.report!.trim())).toBeTruthy();
     fireEvent.click(app.getByRole('button', { name: 'Collapse all' }));
     for (const item of data.todos) {
-      expect(app.queryByText(item.report!)).toBeNull();
+      expect(app.queryByText(item.report!.trim())).toBeNull();
       expect(
         app
           .getByRole('button', { name: `Show details: ${item.title}` })
@@ -136,17 +136,35 @@ describe('NeoAskTodos', () => {
     const app = render(<NeoAskTodos entry={data} onAnswer={vi.fn()} />);
     fireEvent.click(app.getByRole('button', { name: 'Show details: Todo a' }));
     app.rerender(<NeoAskTodos entry={other} onAnswer={vi.fn()} />);
-    expect(app.queryByText(data.todos[0].report!)).toBeNull();
+    expect(app.queryByText(data.todos[0].report!.trim())).toBeNull();
     fireEvent.click(app.getByRole('button', { name: 'Show details: Todo b' }));
     app.rerender(<NeoAskTodos entry={data} onAnswer={vi.fn()} />);
-    expect(app.getByText(data.todos[0].report!)).toBeTruthy();
-    expect(app.queryByText(data.todos[1].report!)).toBeNull();
+    expect(app.getByText(data.todos[0].report!.trim())).toBeTruthy();
+    expect(app.queryByText(data.todos[1].report!.trim())).toBeNull();
     app.unmount();
     const again = render(
       <NeoAskTodos entry={{ ...data, todos: [...data.todos, todo('new')] }} onAnswer={vi.fn()} />
     );
-    expect(again.getByText(data.todos[0].report!)).toBeTruthy();
+    expect(again.getByText(data.todos[0].report!.trim())).toBeTruthy();
     expect(again.getByRole('button', { name: 'Show details: Todo new' }).tagName).toBe('BUTTON');
+  });
+
+  it('omits report and evidence duplicates of each other or the displayed status', () => {
+    locale.value = 'en';
+    const app = render(
+      <NeoAskTodos
+        entry={entry({
+          todos: [
+            todo('a', { status: 'Doing', report: ' Same details ', evidence: 'Same details' }),
+            todo('b', { status: 'Done', report: ' Done ', evidence: '  ' }),
+          ],
+        })}
+        onAnswer={vi.fn()}
+      />
+    );
+    fireEvent.click(app.getByRole('button', { name: 'Expand all' }));
+    expect(app.getAllByText('Same details')).toHaveLength(1);
+    expect(app.getAllByText('Done')).toHaveLength(1);
   });
 
   it('keeps Open separate from the disclosure and matches the iOS all-control translations', () => {
@@ -157,10 +175,10 @@ describe('NeoAskTodos', () => {
     expect(app.getByRole('button', { name: '全部展开' })).toBeTruthy();
     fireEvent.click(app.getByRole('button', { name: '打开 Todo a' }));
     expect(onOpen).toHaveBeenCalledWith('/session/worker', 'Todo a');
-    expect(app.queryByText(data.todos[0].report!)).toBeNull();
+    expect(app.queryByText(data.todos[0].report!.trim())).toBeNull();
     fireEvent.click(app.getByRole('button', { name: '全部展开' }));
     fireEvent.click(app.getByRole('button', { name: '全部收起' }));
-    expect(app.queryByText(data.todos[0].report!)).toBeNull();
+    expect(app.queryByText(data.todos[0].report!.trim())).toBeNull();
   });
 
   it.each(['open', 'answered', 'retired'] as const)(
@@ -437,6 +455,7 @@ describe('NeoAskTodos', () => {
     );
     const reason = app.getByText('卡住了：CI 一直红');
     expect(reason.className).toContain('text-warning');
+    fireEvent.click(app.getByRole('button', { name: '显示详情：Todo a' }));
     const rowA = app.container.querySelector('[data-ask-todo="a"]')!;
     expect(rowA.querySelector('[data-todo-next-action]')?.textContent).toBe('下一步：修好测试再推');
     expect(rowA.textContent).not.toContain('check');

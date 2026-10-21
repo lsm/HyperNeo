@@ -28,7 +28,11 @@ export async function verifyTodoCollapse(page, { port, run, width }) {
   assert.equal(await card.locator('[data-todo-details]').count(), 0);
   await card.getByRole('button', { name: 'Expand all', exact: true }).click();
   assert.equal(await card.locator('[data-todo-details]').count(), 3);
-  await card.screenshot({ path: `${run}/evidence/todo-expanded-${width}.png` });
+  await page.screenshot({ path: `${run}/evidence/todo-expanded-${width}.png` });
+  const lastDetail = card.locator('[data-todo-details]').last();
+  await lastDetail.scrollIntoViewIfNeeded();
+  assert((await lastDetail.innerText()).includes('Evidence 3:'));
+  await page.screenshot({ path: `${run}/evidence/todo-expanded-last-${width}.png` });
   assert.equal(await other.locator('[data-todo-details]').count(), 0);
   record({ name: 'expand-all', details: 3, otherDetails: 0 });
   await card.getByRole('button', { name: 'Collapse all', exact: true }).click();
