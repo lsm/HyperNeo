@@ -1,0 +1,64 @@
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+const [port, run, phase = 'after'] = process.argv.slice(2);
+if (!port || !run || port === '8399') throw new Error('usage: neo-home-sync.ts <test-port> <run-dir> [before|after]');
+const log = await readFile(`${run}/daemon.log`, 'utf8');
+if (!log.includes('HyperNeo Test Server') || !log.includes(`Database: ${run}/data/daemon.db`)) throw new Error('Not an isolated test daemon');
+const root = `${run}/data/Neo`, remote = `${run}/remote.git`, peer = `${run}/peer`;
+async function rpc(input: unknown, name = 'neo.home.save') {
+  const child = Bun.spawn(['bun', '.claude/skills/verify/rpc.ts', name, JSON.stringify(input)], { env: { ...process.env, VERIFY_PORT: port }, stdout: 'pipe', stderr: 'inherit' });
+  const result = JSON.parse(await new Response(child.stdout).text());
+  if (await child.exited) throw new Error(JSON.stringify(result));
+  return result.reply.value ?? result.reply;
+}
+async function git(cwd: string, ...args: string[]) {
+  const child = Bun.spawn(['git', ...args], { cwd, env: { HOME: `${run}/home`, PATH: '/usr/bin:/bin', NODE_ENV: 'test' }, stdout: 'pipe', stderr: 'pipe' });
+  const [text, error, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+  if (code) throw new Error(error);
+  return text.trim();
+}
+async function commit(cwd: string, path: string, content: string) {
+  await writeFile(`${cwd}/${path}`, content); await git(cwd, 'add', '--', path); await git(cwd, 'commit', '-m', 'Synthetic peer change');
+}
+await mkdir(`${run}/home`, { recursive: true });
+await writeFile(`${run}/home/.gitconfig`, '[user]\n name = Verify Neo\n email = verify@example.invalid\n[commit]\n gpgsign = false\n');
+await rpc({}, 'neo.home.init');
+await git(run, 'init', '--bare', '--quiet', '--initial-branch=main', remote);
+await git(root, 'branch', '-M', 'main'); await git(root, 'remote', 'add', 'origin', remote); await git(root, 'push', '-u', 'origin', 'main');
+await git(run, 'clone', '--quiet', remote, peer);
+await commit(peer, 'peer.md', 'Peer progress.\n'); await git(peer, 'push');
+const input = { path: 'digest.md', content: 'Verified progress.\n', message: 'Record verified progress' };
+const saved = await rpc(input);
+const evidence: Record<string, unknown> = { phase, saved, localHead: await git(root, 'rev-parse', 'HEAD'), remoteHead: await git(remote, 'rev-parse', 'main'), peerContent: await readFile(`${root}/peer.md`, 'utf8').catch(() => null), remoteContent: await git(remote, 'show', 'main:digest.md').catch(() => null) };
+const saveEvidence = () => writeFile(`${run}/evidence/neo-home-sync-${phase}.json`, JSON.stringify(evidence, null, 2));
+await saveEvidence();
+if (phase === 'before') throw new Error('Observed baseline: local save neither pulled peer changes nor pushed its commit');
+if (!saved.ok || evidence.localHead !== evidence.remoteHead || evidence.peerContent !== 'Peer progress.\n' || evidence.remoteContent !== input.content.trim()) throw new Error('Configured remote save did not synchronize');
+const elsewhere = `${run}/elsewhere.git`;
+await git(run, 'init', '--bare', '--quiet', '--initial-branch=main', elsewhere);
+await git(root, 'remote', 'add', 'elsewhere', elsewhere);
+await git(root, 'config', 'remote.pushDefault', 'elsewhere');
+const routed = await rpc({ ...input, path: 'routed.md' });
+const routedOrigin = await git(remote, 'rev-parse', 'main');
+const unrelatedHeads = await git(elsewhere, 'show-ref', '--heads').catch(() => '');
+Object.assign(evidence, { routed, routedOrigin, unrelatedHeads }); await saveEvidence();
+if (!routed.ok || routed.commit !== routedOrigin || unrelatedHeads) throw new Error('Save used the unrelated push default instead of origin');
+await commit(root, 'contested.md', 'Base.\n'); await git(root, 'push', 'origin', 'main'); await git(peer, 'pull', '--rebase');
+await commit(root, 'contested.md', 'Local choice.\n'); const beforeConflict = await git(root, 'rev-parse', 'HEAD');
+await commit(peer, 'contested.md', 'Remote choice.\n'); await git(peer, 'push');
+const conflict = await rpc({ ...input, path: 'waiting.md' });
+const afterConflict = await git(root, 'rev-parse', 'HEAD');
+const localChoice = await readFile(`${root}/contested.md`, 'utf8');
+const remoteChoice = await git(remote, 'show', 'main:contested.md');
+const pendingFileAbsent = await readFile(`${root}/waiting.md`).then(() => false, () => true);
+const conflictStatus = await git(root, 'status', '--porcelain');
+Object.assign(evidence, { conflict, beforeConflict, afterConflict, localChoice, remoteChoice, pendingFileAbsent, conflictStatus }); await saveEvidence();
+if (conflict.ok || !conflict.reason?.includes('conflict') || beforeConflict !== afterConflict || localChoice !== 'Local choice.\n' || remoteChoice !== 'Remote choice.' || !pendingFileAbsent || conflictStatus) throw new Error('Conflict changed the local file or left the rebase dirty');
+await git(root, 'merge', '-s', 'ours', 'origin/main', '-m', 'Synthetic human resolution keeps local choice'); await git(root, 'push', 'origin', 'main');
+await git(root, 'config', 'remote.origin.receivepack', '/usr/bin/false');
+const next = { ...input, path: 'later.md' }; const pushFailed = await rpc(next);
+const retainedCommit = await git(root, 'rev-parse', 'HEAD'); const retainedCount = await git(root, 'rev-list', '--count', 'HEAD');
+await git(root, 'config', '--unset', 'remote.origin.receivepack');
+const retried = await rpc(next);
+Object.assign(evidence, { pushFailed, retainedCommit, retainedCount, retried, finalCount: await git(root, 'rev-list', '--count', 'HEAD'), finalRemoteHead: await git(remote, 'rev-parse', 'main'), finalStatus: await git(root, 'status', '--porcelain') }); await saveEvidence();
+if (pushFailed.ok || !pushFailed.reason?.includes('push_failed') || !pushFailed.reason.includes(retainedCommit) || !retried.ok || retried.commit !== retainedCommit || retainedCount !== evidence.finalCount || retainedCommit !== evidence.finalRemoteHead || evidence.finalStatus) throw new Error('Failed push lost the commit or retry added another');
+console.log('PASS: real RPC pulls peer changes, pushes exact committed content, aborts conflicting rebase preserving local files, and retries a retained failed-push commit without duplication.');
