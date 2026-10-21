@@ -11,6 +11,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import fs from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { NeoHomeRepository } from '../../../../src/lib/neo/home/repository.ts';
@@ -243,6 +244,7 @@ exit "$status"
       }
       return result;
     });
+    syncBuiltinESMExports();
     try {
       expect(await call({ remoteUrl: remote })).toMatchObject({
         ok: false,
@@ -259,6 +261,7 @@ exit "$status"
       ]);
     } finally {
       observer.mockRestore();
+      syncBuiltinESMExports();
     }
   });
   test('an inaccessible or empty remote leaves the original home untouched', async () => {
