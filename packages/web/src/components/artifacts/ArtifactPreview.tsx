@@ -92,7 +92,7 @@ export function ArtifactPreview({
 
   return (
     <section class="flex h-full min-h-0 flex-col bg-surface text-fg" aria-label="File preview">
-      <header class="flex items-center gap-3 border-b border-line px-4 py-3">
+      <header class="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line px-4 py-3">
         <button
           type="button"
           aria-label="Back"
@@ -101,7 +101,7 @@ export function ArtifactPreview({
         >
           ←
         </button>
-        <div class="min-w-0 flex-1">
+        <div class="min-w-0 flex-1 basis-56">
           <h1 class="truncate text-sm font-medium" title={metadata?.artifact.title}>
             {metadata?.artifact.title ?? 'Preview'}
           </h1>
@@ -137,8 +137,8 @@ export function ArtifactPreview({
       </div>
       {pendingUrl && (
         <div class="flex flex-wrap items-center gap-2 border-t border-line px-4 py-3 text-sm">
-          <span class="text-fg-muted">Open this link in a new tab?</span>
-          <code class="min-w-0 flex-1 truncate">{pendingUrl}</code>
+          <span class="basis-full text-fg-muted">Open this link in a new tab?</span>
+          <code class="min-w-0 flex-1 basis-full break-all">{pendingUrl}</code>
           <button
             type="button"
             class="rounded-md bg-surface-raised px-3 py-1 hover:bg-fill-strong"
