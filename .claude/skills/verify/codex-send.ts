@@ -146,16 +146,16 @@ if (action === 'prepare') {
       outcome.kind === 'completed'
         ? (outcome.value as {
             ok: boolean;
-            value?: { steeredIntoTurnId?: string; queuedSubmissionId?: string };
+            value?: { steeredIntoTurnId?: string; startedTurnId?: string; queuedSubmissionId?: string };
           })
         : null;
     if (action === 'send' && (!value?.ok || !value.value?.steeredIntoTurnId))
       throw new Error('REPRO: work.send did not steer the running Desktop turn');
     if (
       action === 'fallback' &&
-      (!value?.ok || !value.value?.queuedSubmissionId || value.value.steeredIntoTurnId)
+      (!value?.ok || !value.value?.startedTurnId || value.value.queuedSubmissionId)
     )
-      throw new Error('Not verified: idle Desktop did not fall back to queue');
+      throw new Error('Not verified: idle Desktop did not confirm a new turn');
   } else if (action === 'observe') {
     const detail = readCodexThread(statePath, threadId);
     if (!detail) throw new Error('Verification thread not found');

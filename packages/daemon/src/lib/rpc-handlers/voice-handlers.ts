@@ -50,7 +50,7 @@ export function admitVoiceStreamStart(
 export function expireIdleVoiceStreams(now: number): void {
   for (const [id, owned] of voiceStreams)
     if (now - owned.touchedAt > VOICE_STREAM_IDLE_MS) {
-      owned.stream.close();
+      owned.stream.close('idle_timeout');
       voiceStreams.delete(id);
     }
 }
@@ -106,6 +106,7 @@ export function registerVoiceHandlers(
       try {
         const streamId = crypto.randomUUID();
         const started = await VoiceStream.start(streamId, {
+          clientId,
           voice: () => settingsManager.getGlobalSettings().voice,
           credentialManager,
           transcribeWav: (audioBase64) =>
@@ -125,12 +126,12 @@ export function registerVoiceHandlers(
         if ('error' in started) throw new Error(started.error);
         const router = messageHub.getRouter?.();
         if (context?.clientId && router && !router.getClientById(context.clientId)) {
-          started.stream.close();
+          started.stream.close('client_disconnected');
           throw new Error('The client disconnected while the voice stream was starting');
         }
         for (const [id, owned] of voiceStreams)
           if (owned.clientId === clientId) {
-            owned.stream.close();
+            owned.stream.close('replaced');
             voiceStreams.delete(id);
           }
         voiceStreams.set(streamId, { stream: started.stream, clientId, touchedAt: Date.now() });
@@ -180,7 +181,7 @@ export function registerVoiceHandlers(
     voiceStreamStarts.delete(clientId);
     for (const [id, owned] of voiceStreams)
       if (owned.clientId === clientId) {
-        owned.stream.close();
+        owned.stream.close('client_disconnected');
         voiceStreams.delete(id);
       }
   });
