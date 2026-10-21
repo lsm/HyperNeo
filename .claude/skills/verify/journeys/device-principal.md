@@ -24,4 +24,7 @@ End state:
 - Allow from an unpaired browser answers `not_paired: only a paired human device can
   allow a code. Allow it on the phone or browser you paired first.`
 - Allow from the paired phone answers `ok`, and the code then pairs `Laptop`.
+- A lost phone is recovered from the Mac: `hyperneo pair --reset-human` answers
+  `unpaired=2`, the old phone's Allow is then refused with `not_paired`, and the next
+  human code from the CLI is `approved` again.
 - Neither credential appears in the database dump or the daemon log.

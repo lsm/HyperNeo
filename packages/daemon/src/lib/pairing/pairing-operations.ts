@@ -22,14 +22,12 @@ export const ALLOW_NEEDS_PAIRED_HUMAN =
 const fromDoor = (caller: OperationCaller) =>
   caller.source === 'mcp' && caller.principal === SESSION_DOOR_PRINCIPAL;
 
-const isPairedHuman = (caller: OperationCaller) =>
-  isLocalUser(caller) && caller.device?.kind === 'human';
-
 export function planPairingCode(
   caller: OperationCaller,
-  pairedHumans: number
+  pairedHumans: number,
+  callerIsPairedHuman: boolean
 ): { approved: boolean } | null {
-  if (isPairedHuman(caller)) return { approved: true };
+  if (callerIsPairedHuman) return { approved: true };
   if (isLocalUser(caller) || fromDoor(caller)) return { approved: pairedHumans === 0 };
   return null;
 }
@@ -39,6 +37,10 @@ export function createDevicePairingOperations({
   limiter,
   now,
 }: PairingOperationDeps) {
+  const isPairedHuman = (caller: OperationCaller) =>
+    isLocalUser(caller) &&
+    caller.device?.kind === 'human' &&
+    pairing().isActiveDevice(caller.device.deviceId);
   return [
     defineOperation({
       name: 'device.pair.create',
@@ -59,7 +61,7 @@ export function createDevicePairingOperations({
         Refused,
       ]),
       execute: async (input, caller) => {
-        const plan = planPairingCode(caller, pairing().countHumanDevices());
+        const plan = planPairingCode(caller, pairing().countHumanDevices(), isPairedHuman(caller));
         if (!plan) return refused;
         const made = pairing().createCode(input.kind, input.name ?? null, plan.approved, now());
         return {
@@ -108,6 +110,18 @@ export function createDevicePairingOperations({
         return pairing().approve(input.codeId, now())
           ? { ok: true as const }
           : { ok: false as const, reason: 'not_pending: no pending code with that id.' };
+      },
+    }),
+    defineOperation({
+      name: 'device.pair.reset_humans',
+      description:
+        'Unpair every human device, for a lost or reset phone, so the next code from the local CLI pairs without Allow.',
+      policy: { safetyClass: 'human_only' },
+      inputSchema: z.object({}).strict(),
+      resultSchema: z.union([z.object({ ok: z.literal(true), unpaired: z.number() }), Refused]),
+      execute: async (_input, caller) => {
+        if (!isLocalUser(caller) && !fromDoor(caller)) return refused;
+        return { ok: true as const, unpaired: pairing().revokeHumanDevices(now()) };
       },
     }),
     defineOperation({

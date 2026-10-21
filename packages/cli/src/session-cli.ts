@@ -9,7 +9,8 @@ export const SESSION_CLI_USAGE = `Usage:
   hyperneo build                      Read daemon build and health through the owner-only session socket
   hyperneo pair [--kind human|relay|daemon] [--name <name>]
                                       Make a 10-minute pairing code; after the first device, it waits for Allow on a paired device
-  hyperneo pair --reset-lockout       Reopen pairing after too many bad codes`;
+  hyperneo pair --reset-lockout       Reopen pairing after too many bad codes
+  hyperneo pair --reset-human         Unpair every human device (a lost phone), so the next code pairs without Allow`;
 
 export function resolveSender(env: Env): string | null {
   if (env.HYPERNEO_SESSION_ID) return env.HYPERNEO_SESSION_ID;
@@ -46,6 +47,8 @@ function planPairCommand(
 ): { value: { name: string; input: unknown } } | { reason: string } {
   if (args.length === 1 && args[0] === '--reset-lockout')
     return { value: { name: 'device.pair.reset_lockout', input: {} } };
+  if (args.length === 1 && args[0] === '--reset-human')
+    return { value: { name: 'device.pair.reset_humans', input: {} } };
   const input: { kind: string; name?: string } = { kind: 'human' };
   for (let i = 0; i < args.length; i += 2) {
     const [flag, value] = [args[i], args[i + 1]];

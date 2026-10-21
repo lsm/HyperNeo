@@ -40,11 +40,11 @@ function setup(start = 1_000_000) {
 }
 
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
-const pairedHuman: OperationCaller = {
+const pairedHuman = (deviceId: string): OperationCaller => ({
   source: 'rpc',
   principal: 'local',
-  device: { deviceId: 'phone', kind: 'human' },
-};
+  device: { deviceId, kind: 'human' },
+});
 const door: OperationCaller = { source: 'mcp', principal: 'session-door', sessionId: 'cli' };
 const agent: OperationCaller = { source: 'mcp', sessionId: 'neo:root', role: 'neo' };
 
@@ -96,7 +96,8 @@ describe('device pairing', () => {
     const { db, call, pair } = setup();
     const first = await call('device.pair.create', { kind: 'human' }, door);
     expect(first.approval).toBe('approved');
-    expect((await pair(first.code, 'Laptop')).status).toBe(200);
+    const laptop = await pair(first.code, 'Laptop');
+    expect(laptop.status).toBe(200);
     const next = await call('device.pair.create', { kind: 'human' }, door);
     expect(next.approval).toBe('pending');
     expect(await pair(next.code, 'Agent')).toMatchObject({
@@ -118,7 +119,15 @@ describe('device pairing', () => {
       ok: false,
       reason: ALLOW_NEEDS_PAIRED_HUMAN,
     });
-    expect(await call('device.pair.approve', { codeId: next.codeId }, pairedHuman)).toEqual({
+    expect(
+      await call('device.pair.approve', { codeId: next.codeId }, pairedHuman('phone'))
+    ).toEqual({
+      ok: false,
+      reason: ALLOW_NEEDS_PAIRED_HUMAN,
+    });
+    expect(
+      await call('device.pair.approve', { codeId: next.codeId }, pairedHuman(laptop.body.deviceId))
+    ).toEqual({
       ok: true,
     });
     expect((await pair(next.code, 'Phone')).status).toBe(200);
@@ -136,15 +145,35 @@ describe('device pairing', () => {
     db.close();
   });
 
+  test('a lost phone is recovered from the Mac: the CLI unpairs human devices and pairs a new one alone', async () => {
+    const { db, call, pair } = setup();
+    const first = await call('device.pair.create', { kind: 'human' }, door);
+    const phone = await pair(first.code, 'Phone');
+    const lostPhone = pairedHuman(phone.body.deviceId);
+    const waiting = await call('device.pair.create', { kind: 'human' }, door);
+    expect(waiting.approval).toBe('pending');
+    expect(await call('device.pair.reset_humans', {}, agent)).toMatchObject({ ok: false });
+    expect(await call('device.pair.reset_humans', {}, door)).toEqual({ ok: true, unpaired: 1 });
+    expect(await call('device.pair.approve', { codeId: waiting.codeId }, lostPhone)).toEqual({
+      ok: false,
+      reason: ALLOW_NEEDS_PAIRED_HUMAN,
+    });
+    const fresh = await call('device.pair.create', { kind: 'human' }, door);
+    expect(fresh.approval).toBe('approved');
+    expect((await pair(fresh.code, 'New phone')).status).toBe(200);
+    db.close();
+  });
+
   test('once a human device is paired, a code made in an unpaired browser waits for its Allow', async () => {
     const { db, call, pair } = setup();
     expect((await call('device.pair.create', { kind: 'human' }, human)).approval).toBe('approved');
     const first = await call('device.pair.create', { kind: 'human' }, door);
-    expect((await pair(first.code, 'Phone')).status).toBe(200);
+    const phone = await pair(first.code, 'Phone');
     expect((await call('device.pair.create', { kind: 'human' }, human)).approval).toBe('pending');
-    expect((await call('device.pair.create', { kind: 'human' }, pairedHuman)).approval).toBe(
-      'approved'
-    );
+    expect(
+      (await call('device.pair.create', { kind: 'human' }, pairedHuman(phone.body.deviceId)))
+        .approval
+    ).toBe('approved');
     db.close();
   });
 

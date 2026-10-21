@@ -13,6 +13,7 @@ const DOOR_OPERATIONS = new Set([
   'system.build',
   'device.pair.create',
   'device.pair.reset_lockout',
+  'device.pair.reset_humans',
 ]);
 const MAX_BODY_BYTES = 256 * 1024;
 

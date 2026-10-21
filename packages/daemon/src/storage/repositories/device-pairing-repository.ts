@@ -72,6 +72,22 @@ export class DevicePairingRepository {
       .run(...key, now, now, UNPAIRED_ROW_CAP);
   }
 
+  isActiveDevice(id: string): boolean {
+    return !!this.db
+      .prepare('SELECT 1 FROM paired_devices WHERE id = ? AND revoked_at IS NULL')
+      .get(id);
+  }
+
+  revokeHumanDevices(now: number): number {
+    return Number(
+      this.db
+        .prepare(
+          "UPDATE paired_devices SET revoked_at = ? WHERE kind = 'human' AND revoked_at IS NULL"
+        )
+        .run(now).changes
+    );
+  }
+
   countHumanDevices(): number {
     return (
       this.db
