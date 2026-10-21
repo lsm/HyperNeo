@@ -693,10 +693,15 @@ export function createNeoOperations(service: NeoService) {
   return [
     ...createNeoProjectTreeOperations(service.repo),
     createNeoProjectForgetOperation(service.repo),
-    createNeoIntakeOperation(service.db, service.repo, (sessionId) => {
-      service.notifyChanged();
-      void service.steerQueuedInputs(sessionId);
-    }),
+    createNeoIntakeOperation(
+      service.db,
+      service.repo,
+      (sessionId) => {
+        service.notifyChanged();
+        void service.steerQueuedInputs(sessionId);
+      },
+      service.todos
+    ),
     createNeoReorganizeOperation(neoReorganizeRuntime(service)),
     createNeoPublicationOperation(service.publish),
     ...createNeoPublicationChangeOperations({

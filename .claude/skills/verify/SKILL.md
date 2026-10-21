@@ -2156,7 +2156,10 @@ question and atomically binds its immutable exact edit. No answer leaves the
 rules unchanged. Human yes applies only the stored edit; an agent cannot answer,
 replace the proposal after consent or pass new edit fields to the questionId-only
 `neo.rule.applyAnswer`. Both the human consent and resulting `neo.snapshot`
-standingRules survive restart. Pending proposal retries reuse requestId; closed
+standingRules survive restart. Successful chat consent must also deliver the
+updated `state.settings` event over the connected WebSocket; the helper waits
+for the exact new rule in this projection, rather than accepting a DB read as
+proof that connected clients updated. Pending proposal retries reuse requestId; closed
 questions require a new requestId. Evidence is retained even on failure in
 `evidence/observed.json`; each daemon and socket closes in `finally`.
 
