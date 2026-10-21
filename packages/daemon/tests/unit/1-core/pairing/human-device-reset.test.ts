@@ -119,3 +119,15 @@ test('a failed notice rolls back revocation, recovery and code invalidation atom
   expect(repo.redeem(code.code, 'Previously approved', Date.now())).not.toBeNull();
   expect(notices()).toHaveLength(0);
 });
+
+test('a long device list is retained across bounded notices without dropping any device', async () => {
+  const ids = Array.from(
+    { length: 21 },
+    (_, index) => pair('human', `${index}: ${'\\'.repeat(75)}`).device.id
+  );
+  expect(await call('device.reset_human')).toMatchObject({ ok: true });
+  expect(notices()).toHaveLength(2);
+  const text = JSON.stringify(notices());
+  for (const id of ids) expect(text).toContain(id);
+  expect(repo.listDevices()).toHaveLength(21);
+});

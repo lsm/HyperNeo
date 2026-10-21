@@ -20,7 +20,7 @@ export interface PairingOperationDeps {
 export const ALLOW_NEEDS_PAIRED_HUMAN =
   'not_paired: only a paired human device can allow a code. Allow it on the phone or browser you paired first.';
 
-const fromDoor = (caller: OperationCaller) =>
+export const fromDoor = (caller: OperationCaller) =>
   caller.source === 'mcp' && caller.principal === SESSION_DOOR_PRINCIPAL;
 
 export const NEEDS_PAIRED_HUMAN =
@@ -32,10 +32,12 @@ export const NO_HUMAN_DEVICE =
 export function planPairingCode(
   caller: OperationCaller,
   paired: { all: number; humans: number },
-  callerIsPairedHuman: boolean
+  callerIsPairedHuman: boolean,
+  recovery = false
 ): { approved: boolean } | { reason: string } | null {
   if (callerIsPairedHuman) return { approved: true };
   if (!isLocalUser(caller) && !fromDoor(caller)) return null;
+  if (fromDoor(caller) && recovery) return { approved: true };
   if (paired.all === 0) return { approved: true };
   return paired.humans === 0 ? { reason: NO_HUMAN_DEVICE } : { approved: false };
 }
@@ -70,7 +72,12 @@ export function createDevicePairingOperations({
         Refused,
       ]),
       execute: async (input, caller) => {
-        const plan = planPairingCode(caller, pairing().countDevices(), isPairedHuman(caller));
+        const plan = planPairingCode(
+          caller,
+          pairing().countDevices(),
+          isPairedHuman(caller),
+          input.kind === 'human' && pairing().humanRecoveryOpen()
+        );
         if (!plan) return refused;
         if ('reason' in plan) return { ok: false as const, reason: plan.reason };
         const made = pairing().createCode(input.kind, input.name ?? null, plan.approved, now());

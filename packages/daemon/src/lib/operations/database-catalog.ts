@@ -4,6 +4,7 @@ import { createArtifactRegistration } from '../artifacts/register-operation.ts';
 import { createBuildOperation } from '../system/build-operation.ts';
 import { daemonPairingLimiter } from '../pairing/pairing-limiter.ts';
 import { createDevicePairingOperations } from '../pairing/pairing-operations.ts';
+import { createHumanDeviceResetOperation } from '../pairing/human-device-reset.ts';
 import { announceDeviceRevoked } from '../pairing/upgrade-auth.ts';
 import { DevicePairingRepository } from '../../storage/repositories/device-pairing-repository.ts';
 import type { Database } from '../../storage/database.ts';
@@ -121,6 +122,7 @@ export function createDatabaseOperationCatalog(
         now: Date.now,
         revoked: announceDeviceRevoked,
       }),
+      createHumanDeviceResetOperation(() => db.getDatabase()),
       createDaemonSnapshotOperation({
         readResources: (input) => new DaemonInventoryRepository(db.getDatabase()).read(input),
         readCapabilities: (caller) =>

@@ -129,6 +129,7 @@ describe('the session door', () => {
       'device.pair.reset_lockout',
       'device.list',
       'device.revoke',
+      'device.reset_human',
     ]);
     for (const name of [...OPERATION_NAMES, 'system.health', 'unknown.operation']) {
       if (allowed.has(name)) continue;
