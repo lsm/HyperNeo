@@ -73,6 +73,7 @@ try {
       return route.abort();
     });
     const page = await context.newPage();
+    try {
     await page.goto(`${base}/neo`);
     const article = page.locator('article').filter({ hasText: 'The layout notes are in' });
     await article.waitFor({ timeout: 60_000 });
@@ -112,6 +113,10 @@ try {
     await page.getByRole('dialog', { name: 'Synthetic design PR' }).waitFor();
     await back();
     await dialog.waitFor({ state: 'detached' });
+    } catch (error) {
+      await shot(page, `failure-${width}`);
+      throw error;
+    }
     await context.close();
   }
 } finally {

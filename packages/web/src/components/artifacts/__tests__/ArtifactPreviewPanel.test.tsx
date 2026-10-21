@@ -10,6 +10,7 @@ vi.mock('../../../lib/connection-manager.ts', () => ({
 }));
 
 const source = { kind: 'publication' as const, id: 'p1' };
+const tapped = 'https://github.com/Acme/Demo/pull/7';
 const headSha = 'c0ffee'.padEnd(40, '0');
 const pr = {
   url: 'https://github.com/acme/demo/pull/7',
@@ -86,7 +87,7 @@ describe('ArtifactPreviewPanel', () => {
       input.file ? { accepted: true, artifact: { artifactId: 'a1' } } : { accepted: true, pr }
     );
     render(<ArtifactPreviewPanel />);
-    act(() => openArtifactPreview({ kind: 'reference', source, reference: pr.url }));
+    act(() => openArtifactPreview({ kind: 'reference', source, reference: tapped }));
 
     const panel = await screen.findByRole('dialog', { name: 'Synthetic layout change' });
     expect(
@@ -101,7 +102,7 @@ describe('ArtifactPreviewPanel', () => {
     await screen.findByRole('heading', { name: 'Layout design' });
     expect(request.mock.calls.find((call) => call[1].input?.file)?.[1].input).toEqual({
       sourceMessageOrCard: source,
-      reference: pr.url,
+      reference: tapped,
       file: { path: 'docs/design/layout.md', headSha },
     });
 
