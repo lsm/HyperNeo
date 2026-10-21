@@ -1,6 +1,7 @@
 import { strict as assert } from 'node:assert';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { createServer } from 'node:net';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
@@ -18,7 +19,7 @@ assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert(!existsSync(join(run, 'data')));
-for (const dir of ['home/.codex/app-server-control', 'evidence', 'workspace', 'bin']) mkdirSync(join(run, dir), { recursive: true });
+for (const dir of ['home/.codex/app-server-control', 'home/.claude/projects', 'home/.claude/sessions', 'evidence', 'workspace', 'bin']) mkdirSync(join(run, dir), { recursive: true });
 writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
 assert.equal(process.env.PATH?.split(':')[0], join(run, 'bin'));
 const codex = join(run, 'home/.codex');
@@ -31,6 +32,14 @@ state.prepare(`INSERT INTO threads VALUES ('synthetic-thread', 'Synthetic worker
 state.close();
 const evidence: unknown[] = [];
 let mode = 'queue';
+const cliSession = '10000000-0000-4000-8000-000000000003';
+chmodSync(join(run, 'home/.claude/sessions'), 0o700);
+const inboxPath = join(run, `home/.claude/sessions/${process.pid}.sock`);
+writeFileSync(join(run, `home/.claude/sessions/${process.pid}.json`), JSON.stringify({ sessionId: cliSession, pid: process.pid, procStart: 1, entrypoint: 'cli', version: '2.1.295', messagingSocketPath: inboxPath }));
+writeFileSync(join(run, 'bin/claude'), `#!/bin/sh\nprintf '%s' '${JSON.stringify([{ sessionId: cliSession, status: 'idle', pid: process.pid }])}'\n`, { mode: 0o700 });
+const inbox = createServer(socket => { socket.on('data', bytes => evidence.push({ cliInboxBytes: bytes.toString() })); socket.on('end', () => socket.end()); });
+await new Promise<void>((done, fail) => { inbox.once('error', fail); inbox.listen(inboxPath, done); });
+chmodSync(inboxPath, 0o600);
 const peer = Bun.serve({
   unix: join(codex, 'app-server-control/app-server-control.sock'),
   fetch(request, server) { return server.upgrade(request) ? undefined : new Response('websocket only', { status: 400 }); },
@@ -52,6 +61,8 @@ const sessionId = 'neo:10000000-0000-4000-8000-000000000002';
 const ref = { adapter: 'codex-desktop', id: 'synthetic-thread' };
 const dbPath = join(run, 'data/daemon.db');
 let todoId = '';
+let unconfirmedId = '';
+let unconfirmedInput: string | undefined;
 try {
   for (const phase of ['initial', 'restart']) {
     const app = await createDaemonApp({ config: getConfig({ port, host: '127.0.0.1', dbPath }), verbose: false });
@@ -75,7 +86,19 @@ try {
         const started = await invoke('neo.todo.add', { askId: 'synthetic-ask', title: 'Synthetic queue', doneWhen: 'Facts retained', instruction: 'Only a synthetic queued instruction', target: { verb: 'send', ref }, start: true });
         assert.equal(started.todo.state, 'doing', JSON.stringify(started.todo));
         todoId = started.todo.id;
+        const unconfirmed = await invoke('neo.todo.add', { askId: 'synthetic-ask', title: 'Synthetic inbox', doneWhen: 'Facts retained', instruction: 'Unconfirmed synthetic instruction', target: { verb: 'send', ref: { adapter: 'claude-code', id: cliSession } }, start: true });
+        assert.equal(unconfirmed.todo.state, 'doing', JSON.stringify(unconfirmed.todo));
+        unconfirmedId = unconfirmed.todo.id;
       }
+      const pending = sessions.readSent(unconfirmedId);
+      evidence.push({ phase, unconfirmed: pending });
+      assert.equal(pending?.delivery?.delivered, false);
+      assert.equal(pending?.delivery?.unconfirmed, true);
+      assert.equal(pending?.delivery?.receipt?.executionId, cliSession);
+      assert(pending?.delivery?.receipt?.inputId);
+      if (phase === 'initial') unconfirmedInput = pending.delivery.receipt.inputId;
+      else assert.equal(pending.delivery.receipt.inputId, unconfirmedInput);
+      assert.equal(sessions.readStartedAt(unconfirmedId), null);
       const queued = sessions.readSent(todoId);
       evidence.push({ phase, queued });
       assert.deepEqual(queued?.delivery, { delivered: false, queuedSubmissionId: 'synthetic-queue' });
@@ -92,8 +115,9 @@ try {
   const reopened = new Database(dbPath, { readonly: true });
   try { assert.deepEqual(new NeoTodoSessionRepository(reopened).readSent(todoId)?.delivery, { delivered: true, steeredIntoTurnId: 'synthetic-turn' }); }
   finally { reopened.close(); }
-  console.log(`PASS: real daemon MCP todo dispatch retains queue/steer facts across daemon restart and read-only DB reopen. ${run}/evidence/observed.json`);
+  console.log(`PASS: real daemon MCP todo dispatch retains queue/unconfirmed/steer facts across daemon restart and read-only DB reopen. ${run}/evidence/observed.json`);
 } finally {
   peer.stop(true);
+  await new Promise<void>(done => inbox.close(() => done()));
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
 }
