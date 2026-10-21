@@ -60,6 +60,50 @@ async function start(fixture: ReturnType<typeof setup>, message = fixture.reques
 }
 
 describe('owned Copilot lifecycle', () => {
+  test.each([
+    ['settled', '', 'done'],
+    ['settled', '--abort-ack-only', 'done'],
+    ['error', '', 'failed'],
+  ] as const)('stop preserves terminal %s with %s', async (message, flag, outcome) => {
+    const fixture = setup(flag);
+    const work = await start(fixture, message);
+    const before = await fixture.adapter.status!(work.ref, undefined, work.receipt);
+    expect(before).toMatchObject({ ok: true, value: { status: outcome } });
+    expect(await fixture.adapter.stop!(work.ref, context)).toEqual({
+      ok: true,
+      value: { stopped: false },
+    });
+    expect(await fixture.adapter.status!(work.ref, undefined, work.receipt)).toEqual(before);
+    expect(readFileSync(join(fixture.run, 'calls.jsonl'), 'utf8')).not.toContain('session.abort');
+    await fixture.adapter.close();
+    const restarted = createCopilotAdapter(fixture.discovery, fixture.deps);
+    owners.push(restarted);
+    expect(await restarted.stop!(work.ref, context)).toEqual({
+      ok: true,
+      value: { stopped: false },
+    });
+    expect(await restarted.status!(work.ref, undefined, work.receipt)).toEqual(before);
+  });
+
+  test('stop refreshes completion that arrived after the saved start snapshot', async () => {
+    const fixture = setup();
+    const work = await start(fixture, 'late-settled');
+    expect(work.status).toBe('running');
+    writeFileSync(join(fixture.run, 'release-settlement'), 'release');
+    for (let poll = 0; poll < 200 && !existsSync(join(fixture.run, 'settlement-emitted')); poll++)
+      await new Promise((done) => setTimeout(done, 5));
+    expect(existsSync(join(fixture.run, 'settlement-emitted'))).toBe(true);
+    expect(await fixture.adapter.stop!(work.ref, context)).toEqual({
+      ok: true,
+      value: { stopped: false },
+    });
+    expect(await fixture.adapter.status!(work.ref, undefined, work.receipt)).toMatchObject({
+      ok: true,
+      value: { status: 'done', lastReply: 'LATE_COMPLETE_REPLY' },
+    });
+    expect(readFileSync(join(fixture.run, 'calls.jsonl'), 'utf8')).not.toContain('session.abort');
+  });
+
   test('concurrent status cannot overwrite stopped evidence while its runtime closes', async () => {
     const fixture = setup('--slow-stop');
     const work = await start(fixture);
@@ -101,7 +145,7 @@ describe('owned Copilot lifecycle', () => {
     });
     expect(await fixture.adapter.stop!(work.ref, context)).toEqual({
       ok: true,
-      value: { stopped: true },
+      value: { stopped: false },
     });
   });
 

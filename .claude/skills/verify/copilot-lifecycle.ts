@@ -59,6 +59,12 @@ try {
   await connect();
   const catalog = await rpc('work.adapters', {}) as { value: { id: string; capabilities: string[] }[] };
   assert.deepEqual(catalog.value.find(adapter => adapter.id === 'copilot-cli')?.capabilities, ['find', 'start', 'status', 'stop']);
+  if (mode === 'stop-terminal') {
+    const finished = await start('settled');
+    const before = await status(finished);
+    assert.deepEqual(await rpc('work.stop', { ref: finished.ref }), { ok: true, value: { stopped: false } });
+    assert.deepEqual(await status(finished), before);
+  }
   const complete = await start('settled');
   assert.equal((await status(complete)).inputEvidence?.state, 'observed');
   assert.equal((await status(complete)).lastReply, 'REPLY_1');
@@ -116,6 +122,22 @@ try {
     const pid = calls.at(-1).pid;
     assert(!calls.some(call => call.pid === pid && ['session.create', 'session.send'].includes(call.method)));
   }
+  if (mode === 'all') {
+    installFixture();
+    const late = await start('late-settled');
+    assert.equal(late.status, 'running');
+    writeFileSync(join(run, 'workspace/release-settlement'), 'release');
+    for (let poll = 0; poll < 200 && !existsSync(join(run, 'workspace/settlement-emitted')); poll++) await new Promise(done => setTimeout(done, 5));
+    assert(existsSync(join(run, 'workspace/settlement-emitted')));
+    assert.deepEqual(await rpc('work.stop', { ref: late.ref }), { ok: true, value: { stopped: false } });
+    assert.equal((await status(late)).lastReply, 'LATE_COMPLETE_REPLY');
+    const before = await status(complete);
+    assert.deepEqual(await rpc('work.stop', { ref: complete.ref }), { ok: true, value: { stopped: false } });
+    assert.deepEqual(await status(complete), before);
+    assert.deepEqual(await rpc('work.stop', { ref: stopped.ref }), { ok: true, value: { stopped: false } });
+    const calls = readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    assert.equal(calls.filter(call => call.method === 'session.abort').length, 1, 'only active work may receive abort');
+  }
   installFixture('--crash-on-ping');
   const disconnected = await rpc('work.start', { adapter: 'copilot-cli', place: complete.place, title: 'Synthetic lost owner', model: 'synthetic-model', message: 'hold' }) as { ok: boolean; reason: string; detail: string };
   assert.equal(disconnected.ok, false, 'a disconnected snapshot cannot return queued success');
@@ -132,7 +154,7 @@ try {
   assert.equal((await status(stopped)).status, 'stopped');
   const recovered = await rpc('work.status', { ref: active.ref, receipt: active.receipt }) as { ok: boolean; reason: string };
   assert.equal(recovered.ok, false); assert.equal(recovered.reason, 'unreachable');
-  assert.equal(readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').trim().split('\n').filter(line => JSON.parse(line).method === 'session.send').length, 5);
+  assert.equal(readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').trim().split('\n').filter(line => JSON.parse(line).method === 'session.send').length, mode === 'all' ? 6 : mode === 'stop-terminal' ? 6 : 5);
   console.log(`PASS public Copilot work.start/status/stop: relative DB, durable terminal replies, concurrent stop/status, model rejection, denied permission, abort evidence and no replay. ${run}/evidence/observed.json`);
 } finally {
   ws?.close(); await app?.cleanup();

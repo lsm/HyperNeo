@@ -144,6 +144,20 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
         });
         event('session.idle', {});
       }
+      if (prompt === 'late-settled') {
+        const timer = setInterval(() => {
+          if (!existsSync(join(process.cwd(), 'release-settlement'))) return;
+          clearInterval(timer);
+          event('assistant.message', {
+            messageId: `reply-${input}`,
+            content: 'LATE_COMPLETE_REPLY',
+            interactionId: `interaction-${input}`,
+            phase: 'final_answer',
+          });
+          event('session.idle', {});
+          appendFileSync(join(process.cwd(), 'settlement-emitted'), 'ready');
+        }, 5);
+      }
       if (prompt === 'stale-echo') {
         event('user.message', {
           messageId: 'input-1',
