@@ -1,3 +1,4 @@
+import { GoalJournal, goalMandateLink } from './SessionGoalJournal.tsx';
 import type {
   SessionScheduleListResult,
   SessionScheduleView,
@@ -34,19 +35,39 @@ function RunTime({ at }: { at: number | null }) {
     </time>
   );
 }
-function GoalDefinition({ ownerSessionId, goalId }: { ownerSessionId: string; goalId: string }) {
+export function GoalDefinition({
+  ownerSessionId,
+  goalId,
+}: {
+  ownerSessionId: string;
+  goalId: string;
+}) {
   const [goal, setGoal] = useState<SessionGoal | null>(null);
+  const [remote, setRemote] = useState<string | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
     let alive = true;
+    setGoal(null);
+    setError('');
+    setRemote(null);
     void call<{ accepted: true; goal: SessionGoal } | { accepted: false; reason: string }>(
       'goal.session.get',
       { ownerSessionId, goalId }
     )
-      .then((result) => {
+      .then(async (result) => {
         if (!alive) return;
         if (!result.accepted) throw new Error(result.reason);
         setGoal(result.goal);
+        if (result.goal.mandateRef) {
+          const home = await call<{ ok: boolean; remoteUrl?: string | null; reason?: string }>(
+            'neo.home.read',
+            {
+              path: result.goal.mandateRef.split('#')[0],
+              includeRemote: true,
+            }
+          ).catch(() => null);
+          if (alive && home?.ok) setRemote(home.remoteUrl ?? null);
+        }
       })
       .catch((cause) => {
         if (alive) setError(errorText(cause));
@@ -55,21 +76,65 @@ function GoalDefinition({ ownerSessionId, goalId }: { ownerSessionId: string; go
       alive = false;
     };
   }, [ownerSessionId, goalId]);
+  const mandate = goal && remote ? goalMandateLink(remote, goal) : undefined;
   return (
-    <div class="mt-2 border-l-2 border-line pl-3">
-      {error ? (
-        <p role="alert">{error}</p>
-      ) : !goal ? (
-        t('schedules.loading')
+    <div class="mt-2 space-y-3 break-words border-l-2 border-line pl-3">
+      {error && (
+        <p role="alert" class="text-danger">
+          {error}
+        </p>
+      )}
+      {!goal ? (
+        !error && t('schedules.loading')
       ) : (
         <>
           <p class="whitespace-pre-wrap">{goal.description}</p>
+          {Object.entries(goal.metrics).map(([name, value]) => (
+            <p key={name}>
+              {name}: {String(value ?? '—')}
+            </p>
+          ))}
           {goal.doneTest && (
             <p class="mt-1">
               <span class="font-medium">{t('schedules.doneTest')}: </span>
               {goal.doneTest}
             </p>
           )}
+          {goal.mandateRef && (
+            <p>
+              {mandate ? (
+                <a
+                  href={mandate}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="text-accent hover:underline"
+                >
+                  {goal.mandateRef}
+                </a>
+              ) : (
+                goal.mandateRef
+              )}
+            </p>
+          )}
+          {!!goal.nextSteps.length && (
+            <section>
+              <h4 class="font-medium">{t('goalDetails.nextSteps')}</h4>
+              <ul>
+                {goal.nextSteps.map((step, index) => (
+                  <li key={index}>{step}</li>
+                ))}
+              </ul>
+            </section>
+          )}
+          <section>
+            <h4 class="font-medium">{t('goalDetails.works')}</h4>
+            <p class="whitespace-pre-wrap">{goal.worksNote ?? t('goalDetails.noNote')}</p>
+          </section>
+          <GoalJournal
+            key={`${ownerSessionId}:${goalId}`}
+            ownerSessionId={ownerSessionId}
+            goalId={goalId}
+          />
         </>
       )}
     </div>

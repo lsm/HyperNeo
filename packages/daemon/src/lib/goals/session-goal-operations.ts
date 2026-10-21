@@ -134,6 +134,7 @@ const GoalSchema = z.object({
   metrics: GoalMetricsSchema,
   doneTest: z.string().nullable(),
   summary: z.string(),
+  worksNote: z.string().nullable(),
   progress: z.number(),
   nextSteps: z.array(z.string()),
   mandateRef: z.string().nullable(),

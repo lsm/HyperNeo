@@ -1,6 +1,17 @@
 import type { en } from './en.ts';
 
 export const zhHans: Record<keyof typeof en, string> = {
+  'goalDetails.failed': '无法读取目标详情',
+  'goalDetails.journal': '工作记录',
+  'goalDetails.worked': '有效做法',
+  'goalDetails.failedApproach': '无效做法',
+  'goalDetails.loading': '正在读取…',
+  'goalDetails.older': '更早记录',
+  'goalDetails.retry': '重试读取记录',
+  'goalDetails.nextSteps': '下一步',
+  'goalDetails.works': '有效经验',
+  'goalDetails.noNote': '暂无经验笔记',
+  'schedules.emptyJournal': '暂无工作记录',
   'goals.title': '目标',
   'goals.oneShot': '一次性',
   'goals.measurable': '可衡量',

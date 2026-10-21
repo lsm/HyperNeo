@@ -1,3 +1,4 @@
+import { GoalDefinition } from '../components/SessionSchedules.tsx';
 import type { GoalJournalEntry, SessionGoal } from '@hyperneo/shared/types/session-goal';
 import type { SessionScheduleListResult } from '@hyperneo/shared/types/session-schedule';
 import type { OperationName } from '@hyperneo/shared/types/operation-names';
@@ -21,6 +22,7 @@ async function read<T>(name: OperationName, input: unknown): Promise<T> {
 }
 function GoalList({ sessionId }: { sessionId: string }) {
   const [rows, setRows] = useState<GoalRow[]>([]);
+  const [selected, setSelected] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [version, setVersion] = useState(0);
@@ -104,7 +106,16 @@ function GoalList({ sessionId }: { sessionId: string }) {
           data-neo-goal={goal.id}
           class="space-y-2 rounded-lg border border-line p-3 text-sm"
         >
-          <h3 class="break-words font-medium">{goal.title}</h3>
+          <h3 class="break-words font-medium">
+            <button
+              type="button"
+              aria-expanded={selected === goal.id}
+              class="text-left text-accent hover:underline"
+              onClick={() => setSelected(selected === goal.id ? null : goal.id)}
+            >
+              {goal.title}
+            </button>
+          </h3>
           <p class="text-xs text-fg-muted">
             <span>{t(types[goal.type])}</span>
             {goal.status === 'paused' && (
@@ -151,6 +162,7 @@ function GoalList({ sessionId }: { sessionId: string }) {
           <p class="break-words text-xs text-fg-muted">
             {effect === null ? t('goals.noJournal') : effect}
           </p>
+          {selected === goal.id && <GoalDefinition ownerSessionId={sessionId} goalId={goal.id} />}
         </article>
       ))}
     </section>

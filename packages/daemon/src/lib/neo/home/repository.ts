@@ -20,7 +20,7 @@ import type { NeoRepository } from '../../../storage/repositories/neo-repository
 import { spawnProcess } from '../../runtime-spawn/index.ts';
 import { neoDerivedId } from '../derived-id.ts';
 import type { HomeConflict, HomeFailure } from './conflicts.ts';
-import type { HomeReadInput, HomeReadResult } from './read.ts';
+import { homeRemoteUrl, type HomeReadInput, type HomeReadResult } from './read.ts';
 import type { HomeSavePlan, HomeSaveResult } from './save.ts';
 
 export type HomeResult =
@@ -385,10 +385,14 @@ export class NeoHomeRepository {
   }
 
   read(input: HomeReadInput, wake?: object): Promise<HomeReadResult> {
-    return this.sequence(() => this.readDocument(input.path, wake));
+    return this.sequence(() => this.readDocument(input.path, wake, input.includeRemote));
   }
 
-  private async readDocument(path: string, wake?: object): Promise<HomeReadResult> {
+  private async readDocument(
+    path: string,
+    wake?: object,
+    includeRemote = false
+  ): Promise<HomeReadResult> {
     if (await this.hasSymbolicLink(path))
       return { ok: false, reason: 'invalid_path: symbolic link.' };
     const metadata = await lstat(join(this.root, '.git')).catch((error) => {
@@ -417,7 +421,19 @@ export class NeoHomeRepository {
     const content = bytes.toString('utf8');
     if (!Buffer.from(content, 'utf8').equals(bytes))
       return { ok: false, reason: 'invalid_content: home document is not UTF-8 text.' };
-    return { ok: true, path, content, sha256: createHash('sha256').update(bytes).digest('hex') };
+    return {
+      ok: true,
+      path,
+      content,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+      ...(includeRemote
+        ? {
+            remoteUrl: homeRemoteUrl(
+              (await this.git(['config', '--get', 'remote.origin.url'], true)).text
+            ),
+          }
+        : {}),
+    };
   }
 
   private async write(input: HomeSavePlan): Promise<HomeSaveResult> {
