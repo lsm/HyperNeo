@@ -29,7 +29,7 @@ export type NeoTodoState = 'todo' | 'doing' | 'blocked' | 'done' | 'failed' | 'r
 
 export type NeoTodoBlocker = 'check' | 'worker' | 'failure' | 'question';
 
-export interface NeoTodo {
+export interface NeoTodo extends ArtifactProjection {
   id: string;
   askId: string;
   position: number;
@@ -117,5 +117,3 @@ export interface NeoAskEntry {
   todos: NeoTodoEntry[];
   questions: NeoQuestionEntry[];
 }
-
-export type NeoTodoArtifactProjection = NeoTodo & ArtifactProjection;

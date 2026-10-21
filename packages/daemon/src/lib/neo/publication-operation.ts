@@ -7,6 +7,9 @@ import type {
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
+import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
+import { unregisteredArtifact } from '../artifacts/file-contracts.ts';
+import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import type { NeoAskOrigin } from './ask-origin.ts';
 import {
   NeoPublicationSchema,
@@ -60,6 +63,7 @@ interface NeoPublicationRuntime {
   inputTrigger(input: NeoAskOrigin): string | null;
   isDeliveredHumanInput(input: NeoAskOrigin): boolean;
   notify(): void;
+  artifact: ArtifactRefReader;
 }
 
 export function admitPublicationDraft(input: unknown): { value: Draft } | { reason: Rejection } {
@@ -141,6 +145,23 @@ export function requirePublicationLinks(
     : { value: proof };
 }
 
+export function requirePublicationArtifacts(
+  proof: Proof,
+  draft: Draft,
+  registered: readonly (ArtifactRef | null)[]
+): { value: Proof } | { reason: Rejection } {
+  const unknown = unregisteredArtifact(draft.artifacts ?? [], registered);
+  return unknown
+    ? {
+        reason: {
+          accepted: false,
+          reason: 'invalid_artifact_reference',
+          detail: `artifact "${unknown.artifactId}" is not one you can publish as given; pass the reference artifact.file.register or artifact.file.get returned`,
+        },
+      }
+    : { value: proof };
+}
+
 export function requirePublicationLifetime(
   proof: Proof,
   caller: OperationCaller,
@@ -202,6 +223,13 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     )
     .pipe(requirePublicationLinks, ['publication', 'links'], 'result:publication')
     .pipe(
+      (draft: Draft, caller: OperationCaller) =>
+        (draft.artifacts ?? []).map((ref) => runtime.artifact(ref.artifactId, caller)),
+      ['draft', 'caller'],
+      'registered'
+    )
+    .pipe(requirePublicationArtifacts, ['publication', 'draft', 'registered'], 'result:publication')
+    .pipe(
       (proof: Proof, caller: OperationCaller) =>
         requirePublicationLifetime(
           proof,
@@ -255,7 +283,7 @@ export function createNeoPublicationOperation(publish: ReturnType<typeof createN
   return defineOperation({
     name: 'neo.publication.publish',
     description:
-      'Deliver a message in this conversation. Use a new requestId per message and reuse it only when retrying that send. To answer a human input, copy its triggerId from the daemon human-input envelope, including messages arriving mid-turn. Choose the input this message answers; one publication does not answer every delivered input. The runtime validates this turn and derives publication identity, original request and producer. Scene references must exist and belong to the request. The answered field identifies the human message answered by this delivery and its publication/revision; null means no human message was resolved. It does not complete background work or require another post.',
+      'Deliver a message in this conversation. Use a new requestId per message and reuse it only when retrying that send. To answer a human input, copy its triggerId from the daemon human-input envelope, including messages arriving mid-turn. Choose the input this message answers; one publication does not answer every delivered input. The runtime validates this turn and derives publication identity, original request and producer. Scene references must exist and belong to the request. For a document or evidence file, pass the reference artifact.file.register returned in artifacts and say in one sentence what it is; do not paste the document. The human opens it in the app. The answered field identifies the human message answered by this delivery and its publication/revision; null means no human message was resolved. It does not complete background work or require another post.',
     policy: { safetyClass: 'mutate', roles: ['neo'] },
     inputSchema: Draft,
     resultSchema: NeoPublicationResultSchema,
