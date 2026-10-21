@@ -89,6 +89,8 @@ describe('the session door', () => {
       'system.build',
       'device.pair.create',
       'device.pair.reset_lockout',
+      'device.list',
+      'device.revoke',
     ]);
     for (const name of [...OPERATION_NAMES, 'system.health', 'unknown.operation']) {
       if (allowed.has(name)) continue;

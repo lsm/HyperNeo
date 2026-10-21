@@ -9,7 +9,9 @@ export const SESSION_CLI_USAGE = `Usage:
   hyperneo build                      Read daemon build and health through the owner-only session socket
   hyperneo pair [--kind human|relay|daemon] [--name <name>]
                                       Make a 10-minute pairing code; after the first device, it waits for Allow on a paired device
-  hyperneo pair --reset-lockout       Reopen pairing after too many bad codes`;
+  hyperneo pair --reset-lockout       Reopen pairing after too many bad codes
+  hyperneo devices                    List paired devices (never their credentials)
+  hyperneo devices revoke <id>        Revoke a paired device and close its connections`;
 
 export function resolveSender(env: Env): string | null {
   if (env.HYPERNEO_SESSION_ID) return env.HYPERNEO_SESSION_ID;
@@ -36,6 +38,9 @@ export function planSessionCommand(
   if (command === 'build' && !target && !rest.length)
     return { value: { name: 'system.build', input: {} } };
   if (command === 'pair') return planPairCommand(args.slice(1));
+  if (command === 'devices' && !target) return { value: { name: 'device.list', input: {} } };
+  if (command === 'devices' && target === 'revoke' && rest.length === 1 && rest[0])
+    return { value: { name: 'device.revoke', input: { deviceId: rest[0] } } };
   if (command === 'question' && target && !rest.length)
     return { value: { name: 'neo.question.get', input: { questionId: target } } };
   return { reason: SESSION_CLI_USAGE };
@@ -78,7 +83,7 @@ function post(socketPath: string, body: unknown): Promise<{ status: number; body
 }
 
 export async function runSessionCommand(args: string[], env: Env = process.env): Promise<number> {
-  const sender = resolveSender(env) ?? (args[0] === 'pair' ? 'cli' : null);
+  const sender = resolveSender(env) ?? (args[0] === 'pair' || args[0] === 'devices' ? 'cli' : null);
   if (!sender) {
     console.error(
       'hyperneo send: no sender. Run it inside a HyperNeo, Codex or Claude Code session (HYPERNEO_SESSION_ID, CODEX_THREAD_ID or CLAUDE_CODE_SESSION_ID).'
