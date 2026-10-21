@@ -1,6 +1,11 @@
 import { cleanup, render, waitFor } from '@testing-library/preact';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import MarkdownRenderer from '../MarkdownRenderer';
+
+const mermaidRun = vi.hoisted(() => vi.fn());
+vi.mock('mermaid', () => ({
+  default: { initialize: vi.fn(), parse: vi.fn(async () => true), run: mermaidRun },
+}));
 
 afterEach(cleanup);
 
@@ -79,5 +84,13 @@ describe('MarkdownRenderer artifact links', () => {
     const anchor = container.querySelector('a');
     expect(anchor?.getAttribute('href')).toBeNull();
     expect(anchor?.getAttribute('data-external-href')).toBe('https://example.com/spoof');
+  });
+
+  it('shows a Mermaid block as its source instead of running the diagram renderer', async () => {
+    const source = 'graph TD\n  A[Start] --> B[End]';
+    const container = await renderArtifact(`# Flow\n\n\`\`\`mermaid\n${source}\n\`\`\``);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(mermaidRun).not.toHaveBeenCalled();
+    expect(container.querySelector('pre code')?.textContent?.trim()).toBe(source);
   });
 });

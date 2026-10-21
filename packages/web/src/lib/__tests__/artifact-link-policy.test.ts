@@ -54,3 +54,18 @@ describe('decideArtifactImage', () => {
     expect(decideArtifactImage(src)).toEqual({ kind: 'refused' });
   });
 });
+
+describe('decideArtifactLink without URL.canParse', () => {
+  it('still validates links on engines that lack it', () => {
+    Object.defineProperty(URL, 'canParse', { value: undefined, configurable: true });
+    try {
+      expect(decideArtifactLink('https://example.com/docs')).toEqual({
+        kind: 'external',
+        url: 'https://example.com/docs',
+      });
+      expect(decideArtifactLink('notes.md')).toEqual({ kind: 'refused' });
+    } finally {
+      Reflect.deleteProperty(URL, 'canParse');
+    }
+  });
+});
