@@ -94,6 +94,15 @@ describe('artifact media previews and downloads', () => {
     expect(Buffer.concat(parts).equals(Buffer.from(data))).toBe(true);
     expect(request).toHaveBeenCalledTimes(3);
   });
+  it('verifies downloads when Web Crypto is unavailable on plain HTTP', async () => {
+    const { hub, metadata } = await fixture();
+    vi.stubGlobal('crypto', undefined);
+    try {
+      await downloadArtifact(hub, metadata, new AbortController().signal, async () => {});
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
   it('cancels between chunks without completing a file', async () => {
     const { hub, metadata, request } = await fixture('log', new Uint8Array(600000));
     const controller = new AbortController();
