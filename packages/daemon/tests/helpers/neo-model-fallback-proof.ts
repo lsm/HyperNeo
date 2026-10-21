@@ -312,6 +312,8 @@ export async function proveNeoModelFallback(fallbackProvider: 'anthropic' | 'glm
     ).toMatch(/24000|"effort":"high"/);
     evidence.settings = daemon.db.getGlobalSettings().neo?.preferences;
     expect(evidence.settings).toMatchObject(preference);
+    evidence.snapshot = (await call('neo.snapshot')).preferences;
+    expect(evidence.snapshot).toMatchObject(preference);
   } finally {
     if (process.env.VERIFY_EVIDENCE_DIR) {
       await mkdir(process.env.VERIFY_EVIDENCE_DIR, { recursive: true });
