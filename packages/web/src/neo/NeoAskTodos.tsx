@@ -20,6 +20,7 @@ import {
   NeoSessionMark,
 } from './NeoCardParts.tsx';
 import { neoSessionKind } from './work-driver.ts';
+import { NEO_DONE_SHOWN, type NeoDoneTodosPage, neoDonePageMerge } from './neo-asks.ts';
 import { NeoIcon } from './NeoIcon.tsx';
 import { messageTime } from './NeoMessage.tsx';
 import { t } from '../lib/i18n/index.ts';
@@ -382,6 +383,7 @@ export function NeoAskTodos({
   onReply,
   onOpen,
   onSettle,
+  onLoadDone,
 }: {
   entry: NeoAskEntry;
   disabled?: boolean;
@@ -389,8 +391,14 @@ export function NeoAskTodos({
   onReply?: (question: NeoQuestionEntry) => void;
   onOpen?: (link: string, title: string) => void;
   onSettle?: (status: 'done' | 'dropped') => void;
+  onLoadDone?: (askId: string, offset: number) => Promise<NeoDoneTodosPage>;
 }) {
   const [open, setOpen] = useState(false);
+  const [doneOpen, setDoneOpen] = useState(false);
+  const [paged, setPaged] = useState<NeoTodoEntry[]>([]);
+  const [stalled, setStalled] = useState(false);
+  const [paging, setPaging] = useState(false);
+  const [doneError, setDoneError] = useState<string | null>(null);
   const { ask, todos } = entry;
   const { expanded, setExpanded } = useExpandedTodos(ask.sessionId, ask.id);
   const asked = entry.questions.filter((question) => question.state === 'open');
@@ -399,7 +407,32 @@ export function NeoAskTodos({
   const inQuestion = new Set(
     asked.flatMap((question) => (question.kind === 'start' ? (question.startTodos ?? []) : []))
   );
-  const live = todos.filter((todo) => todo.state !== 'removed');
+  const sent = todos.filter((todo) => todo.state === 'done');
+  const knownDone = [
+    ...sent,
+    ...paged.filter((todo) => !todos.some((other) => other.id === todo.id)),
+  ];
+  const shownDone = doneOpen || entry.doneCount <= NEO_DONE_SHOWN ? knownDone : [];
+  const hiddenDone = entry.doneCount - shownDone.length;
+  const live = [
+    ...todos.filter((todo) => todo.state !== 'removed' && todo.state !== 'done'),
+    ...shownDone,
+  ];
+  const showMoreDone = () => {
+    setDoneOpen(true);
+    if (knownDone.length >= entry.doneCount || !onLoadDone || paging) return;
+    setPaging(true);
+    setDoneError(null);
+    void onLoadDone(ask.id, stalled ? 0 : knownDone.length)
+      .then((page) => {
+        if (!page.ok) return setDoneError(t('ask.moreDoneRefused', { reason: page.reason }));
+        const merged = neoDonePageMerge(paged, knownDone, page.todos, stalled);
+        setPaged(merged.paged);
+        setStalled(merged.stalled);
+      })
+      .catch(() => setDoneError(t('ask.moreDoneFailed')))
+      .finally(() => setPaging(false));
+  };
   const listed = live.filter((todo) => !inQuestion.has(todo.id));
   const allExpanded = listed.every((todo) => expanded.includes(todo.id));
   const removed = todos.filter((todo) => todo.state === 'removed' && !inQuestion.has(todo.id));
@@ -477,6 +510,21 @@ export function NeoAskTodos({
             />
           ))}
         </div>
+      )}
+      {hiddenDone > 0 && (
+        <button
+          type="button"
+          class="mt-2 text-xs font-medium text-fg-muted hover:text-fg-soft disabled:opacity-60"
+          disabled={paging}
+          onClick={showMoreDone}
+        >
+          {t('ask.moreDone', { count: hiddenDone })}
+        </button>
+      )}
+      {doneError && (
+        <p role="alert" class="mt-1 text-xs text-danger">
+          {doneError}
+        </p>
       )}
       {open && hasDetails && (
         <div data-ask-details class="mt-3 space-y-3 text-sm text-fg-muted">
