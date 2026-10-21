@@ -37,3 +37,9 @@ export const withArtifactDescriptor: SafeFsBackendModule['withArtifactDescriptor
   const backend = await getSafeFsBackend();
   return backend.withArtifactDescriptor(...args);
 };
+
+export const withStoredArtifactDescriptor: SafeFsBackendModule['withStoredArtifactDescriptor'] =
+  async (...args) => {
+    const backend = await getSafeFsBackend();
+    return backend.withStoredArtifactDescriptor(...args);
+  };
