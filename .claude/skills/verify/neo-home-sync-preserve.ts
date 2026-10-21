@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { spawnProcess } from '../../../packages/daemon/src/lib/runtime-spawn/index.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 
 const [run, scenario, expectation] = process.argv.slice(2);
 assert(run?.startsWith('/private/tmp/'));
-assert(['conflict', 'fast-forward', 'ignored-race', 'untracked-race', 'healthy'].includes(scenario));
+assert(['conflict', 'fast-forward', 'info-exclude', 'directory', 'conflict-race', 'ignored-race', 'untracked-race', 'publish-ignored-race', 'publish-untracked-race', 'publish-tracked-race', 'healthy'].includes(scenario));
 assert(['reproduce', 'verify'].includes(expectation));
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -15,6 +15,7 @@ assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert.equal(process.env.GIT_CONFIG_GLOBAL, join(run, 'gitconfig'));
 await mkdir(join(run, 'evidence'), { recursive: true });
 await writeFile(join(run, 'gitconfig'), '[user]\n name = Synthetic Neo\n email = test@example.invalid\n[commit]\n gpgsign = false\n');
+const ready = join(run, 'fetch-ready'), release = join(run, 'fetch-release');
 async function git(cwd: string, ...args: string[]) {
   const child = spawnProcess(['git', '-c', 'core.hooksPath=/dev/null', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' });
   const [text, error, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
@@ -26,13 +27,12 @@ await writeFile(join(peer, '.gitignore'), '.coordinators/\nignored/\n');
 await writeFile(join(peer, 'direction.md'), 'Initial\n');
 await git(peer, 'add', '.'); await git(peer, 'commit', '-m', 'Initial');
 await git(run, 'clone', '--bare', peer, remote); await git(peer, 'remote', 'add', 'origin', remote);
-const privatePath = scenario === 'untracked-race' ? 'untracked.md' : 'ignored/report.md';
+const privatePath = scenario.includes('untracked') ? 'untracked.md' : scenario === 'publish-tracked-race' ? 'direction.md' : scenario === 'info-exclude' ? 'private-note.txt' : 'ignored/report.md';
 const bytes = Buffer.concat([Buffer.from('Synthetic human result\0'), Buffer.from(Array.from({ length: 8192 }, (_, n) => n % 256))]);
 const hash = (value: Buffer | null) => value && createHash('sha256').update(value).digest('hex');
 let app: Awaited<ReturnType<typeof import('../../../packages/daemon/src/app.ts').createDaemonApp>> | undefined;
 let transport: WebSocketClientTransport | undefined;
 const evidence: Record<string, unknown> = { scenario, expectation, root, privatePath, expectedSha256: hash(bytes) };
-const release = join(run, 'fetch-release');
 try {
   const { createDaemonApp } = await import('../../../packages/daemon/src/app.ts');
   const { getConfig } = await import('../../../packages/daemon/src/config.ts');
@@ -44,7 +44,8 @@ try {
   const rpc = (name: string, input: unknown) => hub.request<Record<string, unknown>>('operation.invoke', { name, input });
   assert.equal((await rpc('neo.home.init', { remoteUrl: remote })).ok, true);
   await rpc('neo.open', {});
-  if (scenario === 'conflict') {
+  if (scenario === 'info-exclude') await writeFile(join(root, '.git/info/exclude'), 'private-note.txt\n');
+  if (scenario.startsWith('conflict')) {
     await writeFile(join(root, 'direction.md'), 'Human local choice\n');
     await git(root, 'add', 'direction.md'); await git(root, 'commit', '-m', 'Human local choice');
   }
@@ -52,22 +53,24 @@ try {
     await mkdir(join(root, 'ignored'), { recursive: true });
     await writeFile(join(root, privatePath), bytes);
   } else {
-    await mkdir(join(peer, 'ignored'), { recursive: true });
-    await writeFile(join(peer, privatePath), 'Remote colliding content\n');
-    await git(peer, 'add', '-f', '--', privatePath);
+    const remotePath = scenario === 'directory' ? 'ignored' : privatePath;
+    await mkdir(dirname(join(peer, remotePath)), { recursive: true });
+    await writeFile(join(peer, remotePath), 'Remote colliding content\n');
+    await git(peer, 'add', '-f', '--', remotePath);
   }
   await writeFile(join(peer, 'direction.md'), 'Remote direction\n');
   await git(peer, 'add', 'direction.md'); await git(peer, 'commit', '-m', 'Remote update'); await git(peer, 'push', 'origin', 'main');
   const remoteHead = await git(peer, 'rev-parse', 'HEAD');
   const localHead = await git(root, 'rev-parse', 'HEAD');
   const localReflog = await git(root, 'reflog', 'show', '--format=%H %gs', 'HEAD');
-  const ready = join(run, 'fetch-ready');
-  if (scenario.endsWith('-race')) {
+  if (scenario.startsWith('publish-')) {
+    await git(root, 'config', 'merge.autoStash', 'true');
+  } else if (scenario.endsWith('-race')) {
     const upload = join(run, 'delayed-upload');
     await writeFile(upload, `#!/bin/sh\n: > '${ready}'\nwhile [ ! -f '${release}' ]; do sleep 0.02; done\nexec /usr/bin/git-upload-pack "$@"\n`, { mode: 0o755 });
     await git(root, 'config', 'remote.origin.uploadpack', upload);
   } else if (scenario !== 'healthy') {
-    await mkdir(join(root, 'ignored'), { recursive: true });
+    await mkdir(dirname(join(root, privatePath)), { recursive: true });
     await writeFile(join(root, privatePath), bytes);
   }
   const pending = rpc('neo.home.read', { path: 'direction.md' });
@@ -77,7 +80,7 @@ try {
       await new Promise((done) => setTimeout(done, 10));
     }
     await readFile(ready);
-    await mkdir(join(root, 'ignored'), { recursive: true });
+    await mkdir(dirname(join(root, privatePath)), { recursive: true });
     await writeFile(join(root, privatePath), bytes);
     await writeFile(release, 'go');
   }
