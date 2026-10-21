@@ -121,11 +121,27 @@ test('follow eligibility and merged PR changes are seen on the next sweep', () =
     ids.flatMap((i) =>
       ['a', 'b'].map((s) => ({ workId: `todo-${i}`, topic: `synthetic/${i}/${s}` }))
     );
-  expect(service.endUnfollowedCardTopics(4)).toEqual(topics([2, 3, 5, 6]));
+  const probe = readProbe();
+  try {
+    expect(service.endUnfollowedCardTopics(4)).toEqual(topics([2, 3, 5, 6]));
+    expect(probe.count()).toBeLessThanOrEqual(3);
+  } finally {
+    probe.restore();
+  }
   expect(service.cardEvents.listActive()).toEqual(topics([0, 1, 4, 7]));
   sql.exec("UPDATE neo_asks SET status = 'dropped' WHERE id = 'ask-0'");
   sql.exec("UPDATE pack_coding_todo_prs SET prs_json = '[]' WHERE todo_id = 'todo-1'");
   sql.exec("UPDATE neo_todos SET state = 'removed' WHERE id = 'todo-7'");
   expect(service.endUnfollowedCardTopics(5)).toEqual(topics([0, 1, 7]));
   expect(service.cardEvents.listActive()).toEqual(topics([4]));
+});
+
+test('an empty sweep does not read todo, ask or PR eligibility', () => {
+  const probe = readProbe();
+  try {
+    expect(service.endUnfollowedCardTopics(4)).toEqual([]);
+    expect(probe.count()).toBe(0);
+  } finally {
+    probe.restore();
+  }
 });

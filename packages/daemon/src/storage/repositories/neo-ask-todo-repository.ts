@@ -222,6 +222,20 @@ export class NeoAskTodoRepository {
     return row ? toTodo(row) : null;
   }
 
+  getTodos(ids: readonly string[]): NeoTodo[] {
+    return (
+      this.db
+        .prepare(`${TODO_SELECT} WHERE id IN (SELECT value FROM json_each(?))`)
+        .all(JSON.stringify(ids)) as TodoRow[]
+    ).map(toTodo);
+  }
+
+  getAsks(ids: readonly string[]): NeoAsk[] {
+    return this.db
+      .prepare(`${ASK_SELECT} WHERE id IN (SELECT value FROM json_each(?))`)
+      .all(JSON.stringify(ids)) as NeoAsk[];
+  }
+
   listTodos(askId: string): NeoTodo[] {
     return (
       this.db
