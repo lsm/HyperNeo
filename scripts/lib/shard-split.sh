@@ -58,9 +58,9 @@
 # Portability
 # -----------
 # Written for bash 3.2 (macOS default /bin/bash): no associative arrays, no
-# globstar. The hash uses POSIX `cksum`, whose CRC algorithm is specified by
-# POSIX and identical across BSD (macOS) and GNU (Linux) — so the same path
-# hashes to the same integer everywhere. The packer is an awk program (awk
+# globstar. A single Node process batches raw path bytes using the POSIX
+# cksum CRC and length folding; self-tests compare with the system cksum.
+# The same path hashes identically on macOS and Linux. The packer uses awk (awk
 # associative arrays are fine; the bash 3.2 ban is on BASH associative arrays).
 #
 # Dependencies: bash 3.2+, node, cksum (POSIX, self-test only), awk, sort, cut, wc.
