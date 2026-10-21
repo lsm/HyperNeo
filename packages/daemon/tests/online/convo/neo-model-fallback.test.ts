@@ -51,7 +51,7 @@ test('Neo completes a limited primary turn on its fallback thinking level and re
         output: body.output_config ?? null,
         unavailable,
       });
-    if (active && body.model === primary && unavailable) {
+    if (active && String(body.model).includes(primary) && unavailable) {
       res.statusCode = 402;
       res.setHeader('content-type', 'application/json');
       res.end(
@@ -219,8 +219,8 @@ test('Neo completes a limited primary turn on its fallback thinking level and re
     expect((page.items as { shortText: string }[])?.[0]?.shortText, JSON.stringify(evidence)).toBe(
       'Garden reply 1'
     );
-    expect(requests.some((r) => r.model === primary && r.unavailable)).toBe(true);
-    const selected = requests.find((r) => r.model === fallback);
+    expect(requests.some((r) => String(r.model).includes(primary) && r.unavailable)).toBe(true);
+    const selected = requests.find((r) => String(r.model).includes(fallback));
     expect(selected, JSON.stringify(requests)).toBeDefined();
     expect(JSON.stringify(selected)).toMatch(/8000|"effort":"low"/);
     const idle = Date.now() + 15000;
@@ -248,7 +248,9 @@ test('Neo completes a limited primary turn on its fallback thinking level and re
     expect(
       (page.items as { shortText: string }[]).some((item) => item.shortText === 'Garden reply 2')
     ).toBe(true);
-    expect(requests.filter((r) => r.sequence === 2).every((r) => r.model === primary)).toBe(true);
+    expect(
+      requests.filter((r) => r.sequence === 2).every((r) => String(r.model).includes(primary))
+    ).toBe(true);
     evidence.settings = daemon.db.getGlobalSettings().neo?.preferences;
     expect(evidence.settings).toMatchObject(preference);
   } finally {
