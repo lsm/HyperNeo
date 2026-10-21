@@ -10,4 +10,5 @@ cd "$REPO/packages/daemon"
 env -i HOME="$RUN/home" TMPDIR="$RUN/tmp" PATH="$RUN/bin:$PATH" TERM=dumb \
   NODE_ENV=test HYPERNEO_USE_DEV_PROXY=0 VERIFY_EVIDENCE_DIR="$RUN/evidence" \
   node_modules/.bin/vitest run --config vitest.online.config.ts \
-  tests/online/convo/neo-model-fallback.test.ts
+  tests/online/convo/neo-model-fallback.test.ts \
+  tests/online/convo/neo-model-cross-provider-fallback.test.ts

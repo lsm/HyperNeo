@@ -17,6 +17,7 @@ export class RetryPromptIdentity {
   }
 
   incoming(message: SDKMessage): SDKMessage {
+    if (!this.original.size) return message;
     const refs = message as SDKMessage & {
       user_message_uuid?: string;
       user_message_uuids?: string[];

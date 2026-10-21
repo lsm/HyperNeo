@@ -104,6 +104,7 @@ describe('QueryOptionsBuilder', () => {
         updateSession: updateSessionSpy,
         getSDKMessages: getSDKMessagesSpy,
         getSession: getSessionSpy,
+        getGlobalSettings: () => ({ settingSources: [] }),
       } as QueryOptionsBuilderContext['db'],
     };
 

@@ -43,7 +43,13 @@ export async function proveNeoModelFallback(fallbackProvider: 'anthropic' | 'glm
       tool.name.endsWith('hyperneo-operations__invoke')
     );
     const active = !!invoke && JSON.stringify(body.messages).includes('fictional fallback garden');
+    const config = daemon?.sessionManager.getSessionFromDB(String(evidence.sessionId))?.config;
     requests.push({
+      config: config && {
+        model: config.model,
+        provider: config.provider,
+        thinkingLevel: config.thinkingLevel,
+      },
       active,
       path: req.url,
       sequence,
@@ -157,11 +163,17 @@ export async function proveNeoModelFallback(fallbackProvider: 'anthropic' | 'glm
   let daemon: Awaited<ReturnType<typeof import('../../src/app.ts').createDaemonApp>> | undefined;
   const hub = new MessageHub({ defaultSessionId: 'global' });
   let transport: WebSocketClientTransport | undefined;
+  let restoreGlm: (() => void) | undefined;
   try {
     const { getProviderRegistry } = await import('../../src/lib/providers/factory.ts');
     const { GlmProvider } = await import('../../src/lib/providers/glm-provider.ts');
     if (fallbackProvider === 'glm') {
       const registry = getProviderRegistry();
+      const previous = registry.get('glm');
+      restoreGlm = () => {
+        registry.unregister('glm');
+        if (previous) registry.register(previous);
+      };
       registry.unregister('glm');
       registry.register(
         new GlmProvider(process.env, ((url, init) =>
@@ -198,6 +210,7 @@ export async function proveNeoModelFallback(fallbackProvider: 'anthropic' | 'glm
       hub.request<Record<string, unknown>>('operation.invoke', { name, input });
     const opened = await call('neo.open');
     const sessionId = String(opened.sessionId);
+    evidence.sessionId = sessionId;
     const catalog = await hub.request<{ models: { id: string; provider: string }[] }>(
       'models.list',
       { forceRefresh: true }
@@ -309,6 +322,7 @@ export async function proveNeoModelFallback(fallbackProvider: 'anthropic' | 'glm
     }
     await transport?.close();
     await daemon?.cleanup();
+    restoreGlm?.();
     await new Promise<void>((resolve) => fixture.close(() => resolve()));
     for (const [key, value] of prior) {
       if (value === undefined) delete process.env[key];
