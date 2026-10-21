@@ -63,3 +63,13 @@ remain independent. Cleanup drains in-flight transactions before closing remaini
 runtimes. Focused tests also hold shutdown while daemon cleanup starts, then verify
 cleanup waits for the owned process. This proves the synthetic race at the public
 operation door, without real sessions or GUI automation.
+
+Stop first refreshes the owned snapshot inside its session transaction. Already
+done, failed or stopped work returns `stopped: false`, without sending an abort or
+changing receipt evidence. The default proof releases a late completion after the
+start snapshot, then calls stop before another status refresh; it must preserve
+the full late reply. It also stops an already-completed and already-stopped ref,
+with only the original active task receiving abort. Add `stop-terminal` as the
+final helper argument to isolate the original terminal-stop reproduction.
+Focused tests preserve done/failed results through both aborted-idle and ACK-only
+fixtures, and repeat the no-op after restarting the adapter.

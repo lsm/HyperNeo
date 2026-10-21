@@ -194,15 +194,15 @@ export function createCopilotAdapter(
   const stop = (superpipe({})('copilot-stop') as PipelineAPI)
     .input(['ref'])
     .pipe(lookup, 'ref', 'result:stopped')
+    .pipe(refresh, 'stopped', 'stopped')
     .pipe(
       async (record: Record): Promise<W.Result<{ stopped: boolean }>> => {
+        if (['done', 'failed', 'stopped'].includes(record.snapshot.status))
+          return { ok: true, value: { stopped: false } };
         if (closed) return unavailable();
         const id = record.work.ref.id;
         const owned = live.get(id);
-        if (!owned)
-          return record.snapshot.status === 'stopped'
-            ? { ok: true, value: { stopped: true } }
-            : unavailable();
+        if (!owned) return unavailable();
         try {
           await owned.abort();
           const until = Date.now() + (deps.timeoutMs ?? 2000);
