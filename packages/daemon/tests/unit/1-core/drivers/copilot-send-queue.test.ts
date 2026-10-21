@@ -140,6 +140,37 @@ describe('Copilot owned input delivery', () => {
     expect(calls.filter((c) => c.method === 'session.send')).toHaveLength(2);
   });
 
+  test('legacy snapshot-only status works before any resume or follow-up', async () => {
+    const f = fixture();
+    const completed = await f.start('settled');
+    const active = await f.start('hold');
+    const before = await settled(f, completed);
+    rmSync(join(f.run, 'owned/receipts'), { recursive: true });
+    expect(await f.adapter.status!(completed.ref)).toEqual(before);
+    expect(await f.adapter.status!(completed.ref, undefined, completed.receipt)).toEqual(before);
+    expect(await f.adapter.status!(active.ref)).toMatchObject({
+      ok: true,
+      value: {
+        status: 'running',
+        inputEvidence: { state: 'observed', replyAvailability: 'incomplete' },
+      },
+    });
+    expect(await f.adapter.status!(active.ref, undefined, active.receipt)).toMatchObject({
+      ok: true,
+      value: { status: 'running' },
+    });
+    await f.restart();
+    expect(await f.adapter.status!(completed.ref)).toEqual(before);
+    expect(await f.adapter.status!(completed.ref, undefined, completed.receipt)).toEqual(before);
+    expect(await f.adapter.status!(active.ref, undefined, active.receipt)).toMatchObject({
+      ok: false,
+      reason: 'unreachable',
+    });
+    expect(existsSync(join(f.run, 'owned/receipts'))).toBe(false);
+    expect(f.calls().filter((c) => c.method === 'session.resume')).toHaveLength(0);
+    expect(f.calls().filter((c) => c.method === 'session.send')).toHaveLength(2);
+  });
+
   test('busy send and explicit queue remain pending, then receive only their own full reports', async () => {
     const f = fixture();
     const work = await f.start('serial:first');

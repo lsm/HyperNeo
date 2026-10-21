@@ -181,6 +181,24 @@ try {
       await restart(); assert.equal((await done(withReceipt(work, completed.receipt))).lastReply, 'REPLY_2');
     } finally { closeSync(completeFd); closeSync(pendingFd); }
   }
+  if (mode === 'legacy-read' || mode === 'all') {
+    const completed = await start('settled'); const active = await start('hold');
+    const before = await done(completed);
+    rmSync(join(run, 'data/copilot-workers/receipts'), { recursive: true });
+    const generic = await rpc('work.status', { ref: completed.ref }) as Result<WorkDetail>;
+    assert(generic.ok); assert.deepEqual(generic.value, before);
+    assert.deepEqual(await status(completed), before);
+    const activeGeneric = await rpc('work.status', { ref: active.ref }) as Result<WorkDetail>;
+    assert(activeGeneric.ok); assert.equal(activeGeneric.value.status, 'running');
+    assert.equal((await status(active)).status, 'running');
+    await restart();
+    const after = await rpc('work.status', { ref: completed.ref }) as Result<WorkDetail>;
+    assert(after.ok); assert.deepEqual(after.value, before); assert.deepEqual(await status(completed), before);
+    const orphan = await rpc('work.status', { ref: active.ref, receipt: active.receipt }) as { ok: boolean; reason: string };
+    assert.equal(orphan.ok, false); assert.equal(orphan.reason, 'unreachable');
+    assert(!existsSync(join(run, 'data/copilot-workers/receipts')));
+    assert(!calls().some(call => call.method === 'session.resume' && call.params.sessionId === completed.ref.id));
+  }
   const catalog = await rpc('work.adapters', {}) as { value: { id: string; capabilities: string[] }[] };
   assert.deepEqual(catalog.value.find(adapter => adapter.id === 'copilot-cli')?.capabilities, ['find', 'start', 'send', 'queue', 'status', 'stop']);
   ws!.close(); await app!.cleanup(); app = undefined;
