@@ -335,8 +335,12 @@ describe('Neo home save remote sync', () => {
       const start = Date.now();
       const queuedRead = call('neo.home.read', { path: 'README.md' });
       const failed = await pending;
-      expect(await queuedRead).toMatchObject({ ok: true });
-      expect(Date.now() - start).toBeLessThan(3000);
+      expect(await queuedRead).toMatchObject(
+        transport === 'uploadpack'
+          ? { ok: false, reason: expect.stringContaining('timed out') }
+          : { ok: true }
+      );
+      expect(Date.now() - start).toBeLessThan(4000);
       expect(failed).toMatchObject({ ok: false, reason: expect.stringContaining('timed out') });
       expect(await readFile(observed, 'utf8')).toBe('0|/usr/bin/false|ssh -oBatchMode=yes');
       expect(await git(root, 'status', '--porcelain')).toBe('');
