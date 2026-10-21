@@ -1,3 +1,4 @@
+vi.mock('../NeoGoals.tsx', () => ({ NeoGoals: () => null }));
 import { readFileSync } from 'node:fs';
 import { URL as NodeURL } from 'node:url';
 import { signal } from '@preact/signals';
