@@ -37,7 +37,15 @@ const git = async (...args: string[]) => {
 const call = async (input: unknown, caller = owner, name = 'neo.home.github') => {
   const result = await invokeOperation(
     createOperationRegistry([
-      createNeoHomeGithubOperation({ db, todos, defaultSessionId: () => owner.sessionId! }, home),
+      createNeoHomeGithubOperation(
+        {
+          db,
+          repo: new NeoRepository(db.getDatabase()),
+          todos,
+          defaultSessionId: () => owner.sessionId!,
+        },
+        home
+      ),
       ...createNeoQuestionOperations(
         todos,
         async () => {},
@@ -217,11 +225,23 @@ describe('Neo private GitHub home proposal', () => {
     });
     expect((await log()).match(/repo create/g)).toHaveLength(1);
   });
-  test('does not replace an existing remote or publish dirty files', async () => {
+  test.each(['existing origin', 'dirty file'])('refuses %s before creation', async (state) => {
     const proposed = await call({ askId: 'ask' });
     await answer(proposed.questionId);
-    await git('remote', 'add', 'origin', join(fixture, 'remote.git'));
+    if (state === 'existing origin')
+      await git('remote', 'add', 'origin', join(fixture, 'remote.git'));
+    else await writeFile(join(root, 'human.md'), 'Preserve human draft.');
     expect(await call({ questionId: proposed.questionId })).toMatchObject({ ok: false });
+    expect(await log()).not.toContain('repo create');
+  });
+  test('concurrent proposals show only one question and reject replacement repository fields', async () => {
+    const results = await Promise.all([call({ askId: 'ask' }), call({ askId: 'ask' })]);
+    expect(results[0]).toEqual(results[1]);
+    expect(todos.listQuestions('ask')).toHaveLength(1);
+    await answer(results[0].questionId);
+    await expect(
+      call({ questionId: results[0].questionId, repository: 'other/public-repo' })
+    ).rejects.toThrow();
     expect(await log()).not.toContain('repo create');
   });
   test('rejects non-root callers and foreign/closed asks before probing GitHub', async () => {
