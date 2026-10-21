@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import type { MessageHub, ModelInfo } from '@hyperneo/shared';
+import type { MessageHub, ModelInfo, Session } from '@hyperneo/shared';
 import { setModelsCache } from '../../../../src/lib/model-service.ts';
 import {
   clampNeoThinking,
@@ -141,6 +141,7 @@ describe('neo.preferences.set', () => {
   let updated: unknown[];
   let created: unknown[];
   let recovering: boolean;
+  let switchFailure: 'refused' | 'throws' | 'pending' | undefined;
 
   beforeEach(async () => {
     db = await createTestDb();
@@ -154,6 +155,7 @@ describe('neo.preferences.set', () => {
     updated = [];
     created = [];
     recovering = false;
+    switchFailure = undefined;
     const sessions = {
       getSessionForControl: async (sessionId: string) => ({
         isLimitRecoveryPending: () => false,
@@ -162,12 +164,29 @@ describe('neo.preferences.set', () => {
         }),
         requestModelSwitch: async (model: string, provider: string) => {
           switched.push([sessionId, model, provider]);
+          if (switchFailure === 'pending')
+            return { success: true, model, pending: { model, provider, requestedAt: 1 } };
+          if (switchFailure === 'throws') throw new Error('Synthetic unavailable primary');
+          if (switchFailure === 'refused')
+            return {
+              success: false,
+              model: db.getSession(sessionId)?.config.model,
+              error: 'Synthetic unavailable primary',
+            };
+          db.updateSession(sessionId, {
+            config: {
+              ...db.getSession(sessionId)!.config,
+              model,
+              provider: provider as Session['config']['provider'],
+            },
+          });
           return { success: true, model };
         },
         getSessionData: () => db.getSession(sessionId),
       }),
-      updateSession: async (sessionId: string, updates: unknown) => {
+      updateSession: async (sessionId: string, updates: Partial<Session>) => {
         updated.push([sessionId, updates]);
+        db.updateSession(sessionId, updates);
       },
       createSession: async (params: unknown) => {
         created.push(params);
@@ -295,6 +314,53 @@ describe('neo.preferences.set', () => {
       }),
     ]);
   });
+
+  test.each(['refused', 'throws', 'pending'] as const)(
+    'preserves the fallback model/thinking pair when primary restoration %s',
+    async (failure) => {
+      const fallback = {
+        model: 'glm-5',
+        provider: 'glm' as const,
+        thinkingLevel: 'think8k' as const,
+      };
+      db.updateSession('neo:root', {
+        config: { ...db.getSession('neo:root')!.config, ...fallback },
+      });
+      switchFailure = failure;
+      await service.saveModelPreference({
+        model: 'claude-opus',
+        provider: 'anthropic',
+        thinkingLevel: 'think24k',
+      });
+      expect(switched).toEqual([['neo:root', 'claude-opus', 'anthropic']]);
+      expect(db.getSession('neo:root')?.config).toMatchObject(fallback);
+      expect(updated).toHaveLength(2);
+      expect(db.getGlobalSettings().neo?.preferences).toMatchObject({
+        model: 'claude-opus',
+        thinkingLevel: 'think24k',
+      });
+      if (failure === 'pending') {
+        switchFailure = 'refused';
+        await service.saveModelPreference({
+          model: 'claude-opus',
+          provider: 'anthropic',
+          thinkingLevel: 'think24k',
+        });
+        expect(db.getSession('neo:root')?.config).toMatchObject(fallback);
+        switchFailure = undefined;
+        await service.saveModelPreference({
+          model: 'claude-opus',
+          provider: 'anthropic',
+          thinkingLevel: 'think24k',
+        });
+        expect(db.getSession('neo:root')?.config).toMatchObject({
+          model: 'claude-opus',
+          provider: 'anthropic',
+          thinkingLevel: 'think24k',
+        });
+      }
+    }
+  );
 
   test('does not realign a fallback while its retried input is active, then realigns after recovery', async () => {
     recovering = true;
