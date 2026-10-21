@@ -7,7 +7,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import type { Result, WorkStarted } from '../../../packages/daemon/src/lib/drivers/types.ts';
 
-const [portText, runText] = process.argv.slice(2);
+const [portText, runText, mode = 'all'] = process.argv.slice(2);
 assert(runText);
 const run = resolve(runText);
 const port = Number(portText);
@@ -57,6 +57,38 @@ const calls = () => readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').tri
 async function restart() { ws?.close(); await app!.cleanup(); app = undefined; await connect(); }
 try {
   await connect();
+  if (mode === 'search') {
+    writeFileSync(join(run, 'home/copilot-list.json'), JSON.stringify([
+      ...Array.from({ length: 25 }, (_, n) => ({ sessionId: `new-${n}`, cwd: '/synthetic/copilot-project', title: `New item ${n}`, updatedAt: new Date().toISOString() })),
+      { sessionId: 'old-match', cwd: '/synthetic/copilot-project', title: 'Rare target', updatedAt: '2026-01-01T00:00:00Z' },
+    ]));
+    const found = await rpc('work.find', { adapters: ['copilot-cli'], text: 'Rare target', localOnly: true }) as { places: { work: { ref: { id: string } }[] }[] };
+    assert.deepEqual(found.places.flatMap(p => p.work).map(w => w.ref.id), ['old-match']);
+  } else if (mode === 'peek') {
+    const work = await start('hold');
+    const before = calls();
+    const record = join(run, 'data/copilot-workers', `${work.ref.id}.json`);
+    const stored = readFileSync(record);
+    writeFileSync(join(run, 'workspace/block-ping'), 'withhold ping reply');
+    const found = await rpc('work.find', { adapters: ['copilot-cli'], localOnly: true }) as { places: { work: { ref: { id: string }; status: string }[] }[] };
+    assert.equal(found.places.flatMap(p => p.work).find(w => w.ref.id === work.ref.id)?.status, 'running');
+    assert.equal(calls().filter(c => c.method === 'ping').length, before.filter(c => c.method === 'ping').length);
+    assert(!calls().some(c => c.method === 'runtime.shutdown'));
+    process.kill(before[0].pid, 0);
+    assert.deepEqual(readFileSync(record), stored);
+    renameSync(join(run, 'workspace/block-ping'), join(run, 'workspace/block-ping.released'));
+    const sent = await rpc('work.send', { ref: work.ref, message: 'finish' }) as Result<unknown>; assert(sent.ok);
+    const status = await rpc('work.status', { ref: work.ref, receipt: work.receipt }) as Result<{ status: string; lastReply?: string }>;
+    assert(status.ok && status.value.status === 'done' && status.value.lastReply === 'FIRST_REPLY');
+  } else if (mode === 'external-failure') {
+    const work = await start('history');
+    await restart();
+    writeFileSync(join(run, 'home/copilot-list-failure'), 'fail');
+    const found = await rpc('work.find', { adapters: ['copilot-cli'], localOnly: true }) as { places: { work: { ref: { id: string }; status: string; watchHint?: string }[] }[] };
+    const owned = found.places.flatMap(p => p.work).find(w => w.ref.id === work.ref.id);
+    assert(owned && owned.status === 'done' && owned.watchHint?.includes('External Copilot discovery unavailable'));
+    assert(!calls().some(c => c.method === 'session.resume'));
+  } else {
   const work = await start('history');
   const blocked = await start('permission');
   const recordFile = join(run, 'data/copilot-workers', `${work.ref.id}.json`);
@@ -108,7 +140,8 @@ try {
   const acpCalls = readFileSync(join(run, 'home/evidence/calls.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line).method);
   assert(acpCalls.every(method => ['initialize', 'session/list'].includes(method)));
   observations.push({ acpCalls });
-  console.log(`PASS: owned Copilot work.read/find through isolated daemon; evidence ${run}/evidence/observed.json`);
+  }
+  console.log(`PASS (${mode}): owned Copilot work.read/find through isolated daemon; evidence ${run}/evidence/observed.json`);
 } finally {
   ws?.close(); await app?.cleanup();
   const pids = existsSync(join(run, 'workspace/calls.jsonl')) ? [...new Set(calls().map(c => c.pid))] : [];

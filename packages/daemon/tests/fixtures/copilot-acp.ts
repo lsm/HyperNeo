@@ -31,6 +31,14 @@ input.on('line', (line) => {
       });
       break;
     case 'session/list':
+      if (existsSync(join(home, 'copilot-list-failure'))) {
+        send({
+          jsonrpc: '2.0',
+          id: msg.id,
+          error: { code: -32000, message: 'Synthetic ACP listing failure' },
+        });
+        break;
+      }
       if (existsSync(join(home, 'copilot-list.json'))) {
         reply(msg.id, {
           sessions: JSON.parse(readFileSync(join(home, 'copilot-list.json'), 'utf8')),

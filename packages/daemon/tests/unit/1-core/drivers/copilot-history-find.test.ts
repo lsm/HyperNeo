@@ -47,12 +47,17 @@ function setup(projectFolder?: string) {
     agent: { id: 'copilot-cli', name: 'Copilot', bin: 'copilot', args: [] },
     machine: 'test',
     now: Date.now,
-    listSessions: async () => external,
+    listSessions: async () => {
+      if (existsSync(join(run, 'acp-list-failure')))
+        throw new Error('Synthetic ACP listing failure');
+      return external;
+    },
     ownSessions: () => new Set(),
     projectFolder: () => projectFolder ?? run,
   });
   const deps = {
     cliPath,
+    timeoutMs: 1500,
     directory: join(run, 'owned'),
     machine: 'test',
     projectFolder: () => projectFolder ?? run,
@@ -277,5 +282,72 @@ describe('Copilot owned history and discovery', () => {
       value: { execution: { directory: f.run }, lastReply: 'HISTORY_REPLY' },
     });
     expect(await f.adapter.find({ ...query, spaceId: 'external-space' })).toEqual([]);
+  });
+  test('external title search happens before the 20-newest place window', async () => {
+    const f = setup();
+    for (let n = 0; n < 25; n++)
+      f.external.push({
+        sessionId: `new-${n}`,
+        cwd: '/synthetic/copilot-project',
+        title: `New item ${n}`,
+        updatedAt: Date.now(),
+      });
+    f.external.push({
+      sessionId: 'old-match',
+      cwd: '/synthetic/copilot-project',
+      title: 'Rare target',
+      updatedAt: 1,
+    });
+    expect(
+      (await f.adapter.find({ ...query, text: 'Rare target' }))
+        .flatMap((g) => g.work)
+        .map((w) => w.ref.id)
+    ).toEqual(['old-match']);
+  });
+
+  test('find observes a live worker without pinging, writing its record or killing it', async () => {
+    const f = setup();
+    const work = await f.start('hold');
+    const callsFile = join(f.run, 'calls.jsonl');
+    const before = readFileSync(callsFile, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    const record = join(f.run, 'owned', `${work.ref.id}.json`);
+    const original = readFileSync(record);
+    writeFileSync(join(f.run, 'block-ping'), 'withhold ping reply');
+    expect(
+      (await f.adapter.find(query)).flatMap((g) => g.work).find((w) => w.ref.id === work.ref.id)
+        ?.status
+    ).toBe('running');
+    const after = readFileSync(callsFile, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    expect(after.filter((c) => c.method === 'ping')).toHaveLength(
+      before.filter((c) => c.method === 'ping').length
+    );
+    expect(after.some((c) => c.method === 'runtime.shutdown')).toBe(false);
+    expect(readFileSync(record)).toEqual(original);
+    expect(() => process.kill(before[0].pid, 0)).not.toThrow();
+    renameSync(join(f.run, 'block-ping'), join(f.run, 'block-ping.released'));
+    const followup = await f.adapter.send!(work.ref, 'finish', context);
+    expect(followup.ok).toBe(true);
+    expect(await f.adapter.status!(work.ref, undefined, work.receipt)).toMatchObject({
+      ok: true,
+      value: { status: 'done', lastReply: 'FIRST_REPLY' },
+    });
+  });
+
+  test('owned discovery remains available when a cold external list fails; failure without owned work stays explicit', async () => {
+    const f = setup();
+    writeFileSync(join(f.run, 'acp-list-failure'), 'fail');
+    await expect(f.adapter.find(query)).rejects.toThrow('Synthetic ACP listing failure');
+    const work = await f.start();
+    await f.restart();
+    const items = (await f.adapter.find(query)).flatMap((g) => g.work);
+    expect(items).toMatchObject([{ ref: work.ref, status: 'done' }]);
+    expect(items[0].watchHint).toContain('External Copilot discovery unavailable');
+    expect(readFileSync(join(f.run, 'calls.jsonl'), 'utf8')).not.toContain('session.resume');
   });
 });

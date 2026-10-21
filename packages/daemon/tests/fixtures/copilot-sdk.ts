@@ -327,6 +327,7 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
       );
       break;
     case 'ping':
+      if (existsSync(join(process.cwd(), 'block-ping'))) break;
       if (process.argv.includes('--crash-on-ping')) process.exit(1);
       if (process.argv.includes('--initial-idle') && input === 0) event('session.idle', {});
       reply({ message: 'ok', timestamp: Date.now() });
