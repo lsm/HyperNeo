@@ -48,7 +48,7 @@ for (const phase of ['initial', 'restart']) {
       assert.equal(proposed.ok, true); questionId = proposed.questionId;
       assert.equal((await rpc('pack.preferences.list', {})).preferences.length, 0);
       const read = await rpc('neo.question.get', { questionId });
-      assert.equal(read.answeredByHuman, false); for (const value of values) assert(read.question.text.includes(JSON.stringify(value)));
+      assert.equal(read.answeredByHuman, false); assert(read.question.text.includes('| --- | --- |')); for (const value of values) assert(!read.question.text.includes(JSON.stringify(value)));
       const snapshot = await rpc('neo.snapshot', {});
       assert(snapshot.todoAsks.some((entry: any) => entry.questions.some((q: any) => q.id === questionId)));
       assert.equal((await mcp('neo.question.answer', { questionId, answer: 'yes' })).ok, false);

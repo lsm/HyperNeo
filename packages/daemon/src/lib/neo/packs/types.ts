@@ -57,7 +57,11 @@ export interface NeoTodoPack {
   ): string | null;
 }
 
+export type NeoPackPreferenceLabel = { en: string; 'zh-Hans': string };
+
 export interface NeoPackPreferenceDeclaration {
+  label: NeoPackPreferenceLabel;
+  valueLabels: Record<string, NeoPackPreferenceLabel>;
   scope: 'global' | 'repo' | 'project';
   type:
     | { kind: 'enum'; values: readonly string[] }

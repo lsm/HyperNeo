@@ -1,3 +1,4 @@
+import type { LanguageSetting } from '@hyperneo/shared/types/settings';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../../storage/sqlite-compat.ts';
@@ -5,6 +6,7 @@ import type { NeoAskTodoRepository } from '../../../storage/repositories/neo-ask
 import { applyPackPreferenceAnswer } from '../../../storage/repositories/pack-preference-answer.ts';
 import { defineOperation } from '../../operations/registry.ts';
 import { PackPreferenceInput, validatePackPreference } from './preference-operations.ts';
+import { formatPreferenceProposal } from './preference-proposal.ts';
 import type { NeoPack } from './types.ts';
 
 const Ask = z
@@ -24,7 +26,8 @@ const fail = (reason: string) => ({ reason: { ok: false as const, reason } });
 export function createPackPreferenceQuestions(
   db: Database,
   store: NeoAskTodoRepository,
-  packs: () => readonly NeoPack[]
+  packs: () => readonly NeoPack[],
+  language: () => LanguageSetting | undefined
 ) {
   const ask = (superpipe({})('pack.preferences.ask') as PipelineAPI)
     .input(['input'])
@@ -59,7 +62,11 @@ export function createPackPreferenceQuestions(
               : { ok: false as const, reason: 'question_closed' };
           }
           const questionId = crypto.randomUUID();
-          const text = `Apply these pack settings?\n\n${input.values.map((value) => JSON.stringify(value)).join('\n')}`;
+          const { text, noLabel, yesLabel } = formatPreferenceProposal(
+            input.values,
+            packs(),
+            language()
+          );
           store.askQuestion(
             questionId,
             input.askId,
@@ -68,8 +75,8 @@ export function createPackPreferenceQuestions(
               kind: 'yesno',
               options: null,
               multiple: false,
-              noLabel: 'Keep current settings',
-              yesLabel: 'Apply these settings',
+              noLabel,
+              yesLabel,
               startTodos: null,
             },
             Date.now()

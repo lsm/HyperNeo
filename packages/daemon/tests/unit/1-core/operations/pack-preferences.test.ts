@@ -124,8 +124,20 @@ test('validates every declared type and keeps false, zero, empty globs and login
       describe: 'Synthetic',
       instructions: () => null,
       preferences: {
-        flag: { scope: 'project', type: { kind: 'boolean' }, default: true, ask: 'Flag?' },
+        flag: {
+          scope: 'project',
+          type: { kind: 'boolean' },
+          default: true,
+          ask: 'Flag?',
+          label: { en: 'Flag', 'zh-Hans': '标志' },
+          valueLabels: {
+            true: { en: 'Yes', 'zh-Hans': '是' },
+            false: { en: 'No', 'zh-Hans': '否' },
+          },
+        },
         count: {
+          label: { en: 'Count', 'zh-Hans': '数量' },
+          valueLabels: {},
           scope: 'project',
           type: { kind: 'number', min: 0, max: 2 },
           default: 1,

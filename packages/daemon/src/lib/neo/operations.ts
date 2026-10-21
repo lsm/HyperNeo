@@ -752,8 +752,11 @@ export function createNeoOperations(service: NeoService) {
     createNeoConversationImageReadOperation(service.repo, service.asks),
     createNeoDraftRecoveryOperation(service),
     ...createNeoRuleQuestions(service),
-    ...createPackPreferenceQuestions(service.db.getDatabase(), service.todos, () =>
-      service.installedPacks()
+    ...createPackPreferenceQuestions(
+      service.db.getDatabase(),
+      service.todos,
+      () => service.installedPacks(),
+      () => service.db.getGlobalSettings().language
     ),
     createNeoPreferenceOperation(service),
     ...createPackPreferenceOperations(service.db.getDatabase(), () => service.installedPacks()),
