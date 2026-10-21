@@ -50,9 +50,11 @@ const KIND_LABEL: Record<Kind, string> = {
 };
 
 async function call<T>(name: Parameters<typeof invokeOperation>[1], input: unknown = {}) {
-  const hub = connectionManager.getHubIfConnected();
-  if (!hub) throw new Error('Not connected to the daemon');
-  return invokeOperation<({ ok: true } & T) | Refused>(hub, name, input);
+  return invokeOperation<({ ok: true } & T) | Refused>(
+    await connectionManager.getHub(),
+    name,
+    input
+  );
 }
 
 async function loadView(): Promise<View> {

@@ -1,10 +1,27 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 
-const { mockRequest } = vi.hoisted(() => ({ mockRequest: vi.fn() }));
+const { mockRequest, connected } = vi.hoisted(() => {
+  let open: () => void = () => {};
+  const state = {
+    ready: Promise.resolve(),
+    connectLater: () => {
+      state.ready = new Promise<void>((resolve) => {
+        open = resolve;
+      });
+      return () => open();
+    },
+  };
+  return { mockRequest: vi.fn(), connected: state };
+});
 
 vi.mock('../../../lib/connection-manager', () => ({
-  connectionManager: { getHubIfConnected: () => ({ request: mockRequest }) },
+  connectionManager: {
+    getHub: async () => {
+      await connected.ready;
+      return { request: mockRequest };
+    },
+  },
 }));
 
 import { DevicesSettings } from '../DevicesSettings.tsx';
@@ -102,6 +119,15 @@ describe('DevicesSettings', () => {
     expect(screen.getByRole('link', { name: 'Pair this browser' }).getAttribute('href')).toBe(
       '/pair'
     );
+  });
+
+  it('loads once the connection to the daemon comes up after the tab opened', async () => {
+    const open = connected.connectLater();
+    daemon({ paired: true });
+    render(<DevicesSettings />);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    open();
+    await waitFor(() => screen.getByText('Relay on iMac'));
   });
 
   it('lists devices, unpaired connections and codes waiting for Allow, and allows one', async () => {
