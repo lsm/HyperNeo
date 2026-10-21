@@ -1,3 +1,5 @@
+import { admitArtifactCapture } from '../../../packages/daemon/src/lib/artifacts/file-policy.ts';
+import { ArtifactRefSchema, ArtifactReadResultSchema } from '../../../packages/daemon/src/lib/artifacts/file-contracts.ts';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -37,12 +39,30 @@ async function seed() {
   writeFileSync(evidencePath, JSON.stringify({ reference, sourceAbsent: true }, null, 2), { flag: 'wx' });
   return reference;
 }
+const previewRef = ArtifactRefSchema.parse({
+  daemonId: reference.daemonId, artifactId: reference.artifactId, title: reference.name,
+  kind: 'markdown', byteLength: reference.byteLength,
+});
+const context = { kind: 'todo' as const, id: 'synthetic-policy-context' };
+const policy = { daemonId: reference.daemonId, home: join(run, 'home'), loadBinding: () => ({
+  context, daemonId: reference.daemonId, neoSessionId: null, workerSessionId: reference.sessionId,
+  workspacePath: reference.path.slice(0, reference.path.lastIndexOf('/')), approvedEvidenceRoots: [],
+}) };
+const caller = { source: 'mcp' as const, role: 'direct_task_worker' as const, sessionId: reference.sessionId };
+const admitted = await admitArtifactCapture(context, reference.path, caller, policy);
+assert('root' in admitted && admitted.relativePath === reference.name);
+assert.deepEqual(await admitArtifactCapture(context, '.env', caller, policy), { accepted: false, reason: 'sensitive_path' });
+assert.deepEqual(await admitArtifactCapture(context, reference.path, { ...caller, sessionId: 'foreign-worker' }, policy), { accepted: false, reason: 'unavailable' });
 const chunks: Buffer[] = [];
 let offset = 0;
 let complete = false;
 while (!complete) {
   const read = await rpc('handoff.read', { reference, offset });
   assert.equal(read.kind, 'read');
+  ArtifactReadResultSchema.parse({
+    accepted: true, data: read.data, nextOffset: read.nextOffset,
+    byteLength: reference.byteLength, sha256: reference.sha256, complete: read.complete,
+  });
   const chunk = Buffer.from(read.data, 'base64');
   assert(chunk.length > 0 && chunk.length <= 256 * 1024);
   assert.equal(read.nextOffset, offset + chunk.length);
@@ -56,7 +76,7 @@ assert.equal(bytes.length, reference.byteLength);
 assert.equal(createHash('sha256').update(bytes).digest('hex'), reference.sha256);
 assert.deepEqual(await rpc('handoff.read', { reference: { ...reference, daemonId: randomUUID() } }), { kind: 'unavailable' });
 writeFileSync(join(run, 'evidence', `preview-pin-${phase}-read.json`), JSON.stringify({
-  phase, reference, byteLength: bytes.length, chunks: chunks.length,
+  phase, reference, previewRef, policyAdmitted: admitted, byteLength: bytes.length, chunks: chunks.length,
   exactBytes: true, foreignDaemonDenied: true,
 }, null, 2));
 console.log(`PASS: ${phase} reads complete immutable bytes through isolated daemon RPC`);

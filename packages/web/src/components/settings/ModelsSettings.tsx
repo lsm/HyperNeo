@@ -6,7 +6,16 @@ import {
   ModelPencilIcon as PencilIcon,
 } from '../icons/panel-icons.tsx';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { FallbackModelEntry, ModelInfo } from '@hyperneo/shared';
+import {
+  getThinkingOptionsForProvider,
+  THINKING_LEVEL_LABELS,
+  type FallbackModelEntry,
+  type ModelInfo,
+  type NeoModelPreference,
+  type ThinkingLevel,
+} from '@hyperneo/shared';
+import type { ComponentChildren } from 'preact';
+import { invokeOperation } from '../../lib/operations.ts';
 import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
 import { connectionState, globalSettings } from '../../lib/state.ts';
 import { updateGlobalSettings } from '../../lib/api-helpers.ts';
@@ -33,6 +42,7 @@ interface RawModelEntry {
   description: string;
   alias?: string;
   provider?: string;
+  thinkingLevels?: ThinkingLevel[];
 }
 
 interface ModelPickerModalProps {
@@ -139,6 +149,7 @@ interface FallbackChainEditorProps {
   isUpdating: boolean;
   onMove: (index: number, direction: 'up' | 'down') => void;
   onRemove: (index: number) => void;
+  thinking?: (entry: FallbackModelEntry, index: number) => ComponentChildren;
 }
 
 function FallbackChainEditor({
@@ -147,6 +158,7 @@ function FallbackChainEditor({
   isUpdating,
   onMove,
   onRemove,
+  thinking,
 }: FallbackChainEditorProps) {
   const getDisplayInfo = (entry: FallbackModelEntry) => {
     const model = availableModels.find(
@@ -172,6 +184,7 @@ function FallbackChainEditor({
                 {PROVIDER_LABELS[entry.provider] || getProviderLabel(entry.provider)}
               </div>
             </div>
+            {thinking?.(entry, index)}
             <div class="flex items-center gap-1">
               <button
                 class="p-1 rounded hover:bg-fill-strong disabled:opacity-30 disabled:cursor-not-allowed"
@@ -391,6 +404,195 @@ function OverrideEditorModal({
   );
 }
 
+type SettingsModel = ModelInfo & { thinkingLevels?: ThinkingLevel[] };
+
+function NeoModelSettings({
+  availableModels,
+  groupedModels,
+  providerAuthStatuses,
+  loading,
+}: Pick<ModelPickerModalProps, 'groupedModels' | 'providerAuthStatuses'> & {
+  availableModels: SettingsModel[];
+  loading: boolean;
+}) {
+  const preference = globalSettings.value?.neo?.preferences;
+  const [draft, setDraft] = useState<NeoModelPreference | null>(preference ?? null);
+  const [picker, setPicker] = useState<'primary' | 'fallback' | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => setDraft(preference ?? null), [preference]);
+  const busy = loading || saving || connectionState.value !== 'connected';
+  const chain = draft?.fallbacks ?? [];
+  const providers = [...groupedModels.entries()]
+    .filter(([, models]) => models.some((model) => model.available !== false))
+    .map(([id]) => PROVIDER_LABELS[id] || getProviderLabel(id));
+  function thinking(
+    entry: FallbackModelEntry,
+    label: string,
+    change: (thinkingLevel: ThinkingLevel) => void
+  ) {
+    const info = availableModels.find(
+      (model) => model.id === entry.model && model.provider === entry.provider
+    );
+    const options = info?.thinkingLevels
+      ? info.thinkingLevels.map((value) => ({ value, label: THINKING_LEVEL_LABELS[value] }))
+      : getThinkingOptionsForProvider(entry.provider, info?.thinkingModes);
+    return (
+      <select
+        aria-label={label}
+        class="rounded border border-line bg-surface px-2 py-1 text-xs text-fg"
+        value={entry.thinkingLevel ?? 'off'}
+        disabled={busy || !options.length}
+        onChange={(event) => change(event.currentTarget.value as ThinkingLevel)}
+      >
+        {(options.length ? options : [{ value: 'off', label: 'Off' }]).map((option) => (
+          <option value={option.value}>{option.label}</option>
+        ))}
+      </select>
+    );
+  }
+  async function save() {
+    if (!draft || busy) return;
+    setSaving(true);
+    setError('');
+    try {
+      const hub = connectionManager.getHubIfConnected();
+      if (!hub) throw new Error('Reconnect before changing Neo models.');
+      const result = await invokeOperation<
+        { ok: true; preferences: NeoModelPreference } | { ok: false; reason: string }
+      >(hub, 'neo.preferences.set', draft);
+      if (!result.ok) throw new Error(result.reason);
+      setDraft(result.preferences);
+      toast.success('Neo models saved');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not save Neo models.');
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <section aria-label="Neo models" class="space-y-3 rounded-xl border border-line bg-surface p-4">
+      <div>
+        <h4 class="text-[13px] font-semibold text-fg">Neo models</h4>
+        <p class="text-xs text-fg-faint mt-0.5">
+          Primary model and ordered fallbacks for Neo and its projects. Neo returns to the primary
+          after recovery.
+        </p>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="flex-1 text-sm text-fg-soft">
+          {draft ? `${draft.provider} / ${draft.model}` : 'Choose a primary model'}
+        </span>
+        {draft &&
+          thinking(draft, 'Neo primary thinking', (thinkingLevel) =>
+            setDraft({ ...draft, thinkingLevel })
+          )}
+        <Button variant="secondary" size="xs" disabled={busy} onClick={() => setPicker('primary')}>
+          Change Neo primary
+        </Button>
+      </div>
+      <p class="text-xs text-fg-faint">
+        Usable fallback providers: {providers.join(', ') || 'None available'}
+      </p>
+      {draft?.fallbacks === undefined ? (
+        <p class="text-xs text-fg-faint">
+          Uses the general session fallback chain until you save a Neo chain.
+        </p>
+      ) : chain.length === 0 ? (
+        <p class="text-xs text-fg-faint">Neo fallbacks disabled.</p>
+      ) : null}
+      <FallbackChainEditor
+        models={chain}
+        availableModels={availableModels}
+        isUpdating={busy}
+        onRemove={(index) =>
+          draft && setDraft({ ...draft, fallbacks: chain.filter((_, i) => i !== index) })
+        }
+        onMove={(index, direction) => {
+          if (!draft) return;
+          const next = [...chain];
+          const other = index + (direction === 'up' ? -1 : 1);
+          [next[index], next[other]] = [next[other], next[index]];
+          setDraft({ ...draft, fallbacks: next });
+        }}
+        thinking={(entry, index) =>
+          thinking(
+            entry,
+            `Neo fallback ${index + 1} thinking`,
+            (thinkingLevel) =>
+              draft &&
+              setDraft({
+                ...draft,
+                fallbacks: chain.map((item, i) =>
+                  i === index ? { ...item, thinkingLevel } : item
+                ),
+              })
+          )
+        }
+      />
+      <div class="flex flex-wrap gap-2">
+        <Button
+          variant="secondary"
+          size="xs"
+          disabled={busy || !draft || chain.length >= 10}
+          onClick={() => setPicker('fallback')}
+        >
+          Add Neo fallback
+        </Button>
+        <Button
+          variant="secondary"
+          size="xs"
+          disabled={busy || !draft}
+          onClick={() => draft && setDraft({ ...draft, fallbacks: [] })}
+        >
+          Disable Neo fallbacks
+        </Button>
+        <Button size="xs" disabled={busy || !draft} onClick={save}>
+          Save Neo models
+        </Button>
+      </div>
+      {error && (
+        <p role="alert" class="text-xs text-danger">
+          {error}
+        </p>
+      )}
+      {picker && (
+        <ModelPickerModal
+          title={picker === 'primary' ? 'Neo primary model' : 'Add Neo fallback'}
+          groupedModels={groupedModels}
+          providerAuthStatuses={providerAuthStatuses}
+          excludeModels={picker === 'primary' ? [] : [...(draft ? [draft] : []), ...chain]}
+          onClose={() => setPicker(null)}
+          onSelect={(model) => {
+            if (picker === 'primary')
+              setDraft({
+                model: model.id,
+                provider: model.provider,
+                thinkingLevel: 'off',
+                ...(draft?.fallbacks === undefined
+                  ? {}
+                  : {
+                      fallbacks: chain.filter(
+                        (entry) => entry.model !== model.id || entry.provider !== model.provider
+                      ),
+                    }),
+              });
+            else if (draft)
+              setDraft({
+                ...draft,
+                fallbacks: [
+                  ...chain,
+                  { model: model.id, provider: model.provider, thinkingLevel: 'off' },
+                ],
+              });
+            setPicker(null);
+          }}
+        />
+      )}
+    </section>
+  );
+}
+
 export function ModelsSettings() {
   const settings = globalSettings.value;
   const [fallbackModels, setFallbackModels] = useState<FallbackModelEntry[]>(
@@ -402,7 +604,7 @@ export function ModelsSettings() {
   const [openRouterAllowlistText, setOpenRouterAllowlistText] = useState(
     (settings?.providerModelAllowlists?.openrouter ?? []).join('\n')
   );
-  const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
+  const [availableModels, setAvailableModels] = useState<SettingsModel[]>([]);
   const [providerAuthStatuses, setProviderAuthStatuses] = useState<Map<string, ProviderAuthStatus>>(
     new Map()
   );
@@ -455,7 +657,14 @@ export function ModelsSettings() {
         listProviderAuthStatus().catch(() => ({ providers: [] })),
       ]);
 
-      setAvailableModels(mapRawModelsToModelInfos(modelsResponse.models));
+      setAvailableModels(
+        mapRawModelsToModelInfos(modelsResponse.models).map((model) => ({
+          ...model,
+          thinkingLevels: modelsResponse.models.find(
+            (raw) => raw.id === model.id && (raw.provider ?? model.provider) === model.provider
+          )?.thinkingLevels,
+        }))
+      );
 
       const authMap = new Map<string, ProviderAuthStatus>();
       for (const p of authResponse.providers) {
@@ -701,6 +910,12 @@ export function ModelsSettings() {
         </div>
       )}
       <div class="space-y-3">
+        <NeoModelSettings
+          availableModels={availableModels}
+          groupedModels={groupedModels}
+          providerAuthStatuses={providerAuthStatuses}
+          loading={loading}
+        />
         <div class="space-y-3 rounded-xl border border-line bg-surface p-4">
           <div>
             <h4 class="text-[13px] font-semibold text-fg">Default Model</h4>

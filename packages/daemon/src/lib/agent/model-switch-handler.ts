@@ -312,7 +312,8 @@ export class ModelSwitchHandler {
     newModel: string,
     newProvider: string,
     nonInterrupting = false,
-    commit?: RuntimeSettingsCommit
+    commit?: RuntimeSettingsCommit,
+    deferQueryStart = false
   ): Promise<ModelSwitchResult> {
     if (commit && !nonInterrupting)
       throw new Error('runtime settings commit requires the non-interrupting opt-in');
@@ -533,9 +534,11 @@ export class ModelSwitchHandler {
           await this.ctx.queryObject.setModel(resolvedModel);
           await this.ctx.reevaluateContextBudgetAfterModelSwitch?.();
         } else {
-          await lifecycleManager.restart({
-            beforeStart: () => this.ctx.reevaluateContextBudgetAfterModelSwitch?.(),
-          });
+          if (deferQueryStart) await lifecycleManager.stop();
+          else
+            await lifecycleManager.restart({
+              beforeStart: () => this.ctx.reevaluateContextBudgetAfterModelSwitch?.(),
+            });
           if (clearAcpSessionId && previousAcpSessionId) {
             await this.disposePreviousAcpSession(
               previousAcpSessionId,
