@@ -59,14 +59,18 @@ describe('createWebSocketHandlers', () => {
   });
 
   it('records the client identity and close code without logging peer text', () => {
+    const lifecycleHandlers = createWebSocketHandlers(
+      mockTransport as unknown as Parameters<typeof createWebSocketHandlers>[0],
+      mockSessionManager as unknown as Parameters<typeof createWebSocketHandlers>[1]
+    );
     const logs: StructuredLogEvent[] = [];
     const unsubscribe = subscribeToStructuredLogs((event) => {
       if (event.module === 'hyperneo:daemon:websocket') logs.push(event);
     });
     const ws = { data: { connectionSessionId: 'global' }, send: mock(), readyState: 1 };
     try {
-      handlers.open(ws);
-      handlers.close(ws, 1001, 'PRIVATE_CLIENT_TEXT');
+      lifecycleHandlers.open(ws);
+      lifecycleHandlers.close(ws, 1001, 'PRIVATE_CLIENT_TEXT');
       expect(logs.map((event) => event.message)).toEqual([
         'client.websocket.open',
         'client.websocket.close',

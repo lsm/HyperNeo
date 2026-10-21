@@ -38,8 +38,8 @@ export async function createBunServer(options: ServerOptions): Promise<ServerHan
           const msg = typeof message === 'string' ? message : new Uint8Array(message);
           return websocket.message?.(ws as unknown as RuntimeSocket, msg);
         },
-        close(ws: BunWebSocket) {
-          return websocket.close?.(ws as unknown as RuntimeSocket);
+        close(ws: BunWebSocket, code: number, reason: string) {
+          return websocket.close?.(ws as unknown as RuntimeSocket, code, reason);
         },
         error(ws: BunWebSocket, error: unknown) {
           return websocket.error?.(ws as unknown as RuntimeSocket, error);

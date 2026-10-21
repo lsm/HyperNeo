@@ -8,7 +8,7 @@ export interface RuntimeSocket<TData = unknown> {
 export interface RuntimeWebSocketHandler<TData = unknown> {
   open?(ws: RuntimeSocket<TData>): void | Promise<void>;
   message?(ws: RuntimeSocket<TData>, message: string | Uint8Array): void | Promise<void>;
-  close?(ws: RuntimeSocket<TData>): void | Promise<void>;
+  close?(ws: RuntimeSocket<TData>, code?: number, reason?: string): void | Promise<void>;
   error?(ws: RuntimeSocket<TData>, error: unknown): void | Promise<void>;
 }
 
