@@ -44,7 +44,7 @@ export async function applyHomeChoice(
     const remote = (await git(['rev-parse', reference])).text;
     if (homeConflictQuestionId(root, local.text, remote) !== input.resolution!.questionId)
       return refuse(
-        'stale_conflict: local or remote snapshot changed; ask about the current versions.'
+        'stale_conflict: question does not bind the current home revisions; use the current home-sync conflict question.'
       );
     const selected = input.resolution!.version === 'local' ? local.text : remote;
     const mode = (await git(['ls-tree', selected, '--', input.path])).text.slice(0, 6);

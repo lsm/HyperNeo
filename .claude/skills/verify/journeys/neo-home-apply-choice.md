@@ -10,6 +10,7 @@ repository, auth file or human home is used. There is no unattended GUI run.
 bash .claude/skills/verify/neo-home-apply-choice.sh "$RUN_NORMAL" after 9417
 bash .claude/skills/verify/neo-home-apply-choice.sh "$RUN_RACE" after 9418 race
 bash .claude/skills/verify/neo-home-apply-choice.sh "$RUN_IGNORED" after 9419 ignored
+bash .claude/skills/verify/neo-home-apply-choice.sh "$RUN_CHAT" after 9420 chat
 ```
 
 Normal mode drives public WebSocket `operation.invoke` throughout. It creates a
@@ -21,6 +22,13 @@ version-choice answer alone refuses `confirmation_required` without a file chang
 A separate root-Neo yes/no question must visibly bind the exact path and SHA-256;
 only its actual human yes allows save with `questionId`. Check the decision log,
 Neo-Confirmed-By trailer, exact bytes, both ancestors and clean status.
+
+Chat mode runs the same normal/protected journey, but records each version choice
+through public `neo.message.send` with `replyTo` naming the conflict question and
+the exact text `Use remote`. `neo.question.get` must confirm a human answer. This
+channel stores scalar text, unlike the question button's array. Both forms must
+apply identically, and the protected-file choice still requires its separate yes.
+The retained `before ... chat` mode records the original scalar-answer refusal.
 
 Race mode injects an unrelated uncommitted human edit while Git inspects the
 remote, after staging. Save must return stale_conflict with original local and

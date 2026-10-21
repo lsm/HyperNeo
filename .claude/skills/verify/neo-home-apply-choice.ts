@@ -67,6 +67,16 @@ try {
   console.log('REPRODUCED: human chat choice was recorded but save rejected the scalar answer.');
   process.exitCode = 0;
  } else {
+ if (mode === 'chat' && phase === 'after') {
+  const asked = await rpc('neo.question.ask', { askId: normal.askId, kind: 'choice', text: 'Which version?', options: ['Keep local', 'Use remote'], multiple: false });
+  const questionId = (asked.question as { id: string }).id;
+  assert.equal((await rpc('neo.question.answer', { questionId, answer: ['Use remote'] })).ok, true);
+  evidence.unrelatedQuestion = await rpc('neo.home.save', { ...input, conflictQuestionId: questionId });
+  assert.equal((evidence.unrelatedQuestion as { ok: boolean }).ok, false);
+  assert(String((evidence.unrelatedQuestion as { reason: string }).reason).includes('question does not bind'));
+  assert.equal(await git(root, 'rev-parse', 'HEAD'), normal.localHead);
+  assert.equal(await git(remote, 'rev-parse', 'main'), normal.remoteHead);
+ }
  if (mode === 'race') await writeFile(join(run, 'network-race'), '');
  const first = await rpc('neo.home.save', input); evidence.normalResult = first;
  if (mode === 'ignored') {

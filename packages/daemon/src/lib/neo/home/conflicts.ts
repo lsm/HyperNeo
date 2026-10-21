@@ -64,7 +64,7 @@ export function requireHomeChoice(
   if (!input.conflictQuestionId) return { value: input };
   const question = store.getQuestion(input.conflictQuestionId);
   const read = readNeoQuestion(question);
-  const choice = question?.answer;
+  const choice = [question?.answer ?? []].flat();
   if (
     !question ||
     !read.ok ||
@@ -74,7 +74,6 @@ export function requireHomeChoice(
     !question.answeredBy ||
     !sessionId ||
     store.getAsk(question.askId)?.sessionId !== sessionId ||
-    !Array.isArray(choice) ||
     choice.length !== 1 ||
     !['Keep local', 'Use remote'].includes(choice[0])
   )
