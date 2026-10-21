@@ -76,7 +76,7 @@ export function neoAskEntryState(
   return live.length && live.every((todo) => todo.state === 'done') ? 'done' : 'todo';
 }
 
-export const NEO_DONE_TODOS_SHOWN = 3;
+export const NEO_DONE_TODOS_SHOWN = 20;
 
 const NEO_TODO_LIST_ORDER: Record<NeoTodo['state'], number> = {
   blocked: 0,
@@ -249,7 +249,7 @@ export function createNeoDoneTodosOperation(
   return defineOperation({
     name: 'neo.ask.doneTodos',
     description:
-      'Read the done todos of an ask, a page at a time, in list order. An ask with more than 3 done todos lists none of them in neo.snapshot and carries only doneCount; read them here when you need to check finished work. Pass offset from nextOffset for the next page; nextOffset is null on the last page.',
+      'Read the done todos of an ask, a page at a time, in list order. An ask with more than 20 done todos lists none of them in neo.snapshot and carries only doneCount; read them here when you need to check finished work. Pass offset from nextOffset for the next page; nextOffset is null on the last page.',
     inputSchema: DoneTodos,
     resultSchema: z.union([
       z.object({ ok: z.literal(false), reason: z.string() }),
