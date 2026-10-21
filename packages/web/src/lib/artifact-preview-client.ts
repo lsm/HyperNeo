@@ -5,10 +5,12 @@ import {
   type ArtifactReadResult,
 } from '@hyperneo/shared/types/artifact-file';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { readArtifactHtml, type ArtifactHtml } from './artifact-html-client.ts';
 import { invokeOperation } from './operations.ts';
 
 export type ArtifactPreviewState =
-  | { state: 'ready'; metadata: ArtifactFileMetadata; text: string }
+  | { state: 'ready'; metadata: ArtifactFileMetadata; text: string; html?: ArtifactHtml }
+  | { state: 'html_source'; metadata: ArtifactFileMetadata }
   | { state: 'limit' | 'unsupported'; metadata: ArtifactFileMetadata }
   | { state: 'forbidden' | 'revoked' | 'daemon_unavailable' | 'needs_update' };
 
@@ -41,7 +43,7 @@ export async function loadArtifactMetadata(hub: MessageHub, artifactId: string) 
 }
 
 export function gatePreviewableKind(metadata: ArtifactFileMetadata): MetadataGate {
-  return metadata.artifact.kind === 'markdown'
+  return ['markdown', 'html'].includes(metadata.artifact.kind)
     ? { value: metadata }
     : { reason: { state: 'unsupported', metadata } };
 }
@@ -79,5 +81,19 @@ export const readArtifactPreview = (superpipe({})('artifact-preview-read') as Pi
   .pipe(loadArtifactMetadata, ['hub', 'artifactId'], 'result:preview')
   .pipe(gatePreviewableKind, 'preview', 'result:preview')
   .pipe(gatePreviewLimit, 'preview', 'result:preview')
-  .pipe(readText, ['hub', 'preview'], 'preview')
+  .pipe(
+    (hub: MessageHub, metadata: ArtifactFileMetadata) =>
+      metadata.artifact.kind === 'html' ? readArtifactHtml(hub, metadata) : readText(hub, metadata),
+    ['hub', 'preview'],
+    'preview'
+  )
   .endAsync('preview') as (hub: MessageHub, artifactId: string) => Promise<ArtifactPreviewState>;
+
+export const readArtifactSource = (superpipe({})('artifact-source-read') as PipelineAPI)
+  .input(['hub', 'metadata'])
+  .pipe(gatePreviewLimit, 'metadata', 'result:source')
+  .pipe(readText, ['hub', 'source'], 'source')
+  .endAsync('source') as (
+  hub: MessageHub,
+  metadata: ArtifactFileMetadata
+) => Promise<ArtifactPreviewState>;

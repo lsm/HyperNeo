@@ -259,4 +259,9 @@ export const zhHans: Record<keyof typeof en, string> = {
   'artifact.openGitHub': '在 GitHub 打开',
   'artifact.changedFiles': '改动的文件（{count}）',
   'artifact.filesTruncated': '显示 {total} 个文件中的 {shown} 个。',
+  'artifact.scriptsDisabled': '脚本已禁用',
+  'artifact.htmlFrame': '静态 HTML 预览',
+  'artifact.externalLinks': '外部链接',
+  'artifact.htmlSourceOnly': '无法预览 HTML，请查看原始源码。',
+  'artifact.loadingSource': '正在加载源码…',
 };

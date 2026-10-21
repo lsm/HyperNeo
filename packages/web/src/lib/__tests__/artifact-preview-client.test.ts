@@ -5,7 +5,10 @@ import { previewStateForRefusal, readArtifactPreview } from '../artifact-preview
 
 const base64 = (text: string) => Buffer.from(text, 'utf8').toString('base64');
 
-function metadata(kind: 'markdown' | 'html' = 'markdown', byteLength = 11): ArtifactFileMetadata {
+function metadata(
+  kind: 'markdown' | 'html' | 'json' = 'markdown',
+  byteLength = 11
+): ArtifactFileMetadata {
   return {
     context: { kind: 'todo', id: 'todo-1' },
     artifact: { daemonId: 'd1', artifactId: 'a1', title: 'Report', kind, byteLength },
@@ -62,10 +65,10 @@ describe('readArtifactPreview', () => {
   });
 
   it('shows formats this shell cannot preview yet as unsupported', async () => {
-    const { hub: h } = hub([{ accepted: true, metadata: metadata('html') }]);
+    const { hub: h } = hub([{ accepted: true, metadata: metadata('json') }]);
     expect(await readArtifactPreview(h, 'a1')).toEqual({
       state: 'unsupported',
-      metadata: metadata('html'),
+      metadata: metadata('json'),
     });
   });
 
