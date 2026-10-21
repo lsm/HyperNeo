@@ -162,7 +162,7 @@ describe('ArtifactPreviewPanel', () => {
     render(<ArtifactPreviewPanel />);
     act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a1' }));
     await screen.findByRole('heading', { name: 'Layout design' });
-    fireEvent.keyDown(document, { key: 'Escape' });
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(document.activeElement).toBe(opener);
     opener.remove();
@@ -194,10 +194,22 @@ describe('ArtifactPreviewPanel', () => {
     await screen.findByRole('heading', { name: 'Layout design' });
     second.focus();
     act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a1' }));
-    fireEvent.keyDown(document, { key: 'Escape' });
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
     expect(screen.queryByText('Layout design')).toBeNull();
     expect(document.activeElement).toBe(second);
     first.remove();
     second.remove();
+  });
+
+  it('ignores Escape pressed outside the panel, such as in a chat menu beside it', async () => {
+    route(() => ({ accepted: true, artifact: { artifactId: 'a1' } }));
+    const menu = document.createElement('button');
+    document.body.appendChild(menu);
+    render(<ArtifactPreviewPanel />);
+    act(() => openArtifactPreview({ kind: 'artifact', artifactId: 'a1' }));
+    await screen.findByRole('heading', { name: 'Layout design' });
+    fireEvent.keyDown(menu, { key: 'Escape' });
+    expect(screen.getByRole('heading', { name: 'Layout design' })).toBeTruthy();
+    menu.remove();
   });
 });
