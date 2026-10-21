@@ -249,6 +249,9 @@ describe('neo.preferences.set', () => {
     });
     const expected = [fallbacks[0], { ...fallbacks[1], thinkingLevel: 'off' }];
     expect(first).toMatchObject({ value: { ok: true, preferences: { fallbacks: expected } } });
+    expect(await invoke('neo.snapshot', {})).toMatchObject({
+      value: { preferences: { fallbacks: expected } },
+    });
     expect(db.getGlobalSettings().neo?.preferences).toMatchObject({ fallbacks: expected });
     await invoke('neo.preferences.set', {
       model: 'claude-opus',
