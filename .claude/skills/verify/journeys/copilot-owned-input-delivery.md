@@ -73,3 +73,13 @@ restart. Keeping the descriptors open prevents inode reuse from hiding a rewrite
 The default journey includes this case. The owner's persistence cache advances
 only after successful writes and is pruned with its bounded receipt cache; no
 unchanged full reports are serialized or rewritten by the persistence callback.
+
+Mode `legacy-read` removes only the fresh fixture's per-input receipt directory,
+then reads generic and receipt-bound status before any resume/follow-up. Terminal
+snapshot-only records must retain their full report, and live records must stay
+running. After daemon restart, terminal reads remain identical while unfinished
+ownership is unreachable (never not_found/gone). No receipt directory is created
+by those reads and no SDK resume is sent. This case characterizes the existing
+snapshot fallback and also runs in the default journey. Neo's consumer test pins
+that delivered:false with a Copilot receipt/queue ID produces accepted queued
+work and retains attribution; operation help now states this enqueue behavior.
