@@ -60,6 +60,35 @@ async function start(fixture: ReturnType<typeof setup>, message = fixture.reques
 }
 
 describe('owned Copilot lifecycle', () => {
+  test('concurrent status cannot overwrite stopped evidence while its runtime closes', async () => {
+    const fixture = setup('--slow-stop');
+    const work = await start(fixture);
+    const stopping = fixture.adapter.stop!(work.ref, context);
+    try {
+      for (let poll = 0; poll < 200; poll++) {
+        if (readFileSync(join(fixture.run, 'calls.jsonl'), 'utf8').includes('runtime.shutdown'))
+          break;
+        await new Promise((done) => setTimeout(done, 5));
+      }
+      expect(readFileSync(join(fixture.run, 'calls.jsonl'), 'utf8')).toContain('runtime.shutdown');
+      const reading = fixture.adapter.status!(work.ref, undefined, work.receipt);
+      await new Promise((done) => setTimeout(done, 5));
+      writeFileSync(join(fixture.run, 'release-shutdown'), 'release');
+      expect(await reading).toMatchObject({ ok: true, value: { status: 'stopped' } });
+    } finally {
+      writeFileSync(join(fixture.run, 'release-shutdown'), 'release');
+      await stopping;
+    }
+    expect(await fixture.adapter.status!(work.ref, undefined, work.receipt)).toMatchObject({
+      ok: true,
+      value: { status: 'stopped' },
+    });
+    expect(await fixture.adapter.stop!(work.ref, context)).toEqual({
+      ok: true,
+      value: { stopped: true },
+    });
+  });
+
   test.each([
     ['settled', 'done'],
     ['error', 'failed'],

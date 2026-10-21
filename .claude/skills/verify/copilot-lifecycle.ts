@@ -35,13 +35,15 @@ async function connect() {
 function rpc(name: string, input: unknown): Promise<unknown> {
   return new Promise((done, fail) => {
     const id = crypto.randomUUID();
-    const timer = setTimeout(() => fail(new Error(`${name} timeout`)), 20000);
-    ws!.onmessage = event => {
+    const timer = setTimeout(() => { ws!.removeEventListener('message', receive); fail(new Error(`${name} timeout`)); }, 20000);
+    const receive = (event: MessageEvent) => {
       const reply = JSON.parse(String(event.data));
       if (reply.id !== id && reply.requestId !== id) return;
+      ws!.removeEventListener('message', receive);
       clearTimeout(timer); observations.push({ name, input, reply });
       if (reply.error) fail(new Error(JSON.stringify(reply.error))); else done(reply.data);
     };
+    ws!.addEventListener('message', receive);
     ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name, input }, timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
 }
@@ -76,8 +78,28 @@ try {
   assert.match(complete.watchHint ?? '', /work.status/);
   const blocked = await start('permission');
   assert.equal((await status(blocked)).status, 'needs_you');
+  installFixture('--slow-stop');
   const stopped = await start('hold');
-  assert.deepEqual(await rpc('work.stop', { ref: stopped.ref }), { ok: true, value: { stopped: true } });
+  const stopping = rpc('work.stop', { ref: stopped.ref });
+  try {
+    for (let poll = 0; poll < 200; poll++) {
+      if (readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').includes('runtime.shutdown')) {
+        const calls = readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+        const sent = calls.findLast(call => call.method === 'session.send');
+        if (calls.some(call => call.method === 'runtime.shutdown' && call.pid === sent.pid)) break;
+      }
+      await new Promise(done => setTimeout(done, 5));
+    }
+    const calls = readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    const pid = calls.findLast(call => call.method === 'session.send').pid;
+    assert(calls.some(call => call.pid === pid && call.method === 'runtime.shutdown'));
+    const reading = rpc('work.status', { ref: stopped.ref, receipt: stopped.receipt });
+    await rpc('work.adapters', {});
+    writeFileSync(join(run, 'workspace/release-shutdown'), 'release');
+    const concurrent = await reading as Result<WorkDetail>;
+    assert(concurrent.ok, JSON.stringify(concurrent));
+    assert.equal(concurrent.value.status, 'stopped', 'status overlapping runtime close must retain stopped');
+  } finally { writeFileSync(join(run, 'workspace/release-shutdown'), 'release'); assert.deepEqual(await stopping, { ok: true, value: { stopped: true } }); }
   assert.equal((await status(stopped)).status, 'stopped');
   assert.equal((await rpc('work.send', { ref: stopped.ref, message: 'do not send' }) as { reason: string }).reason, 'unsupported');
   assert.equal((await rpc('work.stop', { ref: { adapter: 'copilot-cli', id: crypto.randomUUID() } }) as { reason: string }).reason, 'not_found');
@@ -107,6 +129,7 @@ try {
   await connect();
   assert.equal((await status(complete)).status, 'done');
   assert.equal((await status(complete)).lastReply, 'REPLY_1');
+  assert.equal((await status(stopped)).status, 'stopped');
   const recovered = await rpc('work.status', { ref: active.ref, receipt: active.receipt }) as { ok: boolean; reason: string };
   assert.equal(recovered.ok, false); assert.equal(recovered.reason, 'unreachable');
   assert.equal(readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').trim().split('\n').filter(line => JSON.parse(line).method === 'session.send').length, 5);

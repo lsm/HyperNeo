@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 let buffer = Buffer.alloc(0);
 let sessionId = '';
@@ -208,6 +208,15 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
       break;
     case 'runtime.shutdown':
       if (process.argv.includes('--hang-stop')) break;
+      if (process.argv.includes('--slow-stop')) {
+        const timer = setInterval(() => {
+          if (!existsSync(join(process.cwd(), 'release-shutdown'))) return;
+          clearInterval(timer);
+          reply({});
+          setTimeout(() => process.exit(0), 5);
+        }, 5);
+        break;
+      }
       reply({});
       setTimeout(() => process.exit(0), 5);
       break;
