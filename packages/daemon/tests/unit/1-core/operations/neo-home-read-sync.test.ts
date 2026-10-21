@@ -216,3 +216,52 @@ describe('Curated home reads within a Neo wake', () => {
     expect(await pulls()).toBe(1);
   });
 });
+
+describe('Home sync conflict questions', () => {
+  test('preserves both full versions in one revision-bound question across retries and restart', async () => {
+    const local = `Human local choice\n${'Local text with trailing spaces  \n'.repeat(80)}`;
+    const remoteText = `Other machine choice\n${'Remote full text\n'.repeat(80)}`;
+    await writeFile(join(root, 'direction.md'), local);
+    await git(root, 'add', 'direction.md');
+    await git(root, 'commit', '-m', 'Human local choice');
+    const localHead = await git(root, 'rev-parse', 'HEAD');
+    await version(remoteText);
+    const remoteHead = await git(peer, 'rev-parse', 'HEAD');
+    const first = await read();
+    expect(first).toMatchObject({ ok: false, reason: expect.stringContaining('conflict') });
+    const store = new NeoAskTodoRepository(db.getDatabase());
+    const questions = store.listAsks(undefined, 100).flatMap((ask) => store.listQuestions(ask.id));
+    expect(questions).toHaveLength(1);
+    const question = questions[0] as (typeof questions)[number] & { document: string };
+    expect(question.text.length).toBeLessThan(1800);
+    expect(question.text).toContain('direction.md');
+    expect(question.text).toContain('Human local choice');
+    expect(question.text).toContain('Other machine choice');
+    expect(question.text).toContain('not apply');
+    expect(question.document).toContain(local);
+    expect(question.document).toContain(remoteText);
+    expect(question.document).toContain(localHead);
+    expect(question.document).toContain(remoteHead);
+    expect(question.kind).toBe('choice');
+    expect(await readFile(join(root, 'direction.md'), 'utf8')).toBe(local);
+    expect(await git(root, 'rev-parse', 'HEAD')).toBe(localHead);
+    expect(await git(root, 'status', '--porcelain')).toBe('');
+    expect(await git(peer, 'rev-parse', 'HEAD')).toBe(remoteHead);
+    await read('mandate.md');
+    home = new NeoHomeRepository(root, new NeoRepository(db.getDatabase()));
+    wake();
+    await read();
+    store.answerQuestion(question, ['Keep local'], 'button', Date.now());
+    wake();
+    await read();
+    expect(
+      store.listAsks(undefined, 100).flatMap((ask) => store.listQuestions(ask.id))
+    ).toHaveLength(1);
+    expect(store.getQuestion(question.id)).toMatchObject({
+      state: 'answered',
+      document: question.document,
+    });
+    expect(await readFile(join(root, 'direction.md'), 'utf8')).toBe(local);
+    expect(await git(root, 'rev-parse', 'HEAD')).toBe(localHead);
+  });
+});
