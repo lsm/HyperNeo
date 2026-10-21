@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NeoAskTodos, neoQuestionAnswerLabel } from '../NeoAskTodos.tsx';
 import { messageTime } from '../NeoMessage.tsx';
-import { neoAskEntriesInOrder, neoAskEntryGroup } from '../neo-asks.ts';
+import { neoAskEntriesInOrder, neoAskEntryGroup, neoDonePageMerge } from '../neo-asks.ts';
 import { locale } from '../../lib/i18n/index.ts';
 
 beforeEach(() => {
@@ -633,6 +633,24 @@ describe('neoAskEntryGroup', () => {
       waiting,
       expect.objectContaining({ state: 'doing' }),
     ]);
+  });
+});
+
+describe('neoDonePageMerge', () => {
+  const done = (n: number) => todo(`d${n}`, { state: 'done' });
+  const ids = (todos: readonly NeoTodoEntry[]) => todos.map((item) => item.id);
+
+  it('restarts from the first page without dropping done todos paged past it', () => {
+    const paged = Array.from({ length: 22 }, (_, n) => done(n + 1));
+    const page = Array.from({ length: 20 }, (_, n) => done(n));
+    const merged = neoDonePageMerge(paged, paged, page, true);
+    expect(ids(merged.paged)).toEqual([
+      ...Array.from({ length: 20 }, (_, n) => `d${n}`),
+      'd20',
+      'd21',
+      'd22',
+    ]);
+    expect(merged.stalled).toBe(false);
   });
 });
 
