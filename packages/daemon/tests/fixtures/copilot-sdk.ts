@@ -37,7 +37,29 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
       reply({ protocolVersion: process.argv.includes('--bad-protocol') ? 99 : 3 });
       break;
     case 'status.get':
-      reply({ version: 'fixture-1', protocolVersion: 3 });
+      reply({
+        version: process.argv.includes('--production-version') ? '1.0.83' : 'fixture-1',
+        protocolVersion: 3,
+      });
+      break;
+    case 'auth.getStatus':
+      reply({ isAuthenticated: !process.argv.includes('--logged-out') });
+      break;
+    case 'models.list':
+      reply({
+        models: process.argv.includes('--no-models')
+          ? []
+          : [
+              {
+                id: 'synthetic-model',
+                name: 'Synthetic',
+                capabilities: {
+                  supports: { vision: false, reasoningEffort: false },
+                  limits: { max_context_window_tokens: 10000 },
+                },
+              },
+            ],
+      });
       break;
     case 'session.create':
       sessionId = String(msg.params?.sessionId);
