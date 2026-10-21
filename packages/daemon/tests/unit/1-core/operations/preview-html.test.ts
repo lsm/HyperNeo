@@ -156,6 +156,13 @@ describe('artifact HTML preview document', () => {
     const started = performance.now();
     expect(prepareArtifactHtml(`${'<div>'.repeat(400000)}Kept`)).toBeNull();
     expect(prepareArtifactHtml(`${'<x/>'.repeat(400000)}Kept`)).toBeNull();
+    for (const piece of [
+      '<div a="</div>">',
+      '<div><!--</div>-->',
+      '<div><script></div></script>',
+      '<template>',
+    ])
+      expect(prepareArtifactHtml(`${piece.repeat(20000)}Kept`)).toBeNull();
     expect(performance.now() - started).toBeLessThan(1000);
     expect(prepare(`${'<div>'.repeat(300)}Kept`).document).toContain('Kept');
     expect(prepare(`<ul>${'<li>x'.repeat(100000)}</ul>`).document).toContain('<li>x</li>');
