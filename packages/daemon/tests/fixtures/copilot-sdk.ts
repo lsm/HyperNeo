@@ -84,11 +84,22 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
           interactionId: 'interaction-1',
           phase: 'final_answer',
         });
-      if (prompt === 'permission')
+      if (prompt === 'permission') {
         event('permission.requested', {
           requestId: 'permission-1',
           permissionRequest: { kind: 'read', path: '/outside' },
         });
+        event('session.idle', {});
+      }
+      if (prompt === 'settled') {
+        event('assistant.message', {
+          messageId: `reply-${input}`,
+          content: `REPLY_${input}`,
+          interactionId: `interaction-${input}`,
+          phase: 'final_answer',
+        });
+        event('session.idle', {});
+      }
       if (prompt === 'error') {
         event('session.error', { errorType: 'fixture', message: 'Synthetic error' });
         event('session.idle', {});
@@ -105,6 +116,7 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
       }, 15);
       break;
     case 'ping':
+      if (process.argv.includes('--initial-idle') && input === 0) event('session.idle', {});
       reply({ message: 'ok', timestamp: Date.now() });
       break;
     case 'runtime.shutdown':

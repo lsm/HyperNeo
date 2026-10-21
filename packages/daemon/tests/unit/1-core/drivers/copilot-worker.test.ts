@@ -47,6 +47,49 @@ async function eventually(read: () => Promise<unknown>, matches: (value: unknown
 }
 
 describe('Copilot worker construction', () => {
+  test('an idle before any submitted work preserves queued status', async () => {
+    const worker = await openCopilotWorker(config('fixture-1', '--initial-idle'));
+    try {
+      expect((await worker.snapshot()).status).toBe('queued');
+    } finally {
+      await worker.close();
+    }
+  });
+
+  test('retains only 64 settled receipts without discarding pending work', async () => {
+    const worker = await openCopilotWorker(config());
+    try {
+      const pending = await worker.submit('queued');
+      const first = await worker.submit('settled');
+      let latest = first;
+      for (let index = 0; index < 70; index++) latest = await worker.submit('settled');
+      const state = await worker.snapshot();
+      expect(Object.keys(state.inputs)).toHaveLength(65);
+      expect(state.inputs[first.inputId]).toBeUndefined();
+      expect(state.inputs[pending.inputId].state).toBe('pending');
+      expect(state.inputs[latest.inputId]).toMatchObject({
+        outcome: 'done',
+        replyAvailability: 'complete',
+        replyReport: 'REPLY_72',
+      });
+    } finally {
+      await worker.close();
+    }
+  });
+
+  test('refuses more than 64 unsettled inputs without dropping their receipts', async () => {
+    const worker = await openCopilotWorker(config());
+    try {
+      for (let index = 0; index < 64; index++) await worker.submit('queued');
+      await expect(worker.submit('queued')).rejects.toThrow('unsettled');
+      const state = await worker.snapshot();
+      expect(Object.keys(state.inputs)).toHaveLength(64);
+      expect(state.status).toBe('queued');
+    } finally {
+      await worker.close();
+    }
+  });
+
   test('owns one stdio runtime, binds pre-ACK events, and never settles on turn-end alone', async () => {
     const cfg = config();
     const worker = await openCopilotWorker(cfg);
