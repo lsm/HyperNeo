@@ -338,9 +338,12 @@ describe('presentPublicationPage revisions', () => {
     const artifacts = [
       { daemonId: 'd1', artifactId: 'a1', title: 'Layout report', kind: 'html', byteLength: 86016 },
     ];
-    expect(presentPublicationPage(response([{ ...item(), artifacts }]), page)).toEqual({
-      value: { state: 'ready', items: [{ ...item(), artifacts }], nextAfter: 1 },
-    });
+    const items = [{ ...item(), artifacts }];
+    expect(presentPublicationPage({ ok: true, conversationId, items, nextAfter: 1 }, page)).toEqual(
+      {
+        value: { state: 'ready', items, nextAfter: 1 },
+      }
+    );
   });
 
   it.each([

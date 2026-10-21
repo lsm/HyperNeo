@@ -103,6 +103,8 @@ try {
     await article.getByText('https://github.com/lsm/HyperNeo/pull/42').click();
     await page.getByRole('dialog', { name: 'Synthetic design PR' }).waitFor();
     observed[`pr-${width}`] = await dialog.locator('header p').innerText();
+    await dialog.getByRole('heading', { name: 'Complete untrusted body' }).waitFor();
+    assert.equal(await dialog.locator('script').count(), 0);
     await shot(page, `pr-${width}`);
     await dialog.getByRole('button', { name: /docs\/report\.md/ }).click();
     await dialog.locator('header h1', { hasText: 'report.md' }).waitFor({ timeout: 60_000 });
@@ -113,6 +115,16 @@ try {
     await page.getByRole('dialog', { name: 'Synthetic design PR' }).waitFor();
     await back();
     await dialog.waitFor({ state: 'detached' });
+      if (width === 1280) {
+        const row = page.locator('[data-ask-todo="todo"]');
+        if (!(await row.isVisible()))
+          await page.locator('[data-ask-details-toggle]').first().click();
+        await row.getByRole('button', { name: 'Open preview: Synthetic notes' }).click();
+        await dialog.getByRole('heading', { name: 'Synthetic layout notes' }).waitFor();
+        await shot(page, `todo-card-${width}`);
+        await back();
+        observed.todoCard = 'opened the same registered notes from the todo row';
+      }
     } catch (error) {
       await shot(page, `failure-${width}`);
       throw error;

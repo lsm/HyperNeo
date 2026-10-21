@@ -52,11 +52,7 @@ function ReferenceView({
         pr={resolution.pr}
         onBack={backArtifactPreview}
         onOpenFile={(path) =>
-          pushArtifactPreview({
-            ...target,
-            reference: resolution.pr.url,
-            file: { path, headSha: resolution.pr.headSha },
-          })
+          pushArtifactPreview({ ...target, file: { path, headSha: resolution.pr.headSha } })
         }
       />
     );
