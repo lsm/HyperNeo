@@ -240,13 +240,13 @@ describe('readDriverOutcome', () => {
         kind: 'completed',
         value: { ok: true, value: { delivered: false } },
       })
-    ).toEqual({ ref: sendTarget.ref, queued: true });
+    ).toEqual({ ref: sendTarget.ref, queued: true, delivery: { delivered: false } });
     expect(
       readDriverOutcome(sendTarget, {
         kind: 'completed',
         value: { ok: true, value: { delivered: true } },
       })
-    ).toEqual({ ref: sendTarget.ref });
+    ).toEqual({ ref: sendTarget.ref, delivery: { delivered: true } });
     expect(
       readDriverOutcome(sendTarget, {
         kind: 'completed',

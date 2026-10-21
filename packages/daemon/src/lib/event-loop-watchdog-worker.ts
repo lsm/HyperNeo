@@ -10,6 +10,7 @@ interface EventLoopWatchdogWorkerData {
   killMode: 'sigkill' | 'observe';
   markerPath?: string;
   stackPath?: string;
+  nativeProfileMs?: number;
 }
 
 type WatchdogCommand =
@@ -22,8 +23,16 @@ type WatchdogNotice =
   | { type: 'stall-recovered'; stalledForMs: number }
   | { type: 'fuse-expired'; overdueMs: number };
 
-const { pid, stallMs, checkIntervalMs, killMode, deferStallDetection, markerPath, stackPath } =
-  workerData as EventLoopWatchdogWorkerData;
+const {
+  pid,
+  stallMs,
+  checkIntervalMs,
+  killMode,
+  deferStallDetection,
+  markerPath,
+  stackPath,
+  nativeProfileMs,
+} = workerData as EventLoopWatchdogWorkerData;
 const SAMPLER = '/usr/bin/sample';
 
 const SUSPENSION_GAP_MS = Math.max(checkIntervalMs * 4, 1000);
@@ -34,9 +43,12 @@ let lastCheckMs = Date.now();
 let fuseDeadlineMs: number | null = null;
 let acted = false;
 let episodeReportedForMs: number | null = null;
+let nativeEpisodeSampled = false;
+let sampling = false;
 
 parentPort?.on('message', (command: WatchdogCommand) => {
   if (command.type === 'heartbeat') {
+    nativeEpisodeSampled = false;
     if (episodeReportedForMs !== null) {
       const stalledForMs = Date.now() - lastHeartbeatMs;
       writeSync(2, `[EventLoopWatchdog] event loop recovered after ${stalledForMs}ms\n`);
@@ -65,6 +77,21 @@ setInterval(() => {
     return;
   }
   const stalledForMs = now - lastHeartbeatMs;
+  if (
+    stallDetectionArmed &&
+    nativeProfileMs &&
+    stalledForMs >= nativeProfileMs &&
+    !nativeEpisodeSampled
+  ) {
+    nativeEpisodeSampled = true;
+    if (stackPath) {
+      writeSync(
+        2,
+        `[EventLoopWatchdog] native profile triggered at ${now}, heartbeat late ${stalledForMs}ms\n`
+      );
+      sampleInBackground(() => {}, `${stackPath}.native-${now}.txt`);
+    }
+  }
   if (stallDetectionArmed && stalledForMs >= stallMs && episodeReportedForMs === null) {
     episodeReportedForMs = stalledForMs;
     if (killMode === 'sigkill') acted = true;
@@ -81,15 +108,15 @@ setInterval(() => {
   }
 }, checkIntervalMs);
 
-function samplingArgs(): string[] | null {
-  if (!stackPath || process.platform !== 'darwin' || !existsSync(SAMPLER)) return null;
-  return [String(pid), '1', '-file', stackPath];
+function samplingArgs(path = stackPath): string[] | null {
+  if (!path || process.platform !== 'darwin' || !existsSync(SAMPLER)) return null;
+  return [String(pid), '1', '-file', path];
 }
 
-function sampled(): string | null {
-  if (!stackPath || !existsSync(stackPath)) return null;
-  writeSync(2, `[EventLoopWatchdog] sampled the stalled daemon's stacks into ${stackPath}\n`);
-  return stackPath;
+function sampled(path = stackPath): string | null {
+  if (!path || !existsSync(path)) return null;
+  writeSync(2, `[EventLoopWatchdog] sampled the stalled daemon's stacks into ${path}\n`);
+  return path;
 }
 
 function sampleBeforeKill(): string | null {
@@ -99,17 +126,23 @@ function sampleBeforeKill(): string | null {
   return run.error || run.status !== 0 ? null : sampled();
 }
 
-function sampleInBackground(done: (stack: string) => void): void {
-  const args = samplingArgs();
-  if (!args) return;
+function sampleInBackground(done: (stack: string) => void, path = stackPath): void {
+  const args = samplingArgs(path);
+  if (!args || sampling) return;
+  sampling = true;
   try {
     spawn(SAMPLER, args, { stdio: 'ignore' })
-      .on('error', () => {})
+      .on('error', () => {
+        sampling = false;
+      })
       .on('close', (code) => {
-        const stack = code === 0 ? sampled() : null;
+        sampling = false;
+        const stack = code === 0 ? sampled(path) : null;
         if (stack) done(stack);
       });
-  } catch {}
+  } catch {
+    sampling = false;
+  }
 }
 
 function writeMarker(reason: string, action: 'killed' | 'observed', stack: string | null): void {
