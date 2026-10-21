@@ -63,6 +63,7 @@ try {
   assert.equal(retained.state.inputs[held.receipt.inputId], undefined);
   assert.equal(retained.state.inputs[retained.receipt.inputId].replyAvailability, 'complete');
   const queued = await rpc('verify.copilot', { action: 'queued' }) as typeof held;
+  assert.equal(queued.state.inputs[queued.receipt.inputId].state, 'pending');
   const interrupted = await rpc('verify.copilot', { action: 'hold' }) as typeof held;
   await rpc('verify.copilot', { action: 'abort' });
   let stopped = await rpc('verify.copilot', { action: 'snapshot' }) as typeof held.state;
@@ -76,6 +77,7 @@ try {
   assert.equal(stopped.inputs[queued.receipt.inputId].replyAvailability, 'incomplete');
   assert.equal((await rpc('verify.copilot', { action: 'settled' }) as typeof held).state.status, 'done');
   const beforeError = await rpc('verify.copilot', { action: 'queued' }) as typeof held;
+  assert.equal(beforeError.state.inputs[beforeError.receipt.inputId].state, 'pending');
   const failed = await rpc('verify.copilot', { action: 'error' }) as typeof held;
   assert.equal(failed.state.inputs[beforeError.receipt.inputId].outcome, 'failed');
   assert.equal(failed.state.inputs[beforeError.receipt.inputId].replyAvailability, 'incomplete');

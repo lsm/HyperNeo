@@ -120,7 +120,11 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
       }
       if (prompt === 'abort-queued') event('session.idle', { aborted: true });
       if (prompt === 'empty') event('session.idle', {});
-      if (process.argv.includes('--late-user-echo') && prompt !== 'permission-queued')
+      if (
+        process.argv.includes('--late-user-echo') &&
+        prompt !== 'queued' &&
+        !String(prompt).endsWith('-queued')
+      )
         event('user.message', { messageId: id, interactionId: 'rewritten', content: prompt });
       if (prompt !== 'lost-ack') reply({ messageId: id });
       break;
