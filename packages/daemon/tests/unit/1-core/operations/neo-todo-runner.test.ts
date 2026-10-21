@@ -464,6 +464,36 @@ describe('neo todo runner', () => {
     expect(told).toEqual(['Todo "Rows" failed: Could not start: unavailable: login expired']);
   });
 
+  test('a start whose input was accepted but now waits on a prompt keeps its session', async () => {
+    const { db, store, add } = setup();
+    const todo = add();
+    const accepted = createNeoTodoRunner({
+      store,
+      sessions: new NeoTodoSessionRepository(db),
+      invoke: async () =>
+        completed({
+          ok: true,
+          value: {
+            ref: { adapter: 'copilot', id: 's1' },
+            title: 'Rows',
+            place: { machine: 'laptop', name: 'repo' },
+            status: 'needs_you',
+            lastActivityAt: 1,
+            receipt: { executionId: 's1', inputId: 'in-1' },
+          },
+        }),
+      packs: () => [],
+      tell: async () => {},
+      tellAsk: async () => {},
+      changed: () => {},
+    });
+    const result = await accepted.start(todo.id);
+    expect(result.ok && result.todo).toMatchObject({ state: 'doing', blockedBy: null });
+    expect(new NeoTodoSessionRepository(db).doingTodoOn({ adapter: 'copilot', id: 's1' })?.id).toBe(
+      todo.id
+    );
+  });
+
   test('a start that needs the human blocks the todo with its plain hint, and retry starts it again', async () => {
     const { db, store, runner, add, told } = setup();
     const todo = add();

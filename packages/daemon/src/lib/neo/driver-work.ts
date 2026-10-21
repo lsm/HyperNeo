@@ -155,7 +155,7 @@ export function readDriverOutcome(
       status?: unknown;
       watchHint?: unknown;
     };
-    if (status === 'needs_you')
+    if (status === 'needs_you' && receipt === undefined)
       return {
         failure: typeof watchHint === 'string' ? watchHint : 'The new session needs the human.',
         reason: 'needs_you',
