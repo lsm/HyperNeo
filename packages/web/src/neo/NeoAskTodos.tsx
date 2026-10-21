@@ -1,3 +1,4 @@
+import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import type {
   NeoAskEntry,
   NeoQuestion,
@@ -168,7 +169,10 @@ function QuestionBox({
       data-question-kind={question.kind}
       class="mt-3 rounded-lg bg-warning/10 px-3 py-2"
     >
-      <p class="text-sm font-semibold">{neoQuestionText(question)}</p>
+      <MarkdownRenderer
+        content={neoQuestionText(question)}
+        class="neo-markdown neo-markdown-assistant min-w-0 text-sm leading-relaxed"
+      />
       {question.kind === 'start' &&
         listed.map((todo) => (
           <TodoRow
@@ -371,13 +375,19 @@ export function NeoAskTodos({
               <ul class="mt-1.5 space-y-1.5" aria-label={t('ask.answered')}>
                 {answered.map((question) => (
                   <li key={question.id} id={`neo-ref-question-${question.id}`}>
-                    {neoQuestionText(question)} — {neoQuestionAnswerLabel(question, todos)}
-                    {question.answeredAt
-                      ? ` · ${new Date(question.answeredAt).toLocaleTimeString([], {
-                          hour: 'numeric',
-                          minute: '2-digit',
-                        })}`
-                      : ''}
+                    <MarkdownRenderer
+                      content={neoQuestionText(question)}
+                      class="neo-markdown neo-markdown-assistant min-w-0 text-sm leading-relaxed"
+                    />
+                    <p>
+                      — {neoQuestionAnswerLabel(question, todos)}
+                      {question.answeredAt
+                        ? ` · ${new Date(question.answeredAt).toLocaleTimeString([], {
+                            hour: 'numeric',
+                            minute: '2-digit',
+                          })}`
+                        : ''}
+                    </p>
                   </li>
                 ))}
               </ul>
@@ -389,8 +399,14 @@ export function NeoAskTodos({
               <ul class="mt-1.5 space-y-1.5" aria-label={t('ask.retired')}>
                 {retired.map((question) => (
                   <li key={question.id} id={`neo-ref-question-${question.id}`}>
-                    {t('question.retired', { question: neoQuestionText(question) })}
-                    {question.retiredReason ? `: ${question.retiredReason}` : ''}
+                    <MarkdownRenderer
+                      content={neoQuestionText(question)}
+                      class="neo-markdown neo-markdown-assistant min-w-0 text-sm leading-relaxed"
+                    />
+                    <p>
+                      {t('question.retired', { question: '' })}
+                      {question.retiredReason ? `: ${question.retiredReason}` : ''}
+                    </p>
                   </li>
                 ))}
               </ul>
