@@ -59,6 +59,15 @@ describe('root Neo system prompt', () => {
     expect(NEO_ROOT_PROMPT).not.toContain('Plain assistant text shows only');
   });
 
+  test('gives questions and publications the same concise Markdown guidance', () => {
+    const prompt = neoPrompt([]);
+    expect(prompt).toContain('For neo.question.ask text and publication shortText, use Markdown');
+    expect(prompt).toContain('a short title line, then a few bullets or a small comparison table');
+    expect(prompt).toContain('Bold the key choice');
+    expect(prompt).toContain('Avoid walls of text');
+    expect(prompt).toContain('Preserve required proposal text, path and hash');
+  });
+
   test('appends the pack briefing only when packs are enabled', () => {
     const coding = neoPrompt();
     expect(coding.startsWith(`${NEO_ROOT_PROMPT}\n\nDomain packs carry the field`)).toBe(true);

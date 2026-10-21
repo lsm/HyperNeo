@@ -1,3 +1,4 @@
+import guidanceQuestions from './fixtures/question-guidance.json';
 import type { NeoAskEntry, NeoQuestion, NeoTodoEntry } from '@hyperneo/shared/types/neo-ask';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -86,6 +87,21 @@ const entry = (patch: Partial<NeoAskEntry>): NeoAskEntry => ({
 });
 
 describe('NeoAskTodos', () => {
+  it.each(guidanceQuestions)('renders the concise guidance example: $title', async (fixture) => {
+    const app = render(
+      <NeoAskTodos
+        entry={entry({ questions: [question('guidance', { text: fixture.text })] })}
+        onAnswer={vi.fn()}
+      />
+    );
+    const body = app.container.querySelector('#neo-ref-question-guidance')!;
+    await waitFor(() => expect(body.querySelector('strong')?.textContent).toBe(fixture.keyChoice));
+    expect(body.querySelector('p')?.textContent).toBe(fixture.title);
+    expect(body.querySelectorAll('ul li')).toHaveLength(fixture.bullets);
+    expect(body.querySelectorAll('table tr')).toHaveLength(fixture.tableRows);
+    expect(body.textContent).not.toContain('**');
+  });
+
   it.each(['open', 'answered', 'retired'] as const)(
     'renders safe question Markdown in the %s state with the real chat renderer',
     async (state) => {
