@@ -30,11 +30,12 @@ for (const name of ['report.json', 'large.log', 'chart.png', 'oversized.png']) {
   assert(result.accepted, JSON.stringify(result)); ids[name] = result.artifact.artifactId;
 }
 const { chromium } = createRequire(import.meta.url)('playwright');
-const browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}) });
-const base = `http://127.0.0.1:${port}`; const offOrigin = []; const observed = {};
+const plainHttp = process.env.VERIFY_PLAIN_HTTP === '1';
+const browser = await chromium.launch({ headless: true, args: plainHttp ? ['--host-resolver-rules=MAP preview.invalid 127.0.0.1', '--no-proxy-server'] : [], ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}) });
+const base = `http://${plainHttp ? 'preview.invalid' : '127.0.0.1'}:${port}`; const offOrigin = []; const observed = {};
 try {
   for (const width of [1280, 390]) {
-    const context = await browser.newContext({ viewport: { width, height: 900 }, locale: 'en-US', permissions: ['clipboard-read', 'clipboard-write'] });
+    const context = await browser.newContext({ viewport: { width, height: 900 }, locale: 'en-US', permissions: plainHttp ? [] : ['clipboard-read', 'clipboard-write'] });
     await context.route('**/*', route => {
       if (route.request().url().startsWith(base)) return route.continue();
       offOrigin.push(route.request().url()); return route.abort();
@@ -45,7 +46,8 @@ try {
     assert.equal(await page.locator('pre').innerText(), JSON.stringify(JSON.parse(readFileSync(join(run, 'workspace', 'report.json'))), null, 2));
     assert.equal(await page.evaluate(() => window.__mediaSentinel), undefined);
     await page.getByRole('button', { name: 'Copy visible' }).click();
-    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), await page.locator('pre').innerText());
+    if (!plainHttp) assert.equal(await page.evaluate(() => navigator.clipboard.readText()), await page.locator('pre').innerText());
+    assert.equal(await page.evaluate(() => window.isSecureContext), !plainHttp);
     await page.screenshot({ path: join(run, 'evidence', `media-json-${width}.png`) });
     await page.getByRole('button', { name: 'Source', exact: true }).click();
     assert.equal(await page.locator('pre').innerText(), readFileSync(join(run, 'workspace', 'report.json'), 'utf8'));
@@ -67,7 +69,7 @@ try {
     const target = join(run, 'evidence', `large-${width}.log`); await download.saveAs(target);
     const hash = data => createHash('sha256').update(data).digest('hex');
     assert.equal(hash(readFileSync(target)), hash(source));
-    observed[width] = { formattedJson: true, inertMarkup: true, copy: true, imagePixels: 576, oversizedRefused: true, omittedBytes: source.length - 262144, downloadBytes: source.length, sha256: hash(source) };
+    observed[width] = { formattedJson: true, inertMarkup: true, copy: !plainHttp, secureContext: !plainHttp, imagePixels: 576, oversizedRefused: true, omittedBytes: source.length - 262144, downloadBytes: source.length, sha256: hash(source) };
     await context.close();
   }
 } finally { await browser.close(); }

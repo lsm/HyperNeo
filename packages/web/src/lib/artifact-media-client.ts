@@ -1,3 +1,4 @@
+import { sha256 } from '@noble/hashes/sha2.js';
 import type { MessageHub } from '@hyperneo/shared';
 import {
   type ArtifactFileMetadata,
@@ -37,7 +38,7 @@ export async function downloadArtifact(
   signal: AbortSignal,
   write: (bytes: Uint8Array<ArrayBuffer>) => Promise<void>
 ) {
-  const parts: Uint8Array<ArrayBuffer>[] = [];
+  const hash = sha256.create();
   let offset = 0;
   do {
     signal.throwIfAborted();
@@ -49,14 +50,12 @@ export async function downloadArtifact(
     );
     signal.throwIfAborted();
     await write(bytes);
-    parts.push(bytes);
+    hash.update(bytes);
     offset += bytes.length;
   } while (offset < metadata.artifact.byteLength);
   signal.throwIfAborted();
-  const digest = await crypto.subtle.digest('SHA-256', await new Blob(parts).arrayBuffer());
-  signal.throwIfAborted();
   if (
-    Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('') !==
+    hash.digest().reduce((hex, byte) => hex + byte.toString(16).padStart(2, '0'), '') !==
     metadata.sha256
   )
     throw new Error('unavailable');

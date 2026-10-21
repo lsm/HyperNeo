@@ -26,6 +26,12 @@ media-web.json under RUN/evidence and include them in the PR. Download transfer
 is sequential with bounded authenticated reads; the browser retains at most the
 registration size limit in memory until integrity passes, then saves explicitly.
 
+Repeat the web command with `VERIFY_PLAIN_HTTP=1` to use the synthetic
+`preview.invalid` host mapped to loopback only in headless Chromium. The proof
+asserts `isSecureContext === false`: image preview and integrity-checked full
+download must still work without Web Crypto. Clipboard readback is unverified
+on that origin; the UI reuses the existing copyToClipboard fallback.
+
 Run artifact-media-client plus existing artifact component/client tests for
 cancel between chunks, hash mismatch, revocation and disconnect cleanup. Cancel
 stops subsequent reads; an already in-flight authenticated RPC may finish but its

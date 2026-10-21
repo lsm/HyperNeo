@@ -10,6 +10,7 @@ import {
 } from '../../lib/artifact-preview-client.ts';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { t } from '../../lib/i18n/index.ts';
+import { copyToClipboard } from '../../lib/utils.ts';
 import { connectionState } from '../../lib/state.ts';
 import MarkdownRenderer, { clearArtifactRenderCache } from '../chat/MarkdownRenderer.tsx';
 import { ArtifactDownload } from './ArtifactDownload.tsx';
@@ -216,9 +217,7 @@ export function ArtifactPreview({
               type="button"
               class="mb-3 rounded-md bg-surface-raised px-3 py-1 text-sm"
               onClick={() =>
-                navigator.clipboard.writeText(
-                  view === 'source' ? (shown.sourceText ?? shown.text) : shown.text
-                )
+                copyToClipboard(view === 'source' ? (shown.sourceText ?? shown.text) : shown.text)
               }
             >
               {t('artifact.copyVisible')}
