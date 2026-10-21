@@ -208,7 +208,9 @@ describe('InterruptHandler', () => {
       });
       handler = createHandler();
 
-      await expect(handler.handleInterrupt()).rejects.toThrow('job queue unavailable');
+      await expect(handler.handleInterrupt({ skipDeferredReplay: true })).rejects.toThrow(
+        'job queue unavailable'
+      );
 
       expect(handler.isInterruptRequested()).toBe(false);
       expect(handler.getInterruptPromise()).toBeNull();
@@ -222,7 +224,7 @@ describe('InterruptHandler', () => {
       setInterruptedSpy.mockImplementation(() => gate);
       handler = createHandler();
 
-      const first = handler.handleInterrupt();
+      const first = handler.handleInterrupt({ skipDeferredReplay: true });
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(setInterruptedSpy).toHaveBeenCalled();
       expect(handler.isInterruptRequested()).toBe(true);
@@ -230,7 +232,9 @@ describe('InterruptHandler', () => {
       cancelForSessionSpy.mockImplementation(() => {
         throw new Error('job queue unavailable');
       });
-      await expect(handler.handleInterrupt()).rejects.toThrow('job queue unavailable');
+      await expect(handler.handleInterrupt({ skipDeferredReplay: true })).rejects.toThrow(
+        'job queue unavailable'
+      );
       expect(handler.isInterruptRequested()).toBe(true);
 
       releaseFirst();
@@ -323,7 +327,7 @@ describe('InterruptHandler', () => {
       markFailedSpy.mockImplementation((_sessionId: string, uuid: string) => `db-${uuid}`);
       handler = createHandler();
 
-      await handler.handleInterrupt();
+      await handler.handleInterrupt({ skipDeferredReplay: true });
 
       expect(busPublishSpy).toHaveBeenCalledWith('messages.statusChanged', {
         sessionId: 'test-session-id',
@@ -368,7 +372,7 @@ describe('InterruptHandler', () => {
       expect(sdkInterruptSpy).toHaveBeenCalled();
     });
 
-    it('cancels ALL durable deliveries before anything else (#3743968030/#3744105273)', async () => {
+    it('teardown cancels durable deliveries before stopping the session', async () => {
       cancelForSessionSpy = mock(() => ['turn-uuid', 'steer-uuid']);
       mockDb = {
         getJobQueueRepo: mock(() => ({
@@ -387,7 +391,7 @@ describe('InterruptHandler', () => {
       });
       handler = createHandler({ db: mockDb });
 
-      await handler.handleInterrupt();
+      await handler.handleInterrupt({ skipDeferredReplay: true });
 
       expect(cancelForSessionSpy).toHaveBeenCalledWith('test-session-id');
       expect(markFailedSpy).toHaveBeenCalledWith('test-session-id', 'turn-uuid');
@@ -408,13 +412,13 @@ describe('InterruptHandler', () => {
       } as unknown as InterruptHandlerContext['db'];
       handler = createHandler({ db: mockDb });
 
-      await handler.handleInterrupt();
+      await handler.handleInterrupt({ skipDeferredReplay: true });
 
       expect(notifySpy).toHaveBeenCalledWith('sdk_messages', { sessionId: 'test-session-id' });
       expect(notifySpy).toHaveBeenCalledWith('job_queue', { sessionId: 'test-session-id' });
     });
 
-    it('cancels durable deliveries even when the session is already idle', async () => {
+    it('teardown cancels durable deliveries even when the session is already idle', async () => {
       getStateSpy.mockReturnValue({ status: 'idle', phase: 'idle' });
       cancelForSessionSpy = mock(() => ['pre-claim-uuid']);
       mockDb = {
@@ -426,13 +430,13 @@ describe('InterruptHandler', () => {
       } as unknown as InterruptHandlerContext['db'];
       handler = createHandler({ db: mockDb });
 
-      await handler.handleInterrupt();
+      await handler.handleInterrupt({ skipDeferredReplay: true });
 
       expect(cancelForSessionSpy).toHaveBeenCalledWith('test-session-id');
       expect(markFailedSpy).toHaveBeenCalledWith('test-session-id', 'pre-claim-uuid');
     });
 
-    it('terminalizes enqueued orphan rows (no active job) so a Stop is not undone by the post-interrupt idle reconcile (#861)', async () => {
+    it('teardown terminalizes orphan inputs so it cannot reopen the session', async () => {
       cancelForSessionSpy = mock(() => ['active-uuid']);
       const orphan = { uuid: 'orphan-uuid' };
       const getUserMessageIdsByStatusSpy = mock((_sid: string, status: string) =>
@@ -448,7 +452,7 @@ describe('InterruptHandler', () => {
       } as unknown as InterruptHandlerContext['db'];
       handler = createHandler({ db: mockDb });
 
-      await handler.handleInterrupt();
+      await handler.handleInterrupt({ skipDeferredReplay: true });
 
       expect(markFailedSpy).toHaveBeenCalledWith('test-session-id', 'active-uuid');
       expect(markFailedSpy).toHaveBeenCalledWith('test-session-id', 'orphan-uuid');
@@ -1022,7 +1026,7 @@ describe('InterruptHandler', () => {
       }
     });
 
-    it('fails only enqueued, deferred, and submitted delivery rows and never downgrades a consumed row', async () => {
+    it('teardown fails unconsumed delivery rows and never downgrades a consumed row', async () => {
       const f = await makeRealFixture('sess-int-routing');
       try {
         const sdkRepo = f.db.getSDKMessageRepo();
@@ -1058,7 +1062,7 @@ describe('InterruptHandler', () => {
           });
         }
 
-        await f.handler.handleInterrupt();
+        await f.handler.handleInterrupt({ skipDeferredReplay: true });
 
         expect(f.sendStatusOf('msg-int-enqueued')).toBe('failed');
         expect(f.sendStatusOf('msg-int-deferred')).toBe('failed');

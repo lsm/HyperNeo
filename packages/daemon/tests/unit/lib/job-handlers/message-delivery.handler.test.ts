@@ -13,6 +13,8 @@ import type {
   JobQueueRepository,
 } from '../../../../src/storage/repositories/job-queue-repository';
 
+import { createTestDb, createTestSession } from '../../../helpers/database';
+
 const CHAT_PAYLOAD: Record<string, unknown> = {
   sessionId: 'sess-1',
   messageUuid: 'uuid-1',
@@ -100,14 +102,46 @@ function makeHarness(
 
 describe('createMessageDeliveryHandler', () => {
   it('keeps interrupted unconsumed input retryable without spending an attempt', async () => {
-    const { handler, session, jobQueue, job } = makeHarness();
-    session.driveDeliveryTurn = async () => {
-      throw new Error('Interrupted by user');
-    };
-    const result = await handler(job, {});
-    expect(result).toMatchObject({ parked: 'user_interrupt', retryAt: expect.any(Number) });
-    expect(jobQueue.requeueParked).toHaveBeenCalledWith(job.id, expect.any(Number), job.claimToken);
-    expect(session.settleCalls).toEqual([]);
+    const db = await createTestDb();
+    try {
+      db.createSession(createTestSession('sess-1'));
+      const repo = db.getSDKMessageRepo();
+      repo.saveUserMessage(
+        'sess-1',
+        {
+          type: 'user',
+          uuid: 'uuid-1',
+          message: { role: 'user', content: 'hello' },
+        },
+        'enqueued'
+      );
+      const jobs = db.getJobQueueRepo();
+      const queued = jobs.enqueue({
+        queue: 'message_delivery',
+        payload: CHAT_PAYLOAD,
+        maxRetries: 1,
+      });
+      db.getDatabase()
+        .prepare('UPDATE job_queue SET retry_count = max_retries WHERE id = ?')
+        .run(queued.id);
+      const [job] = jobs.dequeue('message_delivery', 1);
+      const session = new MockSession();
+      const handler = createMessageDeliveryHandler({
+        jobQueue: jobs,
+        getSession: async () => session,
+        getMessageContent: (sessionId, uuid) => repo.getDeliveryContent(sessionId, uuid),
+      });
+      session.driveDeliveryTurn = async () => {
+        throw new Error('Interrupted by user');
+      };
+      const result = await handler(job, {});
+      expect(result).toMatchObject({ parked: 'user_interrupt', retryAt: expect.any(Number) });
+      expect(jobs.getJob(job.id)).toMatchObject({ status: 'pending', retryCount: 1 });
+      expect(repo.getDeliveryContent('sess-1', 'uuid-1')?.sendStatus).toBe('enqueued');
+      expect(session.settleCalls).toEqual([]);
+    } finally {
+      db.close();
+    }
   });
 
   describe('preflight gates', () => {
