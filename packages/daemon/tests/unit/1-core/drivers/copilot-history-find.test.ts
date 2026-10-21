@@ -259,6 +259,21 @@ describe('Copilot owned history and discovery', () => {
     expect(f.read(work)?.availability).toBe('reply_unavailable');
   });
 
+  test('a clipped turn never ends in half of an emoji', async () => {
+    const f = setup();
+    const work = await f.start();
+    appendFileSync(
+      f.history(work),
+      JSON.stringify({
+        type: 'assistant.message',
+        timestamp: new Date().toISOString(),
+        data: { messageId: 'emoji-edge', content: `${'a'.repeat(3999)}😀 and more` },
+      }) + '\n'
+    );
+    const [turn] = f.read(work, undefined, 0, 0)?.turns ?? [];
+    expect(turn).toMatchObject({ text: 'a'.repeat(3999), textComplete: false });
+  });
+
   test('find keeps grouped project and execution folder distinct and never completes uncertain accepted work', async () => {
     const f = setup('/synthetic/grouped-project');
     const work = await f.start();
