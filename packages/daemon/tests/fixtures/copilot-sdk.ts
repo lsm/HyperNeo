@@ -100,6 +100,15 @@ function receive(msg: { id?: number; method: string; params?: Record<string, unk
         });
         event('session.idle', {});
       }
+      if (prompt === 'dedup-pressure') {
+        for (let index = 0; index < 270; index++)
+          event('assistant.message', {
+            messageId: `pressure-${index}`,
+            content: 'fragment',
+            interactionId: `interaction-${input}`,
+            phase: 'final_answer',
+          });
+      }
       if (prompt === 'error') {
         event('session.error', { errorType: 'fixture', message: 'Synthetic error' });
         event('session.idle', {});

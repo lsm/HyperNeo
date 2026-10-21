@@ -62,7 +62,7 @@ describe('Copilot worker construction', () => {
       const pending = await worker.submit('queued');
       const first = await worker.submit('settled');
       let latest = first;
-      for (let index = 0; index < 70; index++) latest = await worker.submit('settled');
+      for (let index = 0; index < 270; index++) latest = await worker.submit('settled');
       const state = await worker.snapshot();
       expect(Object.keys(state.inputs)).toHaveLength(65);
       expect(state.inputs[first.inputId]).toBeUndefined();
@@ -70,8 +70,19 @@ describe('Copilot worker construction', () => {
       expect(state.inputs[latest.inputId]).toMatchObject({
         outcome: 'done',
         replyAvailability: 'complete',
-        replyReport: 'REPLY_72',
+        replyReport: 'REPLY_272',
       });
+    } finally {
+      await worker.close();
+    }
+  });
+
+  test('fails closed when dedup retention would forget an unsettled reply', async () => {
+    const worker = await openCopilotWorker(config());
+    try {
+      await expect(worker.submit('dedup-pressure')).rejects.toThrow('disconnected');
+      expect((await worker.snapshot()).status).toBe('unreachable');
+      await expect(worker.submit('never replay')).rejects.toThrow('disconnected');
     } finally {
       await worker.close();
     }
