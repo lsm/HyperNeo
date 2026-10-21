@@ -22,6 +22,13 @@ process pauses after syncing a partial capture; the helper kills only that owned
 child and reopens its store. Inventory must retain all prior blobs and partial
 bytes and charge those partials to quota. No expiry or recovery sweep is allowed.
 Tampered existing blobs must not be overwritten or accepted as a valid capture.
+Inject staging-unlink failure after blob linking, restart, then recapture identical
+content three times: each must succeed without additional retained bytes or stages.
+Keep the original interrupted staging link and bytes. Internal blob verification
+uses its own anchored/no-follow opener allowing one or two stable links, checks
+size/timestamps/identity and the full hash; three links still refuse. Source opens
+remain strictly single-link. This regression fails with artifact_blob_conflict
+before the fix, despite the original inventory-only crash-window test passing.
 
 Only successful transactions remove their own staging filename after a durable
 blob link exists. This transfers ownership of the complete bytes; it never deletes

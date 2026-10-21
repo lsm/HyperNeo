@@ -4,7 +4,7 @@ import { constants, fstatSync, read, type Stats } from 'node:fs';
 import fs, { type FileHandle } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
-import { withArtifactDescriptor } from '../runtime-artifact-open.ts';
+import { withArtifactDescriptor, withStoredArtifactDescriptor } from '../runtime-artifact-open.ts';
 import { ArtifactLimitsSchema } from './file-contracts.ts';
 import { admitArtifactStorage } from './capture-admission.ts';
 
@@ -63,7 +63,7 @@ async function copyDescriptor(fd: number, initial: Stats, destination?: FileHand
     after.size === initial.size &&
     after.mtimeMs === initial.mtimeMs &&
     after.ctimeMs === initial.ctimeMs &&
-    after.nlink === 1
+    after.nlink === initial.nlink
     ? hash.digest('hex')
     : null;
 }
@@ -123,7 +123,7 @@ export async function createArtifactCaptureStore(
               added = initial.size;
             } catch (error) {
               if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-              const existing = await withArtifactDescriptor(root, ['blobs', sha256], (fd, stat) =>
+              const existing = await withStoredArtifactDescriptor(root, sha256, (fd, stat) =>
                 stat.size === initial.size ? copyDescriptor(fd, stat) : null
               );
               if (!existing.accepted || existing.value !== sha256)

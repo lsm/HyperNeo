@@ -49,6 +49,8 @@ describe('artifact capture storage', () => {
         interruptionsRetained: true,
         restartPreserved: true,
         actualProcessCrash: true,
+        interruptedCommitRetried: true,
+        storedExcessLinksRefused: true,
         sharedInodeCountedOnce: true,
       });
     } finally {

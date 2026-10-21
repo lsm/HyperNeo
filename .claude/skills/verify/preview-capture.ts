@@ -75,6 +75,28 @@ finally { delayed.mockRestore(); }
 assert(identical.every((result) => result.status === 'fulfilled' && result.value.accepted), 'concurrent identical captures must deduplicate');
 assert.equal((await concurrent.inspect()).retainedBytes, bytes.length);
 
+const interruptedDirectory = join(root, 'interrupted-commit');
+const interrupted = await createArtifactCaptureStore(interruptedDirectory);
+const failUnlink = spyOn(fs, 'unlink').mockRejectedValue(new Error('synthetic interrupted commit'));
+try { await assert.rejects(interrupted.capture(source, ['report.bin']), /synthetic interrupted commit/); }
+finally { failUnlink.mockRestore(); }
+const interruptedBlob = join(interruptedDirectory, 'blobs', hash);
+assert.equal(statSync(interruptedBlob).nlink, 2);
+const interruptedState = await interrupted.inspect();
+const retainedStage = interruptedState.entries.find((entry) => entry.area === 'staging');
+assert(retainedStage);
+const retryStore = await createArtifactCaptureStore(interruptedDirectory, { retainedBytes: bytes.length * 2 });
+for (let attempt = 0; attempt < 3; attempt++) {
+  assert.deepEqual(await retryStore.capture(source, ['report.bin']), receipt, 'interrupted linked commit must allow identical recapture');
+  assert.deepEqual(await retryStore.inspect(), { ...interruptedState, limitBytes: bytes.length * 2, warning: false });
+  assert(readFileSync(join(interruptedDirectory, 'staging', retainedStage.name)).equals(bytes));
+}
+assert.equal(statSync(interruptedBlob).nlink, 2);
+assert(readFileSync(interruptedBlob).equals(bytes));
+await fs.link(interruptedBlob, join(interruptedDirectory, 'staging', 'unexpected-third-link'));
+await assert.rejects(retryStore.capture(source, ['report.bin']), /artifact_blob_conflict/);
+assert(readFileSync(interruptedBlob).equals(bytes));
+
 const corruptDirectory = join(root, 'corrupt');
 const corrupt = await createArtifactCaptureStore(corruptDirectory);
 assert((await corrupt.capture(source, ['report.bin'])).accepted);
@@ -158,6 +180,6 @@ renameSync(source, `${source}.retained-fixture`);
 assert(readFileSync(blob).equals(bytes));
 const evidence = { exactBytes: true, deduplicated: true, quotaReserved: true, sourceChangeRefused: true,
   interruptionsRetained: true, restartPreserved: true, byteLength: bytes.length, sha256: hash,
-  actualProcessCrash: true, sharedInodeCountedOnce: true, recovery: recoveredState, priorFaults: await reopened.inspect() };
+  actualProcessCrash: true, interruptedCommitRetried: true, storedExcessLinksRefused: true, sharedInodeCountedOnce: true, recovery: recoveredState, priorFaults: await reopened.inspect() };
 writeFileSync(join(root, 'capture-evidence.json'), JSON.stringify(evidence, null, 2));
 console.log(JSON.stringify(evidence));
