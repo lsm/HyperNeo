@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { constants, fchmodSync, fstatSync, realpathSync } from 'node:fs';
+import { constants, fchmodSync, fstatSync, realpathSync, type Stats } from 'node:fs';
 
 const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
@@ -49,6 +49,7 @@ export interface SafeFsReadOptions {
 }
 
 export interface SafeFsBackendModule {
+  withArtifactDescriptor: typeof withArtifactDescriptor;
   readFileWithinWorkspace: (
     workspace: string,
     segments: string[],
@@ -169,11 +170,11 @@ function validateSegments(segments: string[]): void {
   }
 }
 
-function openDirectory(symbols: LibcSymbols, parentFd: number, name: string): number {
+function openDirectory(symbols: LibcSymbols, parentFd: number, name: string, flags = 0): number {
   return symbols.openat(
     parentFd,
     cString(name),
-    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | flags,
     0
   );
 }
@@ -182,12 +183,17 @@ function closeFile(symbols: LibcSymbols, fd: number): void {
   if (fd >= 0) symbols.close(fd);
 }
 
-function openRootDirectory(symbols: LibcSymbols, atFdcwd: number, workspaceRoot: string): number {
-  let directoryFd = openDirectory(symbols, atFdcwd, '/');
+function openRootDirectory(
+  symbols: LibcSymbols,
+  atFdcwd: number,
+  workspaceRoot: string,
+  flags = 0
+): number {
+  let directoryFd = openDirectory(symbols, atFdcwd, '/', flags);
   for (const component of workspaceRoot.split('/')) {
     if (!component) continue;
     if (directoryFd < 0) return -1;
-    const nextFd = openDirectory(symbols, directoryFd, component);
+    const nextFd = openDirectory(symbols, directoryFd, component, flags);
     closeFile(symbols, directoryFd);
     directoryFd = nextFd;
   }
@@ -440,6 +446,52 @@ export async function writeFileWithinWorkspace(
     temporaryExists = false;
   } finally {
     if (temporaryExists) symbols.unlinkat(directoryFd, cString(temporaryName), 0);
+    closeFile(symbols, directoryFd);
+  }
+}
+
+export async function withArtifactDescriptor<Value>(
+  root: string,
+  segments: string[],
+  consume: (fd: number, initial: Stats) => Value | Promise<Value>
+): Promise<
+  | { accepted: true; value: Value }
+  | { accepted: false; reason: 'safe_open_unavailable' | 'unsafe_path' }
+> {
+  const backend = await getSafeFsBackend().catch(() => null);
+  if (!backend) return { accepted: false, reason: 'safe_open_unavailable' };
+  try {
+    validateSegments(segments);
+    if (!root.startsWith('/') || root.includes('\0')) throw new Error('invalid_root');
+    validateSegments(root.split('/').filter(Boolean));
+  } catch {
+    return { accepted: false, reason: 'unsafe_path' };
+  }
+  const { symbols, atFdcwd } = backend;
+  const cloexec = process.platform === 'darwin' ? 0x1000000 : 0x80000;
+  let directoryFd = -1;
+  let fileFd = -1;
+  try {
+    directoryFd = openRootDirectory(symbols, atFdcwd, root, cloexec);
+    if (directoryFd < 0) return { accepted: false, reason: 'unsafe_path' };
+    for (const segment of segments.slice(0, -1)) {
+      const nextFd = openDirectory(symbols, directoryFd, segment, cloexec);
+      closeFile(symbols, directoryFd);
+      directoryFd = nextFd;
+      if (directoryFd < 0) return { accepted: false, reason: 'unsafe_path' };
+    }
+    fileFd = symbols.openat(
+      directoryFd,
+      cString(segments[segments.length - 1]),
+      constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW | cloexec,
+      0
+    );
+    if (fileFd < 0) return { accepted: false, reason: 'unsafe_path' };
+    const initial = fstatSync(fileFd);
+    if (!initial.isFile() || initial.nlink !== 1) return { accepted: false, reason: 'unsafe_path' };
+    return { accepted: true, value: await consume(fileFd, initial) };
+  } finally {
+    closeFile(symbols, fileFd);
     closeFile(symbols, directoryFd);
   }
 }
