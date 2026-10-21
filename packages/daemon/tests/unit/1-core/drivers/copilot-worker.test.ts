@@ -216,6 +216,28 @@ describe('Copilot worker construction', () => {
     }
   });
 
+  for (const prompt of ['queued', 'hold'])
+    test(`refuses ${prompt} follow-up while permission-blocked without sending it`, async () => {
+      const cfg = config();
+      const worker = await openCopilotWorker(cfg);
+      try {
+        const receipt = await worker.submit('permission');
+        expect((await worker.snapshot()).status).toBe('needs_you');
+        await expect(worker.submit(prompt)).rejects.toThrow('permission');
+        const state = await worker.snapshot();
+        expect(state.status).toBe('needs_you');
+        expect(Object.keys(state.inputs)).toEqual([receipt.inputId]);
+        expect(state.inputs[receipt.inputId].replyAvailability).toBe('incomplete');
+        const calls = readFileSync(join(cfg.cwd, 'calls.jsonl'), 'utf8')
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line));
+        expect(calls.filter((call) => call.method === 'session.send')).toHaveLength(1);
+      } finally {
+        await worker.close();
+      }
+    });
+
   test('a session error followed by idle is failed, not successful completion', async () => {
     const worker = await openCopilotWorker(config());
     try {

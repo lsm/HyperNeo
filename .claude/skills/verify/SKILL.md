@@ -2322,7 +2322,8 @@ matched replies. Public `work.adapters` must still advertise Copilot as find-onl
 An idle before the first input must remain queued. After 270 additional settled
 inputs, only the latest 64 settled receipts remain; the runtime stays usable
 across dedup retention rollover. A rejected permission followed by idle must stay
-`needs_you`. Unsettled inputs are capped at 64 without losing accepted receipts.
+`needs_you`; a follow-up submit is rejected before transport and preserves that
+blocked status. Unsettled inputs are capped at 64 without losing accepted receipts.
 Dedup retains at most 512 keys, evicting only keys unrelated to unsettled inputs;
 if all retained keys protect active evidence, the runtime becomes unreachable
 instead of forgetting that evidence and risking duplicate attribution. Snapshot

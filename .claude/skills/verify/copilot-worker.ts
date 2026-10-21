@@ -65,6 +65,8 @@ try {
   const blocked = await rpc('verify.copilot', { action: 'permission' }) as typeof held;
   assert.equal(blocked.state.status, 'needs_you');
   assert.equal(blocked.state.inputs[blocked.receipt.inputId].replyAvailability, 'incomplete');
+  await assert.rejects(rpc('verify.copilot', { action: 'hold' }), /permission/);
+  assert.equal((await rpc('verify.copilot', { action: 'snapshot' }) as { status: string }).status, 'needs_you');
   const adapters = await rpc('operation.invoke', { name: 'work.adapters', input: {} }) as { value: { id: string; capabilities: string[] }[] };
   assert.deepEqual(adapters.value.find(a => a.id === 'copilot-cli')?.capabilities, ['find']);
   const calls = readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
