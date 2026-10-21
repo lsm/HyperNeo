@@ -24,17 +24,17 @@ vi.mock('../../../lib/connection-manager', () => ({
   },
 }));
 
-const { settings, mockUpdate } = vi.hoisted(() => ({
-  settings: { value: { allowedHosts: ['lan.local'] } as { allowedHosts?: string[] } | null },
-  mockUpdate: vi.fn(async (updates: { allowedHosts: string[] }) => ({
-    success: true,
-    settings: updates,
-  })),
+const { mockUpdate } = vi.hoisted(() => ({
+  mockUpdate: vi.fn(),
 }));
 
-vi.mock('../../../lib/state.ts', () => ({ globalSettings: settings }));
+vi.mock('../../../lib/state.ts', async () => {
+  const { signal } = await import('@preact/signals');
+  return { globalSettings: signal<{ allowedHosts?: string[] } | null>(null) };
+});
 vi.mock('../../../lib/api-helpers.ts', () => ({ updateGlobalSettings: mockUpdate }));
 
+import { globalSettings } from '../../../lib/state.ts';
 import { DevicesSettings } from '../DevicesSettings.tsx';
 
 type Invocation = { name: string; input: Record<string, unknown> };
@@ -137,7 +137,12 @@ function daemon(state: { paired: boolean; pending?: unknown[] }) {
 describe('DevicesSettings', () => {
   beforeEach(() => {
     mockRequest.mockReset();
-    mockUpdate.mockClear();
+    mockUpdate.mockReset();
+    mockUpdate.mockImplementation(async (updates: { allowedHosts: string[] }) => {
+      (globalSettings as { value: unknown }).value = updates;
+      return { success: true, settings: updates };
+    });
+    (globalSettings as { value: unknown }).value = { allowedHosts: ['lan.local'] };
   });
   afterEach(() => cleanup());
 
@@ -191,6 +196,21 @@ describe('DevicesSettings', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Remove lan.local' }));
     await waitFor(() =>
       expect(mockUpdate).toHaveBeenLastCalledWith({ allowedHosts: ['mac.tailnet.ts.net'] })
+    );
+  });
+
+  it('keeps a host another browser added when this one adds or removes one', async () => {
+    daemon({ paired: true });
+    render(<DevicesSettings />);
+    await screen.findByText('lan.local');
+    (globalSettings as { value: unknown }).value = { allowedHosts: ['lan.local', 'other.lan'] };
+    await screen.findByText('other.lan');
+    fireEvent.input(screen.getByLabelText('Allowed host'), { target: { value: 'mac.ts.net' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add host' }));
+    await waitFor(() =>
+      expect(mockUpdate).toHaveBeenCalledWith({
+        allowedHosts: ['lan.local', 'other.lan', 'mac.ts.net'],
+      })
     );
   });
 

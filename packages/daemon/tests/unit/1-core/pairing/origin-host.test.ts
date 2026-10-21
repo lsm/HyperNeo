@@ -98,6 +98,26 @@ describe('recording requests the Origin and Host checks would refuse', () => {
     db.close();
   });
 
+  test('loopback requests are judged without reading the settings', () => {
+    let reads = 0;
+    const observe = createRequestObserver({
+      devices: () => {
+        throw new Error('no record expected');
+      },
+      allowedHosts: () => {
+        reads += 1;
+        return [];
+      },
+      exempt: () => false,
+      now: () => 1,
+    });
+    observe(request({ host: '127.0.0.1:9283', origin: 'http://127.0.0.1:9283' }));
+    observe(request({ host: 'localhost' }));
+    expect(reads).toBe(0);
+    observe(request({ host: 'mac.ts.net' }));
+    expect(reads).toBe(1);
+  });
+
   test('a storage failure is swallowed', () => {
     const observe = createRequestObserver({
       devices: () => {

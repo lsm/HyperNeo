@@ -110,13 +110,14 @@ export function DevicesSettings() {
   const [error, setError] = useState<string | null>(null);
   const [newKind, setNewKind] = useState<Kind>('human');
   const [newName, setNewName] = useState('');
-  const [hosts, setHosts] = useState<string[]>(globalSettings.value?.allowedHosts ?? []);
+  const hosts = globalSettings.value?.allowedHosts ?? [];
   const [newHost, setNewHost] = useState('');
-  const saveHosts = async (next: string[]) => {
+  const saveHosts = async (change: (current: string[]) => string[]) => {
     setError(null);
-    const saved = await updateGlobalSettings({ allowedHosts: next }).catch(() => null);
-    if (saved?.success) setHosts(saved.settings.allowedHosts ?? []);
-    else setError('Could not save the allowed hosts.');
+    const saved = await updateGlobalSettings({
+      allowedHosts: change(globalSettings.value?.allowedHosts ?? []),
+    }).catch(() => null);
+    if (!saved?.success) setError('Could not save the allowed hosts.');
   };
 
   const reload = () =>
@@ -359,7 +360,7 @@ export function DevicesSettings() {
                 size="sm"
                 variant="secondary"
                 aria-label={`Remove ${host}`}
-                onClick={() => saveHosts(hosts.filter((item) => item !== host))}
+                onClick={() => saveHosts((current) => current.filter((item) => item !== host))}
               >
                 Remove
               </Button>
@@ -372,7 +373,8 @@ export function DevicesSettings() {
             event.preventDefault();
             const host = newHost.trim().toLowerCase();
             setNewHost('');
-            if (host && !hosts.includes(host)) void saveHosts([...hosts, host]);
+            if (host)
+              void saveHosts((current) => (current.includes(host) ? current : [...current, host]));
           }}
         >
           <label class="block flex-1">

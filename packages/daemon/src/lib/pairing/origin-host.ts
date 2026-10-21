@@ -45,7 +45,7 @@ export function createRequestObserver({
   return (req: Request): void => {
     try {
       if (exempt(req)) return;
-      const refusal = judgeOriginHost(req, allowedHosts());
+      const refusal = judgeOriginHost(req, []) && judgeOriginHost(req, allowedHosts());
       if (refusal) devices().recordWouldRefuse(refusal, now());
     } catch {
       return;
