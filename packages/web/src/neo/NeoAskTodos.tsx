@@ -20,7 +20,7 @@ import {
   NeoSessionMark,
 } from './NeoCardParts.tsx';
 import { neoSessionKind } from './work-driver.ts';
-import { NEO_DONE_SHOWN, type NeoDoneTodosPage } from './neo-asks.ts';
+import { NEO_DONE_SHOWN, type NeoDoneTodosPage, neoDonePageMerge } from './neo-asks.ts';
 import { NeoIcon } from './NeoIcon.tsx';
 import { messageTime } from './NeoMessage.tsx';
 import { t } from '../lib/i18n/index.ts';
@@ -338,6 +338,7 @@ export function NeoAskTodos({
   const [open, setOpen] = useState(false);
   const [doneOpen, setDoneOpen] = useState(false);
   const [paged, setPaged] = useState<NeoTodoEntry[]>([]);
+  const [stalled, setStalled] = useState(false);
   const [paging, setPaging] = useState(false);
   const [doneError, setDoneError] = useState<string | null>(null);
   const { ask, todos } = entry;
@@ -363,10 +364,12 @@ export function NeoAskTodos({
     if (knownDone.length >= entry.doneCount || !onLoadDone || paging) return;
     setPaging(true);
     setDoneError(null);
-    void onLoadDone(ask.id, knownDone.length)
+    void onLoadDone(ask.id, stalled ? 0 : knownDone.length)
       .then((page) => {
-        if (page.ok) setPaged((current) => [...current, ...page.todos]);
-        else setDoneError(t('ask.moreDoneRefused', { reason: page.reason }));
+        if (!page.ok) return setDoneError(t('ask.moreDoneRefused', { reason: page.reason }));
+        const merged = neoDonePageMerge(paged, knownDone, page.todos, stalled);
+        setPaged(merged.paged);
+        setStalled(merged.stalled);
       })
       .catch(() => setDoneError(t('ask.moreDoneFailed')))
       .finally(() => setPaging(false));

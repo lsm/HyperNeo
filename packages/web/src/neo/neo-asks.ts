@@ -24,3 +24,16 @@ export function neoAskEntriesInOrder<T extends Pick<NeoAskEntry, 'todos'>>(
 ): T[] {
   return [...entries].sort((a, b) => Number(holdsBlocked(b)) - Number(holdsBlocked(a)));
 }
+
+export function neoDonePageMerge(
+  paged: readonly NeoTodoEntry[],
+  known: readonly NeoTodoEntry[],
+  page: readonly NeoTodoEntry[],
+  restart: boolean
+): { paged: NeoTodoEntry[]; stalled: boolean } {
+  const seen = new Set((restart ? [] : known).map((todo) => todo.id));
+  const fresh = page.filter((todo) => !seen.has(todo.id) && !!seen.add(todo.id));
+  return restart
+    ? { paged: fresh, stalled: false }
+    : { paged: [...paged, ...fresh], stalled: fresh.length === 0 };
+}

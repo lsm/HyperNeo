@@ -595,6 +595,39 @@ describe('done todos on a card', () => {
     expect(onLoadDone).toHaveBeenCalledWith('ask', 1);
   });
 
+  it('keeps each done todo once when the done list shifts between pages', async () => {
+    const onLoadDone = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        todos: [done('d1'), done('d2')],
+        doneCount: 5,
+        nextOffset: 2,
+      })
+      .mockResolvedValueOnce({ ok: true, todos: [done('d2')], doneCount: 5, nextOffset: null })
+      .mockResolvedValueOnce({
+        ok: true,
+        todos: [done('d0'), done('d1'), done('d2'), done('d3'), done('d4')],
+        doneCount: 5,
+        nextOffset: null,
+      });
+    const app = render(
+      <NeoAskTodos
+        entry={entry({ todos: [todo('a')], doneCount: 5 })}
+        onAnswer={vi.fn()}
+        onLoadDone={onLoadDone}
+      />
+    );
+    fireEvent.click(app.getByRole('button', { name: '5 done — show more' }));
+    await waitFor(() => expect(rows(app)).toEqual(['a', 'd1', 'd2']));
+    fireEvent.click(app.getByRole('button', { name: '3 done — show more' }));
+    await waitFor(() => expect(onLoadDone).toHaveBeenCalledTimes(2));
+    expect(rows(app)).toEqual(['a', 'd1', 'd2']);
+    fireEvent.click(app.getByRole('button', { name: '3 done — show more' }));
+    await waitFor(() => expect(rows(app)).toEqual(['a', 'd0', 'd1', 'd2', 'd3', 'd4']));
+    expect(onLoadDone).toHaveBeenLastCalledWith('ask', 0);
+  });
+
   it('says when done todos could not be read and lets the reader try again', async () => {
     const onLoadDone = vi
       .fn()
