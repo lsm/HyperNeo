@@ -1686,9 +1686,11 @@ export class QueryRunner {
           recoveryState,
           resetStartupState: true,
           idleFirst: true,
-          requeueLastConsumedFor: 'transient connection error retry',
+          snapshotLastConsumed: true,
+          snapshotRequeueLabel: 'transient connection error retry',
           notice: '⚠️ The connection was interrupted. Retrying…',
           guardAfterExit: true,
+          restartQueue: true,
         });
       }
 

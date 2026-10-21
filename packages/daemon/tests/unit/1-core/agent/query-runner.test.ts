@@ -3276,7 +3276,7 @@ describe('QueryRunner', () => {
       expect(runnerPrivate._lastConsumedUserMessage).toBeNull();
     });
 
-    it('transient arm resnapshot suppresses close and recursion when superseded during displayErrorAsAssistantMessage', async () => {
+    it('transient arm resnapshot suppresses close, re-enqueue and recursion when superseded during displayErrorAsAssistantMessage', async () => {
       const consumedUuid = 'consumed-uuid';
       const consumedContent = [{ type: 'text' as const, text: 'C' }];
       buildSpy.mockRejectedValue(new Error('TypeError: fetch failed'));
@@ -3305,7 +3305,7 @@ describe('QueryRunner', () => {
       await runnerPrivate.runQuery(1, 0, { rateLimitCooldownScheduled: false });
 
       expect(buildSpy).toHaveBeenCalledTimes(1);
-      expect(enqueueWithIdSpy).toHaveBeenCalledWith(consumedUuid, consumedContent);
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
       expect(closeSpy).not.toHaveBeenCalled();
       expect(ctx.queryObject).not.toBeNull();
       expect(runnerPrivate._lastConsumedUserMessage).toBeNull();
@@ -4456,10 +4456,11 @@ describe('QueryRunner', () => {
         'timer.clear',
         'firstMsg.reset',
         'idle:suppress',
-        'enqueue:lm1',
         'display',
         'query.close',
         'exit.reset',
+        'queue.start',
+        'enqueue:lm1',
         'build#2',
         'queue.clear',
         'terminal.begin',
@@ -4493,6 +4494,7 @@ describe('QueryRunner', () => {
         'display',
         'query.close',
         'exit.reset',
+        'queue.start',
         'build#2',
         'queue.clear',
         'terminal.begin',

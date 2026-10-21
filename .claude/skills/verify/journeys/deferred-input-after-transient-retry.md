@@ -31,3 +31,9 @@ transient fails with recipient `closed SDK` instead of `replacement SDK`.
 The RPC reproduction similarly shows the transient retry notice, but no
 kickoff in attempt 2. Renewing the queue after the early enqueue is too late:
 snapshot before teardown, then enqueue after the generation is renewed.
+
+Failing reproduction commit: `3f5950655`. Adding only `restartQueue:true`
+still fails the ownership assertion because enqueue runs earlier. With the
+snapshot/requeue ordering fixed, both ownership cases pass; the real-SDK RPC
+journey observes kickoff and follow-up in attempt 2, and final counts are
+`consumed=2`, `deferred=0`.
