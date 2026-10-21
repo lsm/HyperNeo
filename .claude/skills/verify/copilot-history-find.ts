@@ -57,7 +57,23 @@ const calls = () => readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').tri
 async function restart() { ws?.close(); await app!.cleanup(); app = undefined; await connect(); }
 try {
   await connect();
-  if (mode === 'search') {
+  if (mode === 'boundary') {
+    const work = await start('history');
+    const file = join(run, 'data/copilot-workers', work.ref.id, 'session-state', work.ref.id, 'events.jsonl');
+    appendFileSync(file, JSON.stringify({ type: 'assistant.message', timestamp: new Date().toISOString(), data: { messageId: 'boundary-turn', content: 'BOUNDARY'.repeat(600) } }) + '\n');
+    const boundary = readFileSync(file).length;
+    const hidden = { type: 'unknown.fixture', timestamp: new Date().toISOString(), data: {}, padding: '' };
+    hidden.padding = 'x'.repeat(262000 - Buffer.byteLength(JSON.stringify(hidden) + '\n'));
+    appendFileSync(file, JSON.stringify(hidden) + '\n');
+    const page = await rpc('work.read', { sessionId: work.ref.id, before: 10, after: 10 }) as Result<import('../../../packages/daemon/src/storage/work-turn-page.ts').WorkTurnPage>;
+    assert(page.ok && page.value.nextCursor, JSON.stringify(page));
+    assert.deepEqual(page.value.turns, []);
+    const older = await rpc('work.read', { sessionId: work.ref.id, before: 10, after: 10, cursor: page.value.nextCursor }) as typeof page;
+    assert(older.ok); assert(older.value.turns.some(t => t.messageId === 'assistant:boundary-turn'), JSON.stringify(older));
+    assert.equal(page.value.nextCursor.before, boundary);
+    const status = await rpc('work.status', { ref: work.ref, receipt: work.receipt }) as Result<{ lastReply?: string }>;
+    assert(status.ok && status.value.lastReply === 'HISTORY_REPLY');
+  } else if (mode === 'search') {
     writeFileSync(join(run, 'home/copilot-list.json'), JSON.stringify([
       ...Array.from({ length: 25 }, (_, n) => ({ sessionId: `new-${n}`, cwd: '/synthetic/copilot-project', title: `New item ${n}`, updatedAt: new Date().toISOString() })),
       { sessionId: 'old-match', cwd: '/synthetic/copilot-project', title: 'Rare target', updatedAt: '2026-01-01T00:00:00Z' },

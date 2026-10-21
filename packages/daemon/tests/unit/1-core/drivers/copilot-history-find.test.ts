@@ -350,4 +350,75 @@ describe('Copilot owned history and discovery', () => {
     expect(items[0].watchHint).toContain('External Copilot discovery unavailable');
     expect(readFileSync(join(f.run, 'calls.jsonl'), 'utf8')).not.toContain('session.resume');
   });
+  test.each(['unknown', 'delta', 'subagent', 'malformed'])(
+    'paging over only %s records preserves the turn straddling the byte boundary',
+    async (kind) => {
+      const f = setup();
+      const work = await f.start();
+      const file = f.history(work);
+      appendFileSync(
+        file,
+        JSON.stringify({
+          type: 'assistant.message',
+          timestamp: new Date().toISOString(),
+          data: { messageId: 'boundary-turn', content: 'BOUNDARY'.repeat(600) },
+        }) + '\n'
+      );
+      const boundary = Buffer.byteLength(readFileSync(file));
+      const hidden = {
+        type:
+          kind === 'subagent'
+            ? 'assistant.message'
+            : kind === 'delta'
+              ? 'assistant.message_delta'
+              : 'unknown.fixture',
+        timestamp: new Date().toISOString(),
+        data: { messageId: 'hidden', content: 'not visible' },
+        ...(kind === 'subagent' ? { agentId: 'child' } : {}),
+        padding: '',
+      };
+      hidden.padding = 'x'.repeat(262000 - Buffer.byteLength(JSON.stringify(hidden) + '\n'));
+      appendFileSync(
+        file,
+        kind === 'malformed' ? '!'.repeat(261999) + '\n' : JSON.stringify(hidden) + '\n'
+      );
+      const first = f.read(work, undefined, 10, 10);
+      expect(first?.turns).toEqual([]);
+      expect(first?.nextCursor?.before).toBe(boundary);
+      const second = f.read(work, undefined, 10, 10, first?.nextCursor);
+      expect(second?.turns.find((t) => t.messageId === 'assistant:boundary-turn')).toMatchObject({
+        text: 'BOUNDARY'.repeat(600).slice(0, 4000),
+        textComplete: false,
+      });
+    }
+  );
+
+  test('empty windows over an oversized line always move the cursor backwards', async () => {
+    const f = setup();
+    const work = await f.start();
+    const file = f.history(work);
+    appendFileSync(
+      file,
+      JSON.stringify({
+        type: 'unknown.fixture',
+        timestamp: new Date().toISOString(),
+        data: {},
+        padding: 'x'.repeat(600000),
+      }) + '\n'
+    );
+    let cursor: WorkTurnPage['nextCursor'];
+    let previous = readFileSync(file).length + 1;
+    const ids: string[] = [];
+    for (let n = 0; n < 10; n++) {
+      const page = f.read(work, undefined, 10, 10, cursor);
+      expect(page).toBeDefined();
+      ids.push(...page!.turns.map((t) => t.messageId));
+      cursor = page?.nextCursor;
+      if (!cursor) break;
+      expect(cursor.before).toBeLessThan(previous);
+      previous = cursor.before;
+    }
+    expect(cursor).toBeUndefined();
+    expect(ids).toContain('assistant:reply-1');
+  });
 });
