@@ -9,7 +9,7 @@ import type { Database } from '../../storage/sqlite-compat.ts';
 import { ArtifactFileRepository } from '../../storage/repositories/artifact-file-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { getDataDir } from '../data-dir.ts';
-import { createArtifactCaptureStore } from './capture-store.ts';
+import { artifactCaptureOwner } from './capture-owner.ts';
 import { ArtifactRefSchema, ArtifactRefusalSchema } from './file-contracts.ts';
 import { admitArtifactCapture } from './file-policy.ts';
 import { loadRegistrationBinding } from './registration-binding.ts';
@@ -68,7 +68,6 @@ function storedKind(root: string, hash: string, path: string) {
 function registrationService(db: Database, data: string, home: string) {
   const registry = new ArtifactFileRepository(db);
   const root = join(data, 'artifacts');
-  let store: ReturnType<typeof createArtifactCaptureStore> | undefined;
   let lane = Promise.resolve();
   const policy = {
     daemonId: registry.daemonId,
@@ -103,7 +102,7 @@ function registrationService(db: Database, data: string, home: string) {
     }
     const previous = registry.receipt(input.context, input.requestId);
     if (previous && previous.fingerprint !== fingerprint) return refused('source_changed');
-    const owner = await (store ??= createArtifactCaptureStore(root));
+    const owner = await artifactCaptureOwner(db, data);
     if (previous) {
       const hash = await owner.hashSource(plan.root, plan.relativePath.split('/'));
       if (hash.accepted)
