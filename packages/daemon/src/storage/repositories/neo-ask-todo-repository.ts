@@ -59,13 +59,21 @@ const TODO_SELECT = `SELECT id, ask_id AS askId, position, title, done_when AS d
 
 export type NeoQuestionDraft = Pick<
   NeoQuestion,
-  'text' | 'kind' | 'options' | 'multiple' | 'noLabel' | 'yesLabel' | 'startTodos' | 'confirm'
+  | 'text'
+  | 'kind'
+  | 'options'
+  | 'multiple'
+  | 'noLabel'
+  | 'yesLabel'
+  | 'startTodos'
+  | 'confirm'
+  | 'document'
 >;
 
 const QUESTION_SELECT = `SELECT id, ask_id AS askId, text, kind, options, multiple, no_label AS noLabel,
   yes_label AS yesLabel, start_todos AS startTodos, state, answer, answered_by AS answeredBy,
   answered_at AS answeredAt, retired_reason AS retiredReason, replaced_by AS replacedBy,
-  confirm_json AS confirmJson, created_at AS createdAt FROM neo_questions`;
+  confirm_json AS confirmJson, document, created_at AS createdAt FROM neo_questions`;
 
 type QuestionRow = Omit<
   NeoQuestion,
@@ -220,6 +228,20 @@ export class NeoAskTodoRepository {
   getTodo(id: string): NeoTodo | null {
     const row = this.db.prepare(`${TODO_SELECT} WHERE id = ?`).get(id) as TodoRow | null;
     return row ? toTodo(row) : null;
+  }
+
+  getTodos(ids: readonly string[]): NeoTodo[] {
+    return (
+      this.db
+        .prepare(`${TODO_SELECT} WHERE id IN (SELECT value FROM json_each(?))`)
+        .all(JSON.stringify(ids)) as TodoRow[]
+    ).map(toTodo);
+  }
+
+  getAsks(ids: readonly string[]): NeoAsk[] {
+    return this.db
+      .prepare(`${ASK_SELECT} WHERE id IN (SELECT value FROM json_each(?))`)
+      .all(JSON.stringify(ids)) as NeoAsk[];
   }
 
   listTodos(askId: string): NeoTodo[] {
@@ -378,7 +400,7 @@ export class NeoAskTodoRepository {
     this.db
       .prepare(
         `INSERT INTO neo_questions (id, ask_id, text, kind, options, multiple, no_label, yes_label,
-           start_todos, confirm_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           start_todos, confirm_json, document, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -391,6 +413,7 @@ export class NeoAskTodoRepository {
         draft.yesLabel,
         draft.startTodos ? JSON.stringify(draft.startTodos) : null,
         draft.confirm ? JSON.stringify(draft.confirm) : null,
+        draft.document ?? null,
         now
       );
     this.touchAsk(askId, now);

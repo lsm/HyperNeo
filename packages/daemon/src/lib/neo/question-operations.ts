@@ -56,6 +56,7 @@ const Answer = z.object({ questionId: Text, answer: z.union([z.string(), z.array
 const Get = z.object({ questionId: Text });
 
 export const NeoQuestionSchema = z.object({
+  document: z.string().nullable().optional(),
   id: z.string(),
   askId: z.string(),
   text: z.string(),
@@ -87,6 +88,7 @@ const QuestionReadResult = z.union([
       answer: true,
       answeredAt: true,
       confirm: true,
+      document: true,
     }),
     answeredByHuman: z.boolean(),
   }),
@@ -94,10 +96,10 @@ const QuestionReadResult = z.union([
 
 export function readNeoQuestion(question: NeoQuestion | null): z.infer<typeof QuestionReadResult> {
   if (!question) return { ok: false, reason: 'not_found: no such question.' };
-  const { id, text, kind, state, answer, answeredAt, confirm } = question;
+  const { id, text, kind, state, answer, answeredAt, confirm, document } = question;
   return {
     ok: true,
-    question: { id, text, kind, state, answer, answeredAt, confirm },
+    question: { id, text, kind, state, answer, answeredAt, confirm, document },
     answeredByHuman: state === 'answered',
   };
 }

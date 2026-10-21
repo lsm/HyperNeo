@@ -471,3 +471,40 @@ describe('NeoAskTodos in English', () => {
     expect(app.container.textContent).not.toMatch(/[\u4e00-\u9fff]/);
   });
 });
+
+describe('Question full-version document', () => {
+  it.each(['open', 'answered', 'retired'] as const)(
+    'keeps the %s card short and opens literal full text',
+    async (state) => {
+      locale.value = 'en';
+      const document =
+        'Local version\n' +
+        'Full original line  \n'.repeat(80) +
+        '<script>unsafe()</script>\nRemote version';
+      const view = render(
+        <NeoAskTodos
+          entry={entry({
+            questions: [
+              question('document', {
+                text: 'direction.md: compact diff',
+                state,
+                document,
+              } as Partial<NeoQuestion>),
+            ],
+          })}
+          onAnswer={() => {}}
+        />
+      );
+      if (state !== 'open')
+        fireEvent.click(view.container.querySelector('[data-ask-details-toggle]')!);
+      expect(view.queryByRole('dialog')).toBeNull();
+      fireEvent.click(view.getByRole('button', { name: 'View full versions' }));
+      const dialog = await view.findByRole('dialog');
+      expect(dialog.querySelector('pre')?.textContent).toBe(document);
+      expect(dialog.querySelector('script')).toBeNull();
+      expect(dialog.textContent).toContain('Remote version');
+      fireEvent.click(view.getByRole('button', { name: /close/i }));
+      await waitFor(() => expect(view.queryByRole('dialog')).toBeNull());
+    }
+  );
+});

@@ -109,6 +109,16 @@ export class CodingTodoPrRepository {
     return row ? (JSON.parse(row.prs) as NeoWorkPr[]) : [];
   }
 
+  prsForTodos(ids: readonly string[]): Map<string, NeoWorkPr[]> {
+    const rows = this.db
+      .prepare(
+        `SELECT todo_id AS todoId, prs_json AS prs FROM pack_coding_todo_prs
+          WHERE todo_id IN (SELECT value FROM json_each(?))`
+      )
+      .all(JSON.stringify(ids)) as { todoId: string; prs: string }[];
+    return new Map(rows.map((row) => [row.todoId, JSON.parse(row.prs) as NeoWorkPr[]]));
+  }
+
   latest(url: string): { pr: NeoWorkPr; readAt: number } | null {
     const key = codingPrKey(url);
     const rows = this.db

@@ -58,6 +58,7 @@ export const en = {
   'todo.open': 'Open',
   'todo.openTitle': 'Open {title}',
   'todo.startTitle': 'Start {title}',
+  'question.document': 'View full versions',
   'question.reply': 'Reply in chat',
   'question.confirm': 'Confirm',
   'question.start': 'Start',

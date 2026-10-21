@@ -87,3 +87,15 @@ describe('fitNeoSnapshotBudget', () => {
     expect(fitNeoSnapshotBudget(full, 40_000).todoAsks?.length).toBeGreaterThan(0);
   });
 });
+
+describe('Full-version question documents in bounded snapshots', () => {
+  test('keeps the question visible without copying its large document into the trimmed snapshot', () => {
+    const full = snapshot(1, 0);
+    full.todoAsks![0].questions[0].document = 'Full immutable versions\n'.repeat(5000);
+    const fitted = fitNeoSnapshotBudget(full, 4000);
+    expect(fitted.todoAsks![0].questions).toHaveLength(1);
+    expect(fitted.todoAsks![0].questions[0].text).toBe('Which one?');
+    expect(bytes(fitted)).toBeLessThanOrEqual(4000);
+    expect(full.todoAsks![0].questions[0].document).toContain('Full immutable versions');
+  });
+});

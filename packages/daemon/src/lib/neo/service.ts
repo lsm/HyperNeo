@@ -1,3 +1,5 @@
+import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import { neoStateNote, restartNeo } from './restart.ts';
 import { projectNeoAskEntries } from './ask-entries.ts';
 import { hostname } from 'node:os';
@@ -98,6 +100,12 @@ import type { NeoSessionNotice, NeoSessionNoticeGroup } from './session-watch.ts
 import { NeoSessionWatcher } from './session-watcher.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
 import type { NeoSnapshotRead } from './snapshot-read.ts';
+
+type NeoFollowedTodoSnapshot = {
+  todos: Map<string, NeoTodo>;
+  asks: Map<string, NeoAsk>;
+  prs: Map<string, NeoWorkPr[]>;
+};
 
 export class NeoService {
   readonly repo: NeoRepository;
@@ -599,14 +607,21 @@ export class NeoService {
     return this.todos.listCheckable().map((todo) => todo.id);
   }
 
-  private followedTodo(workId: string): NeoWork | null {
-    const todo = this.todos.getTodo(workId);
-    const ask = todo ? this.todos.getAsk(todo.askId) : null;
+  private followedTodo(workId: string, snapshot?: NeoFollowedTodoSnapshot): NeoWork | null {
+    const todo = snapshot ? snapshot.todos.get(workId) : this.todos.getTodo(workId);
+    const ask = todo
+      ? snapshot
+        ? snapshot.asks.get(todo.askId)
+        : this.todos.getAsk(todo.askId)
+      : null;
     return todo &&
       ask &&
       ask.status !== 'dropped' &&
       ((ask.status === 'open' && ['todo', 'doing', 'blocked'].includes(todo.state)) ||
-        (todo.state === 'done' && this.todoPrs.prs(workId).some((pr) => pr.state === 'MERGED')))
+        (todo.state === 'done' &&
+          (snapshot ? (snapshot.prs.get(workId) ?? []) : this.todoPrs.prs(workId)).some(
+            (pr) => pr.state === 'MERGED'
+          )))
       ? neoTodoCard(todo, ask)
       : null;
   }
@@ -696,6 +711,36 @@ export class NeoService {
     )
     .pipe(
       (rows: NeoCardEventSubscription[]) =>
+        runLagPhase('neo:card_topics:followed_snapshot', () => {
+          const ids = [...new Set(rows.map((row) => row.workId))];
+          const todos = ids.length ? this.todos.getTodos(ids) : [];
+          const asks = new Map(
+            (todos.length
+              ? this.todos.getAsks([...new Set(todos.map((todo) => todo.askId))])
+              : []
+            ).map((ask) => [ask.id, ask])
+          );
+          const doneIds = todos
+            .filter(
+              (todo) =>
+                todo.state === 'done' &&
+                asks.has(todo.askId) &&
+                asks.get(todo.askId)?.status !== 'dropped'
+            )
+            .map((todo) => todo.id);
+          return {
+            todos: new Map(todos.map((todo) => [todo.id, todo])),
+            asks,
+            prs: doneIds.length
+              ? this.todoPrs.prsForTodos(doneIds)
+              : new Map<string, NeoWorkPr[]>(),
+          };
+        }),
+      'rows',
+      'snapshot'
+    )
+    .pipe(
+      (rows: NeoCardEventSubscription[], snapshot: NeoFollowedTodoSnapshot) =>
         runLagPhase('neo:card_topics:eligibility', () => {
           let delivered: boolean | undefined;
           return new Map(
@@ -704,7 +749,7 @@ export class NeoService {
                 [
                   workId,
                   !!runLagPhase(`neo:card_topics:followed_todo:${workId}`, () =>
-                    this.followedTodo(workId)
+                    this.followedTodo(workId, snapshot)
                   ) &&
                     runLagPhase(
                       `neo:card_topics:card_events_delivered:${workId}`,
@@ -714,7 +759,7 @@ export class NeoService {
             )
           );
         }),
-      'rows',
+      ['rows', 'snapshot'],
       'followed'
     )
     .pipe(planNeoCardTopicsEnded, ['rows', 'followed'], 'ended')

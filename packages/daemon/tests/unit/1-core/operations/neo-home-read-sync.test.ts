@@ -216,3 +216,92 @@ describe('Curated home reads within a Neo wake', () => {
     expect(await pulls()).toBe(1);
   });
 });
+
+describe('Home sync conflict questions', () => {
+  test('preserves both full versions in one revision-bound question across retries and restart', async () => {
+    const local = `Human local choice\n${'Local text with trailing spaces  \n'.repeat(80)}`;
+    const remoteText = `Other machine choice\n${'Remote full text\n'.repeat(80)}`;
+    await writeFile(join(root, 'direction.md'), local);
+    await git(root, 'add', 'direction.md');
+    await git(root, 'commit', '-m', 'Human local choice');
+    const localHead = await git(root, 'rev-parse', 'HEAD');
+    await version(remoteText);
+    const remoteHead = await git(peer, 'rev-parse', 'HEAD');
+    const first = await read();
+    expect(first).toMatchObject({ ok: false, reason: expect.stringContaining('conflict') });
+    const store = new NeoAskTodoRepository(db.getDatabase());
+    const questions = store.listAsks(undefined, 100).flatMap((ask) => store.listQuestions(ask.id));
+    expect(questions).toHaveLength(1);
+    const question = questions[0] as (typeof questions)[number] & { document: string };
+    expect(question.text.length).toBeLessThan(1800);
+    expect(question.text).toContain('direction.md');
+    expect(question.text).toContain('Human local choice');
+    expect(question.text).toContain('Other machine choice');
+    expect(question.text).toContain('not apply');
+    expect(question.document).toContain(local);
+    expect(question.document).toContain(remoteText);
+    expect(question.document).toContain(localHead);
+    expect(question.document).toContain(remoteHead);
+    expect(question.kind).toBe('choice');
+    expect(await readFile(join(root, 'direction.md'), 'utf8')).toBe(local);
+    expect(await git(root, 'rev-parse', 'HEAD')).toBe(localHead);
+    expect(await git(root, 'status', '--porcelain')).toBe('');
+    expect(await git(peer, 'rev-parse', 'HEAD')).toBe(remoteHead);
+    await read('mandate.md');
+    home = new NeoHomeRepository(root, new NeoRepository(db.getDatabase()));
+    wake();
+    await read();
+    store.answerQuestion(question, ['Keep local'], 'button', Date.now());
+    wake();
+    await read();
+    expect(
+      store.listAsks(undefined, 100).flatMap((ask) => store.listQuestions(ask.id))
+    ).toHaveLength(1);
+    expect(store.getQuestion(question.id)).toMatchObject({
+      state: 'answered',
+      document: question.document,
+    });
+    expect(await readFile(join(root, 'direction.md'), 'utf8')).toBe(local);
+    expect(await git(root, 'rev-parse', 'HEAD')).toBe(localHead);
+  });
+});
+
+describe('Conflict document filenames', () => {
+  test('keeps a leading-space path and both add/add versions intact', async () => {
+    const path = ' notes.md';
+    await writeFile(join(root, path), 'Local complete text\n');
+    await git(root, 'add', '--', path);
+    await git(root, 'commit', '-m', 'Local notes');
+    await writeFile(join(peer, path), 'Remote complete text\n');
+    await git(peer, 'add', '--', path);
+    await git(peer, 'commit', '-m', 'Remote notes');
+    await git(peer, 'push', 'origin', 'main');
+    expect(await read()).toMatchObject({ ok: false, reason: expect.stringContaining('conflict') });
+    const store = new NeoAskTodoRepository(db.getDatabase());
+    const questions = store.listAsks(undefined, 100).flatMap((ask) => store.listQuestions(ask.id));
+    expect(questions).toHaveLength(1);
+    expect(questions[0].document).toContain('File: " notes.md"');
+    expect(questions[0].document).toContain('Local complete text\n');
+    expect(questions[0].document).toContain('Remote complete text\n');
+    expect(await readFile(join(root, path), 'utf8')).toBe('Local complete text\n');
+    expect(await git(root, 'status', '--porcelain')).toBe('');
+  });
+});
+
+describe('Conflict snapshot failure recovery', () => {
+  test('still aborts its own rebase when reading the fetched revision fails', async () => {
+    await writeFile(join(root, 'direction.md'), 'Local preserved\n');
+    await git(root, 'add', '.');
+    await git(root, 'commit', '-m', 'Local preserved');
+    const head = await git(root, 'rev-parse', 'HEAD');
+    await version('Remote preserved');
+    await writeFile(
+      join(fixture, 'bin', 'git'),
+      `#!/bin/sh\nfor arg do\n if [ "$arg" = FETCH_HEAD ]; then echo 'synthetic snapshot failure' >&2; exit 7; fi\ndone\nexec /usr/bin/git "$@"\n`
+    );
+    await expect(read()).rejects.toThrow('synthetic snapshot failure');
+    expect(await readFile(join(root, 'direction.md'), 'utf8')).toBe('Local preserved\n');
+    expect(await git(root, 'rev-parse', 'HEAD')).toBe(head);
+    expect(await git(root, 'status', '--porcelain')).toBe('');
+  });
+});
