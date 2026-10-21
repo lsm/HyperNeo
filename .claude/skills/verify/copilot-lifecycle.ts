@@ -7,7 +7,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import type { Result, WorkDetail, WorkStarted } from '../../../packages/daemon/src/lib/drivers/types.ts';
 
-const [portText, runText] = process.argv.slice(2);
+const [portText, runText, mode = 'all'] = process.argv.slice(2);
 assert(runText);
 const run = resolve(runText);
 const port = Number(portText);
@@ -23,7 +23,8 @@ const fixture = fileURLToPath(new URL('../../../packages/daemon/tests/fixtures/c
 const installFixture = (flag = '') => writeFileSync(join(run, 'bin/copilot'), `#!/usr/bin/env bun\nprocess.argv.push('--production-version', ${JSON.stringify(flag)}); await import(${JSON.stringify(fixture)});\n`, { mode: 0o700 });
 installFixture('--idle-after-abort');
 const observations: unknown[] = [];
-const config = getConfig({ port, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') });
+process.chdir(run);
+const config = getConfig({ port, host: '127.0.0.1', dbPath: ['relative', 'all'].includes(mode) ? 'data/daemon.db' : join(run, 'data/daemon.db') });
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let ws: WebSocket | undefined;
 async function connect() {
@@ -60,6 +61,17 @@ try {
   assert.equal((await status(complete)).inputEvidence?.state, 'observed');
   assert.equal((await status(complete)).lastReply, 'REPLY_1');
   assert.equal((await status(complete)).status, 'done');
+  if (mode === 'terminal' || mode === 'all') {
+    const before = await status(complete);
+    const pid = JSON.parse(readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').split('\n')[0]).pid;
+    process.kill(pid, 'SIGTERM');
+    for (let poll = 0; poll < 100; poll++) {
+      try { process.kill(pid, 0); } catch { break; }
+      await new Promise(done => setTimeout(done, 10));
+    }
+    assert.throws(() => process.kill(pid, 0));
+    assert.deepEqual(await status(complete), before, 'completed receipt must survive runtime exit');
+  }
   assert.equal(complete.link, undefined);
   assert.match(complete.watchHint ?? '', /work.status/);
   const blocked = await start('permission');
@@ -74,6 +86,13 @@ try {
   assert.equal(loggedOut.ok, false); assert.match(loggedOut.detail, /copilot login/);
   installFixture('--no-models');
   assert.equal((await rpc('work.start', { adapter: 'copilot-cli', place: complete.place, title: 'No catalog', model: 'synthetic-model', message: 'never delivered' }) as { ok: boolean }).ok, false);
+  if (mode === 'model' || mode === 'all') {
+    const refused = await rpc('work.start', { adapter: 'copilot-cli', place: complete.place, title: 'Unknown model', model: 'unknown-model', message: 'never delivered' }) as { ok: boolean; reason: string };
+    assert.equal(refused.ok, false); assert.equal(refused.reason, 'unsupported_model');
+    const calls = readFileSync(join(run, 'workspace/calls.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    const pid = calls.at(-1).pid;
+    assert(!calls.some(call => call.pid === pid && ['session.create', 'session.send'].includes(call.method)));
+  }
   installFixture('--crash-on-ping');
   const disconnected = await rpc('work.start', { adapter: 'copilot-cli', place: complete.place, title: 'Synthetic lost owner', model: 'synthetic-model', message: 'hold' }) as { ok: boolean; reason: string; detail: string };
   assert.equal(disconnected.ok, false, 'a disconnected snapshot cannot return queued success');

@@ -60,6 +60,35 @@ async function start(fixture: ReturnType<typeof setup>, message = fixture.reques
 }
 
 describe('owned Copilot lifecycle', () => {
+  test.each([
+    ['settled', 'done'],
+    ['error', 'failed'],
+  ] as const)('retains %s terminal evidence after its runtime dies', async (message, outcome) => {
+    const fixture = setup();
+    const work = await start(fixture, message);
+    const before = await fixture.adapter.status!(work.ref, undefined, work.receipt);
+    expect(before).toMatchObject({ ok: true, value: { status: outcome } });
+    const pid = JSON.parse(
+      readFileSync(join(fixture.run, 'calls.jsonl'), 'utf8').split('\n')[0]
+    ).pid;
+    process.kill(pid, 'SIGTERM');
+    for (let poll = 0; poll < 100; poll++) {
+      try {
+        process.kill(pid, 0);
+      } catch {
+        break;
+      }
+      await new Promise((done) => setTimeout(done, 10));
+    }
+    expect(() => process.kill(pid, 0)).toThrow();
+    expect(await fixture.adapter.status!(work.ref, undefined, work.receipt)).toEqual(before);
+    expect(await fixture.adapter.status!(work.ref, undefined, work.receipt)).toEqual(before);
+    await fixture.adapter.close();
+    const restarted = createCopilotAdapter(fixture.discovery, fixture.deps);
+    owners.push(restarted);
+    expect(await restarted.status!(work.ref, undefined, work.receipt)).toEqual(before);
+  });
+
   test('disconnect after first ACK preserves identity and cannot report queued success', async () => {
     const fixture = setup('--crash-on-ping');
     const result = await fixture.adapter.start!(fixture.request, context);
@@ -175,7 +204,7 @@ describe('owned Copilot lifecycle', () => {
   test.each([
     ['effort', { effort: 'high' }, 'unsupported_effort'],
     ['missing model', { model: undefined }, 'unsupported_model'],
-    ['unknown model', { model: 'unknown' }, 'unreachable'],
+    ['unknown model', { model: 'unknown' }, 'unsupported_model'],
     [
       'remote folder',
       { place: { machine: 'elsewhere', folder: '/', name: 'remote' } },
