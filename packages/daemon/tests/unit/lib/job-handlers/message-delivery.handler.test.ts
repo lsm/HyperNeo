@@ -99,6 +99,17 @@ function makeHarness(
 }
 
 describe('createMessageDeliveryHandler', () => {
+  it('keeps interrupted unconsumed input retryable without spending an attempt', async () => {
+    const { handler, session, jobQueue, job } = makeHarness();
+    session.driveDeliveryTurn = async () => {
+      throw new Error('Interrupted by user');
+    };
+    const result = await handler(job, {});
+    expect(result).toMatchObject({ parked: 'user_interrupt', retryAt: expect.any(Number) });
+    expect(jobQueue.requeueParked).toHaveBeenCalledWith(job.id, expect.any(Number), job.claimToken);
+    expect(session.settleCalls).toEqual([]);
+  });
+
   describe('preflight gates', () => {
     it('throws on an unparseable payload before any other check runs', async () => {
       const { handler, jobQueue } = makeHarness();

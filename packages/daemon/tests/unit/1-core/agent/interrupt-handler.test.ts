@@ -966,6 +966,38 @@ describe('InterruptHandler', () => {
       return { db, queue, handler, published, sendStatusOf };
     }
 
+    it('stops the current turn without failing queued deliveries or orphan inputs', async () => {
+      const f = await makeRealFixture('sess-int-preserve');
+      try {
+        const repo = f.db.getSDKMessageRepo();
+        const jobs = f.db.getJobQueueRepo();
+        for (const uuid of ['active', 'queued', 'orphan']) {
+          repo.saveUserMessage(
+            'sess-int-preserve',
+            {
+              type: 'user',
+              uuid,
+              message: { role: 'user', content: uuid },
+            } as SDKMessage,
+            uuid === 'active' ? 'consumed' : 'enqueued'
+          );
+        }
+        const job = jobs.enqueue({
+          queue: MESSAGE_DELIVERY,
+          payload: { sessionId: 'sess-int-preserve', messageUuid: 'queued', origin: 'chat' },
+          maxRetries: MESSAGE_DELIVERY_MAX_RETRIES,
+        });
+        await f.handler.handleInterrupt();
+        expect(f.sendStatusOf('active')).toBe('consumed');
+        expect(f.sendStatusOf('queued')).toBe('enqueued');
+        expect(f.sendStatusOf('orphan')).toBe('enqueued');
+        expect(jobs.getJob(job.id)?.status).toBe('pending');
+        expect(f.published.filter((event) => event.payload.status === 'failed')).toEqual([]);
+      } finally {
+        f.db.close();
+      }
+    });
+
     it('rejects pending and yielded in-flight entries when the interrupt clears the queue', async () => {
       const f = await makeRealFixture('sess-int-queue');
       try {
