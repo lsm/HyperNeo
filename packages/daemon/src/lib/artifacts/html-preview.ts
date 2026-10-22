@@ -1,3 +1,4 @@
+import { ARTIFACT_DEFAULT_LIMITS } from '@hyperneo/shared/types/artifact-file';
 import { fromParse5 } from 'hast-util-from-parse5';
 import { toHtml } from 'hast-util-to-html';
 import { defaultTreeAdapter, parse, type DefaultTreeAdapterMap } from 'parse5';
@@ -46,21 +47,22 @@ export interface ArtifactHtmlAsset {
   readonly kind: 'css' | 'image';
   readonly data: string;
 }
-type Assets = ReadonlyMap<string, ArtifactHtmlAsset>;
+type Assets = Pick<ReadonlyMap<string, ArtifactHtmlAsset>, 'get'>;
 
 function resource(target: unknown, assets: Assets, base = '') {
   if (typeof target !== 'string' || /[\\\u0000-\u001f\u007f]/.test(target)) return null;
   const href = target.trim();
   if (/^(?:[a-z][a-z0-9+.-]*:|\/)/i.test(href)) return null;
+  let path: string;
   try {
     const url = new URL(href, 'https://bundle.invalid/' + base);
     if (url.search || url.hash) return null;
-    const path = decodeURIComponent(url.pathname.slice(1));
-    const asset = assets.get(path);
-    return asset ? { path, ...asset } : null;
+    path = decodeURIComponent(url.pathname.slice(1));
   } catch {
     return null;
   }
+  const asset = assets.get(path);
+  return asset ? { path, ...asset } : null;
 }
 
 export interface PreparedArtifactHtml {
@@ -293,10 +295,7 @@ function parseBounded(html: string): Root | null {
   return fromParse5(document) as Root;
 }
 
-export function prepareArtifactHtml(
-  html: string,
-  assets: Assets = new Map()
-): PreparedArtifactHtml | null {
+function prepareDocument(html: string, assets: Assets = new Map()): PreparedArtifactHtml | null {
   const tree = parseBounded(html);
   if (!tree) return null;
   const links: ArtifactHtmlLink[] = [];
@@ -326,4 +325,29 @@ export function prepareArtifactHtml(
     ],
   };
   return { document: toHtml(document), links, scriptsRemoved: removed.scripts };
+}
+
+class AssetExpansionLimit extends Error {}
+
+export function prepareArtifactHtml(
+  html: string,
+  assets: Assets = new Map()
+): PreparedArtifactHtml | null {
+  let remaining: number = ARTIFACT_DEFAULT_LIMITS.documentPreviewBytes;
+  const bounded: Assets = {
+    get(path) {
+      const asset = assets.get(path);
+      if (asset) {
+        remaining -= new TextEncoder().encode(asset.data).byteLength;
+        if (remaining < 0) throw new AssetExpansionLimit();
+      }
+      return asset;
+    },
+  };
+  try {
+    return prepareDocument(html, bounded);
+  } catch (error) {
+    if (error instanceof AssetExpansionLimit) return null;
+    throw error;
+  }
 }
