@@ -57,6 +57,17 @@ that authenticated core and GraphQL quotas are interchangeable. The existing
 ledger sweep is once per five minutes and sequential per repo; its new cost
 logs, rather than the schedule alone, are needed to measure actual volume.
 
+Settings connection-card regression: the authenticated gh CLI source must be
+labelled, Disconnect disabled (it cannot clear an external login), and saving
+a keychain override must ask before shadowing that login. Run the retained
+`SpaceExternalEventsSettings.test.tsx` contracts for env and gh sources. For a
+manual isolated web check, build packages/web, then run
+`bash .claude/skills/verify/github-poll-cli-ui.sh "$RUN" 9364` with a fresh
+absolute RUN. Open the created space Configure > Events in the browser, observe
+those controls, then decline the replacement
+confirmation and check that no token-write RPC ran. Never use a real login for
+this check. Create `$RUN/stop` to stop its daemon when finished. Component results alone do not establish a browser interaction pass.
+
 The helper closes its WebSocket, daemon and loopback server in finally. Stop any
 remaining owned process on failure and retain evidence. After a real deployment,
 first read `hyperneo build` and prove it contains the merge, then inspect only
