@@ -111,6 +111,35 @@ afterEach(async () => {
 });
 
 describe('Neo human-confirmed home saves', () => {
+  test('mandate revisions compare document content, ignore unrelated commits and never fetch or write', async () => {
+    const first = await call('neo.home.save', { ...input, questionId: await proposal() }, owner);
+    expect(first.ok).toBe(true);
+    expect(await home.changedRevision(`${input.path}#goal`, first.commit!)).toBeNull();
+    const unrelated = await call(
+      'neo.home.save',
+      { path: 'notes.md', content: 'Unrelated note', message: 'A different document' },
+      owner
+    );
+    expect(unrelated.ok).toBe(true);
+    expect(await home.changedRevision(input.path, first.commit!)).toBeNull();
+    expect(await home.changedRevision(input.path, unrelated.commit!)).toBeNull();
+    const next = { ...input, content: 'A changed mandate.\n' };
+    const changed = await call(
+      'neo.home.save',
+      { ...next, questionId: await proposal(next) },
+      owner
+    );
+    expect(changed.ok).toBe(true);
+    await git('remote', 'add', 'origin', '/synthetic-unreachable-remote');
+    expect(await home.changedRevision(input.path, first.commit!)).toBe(changed.commit);
+    expect(await home.changedRevision(input.path, unrelated.commit!)).toBe(changed.commit);
+    expect(await home.changedRevision(input.path, null)).toBe(changed.commit);
+    expect(await home.changedRevision(input.path, 'not-a-revision')).toBe(changed.commit);
+    expect(await home.changedRevision(input.path, changed.commit!)).toBeNull();
+    expect(await home.changedRevision('../mandate.md', first.commit!)).toBeNull();
+    expect(await git('rev-parse', 'HEAD')).toBe(changed.commit!);
+    expect(await git('status', '--porcelain')).toBe('');
+  });
   test.each(['direction.md', input.path])(
     'commits %s with its decision and human trailer once',
     async (path) => {

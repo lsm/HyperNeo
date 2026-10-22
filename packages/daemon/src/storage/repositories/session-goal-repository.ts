@@ -22,6 +22,7 @@ const COLUMNS: Record<keyof SessionGoalPatch, string> = {
   metrics: 'metrics',
   doneTest: 'done_test',
   summary: 'summary',
+  worksNote: 'works_note',
   progress: 'progress',
   nextSteps: 'next_steps',
   mandateRef: 'mandate_ref',
@@ -122,6 +123,7 @@ export class SessionGoalRepository {
         ? []
         : [patch.status === 'completed' ? (goal.completedAt ?? now) : null];
     this.db.transaction(() => {
+      const compaction = patch.worksNote === undefined ? null : this.factState(goal.id);
       this.db
         .prepare(
           `UPDATE space_goals SET ${keys.map((key) => `${COLUMNS[key]} = ?, `).join('')}updated_at = ?,
@@ -135,6 +137,14 @@ export class SessionGoalRepository {
           ...completedAt,
           goal.id
         );
+      if (compaction) {
+        this.db
+          .prepare('UPDATE space_goals SET works_note_through = ? WHERE id = ?')
+          .run(compaction.entries, goal.id);
+        const previous = { ...goal, worksNoteThrough: compaction.through };
+        const next = { ...this.get(goal.id)!, worksNoteThrough: compaction.entries };
+        this.recordEvent(goal.id, 'journal_compacted', source, previous, next, now);
+      }
       this.recordEvent(
         goal.id,
         patch.status && patch.status !== goal.status ? 'status_changed' : 'updated',
@@ -181,11 +191,23 @@ export class SessionGoalRepository {
     return this.journalEntry(goalId, runId === null ? { id } : { runId })!;
   }
 
-  factState(id: string): { lines: string[]; note: string | null } {
+  factState(id: string): {
+    lines: string[];
+    note: string | null;
+    through: number | null;
+    entries: number;
+  } {
     const row = this.db
-      .prepare('SELECT facts_lines AS lines, works_note AS note FROM space_goals WHERE id = ?')
-      .get(id) as { lines: string | null; note: string | null };
-    return { lines: JSON.parse(row.lines ?? '[]'), note: row.note };
+      .prepare(`SELECT facts_lines AS lines, works_note AS note, works_note_through AS through,
+        (SELECT COUNT(*) FROM goal_journal WHERE goal_id = space_goals.id) AS entries
+        FROM space_goals WHERE id = ?`)
+      .get(id) as {
+      lines: string | null;
+      note: string | null;
+      through: number | null;
+      entries: number;
+    };
+    return { ...row, lines: JSON.parse(row.lines ?? '[]') };
   }
 
   wakeSchedule(id: string): WakeSchedule | null {
@@ -228,7 +250,7 @@ export class SessionGoalRepository {
 
   private recordEvent(
     goalId: string,
-    type: 'created' | 'updated' | 'status_changed',
+    type: 'created' | 'updated' | 'status_changed' | 'journal_compacted',
     source: SpaceGoalEventSource,
     previous: SessionGoal | null,
     next: SessionGoal | null,

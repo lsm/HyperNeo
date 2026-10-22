@@ -1512,6 +1512,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   const familyOperations = [
     ...collectFamilyOperations({
       ...familyContext,
+      goalMandateChange: (ref, revision) => neoHome.changedRevision(ref, revision),
       executionPreparations: () => neoService.packs(),
     }),
     ...createNeoOperations(neoService),

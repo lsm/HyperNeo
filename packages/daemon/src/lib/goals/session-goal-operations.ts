@@ -72,6 +72,12 @@ const Update = z
     goalId: z.string().min(1),
     title: z.string().min(1).optional(),
     status: GoalStatusSchema.optional(),
+    worksNote: z
+      .string()
+      .optional()
+      .describe(
+        'Rewrite what worked from the journal; retains all entries and advances the compaction cursor.'
+      ),
   })
   .strict();
 
@@ -386,7 +392,7 @@ export function createSessionGoalOperations({
     defineOperation({
       name: 'goal.session.update',
       description:
-        'Update a session-owned goal: fields, progress, next steps, mandate link, or status. Paused pauses its schedule, active resumes it, completed or archived removes it. Each change is recorded as a goal event.',
+        'Update a session-owned goal: fields, progress, next steps, mandate link, or status. Paused pauses its schedule, active resumes it, completed or archived removes it. worksNote summarizes the journal, advances its cursor and records journal_compacted without deleting entries. Each change is recorded as a goal event.',
       policy: GOAL_WRITE_POLICY,
       inputSchema: Update,
       resultSchema: GoalResult,

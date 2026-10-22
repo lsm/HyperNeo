@@ -13,7 +13,11 @@ export class SessionGoalSchedules implements ScheduleSource {
     private readonly goals: SessionGoalRepository,
     private readonly asks: NeoAskTodoRepository,
     private readonly scheduler: SessionScheduler,
-    private readonly packs: () => readonly NeoPack[]
+    private readonly packs: () => readonly NeoPack[],
+    private readonly mandateChange: (
+      ref: string,
+      revision: string | null
+    ) => Promise<string | null> = async () => null
   ) {}
 
   sync(goal: SessionGoal, cadence?: SessionScheduleCadence, nudgeEvery = 4): void {
@@ -59,7 +63,17 @@ export class SessionGoalSchedules implements ScheduleSource {
     const todos = asks.flatMap((ask) => this.asks.listTodos(ask.id));
     const todoIds = todos.map((todo) => todo.id);
     const packs = this.packs();
+    const state = this.goals.factState(id);
+    const mandate = goal.mandateRef
+      ? await this.mandateChange(goal.mandateRef, goal.mandateRev)
+      : null;
     const lines = [
+      ...(state.entries - (state.through ?? 0) >= 10 ? ['What-works compaction due'] : []),
+      ...(mandate
+        ? [
+            `Mandate changed: ${goal.mandateRef} at ${mandate}; read and reconcile, then goal.session.update mandateRev ${mandate}.`,
+          ]
+        : []),
       `Progress: ${goal.progress}`,
       ...Object.keys(goal.metrics)
         .sort()
@@ -90,7 +104,7 @@ export class SessionGoalSchedules implements ScheduleSource {
           )
       ),
     ].sort();
-    const previous = this.goals.factState(id).lines;
+    const previous = state.lines;
     const summary = [
       ...previous.filter((line) => !lines.includes(line)).map((line) => `- ${line}`),
       ...lines.filter((line) => !previous.includes(line)).map((line) => `+ ${line}`),
@@ -109,9 +123,12 @@ export class SessionGoalSchedules implements ScheduleSource {
     if (!goal || goal.status === 'completed' || goal.status === 'archived' || !schedule)
       return null;
     const runId = `schedule:${schedule.id}:${schedule.nextRunAt}`;
+    const state = this.goals.factState(id);
+    const compact = change.nudge || state.entries - (state.through ?? 0) >= 10;
     return `Goal "${goal.title}": ${change.nudge ? 'Nothing moved; check what can advance.' : change.summary}
 Read ${goal.mandateRef ?? 'the goal definition'} and this what-works note:
-${this.goals.factState(id).note ?? 'No what-works note yet.'}
+${state.note ?? 'No what-works note yet.'}
+${compact ? 'Read the journal pages and rewrite the what-works note with goal.session.update {goalId, worksNote}, folding new entries into it. Journal entries are kept.' : ''}
 Act using the usual tools; new asks in this cycle carry goalId ${id}.
 Then append one goal.journal.append entry for goalId ${id}, runId ${runId}.`;
   }

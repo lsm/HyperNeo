@@ -39,7 +39,9 @@ export type SessionGoalDraft = Pick<SessionGoal, 'title'> &
     >
   >;
 
-export type SessionGoalPatch = Partial<SessionGoalDraft & Pick<SessionGoal, 'status'>>;
+export type SessionGoalPatch = Partial<
+  SessionGoalDraft & Pick<SessionGoal, 'status' | 'worksNote'>
+>;
 
 export interface GoalJournalEvidence {
   kind: 'pr' | 'todo' | 'metric' | 'url' | 'commit' | 'text';
