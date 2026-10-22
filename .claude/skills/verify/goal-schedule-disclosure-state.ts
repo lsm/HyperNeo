@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
+const [port, run, expected] = process.argv.slice(2);
+assert(port && port !== '8399' && ['paused', 'active'].includes(expected));
+const log = readFileSync(`${run}/daemon.log`, 'utf8');
+assert(log.includes('HyperNeo Test Server') && log.includes(`Database: ${run}/`));
+const seed = JSON.parse(readFileSync(`${run}/evidence/goal-detail-seed.json`, 'utf8'));
+const response = JSON.parse(execFileSync('bun', ['.claude/skills/verify/rpc.ts', 'schedule.session.list', JSON.stringify({ target: { adapter: 'hyperneo', id: seed.root } })], { env: { ...process.env, VERIFY_PORT: port }, encoding: 'utf8' }));
+assert.equal(response.reply.ok, true);
+const schedule = response.reply.schedules.find((s: { sourceId: string }) => s.sourceId === seed.goalId);
+assert.equal(schedule.status, expected);
+writeFileSync(`${run}/evidence/schedule-state-${expected}.json`, JSON.stringify(schedule, null, 2));
+console.log(`Observed persisted ${expected} through real schedule.session.list`);

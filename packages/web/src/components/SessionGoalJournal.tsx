@@ -4,6 +4,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { invokeOperation, requireAccepted, type OperationRejection } from '../lib/operations.ts';
 import { t, locale } from '../lib/i18n/index.ts';
+import { NativeContentDisclosure } from './ui/NativeContentDisclosure.tsx';
 import { Button } from './ui/Button.tsx';
 async function read<T>(name: OperationName, input: unknown): Promise<T> {
   return requireAccepted(
@@ -70,13 +71,20 @@ export function GoalJournal({
     <section aria-label={t('goalDetails.journal')} class="space-y-2">
       <h4 class="font-medium">{t('goalDetails.journal')}</h4>
       {entries.map((entry) => (
-        <details key={entry.id} data-journal-entry={entry.id} class="border-t border-line pt-2">
-          <summary class="cursor-pointer break-words">
-            {entry.effect}
-            <time class="ml-2 text-fg-muted" dateTime={new Date(entry.createdAt).toISOString()}>
-              {new Date(entry.createdAt).toLocaleDateString(locale.value)}
-            </time>
-          </summary>
+        <NativeContentDisclosure
+          key={entry.id}
+          data-journal-entry={entry.id}
+          class="border-t border-line pt-2"
+          label={entry.effect}
+          summary={
+            <span class="break-words">
+              {entry.effect}
+              <time class="ml-2 text-fg-muted" dateTime={new Date(entry.createdAt).toISOString()}>
+                {new Date(entry.createdAt).toLocaleDateString(locale.value)}
+              </time>
+            </span>
+          }
+        >
           <div class="space-y-1 py-2">
             <p>{entry.done}</p>
             <p>
@@ -106,7 +114,7 @@ export function GoalJournal({
               ))}
             </ul>
           </div>
-        </details>
+        </NativeContentDisclosure>
       ))}
       {loading && <p role="status">{t('goalDetails.loading')}</p>}
       {error && (

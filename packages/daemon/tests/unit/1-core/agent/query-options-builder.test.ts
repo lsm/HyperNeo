@@ -21,6 +21,7 @@ import {
   setModelsCache,
 } from '../../../../src/lib/model-service';
 import { neoPrompt } from '../../../../src/lib/neo/prompt';
+import { neoSecretReadRules } from '../../../../src/lib/neo/secret-read-rules';
 
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
@@ -2114,6 +2115,13 @@ describe('QueryOptionsBuilder', () => {
           expect(options.allowedTools?.includes('AskUserQuestion')).toBe(true);
           expect(options.permissionMode).toBe('acceptEdits');
           expect(options.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code' });
+          if (kind === 'neo') {
+            expect(options.disallowedTools).toEqual(neoSecretReadRules());
+            expect(options.disallowedTools).toContain('Read(~/.ssh/**)');
+            expect(options.disallowedTools?.every((rule) => rule.startsWith('Read('))).toBe(true);
+          } else {
+            expect(options.disallowedTools).toBeUndefined();
+          }
         } finally {
           sqlite.close();
         }
