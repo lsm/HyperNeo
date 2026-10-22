@@ -26,6 +26,28 @@ const NEO_TOOLS = [
   'Bash',
 ];
 
+describe('Neo native tools without command parsing', () => {
+  test('adds no PreToolUse hook to an unrestricted native tool request', () => {
+    const options: Options = {};
+    restrictNeoQuery(options, undefined, []);
+    expect(options.hooks).toBeUndefined();
+    expect(options.allowedTools).toContain('Bash');
+    expect(options.disallowedTools).toEqual(neoCoordinatorDeniedReads());
+  });
+
+  test('preserves existing hooks without injecting a command gate', () => {
+    const hooks: NonNullable<Options['hooks']> = {
+      PreToolUse: [{ matcher: 'Bash', hooks: [async () => ({})] }],
+      PostToolUse: [{ hooks: [async () => ({})] }],
+    };
+    const options: Options = { hooks };
+    restrictNeoQuery(options, undefined, []);
+    expect(options.hooks).toBe(hooks);
+    expect(options.hooks?.PreToolUse).toHaveLength(1);
+    expect(options.hooks?.PostToolUse).toBe(hooks.PostToolUse);
+  });
+});
+
 describe('restrictNeoQuery attribution', () => {
   test('gives Neo empty commit and PR attribution, so the CLI adds no attribution reminder', () => {
     const options: Options = { settings: { cleanupPeriodDays: 30 } };
