@@ -741,7 +741,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       jobQueue,
       jobProcessor,
       skillsManager,
-      db.appMcpServers
+      db.appMcpServers,
+      () => credentialManager.getCredentialStore().get('neokai.external-events.github', 'default')
     );
 
     sessionManager.start();

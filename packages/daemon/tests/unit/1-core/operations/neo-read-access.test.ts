@@ -1,27 +1,23 @@
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, beforeEach, expect, test } from 'bun:test';
 import * as fs from 'node:fs';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
-import { KeychainCredentialStore } from '../../../../src/lib/credentials/credential-store.ts';
 import { neoReadAccess, neoReadCheckoutPaths } from '../../../../src/lib/neo/read-access.ts';
-
-const { runtimePlatform } = vi.hoisted(() => ({ runtimePlatform: vi.fn(() => process.platform) }));
-vi.mock('node:os', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('node:os')>()),
-  platform: runtimePlatform,
-}));
 
 vi.mock('node:fs', async (importOriginal) => ({
   ...(await importOriginal<typeof import('node:fs')>()),
 }));
 
 const roots: string[] = [];
+beforeEach(() => {
+  vi.stubEnv('GH_TOKEN', undefined);
+  vi.stubEnv('GITHUB_TOKEN', undefined);
+});
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
-  runtimePlatform.mockReturnValue(process.platform);
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -39,29 +35,23 @@ test.each([
 });
 
 test('Neo uses the poller existing credential-store token before its environment fallback', async () => {
-  runtimePlatform.mockReturnValue('darwin');
-  vi.stubEnv('NODE_ENV', 'production');
   vi.stubEnv('GH_TOKEN', 'synthetic-environment-token');
-  const get = vi
-    .spyOn(KeychainCredentialStore.prototype, 'get')
-    .mockResolvedValue('synthetic-poller-token');
-  const access = await neoReadAccess('synthetic-poller-token', '/synthetic/Neo');
+  const get = vi.fn(async () => 'synthetic-poller-token');
+  const access = await neoReadAccess('synthetic-poller-token', '/synthetic/Neo', get);
   roots.push(access.env.TMPDIR);
   expect(access.env.GH_TOKEN).toBe('synthetic-poller-token');
-  expect(get).toHaveBeenCalledWith('neokai.external-events.github', 'default');
+  expect(get).toHaveBeenCalled();
 });
 
 test('an unavailable poller store falls back to the daemon environment', async () => {
-  runtimePlatform.mockReturnValue('darwin');
-  vi.stubEnv('NODE_ENV', 'production');
   vi.stubEnv('GH_TOKEN', 'synthetic-environment-token');
-  const get = vi
-    .spyOn(KeychainCredentialStore.prototype, 'get')
-    .mockRejectedValue(new Error('Synthetic locked store'));
-  const access = await neoReadAccess('synthetic-poller-locked', '/synthetic/Neo');
+  const get = vi.fn(async () => {
+    throw new Error('Synthetic locked store');
+  });
+  const access = await neoReadAccess('synthetic-poller-locked', '/synthetic/Neo', get);
   roots.push(access.env.TMPDIR);
   expect(access.env.GH_TOKEN).toBe('synthetic-environment-token');
-  expect(get).toHaveBeenCalledWith('neokai.external-events.github', 'default');
+  expect(get).toHaveBeenCalled();
 });
 
 test('only exact existing Neo checkout leaves become writable, never worker siblings', () => {

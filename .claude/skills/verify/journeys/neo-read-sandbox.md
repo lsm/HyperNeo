@@ -45,23 +45,26 @@ The transport fixture must show a successful authenticated Bash PR read, without
 claiming an OS-denied write. Native Write/Edit remain unavailable. Ordinary Linux
 CI uses this mode; it is not OS-containment evidence. Production options stay strict.
 
-The daemon supplies Neo's `GH_TOKEN` at runtime from its existing GitHub poller
-credential: Keychain service `neokai.external-events.github`, account `default`,
-then `GH_TOKEN ?? GITHUB_TOKEN` if the item is absent or unavailable. This matches
-the poller's credential-store-first precedence. Test mode and non-macOS hosts use
-only the environment; the synthetic SDK fixture never reads a real credential.
+The daemon supplies Neo's `GH_TOKEN` through the poller's existing composed
+`credentialManager.getCredentialStore()` instance (`neokai.external-events.github`,
+account `default`), then `GH_TOKEN ?? GITHUB_TOKEN` if the item is absent or
+unavailable. Its existing Keychain/database fallback and pending token replacement
+semantics are preserved. Test mode uses only its synthetic encrypted DB store;
+no new store or direct Keychain access is introduced for Neo.
 No token is stored in session config or printed in evidence. The human approved
 this existing, potentially write-capable token in question
 `79a6141f-f688-40b4-a403-ad52f9f3e30f`; a dedicated read-only token is deferred.
 That later step changes only the runtime token source. Missing tokens leave gh
 unauthenticated in an isolated empty `GH_CONFIG_DIR`, with no auth-file fallback.
 
-The fixture supplies a synthetic daemon token and puts a local `gh` stub on PATH.
+The fixture saves a synthetic token through `space.github.setToken` into its own
+encrypted DB, while the environment contains a conflicting synthetic token. It
+puts a local `gh` stub on PATH.
 Actual SDK Bash must run `gh pr view`, and the stub checks the token privately and
 returns PR number 8148 with `authenticatedByDaemon:true`. An absent/wrong token
 returns a visible authentication error. No GitHub network request is made. A synthetic
 `.zshenv` tries to replace the token; isolated `ZDOTDIR` must prevent that reinjection.
-Focused tests also cover the existing store precedence, GH_TOKEN precedence,
+Focused tests also cover the supplied shared-store reader, GH_TOKEN precedence,
 GITHUB_TOKEN fallback, missing or failed runtime providers and disappearing checkout-inventory entries. Preserve the JSON
 outside the worktree before cleanup. This proves runtime wiring, not the real token's
 GitHub scopes or spontaneous model behavior.

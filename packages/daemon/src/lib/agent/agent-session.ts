@@ -136,6 +136,7 @@ export interface AgentSessionInit {
 }
 
 export interface AgentSessionRuntimeOptions {
+  getGithubToken?(): Promise<string | null>;
   operationRegistryProvider?: () => OperationRegistry | undefined;
   callerScopeResolver?: CallerScopeResolver;
   spaceScopeResolver?: SessionScopeResolver;
@@ -295,6 +296,10 @@ export class AgentSession
 
   setAttachedCapabilities(capabilities: readonly AuthoredCapabilityContribution[]): void {
     this.attachedCapabilities = capabilities;
+  }
+
+  getGithubToken(): Promise<string | null> {
+    return this.runtimeOptions.getGithubToken?.() ?? Promise.resolve(null);
   }
 
   getSpaceBriefing(): string | undefined {

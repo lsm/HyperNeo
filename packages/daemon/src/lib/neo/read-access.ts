@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, readdirSync } from 'node:fs';
-import { platform, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { KeychainCredentialStore } from '../credentials/credential-store.ts';
 import { getDataDir } from '../data-dir.ts';
 import { neoFolderPath } from './folder.ts';
 import { getNeoReadCheckoutPath } from './read-checkout-path.ts';
@@ -33,19 +32,13 @@ export function neoReadCheckoutPaths(dataDir = getDataDir()): string[] {
 export async function neoReadAccess(
   sessionId: string,
   cwd: string | undefined,
-  readToken: () => Promise<string | null> = async () => {
-    const stored =
-      process.env.NODE_ENV === 'test' || platform() !== 'darwin'
-        ? null
-        : await new KeychainCredentialStore()
-            .get('neokai.external-events.github', 'default')
-            .catch(() => null);
-    return stored || (process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN ?? null);
-  }
+  readToken: () => Promise<string | null> = () => Promise.resolve(null)
 ) {
   const temp = join(tmpdir(), 'hyperneo-neo', sessionId);
   mkdirSync(join(temp, 'gh'), { recursive: true });
-  const token = await readToken().catch(() => null);
+  const token =
+    (await readToken().catch(() => null)) ||
+    (process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN ?? null);
   return {
     filesystem: {
       allowWrite: [temp, ...neoReadCheckoutPaths()],
