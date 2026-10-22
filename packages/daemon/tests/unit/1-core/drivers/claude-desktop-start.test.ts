@@ -196,6 +196,10 @@ describe('claude-desktop start', () => {
       value: {
         ref: { adapter: 'claude-desktop', id: 'local_u1' },
         title: 'Bigger font',
+        desktopUI: {
+          state: 'ui-unconfirmed',
+          detail: expect.stringContaining('No supported live Desktop render/read acknowledgment'),
+        },
         place,
         status: 'running',
         lastActivityAt: 1_000,
