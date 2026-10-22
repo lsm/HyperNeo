@@ -8,13 +8,19 @@ final class FakeCapture: CaptureAPI {
     var catalog = [CaptureWindow(id: 7, appBundleId: "com.anthropic.claudefordesktop", title: "Synthetic session")]
     var calls: [String] = []
     var fails = false
+    var catalogFails = false
+    var emptyImage = false
     let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=")!
     func hasPermission() -> Bool { calls.append("permission"); return permission }
-    func windows() async throws -> [CaptureWindow] { calls.append("windows"); return catalog }
+    func windows() async throws -> [CaptureWindow] {
+        calls.append("windows")
+        if catalogFails { throw CaptureFailure(code: "capture_failed", detail: "catalog unavailable") }
+        return catalog
+    }
     func image(for window: CaptureWindow) async throws -> CaptureImage {
         calls.append("capture:\(window.id)")
         if fails { throw CaptureFailure(code: "capture_failed", detail: "synthetic capture failure") }
-        return CaptureImage(png: png, width: 1, height: 1)
+        return CaptureImage(png: emptyImage ? Data() : png, width: 1, height: 1)
     }
 }
 
@@ -96,6 +102,19 @@ final class CaptureTests: XCTestCase {
         do { _ = try await capture(request, api: api); XCTFail("must refuse") }
         catch let failure as CaptureFailure { XCTAssertEqual(failure.code, "capture_failed") }
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), [])
+    }
+
+    @MainActor
+    func testUnavailableCatalogOrEmptyCaptureLeavesNoFiles() async throws {
+        for failCatalog in [true, false] {
+            let (root, request, api) = try fixture()
+            defer { try? FileManager.default.removeItem(at: root) }
+            api.catalogFails = failCatalog
+            api.emptyImage = !failCatalog
+            do { _ = try await capture(request, api: api); XCTFail("must refuse") }
+            catch let failure as CaptureFailure { XCTAssertEqual(failure.code, "capture_failed") }
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), [])
+        }
     }
 
     @MainActor
