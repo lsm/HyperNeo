@@ -18,8 +18,10 @@ end cleanup, restart recovery and an aged-orphan sweep that preserves active own
 Reuse PR ledger facts, worktree ownership and the existing scheduler. Remove a PR's
 owned, clean, unused worktree when it merges or closes; reconcile missed transitions
 after restart. Preserve dirty or shared worktrees and report why cleanup was skipped.
-The coding pack trims build caches on a schedule with each toolchain's own clean
-command when idle. Core has no knowledge of PRs or toolchains.
+The coding pack redirects worker build caches to pack-owned roots through toolchain
+configuration. It trims only those roots on a schedule with each toolchain's own clean
+command when idle, never human or shared user caches. Core has no knowledge of PRs
+or toolchains.
 
 Verify using synthetic Git repositories, ledger facts and disposable cache roots:
 terminal PRs release only their worktrees, open/live/dirty/shared worktrees survive,
