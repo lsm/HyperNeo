@@ -51,7 +51,7 @@ that RPC must reject at the real deadline while health works, then a new reader
 must return the same page. No synchronous file-backed failure fallback.
 
 For before/after, run the same committed helper in `baseline` mode on tests-first
-`1a06bd346` in a separate worktree and fresh directory. Never copy a DB. A baseline
+`9b448c9c16` in a separate worktree and fresh directory. Never copy a DB. A baseline
 setup/RPC failure is inconclusive; it must observe a >100 ms main stall. Preserve
 failed/inconclusive runs with the final result. Repeat the unchanged step-1
 `db-off-main-sdk-status-reader.md` journey to measure whether the shared reader's
