@@ -46,8 +46,11 @@ async function driveThenClear(sessionId: string, bound: boolean) {
     suppressPreYieldCallback: true,
   });
   const turn = agentSession.driveDeliveryTurn('human-1', 'Remove i4', null, false, () => true);
-  await generator.next();
-  if (bound) agentSession.markHolderInputConsumed('human-1');
+  const next = await generator.next();
+  if (bound) {
+    next.value?.onSent();
+    await turn;
+  }
   agentSession.messageQueue.clear();
   const outcome = await turn.then(
     (value) => value,
@@ -60,7 +63,7 @@ async function driveThenClear(sessionId: string, bound: boolean) {
   return { outcome, status };
 }
 
-describe('AgentSession driveDeliveryTurn for a Neo input its turn already took', () => {
+describe('AgentSession driveDeliveryTurn for a input acknowledged through the ordinary queue', () => {
   it('completes when the queue is cleared after the turn took the input, so it never runs again', async () => {
     expect(await driveThenClear('neo:once', true)).toEqual({
       outcome: { outcome: 'completed' },

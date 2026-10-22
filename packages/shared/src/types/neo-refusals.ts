@@ -82,8 +82,8 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
   invalid_target_reference:
     'targetSessionId must be a non-empty session id or null. Pass a real session id, or null for a new session.',
   invalid_work_id: 'The card id is empty. Pass a card id from neo.snapshot.',
-  live_avatar_required:
-    'Only a live turn of Neo, in its own session of this conversation, can publish. Publish while answering, not from a finished turn.',
+  avatar_required:
+    'Only Neo’s own session for this conversation can publish. Use that session’s publication tool.',
   main_neo_only:
     'Only main Neo or the human can do this. Ask main Neo to do it, or do it from main.',
   needs_human:

@@ -7,7 +7,3 @@ export function neoSessionStatus(processingState: string | undefined): string | 
     return null;
   }
 }
-
-export function neoNoteDeliveryMode(status: string | null | undefined): 'defer' | 'immediate' {
-  return status === 'processing' || status === 'queued' ? 'defer' : 'immediate';
-}

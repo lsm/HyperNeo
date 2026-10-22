@@ -1,5 +1,10 @@
 import { runLagPhase } from './event-loop-activity.ts';
-import type { ModelInfo, ProviderRecord, Session } from '@hyperneo/shared';
+import {
+  resolveAutoCompactPercent,
+  type ModelInfo,
+  type ProviderRecord,
+  type Session,
+} from '@hyperneo/shared';
 import type {
   Provider,
   ProviderFailureErrorKind,
@@ -1630,9 +1635,10 @@ export async function resolveSessionContextModelInfo(
     );
   }
   const modelInfo = await getSessionModelInfo(session, cacheKey);
-  const percent = session.id.startsWith('neo:')
-    ? session.metadata?.neoAutoCompactPercent
-    : undefined;
+  const percent =
+    session.config.autoCompactPercent === undefined
+      ? undefined
+      : resolveAutoCompactPercent(session.config.autoCompactPercent);
   return {
     cacheKey,
     modelInfo:

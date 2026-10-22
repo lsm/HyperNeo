@@ -44,7 +44,6 @@
 7	packages/daemon/tests/unit/1-core/agent/context-reset-planner.test.ts
 12	packages/daemon/tests/unit/1-core/agent/context-tracker.test.ts
 8	packages/daemon/tests/unit/1-core/agent/coordinator-agents.test.ts
-7535	packages/daemon/tests/unit/1-core/agent/coordinator-handoff.test.ts
 1964	packages/daemon/tests/unit/1-core/agent/delivery-admission-boundary.test.ts
 182	packages/daemon/tests/unit/1-core/agent/delivery-coordination.test.ts
 5	packages/daemon/tests/unit/1-core/agent/drive-turn-outcome-gates.test.ts
@@ -243,18 +242,15 @@
 344	packages/daemon/tests/unit/1-core/operations/neo-coding-preparation.test.ts
 124	packages/daemon/tests/unit/1-core/operations/neo-conversation-ask-read.test.ts
 36	packages/daemon/tests/unit/1-core/operations/neo-conversation-images.test.ts
-8	packages/daemon/tests/unit/1-core/operations/neo-coordinator-cwd.test.ts
 1152	packages/daemon/tests/unit/1-core/operations/neo-daemon-ticks.test.ts
 491	packages/daemon/tests/unit/1-core/operations/neo-draft-recover.test.ts
 9	packages/daemon/tests/unit/1-core/operations/neo-driver-refresh.test.ts
 22994	packages/daemon/tests/unit/1-core/operations/neo-driver-work.test.ts
 12	packages/daemon/tests/unit/1-core/operations/neo-file-packs.test.ts
 1107	packages/daemon/tests/unit/1-core/operations/neo-holder-parent.test.ts
-59	packages/daemon/tests/unit/1-core/operations/neo-coordinator-turn.test.ts
 3419	packages/daemon/tests/unit/1-core/operations/neo-intake-notification.test.ts
 92	packages/daemon/tests/unit/1-core/operations/neo-intake.test.ts
 11	packages/daemon/tests/unit/1-core/operations/neo-life-admin-pack.test.ts
-78	packages/daemon/tests/unit/1-core/operations/neo-look-up-guard.test.ts
 863	packages/daemon/tests/unit/1-core/operations/neo-model-preference.test.ts
 603	packages/daemon/tests/unit/1-core/operations/neo-note-delivery-mode.test.ts
 22	packages/daemon/tests/unit/1-core/operations/neo-packs.test.ts
@@ -264,7 +260,6 @@
 96	packages/daemon/tests/unit/1-core/operations/neo-publication-read.test.ts
 13	packages/daemon/tests/unit/1-core/operations/neo-reorganize-nightly.test.ts
 326	packages/daemon/tests/unit/1-core/operations/neo-reorganize.test.ts
-1100	packages/daemon/tests/unit/1-core/operations/neo-response-input.test.ts
 1438	packages/daemon/tests/unit/1-core/operations/neo-saved-rules.test.ts
 1721	packages/daemon/tests/unit/1-core/operations/neo-session-ask-links.test.ts
 1174	packages/daemon/tests/unit/1-core/operations/neo-session-track.test.ts

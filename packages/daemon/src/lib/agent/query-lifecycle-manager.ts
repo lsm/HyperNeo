@@ -15,7 +15,7 @@ import { Logger } from '../logger.ts';
 import { existsSync, copyFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { throwIfDeliveryAborted, waitForDeliveryAbort } from './message-delivery.ts';
-import { sessionSdkPath } from '../neo/session-policy.ts';
+import { sessionSdkPath } from '../session/sdk-path.ts';
 import {
   validateAndRepairSDKSession,
   findSDKSessionFileGlobally,
@@ -107,8 +107,8 @@ export class QueryLifecycleManager {
   }
 
   private getSDKWorkspacePath(): string {
-    const { session, db } = this.ctx;
-    return sessionSdkPath(db, session) ?? process.cwd();
+    const { session } = this.ctx;
+    return sessionSdkPath(session) ?? process.cwd();
   }
 
   private ensureSDKSessionFileMigrated(): boolean {

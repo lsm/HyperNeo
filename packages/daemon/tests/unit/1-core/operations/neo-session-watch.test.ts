@@ -799,7 +799,6 @@ describe('refreshDriverWork', () => {
           source: 'mcp',
           sessionId: 'neo:root',
           role: 'neo',
-          neoTurn: { messageId: 'm1', human: true, isLive: () => true },
         }
       );
       expect('value' in snapshot && snapshot.value).toMatchObject({

@@ -197,20 +197,6 @@ export async function readHandoff(
   };
 }
 
-export async function verifyPublishedHandoff(dataDir: string, path: string) {
-  const parts = relative(realpathSync(dataDir), path).split(sep);
-  const ref: Reference = {
-    artifactId: parts[3],
-    daemonId: await daemonIdentity(dataDir),
-    sessionId: decodeURIComponent(parts[1]),
-    name: parts[4],
-    byteLength: lstatSync(path).size,
-    sha256: parts[3],
-    path,
-  };
-  return readHandoff(dataDir, ref, 0, 0);
-}
-
 export async function publishHandoff(dataDir: string, sessionId: string, name: string) {
   const draft = join(handoffDraftDirectory(dataDir, sessionId), HandoffName.parse(name));
   const staged = join(

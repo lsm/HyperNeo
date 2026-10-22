@@ -17,7 +17,8 @@ headless browser is unavailable. The browser always runs headlessly.
 The actual built Settings > Neo model page must select a Neo primary, add two
 fallbacks through the shared model picker, set each thinking level, reorder and
 save. The helper checks persisted preferences through real `neo.snapshot` RPC,
-sets auto-compact to 70% (target calculated from the selected catalog window), then reloads desktop/mobile pages and checks values, order, usable provider text
+sets auto-compact to 70% (target calculated from the selected catalog window),
+then reloads desktop/mobile pages and checks values, order, usable provider text
 and control bounds. Disabling fallbacks must persist an explicit empty chain
 after reload. Evidence: `evidence/neo-model-settings.json` and desktop/mobile PNGs.
 Browser and helper-owned daemon/mock close on success or failure.
@@ -25,9 +26,14 @@ Browser and helper-owned daemon/mock close on success or failure.
 Focused Settings contracts also cover cross-provider catalog entries, server
 thinking options, unavailable providers, human-operation refusal retaining edits
 and primary-only edits preserving inherited fallback behavior. This web journey
-uses synthetic Anthropic models; actual Anthropic-to-GLM inference is proved by
-the [backend model-fallback journey](neo-coordinator-model-fallback-backend.md). No real account quota or GUI session
+uses synthetic Anthropic models; the former Neo-only execution journey was retired in #8114; see
+[model runtime removal](neo-coordinator-model-fallback-backend.md). Stored Neo
+fallback preferences no longer override the ordinary session recovery policy. No real account quota or GUI session
 is used. The Settings PR contains no new fallback execution policy.
 
 It also checks 90 resets to an omitted override, the Neo popover links to the new
 page, and ordinary Settings > Models contains no Neo preference controls.
+
+The auto-compaction percentage control in #8121 keeps its existing preference
+and snapshot API. Its value writes the ordinary per-session setting; verify
+its daemon behavior with [per-session compaction](neo-auto-compact-percentage.md).

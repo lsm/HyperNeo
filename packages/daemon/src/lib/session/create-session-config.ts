@@ -12,6 +12,7 @@ export const CREATE_SESSION_CONFIG_FIELD_POLICY: Record<
   temperature: 'derived',
   autoScroll: 'derived',
   thinkingLevel: 'derived',
+  autoCompactPercent: 'carried',
   coordinatorMode: 'derived',
   sandbox: 'derived',
   settingSources: 'derived',

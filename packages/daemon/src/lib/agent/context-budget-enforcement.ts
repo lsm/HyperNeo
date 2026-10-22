@@ -93,10 +93,7 @@ const runEnforceContextBudget = (
       !ctx.providerId ||
       ctx.providerId === 'acp' ||
       (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(ctx.providerId) &&
-        !(
-          ctx.sessionId.startsWith('neo:') &&
-          ctx.contextInfo.autoCompactPercentOverride !== undefined
-        )),
+        ctx.contextInfo.autoCompactPercentOverride === undefined),
     limitRecoveryOwnsTurn: (ctx: ContextBudgetEnforcementCtx) =>
       ctx.stateManager.getState().status === 'rate_limit_cooldown' || ctx.limitRecoveryPending,
     deadCompactionCleared: (ctx: ContextBudgetEnforcementCtx) => ctx.clearedDeadCompaction,

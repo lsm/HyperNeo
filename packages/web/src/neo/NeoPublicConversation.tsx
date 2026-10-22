@@ -462,7 +462,7 @@ function PublicEntry({
     : undefined;
   const photos = ask ? publicAskPhotos(ask.content) : [];
   const time = messageTime((ask ?? publication)!.createdAt);
-  const author = publication?.producerInput.sessionId ? 'Neo' : t('chat.you');
+  const author = publication ? 'Neo' : t('chat.you');
   const notDelivered = t('chat.notDelivered');
   const links = publication?.links.filter((link) => link.kind === 'work') ?? [];
   const anchor = ask

@@ -120,32 +120,31 @@ describe('enforce-context-budget stages', () => {
 
 describe('enforce-context-budget pipeline', () => {
   it.each(['anthropic', 'anthropic-copilot', 'anthropic-codex', 'glm'])(
-    'enforces an explicit Neo percentage for %s only',
+    'enforces the same explicit per-session percentage for %s',
     (providerId) => {
-      const { input, enqueue } = enforcementHarness({ providerId, totalUsed: 700_000 });
-      input.sessionId = 'neo:fixture';
-      input.contextInfo = {
-        ...input.contextInfo,
-        autoCompactPercent: 70,
-        autoCompactPercentOverride: 70,
-      };
-      expect(
-        enforceContextBudget({
-          ...input,
-          contextInfo: { ...input.contextInfo, totalUsed: 699_999 },
-        }).compactionEnqueued
-      ).toBe(false);
-      expect(enforceContextBudget({ ...input, sessionId: 'ordinary' }).compactionEnqueued).toBe(
-        false
-      );
-      expect(
-        enforceContextBudget({
-          ...input,
-          contextInfo: { ...input.contextInfo, autoCompactPercentOverride: undefined },
-        }).compactionEnqueued
-      ).toBe(false);
-      expect(enforceContextBudget(input).compactionEnqueued).toBe(true);
-      expect(enqueue).toHaveBeenCalledWith('/compact', true, { durable: true, prepend: true });
+      for (const sessionId of ['neo:fixture', 'ordinary']) {
+        const { input, enqueue } = enforcementHarness({ providerId, totalUsed: 700_000 });
+        input.sessionId = sessionId;
+        input.contextInfo = {
+          ...input.contextInfo,
+          autoCompactPercent: 70,
+          autoCompactPercentOverride: 70,
+        };
+        expect(
+          enforceContextBudget({
+            ...input,
+            contextInfo: { ...input.contextInfo, totalUsed: 699_999 },
+          }).compactionEnqueued
+        ).toBe(false);
+        expect(
+          enforceContextBudget({
+            ...input,
+            contextInfo: { ...input.contextInfo, autoCompactPercentOverride: undefined },
+          }).compactionEnqueued
+        ).toBe(false);
+        expect(enforceContextBudget(input).compactionEnqueued).toBe(true);
+        expect(enqueue).toHaveBeenCalledWith('/compact', true, { durable: true, prepend: true });
+      }
     }
   );
   it('enqueues a durable prepended /compact when the budget is exceeded', () => {

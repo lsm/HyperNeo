@@ -1,4 +1,3 @@
-import { neoModelFallbacks } from '../neo/model-fallback.ts';
 import { fillPrompt, MINIMAL_WORKTREE_PROMPT, WORKTREE_ISOLATION_PROMPT } from '@hyperneo/prompts';
 import type {
   CanUseTool,
@@ -78,8 +77,6 @@ import {
 } from './output-limiter-hook.ts';
 import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.js';
 import { withSdkTranscriptRetention } from './sdk-transcript-retention.ts';
-import { neoCoordinatorBinding, restrictNeoQuery } from '../neo/session-policy.ts';
-import { neoSettingsPackBriefs } from '../neo/packs/index.ts';
 import { handoffDraftDirectory } from '../handoffs/outbox.ts';
 
 const log = new Logger('QueryOptionsBuilder');
@@ -320,10 +317,6 @@ export class QueryOptionsBuilder {
   }
 
   private computeEffectiveMcpServers(): Record<string, SdkMcpServerConfig> | undefined {
-    if (neoCoordinatorBinding(this.ctx.db, this.ctx.session.id)) {
-      const operations = this.ctx.getOperationMcpServer?.();
-      return operations ? { 'hyperneo-operations': operations } : {};
-    }
     const { servers, renamed } = mergeSessionMcpServers<SdkMcpServerConfig>({
       registryServers: this.getMcpServersFromRegistry(),
       skillServers: this.getMcpServersFromSkills(),
@@ -581,15 +574,6 @@ export class QueryOptionsBuilder {
       this.deferredPermissionMode = undefined;
     }
 
-    const neoBinding = neoCoordinatorBinding(this.ctx.db, this.ctx.session.id);
-    if (neoBinding) {
-      restrictNeoQuery(
-        queryOptions,
-        this.ctx.session.id,
-        neoSettingsPackBriefs(this.ctx.settingsManager.getGlobalSettings().neo)
-      );
-    }
-
     const cleanedOptions = Object.fromEntries(
       Object.entries(queryOptions).filter(([, v]) => v !== undefined)
     ) as Options;
@@ -645,9 +629,7 @@ export class QueryOptionsBuilder {
     } catch {}
     const thinkingLevel = this.getEffectiveThinkingLevel();
     const effort =
-      thinkingModes === 'granular' &&
-      (effortLevels?.length ||
-        (this.ctx.db && neoModelFallbacks(this.ctx.db, this.ctx.session.id) !== undefined))
+      thinkingModes === 'granular' && effortLevels?.length
         ? effortForThinkingLevel(
             thinkingLevel,
             effortLevels?.length ? effortLevels : ['low', 'medium', 'high']
@@ -978,7 +960,6 @@ export class QueryOptionsBuilder {
   }
 
   private getPermissionMode(): PermissionMode {
-    if (neoCoordinatorBinding(this.ctx.db, this.ctx.session.id)) return 'dontAsk';
     if (this.ctx.session.config.permissionMode) {
       if (this.ctx.session.config.permissionMode === 'default') {
         return 'bypassPermissions';
@@ -1038,7 +1019,7 @@ export class QueryOptionsBuilder {
     });
 
     const bashScopePrefixes = extractBashScopePrefixes(this.ctx.session.config.allowedTools ?? []);
-    if (bashScopePrefixes.length > 0 && !neoCoordinatorBinding(this.ctx.db, this.ctx.session.id)) {
+    if (bashScopePrefixes.length > 0) {
       preToolUse.push({
         matcher: 'Bash',
         hooks: [createBashScopeHook(bashScopePrefixes)],

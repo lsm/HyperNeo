@@ -91,6 +91,18 @@ describe('authored publication client', () => {
     expect(io.request.mock.calls).toHaveLength(1);
   });
 
+  it('reads a newly authored reply without inferred input attribution', async () => {
+    const authored: Partial<ReturnType<typeof item>> = item();
+    delete authored.askOrigin;
+    delete authored.producerInput;
+    const io = transport({ ok: true, conversationId, items: [authored], nextAfter: 1 });
+    expect(await readNeoPublications(page, io.getHub, current)).toEqual({
+      state: 'ready',
+      items: [authored],
+      nextAfter: 1,
+    });
+  });
+
   it.each([
     { conversationId: 'legacy-root', after: 0 },
     { conversationId, after: -1 },
@@ -306,6 +318,27 @@ describe('presentPublicationPage revisions', () => {
     shortText: 'Updated summary',
     fullText: 'Updated **detail**',
     revisions: [saved],
+  });
+
+  it('reads origin-less revisions alongside legacy attributed replies', () => {
+    const authored: Partial<ReturnType<typeof item>> = item(2);
+    delete authored.askOrigin;
+    delete authored.producerInput;
+    const history = {
+      revisionId: '40000000-0000-4000-8000-000000000004',
+      shortText: 'Earlier summary',
+      fullText: 'Earlier details',
+      createdAt: original.createdAt,
+    };
+    const revised = { ...authored, revisions: [history] };
+    expect(
+      presentPublicationPage(
+        { ok: true, conversationId, items: [item(), revised], nextAfter: 2 },
+        page
+      )
+    ).toEqual({
+      value: { state: 'ready', items: [item(), revised], nextAfter: 2 },
+    });
   });
 
   it('preserves the current message and all earlier authored versions', () => {

@@ -124,7 +124,6 @@ async function streamIntoRunningTurn(harness: Harness, head: string) {
   const turn = agentSession.driveDeliveryTurn(head, `note ${head}`, null, false, () => true);
   const yielded = await generator.next();
   if (!yielded.value) throw new Error('note was not streamed');
-  agentSession.markHolderInputConsumed(head);
   return { generator, turn, sent: yielded.value };
 }
 

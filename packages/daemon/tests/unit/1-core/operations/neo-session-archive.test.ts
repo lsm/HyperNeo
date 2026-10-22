@@ -14,7 +14,6 @@ import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 describe('neo.session.archive', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
   let repo: NeoRepository;
-  let live: boolean;
   const ref = { adapter: 'test', id: 'worker' };
   const user: OperationCaller = { source: 'rpc', principal: 'local' };
   let caller: OperationCaller;
@@ -26,7 +25,7 @@ describe('neo.session.archive', () => {
     list: () => [],
     invoke: mock(async () => ({ ok: true, value: { archived: true } })),
   };
-  const invoke = (target = ref, who = caller, capable = true) =>
+  const invoke = (target = ref, who = user, capable = true) =>
     invokeOperation(
       createOperationRegistry([
         createNeoSessionArchiveOperation({
@@ -61,12 +60,10 @@ describe('neo.session.archive', () => {
       inputKind: 'human',
       message: { role: 'user', content: 'Archive the finished session.' },
     } as unknown as SDKUserMessage);
-    live = true;
     caller = {
       source: 'mcp',
       role: 'neo',
       sessionId: 'root',
-      neoTurn: { messageId: 'human', human: true, isLive: () => live },
     };
     archive.mockClear();
     remote.invoke.mockClear();
@@ -92,40 +89,25 @@ describe('neo.session.archive', () => {
     expect(await invoke(ref, user)).toMatchObject({ value: { ok: true } });
   });
 
-  test('allows a verified live human turn and the local user', async () => {
-    expect(await invoke()).toMatchObject({ value: { ok: true, value: { archived: true } } });
+  test('requires the ordinary local user even when Neo received a human message', async () => {
+    expect(await invoke(ref, caller)).toMatchObject({ value: { ok: false, reason: 'human_only' } });
     expect(await invoke(ref, user)).toMatchObject({ value: { ok: true } });
-    expect(archive).toHaveBeenCalledTimes(2);
+    expect(archive).toHaveBeenCalledTimes(1);
   });
 
-  test.each(['stale', 'system', 'unbound', 'missing_prompt', 'internal', 'untrusted_rpc'])(
+  test.each(['mcp', 'unbound', 'internal', 'untrusted_rpc'])(
     'refuses %s callers before driver or remote effects',
     async (kind) => {
-      if (kind === 'stale') live = false;
-      if (kind === 'system') caller = { ...caller, neoTurn: { ...caller.neoTurn!, human: false } };
       if (kind === 'unbound') caller = { ...caller, sessionId: 'worker' };
-      if (kind === 'missing_prompt')
-        caller = { ...caller, neoTurn: { ...caller.neoTurn!, messageId: 'absent' } };
       if (kind === 'internal') caller = { ...caller, source: 'internal' };
       if (kind === 'untrusted_rpc') caller = { source: 'rpc' };
-      expect(await invoke()).toMatchObject(
-        kind === 'stale'
-          ? { kind: 'failed', code: 'forbidden' }
-          : { value: { ok: false, reason: 'human_only' } }
-      );
+      expect(await invoke(ref, caller)).toMatchObject({
+        value: { ok: false, reason: 'human_only' },
+      });
       expect(archive).not.toHaveBeenCalled();
       expect(remote.invoke).not.toHaveBeenCalled();
     }
   );
-
-  test('rechecks the turn after a driver awaits', async () => {
-    archive.mockImplementationOnce(async (_ref, admit) => {
-      await Promise.resolve();
-      live = false;
-      return admit() ?? { ok: true, value: { archived: true } };
-    });
-    expect(await invoke()).toMatchObject({ value: { ok: false, reason: 'human_only' } });
-  });
 
   test('forwards one hop after admission and refuses unsupported or failed drivers', async () => {
     const target = { ...ref, daemon: 'remote' };

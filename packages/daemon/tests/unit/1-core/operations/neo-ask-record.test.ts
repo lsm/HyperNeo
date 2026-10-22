@@ -13,11 +13,10 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { SessionGoalRepository } from '../../../../src/storage/repositories/session-goal-repository.ts';
 import { neoTodoHome } from '../../../../src/lib/neo/todo-repo.ts';
 
-const turn = (messageId: string, human = true): OperationCaller => ({
+const turn = (_messageId: string, _human = true): OperationCaller => ({
   source: 'mcp',
   sessionId: 'neo-a',
   role: 'neo',
-  neoTurn: { messageId, human, isLive: () => true },
 });
 
 type Receipt = { ok: true; ask: NeoAsk; todos: NeoTodo[] } | { ok: false; reason: string };
@@ -121,7 +120,7 @@ describe('neo.ask.open and neo.ask.settle', () => {
     expect(first.ask).toMatchObject({
       projectId: null,
       sessionId: 'neo-a',
-      originMessageId: 'm1',
+      originMessageId: null,
       status: 'open',
     });
     expect(first.todos.map((todo) => [todo.title, todo.instruction !== null])).toEqual([

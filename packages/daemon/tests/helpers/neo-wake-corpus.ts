@@ -1,4 +1,3 @@
-import { stampNeoResponseInput } from '../../src/lib/neo/response-input.ts';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { Database } from '../../src/storage/sqlite-compat.ts';
 import { NeoAskTodoRepository } from '../../src/storage/repositories/neo-ask-todo-repository.ts';
@@ -155,9 +154,14 @@ export function seedNeoWake(db: Database, conversationId: string, additions = tr
       !sdk.saveSDKMessage(
         sessionId,
         stamped
-          ? stampNeoResponseInput(message, sessionId, boundInput, (input) =>
-              origins.get(input.sessionId, input.messageId)
-            )
+          ? {
+              ...message,
+              neoInputOrigin: { sessionId, messageId: boundInput },
+              neoAskOrigin: origins.get(sessionId, boundInput) ?? {
+                sessionId,
+                messageId: boundInput,
+              },
+            }
           : message
       )
     )
