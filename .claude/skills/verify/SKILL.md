@@ -69,9 +69,10 @@ only its synthetic DB, and closes its resources in finally. Keep its evidence
 before removing the run directory. The journey names the checks and any
 additional ports; do not also start `launch.sh` for these helpers.
 
-For an ACP-only helper whose journey specifies no HTTP mock, omit the
-8000/8001 preflight loop. It uses synthetic stdio agents and owns its ephemeral
-listeners; the remaining isolated environment and data-directory setup applies.
+For a helper whose journey specifies no provider turn or only a synthetic ACP
+agent, omit the 8000/8001 preflight loop when it specifies no HTTP mock. Such
+helpers own their ephemeral listeners; the remaining isolated environment and
+data-directory setup applies.
 
 ## Doctor
 
