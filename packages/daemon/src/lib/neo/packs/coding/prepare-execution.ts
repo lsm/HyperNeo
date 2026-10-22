@@ -1,4 +1,5 @@
-import { isAbsolute, resolve } from 'node:path';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoExecutionPreparation } from '../../pack-contract.ts';
 
@@ -101,6 +102,63 @@ function requireCommit(result: CommandResult): Gate<string> {
     : refuse('invalid_prepared_commit');
 }
 
+async function prepareClone(
+  plan: Plan,
+  commit: string,
+  effects: Effects
+): Promise<Gate<{ directory: string; release: () => Promise<void> }>> {
+  const remote = await effects.run(['git', 'remote', 'get-url', 'origin'], plan.directory);
+  if (remote.code !== 0) return refuse(`clone_origin_failed: ${remote.stderr.trim()}`);
+  try {
+    await mkdir(dirname(plan.destination), { recursive: true });
+    await mkdir(plan.destination);
+  } catch (error) {
+    return refuse(`clone_failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  let ready = false;
+  try {
+    const commands = [
+      {
+        args: [
+          'git',
+          'clone',
+          '--no-hardlinks',
+          '--no-checkout',
+          '--',
+          plan.directory,
+          plan.destination,
+        ],
+        cwd: plan.directory,
+        phase: 'clone_failed',
+      },
+      {
+        args: ['git', 'remote', 'set-url', 'origin', remote.stdout.trim()],
+        cwd: plan.destination,
+        phase: 'clone_origin_failed',
+      },
+      {
+        args: ['git', 'checkout', '--detach', commit],
+        cwd: plan.destination,
+        phase: 'clone_checkout_failed',
+      },
+    ];
+    for (const { args, cwd, phase } of commands) {
+      const result = await effects.run(args, cwd);
+      if (result.code !== 0) return refuse(`${phase}: ${result.stderr.trim()}`);
+    }
+    await writeFile(join(plan.destination, '.git', 'hyperneo-source-checkout'), plan.directory);
+    ready = true;
+    return {
+      value: {
+        directory: plan.destination,
+        release: () => rm(plan.destination, { recursive: true }),
+      },
+    };
+  } finally {
+    if (!ready) await rm(plan.destination, { recursive: true });
+  }
+}
+
 export const prepareCodingExecution = (superpipe({})('neo-coding-prepare-execution') as PipelineAPI)
   .input(['request', 'effects'])
   .pipe(planPreparation, 'request', 'result:prepared')
@@ -198,33 +256,13 @@ export const prepareCodingExecution = (superpipe({})('neo-coding-prepare-executi
     ['request', 'listed', 'agents'],
     'result:prepared'
   )
+  .pipe(prepareClone, ['plan', 'commit', 'effects'], 'result:prepared')
   .pipe(
-    async (plan: Plan, commit: string, effects: Effects) =>
-      effects.run(['git', 'worktree', 'add', '--detach', plan.destination, commit], plan.directory),
-    ['plan', 'commit', 'effects'],
-    'added'
-  )
-  .pipe(
-    (added: CommandResult) => requireCommand(added, 'worktree_failed'),
-    'added',
-    'result:prepared'
-  )
-  .pipe(
-    (plan: Plan, effects: Effects) => ({
+    (prepared: { directory: string; release: () => Promise<void> }) => ({
       ok: true,
-      value: {
-        directory: plan.destination,
-        release: async () => {
-          const removed = await effects.run(
-            ['git', 'worktree', 'remove', '--force', plan.destination],
-            plan.directory
-          );
-          if (removed.code !== 0)
-            throw new Error(`worktree_release_failed: ${removed.stderr.trim()}`);
-        },
-      },
+      value: prepared,
     }),
-    ['plan', 'effects'],
+    'prepared',
     'prepared'
   )
   .endAsync('prepared') as NeoExecutionPreparation;

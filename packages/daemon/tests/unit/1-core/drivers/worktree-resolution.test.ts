@@ -85,11 +85,11 @@ describe('worktree project cache', () => {
       mkdirSync(file);
       expect(await gitWorktreeProject(folder)).toBe(folder);
       expect(await gitWorktreeProject(folder)).toBe(folder);
-      expect(reads()).toBe(4);
+      expect(reads()).toBe(2);
       rmSync(file, { recursive: true });
       writeFileSync(file, 'gitdir: /restored/.git/worktrees/wt\n');
       expect(await gitWorktreeProject(folder)).toBe('/restored');
-      expect(reads()).toBe(5);
+      expect(reads()).toBe(3);
       const other = join(root, 'other');
       mkdirSync(other);
       writeFileSync(join(other, '.git'), 'not a worktree');

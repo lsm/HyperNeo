@@ -169,7 +169,7 @@ describe('prepareCodingExecution', () => {
     expect(git(result.value.directory, 'rev-parse', 'HEAD')).toBe(f.latest);
     expect(git(f.directory, 'rev-parse', 'HEAD')).toBe(f.before);
     expect(readFileSync(join(f.directory, 'file'), 'utf8')).toBe('uncommitted user work');
-    expect(f.calls.find((call) => call[1] === 'worktree')?.at(-1)).toBe(f.latest);
+    expect(f.calls.find((call) => call[1] === 'checkout')?.at(-1)).toBe(f.latest);
     await result.value.release();
     expect(existsSync(f.destination)).toBe(false);
   });
@@ -242,7 +242,7 @@ describe('prepareCodingExecution', () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('unexpected preparation');
     expect(result.reason).toContain('fetch_failed');
-    expect(f.calls.some((call) => call[1] === 'worktree')).toBe(false);
+    expect(f.calls.some((call) => call[1] === 'clone')).toBe(false);
     expect(existsSync(f.destination)).toBe(false);
   });
 
@@ -253,7 +253,7 @@ describe('prepareCodingExecution', () => {
       f.effects
     );
     expect(result.ok).toBe(false);
-    expect(f.calls.some((call) => call[1] === 'worktree')).toBe(false);
+    expect(f.calls.some((call) => call[1] === 'clone')).toBe(false);
   });
 
   test("a base that contains the prerequisite's merge is prepared from that merge onward", async () => {
@@ -287,7 +287,7 @@ describe('prepareCodingExecution', () => {
       f.effects
     );
     expect(result).toEqual({ ok: false, reason: `prerequisite_not_in_base: ${missing}` });
-    expect(f.calls.some((call) => call[1] === 'worktree')).toBe(false);
+    expect(f.calls.some((call) => call[1] === 'clone')).toBe(false);
   });
 
   test('invalid targets and commit identifiers reject before effects', async () => {
@@ -326,7 +326,34 @@ describe('prepareCodingExecution', () => {
     expect(calls).toEqual([]);
   });
 
-  test('an existing destination is preserved when worktree creation fails', async () => {
+  test.each(['clone', 'remote', 'checkout'])(
+    'a failed %s step is explicit and releases only its newly owned clone',
+    async (step) => {
+      const f = fixture();
+      const result = await prepareCodingExecution(f.request, {
+        run: async (command, cwd) => {
+          if (command[1] === step && (step !== 'remote' || command[2] === 'set-url'))
+            return { code: 1, stdout: '', stderr: 'synthetic refusal' };
+          return f.effects.run(command, cwd);
+        },
+      });
+      expect(result).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('synthetic refusal'),
+      });
+      expect(existsSync(f.destination)).toBe(false);
+      expect(readFileSync(join(f.directory, 'file'), 'utf8')).toBe('uncommitted user work');
+    }
+  );
+
+  test('an existing empty destination is never claimed or removed', async () => {
+    const f = fixture();
+    mkdirSync(f.destination);
+    expect(await prepareCodingExecution(f.request, f.effects)).toMatchObject({ ok: false });
+    expect(statSync(f.destination).isDirectory()).toBe(true);
+  });
+
+  test('an existing destination is preserved when clone creation fails', async () => {
     const f = fixture();
     writeFileSync(f.destination, 'existing content');
     const result = await prepareCodingExecution(f.request, f.effects);
