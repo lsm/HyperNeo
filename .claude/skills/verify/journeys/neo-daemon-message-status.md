@@ -48,3 +48,23 @@ Evidence: evidence/unit.log, sdk/evidence/neo-goal-cycle-sdk.json (including
 messageStatuses, workingStatus and unansweredStatus), and
 restart/evidence/spent-admission-*.json. No GUI or live
 restart is claimed. The served field is verified; client rendering follows later.
+
+## Large stored bodies preserve responsive status reads
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-neo-status-lag-XXXXXX)
+env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
+  bun .claude/skills/verify/neo-message-status-lag.ts "$RUN"
+```
+
+The isolated daemon uses an ephemeral port and a new synthetic DB. It retains
+101 SDK rows holding about 216 MB of valid message bodies, plus 100 durable human
+asks. A duplicate UUID with an earlier failed delivery checks the existing
+earliest-timestamp rule. Three real `neo.conversation.asks.read` RPCs must return
+the complete ordered page with the expected statuses within 250 ms each, without
+a one-second event-loop block. `observed.json` records RPC timings, loop lag,
+row/byte counts and full before/after stored-body hashes. The helper stops its
+daemon in `finally`; no provider, real DB, native sampler or port 8399 is used.
+This reproduces an inefficient lookup plan, not the physical cause of the
+historical 4.16 s scanner-associated block. It is a synthetic workload, not a
+two-hour live rollout acceptance result.
