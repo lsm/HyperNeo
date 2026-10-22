@@ -168,8 +168,12 @@ try {
     const cancelled = await cli('pair', '--name', 'Synthetic cancelled browser');
     mount(cancelled.code);
     button('Pair this browser')!.click();
-    await wait(() => !!button('Cancel pairing'));
-    button('Cancel pairing')!.click();
+    await wait(
+      () =>
+        statuses.at(-1) === 403 &&
+        win.document.body.textContent.includes('Waiting for Allow on a paired phone or browser.')
+    );
+    button('Stop waiting')!.click();
     const count = statuses.length;
     await approve('device.pair.approve', { codeId: cancelled.codeId });
     await new Promise((r) => setTimeout(r, 2300));

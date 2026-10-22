@@ -1,28 +1,30 @@
-## Settings > Devices lists devices, unpaired connections and codes waiting for Allow (S6 of docs/design/daemon-security.md)
+## Settings > Devices manages issued codes and explicit removal
 
-Build the web bundle first (`cd packages/web && bun run build`), then run on a free
-port (never 8399):
+Read SKILL.md. No unattended GUI tests. Use the non-GUI real-daemon/actual-pairing-
+component proof in `web-pairing.md` for approval and authority. Its fresh synthetic
+HOME/data/DB, ephemeral port and finally cleanup apply; no real credentials or
+live daemon. Settings component contracts cover the small UI changes below.
 
-```bash
-TMPDIR=/tmp/claude-501 .claude/skills/verify/devices-settings.sh 9320
-```
+For an attended Settings run only, build the web bundle and run the existing
+`devices-settings.sh <free-non-8399-port>` with the human present. The helper owns
+its isolated test daemon and closes it after the attended browser capture:
 
-The script starts an isolated daemon through the CLI front door (`env -i`,
-NODE_ENV=test, its own HOME, data dir and database, no provider key). It records one
-unpaired connection from a foreign Origin, then drives headless Chromium with
-`devices-settings-view.mjs`: a desk browser pairs at `/pair#<code>`, the CLI makes a
-relay code (pending, since a device is now paired), and the browser opens
-`/settings?tab=devices`. Codes and credentials stay in variables; the screenshot that
-shows a live code masks it.
+- At 1280 and 390, a paired browser sees **Codes waiting for Allow**: issued codes,
+  not verified device identities. Only allow a code the human requested. Refresh
+  devices and returning focus/online re-read the list; a code's existing expiresAt
+  supplies its countdown and expired/Allow-disabled state. Offline initial load
+  explains that a connection is needed.
+- Allow removes a code from pending; a waiting PairPage finishes automatically.
+  An unpaired browser sees the Pair this browser link, with no Allow controls.
+- Devices explains that pairing is report-only: revocation closes paired sockets
+  but unpaired access is still permitted. This work does not enable S8/S9.
+- There is no Re-pair shortcut. Explicit Revoke → Confirm removes the selected
+  old device; then Make pairing code creates the replacement. The browser itself
+  still has no self-removal control in this slice. History remains visible.
+- Allowed hosts and unpaired/Origin reports retain their existing behavior.
 
-End state, in `$RUN/evidence/`:
-- `devices-1280.png`: "Waiting for Allow" lists `Push relay` with an Allow button; the
-  desk browser is marked `This browser` with no Revoke or Re-pair; "Unpaired
-  connections seen" shows `https://evil.example` with `No credential · 1 time`.
-- Allow answers `No codes are waiting for Allow.`, and the relay then pairs (200).
-- `devices-390.png`: the same lists at phone width, the relay with Re-pair and Revoke.
-- `devices-repaired-1280.png`: Re-pair on the relay shows a new code with `Enter this
-  code on the push relay.` and the old relay `Revoked`.
-- `devices-unpaired-390.png`: a second, unpaired browser sees `Pair this browser to
-  manage devices.` and a `Pair this browser` link.
-- The pairing code appears 0 times in the daemon log.
+The attended helper now captures explicit removal followed by replacement-code
+creation (`devices-replacement-1280.png`), masking the code. Keep captures and safe
+RPC evidence in the run's evidence directory. Headless helper edits alone are
+not an attended pass. Real-browser visuals, self-removal and native iOS management
+remain unverified until their own attended journey; iOS is a separate ask.

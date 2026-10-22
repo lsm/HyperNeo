@@ -93,7 +93,7 @@ export function createDevicePairingOperations({
     defineOperation({
       name: 'device.pair.pending',
       description:
-        'List pairing codes waiting for the human to allow them (never the codes themselves).',
+        'List issued codes waiting for Allow by an active paired human (never the codes themselves).',
       policy: { safetyClass: 'human_only' },
       inputSchema: z.object({}).strict(),
       resultSchema: z.union([
@@ -111,9 +111,9 @@ export function createDevicePairingOperations({
         Refused,
       ]),
       execute: async (_input, caller) =>
-        isLocalUser(caller)
+        isPairedHuman(caller)
           ? { ok: true as const, pending: pairing().listPending(now()) }
-          : refused,
+          : { ok: false as const, reason: NEEDS_PAIRED_HUMAN },
     }),
     defineOperation({
       name: 'device.pair.approve',

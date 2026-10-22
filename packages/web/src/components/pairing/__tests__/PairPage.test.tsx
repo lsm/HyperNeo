@@ -78,7 +78,10 @@ describe('PairPage', () => {
     const fetchMock = answer(403, { error: 'awaiting_approval' });
     const view = openPairPage('#ABCDE23456', fetchMock);
     pressPair(view);
-    fireEvent.click(await view.findByRole('button', { name: 'Cancel pairing' }));
+    await view.findByText(
+      'Waiting for Allow on a paired phone or browser. This page will finish pairing automatically.'
+    );
+    fireEvent.click(view.getByRole('button', { name: 'Stop waiting' }));
     const calls = fetchMock.mock.calls.length;
     await new Promise((resolve) => setTimeout(resolve, 2100));
     expect(fetchMock).toHaveBeenCalledTimes(calls);
@@ -99,7 +102,7 @@ describe('PairPage', () => {
     );
     const view = openPairPage('#ABCDE23456', fetchMock);
     pressPair(view);
-    await view.findByRole('button', { name: 'Cancel pairing' });
+    await view.findByRole('button', { name: 'Stop waiting' });
     online.mockReturnValue(false);
     const calls = fetchMock.mock.calls.length;
     await new Promise((resolve) => setTimeout(resolve, 2100));
@@ -107,6 +110,30 @@ describe('PairPage', () => {
     approved = true;
     online.mockReturnValue(true);
     await waitFor(() => view.getByText('This browser is paired.'), { timeout: 5000 });
+  });
+
+  it('does not redeem while hidden and resumes in the foreground', async () => {
+    const visible = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    const fetchMock = answer(200, {});
+    const view = openPairPage('#ABCDE23456', fetchMock);
+    pressPair(view);
+    await view.findByText('Pairing paused. Return to this page with a connection to continue.');
+    expect(fetchMock).not.toHaveBeenCalled();
+    visible.mockReturnValue('visible');
+    await waitFor(() => view.getByText('This browser is paired.'), { timeout: 5000 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops pending redemption when the page leaves', async () => {
+    const fetchMock = answer(403, { error: 'awaiting_approval' });
+    const view = openPairPage('#ABCDE23456', fetchMock);
+    pressPair(view);
+    await view.findByText(
+      'Waiting for Allow on a paired phone or browser. This page will finish pairing automatically.'
+    );
+    view.unmount();
+    await new Promise((resolve) => setTimeout(resolve, 2100));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('explains a wrong code and a lockout', async () => {

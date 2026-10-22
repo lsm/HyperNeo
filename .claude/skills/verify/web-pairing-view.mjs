@@ -20,7 +20,7 @@ try {
   await pair.waitFor({ timeout: 30000 });
   await shot(page, 'form');
   await pair.click();
-  const wrong = await page.getByText('That code is wrong or expired.', { exact: false }).innerText();
+  const wrong = await page.getByText('That code is invalid, expired or already used.', { exact: false }).innerText();
   await shot(page, 'wrong-code');
   await page.goto(`${base}/pair#${code}`);
   await page.getByLabel('Name for this browser').fill(`Browser ${width}`);
@@ -43,7 +43,7 @@ try {
     await page.waitForTimeout(4000);
     result.appUrl = page.url();
   } else {
-    result.awaiting = await page.getByText('This code needs Allow first.', { exact: false }).innerText();
+    result.awaiting = await page.getByText('Waiting for Allow on a paired phone or browser.', { exact: false }).innerText();
     await shot(page, 'awaiting', [page.getByLabel('Pairing code')]);
   }
   writeFileSync(`${run}/evidence/web-pairing-${mode}.json`, JSON.stringify({ wrong, ...result }, null, 2));

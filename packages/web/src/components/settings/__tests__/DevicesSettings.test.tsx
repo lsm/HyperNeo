@@ -73,7 +73,7 @@ function daemon(state: { paired: boolean; pending?: unknown[] }) {
   mockRequest.mockImplementation(async (method: string, params?: Invocation) => {
     if (!params) throw new Error(`unexpected call ${method}`);
     const { name, input } = params;
-    if (!state.paired && name !== 'device.pair.pending')
+    if (!state.paired)
       return {
         ok: false,
         reason: 'not_paired: only a paired human device or the local CLI can manage devices.',
@@ -144,7 +144,10 @@ describe('DevicesSettings', () => {
     });
     (globalSettings as { value: unknown }).value = { allowedHosts: ['lan.local'] };
   });
-  afterEach(() => cleanup());
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
 
   it('asks an unpaired browser to pair before it can manage devices', async () => {
     daemon({ paired: false });
@@ -153,6 +156,31 @@ describe('DevicesSettings', () => {
     expect(screen.getByRole('link', { name: 'Pair this browser' }).getAttribute('href')).toBe(
       '/pair'
     );
+  });
+
+  it('explains an offline initial load and refreshes when the device returns online', async () => {
+    const online = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    daemon({ paired: true });
+    render(<DevicesSettings />);
+    await screen.findByText('Offline. Reconnect to manage devices.');
+    expect(invoked('device.list')).toEqual([]);
+    online.mockReturnValue(true);
+    fireEvent(window, new Event('online'));
+    await screen.findByText('Relay on iMac');
+  });
+
+  it('disables Allow when a code expires while Settings stays open', async () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1000000);
+    daemon({
+      paired: true,
+      pending: [{ id: 'soon', kind: 'human', name: 'Soon', expiresAt: 1000500 }],
+    });
+    render(<DevicesSettings />);
+    const allow = await screen.findByRole('button', { name: 'Allow Soon' });
+    expect(allow).toHaveProperty('disabled', false);
+    clock.mockReturnValue(1001000);
+    await waitFor(() => expect(allow).toHaveProperty('disabled', true), { timeout: 2500 });
+    expect(invoked('device.pair.approve')).toEqual([]);
   });
 
   it('loads once the connection to the daemon comes up after the tab opened', async () => {
@@ -172,6 +200,7 @@ describe('DevicesSettings', () => {
     render(<DevicesSettings />);
     await waitFor(() => screen.getByText('Relay on iMac'));
     expect(screen.getByText('mac.tailnet.ts.net')).toBeTruthy();
+    expect(screen.getByText(/expires in 5 min/)).toBeTruthy();
     expect(screen.getByText('https://evil.example')).toBeTruthy();
     expect(screen.getByText('Unknown credential · 4 times')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Allow Laptop' }));

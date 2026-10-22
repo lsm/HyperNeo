@@ -1,6 +1,6 @@
 #!/bin/bash
 # S6 of docs/design/daemon-security.md: Settings > Devices lists devices, unpaired
-# connections and codes waiting for Allow; a paired browser allows, re-pairs and revokes.
+# connections and codes waiting for Allow; an attended paired browser allows, explicitly revokes and makes a replacement code.
 # Usage: devices-settings.sh <port> (never 8399). Needs the web build and Playwright
 # (PLAYWRIGHT_NODE_PATH, default: the Homebrew @playwright/cli install). Codes and
 # credentials stay in shell variables; screenshots mask a live code.

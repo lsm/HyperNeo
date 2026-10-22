@@ -108,6 +108,7 @@ export function DevicesSettings() {
   const [confirming, setConfirming] = useState<string | null>(null);
   const [code, setCode] = useState<Code | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [now, setNow] = useState(Date.now);
   const [newKind, setNewKind] = useState<Kind>('human');
   const [newName, setNewName] = useState('');
   const hosts = globalSettings.value?.allowedHosts ?? [];
@@ -125,7 +126,19 @@ export function DevicesSettings() {
       .then(setView)
       .catch((failure: unknown) => setView({ kind: 'failed', reason: String(failure) }));
   useEffect(() => {
-    void reload();
+    const refresh = () => {
+      if (navigator.onLine) void reload();
+      else setView({ kind: 'failed', reason: 'Offline. Reconnect to manage devices.' });
+    };
+    refresh();
+    addEventListener('focus', refresh);
+    addEventListener('online', refresh);
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => {
+      removeEventListener('focus', refresh);
+      removeEventListener('online', refresh);
+      clearInterval(timer);
+    };
   }, []);
 
   const act = async (run: () => Promise<{ ok: boolean; reason?: string }>) => {
@@ -146,12 +159,6 @@ export function DevicesSettings() {
     return made;
   };
   const revoke = (device: Device) => act(() => call('device.revoke', { deviceId: device.id }));
-  const repair = (device: Device) =>
-    act(async () => {
-      const made = await makeCode(device.kind, device.name);
-      return made.ok ? call('device.revoke', { deviceId: device.id }) : made;
-    });
-
   if (view.kind === 'loading')
     return (
       <SettingsSection title="Devices">
@@ -173,6 +180,7 @@ export function DevicesSettings() {
     return (
       <SettingsSection title="Devices">
         <div class="px-1 text-xs text-danger">{view.reason}</div>
+        <Button onClick={() => void reload()}>Refresh devices</Button>
       </SettingsSection>
     );
 
@@ -181,9 +189,12 @@ export function DevicesSettings() {
     <>
       {error && <div class="px-1 text-xs text-danger">{error}</div>}
       <SettingsSection
-        title="Waiting for Allow"
-        description="Codes made on the Mac's CLI pair only after a paired device allows them."
+        title="Codes waiting for Allow"
+        description="These are issued codes, not device identities. Allow only a code you requested on the Mac."
       >
+        <Button size="sm" variant="secondary" onClick={() => void reload()}>
+          Refresh devices
+        </Button>
         {view.pending.length === 0 ? (
           <div class="px-1 text-xs text-fg-faint">No codes are waiting for Allow.</div>
         ) : (
@@ -194,11 +205,17 @@ export function DevicesSettings() {
                   <div class="truncate text-sm font-medium text-fg-soft">
                     {item.name ?? 'Unnamed device'}
                   </div>
-                  <div class="text-xs text-fg-faint">{KIND_LABEL[item.kind]}</div>
+                  <div class="text-xs text-fg-faint">
+                    {KIND_LABEL[item.kind]} ·{' '}
+                    {item.expiresAt <= now
+                      ? 'Expired'
+                      : `expires in ${Math.ceil((item.expiresAt - now) / 60_000)} min`}
+                  </div>
                 </div>
                 <Button
                   size="sm"
                   aria-label={`Allow ${item.name ?? 'Unnamed device'}`}
+                  disabled={item.expiresAt <= now || !navigator.onLine}
                   onClick={() => act(() => call('device.pair.approve', { codeId: item.id }))}
                 >
                   Allow
@@ -210,7 +227,7 @@ export function DevicesSettings() {
       </SettingsSection>
       <SettingsSection
         title="Devices"
-        description="Paired phones, browsers, relays and daemons. Revoking closes a device's connections at once."
+        description="Pairing is report-only: unpaired connections can still connect. Revoke closes current paired connections; to replace a device, remove it explicitly, then make a new code."
       >
         {code && (
           <div class="space-y-1 rounded-xl border border-accent/40 bg-accent/10 p-4 text-sm">
@@ -224,7 +241,11 @@ export function DevicesSettings() {
                 Enter this code on the {KIND_LABEL[code.kind].toLowerCase()}.
               </div>
             )}
-            <div class="text-xs text-fg-faint">Single use, valid for 10 minutes.</div>
+            <div class="text-xs text-fg-faint">
+              {code.expiresAt <= now
+                ? 'This code expired. Make a new one.'
+                : `Single use; expires in ${Math.ceil((code.expiresAt - now) / 60_000)} min.`}
+            </div>
           </div>
         )}
         <SettingsGroup>
@@ -248,14 +269,6 @@ export function DevicesSettings() {
                 <span class="text-xs text-fg-faint">Revoked</span>
               ) : (
                 <div class="flex gap-2">
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    aria-label={`Re-pair ${device.name}`}
-                    onClick={() => repair(device)}
-                  >
-                    Re-pair
-                  </Button>
                   {confirming === device.id ? (
                     <Button
                       size="sm"
