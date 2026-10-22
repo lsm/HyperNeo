@@ -30,6 +30,23 @@ test(`root startup, reads, resume and publication (${sandboxProof ? 'real OS san
   const shellHome = join(isolated, 'inherited-shell');
   await mkdir(shellHome);
   await writeFile(join(shellHome, '.zshenv'), 'export GH_TOKEN=synthetic-inherited-owner-token\n');
+  const ghBin = join(isolated, 'bin');
+  await mkdir(ghBin);
+  await writeFile(
+    join(ghBin, 'gh'),
+    `#!/bin/sh
+if [ "$GH_TOKEN" != synthetic-daemon-token ]; then
+  printf 'GitHub authentication unavailable\\n' >&2
+  exit 1
+fi
+if [ "$*" != 'pr view https://github.com/lsm/HyperNeo/pull/8148 --json number' ]; then
+  printf 'Unexpected synthetic GitHub request\\n' >&2
+  exit 1
+fi
+printf '{"number":8148,"authenticatedByDaemon":true}\\n'
+`,
+    { mode: 0o755 }
+  );
   let approvalProbeIssued = false;
   let nativeProbeIndex = 0;
   let approvalProbeDenied = false;
@@ -45,8 +62,8 @@ test(`root startup, reads, resume and publication (${sandboxProof ? 'real OS san
       name: 'Bash',
       input: {
         command: sandboxProof
-          ? `cat '${readProbeFile}'; if [ -n "$HYPERNEO_HANDOFF_DIR" ]; then printf UNWRITABLE_HANDOFF_ADVERTISED; exit 1; fi; if [ -n \"$GH_TOKEN\" ]; then printf UNEXPECTED_INHERITED_TOKEN; exit 1; fi; printf CHECKOUT_OK > '${readCheckout}/allowed.txt'; printf TEMP_OK > '${join(tmpdir(), 'hyperneo-neo', root, 'allowed.txt')}'; (printf BAD > '${workerCheckout}/blocked.txt'); (printf BAD > '${isolated}/data/blocked.txt'); (printf BAD > '${isolated}/data/Neo/blocked.txt'); gh pr view https://github.com/lsm/HyperNeo/pull/8148 --json number; printf SYNTHETIC_UNAPPROVED > '${approvalProbeFile}'`
-          : `cat '${readProbeFile}'; if [ -n "$HYPERNEO_HANDOFF_DIR" ]; then printf UNWRITABLE_HANDOFF_ADVERTISED; exit 1; fi; if [ -n \"$GH_TOKEN\" ]; then printf UNEXPECTED_INHERITED_TOKEN; exit 1; fi; gh pr view https://github.com/lsm/HyperNeo/pull/8148 --json number`,
+          ? `cat '${readProbeFile}'; if [ -n "$HYPERNEO_HANDOFF_DIR" ]; then printf UNWRITABLE_HANDOFF_ADVERTISED; exit 1; fi; printf CHECKOUT_OK > '${readCheckout}/allowed.txt'; printf TEMP_OK > '${join(tmpdir(), 'hyperneo-neo', root, 'allowed.txt')}'; (printf BAD > '${workerCheckout}/blocked.txt'); (printf BAD > '${isolated}/data/blocked.txt'); (printf BAD > '${isolated}/data/Neo/blocked.txt'); gh pr view https://github.com/lsm/HyperNeo/pull/8148 --json number; printf SYNTHETIC_UNAPPROVED > '${approvalProbeFile}'`
+          : `cat '${readProbeFile}'; if [ -n "$HYPERNEO_HANDOFF_DIR" ]; then printf UNWRITABLE_HANDOFF_ADVERTISED; exit 1; fi; gh pr view https://github.com/lsm/HyperNeo/pull/8148 --json number`,
       },
     },
     { name: 'Write', input: { file_path: approvalProbeFile, content: 'NATIVE_WRITE_BYPASS' } },
@@ -274,7 +291,8 @@ test(`root startup, reads, resume and publication (${sandboxProof ? 'real OS san
     MINIMAX_API_KEY: '',
     COPILOT_GITHUB_TOKEN: '',
     DEFAULT_MODEL: 'haiku',
-    GH_TOKEN: 'synthetic-inherited-owner-token',
+    PATH: `${ghBin}:${process.env.PATH}`,
+    GH_TOKEN: 'synthetic-daemon-token',
     GITHUB_TOKEN: 'synthetic-inherited-owner-token',
     GITHUB_ACTIONS: 'true',
     ZDOTDIR: shellHome,
@@ -698,8 +716,10 @@ test(`root startup, reads, resume and publication (${sandboxProof ? 'real OS san
       expect(result?.is_error).not.toBe(true);
     }
     expect(JSON.stringify(approvalProbeResults)).not.toContain('UNWRITABLE_HANDOFF_ADVERTISED');
-    expect(JSON.stringify(approvalProbeResults)).not.toContain('UNEXPECTED_INHERITED_TOKEN');
-    expect(JSON.stringify(approvalProbeResults)).toContain('GH_TOKEN environment variable');
+    expect(JSON.stringify(approvalProbeResults)).toContain('authenticatedByDaemon');
+    expect(JSON.stringify(approvalProbeResults)).toContain('8148');
+    expect(JSON.stringify(approvalProbeResults)).not.toContain('GitHub authentication unavailable');
+    expect(JSON.stringify(storedAtStartup.config)).not.toContain('synthetic-daemon-token');
     if (sandboxProof) {
       expect(JSON.stringify(approvalProbeResults)).toMatch(/operation not permitted/i);
       expect(existsSync(join(readCheckout, 'allowed.txt'))).toBe(true);
