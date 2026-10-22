@@ -772,7 +772,10 @@ describe('Message RPC Handlers', () => {
       sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(null);
       const page = { sdkMessages: [], hasMore: false, backgroundTaskMessages: [] };
       const read = mock(async () => page);
-      const db = { getSDKMessagePageAsync: read } as unknown as Database;
+      const db = {
+        getDbPath: () => '/synthetic-page.db',
+        getSDKMessagePageAsync: read,
+      } as unknown as Database;
       setupMessageHandlers(messageHubData.hub, sessionManagerData.sessionManager, db);
       expect(
         await messageHubData.handlers.get('message.sdkMessages')!(
