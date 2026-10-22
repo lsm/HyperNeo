@@ -88,6 +88,14 @@ describe('Neo preferences', () => {
     expect(screen.queryByRole('slider')).toBeNull();
     expect(api.request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
   });
+  it('closes the minimal Neo menu on Escape and restores trigger focus', () => {
+    render(<NeoPreferences sessionId="neo:root" store={makeStore()} onError={vi.fn()} />);
+    const trigger = screen.getByRole('button', { name: 'Model and thinking' });
+    fireEvent.click(trigger);
+    fireEvent.keyDown(screen.getByRole('link', { name: 'Neo model settings' }), { key: 'Escape' });
+    expect(screen.queryByRole('link', { name: 'Neo model settings' })).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
   it('changes one session’s own model and thinking, ignoring Neo’s preference', async () => {
     const store = makeStore();
     api.request.mockImplementation(async (method: string) =>
