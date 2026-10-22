@@ -34,6 +34,9 @@ export function createCodingPack(deps: {
 }): NeoPack {
   const readClaudeOwners = deps.readClaudeOwners ?? createCodingClaudeOwnerReader();
   const ledgerSkips = new Map<string, number>();
+  const todos = createCodingTodoPack(deps.todoPrs, deps.readPrs, (url) =>
+    deps.prLedger.stateOf(url)
+  );
   return {
     ...CODING_PACK_BRIEF,
     preferences: {
@@ -73,7 +76,9 @@ export function createCodingPack(deps: {
       },
     },
     prepareExecution: prepareCodingExecution,
-    todos: createCodingTodoPack(deps.todoPrs, deps.readPrs, (url) => deps.prLedger.stateOf(url)),
+    todos,
+    readFacts: todos.readFacts,
+    judge: todos.judge,
     observeSessions: (sessions, now) => deps.prLedger.observeSessions(sessions, now),
     sweep: async (now) => {
       deps.prLedger.observeSessions(await readClaudeOwners(), now);

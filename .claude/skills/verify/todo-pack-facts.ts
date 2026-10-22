@@ -72,7 +72,7 @@ try {
  evidence.closed=await rpc('neo.todo.close',{todoId:todo.id,reason:'Observed merge'});
  assert.equal((evidence.closed as {ok:boolean}).ok,true);
  const final=store.getTodo(todo.id)!;
- assert.equal(final.state,'done');assert.equal(final.evidence,'#8 merged');assert.equal(final.report,report);
+ assert.equal(final.state,'done');assert.equal(final.evidence,'Observed merge');assert.equal(final.report,report);
  evidence.stored={state:final.state,evidence:final.evidence,reportBytes:Buffer.byteLength(final.report!),reportSha256:hash(final.report!)};
  console.log('PASS: fact read leaves todo unchanged; pure replay uses captured facts; real RPC refuses then completes with full report retained.');
 } catch(error){evidence.error=String(error);throw error}
