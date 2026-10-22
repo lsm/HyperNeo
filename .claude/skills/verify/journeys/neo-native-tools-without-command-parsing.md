@@ -13,7 +13,10 @@ env -i HOME="$RUN/home" PATH="$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/
   bun .claude/skills/verify/neo-native-tools-no-parser.ts "$RUN" 9387
 ```
 
-The helper uses the installed real SDK and production restrictNeoQuery options.
+The helper uses the installed real SDK with the production static Read rules.
+Focused QueryOptionsBuilder tests pin their attachment to bound Neo sessions
+without changing ordinary configured tools, permissions, prompts or hooks.
+The former restrictNeoQuery runtime was already removed by #8114.
 A scripted mock asks its native Bash tool to run bash -c, a command substitution,
 a Makefile target and a package script. Every gh invocation forces a synthetic-only PATH and uses the shell command
 builtin, so it runs only the marker-writing stub; no real git/gh mutation can
@@ -27,7 +30,8 @@ closes its SDK stream and loopback server in finally. No test daemon is started.
 Run focused neo-prompt, neo, query-options-builder and handoff operation tests,
 then bun run check. SDK handoff.read still verifies publication hashes; native
 Read no longer claims custom hash/canonical-path enforcement from the deleted
-hook. Do not treat the retained Read patterns as an OS sandbox. Environment
+hook. The static rules cover only direct SDK Read requests, not Bash/Write/Grep/Glob,
+the daemon DB or other worker workspaces. Do not treat them as an OS sandbox. Environment
 isolation is separate work, with no replacement command parser in this change.
 
 After an eligible exact-head review, green CI and manual squash, read the running

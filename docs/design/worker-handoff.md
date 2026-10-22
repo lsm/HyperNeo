@@ -17,7 +17,7 @@ inspection; the suspected paths below need reproductions before implementation.
 | Part | First wrong decision / current boundary | Proposed change |
 |---|---|---|
 | Send | [`message-send.ts:40`](../../packages/daemon/src/lib/messaging/message-send.ts#L40) requires the SDK envelope; [`invoke.ts:77`](../../packages/daemon/src/lib/operations/invoke.ts#L77) returns schema diagnostics without a corrective example. Incident calls repeatedly omitted `type` or `parent_tool_use_id`. | Extend **the same `message.send` operation** with `{to, text, files?}`; normalize once into its current admission, identity, routing and persistence pipeline. Keep the existing SDK shape accepted. Invalid input includes a minimal valid example for each shape. |
-| File | Worker workspaces are under the daemon data directory. The former Neo command/read hook has been removed; static SDK secret-path Read rules remain. | Add a daemon-managed **per-session outbox**, explicitly writable by that worker and readable by Neo through the narrow exception below. Do not allow another worker's workspace or all of `~/.hyperneo`. |
+| File | Worker workspaces are under the daemon data directory. The former Neo command/read hook has been removed; static SDK secret-path Read rules remain. | Add a daemon-managed **per-session outbox**, explicitly writable by that worker and readable through the verified operation below. Its reference checks do not grant arbitrary paths; native tools retain ordinary same-user filesystem access, including the daemon data directory. Environment isolation is separate work. |
 | Reply | [`work-turns.ts:3`](../../packages/daemon/src/storage/work-turns.ts#L3) cuts text at 4,000 characters; lines 39–75 read a bounded search-index tail. [`hyperneo-adapter.ts:409`](../../packages/daemon/src/lib/drivers/hyperneo-adapter.ts#L409) projects agent replies from `result` only. [`driver-work.ts:372`](../../packages/daemon/src/lib/neo/driver-work.ts#L372) cuts attribution at the next user input, and line 498 can turn an empty observed exchange into “without a written reply.” | Read local conversation replies from authoritative SDK storage, with stable anchors and continuation cursors. Bind todo reports to the acknowledged input and actual consumed-turn evidence, rather than a search tail or text match alone. Preserve assistant text when a result has no text; deduplicate when both contain the reply. |
 | Answered | [`coordinator-turn.ts:95`](../../packages/daemon/src/lib/neo/coordinator-turn.ts#L95) tracks carried human inputs internally, but its identity exposes one original trigger. [`publication-operation.ts:78`](../../packages/daemon/src/lib/neo/publication-operation.ts#L78) **already accepts an explicit alternate delivered human trigger**. The missing link is making that ID available with the input. | Surface daemon-authored human message IDs and `triggerId` in every human input envelope, including mid-turn delivery. Neo selects the human input it actually answers using the existing publication field. |
 
@@ -33,8 +33,12 @@ artifact path. Paths are local to their originating daemon; remote delivery must
 transfer the artifact explicitly or report unavailable, never reinterpret a path.
 
 The handoff.read operation verifies the canonical published-artifact subtree.
-Neo no longer has a custom native Read hook; only static SDK secret-path Read
-rules remain. Publication
+Neo no longer has a custom native path hook; only static SDK secret-path Read
+rules remain. These do not deny Write/Grep/Glob/Bash access, protect daemon.db or
+confine native tools to one worker workspace. The earlier native data-directory
+restriction is deliberately removed with the hook; a container/filesystem boundary
+is required for that isolation. The verified operation still rejects arbitrary
+references independently of native access. Publication
 accepts only regular files from the caller's registered draft directory: reject
 traversal, symlinks, hard links and cross-session references; snapshot through the
 validated open descriptor, not a second path lookup. Published artifacts are immutable through the API/SDK contract: publication never

@@ -39,6 +39,8 @@ import { PROVIDER_KEY_ENV_VARS } from '../credential-discovery.ts';
 import { getDataDir } from '../data-dir.ts';
 import { sessionDoorPath } from '../messaging/session-door.ts';
 import { Logger } from '../logger.ts';
+import { neoCoordinatorBinding } from '../neo/session-policy.ts';
+import { neoSecretReadRules } from '../neo/secret-read-rules.ts';
 import { mergeSessionMcpServers } from '../mcp/built-in-servers.ts';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
 import {
@@ -808,6 +810,10 @@ export class QueryOptionsBuilder {
 
     if (this.exaWebToolsActivation) {
       disallowedTools.push(...this.exaWebToolsActivation.disallowedTools);
+    }
+
+    if (neoCoordinatorBinding(this.ctx.db, this.ctx.session.id)) {
+      disallowedTools.push(...neoSecretReadRules());
     }
 
     return [...new Set(disallowedTools)];

@@ -151,9 +151,6 @@ standing rule: never enforce safety by parsing command lines. Neo adds no such
 hook or local-change nudge. Static SDK `Read(path)` secret-path denials remain;
 filesystem/container isolation is separate environment work.
 
-
-The hook reads each command by its words, including `bash -c`, `$(…)`, git's and gh's global options, inline interpreter code, and the script file a command runs. It stops shared-state actions and secret paths that appear literally there. A path or command the code builds at run time can still get through, so for both secrets and shared state the prompt and the card hand-off carry the rest of the trust.
-
 ### 7. Notifications
 
 A publication to the human happens in three cases only:
