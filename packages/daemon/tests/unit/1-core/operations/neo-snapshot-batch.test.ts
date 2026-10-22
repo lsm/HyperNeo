@@ -8,7 +8,11 @@ import {
   type DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
-import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
+import { z } from 'zod';
+import {
+  createOperationRegistry,
+  defineOperation,
+} from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 import {
@@ -246,3 +250,38 @@ test.each([3, 4, 20, 21])(
     ).toBe(true);
   }
 );
+
+test('worker identity follows the adapter and current record, including notices after rename', async () => {
+  const ref = { adapter: 'codex-desktop', id: 'thread-1' };
+  let title = 'Claude something';
+  const status = defineOperation({
+    name: 'work.status',
+    inputSchema: z.object({ ref: z.unknown() }),
+    resultSchema: z.unknown(),
+    policy: { safetyClass: 'read' },
+    execute: async () => ({ ok: true, value: { ref, title } }),
+  });
+  registry = createOperationRegistry([...createNeoOperations(service), status]);
+  service.todoSessions.create('todo-230', { verb: 'send', ref });
+  service.todoSessions.recordRef('todo-230', ref);
+  service.sessionWatcher.sessionNotices = [
+    { key: 'notice', ref, title: 'Creation-time cache', kind: 'needs_you', at: 1 },
+  ];
+  service.sessionWatcher.sessionNoticeGroups = [
+    { id: 'group', at: 1, line: 'Historical line', notices: service.sessionNotices },
+  ];
+  const first = read(await snapshot());
+  const worker = { ...ref, name: title, label: 'Codex · Claude something' };
+  expect(
+    first.todoAsks.flatMap((entry) => entry.todos).find((todo) => todo.id === 'todo-230')
+  ).toMatchObject({ worker });
+  expect(first.sessionNotices?.[0]).toMatchObject({ worker, title });
+  expect(first.sessionNoticeGroups?.[0].line).toContain('Codex · Claude something');
+  title = 'fullstack-renamed';
+  const next = read(await snapshot({ sinceRev: first.rev }));
+  expect(next).not.toHaveProperty('unchanged');
+  expect(
+    next.todoAsks.flatMap((entry) => entry.todos).find((todo) => todo.id === 'todo-230')
+  ).toMatchObject({ worker: { ...ref, name: title, label: 'Codex · fullstack-renamed' } });
+  expect(next.sessionNotices?.[0]).toMatchObject({ title });
+});

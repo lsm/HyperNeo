@@ -916,3 +916,32 @@ describe('Question full-version document', () => {
     }
   );
 });
+
+it('shows adapter-based worker identity and the next record name after rename', () => {
+  const data = entry({ todos: [todo('a')] });
+  const worker = {
+    id: 'thread-1',
+    adapter: 'codex-desktop',
+    name: 'Claude something',
+    label: 'Codex · Claude something',
+  };
+  Object.assign(data.todos[0], { worker });
+  const app = render(<NeoAskTodos entry={data} onAnswer={vi.fn()} />);
+  expect(app.getByText('Codex · Claude something')).toBeTruthy();
+  app.rerender(
+    <NeoAskTodos
+      entry={{
+        ...data,
+        todos: [
+          Object.assign(
+            { ...data.todos[0] },
+            { worker: { ...worker, name: 'renamed', label: 'Codex · renamed' } }
+          ),
+        ],
+      }}
+      onAnswer={vi.fn()}
+    />
+  );
+  expect(app.getByText('Codex · renamed')).toBeTruthy();
+  expect(app.queryByText('Codex · Claude something')).toBeNull();
+});
