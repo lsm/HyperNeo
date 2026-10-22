@@ -19,7 +19,8 @@ are read, and no model/provider is needed.
 
 The returned prepared directory must contain its own `.git` directory, start at
 the freshly fetched remote commit, keep the original upstream and contain no Git
-object hardlinks to the source. A real edit/add/commit in that directory must
+object hardlinks to the source. Focused Git tests also start from a source that
+borrows objects: `--dissociate` must leave no alternates dependency in the clone. A real edit/add/commit in that directory must
 use the source repo-local identity/signing policy and produce a commit absent
 from the source object store, preserving source HEAD and
 dirty bytes. A synthetic CLI refusal after preparation must release only its new

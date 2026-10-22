@@ -137,6 +137,7 @@ async function prepareClone(
           'git',
           'clone',
           '--no-hardlinks',
+          '--dissociate',
           '--no-checkout',
           '--',
           plan.directory,
