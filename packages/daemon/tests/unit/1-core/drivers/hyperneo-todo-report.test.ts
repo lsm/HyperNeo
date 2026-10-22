@@ -100,6 +100,21 @@ describe('HyperNeo todo reply attribution', () => {
     });
   });
 
+  test('internal compaction and intercepted recovery records cannot replace a final message', async () => {
+    put('assistant', 'assistant', report, null);
+    put('intercepted', 'result', 'INTERNAL RECOVERY', 15);
+    db.prepare("UPDATE sdk_messages SET recovery_intercepted=1 WHERE id='intercepted'").run();
+    put('compaction', 'assistant', 'INTERNAL COMPACTION', null);
+    db.prepare("UPDATE sdk_messages SET internal_compaction_turn=1 WHERE id='compaction'").run();
+    put('terminal', 'result', '', 20);
+    expect((await status()).value).toMatchObject({
+      ok: true,
+      value: {
+        turnEnds: [{ message: report }],
+      },
+    });
+  });
+
   test('mid-turn human input does not sever the complete assistant report or borrow a later turn', async () => {
     put('mid-turn', 'user', 'Human clarification', 15);
     put('report', 'assistant', report, null);
