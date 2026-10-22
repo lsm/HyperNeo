@@ -158,9 +158,9 @@ describe('GitPanel', () => {
           },
         })
       );
-      const { container } = renderPanel();
+      const { container, getByRole } = renderPanel();
 
-      fireEvent.click(container.querySelector('[data-testid="git-checks-toggle"]')!);
+      fireEvent.click(getByRole('button', { name: 'more — Git checks', exact: true }));
 
       const list = container.querySelector('[data-testid="git-checks-list"]')!;
       expect(list).toBeTruthy();
@@ -205,37 +205,43 @@ describe('GitPanel', () => {
     ).toBe('false');
   });
 
-  it('loads a full diff through more and returns to its preview through less', async () => {
-    const status = makeStatus();
-    status.review!.files = [makeFile({ patch: '+synthetic preview', patchTruncated: true })];
-    setStatus(status);
-    mockedGetGitFileDiff.mockResolvedValue({
-      sessionId: 'session-1',
-      path: 'src/foo.ts',
-      patch: '+synthetic full ending',
-      truncated: false,
-      additions: 1,
-      deletions: 0,
-    });
-    const view = renderPanel();
-    fireEvent.click(view.getByText('+synthetic preview'));
-    expect(mockedGetGitFileDiff).not.toHaveBeenCalled();
-    const more = view.getByRole('button', { name: 'more — Full diff', exact: true });
-    more.focus();
-    fireEvent.click(more);
-    await waitFor(() => expect(view.getByText('+synthetic full ending')).toBeTruthy());
-    const less = view.getByRole('button', { name: 'less — Full diff', exact: true });
-    expect(document.activeElement).toBe(less);
-    fireEvent.click(view.getByText('+synthetic full ending'));
-    expect(less.getAttribute('aria-expanded')).toBe('true');
-    fireEvent.click(less);
-    expect(view.queryByText('+synthetic full ending')).toBeNull();
-    expect(view.getByText('+synthetic preview')).toBeTruthy();
-    expect(view.getByRole('button', { name: 'more — Full diff', exact: true })).toBe(
-      document.activeElement
-    );
-    expect(mockedGetGitFileDiff).toHaveBeenCalledTimes(1);
-  });
+  it.each(['+synthetic full ending', null])(
+    'returns to its preview after loading full diff %s',
+    async (patch) => {
+      const status = makeStatus();
+      status.review!.files = [makeFile({ patch: '+synthetic preview', patchTruncated: true })];
+      setStatus(status);
+      mockedGetGitFileDiff.mockResolvedValue({
+        sessionId: 'session-1',
+        path: 'src/foo.ts',
+        patch,
+        truncated: false,
+        additions: 1,
+        deletions: 0,
+      });
+      const view = renderPanel();
+      fireEvent.click(view.getByText('+synthetic preview'));
+      expect(mockedGetGitFileDiff).not.toHaveBeenCalled();
+      const more = view.getByRole('button', { name: 'more — Full diff', exact: true });
+      more.focus();
+      fireEvent.click(more);
+      await waitFor(() =>
+        expect(view.getByRole('button', { name: 'less — Full diff', exact: true })).toBeTruthy()
+      );
+      const less = view.getByRole('button', { name: 'less — Full diff', exact: true });
+      expect(document.activeElement).toBe(less);
+      if (patch) fireEvent.click(view.getByText(patch));
+      else expect(view.getByText(/No inline diff available/)).toBeTruthy();
+      expect(less.getAttribute('aria-expanded')).toBe('true');
+      fireEvent.click(less);
+      expect(view.queryByText('+synthetic full ending')).toBeNull();
+      expect(view.getByText('+synthetic preview')).toBeTruthy();
+      expect(view.getByRole('button', { name: 'more — Full diff', exact: true })).toBe(
+        document.activeElement
+      );
+      expect(mockedGetGitFileDiff).toHaveBeenCalledTimes(1);
+    }
+  );
 
   describe('file list', () => {
     it('groups files into Staged and Unstaged based on the working-tree flags', () => {
@@ -511,6 +517,17 @@ describe('GitPanel', () => {
 
       await waitFor(() => expect(container.textContent).toContain('Not a git repository'));
       expect(container.textContent).toContain('+preview');
+      mockedGetGitFileDiff.mockResolvedValue({
+        sessionId: 'session-1',
+        path: 'src/big.ts',
+        patch: '+retried full diff',
+        truncated: false,
+        additions: 1,
+        deletions: 0,
+      });
+      fireEvent.click(container.querySelector('[data-testid="git-expand-diff"]')!);
+      await waitFor(() => expect(container.textContent).toContain('+retried full diff'));
+      expect(container.textContent).not.toContain('Not a git repository');
     });
 
     it('discards a full-diff response superseded by a refresh', async () => {
@@ -537,6 +554,10 @@ describe('GitPanel', () => {
 
       fireEvent.click(container.querySelector('[data-testid="git-expand-diff"]')!);
       await waitFor(() => expect(mockedGetGitFileDiff).toHaveBeenCalled());
+      expect(
+        container.querySelector<HTMLButtonElement>('[data-testid="git-expand-diff"]')?.disabled
+      ).toBe(true);
+      expect(container.querySelector('[role="status"]')?.textContent).toBe('Loading…');
 
       const refreshedStatus = makeStatus({
         files: [{ path: 'src/big.ts', status: 'modified', staged: false, unstaged: true }],
