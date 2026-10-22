@@ -9,14 +9,22 @@ import {
 } from '../../../../src/lib/credentials/credential-store.ts';
 import { neoReadAccess, neoReadCheckoutPaths } from '../../../../src/lib/neo/read-access.ts';
 
+const { runtimePlatform } = vi.hoisted(() => ({ runtimePlatform: vi.fn(() => process.platform) }));
+vi.mock('node:os', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:os')>()),
+  platform: runtimePlatform,
+}));
+
 const roots: string[] = [];
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+  runtimePlatform.mockReturnValue(process.platform);
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
 test('a locked dedicated keychain leaves Neo usable and gh visibly unauthenticated', async () => {
+  runtimePlatform.mockReturnValue('darwin');
   vi.stubEnv('NODE_ENV', 'production');
   vi.spyOn(KeychainCredentialStore.prototype, 'get').mockRejectedValue(
     new KeychainUnavailableError('Synthetic keychain locked')
@@ -54,7 +62,7 @@ test('a missing dedicated token leaves gh unauthenticated without inherited-toke
   expect(access.filesystem.denyWrite).toEqual(['/synthetic/Neo']);
 });
 
-test('only the dedicated token reaches gh and a store failure is not swallowed', async () => {
+test('only the dedicated token reaches gh and unavailable stores stay unauthenticated', async () => {
   const access = await neoReadAccess(
     'synthetic-token',
     '/synthetic/Neo',
@@ -62,9 +70,21 @@ test('only the dedicated token reaches gh and a store failure is not swallowed',
   );
   roots.push(access.env.TMPDIR);
   expect(access.env.GH_TOKEN).toBe('synthetic-readonly');
-  await expect(
-    neoReadAccess('synthetic-token', '/synthetic/Neo', async () => {
-      throw new Error('Synthetic store unavailable');
-    })
-  ).rejects.toThrow('Synthetic store unavailable');
+  const unavailable = await neoReadAccess('synthetic-token', '/synthetic/Neo', async () => {
+    throw new Error('Synthetic store unavailable');
+  });
+  expect(unavailable.env.GH_TOKEN).toBe('');
 });
+
+test.each(['linux', 'win32'] as const)(
+  '%s does not attempt macOS Keychain access',
+  async (host) => {
+    runtimePlatform.mockReturnValue(host);
+    vi.stubEnv('NODE_ENV', 'production');
+    const get = vi.spyOn(KeychainCredentialStore.prototype, 'get');
+    const access = await neoReadAccess(`synthetic-${host}`, '/synthetic/Neo');
+    roots.push(access.env.TMPDIR);
+    expect(access.env.GH_TOKEN).toBe('');
+    expect(get).not.toHaveBeenCalled();
+  }
+);

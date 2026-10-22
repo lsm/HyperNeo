@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { KeychainCredentialStore } from '../credentials/credential-store.ts';
 import { getDataDir } from '../data-dir.ts';
@@ -23,13 +23,13 @@ export async function neoReadAccess(
   sessionId: string,
   cwd: string | undefined,
   readToken: () => Promise<string | null> = () =>
-    process.env.NODE_ENV === 'test'
+    process.env.NODE_ENV === 'test' || platform() !== 'darwin'
       ? Promise.resolve(null)
       : new KeychainCredentialStore().get('hyperneo.neo.github', 'readonly')
 ) {
   const temp = join(tmpdir(), 'hyperneo-neo', sessionId);
   mkdirSync(join(temp, 'gh'), { recursive: true });
-  const token = await readToken();
+  const token = await readToken().catch(() => null);
   return {
     filesystem: {
       allowWrite: [temp, ...neoReadCheckoutPaths()],
