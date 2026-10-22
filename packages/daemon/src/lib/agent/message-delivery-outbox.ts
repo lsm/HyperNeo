@@ -292,8 +292,7 @@ const ACTIVATE_PROMPT_ROW_BY_UUID_SQL = `UPDATE sdk_messages
   AND send_status IN ('deferred', 'enqueued')
   RETURNING id AS db_id`;
 
-const RETRY_PROMPT_ROW_BY_ID_SQL = `UPDATE sdk_messages
-  SET send_status = 'enqueued'
+const RETRY_PROMPT_ROW_BY_ID_SQL = `SELECT id AS db_id FROM sdk_messages
   WHERE id = (
     SELECT id FROM sdk_messages
     WHERE id = ? AND session_id = ? AND message_type = 'user' AND sdk_uuid = ?
@@ -304,11 +303,9 @@ const RETRY_PROMPT_ROW_BY_ID_SQL = `UPDATE sdk_messages
           AND sibling.sdk_uuid = ? AND (sibling.consumed_seq IS NOT NULL OR COALESCE(sibling.send_status, 'consumed') = 'consumed')
       )
   )
-  AND send_status = 'failed'
-  RETURNING id AS db_id`;
+  AND send_status = 'failed'`;
 
-const RETRY_PROMPT_ROW_BY_UUID_SQL = `UPDATE sdk_messages
-  SET send_status = 'enqueued'
+const RETRY_PROMPT_ROW_BY_UUID_SQL = `SELECT id AS db_id FROM sdk_messages
   WHERE id = (
     SELECT id FROM sdk_messages
     WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
@@ -320,8 +317,7 @@ const RETRY_PROMPT_ROW_BY_UUID_SQL = `UPDATE sdk_messages
       )
     ORDER BY timestamp ASC, rowid ASC LIMIT 1
   )
-  AND send_status = 'failed'
-  RETURNING id AS db_id`;
+  AND send_status = 'failed'`;
 
 const PROMPT_ROW_BY_UUID_SQL = `SELECT id AS "dbId", ${sdkMessageBodyAt('sdk_messages.rowid')} AS "sdkMessage",
     COALESCE(send_status, 'consumed') AS "sendStatus"
@@ -932,7 +928,11 @@ function commitRetryPrompt(ctx: RetryPromptCtx): RetryPromptCtx {
           admissionRowid: ctx.admissionRowid,
         })
       );
-      ctx.sdkMessageRepo?.updateMessageStatus([row.db_id], 'enqueued');
+      if (ctx.sdkMessageRepo) ctx.sdkMessageRepo.updateMessageStatus([row.db_id], 'enqueued');
+      else
+        ctx.db
+          .prepare("UPDATE sdk_messages SET send_status = 'enqueued' WHERE id = ?")
+          .run(row.db_id);
       return { dbId: row.db_id, messageUuid: ctx.messageUuid };
     }, 'immediate')()
   );

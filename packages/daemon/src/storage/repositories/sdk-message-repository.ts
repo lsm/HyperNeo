@@ -1722,56 +1722,68 @@ export class SDKMessageRepository {
     return row?.seq ?? null;
   }
 
+  private statusBadgeDeltas(
+    messageIds: string[],
+    status: SendStatus
+  ): { sid: string; delta: number }[] {
+    if (!this.supportsVisibleMessageCount()) return [];
+    const placeholders = messageIds.map(() => '?').join(',');
+    return this.db
+      .prepare(`SELECT session_id AS sid,
+        SUM(CASE WHEN message_type = 'user' THEN
+          ? - CASE WHEN COALESCE(send_status, 'consumed') IN ('consumed', 'failed') THEN 1 ELSE 0 END
+          ELSE 0 END) AS delta
+      FROM sdk_messages WHERE id IN (${placeholders})
+        AND parent_tool_use_id IS NULL
+        AND COALESCE(message_subtype, '') NOT IN (${EXCLUDED_FROM_PAGINATION_SQL_LIST})
+      GROUP BY session_id`)
+      .all(status === 'consumed' || status === 'failed' ? 1 : 0, ...messageIds) as {
+      sid: string;
+      delta: number;
+    }[];
+  }
+
   updateMessageStatus(
     messageIds: string[],
     newStatus: SendStatus,
     options?: { sharedTurn?: boolean; consumedSeq?: number }
   ): void {
     if (messageIds.length === 0) return;
-
     const placeholders = messageIds.map(() => '?').join(',');
-    const pending =
-      newStatus === 'consumed' || newStatus === 'failed'
-        ? (this.db
-            .prepare(
-              `SELECT id, task_id, is_renderable FROM sdk_messages
-                WHERE id IN (${placeholders})
-                  AND message_type = 'user'
-                  AND send_status IN (${PENDING_ROW_FROM_STATUSES.map(() => '?').join(', ')})
-                ORDER BY rowid ASC`
-            )
-            .all(...messageIds, ...PENDING_ROW_FROM_STATUSES) as Array<{
-            id: string;
-            task_id: string | null;
-            is_renderable: number;
-          }>)
-        : [];
-    const affectedSessions = this.supportsVisibleMessageCount()
-      ? (this.db
-          .prepare(
-            `SELECT DISTINCT session_id AS sid FROM sdk_messages WHERE id IN (${placeholders})`
-          )
-          .all(...messageIds) as Array<{ sid: string }>)
-      : [];
-    const plan = planMessageStatusApplication(
-      pending.map((row) => ({
-        rowId: row.id,
-        taskId: row.task_id,
-        isRenderable: row.is_renderable === 1,
-      })),
-      newStatus,
-      options
-    );
-    const changedSessions: string[] = [];
-    const badgeUpdate = planBadgeRecompute();
     const statusTransaction = this.db.transaction(() => {
+      const pending =
+        newStatus === 'consumed' || newStatus === 'failed'
+          ? (this.db
+              .prepare(`SELECT id, task_id, is_renderable FROM sdk_messages
+            WHERE id IN (${placeholders}) AND message_type = 'user'
+              AND send_status IN (${PENDING_ROW_FROM_STATUSES.map(() => '?').join(', ')})
+            ORDER BY rowid ASC`)
+              .all(...messageIds, ...PENDING_ROW_FROM_STATUSES) as Array<{
+              id: string;
+              task_id: string | null;
+              is_renderable: number;
+            }>)
+          : [];
+      const plan = planMessageStatusApplication(
+        pending.map((row) => ({
+          rowId: row.id,
+          taskId: row.task_id,
+          isRenderable: row.is_renderable === 1,
+        })),
+        newStatus,
+        options
+      );
+      const deltas = this.statusBadgeDeltas(messageIds, newStatus);
       applyMessageStatusPlan(this.db, plan, messageIds, () => this.nextConsumedSeq());
-
-      for (const { sid } of affectedSessions) {
-        if (this.applyBadgeUpdate(sid, badgeUpdate)) changedSessions.push(sid);
+      const changed: string[] = [];
+      for (const { sid, delta } of deltas) {
+        if (delta === 0) continue;
+        this.bumpVisibleMessageCount(sid, delta);
+        changed.push(sid);
       }
+      return changed;
     });
-    withBusyRetry(() => statusTransaction());
+    const changedSessions = withBusyRetry(() => statusTransaction());
     for (const sid of changedSessions) this.notifySessionsChanged(sid);
     for (const messageId of messageIds) this.scheduleMessageSearchIndex(messageId);
   }
@@ -1784,16 +1796,16 @@ export class SDKMessageRepository {
     let changed = false;
     let notifySid: string | null = null;
     const transitionTransaction = this.db.transaction(() => {
+      const deltas = this.statusBadgeDeltas([messageId], targetStatus);
       changed =
         this.db
           .prepare(`UPDATE sdk_messages SET send_status = ? WHERE id = ? AND send_status = ?`)
           .run(targetStatus, messageId, expectedStatus).changes > 0;
       if (!changed) return;
-      const row = this.db
-        .prepare(`SELECT session_id AS sid FROM sdk_messages WHERE id = ?`)
-        .get(messageId) as { sid: string } | undefined;
-      if (row && this.applyBadgeUpdate(row.sid, planBadgeRecompute())) {
-        notifySid = row.sid;
+      for (const { sid, delta } of deltas) {
+        if (delta === 0) continue;
+        this.bumpVisibleMessageCount(sid, delta);
+        notifySid = sid;
       }
     });
     withBusyRetry(() => transitionTransaction());

@@ -1,3 +1,4 @@
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies.ts';
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { McpServerConfig, MessageHub, ModelInfo, Session } from '@hyperneo/shared';
@@ -1208,6 +1209,7 @@ describe('Session RPC Handlers — models.list', () => {
       `);
       runMigration418(db);
       jobQueue = new JobQueueRepository(db as never);
+      const sdkRepo = new SDKMessageRepository(db);
       db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
          VALUES (?, ?, 'user', ?, ?, 'failed', ?)`
@@ -1247,9 +1249,7 @@ describe('Session RPC Handlers — models.list', () => {
         getJobQueueRepo: () => jobQueue,
         getDatabase: () => db,
         getSession: (sid: string) => ({ id: sid, status: sessionStatus }),
-        getSDKMessageRepo: () => ({
-          updateMessageStatus: mock(() => {}),
-        }),
+        getSDKMessageRepo: () => sdkRepo,
       };
       const agentSession = {
         getSessionData: () => ({ id: 'sess-1', status: 'active' }),
