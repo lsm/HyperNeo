@@ -317,3 +317,42 @@ test('transient SQLite contention retries persistence without repeating shared a
     fault.mockRestore();
   }
 });
+
+for (const mode of ['relative', 'growth']) {
+  test(`public relative query ${mode} shares coverage without per-call row growth`, () => {
+    const run = realpathSync(mkdtempSync(join(tmpdir(), 'relative-query-rpc-')));
+    mkdirSync(join(run, 'home'));
+    try {
+      execFileSync(
+        'bun',
+        [
+          fileURLToPath(
+            new URL(
+              '../../../../../../.claude/skills/verify/github-ledger-query.ts',
+              import.meta.url
+            )
+          ),
+          run,
+          mode,
+        ],
+        {
+          cwd: run,
+          env: {
+            HOME: join(run, 'home'),
+            PATH: process.env.PATH!,
+            NODE_ENV: 'test',
+            HYPERNEO_DATA_DIR: join(run, 'data'),
+            LOG_LEVEL: 'error',
+          },
+          timeout: 30000,
+          stdio: 'pipe',
+        }
+      );
+      const result = JSON.parse(readFileSync(join(run, 'evidence/query-ledger.json'), 'utf8'));
+      expect(result.verified).toBe(true);
+      expect(result.rows).toHaveLength(1);
+    } finally {
+      rmSync(run, { recursive: true, force: true });
+    }
+  }, 30000);
+}

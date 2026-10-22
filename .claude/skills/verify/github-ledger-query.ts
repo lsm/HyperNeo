@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 
-const run = resolve(process.argv[2]);
+const run = resolve(process.argv[2]), mode = process.argv[3];
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -22,10 +22,11 @@ appendFileSync(join(root,'evidence/requests.jsonl'),JSON.stringify({phase,args})
 if(!['pr','issue'].includes(args[0])||args[1]!=='list'){process.stderr.write('unsupported synthetic request');process.exit(2);}
 await Bun.sleep(300);
 if(phase==='failed'){process.stderr.write('synthetic unavailable');process.exit(1);}
-const item=n=>({number:n,title:phase==='changed'?'Changed '+n:'Synthetic '+n,url:'https://github.com/synthetic/ledger/pull/'+n,state:'MERGED',createdAt:'2026-10-15T09:00:00Z',updatedAt:'2026-10-15T11:00:00Z',mergedAt:'2026-10-15T11:00:00Z',closedAt:'2026-10-15T11:00:00Z'});
+const item=n=>({number:n,title:phase==='changed'?'Changed '+n:'Synthetic '+n,url:'https://github.com/synthetic/ledger/pull/'+n,state:'MERGED',createdAt:'${mode ? new Date(Date.now()-3600000).toISOString() : '2026-10-15T11:00:00Z'}',updatedAt:'${mode ? new Date(Date.now()-3600000).toISOString() : '2026-10-15T11:00:00Z'}',mergedAt:'${mode ? new Date(Date.now()-3600000).toISOString() : '2026-10-15T11:00:00Z'}',closedAt:'${mode ? new Date(Date.now()-3600000).toISOString() : '2026-10-15T11:00:00Z'}'});
 process.stdout.write(JSON.stringify(phase==='empty'?[]:phase==='malformed'?{unexpected:true}:[item(3),item(2),item(1)]));
 `, { mode: 0o700 });
-const input = { repo: 'synthetic/ledger', state: 'merged', since: '2026-10-15T10:00:00Z', until: '2026-10-15T12:00:00Z', limit: 2 };
+const explicit = { repo: 'synthetic/ledger', state: 'merged', since: '2026-10-15T10:00:00Z', until: '2026-10-15T12:00:00Z', limit: 2 };
+const input = mode ? {repo: explicit.repo, state: explicit.state, withinHours: 3, limit: 2} : explicit;
 const control = (phase: string) => writeFileSync(join(run, 'phase'), phase);
 control('initial');
 const evidence: Record<string, any> = {};
@@ -53,12 +54,39 @@ const read = () => new Promise<any>((done, fail) => {
 });
 const requests = () => readFileSync(join(run, 'evidence/requests.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
 const stored = () => app!.db.getDatabase().prepare('SELECT * FROM pack_coding_query_facts').get() as Record<string, any>;
-try {
+async function prove() {
   await open();
+  if(mode) {
+    evidence.mode = mode;
+    if(mode === 'growth') {
+      evidence.reads = [];
+      for(let i=0;i<4;i++) evidence.reads.push(await read());
+      evidence.rows = app!.db.getDatabase().prepare('SELECT * FROM pack_coding_query_facts').all();
+      evidence.requests = requests();
+      for(const result of evidence.reads) assert.equal(result.ok,true);
+      assert.equal(evidence.requests.length,4,'Settled relative queries still make fresh attempts');
+      assert.equal(evidence.rows.length,1,'Repeated rolling-window reads must not create a row per invocation');
+    } else {
+      const held:Promise<any>[] = [];
+      for(let i=0;i<5;i++){held.push(read());await Bun.sleep(20);}
+      evidence.fanout = await Promise.all(held); evidence.initialRequests = requests();
+      for(const result of evidence.fanout) assert.equal(result.ok,true);
+      assert.equal(evidence.initialRequests.length,1,'Staggered relative queries must share one acquisition');
+      for(const result of evidence.fanout) assert.deepEqual(result,evidence.fanout[0]);
+      const window=evidence.fanout[0].window;
+      assert.equal(evidence.fanout[0].search,`merged:>=${window.since}`);
+      assert(evidence.initialRequests[0].args.includes(`merged:>=${window.since}`));
+      evidence.rows = app!.db.getDatabase().prepare('SELECT * FROM pack_coding_query_facts').all();
+      assert.equal(evidence.rows.length,1);
+    }
+    evidence.verified = true;
+    console.log(JSON.stringify({verified:true,mode,rows:evidence.rows.length}));
+    return;
+  }
   evidence.fanout = await Promise.all(Array.from({ length: 5 }, () => read()));
   for (const result of evidence.fanout) {
     assert.equal(result.ok, true); assert.equal(result.kind, 'list'); assert.equal(result.truncated, true);
-    assert.deepEqual(result.window, { by: 'merged', since: input.since, until: input.until });
+    assert.deepEqual(result.window, { by: 'merged', since: explicit.since, until: explicit.until });
     assert.deepEqual(result.items.map((item: any) => item.number), [3, 2]);
     assert.deepEqual(result, evidence.fanout[0]);
   }
@@ -80,7 +108,8 @@ try {
   assert.deepEqual(evidence.counts, { initial: 1, changed: 1, failed: 1, malformed: 1, empty: 1 });
   evidence.verified = true;
   console.log(JSON.stringify({ verified: true, counts: evidence.counts, path: join(run, 'evidence/query-ledger.json') }));
-} finally {
+}
+try { await prove(); } finally {
   if (existsSync(join(run, 'evidence/requests.jsonl'))) evidence.requests = requests();
   writeFileSync(join(run, 'evidence/query-ledger.json'), JSON.stringify(evidence, null, 2));
   for (const held of waiting.values()) clearTimeout(held.timer);
