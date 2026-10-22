@@ -3,6 +3,7 @@ import { emitStructuredLogEvent } from '../logger.ts';
 import type { SQLiteQueryObservabilityOptions } from '../../storage/sqlite-query-observability.ts';
 import type { IngestExternalEventOutcome } from './ingest-external-event-pipeline.ts';
 import type { ExternalEvent } from './types.ts';
+import type { Job, JobClaim } from '../../storage/repositories/job-queue-repository.ts';
 
 export type JobCleanup = {
   beforeMs: number;
@@ -17,6 +18,7 @@ export type SessionEventWriteRequest = {
   event: ExternalEvent | null;
   purgeClaudeSessions?: string[];
   cleanupJobs?: JobCleanup;
+  claimJobs?: JobClaim;
   queryObservability?: SQLiteQueryObservabilityOptions;
 };
 export type SessionEventWriteReply =
@@ -25,7 +27,7 @@ export type SessionEventWriteReply =
   | {
       id: number;
       epoch: number;
-      outcome?: IngestExternalEventOutcome | number;
+      outcome?: IngestExternalEventOutcome | number | Job[];
       error?: string;
       finishedAt: number;
       workerMs: number;
@@ -63,11 +65,16 @@ export class SessionEventWriter {
     return this.write(null, undefined, params) as Promise<number>;
   }
 
+  claimJobs(params: JobClaim): Promise<Job[]> {
+    return this.write(null, undefined, undefined, params) as Promise<Job[]>;
+  }
+
   private write(
     event: ExternalEvent | null,
     purgeClaudeSessions?: string[],
-    cleanupJobs?: JobCleanup
-  ): Promise<IngestExternalEventOutcome | number | undefined> {
+    cleanupJobs?: JobCleanup,
+    claimJobs?: JobClaim
+  ): Promise<IngestExternalEventOutcome | number | Job[] | undefined> {
     if (this.closing) return Promise.reject(new Error('Session event writer closed'));
     if (this.waiting >= 16) return Promise.reject(new Error('Session event writer queue full'));
     this.waiting++;
@@ -76,7 +83,7 @@ export class SessionEventWriter {
     const result = this.queue.then(() => {
       if (epoch !== this.epoch)
         throw new Error('Session event writer generation failed before dispatch');
-      return this.exchange(event, queuedAt, purgeClaudeSessions, cleanupJobs);
+      return this.exchange(event, queuedAt, purgeClaudeSessions, cleanupJobs, claimJobs);
     });
     this.queue = result
       .catch(() => {})
@@ -101,19 +108,22 @@ export class SessionEventWriter {
     event: ExternalEvent | null,
     queuedAt: number,
     purgeClaudeSessions?: string[],
-    cleanupJobs?: JobCleanup
-  ): Promise<IngestExternalEventOutcome | number | undefined> {
+    cleanupJobs?: JobCleanup,
+    claimJobs?: JobClaim
+  ): Promise<IngestExternalEventOutcome | number | Job[] | undefined> {
     const worker = (this.worker ??= this.createWorker()),
       id = ++this.id,
       epoch = this.epoch,
       started = performance.now(),
-      operation = cleanupJobs
-        ? 'job-queue-cleanup'
-        : purgeClaudeSessions
-          ? 'claude-feed-purge'
-          : event
-            ? 'session-event-ingest'
-            : 'session-event-close';
+      operation = claimJobs
+        ? 'job-queue-dequeue'
+        : cleanupJobs
+          ? 'job-queue-cleanup'
+          : purgeClaudeSessions
+            ? 'claude-feed-purge'
+            : event
+              ? 'session-event-ingest'
+              : 'session-event-close';
     return new Promise((resolve, reject) => {
       let settled = false,
         sent = false;
@@ -203,6 +213,7 @@ export class SessionEventWriter {
             event,
             purgeClaudeSessions,
             cleanupJobs,
+            claimJobs,
             queryObservability: this.queryObservability,
           } satisfies SessionEventWriteRequest);
           sent = true;

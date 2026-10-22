@@ -18,3 +18,8 @@ Keep `evidence/purge.json` including transaction caller stacks and worker metric
 This controlled cost does not establish the historical physical disk cause.
 Repeat with `VERIFY_WRITER_IPC=1`; rerun job-queue-cleanup-worker.ts on a second
 fresh fixture. Report affected job/worker latency separately from responsiveness.
+After the feed daemon closes, two existing writer clients compete for20synthetic
+jobs in the same fixture DB. `evidence/dequeue.json` verifies20unique claims and
+completions, complete payloads, wrong-token rejection, FIFO heads/tail and exempt
+session exclusion. Unit coverage also holds a claim reply across stop and races
+overlapping processor ticks; stop must drain the accepted handlers without loss.

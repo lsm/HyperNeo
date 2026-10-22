@@ -45,6 +45,65 @@ describe('JobQueueProcessor', () => {
     db.close();
   });
 
+  it('serializes delayed claims and drains their handlers on stop without losing jobs', async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    processor = new JobQueueProcessor(repo, {
+      maxConcurrent: 5,
+      claimJobs: async (request) => {
+        await gate;
+        if (request.method !== 'dequeue') throw new Error('unexpected fixture mode');
+        return repo.dequeue(...request.args);
+      },
+    });
+    const seen: string[] = [];
+    let maxActive = 0;
+    processor.register('synthetic', async (job) => {
+      seen.push(job.id);
+      maxActive = Math.max(maxActive, processor.snapshot().inFlightCapped);
+      await flush();
+    });
+    const jobs = Array.from({ length: 10 }, () =>
+      repo.enqueue({ queue: 'synthetic', payload: {} })
+    );
+    const first = processor.tick();
+    expect(await processor.tick()).toBe(0);
+    let stopped = false;
+    const stopping = processor.stop().then(() => {
+      stopped = true;
+    });
+    await flush();
+    expect(stopped).toBe(false);
+    release();
+    expect(await first).toBe(5);
+    await stopping;
+    expect(seen).toHaveLength(5);
+    expect(jobs.filter((job) => repo.getJob(job.id)?.status === 'pending')).toHaveLength(5);
+    expect(await processor.tick()).toBe(5);
+    await processor.stop();
+    expect(new Set(seen).size).toBe(10);
+    expect(maxActive).toBeLessThanOrEqual(5);
+    expect(jobs.every((job) => repo.getJob(job.id)?.status === 'completed')).toBe(true);
+  });
+
+  it('does not fall back to a main claim when the async writer rejects', async () => {
+    processor = new JobQueueProcessor(repo, {
+      claimJobs: async () => {
+        throw new Error('unknown claim');
+      },
+    });
+    let called = false;
+    processor.register('synthetic', async () => {
+      called = true;
+    });
+    const job = repo.enqueue({ queue: 'synthetic', payload: {} });
+    expect(await processor.tick()).toBe(0);
+    expect(called).toBe(false);
+    expect(repo.getJob(job.id)?.status).toBe('pending');
+  });
+
   describe('register', () => {
     it('registers a handler for a queue', async () => {
       let called = false;

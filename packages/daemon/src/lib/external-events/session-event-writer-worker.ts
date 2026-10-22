@@ -27,14 +27,16 @@ worker.onmessage = async ({ data }) => {
   const { id, epoch, event } = data,
     started = performance.now(),
     queueMs = Date.now() - data.sentAt;
-  workerOperation = data.cleanupJobs
-    ? 'job-queue-cleanup'
-    : data.purgeClaudeSessions
-      ? 'claude-feed-purge'
-      : 'session-event-ingest';
+  workerOperation = data.claimJobs
+    ? 'job-queue-dequeue'
+    : data.cleanupJobs
+      ? 'job-queue-cleanup'
+      : data.purgeClaudeSessions
+        ? 'claude-feed-purge'
+        : 'session-event-ingest';
   try {
     let outcome;
-    if (!event && !data.purgeClaudeSessions && !data.cleanupJobs) {
+    if (!event && !data.purgeClaudeSessions && !data.cleanupJobs && !data.claimJobs) {
       db?.close();
       db = null;
       store = null;
@@ -44,7 +46,16 @@ worker.onmessage = async ({ data }) => {
         db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000');
         store = new SessionExternalEventStore(db);
       }
-      if (data.cleanupJobs) {
+      if (data.claimJobs) {
+        const queue = new JobQueueRepository(db);
+        const request = data.claimJobs;
+        outcome =
+          request.method === 'dequeue'
+            ? queue.dequeue(...request.args)
+            : request.method === 'dequeueSessionFifo'
+              ? queue.dequeueSessionFifo(...request.args)
+              : queue.dequeueExempt(...request.args);
+      } else if (data.cleanupJobs) {
         const queue = new JobQueueRepository(db);
         outcome = queue.cleanup(data.cleanupJobs.beforeMs);
         for (const { queue: name, beforeMs } of data.cleanupJobs.completed)

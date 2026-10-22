@@ -8,6 +8,7 @@ import { Logger } from '../lib/logger.ts';
 import type { TableChangeScope } from './reactive-database.ts';
 import type {
   Job,
+  JobClaim,
   JobQueueRepository,
   PayloadMatch,
   ReclaimedJobClaim,
@@ -102,6 +103,7 @@ export interface JobQueueProcessorOptions {
   staleThresholdMs?: number;
   jitterRandom?: () => number;
   settlementGraceMs?: number;
+  claimJobs?: (request: JobClaim) => Promise<Job[]>;
 }
 
 export interface SessionFifoDequeueMode {
@@ -181,6 +183,8 @@ export class JobQueueProcessor {
     { claimToken: string | null; expireAt: number }
   >();
   private tickRequested = false;
+  private ticking = false;
+  private readonly claimJobs?: (request: JobClaim) => Promise<Job[]>;
   private changeNotifier: ((table: string, scope?: TableChangeScope) => void) | null = null;
   private readonly pollIntervalMs: number;
   private readonly maxConcurrent: number;
@@ -204,6 +208,7 @@ export class JobQueueProcessor {
     this.jitterRandom = options?.jitterRandom ?? Math.random;
     this.settlementGraceMs = options?.settlementGraceMs ?? SETTLEMENT_GRACE_MS;
     this.heartbeatIntervalMs = Math.max(10, Math.floor(this.staleThresholdMs / 3));
+    this.claimJobs = options?.claimJobs;
   }
 
   register(queue: string, handler: JobHandler, options?: RegisterOptions): void {
@@ -253,12 +258,12 @@ export class JobQueueProcessor {
   stop(): Promise<void> {
     this.stopPolling();
     return new Promise<void>((resolve) => {
-      if (this.activeHandlers === 0) {
+      if (this.activeHandlers === 0 && !this.ticking) {
         resolve();
         return;
       }
       const check = setInterval(() => {
-        if (this.activeHandlers === 0) {
+        if (this.activeHandlers === 0 && !this.ticking) {
           clearInterval(check);
           resolve();
         }
@@ -267,6 +272,23 @@ export class JobQueueProcessor {
   }
 
   async tick(): Promise<number> {
+    if (this.ticking) {
+      this.tickRequested = true;
+      return 0;
+    }
+    this.ticking = true;
+    try {
+      return await this.pollOnce();
+    } finally {
+      this.ticking = false;
+      if (this.tickRequested) {
+        this.tickRequested = false;
+        this.requestTick();
+      }
+    }
+  }
+
+  private async pollOnce(): Promise<number> {
     let claimed = 0;
     let errored = false;
     try {
@@ -298,16 +320,28 @@ export class JobQueueProcessor {
           let jobs: Job[];
           const dequeueMode = reg.dequeueMode;
           try {
-            jobs =
+            const request: JobClaim =
               dequeueMode?.kind === 'session-fifo'
-                ? this.repo.dequeueSessionFifo(queue, cappedSlots, {
-                    sessionIdPath: dequeueMode.sessionIdPath,
-                    releasedPath: dequeueMode.releasedPath,
-                    waitsBehind: dequeueMode.waitsBehind,
-                    exclude: reg.exemptJobs,
-                    excludeIds,
-                  })
-                : this.repo.dequeue(queue, cappedSlots, reg.exemptJobs, excludeIds);
+                ? {
+                    method: 'dequeueSessionFifo',
+                    args: [
+                      queue,
+                      cappedSlots,
+                      {
+                        sessionIdPath: dequeueMode.sessionIdPath,
+                        releasedPath: dequeueMode.releasedPath,
+                        waitsBehind: dequeueMode.waitsBehind,
+                        exclude: reg.exemptJobs,
+                        excludeIds,
+                      },
+                    ],
+                  }
+                : { method: 'dequeue', args: [queue, cappedSlots, reg.exemptJobs, excludeIds] };
+            jobs = this.claimJobs
+              ? await this.claimJobs(request)
+              : request.method === 'dequeue'
+                ? this.repo.dequeue(...request.args)
+                : this.repo.dequeueSessionFifo(...request.args);
           } catch (error) {
             errored = true;
             this.notePollError('dequeue', queue, error);
@@ -332,9 +366,16 @@ export class JobQueueProcessor {
           while (exemptSlots > 0) {
             let jobs: Job[];
             try {
-              jobs = this.repo.dequeueExempt(queue, reg.exemptJobs, 1, excludeIds, [
-                ...admittedSessions,
-              ]);
+              const args: Parameters<JobQueueRepository['dequeueExempt']> = [
+                queue,
+                reg.exemptJobs,
+                1,
+                excludeIds,
+                [...admittedSessions],
+              ];
+              jobs = this.claimJobs
+                ? await this.claimJobs({ method: 'dequeueExempt', args })
+                : this.repo.dequeueExempt(...args);
             } catch (error) {
               errored = true;
               this.notePollError('dequeue_exempt', queue, error);

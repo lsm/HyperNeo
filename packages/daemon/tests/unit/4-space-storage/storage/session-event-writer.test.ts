@@ -6,6 +6,7 @@ import {
 } from '../../../../src/lib/external-events/session-event-writer';
 import type { IngestExternalEventOutcome } from '../../../../src/lib/external-events/ingest-external-event-pipeline';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types';
+import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
 
 class TestWorker {
   onmessage: ((event: MessageEvent<SessionEventWriteReply>) => void) | null = null;
@@ -20,13 +21,18 @@ class TestWorker {
   }
   postMessage(request: SessionEventWriteRequest) {
     this.requests.push(request);
-    if (!request.event && !request.purgeClaudeSessions && !request.cleanupJobs)
+    if (
+      !request.event &&
+      !request.purgeClaudeSessions &&
+      !request.cleanupJobs &&
+      !request.claimJobs
+    )
       queueMicrotask(() => this.reply(request));
   }
   terminate() {
     this.stopped = true;
   }
-  reply(request: SessionEventWriteRequest, outcome?: IngestExternalEventOutcome | number) {
+  reply(request: SessionEventWriteRequest, outcome?: IngestExternalEventOutcome | number | Job[]) {
     this.onmessage?.({
       data: {
         id: request.id,
@@ -228,5 +234,19 @@ test('lost cleanup reply is unknown without replaying a possible committed clean
   workers[0].crash();
   expect(await failed).toContain('outcome unknown for job-queue-cleanup');
   expect(workers[0].requests).toHaveLength(1);
+  await writer.close();
+});
+
+test('lost claim reply remains unknown without replay or local fallback', async () => {
+  const { writer, workers } = fixture();
+  const request = { method: 'dequeue' as const, args: ['synthetic', 5] as [string, number] };
+  const result = writer.claimJobs(request);
+  const failure = expect(result).rejects.toThrow('outcome unknown');
+  await tick();
+  expect(workers[0].requests[0].claimJobs).toEqual(request);
+  workers[0].crash();
+  await failure;
+  expect(workers[0].requests).toHaveLength(1);
+  expect(workers[0].stopped).toBe(true);
   await writer.close();
 });
