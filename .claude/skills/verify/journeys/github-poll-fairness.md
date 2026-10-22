@@ -50,3 +50,26 @@ extension restart, paginated reviews, and check-page supersession across a pause
 The helper closes its WebSocket and cleans up its daemon in `finally`. Keep the
 JSON evidence. Legacy closed-subscription replay and an N-cycle Neo starvation
 concern are separate follow-up slices; this journey does not claim they exist.
+
+## Newly discovered PRs during a resumed scan
+
+Run the same isolated command with `resume-verify` instead of `verify`, using a
+fresh RUN and a free port. It seeds persisted stage-4, stage-5 and stage-6 resume
+positions, not a killed daemon. A newly subscribed PR appears before the saved
+position, with an approval, positive reaction and failed check at 00:01; its feed
+update at 00:02 is newer. The legacy cursor deliberately has no check-enabled
+baseline. Three real `space.github.pollOnce` calls must publish each signal
+exactly once for every repo, including the newly discovered PR, and enqueue
+owner mail. Inspect every cycle in `evidence/polling.json`.
+
+The completing resume must retain the old global cutoff at 00:00 even when it
+has no further continuation. The following full scan delivers previously skipped
+signals; only then may the global cutoff reach 00:02. Per-endpoint and per-head
+cursors still advance during slices. Repos requiring a slice every cycle may
+retain that conservative global cutoff; deduplication prevents repeat delivery.
+
+At reproduction commit `cdc532fd3`, use `resume-reproduce`: approvals are absent
+for stages 5/6, the stage-6 reaction is absent, and the stage-4 failed check is
+absent after all three polls. This is the P1 regression, independent of the
+40-request fairness fixture. The helper checks those losses and retains the
+before evidence. `resume-verify` must fail on that source and pass after the fix.

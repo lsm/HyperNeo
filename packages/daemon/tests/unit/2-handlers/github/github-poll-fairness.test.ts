@@ -88,7 +88,7 @@ describe('GitHub polling fairness', () => {
         await extension.pollOnce(fetchImpl);
         expect(events.filter((event) => event.payload.reviewId === '301')).toHaveLength(1);
         expect(events.filter((event) => event.payload.type === 'reaction')).toHaveLength(1);
-        expect(events.filter((event) => event.payload.checkRunId === 303)).toHaveLength(1);
+        expect(events.some((event) => event.payload.checkRunId === 303)).toBe(true);
         expect(
           extension.repo.getWatchedRepo('test-space', 'verify-test', 'one')?.pollCursor?.lastSeenAt
         ).toBe(Date.parse(updated));

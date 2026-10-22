@@ -3408,6 +3408,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (!etagTracked) delete checkRunEtags[key];
     }
     const pullsCheckRunDeferred = pullsFetchedResumedPage;
+    const incompleteScan =
+      partialScan || hasBacklog || pullsCheckRunDeferred || cursor.pollResume !== undefined;
     const credentialGenerationStale =
       this.pollCycleCredentialGeneration !== null &&
       this.pollCycleCredentialGeneration !== this.credentialGeneration;
@@ -3421,7 +3423,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       : accessible
         ? pollErrorMessage != null
           ? pollErrorMessage
-          : partialScan || hasBacklog || pullsCheckRunDeferred
+          : incompleteScan
             ? (cursor.lastPartialPollError ?? 'poll cycle incomplete — some endpoints unchecked')
             : null
         : committedLastPollError != null
@@ -3429,12 +3431,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           : (cursor.lastPartialPollError ?? null);
     const cursorPayload: PollCursor = {
       pollResume: slice.next,
-      lastSeenAt:
-        partialScan || hasBacklog || pullsCheckRunDeferred
-          ? watermarks.committed
-          : watermarks.pending,
-      pendingLastSeenAt:
-        partialScan || hasBacklog || pullsCheckRunDeferred ? watermarks.pending : undefined,
+      lastSeenAt: incompleteScan ? watermarks.committed : watermarks.pending,
+      pendingLastSeenAt: incompleteScan ? watermarks.pending : undefined,
       etags,
       processedPages,
       recentPullRequestNumbers,

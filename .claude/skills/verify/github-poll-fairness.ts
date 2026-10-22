@@ -98,6 +98,8 @@ try {
     const queued = db.prepare("SELECT COUNT(*) AS count FROM job_queue WHERE queue = 'mailbox'").get();
     evidence.push({ cycle, reply, remaining, calls: [...calls], polled, approvals, queued });
     if (resume) {
+      const cutoff = mode === 'resume-verify' && cycle === 1 ? committed : Date.parse(updated);
+      assert(polled.every(repo => repo.resume?.lastSeenAt === cutoff));
       if (cycle === 3) {
         const count = (repo: string, matches: (payload: Record<string, unknown>) => boolean) => events.filter(event => event.topic.includes(`/${repo}/`) && matches(JSON.parse(event.payload_json))).length;
         if (mode === 'resume-reproduce') {
