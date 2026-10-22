@@ -17,7 +17,8 @@ const run = resolve(process.argv[2]);
 const waitMs = Number(process.argv[3] ?? 1200);
 const bridge = process.argv[4] === 'bridge';
 const priority = process.argv[5] === 'priority';
-const fanout = process.argv[5] === 'fanout';
+const recovery = process.argv[5] === 'recovery';
+const fanout = process.argv[5] === 'fanout' || recovery;
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -100,6 +101,8 @@ try {
   const started = performance.now();
   const requestSearch = (text: string) => hub.request<{ places: PlaceGroup[]; unreachable: { source: string; reason: string }[] }>('operation.invoke', { name: 'work.find', input: { text, localOnly: true, adapters: fanout ? ['hyperneo', 'codex-desktop', 'claude-code'] : ['hyperneo'], limit: 20 } });
   const firstSearch = requestSearch('unmatched quokka');
+  const retries: { unreachable: { source: string; reason: string }[] }[] = [];
+  let rejectedAt = 0;
   const order: string[] = [];
   const sdkMs: Record<string, number> = {};
   let queued: Promise<unknown>[] = [];
@@ -110,8 +113,15 @@ try {
     queued.push(hub.request('session.messages.byStatus', { sessionId, status: 'consumed', limit: 1 }).then(() => { order.push('status'); sdkMs.status = performance.now() - started; }));
     queued.push(hub.request('message.sdkMessages', { sessionId, limit: 1 }).then(() => { order.push('page'); sdkMs.page = performance.now() - started; }));
   }
+  if (recovery) {
+    for (let i = 0; !existsSync(join(run, 'read-started')) && i < 200; i++) await Bun.sleep(5);
+    retries.push(await requestSearch('unmatched wombat'));
+    rejectedAt = performance.now();
+  }
   const found = await firstSearch;
   const rpcMs = performance.now() - started;
+  if (recovery) retries.push(await requestSearch('unmatched wombat'));
+  const retryAfterMs = recovery ? performance.now() - rejectedAt : null;
   await Bun.sleep(20);
   clearInterval(timer);
   timer = undefined;
@@ -119,7 +129,7 @@ try {
   const health = waitMs ? JSON.parse(output.trim().split('\n').at(-1)!) : null;
   const ids = found.places.flatMap(place => place.work.map(work => work.ref.id));
   await Promise.all(queued);
-  Object.assign(evidence, { rpcMs, lagMs, result: found, bridge, order, sdkMs });
+  Object.assign(evidence, { rpcMs, lagMs, result: found, bridge, order, sdkMs, retries, retryAfterMs });
   if (priority) assert(Object.values(sdkMs).every(ms => ms < waitMs * 1.5), 'SDK reads queued behind the second search');
   assert(ids.includes(sessionId), JSON.stringify(found));
   const observed = found.places.flatMap(place => place.work).find(work => work.ref.id === sessionId)!;
@@ -133,6 +143,7 @@ try {
   console.log(JSON.stringify(evidence, null, 2));
   assert.equal(before, after);
   if (fanout) { assert.deepEqual(found.unreachable, []); assert(ids.includes('synthetic-claude'), 'Claude search result lost from fanout'); }
+  if (recovery) { assert(retries[0].unreachable.some(r => r.reason.includes('queue full'))); assert(retryAfterMs! < 2000); assert.deepEqual(retries[1].unreachable, []); }
   assert(lagMs < 1000, 'work.find blocked the event loop >=1s');
   if (waitMs) { assert.equal(health.data.status, 'ok'); assert(health.ms < 250, 'Independent health blocked behind work.find'); }
   else { assert(rpcMs < 250, 'Natural work.find exceeded250ms'); assert(reads.every(r => r.sqlMs < 250)); }
