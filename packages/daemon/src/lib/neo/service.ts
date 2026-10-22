@@ -453,23 +453,12 @@ export class NeoService {
     if (!live) return;
     if (live.isLimitRecoveryPending?.() || live.getRateLimitWatchdogState?.().lastUserMessage)
       return;
-    const metadata = live.getSessionData().metadata;
-    if (
-      live.getProcessingState().status === 'idle' &&
-      metadata.neoAutoCompactPercent !== preference.autoCompactPercent
-    ) {
-      await this.sessions.updateSession(sessionId, {
-        metadata: { ...metadata, neoAutoCompactPercent: preference.autoCompactPercent },
-      });
-      await live.restartQuery();
-    }
-    if (!plan) return;
     const previousThinking = live.getSessionData().config.thinkingLevel;
-    if (plan.thinking)
+    if (plan?.thinking)
       await this.sessions.updateSession(sessionId, {
         config: { ...live.getSessionData().config, thinkingLevel: preference.thinkingLevel },
       });
-    if (plan.model) {
+    if (plan?.model) {
       let restored = false;
       try {
         const switched = await live.requestModelSwitch(preference.model, preference.provider);
@@ -482,6 +471,16 @@ export class NeoService {
             config: { ...live.getSessionData().config, thinkingLevel: previousThinking },
           });
       }
+    }
+    const metadata = live.getSessionData().metadata;
+    if (
+      live.getProcessingState().status === 'idle' &&
+      metadata.neoAutoCompactPercent !== preference.autoCompactPercent
+    ) {
+      await this.sessions.updateSession(sessionId, {
+        metadata: { ...metadata, neoAutoCompactPercent: preference.autoCompactPercent },
+      });
+      await live.restartQuery();
     }
   }
 
