@@ -22,6 +22,15 @@ unrelated turn. The coding todo stays doing while its PR is open; an explicit
 A non-pack todo stays doing until explicit human confirmation via the close
 operation, retaining the same report bytes.
 
+The actual daemon also dispatches a synthetic Codex worker that ends a turn with
+an empty final message and no `hyperneo send`. Observe a tagged report in Neo's
+stored incoming SDK message: `worker ended its turn with no reply`, with the
+todo id and durable dispatch id. Repeated refresh sends it once through the
+existing mailbox deduplication. The todo's result remains null and it stays
+doing: the relay neither submits a result nor completes it. The synthetic Neo
+has no provider, so this proves actual mailbox receipt/storage, not model
+consumption. Preserve the `silentTurn` evidence and delivery receipt.
+
 Repeat refresh, remove the legacy todo through RPC, and reopen the daemon. The
 removed todo stays removed with its old report; the receipt-bound report remains
 identical. Only after the fixture PR merges may the pack finish its todo and

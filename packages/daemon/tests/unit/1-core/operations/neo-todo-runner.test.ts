@@ -402,6 +402,37 @@ describe('neo todo runner', () => {
     expect(told).toEqual([]);
     db.close();
   });
+  test.each(['', '  Final worker message 🔬\n'.repeat(400)])(
+    'relays a terminal message verbatim as a report without changing the todo result: %s',
+    async (message) => {
+      const h = setup(false);
+      try {
+        const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+        await h.runner.start(todo.id);
+        const dispatch = h.sessions.inputs.list(todo.id)[0];
+        const prior = 'Keep the stored result';
+        h.store.updateTodo(h.store.getTodo(todo.id)!, { report: prior }, Date.now());
+        h.setStatus({
+          ok: true,
+          value: {
+            status: 'done',
+            lastActivityAt: dispatch.acceptedAt + 100,
+            lastReply: 'Unverified prose says complete',
+            turnEnds: [{ id: 'turn-1', at: dispatch.acceptedAt + 100, message }],
+          },
+        });
+        await h.runner.refresh(() => {});
+        expect(h.told).toContain(
+          `Worker turn report (todo ${todo.id}, dispatch ${dispatch.id}):\n\n${message || 'worker ended its turn with no reply'}`
+        );
+        expect(h.toldKeys).toContain(`neo-todo-turn:${todo.id}:${dispatch.id}:turn-1`);
+        expect(h.store.getTodo(todo.id)).toMatchObject({ state: 'doing', report: prior });
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
   test('starts a todo in its session, settles its report and lets the pack tick it done', async () => {
     const { store, sessions, runner, calls, told, add, setStatus } = setup(true);
     const todo = add({ pack: 'coding', kind: 'pr_merged', params: {} });

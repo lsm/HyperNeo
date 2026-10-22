@@ -1164,6 +1164,33 @@ describe('reuseLiveSessions', () => {
 });
 
 describe('claudeTranscriptState', () => {
+  test.each(['', '  Final Claude message 🔬\n'.repeat(400)])(
+    'exposes only an explicit top-level turn end with its verbatim message: %s',
+    (message) => {
+      const stamp = '2026-10-08T10:00:00.000Z';
+      const entry = (uuid: string, text: string, stop: string, isSidechain = false) =>
+        JSON.stringify({
+          uuid,
+          type: 'assistant',
+          timestamp: stamp,
+          isSidechain,
+          message: { stop_reason: stop, content: [{ type: 'text', text }] },
+        });
+      expect(
+        claudeTranscriptState(
+          [
+            entry('tool', 'Earlier commentary', 'tool_use'),
+            entry('side', 'Nested final', 'end_turn', true),
+            entry('ended-turn', message, 'end_turn'),
+          ],
+          0
+        )
+      ).toMatchObject({
+        turnEnds: [{ id: 'ended-turn', at: Date.parse(stamp), message }],
+      });
+    }
+  );
+
   test('counts typed, relayed and notified messages as input, not tool results or bare notes', () => {
     const user = (timestamp: string, fields: Record<string, unknown>) =>
       JSON.stringify({ type: 'user', timestamp, ...fields });

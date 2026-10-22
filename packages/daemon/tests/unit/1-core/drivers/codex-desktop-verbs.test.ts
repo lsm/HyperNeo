@@ -445,6 +445,28 @@ describe('codex-desktop adapter status and send', () => {
 
   const ref = (id: string) => ({ adapter: 'codex-desktop', id });
 
+  test.each(['', '  Final Codex message 🔬\n'.repeat(400)])(
+    'exposes explicit turn-end payloads without borrowing earlier prose: %s',
+    async (message) => {
+      const stamp = new Date(NOW).toISOString();
+      writeFileSync(
+        join(dir, 'finished.jsonl'),
+        [
+          saidAt('Earlier commentary'),
+          JSON.stringify({
+            type: 'event_msg',
+            timestamp: stamp,
+            payload: { type: 'task_complete', turn_id: 'ended-turn', last_agent_message: message },
+          }),
+        ].join('\n')
+      );
+      const detail = await adapter().status!(ref('idle'), NOW - 1);
+      expect(WorkDetailSchema.parse(detail.ok ? detail.value : null)).toMatchObject({
+        turnEnds: [{ id: 'ended-turn', at: NOW, message }],
+      });
+    }
+  );
+
   test('work.send steers a running Codex turn instead of queuing it', async () => {
     const calls: string[] = [];
     const driver = adapter(0, '', async () => ({

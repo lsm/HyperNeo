@@ -9,6 +9,7 @@ import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repos
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 import { sdkMessageBodyAt } from '../../../packages/daemon/src/storage/repositories/sdk-message-body-read.ts';
+import { hyperneoInputText } from '../../../packages/daemon/src/lib/drivers/hyperneo-adapter.ts';
 
 const [mode, directory] = process.argv.slice(2);
 const run = resolve(directory);
@@ -40,9 +41,11 @@ process.stdout.write(fs.readFileSync(run+'/pr.json','utf8'));
 `, { mode: 0o700 });
 const external = new Database(join(run, 'home/.codex/state_5.sqlite'));
 external.exec('CREATE TABLE projects(id TEXT PRIMARY KEY,name TEXT,updated_at_ms INTEGER);CREATE TABLE project_roots(project_id TEXT,position INTEGER,path TEXT);CREATE TABLE threads(id TEXT PRIMARY KEY,name TEXT,title TEXT,first_user_message TEXT,cwd TEXT,source TEXT,archived INTEGER,updated_at_ms INTEGER,rollout_path TEXT,git_branch TEXT)');
-const rollout = join(run, 'home/.codex/next.jsonl');
-writeFileSync(rollout, '');
-external.prepare("INSERT INTO threads VALUES ('next','next','','',?,'vscode',0,?,?,NULL)").run(join(run, 'workspace'), at, rollout);
+for (const id of ['next', 'silent']) {
+  const rollout = join(run, `home/.codex/${id}.jsonl`);
+  writeFileSync(rollout, '');
+  external.prepare("INSERT INTO threads VALUES (?,?,'','',?,'vscode',0,?,?,NULL)").run(id, id, join(run, 'workspace'), at, rollout);
+}
 external.close();
 const calls: { method: string; params: Record<string, unknown> }[] = [];
 const peer = Bun.serve({ unix: join(run, 'home/.codex/app-server-control/app-server-control.sock'),
@@ -111,7 +114,7 @@ const seed = (id: string, packed: boolean, receipt: boolean) => {
   put(id, `${id}-later`, 'user', 'Unrelated later input', 30);
   put(id, `${id}-later-result`, 'result', 'UNRELATED LATER RESULT', 40);
 };
-const starts = () => calls.filter((call) => call.method === 'turn/start').length;
+const starts = () => calls.filter((call) => call.method === 'turn/start' && call.params.threadId === 'next').length;
 try {
   await open();
   seedSession(root);
@@ -136,6 +139,28 @@ try {
     console.log('REPRODUCED: an opening-matched result without a dispatch receipt replaces the stored todo report.');
   } else {
     assert.equal(store.getTodo('legacy')?.report, prior);
+    store.openAsk({ id: 'silent', title: 'Silent worker', request: 'Observe an empty worker turn', sessionId: root, projectId: null, originMessageId: null, createdAt: Date.now() });
+    evidence.silentStart = await rpc('neo.todo.add', { askId: 'silent', title: 'Silent worker', doneWhen: 'Synthetic PR merged', check: { pack: 'coding', kind: 'pr_merged', params: { urls: [pr] } }, instruction: 'Finish an empty synthetic turn', target: { verb: 'send', ref: { adapter: 'codex-desktop', id: 'silent' } }, start: true });
+    const silentTodo = (evidence.silentStart as any).todo;
+    assert(silentTodo?.id);
+    const dispatch = sessions.inputs.list(silentTodo.id).at(-1)!;
+    assert(dispatch?.id);
+    const endedAt = Date.now() + 1;
+    writeFileSync(join(run, 'home/.codex/silent.jsonl'), JSON.stringify({ type: 'event_msg', timestamp: new Date(endedAt).toISOString(), payload: { type: 'task_complete', turn_id: 'silent-turn', last_agent_message: '' } }) + '\n', { flag: 'a' });
+    const threadState = new Database(join(run, 'home/.codex/state_5.sqlite'));
+    threadState.prepare('UPDATE threads SET updated_at_ms=? WHERE id=?').run(endedAt, 'silent');
+    threadState.close();
+    await refresh();
+    const noReply = `Worker turn report (todo ${silentTodo.id}, dispatch ${dispatch.id}):\n\nworker ended its turn with no reply`;
+    const recipientMessages = () => (app!.db.getDatabase().prepare(`SELECT ${sdkMessageBodyAt('sdk_messages.rowid')} AS message FROM sdk_messages WHERE session_id=? AND message_type='user' ORDER BY seq`).all(root) as { message: string }[]).map((row) => hyperneoInputText(row.message));
+    const deadline = Date.now() + 3000;
+    while (!recipientMessages().some((text) => text.includes(noReply)) && Date.now() < deadline) await new Promise((done) => setTimeout(done, 20));
+    evidence.silentTurn = { todoId: silentTodo.id, dispatchId: dispatch.id, endedAt, recipientMessages: recipientMessages(), expected: noReply };
+    assert(recipientMessages().some((text) => text.includes(noReply)), 'Neo did not receive the silent-turn report');
+    assert.equal(store.getTodo(silentTodo.id)?.state, 'doing');
+    assert.equal(store.getTodo(silentTodo.id)?.report, null);
+    await refresh();
+    assert.equal(recipientMessages().filter((text) => text.includes(noReply)).length, 1);
     evidence.unmetClose = await rpc('neo.todo.close', { todoId: 'explicit', reason: 'Worker says complete' });
     assert.equal((evidence.unmetClose as any).ok, false);
     assert.equal(starts(), 0);
