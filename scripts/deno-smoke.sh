@@ -212,6 +212,15 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_WRITER_PATH="$REPO_ROOT/packages/daemon/src/
       if (count !== 2 || rows.length !== 1 || rows[0].id !== "deno-cleanup-keep" || JSON.parse(rows[0].payload).body !== "complete retained job") Deno.exit(1);
     } finally { cleanupDb.close(); }
     console.log("[deno-smoke] job cleanup preserves cutoffs and retained payloads");
+    const claimDb = new DatabaseSync(Deno.env.get("SMOKE_DB_PATH"));
+    try {
+      const now = Date.now();
+      claimDb.prepare("INSERT INTO job_queue(id,queue,status,payload,run_at,created_at) VALUES(?,?,?,?,?,?)").run("deno-claim", "synthetic-claim", "pending", "{\"body\":\"complete claim payload\"}", now, now);
+      const claimed = await writer.claimJobs({method:"dequeue",args:["synthetic-claim",5]});
+      const again = await writer.claimJobs({method:"dequeue",args:["synthetic-claim",5]});
+      if (claimed.length !== 1 || again.length !== 0 || !claimed[0].claimToken || claimed[0].payload.body !== "complete claim payload") Deno.exit(1);
+    } finally { claimDb.close(); }
+    console.log("[deno-smoke] worker claim is fenced and not duplicated");
     console.log("[deno-smoke] session event writer commit/dedupe ok");
   } finally { await writer.close(); }
 '; then

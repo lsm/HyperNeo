@@ -308,6 +308,7 @@ describe('Message delivery mode queue flow', () => {
         const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
           minCount: 5,
           timeout: 10000,
+          userMessageIds: [steer1.messageId, steer2.messageId],
         });
 
         const steered1 = sdkMessages.find(

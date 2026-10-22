@@ -4,6 +4,11 @@ import type { Database as BunDatabase } from '../sqlite-compat.ts';
 
 export type JobStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'dead';
 
+export type JobClaim =
+  | { method: 'dequeue'; args: Parameters<JobQueueRepository['dequeue']> }
+  | { method: 'dequeueSessionFifo'; args: Parameters<JobQueueRepository['dequeueSessionFifo']> }
+  | { method: 'dequeueExempt'; args: Parameters<JobQueueRepository['dequeueExempt']> };
+
 export interface Job {
   id: string;
   queue: string;

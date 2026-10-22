@@ -517,12 +517,27 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const workflowHookStateRepository = new WorkflowHookStateRepository(db.getDatabase());
     const workflowHookRuntimeService = new WorkflowHookRuntimeService();
     const maxConcurrent = parsePositiveInt(process.env.HYPERNEO_JOB_QUEUE_MAX_CONCURRENT, 5);
+    sessionEventWriter =
+      db.getDbPath() === ':memory:'
+        ? null
+        : new SessionEventWriter(
+            db.getDbPath(),
+            undefined,
+            undefined,
+            config.sqlQueryObservability
+          );
+    const claimJobs = sessionEventWriter
+      ? (request: Parameters<SessionEventWriter['claimJobs']>[0]) =>
+          sessionEventWriter!.claimJobs(request)
+      : undefined;
     const jobProcessor = new JobQueueProcessor(jobQueue, {
+      claimJobs,
       pollIntervalMs: 1000,
       maxConcurrent,
       staleThresholdMs: 5 * 60 * 1000,
     });
     const mailboxExpireProcessor = new JobQueueProcessor(jobQueue, {
+      claimJobs,
       pollIntervalMs: 1000,
       maxConcurrent: 1,
       staleThresholdMs: 5 * 60 * 1000,
@@ -532,6 +547,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       64
     );
     const messageDeliveryProcessor = new JobQueueProcessor(jobQueue, {
+      claimJobs,
       pollIntervalMs: 1000,
       maxConcurrent: messageDeliveryMaxConcurrent,
       staleThresholdMs: 5 * 60 * 1000,
@@ -847,15 +863,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const externalEventStore = new ExternalEventStore(db.getDatabase(), reactiveDb);
     const externalEventService = new ExternalEventService(externalEventStore, internalEventBus);
     const sessionExternalEventStore = new SessionExternalEventStore(db.getDatabase());
-    sessionEventWriter =
-      db.getDbPath() === ':memory:'
-        ? null
-        : new SessionEventWriter(
-            db.getDbPath(),
-            undefined,
-            undefined,
-            config.sqlQueryObservability
-          );
     const sessionExternalEventService = new ExternalEventService(
       sessionExternalEventStore,
       internalEventBus,
