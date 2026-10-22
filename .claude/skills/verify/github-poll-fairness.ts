@@ -9,7 +9,11 @@ import { SessionEventSubscriptionRepository } from '../../../packages/daemon/src
 
 const [mode, portText, runText] = process.argv.slice(2);
 const port = Number(portText), run = resolve(runText);
-assert(['reproduce', 'verify'].includes(mode));
+assert(['reproduce', 'verify', 'resume-reproduce', 'resume-verify'].includes(mode));
+const resume = mode.startsWith('resume-');
+const committed = Date.parse('2026-01-01T00:00:00Z');
+const occurred = '2026-01-01T00:01:00Z';
+const updated = '2026-01-01T00:02:00Z';
 assert(port > 0 && port !== 8399);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -19,7 +23,7 @@ mkdirSync(join(run, 'evidence'), { recursive: true });
 mkdirSync(join(run, 'bin'));
 writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
 assert.equal(process.env.PATH?.split(':')[0], join(run, 'bin'));
-const repos = ['a-heavy', 'b-phone', 'c-ops', 'd-research'];
+const repos = resume ? ['resume-4', 'resume-5', 'resume-6'] : ['a-heavy', 'b-phone', 'c-ops', 'd-research'];
 let cycle = 0, remaining = 40;
 const calls: string[] = [];
 const realFetch = globalThis.fetch;
@@ -29,14 +33,21 @@ globalThis.fetch = (async (input: string | URL | Request) => {
   calls.push(url.pathname);
   const repo = url.pathname.split('/')[3];
   let body: unknown = [];
-  if (/\/pulls\/\d+$/.test(url.pathname)) {
+  if (resume) {
+    const row = { id: 30, number: 3, state: 'open', title: 'New PR', updated_at: updated, head: { sha: 'new-head' }, user: { login: 'synthetic-human' } };
+    if (url.pathname.endsWith('/pulls')) body = [row];
+    if (/\/pulls\/\d+$/.test(url.pathname)) body = { ...row, number: Number(url.pathname.split('/').at(-1)), mergeable: true };
+    if (url.pathname.endsWith('/pulls/3/reviews')) body = [{ id: 301, state: 'APPROVED', submitted_at: occurred, user: { login: 'synthetic-reviewer' } }];
+    if (url.pathname.endsWith('/issues/3/reactions')) body = [{ id: 302, content: '+1', created_at: occurred, user: { login: 'synthetic-human' } }];
+    if (url.pathname.endsWith('/check-runs')) body = { check_runs: [{ id: 303, name: 'build', status: 'completed', conclusion: 'failure', completed_at: occurred, app: { id: 1 }, pull_requests: [{ number: 3 }] }] };
+  } else if (/\/pulls\/\d+$/.test(url.pathname)) {
     body = { number: Number(url.pathname.split('/')[5]), state: repo === 'a-heavy' ? 'closed' : 'open', mergeable: true };
   } else if (url.pathname.endsWith('/reviews') && repo !== 'a-heavy') {
     body = [{ id: cycle * 1000 + repos.indexOf(repo), state: 'APPROVED', body: 'Synthetic approval', submitted_at: new Date().toISOString(), user: { login: 'synthetic-reviewer' }, html_url: `https://github.com/verify-test/${repo}/pull/162#pullrequestreview-${cycle}` }];
   } else if (url.pathname === '/user') {
     body = { login: 'synthetic-human' };
   }
-  return Response.json(body, { headers: { 'X-RateLimit-Remaining': String(--remaining), 'X-RateLimit-Reset': '1' } });
+  return Response.json(body, { headers: { 'X-RateLimit-Remaining': String(resume ? 5000 : --remaining), 'X-RateLimit-Reset': '1' } });
 }) as typeof fetch;
 const app = await createDaemonApp({ config: getConfig({ port, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
 let ws: WebSocket | undefined;
@@ -53,11 +64,17 @@ try {
   const subscriptions = new SessionEventSubscriptionRepository(db);
   for (const repo of repos) {
     github.repo.upsertWatchedRepo({ spaceId: 'sessions', owner: 'verify-test', repo, pollingEnabled: true });
-    const numbers = repo === 'a-heavy' ? Array.from({ length: 201 }, (_, i) => i + 1) : [162];
+    const numbers = resume ? [3] : repo === 'a-heavy' ? Array.from({ length: 201 }, (_, i) => i + 1) : [162];
     for (const pr of numbers) subscriptions.upsert({ sessionId, topic: `github/verify-test/${repo}/pull_request/${pr}.*` });
   }
-  const heavy = github.repo.getWatchedRepo('sessions', 'verify-test', 'a-heavy')!;
-  github.repo.updatePollCursorJson(heavy.id, { lastSeenAt: 0, recentPullRequestHeadShas: Object.fromEntries(Array.from({ length: 201 }, (_, i) => [i + 1, `head-${i + 1}`])) });
+  if (resume) {
+    for (const repo of repos) {
+      const watched = github.repo.getWatchedRepo('sessions', 'verify-test', repo)!;
+      github.repo.updatePollCursorJson(watched.id, { lastSeenAt: committed, recentPullRequestNumbers: [2], pollResume: { stage: Number(repo.at(-1)), item: '2' } });
+    }
+  }
+  const heavy = github.repo.getWatchedRepo('sessions', 'verify-test', 'a-heavy');
+  if (!resume) github.repo.updatePollCursorJson(heavy!.id, { lastSeenAt: 0, recentPullRequestHeadShas: Object.fromEntries(Array.from({ length: 201 }, (_, i) => [i + 1, `head-${i + 1}`])) });
   ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC connection failed')); });
   const poll = () => new Promise<unknown>((done, fail) => {
@@ -74,13 +91,29 @@ try {
   for (cycle = 1; cycle <= (mode === 'reproduce' ? 1 : 3); cycle++) {
     calls.length = 0; remaining = 40;
     const reply = await poll();
-    if (cycle === 1) assert(calls[0].includes('/a-heavy/'));
+    if (cycle === 1 && !resume) assert(calls[0].includes('/a-heavy/'));
     const polled = github.repo.listPollingRepos().map((repo) => ({ repo: repo.repo, lastPollAt: repo.lastPollAt, resume: repo.pollCursor }));
     const events = db.prepare('SELECT topic, payload_json FROM session_external_events').all() as { topic: string; payload_json: string }[];
     const approvals = repos.slice(1).filter(repo => events.some(event => event.topic.includes(`/${repo}/`) && JSON.parse(event.payload_json).reviewId === String(cycle * 1000 + repos.indexOf(repo))));
     const queued = db.prepare("SELECT COUNT(*) AS count FROM job_queue WHERE queue = 'mailbox'").get();
     evidence.push({ cycle, reply, remaining, calls: [...calls], polled, approvals, queued });
-    if (mode === 'reproduce') {
+    if (resume) {
+      if (cycle === 3) {
+        const count = (repo: string, matches: (payload: Record<string, unknown>) => boolean) => events.filter(event => event.topic.includes(`/${repo}/`) && matches(JSON.parse(event.payload_json))).length;
+        if (mode === 'resume-reproduce') {
+          assert.equal(count('resume-4', payload => payload.checkRunId === 303), 0);
+          for (const repo of ['resume-5', 'resume-6']) assert.equal(count(repo, payload => payload.reviewId === '301'), 0);
+          assert.equal(count('resume-6', payload => payload.type === 'reaction'), 0);
+        } else {
+          for (const repo of repos) {
+            assert.equal(count(repo, payload => payload.reviewId === '301'), 1);
+            assert.equal(count(repo, payload => payload.type === 'reaction'), 1);
+            assert.equal(count(repo, payload => payload.checkRunId === 303), 1);
+          }
+        }
+      }
+      evidence.push({ cycle, events });
+    } else if (mode === 'reproduce') {
       assert.deepEqual(approvals, []);
       assert(polled.filter(repo => repo.repo !== 'a-heavy').every(repo => repo.lastPollAt === null));
     } else {
@@ -90,7 +123,7 @@ try {
       assert((queued as { count: number }).count >= cycle * 3);
     }
   }
-  console.log(`${mode === 'reproduce' ? 'REPRODUCED starvation' : 'PASS: every small repo approval is published each cycle'}; ${run}/evidence/polling.json`);
+  console.log(`${resume ? mode : mode === 'reproduce' ? 'REPRODUCED starvation' : 'PASS: every small repo approval is published each cycle'}; ${run}/evidence/polling.json`);
 } finally {
   writeFileSync(join(run, 'evidence/polling.json'), JSON.stringify(evidence, null, 2));
   ws?.close();

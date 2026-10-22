@@ -6,6 +6,99 @@ import { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-
 import type { ExternalEvent } from '../../../../src/lib/external-events/types';
 
 describe('GitHub polling fairness', () => {
+  for (const stage of [4, 5, 6]) {
+    test(`a completing stage-${stage} resume preserves events on a newly discovered earlier PR`, async () => {
+      const db = new Database(':memory:');
+      createTables(db);
+      runMigrations(db, () => {});
+      const config = new ExternalEventExtensionConfigStore(db);
+      await config.setGlobalConfig('github', {
+        source: 'github',
+        globallyEnabled: true,
+        capabilities: { polling: true },
+      });
+      const events: ExternalEvent[] = [];
+      const committed = Date.parse('2026-01-01T00:00:00Z');
+      const occurred = '2026-01-01T00:01:00Z';
+      const updated = '2026-01-01T00:02:00Z';
+      const row = {
+        id: 30,
+        number: 3,
+        state: 'open',
+        title: 'New PR',
+        updated_at: updated,
+        head: { sha: 'new-head' },
+        user: { login: 'human' },
+      };
+      const fetchImpl = (async (input: string | URL | Request) => {
+        const url = new URL(String(input));
+        let body: unknown = [];
+        if (url.pathname.endsWith('/pulls')) body = [row];
+        if (/\/pulls\/\d+$/.test(url.pathname))
+          body = { ...row, number: Number(url.pathname.split('/').at(-1)), mergeable: true };
+        if (url.pathname.endsWith('/pulls/3/reviews'))
+          body = [
+            { id: 301, state: 'APPROVED', submitted_at: occurred, user: { login: 'reviewer' } },
+          ];
+        if (url.pathname.endsWith('/issues/3/reactions'))
+          body = [{ id: 302, content: '+1', created_at: occurred, user: { login: 'human' } }];
+        if (url.pathname.endsWith('/check-runs'))
+          body = {
+            check_runs: [
+              {
+                id: 303,
+                name: 'build',
+                status: 'completed',
+                conclusion: 'failure',
+                completed_at: occurred,
+                app: { id: 1 },
+                pull_requests: [{ number: 3 }],
+              },
+            ],
+          };
+        return Response.json(body, { headers: { 'X-RateLimit-Remaining': '5000' } });
+      }) as typeof fetch;
+      const extension = new GitHubEventExtension(db, undefined, {
+        pollIntervalMs: 60_000,
+        fetchImpl,
+      });
+      const repo = extension.repo.upsertWatchedRepo({
+        spaceId: 'test-space',
+        owner: 'verify-test',
+        repo: 'one',
+        pollingEnabled: true,
+      });
+      extension.repo.updatePollCursorJson(repo.id, {
+        lastSeenAt: committed,
+        recentPullRequestNumbers: [2],
+        pollResume: { stage, item: '2' },
+      });
+      await extension.start({
+        config,
+        publisher: {
+          publish: async (event) => {
+            events.push(event);
+          },
+        },
+        onSourceConfigChanged() {},
+      });
+      try {
+        await extension.pollOnce(fetchImpl);
+        await extension.pollOnce(fetchImpl);
+        await extension.pollOnce(fetchImpl);
+        expect(events.filter((event) => event.payload.reviewId === '301')).toHaveLength(1);
+        expect(events.filter((event) => event.payload.type === 'reaction')).toHaveLength(1);
+        expect(events.filter((event) => event.payload.checkRunId === 303)).toHaveLength(1);
+        expect(
+          extension.repo.getWatchedRepo('test-space', 'verify-test', 'one')?.pollCursor?.lastSeenAt
+        ).toBe(Date.parse(updated));
+      } finally {
+        await extension.stop();
+        db.close();
+      }
+    });
+  }
+
   test('a one-request share resumes check pages without reviving superseded failures', async () => {
     const db = new Database(':memory:');
     createTables(db);
