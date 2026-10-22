@@ -1,4 +1,5 @@
 import { homedir } from 'node:os';
+import { withBusyRetry } from '../../../../storage/busy-retry.ts';
 import { z } from 'zod';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
@@ -164,7 +165,7 @@ export class CodingBranchFactsRepository {
     } catch {
       observation = { reason: 'failed', retryMs: 0 };
     }
-    this.db.transaction(() => {
+    const persist = this.db.transaction(() => {
       const before = this.row(repo, branch);
       if ((before?.observation_revision ?? 0) !== revision) return;
       const observed = observation;
@@ -190,7 +191,8 @@ export class CodingBranchFactsRepository {
           success ? null : observed.reason,
           CODING_BRANCH_PR_LIMIT
         );
-    }, 'immediate')();
+    }, 'immediate');
+    withBusyRetry(persist);
     return this.read(repo, branch, now());
   }
 }

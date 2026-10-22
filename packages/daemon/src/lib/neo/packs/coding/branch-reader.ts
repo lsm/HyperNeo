@@ -7,7 +7,7 @@ import { readCodingBranchPrs } from './branch-prs.ts';
 
 function branchRemoteRepo(remote: string): string | null {
   const match =
-    /^(?:(?:https?|ssh|git):\/\/)?(?:[^/@\s]+@)?([^/:\s]+)[:/]([^/\s]+\/[^/\s]+?)(?:\.git)?\/*$/i.exec(
+    /^(?:(?:https?|ssh|git):\/\/)?(?:[^/@\s]+@)?([^/:\s]+)(?::\d+)?[:/]([^/\s]+\/[^/\s]+?)(?:\.git)?\/*$/i.exec(
       remote.trim()
     );
   return match
