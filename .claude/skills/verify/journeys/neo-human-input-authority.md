@@ -20,10 +20,10 @@ including pre-id stored messages, retain the same prompt and do not rerun it;
 changed-content retries are refused.
 
 The installed SDK sees the id and invokes `neo.rule.save` citing that id plus
-an exact quote from the human message. The actual daemon persists the rule
+an exact complete text part from the human message. The actual daemon persists the rule
 without a holder/turn object. Focused operations contracts refuse unknown,
 foreign, non-human, unconsumed and non-conversation ids, as well as a quote not
-in that human input. Client-originated local human edits and question-bound
+in that human input or a fragment of an otherwise valid text part. Client-originated local human edits and question-bound
 consent continue to work. Message ids identify received input; they do not
 create a new delivery lane or infer an answered input.
 

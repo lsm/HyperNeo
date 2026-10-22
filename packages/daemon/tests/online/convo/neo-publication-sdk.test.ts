@@ -92,7 +92,7 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
                 ? { requestId: 'fictional-send', shortText, fullText, links: [] }
                 : {
                     messageId: requestId,
-                    from: 'Keep synthetic garden changes as drafts.',
+                    from: 'Tell me about the fictional moon garden. Keep synthetic garden changes as drafts.',
                     add: ['Keep synthetic garden changes as drafts.'],
                   },
           },
