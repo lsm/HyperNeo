@@ -86,7 +86,7 @@ try {
   assert.match(refused.detail ?? '', /acceptEdits permission mode .* claude:\/\/claude\.ai\/epitaxy\/local_synthetic-human/);
   assert.doesNotMatch(inputs(), /Synthetic escalation attempt/, 'a human session is never run headless above its own mode');
   evidence.push({ registeredWithoutDaemonRestart: true, cliSessionId: sessionId, cliInputs: inputs() });
-  console.log(`PASS: work.start runs the task as the first CLI turn with no click, find/status link it once a Desktop record appears, an idle send resumes Neo's session in its started mode, and a human acceptEdits session is sent to Desktop instead. ${run}/evidence/observed.json`);
+  console.log(`PASS: work.start runs the task as the first CLI turn with no click, find/status link it once a Desktop record appears, an idle send resumes Neo's session in its started mode; both transcript turns complete while send/status report ui-unconfirmed, and a human acceptEdits session is never run headlessly. ${run}/evidence/observed.json`);
 } finally {
   ws?.close();
   const pidFile = join(run, 'evidence/worker-pid');

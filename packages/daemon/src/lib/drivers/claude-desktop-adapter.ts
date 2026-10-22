@@ -68,6 +68,12 @@ const DELIVERY_POLLS = 15;
 const OPEN_WAIT_MS = 60_000;
 const OPEN_POLL_MS = 2_000;
 
+const DESKTOP_UI_UNCONFIRMED = {
+  state: 'ui-unconfirmed' as const,
+  detail:
+    'No supported live Desktop render/read acknowledgment is available. The transcript can advance while the Desktop view remains stale; registration, links and Remote Control do not confirm rendering or reading.',
+};
+
 const RecordSchema = z.object({
   sessionId: z.string().startsWith('local_'),
   cliSessionId: z.string().optional(),
@@ -266,6 +272,7 @@ function toClaudeWork(
   const remoteLink = claudeRemoteLink(record);
   return {
     ref: { adapter: 'claude-desktop', id: record.sessionId },
+    desktopUI: DESKTOP_UI_UNCONFIRMED,
     title: record.title,
     place: folder
       ? { machine, folder, name: basename(folder) || folder }
@@ -736,6 +743,7 @@ export function claudeInputEvidence(
   const replies: WorkExchangeEntry[] = [];
   const window = lines.slice(start + 1).filter((line) => line.trim());
   let ended = false;
+  let completed = false;
   for (const [index, line] of window.entries()) {
     const entry = parseClaudeEntry(line);
     if (!entry) {
@@ -747,17 +755,21 @@ export function claudeInputEvidence(
       ended = true;
       break;
     }
-    if (entry.type === 'assistant') ended = claudeTurnEnded(entry);
+    if (entry.type === 'assistant') {
+      ended = claudeTurnEnded(entry);
+      completed = ended;
+    }
     const said = assistantText(line);
     const reply = said
       ? exchangeEntry(workEntryTime(entry.timestamp), 'agent', said, -Infinity)
       : null;
     if (reply) replies.push(reply);
   }
-  if (!ended) return { receipt, state: 'pending' };
+  if (!ended) return { receipt, state: 'pending', transcriptState: 'accepted' };
   return {
     receipt,
     state: 'observed',
+    transcriptState: completed ? 'completed' : 'accepted',
     exchange: [first, ...turnReplies(replies)],
     exchangeCut: replies.length > TURN_REPLIES,
   };
@@ -1074,7 +1086,14 @@ export async function withRemoteControl(
   const fresh = (await readClaudeDesktopRecords(deps.sessionsDir, new Map())).find(
     (candidate) => candidate.sessionId === record.sessionId
   );
-  return { ok: true, value: { ...sent.value, remoteControl: !!claudeRemoteLink(fresh ?? record) } };
+  return {
+    ok: true,
+    value: {
+      ...sent.value,
+      desktopUI: DESKTOP_UI_UNCONFIRMED,
+      remoteControl: !!claudeRemoteLink(fresh ?? record),
+    },
+  };
 }
 
 const runClaudeDesktopSend = (superpipe({})('claude-desktop-send-work') as PipelineAPI)

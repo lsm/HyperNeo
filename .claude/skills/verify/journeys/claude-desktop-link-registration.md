@@ -36,3 +36,7 @@ no click, the permission-mode rule, and the record-discovery transition. The rea
 Desktop import and Remote Control are proven only by the human's hand test with
 a throwaway session. Do not automate the GUI or restart the human's Desktop app
 as part of this journey.
+
+Send/status now also expose desktopUI.state ui-unconfirmed: the two end_turn
+transcript turns and unchanged synthetic import record are separate from any
+Desktop render/read acknowledgment. See claude-desktop-transcript-ui-facts.md.
