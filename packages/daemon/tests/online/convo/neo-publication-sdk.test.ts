@@ -21,6 +21,7 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
   const fullText = '## Fictional garden\n\nThe moon garden has three blue flowers.';
   const calls: string[] = [];
   const receipts: { accepted: boolean; created?: boolean }[] = [];
+  const receivedToolCalls = new Set<string>();
   const requests: { path: string; tools: number; active: boolean }[] = [];
   const sent: { system: string; human: unknown }[] = [];
   const nudged: string[] = [];
@@ -50,7 +51,9 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
       stream?: boolean;
       messages?: {
         role?: string;
-        content?: string | { type: string; text?: string; content?: { text?: string }[] }[];
+        content?:
+          | string
+          | { type: string; text?: string; tool_use_id?: string; content?: { text?: string }[] }[];
       }[];
       tools?: { name: string }[];
       system?: string | { text: string }[];
@@ -76,13 +79,22 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
             message.role === 'user' && JSON.stringify(message).includes('fictional moon garden')
         )?.content,
       });
-    if (active) {
-      const content = body.messages?.at(-1)?.content;
-      if (Array.isArray(content))
-        for (const result of content.filter((item) => item.type === 'tool_result'))
+    if (active)
+      for (const message of body.messages ?? []) {
+        if (!Array.isArray(message.content)) continue;
+        for (const result of message.content) {
+          const id = result.tool_use_id;
+          if (
+            result.type !== 'tool_result' ||
+            !id?.startsWith('tool-fictional-') ||
+            receivedToolCalls.has(id)
+          )
+            continue;
           for (const item of result.content ?? [])
             if (item.text) receipts.push(JSON.parse(item.text));
-    }
+          receivedToolCalls.add(id);
+        }
+      }
     const publishing = active && round < 4;
     const block = publishing
       ? {
