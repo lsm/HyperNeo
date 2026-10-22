@@ -398,6 +398,14 @@ export async function verifySpentAdmission(
           .every((row) => row.send_status === 'consumed'),
       'queued inputs were not consumed'
     );
+    if (scenario === 'history') {
+      const { sdkSideOnlyWrites } = await import('../../src/storage/sdk-message-body-admission.ts');
+      await until(
+        () => sdkSideOnlyWrites(daemon!.db.getDatabase()),
+        'read-only coverage worker did not complete successfully'
+      );
+      evidence.coverageVerified = true;
+    }
     evidence.afterDelivery = sample();
     evidence.messages = await read();
     evidence.received = [...received];

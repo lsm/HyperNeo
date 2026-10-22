@@ -21,3 +21,21 @@ vi.mock('../src/storage/sdk-status-reader.ts', async (importOriginal) => {
     },
   };
 });
+
+vi.mock('../src/storage/sdk-message-body-admission.ts', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../src/storage/sdk-message-body-admission.ts')>();
+  return {
+    ...actual,
+    startSdkBodyWriteAdmission: (...args: Parameters<typeof actual.startSdkBodyWriteAdmission>) =>
+      actual.startSdkBodyWriteAdmission(
+        args[0],
+        args[1],
+        args[2],
+        () =>
+          new SDKBunWorkerBridge(
+            new URL('../src/storage/sdk-message-body-admission-worker.ts', import.meta.url).href
+          ) as unknown as Worker
+      ),
+  };
+});

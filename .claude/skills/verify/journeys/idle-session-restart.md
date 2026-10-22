@@ -21,3 +21,9 @@ not a claimed measurement of production hardware. No real database is copied.
 Evidence is `$RUN/evidence/spent-admission-{idle-ordinary,idle-neo,history-neo}.json`,
 including idle state, exactly one restart, startup time, queue lifecycle and model
 receipts. The helper closes its daemon, SDK and model listener in finally.
+
+The initial regression commit `159af8980` fails the large-history availability
+assertion at 2,267 ms; the five markers eventually reach the model, exposing a
+startup gate rather than a lost delivery wake. The first fixed run binds in
+361 ms and drains all markers. The final run also requires successful completion
+of the real read-only worker, so worker-unavailable fallback cannot pass it.
