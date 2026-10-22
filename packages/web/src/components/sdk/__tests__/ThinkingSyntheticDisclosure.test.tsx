@@ -38,12 +38,12 @@ describe('SDK thinking and synthetic text disclosures', () => {
     const view = render(<ThinkingBlock content={content} />);
     const more = view.getByRole('button', { name: 'more — Thinking', exact: true });
     expect(more.getAttribute('aria-expanded')).toBe('false');
-    fireEvent.click(view.getByText(content, { exact: true }));
+    fireEvent.click(view.getByText(/Short ending\./));
     expect(more.getAttribute('aria-expanded')).toBe('false');
     fireEvent.click(more);
     const less = view.getByRole('button', { name: 'less — Thinking', exact: true });
     expect(less.getAttribute('aria-expanded')).toBe('true');
-    fireEvent.click(view.getByText(content, { exact: true }));
+    fireEvent.click(view.getByText(/Short ending\./));
     expect(less.getAttribute('aria-expanded')).toBe('true');
     fireEvent.click(less);
     expect(view.getByRole('button', { name: 'more — Thinking', exact: true })).toBeTruthy();
@@ -56,14 +56,31 @@ describe('SDK thinking and synthetic text disclosures', () => {
       <SyntheticMessageBlock content={content} renderAsPlainText showActions={false} />
     );
     const more = view.getByRole('button', { name: 'more — Synthetic', exact: true });
-    fireEvent.click(view.getByText(content, { exact: true }));
+    fireEvent.click(view.getByText(/Short ending\./));
     expect(more.getAttribute('aria-expanded')).toBe('false');
     fireEvent.click(more);
     const less = view.getByRole('button', { name: 'less — Synthetic', exact: true });
     expect(less.getAttribute('aria-expanded')).toBe('true');
-    fireEvent.click(view.getByText(content, { exact: true }));
+    fireEvent.click(view.getByText(/Short ending\./));
     expect(less.getAttribute('aria-expanded')).toBe('true');
     fireEvent.click(less);
+    expect(view.getByRole('button', { name: 'more — Synthetic', exact: true })).toBeTruthy();
+  });
+
+  it('keeps the collapse control after synthetic non-text blocks', () => {
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(500);
+    const view = render(
+      <SyntheticMessageBlock
+        content={[
+          { type: 'tool_result', tool_use_id: 'synthetic-result', content: 'Synthetic output.' },
+        ]}
+        renderAsPlainText
+        showActions={false}
+      />
+    );
+    fireEvent.click(view.getByRole('button', { name: 'more — Synthetic', exact: true }));
+    expect(view.getByText('Synthetic output.')).toBeTruthy();
+    fireEvent.click(view.getByRole('button', { name: 'less — Synthetic', exact: true }));
     expect(view.getByRole('button', { name: 'more — Synthetic', exact: true })).toBeTruthy();
   });
 });
