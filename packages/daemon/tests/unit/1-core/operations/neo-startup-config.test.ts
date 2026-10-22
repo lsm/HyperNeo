@@ -137,4 +137,30 @@ describe('Neo startup configuration', () => {
     expect(service.defaultSessionId()).toBeUndefined();
     expect(updateSession).not.toHaveBeenCalled();
   });
+
+  test('a recovered root can read with a strict Bash sandbox and cannot approve native writes', async () => {
+    const session = createTestSession(root);
+    session.config.allowedTools = ['Write', 'Edit', 'NotebookEdit'];
+    db.createSession(session);
+    service.repo.reserveBinding({ sessionId: root, projectId: null, kind: 'neo' });
+    await service.recover();
+    const config = db.getSession(root)!.config;
+    expect(config.allowedTools).toEqual([
+      'Read',
+      'Grep',
+      'Glob',
+      'WebSearch',
+      'WebFetch',
+      'Bash',
+      'mcp__hyperneo-operations__invoke',
+    ]);
+    expect(config.permissionMode).toBe('dontAsk');
+    expect(config.sandbox).toMatchObject({
+      enabled: true,
+      failIfUnavailable: true,
+      allowUnsandboxedCommands: false,
+      enableWeakerNetworkIsolation: true,
+      excludedCommands: [],
+    });
+  });
 });
