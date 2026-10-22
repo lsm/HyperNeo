@@ -483,6 +483,21 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
       })
     ).toMatchObject({ ok: true, question: { replyTo: [requestId] } });
     expect((await read()).items).toEqual(page.items);
+    const messageStatuses = await hub.request<{
+      items: { requestId: string; messageStatus?: string }[];
+    }>('operation.invoke', {
+      name: 'neo.conversation.asks.read',
+      input: { conversationId: opened.sessionId.slice(4) },
+    });
+    expect(messageStatuses.items).toEqual([
+      expect.objectContaining({ requestId, messageStatus: 'answered' }),
+    ]);
+    expect((await conversation()).items).toContainEqual(
+      expect.objectContaining({
+        role: 'human',
+        ask: expect.objectContaining({ requestId, messageStatus: 'answered' }),
+      })
+    );
     const webRead = await readNeoPublications(
       { conversationId: opened.sessionId.slice(4), after: 0 },
       async () => hub,
@@ -521,6 +536,7 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
             receipts,
             publication: page.items[0],
             question,
+            messageStatuses,
             wakeHistory: history,
             webRead,
             daemonPort: daemon.server.port,
