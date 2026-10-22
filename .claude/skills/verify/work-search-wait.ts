@@ -1,7 +1,7 @@
 import { appendFileSync, writeFileSync } from 'node:fs';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 
-export function installWorkSearchWait(run: string, waitMs: number, thread: string): void {
+export function installWorkSearchWait(run: string, waitMs: number, thread: string, repeat = false): void {
   const prepare = Database.prototype.prepare;
   let first = true;
   Database.prototype.prepare = function (sql, options) {
@@ -12,7 +12,7 @@ export function installWorkSearchWait(run: string, waitMs: number, thread: strin
         const value = Reflect.get(target, property, target);
         if (property !== 'all') return typeof value === 'function' ? value.bind(target) : value;
         return (...args: unknown[]) => {
-          const delay = first && args[0] === 'message' ? waitMs : 0;
+          const delay = (first || repeat) && args[0] === 'message' ? waitMs : 0;
           first = false;
           if (delay) {
             writeFileSync(`${run}/read-started`, thread);

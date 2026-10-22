@@ -15,6 +15,7 @@ import { SDKBunWorkerBridge } from '../../../packages/daemon/tests/helpers/sdk-b
 const run = resolve(process.argv[2]);
 const waitMs = Number(process.argv[3] ?? 1200);
 const bridge = process.argv[4] === 'bridge';
+const priority = process.argv[5] === 'priority';
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -28,7 +29,7 @@ const NativeWorker = globalThis.Worker;
 const warm = WorkerAgentMemoryEmbedder.prototype.warm;
 WorkerAgentMemoryEmbedder.prototype.warm = () => {};
 const fixtureWorker = pathToFileURL(join(run, 'reader.ts')).href;
-writeFileSync(join(run, 'reader.ts'), `import { installWorkSearchWait } from ${JSON.stringify(pathToFileURL(resolve('.claude/skills/verify/work-search-wait.ts')).href)}; installWorkSearchWait(${JSON.stringify(run)}, ${waitMs}, 'worker'); const pending=[]; globalThis.onmessage=e=>pending.push(e); await import(${JSON.stringify(pathToFileURL(resolve('packages/daemon/src/storage/sdk-status-worker.ts')).href)}); const dispatch=globalThis.onmessage; for(const event of pending) dispatch(event);`);
+writeFileSync(join(run, 'reader.ts'), `import { installWorkSearchWait } from ${JSON.stringify(pathToFileURL(resolve('.claude/skills/verify/work-search-wait.ts')).href)}; installWorkSearchWait(${JSON.stringify(run)}, ${waitMs}, 'worker', ${priority}); const pending=[]; globalThis.onmessage=e=>pending.push(e); await import(${JSON.stringify(pathToFileURL(resolve('packages/daemon/src/storage/sdk-status-worker.ts')).href)}); const dispatch=globalThis.onmessage; for(const event of pending) dispatch(event);`);
 globalThis.Worker = class extends NativeWorker {
   constructor(url: string | URL, options?: WorkerOptions) {
     if (bridge && String(url).endsWith('/sdk-status-worker.ts'))
@@ -71,7 +72,7 @@ try {
   await hub.request('session.messages.byStatus', { sessionId, status: 'consumed', limit: 1 });
   const expected = app.db.getSDKMessageRepo().searchWorkChats('unmatched quokka', 200, { model: embedder.model, vector }, ['message', 'task']);
   assert.equal(expected[0].sessionId, sessionId);
-  installWorkSearchWait(run, waitMs, 'main');
+  installWorkSearchWait(run, waitMs, 'main', priority);
   let output = '', errors = '';
   if (waitMs) {
     probe = spawn(process.execPath, ['-e', `import {existsSync} from 'node:fs';const ws=new WebSocket('ws://127.0.0.1:${app.server.port}/ws');let at;ws.onopen=()=>{console.log('READY');const t=setInterval(()=>{if(existsSync(${JSON.stringify(join(run, 'read-started'))})){clearInterval(t);at=performance.now();ws.send(JSON.stringify({id:'health',type:'REQ',method:'system.health',data:{},sessionId:'global',version:'1.0.0',timestamp:new Date().toISOString()}));}},1);};ws.onmessage=e=>{const r=JSON.parse(e.data);if(r.requestId==='health'){console.log(JSON.stringify({ms:performance.now()-at,data:r.data}));ws.close();}};`], { stdio: ['ignore', 'pipe', 'pipe'], env: process.env });
@@ -84,7 +85,19 @@ try {
   timer = setInterval(() => { const now = performance.now(); lagMs = Math.max(lagMs, now - previous - 10); previous = now; }, 10);
   await Bun.sleep(20);
   const started = performance.now();
-  const found = await hub.request<{ places: PlaceGroup[] }>('operation.invoke', { name: 'work.find', input: { text: 'unmatched quokka', localOnly: true, adapters: ['hyperneo'], limit: 20 } });
+  const requestSearch = (text: string) => hub.request<{ places: PlaceGroup[] }>('operation.invoke', { name: 'work.find', input: { text, localOnly: true, adapters: ['hyperneo'], limit: 20 } });
+  const firstSearch = requestSearch('unmatched quokka');
+  const order: string[] = [];
+  const sdkMs: Record<string, number> = {};
+  let queued: Promise<unknown>[] = [];
+  if (priority) {
+    for (let i = 0; !existsSync(join(run, 'read-started')) && i < 200; i++) await Bun.sleep(5);
+    queued = [requestSearch('unmatched wombat').then(() => order.push('search'))];
+    await Bun.sleep(50);
+    queued.push(hub.request('session.messages.byStatus', { sessionId, status: 'consumed', limit: 1 }).then(() => { order.push('status'); sdkMs.status = performance.now() - started; }));
+    queued.push(hub.request('message.sdkMessages', { sessionId, limit: 1 }).then(() => { order.push('page'); sdkMs.page = performance.now() - started; }));
+  }
+  const found = await firstSearch;
   const rpcMs = performance.now() - started;
   await Bun.sleep(20);
   clearInterval(timer);
@@ -92,7 +105,9 @@ try {
   for (let i = 0; waitMs && output.trim().split('\n').length < 2 && i < 200; i++) await Bun.sleep(10);
   const health = waitMs ? JSON.parse(output.trim().split('\n').at(-1)!) : null;
   const ids = found.places.flatMap(place => place.work.map(work => work.ref.id));
-  Object.assign(evidence, { rpcMs, lagMs, result: found, bridge });
+  await Promise.all(queued);
+  Object.assign(evidence, { rpcMs, lagMs, result: found, bridge, order, sdkMs });
+  if (priority) assert(Object.values(sdkMs).every(ms => ms < waitMs * 1.5), 'SDK reads queued behind the second search');
   assert(ids.includes(sessionId), JSON.stringify(found));
   const observed = found.places.flatMap(place => place.work).find(work => work.ref.id === sessionId)!;
   assert.equal(observed.hits, expected[0].hits);
