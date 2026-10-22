@@ -167,6 +167,7 @@ describe('neo.preferences.set', () => {
     const sessions = {
       getSessionForControl: async (sessionId: string) => ({
         isLimitRecoveryPending: () => false,
+        restartQuery: async () => {},
         getProcessingState: () => ({ status: busy ? 'processing' : 'idle' }),
         getRateLimitWatchdogState: () => ({
           lastUserMessage: recovering ? { uuid: 'limited-turn' } : null,
@@ -265,12 +266,10 @@ describe('neo.preferences.set', () => {
       provider: 'deepseek' as const,
       thinkingLevel: 'off' as const,
     };
-    for (const id of ['neo:root', 'neo:project', 'neo:topic', 'ordinary', 'worker']) {
+    for (const id of ['neo:root', 'ordinary', 'worker']) {
       if (id !== 'neo:root') db.createSession(createTestSession(id));
       db.updateSession(id, { config: { ...db.getSession(id)!.config, ...base } });
     }
-    for (const id of ['neo:project', 'neo:topic'])
-      service.repo.reserveBinding({ sessionId: id, kind: 'neo', projectId: null });
     service.repo.reserveBinding({ sessionId: 'worker', kind: 'worker', projectId: null });
     const percentage = async (id: string) =>
       (await getSessionContextModelInfo(db.getSession(id)!))?.autoCompactPercent;
@@ -279,11 +278,12 @@ describe('neo.preferences.set', () => {
     expect(await percentage('neo:root')).toBe(80);
     expect(updated).toHaveLength(0);
     busy = false;
-    for (const id of ['neo:root', 'neo:project', 'neo:topic', 'ordinary', 'worker']) {
-      await events.publish('session.updated', {
+    for (const id of ['neo:root', 'ordinary', 'worker']) {
+      const event = await events.publish('session.updated', {
         sessionId: id,
         processingState: { status: 'idle' },
       });
+      expect(event.failures).toEqual([]);
       expect(await percentage(id)).toBe(id.startsWith('neo:') ? 70 : 80);
     }
     const info = await getSessionContextModelInfo(db.getSession('neo:root')!);

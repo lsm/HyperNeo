@@ -440,13 +440,30 @@ export class NeoService {
 
   private async alignModelPreference(sessionId: string): Promise<void> {
     const preference = this.modelPreference();
-    const config = this.db.getSession(sessionId)?.config;
+    const stored = this.db.getSession(sessionId);
+    const config = stored?.config;
     const plan = preference && config ? planNeoAlignment(config, preference) : null;
-    if (!preference || !plan) return;
+    if (
+      !preference ||
+      !stored ||
+      (!plan && stored.metadata.neoAutoCompactPercent === preference.autoCompactPercent)
+    )
+      return;
     const live = await this.sessions.getSessionForControl(sessionId);
     if (!live) return;
     if (live.isLimitRecoveryPending?.() || live.getRateLimitWatchdogState?.().lastUserMessage)
       return;
+    const metadata = live.getSessionData().metadata;
+    if (
+      live.getProcessingState().status === 'idle' &&
+      metadata.neoAutoCompactPercent !== preference.autoCompactPercent
+    ) {
+      await this.sessions.updateSession(sessionId, {
+        metadata: { ...metadata, neoAutoCompactPercent: preference.autoCompactPercent },
+      });
+      await live.restartQuery();
+    }
+    if (!plan) return;
     const previousThinking = live.getSessionData().config.thinkingLevel;
     if (plan.thinking)
       await this.sessions.updateSession(sessionId, {
@@ -550,6 +567,7 @@ export class NeoService {
       });
     }
     await this.removeTurnLimit(binding.sessionId);
+    await this.alignModelPreference(binding.sessionId);
     return binding.sessionId;
   }
 

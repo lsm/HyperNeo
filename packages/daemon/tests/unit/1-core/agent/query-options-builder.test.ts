@@ -933,6 +933,39 @@ describe('QueryOptionsBuilder', () => {
       }
     );
 
+    it('passes explicit Neo native percentage into the built SDK settings only for Neo', async () => {
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              {
+                id: 'fixture-native',
+                name: 'Fixture',
+                provider: 'anthropic',
+                available: true,
+                contextWindow: 1_000_000,
+              },
+            ],
+          ],
+        ])
+      );
+      try {
+        builder = new QueryOptionsBuilder({ ...mockContext, db: undefined });
+        mockSession.id = 'neo:fixture';
+        mockSession.config.model = 'fixture-native';
+        mockSession.metadata.neoAutoCompactPercent = 70;
+        expect((await builder.build()).settings?.autoCompactWindow).toBe(733_000);
+        mockSession.id = 'ordinary';
+        expect((await builder.build()).settings?.autoCompactWindow).toBeUndefined();
+        mockSession.id = 'neo:fixture';
+        delete mockSession.metadata.neoAutoCompactPercent;
+        expect((await builder.build()).settings?.autoCompactWindow).toBeUndefined();
+      } finally {
+        setModelsCache(new Map());
+      }
+    });
+
     it('should not override SDK auto-compaction settings for native anthropic provider', async () => {
       const options = await builder.build();
       expect(options.settings).toEqual({ cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS });

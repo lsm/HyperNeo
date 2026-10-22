@@ -220,9 +220,13 @@ export function buildProviderSettings(
   providerId: string,
   contextWindow?: number | null,
   modelId?: string | null,
-  autoCompactPercent?: number | null
+  autoCompactPercent?: number | null,
+  autoCompactPercentOverride?: number
 ): Settings | undefined {
-  if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) {
+  if (
+    NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId) &&
+    autoCompactPercentOverride === undefined
+  ) {
     return undefined;
   }
 
@@ -237,6 +241,7 @@ export function buildProviderSettings(
     return undefined;
   }
 
+  autoCompactPercent = autoCompactPercentOverride ?? autoCompactPercent;
   const hasExplicitPercent =
     typeof autoCompactPercent === 'number' && Number.isFinite(autoCompactPercent);
   const autoCompactWindow =
@@ -484,7 +489,8 @@ export class QueryOptionsBuilder {
           providerId,
           modelInfo?.contextWindow,
           this.ctx.session.config.model,
-          modelInfo?.autoCompactPercent
+          modelInfo?.autoCompactPercent,
+          modelInfo?.autoCompactPercentOverride
         )
       ),
 
