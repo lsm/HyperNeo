@@ -303,7 +303,7 @@ describe('SubagentBlock', () => {
       fireEvent.click(button);
       expect(container.textContent).toContain('Input');
 
-      fireEvent.click(button);
+      fireEvent.click(container.querySelector('button[aria-label="less — Explore Find files"]')!);
       expect(container.querySelector('.border-t')).toBeFalsy();
     });
   });
@@ -495,7 +495,7 @@ describe('SubagentBlock', () => {
       await waitFor(() => expect(container.textContent).toContain('Read'));
       const cardButtons = container.querySelectorAll('button');
       const nestedCardButton = Array.from(cardButtons).find((b) =>
-        b.textContent?.includes('Read')
+        b.getAttribute('aria-label')?.startsWith('more — Read')
       )!;
       fireEvent.click(nestedCardButton);
 
@@ -734,35 +734,23 @@ describe('SubagentBlock', () => {
       expect(container.querySelector('.custom-class')).toBeTruthy();
     });
 
-    it('should have full width header button', () => {
+    it('labels the explicit control with the subagent context', () => {
       const input = createAgentInput('Explore', 'Find files', 'Search for test files');
       const { container } = render(<SubagentBlock input={input} toolId="toolu_task123" />);
 
       const button = container.querySelector('button');
-      expect(button?.className).toContain('w-full');
+      expect(button?.getAttribute('aria-label')).toBe('more — Explore Find files');
     });
   });
 
-  describe('Chevron Rotation', () => {
-    it('should rotate chevron when expanded', () => {
+  describe('Disclosure direction', () => {
+    it('shows the explicit more and less direction', () => {
       const input = createAgentInput('Explore', 'Find files', 'Search for test files');
-      const { container } = render(<SubagentBlock input={input} toolId="toolu_task123" />);
-
-      const button = container.querySelector('button')!;
-
-      const chevrons = button.querySelectorAll('svg');
-      const chevron = chevrons[chevrons.length - 1];
-
-      expect(chevron?.className.baseVal || chevron?.getAttribute('class')).not.toContain(
-        'rotate-180'
-      );
-
-      fireEvent.click(button);
-      const rotatedChevrons = button.querySelectorAll('svg');
-      const rotatedChevron = rotatedChevrons[rotatedChevrons.length - 1];
-      expect(rotatedChevron?.className.baseVal || rotatedChevron?.getAttribute('class')).toContain(
-        'rotate-180'
-      );
+      const { getByRole } = render(<SubagentBlock input={input} toolId="toolu_task123" />);
+      const more = getByRole('button', { name: 'more — Explore Find files' });
+      expect(more.textContent).toContain('▾');
+      fireEvent.click(more);
+      expect(getByRole('button', { name: 'less — Explore Find files' }).textContent).toContain('▴');
     });
   });
 
@@ -1258,7 +1246,11 @@ describe('SubagentBlock loading thinned messages', () => {
     fireEvent.click(getAllByRole('button')[0]);
     expect(hydrate).toHaveBeenCalledWith(['parent-assistant', 'parent-result', nested.uuid]);
 
-    fireEvent.click(getAllByRole('button')[1]);
+    fireEvent.click(
+      getAllByRole('button').find(
+        (button) => button.getAttribute('aria-label') === 'more — Read file.txt'
+      )!
+    );
     expect(hydrate).toHaveBeenLastCalledWith([nested.uuid, 'nested-result']);
   });
 });

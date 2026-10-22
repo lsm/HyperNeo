@@ -1,6 +1,6 @@
-import { CheckGlyph, ChevronDownGlyph, CloseGlyph } from '../icons/common-glyphs.tsx';
+import { CheckGlyph, CloseGlyph } from '../icons/common-glyphs.tsx';
 import type { ComponentChild } from 'preact';
-import { useState, useMemo } from 'preact/hooks';
+import { useState, useMemo, useId, useLayoutEffect, useRef } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
 import type { AgentInput } from '@hyperneo/shared/sdk/sdk-tools.d.ts';
@@ -24,6 +24,8 @@ import { ToolResultCard } from './tools/index.ts';
 import { useHydrateMessages } from './chat-display-mode.ts';
 import { ThinkingBlock } from './ThinkingBlock.tsx';
 import { SDKSystemMessage } from './SDKSystemMessage.tsx';
+import { ContentDisclosureControl } from '../ui/ContentDisclosureControl.tsx';
+import { NativeContentDisclosure } from '../ui/NativeContentDisclosure.tsx';
 import {
   getMessageUuid,
   type MessageReplacementStatus,
@@ -280,6 +282,16 @@ export function SubagentBlock({
   toolId,
 }: SubagentBlockProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const restoreFocus = useRef(false);
+  const id = useId();
+  useLayoutEffect(() => {
+    if (!restoreFocus.current) return;
+    restoreFocus.current = false;
+    cardRef.current
+      ?.querySelector<HTMLButtonElement>(`button[id="${id}-control"]`)
+      ?.focus({ preventScroll: true });
+  }, [isExpanded, id]);
   const hydrate = useHydrateMessages();
   const full = useFullToolOutput(output, undefined, sessionId, messageUuid, toolId);
   output = full.output;
@@ -353,8 +365,30 @@ export function SubagentBlock({
     return completed;
   }, [nestedMessages]);
 
+  const control = (
+    <ContentDisclosureControl
+      expanded={isExpanded}
+      id={`${id}-control`}
+      aria-controls={isExpanded ? id : undefined}
+      aria-label={`${input.subagent_type ?? 'general-purpose'} ${input.description}`}
+      onToggle={() => {
+        restoreFocus.current = true;
+        if (!isExpanded)
+          hydrate(
+            [
+              assistantUuid,
+              messageUuid,
+              ...nestedMessages.map((message) => message.uuid as string | undefined),
+            ].filter((uuid): uuid is string => !!uuid)
+          );
+        setIsExpanded(!isExpanded);
+      }}
+    />
+  );
+
   const block = (
     <div
+      ref={cardRef}
       class={cn(
         'border rounded-lg overflow-hidden',
         isRunning && 'relative',
@@ -363,24 +397,8 @@ export function SubagentBlock({
         className
       )}
     >
-      <button
-        onClick={() => {
-          if (!isExpanded)
-            hydrate(
-              [
-                assistantUuid,
-                messageUuid,
-                ...nestedMessages.map((message) => message.uuid as string | undefined),
-              ].filter((uuid): uuid is string => !!uuid)
-            );
-          setIsExpanded(!isExpanded);
-        }}
-        class={cn(
-          'w-full flex items-center justify-between p-3 transition-colors',
-          'hover:bg-opacity-80 dark:hover:bg-opacity-80'
-        )}
-      >
-        <div class="flex items-center gap-2 min-w-0 flex-1">
+      <div class="flow-root p-3">
+        <div class="inline-flex max-w-full items-center gap-2 min-w-0">
           <span class={colors.icon}>
             {getSubagentIcon(input.subagent_type ?? 'general-purpose')}
           </span>
@@ -394,7 +412,7 @@ export function SubagentBlock({
           <span class={cn('text-sm font-medium truncate', colors.text)}>{input.description}</span>
         </div>
 
-        <div class="flex items-center gap-2 flex-shrink-0">
+        <div class="inline-flex items-center gap-2 ml-2 align-middle">
           {filteredNestedMessages.length > 0 && (
             <span class="text-xs font-semibold px-1.5 py-0.5 rounded-full bg-fill-strong text-fg-soft">
               {filteredNestedMessages.length}
@@ -418,20 +436,14 @@ export function SubagentBlock({
               pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
             />
           )}
-          <ChevronDownGlyph
-            class={cn('w-5 h-5 transition-transform', colors.icon, isExpanded ? 'rotate-180' : '')}
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-            pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
-          />
         </div>
-      </button>
+        {!isExpanded && control}
+      </div>
 
       {isRunning && taskProgress && <TaskProgressLine progress={taskProgress} />}
 
       {isExpanded && (
-        <div class={cn('border-t bg-surface', colors.border)}>
+        <div id={id} class={cn('border-t bg-surface', colors.border)}>
           {taskNotification && (taskNotification.summary || taskNotification.usage) && (
             <div class="border-b border-line p-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
               {taskNotification.summary && (
@@ -492,22 +504,21 @@ export function SubagentBlock({
             <div class="mb-2">
               <FullOutputNotice capped={full.capped} />
             </div>
-            {outputText ? (
-              <div
-                class={cn(
-                  'bg-surface-raised p-3 rounded border border-line',
-                  'prose prose-sm dark:prose-invert max-w-full overflow-x-auto',
-                  'prose-pre:bg-surface prose-pre:text-fg',
-                  isError && 'text-danger'
-                )}
-              >
-                <MarkdownRenderer content={outputText} />
-              </div>
-            ) : (
-              <div class="text-sm bg-surface-raised p-3 rounded border border-line text-fg-muted italic">
-                No output yet...
-              </div>
-            )}
+            <div
+              class={cn(
+                'flow-root bg-surface-raised p-3 rounded border border-line',
+                'prose prose-sm dark:prose-invert max-w-full overflow-x-auto',
+                'prose-pre:bg-surface prose-pre:text-fg',
+                isError && 'text-danger'
+              )}
+            >
+              {outputText ? (
+                <MarkdownRenderer content={outputText} class="contents [&>p:last-child]:inline" />
+              ) : (
+                <span class="text-sm text-fg-muted italic">No output yet...</span>
+              )}
+              {control}
+            </div>
           </div>
         </div>
       )}
@@ -734,10 +745,12 @@ function NestedMessageRenderer({
 
   return withReplacementStatus(
     <div class="bg-surface-raised p-2 rounded text-xs">
-      <details>
-        <summary class="cursor-pointer text-fg-faint">Unknown message type: {message.type}</summary>
+      <NativeContentDisclosure
+        label={`Unknown message type: ${message.type}`}
+        summary={<span class="text-fg-faint">Unknown message type: {message.type}</span>}
+      >
         <pre class="mt-2 overflow-x-auto">{JSON.stringify(message, null, 2)}</pre>
-      </details>
+      </NativeContentDisclosure>
     </div>
   );
 }
