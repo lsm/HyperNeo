@@ -55,6 +55,13 @@ For contention pass `1200 native priority` (or `1200 bridge priority`) after
 a fresh run directory. Two distinct real searches each wait 1200 ms. Status
 and page RPCs must finish before 1800 ms from the first search, ahead of the
 second search's wait. The FIFO baseline takes 2477 ms; priority takes 1267/1273 ms.
-Two search slots have separate admission from all 16 SDK slots; queued SDK reads
+Three search slots have separate admission from all 16 SDK slots; queued SDK reads
 run first. An active SQLite call remains uninterruptible and its timeout fails
 the shared generation: this does not prove SDK latency below 250 ms during it.
+
+For adapter fan-out pass `1200 native fanout` (or `1200 bridge fanout`). The
+helper creates only synthetic Codex state and Claude project directories in its
+empty HOME, activating the three search families. One work.find must return the
+retained HyperNeo and Claude semantic matches with no unreachable adapter, and
+all 10,021 complete indexed bodies/embeddings must retain their hash. The two-slot
+baseline drops claude-code as queue-full; three slots admit this normal fan-out.

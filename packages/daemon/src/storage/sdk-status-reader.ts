@@ -151,7 +151,7 @@ export class SDKStatusReader {
   private enqueue(args: SDKReadArgs): Promise<SDKReadResult> {
     if (this.closing) return Promise.reject(new Error('SDK reader closed'));
     const search = 'query' in args;
-    if ((search ? this.searches : this.waiting) >= (search ? 2 : 16))
+    if ((search ? this.searches : this.waiting) >= (search ? 3 : 16))
       return Promise.reject(new Error('SDK reader queue full'));
     const epoch = this.epoch,
       queuedAt = performance.now();
