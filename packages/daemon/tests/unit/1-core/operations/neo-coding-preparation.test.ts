@@ -223,6 +223,7 @@ describe('prepareCodingExecution', () => {
 
   test('prepares the fetched target and preserves dirty user checkout', async () => {
     const f = fixture();
+    git(f.directory, 'branch', 'local-only', f.before);
     const result = await prepareCodingExecution(f.request, f.effects);
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(result.reason);
@@ -230,6 +231,13 @@ describe('prepareCodingExecution', () => {
     expect(git(f.directory, 'rev-parse', 'HEAD')).toBe(f.before);
     expect(readFileSync(join(f.directory, 'file'), 'utf8')).toBe('uncommitted user work');
     expect(f.calls.find((call) => call[1] === 'checkout')?.at(-1)).toBe(f.latest);
+    expect(git(f.destination, 'rev-parse', 'refs/remotes/origin/dev')).toBe(f.latest);
+    expect(
+      spawnSync('git', ['show-ref', '--verify', 'refs/remotes/origin/local-only'], {
+        cwd: f.destination,
+        env: gitEnv,
+      }).status
+    ).not.toBe(0);
     await result.value.release();
     expect(existsSync(f.destination)).toBe(false);
   });
