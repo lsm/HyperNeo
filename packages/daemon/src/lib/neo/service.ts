@@ -26,6 +26,7 @@ import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
 import type { ExternalEventPublishedPayload } from '../external-events/external-event-service.ts';
+import { requireClosedPrEvent } from '../external-events/session-subscription-close.ts';
 import { sessionEventText } from '../external-events/session-event-delivery.ts';
 import {
   SESSION_EVENT_SCOPE,
@@ -753,7 +754,11 @@ export class NeoService {
       (event: ExternalEvent) =>
         this.todoRunner.checkNow(
           this.packs().flatMap((pack) => pack.todos?.event(event) ?? []),
-          (message, error) => this.log.warn(message, error)
+          (message, error) => this.log.warn(message, error),
+          'value' in
+            requireClosedPrEvent({
+              record: { event, state: 'published', createdAt: 0, updatedAt: 0 },
+            })
         ),
       'event',
       'checked'
@@ -790,9 +795,6 @@ export class NeoService {
       ['event', 'route'],
       'delivered'
     )
-    .pipe(async () => {
-      await this.todoRunner.refresh((message, error) => this.log.warn(message, error));
-    }, 'delivered')
     .pipe((route: NeoPackEventRoute) => {
       for (const row of route.ending) this.cardEvents.end(row.workId, row.topic, Date.now());
     }, 'route')
