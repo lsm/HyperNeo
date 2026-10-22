@@ -230,7 +230,10 @@ describe('pack-owned Neo operation registration', () => {
               name: 'verify.pack.echo',
               description: 'Return synthetic input',
               inputSchema: z.object({ text: z.string() }),
-              resultSchema: z.object({ ok: z.literal(true), text: z.string() }),
+              resultSchema: z.union([
+                z.object({ ok: z.literal(true), text: z.string() }),
+                z.object({ ok: z.literal(false), reason: z.string() }),
+              ]),
               policy: { safetyClass: 'read', roles: ['neo'] },
               execute: async ({ text }) => {
                 calls++;
