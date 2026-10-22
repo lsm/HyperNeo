@@ -152,3 +152,40 @@ describe('GitHub rate-limit bucket evidence', () => {
     expect(rate.resetAt).toBeLessThan(now + 121_000);
   });
 });
+
+describe('GitHub CLI response metadata', () => {
+  for (const status of [200, 403]) {
+    test(`HTTP ${status} preserves JSON or the server Retry-After`, async () => {
+      const calls: string[][] = [];
+      const spawn: SpawnFn = (args) => {
+        calls.push(args);
+        const stream = (text: string) =>
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(text));
+              controller.close();
+            },
+          });
+        return {
+          stdout: stream(
+            `HTTP/2.0 ${status} Synthetic\r\nRetry-After: 120\r\nX-RateLimit-Remaining: 4866\r\n\r\n{"synthetic":true}`
+          ),
+          stderr: stream(status === 403 ? 'secondary rate limit' : ''),
+          exited: Promise.resolve(status === 403 ? 1 : 0),
+          exitCode: status === 403 ? 1 : 0,
+          kill() {},
+        };
+      };
+      const result = await runGhJson(['gh', 'api', 'graphql'], '/tmp', spawn, {
+        resourceHint: 'graphql',
+      });
+      if (status === 200) expect(result).toEqual({ ok: true, data: { synthetic: true } });
+      else {
+        expect(result.ok).toBe(false);
+        expect(result.retryAfterMs).toBe(120_000);
+      }
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toContain('--include');
+    });
+  }
+});
