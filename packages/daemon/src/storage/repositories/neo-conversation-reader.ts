@@ -12,6 +12,7 @@ import { NeoConversationAskRepository } from './neo-conversation-ask-repository.
 import { NeoPublicationRepository } from './neo-publication-repository.ts';
 import { NeoSessionMessageRepository, SENT_BY_NEO } from './neo-session-message-repository.ts';
 import { presentNeoAskImageRefs } from '../../lib/neo/conversation-ask-read-operation.ts';
+import type { NeoMessageStatusPresenter } from '../../lib/neo/message-status.ts';
 
 export const NeoConversationCursorSchema = z
   .object({
@@ -47,7 +48,10 @@ export function neoConversationPage(entries: NeoConversationEntry[], page: NeoCo
 }
 
 export class NeoConversationReader {
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    private readonly presentStatus: NeoMessageStatusPresenter = (items) => [...items]
+  ) {}
 
   read(page: NeoConversationPage, humanView = false) {
     const cursor = page.after ?? page.before;
@@ -102,6 +106,16 @@ export class NeoConversationReader {
       if (!publication) throw new Error('Recorded Neo message disappeared');
       return { cursor, role: row.role, publication };
     });
-    return neoConversationPage(items, page);
+    const statuses = new Map(
+      this.presentStatus(items.flatMap((item) => (item.role === 'human' ? [item.ask] : []))).map(
+        (ask) => [ask.requestId, ask]
+      )
+    );
+    return neoConversationPage(
+      items.map((item) =>
+        item.role === 'human' ? { ...item, ask: statuses.get(item.ask.requestId)! } : item
+      ),
+      page
+    );
   }
 }

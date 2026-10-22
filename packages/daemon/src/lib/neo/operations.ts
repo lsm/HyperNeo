@@ -1,4 +1,5 @@
 import { receivedNeoHumanInput } from './human-input.ts';
+import { readNeoMessageStatuses, type NeoMessageStatusPresenter } from './message-status.ts';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 import { createNeoRuleQuestions } from './rule-questions.ts';
 import { createPackPreferenceQuestions } from './packs/preference-questions.ts';
@@ -348,6 +349,8 @@ export function neoReorganizeRuntime(service: NeoService): NeoReorganizeRuntime 
 }
 
 export function createNeoOperations(service: NeoService) {
+  const messageStatuses: NeoMessageStatusPresenter = (items) =>
+    readNeoMessageStatuses(service.db.getDatabase(), items);
   const snapshots = new Map<string, ReturnType<typeof buildSnapshot>>();
   function path<I, O>(name: string, action: (input: I, caller: OperationCaller) => O | Promise<O>) {
     return (superpipe({})(name) as PipelineAPI)
@@ -729,12 +732,10 @@ export function createNeoOperations(service: NeoService) {
     createNeoPublicationReadOperation(service.repo, service.publications),
     createNeoConversationReadOperation(
       service.repo,
-      new NeoConversationReader(service.db.getDatabase()),
+      new NeoConversationReader(service.db.getDatabase(), messageStatuses),
       (message) => service.messageNames(message)
     ),
-    createNeoConversationAskReadOperation(service.repo, service.asks, (sessionId, messageId) =>
-      service.db.getSDKMessageRepo().getUserSendStatus(sessionId, messageId)
-    ),
+    createNeoConversationAskReadOperation(service.repo, service.asks, messageStatuses),
     createNeoConversationImageReadOperation(service.repo, service.asks),
     createNeoDraftRecoveryOperation(service),
     ...createNeoRuleQuestions(service),

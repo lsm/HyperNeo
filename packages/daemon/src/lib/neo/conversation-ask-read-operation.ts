@@ -3,6 +3,8 @@ import type {
   NeoConversationAskPageItem,
   NeoConversationImageRef,
 } from '@hyperneo/shared/types/neo-conversation-ask';
+import { NEO_MESSAGE_STATUSES } from '@hyperneo/shared/types/neo-conversation-ask';
+import type { NeoMessageStatusPresenter } from './message-status.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
@@ -40,12 +42,16 @@ const StoredAsk = z
   .preprocess(
     (value) => {
       if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
-      const { sequence, createdAt, delivery, ...ask } = value as Record<string, unknown>;
-      return { sequence, createdAt, delivery, ask };
+      const { sequence, createdAt, delivery, messageStatus, ...ask } = value as Record<
+        string,
+        unknown
+      >;
+      return { sequence, createdAt, delivery, messageStatus, ask };
     },
     z.object({
       sequence: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
       createdAt: z.iso.datetime(),
+      messageStatus: z.enum(NEO_MESSAGE_STATUSES).optional(),
       delivery: z
         .object({ state: z.literal('failed') })
         .strict()
@@ -53,11 +59,12 @@ const StoredAsk = z
       ask: NeoConversationAskSchema,
     })
   )
-  .transform(({ sequence, createdAt, delivery, ask }) => ({
+  .transform(({ sequence, createdAt, delivery, messageStatus, ask }) => ({
     ...ask,
     sequence,
     createdAt,
     ...(delivery ? { delivery } : {}),
+    ...(messageStatus ? { messageStatus } : {}),
   }));
 
 const ImageRefSchema = z
@@ -81,26 +88,12 @@ export const NeoConversationAskPageSchema = z.object({
   createdAt: z.iso.datetime(),
   replyTo: NeoReplyToSchema.optional(),
   delivery: z.object({ state: z.literal('failed') }).optional(),
+  messageStatus: z.enum(NEO_MESSAGE_STATUSES).optional(),
 });
 
-type NeoAskSendStatusReader = (sessionId: string, messageId: string) => string | null;
-
-export function presentNeoAskDelivery(
-  items: readonly NeoConversationAsk[],
-  statuses: readonly (string | null)[]
-): NeoConversationAsk[] {
-  return items.map((item, index) =>
-    statuses[index] === 'failed' ? { ...item, delivery: { state: 'failed' as const } } : item
-  );
-}
-
-function readAskDelivery(result: Result, readSendStatus: NeoAskSendStatusReader): Result {
+function readAskStatus(result: Result, presentStatus: NeoMessageStatusPresenter): Result {
   if (!result.ok) return result;
-  const items = result.items as NeoConversationAsk[];
-  const statuses = items.map((item) =>
-    readSendStatus(item.askOrigin.sessionId, item.askOrigin.messageId)
-  );
-  return { ...result, items: presentNeoAskDelivery(items, statuses) };
+  return { ...result, items: presentStatus(result.items) };
 }
 
 export function neoConversationImageId(sequence: number, index: number): string {
@@ -161,7 +154,7 @@ function readAskImageRefs(
 }
 
 const read = (superpipe({})('neo-conversation-ask-read') as PipelineAPI)
-  .input(['request', 'caller', 'repo', 'ledger', 'readSendStatus'])
+  .input(['request', 'caller', 'repo', 'ledger', 'presentStatus'])
   .pipe((request: AskPage): Page => request, 'request', 'page')
   .pipe(requirePublicationReader, ['page', 'caller'], 'result:page')
   .pipe((repo: NeoRepository) => repo.conversationId(), 'repo', 'conversation')
@@ -172,25 +165,25 @@ const read = (superpipe({})('neo-conversation-ask-read') as PipelineAPI)
     ['page', 'ledger'],
     'page'
   )
-  .pipe(readAskDelivery, ['page', 'readSendStatus'], 'page')
+  .pipe(readAskStatus, ['page', 'presentStatus'], 'page')
   .pipe(readAskImageRefs, ['request', 'page', 'ledger'], 'page')
   .end('page') as (
   request: AskPage,
   caller: OperationCaller,
   repo: NeoRepository,
   ledger: NeoConversationAskRepository,
-  readSendStatus: NeoAskSendStatusReader
+  presentStatus: NeoMessageStatusPresenter
 ) => Result;
 
 export function createNeoConversationAskReadOperation(
   repo: NeoRepository,
   ledger: NeoConversationAskRepository,
-  readSendStatus: NeoAskSendStatusReader = () => null
+  presentStatus: NeoMessageStatusPresenter = (items) => [...items]
 ) {
   return defineOperation({
     name: 'neo.conversation.asks.read',
     description:
-      'Read one bounded ascending page of durably accepted human asks for the current public conversation. Original request identities and content are preserved; this never reads execution transcripts or starts a query. Use nextAfter for later pages, or pass before (for example Number.MAX_SAFE_INTEGER for the newest page) to read the page that ends just before that sequence. An ask that could not be delivered carries delivery: { state: "failed" }. With imageRefs: true, each photo comes back as { type: "image_ref", imageId, mediaType, bytes, width, height, thumbnail } instead of its full data; read the full photo with neo.conversation.image.read.',
+      'Read one bounded ascending page of durably accepted human asks for the current public conversation. Original request identities and content are preserved; this never reads execution transcripts or starts a query. messageStatus is computed by the daemon: received, queued, working, read, answered or failed. Only a publication explicitly citing a consumed input in replyTo marks it answered; read without a reply stays read. Use nextAfter for later pages, or pass before (for example Number.MAX_SAFE_INTEGER for the newest page) to read the page that ends just before that sequence. An ask that could not be delivered also carries delivery: { state: "failed" }. With imageRefs: true, each photo comes back as { type: "image_ref", imageId, mediaType, bytes, width, height, thumbnail } instead of its full data; read the full photo with neo.conversation.image.read.',
     policy: { safetyClass: 'human_only' },
     inputSchema: AskPageInput,
     resultSchema: z.union([
@@ -202,7 +195,7 @@ export function createNeoConversationAskReadOperation(
         nextAfter: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
       }),
     ]),
-    execute: async (page, caller) => read(page, caller, repo, ledger, readSendStatus),
+    execute: async (page, caller) => read(page, caller, repo, ledger, presentStatus),
   });
 }
 

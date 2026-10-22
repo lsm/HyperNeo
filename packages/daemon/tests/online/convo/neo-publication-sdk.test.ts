@@ -37,6 +37,11 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
   const sent: { system: string; human: unknown }[] = [];
   const nudged: string[] = [];
   const sdkErrors: string[] = [];
+  let publicationReady = false;
+  let releasePublication = () => {};
+  const publicationGate = new Promise<void>((resolve) => {
+    releasePublication = resolve;
+  });
   let round = 0;
   const fixture = createServer(async (req, res) => {
     if (req.url?.startsWith('/v1/models')) {
@@ -119,6 +124,10 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
     const approvalProbe = active && !approvalProbeIssued;
     if (approvalProbe) approvalProbeIssued = true;
     const publishing = active && !approvalProbe && round < 4;
+    if (publishing && round === 0) {
+      publicationReady = true;
+      await publicationGate;
+    }
     const block = approvalProbe
       ? {
           type: 'tool_use',
@@ -429,6 +438,20 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
       },
     });
     expect(accepted).toMatchObject({ ok: true, messageId: requestId });
+    const statusPage = () =>
+      hub.request<{ items: { requestId: string; messageStatus?: string }[] }>('operation.invoke', {
+        name: 'neo.conversation.asks.read',
+        input: { conversationId: opened.sessionId.slice(4) },
+      });
+    const workingDeadline = Date.now() + 15000;
+    while (!publicationReady && Date.now() < workingDeadline)
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(publicationReady).toBe(true);
+    const workingStatus = await statusPage();
+    expect(workingStatus.items).toEqual([
+      expect.objectContaining({ requestId, messageStatus: 'working' }),
+    ]);
+    releasePublication();
     const read = () =>
       hub.request<{ ok: boolean; items: NeoPublication[] }>('operation.invoke', {
         name: 'neo.publication.read',
@@ -483,12 +506,53 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
       })
     ).toMatchObject({ ok: true, question: { replyTo: [requestId] } });
     expect((await read()).items).toEqual(page.items);
+    const messageStatuses = await hub.request<{
+      items: { requestId: string; messageStatus?: string }[];
+    }>('operation.invoke', {
+      name: 'neo.conversation.asks.read',
+      input: { conversationId: opened.sessionId.slice(4) },
+    });
+    expect(messageStatuses.items).toEqual([
+      expect.objectContaining({ requestId, messageStatus: 'answered' }),
+    ]);
+    expect((await conversation()).items).toContainEqual(
+      expect.objectContaining({
+        role: 'human',
+        ask: expect.objectContaining({ requestId, messageStatus: 'answered' }),
+      })
+    );
     const webRead = await readNeoPublications(
       { conversationId: opened.sessionId.slice(4), after: 0 },
       async () => hub,
       () => true
     );
     expect(webRead).toEqual({ state: 'ready', items: page.items, nextAfter: 1 });
+    const unansweredId = randomUUID();
+    expect(
+      await hub.request('operation.invoke', {
+        name: 'neo.message.send',
+        input: {
+          sessionId: opened.sessionId,
+          requestId: unansweredId,
+          content: 'Read this synthetic follow-up without publishing.',
+        },
+      })
+    ).toMatchObject({ ok: true, messageId: unansweredId });
+    let unansweredStatus = await statusPage();
+    const readDeadline = Date.now() + 15000;
+    while (
+      unansweredStatus.items.find((item) => item.requestId === unansweredId)?.messageStatus !==
+        'read' &&
+      Date.now() < readDeadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      unansweredStatus = await statusPage();
+    }
+    expect(unansweredStatus.items).toEqual([
+      expect.objectContaining({ requestId, messageStatus: 'answered' }),
+      expect.objectContaining({ requestId: unansweredId, messageStatus: 'read' }),
+    ]);
+    expect((await read()).items).toEqual(page.items);
     await new Promise((resolve) => setTimeout(resolve, 3000));
     expect(nudged, 'ending with Done. keeps the CLI from nudging for visible output').toEqual([]);
     const { neoPrompt } = await import('../../../src/lib/neo/prompt.ts');
@@ -521,6 +585,9 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
             receipts,
             publication: page.items[0],
             question,
+            messageStatuses,
+            workingStatus,
+            unansweredStatus,
             wakeHistory: history,
             webRead,
             daemonPort: daemon.server.port,
@@ -567,6 +634,7 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
     expect(human.map((part) => part.text).join('\n')).not.toContain('<human-input>');
     expect(human.map((part) => part.text)).toContain(`[message id: ${requestId}]`);
   } finally {
+    releasePublication();
     QueryOptionsBuilder.prototype.build = build;
     await transport?.close();
     await daemon?.cleanup();
