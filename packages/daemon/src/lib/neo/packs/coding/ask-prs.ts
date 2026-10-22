@@ -138,18 +138,22 @@ export function extractNeoCardRefs(
   );
 }
 
-async function readGithubRefState(ref: NeoRef, spawnImpl: SpawnFn): Promise<NeoRefState | null> {
+async function readGithubRefState(
+  ref: NeoRef,
+  spawnImpl: SpawnFn,
+  fresh: boolean
+): Promise<NeoRefState | null> {
   const key = refKey(ref);
-  const done = settled.get(key);
+  const done = fresh ? undefined : settled.get(key);
   if (done) return done;
   const gone = missing.get(key);
-  if (gone !== undefined && Date.now() - gone < NEO_REF_MISSING_MS) return null;
+  if (!fresh && gone !== undefined && Date.now() - gone < NEO_REF_MISSING_MS) return null;
   const outcome = await runGhJson(githubGraphqlArgs(REF_QUERY, ref), homedir(), spawnImpl, {
     resourceHint: 'graphql',
   });
   const parsed = outcome.ok ? GhRefSchema.safeParse(outcome.data) : null;
   if (!parsed?.success) {
-    if (!outcome.ok && NOT_A_REF.test(outcome.error)) missing.set(key, Date.now());
+    if (!fresh && !outcome.ok && NOT_A_REF.test(outcome.error)) missing.set(key, Date.now());
     return null;
   }
   const found = parsed.data.data.repository.issueOrPullRequest;
@@ -198,17 +202,18 @@ async function readGithubRefState(ref: NeoRef, spawnImpl: SpawnFn): Promise<NeoR
               }
             : null,
         };
-  if (state.kind === 'pr' && state.done) settled.set(key, state);
+  if (!fresh && state.kind === 'pr' && state.done) settled.set(key, state);
   return state;
 }
 
 export async function readGithubRefStates(
   refs: readonly NeoRef[],
-  spawnImpl: SpawnFn = spawnProcess
+  spawnImpl: SpawnFn = spawnProcess,
+  fresh = false
 ): Promise<NeoRefState[]> {
   const states: NeoRefState[] = [];
   for (const ref of refs) {
-    const state = await readGithubRefState(ref, spawnImpl);
+    const state = await readGithubRefState(ref, spawnImpl, fresh);
     if (state) states.push(state);
   }
   return states;

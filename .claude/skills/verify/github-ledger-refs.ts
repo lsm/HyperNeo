@@ -40,18 +40,18 @@ const read=(input:unknown={url},name='neo.github.read')=>new Promise<any>((done,
   ws!.send(JSON.stringify({id,type:'REQ',sessionId:'global',method:'operation.invoke',data:{name,input},timestamp:new Date().toISOString(),version:'1.0.0'}));
 });
 const requests=()=>readFileSync(join(run,'evidence/requests.jsonl'),'utf8').trim().split('\n').map(line=>JSON.parse(line));
-const stored=()=>app!.db.getDatabase().prepare('SELECT * FROM pack_coding_ref_facts WHERE number=7').get();
+const stored=()=>app!.db.getDatabase().prepare("SELECT * FROM pack_coding_ref_facts WHERE json_extract(subject,'$.number')=7").get();
 try{
   await open();evidence.fanout=await Promise.all(Array.from({length:5},()=>read()));
   for(const result of evidence.fanout)assert.deepEqual(result,{ok:true,kind:'pr',url,state:'OPEN',checks:'passing',review:'approved',blockers:['1 unresolved review thread'],title:'Synthetic shared fact'});
   evidence.initialRequests=requests();evidence.refLookups=evidence.initialRequests.filter((r:any)=>r.family==='ask-reference').length;
   assert.equal(evidence.refLookups,1,'Concurrent public reference reads must share one ledger acquisition');
   evidence.firstStored=stored();
-  const repo=new NeoRepository(app!.db.getDatabase());repo.saveProject({id:'synthetic-project',title:'Synthetic project',summary:'Synthetic',context:'Retained'},0);
+  const repo=new NeoRepository(app!.db.getDatabase());repo.saveProject({id:'synthetic-project',title:'Synthetic project',summary:'Synthetic',context:'Retained'},0);app!.db.getDatabase().prepare('INSERT INTO neo_project_workspaces(alias,project_id) VALUES(?,?)').run('repo:synthetic/ledger'+String.fromCharCode(0)+'history','synthetic-project');
   const issue='https://github.com/synthetic/ledger/issues/3';
   control('issue');[evidence.issue,evidence.section]=await Promise.all([read({url:issue}),read({parentId:'synthetic-project',epicUrl:issue},'neo.project.section')]);
   assert.deepEqual(evidence.issue,{ok:true,kind:'issue',url:issue,state:'CLOSED',closedAs:'completed',closedBy:url,parent:'https://github.com/synthetic/ledger/issues/1'});
-  assert.equal(evidence.section.ok,true);assert.equal(repo.getProject(evidence.section.projectId)?.title,'Synthetic epic');
+  assert.equal(evidence.section.ok,true,JSON.stringify(evidence.section));assert.equal(repo.getProject(evidence.section.projectId)?.title,'Synthetic epic');
   evidence.issueLookups=requests().filter((r:any)=>r.phase==='issue'&&r.family==='issue-reference').length;assert.equal(evidence.issueLookups,1,'Project and detail must share their reference acquisition');
   control('changed');evidence.changed=await read();assert.equal(evidence.changed.review,'none');evidence.changedStored=stored();assert.equal(JSON.parse(evidence.changedStored.value_json).defaultBase,'main');
   control('failed');evidence.failed=await read();assert.equal(evidence.failed.ok,false);assert.match(evidence.failed.reason,/unreadable/);

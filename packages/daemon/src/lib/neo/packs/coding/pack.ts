@@ -1,5 +1,6 @@
 import { createCodingGithubReadOperation } from './github-read-operation.ts';
-import { readGithubRefStates, type NeoRefStateReader } from './ask-prs.ts';
+import type { NeoRefStateReader } from './ask-prs.ts';
+import { createCodingRefReader } from './ref-reader.ts';
 import { listNeoGithub, type NeoGithubLister } from './github-query.ts';
 import { createCodingClaudeOwnerReader } from './claude-pr-owners.ts';
 import { NEO_PACK_CODING_INSTRUCTIONS, NEO_PACK_CODING_WORKER_RULES } from '@hyperneo/prompts';
@@ -47,7 +48,7 @@ export function createCodingPack(deps: {
     operations: [
       createCodingGithubReadOperation({
         readPrs: deps.readPrs,
-        readRefStates: deps.readRefStates ?? readGithubRefStates,
+        readRefStates: deps.readRefStates ?? createCodingRefReader(() => deps.prLedger.refFacts),
         listGithub:
           deps.listGithub ??
           (async (args) => ({ data: await listNeoGithub(args), at: new Date().toISOString() })),
