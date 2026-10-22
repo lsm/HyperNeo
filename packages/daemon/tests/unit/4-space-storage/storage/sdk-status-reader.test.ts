@@ -532,3 +532,24 @@ test('an in-memory database keeps turn-range semantics without opening a worker'
     await db.close();
   }
 });
+
+test('a cold reader waits for its handler before sending the accepted turn-range read', async () => {
+  const worker = new TestWorker();
+  const reader = new SDKStatusReader('/synthetic.db', () => worker as unknown as Worker);
+  const pending = reader.readPendingTurns('synthetic-model', 3, 32);
+  try {
+    expect(worker.requests).toHaveLength(0);
+    worker.onmessage?.({ data: { ready: true } } as unknown as MessageEvent<SDKStatusReply>);
+    await tick();
+    expect(worker.requests).toHaveLength(1);
+    const turns = [{ id: 1, text: 'Complete synthetic turn', bodyLength: 23 }];
+    worker.reply(worker.requests[0], turns);
+    expect(await pending).toEqual(turns);
+    worker.onmessage?.({ data: { ready: true } } as unknown as MessageEvent<SDKStatusReply>);
+    expect(worker.requests).toHaveLength(1);
+  } finally {
+    for (const request of worker.requests) worker.reply(request, []);
+    await pending.catch(() => {});
+    await reader.close();
+  }
+});
