@@ -2112,14 +2112,16 @@ describe('QueryOptionsBuilder', () => {
               tools: ['Write', 'Edit'],
             },
           };
-          const resumedBuilder = new QueryOptionsBuilder({
+          const resumedContext = {
             ...mockContext,
+            getGithubToken: async () => 'synthetic-poller-query-token',
             db: {
               ...mockContext.db!,
               getDatabase: () => sqlite,
             },
-            getOperationMcpServer: () => ({ type: 'stdio', command: 'operations' }),
-          });
+            getOperationMcpServer: () => ({ type: 'stdio' as const, command: 'operations' }),
+          };
+          const resumedBuilder = new QueryOptionsBuilder(resumedContext);
           const options = resumedBuilder.addSessionStateOptions(await resumedBuilder.build());
           expect(options.resume).toBe(mockSession.sdkSessionId);
           expect(options.model).toBe('default');
@@ -2154,7 +2156,7 @@ describe('QueryOptionsBuilder', () => {
             expect(options.sandbox?.filesystem?.denyWrite).toEqual(['/test/workspace']);
             expect(options.sandbox?.filesystem?.allowWrite).not.toContain(handoffDataDir);
             expect(options.env?.HYPERNEO_HANDOFF_DIR).toBeUndefined();
-            expect(options.env?.GH_TOKEN).toBe('synthetic-daemon-query-token');
+            expect(options.env?.GH_TOKEN).toBe('synthetic-poller-query-token');
             expect(options.env?.GITHUB_TOKEN).toBe('');
             expect(options.env?.GH_CONFIG_DIR).toBe(join(options.env!.TMPDIR!, 'gh'));
             for (const sandbox of [
