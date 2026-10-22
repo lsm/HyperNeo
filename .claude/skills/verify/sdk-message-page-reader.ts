@@ -78,6 +78,7 @@ try {
   assert(latest.backgroundTaskMessages.some((m)=>m.uuid==='background'),'background fixture must be reached');
   const first=latest.sdkMessages[0] as {timestamp:number;rowid:number};
   const queries=[params,{...params,before:first.timestamp,beforeRowid:first.rowid},{...params,since:first.timestamp,sinceRowid:first.rowid}];
+  queries.push(params);
   const expectations=queries.map(q=>JSON.parse(JSON.stringify(expected(q))));
   evidence.beforeBodies = hash();
   app.db.getSDKMessageRepo().flushMessageSearchIndex();
@@ -106,7 +107,7 @@ try {
   await wait(30);
   measuring = true;
   const calls: { ms: number; replyHash: string }[] = [];
-  for (let n = 0; n < 3; n++) {
+  for (let n = 0; n < queries.length; n++) {
     const at = performance.now();
     const reply = await rpc('message.sdkMessages', queries[n]);
     calls.push({ms:performance.now()-at,replyHash:createHash('sha256').update(JSON.stringify(reply)).digest('hex')});

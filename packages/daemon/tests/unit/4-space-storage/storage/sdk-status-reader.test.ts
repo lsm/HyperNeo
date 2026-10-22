@@ -5,6 +5,7 @@ import { capSdkMessage } from '../../../../src/lib/rpc-handlers/message-output-c
 import {
   SDKStatusReader,
   type SDKStatusReply,
+  type SDKReadResult,
   type SDKStatusRequest,
 } from '../../../../src/storage/sdk-status-reader';
 
@@ -20,7 +21,7 @@ class TestWorker {
   terminate() {
     this.stopped = true;
   }
-  reply(request: SDKStatusRequest, result: typeof page | null) {
+  reply(request: SDKStatusRequest, result: SDKReadResult | null) {
     this.onmessage?.({
       data: {
         id: request.id,
@@ -249,6 +250,17 @@ test('reader projections change only returned pages, never original or full-outp
     );
     expect(projected.messages).toEqual(original.messages.map(capSdkMessage));
     expect(projected.messages[0]).toMatchObject({ output_capped: true });
+    expect(
+      repo.getSDKMessages(
+        'projected-page',
+        1,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        capSdkMessage
+      )
+    ).toEqual(projected);
     const status = repo.getUserMessagesByStatus('projected-page', 'consumed', 1, 'asc', (m) => ({
       ...m,
       message: { ...m.message, content: 'Projected text' },
@@ -261,4 +273,37 @@ test('reader projections change only returned pages, never original or full-outp
   } finally {
     await db.close();
   }
+});
+
+test('status and paged reads share the serial reader and retain full projected replies', async () => {
+  const { reader, workers } = fixture();
+  const first = reader.read(args);
+  const second = reader.readMessages({
+    sessionId: args.sessionId,
+    page: { limit: 2, before: 100, beforeRowid: 4 },
+  });
+  await tick();
+  workers[0].reply(workers[0].requests[0], page);
+  expect(await first).toEqual(page);
+  await tick();
+  expect(workers[0].requests[1].args).toEqual({
+    sessionId: args.sessionId,
+    page: { limit: 2, before: 100, beforeRowid: 4 },
+  });
+  const result = {
+    sdkMessages: [
+      {
+        type: 'user',
+        uuid: 'child',
+        timestamp: 1,
+        message: { role: 'user', content: '完整 projected reply' },
+      },
+    ],
+    hasMore: true,
+    backgroundTaskMessages: [],
+  } as SDKReadResult;
+  workers[0].reply(workers[0].requests[1], result);
+  expect(await second).toEqual(result);
+  expect(workers).toHaveLength(1);
+  await reader.close();
 });
