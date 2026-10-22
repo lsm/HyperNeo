@@ -1,0 +1,32 @@
+{
+  "width": 390,
+  "phase": "before",
+  "cases": [
+    {
+      "name": "Read long-synthetic.txt",
+      "before": 548.1875,
+      "after": -2645.8125,
+      "delta": -3194,
+      "footer": {
+        "x": 328.984375,
+        "y": 714.1875,
+        "width": 32.015625,
+        "height": 16
+      },
+      "focused": true
+    },
+    {
+      "name": "Explore Synthetic exploration",
+      "before": 616.1875,
+      "after": -4368.8125,
+      "delta": -4985,
+      "footer": {
+        "x": 315.984375,
+        "y": 758.125,
+        "width": 32.015625,
+        "height": 16
+      },
+      "focused": true
+    }
+  ]
+}
