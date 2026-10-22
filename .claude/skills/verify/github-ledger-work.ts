@@ -15,6 +15,8 @@ const original=readFileSync(fileURLToPath(new URL('./github-ledger-gh.ts',import
 assert(original.includes("if (phase === 'failed')"));
 const stub=original.replace("phase === 'changed' ? 'b'", "['changed','detail-failed','reopen'].includes(phase) ? 'b'")
   .replace("appendFileSync(join(root, 'evidence'", "if(family==='work-detail')await Bun.sleep(300);\nappendFileSync(join(root, 'evidence'")
+  .replace("process.stderr.write('unsupported synthetic request'); process.exit(2);", "appendFileSync(join(root,'evidence','requests.jsonl'),JSON.stringify({phase,family:'unsupported',args})+String.fromCharCode(10));process.stderr.write('unsupported synthetic request');process.exit(2);")
+  .replace('JSON.stringify({ phase, family, graphqlCost:', 'JSON.stringify({ phase, family, args, graphqlCost:')
   .replace("if (phase === 'failed')", "if (phase === 'failed' || (phase === 'detail-failed' && family === 'work-detail'))");
 writeFileSync(join(run,'bin/gh'),stub,{mode:0o700});
 const now=Date.now(),url='https://github.com/synthetic/ledger/pull/7';

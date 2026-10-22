@@ -15,7 +15,10 @@ No model, GUI, real GitHub, keys or credential files are used; direct HTTP throw
 Five concurrent public `neo.github.read` requests receive the same current-head
 approval and unresolved-thread blocker. Before wiring, they cause five work-detail
 acquisitions. After, one ledger acquisition serves all five. Other acquisition
-families, including ask-reference reads, are not migrated by this slice.
+families, including ask-reference reads, are not migrated by this slice. The
+complete work family drops from fifteen lookups to three (detail, rules and
+blocker detail each once); the same five ask-reference lookups remain. These
+are logical gh invocations, not exact HTTP requests or GraphQL points.
 
 A later human read makes a fresh attempt. Changing the head removes the old
 approval immediately; failure returns typed unreadable rather than the prior
