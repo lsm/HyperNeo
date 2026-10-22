@@ -1,3 +1,4 @@
+import type { PendingTurn } from './turn-vectors.ts';
 import type { Fact, NeoMessageStatusRef } from '../lib/neo/message-status.ts';
 import type { MessageFeedArgs } from './sdk-message-feed-read.ts';
 import type { LiveQueryEvaluation } from './live-query.ts';
@@ -37,13 +38,16 @@ type SDKReadArgs =
   | SDKPageArgs
   | WorkSearchArgs
   | MessageFeedArgs
-  | { neoMessageStatus: NeoMessageStatusRef[] };
+  | { neoMessageStatus: NeoMessageStatusRef[] }
+  | { turnVectors: { model: string; dimensions: number; limit: number | null } };
 export type SDKReadResult =
   | SDKStatusPage
   | SDKMessagePage
   | WorkChatMatch[]
   | LiveQueryEvaluation
-  | Fact[];
+  | Fact[]
+  | PendingTurn[]
+  | number;
 export type SDKStatusRequest = {
   id: number;
   epoch: number;
@@ -169,6 +173,14 @@ export class SDKStatusReader {
     return this.enqueue({ neoMessageStatus: refs }) as Promise<Fact[]>;
   }
 
+  readPendingTurns(model: string, dimensions: number, limit: number): Promise<PendingTurn[]> {
+    return this.enqueue({ turnVectors: { model, dimensions, limit } }) as Promise<PendingTurn[]>;
+  }
+
+  countPendingTurns(model: string, dimensions: number): Promise<number> {
+    return this.enqueue({ turnVectors: { model, dimensions, limit: null } }) as Promise<number>;
+  }
+
   private enqueue(args: SDKReadArgs): Promise<SDKReadResult> {
     if (this.closing) return Promise.reject(new Error('SDK reader closed'));
     const search = 'query' in args;
@@ -247,13 +259,15 @@ export class SDKStatusReader {
             operation: args
               ? 'query' in args
                 ? 'work-search'
-                : 'neoMessageStatus' in args
-                  ? 'neo-message-status'
-                  : 'feed' in args
-                    ? 'message-feed'
-                    : 'page' in args
-                      ? 'sdk-page'
-                      : 'sdk-status'
+                : 'turnVectors' in args
+                  ? 'turn-vectors'
+                  : 'neoMessageStatus' in args
+                    ? 'neo-message-status'
+                    : 'feed' in args
+                      ? 'message-feed'
+                      : 'page' in args
+                        ? 'sdk-page'
+                        : 'sdk-status'
               : 'close',
             id,
             epoch,

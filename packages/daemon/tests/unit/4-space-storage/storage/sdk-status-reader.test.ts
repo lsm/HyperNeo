@@ -490,3 +490,45 @@ test('a failed Neo fact request rejects and a fresh request uses a replacement r
   expect(await next).toEqual([]);
   await reader.close();
 });
+
+test('turn ranges and counts share metadata admission and preserve zero counts', async () => {
+  const { reader, workers } = fixture();
+  const first = reader.read(args);
+  const pending = reader.readPendingTurns('synthetic-model', 3, 32);
+  const count = reader.countPendingTurns('synthetic-model', 3);
+  await tick();
+  workers[0].reply(workers[0].requests[0], page);
+  await first;
+  await tick();
+  const turns = [{ id: 9, text: 'Retained Unicode 🦊', bodyLength: 4000 }];
+  expect(workers[0].requests[1].args).toEqual({
+    turnVectors: { model: 'synthetic-model', dimensions: 3, limit: 32 },
+  });
+  workers[0].reply(workers[0].requests[1], turns);
+  expect(await pending).toEqual(turns);
+  await tick();
+  expect(workers[0].requests[2].args).toEqual({
+    turnVectors: { model: 'synthetic-model', dimensions: 3, limit: null },
+  });
+  workers[0].reply(workers[0].requests[2], 0);
+  expect(await count).toBe(0);
+  expect(workers).toHaveLength(1);
+  await reader.close();
+  await expect(reader.readPendingTurns('synthetic-model', 3, 32)).rejects.toThrow('closed');
+});
+
+test('an in-memory database keeps turn-range semantics without opening a worker', async () => {
+  const db = await createTestDb();
+  try {
+    const raw = db.getDatabase();
+    raw.exec(
+      "INSERT INTO message_search_content(kind,source_id,message_id,session_id,message_type,title,body,timestamp) VALUES ('message','synthetic','synthetic','synthetic','user','Retained','Complete synthetic turn body',1)"
+    );
+    expect(await db.readPendingTurnsAsync('synthetic-model', 3, 32)).toEqual([
+      { id: 1, text: 'Complete synthetic turn body', bodyLength: 28 },
+    ]);
+    expect(await db.countPendingTurnsAsync('synthetic-model', 3)).toBe(1);
+  } finally {
+    await db.close();
+  }
+});

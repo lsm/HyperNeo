@@ -1,8 +1,13 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { AgentMemoryEmbedder } from '../../storage/repositories/agent-memory-repository.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
-import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
-import { countPendingTurns, readPendingTurns, saveTurnVector } from '../../storage/turn-vectors.ts';
+import type { Database } from '../../storage/index.ts';
+import { saveTurnVector } from '../../storage/turn-vectors.ts';
+
+type TurnVectorStorage = Pick<
+  Database,
+  'getDatabase' | 'readPendingTurnsAsync' | 'countPendingTurnsAsync'
+>;
 
 export const WORK_TURN_EMBED = 'work.turns.embed';
 const TURN_BATCH = 32;
@@ -20,7 +25,7 @@ export function scheduleTurnEmbedding(queue: JobQueueRepository): void {
 }
 
 export async function embedPendingTurns(
-  db: BunDatabase,
+  db: TurnVectorStorage,
   embedder: AgentMemoryEmbedder,
   budgetMs = TURN_EMBED_BUDGET_MS
 ): Promise<{ embedded: number; remaining: number }> {
@@ -28,19 +33,22 @@ export async function embedPendingTurns(
   const tried = new Set<number>();
   let embedded = 0;
   for (;;) {
-    const pending = readPendingTurns(db, embedder.model, embedder.dimensions, TURN_BATCH).filter(
-      (turn) => !tried.has(turn.id)
-    );
+    const pending = (
+      await db.readPendingTurnsAsync(embedder.model, embedder.dimensions, TURN_BATCH)
+    ).filter((turn) => !tried.has(turn.id));
     for (const turn of pending) {
       tried.add(turn.id);
       const vector = Float32Array.from(await embedder.embedPassage(turn.text));
-      saveTurnVector(db, turn, embedder.model, vector, Date.now());
+      saveTurnVector(db.getDatabase(), turn, embedder.model, vector, Date.now());
     }
     embedded += pending.length;
     if (pending.length === 0 || Date.now() - started >= budgetMs) break;
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
-  return { embedded, remaining: countPendingTurns(db, embedder.model, embedder.dimensions) };
+  return {
+    embedded,
+    remaining: await db.countPendingTurnsAsync(embedder.model, embedder.dimensions),
+  };
 }
 
 export const runTurnEmbedding = (superpipe({})('work-turn-embedding') as PipelineAPI)
@@ -49,6 +57,6 @@ export const runTurnEmbedding = (superpipe({})('work-turn-embedding') as Pipelin
   .pipe(embedPendingTurns, ['db', 'embedder'], 'result')
   .endAsync('result') as (
   queue: JobQueueRepository,
-  db: BunDatabase,
+  db: TurnVectorStorage,
   embedder: AgentMemoryEmbedder
 ) => Promise<{ embedded: number; remaining: number }>;
