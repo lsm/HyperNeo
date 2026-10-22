@@ -42,7 +42,13 @@ Technical content stays mounted for the existing height transition: use the
 control's aria-expanded plus the height/screenshot, not innerText alone, to
 judge closed state. The helper waits for height to settle before dragging text.
 Native iOS, clipboard permission behavior, real providers and task execution are
-not covered by this journey. No settings are changed during browser proof.
+not covered by this journey. The main journey changes no settings. For the review regression, call
+`verifyEmptyWorkflowFooter(page, {run, port:9396, width, phase})` at both widths,
+with phase review-before/review-after. Expand workflow details, choose level 5 in
+the local settings draft (do not Save Changes), and check that only the count
+remains: no blank footer or added vertical gap. Restore level 3 and confirm the
+returning details can still collapse. The helper restores the draft before exit;
+no setting is persisted. Component cases also cover a workflow-list update.
 
 Close the owned browser, then Ctrl-C the server's owning shell. Its signal handler
 stops only its own daemon and mock and waits for cleanup. Preserve the synthetic

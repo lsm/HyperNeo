@@ -99,7 +99,7 @@ export function AutonomyWorkflowSummary({
           ))}
         </ul>
       )}
-      {expanded && <div class="flow-root">{control}</div>}
+      {expanded && hasDetails && <div class="flow-root">{control}</div>}
     </div>
   );
 }
