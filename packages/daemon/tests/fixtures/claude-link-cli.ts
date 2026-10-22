@@ -13,6 +13,10 @@ const turn = (id: string) => {
     `${JSON.stringify({ type: 'user', uuid: `synthetic-${Date.now()}`, cwd: process.cwd(), entrypoint: 'sdk-cli', permissionMode: flag('--permission-mode'), timestamp: new Date().toISOString(), message: { content: process.argv.at(-1) } })}\n`
   );
   appendFileSync(
+    join(dir, `${id}.jsonl`),
+    `${JSON.stringify({ type: 'assistant', uuid: crypto.randomUUID(), timestamp: new Date().toISOString(), message: { content: [{ type: 'text', text: `Completed: ${process.argv.at(-1)}` }], stop_reason: 'end_turn' } })}\n`
+  );
+  appendFileSync(
     join(run, 'evidence/cli-inputs'),
     `${flag('--permission-mode')} ${process.argv.at(-1)}\n`
   );
