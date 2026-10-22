@@ -233,6 +233,23 @@ describe('Claude transcript feed', () => {
     expect(owners()).toEqual([{ id: 'u1', session: 'cli-1' }]);
   });
 
+  test('failed worker purge is surfaced without a local purge fallback', async () => {
+    db.prepare(`INSERT INTO message_search_content
+      (kind,source_id,session_id,body) VALUES ('claude','kept','sdk-hyperneo','full body')`).run();
+    const calls: string[][] = [];
+    const queue = { enqueueUniquePending: () => {} } as never;
+    await expect(
+      runClaudeFeed(queue, db, root, Date.now(), async (ids) => {
+        calls.push(ids);
+        throw new Error('writer unavailable');
+      })
+    ).rejects.toThrow('writer unavailable');
+    expect(calls).toEqual([['sdk-hyperneo']]);
+    expect(db.prepare('SELECT body FROM message_search_content').all()).toEqual([
+      { body: 'full body' },
+    ]);
+  });
+
   test('purges a session once HyperNeo knows it as its own', async () => {
     const project = join(root, '-Users-me-focus-neokai');
     mkdirSync(project, { recursive: true });

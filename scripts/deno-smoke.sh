@@ -192,6 +192,16 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_WRITER_PATH="$REPO_ROOT/packages/daemon/src/
     const first = await writer.ingest(event);
     const duplicate = await writer.ingest({...event,id:"deno-duplicate"});
     if (first.action !== "ingested" || duplicate.action !== "duplicate" || duplicate.eventId !== event.id) Deno.exit(1);
+    const { DatabaseSync } = await import("node:sqlite");
+    const db = new DatabaseSync(Deno.env.get("SMOKE_DB_PATH"));
+    try {
+      const insert = db.prepare("INSERT INTO message_search_content(kind,source_id,session_id,message_type,title,body,timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)");
+      for (const kind of ["claude", "codex"]) insert.run(kind, "deno-purge-"+kind, "deno-purge-sdk", "user", "Synthetic", "complete retained result", 1);
+      await writer.purgeClaudeFeed(["deno-purge-sdk"]);
+      const rows = db.prepare("SELECT kind,body FROM message_search_content WHERE session_id=?").all("deno-purge-sdk");
+      if (rows.length !== 1 || rows[0].kind !== "codex" || rows[0].body !== "complete retained result") Deno.exit(1);
+    } finally { db.close(); }
+    console.log("[deno-smoke] Claude feed purge preserves other feed kinds");
     console.log("[deno-smoke] session event writer commit/dedupe ok");
   } finally { await writer.close(); }
 '; then

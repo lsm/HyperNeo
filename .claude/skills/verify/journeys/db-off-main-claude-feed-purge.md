@@ -28,3 +28,12 @@ explicitly in the PR. All120 Codex rows survive and duplicate Claude rows go to0
 Repeat with `VERIFY_WRITER_IPC=1` for the existing real-Bun-worker JSON IPC bridge.
 The helper closes the probe, daemon and every worker in finally, including failed
 runs. Never run any cleanup or migration against stored human data.
+
+With the default5-job concurrency, another legacy main-thread writer can wait
+for the purge's SQLite lock. The strict responsiveness run currently FAILS for
+that coexistence case; preserve it and do not label it a responsiveness pass.
+Use the helper's third argument `movement` to separately assert worker ownership
+of the slow purge SQL, absence of main purge SQL and full data correctness;
+`responsivenessPass` remains false when lag/health budgets are missed. Its
+`mainTransactions` stacks retain the separate contending caller for the next
+unit. The existing1-job configuration may still contend with other processors.

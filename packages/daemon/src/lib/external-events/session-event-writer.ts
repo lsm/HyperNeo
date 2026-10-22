@@ -10,6 +10,7 @@ export type SessionEventWriteRequest = {
   dbPath: string;
   sentAt: number;
   event: ExternalEvent | null;
+  purgeClaudeSessions?: string[];
   queryObservability?: SQLiteQueryObservabilityOptions;
 };
 export type SessionEventWriteReply =
@@ -45,6 +46,17 @@ export class SessionEventWriter {
   ) {}
 
   ingest(event: ExternalEvent): Promise<IngestExternalEventOutcome> {
+    return this.write(event) as Promise<IngestExternalEventOutcome>;
+  }
+
+  purgeClaudeFeed(sessionIds: string[]): Promise<void> {
+    return this.write(null, sessionIds).then(() => {});
+  }
+
+  private write(
+    event: ExternalEvent | null,
+    purgeClaudeSessions?: string[]
+  ): Promise<IngestExternalEventOutcome | undefined> {
     if (this.closing) return Promise.reject(new Error('Session event writer closed'));
     if (this.waiting >= 16) return Promise.reject(new Error('Session event writer queue full'));
     this.waiting++;
@@ -53,7 +65,7 @@ export class SessionEventWriter {
     const result = this.queue.then(() => {
       if (epoch !== this.epoch)
         throw new Error('Session event writer generation failed before dispatch');
-      return this.exchange(event, queuedAt) as Promise<IngestExternalEventOutcome>;
+      return this.exchange(event, queuedAt, purgeClaudeSessions);
     });
     this.queue = result
       .catch(() => {})
@@ -76,7 +88,8 @@ export class SessionEventWriter {
 
   private exchange(
     event: ExternalEvent | null,
-    queuedAt: number
+    queuedAt: number,
+    purgeClaudeSessions?: string[]
   ): Promise<IngestExternalEventOutcome | undefined> {
     const worker = (this.worker ??= this.createWorker()),
       id = ++this.id,
@@ -99,7 +112,11 @@ export class SessionEventWriter {
           module: 'hyperneo:daemon:sqlite.worker',
           args: ['sqlite.worker.request'],
           metadata: {
-            operation: event ? 'session-event-ingest' : 'session-event-close',
+            operation: purgeClaudeSessions
+              ? 'claude-feed-purge'
+              : event
+                ? 'session-event-ingest'
+                : 'session-event-close',
             id,
             epoch,
             outcome: error ? (unknown ? 'unknown' : 'error') : 'ok',
@@ -117,14 +134,19 @@ export class SessionEventWriter {
           reject(
             unknown
               ? new Error(
-                  `Session event writer outcome unknown for ${event!.id}: ${error.message}; not replayed`
+                  `Session event writer outcome unknown for ${event?.id ?? 'claude-feed-purge'}: ${error.message}; not replayed`
                 )
               : error
           );
         } else resolve(reply?.outcome);
       };
       const timer = setTimeout(
-        () => finish(new Error('Session event writer timeout'), undefined, sent && event !== null),
+        () =>
+          finish(
+            new Error('Session event writer timeout'),
+            undefined,
+            sent && (event !== null || purgeClaudeSessions !== undefined)
+          ),
         this.timeoutMs
       );
       worker.onerror = (error) => {
@@ -134,7 +156,12 @@ export class SessionEventWriter {
           this.worker = null;
           this.epoch++;
           worker.terminate();
-        } else finish(new Error(error.message), undefined, sent && event !== null);
+        } else
+          finish(
+            new Error(error.message),
+            undefined,
+            sent && (event !== null || purgeClaudeSessions !== undefined)
+          );
       };
       worker.onmessage = ({ data }: MessageEvent<SessionEventWriteReply>) => {
         if (this.worker !== worker) return;
@@ -163,6 +190,7 @@ export class SessionEventWriter {
             dbPath: this.dbPath,
             sentAt: Date.now(),
             event,
+            purgeClaudeSessions,
             queryObservability: this.queryObservability,
           } satisfies SessionEventWriteRequest);
           sent = true;

@@ -7,6 +7,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { subscribeToStructuredLogs } from '../../../packages/daemon/src/lib/logger.ts';
 import { seedWorkFeedDeleteCorpus } from '../../../packages/daemon/tests/helpers/work-feed-delete-corpus.ts';
+import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 import { SDKBunWorkerBridge } from '../../../packages/daemon/tests/helpers/sdk-bun-worker-bridge.ts';
 
 const run = resolve(process.argv[2]);
@@ -37,6 +38,17 @@ const evidence: Record<string, unknown> = {
   notProofOfProductionPhysicalCause: true,
   runtime: Bun.version,
 };
+const mainTransactions: unknown[] = [];
+const originalTransaction = Database.prototype.transaction;
+Database.prototype.transaction = function (...args: Parameters<Database['transaction']>) {
+  const stack = new Error('main transaction caller').stack;
+  const transaction = Reflect.apply(originalTransaction, this, args);
+  return new Proxy(transaction, { apply(target, self, values) {
+    const started = performance.now();
+    try { return Reflect.apply(target, self, values); }
+    finally { if (measuring && performance.now() - started >= 250) mainTransactions.push({ ms: performance.now() - started, stack }); }
+  } });
+} as typeof Database.prototype.transaction;
 const off = subscribeToStructuredLogs((event) => {
   if (measuring && ['hyperneo:daemon:sqlite.worker', 'hyperneo:daemon:sqlite.query'].includes(event.module ?? '')) metrics.push(event);
 });
@@ -94,6 +106,9 @@ try {
   evidence.maxHealthMs = Math.max(...health);
   evidence.healthReplies = health.length;
   evidence.metrics = metrics;
+  evidence.mainTransactions = mainTransactions;
+  evidence.maxConcurrent = Number(process.env.HYPERNEO_JOB_QUEUE_MAX_CONCURRENT ?? 5);
+  evidence.responsivenessPass = maxLagMs < 1000 && Math.max(...health) < 250;
   evidence.job = result;
   evidence.storedAfter = storedDigest();
   evidence.remaining = db.prepare('SELECT kind, COUNT(*) n FROM message_search_content GROUP BY kind').all();
@@ -104,13 +119,21 @@ try {
   assert.equal(db.prepare("SELECT COUNT(*) n FROM message_search_content WHERE kind='codex'").get()?.n, 120);
   assert.equal((evidence.probeRan as { used: number }).used, 1);
   console.log(JSON.stringify({ run, maxLagMs, maxHealthMs: evidence.maxHealthMs, jobMs: evidence.jobMs }));
+  if (process.argv[3] === 'movement') {
+    const slow = metrics as { message: string; metadata: Record<string, unknown> }[];
+    assert(slow.some((event) => event.metadata.workerOperation === 'claude-feed-purge' && event.metadata.workerKind === 'session-event-writer' && Number(event.metadata.durationMs) >= 250), 'target slow SQL did not execute on the existing writer');
+    assert(!slow.some((event) => !event.metadata.workerKind && String(event.metadata.normalizedSql).startsWith('delete from message_search_content where id in')), 'purge SQL still ran on main');
+    evidence.threadMovementVerified = true;
+  } else {
   assert(maxLagMs < 1000, `main event loop blocked ${maxLagMs.toFixed(3)}ms`);
   assert(Number(evidence.maxHealthMs) < 250, 'independent health exceeded 250ms');
+  }
 } finally {
   if (timer) clearInterval(timer);
   probe?.kill();
   await app?.cleanup();
   off();
   globalThis.Worker = nativeWorker;
+  Database.prototype.transaction = originalTransaction;
   writeFileSync(join(run, 'evidence/purge.json'), JSON.stringify(evidence, null, 2));
 }

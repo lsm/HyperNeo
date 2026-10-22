@@ -20,7 +20,7 @@ class TestWorker {
   }
   postMessage(request: SessionEventWriteRequest) {
     this.requests.push(request);
-    if (!request.event) queueMicrotask(() => this.reply(request));
+    if (!request.event && !request.purgeClaudeSessions) queueMicrotask(() => this.reply(request));
   }
   terminate() {
     this.stopped = true;
@@ -163,5 +163,39 @@ test('startup deadline fails before dispatch instead of reporting an uncertain w
   expect(error).toBe('Error: Session event writer timeout');
   expect(worker.requests).toHaveLength(0);
   expect(worker.stopped).toBe(true);
+  await writer.close();
+});
+
+test('purge uses the existing serial writer and accepted commands drain before close', async () => {
+  const { writer, workers } = fixture();
+  const purge = writer.purgeClaudeFeed(['sdk-one', 'sdk-two']);
+  const ingest = writer.ingest(event);
+  await tick();
+  expect(workers[0].requests).toHaveLength(1);
+  expect(workers[0].requests[0].purgeClaudeSessions).toEqual(['sdk-one', 'sdk-two']);
+  const closing = writer.close();
+  await expect(writer.purgeClaudeFeed(['later'])).rejects.toThrow('closed');
+  workers[0].reply(workers[0].requests[0]);
+  await purge;
+  await tick();
+  workers[0].reply(workers[0].requests[1], outcome);
+  expect(await ingest).toEqual(outcome);
+  await closing;
+  expect(workers).toHaveLength(1);
+  expect(workers[0].stopped).toBe(true);
+});
+
+test('lost purge reply is unknown and never replayed on the next writer generation', async () => {
+  const { writer, workers } = fixture();
+  const failed = writer.purgeClaudeFeed(['sdk-one']).catch(String);
+  await tick();
+  workers[0].crash();
+  expect(await failed).toContain('outcome unknown for claude-feed-purge');
+  expect(workers[0].requests).toHaveLength(1);
+  const next = writer.purgeClaudeFeed(['sdk-two']);
+  await tick();
+  expect(workers[1].requests[0].purgeClaudeSessions).toEqual(['sdk-two']);
+  workers[1].reply(workers[1].requests[0]);
+  await next;
   await writer.close();
 });
