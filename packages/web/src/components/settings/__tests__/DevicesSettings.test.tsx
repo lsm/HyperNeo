@@ -144,10 +144,7 @@ describe('DevicesSettings', () => {
     });
     (globalSettings as { value: unknown }).value = { allowedHosts: ['lan.local'] };
   });
-  afterEach(() => {
-    cleanup();
-    vi.restoreAllMocks();
-  });
+  afterEach(() => cleanup());
 
   it('asks an unpaired browser to pair before it can manage devices', async () => {
     daemon({ paired: false });
@@ -156,31 +153,6 @@ describe('DevicesSettings', () => {
     expect(screen.getByRole('link', { name: 'Pair this browser' }).getAttribute('href')).toBe(
       '/pair'
     );
-  });
-
-  it('explains an offline initial load and refreshes when the device returns online', async () => {
-    const online = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
-    daemon({ paired: true });
-    render(<DevicesSettings />);
-    await screen.findByText('Offline. Reconnect to manage devices.');
-    expect(invoked('device.list')).toEqual([]);
-    online.mockReturnValue(true);
-    fireEvent(window, new Event('online'));
-    await screen.findByText('Relay on iMac');
-  });
-
-  it('disables Allow when a code expires while Settings stays open', async () => {
-    const clock = vi.spyOn(Date, 'now').mockReturnValue(1000000);
-    daemon({
-      paired: true,
-      pending: [{ id: 'soon', kind: 'human', name: 'Soon', expiresAt: 1000500 }],
-    });
-    render(<DevicesSettings />);
-    const allow = await screen.findByRole('button', { name: 'Allow Soon' });
-    expect(allow).toHaveProperty('disabled', false);
-    clock.mockReturnValue(1001000);
-    await waitFor(() => expect(allow).toHaveProperty('disabled', true), { timeout: 2500 });
-    expect(invoked('device.pair.approve')).toEqual([]);
   });
 
   it('loads once the connection to the daemon comes up after the tab opened', async () => {
@@ -200,7 +172,6 @@ describe('DevicesSettings', () => {
     render(<DevicesSettings />);
     await waitFor(() => screen.getByText('Relay on iMac'));
     expect(screen.getByText('mac.tailnet.ts.net')).toBeTruthy();
-    expect(screen.getByText(/expires in 5 min/)).toBeTruthy();
     expect(screen.getByText('https://evil.example')).toBeTruthy();
     expect(screen.getByText('Unknown credential · 4 times')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Allow Laptop' }));
@@ -252,18 +223,18 @@ describe('DevicesSettings', () => {
     expect(screen.queryByRole('button', { name: 'Re-pair Desk browser' })).toBeNull();
   });
 
-  it('does not offer Allow for an expired code', async () => {
+  it('shows a failed Allow above the sections, next to the code it was for', async () => {
     daemon({
       paired: true,
       pending: [{ id: 'expired', kind: 'human', name: 'Old laptop', expiresAt: Date.now() }],
     });
     render(<DevicesSettings />);
-    await screen.findByText('Old laptop');
-    expect(screen.getByRole('button', { name: 'Allow Old laptop' })).toHaveProperty(
-      'disabled',
-      true
-    );
-    expect(invoked('device.pair.approve')).toEqual([]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Allow Old laptop' }));
+    const failure = await screen.findByText('not_pending: no pending code with that id.');
+    const waiting = screen.getByText('Waiting for Allow');
+    expect(
+      failure.compareDocumentPosition(waiting) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
   });
 
   it('revokes a device after a second click', async () => {
@@ -279,15 +250,19 @@ describe('DevicesSettings', () => {
     ]);
   });
 
-  it('requires explicit removal instead of revoking a device through a Re-pair shortcut', async () => {
+  it('re-pairs a device with a new code for the same kind and name, revoking the old credential', async () => {
     daemon({ paired: true });
     render(<DevicesSettings />);
-    await screen.findByText('Phone');
-    expect(screen.queryByRole('button', { name: 'Re-pair Phone' })).toBeNull();
-    expect(invoked('device.revoke')).toEqual([]);
-    expect(screen.getByText(/Pairing is report-only/)).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh devices' }));
-    await waitFor(() => expect(invoked('device.list')).toHaveLength(2));
+    await waitFor(() => screen.getByText('Phone'));
+    fireEvent.click(screen.getByRole('button', { name: 'Re-pair Phone' }));
+    await waitFor(() => screen.getByText('NEWCODE234'));
+    expect(invoked('device.pair.create')).toEqual([
+      { name: 'device.pair.create', input: { kind: 'human', name: 'Phone' } },
+    ]);
+    expect(invoked('device.revoke')).toEqual([
+      { name: 'device.revoke', input: { deviceId: 'phone-1' } },
+    ]);
+    expect(screen.getByRole('link', { name: `${location.origin}/pair#NEWCODE234` })).toBeTruthy();
   });
 
   it('adds a device of the chosen kind', async () => {

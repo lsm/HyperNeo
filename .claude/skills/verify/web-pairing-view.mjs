@@ -20,7 +20,7 @@ try {
   await pair.waitFor({ timeout: 30000 });
   await shot(page, 'form');
   await pair.click();
-  const wrong = await page.getByText('That code is invalid, expired or already used.', { exact: false }).innerText();
+  const wrong = await page.getByText('That code is wrong or expired.', { exact: false }).innerText();
   await shot(page, 'wrong-code');
   await page.goto(`${base}/pair#${code}`);
   await page.getByLabel('Name for this browser').fill(`Browser ${width}`);

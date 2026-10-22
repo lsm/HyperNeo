@@ -140,9 +140,7 @@ describe('PairPage', () => {
     const wrong = openPairPage('#ZZZZZZZZZZ', answer(401, { error: 'invalid_code' }));
     pressPair(wrong);
     await waitFor(() =>
-      wrong.getByText(
-        'That code is invalid, expired or already used. Make a new one with hyperneo pair.'
-      )
+      wrong.getByText('That code is wrong or expired. Make a new one with hyperneo pair.')
     );
     wrong.unmount();
     const locked = openPairPage(

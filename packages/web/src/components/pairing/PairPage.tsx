@@ -14,8 +14,7 @@ function pairFailureMessage(
   body: { error?: unknown; retryAfterMs?: unknown }
 ): string {
   if (status === 403) return 'Approval was refused. Use an already paired phone or browser.';
-  if (status === 401)
-    return 'That code is invalid, expired or already used. Make a new one with hyperneo pair.';
+  if (status === 401) return 'That code is wrong or expired. Make a new one with hyperneo pair.';
   if (status === 429) {
     const minutes = Math.max(1, Math.ceil(Number(body.retryAfterMs ?? 0) / 60_000));
     return `Too many tries. Pairing reopens in ${minutes} minute${minutes === 1 ? '' : 's'}.`;

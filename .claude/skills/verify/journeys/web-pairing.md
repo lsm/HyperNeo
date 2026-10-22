@@ -27,13 +27,13 @@ Stopping a wait does not invalidate the code for other holders.
 The helper keeps only statuses and safe rendered text in
 `evidence/observed.json`, bundles only source code, and closes the component,
 DOM, sockets and daemon in finally. Keep red and green evidence. Component
-contracts also cover offline/background pause, unmount cleanup, invalid/used
+contracts also cover offline/background pause, unmount cleanup, invalid/expired
 codes and rate-limit wording. This DOM/HTTP proof is not real-browser visual or
 native iOS integration proof; label those unverified without an attended run.
 
 For attended browser checks only, build the web bundle, then use the existing
 `web-pairing.sh` / `web-pairing-view.mjs` with the human present, never an unattended
-GUI test. At 1280 and 390 check the form, invalid/expired/already-used message,
+GUI test. At 1280 and 390 check the form, wrong/expired message,
 waiting status and Stop waiting. Have another paired client Allow the code and
 watch automatic completion. Check the HttpOnly, SameSite Strict cookie, no raw
 credential in browser JSON, no code in daemon logs and no fragment after submit.
