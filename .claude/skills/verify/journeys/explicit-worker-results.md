@@ -51,3 +51,11 @@ wrong execution/input receipts, malformed/unavailable evidence, valid failure
 results and complete report/follow-up bytes. Existing report-attribution tests
 also cover full assistant pages and split-body storage. This journey proves the
 worker-result operation surface, not GUI rendering or model note consumption.
+
+Re-run the driver/Neo contracts and repository checks from this same source tree:
+
+```bash
+(cd packages/daemon && NODE_ENV=test node_modules/.bin/vitest run \
+  tests/unit/1-core/drivers tests/unit/1-core/operations/neo-)
+bun run check
+```

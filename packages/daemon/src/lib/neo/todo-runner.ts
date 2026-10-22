@@ -504,6 +504,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     if (todo)
       for (const pack of deps.packs()) pack.todos?.openedPrs?.(todo, readDriverOpenedPrs(outcome));
     if (todo) relocate(id);
+    const turns = readDriverTurnEnds(outcome);
+    if (!turns.length) return;
     const ask = todo && store.getAsk(todo.askId);
     const current = sessions.readRef(id);
     if (
@@ -517,7 +519,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     )
       return;
     const inputs = sessions.inputs.list(id);
-    for (const turn of readDriverTurnEnds(outcome)) {
+    for (const turn of turns) {
       const dispatch = inputs.findLast((input) => {
         const result = input.outcome;
         return (

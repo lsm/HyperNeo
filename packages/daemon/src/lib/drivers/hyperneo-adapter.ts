@@ -365,10 +365,11 @@ export function readHyperneoTurnEnds(
         SELECT CASE json_type(${sdkMessageBodyAt('a.rowid')}, '$.message.content')
           WHEN 'array' THEN json_extract(${sdkMessageBodyAt('a.rowid')}, '$.message.content') ELSE '[]' END
         FROM sdk_messages a WHERE a.session_id=m.session_id AND a.message_type='assistant'
-          AND a.parent_tool_use_id IS NULL AND a.rowid<m.rowid
+          AND a.parent_tool_use_id IS NULL AND a.rowid<m.rowid AND COALESCE(a.internal_compaction_turn,0)=0
           AND a.rowid>COALESCE((SELECT MAX(p.rowid) FROM sdk_messages p
             WHERE p.session_id=m.session_id AND p.message_type='result' AND p.parent_tool_use_id IS NULL
-              AND COALESCE(p.internal_compaction_turn,0)=0 AND p.rowid<m.rowid),0)
+              AND COALESCE(p.internal_compaction_turn,0)=0 AND p.rowid<m.rowid
+              AND NOT (COALESCE(p.recovery_intercepted,0)=1 AND COALESCE(p.recovery_billing_terminal,0)=0)),0)
         ORDER BY a.rowid DESC LIMIT 1
       )) block WHERE json_extract(block.value, '$.type')='text'), '') AS message
     FROM sdk_messages m WHERE m.session_id=? AND m.message_type='result' AND m.parent_tool_use_id IS NULL
