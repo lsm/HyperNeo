@@ -23,7 +23,7 @@ import {
   readLiveClaudeSessions,
   reuseLiveSessions,
 } from '../../../../src/lib/drivers/claude-desktop-adapter';
-import { WorkDetailSchema } from '../../../../src/lib/drivers/types';
+import { WorkDeliverySchema, WorkDetailSchema } from '../../../../src/lib/drivers/types';
 import { claudeInboxText } from '../../../../src/lib/drivers/claude-inbox';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn';
 
@@ -49,6 +49,10 @@ function record(id: string, fields: Record<string, unknown>) {
 }
 
 const user = { from: 'user', caller: { source: 'rpc' as const } };
+const desktopUI = {
+  state: 'ui-unconfirmed',
+  detail: expect.stringContaining('No supported live Desktop render/read acknowledgment'),
+};
 
 describe('claude-desktop adapter against the app session records', () => {
   let dir: string;
@@ -159,6 +163,80 @@ describe('claude-desktop adapter against the app session records', () => {
     });
   }
 
+  test.each([false, true])(
+    'an import between CLI turns leaves Desktop UI unconfirmed (second turn completed: %s)',
+    async (completed) => {
+      const folder = join(dir, 'projects', '-focus-ops');
+      mkdirSync(folder, { recursive: true });
+      const transcript = join(folder, 'cli-b2.jsonl');
+      const entry = (type: string, uuid: string, text: string) =>
+        JSON.stringify({
+          type,
+          uuid,
+          timestamp: '2026-10-21T20:00:00.000Z',
+          ...(type === 'user'
+            ? { entrypoint: 'sdk-cli', permissionMode: 'bypassPermissions' }
+            : {}),
+          message: {
+            content: type === 'user' ? text : [{ type: 'text', text }],
+            ...(type === 'assistant' ? { stop_reason: 'end_turn' } : {}),
+          },
+        }) + '\n';
+      writeFileSync(
+        transcript,
+        entry('user', 'first-input', 'First turn') + entry('assistant', 'first-reply', 'Turn one')
+      );
+      const importedPath = join(dir, 'acct-b/scope-2/local_b2.json');
+      writeFileSync(
+        importedPath,
+        JSON.stringify(record('b2', { cwd: '/focus/ops', permissionMode: 'acceptEdits' }))
+      );
+      const imported = readFileSync(importedPath, 'utf8');
+      const renderedPath = join(dir, 'synthetic-rendered.json');
+      writeFileSync(renderedPath, JSON.stringify(['Turn one']));
+      const driver = adapter([], 0, () => {
+        appendFileSync(transcript, entry('user', 'second-input', 'Second turn'));
+        if (completed) appendFileSync(transcript, entry('assistant', 'second-reply', 'Turn two'));
+      });
+      const ref = { adapter: 'claude-desktop', id: 'local_b2' };
+      const sent = await driver.send!(ref, 'Second turn', user);
+      expect(sent.ok).toBe(true);
+      if (!sent.ok) throw new Error(sent.detail);
+      const receipt = sent.value.receipt!;
+      const status = await driver.status!(ref, undefined, receipt);
+      const resumeCommands = [...spawned];
+      const restarted = await adapter([]).status!(ref, undefined, receipt);
+      expect(readFileSync(importedPath, 'utf8')).toBe(imported);
+      expect(JSON.parse(readFileSync(renderedPath, 'utf8'))).toEqual(['Turn one']);
+      expect(readFileSync(transcript, 'utf8').match(/end_turn/g)).toHaveLength(completed ? 2 : 1);
+      expect(resumeCommands.map((command) => command.args.slice(0, 4))).toEqual([
+        ['claude', '-p', '--resume', 'cli-b2'],
+      ]);
+      expect(spawned).toEqual([]);
+      expect(sent.value.delivered).toBe(true);
+      expect(receipt).toEqual({ executionId: 'cli-b2', inputId: 'second-input' });
+      expect(WorkDeliverySchema.parse(sent.value)).toMatchObject({
+        desktopUI: { state: 'ui-unconfirmed' },
+      });
+      for (const result of [status, restarted]) {
+        expect(result.ok).toBe(true);
+        if (!result.ok) throw new Error(result.detail);
+        expect(WorkDetailSchema.parse(result.value)).toMatchObject({
+          desktopUI: { state: 'ui-unconfirmed' },
+          inputEvidence: {
+            receipt,
+            transcriptState: completed ? 'completed' : 'accepted',
+            state: completed ? 'observed' : 'pending',
+          },
+        });
+        if (completed)
+          expect(result.value.inputEvidence).toMatchObject({
+            exchange: [{ text: 'Second turn' }, { text: 'Turn two' }],
+          });
+      }
+    }
+  );
+
   describe('send confirms delivery in the target transcript', () => {
     const ref = { adapter: 'claude-desktop', id: 'local_a1' };
     const context = { from: 'session:origin', caller: { source: 'internal' as const } };
@@ -205,6 +283,7 @@ describe('claude-desktop adapter against the app session records', () => {
           delivered: true,
           receipt: { executionId: 'cli-a1', inputId: 'in-1' },
           confirmedAt,
+          desktopUI,
           remoteControl: false,
         },
       });
@@ -232,6 +311,7 @@ describe('claude-desktop adapter against the app session records', () => {
           delivered: true,
           receipt: { executionId: 'cli-a1', inputId: 'u-relay' },
           confirmedAt,
+          desktopUI,
           remoteControl: false,
         },
       });
@@ -258,7 +338,7 @@ describe('claude-desktop adapter against the app session records', () => {
       );
       expect(await queued.send?.(ref, 'load "orders"\nthen stop', context)).toEqual({
         ok: true,
-        value: { delivered: true, confirmedAt, remoteControl: false },
+        value: { delivered: true, confirmedAt, desktopUI, remoteControl: false },
       });
       const lost = adapter(undefined, 1, undefined, undefined, async () => reply);
       expect(await lost.send?.(ref, 'load "orders"', context)).toEqual({
@@ -302,6 +382,7 @@ describe('claude-desktop adapter against the app session records', () => {
           delivered: true,
           receipt: { executionId: 'cli-c1', inputId: 'in-c1' },
           confirmedAt: 0,
+          desktopUI,
           remoteControl: false,
         },
       });
@@ -398,6 +479,7 @@ describe('claude-desktop adapter against the app session records', () => {
       status: 'needs_you',
       lastActivityAt: 30,
       link: 'claude://claude.ai/epitaxy/local_a1',
+      desktopUI,
       remoteControl: false,
     });
   });
@@ -618,6 +700,7 @@ describe('claude-desktop adapter against the app session records', () => {
         status: 'needs_you',
         lastActivityAt: 30,
         link: 'claude://claude.ai/epitaxy/local_a1',
+        desktopUI,
         remoteControl: false,
         execution: { directory: '/focus/dolmen/.claude/worktrees/w1', machine: 'laptop' },
         waitingFor: 'permission prompt',
@@ -779,6 +862,7 @@ describe('claude-desktop adapter against the app session records', () => {
         delivered: true,
         receipt: { executionId: 'cli-b2', inputId: 'in-b2' },
         confirmedAt: Date.parse('2026-10-18T01:00:00.000Z'),
+        desktopUI,
         remoteControl: false,
       },
     };
@@ -1228,10 +1312,15 @@ describe('claudeInputEvidence', () => {
     });
 
   test('is pending until the turn ends, and a half-written last line is still being written', () => {
-    expect(claudeInputEvidence([input], receipt, 'cli-a1')).toEqual({ receipt, state: 'pending' });
+    expect(claudeInputEvidence([input], receipt, 'cli-a1')).toEqual({
+      receipt,
+      state: 'pending',
+      transcriptState: 'accepted',
+    });
     expect(claudeInputEvidence([input, reply(0, 'tool_use')], receipt, 'cli-a1')).toEqual({
       receipt,
       state: 'pending',
+      transcriptState: 'accepted',
     });
     expect(
       claudeInputEvidence(
@@ -1242,6 +1331,25 @@ describe('claudeInputEvidence', () => {
     ).toMatchObject({
       state: 'observed',
       exchange: [{ text: 'go' }, { text: 'step 0' }, { text: 'step 1' }],
+    });
+  });
+
+  test('a later input bounds evidence without proving the earlier transcript completed', () => {
+    const next = JSON.stringify({
+      type: 'user',
+      uuid: 'next',
+      timestamp: '2026-10-14T10:00:02.000Z',
+      message: { content: 'another task' },
+    });
+    expect(
+      claudeInputEvidence([input, reply(0, 'tool_use'), next], receipt, 'cli-a1')
+    ).toMatchObject({
+      state: 'observed',
+      transcriptState: 'accepted',
+    });
+    expect(claudeInputEvidence([input, reply(0), next], receipt, 'cli-a1')).toMatchObject({
+      state: 'observed',
+      transcriptState: 'completed',
     });
   });
 
@@ -1294,6 +1402,7 @@ describe('claudeInputEvidence', () => {
     expect(claudeInputEvidence([input, reply(0, 'tool_use'), queued], receipt, 'cli-a1')).toEqual({
       receipt,
       state: 'pending',
+      transcriptState: 'accepted',
     });
     expect(
       claudeInputEvidence([input, reply(0, 'tool_use'), queued, reply(900)], receipt, 'cli-a1')

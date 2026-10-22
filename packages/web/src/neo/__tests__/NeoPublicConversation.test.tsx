@@ -162,33 +162,56 @@ describe('durable public conversation presentation', () => {
     expect(screen.queryByLabelText('Edit and send again')).toBeNull();
   });
 
+  it.each(['Short ending.', 'A long ending that fills the available line. '.repeat(16)])(
+    'keeps collapsed and expanded controls right-aligned for %s without body toggles',
+    async (ending) => {
+      const value = publication({
+        shortText: `Preview ${ending}`,
+        fullText: `Full details\n\n${ending}`,
+      });
+      const { container } = render(
+        <NeoPublicConversation conversation={conversation([], [value])} />
+      );
+      const more = await screen.findByRole('button', { name: /more$/ });
+      expect(getComputedStyle(more).getPropertyValue('float')).toBe('right');
+      fireEvent.click(screen.getByText(value.shortText.trim()));
+      expect(container.querySelector('[data-publication-details]')).toBeNull();
+      fireEvent.click(more);
+      const less = await screen.findByRole('button', { name: /less$/ });
+      expect(getComputedStyle(less).getPropertyValue('float')).toBe('right');
+      fireEvent.click(screen.getByText(ending.trim(), { exact: true }));
+      expect(container.querySelector('[data-publication-details]')).toBeTruthy();
+      expect(less.getAttribute('aria-expanded')).toBe('true');
+    }
+  );
+
   it('keeps the short reply, shows the full one under it on demand, and copies the full one', async () => {
     const value = publication({ shortText: 'The comparison is ready. Nothing has been executed.' });
     const { container } = render(
       <NeoPublicConversation conversation={conversation([], [value])} />
     );
     expect(container.querySelector('details')).toBeNull();
-    const more = await screen.findByRole('button', { name: /^…\smore$/ });
-    expect(more.closest('p')?.textContent).toBe(`${value.shortText} …\u00a0more`);
+    const more = await screen.findByRole('button', { name: /^more$/ });
+    expect(more.closest('p')?.textContent).toContain(value.shortText);
     expect(more.getAttribute('aria-expanded')).toBe('false');
     expect(container.querySelector('table')).toBeNull();
     fireEvent.click(more);
     await waitFor(() => expect(container.querySelector('table')).toBeTruthy());
     expect(container.querySelector('blockquote')?.textContent).toContain('not verified completion');
     expect(container.querySelector('pre code')?.textContent).toContain('Fictional detail');
-    expect(screen.queryByRole('button', { name: /^…\smore$/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^more$/ })).toBeNull();
     expect(container.querySelector('[data-publication-details] table')).toBeTruthy();
     const copyDetails = screen.getByRole('button', { name: 'Copy details' });
     expect(copyDetails.closest('[data-publication-details]')).toBeTruthy();
     expect(copyDetails.parentElement?.textContent).toBe('Details');
     fireEvent.click(copyDetails);
     await waitFor(() => expect(clipboard).toHaveBeenLastCalledWith(value.fullText));
-    const less = await screen.findByRole('button', { name: /^…less$/ });
+    const less = await screen.findByRole('button', { name: /^less$/ });
     expect(less.closest('[data-publication-details]')).toBeTruthy();
     fireEvent.click(less);
     expect(container.querySelector('[data-publication-details]')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Copy details' })).toBeNull();
-    expect(await screen.findByRole('button', { name: /^…\smore$/ })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: /^more$/ })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Copy Neo’s message' }));
     await waitFor(() => expect(clipboard).toHaveBeenLastCalledWith(value.fullText));
     expect(container.querySelector('script')).toBeNull();

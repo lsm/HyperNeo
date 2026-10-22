@@ -39,12 +39,18 @@ export const WorkSnippetSchema = z.object({
   handle: z.object({ sessionId: z.string(), messageId: z.string() }).optional(),
 });
 
+const DesktopUIEvidenceSchema = z.object({
+  state: z.literal('ui-unconfirmed'),
+  detail: z.string(),
+});
+
 export const WorkSummarySchema = z.object({
   ref: WorkRefSchema,
   title: z.string(),
   place: PlaceSchema,
   status: WorkStatusSchema,
   lastActivityAt: z.number(),
+  desktopUI: DesktopUIEvidenceSchema.optional(),
   link: z.string().optional(),
   watchHint: z
     .string()
@@ -120,6 +126,7 @@ export const WorkInputReceiptSchema = z.object({
 });
 
 export const WorkDeliverySchema = z.object({
+  desktopUI: DesktopUIEvidenceSchema.optional(),
   delivered: z.boolean(),
   unconfirmed: z.literal(true).optional(),
   receipt: WorkInputReceiptSchema.optional(),
@@ -142,6 +149,7 @@ export const WorkInputEvidenceSchema = z.discriminatedUnion('state', [
     .object({
       receipt: WorkInputReceiptSchema,
       state: z.enum(['unavailable', 'pending']),
+      transcriptState: z.literal('accepted').optional(),
       replyAvailability: z.literal('reply_unavailable').optional(),
     })
     .strict(),
@@ -149,6 +157,7 @@ export const WorkInputEvidenceSchema = z.discriminatedUnion('state', [
     .object({
       receipt: WorkInputReceiptSchema,
       state: z.literal('observed'),
+      transcriptState: z.enum(['accepted', 'completed']).optional(),
       exchange: z.array(WorkExchangeEntrySchema).max(40),
       exchangeCut: z.boolean(),
       replyAvailability: z.enum(['complete', 'incomplete']).optional(),

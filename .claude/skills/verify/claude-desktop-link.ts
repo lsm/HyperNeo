@@ -63,9 +63,20 @@ try {
   assert.equal(registered.places[0].work[0].watchHint, undefined);
   const registeredStatus = await rpc('work.status', { ref }) as typeof started;
   assert.equal(registeredStatus.value.link, `claude://claude.ai/epitaxy/${ref.id}`);
-  const sent = await rpc('work.send', { ref, message: 'Synthetic follow-up' }) as { ok: boolean; value?: { delivered?: boolean } };
+  const importedPath = join(scope, `${ref.id}.json`);
+  const imported = readFileSync(importedPath, 'utf8');
+  const sent = await rpc('work.send', { ref, message: 'Synthetic follow-up' }) as { ok: boolean; value?: { delivered?: boolean; receipt?: { executionId: string; inputId: string }; desktopUI?: { state: string } } };
   assert.equal(sent.ok, true, JSON.stringify(sent)); assert.equal(sent.value?.delivered, true);
   assert.match(inputs(), /^bypassPermissions Synthetic follow-up$/m, 'Neo\'s session resumes in the mode it started in, though Desktop relabelled it acceptEdits');
+  const afterSend = await rpc('work.status', { ref, receipt: sent.value?.receipt }) as { ok: boolean; value: { lastReply: string; desktopUI?: { state: string }; inputEvidence?: { state: string; transcriptState?: string } } };
+  const transcript = join(run, 'home/.claude/projects', join(run, 'workspace').replace(/[/.]/g, '-'), `${sessionId}.jsonl`);
+  assert.equal(readFileSync(transcript, 'utf8').match(/end_turn/g)?.length, 2);
+  assert.equal(readFileSync(importedPath, 'utf8'), imported, 'idle resume never rewrites Desktop import state');
+  assert.equal(afterSend.value.lastReply, 'Completed: Synthetic follow-up');
+  evidence.push({ desktopImportUnchanged: true, transcriptCompletedTurns: 2, sent, status: afterSend, realDesktopRender: 'not observed; no supported live acknowledgment' });
+  assert.equal(sent.value?.desktopUI?.state, 'ui-unconfirmed');
+  assert.equal(afterSend.value.desktopUI?.state, 'ui-unconfirmed');
+  assert.equal(afterSend.value.inputEvidence?.transcriptState, 'completed');
   const human = 'local_synthetic-human';
   const humanTranscripts = join(run, 'home/.claude/projects', join(run, 'workspace').replace(/[/.]/g, '-'));
   writeFileSync(join(humanTranscripts, 'synthetic-human.jsonl'), `${JSON.stringify({ type: 'user', uuid: 'h1', entrypoint: 'claude-desktop', permissionMode: 'acceptEdits', message: { content: 'human work' } })}\n`);
@@ -75,7 +86,7 @@ try {
   assert.match(refused.detail ?? '', /acceptEdits permission mode .* claude:\/\/claude\.ai\/epitaxy\/local_synthetic-human/);
   assert.doesNotMatch(inputs(), /Synthetic escalation attempt/, 'a human session is never run headless above its own mode');
   evidence.push({ registeredWithoutDaemonRestart: true, cliSessionId: sessionId, cliInputs: inputs() });
-  console.log(`PASS: work.start runs the task as the first CLI turn with no click, find/status link it once a Desktop record appears, an idle send resumes Neo's session in its started mode, and a human acceptEdits session is sent to Desktop instead. ${run}/evidence/observed.json`);
+  console.log(`PASS: work.start runs the task as the first CLI turn with no click, find/status link it once a Desktop record appears, an idle send resumes Neo's session in its started mode; both transcript turns complete while send/status report ui-unconfirmed, and a human acceptEdits session is never run headlessly. ${run}/evidence/observed.json`);
 } finally {
   ws?.close();
   const pidFile = join(run, 'evidence/worker-pid');

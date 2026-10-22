@@ -1,0 +1,116 @@
+[
+  {
+    "name": "short-collapsed",
+    "layout": {
+      "button": {
+        "left": 219.640625,
+        "right": 273.515625,
+        "top": 480,
+        "bottom": 507.1875,
+        "width": 53.875,
+        "height": 27.1875
+      },
+      "paragraph": {
+        "left": 41,
+        "right": 273.515625,
+        "top": 480,
+        "bottom": 507.1875,
+        "width": 232.515625,
+        "height": 27.1875
+      },
+      "float": "none"
+    }
+  },
+  {
+    "name": "short-expanded",
+    "layout": {
+      "button": {
+        "left": 143.859375,
+        "right": 180.4375,
+        "top": 475.484375,
+        "bottom": 499.28125,
+        "width": 36.578125,
+        "height": 23.796875
+      },
+      "paragraph": {
+        "left": 53,
+        "right": 225.453125,
+        "top": 475.484375,
+        "bottom": 499.28125,
+        "width": 172.453125,
+        "height": 23.796875
+      },
+      "float": "none"
+    }
+  },
+  {
+    "name": "long-collapsed",
+    "layout": {
+      "button": {
+        "left": 308.015625,
+        "right": 361.890625,
+        "top": 667.5625,
+        "bottom": 694.75,
+        "width": 53.875,
+        "height": 27.1875
+      },
+      "paragraph": {
+        "left": 41,
+        "right": 643.390625,
+        "top": 613.1875,
+        "bottom": 694.75,
+        "width": 602.390625,
+        "height": 81.5625
+      },
+      "float": "none"
+    }
+  },
+  {
+    "name": "long-expanded",
+    "layout": {
+      "button": {
+        "left": 53,
+        "right": 89.578125,
+        "top": 663.609375,
+        "bottom": 687.40625,
+        "width": 36.578125,
+        "height": 23.796875
+      },
+      "paragraph": {
+        "left": 53,
+        "right": 631.390625,
+        "top": 378.046875,
+        "bottom": 687.40625,
+        "width": 578.390625,
+        "height": 309.359375
+      },
+      "float": "none"
+    }
+  },
+  {
+    "name": "human-expanded",
+    "layout": {
+      "button": {
+        "left": 482.40625,
+        "right": 538.984375,
+        "top": 356.5625,
+        "bottom": 372.5625,
+        "width": 56.578125,
+        "height": 16
+      },
+      "paragraph": {
+        "left": 482.40625,
+        "right": 684.015625,
+        "top": -186,
+        "bottom": 374.5625,
+        "width": 201.609375,
+        "height": 560.5625
+      },
+      "float": "none"
+    }
+  },
+  {
+    "name": "todo-body-click",
+    "toggledByBody": 1
+  }
+]

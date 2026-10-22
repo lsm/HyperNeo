@@ -1,3 +1,4 @@
+import { ContentDisclosureControl } from '../components/ui/ContentDisclosureControl.tsx';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { ArtifactCards } from '../components/artifacts/ArtifactCards.tsx';
 import type {
@@ -21,7 +22,6 @@ import {
 } from './NeoCardParts.tsx';
 import { neoSessionKind } from './work-driver.ts';
 import { NEO_DONE_SHOWN, type NeoDoneTodosPage, neoDonePageMerge } from './neo-asks.ts';
-import { NeoIcon } from './NeoIcon.tsx';
 import { messageTime } from './NeoMessage.tsx';
 import { t } from '../lib/i18n/index.ts';
 import { neoQuestionText, neoTodoDetail, neoTodoStatus } from './todo-status.ts';
@@ -117,9 +117,16 @@ function TodoRow({
   onOpen?: (link: string, title: string) => void;
 }) {
   const [mark, color] = marks[todo.state];
-  const Summary = onToggle ? 'button' : 'div';
   const detailId = `neo-todo-detail-${todo.id}`;
   const detail = neoTodoDetail(todo);
+  const control = onToggle && (
+    <ContentDisclosureControl
+      expanded={expanded}
+      onToggle={onToggle}
+      aria-label={t(expanded ? 'todo.hideDetails' : 'todo.showDetails', { title: todo.title })}
+      aria-controls={detailId}
+    />
+  );
   return (
     <div
       id={`neo-ref-todo-${todo.id}`}
@@ -141,23 +148,7 @@ function TodoRow({
         </span>
       )}
       <div class="min-w-0 flex-1">
-        <Summary
-          type={onToggle ? 'button' : undefined}
-          onClick={onToggle}
-          aria-label={
-            onToggle
-              ? t(expanded ? 'todo.hideDetails' : 'todo.showDetails', { title: todo.title })
-              : undefined
-          }
-          aria-expanded={onToggle ? expanded : undefined}
-          aria-controls={onToggle ? detailId : undefined}
-          class="block w-full min-w-0 text-left focus-visible:outline-accent"
-        >
-          {onToggle && (
-            <span aria-hidden="true" class="float-right ml-2 text-fg-faint">
-              {expanded ? '⌄' : '›'}
-            </span>
-          )}
+        <div class="block w-full min-w-0 text-left">
           <span
             class={`break-words ${todo.state === 'removed' ? 'text-fg-faint line-through' : 'text-fg'}`}
           >
@@ -168,29 +159,35 @@ function TodoRow({
               {t('todo.new')}
             </span>
           )}
-          <span
-            data-todo-status
-            class={`block ${onToggle && !expanded ? 'truncate' : 'break-words'} text-xs ${number === undefined && todo.state === 'blocked' ? 'text-warning' : 'text-fg-muted'}`}
-          >
-            {number === undefined
-              ? neoTodoStatus(todo)
-              : t('todo.doneWhen', { doneWhen: todo.doneWhen })}
-          </span>
-        </Summary>
+          <div class="flow-root">
+            {!expanded && control}
+            <span
+              data-todo-status
+              class={`block ${onToggle && !expanded ? 'truncate' : 'break-words'} text-xs ${number === undefined && todo.state === 'blocked' ? 'text-warning' : 'text-fg-muted'}`}
+            >
+              {number === undefined
+                ? neoTodoStatus(todo)
+                : t('todo.doneWhen', { doneWhen: todo.doneWhen })}
+            </span>
+          </div>
+        </div>
         {(!onToggle || expanded) && (
-          <div id={detailId} data-todo-details={onToggle ? '' : undefined}>
-            {onToggle &&
-              detail.map((text) => (
-                <p key={text} class="mt-1 whitespace-pre-wrap break-words text-xs text-fg-muted">
-                  {text}
-                </p>
-              ))}
-            <ArtifactCards artifacts={todo.artifacts} />
-            {number === undefined && todo.state === 'blocked' && todo.nextAction && (
-              <span data-todo-next-action class="block break-words text-xs text-fg-muted">
-                {t('todo.nextAction', { action: todo.nextAction })}
-              </span>
-            )}
+          <div id={detailId} data-todo-details={onToggle ? '' : undefined} class="flow-root">
+            <div class="contents [&>p:last-child]:inline [&>span:last-child]:inline">
+              {onToggle &&
+                detail.map((text) => (
+                  <p key={text} class="mt-1 whitespace-pre-wrap break-words text-xs text-fg-muted">
+                    {text}
+                  </p>
+                ))}
+              <ArtifactCards artifacts={todo.artifacts} />
+              {number === undefined && todo.state === 'blocked' && todo.nextAction && (
+                <span data-todo-next-action class="block break-words text-xs text-fg-muted">
+                  {t('todo.nextAction', { action: todo.nextAction })}
+                </span>
+              )}
+            </div>
+            {expanded && control}
           </div>
         )}
       </div>
@@ -600,19 +597,12 @@ export function NeoAskTodos({
       {hasDetails && (
         <div class={neoFooterClass}>
           <span class="flex-1" />
-          <button
-            type="button"
+          <ContentDisclosureControl
             data-ask-details-toggle
-            aria-expanded={open}
-            onClick={() => setOpen(!open)}
-            class={neoPlainClass}
-          >
-            {t('ask.details')}
-            <NeoIcon
-              name="chevron"
-              class={`!h-3.5 !w-3.5 transition-transform${open ? '' : ' rotate-180'}`}
-            />
-          </button>
+            expanded={open}
+            onToggle={() => setOpen(!open)}
+            aria-label={t('ask.details')}
+          />
         </div>
       )}
     </article>
