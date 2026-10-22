@@ -1,18 +1,25 @@
 import { expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
+import { MessageHub, WebSocketClientTransport, type Session } from '@hyperneo/shared';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import { readNeoPublications } from '../../../../web/src/neo/publication-client.ts';
 
 test('real SDK sends root Neo its system prompt and the stored human message, and publishes the reply', async () => {
   const isolated = mkdtempSync(join(tmpdir(), 'neo-sdk-publication-'));
   const requestId = randomUUID();
+  const root = `neo:${randomUUID()}`;
+  const historyMarker = `synthetic-history-${randomUUID()}`;
+  const oldCwd = join(isolated, 'data', 'Neo', '.coordinators', 'old-root');
+  const newCwd = join(isolated, 'data', 'Neo');
+  let sdkSessionId = '';
+  const historySeen: boolean[] = [];
+  const nativeToolsSeen: string[][] = [];
   const shortText = 'The fictional moon garden is ready.';
   const fullText = '## Fictional garden\n\nThe moon garden has three blue flowers.';
   const calls: string[] = [];
@@ -72,6 +79,8 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
         )?.content,
       });
     if (active) {
+      historySeen.push(JSON.stringify(body.messages).includes(historyMarker));
+      nativeToolsSeen.push((body.tools ?? []).map((tool) => tool.name));
       const content = body.messages?.at(-1)?.content;
       if (Array.isArray(content))
         for (const result of content.filter((item) => item.type === 'tool_result'))
@@ -181,6 +190,63 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
   };
 
   try {
+    const { query } = await import('@anthropic-ai/claude-agent-sdk');
+    const { resolveSDKCliPath } = await import('../../../src/lib/agent/sdk-cli-resolver.ts');
+    const { getSDKSessionFilePath } = await import('../../../src/lib/sdk-session-file-manager.ts');
+    await mkdir(oldCwd, { recursive: true });
+    const seedTurn = query({
+      prompt: historyMarker,
+      options: {
+        cwd: oldCwd,
+        executable: 'bun',
+        pathToClaudeCodeExecutable: resolveSDKCliPath(),
+        model: 'claude-haiku-4-5-20251001',
+        tools: [],
+        settingSources: [],
+        permissionMode: 'bypassPermissions',
+        allowDangerouslySkipPermissions: true,
+        env: { ...process.env, ANTHROPIC_API_KEY: 'sk-synthetic-loopback-only' },
+      },
+    });
+    try {
+      for await (const event of seedTurn)
+        if (event.type === 'result') sdkSessionId = event.session_id;
+    } finally {
+      seedTurn.close();
+    }
+    expect(sdkSessionId).not.toBe('');
+    expect(existsSync(getSDKSessionFilePath(oldCwd, sdkSessionId))).toBe(true);
+    const { Database } = await import('../../../src/storage/database.ts');
+    const { createReactiveDatabase } = await import('../../../src/storage/reactive-database.ts');
+    const { NeoRepository } = await import('../../../src/storage/repositories/neo-repository.ts');
+    const { createTestSession } = await import('../../helpers/database.ts');
+    const seed = new Database(join(isolated, 'daemon.db'));
+    try {
+      await seed.initialize(createReactiveDatabase(seed));
+      seed.createSession({
+        ...createTestSession(root),
+        workspacePath: newCwd,
+        sdkSessionId,
+        sdkOriginPath: oldCwd,
+        config: {
+          model: 'claude-haiku-4-5-20251001',
+          maxTokens: 8192,
+          temperature: 1,
+          provider: 'anthropic',
+          permissionMode: 'bypassPermissions',
+          settingSources: [],
+          systemPrompt: 'You are Neo, the user’s personal context coordinator.',
+          sdkToolsPreset: [],
+        },
+      });
+      new NeoRepository(seed.getDatabase()).reserveBinding({
+        sessionId: root,
+        kind: 'neo',
+        projectId: null,
+      });
+    } finally {
+      seed.close();
+    }
     const { createDaemonApp } = await import('../../../src/app.ts');
     const { getConfig } = await import('../../../src/config.ts');
     daemon = await createDaemonApp({
@@ -227,7 +293,10 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
       input: {},
     });
     expect(opened.ok).toBe(true);
-    expect(opened.sessionId).toMatch(/^neo:/);
+    expect(opened.sessionId).toBe(root);
+    const storedAtStartup = (
+      await hub.request<{ session: Session }>('session.get', { sessionId: root })
+    ).session;
     const accepted = await hub.request<{ ok: boolean; messageId: string }>('operation.invoke', {
       name: 'neo.message.send',
       input: {
@@ -290,6 +359,21 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
         join(process.env.VERIFY_EVIDENCE_DIR, 'neo-goal-cycle-sdk.json'),
         JSON.stringify(
           {
+            sdkSessionId,
+            historyMarker,
+            oldCwd,
+            newCwd,
+            historySeen,
+            nativeToolsSeen,
+            storedAtStartup: {
+              sdkSessionId: storedAtStartup.sdkSessionId,
+              config: storedAtStartup.config,
+            },
+            afterResume: {
+              sdkSessionId: daemon.db.getSession(root)?.sdkSessionId,
+              sdkOriginPath: daemon.db.getSession(root)?.sdkOriginPath,
+            },
+            transcriptAtNewCwd: existsSync(getSDKSessionFilePath(newCwd, sdkSessionId)),
             sent,
             calls,
             receipts,
@@ -303,6 +387,15 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
         )
       );
     }
+    expect(storedAtStartup.config.systemPrompt).toBe(neoPrompt());
+    expect(storedAtStartup.config.sdkToolsPreset).toContain('Read');
+    expect(storedAtStartup.config.sdkToolsPreset).toContain('Bash');
+    expect(nativeToolsSeen[0]).toEqual(expect.arrayContaining(['Read', 'Bash']));
+    expect(historySeen.length).toBeGreaterThan(0);
+    expect(historySeen.every(Boolean)).toBe(true);
+    expect(daemon.db.getSession(root)?.sdkSessionId).toBe(sdkSessionId);
+    expect(daemon.db.getSession(root)?.sdkOriginPath).toBe(newCwd);
+    expect(existsSync(getSDKSessionFilePath(newCwd, sdkSessionId))).toBe(true);
     expect(sent[0].system).toContain(neoPrompt());
     for (const instruction of [
       'On a scheduled goal wake',
