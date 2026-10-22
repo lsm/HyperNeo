@@ -394,7 +394,7 @@ describe('prepareCodingExecution', () => {
     expect(calls).toEqual([]);
   });
 
-  test.each(['clone', 'remote', 'checkout'])(
+  test.each(['clone', 'remote', 'checkout', 'for-each-ref', 'update-ref'])(
     'a failed %s step is explicit and releases only its newly owned clone',
     async (step) => {
       const f = fixture();

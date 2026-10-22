@@ -76,6 +76,7 @@ try {
   assert(statSync(join(worker, '.git')).isDirectory());
   assert.equal(git(worker, 'rev-parse', '--git-common-dir'), '.git');
   assert.equal(git(worker, 'rev-parse', 'HEAD'), latest);
+  assert.equal(git(worker, 'rev-parse', 'refs/remotes/origin/dev'), latest);
   assert.equal(git(worker, 'remote', 'get-url', 'origin'), remote);
   const blob = git(source, 'rev-parse', `${latest}:code.txt`);
   const object = join('.git/objects', blob.slice(0, 2), blob.slice(2));

@@ -161,6 +161,20 @@ async function prepareClone(
       const result = await effects.run(args, cwd);
       if (result.code !== 0) return refuse(`${phase}: ${result.stderr.trim()}`);
     }
+    const refs = await effects.run(
+      ['git', 'for-each-ref', '--format=%(refname)', 'refs/remotes/origin/'],
+      plan.destination
+    );
+    if (refs.code !== 0) return refuse(`clone_refs_failed: ${refs.stderr.trim()}`);
+    for (const ref of refs.stdout.split('\n').filter(Boolean)) {
+      const removed = await effects.run(
+        ['git', 'update-ref', '--no-deref', '-d', ref],
+        plan.destination
+      );
+      if (removed.code !== 0) return refuse(`clone_refs_failed: ${removed.stderr.trim()}`);
+    }
+    const pinned = await effects.run(['git', 'update-ref', plan.ref, commit], plan.destination);
+    if (pinned.code !== 0) return refuse(`clone_refs_failed: ${pinned.stderr.trim()}`);
     for (const setting of config.stdout.split('\0').filter(Boolean)) {
       const split = setting.indexOf('\n');
       const written = await effects.run(
