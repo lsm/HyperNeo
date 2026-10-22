@@ -38,11 +38,18 @@ try {
   const id = crypto.randomUUID();
   const reply = await new Promise<unknown>((done, fail) => {
     const timeout = setTimeout(() => fail(new Error('RPC timeout')), 10_000);
-    ws!.onopen = () => ws!.send(JSON.stringify({
-      id, type: 'REQ', method: 'verify.activityBurst',
-      data: { text: 'PRIVATE_SYNTHETIC_BODY' }, sessionId: 'global',
-      version: '1.0.0', timestamp: new Date().toISOString(),
-    }));
+    ws!.onopen = () =>
+      ws!.send(
+        JSON.stringify({
+          id,
+          type: 'REQ',
+          method: 'verify.activityBurst',
+          data: { text: 'PRIVATE_SYNTHETIC_BODY' },
+          sessionId: 'global',
+          version: '1.0.0',
+          timestamp: new Date().toISOString(),
+        })
+      );
     ws!.onmessage = (event) => {
       const message = JSON.parse(event.data.toString());
       if (message.requestId !== id) return;
@@ -58,14 +65,30 @@ try {
   await new Promise((done) => setTimeout(done, 300));
   const report = reports.find((entry) => Number(entry.lagMs) >= 1000);
   assert(report, 'blocked RPC must emit diagnostic');
-  writeFileSync(join(run, 'observed.json'), JSON.stringify({
-    surface: 'isolated daemon WebSocket RPC and production diagnostic attachment',
-    modeledWaitMs: 1350, syntheticOnly: true, runtime: process.versions, report,
-  }, null, 2));
+  writeFileSync(
+    join(run, 'observed.json'),
+    JSON.stringify(
+      {
+        surface: 'isolated daemon WebSocket RPC and production diagnostic attachment',
+        modeledWaitMs: 1350,
+        syntheticOnly: true,
+        runtime: process.versions,
+        report,
+      },
+      null,
+      2
+    )
+  );
   const entries = report.activities as { name: string; kind: string; durationMs?: number }[];
-  assert(entries.some((entry) => entry.name === 'scanner:synthetic:blocked'
-    && entry.kind === 'end' && Number(entry.durationMs) >= 1000),
-  'early blocking phase must survive the later metadata burst');
+  assert(
+    entries.some(
+      (entry) =>
+        entry.name === 'scanner:synthetic:blocked' &&
+        entry.kind === 'end' &&
+        Number(entry.durationMs) >= 1000
+    ),
+    'early blocking phase must survive the later metadata burst'
+  );
   assert.equal(report.droppedActivities, 0, 'recorded live burst size must fit');
   assert(!JSON.stringify(report).includes('PRIVATE_SYNTHETIC_BODY'));
   process.stdout.write(`Retained early blocking phase: ${join(run, 'observed.json')}\n`);
