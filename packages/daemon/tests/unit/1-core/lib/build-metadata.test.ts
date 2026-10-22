@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import daemonPackageJson from '../../../../package.json' with { type: 'json' };
+import * as metadata from '../../../../src/lib/build-metadata';
 import { execFileSync } from 'node:child_process';
 import {
   BUILD_METADATA,
@@ -71,5 +72,22 @@ describe('BUILD_METADATA commit', () => {
   it('is the HEAD of the checkout the daemon runs from', () => {
     const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
     expect(BUILD_METADATA.commit).toBe(process.env.HYPERNEO_BUILD_COMMIT?.trim() || head);
+  });
+});
+
+describe('release build commit shared by web and daemon', () => {
+  it.each([
+    { environment: { HYPERNEO_BUILD_COMMIT: 'b'.repeat(40) }, expected: 'b'.repeat(40) },
+    {
+      environment: { GITHUB_SHA: 'c'.repeat(40), HYPERNEO_BUILD_COMMIT: 'b'.repeat(40) },
+      expected: 'c'.repeat(40),
+    },
+    { environment: {}, expected: SHA },
+  ])('reports the same release commit for $expected', ({ environment, expected }) => {
+    const read = Reflect.get(metadata, 'readReleaseBuildCommit') as (
+      environment: Record<string, string | undefined>,
+      gitHead: () => string
+    ) => string | undefined;
+    expect(read(environment, () => SHA)).toBe(expected);
   });
 });

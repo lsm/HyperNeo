@@ -20,6 +20,7 @@ mkdirSync(`${run}/evidence`);
 const env = { PATH: process.env.PATH, HOME: `${run}/home`, NODE_ENV: 'test', HYPERNEO_DATA_DIR: `${run}/data` };
 const commitA = 'a'.repeat(40);
 const commitB = 'b'.repeat(40);
+const persistent = mode === 'persistent' || mode === 'reproduce-loop';
 const url = `http://127.0.0.1:${port}/neo?build-reconnect=synthetic#keep-route`;
 const pause = (ms) => new Promise((accept) => setTimeout(accept, ms));
 let daemon;
@@ -60,6 +61,7 @@ async function read(page, expected, stage) {
     build: await window.__messageHub.request('operation.invoke', { name: 'system.build', input: {} }),
     loads: Number(sessionStorage.getItem('verify-build-loads')),
     url: location.href,
+    reloadMarkers: Object.keys(sessionStorage).filter((key) => key.startsWith('hyperneo:web-build-reload:')),
     navigation: performance.getEntriesByType('navigation')[0].type,
   }));
   assert.equal(value.build.commit, expected);
@@ -74,8 +76,16 @@ try {
   const { chromium } = createRequire(import.meta.url)('playwright');
   browser = await chromium.launch({ headless: true, ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}) });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
-  await context.addInitScript(() => sessionStorage.setItem('verify-build-loads', String(Number(sessionStorage.getItem('verify-build-loads')) + 1)));
+  await context.addInitScript(() => {
+    const count = Number(sessionStorage.getItem('verify-build-loads')) + 1;
+    sessionStorage.setItem('verify-build-loads', String(count));
+    console.log(`verify-build-load:${count}`);
+  });
   const page = await context.newPage();
+  const loads = [];
+  page.on('console', (message) => {
+    if (message.text().startsWith('verify-build-load:')) loads.push(Number(message.text().split(':')[1]));
+  });
   await page.goto(url);
   assert.equal((await read(page, commitA, 'initial')).loads, 1);
   await page.screenshot({ path: `${run}/evidence/before.png` });
@@ -85,9 +95,15 @@ try {
   await pause(1500);
   assert.equal((await read(page, commitA, 'same-build-stable')).loads, 1);
   await stopDaemon();
-  await build(commitB);
+  if (!persistent) await build(commitB);
   await startDaemon(commitB);
-  if (mode === 'reproduce') {
+  if (mode === 'reproduce-loop') {
+    for (let attempt = 0; attempt < 100 && loads.at(-1) < 4; attempt++) await pause(100);
+    assert(loads.at(-1) >= 4, 'persistent mismatch did not reproduce a reload loop');
+    evidence.observations.push({ stage: 'persistent-reload-loop', loads: [...loads] });
+    writeFileSync(`${run}/evidence/reconnect.json`, JSON.stringify(evidence, null, 2));
+    await stopDaemon();
+  } else if (mode === 'reproduce') {
     await read(page, commitB, 'changed-build');
     await pause(3000);
     assert.equal((await read(page, commitB, 'stale-page')).loads, 1);
@@ -102,7 +118,7 @@ try {
     await pause(1500);
     assert.equal((await read(page, commitB, 'new-build-reconnect-stable')).loads, 2);
   }
-  await page.screenshot({ path: `${run}/evidence/after.png` });
+  if (mode !== 'reproduce-loop') await page.screenshot({ path: `${run}/evidence/after.png` });
   console.log(`${mode} PASS: ${run}/evidence/reconnect.json`);
 } finally {
   await browser?.close();
