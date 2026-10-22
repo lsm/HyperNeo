@@ -15,6 +15,9 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
   const isolated = mkdtempSync(join(tmpdir(), 'neo-sdk-publication-'));
   const requestId = randomUUID();
   const approvalProbeFile = join(isolated, 'approval-probe.txt');
+  const readProbeFile = join(isolated, 'read-probe.txt');
+  const readProbe = `synthetic-code-${randomUUID()}`;
+  await writeFile(readProbeFile, readProbe);
   let approvalProbeIssued = false;
   let approvalProbeDenied = false;
   const approvalProbeResults: unknown[] = [];
@@ -115,7 +118,9 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
           type: 'tool_use',
           id: 'tool-approval-probe',
           name: 'Bash',
-          input: { command: `printf SYNTHETIC_UNAPPROVED > '${approvalProbeFile}'` },
+          input: {
+            command: `cat '${readProbeFile}'; printf SYNTHETIC_UNAPPROVED > '${approvalProbeFile}'`,
+          },
         }
       : publishing
         ? {
@@ -485,6 +490,10 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
       );
     }
     expect(approvalProbeIssued).toBe(true);
+    expect(JSON.stringify(approvalProbeResults)).toContain(readProbe);
+    expect(JSON.stringify(approvalProbeResults)).not.toContain(
+      'Permission to use Bash has been denied'
+    );
     expect(approvalProbeDenied).toBe(true);
     expect(existsSync(approvalProbeFile)).toBe(false);
     expect(storedAtStartup.config.systemPrompt).toBe(neoPrompt());
