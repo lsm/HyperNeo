@@ -36,7 +36,10 @@ describe('ask goal-link upgrade', () => {
   });
 });
 
-function setup(packs: NeoPack[] = []) {
+function setup(
+  packs: NeoPack[] = [],
+  mandateChange?: (ref: string, revision: string | null) => Promise<string | null>
+) {
   const db = new Database(':memory:');
   runMigrations(db, () => {});
   createTables(db);
@@ -47,7 +50,8 @@ function setup(packs: NeoPack[] = []) {
     goals,
     new NeoAskTodoRepository(db),
     scheduler,
-    () => packs
+    () => packs,
+    mandateChange
   );
   scheduler.registerSource(schedules);
   const ops = createSessionGoalOperations({
@@ -85,6 +89,169 @@ describe('session goal detail reads', () => {
       expect(
         db.prepare('SELECT works_note FROM space_goals WHERE id = ?').get(created.goal.id)
       ).toEqual({ works_note: 'Concrete examples work' });
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe('goal mandate reconciliation facts', () => {
+  test('changed mandates remain read-only until the owner reconciles the returned revision', async () => {
+    const seen: { ref: string; revision: string | null }[] = [];
+    const revision = 'confirmed-home-commit';
+    const { db, call } = setup([], async (ref, base) => {
+      seen.push({ ref, revision: base });
+      return base === revision ? null : revision;
+    });
+    try {
+      const goal = (
+        await call('goal.session.create', {
+          title: 'Guide',
+          doneTest: 'Published',
+          mandateRef: 'projects/guide/mandate.md#readers',
+          mandateRev: 'old-home-commit',
+        })
+      ).goal;
+      const first = await call('goal.facts', { goalId: goal.id });
+      expect(
+        first.facts.lines.some(
+          (line: string) => line.startsWith('Mandate changed:') && line.includes(revision)
+        )
+      ).toBe(true);
+      expect(await call('goal.facts', { goalId: goal.id })).toEqual(first);
+      expect((await call('goal.session.get', { goalId: goal.id })).goal.mandateRev).toBe(
+        'old-home-commit'
+      );
+      expect(seen).toEqual([
+        { ref: goal.mandateRef, revision: 'old-home-commit' },
+        { ref: goal.mandateRef, revision: 'old-home-commit' },
+      ]);
+      await call('goal.session.update', { goalId: goal.id, mandateRev: revision });
+      const after = await call('goal.facts', { goalId: goal.id });
+      expect(after.facts.digest).not.toBe(first.facts.digest);
+      expect(after.facts.lines.some((line: string) => line.startsWith('Mandate changed:'))).toBe(
+        false
+      );
+      expect(db.prepare('SELECT facts_lines FROM space_goals WHERE id=?').get(goal.id)).toEqual({
+        facts_lines: null,
+      });
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe('goal what-works compaction', () => {
+  test('ten new journal entries request compaction; rewriting the note advances its cursor without deleting history', async () => {
+    const { db, call, schedules } = setup();
+    try {
+      const goal = (await call('goal.session.create', { title: 'Guide', doneTest: 'Published' }))
+        .goal;
+      const append = (runId: string) =>
+        call('goal.journal.append', {
+          goalId: goal.id,
+          runId,
+          done: runId,
+          effect: 'A reader tried it',
+          worked: 'Concrete examples',
+        });
+      for (let i = 0; i < 9; i++) await append(`cycle-${i}`);
+      const before = await call('goal.facts', { goalId: goal.id });
+      expect(schedules.message(goal.id, { summary: 'changed', nudge: false })).not.toContain(
+        'rewrite'
+      );
+      await append('cycle-9');
+      const due = await call('goal.facts', { goalId: goal.id });
+      expect(due.facts.digest).not.toBe(before.facts.digest);
+      expect(due.facts.lines).toContain('What-works compaction due');
+      expect(await call('goal.facts', { goalId: goal.id })).toEqual(due);
+      expect(schedules.message(goal.id, { summary: 'changed', nudge: false })).toContain(
+        'goal.session.update'
+      );
+      expect(schedules.message(goal.id, { summary: 'changed', nudge: false })).toContain(
+        'worksNote'
+      );
+      db.exec('UPDATE goal_journal SET created_at=5');
+      expect(
+        await call('goal.session.update', {
+          goalId: goal.id,
+          worksNote: 'Small examples bring readers',
+        })
+      ).toMatchObject({ accepted: true, goal: { worksNote: 'Small examples bring readers' } });
+      expect(
+        db.prepare('SELECT works_note_through FROM space_goals WHERE id=?').get(goal.id)
+      ).toEqual({ works_note_through: 10 });
+      const events = db
+        .prepare(
+          "SELECT source,new_state FROM space_goal_events WHERE goal_id=? AND event_type='journal_compacted'"
+        )
+        .all(goal.id) as { source: string; new_state: string }[];
+      expect(events).toHaveLength(1);
+      expect(events[0].source).toBe('neo');
+      expect(JSON.parse(events[0].new_state)).toMatchObject({
+        worksNote: 'Small examples bring readers',
+        worksNoteThrough: 10,
+      });
+      expect((await call('goal.journal.list', { goalId: goal.id })).entries).toHaveLength(10);
+      expect((await call('goal.facts', { goalId: goal.id })).facts.lines).not.toContain(
+        'What-works compaction due'
+      );
+      expect(schedules.message(goal.id, { summary: 'changed', nudge: false })).toContain(
+        'Small examples bring readers'
+      );
+      expect(schedules.message(goal.id, { summary: 'changed', nudge: false })).not.toContain(
+        'rewrite'
+      );
+      await append('cycle-9');
+      for (let i = 10; i < 19; i++) await append(`cycle-${i}`);
+      expect(schedules.message(goal.id, { summary: 'changed', nudge: false })).not.toContain(
+        'rewrite'
+      );
+      await append('cycle-19');
+      expect(schedules.message(goal.id, { summary: 'changed', nudge: false })).toContain('rewrite');
+    } finally {
+      db.close();
+    }
+  });
+  test('a nudge requests a rewrite even without ten entries and foreign sessions cannot compact', async () => {
+    const { db, call, schedules } = setup();
+    try {
+      const goal = (await call('goal.session.create', { title: 'Guide', doneTest: 'Published' }))
+        .goal;
+      expect(schedules.message(goal.id, { summary: '', nudge: true })).toContain('rewrite');
+      expect(
+        await call(
+          'goal.session.update',
+          { goalId: goal.id, worksNote: 'Not mine' },
+          { source: 'mcp', role: 'neo', sessionId: 'neo:other' }
+        )
+      ).toEqual({ accepted: false, reason: 'goal_not_found' });
+      expect((await call('goal.session.get', { goalId: goal.id })).goal.worksNote).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+  test('audit failure rolls the note and cursor back together', async () => {
+    const { db, call } = setup();
+    try {
+      const goal = (await call('goal.session.create', { title: 'Guide', doneTest: 'Published' }))
+        .goal;
+      await call('goal.journal.append', {
+        goalId: goal.id,
+        done: 'Read',
+        effect: 'Learned',
+        worked: 'Examples',
+      });
+      db.exec(
+        "CREATE TRIGGER refuse_compaction BEFORE INSERT ON space_goal_events WHEN NEW.event_type='journal_compacted' BEGIN SELECT RAISE(ABORT,'synthetic audit failure'); END"
+      );
+      await expect(
+        call('goal.session.update', { goalId: goal.id, worksNote: 'Examples help' })
+      ).rejects.toThrow('synthetic audit failure');
+      expect(
+        db.prepare('SELECT works_note,works_note_through FROM space_goals WHERE id=?').get(goal.id)
+      ).toEqual({ works_note: null, works_note_through: null });
+      expect((await call('goal.journal.list', { goalId: goal.id })).entries).toHaveLength(1);
     } finally {
       db.close();
     }

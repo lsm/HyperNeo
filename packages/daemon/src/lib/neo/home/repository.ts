@@ -22,7 +22,7 @@ import { neoDerivedId } from '../derived-id.ts';
 import { applyHomeChoice } from './apply-choice.ts';
 import type { HomeConflict, HomeFailure } from './conflicts.ts';
 import { homeRemoteUrl, type HomeReadInput, type HomeReadResult } from './read.ts';
-import type { HomeSavePlan, HomeSaveResult } from './save.ts';
+import { requireHomePath, type HomeSavePlan, type HomeSaveResult } from './save.ts';
 
 export type HomeResult =
   | { ok: true; path: string; projects: { id: string; homePath: string }[] }
@@ -392,6 +392,31 @@ export class NeoHomeRepository {
       if (stat?.isSymbolicLink()) return true;
     }
     return false;
+  }
+
+  changedRevision(ref: string, revision: string | null): Promise<string | null> {
+    return this.sequence(async () => {
+      const path = ref.split('#')[0];
+      if ('reason' in requireHomePath({ path }) || (await this.hasSymbolicLink(path))) return null;
+      const metadata = await lstat(join(this.root, '.git')).catch((error) => {
+        if (error.code !== 'ENOENT') throw error;
+        return null;
+      });
+      if (!metadata?.isDirectory()) return null;
+      const current = await this.git(
+        ['--literal-pathspecs', 'log', '-1', '--format=%H', 'HEAD', '--', path],
+        true
+      );
+      if (current.code || !current.text || current.text === revision) return null;
+      if (revision) {
+        const [head, previous] = await Promise.all([
+          this.git(['rev-parse', '--verify', '--end-of-options', `HEAD:${path}`], true),
+          this.git(['rev-parse', '--verify', '--end-of-options', `${revision}:${path}`], true),
+        ]);
+        if (!head.code && !previous.code && head.text === previous.text) return null;
+      }
+      return current.text;
+    });
   }
 
   read(input: HomeReadInput, wake?: object): Promise<HomeReadResult> {
