@@ -1,0 +1,24 @@
+{
+  "width": 1280,
+  "phase": "before",
+  "surface": "Component fixture only; no active runtime initialization caller",
+  "cases": [
+    {
+      "section": "Direct component",
+      "titleOpens": true
+    },
+    {
+      "section": "Gated component",
+      "titleOpens": true
+    }
+  ],
+  "runtime": {
+    "surface": "Actual isolated session",
+    "storedInitUuid": "4c719c57-2948-43b9-810d-905d82432be0",
+    "initVisible": false
+  },
+  "viewport": {
+    "width": 1280,
+    "scrollWidth": 1280
+  }
+}
