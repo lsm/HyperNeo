@@ -101,7 +101,7 @@ try {
   const started = performance.now();
   const requestSearch = (text: string) => hub.request<{ places: PlaceGroup[]; unreachable: { source: string; reason: string }[] }>('operation.invoke', { name: 'work.find', input: { text, localOnly: true, adapters: fanout ? ['hyperneo', 'codex-desktop', 'claude-code'] : ['hyperneo'], limit: 20 } });
   const firstSearch = requestSearch('unmatched quokka');
-  const retries: { unreachable: { source: string; reason: string }[] }[] = [];
+  const retries: Awaited<ReturnType<typeof requestSearch>>[] = [];
   let rejectedAt = 0;
   const order: string[] = [];
   const sdkMs: Record<string, number> = {};
@@ -143,7 +143,7 @@ try {
   console.log(JSON.stringify(evidence, null, 2));
   assert.equal(before, after);
   if (fanout) { assert.deepEqual(found.unreachable, []); assert(ids.includes('synthetic-claude'), 'Claude search result lost from fanout'); }
-  if (recovery) { assert(retries[0].unreachable.some(r => r.reason.includes('queue full'))); assert(retryAfterMs! < 2000); assert.deepEqual(retries[1].unreachable, []); }
+  if (recovery) { assert(retries[0].unreachable.some(r => r.reason.includes('queue full'))); assert(retryAfterMs! < 2000); assert.deepEqual(retries[1].unreachable, []); const ids = retries[1].places.flatMap(g => g.work.map(w => w.ref.id)); assert(ids.includes(sessionId) && ids.includes('synthetic-claude')); }
   assert(lagMs < 1000, 'work.find blocked the event loop >=1s');
   if (waitMs) { assert.equal(health.data.status, 'ok'); assert(health.ms < 250, 'Independent health blocked behind work.find'); }
   else { assert(rpcMs < 250, 'Natural work.find exceeded250ms'); assert(reads.every(r => r.sqlMs < 250)); }

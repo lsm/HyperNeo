@@ -65,3 +65,9 @@ empty HOME, activating the three search families. One work.find must return the
 retained HyperNeo and Claude semantic matches with no unreachable adapter, and
 all 10,021 complete indexed bodies/embeddings must retain their hash. The two-slot
 baseline drops claude-code as queue-full; three slots admit this normal fan-out.
+
+For rejection recovery pass `1200 native recovery` (or `1200 bridge recovery`).
+A three-family search fills admission; another text is rejected. After the first
+drains, retry that same rejected text within the two-second reuse interval.
+Require no unreachable adapter and both retained matches, with unchanged stored
+hash. The baseline reuses the rejected promise; failed-entry eviction recovers.
