@@ -1162,28 +1162,49 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       expect(job.status).toBe('pending');
     });
 
-    it('retryPrompt runs the repo status bookkeeping inside the retry transaction', async () => {
-      insertStatusRow('retry-book', 'failed');
-      const bookkeeping: Array<[string[], string, string]> = [];
-      const spyRepo = {
-        updateMessageStatus: (ids: string[], status: string) => {
-          const withinJobWrite = db
-            .prepare(`SELECT send_status FROM sdk_messages WHERE id = ?`)
-            .get(ids[0]) as { send_status: string };
-          bookkeeping.push([[...ids], status, withinJobWrite.send_status]);
-        },
-      } as unknown as SDKMessageRepository;
-
-      await retryPrompt({
+    it('retryPrompt commits the status, badge and released job together', async () => {
+      db.prepare('INSERT INTO sessions (id) VALUES (?)').run(SESSION);
+      const id = sdkRepo.saveUserMessage(SESSION, userMessage('retry-book'), 'failed');
+      const retried = await retryPrompt({
         db: db as never,
         jobQueue,
-        sdkMessageRepo: spyRepo,
+        sdkMessageRepo: sdkRepo,
         sessionId: SESSION,
         messageUuid: 'retry-book',
         origin: 'chat',
       });
+      expect(retried?.dbId).toBe(id);
+      expect(
+        db.prepare('SELECT visible_message_count AS n FROM sessions WHERE id = ?').get(SESSION)
+      ).toEqual({ n: 0 });
+      expect(db.prepare('SELECT send_status FROM sdk_messages WHERE id = ?').get(id)).toEqual({
+        send_status: 'enqueued',
+      });
+      expect(jobPayload(db, SESSION, 'retry-book')?.released).toBe(true);
+    });
 
-      expect(bookkeeping).toEqual([[['db-retry-book'], 'enqueued', 'enqueued']]);
+    it('retryPrompt rolls back its status and job if the badge write fails', async () => {
+      db.prepare('INSERT INTO sessions (id) VALUES (?)').run(SESSION);
+      const id = sdkRepo.saveUserMessage(SESSION, userMessage('retry-atomic'), 'failed');
+      db.exec(`CREATE TRIGGER reject_badge BEFORE UPDATE OF visible_message_count ON sessions
+        BEGIN SELECT RAISE(ABORT, 'badge write failed'); END`);
+      await expect(
+        retryPrompt({
+          db: db as never,
+          jobQueue,
+          sdkMessageRepo: sdkRepo,
+          sessionId: SESSION,
+          messageUuid: 'retry-atomic',
+          origin: 'chat',
+        })
+      ).rejects.toThrow('badge write failed');
+      expect(db.prepare('SELECT send_status FROM sdk_messages WHERE id = ?').get(id)).toEqual({
+        send_status: 'failed',
+      });
+      expect(
+        db.prepare('SELECT visible_message_count AS n FROM sessions WHERE id = ?').get(SESSION)
+      ).toEqual({ n: 1 });
+      expect(jobPayload(db, SESSION, 'retry-atomic')).toBeNull();
     });
 
     it('activatePrompts requeues a processing held claim in place instead of trusting it', async () => {
@@ -1706,14 +1727,16 @@ describe('retryPrompt consumption-evidence guard', () => {
       SESSION,
       JSON.stringify(userMessage('retry-legacy-1')),
       new Date().toISOString(),
-      'failed'
+      'failed',
+      'retry-legacy-1'
     );
     insert.run(
       'db-legacy-consumed',
       SESSION,
       JSON.stringify(userMessage('retry-legacy-1')),
       new Date().toISOString(),
-      'consumed'
+      'consumed',
+      'retry-legacy-1'
     );
     const retried = await retryPrompt({
       db: db as never,

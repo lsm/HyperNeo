@@ -143,6 +143,65 @@ describe('badge instruction interpretation (chain B3)', () => {
     expect(sessionsNotified()).toEqual([]);
   });
 
+  test('a duplicate multi-session batch counts only real visibility changes', () => {
+    db.prepare(`INSERT INTO sessions (id,title,created_at,last_active_at,status,config,metadata,type)
+      VALUES ('second','second',?,?,'active','{}','{}','worker')`).run(NOW, NOW);
+    const failed = repo.saveUserMessage(SID, userMessage('batch-failed'), 'failed');
+    const consumed = repo.saveUserMessage('second', userMessage('batch-consumed'), 'consumed');
+    const pending = repo.saveUserMessage(SID, userMessage('batch-pending'), 'deferred');
+    const hidden = repo.saveUserMessage(
+      SID,
+      { ...userMessage('child'), parent_tool_use_id: 'tool' } as SDKMessage,
+      'failed'
+    );
+    const ids = [failed, consumed, pending, hidden, failed, 'missing'];
+    repo.updateMessageStatus(ids, 'submitted');
+    expect(badgeOf()).toBe(0);
+    expect(badgeOf('second')).toBe(0);
+    repo.updateMessageStatus(ids, 'failed');
+    expect(badgeOf()).toBe(2);
+    expect(badgeOf('second')).toBe(1);
+    repo.updateMessageStatus(ids, 'failed');
+    expect(badgeOf()).toBe(2);
+    expect(badgeOf('second')).toBe(1);
+  });
+
+  test('NULL user status is consumed while hidden and non-user rows do not change visibility', () => {
+    const legacy = repo.saveUserMessage(SID, userMessage('legacy-null'), 'consumed');
+    db.prepare('UPDATE sdk_messages SET send_status = NULL WHERE id = ?').run(legacy);
+    const hidden = repo.saveUserMessageCore(
+      SID,
+      hiddenSubtypeMessage('thinking_tokens', 'hidden-status'),
+      'failed'
+    ).id;
+    const assistant = repo.saveUserMessageCore(
+      SID,
+      assistantMessage('assistant-status'),
+      'consumed'
+    ).id;
+    expect(badgeOf()).toBe(2);
+    repo.updateMessageStatus([legacy, hidden, assistant], 'deferred');
+    expect(badgeOf()).toBe(1);
+    repo.updateMessageStatus([legacy, hidden, assistant], 'consumed');
+    expect(badgeOf()).toBe(2);
+  });
+
+  test('every conditional status transition preserves visible count and a lost CAS does not change it', () => {
+    const statuses = ['deferred', 'enqueued', 'submitted', 'consumed', 'failed'] as const;
+    for (const from of statuses)
+      for (const to of statuses) {
+        const id = repo.saveUserMessage(SID, userMessage(`${from}-${to}`), from);
+        const before = badgeOf();
+        const visible = (status: string) => Number(status === 'consumed' || status === 'failed');
+        expect(repo.transitionMessageSendStatus(id, from, to)).toBe(true);
+        expect(badgeOf()).toBe(before + visible(to) - visible(from));
+        expect(
+          repo.transitionMessageSendStatus(id, to === 'failed' ? 'deferred' : 'failed', to)
+        ).toBe(false);
+        expect(badgeOf()).toBe(before + visible(to) - visible(from));
+      }
+  });
+
   test('rewind operators notify only when the recount changes the stored count', () => {
     repo.saveSDKMessage(SID, assistantMessage('r-1'));
     repo.saveSDKMessage(SID, assistantMessage('r-2'));

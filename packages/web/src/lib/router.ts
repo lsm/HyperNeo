@@ -54,6 +54,7 @@ const SETTINGS_SECTIONS = new Set<SettingsSection>([
   'devices',
   'remote-daemons',
   'skills',
+  'neo-model',
   'models',
   'usage',
   'shortcuts',

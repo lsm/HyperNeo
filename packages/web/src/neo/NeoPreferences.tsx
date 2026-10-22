@@ -13,6 +13,7 @@ import { providerLogoColor, shortenModelName } from '../lib/provider-brand.ts';
 import type { SessionStore } from '../lib/session-store.ts';
 import { NeoIcon } from './NeoIcon.tsx';
 import { NeoModelMenu } from './NeoModelMenu.tsx';
+import { createSettingsPath } from '../lib/router.ts';
 import { t } from '../lib/i18n/index.ts';
 import { ThinkingLevelIcon } from '../components/ThinkingLevelIcon.tsx';
 import { ProviderLogo } from '../components/ProviderLogo.tsx';
@@ -225,7 +226,35 @@ export function NeoPreferences({
           class={`!h-3.5 !w-3.5 transition-transform ${open ? 'rotate-180' : ''}`}
         />
       </button>
-      {open && (
+      {open && !forSession && (
+        <div
+          id="neo-preferences"
+          onKeyDown={(event) => {
+            if (event.key !== 'Escape') return;
+            event.stopPropagation();
+            setOpen(false);
+            trigger.current?.focus();
+          }}
+          class="absolute bottom-full left-0 z-30 mb-3 w-60 rounded-xl border border-line bg-surface-raised p-2 shadow-xl"
+        >
+          <a
+            href={createSettingsPath('neo-model')}
+            onClick={() => setOpen(false)}
+            class="block rounded-lg px-3 py-2 text-sm text-accent"
+          >
+            Neo model settings
+          </a>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void restart()}
+            class="w-full rounded-lg px-3 py-2 text-left text-xs text-fg-muted hover:bg-fill-soft"
+          >
+            Restart Neo
+          </button>
+        </div>
+      )}
+      {open && forSession && (
         <NeoModelMenu
           id={forSession ? 'neo-preferences-session' : 'neo-preferences'}
           models={models}

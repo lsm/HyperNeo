@@ -36,6 +36,7 @@ import { McpEnablementRepository } from './repositories/mcp-enablement-repositor
 import { SkillRepository } from './repositories/skill-repository.ts';
 import { WorkspaceHistoryRepository } from './repositories/workspace-history-repository.ts';
 import { WorkerAgentMemoryEmbedder } from './repositories/agent-memory-worker-embedder.ts';
+import { SDKStatusReader, projectSDKStatusPage } from './sdk-status-reader.ts';
 import {
   type AgentMemoryEmbedder,
   AgentMemoryRepository,
@@ -112,6 +113,7 @@ export class Database {
   private workspaceHistoryRepo!: WorkspaceHistoryRepository;
   private agentMemoryRepo!: AgentMemoryRepository;
   private readonly embedder = new WorkerAgentMemoryEmbedder();
+  private sdkStatusReader: SDKStatusReader | null = null;
   private evolutionRepo!: EvolutionRepository;
   private goalAutomationCursorRepo!: GoalAutomationCursorRepository;
   private providerRepo!: ProviderRepository;
@@ -122,7 +124,10 @@ export class Database {
 
   private static readonly MESSAGE_SEARCH_INDEX_FLUSH_INTERVAL_MS = 2_000;
 
-  constructor(dbPath: string, options?: DatabaseOptions) {
+  constructor(
+    dbPath: string,
+    private readonly options?: DatabaseOptions
+  ) {
     this.core = new DatabaseCore(dbPath, { queryObservability: options?.queryObservability });
     this.messageSearchIndexFlushIntervalMs =
       options?.messageSearchIndexFlushIntervalMs ?? Database.MESSAGE_SEARCH_INDEX_FLUSH_INTERVAL_MS;
@@ -352,6 +357,21 @@ export class Database {
     return this.sdkMessageRepo.getUserMessagesByStatus(sessionId, status, limit, direction);
   }
 
+  async getUserMessagesByStatusAsync(sessionId: string, status: SendStatus, limit: number) {
+    if (this.getDbPath() === ':memory:')
+      return projectSDKStatusPage(this.getUserMessagesByStatus(sessionId, status, limit), status);
+    return (this.sdkStatusReader ??= new SDKStatusReader(
+      this.getDbPath(),
+      undefined,
+      undefined,
+      this.options?.queryObservability
+    )).read({
+      sessionId,
+      status,
+      limit,
+    });
+  }
+
   getMessageByStatusAndUuid(
     sessionId: string,
     status: SendStatus,
@@ -545,12 +565,13 @@ export class Database {
     return this.providerRepo;
   }
 
-  close(): void {
+  close(): void | Promise<void> {
     this.embedder.stop();
     if (this.messageSearchIndexTimer) {
       clearInterval(this.messageSearchIndexTimer);
       this.messageSearchIndexTimer = null;
     }
+    if (this.sdkStatusReader) return this.sdkStatusReader.close().finally(() => this.core.close());
     this.core.close();
   }
 }

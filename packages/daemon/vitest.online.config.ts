@@ -21,6 +21,7 @@ export default defineConfig({
   plugins: [rawMarkdown],
   test: {
     environment: 'node',
+    setupFiles: [resolve(here, 'tests/sdk-worker.online.setup.ts')],
     globals: true,
     fileParallelism: false,
     include: ['tests/online/**/*.test.ts', 'tests/online/**/*_test.ts'],
