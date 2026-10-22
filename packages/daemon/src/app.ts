@@ -1680,7 +1680,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         unsubscribeProviderFailureChanges?.();
         await invalidateInFlightModelLoads();
 
-        db.close();
+        await db.close();
 
         logInfo('[Daemon] Graceful shutdown complete');
       } catch (error) {

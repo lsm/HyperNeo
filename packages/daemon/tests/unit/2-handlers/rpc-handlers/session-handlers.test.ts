@@ -85,21 +85,14 @@ describe('Session RPC Handlers — session.messages.byStatus', () => {
   beforeEach(async () => {
     messageHubData = createMockMessageHub();
     eventBus = createMockInternalEventBus();
-    getUserMessagesByStatus = mock(async () => ({
+    getUserMessagesByStatus = mock(async (_sessionId: string, status: string) => ({
       messages: [
         {
-          type: 'user',
           uuid: 'message-1',
           dbId: 'db-1',
           timestamp: 123,
-          message: {
-            role: 'user',
-            content: [
-              { type: 'text', text: 'First' },
-              { type: 'image' },
-              { type: 'text', text: 'Second' },
-            ],
-          },
+          status,
+          text: 'First\nSecond',
         },
       ],
       total: 42,

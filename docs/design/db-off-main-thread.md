@@ -1,6 +1,6 @@
 # Disk work off the daemon main thread
 
-**Design for human review; no implementation authorized yet.** #7843 stays first. Merge this document only after Neo relays human design approval AND exact-head bot approval/green CI; a PR-sweep nudge is not human approval. Goal: no SQLite or synchronous filesystem/lock/checkpoint work on the main thread, including startup and shutdown. Moving SQL does not by itself make slow queries fast.
+**Approved design; step 1 is now authorized.** #7843 is merged; later units remain separate. Goal: no SQLite or synchronous filesystem/lock/checkpoint work on the main thread, including startup and shutdown. Moving SQL does not by itself make slow queries fast.
 
 ## Boundary and transactions
 
@@ -24,7 +24,7 @@ At fresh dev `c65e9968ef`, lexical `.prepare(` / `.transaction(` counts are **1,
 | `storage/live-query.ts:214,357,401` synchronously evaluates/expands/caches; `lib/live-query/types.ts:5,18` callbacks accept a DB. | Async query plus expansion/metadata on the worker; retain snapshot/delta/version/disposal behavior. |
 | `storage/index.ts:143,468` constructs sync repositories/exposes raw DB; `storage/database-core.ts:66,85` opens/migrates with a 5 s busy timeout. | Per-method async facade/caller conversion, then remove raw escapes; worker boot owns schema, lock and close. |
 
-**Reuse, with limits:** [#7822](https://github.com/lsm/HyperNeo/pull/7822) (`storage/repositories/agent-memory-worker-embedder.ts:19,80`) supplies lazy lifetime, serialized requests, failure and injectable fake-worker seams; it moves inference, not SQLite. Existing `lib/message-search-merge.ts:28` / `lib/message-search-merge-worker.ts:27` demonstrate off-thread connections and disposal. [#7827](https://github.com/lsm/HyperNeo/pull/7827) lowers FTS crisis-merge size; it did not introduce that worker. [#7843](https://github.com/lsm/HyperNeo/pull/7843), pending separately, supplies numbered backup replies, abort/close, verified backup and worker checkpoints, **but its copy transactions and some file stats still run on main**. Also reuse read-only `lib/db-query/db-query-worker.ts:34` and `lib/message-search-worker.ts:23`; preserve scoped-query authorization, do not turn the general command channel into its bypass.
+**Reuse, with limits:** [#7822](https://github.com/lsm/HyperNeo/pull/7822) (`storage/repositories/agent-memory-worker-embedder.ts:19,80`) supplies lazy lifetime, serialized requests, failure and injectable fake-worker seams; it moves inference, not SQLite. Existing `lib/message-search-merge.ts:28` / `lib/message-search-merge-worker.ts:27` demonstrate off-thread connections and disposal. [#7827](https://github.com/lsm/HyperNeo/pull/7827) lowers FTS crisis-merge size; it did not introduce that worker. [#7843](https://github.com/lsm/HyperNeo/pull/7843) supplies numbered backup replies, abort/close, verified backup and worker checkpoints, **but its copy transactions and some file stats still run on main**. Also reuse read-only `lib/db-query/db-query-worker.ts:34` and `lib/message-search-worker.ts:23`; preserve scoped-query authorization, do not turn the general command channel into its bypass.
 
 ## Independently shippable PR sequence
 
