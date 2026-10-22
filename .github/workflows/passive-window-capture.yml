@@ -10,14 +10,14 @@ permissions:
   contents: read
 concurrency:
   group: passive-window-capture-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   test:
     name: Passive capture fake-API tests
     runs-on: macos-15
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - run: swift test --package-path .claude/skills/verify/window-capture
       - name: Invalid JSON fails before native capture
         run: |
