@@ -1146,7 +1146,7 @@ describe('LiveQueryEngine asynchronous evaluation', () => {
     db.close();
   });
 
-  test('awaits the initial evaluation and never publishes a superseded read', async () => {
+  test('awaits the initial read then catches up without starving on in-flight invalidation', async () => {
     const reads = [deferred<Result>(), deferred<Result>()];
     let calls = 0;
     const diffs: QueryDiff[] = [];
@@ -1157,17 +1157,21 @@ describe('LiveQueryEngine asynchronous evaluation', () => {
     reactive.bumpAndFire('items');
     reads[0].resolve({ rows: [{ id: 'stale', name: 'old snapshot' }] });
     await flush();
-    expect(diffs).toEqual([]);
+    expect(diffs).toMatchObject([
+      { type: 'snapshot', rows: [{ id: 'stale', name: 'old snapshot' }] },
+    ]);
     reads[1].resolve({ rows: [{ id: 'current', name: 'complete bytes' }], metadata: { count: 1 } });
     await (handle as typeof handle & { ready: Promise<void> }).ready;
+    await flush();
     expect(diffs).toMatchObject([
+      { type: 'snapshot', rows: [{ id: 'stale', name: 'old snapshot' }] },
       {
-        type: 'snapshot',
+        type: 'delta',
         rows: [{ id: 'current', name: 'complete bytes' }],
         metadata: { count: 1 },
       },
     ]);
-    expect(handle.get()).toEqual(diffs[0].rows);
+    expect(handle.get()).toEqual(diffs[1].rows);
     expect(calls).toBe(2);
   });
 
@@ -1224,6 +1228,47 @@ describe('LiveQueryEngine asynchronous evaluation', () => {
     expect(diffs).toMatchObject([{ type: 'snapshot', rows: [{ id: 'healthy' }] }]);
   });
 
+  test('shared pending subscribers receive snapshots once and raw fingerprints preserve hidden-body changes', async () => {
+    const read = deferred<Result>(),
+      first: QueryDiff[] = [],
+      second: QueryDiff[] = [];
+    let calls = 0;
+    const options = {
+      evaluateAsync: async () => {
+        calls++;
+        if (calls === 1) return read.promise;
+        return {
+          rows: [{ id: 'same', content: 'existing wire cap' }],
+          hashes: { hash: 2, rowHashes: [['same', 2] as [unknown, number]] },
+        };
+      },
+    };
+    const a = engine.subscribe(sql, [], (diff) => first.push(diff), options);
+    const b = engine.subscribe(sql, [], (diff) => second.push(diff), options);
+    await flush();
+    read.resolve({
+      rows: [{ id: 'same', content: 'existing wire cap' }],
+      hashes: { hash: 1, rowHashes: [['same', 1]] },
+    } as Result);
+    await Promise.all([
+      (a as typeof a & { ready: Promise<void> }).ready,
+      (b as typeof b & { ready: Promise<void> }).ready,
+    ]);
+    expect(calls).toBe(1);
+    expect(first).toHaveLength(1);
+    expect(second).toHaveLength(1);
+    a.dispose();
+    reactive.bumpAndFire('items');
+    await flush();
+    await flush();
+    expect(first).toHaveLength(1);
+    expect(second[1]).toMatchObject({
+      type: 'delta',
+      updated: [{ id: 'same', content: 'existing wire cap' }],
+    });
+    expect(second[1].metadata).toBeUndefined();
+  });
+
   test('engine close rejects pending readiness and suppresses all late snapshots', async () => {
     const read = deferred<Result>(),
       diffs: QueryDiff[] = [];
@@ -1239,5 +1284,6 @@ describe('LiveQueryEngine asynchronous evaluation', () => {
     await flush();
     expect(await rejected).toContain('disposed');
     expect(diffs).toEqual([]);
+    expect(() => engine.subscribe(sql, [], () => {})).toThrow('disposed');
   });
 });
