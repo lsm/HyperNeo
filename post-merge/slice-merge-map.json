@@ -1,0 +1,218 @@
+[
+  {
+    "slice": "design",
+    "pr": "lsm/HyperNeo#7935",
+    "url": "https://github.com/lsm/HyperNeo/pull/7935",
+    "merged_at": "2026-10-21T02:24:53Z",
+    "merge_commit_sha": "c09e0108bb368f6dfa9c25b9cc6455d1967b86b3",
+    "head": "3b601d85d0f8d050b5d82c253d5d12ae08423a4a",
+    "state": "closed"
+  },
+  {
+    "slice": "1",
+    "pr": "lsm/HyperNeo#7942",
+    "url": "https://github.com/lsm/HyperNeo/pull/7942",
+    "merged_at": "2026-10-21T02:52:28Z",
+    "merge_commit_sha": "2acca150a864cbd268fccb7ae8a22ac972457ab6",
+    "head": "60341451d3241439c683988dc12219987b15f213",
+    "state": "closed"
+  },
+  {
+    "slice": "2",
+    "pr": "lsm/HyperNeo#7948",
+    "url": "https://github.com/lsm/HyperNeo/pull/7948",
+    "merged_at": "2026-10-21T03:15:19Z",
+    "merge_commit_sha": "5a3c51399452ff8880de043fe1b110b6a6fadfa8",
+    "head": "cd3ee6971b6fc8b582a006f2b69fb1f433ca2b57",
+    "state": "closed"
+  },
+  {
+    "slice": "3",
+    "pr": "lsm/HyperNeo#7953",
+    "url": "https://github.com/lsm/HyperNeo/pull/7953",
+    "merged_at": "2026-10-21T03:45:47Z",
+    "merge_commit_sha": "cf96533524f602c1abfa4b05f8c5ca423cda9620",
+    "head": "6695adec7ab1ba63364e0f28e608ec3671d5a63f",
+    "state": "closed"
+  },
+  {
+    "slice": "4",
+    "pr": "lsm/HyperNeo#7958",
+    "url": "https://github.com/lsm/HyperNeo/pull/7958",
+    "merged_at": "2026-10-21T06:31:00Z",
+    "merge_commit_sha": "fe9ed0447a86c2d23524d132aada7eda3ffb7431",
+    "head": "d7b439473f219aec392b612e80d56bfb9bef5458",
+    "state": "closed"
+  },
+  {
+    "slice": "5",
+    "pr": "lsm/HyperNeo#7977",
+    "url": "https://github.com/lsm/HyperNeo/pull/7977",
+    "merged_at": "2026-10-21T07:49:40Z",
+    "merge_commit_sha": "ee169ca42965361c958b69e5dbb0ca87785a79dd",
+    "head": "52985a7cd6721605d1f94cdc885e99a74ba58817",
+    "state": "closed"
+  },
+  {
+    "slice": "6",
+    "pr": "lsm/HyperNeo#7982",
+    "url": "https://github.com/lsm/HyperNeo/pull/7982",
+    "merged_at": "2026-10-21T09:32:11Z",
+    "merge_commit_sha": "124f5b91ac67b78548d6d14421db9060f78d05f1",
+    "head": "bcb5177059c7cd91f27c3de78984d2aab7fdce51",
+    "state": "closed"
+  },
+  {
+    "slice": "7",
+    "pr": "lsm/HyperNeo#7990",
+    "url": "https://github.com/lsm/HyperNeo/pull/7990",
+    "merged_at": "2026-10-21T10:01:39Z",
+    "merge_commit_sha": "30bfa9c1870d50e22d7cf01c86ac13af732e6dc1",
+    "head": "7bbee0f50fa0fac9480a61fb958d87e108c75574",
+    "state": "closed"
+  },
+  {
+    "slice": "8",
+    "pr": "lsm/HyperNeo#7992",
+    "url": "https://github.com/lsm/HyperNeo/pull/7992",
+    "merged_at": "2026-10-21T10:45:40Z",
+    "merge_commit_sha": "108bbf6ad3bc16d8e3d87c047b4721f3437288f4",
+    "head": "1e916005fc262e30ea2a09f5d179d1c620ad7102",
+    "state": "closed"
+  },
+  {
+    "slice": "9",
+    "pr": "lsm/HyperNeo#7994",
+    "url": "https://github.com/lsm/HyperNeo/pull/7994",
+    "merged_at": "2026-10-21T11:26:50Z",
+    "merge_commit_sha": "38f9ec8820bfd3a0ae75761ab45ffc73e3e0f8c1",
+    "head": "4b0e90696e2bf1c3e428eed68cfc9826997ed481",
+    "state": "closed"
+  },
+  {
+    "slice": "10",
+    "pr": "lsm/HyperNeo#7998",
+    "url": "https://github.com/lsm/HyperNeo/pull/7998",
+    "merged_at": "2026-10-21T11:57:29Z",
+    "merge_commit_sha": "a75253028a57a8134655d799d983478b1f0d8249",
+    "head": "73266ec260b0419a8824fb7a1a07479d9b23eec1",
+    "state": "closed"
+  },
+  {
+    "slice": "11a",
+    "pr": "lsm/HyperNeo#8000",
+    "url": "https://github.com/lsm/HyperNeo/pull/8000",
+    "merged_at": "2026-10-21T13:00:14Z",
+    "merge_commit_sha": "5e16f1bfc18abab60fd48760655b36f35a04cf5f",
+    "head": "c9af8e60f38b353704badfeb0f3ebf1dc74a2526",
+    "state": "closed"
+  },
+  {
+    "slice": "11b",
+    "pr": "lsm/HyperNeo#8002",
+    "url": "https://github.com/lsm/HyperNeo/pull/8002",
+    "merged_at": "2026-10-21T13:24:14Z",
+    "merge_commit_sha": "01458232d58e550450315ec69ef3e8acb385c9a3",
+    "head": "0eecf34f7a195ac8065cf5e3e460464fef3c4ff6",
+    "state": "closed"
+  },
+  {
+    "slice": "12",
+    "pr": "lsm/HyperNeo#8008",
+    "url": "https://github.com/lsm/HyperNeo/pull/8008",
+    "merged_at": "2026-10-21T14:02:37Z",
+    "merge_commit_sha": "f6dc840e309e78a0f9717b6dd0b5c85a17b0e0e8",
+    "head": "3128068514c876b309e11df89e3fe1ad70e2348b",
+    "state": "closed"
+  },
+  {
+    "slice": "13",
+    "pr": "lsm/HyperNeo#8025",
+    "url": "https://github.com/lsm/HyperNeo/pull/8025",
+    "merged_at": "2026-10-21T16:37:05Z",
+    "merge_commit_sha": "f94ec26d51fda14bd7230d426a71f68124ddee14",
+    "head": "a4f436291bca8ba17838a5444e646bd4385ebdf1",
+    "state": "closed"
+  },
+  {
+    "slice": "14",
+    "pr": "lsm/HyperNeo#8038",
+    "url": "https://github.com/lsm/HyperNeo/pull/8038",
+    "merged_at": "2026-10-21T17:48:38Z",
+    "merge_commit_sha": "73e9064e143134c58ec1d53071a9d1d93c9b97d2",
+    "head": "17709ae3fd23b4e797d25f30fc2f8d860b8ee6ce",
+    "state": "closed"
+  },
+  {
+    "slice": "15",
+    "pr": "lsm/HyperNeo#8021",
+    "url": "https://github.com/lsm/HyperNeo/pull/8021",
+    "merged_at": "2026-10-21T16:28:00Z",
+    "merge_commit_sha": "35dc267abbf27f29eb1e55a2aa4021537c0e78e0",
+    "head": "c3e6ebd0ec02844e595a65fa58d9249882507601",
+    "state": "closed"
+  },
+  {
+    "slice": "16",
+    "pr": "lsm/HyperNeo#8045",
+    "url": "https://github.com/lsm/HyperNeo/pull/8045",
+    "merged_at": "2026-10-21T18:04:02Z",
+    "merge_commit_sha": "ef253af0637b0f86172d51980674b29e1fde3201",
+    "head": "c46132725d78fcb4d8441315ad30400cd9439019",
+    "state": "closed"
+  },
+  {
+    "slice": "17",
+    "pr": "lsm/HyperNeo#8050",
+    "url": "https://github.com/lsm/HyperNeo/pull/8050",
+    "merged_at": "2026-10-21T20:03:28Z",
+    "merge_commit_sha": "b13a49a2afa5b26b6d9f29e5e7951e310207c603",
+    "head": "d49ef7da8eb565a5cd3121a7e5c11b2187666d84",
+    "state": "closed"
+  },
+  {
+    "slice": "18",
+    "pr": "lsm/neo-ios#159",
+    "url": "https://github.com/lsm/neo-ios/pull/159",
+    "merged_at": "2026-10-21T18:06:09Z",
+    "merge_commit_sha": "1cfb741a4d87a0d298550aaa2a3e3653ed20e62a",
+    "head": "5ff828a611745ebdc529a0a1c2e29e0374891632",
+    "state": "closed"
+  },
+  {
+    "slice": "19",
+    "pr": "lsm/neo-ios#162",
+    "url": "https://github.com/lsm/neo-ios/pull/162",
+    "merged_at": "2026-10-22T00:39:13Z",
+    "merge_commit_sha": "9aa46aa6f63d878fbb9f3db3fe6eff880c3975bf",
+    "head": "9176270e264644b001c8ca51efb15f58f6c23b07",
+    "state": "closed"
+  },
+  {
+    "slice": "20",
+    "pr": "lsm/neo-ios#172",
+    "url": "https://github.com/lsm/neo-ios/pull/172",
+    "merged_at": "2026-10-22T04:00:39Z",
+    "merge_commit_sha": "fa7f9d80a14aa74328299ab8a4e9577625200424",
+    "head": "14667de2c3710166401d747342878cd48379ee54",
+    "state": "closed"
+  },
+  {
+    "slice": "21",
+    "pr": "lsm/neo-ios#175",
+    "url": "https://github.com/lsm/neo-ios/pull/175",
+    "merged_at": "2026-10-22T02:59:03Z",
+    "merge_commit_sha": "2b62ba52a08d1cd964da70c8c8cd04732304b0f0",
+    "head": "646bbdd09805770de6daf2f698bc15180f97a708",
+    "state": "closed"
+  },
+  {
+    "slice": "22",
+    "pr": "lsm/HyperNeo#8162",
+    "url": "https://github.com/lsm/HyperNeo/pull/8162",
+    "merged_at": "2026-10-22T04:52:09Z",
+    "merge_commit_sha": "9a353b13f0cf800f24324c6573e026cdac6fb89b",
+    "head": "398444b46227021dd6ab07729fc3927af6792862",
+    "state": "closed"
+  }
+]
