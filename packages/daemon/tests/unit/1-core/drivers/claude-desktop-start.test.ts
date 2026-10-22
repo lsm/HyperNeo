@@ -130,7 +130,7 @@ describe('claude-desktop start', () => {
               cwd,
               title: 'Bigger font',
               lastActivityAt: clock,
-              permissionMode: options.importedPermissionMode,
+              permissionMode: options.importedPermissionMode ?? 'acceptEdits',
             })
           );
         }
@@ -192,71 +192,67 @@ describe('claude-desktop start', () => {
     }
   );
 
-  test('the task runs as the first CLI turn; Desktop imports the session when that turn exits', async () => {
-    expect(await adapter().start?.(request, user)).toEqual({
+  test('B1 prepares, exits and imports before any actual task is dispatched', async () => {
+    expect(await adapter().start!(request, user)).toMatchObject({
       ok: true,
       value: {
         ref: { adapter: 'claude-desktop', id: 'local_u1' },
         title: 'Bigger font',
-        desktopUI: {
-          state: 'ui-unconfirmed',
-          detail: expect.stringContaining('No supported live Desktop render/read acknowledgment'),
-        },
         place,
-        status: 'running',
-        lastActivityAt: 1_000,
-        receipt: { executionId: 'u1', inputId: 'u-open' },
-        watchHint:
-          'Watch this Claude Code session via Neo with work.status using this work ref. It is not registered in Claude Desktop yet.',
+        status: 'queued',
+        permissionMode: 'acceptEdits',
+        link: 'claude://claude.ai/epitaxy/local_u1',
       },
     });
-    expect(spawned).toEqual([
-      [
-        'claude',
-        '-p',
-        '--session-id',
-        'u1',
-        '-n',
-        'Bigger font',
-        '--permission-mode',
-        'bypassPermissions',
-        '--',
-        'Raise the body font to 16px.',
-      ],
-      ['script', '-q', '/dev/null', 'claude', '--desktop', '--resume', 'u1'],
+    expect(spawned[0].slice(0, 8)).toEqual([
+      'claude',
+      '-p',
+      '--session-id',
+      'u1',
+      '-n',
+      'Bigger font',
+      '--permission-mode',
+      'bypassPermissions',
+    ]);
+    expect(spawned[0]).toContain('--model');
+    expect(spawned[0]).toContain('haiku');
+    expect(spawned[0].at(-1)).not.toContain(request.message);
+    expect(spawned[1]).toEqual([
+      'script',
+      '-q',
+      '/dev/null',
+      'claude',
+      '--desktop',
+      '--resume',
+      'u1',
     ]);
     expect(inbox).toEqual([]);
   });
 
-  test('the task still runs when Desktop never imports the session', async () => {
-    expect(await adapter({ desktop: 'never' }).start?.(request, user)).toMatchObject({
-      ok: true,
-      value: { status: 'running', receipt: { executionId: 'u1', inputId: 'u-open' } },
-    });
-    expect(handoffs).toBe(1);
-    expect(clock).toBe(1_000);
-  });
-
-  test('B1 prepares the session without executing the actual task in the CLI', async () => {
-    await adapter().start!(request, user);
-    expect(spawned[0].at(-1)).not.toContain(request.message);
-  });
-
-  test('B1 does not dispatch work when Desktop imports a different permission mode', async () => {
-    const result = await adapter({
-      permissionMode: 'bypassPermissions',
-      importedPermissionMode: 'acceptEdits',
-    }).start!(request, user);
-    expect(result).toMatchObject({
+  test('B1 refuses an unconfirmed import without running the task headlessly', async () => {
+    expect(await adapter({ desktop: 'never' }).start!(request, user)).toMatchObject({
       ok: false,
       reason: 'not_delivered',
-      detail: expect.stringContaining('permission mode'),
+    });
+    expect(spawned.every((args) => !args.includes(request.message))).toBe(true);
+    expect(handoffs).toBe(1);
+  });
+
+  test('B1 accepts and reports the actual imported acceptEdits mode', async () => {
+    expect(
+      await adapter({
+        permissionMode: 'bypassPermissions',
+        importedPermissionMode: 'acceptEdits',
+      }).start!(request, user)
+    ).toMatchObject({
+      ok: true,
+      value: { permissionMode: 'acceptEdits', status: 'queued' },
     });
     expect(spawned.every((args) => !args.includes(request.message))).toBe(true);
     expect(inbox).toEqual([]);
   });
 
-  test('the worker permission mode setting runs the first turn; Desktop gets no flag', async () => {
+  test('the configured mode applies only to preparation; Desktop gets no flag', async () => {
     expect(await adapter({ permissionMode: 'acceptEdits' }).start?.(request, user)).toMatchObject({
       ok: true,
     });
@@ -267,7 +263,7 @@ describe('claude-desktop start', () => {
   test('status finds the started session before Desktop registers it', async () => {
     const driver = adapter({ desktop: 'never' });
     const started = await driver.start?.(request, user);
-    expect(started).toMatchObject({ ok: true });
+    expect(started).toMatchObject({ ok: false, reason: 'not_delivered' });
     expect(
       await driver.status!({ adapter: 'claude-desktop', id: 'local_u1' }, undefined)
     ).toMatchObject({ ok: true, value: { ref: { id: 'local_u1' }, title: 'Bigger font' } });
@@ -278,7 +274,7 @@ describe('claude-desktop start', () => {
     const started = await driver.start!(request, user);
     const ref = { adapter: 'claude-desktop', id: 'local_u1' };
     const find = () => driver.find({ includeClosed: true, limit: 20 });
-    expect(started.ok && started.value.link).toBeUndefined();
+    expect(started.ok).toBe(false);
     const before = (await find())
       .flatMap((group) => group.work)
       .find((work) => work.ref.id === ref.id)!;
@@ -396,6 +392,6 @@ describe('claude-desktop start', () => {
       detail: 'the message did not appear in the session transcript',
     });
     expect(spawned).toHaveLength(1);
-    expect(killed).toEqual(['SIGKILL']);
+    expect(killed).toEqual([]);
   });
 });
