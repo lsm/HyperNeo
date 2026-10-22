@@ -88,7 +88,7 @@ beforeEach(async () => {
   const source = join(fixture, 'source');
   await mkdir(join(source, 'projects', 'shared'), { recursive: true });
   await writeFile(join(source, 'README.md'), '# Shared home\n');
-  await writeFile(join(source, '.gitignore'), '.coordinators/\n');
+  await writeFile(join(source, '.gitignore'), '.coordinators/\n.claude/\nworktrees/\n');
   await writeFile(join(source, 'direction.md'), 'Human direction from the first machine\n');
   await writeFile(join(source, 'projects', 'shared', 'mandate.md'), 'Shared project mandate\n');
   await git(source, 'init', '--initial-branch=main', '--quiet');

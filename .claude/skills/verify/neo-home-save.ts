@@ -19,6 +19,12 @@ async function git(...args: string[]) {
 await writeFile(`${run}/home/.gitconfig`, '[user]\n name = Verify Neo\n email = verify@example.invalid\n[commit]\n gpgsign = false\n');
 await mkdir(`${root}/.coordinators/verify`, { recursive: true });
 await writeFile(`${root}/.coordinators/verify/transcript.md`, 'Synthetic private transcript.');
+if (mode === 'runtime') {
+  for (const dir of ['.claude', 'worktrees']) {
+    await mkdir(`${root}/${dir}/verify`, { recursive: true });
+    await writeFile(`${root}/${dir}/verify/private.md`, `Synthetic ${dir} bytes.`);
+  }
+}
 const input = { path: 'projects/verify/digest.md', content: '  Curated progress 🦊.\n\n', message: 'Record verified progress' };
 const first = await rpc(input);
 await writeFile(`${run}/evidence/neo-home-save.json`, JSON.stringify({ first }, null, 2));
@@ -81,7 +87,15 @@ try {
 } finally {
   await chmod(`${root}/readonly`, 0o755);
 }
-const evidence = { first, repeat, commits, committedPaths, head, content, denied, confirmation, dirty, humanDraft, failure, afterFailure, retry, writeFailure, createFailure, finalHead: await git('rev-parse', 'HEAD'), status: await git('status', '--porcelain'), trackedTranscripts: await git('ls-files', '.coordinators') };
+const runtime = [];
+if (mode === 'runtime') for (const dir of ['.claude', 'worktrees']) {
+  const bytes = await readFile(`${root}/${dir}/verify/private.md`, 'utf8');
+  const tracked = await git('ls-files', '--', dir);
+  const ignore = await git('show', 'HEAD:.gitignore');
+  runtime.push({ dir, bytes, tracked, ignore });
+  if (bytes !== `Synthetic ${dir} bytes.` || tracked || !ignore.split('\n').includes(`${dir}/`)) throw new Error('Runtime data was altered, tracked or not ignored');
+}
+const evidence = { runtime, first, repeat, commits, committedPaths, head, content, denied, confirmation, dirty, humanDraft, failure, afterFailure, retry, writeFailure, createFailure, finalHead: await git('rev-parse', 'HEAD'), status: await git('status', '--porcelain'), trackedTranscripts: await git('ls-files', '.coordinators') };
 await writeFile(`${run}/evidence/neo-home-save.json`, JSON.stringify(evidence, null, 2));
 if (!repeat.ok || first.commit !== head || repeat.commit !== head || commits !== '2' || committedPaths !== input.path || content !== input.content || denied.ok || !denied.reason?.includes('content') || confirmation.ok || !confirmation.reason?.includes('confirmation_required') || dirty.ok || !dirty.reason?.includes('dirty') || humanDraft !== 'Synthetic human draft.' || !String(failure.error).includes('Author identity unknown') || afterFailure !== input.content || !retry.ok || !String(writeFailure.error).includes('ENAMETOOLONG') || !String(createFailure.error).includes('EACCES') || evidence.finalHead !== head || evidence.status || evidence.trackedTranscripts) throw new Error('Home save contract failed');
 console.log('PASS: real RPC saves exact bytes in one commit, refuses credentials/confirmation/dirty writes, preserves existing content on failure, and retries cleanly.');

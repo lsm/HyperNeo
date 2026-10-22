@@ -1,4 +1,5 @@
 import { describe, expect, spyOn, test } from 'bun:test';
+import { NEO_GOAL_CYCLE } from '@hyperneo/prompts';
 import { createSessionGoalOperations } from '../../../../src/lib/goals/session-goal-operations.ts';
 import { SessionGoalSchedules } from '../../../../src/lib/goals/session-goal-schedules.ts';
 import { SessionScheduler } from '../../../../src/lib/scheduler/session-schedules.ts';
@@ -259,6 +260,35 @@ describe('goal what-works compaction', () => {
 });
 
 describe('goal-owned schedules', () => {
+  test('puts the full cycle only in goal wake content, preserving cadence and identity', async () => {
+    const { db, call, scheduler, schedules } = setup();
+    try {
+      const goal = (
+        await call('goal.session.create', {
+          title: 'Standing outcome',
+          doneTest: 'Measured outcome',
+          cadence: { kind: 'every', everyMs: 900000 },
+          nudgeEvery: 2,
+        })
+      ).goal;
+      const row = scheduler.repo.getBySource('goal', goal.id)!;
+      expect(row).toMatchObject({ cadence: { kind: 'every', everyMs: 900000 }, nudgeEvery: 2 });
+      for (const nudge of [false, true]) {
+        const message = schedules.message(goal.id, { summary: 'A measured change', nudge });
+        expect(message?.startsWith(`${NEO_GOAL_CYCLE}\n\nGoal`)).toBe(true);
+        expect(message).toContain(`goalId ${goal.id}`);
+        expect(message).toContain(`runId schedule:${row.id}:${row.nextRunAt}`);
+      }
+      expect(
+        scheduler
+          .source('reminder')!
+          .message('reminder', { summary: 'Only this reminder', nudge: false })
+      ).toBe('Only this reminder');
+    } finally {
+      db.close();
+    }
+  });
+
   test.each(['completed', 'archived', 'schedule_deleted', 'goal_deleted'] as const)(
     '%s during fact collection retires the wake without a failed delivery',
     async (change) => {

@@ -20,7 +20,7 @@ async function git(cwd: string, args: string[], allowFailure = false) {
 const source = join(run, 'first-machine');
 const remote = join(run, 'shared.git');
 await mkdir(source);
-await writeFile(join(source, '.gitignore'), '.coordinators/\n');
+await writeFile(join(source, '.gitignore'), '.coordinators/\n.claude/\nworktrees/\n');
 await writeFile(join(source, 'README.md'), '# Synthetic shared home\n');
 await writeFile(join(source, 'direction.md'), 'Human direction from the first machine\n');
 if (mode === 'nested') {

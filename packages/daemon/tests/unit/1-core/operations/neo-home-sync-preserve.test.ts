@@ -52,7 +52,7 @@ beforeEach(async () => {
   process.env.PATH = `${join(fixture, 'bin')}:${process.env.PATH}`;
   await mkdir(peer);
   await git(peer, 'init', '--quiet', '--initial-branch=main');
-  await writeFile(join(peer, '.gitignore'), '.coordinators/\nprivate/\n');
+  await writeFile(join(peer, '.gitignore'), '.coordinators/\n.claude/\nworktrees/\nprivate/\n');
   await writeFile(join(peer, 'direction.md'), 'Initial\n');
   await git(peer, 'add', '.');
   await git(peer, 'commit', '-m', 'Initial');

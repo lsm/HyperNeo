@@ -1,3 +1,4 @@
+import { NEO_GOAL_CYCLE } from '../../../packages/prompts/src/mod.ts';
 import { Database } from 'bun:sqlite';
 import { mkdir, writeFile } from 'node:fs/promises';
 
@@ -52,7 +53,7 @@ evidence.fired = delivered;
 const message = await until(() => db.query('SELECT * FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ?').get(root, delivered.last_message_id), 'Wake missing from transcript');
 evidence.message = message;
 const serialized = JSON.stringify(message);
-assert(serialized.includes('daemon-note') && serialized.includes('mandate.md#guides') && serialized.includes(`goalId ${goalId}`) && serialized.includes(`runId ${delivered.last_message_id}`), 'Wake omitted goal context or run id');
+assert(serialized.includes('daemon-note') && serialized.includes(NEO_GOAL_CYCLE.split('\n')[0]) && serialized.includes('mandate.md#guides') && serialized.includes(`goalId ${goalId}`) && serialized.includes(`runId ${delivered.last_message_id}`), 'Wake omitted goal context or run id');
 const after = await read();
 evidence.after = after;
 assert(after.facts.summary === '' && after.facts.digest === delivered.facts_digest, 'Delivery did not atomically save its facts baseline');
