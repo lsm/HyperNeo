@@ -38,5 +38,8 @@
     intermediate 256-record cap. End state: `observed.json` retains that early
     phase and reports zero drops within the bounded 512-record ring. Larger
     bursts still drop the oldest records and disclose the drop count. The helper
-    stops its daemon in `finally`. This proves retention and payload privacy,
+    first emits an unrelated synthetic startup stall, then selects the burst
+    report by its named phase so earlier background stalls cannot poison proof.
+    It separately asserts the selected report's lag exceeds one second.
+    The helper stops its daemon in `finally`. This proves retention and payload privacy,
     not scanner causality or a fix for physical disk stalls.

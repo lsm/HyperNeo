@@ -67,8 +67,13 @@ try {
   });
   assert.deepEqual(reply, { accepted: true });
   await new Promise((done) => setTimeout(done, 300));
-  const report = reports.find((entry) => Number(entry.lagMs) >= 1000);
+  const report = reports.find((entry) =>
+    (entry.activities as { name: string }[]).some(
+      (phase) => phase.name === 'scanner:synthetic:blocked'
+    )
+  );
   assert(report, 'blocked RPC must emit diagnostic');
+  assert(Number(report.lagMs) >= 1000);
   writeFileSync(
     join(run, 'observed.json'),
     JSON.stringify(
