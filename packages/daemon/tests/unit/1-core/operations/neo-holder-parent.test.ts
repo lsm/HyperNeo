@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import type { MessageHub, Session } from '@hyperneo/shared';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import {
   type ReturnSessionCloneDependencies,
   loadClone,
@@ -62,7 +63,7 @@ describe('Neo ordinary sessions', () => {
     expect(createSession).toHaveBeenCalledTimes(1);
     expect(db.getSession(root)).toMatchObject({
       sdkSessionId,
-      config: { systemPrompt: 'Stored context' },
+      config: { systemPrompt: neoPrompt(service.packBriefs()) },
     });
     expect(db.getSession(root)?.config.maxTurns).toBe(32);
   });

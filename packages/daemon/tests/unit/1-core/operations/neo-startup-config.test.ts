@@ -1,0 +1,140 @@
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import type { MessageHub, Session } from '@hyperneo/shared';
+import { vi } from 'vitest';
+import {
+  InternalEventBus,
+  type DaemonInternalEventMap,
+} from '../../../../src/lib/internal-event-bus.ts';
+import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
+import { NeoService } from '../../../../src/lib/neo/service.ts';
+import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
+import type { CreateSessionParams } from '../../../../src/lib/session/session-lifecycle.ts';
+import { createTestDb, createTestSession } from '../../../helpers/database.ts';
+
+const root = 'neo:synthetic-startup';
+const tools = [
+  'Read',
+  'Write',
+  'Edit',
+  'NotebookEdit',
+  'Grep',
+  'Glob',
+  'WebSearch',
+  'WebFetch',
+  'Bash',
+];
+
+describe('Neo startup configuration', () => {
+  let db: Awaited<ReturnType<typeof createTestDb>>;
+  let service: NeoService;
+  const updateSession = vi.fn();
+
+  beforeEach(async () => {
+    db = await createTestDb();
+    updateSession.mockReset();
+    updateSession.mockImplementation(async (id: string, updates: Partial<Session>) => {
+      db.updateSession(id, updates);
+    });
+    service = new NeoService(
+      db,
+      {
+        updateSession,
+        createSession: async (params: CreateSessionParams) => {
+          db.createSession({ ...createTestSession(params.sessionId!), config: params.config! });
+        },
+      } as unknown as SessionManager,
+      { event: vi.fn() } as unknown as MessageHub,
+      new InternalEventBus<DaemonInternalEventMap>()
+    );
+  });
+
+  afterEach(async () => {
+    await service.dispose();
+    db.close();
+    vi.restoreAllMocks();
+  });
+
+  test.each(['recover', 'open'] as const)(
+    '%s refreshes a stored root without changing its history or ordinary settings',
+    async (method) => {
+      const session = createTestSession(root);
+      session.sdkSessionId = 'synthetic-sdk-history';
+      session.sdkOriginPath = '/synthetic/old/.coordinators/root';
+      session.config = {
+        ...session.config,
+        systemPrompt: 'You are Neo, the user’s personal context coordinator.',
+        sdkToolsPreset: [],
+        allowedTools: ['mcp__fetch-mcp__fetch'],
+        disallowedTools: ['Read(/synthetic/keep)'],
+        settingSources: ['user', 'project', 'local'],
+        permissionMode: 'acceptEdits',
+        autoCompactPercent: 70,
+      };
+      db.createSession(session);
+      service.repo.reserveBinding({ sessionId: root, projectId: null, kind: 'neo' });
+      await service[method]();
+      const restored = db.getSession(root)!;
+      expect(restored.config.systemPrompt).toBe(neoPrompt(service.packBriefs()));
+      expect(restored.config.systemPrompt).toContain('the human sees none of your assistant text');
+      expect(restored.config.sdkToolsPreset).toEqual(tools);
+      expect(restored.config.allowedTools).toEqual([
+        'mcp__fetch-mcp__fetch',
+        'mcp__hyperneo-operations__invoke',
+      ]);
+      expect(restored).toMatchObject({
+        sdkSessionId: session.sdkSessionId,
+        sdkOriginPath: session.sdkOriginPath,
+        workspacePath: session.workspacePath,
+        metadata: session.metadata,
+      });
+      expect(restored.config).toMatchObject({
+        model: session.config.model,
+        maxTokens: 8192,
+        disallowedTools: ['Read(/synthetic/keep)'],
+        settingSources: session.config.settingSources,
+        permissionMode: 'acceptEdits',
+        autoCompactPercent: 70,
+      });
+      await service[method]();
+      expect(updateSession).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  test('refreshing tools does not auto-approve native mutation under acceptEdits', async () => {
+    const session = createTestSession(root);
+    session.config = { ...session.config, permissionMode: 'acceptEdits', allowedTools: ['Read'] };
+    db.createSession(session);
+    service.repo.reserveBinding({ sessionId: root, projectId: null, kind: 'neo' });
+    await service.open();
+    const config = db.getSession(root)!.config;
+    expect(config.sdkToolsPreset).toContain('Bash');
+    expect(config.allowedTools).toContain('Read');
+    for (const tool of ['Bash', 'Write', 'Edit', 'NotebookEdit'])
+      expect(config.allowedTools).not.toContain(tool);
+    expect(config.permissionMode).toBe('acceptEdits');
+  });
+
+  test('new roots start with current prompt and native tools', async () => {
+    const id = await service.open();
+    expect(db.getSession(id)?.config).toMatchObject({
+      systemPrompt: neoPrompt(service.packBriefs()),
+      sdkToolsPreset: tools,
+      allowedTools: ['mcp__hyperneo-operations__invoke'],
+    });
+  });
+
+  test('a later startup refreshes changed pack guidance', async () => {
+    const id = await service.open();
+    const packs = [{ id: 'synthetic', describe: 'Test domain', guidance: 'New pack instruction' }];
+    vi.spyOn(service, 'packBriefs').mockReturnValue(packs);
+    await service.recover();
+    expect(db.getSession(id)?.config.systemPrompt).toBe(neoPrompt(packs));
+    expect(updateSession).toHaveBeenCalledTimes(1);
+  });
+
+  test('recovery without a root does not create one', async () => {
+    await service.recover();
+    expect(service.defaultSessionId()).toBeUndefined();
+    expect(updateSession).not.toHaveBeenCalled();
+  });
+});
