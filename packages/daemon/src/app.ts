@@ -938,7 +938,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const githubPollingEnabled = getGitHubPollingIntervalSeconds() > 0;
     await syncGitHubPollingCapability(extensionConfigStore, githubPollingEnabled);
     extensionManager.register(
-      new GitHubEventExtension(db.getDatabase(), process.env.GITHUB_TOKEN, {
+      new GitHubEventExtension(db.getDatabase(), process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN, {
         getPollIntervalMs: () => getGitHubPollingIntervalSeconds() * 1000,
         credentialStore: credentialManager.getCredentialStore(),
         reactiveDb,

@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
+import { fetchGitHubViaCli } from '../../../../src/lib/github/gh-api-fetch';
 import { runGhJson } from '../../../../src/lib/github/gh-lookup-helpers';
 import { parseRateLimitHeaders } from '../../../../src/lib/external-events/github/github-event-extension';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Database } from '../../../../src/storage/sqlite-compat';
@@ -187,5 +188,156 @@ describe('GitHub CLI response metadata', () => {
       expect(calls).toHaveLength(1);
       expect(calls[0]).toContain('--include');
     });
+  }
+});
+
+describe('authenticated GitHub polling transport', () => {
+  for (const status of [304, 403]) {
+    test(`preserves HTTP ${status} metadata and conditional headers`, async () => {
+      const calls: string[][] = [];
+      const spawn: SpawnFn = (args) => {
+        calls.push(args);
+        const stream = (text: string) =>
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(text));
+              controller.close();
+            },
+          });
+        return {
+          stdout: stream(
+            `HTTP/2.0 ${status} Synthetic\r\nRetry-After: 120\r\nX-RateLimit-Limit: 5000\r\nX-RateLimit-Resource: core\r\n\r\n${status === 304 ? '' : '{"message":"secondary rate limit"}'}`
+          ),
+          stderr: stream(''),
+          exited: Promise.resolve(status === 403 ? 1 : 0),
+          exitCode: status === 403 ? 1 : 0,
+          kill() {},
+        };
+      };
+      const response = await fetchGitHubViaCli(
+        'https://api.github.com/repos/synthetic/private/pulls',
+        { headers: { 'If-None-Match': 'synthetic-etag' } },
+        spawn
+      );
+      expect(response.status).toBe(status);
+      expect(response.headers.get('retry-after')).toBe('120');
+      expect(response.headers.get('x-ratelimit-limit')).toBe('5000');
+      expect(calls[0]).toContain('If-None-Match: synthetic-etag');
+      expect(calls[0]).not.toContain('auth');
+      if (status === 304) expect(await response.text()).toBe('');
+    });
+  }
+
+  test('an already-aborted request starts no credential helper', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const spawn = vi.fn<SpawnFn>();
+    await expect(
+      fetchGitHubViaCli(
+        'https://api.github.com/repos/synthetic/private',
+        { signal: controller.signal },
+        spawn
+      )
+    ).rejects.toThrow();
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  test('GH_TOKEN is honored by the daemon path without printing or extracting it', async () => {
+    vi.stubEnv('GH_TOKEN', 'synthetic-gh-token');
+    vi.stubEnv('GITHUB_TOKEN', undefined);
+    const seen: string[] = [];
+    const fetchImpl = (async (_input, init) => {
+      seen.push(new Headers(init?.headers).get('authorization') ?? '');
+      return Response.json([], { headers: { 'X-RateLimit-Remaining': '5000' } });
+    }) as typeof fetch;
+    const db = new Database(':memory:');
+    createTables(db);
+    runMigrations(db, () => {});
+    const config = new ExternalEventExtensionConfigStore(db);
+    await config.setGlobalConfig('github', {
+      source: 'github',
+      globallyEnabled: true,
+      capabilities: { polling: true },
+    });
+    const extension = new GitHubEventExtension(db, undefined, {
+      fetchImpl,
+      pollIntervalMs: 60_000,
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'test-space',
+      owner: 'synthetic',
+      repo: 'private',
+      pollingEnabled: true,
+    });
+    await extension.start({
+      config,
+      publisher: { publish: async () => {} },
+      onSourceConfigChanged() {},
+    });
+    try {
+      await extension.pollOnce();
+      expect(seen.length).toBeGreaterThan(0);
+      expect(seen.every((value) => value === 'Bearer synthetic-gh-token')).toBe(true);
+    } finally {
+      await extension.stop();
+      db.close();
+    }
+  });
+});
+
+test('a failed configured credential read does not switch to anonymous or another account', async () => {
+  const run = mkdtempSync(join(tmpdir(), 'github-credential-fault-'));
+  owned.push(run);
+  mkdirSync(join(run, 'bin'));
+  vi.stubEnv('HOME', run);
+  vi.stubEnv('GH_TOKEN', undefined);
+  vi.stubEnv('GITHUB_TOKEN', undefined);
+  vi.stubEnv('PATH', `${join(run, 'bin')}:${process.env.PATH}`);
+  writeFileSync(
+    join(run, 'bin/gh'),
+    `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(join(run, 'unexpected-cli'))}, 'called');\nprocess.exit(1);\n`,
+    { mode: 0o700 }
+  );
+  const network = vi.fn(async () => Response.json([]));
+  vi.stubGlobal('fetch', network);
+  const db = new Database(':memory:');
+  createTables(db);
+  runMigrations(db, () => {});
+  const config = new ExternalEventExtensionConfigStore(db);
+  await config.setGlobalConfig('github', {
+    source: 'github',
+    globallyEnabled: true,
+    capabilities: { polling: true },
+  });
+  const extension = new GitHubEventExtension(db, undefined, {
+    pollIntervalMs: 60_000,
+    credentialStore: {
+      get: async () => {
+        throw new Error('synthetic credential store locked');
+      },
+      set: async () => {},
+      delete: async () => {},
+      listServices: async () => [],
+    },
+  });
+  extension.repo.upsertWatchedRepo({
+    spaceId: 'test-space',
+    owner: 'synthetic',
+    repo: 'private',
+    pollingEnabled: true,
+  });
+  await extension.start({
+    config,
+    publisher: { publish: async () => {} },
+    onSourceConfigChanged() {},
+  });
+  try {
+    await extension.pollOnce();
+    expect(network).not.toHaveBeenCalled();
+    expect(existsSync(join(run, 'unexpected-cli'))).toBe(false);
+    expect(extension.repo.listPollingRepos()[0].lastPollAt).toBeNull();
+  } finally {
+    await extension.stop();
+    db.close();
   }
 });

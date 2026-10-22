@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { readCodingLedgerRepo } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { GitHubEventExtension } from '../../../packages/daemon/src/lib/external-events/github/github-event-extension.ts';
 import { ExternalEventExtensionConfigStore } from '../../../packages/daemon/src/lib/external-events/extension-config-store.ts';
@@ -11,7 +12,7 @@ import { SessionEventSubscriptionRepository } from '../../../packages/daemon/src
 const [mode, scenario, portText, runText] = process.argv.slice(2);
 const port = Number(portText), run = resolve(runText);
 assert(['reproduce', 'verify'].includes(mode));
-assert(['private', 'exhausted'].includes(scenario));
+assert(['private', 'exhausted', 'secondary'].includes(scenario));
 assert(port > 0 && port !== 8399);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -26,15 +27,18 @@ const repos = ['a-public', 'b-public', 'c-public', 'd-phone', 'e-qlark', 'f-mone
 const calls: { path: string; authenticated: boolean; limit: number; resource: string; status: number }[] = [];
 const api = (url: URL, authenticated: boolean) => {
   const repo = url.pathname.split('/')[3];
-  const status = authenticated || repos.indexOf(repo) < 3 ? 200 : scenario === 'private' ? 404 : 403;
+  const secondary = authenticated && scenario === 'secondary' && calls.length === 0;
+  const status = secondary ? 403 : authenticated || repos.indexOf(repo) < 3 ? 200 : scenario === 'private' ? 404 : 403;
   let body: unknown = [];
   if (status !== 200) body = { message: status === 404 ? 'Not Found' : 'API rate limit exceeded' };
   else if (/\/pulls\/\d+$/.test(url.pathname)) body = { number: 162, state: 'open', mergeable: true };
   else if (url.pathname.endsWith('/reviews')) body = [{ id: 1000 + repos.indexOf(repo), state: 'APPROVED', submitted_at: new Date().toISOString(), user: { login: 'synthetic-reviewer' } }];
+  if (url.pathname === '/user') body = { login: 'synthetic-human' };
   const limit = authenticated ? 5000 : 60;
   calls.push({ path: url.pathname, authenticated, limit, resource: 'core', status });
-  return Response.json(body, { status, headers: { 'X-RateLimit-Limit': String(limit), 'X-RateLimit-Remaining': authenticated ? '4900' : scenario === 'exhausted' ? '0' : '59', 'X-RateLimit-Reset': String(Math.ceil(Date.now() / 1000) + 3600), 'X-RateLimit-Resource': 'core' } });
+  return Response.json(body, { status, headers: { 'X-RateLimit-Limit': String(limit), 'X-RateLimit-Remaining': authenticated ? '4900' : scenario === 'exhausted' ? '0' : '59', 'X-RateLimit-Reset': String(Math.ceil(Date.now() / 1000) + 3600), 'X-RateLimit-Resource': 'core', ...(secondary ? { 'Retry-After': '2' } : {}) } });
 };
+const ledgerCalls: unknown[] = [];
 const mock = createServer(async (req, res) => {
   try {
     let text = '';
@@ -42,8 +46,14 @@ const mock = createServer(async (req, res) => {
     const args = JSON.parse(text) as string[];
     assert.equal(args[0], 'api');
     assert(args.includes('--include'));
-    assert(!args.includes('auth') && !args.includes('graphql'));
-    const path = args.find(arg => arg.startsWith('/repos/'));
+    assert(!args.includes('auth'));
+    if (args.includes('graphql')) {
+      const budget = { cost: 7, remaining: 4866, resetAt: new Date(Date.now() + 3600_000).toISOString() };
+      ledgerCalls.push({ resource: 'graphql', ...budget });
+      res.end(`HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n${JSON.stringify({ data: { rateLimit: budget } })}`);
+      return;
+    }
+    const path = args.find(arg => arg.startsWith('/repos/') || arg === '/user');
     assert(path);
     const response = api(new URL(path, 'https://api.github.com'), true);
     res.end(`HTTP/2.0 ${response.status} Synthetic\r\n${[...response.headers].map(([k, v]) => `${k}: ${v}`).join('\r\n')}\r\n\r\n${await response.text()}`);
@@ -79,13 +89,14 @@ try {
   }
   ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC connection failed')); });
+  const rpc = (method: string) => new Promise<unknown>((done, fail) => {
+    const id = crypto.randomUUID(), timer = setTimeout(() => fail(new Error('RPC timeout')), 30_000);
+    ws!.onmessage = event => { const msg = JSON.parse(String(event.data)); if (msg.id !== id && msg.requestId !== id) return; clearTimeout(timer); msg.error ? fail(new Error(JSON.stringify(msg.error))) : done(msg.data); };
+    ws!.send(JSON.stringify({ id, type: 'REQ', method, data: {}, sessionId: 'global', timestamp: new Date().toISOString(), version: '1.0.0' }));
+  });
   const started = Date.now();
   for (let cycle = 1; cycle <= 2; cycle++) {
-    const reply = await new Promise<unknown>((done, fail) => {
-      const id = crypto.randomUUID(), timer = setTimeout(() => fail(new Error('RPC timeout')), 30_000);
-      ws!.onmessage = event => { const msg = JSON.parse(String(event.data)); if (msg.id !== id && msg.requestId !== id) return; clearTimeout(timer); msg.error ? fail(new Error(JSON.stringify(msg.error))) : done(msg.data); };
-      ws!.send(JSON.stringify({ id, type: 'REQ', method: 'space.github.pollOnce', data: {}, sessionId: 'global', timestamp: new Date().toISOString(), version: '1.0.0' }));
-    });
+    const reply = await rpc('space.github.pollOnce');
     const rows = github.repo.listPollingRepos().map(repo => ({ repo: repo.repo, lastPollAt: repo.lastPollAt }));
     const approvals = db.prepare("SELECT topic FROM session_external_events WHERE json_extract(payload_json, '$.state') = 'APPROVED'").all();
     const mailbox = db.prepare("SELECT COUNT(*) AS count FROM job_queue WHERE queue = 'mailbox'").get() as { count: number };
@@ -94,11 +105,25 @@ try {
       assert(rows.filter(row => repos.indexOf(row.repo) >= 3).every(row => row.lastPollAt === null));
       assert(calls.every(call => !call.authenticated));
     } else {
+      if (scenario === 'secondary' && cycle === 1) {
+        assert((reply as { retryAt: number }).retryAt <= Date.now() + 2100);
+        assert((reply as { skipped: string }).skipped === 'rate-limited');
+        await new Promise(done => setTimeout(done, 2100));
+        continue;
+      }
       assert(rows.every(row => row.lastPollAt !== null && row.lastPollAt >= started));
       assert(calls.every(call => call.authenticated && call.limit === 5000 && call.resource === 'core'));
       assert.equal(approvals.length, 10);
       assert(mailbox.count >= 1);
     }
+  }
+  if (mode === 'verify') {
+    const tokenStatus = await rpc('space.github.getTokenStatus') as { configured: boolean; source: string; login?: string };
+    assert(tokenStatus.configured && tokenStatus.source === 'gh' && tokenStatus.login === 'synthetic-human');
+    evidence.push({ tokenStatus });
+    await readCodingLedgerRepo('synthetic/a-public');
+    assert.equal(ledgerCalls.length, 1);
+    evidence.push({ ledgerDiagnostics: ledgerCalls });
   }
   console.log(`${mode} ${scenario}: ${run}/evidence/auth-bucket.json`);
 } finally {

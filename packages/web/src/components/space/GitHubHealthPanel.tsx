@@ -20,7 +20,7 @@ export interface GitHubHealthSnapshot {
   timestamp: number;
   token: {
     configured: boolean;
-    source: 'keychain' | 'env' | 'none';
+    source: 'keychain' | 'env' | 'gh' | 'none';
     login?: string;
     error?: string;
     authRejected?: boolean;
@@ -637,7 +637,8 @@ function TokenStatusBadge({ snapshot }: { snapshot: GitHubHealthSnapshot }) {
       </span>
     );
   }
-  const sourceLabel = token.source === 'keychain' ? 'keychain' : 'env var';
+  const sourceLabel =
+    token.source === 'gh' ? 'gh CLI' : token.source === 'keychain' ? 'keychain' : 'env var';
   return (
     <span>
       <span class="text-fg-soft">{token.login ?? 'configured'}</span>{' '}

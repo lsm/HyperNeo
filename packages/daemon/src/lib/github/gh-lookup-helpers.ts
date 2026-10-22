@@ -73,8 +73,8 @@ export function resolveGithubConfigDir(): string | undefined {
 
 interface RateLimitPayload {
   resources?: {
-    core?: { reset?: number };
-    graphql?: { reset?: number };
+    core?: { reset?: number; remaining?: number };
+    graphql?: { reset?: number; remaining?: number };
   };
 }
 
@@ -83,18 +83,30 @@ export function pickRateLimitResetEpoch(
   resource?: 'core' | 'graphql'
 ): number | null {
   if (resource === 'core') {
+    if ((payload.resources?.core?.remaining ?? 0) > 0) return null;
     const reset = payload.resources?.core?.reset;
     return typeof reset === 'number' && Number.isFinite(reset) ? reset : null;
   }
   if (resource === 'graphql') {
+    if ((payload.resources?.graphql?.remaining ?? 0) > 0) return null;
     const reset = payload.resources?.graphql?.reset;
     return typeof reset === 'number' && Number.isFinite(reset) ? reset : null;
   }
   const resets: number[] = [];
   const coreReset = payload.resources?.core?.reset;
   const graphqlReset = payload.resources?.graphql?.reset;
-  if (typeof coreReset === 'number' && Number.isFinite(coreReset)) resets.push(coreReset);
-  if (typeof graphqlReset === 'number' && Number.isFinite(graphqlReset)) resets.push(graphqlReset);
+  if (
+    (payload.resources?.core?.remaining ?? 0) <= 0 &&
+    typeof coreReset === 'number' &&
+    Number.isFinite(coreReset)
+  )
+    resets.push(coreReset);
+  if (
+    (payload.resources?.graphql?.remaining ?? 0) <= 0 &&
+    typeof graphqlReset === 'number' &&
+    Number.isFinite(graphqlReset)
+  )
+    resets.push(graphqlReset);
   return resets.length === 0 ? null : Math.min(...resets);
 }
 
@@ -158,7 +170,11 @@ export async function runGhJson(
 
   let proc;
   try {
-    proc = spawnImpl(args, {
+    const requestArgs =
+      args[1] === 'api' && !args.includes('--include') && !args.includes('-i')
+        ? [...args, '--include']
+        : args;
+    proc = spawnImpl(requestArgs, {
       cwd,
       env: ghEnv,
       stdout: 'pipe',
@@ -183,17 +199,26 @@ export async function runGhJson(
   ]);
 
   clearTimeout(killTimer);
+  const response = readGhHttpResponse(stdoutResult.text);
+  const retryAfter = response?.headers.get('retry-after');
+  const retrySeconds = retryAfter ? Number(retryAfter) : Number.NaN;
+  const retryDate = retryAfter ? Date.parse(retryAfter) : Number.NaN;
+  const retryAfterMs = Number.isFinite(retrySeconds)
+    ? Math.max(0, retrySeconds * 1000)
+    : Number.isFinite(retryDate)
+      ? Math.max(0, retryDate - Date.now())
+      : null;
 
   if (exitCode !== 0) {
     const stderrText = stderrResult.text.trim();
     const errorText = stderrText || `gh exited with code ${exitCode}`;
-    if (isRateLimitError(errorText)) {
-      if (isSecondaryRateLimitError(errorText)) {
+    if (isRateLimitError(errorText) || retryAfterMs !== null) {
+      if (retryAfterMs !== null || isSecondaryRateLimitError(errorText)) {
         return {
           ok: false,
           error: errorText,
           retryable: true,
-          retryAfterMs: RATE_LIMIT_MIN_BACKOFF_MS,
+          retryAfterMs: retryAfterMs ?? RATE_LIMIT_MIN_BACKOFF_MS,
         };
       }
       const resetEpoch = await fetchRateLimitResetEpoch(
@@ -221,7 +246,9 @@ export async function runGhJson(
     return { ok: false, error: errorText };
   }
 
-  const parsed = stdoutResult.truncated ? undefined : parseJsonAny(stdoutResult.text);
+  const parsed = stdoutResult.truncated
+    ? undefined
+    : parseJsonAny(response?.body ?? stdoutResult.text);
   if (parsed === undefined) {
     if (stdoutResult.truncated) {
       return {
@@ -264,4 +291,22 @@ function parseJsonAny(raw: string): unknown {
   } catch {
     return undefined;
   }
+}
+
+export function readGhHttpResponse(
+  raw: string
+): { status: number; headers: Headers; body: string } | null {
+  const boundary = /\r?\n\r?\n/.exec(raw);
+  const status = /^HTTP\/\S+\s+(\d{3})\b/.exec(raw);
+  if (!boundary || !status) return null;
+  const headers = new Headers();
+  for (const line of raw.slice(0, boundary.index).split(/\r?\n/).slice(1)) {
+    const colon = line.indexOf(':');
+    if (colon > 0) headers.append(line.slice(0, colon), line.slice(colon + 1).trim());
+  }
+  return {
+    status: Number(status[1]),
+    headers,
+    body: raw.slice(boundary.index + boundary[0].length),
+  };
 }
