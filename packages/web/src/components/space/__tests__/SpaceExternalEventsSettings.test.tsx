@@ -1523,43 +1523,63 @@ describe('SpaceExternalEventsSettings', () => {
     expect(pollingInput).toHaveProperty('disabled', true);
   });
 
-  it('confirms before shadowing an env-sourced token with a keychain token', async () => {
-    const confirmSpy = vi.fn(() => false);
-    vi.stubGlobal('confirm', confirmSpy);
-    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
-    mockRequest.mockImplementation((method) => {
-      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
-      if (method === 'space.github.listConfig') {
-        return Promise.resolve({
-          spaceId: 'space-1',
-          source: 'github',
-          enabled: true,
-          settings: {},
-        });
-      }
-      if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
-      if (method === 'space.github.getTokenStatus') {
-        return Promise.resolve({
-          configured: true,
-          source: 'env',
-          login: 'env-user',
-          error: 'HTTP 401',
-        });
-      }
-      return Promise.resolve({});
-    });
-
-    const { findByPlaceholderText, getByText } = render(
-      <SpaceExternalEventsSettings spaceId="space-1" />
+  it('shows gh CLI ownership and disables Disconnect for its login', async () => {
+    setupRequests();
+    const initial = mockRequest.getMockImplementation()!;
+    mockRequest.mockImplementation((method, params) =>
+      method === 'space.github.getTokenStatus'
+        ? Promise.resolve({ configured: true, source: 'gh', login: 'cli-user' })
+        : initial(method, params)
     );
-    const input = await findByPlaceholderText('ghp_…');
-    fireEvent.input(input, { target: { value: 'ghp_replacement_token_value' } });
-    fireEvent.click(getByText('Save token'));
-
-    expect(confirmSpy).toHaveBeenCalledWith(expect.stringMatching(/GITHUB_TOKEN env var/));
-    expect(mockRequest).not.toHaveBeenCalledWith('space.github.setToken', {
-      token: 'ghp_replacement_token_value',
-    });
-    vi.unstubAllGlobals();
+    const { findByText, getByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    await findByText('cli-user');
+    expect(getByText(/authenticated gh CLI/)).toBeTruthy();
+    expect(getByText('Disconnect')).toHaveProperty('disabled', true);
+    expect(getByText('Replace with keychain token')).toBeTruthy();
   });
+
+  it.each(['env', 'gh'] as const)(
+    'confirms before shadowing a %s-sourced login with a keychain token',
+    async (source) => {
+      const confirmSpy = vi.fn(() => false);
+      vi.stubGlobal('confirm', confirmSpy);
+      mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+      mockRequest.mockImplementation((method) => {
+        if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+        if (method === 'space.github.listConfig') {
+          return Promise.resolve({
+            spaceId: 'space-1',
+            source: 'github',
+            enabled: true,
+            settings: {},
+          });
+        }
+        if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+        if (method === 'space.github.getTokenStatus') {
+          return Promise.resolve({
+            configured: true,
+            source,
+            login: 'env-user',
+            error: 'HTTP 401',
+          });
+        }
+        return Promise.resolve({});
+      });
+
+      const { findByPlaceholderText, getByText } = render(
+        <SpaceExternalEventsSettings spaceId="space-1" />
+      );
+      const input = await findByPlaceholderText('ghp_…');
+      fireEvent.input(input, { target: { value: 'ghp_replacement_token_value' } });
+      fireEvent.click(getByText('Save token'));
+
+      expect(confirmSpy).toHaveBeenCalledWith(
+        expect.stringMatching(source === 'gh' ? /gh CLI/ : /env/)
+      );
+      expect(mockRequest).not.toHaveBeenCalledWith('space.github.setToken', {
+        token: 'ghp_replacement_token_value',
+      });
+      vi.unstubAllGlobals();
+    }
+  );
 });
