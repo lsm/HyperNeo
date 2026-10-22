@@ -10,9 +10,11 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { WorkerAgentMemoryEmbedder } from '../../../packages/daemon/src/storage/repositories/agent-memory-worker-embedder.ts';
 import { installWorkSearchWait } from './work-search-wait.ts';
 import type { PlaceGroup } from '../../../packages/daemon/src/lib/drivers/types.ts';
+import { SDKBunWorkerBridge } from '../../../packages/daemon/tests/helpers/sdk-bun-worker-bridge.ts';
 
 const run = resolve(process.argv[2]);
 const waitMs = Number(process.argv[3] ?? 1200);
+const bridge = process.argv[4] === 'bridge';
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -28,6 +30,8 @@ const fixtureWorker = pathToFileURL(join(run, 'reader.ts')).href;
 writeFileSync(join(run, 'reader.ts'), `import { installWorkSearchWait } from ${JSON.stringify(pathToFileURL(resolve('.claude/skills/verify/work-search-wait.ts')).href)}; installWorkSearchWait(${JSON.stringify(run)}, ${waitMs}, 'worker'); const pending=[]; globalThis.onmessage=e=>pending.push(e); await import(${JSON.stringify(pathToFileURL(resolve('packages/daemon/src/storage/sdk-status-worker.ts')).href)}); const dispatch=globalThis.onmessage; for(const event of pending) dispatch(event);`);
 globalThis.Worker = class extends NativeWorker {
   constructor(url: string | URL, options?: WorkerOptions) {
+    if (bridge && String(url).endsWith('/sdk-status-worker.ts'))
+      return new SDKBunWorkerBridge(fixtureWorker) as unknown as Worker;
     super(String(url).endsWith('/sdk-status-worker.ts') ? fixtureWorker : url, options);
   }
 };
@@ -87,6 +91,7 @@ try {
   for (let i = 0; waitMs && output.trim().split('\n').length < 2 && i < 200; i++) await Bun.sleep(10);
   const health = waitMs ? JSON.parse(output.trim().split('\n').at(-1)!) : null;
   const ids = found.places.flatMap(place => place.work.map(work => work.ref.id));
+  Object.assign(evidence, { rpcMs, lagMs, result: found, bridge });
   assert(ids.includes(sessionId), JSON.stringify(found));
   const observed = found.places.flatMap(place => place.work).find(work => work.ref.id === sessionId)!;
   assert.equal(observed.hits, expected[0].hits);

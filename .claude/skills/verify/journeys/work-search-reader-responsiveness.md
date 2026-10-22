@@ -41,3 +41,10 @@ RPC and 14.07 ms for the largest vector SQL read. The delayed RPC still took
 `3ce3df87dac94246be56038cdeb31538cdada8cdbec0e051bcc289a358ae501c`
 before and after. Ranking, hit counts, scores and semantic snippets are compared
 to the existing repository result within each run, not just session presence.
+
+For the Node-hosted online-test boundary, add `0 bridge` after a fresh run
+directory. This runs the same public search via the existing isolated IPC host
+and a real native Bun worker. Typed arrays are not preserved by its JSON IPC;
+the tests-first request lost its vector length and returned no semantic match.
+The request DTO must carry numeric arrays and reconstruct the query vector in
+the worker. Require the same semantic snippets/ranking and retained hash.
