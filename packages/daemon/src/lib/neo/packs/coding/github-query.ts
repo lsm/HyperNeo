@@ -5,7 +5,10 @@ import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 
 type Failure = { ok: false; reason: string };
-export type NeoGithubLister = (args: string[]) => Promise<unknown | null>;
+export type NeoGithubLister = (
+  args: string[],
+  coverage: NeoGithubCollection
+) => Promise<unknown | null>;
 
 const When = z.string().datetime({ offset: true });
 
@@ -35,6 +38,8 @@ const Item = z.object({
   closedAt: z.string().nullable().default(null),
 });
 
+export const NeoGithubQueryItems = z.array(Item);
+
 export const NeoGithubQueryResult = z.union([
   z.object({ ok: z.literal(false), reason: z.string() }),
   z.object({
@@ -54,6 +59,7 @@ export const NeoGithubQueryResult = z.union([
 export type NeoGithubQueryResult = z.infer<typeof NeoGithubQueryResult>;
 
 type By = 'created' | 'updated' | 'merged' | 'closed';
+export type NeoGithubCollection = Omit<NeoGithubQuery, 'withinHours' | 'by'> & { by: By };
 type Plan = { query: NeoGithubQuery; by: By; search: string; args: string[] };
 
 export function planNeoGithubQuery(
@@ -121,7 +127,7 @@ export function presentNeoGithubQuery(
   plan: Plan,
   listed: { data: unknown | null; at: string }
 ): { value: NeoGithubQueryResult } | { reason: Failure } {
-  const parsed = z.array(Item).safeParse(listed.data);
+  const parsed = NeoGithubQueryItems.safeParse(listed.data);
   if (!parsed.success)
     return {
       reason: {
@@ -170,7 +176,7 @@ export const queryNeoGithub = (superpipe({})('neo-github-query') as PipelineAPI)
   .pipe(planNeoGithubQuery, 'query', 'result:query')
   .pipe(
     async (list: NeoGithubLister, plan: Plan) => {
-      const data = await list(plan.args);
+      const data = await list(plan.args, { ...plan.query, by: plan.by });
       return { data, at: new Date().toISOString() };
     },
     ['list', 'query'],

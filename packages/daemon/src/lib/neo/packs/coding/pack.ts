@@ -48,7 +48,7 @@ export function createCodingPack(deps: {
       createCodingGithubReadOperation({
         readPrs: deps.readPrs,
         readRefStates: deps.readRefStates ?? readGithubRefStates,
-        listGithub: deps.listGithub ?? listNeoGithub,
+        listGithub: deps.listGithub ?? ((args) => listNeoGithub(args)),
       }),
     ],
     preferences: {
