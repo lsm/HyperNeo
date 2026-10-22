@@ -17,8 +17,9 @@ env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test \
 Observe the rendered waiting message after one submit and a real `403
 awaiting_approval`. Allow from a separate authenticated client. Without another
 click or code entry, the same component retries and shows `This browser is
-paired.`; its real responses are `[403, 200]`. The resulting browser identity can
-read `device.list`, and the code fragment is absent from the URL. An unpaired
+paired.`; its real responses end in `200` after pending `403` replies. The helper
+delays approval long enough to observe another pending retry. The resulting
+browser identity can read `device.list`, and the code fragment is absent from the URL. An unpaired
 client cannot read pending codes or Allow itself. A second flow's Stop waiting
 aborts retries: approving that code later does not redeem it in this browser.
 Stopping a wait does not invalidate the code for other holders.
@@ -26,8 +27,10 @@ Stopping a wait does not invalidate the code for other holders.
 `before` mode on the pre-fix revision reproduces the original stop after 403.
 The helper keeps only statuses and safe rendered text in
 `evidence/observed.json`, bundles only source code, and closes the component,
-DOM, sockets and daemon in finally. Keep red and green evidence. Component
-contracts also cover offline/background pause, unmount cleanup, invalid/expired
+DOM, sockets and daemon in finally. Keep red and green evidence. An interrupted
+request can have redeemed a single-use code before its response arrives; the form directs the human to check Devices before making a new code.
+Component contracts prove a stalled request is aborted at the ten-minute deadline
+and cover offline/background pause, unmount cleanup, invalid/expired
 codes and rate-limit wording. This DOM/HTTP proof is not real-browser visual or
 native iOS integration proof; label those unverified without an attended run.
 

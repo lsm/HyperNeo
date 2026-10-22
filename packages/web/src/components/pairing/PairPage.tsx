@@ -68,56 +68,60 @@ export function PairPage() {
     const body = JSON.stringify({ code: code.trim(), name: name.trim() });
     history.replaceState(null, '', location.pathname);
     setState({ kind: 'pairing' });
-    while (!signal.aborted) {
-      if (Date.now() >= until) {
-        setState({
-          kind: 'failed',
-          message: 'Pairing timed out. Make a new code with hyperneo pair.',
-        });
-        return;
+    const timer = setTimeout(() => {
+      controller.abort();
+      setState({
+        kind: 'failed',
+        message: 'Pairing timed out. Make a new code with hyperneo pair.',
+      });
+    }, until - Date.now());
+    try {
+      while (!signal.aborted) {
+        if (!navigator.onLine || document.visibilityState === 'hidden') {
+          setState({
+            kind: 'waiting',
+            message: 'Pairing paused. Return to this page with a connection to continue.',
+          });
+          await pause(2000, signal);
+          continue;
+        }
+        const response = await fetch('/pair', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'content-type': 'application/json' },
+          body,
+          signal,
+        }).catch(() => null);
+        if (signal.aborted) return;
+        if (response?.ok) {
+          setState({ kind: 'paired' });
+          return;
+        }
+        const reply = response ? await response.json().catch(() => ({})) : {};
+        if (signal.aborted) return;
+        let delay = 2000;
+        if (!response)
+          setState({
+            kind: 'waiting',
+            message: 'Waiting for a connection to the daemon. Pairing will retry automatically.',
+          });
+        else if (response.status === 403 && reply.error === 'awaiting_approval')
+          setState({
+            kind: 'waiting',
+            message:
+              'Waiting for Allow on a paired phone or browser. This page will finish pairing automatically.',
+          });
+        else if (response.status === 429) {
+          delay = Number(reply.retryAfterMs ?? 60_000);
+          setState({ kind: 'waiting', message: pairFailureMessage(429, reply) });
+        } else {
+          setState({ kind: 'failed', message: pairFailureMessage(response.status, reply) });
+          return;
+        }
+        await pause(Math.min(delay, until - Date.now()), signal);
       }
-      if (!navigator.onLine || document.visibilityState === 'hidden') {
-        setState({
-          kind: 'waiting',
-          message: 'Pairing paused. Return to this page with a connection to continue.',
-        });
-        await pause(2000, signal);
-        continue;
-      }
-      const response = await fetch('/pair', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'content-type': 'application/json' },
-        body,
-        signal,
-      }).catch(() => null);
-      if (signal.aborted) return;
-      if (response?.ok) {
-        setState({ kind: 'paired' });
-        return;
-      }
-      const reply = response ? await response.json().catch(() => ({})) : {};
-      if (signal.aborted) return;
-      let delay = 2000;
-      if (!response)
-        setState({
-          kind: 'waiting',
-          message: 'Waiting for a connection to the daemon. Pairing will retry automatically.',
-        });
-      else if (response.status === 403 && reply.error === 'awaiting_approval')
-        setState({
-          kind: 'waiting',
-          message:
-            'Waiting for Allow on a paired phone or browser. This page will finish pairing automatically.',
-        });
-      else if (response.status === 429) {
-        delay = Number(reply.retryAfterMs ?? 60_000);
-        setState({ kind: 'waiting', message: pairFailureMessage(429, reply) });
-      } else {
-        setState({ kind: 'failed', message: pairFailureMessage(response.status, reply) });
-        return;
-      }
-      await pause(Math.min(delay, until - Date.now()), signal);
+    } finally {
+      clearTimeout(timer);
     }
   };
 
@@ -136,6 +140,10 @@ export function PairPage() {
           <form class="space-y-4" onSubmit={pair}>
             <p class="text-sm text-fg-muted">
               Enter the code from hyperneo pair or from a paired device.
+            </p>
+            <p class="text-xs text-fg-muted">
+              If pairing was interrupted after the code was used, check Devices on a paired device
+              before making a new code.
             </p>
             <FormField label="Pairing code">
               <input

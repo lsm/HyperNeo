@@ -147,7 +147,7 @@ try {
   button('Pair this browser')!.click();
   await wait(() => statuses.includes(403));
   evidence.initialText = win.document.body.textContent;
-  if (mode === 'verify') await new Promise((r) => setTimeout(r, 2300));
+  if (mode === 'verify') await wait(() => statuses.length >= 2);
   assert.equal((await approve('device.pair.approve', { codeId: next.codeId })).ok, true);
   if (mode === 'before') {
     await new Promise((r) => setTimeout(r, 2500));
@@ -159,7 +159,9 @@ try {
   } else {
     assert.equal(pending.ok, false);
     await wait(() => win.document.body.textContent.includes('This browser is paired.'));
-    assert.deepEqual(statuses, [403, 200]);
+    assert.equal(statuses.at(-1), 200);
+    assert(statuses.slice(0, -1).every((status) => status === 403));
+    assert(statuses.filter((status) => status === 403).length >= 2);
     assert(cookie);
     assert.equal(win.location.hash, '');
     const browser = await connect({ Cookie: cookie! });
