@@ -1,7 +1,16 @@
 import { createCodexDesktopAdapter } from '../../../../src/lib/drivers/codex-desktop-adapter';
+import { gitWorktreeProject } from '../../../../src/lib/drivers/acp-agent-adapter';
 import { workStartPreparation } from '../../../../src/lib/drivers/start-preparation';
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+  existsSync,
+  readFileSync,
+  statSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -121,6 +130,37 @@ describe('createCodexDesktopAdapter with coding preparation', () => {
 });
 
 describe('prepareCodingExecution', () => {
+  test('prepared coding work owns its Git objects and refs without hardlinks to main', async () => {
+    const f = fixture();
+    const prepared = await prepareCodingExecution(f.request, f.effects);
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) throw new Error(prepared.reason);
+    expect(statSync(join(f.destination, '.git')).isDirectory()).toBe(true);
+    expect(git(f.destination, 'rev-parse', '--git-common-dir')).toBe('.git');
+    expect(git(f.destination, 'remote', 'get-url', 'origin')).toBe(f.remote);
+    expect(await gitWorktreeProject(f.destination)).toBe(f.directory);
+    const blob = git(f.directory, 'rev-parse', `${f.latest}:file`);
+    const objectPath = join('.git', 'objects', blob.slice(0, 2), blob.slice(2));
+    const source = statSync(join(f.directory, objectPath));
+    const copy = statSync(join(f.destination, objectPath));
+    expect([copy.dev, copy.ino]).not.toEqual([source.dev, source.ino]);
+    git(f.destination, 'config', 'user.name', 'Synthetic worker');
+    git(f.destination, 'config', 'user.email', 'worker@example.invalid');
+    git(f.destination, 'checkout', '-b', 'worker-change');
+    writeFileSync(join(f.destination, 'worker-file'), 'independent worker content');
+    git(f.destination, 'add', 'worker-file');
+    git(f.destination, 'commit', '-m', 'worker-only commit');
+    const workerCommit = git(f.destination, 'rev-parse', 'HEAD');
+    expect(
+      spawnSync('git', ['cat-file', '-e', workerCommit], { cwd: f.directory }).status
+    ).not.toBe(0);
+    expect(git(f.directory, 'rev-parse', 'HEAD')).toBe(f.before);
+    expect(readFileSync(join(f.directory, 'file'), 'utf8')).toBe('uncommitted user work');
+    await prepared.value.release();
+    expect(existsSync(f.destination)).toBe(false);
+    expect(readFileSync(join(f.directory, 'file'), 'utf8')).toBe('uncommitted user work');
+  });
+
   test('prepares the fetched target and preserves dirty user checkout', async () => {
     const f = fixture();
     const result = await prepareCodingExecution(f.request, f.effects);
