@@ -20,6 +20,7 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
   const requests: { path: string; tools: number; active: boolean }[] = [];
   const sent: { system: string; human: unknown }[] = [];
   const nudged: string[] = [];
+  const sdkErrors: string[] = [];
   let round = 0;
   const fixture = createServer(async (req, res) => {
     if (req.url?.startsWith('/v1/models')) {
@@ -177,6 +178,10 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
     const options = await build.apply(this, args);
     return {
       ...options,
+      stderr: (data) => {
+        sdkErrors.push(data);
+        options.stderr?.(data);
+      },
       spawnClaudeCodeProcess: (opts) =>
         spawn(opts.command, opts.args, {
           cwd: opts.cwd,
@@ -211,6 +216,12 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
     });
     hub.registerTransport(transport);
     await transport.initialize();
+    const { servers } = await hub.request<{ servers: Array<{ id: string }> }>(
+      'mcp.registry.list',
+      {}
+    );
+    for (const server of servers)
+      await hub.request('mcp.registry.setEnabled', { id: server.id, enabled: false });
     const params = {
       providerId: 'anthropic',
       displayName: 'Synthetic local model',
@@ -257,7 +268,7 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
       page = await read();
     }
     expect(page.ok).toBe(true);
-    expect(page.items, JSON.stringify({ calls, receipts, requests })).toHaveLength(1);
+    expect(page.items, JSON.stringify({ calls, receipts, requests, sdkErrors })).toHaveLength(1);
     expect(page.items[0].askOrigin).toBeUndefined();
     expect(page.items[0].producerInput).toBeUndefined();
     expect(page.items[0]).toMatchObject({

@@ -113,7 +113,8 @@ describe('neo.message.send replyTo', () => {
           .get(requestId) as { sdk_message: string }
       ).sdk_message
     );
-    const [time, ...content] = stored.message.content;
+    const [identifier, time, ...content] = stored.message.content;
+    expect(identifier.text).toBe(`[message id: ${requestId}]`);
     expect(time.text).toMatch(/^\(local time: \w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+\)$/);
     return { ...stored, message: { ...stored.message, content } };
   };
