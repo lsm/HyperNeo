@@ -49,7 +49,11 @@ export function decideTodoState(facts: TodoStateFacts, now: number): TodoStateDe
         nextAction: judgement.reason,
       };
     else if (!Object.keys(change).length && !['done', 'failed'].includes(todo.state)) {
-      if (facts.questionOpen)
+      if (
+        facts.questionOpen &&
+        !facts.dispatched &&
+        (todo.state === 'todo' || todo.blockedBy === 'question')
+      )
         patch = {
           ...patch,
           state: 'blocked',

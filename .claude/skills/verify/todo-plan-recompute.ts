@@ -47,7 +47,7 @@ fs.appendFileSync(root+'/evidence/gh.log',JSON.stringify(args)+'\\n');
 if(args[0]!=='pr'||args[1]!=='view')process.exit(2);
 const rows=JSON.parse(fs.readFileSync(root+'/prs.json','utf8')),row=rows[args.find(s=>s.startsWith('https://'))];
 if(!row)process.exit(2);
-if(row.pause){fs.writeFileSync(root+'/read-started','');while(!fs.existsSync(root+'/read-release'))await Bun.sleep(10);}
+if(row.pause){fs.writeFileSync(root+'/read-started','');const deadline=Date.now()+20000;while(!fs.existsSync(root+'/read-release')){if(Date.now()>deadline)process.exit(3);await Bun.sleep(10);}}
 process.stdout.write(JSON.stringify(row));
 `,
   { mode: 0o700 }
@@ -82,6 +82,24 @@ const peer = Bun.serve({
       const call = JSON.parse(String(bytes));
       if (!('id' in call)) return;
       calls.push(call);
+      if (call.method === 'turn/start') {
+        const input = call.params.input
+          .map((part: { text?: string }) => part.text ?? '')
+          .join('\n');
+        writeFileSync(
+          join(run, `home/.codex/${call.params.threadId}.jsonl`),
+          JSON.stringify({
+            timestamp: new Date().toISOString(),
+            type: 'response_item',
+            payload: {
+              type: 'message',
+              role: 'user',
+              content: [{ type: 'input_text', text: input }],
+            },
+          }) + '\n',
+          { flag: 'a' }
+        );
+      }
       const result =
         call.method === 'thread/turns/list'
           ? { data: [] }
@@ -275,6 +293,11 @@ try {
       }) + '\n',
       { flag: 'a' }
     );
+    const threadState = new Database(join(run, 'home/.codex/state_5.sqlite'));
+    threadState
+      .prepare('UPDATE threads SET updated_at_ms = ? WHERE id = ?')
+      .run(Date.now() + 1000, 'flow');
+    threadState.close();
     ws!.close();
     await app!.cleanup();
     app = undefined;

@@ -86,8 +86,16 @@ function fixture() {
           value: {
             ok: true,
             value: {
-              status: 'stopped',
+              status: activity === 1 ? 'stopped' : 'done',
               lastActivityAt: activity,
+              ...(activity > 1
+                ? {
+                    exchange: [
+                      { at: activity - 1, role: 'user', text: starts.at(-1)! },
+                      { at: activity, role: 'agent', text: 'Complete synthetic report' },
+                    ],
+                  }
+                : {}),
               lastReply: 'Complete synthetic report',
             },
           },

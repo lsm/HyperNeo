@@ -383,7 +383,7 @@ export class NeoAskTodoRepository {
     advance: (id: string) => Promise<unknown>
   ): Promise<NeoTodo> {
     const current = this.getTodo(todo.id)!;
-    if (current.state === 'removed' || current.updatedAt !== todo.updatedAt) return current;
+    if (current.state === 'removed') return current;
     return recomputeTodoStateAsync(
       () => this.stateFacts(current, change, judgement),
       async (plan) => {

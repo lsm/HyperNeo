@@ -20,6 +20,13 @@ the synthetic worker through the real start/send path. Repeating refresh must
 send nothing again. Completing the final todo through `neo.todo.close` sends
 no further work.
 
+With a non-start ask question open, the dispatched worker stays doing and its
+fresh attributed report is stored; pending work still waits. The helper then
+pauses a real completion RPC inside its synthetic GitHub read, records a new
+report, and releases the read. The RPC must return done with the complete new
+report retained, rather than silently returning success with a pending todo.
+The stub bounds this pause so an assertion cannot leave a child waiting forever.
+
 Next it saves a completed predecessor with a pending successor, stops and
 reopens its daemon, and repeats refresh. The saved handoff must dispatch once.
 An ask with an open question must not start its later worker. The real

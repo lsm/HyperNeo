@@ -309,8 +309,9 @@ describe('Neo todo pull request events', () => {
     service.todos.updateTodo(row, { state: 'removed' }, 3);
     expect(service.endUnfollowedCardTopics(Date.now())).toHaveLength(1);
     expect(service.followedTopics()).toEqual([]);
-    service.todos.updateTodo(row, { state: 'doing' }, 4);
-    service.followCardTopics(row.id);
+    expect(service.todos.updateTodo(row, { state: 'doing' }, 4).state).toBe('removed');
+    const live = todo(ref, 'disabled-pack-todo');
+    service.followCardTopics(live.id);
     db.updateGlobalSettings({ neo: { packs: ['life-admin'] } });
     expect(service.endUnfollowedCardTopics(Date.now())).toHaveLength(1);
   });
