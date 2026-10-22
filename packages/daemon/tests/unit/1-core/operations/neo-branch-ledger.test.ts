@@ -1,7 +1,8 @@
+import { fileURLToPath } from 'node:url';
 import { CodingPrLedgerRepository } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
 import { describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createCodingBranchPrReader } from '../../../../src/lib/neo/packs/coding/branch-reader.ts';
@@ -254,4 +255,42 @@ describe('branch coverage', () => {
       f.cleanup();
     }
   });
+});
+
+test('the actual daemon watcher shares branch coverage and reuses it after reopen', () => {
+  const run = realpathSync(mkdtempSync(join(tmpdir(), 'branch-ledger-rpc-')));
+  mkdirSync(join(run, 'home'));
+  try {
+    execFileSync(
+      'bun',
+      [
+        fileURLToPath(
+          new URL(
+            '../../../../../../.claude/skills/verify/github-ledger-branch.ts',
+            import.meta.url
+          )
+        ),
+        run,
+      ],
+      {
+        cwd: run,
+        env: {
+          HOME: join(run, 'home'),
+          PATH: process.env.PATH!,
+          NODE_ENV: 'test',
+          HYPERNEO_DATA_DIR: join(run, 'data'),
+          LOG_LEVEL: 'error',
+        },
+        timeout: 30000,
+        stdio: 'pipe',
+      }
+    );
+    const observed = JSON.parse(readFileSync(join(run, 'evidence/branch-ledger.json'), 'utf8'));
+    expect(observed.verified).toBe(true);
+    expect(observed.counts).toEqual({ watch: 1, legacy: 2, reopen: 0 });
+    expect(observed.fact.membership).toMatchObject({ status: 'known', urls: [url] });
+    expect(observed.snapshot.ok).toBe(true);
+  } finally {
+    rmSync(run, { recursive: true, force: true });
+  }
 });
