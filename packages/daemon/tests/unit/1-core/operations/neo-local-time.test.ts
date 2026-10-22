@@ -25,6 +25,7 @@ describe('neoIntakeMessage', () => {
       '(local time: Sun 2026-10-18 21:10 EDT)'
     );
     expect(message.message.content).toEqual([
+      { type: 'text', text: `[message id: ${input.requestId}]` },
       { type: 'text', text: '(local time: Sun 2026-10-18 21:10 EDT)' },
       { type: 'text', text: 'The human replied to the Neo message "Ready?":' },
       { type: 'text', text: 'Ship it' },
