@@ -26,10 +26,13 @@ function fixture() {
   const db = new Database(join(root, 'facts.db'));
   createCodingPackTables(db);
   let calls = 0;
-  const spawn: SpawnFn = () => {
+  const requests: string[][] = [];
+  const spawn: SpawnFn = (args) => {
     calls++;
+    requests.push(args);
+    const repo = args.includes('--repo') ? args[args.indexOf('--repo') + 1] : 'synthetic/ledger';
     return {
-      stdout: new Response(JSON.stringify([{ url }])).body,
+      stdout: new Response(JSON.stringify([{ url: url.replace('synthetic/ledger', repo) }])).body,
       stderr: new Response('').body,
       exited: new Promise<number>((done) => setTimeout(() => done(0), 20)),
       exitCode: null,
@@ -43,6 +46,7 @@ function fixture() {
     checkout,
     reader,
     calls: () => calls,
+    requests: () => requests,
     cleanup: () => {
       db.close();
       rmSync(root, { recursive: true, force: true });
@@ -60,6 +64,36 @@ describe('ledger branch reader', () => {
         Array.from({ length: 5 }, () => [url])
       );
       expect(f.calls()).toBe(1);
+    } finally {
+      f.cleanup();
+    }
+  });
+  test('fork checkouts keep GitHub CLI upstream and explicit default selection', async () => {
+    const f = fixture();
+    try {
+      const query = f.checkout('fork'),
+        read = f.reader(f.db);
+      execFileSync(
+        'git',
+        ['remote', 'add', 'upstream', 'https://github.com/synthetic/parent.git'],
+        { cwd: query.cwd, stdio: 'pipe' }
+      );
+      expect(await read(query)).toEqual([url.replace('synthetic/ledger', 'synthetic/parent')]);
+      execFileSync('git', ['config', 'remote.origin.gh-resolved', 'base'], {
+        cwd: query.cwd,
+        stdio: 'pipe',
+      });
+      expect(await read(query)).toEqual([url]);
+      execFileSync('git', ['config', 'remote.origin.gh-resolved', 'synthetic/selected'], {
+        cwd: query.cwd,
+        stdio: 'pipe',
+      });
+      expect(await read(query)).toEqual([url.replace('synthetic/ledger', 'synthetic/selected')]);
+      expect(f.requests().map((args) => args[args.indexOf('--repo') + 1])).toEqual([
+        'synthetic/parent',
+        'synthetic/ledger',
+        'synthetic/selected',
+      ]);
     } finally {
       f.cleanup();
     }
