@@ -5,6 +5,7 @@ import {
   BUILD_METADATA,
   UNKNOWN_VERSION,
   readBuildCommit,
+  readReleaseBuildCommit,
   readBuildMetadata,
 } from '../../../../src/lib/build-metadata';
 
@@ -71,5 +72,18 @@ describe('BUILD_METADATA commit', () => {
   it('is the HEAD of the checkout the daemon runs from', () => {
     const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
     expect(BUILD_METADATA.commit).toBe(process.env.HYPERNEO_BUILD_COMMIT?.trim() || head);
+  });
+});
+
+describe('release build commit shared by web and daemon', () => {
+  it.each([
+    { environment: { HYPERNEO_BUILD_COMMIT: 'b'.repeat(40) }, expected: 'b'.repeat(40) },
+    {
+      environment: { GITHUB_SHA: 'c'.repeat(40), HYPERNEO_BUILD_COMMIT: 'b'.repeat(40) },
+      expected: 'c'.repeat(40),
+    },
+    { environment: {}, expected: SHA },
+  ])('reports the same release commit for $expected', ({ environment, expected }) => {
+    expect(readReleaseBuildCommit(environment, () => SHA)).toBe(expected);
   });
 });

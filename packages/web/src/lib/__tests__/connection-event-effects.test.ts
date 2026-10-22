@@ -6,6 +6,7 @@ const fixture = vi.hoisted(() => ({
   state: 'disconnected',
   attempts: 7,
   connected: true,
+  build: vi.fn(async () => ({ commit: 'a'.repeat(40) })),
   emit: (_state: string, _error?: Error) => {},
 }));
 
@@ -15,6 +16,7 @@ vi.mock('@hyperneo/shared', () => ({
       fixture.emit = callback;
       return () => {};
     }
+    request = fixture.build;
     isConnected() {
       return fixture.connected;
     }
@@ -79,6 +81,12 @@ describe('real ConnectionManager connection-event effects', () => {
   let manager: ConnectionManager;
 
   beforeEach(async () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal('sessionStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+    fixture.build.mockReset().mockResolvedValue({ commit: 'a'.repeat(40) });
     fixture.connected = true;
     fixture.state = 'disconnected';
     fixture.attempts = 7;
@@ -94,6 +102,88 @@ describe('real ConnectionManager connection-event effects', () => {
   afterEach(async () => {
     await manager.disconnect();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('reloads the running bundle when reconnect reports a different daemon commit', async () => {
+    vi.stubGlobal('__WEB_BUILD_COMMIT__', 'a'.repeat(40));
+    window.location.reload = vi.fn();
+    fixture.build.mockResolvedValueOnce({ commit: 'a'.repeat(40) });
+    fixture.emit('connected');
+    await vi.waitFor(() => expect(fixture.build).toHaveBeenCalled());
+    expect(window.location.reload).not.toHaveBeenCalled();
+    fixture.build.mockResolvedValueOnce({ commit: 'b'.repeat(40) });
+    fixture.emit('reconnecting');
+    fixture.emit('connected');
+    await vi.waitFor(() => expect(window.location.reload).toHaveBeenCalledOnce());
+    expect(fixture.build).toHaveBeenLastCalledWith('operation.invoke', {
+      name: 'system.build',
+      input: {},
+    });
+  });
+
+  it('reloads only once for a persistent commit pair, across page initialization and reconnects', async () => {
+    vi.stubGlobal('__WEB_BUILD_COMMIT__', 'a'.repeat(40));
+    window.location.reload = vi.fn();
+    fixture.build.mockResolvedValue({ commit: 'b'.repeat(40) });
+    fixture.emit('connected');
+    await vi.waitFor(() => expect(window.location.reload).toHaveBeenCalledOnce());
+    await manager.disconnect();
+    manager = new ConnectionManager('ws://example.test');
+    await manager.getHub();
+    fixture.emit('connected');
+    fixture.emit('connected');
+    await vi.waitFor(() => expect(fixture.build).toHaveBeenCalledTimes(3));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(window.location.reload).toHaveBeenCalledOnce();
+    fixture.build.mockResolvedValue({ commit: 'c'.repeat(40) });
+    fixture.emit('connected');
+    await vi.waitFor(() => expect(window.location.reload).toHaveBeenCalledTimes(2));
+    fixture.build.mockResolvedValue({ commit: 'b'.repeat(40) });
+    fixture.emit('connected');
+    await vi.waitFor(() => expect(fixture.build).toHaveBeenCalledTimes(5));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(window.location.reload).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['getItem', 'setItem'])(
+    'keeps the page when session storage %s is blocked',
+    async (method) => {
+      vi.stubGlobal('__WEB_BUILD_COMMIT__', 'a'.repeat(40));
+      window.location.reload = vi.fn();
+      vi.spyOn(sessionStorage, method).mockImplementation(() => {
+        throw new Error('storage unavailable');
+      });
+      fixture.build.mockResolvedValue({ commit: 'b'.repeat(40) });
+      fixture.emit('connected');
+      await vi.waitFor(() => expect(fixture.build).toHaveBeenCalled());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(window.location.reload).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['unknown', '', undefined])(
+    'keeps the page when the daemon commit is %s',
+    async (commit) => {
+      vi.stubGlobal('__WEB_BUILD_COMMIT__', 'a'.repeat(40));
+      window.location.reload = vi.fn();
+      fixture.build.mockResolvedValueOnce({ commit } as { commit: string });
+      fixture.emit('connected');
+      await vi.waitFor(() => expect(fixture.build).toHaveBeenCalled());
+      expect(window.location.reload).not.toHaveBeenCalled();
+    }
+  );
+
+  it('keeps the page when build discovery fails, then retries on reconnect', async () => {
+    vi.stubGlobal('__WEB_BUILD_COMMIT__', 'a'.repeat(40));
+    window.location.reload = vi.fn();
+    fixture.build.mockRejectedValueOnce(new Error('disconnected'));
+    fixture.emit('connected');
+    await vi.waitFor(() => expect(fixture.build).toHaveBeenCalled());
+    expect(window.location.reload).not.toHaveBeenCalled();
+    fixture.build.mockResolvedValueOnce({ commit: 'b'.repeat(40) });
+    fixture.emit('connected');
+    await vi.waitFor(() => expect(window.location.reload).toHaveBeenCalledOnce());
   });
 
   it('runs connected effects synchronously in order', () => {

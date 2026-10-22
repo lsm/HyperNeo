@@ -13,7 +13,11 @@ import {
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import { operationSignature } from '../../../../src/lib/operations/discovery.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
-import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
+import {
+  createOperationRegistry,
+  defineOperation,
+} from '../../../../src/lib/operations/registry.ts';
+import { z } from 'zod';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createTestDb } from '../../../helpers/database.ts';
 
@@ -200,6 +204,94 @@ describe('neo.github.read list form', () => {
       expect(items.map((item) => item.number).sort()).toEqual(merged.map((item) => item.number));
       expect(items[0]?.mergedAt).toBe(merged.at(-1)!.mergedAt);
     } finally {
+      db.close();
+    }
+  });
+});
+
+describe('pack-owned Neo operation registration', () => {
+  test('installed pack operations retain Neo admission before their implementation runs', async () => {
+    const db = await createTestDb();
+    const service = new NeoService(
+      db,
+      { getOperationRegistry: () => createOperationRegistry([]) } as unknown as SessionManager,
+      { event: mock(() => {}) } as unknown as MessageHub,
+      new InternalEventBus<DaemonInternalEventMap>()
+    );
+    let calls = 0;
+    try {
+      service.filePacks = [
+        {
+          id: 'synthetic-pack',
+          describe: 'Synthetic operation owner',
+          instructions: () => null,
+          operations: [
+            defineOperation({
+              name: 'verify.pack.echo',
+              description: 'Return synthetic input',
+              inputSchema: z.object({ text: z.string() }),
+              resultSchema: z.union([
+                z.object({ ok: z.literal(true), text: z.string() }),
+                z.object({ ok: z.literal(false), reason: z.string() }),
+              ]),
+              policy: { safetyClass: 'read', roles: ['neo'] },
+              execute: async ({ text }) => {
+                calls++;
+                return { ok: true as const, text };
+              },
+            }),
+          ],
+        },
+      ];
+      const registry = createOperationRegistry(createNeoOperations(service));
+      expect(registry.get('verify.pack.echo')).toBeDefined();
+      expect(
+        await invokeOperation(
+          registry,
+          'verify.pack.echo',
+          { text: 'Synthetic bytes' },
+          {
+            source: 'mcp',
+            sessionId: 'unbound-worker',
+            role: 'neo',
+          }
+        )
+      ).toMatchObject({ value: { ok: false, reason: 'This operation belongs to Neo.' } });
+      expect(calls).toBe(0);
+      expect(
+        await invokeOperation(
+          registry,
+          'verify.pack.echo',
+          { text: 'Synthetic bytes' },
+          {
+            source: 'rpc',
+            principal: 'local',
+          }
+        )
+      ).toMatchObject({ value: { ok: true, text: 'Synthetic bytes' } });
+      expect(calls).toBe(1);
+    } finally {
+      service.dispose();
+      db.close();
+    }
+  });
+
+  test('disabling coding work guidance keeps the existing GitHub read operation available', async () => {
+    const db = await createTestDb();
+    const service = new NeoService(
+      db,
+      { getOperationRegistry: () => createOperationRegistry([]) } as unknown as SessionManager,
+      { event: mock(() => {}) } as unknown as MessageHub,
+      new InternalEventBus<DaemonInternalEventMap>()
+    );
+    try {
+      db.updateGlobalSettings({ neo: { packs: [] } });
+      expect(service.packs().some((pack) => pack.id === 'coding')).toBe(false);
+      expect(
+        createOperationRegistry(createNeoOperations(service)).get('neo.github.read')
+      ).toBeDefined();
+    } finally {
+      service.dispose();
       db.close();
     }
   });
