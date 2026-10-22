@@ -1,5 +1,6 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
+import { ContentDisclosureControl } from '../components/ui/ContentDisclosureControl.tsx';
 import { t } from '../lib/i18n/index.ts';
 import { NeoIcon } from './NeoIcon.tsx';
 import {
@@ -11,17 +12,6 @@ import {
 } from './session-transcript.ts';
 
 const rowClass = 'rounded-xl border border-line bg-surface';
-
-function Chevron({ open, small }: { open: boolean; small?: boolean }) {
-  return (
-    <span
-      aria-hidden="true"
-      class={`inline-flex shrink-0 text-fg-faint transition-transform ${open ? '' : 'rotate-180'}`}
-    >
-      <NeoIcon name="chevron" class={small ? '!h-3 !w-3' : '!h-3.5 !w-3.5'} />
-    </span>
-  );
-}
 
 export function NeoToolRow({
   name,
@@ -37,29 +27,26 @@ export function NeoToolRow({
   const [open, setOpen] = useState(false);
   const tone = isError ? 'text-danger' : result === null ? 'text-accent' : 'text-success';
   return (
-    <div class={rowClass}>
-      <button
-        type="button"
-        disabled={!result}
-        aria-expanded={result ? open : undefined}
-        aria-label={`${name} ${summary}`}
-        onClick={() => setOpen(!open)}
-        class="flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left"
-      >
-        <span class={`inline-flex w-4 shrink-0 justify-center ${tone}`} aria-hidden="true">
-          <NeoIcon
-            name={isError ? 'alert' : result === null ? 'spark' : 'check'}
-            class="!h-3.5 !w-3.5"
-          />
-        </span>
-        <span class="shrink-0 text-xs font-semibold text-fg">{name}</span>
-        <span class="min-w-0 flex-1 truncate font-mono text-xs text-fg-muted">{summary}</span>
-        {!!result && <Chevron open={open} small />}
-      </button>
+    <div class={`${rowClass} flow-root px-3 py-2`}>
+      <span class={`mr-2 inline-flex w-4 justify-center align-middle ${tone}`} aria-hidden="true">
+        <NeoIcon
+          name={isError ? 'alert' : result === null ? 'spark' : 'check'}
+          class="!h-3.5 !w-3.5"
+        />
+      </span>
+      <span class="mr-2 text-xs font-semibold text-fg">{name}</span>
+      <span class="break-words font-mono text-xs text-fg-muted">{summary}</span>
       {open && !!result && (
-        <pre class="mx-3 mb-2.5 max-h-[220px] overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] text-fg-muted">
+        <pre class="mt-2 max-h-[220px] overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] text-fg-muted">
           {result}
         </pre>
+      )}
+      {!!result && (
+        <ContentDisclosureControl
+          expanded={open}
+          onToggle={() => setOpen(!open)}
+          aria-label={`${name} ${summary}`}
+        />
       )}
     </div>
   );
@@ -69,26 +56,27 @@ export function NeoThinkingRow({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   const firstLine = text.split(/\r?\n/).find((line) => line) ?? '';
   return (
-    <button
-      type="button"
-      disabled={!text}
-      aria-expanded={open}
-      onClick={() => setOpen(!open)}
-      class={`${rowClass} flex w-full min-w-0 items-baseline gap-2 px-3 py-2 text-left`}
-    >
+    <div class={`${rowClass} flow-root px-3 py-2`}>
       <span
-        class="inline-flex w-4 shrink-0 justify-center self-center text-fg-muted"
+        class="mr-2 inline-flex w-4 justify-center align-middle text-fg-muted"
         aria-hidden="true"
       >
         <NeoIcon name="spark" class="!h-3 !w-3" />
       </span>
-      <span class="shrink-0 text-xs font-semibold text-fg">{t('session.thinking')}</span>
+      <span class="mr-2 text-xs font-semibold text-fg">{t('session.thinking')}</span>
       <span
-        class={`min-w-0 flex-1 text-xs italic text-fg-muted ${open ? 'whitespace-pre-wrap break-words' : 'truncate'}`}
+        class={`text-xs italic text-fg-muted ${open ? 'whitespace-pre-wrap break-words' : 'inline-block max-w-[70%] truncate align-bottom'}`}
       >
         {open ? text : firstLine}
       </span>
-    </button>
+      {!!text && (
+        <ContentDisclosureControl
+          expanded={open}
+          onToggle={() => setOpen(!open)}
+          aria-label={t('session.thinking')}
+        />
+      )}
+    </div>
   );
 }
 
@@ -129,15 +117,16 @@ export function NeoSessionStepsLine({
   const now = useNow(steps.running);
   const counts = sessionStepCountsLabel(steps);
   const current = currentLine(steps.items[steps.items.length - 1]);
+  const control = (
+    <ContentDisclosureControl
+      expanded={open}
+      onToggle={() => setOpen(!open)}
+      aria-label={t(open ? 'session.hideSteps' : 'session.showSteps')}
+    />
+  );
   return (
-    <div class="flex flex-col gap-2">
-      <button
-        type="button"
-        aria-expanded={open}
-        title={open ? t('session.hideSteps') : t('session.showSteps')}
-        onClick={() => setOpen(!open)}
-        class="flex w-full min-w-0 items-center gap-2.5 rounded-[14px] border border-line bg-surface px-3.5 py-[11px] text-left"
-      >
+    <div class="flow-root">
+      <div class="flex w-full min-w-0 items-center gap-2.5 rounded-[14px] border border-line bg-surface px-3.5 py-[11px] text-left">
         {steps.running ? (
           <span
             aria-hidden="true"
@@ -149,7 +138,7 @@ export function NeoSessionStepsLine({
           </span>
         )}
         <span class="flex min-w-0 flex-1 flex-col gap-[3px]">
-          <span class="text-sm text-fg">
+          <span class="flow-root text-sm text-fg">
             {steps.running ? (
               <>
                 {`${t('session.workingNow')} `}
@@ -159,20 +148,24 @@ export function NeoSessionStepsLine({
               t('session.worked', { duration: sessionDuration(steps.end - steps.start) })
             )}
             {counts && <span class="text-fg-muted">{` · ${counts}`}</span>}
+            {!open && !steps.running && control}
           </span>
           {steps.running && current && (
-            <span class="truncate whitespace-pre font-mono text-xs text-fg-muted">{current}</span>
+            <span class="flow-root font-mono text-xs text-fg-muted">
+              {current}
+              {!open && control}
+            </span>
           )}
         </span>
-        <Chevron open={open} />
-      </button>
+      </div>
       {open && (
-        <div class="ml-2 flex flex-col gap-1.5 border-l-2 border-line pl-3">
+        <div class="ml-2 mt-2 flex flex-col gap-1.5 border-l-2 border-line pl-3">
           {steps.items.map((item) => (
             <div key={item.id}>{renderStep(item)}</div>
           ))}
         </div>
       )}
+      {(open || (steps.running && !current)) && control}
     </div>
   );
 }
