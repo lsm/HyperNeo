@@ -3,6 +3,7 @@ import type { ConnectionState } from './state';
 import { ConnectionNotReadyError, ConnectionTimeoutError } from './errors';
 import { createDeferred } from './timeout';
 import { currentSessionIdSignal, slashCommandsSignal } from './signals';
+import { reloadStaleWebBuild } from './web-build-reconnect';
 import { runConnectionEvent } from './connection-event-pipeline';
 import { runConnectionResume } from './connection-resume-pipeline';
 import {
@@ -176,6 +177,10 @@ export class ConnectionManager {
     });
     this.messageHub.onConnection((state, error) => {
       runConnectionEvent(eventEffects, state, error, this._isResuming);
+      if (state === 'connected' && typeof __WEB_BUILD_COMMIT__ === 'string')
+        void reloadStaleWebBuild(this.messageHub!, __WEB_BUILD_COMMIT__, () =>
+          window.location.reload()
+        ).catch(() => {});
     });
 
     this.application.lifecycle.exposeHub(this.messageHub, this);

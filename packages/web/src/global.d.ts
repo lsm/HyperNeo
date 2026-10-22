@@ -6,6 +6,7 @@ import type { GlobalStore } from './lib/global-store';
 import type { SessionStore } from './lib/session-store';
 
 declare global {
+  const __WEB_BUILD_COMMIT__: string | null;
   interface Window {
     __messageHub?: MessageHub;
     __messageHubReady?: boolean;
