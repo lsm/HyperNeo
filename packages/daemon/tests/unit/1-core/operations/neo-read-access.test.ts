@@ -2,11 +2,29 @@ import { afterEach, expect, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { vi } from 'vitest';
+import {
+  KeychainCredentialStore,
+  KeychainUnavailableError,
+} from '../../../../src/lib/credentials/credential-store.ts';
 import { neoReadAccess, neoReadCheckoutPaths } from '../../../../src/lib/neo/read-access.ts';
 
 const roots: string[] = [];
 afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+test('a locked dedicated keychain leaves Neo usable and gh visibly unauthenticated', async () => {
+  vi.stubEnv('NODE_ENV', 'production');
+  vi.spyOn(KeychainCredentialStore.prototype, 'get').mockRejectedValue(
+    new KeychainUnavailableError('Synthetic keychain locked')
+  );
+  const access = await neoReadAccess('synthetic-locked-token', '/synthetic/Neo');
+  roots.push(access.env.TMPDIR);
+  expect(access.env.GH_TOKEN).toBe('');
+  expect(access.env.GITHUB_TOKEN).toBe('');
 });
 
 test('only exact existing Neo checkout leaves become writable, never worker siblings', () => {
