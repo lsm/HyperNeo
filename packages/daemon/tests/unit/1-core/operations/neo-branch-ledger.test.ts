@@ -32,7 +32,16 @@ function fixture() {
     requests.push(args);
     const repo = args.includes('--repo') ? args[args.indexOf('--repo') + 1] : 'synthetic/ledger';
     return {
-      stdout: new Response(JSON.stringify([{ url: url.replace('synthetic/ledger', repo) }])).body,
+      stdout: new Response(
+        JSON.stringify([
+          {
+            url:
+              repo.split('/').length === 3
+                ? `https://${repo}/pull/7`
+                : url.replace('synthetic/ledger', repo),
+          },
+        ])
+      ).body,
       stderr: new Response('').body,
       exited: new Promise<number>((done) => setTimeout(() => done(0), 20)),
       exitCode: null,
@@ -94,6 +103,42 @@ describe('ledger branch reader', () => {
         'synthetic/ledger',
         'synthetic/selected',
       ]);
+    } finally {
+      f.cleanup();
+    }
+  });
+  test('Enterprise hosts and explicit host defaults stay separate from github.com coverage', async () => {
+    const f = fixture();
+    try {
+      const query = f.checkout('enterprise'),
+        read = f.reader(f.db);
+      expect(await read(query)).toEqual([url]);
+      for (const remote of [
+        'https://ghe.example/synthetic/ledger.git',
+        'git@ghe.example:synthetic/ledger.git',
+        'ssh://git@ghe.example/synthetic/ledger.git',
+      ]) {
+        execFileSync('git', ['remote', 'set-url', 'origin', remote], {
+          cwd: query.cwd,
+          stdio: 'pipe',
+        });
+        expect(await read(query)).toEqual(['https://ghe.example/synthetic/ledger/pull/7']);
+      }
+      execFileSync(
+        'git',
+        ['config', 'remote.origin.gh-resolved', 'other.example/synthetic/selected'],
+        { cwd: query.cwd, stdio: 'pipe' }
+      );
+      expect(await read(query)).toEqual(['https://other.example/synthetic/selected/pull/7']);
+      expect(f.requests().map((args) => args[args.indexOf('--repo') + 1])).toEqual([
+        'synthetic/ledger',
+        'ghe.example/synthetic/ledger',
+        'other.example/synthetic/selected',
+      ]);
+      expect(
+        new CodingPrLedgerRepository(f.db).branchFacts.read('synthetic/ledger', 'feature')
+          .membership
+      ).toMatchObject({ status: 'known', urls: [url] });
     } finally {
       f.cleanup();
     }

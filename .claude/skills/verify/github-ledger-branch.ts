@@ -15,7 +15,8 @@ assert.equal(process.env.HYPERNEO_DATA_DIR,join(run,'data'));
 assert(!existsSync(join(run,'data/daemon.db')));
 for(const dir of ['home','data','bin','evidence']) mkdirSync(join(run,dir),{recursive:true});
 process.env.PATH=`${join(run,'bin')}:${process.env.PATH}`;
-const url='https://github.com/synthetic/ledger/pull/7';
+const host=process.argv[3]==='enterprise'?'ghe.example':'github.com',repo=host==='github.com'?'synthetic/ledger':`${host}/synthetic/ledger`;
+const url=`https://${host}/synthetic/ledger/pull/7`;
 writeFileSync(join(run,'phase'),'watch');
 writeFileSync(join(run,'bin/gh'),`#!/usr/bin/env bun
 import {appendFileSync,readFileSync} from 'node:fs';
@@ -27,11 +28,11 @@ await Bun.sleep(100);console.log(JSON.stringify([{url:${JSON.stringify(url)}}]))
 const checkout=(name:string)=>{
   const cwd=join(run,name);mkdirSync(cwd);
   execFileSync('git',['init','-b','feature'],{cwd,stdio:'pipe'});
-  execFileSync('git',['remote','add','origin','https://github.com/synthetic/ledger.git'],{cwd,stdio:'pipe'});
+  execFileSync('git',['remote','add','origin',`https://${host}/synthetic/ledger.git`],{cwd,stdio:'pipe'});
   return {cwd,branch:'feature'};
 };
 const queries=[checkout('one'),checkout('two')];
-const evidence:Record<string,any>={};
+const evidence:Record<string,any>={host,repo};
 let app:Awaited<ReturnType<typeof createDaemonApp>>|undefined,ws:WebSocket|undefined;
 const network=globalThis.fetch;
 globalThis.fetch=(()=>{throw new Error('No real HTTP in synthetic proof');}) as typeof fetch;
@@ -70,7 +71,7 @@ try{
   evidence.worker=await rpc('work.status',{ref:{adapter:'hyperneo',id:'synthetic-worker-0'}});
   evidence.watch=await watch();
   evidence.snapshot=await rpc('neo.snapshot');
-  evidence.fact=new CodingPrLedgerRepository(app!.db.getDatabase()).branchFacts.read('synthetic/ledger','feature');
+  evidence.fact=new CodingPrLedgerRepository(app!.db.getDatabase()).branchFacts.read(repo,'feature');
   assert.equal(evidence.fact.membership.status,'known','The real session watcher must collect branch coverage');
   assert.deepEqual(evidence.fact.membership.urls,[url]);
   const read=createCodingBranchPrReader(()=>app!.db.getDatabase());
@@ -79,7 +80,7 @@ try{
   evidence.legacy=await Promise.all(queries.map(q=>readGithubBranchPrs(q)));
   writeFileSync(join(run,'phase'),'reopen');ws!.close();await app!.cleanup();app=undefined;
   await open();evidence.reopenedWatch=await watch();
-  evidence.reopenedFact=new CodingPrLedgerRepository(app!.db.getDatabase()).branchFacts.read('synthetic/ledger','feature');
+  evidence.reopenedFact=new CodingPrLedgerRepository(app!.db.getDatabase()).branchFacts.read(repo,'feature');
   assert.deepEqual(evidence.reopenedFact,evidence.fact);
   const requests=readFileSync(join(run,'evidence/requests.jsonl'),'utf8').trim().split('\n').map(line=>JSON.parse(line));
   evidence.requests=requests;
