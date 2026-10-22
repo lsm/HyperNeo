@@ -1,7 +1,7 @@
 import { createCodingClaudeOwnerReader } from './claude-pr-owners.ts';
 import { NEO_PACK_CODING_INSTRUCTIONS, NEO_PACK_CODING_WORKER_RULES } from '@hyperneo/prompts';
 import { type CodingTodoPrRepository, createCodingTodoPack } from './todo-prs.ts';
-import type { NeoPack, NeoPackBrief } from '../types.ts';
+import type { NeoPack, NeoPackBrief } from '../../pack-contract.ts';
 import { routeNeoCardPrEvent } from './card-pr-events.ts';
 import { prepareCodingExecution } from './prepare-execution.ts';
 import {

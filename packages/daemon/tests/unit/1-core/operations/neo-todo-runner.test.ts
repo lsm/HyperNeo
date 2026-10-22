@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
-import type { NeoPack, NeoTodoCheckResult } from '../../../../src/lib/neo/packs/types.ts';
+import type { NeoPack, NeoTodoCheckResult } from '../../../../src/lib/neo/pack-contract.ts';
 import {
   createNeoTodoRunner,
   neoAskIdleNote,

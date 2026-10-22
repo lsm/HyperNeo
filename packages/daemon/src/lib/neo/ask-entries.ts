@@ -12,7 +12,7 @@ import { z } from 'zod';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import type { NeoPack } from './packs/types.ts';
+import type { NeoPack } from './pack-contract.ts';
 import { neoStartQuestionLine } from './start-question.ts';
 import {
   NeoStatusCodesSchema,

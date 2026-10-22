@@ -4,7 +4,7 @@ import { requireClosedPrEvent } from '../../../external-events/session-subscript
 import { topicMatchesPattern } from '../../../external-events/topic-trie.ts';
 import type { ExternalEvent } from '../../../external-events/types.ts';
 import { pullRequestUrlOfTopic } from '../../../github/parse-pr-url.ts';
-import type { NeoCardEventSubscription, NeoPackEventRoute } from '../types.ts';
+import type { NeoCardEventSubscription, NeoPackEventRoute } from '../../pack-contract.ts';
 
 function isNeoCardPrEventCurrent(
   read: { pr: NeoWorkPr; readAt: number } | null,

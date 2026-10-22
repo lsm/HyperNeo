@@ -23,7 +23,7 @@ import {
   readDriverSent,
   withWorkGoal,
 } from './driver-work.ts';
-import type { NeoPack, NeoTodoCheckResult } from './packs/types.ts';
+import type { NeoPack, NeoTodoCheckResult } from './pack-contract.ts';
 import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
 import { readNeoTodoCompletion, sameNeoTodoCheck } from './todo-completion.ts';
 import { dispatchNeoInput } from './dispatch-input.ts';

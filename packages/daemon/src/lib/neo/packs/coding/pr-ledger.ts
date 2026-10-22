@@ -6,7 +6,7 @@ import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { Logger } from '../../../logger.ts';
 import { spawnProcess } from '../../../runtime-spawn/index.ts';
 import { isRateLimitError } from '../../../session/rate-limit-detector.ts';
-import type { NeoSessionFacts } from '../types.ts';
+import type { NeoSessionFacts } from '../../pack-contract.ts';
 import { codingPrKey } from './todo-prs.ts';
 
 export type CodingPrState =

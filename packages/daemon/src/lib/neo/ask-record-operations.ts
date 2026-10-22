@@ -13,7 +13,7 @@ import {
   requireNeoOpenAsk,
 } from './todo-operations.ts';
 import { isNeoTodoStartable } from './todo-runner.ts';
-import type { NeoPack } from './packs/types.ts';
+import type { NeoPack } from './pack-contract.ts';
 import { neoSplitOutcome, neoTodoRepo } from './todo-repo.ts';
 import type { SessionGoal } from '@hyperneo/shared/types/session-goal';
 
