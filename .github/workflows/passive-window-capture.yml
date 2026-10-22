@@ -1,0 +1,26 @@
+name: Passive Window Capture
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - '.claude/skills/verify/window-capture/**'
+      - '.github/workflows/passive-window-capture.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: passive-window-capture-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  test:
+    name: Passive capture fake-API tests
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - run: swift test --package-path .claude/skills/verify/window-capture
+      - name: Invalid JSON fails before native capture
+        run: |
+          capture="$(swift build --package-path .claude/skills/verify/window-capture --show-bin-path)/capture-window"
+          if printf '{}' | "$capture" > "$RUNNER_TEMP/capture-error.json"; then exit 1; fi
+          python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r["ok"] is False and r["code"] == "invalid_request" and "png" not in r' "$RUNNER_TEMP/capture-error.json"
