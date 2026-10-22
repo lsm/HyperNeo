@@ -1,3 +1,4 @@
+import { runMigration445 } from '../../../../src/storage/schema/m445-job-queue-message-lookup-index';
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
@@ -413,6 +414,7 @@ describe('JobQueueRepository', () => {
   });
 
   describe('getLatestByPayload', () => {
+    beforeEach(() => runMigration445(db));
     it('keeps queue and session scope plus rowid ties for full message payloads', () => {
       const body = 'Complete stored report 🦊'.repeat(1000);
       const payload = { to: { sessionId: 'target' }, messageUuid: 'message', body };

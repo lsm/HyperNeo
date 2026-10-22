@@ -907,12 +907,16 @@ export class JobQueueRepository {
 
   getLatestByPayload(queue: string, matchPayload: Record<string, unknown>): Job | null {
     if (Object.keys(matchPayload).length === 0) return null;
-    const payloadPredicates = Object.values(matchPayload).map((value) =>
-      value === null ? `json_type(payload, ?) = 'null'` : `json_extract(payload, ?) = ?`
+    const payloadPredicates = Object.entries(matchPayload).map(([key, value]) =>
+      value === null
+        ? `json_type(payload, ?) = 'null'`
+        : key === 'messageUuid'
+          ? `json_extract(payload, '$.messageUuid') = ?`
+          : `json_extract(payload, ?) = ?`
     );
     const params: (string | number | null)[] = [queue];
     for (const [key, value] of Object.entries(matchPayload)) {
-      params.push(`$.${key}`);
+      if (key !== 'messageUuid' || value === null) params.push(`$.${key}`);
       if (value !== null) params.push(sqliteJsonScalar(value));
     }
     const row = this.db

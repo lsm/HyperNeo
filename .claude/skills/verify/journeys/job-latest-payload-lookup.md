@@ -21,3 +21,15 @@ all three latency surfaces below 250ms, the same unknown/failed result and lates
 failure reason, and unchanged payloads. The helper closes its child, socket and
 daemon in `finally`. Natural synthetic traversal demonstrates query work; it does
 not establish the physical cause or exact caller of the historical 2.887s query.
+
+To measure the index upgrade on the already seeded regression fixture, after its
+daemon has exited:
+
+```bash
+env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test \
+  bun .claude/skills/verify/job-latest-index-upgrade.ts "$RUN"
+```
+
+`migration-observed.json` records index-creation time on at least 300,000 rows,
+unchanged full-row SHA/count before and after, and an idempotent second run. This
+is synthetic startup cost; no production migration or data modification is run.
