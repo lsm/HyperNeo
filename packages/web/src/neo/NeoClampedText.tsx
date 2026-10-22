@@ -1,3 +1,4 @@
+import { ContentDisclosureControl } from '../components/ui/ContentDisclosureControl.tsx';
 import type { ComponentChildren } from 'preact';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { t } from '../lib/i18n/index.ts';
@@ -52,7 +53,7 @@ export function NeoClampedText({ text, children }: { text: string; children: Com
     return () => observer.disconnect();
   }, [text, open]);
   return (
-    <>
+    <div class="flow-root">
       <div
         ref={box}
         data-clamped={!open && long ? '' : undefined}
@@ -61,15 +62,12 @@ export function NeoClampedText({ text, children }: { text: string; children: Com
         {children}
       </div>
       {long && (
-        <button
-          type="button"
-          aria-expanded={open}
-          onClick={() => setOpen(!open)}
-          class="mt-1 text-xs text-fg-muted hover:text-fg hover:underline"
-        >
-          {t(open ? 'chat.showLess' : 'chat.showMore')}
-        </button>
+        <ContentDisclosureControl
+          expanded={open}
+          onToggle={() => setOpen(!open)}
+          aria-label={t(open ? 'chat.showLess' : 'chat.showMore')}
+        />
       )}
-    </>
+    </div>
   );
 }

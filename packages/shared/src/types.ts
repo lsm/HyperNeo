@@ -369,6 +369,7 @@ export interface PendingModelSwitch {
 }
 
 export interface SessionMetadata {
+  neoAutoCompactPercent?: number;
   messageCount: number;
   progress?: SessionProgress;
   totalTokens: number;
@@ -662,6 +663,7 @@ export interface ContextInfo {
   autoCompactThreshold?: number;
   sdkAutoCompactThreshold?: number;
   autoCompactPercent?: number;
+  autoCompactPercentOverride?: number;
   daemonBackstopActive?: boolean;
   isAutoCompactEnabled?: boolean;
   messageBreakdown?: ContextMessageBreakdown;

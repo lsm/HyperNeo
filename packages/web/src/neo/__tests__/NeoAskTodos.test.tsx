@@ -116,6 +116,23 @@ describe('NeoAskTodos', () => {
       ),
     });
 
+  it('uses an explicit trailing control so clicking todo text never expands or collapses it', () => {
+    locale.value = 'en';
+    const data = detailed();
+    const app = render(<NeoAskTodos entry={data} onAnswer={vi.fn()} />);
+    fireEvent.click(app.getByText('Todo a'));
+    expect(app.queryByText(data.todos[0].report!.trim())).toBeNull();
+    const more = app.getByRole('button', { name: 'more — Show details: Todo a' });
+    expect(getComputedStyle(more).getPropertyValue('float')).toBe('right');
+    fireEvent.click(more);
+    fireEvent.click(app.getByText('Todo a'));
+    expect(app.getByText(data.todos[0].report!.trim())).toBeTruthy();
+    const less = app.getByRole('button', { name: 'less — Hide details: Todo a' });
+    expect(getComputedStyle(less).getPropertyValue('float')).toBe('right');
+    fireEvent.click(less);
+    expect(app.queryByText(data.todos[0].report!.trim())).toBeNull();
+  });
+
   it('collapses three detailed todos by default, opens one, and expands or collapses all including the first', () => {
     locale.value = 'en';
     const data = detailed();
@@ -125,7 +142,7 @@ describe('NeoAskTodos', () => {
       expect(app.queryByText(item.report!.trim())).toBeNull();
       expect(app.queryByText(item.evidence!.trim())).toBeNull();
     }
-    const first = app.getByRole('button', { name: 'Show details: Todo a' });
+    const first = app.getByRole('button', { name: 'more — Show details: Todo a' });
     expect(first.getAttribute('aria-expanded')).toBe('false');
     fireEvent.click(first);
     expect(app.getByText(data.todos[0].report!.trim())).toBeTruthy();
@@ -139,7 +156,7 @@ describe('NeoAskTodos', () => {
       expect(app.queryByText(item.report!.trim())).toBeNull();
       expect(
         app
-          .getByRole('button', { name: `Show details: ${item.title}` })
+          .getByRole('button', { name: `more — Show details: ${item.title}` })
           .getAttribute('aria-expanded')
       ).toBe('false');
     }
@@ -150,10 +167,10 @@ describe('NeoAskTodos', () => {
     const data = detailed();
     const other = { ...data, ask: { ...data.ask, id: 'other', title: 'Other card' } };
     const app = render(<NeoAskTodos entry={data} onAnswer={vi.fn()} />);
-    fireEvent.click(app.getByRole('button', { name: 'Show details: Todo a' }));
+    fireEvent.click(app.getByRole('button', { name: 'more — Show details: Todo a' }));
     app.rerender(<NeoAskTodos entry={other} onAnswer={vi.fn()} />);
     expect(app.queryByText(data.todos[0].report!.trim())).toBeNull();
-    fireEvent.click(app.getByRole('button', { name: 'Show details: Todo b' }));
+    fireEvent.click(app.getByRole('button', { name: 'more — Show details: Todo b' }));
     app.rerender(<NeoAskTodos entry={data} onAnswer={vi.fn()} />);
     expect(app.getByText(data.todos[0].report!.trim())).toBeTruthy();
     expect(app.queryByText(data.todos[1].report!.trim())).toBeNull();
@@ -162,7 +179,9 @@ describe('NeoAskTodos', () => {
       <NeoAskTodos entry={{ ...data, todos: [...data.todos, todo('new')] }} onAnswer={vi.fn()} />
     );
     expect(again.getByText(data.todos[0].report!.trim())).toBeTruthy();
-    expect(again.getByRole('button', { name: 'Show details: Todo new' }).tagName).toBe('BUTTON');
+    expect(again.getByRole('button', { name: 'more — Show details: Todo new' }).tagName).toBe(
+      'BUTTON'
+    );
   });
 
   it('omits report and evidence duplicates of each other or the displayed status', () => {
@@ -471,7 +490,7 @@ describe('NeoAskTodos', () => {
     );
     const reason = app.getByText('卡住了：CI 一直红');
     expect(reason.className).toContain('text-warning');
-    fireEvent.click(app.getByRole('button', { name: '显示详情：Todo a' }));
+    fireEvent.click(app.getByRole('button', { name: '更多 — 显示详情：Todo a' }));
     const rowA = app.container.querySelector('[data-ask-todo="a"]')!;
     expect(rowA.querySelector('[data-todo-next-action]')?.textContent).toBe('下一步：修好测试再推');
     expect(rowA.textContent).not.toContain('check');
@@ -526,7 +545,7 @@ describe('NeoAskTodos', () => {
       />
     );
     expect(app.queryByText('Todo d')).toBeNull();
-    fireEvent.click(app.getByRole('button', { name: '详情' }));
+    fireEvent.click(app.getByRole('button', { name: '更多 — 详情' }));
     const line = app.getByRole('list', { name: '已移除' }).querySelector('li')!;
     expect(line.textContent).toBe('Todo d — 换成「Todo e」');
     expect(line.id).toBe('neo-ref-todo-d');
@@ -542,7 +561,7 @@ describe('NeoAskTodos', () => {
         onAnswer={() => {}}
       />
     );
-    expect(app.queryByRole('button', { name: '详情' })).toBeNull();
+    expect(app.queryByRole('button', { name: '更多 — 详情' })).toBeNull();
     expect(app.container.querySelectorAll('[data-ask-todo="d"]')).toHaveLength(1);
   });
 
@@ -550,7 +569,7 @@ describe('NeoAskTodos', () => {
     const app = render(
       <NeoAskTodos entry={entry({ todos: [todo('a', { state: 'doing' })] })} onAnswer={() => {}} />
     );
-    expect(app.queryByRole('button', { name: '详情' })).toBeNull();
+    expect(app.queryByRole('button', { name: '更多 — 详情' })).toBeNull();
   });
 
   it('shows a retired question in Details with why it is no longer needed', async () => {
@@ -569,7 +588,7 @@ describe('NeoAskTodos', () => {
       />
     );
     expect(app.queryByText('Allow a placeholder key?')).toBeNull();
-    fireEvent.click(app.getByRole('button', { name: '详情' }));
+    fireEvent.click(app.getByRole('button', { name: '更多 — 详情' }));
     await waitFor(() =>
       expect(app.getByRole('list', { name: '不再需要' }).textContent).toContain(
         'Allow a placeholder key?'
@@ -601,7 +620,7 @@ describe('NeoAskTodos', () => {
       />
     );
     expect(app.queryByText('已回答')).toBeNull();
-    fireEvent.click(app.getByRole('button', { name: '详情' }));
+    fireEvent.click(app.getByRole('button', { name: '更多 — 详情' }));
     await waitFor(() => expect(app.getByText('开始这 1 件？')).toBeTruthy());
     expect(app.getByText('— 开始 Todo a')).toBeTruthy();
   });

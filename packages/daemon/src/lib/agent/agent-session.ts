@@ -179,7 +179,7 @@ import {
 import { AcpQueryRunner } from '../acp/acp-query-runner.ts';
 import {
   resolveSessionContextModelInfo,
-  getSessionModelInfo,
+  getSessionContextModelInfo,
   initializeModels,
   resolveModelAlias,
 } from '../model-service.ts';
@@ -2105,7 +2105,7 @@ export class AgentSession
     if (cacheKey !== 'global') return cached;
     if (cached) return cached;
     await initializeModels().catch(() => {});
-    return getSessionModelInfo(this.session);
+    return getSessionContextModelInfo(this.session);
   }
 
   async midTurnContextBudgetCheck(): Promise<void> {
@@ -2181,7 +2181,14 @@ export class AgentSession
           if (this.isLimitRecoveryPending()) return false;
           if (!this.messageQueue.isRunning()) return false;
           if (providerId === 'acp') return false;
-          if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) return false;
+          if (
+            NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId) &&
+            !(
+              this.session.id.startsWith('neo:') &&
+              this.session.metadata.neoAutoCompactPercent !== undefined
+            )
+          )
+            return false;
           return true;
         },
         refreshUsage: () => this.refreshMidTurnContextInfo(queryObject),
