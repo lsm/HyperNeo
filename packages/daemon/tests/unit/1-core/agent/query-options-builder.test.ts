@@ -2126,6 +2126,26 @@ describe('QueryOptionsBuilder', () => {
             expect(options.env?.GH_TOKEN).toBe('');
             expect(options.env?.GITHUB_TOKEN).toBe('');
             expect(options.env?.GH_CONFIG_DIR).toBe(join(options.env!.TMPDIR!, 'gh'));
+            for (const sandbox of [
+              undefined,
+              {
+                enabled: false,
+                failIfUnavailable: false,
+                allowUnsandboxedCommands: true,
+                excludedCommands: ['gh'],
+              },
+            ]) {
+              mockSession.config.sandbox = sandbox;
+              const enforced = await resumedBuilder.build();
+              expect(enforced.sandbox).toMatchObject({
+                enabled: true,
+                failIfUnavailable: true,
+                allowUnsandboxedCommands: false,
+                excludedCommands: [],
+                enableWeakerNetworkIsolation: true,
+              });
+              expect(enforced.sandbox?.filesystem?.allowWrite).not.toContain('/test/workspace');
+            }
           } else {
             expect(options.env?.HYPERNEO_HANDOFF_DIR).toBe(
               join(handoffDataDir, 'handoffs', encodeURIComponent(mockSession.id), 'drafts')

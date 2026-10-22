@@ -405,6 +405,20 @@ test(`root startup, reads, resume and publication (${sandboxProof ? 'real OS san
     });
     expect(opened.ok).toBe(true);
     expect(opened.sessionId).toBe(root);
+    await expect(
+      hub.request('session.sandbox.switch', { sessionId: root, sandboxEnabled: false })
+    ).resolves.toMatchObject({
+      success: false,
+      sandboxEnabled: true,
+      error: expect.stringContaining('Neo requires'),
+    });
+    await hub.request('session.update', {
+      sessionId: root,
+      config: {
+        ...storedAtStartup.config,
+        sandbox: { enabled: false, allowUnsandboxedCommands: true, excludedCommands: ['gh'] },
+      },
+    });
     const schedule = new SessionScheduleRepository(daemon.db.getDatabase()).create(
       {
         target: { adapter: 'hyperneo', id: opened.sessionId },
