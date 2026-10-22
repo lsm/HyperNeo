@@ -89,7 +89,16 @@ try {
     assert(selectedWorker); const failed = rpc('liveQuery.subscribe', { queryName: 'messages.bySession', subscriptionId: 'death', params: [sessionId, 30] }).then(() => { throw new Error('Terminated read unexpectedly succeeded'); }, (error) => String(error));
     setTimeout(() => selectedWorker!.terminate(), 10); await wait(100); const at = performance.now(); assert.equal((await rpc('system.health') as { status: string }).status, 'ok'); evidence.deathHealthMs = performance.now() - at;
     evidence.workerDeath = await failed; assert(String(evidence.workerDeath).includes('SDK reader timeout'));
-    await rpc('liveQuery.subscribe', { queryName: 'messages.bySession', subscriptionId: 'death', params: [sessionId, 30] }); await rpc('liveQuery.unsubscribe', { subscriptionId: 'death' }); evidence.recoveredAfterDeath = true;
+    await rpc('liveQuery.subscribe', { queryName: 'messages.bySession', subscriptionId: 'death', params: [sessionId, 30] }); evidence.recoveredAfterDeath = true;
+    const since = events.length;
+    app.reactiveDb.db.updateMessageStatus([ids[0]], 'deferred');
+    setTimeout(() => selectedWorker!.dispatchEvent(new ErrorEvent('error', { message: 'synthetic live worker fault', cancelable: true })), 300);
+    let error: typeof events[number] | undefined;
+    for (let n = 0; n < 1000; n++) { error = events.slice(since).find(event => event.method === 'liveQuery.error' && event.data.subscriptionId === 'death'); if (error) break; await wait(10); }
+    assert(error); assert.equal(error.data.code, 'QUERY_FAILED'); assert.equal(error.data.phase, 'delta');
+    evidence.deltaFailure = error.data;
+    await rpc('liveQuery.subscribe', { queryName: 'messages.bySession', subscriptionId: 'death', params: [sessionId, 30] });
+    await rpc('liveQuery.unsubscribe', { subscriptionId: 'death' }); evidence.recoveredAfterDeltaFailure = true;
   }
   evidence.afterBodies = hash(); assert.deepEqual(evidence.afterBodies, evidence.beforeBodies);
   evidence.verified = true;

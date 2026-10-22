@@ -517,6 +517,10 @@ export class SessionStore {
     const unsubError = hub.onEvent<LiveQueryErrorEvent>('liveQuery.error', (event) => {
       if (event.subscriptionId !== subscriptionId) return;
       if (this.activeMessagesSubscriptionId !== subscriptionId) return;
+      if (event.code === 'QUERY_FAILED') {
+        this.resyncMessages?.();
+        return;
+      }
       if (event.code === 'MESSAGE_TOO_LARGE') {
         awaitingSnapshot = true;
         this.messagesLoaded.value = false;

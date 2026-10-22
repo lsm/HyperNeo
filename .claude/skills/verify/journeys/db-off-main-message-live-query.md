@@ -49,3 +49,14 @@ snapshot and status delta on the explicit no-disk path or the real Bun IPC host.
 The worker hash rows are portable tuples on the wire, then local Maps on main;
 the JSON IPC bridge must retain them. Deno Boot Smoke covers an empty live
 subscription on its actual runtime; Deno is CI-only when unavailable locally.
+
+
+After initial-read termination/deadline recovery, the helper injects a native
+worker error during a status-triggered reevaluation. It must emit QUERY_FAILED
+for that delta, release the subscription and accept a fresh subscription. The
+SessionStore uses its existing resynchronization path for this event, retaining
+rendered messages until the replacement snapshot; stale-ID errors are ignored.
+That client wiring has CI contracts; no browser/GUI verification is claimed.
+Failed helper runs that bypassed the reactive facade or compared a pre-status
+reference after a timestamp-changing consumed write are retained as helper
+failures, not successful production delta proofs.
