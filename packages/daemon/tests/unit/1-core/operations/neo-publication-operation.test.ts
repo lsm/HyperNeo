@@ -37,6 +37,7 @@ describe('Neo publication without runtime input attribution', () => {
     ledger = new NeoPublicationRepository(mailbox.db);
     notify.mockClear();
     publish = createNeoPublisher({
+      receivedHumanInput: () => false,
       getBinding: (id) => repo.getBindingBySession(id),
       getRootBinding: () => repo.defaultBinding(),
       hasProject: (id) => !!repo.getProject(id),

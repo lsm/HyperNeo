@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MessageHub, WebSocketClientTransport, type Session } from '@hyperneo/shared';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
+import { NeoAskTodoRepository } from '../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { readNeoPublications } from '../../../../web/src/neo/publication-client.ts';
 
 test('recovered root refreshes prompt and tools, resumes SDK history across cwd changes and publishes the reply', async () => {
@@ -31,6 +32,7 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
   const requests: { path: string; tools: number; active: boolean }[] = [];
   const sent: { system: string; human: unknown }[] = [];
   const nudged: string[] = [];
+  const sdkErrors: string[] = [];
   let round = 0;
   const fixture = createServer(async (req, res) => {
     if (req.url?.startsWith('/v1/models')) {
@@ -107,7 +109,7 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
     }
     const approvalProbe = active && !approvalProbeIssued;
     if (approvalProbe) approvalProbeIssued = true;
-    const publishing = active && !approvalProbe && round < 2;
+    const publishing = active && !approvalProbe && round < 4;
     const block = approvalProbe
       ? {
           type: 'tool_use',
@@ -121,8 +123,33 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
             id: `tool-fictional-${++round}`,
             name: invoke!.name,
             input: {
-              name: 'neo.publication.publish',
-              input: { requestId: 'fictional-send', shortText, fullText, links: [] },
+              name:
+                round <= 2
+                  ? 'neo.publication.publish'
+                  : round === 3
+                    ? 'neo.rule.save'
+                    : 'neo.question.ask',
+              input:
+                round <= 2
+                  ? {
+                      requestId: 'fictional-send',
+                      shortText,
+                      fullText,
+                      links: [],
+                      replyTo: [requestId],
+                    }
+                  : round === 3
+                    ? {
+                        messageId: requestId,
+                        from: 'Tell me about the fictional moon garden. Keep synthetic garden changes as drafts.',
+                        add: ['Keep synthetic garden changes as drafts.'],
+                      }
+                    : {
+                        askId: 'fictional-garden',
+                        kind: 'reply',
+                        text: 'Which synthetic flower?',
+                        replyTo: [requestId],
+                      },
             },
           }
         : { type: 'text', text: 'Done.' };
@@ -208,6 +235,10 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
     const options = await build.apply(this, args);
     return {
       ...options,
+      stderr: (data) => {
+        sdkErrors.push(data);
+        options.stderr?.(data);
+      },
       spawnClaudeCodeProcess: (opts) =>
         spawn(opts.command, opts.args, {
           cwd: opts.cwd,
@@ -299,6 +330,12 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
     });
     hub.registerTransport(transport);
     await transport.initialize();
+    const { servers } = await hub.request<{ servers: Array<{ id: string }> }>(
+      'mcp.registry.list',
+      {}
+    );
+    for (const server of servers)
+      await hub.request('mcp.registry.setEnabled', { id: server.id, enabled: false });
     const params = {
       providerId: 'anthropic',
       displayName: 'Synthetic local model',
@@ -326,12 +363,23 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
     });
     expect(opened.ok).toBe(true);
     expect(opened.sessionId).toBe(root);
+    const todos = new NeoAskTodoRepository(daemon.db.getDatabase());
+    todos.openAsk({
+      id: 'fictional-garden',
+      projectId: null,
+      sessionId: opened.sessionId,
+      originMessageId: null,
+      title: 'Garden',
+      request: 'Compare fictional flowers',
+      createdAt: 1,
+    });
     const accepted = await hub.request<{ ok: boolean; messageId: string }>('operation.invoke', {
       name: 'neo.message.send',
       input: {
         sessionId: opened.sessionId,
         requestId,
-        content: 'Tell me about the fictional moon garden.',
+        content:
+          'Tell me about the fictional moon garden. Keep synthetic garden changes as drafts.',
       },
     });
     expect(accepted).toMatchObject({ ok: true, messageId: requestId });
@@ -347,7 +395,7 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
       page = await read();
     }
     expect(page.ok).toBe(true);
-    expect(page.items, JSON.stringify({ calls, receipts, requests })).toHaveLength(1);
+    expect(page.items, JSON.stringify({ calls, receipts, requests, sdkErrors })).toHaveLength(1);
     expect(page.items[0].askOrigin).toBeUndefined();
     expect(page.items[0].producerInput).toBeUndefined();
     expect(page.items[0]).toMatchObject({
@@ -355,11 +403,12 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
       shortText,
       fullText,
       links: [],
+      replyTo: [requestId],
     });
     const end = Date.now() + 15000;
-    while (calls.length < 3 && Date.now() < end)
+    while (calls.length < 6 && Date.now() < end)
       await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(calls).toEqual(['tool_use', 'tool_use', 'tool_use', 'text']);
+    expect(calls).toEqual(['tool_use', 'tool_use', 'tool_use', 'tool_use', 'tool_use', 'text']);
     expect(receipts).toMatchObject([
       {
         accepted: true,
@@ -371,7 +420,22 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
         created: false,
         publication: { publicationId: page.items[0].publicationId },
       },
+      { ok: true, standingRules: ['Keep synthetic garden changes as drafts.'] },
+      { ok: true, question: { replyTo: [requestId] } },
     ]);
+    expect(daemon.db.getGlobalSettings().neo?.standingRules).toEqual([
+      'Keep synthetic garden changes as drafts.',
+    ]);
+    expect(todos.listQuestions('fictional-garden')).toEqual([
+      expect.objectContaining({ replyTo: [requestId] }),
+    ]);
+    const question = todos.listQuestions('fictional-garden')[0];
+    expect(
+      await hub.request('operation.invoke', {
+        name: 'neo.question.get',
+        input: { questionId: question.id },
+      })
+    ).toMatchObject({ ok: true, question: { replyTo: [requestId] } });
     expect((await read()).items).toEqual(page.items);
     const webRead = await readNeoPublications(
       { conversationId: opened.sessionId.slice(4), after: 0 },
@@ -410,6 +474,7 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
             calls,
             receipts,
             publication: page.items[0],
+            question,
             webRead,
             daemonPort: daemon.server.port,
             mockPort: address.port,
@@ -450,9 +515,10 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
     );
     expect(human.map((part) => part.text).slice(-2)).toEqual([
       expect.stringMatching(/^\(local time: \w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+\)$/),
-      'Tell me about the fictional moon garden.',
+      'Tell me about the fictional moon garden. Keep synthetic garden changes as drafts.',
     ]);
     expect(human.map((part) => part.text).join('\n')).not.toContain('<human-input>');
+    expect(human.map((part) => part.text)).toContain(`[message id: ${requestId}]`);
   } finally {
     QueryOptionsBuilder.prototype.build = build;
     await transport?.close();

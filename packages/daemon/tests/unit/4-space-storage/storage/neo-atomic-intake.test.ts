@@ -65,7 +65,7 @@ describe('atomic public ask intake primitive', () => {
         conversationId,
         requestId,
         askOrigin: { sessionId, messageId: requestId },
-        content: message.message.content,
+        content: message.humanContent,
       },
     });
     for (const inputKind of [undefined, 'consultation', 'work-report', true])
@@ -91,7 +91,7 @@ describe('atomic public ask intake primitive', () => {
         requestId,
         conversationId,
         askOrigin: { sessionId, messageId: requestId },
-        content: prompt().message.content,
+        content: prompt().humanContent,
       },
     });
     expect(ledger.list(conversationId)).toHaveLength(1);
@@ -133,7 +133,10 @@ describe('atomic public ask intake primitive', () => {
   test('photos, attachments as text and whitespace remain unchanged in both records', () => {
     const content = [photo, { type: 'text' as const, text: '```txt\nfile notes\n```' }];
     expect(accepted(prompt(content))).toMatchObject({ accepted: true, ask: { content } });
-    expect(JSON.parse(mailbox.sdkRows()[0].sdk_message).message.content).toEqual(content);
+    expect(JSON.parse(mailbox.sdkRows()[0].sdk_message).message.content).toEqual([
+      { type: 'text', text: `[message id: ${requestId}]` },
+      ...content,
+    ]);
     expect(accepted(prompt([photo], crypto.randomUUID()))).toMatchObject({
       accepted: true,
       ask: { content: [photo] },

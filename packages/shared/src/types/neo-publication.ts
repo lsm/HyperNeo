@@ -27,6 +27,7 @@ export interface NeoPublicationInput extends ArtifactProjection {
   readonly fullText: string;
   readonly links: readonly NeoPublicationLink[];
   readonly triggerId?: string;
+  readonly replyTo?: readonly string[];
   readonly askSummary?: string;
   readonly awaiting?: string;
   readonly editedAt?: string;

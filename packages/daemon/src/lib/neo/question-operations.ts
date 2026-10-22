@@ -34,6 +34,7 @@ const Confirmation = z.object({
 const Asked = {
   askId: Text,
   text: Text,
+  replyTo: z.array(z.uuid()).max(100).optional(),
   replaces: Text.optional(),
   confirm: Confirmation.optional(),
 };
@@ -47,7 +48,13 @@ const Ask = z.discriminatedUnion('kind', [
     multiple: z.boolean().default(false),
   }),
   z.object({ ...Asked, kind: z.literal('reply') }),
-  z.object({ askId: Text, text: Text, kind: z.literal('start'), confirm: Confirmation.optional() }),
+  z.object({
+    askId: Text,
+    text: Text,
+    kind: z.literal('start'),
+    confirm: Confirmation.optional(),
+    replyTo: Asked.replyTo,
+  }),
 ]);
 
 const Retire = z.object({ questionId: Text, reason: Text });
@@ -58,6 +65,7 @@ const Get = z.object({ questionId: Text });
 
 export const NeoQuestionSchema = z.object({
   document: z.string().nullable().optional(),
+  replyTo: z.array(z.uuid()).optional(),
   id: z.string(),
   askId: z.string(),
   text: z.string(),
@@ -90,6 +98,7 @@ const QuestionReadResult = z.union([
       answeredAt: true,
       confirm: true,
       document: true,
+      replyTo: true,
     }),
     answeredByHuman: z.boolean(),
   }),
@@ -97,10 +106,20 @@ const QuestionReadResult = z.union([
 
 export function readNeoQuestion(question: NeoQuestion | null): z.infer<typeof QuestionReadResult> {
   if (!question) return { ok: false, reason: 'not_found: no such question.' };
-  const { id, text, kind, state, answer, answeredAt, confirm, document } = question;
+  const { id, text, kind, state, answer, answeredAt, confirm, document, replyTo } = question;
   return {
     ok: true,
-    question: { id, text, kind, state, answer, answeredAt, confirm, document },
+    question: {
+      id,
+      text,
+      kind,
+      state,
+      answer,
+      answeredAt,
+      confirm,
+      document,
+      ...(replyTo ? { replyTo } : {}),
+    },
     answeredByHuman: state === 'answered',
   };
 }
@@ -131,6 +150,7 @@ export function planNeoQuestion(
   }
   const draft: NeoQuestionDraft = {
     text: input.text,
+    ...(input.replyTo ? { replyTo: input.replyTo } : {}),
     kind: input.kind,
     options: input.kind === 'choice' ? input.options : null,
     multiple: input.kind === 'choice' && input.multiple,
@@ -229,10 +249,19 @@ export function neoQuestionAnsweredNote(question: NeoQuestion, todos: NeoTodo[])
 export function createNeoQuestionOperations(
   store: NeoAskTodoRepository,
   told: (ask: NeoAsk, question: NeoQuestion, note: string) => Promise<void>,
-  start: (todoId: string) => Promise<{ ok: boolean; reason?: string }>
+  start: (todoId: string) => Promise<{ ok: boolean; reason?: string }>,
+  receivedHumanInput: (caller: OperationCaller, messageId: string) => boolean = () => false
 ) {
   const ask = (superpipe({})('neo.question.ask') as PipelineAPI)
     .input(['input', 'caller'])
+    .pipe(
+      (input: z.infer<typeof Ask>, caller: OperationCaller) =>
+        (input.replyTo ?? []).every((id) => receivedHumanInput(caller, id))
+          ? { value: input }
+          : fail('invalid_reply_to: cite only received human messages in this conversation.'),
+      ['input', 'caller'],
+      'result:outcome'
+    )
     .pipe(
       (input: z.infer<typeof Ask>) => requireNeoOpenAsk(store.getAsk(input.askId)),
       'input',
@@ -261,7 +290,13 @@ export function createNeoQuestionOperations(
       (plan: QuestionPlan & { replaced: NeoQuestion | null }): QuestionReceipt | Rejection => {
         if (plan.reworded) {
           const { id, startTodos } = plan.reworded;
-          store.extendStartQuestion(id, startTodos ?? [], plan.draft.text, Date.now());
+          store.extendStartQuestion(
+            id,
+            startTodos ?? [],
+            plan.draft.text,
+            Date.now(),
+            plan.draft.replyTo
+          );
           const question = store.getQuestion(id);
           return question?.state === 'open'
             ? { ok: true, question }
@@ -363,7 +398,7 @@ export function createNeoQuestionOperations(
     defineOperation({
       name: 'neo.question.ask',
       description:
-        'Ask the human one question on an open ask you own. Format text as Markdown: short title line, a few bullets or a small table, bold key choice; no walls of text. A home proposal uses kind yesno with confirm:{path,sha256}; the question text must show that exact path and 64-character lowercase content hash alongside the proposed change. This records the proposal, not permission to save. kind yesno: noLabel (left, keep things as they are) and yesLabel (right, the change it names). choice: 2-6 options, multiple for pick-any; the card labels them A, B, C… in order and the human may answer by letter, so never put letters in the option text. Every card also has Reply in chat, where the human can answer in their own words, so never add an "other" or "something else" option. reply: answered in chat. start: rewords the start question the daemon opens on this ask for todos waiting to start; the human unticks any they do not want, and answering starts the ticked ones. It never opens a second one. Ask only what you cannot read yourself; never a bookkeeping question. replaces names an open question on the same ask: it is retired as replaced by this one in the same step.',
+        'Ask the human one question on an open ask you own. Optional replyTo cites received human message ids this question asks back about; it does not mark those inputs answered. Unknown, foreign, queued and non-human ids are refused. Format text as Markdown: short title line, a few bullets or a small table, bold key choice; no walls of text. A home proposal uses kind yesno with confirm:{path,sha256}; the question text must show that exact path and 64-character lowercase content hash alongside the proposed change. This records the proposal, not permission to save. kind yesno: noLabel (left, keep things as they are) and yesLabel (right, the change it names). choice: 2-6 options, multiple for pick-any; the card labels them A, B, C… in order and the human may answer by letter, so never put letters in the option text. Every card also has Reply in chat, where the human can answer in their own words, so never add an "other" or "something else" option. reply: answered in chat. start: rewords the start question the daemon opens on this ask for todos waiting to start; the human unticks any they do not want, and answering starts the ticked ones. It never opens a second one. Ask only what you cannot read yourself; never a bookkeeping question. replaces names an open question on the same ask: it is retired as replaced by this one in the same step.',
       inputSchema: Ask,
       resultSchema: QuestionResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

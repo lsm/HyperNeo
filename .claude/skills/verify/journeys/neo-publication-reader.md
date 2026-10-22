@@ -11,8 +11,12 @@ Use a fresh absolute run directory. Shared isolation from SKILL.md applies:
 GitHub stub, an ephemeral daemon and a loopback model on ephemeral ports. No
 live daemon, real provider or credential file is used. Resources close in finally.
 
-The installed SDK receives a human message, invokes `neo.publication.publish`
-through MCP, retries the same publication idempotently, then ends in plain text.
+The installed SDK receives a human message with its intake-stored message id,
+invokes `neo.publication.publish` through MCP, retries the same publication
+idempotently with explicit replyTo, then cites that received human id and its exact words in
+`neo.rule.save`. The rule is saved without a turn object before plain text ends
+the turn. It also asks a question through MCP with the same replyTo id; question.get retains it. Missing, foreign, queued and non-human ids are refused in the focused
+human-authority contracts.
 The web's actual `readNeoPublications` client reads that newly authored reply
 through the test daemon's WebSocket RPC. It must return `ready` with the same
 stored text and no inferred askOrigin/producerInput; plain terminal text must not

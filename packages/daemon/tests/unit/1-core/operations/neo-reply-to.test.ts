@@ -1,3 +1,4 @@
+import { runMigration442 } from '../../../../src/storage/schema/m442-neo-question-reply-to.ts';
 import { runMigration433 } from '../../../../src/storage/schema/m433-neo-question-document.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
@@ -49,6 +50,7 @@ describe('neo.message.send replyTo', () => {
     runMigration420(mailbox.db);
     runMigration427(mailbox.db);
     runMigration433(mailbox.db);
+    runMigration442(mailbox.db);
     createNeoPublicationTable(mailbox.db);
     runMigration344(mailbox.db);
     for (const id of [root, holder])
@@ -113,7 +115,8 @@ describe('neo.message.send replyTo', () => {
           .get(requestId) as { sdk_message: string }
       ).sdk_message
     );
-    const [time, ...content] = stored.message.content;
+    const [identifier, time, ...content] = stored.message.content;
+    expect(identifier.text).toBe(`[message id: ${requestId}]`);
     expect(time.text).toMatch(/^\(local time: \w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+\)$/);
     return { ...stored, message: { ...stored.message, content } };
   };

@@ -1,0 +1,10 @@
+{
+  "width": 390,
+  "phase": "before",
+  "bodyClickOpens": true,
+  "controls": [],
+  "viewport": {
+    "width": 390,
+    "scrollWidth": 390
+  }
+}

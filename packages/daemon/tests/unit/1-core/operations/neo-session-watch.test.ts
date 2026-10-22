@@ -807,7 +807,16 @@ describe('refreshDriverWork', () => {
         }
       );
       expect('value' in snapshot && snapshot.value).toMatchObject({
-        sessionNoticeGroups: service.sessionNoticeGroups,
+        sessionNoticeGroups: [
+          expect.objectContaining({
+            notices: [
+              expect.objectContaining({
+                worker: { id: 't1', adapter: 'codex-desktop', name: null, label: 'Codex · t1' },
+                title: 't1',
+              }),
+            ],
+          }),
+        ],
       });
       expect('value' in snapshot && snapshot.value).not.toHaveProperty('sessionNotices');
 

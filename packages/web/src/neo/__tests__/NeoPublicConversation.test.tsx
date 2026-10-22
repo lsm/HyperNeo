@@ -716,7 +716,7 @@ describe('session notice rows', () => {
       />
     );
     const row = screen.getByRole('note');
-    expect(row.textContent).toContain('Claude Code · Session 1 needs you');
+    expect(row.textContent).toContain('Claude · Session 1 needs you');
     expect(
       within(row)
         .getAllByRole('link')

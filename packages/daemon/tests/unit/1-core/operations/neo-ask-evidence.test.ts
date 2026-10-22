@@ -196,7 +196,7 @@ describe('readGithubRefStates', () => {
             }
           : null;
     const spawn = (args: string[]) => {
-      const number = Number(args.at(-1)?.slice(2));
+      const number = Number(args.find((arg) => /^p=\d+$/.test(arg))?.slice(2));
       asked.push(number);
       const found = node(number);
       return {

@@ -103,6 +103,26 @@ describe('authored publication client', () => {
     });
   });
 
+  it('preserves explicit human references and refuses malformed references', async () => {
+    const authored = { ...item(), replyTo: [foreignId] };
+    expect(
+      await readNeoPublications(page, transport(response([authored])).getHub, current)
+    ).toEqual({
+      state: 'ready',
+      items: [authored],
+      nextAfter: 1,
+    });
+    for (const replyTo of [null, 'bad', ['not-an-id'], [17]])
+      expect(
+        await readNeoPublications(
+          page,
+          transport({ ok: true, conversationId, items: [{ ...item(), replyTo }], nextAfter: 1 })
+            .getHub,
+          current
+        )
+      ).toMatchObject({ state: 'unavailable' });
+  });
+
   it.each([
     { conversationId: 'legacy-root', after: 0 },
     { conversationId, after: -1 },

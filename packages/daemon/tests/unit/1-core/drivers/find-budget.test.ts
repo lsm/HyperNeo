@@ -17,6 +17,12 @@ function place(name: string, titles: string[]): PlaceGroup {
     work: titles.map((title, index) => ({
       ref: { adapter: 'hyperneo', id: `${name}-${index}` },
       title,
+      worker: {
+        id: `${name}-${index}`,
+        adapter: 'hyperneo',
+        name: title,
+        label: `HyperNeo · ${title}`,
+      },
       place: where,
       status: 'running',
       lastActivityAt: index,
@@ -32,14 +38,17 @@ describe('fitFindBudget', () => {
 
   test('stops adding work at the budget and flags more', () => {
     const places = [place('a', ['x'.repeat(150), 'y'.repeat(150)]), place('b', ['z'])];
-    const fitted = fitFindBudget(places, 700);
+    const budget = JSON.stringify([{ ...places[0], work: [places[0].work[0]] }]).length + 5;
+    const fitted = fitFindBudget(places, budget);
     expect(fitted.more).toBe(true);
     expect(fitted.places.map((g) => [g.place.name, g.work.length])).toEqual([['a', 1]]);
-    expect(JSON.stringify(fitted.places).length).toBeLessThanOrEqual(700);
+    expect(JSON.stringify(fitted.places).length).toBeLessThanOrEqual(budget);
   });
 
   test('cuts a runaway title to 200 characters', () => {
-    const [group] = fitFindBudget([place('a', ['t'.repeat(5_000)])], 10_000).places;
+    const input = place('a', ['t'.repeat(5_000)]);
+    delete input.work[0].worker;
+    const [group] = fitFindBudget([input], 10_000).places;
     expect(group.work[0].title).toBe(`${'t'.repeat(200)}…`);
   });
 });

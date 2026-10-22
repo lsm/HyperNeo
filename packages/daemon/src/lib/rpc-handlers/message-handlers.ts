@@ -126,40 +126,15 @@ export function setupMessageHandlers(
 
     const agentSession = await sessionManager.getSessionForControl(targetSessionId);
 
-    if (!agentSession) {
-      if (targetSessionId.startsWith('conv:') && db) {
-        const sdkMessageRepo = new SDKMessageRepository(db.getDatabase());
-        const { messages: sdkMessages, hasMore } = sdkMessageRepo.getSDKMessages(
-          targetSessionId,
-          limit,
-          before,
-          since,
-          beforeRowid,
-          sinceRowid
-        );
-        return {
-          sdkMessages: sdkMessages.map(capSdkMessage),
-          hasMore,
-          backgroundTaskMessages: sdkMessageRepo
-            .getBackgroundTaskMessages(targetSessionId)
-            .map(capSdkMessage),
-        };
-      }
+    if (!agentSession && !(targetSessionId.startsWith('conv:') && db))
       throw new Error('Session not found');
-    }
-
-    const { messages: sdkMessages, hasMore } = agentSession.getSDKMessages(
+    return (db ?? sessionManager.getDatabase()).getSDKMessagePageAsync(targetSessionId, {
       limit,
       before,
       since,
       beforeRowid,
-      sinceRowid
-    );
-    return {
-      sdkMessages: sdkMessages.map(capSdkMessage),
-      hasMore,
-      backgroundTaskMessages: agentSession.getBackgroundTaskMessages().map(capSdkMessage),
-    };
+      sinceRowid,
+    });
   });
 
   messageHub.onRequest('message.sdkMessage', async (data) => {

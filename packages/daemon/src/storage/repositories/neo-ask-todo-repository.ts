@@ -70,18 +70,20 @@ export type NeoQuestionDraft = Pick<
   | 'startTodos'
   | 'confirm'
   | 'document'
+  | 'replyTo'
 >;
 
 const QUESTION_SELECT = `SELECT id, ask_id AS askId, text, kind, options, multiple, no_label AS noLabel,
   yes_label AS yesLabel, start_todos AS startTodos, state, answer, answered_by AS answeredBy,
   answered_at AS answeredAt, retired_reason AS retiredReason, replaced_by AS replacedBy,
-  confirm_json AS confirmJson, document, created_at AS createdAt FROM neo_questions`;
+  confirm_json AS confirmJson, reply_to_json AS replyToJson, document, created_at AS createdAt FROM neo_questions`;
 
 type QuestionRow = Omit<
   NeoQuestion,
-  'options' | 'multiple' | 'startTodos' | 'answer' | 'confirm'
+  'options' | 'multiple' | 'startTodos' | 'answer' | 'confirm' | 'replyTo'
 > & {
   confirmJson: string | null;
+  replyToJson: string | null;
   options: string | null;
   multiple: number;
   startTodos: string | null;
@@ -90,8 +92,9 @@ type QuestionRow = Omit<
 
 const parsed = <T>(json: string | null): T | null => (json ? (JSON.parse(json) as T) : null);
 
-const toQuestion = ({ confirmJson, ...row }: QuestionRow): NeoQuestion => ({
+const toQuestion = ({ confirmJson, replyToJson, ...row }: QuestionRow): NeoQuestion => ({
   ...row,
+  ...(replyToJson ? { replyTo: JSON.parse(replyToJson) as string[] } : {}),
   confirm: parsed<NonNullable<NeoQuestion['confirm']>>(confirmJson),
   options: parsed<string[]>(row.options),
   multiple: row.multiple === 1,
@@ -422,7 +425,7 @@ export class NeoAskTodoRepository {
     this.db
       .prepare(
         `INSERT INTO neo_questions (id, ask_id, text, kind, options, multiple, no_label, yes_label,
-           start_todos, confirm_json, document, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           start_todos, confirm_json, document, reply_to_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -436,18 +439,27 @@ export class NeoAskTodoRepository {
         draft.startTodos ? JSON.stringify(draft.startTodos) : null,
         draft.confirm ? JSON.stringify(draft.confirm) : null,
         draft.document ?? null,
+        draft.replyTo ? JSON.stringify(draft.replyTo) : null,
         now
       );
     this.touchAsk(askId, now);
     return this.getQuestion(id)!;
   }
 
-  extendStartQuestion(id: string, startTodos: readonly string[], text: string, now: number): void {
+  extendStartQuestion(
+    id: string,
+    startTodos: readonly string[],
+    text: string,
+    now: number,
+    replyTo?: readonly string[]
+  ): void {
     const question = this.getQuestion(id);
     if (!question) return;
     this.db
-      .prepare("UPDATE neo_questions SET start_todos = ?, text = ? WHERE id = ? AND state = 'open'")
-      .run(JSON.stringify(startTodos), text, id);
+      .prepare(
+        "UPDATE neo_questions SET start_todos = ?, text = ?, reply_to_json = COALESCE(?, reply_to_json) WHERE id = ? AND state = 'open'"
+      )
+      .run(JSON.stringify(startTodos), text, replyTo ? JSON.stringify(replyTo) : null, id);
     this.touchAsk(question.askId, now);
   }
 

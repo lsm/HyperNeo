@@ -1,3 +1,4 @@
+import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { NeoGoals } from './NeoGoals.tsx';
 import { SessionSchedules } from '../components/SessionSchedules.tsx';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
@@ -46,7 +47,7 @@ export function NeoLive() {
   const [dragging, setDragging] = useState(false);
   const [narrow, setNarrow] = useState(() => !window.matchMedia('(min-width: 1120px)').matches);
   const [scenesOpen, setScenesOpen] = useState(false);
-  const [chat, setChat] = useState<{ sessionId: string; title: string } | null>(null);
+  const [chat, setChat] = useState<{ sessionId: string } | null>(null);
   const closeChat = useCallback(() => setChat(null), []);
   const [awayFromBottom, setAwayFromBottom] = useState(false);
   const dragDepth = useRef(0);
@@ -632,9 +633,9 @@ export function NeoLive() {
                         })
                       )
                     }
-                    onOpen={(link, title) =>
+                    onOpen={(link) =>
                       link.startsWith('/session/')
-                        ? setChat({ sessionId: link.slice('/session/'.length), title })
+                        ? setChat({ sessionId: link.slice('/session/'.length) })
                         : window.open(link, '_blank', 'noopener')
                     }
                   />
@@ -647,7 +648,7 @@ export function NeoLive() {
           <NeoSessionPane
             key={chat.sessionId}
             sessionId={chat.sessionId}
-            title={chat.title}
+            title={workerIdentity({ adapter: 'hyperneo', id: chat.sessionId }, null).label}
             overlay={narrow || !publicConversation}
             onClose={closeChat}
           />

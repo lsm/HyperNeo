@@ -71,6 +71,7 @@ import {
   inflatePersistedMessage,
   orderHydratedMessages,
   type PaginationMessageRow,
+  type SDKMessageProjection,
   projectBackgroundTaskMessageRow,
   projectRenderableTextRow,
   RENDERABLE_TEXT_MESSAGE_BATCH_SIZE,
@@ -93,6 +94,8 @@ export {
   extractReplacementEdges,
   extractSdkUuid,
 } from './sdk-message-admission.ts';
+
+type UserStatusMessage = SDKUserMessage & { dbId: string; timestamp: number };
 
 const USER_STATUS_MESSAGE_SQL = `message_type = 'user'
   AND user_status_eligible = 1`;
@@ -994,7 +997,8 @@ export class SDKMessageRepository {
     before?: number,
     since?: number,
     beforeRowid?: number,
-    sinceRowid?: number
+    sinceRowid?: number,
+    project?: SDKMessageProjection
   ): {
     messages: Array<
       ChatMessage & {
@@ -1011,7 +1015,8 @@ export class SDKMessageRepository {
       before,
       since,
       beforeRowid,
-      sinceRowid
+      sinceRowid,
+      project
     );
   }
 
@@ -1062,7 +1067,8 @@ export class SDKMessageRepository {
     before?: number,
     since?: number,
     beforeRowid?: number,
-    sinceRowid?: number
+    sinceRowid?: number,
+    project?: SDKMessageProjection
   ): {
     messages: Array<
       ChatMessage & {
@@ -1126,26 +1132,61 @@ export class SDKMessageRepository {
     params.push(limit);
 
     const stmt = this.db.prepare(
-      hydrateSdkMessageBodies(query, 'body_selection.timestamp DESC, body_selection.body_seq DESC')
+      project
+        ? query
+        : hydrateSdkMessageBodies(
+            query,
+            'body_selection.timestamp DESC, body_selection.body_seq DESC'
+          )
     );
-    const rows = stmt.all(...params) as Array<PaginationMessageRow>;
+    const rows = (
+      project
+        ? this.hydratePageRows(
+            stmt.iterate(...params) as Iterable<
+              Omit<PaginationMessageRow, 'sdk_message'> & { body_seq: number }
+            >
+          )
+        : stmt.all(...params)
+    ) as Iterable<PaginationMessageRow>;
 
-    return composeMessagePage(rows, limit, (toolUseIds) => {
+    const fetchSubagentRows = (toolUseIds: string[]) => {
       const placeholders = toolUseIds.map(() => '?').join(',');
-      const subagentQuery = hydrateSdkMessageBodies(
-        `SELECT id, rowid AS body_seq, timestamp FROM sdk_messages
+      const metadataQuery = `SELECT id, rowid AS body_seq, timestamp FROM sdk_messages
        WHERE session_id = ?
          AND parent_tool_use_id IN (${placeholders})
          AND COALESCE(message_subtype, '') NOT IN (${EXCLUDED_FROM_PAGINATION_SQL_LIST})
          AND (message_type != 'user' OR COALESCE(send_status, 'consumed') IN ('consumed', 'failed'))
-        ORDER BY +timestamp ASC, rowid ASC`,
-        'body_selection.timestamp ASC, body_selection.body_seq ASC'
-      );
+        ORDER BY +timestamp ASC, rowid ASC`;
+      const subagentQuery = project
+        ? metadataQuery
+        : hydrateSdkMessageBodies(
+            metadataQuery,
+            'body_selection.timestamp ASC, body_selection.body_seq ASC'
+          );
       const subagentParams: SQLiteValue[] = [sessionId, ...toolUseIds];
 
       const subagentStmt = this.db.prepare(subagentQuery);
-      return subagentStmt.all(...subagentParams) as Array<SubagentMessageRow>;
-    });
+      return (
+        project
+          ? this.hydratePageRows(
+              subagentStmt.iterate(...subagentParams) as Iterable<
+                Omit<SubagentMessageRow, 'sdk_message'> & { body_seq: number }
+              >
+            )
+          : subagentStmt.all(...subagentParams)
+      ) as Iterable<SubagentMessageRow>;
+    };
+    return composeMessagePage(rows, limit, fetchSubagentRows, project);
+  }
+
+  private *hydratePageRows<T extends { body_seq: number }>(rows: Iterable<T>) {
+    const body = this.db.prepare(
+      hydrateSdkMessageBodies('SELECT rowid AS body_seq FROM sdk_messages WHERE rowid = ?')
+    );
+    for (const row of rows) {
+      const stored = body.get(row.body_seq) as { sdk_message: string };
+      yield { ...row, sdk_message: stored.sdk_message };
+    }
   }
 
   getMessageByUuid(sessionId: string, messageUuid: string): SDKMessage | null {
@@ -1517,9 +1558,10 @@ export class SDKMessageRepository {
     sessionId: string,
     status: SendStatus,
     limit?: number,
-    direction: 'asc' | 'desc' = 'asc'
+    direction: 'asc' | 'desc' = 'asc',
+    project?: (message: UserStatusMessage) => UserStatusMessage
   ): {
-    messages: Array<SDKUserMessage & { dbId: string; timestamp: number }>;
+    messages: Array<UserStatusMessage>;
     total: number;
   } {
     const countRow =
@@ -1542,28 +1584,22 @@ export class SDKMessageRepository {
             row_id: number;
           }>)
         : (this.db.prepare(projectionSql).all(sessionId, status) as Array<{ row_id: number }>);
-    const messagesByRowId = new Map<number, SDKUserMessage & { dbId: string; timestamp: number }>();
+    const messagesByRowId = new Map<number, UserStatusMessage>();
 
     for (const { rowIds, placeholders } of buildRowIdHydrationBatches(projected)) {
-      const rows = this.db
-        .prepare(
-          hydrateSdkMessageBodies(`SELECT rowid AS row_id, id, rowid AS body_seq, timestamp FROM sdk_messages
+      const stmt = this.db.prepare(
+        hydrateSdkMessageBodies(`SELECT rowid AS row_id, id, rowid AS body_seq, timestamp FROM sdk_messages
            WHERE rowid IN (${placeholders})`)
-        )
-        .all(...rowIds) as Array<{
+      );
+      const rows = (project ? stmt.iterate(...rowIds) : stmt.all(...rowIds)) as Iterable<{
         row_id: number;
         id: string;
         sdk_message: string;
         timestamp: string;
       }>;
       for (const row of rows) {
-        messagesByRowId.set(
-          row.row_id,
-          inflatePersistedMessage(row) as SDKUserMessage & {
-            dbId: string;
-            timestamp: number;
-          }
-        );
+        const message = inflatePersistedMessage(row) as UserStatusMessage;
+        messagesByRowId.set(row.row_id, project ? project(message) : message);
       }
     }
 
