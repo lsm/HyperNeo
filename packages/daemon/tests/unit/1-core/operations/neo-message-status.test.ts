@@ -275,8 +275,14 @@ test.each(['neo.conversation.asks.read', 'neo.conversation.read'])(
     };
     const item = page.items[0];
     const ask = 'role' in item ? item.ask : item;
-    expect(ask).toMatchObject({ requestId: id, content, messageStatus: 'answered' });
-    expect(service.asks.find(conversationId, id)?.content).toBe(content);
+    expect(ask).toMatchObject({
+      requestId: id,
+      content: [{ type: 'text', text: content }],
+      messageStatus: 'answered',
+    });
+    expect(service.asks.find(conversationId, id)?.content).toEqual([
+      { type: 'text', text: content },
+    ]);
   }
 );
 
