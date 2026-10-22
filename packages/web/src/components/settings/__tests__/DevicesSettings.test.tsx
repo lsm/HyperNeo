@@ -223,18 +223,18 @@ describe('DevicesSettings', () => {
     expect(screen.queryByRole('button', { name: 'Re-pair Desk browser' })).toBeNull();
   });
 
-  it('shows a failed Allow above the sections, next to the code it was for', async () => {
+  it('does not offer Allow for an expired code', async () => {
     daemon({
       paired: true,
       pending: [{ id: 'expired', kind: 'human', name: 'Old laptop', expiresAt: Date.now() }],
     });
     render(<DevicesSettings />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Allow Old laptop' }));
-    const failure = await screen.findByText('not_pending: no pending code with that id.');
-    const waiting = screen.getByText('Waiting for Allow');
-    expect(
-      failure.compareDocumentPosition(waiting) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy();
+    await screen.findByText('Old laptop');
+    expect(screen.getByRole('button', { name: 'Allow Old laptop' })).toHaveProperty(
+      'disabled',
+      true
+    );
+    expect(invoked('device.pair.approve')).toEqual([]);
   });
 
   it('revokes a device after a second click', async () => {
@@ -250,19 +250,15 @@ describe('DevicesSettings', () => {
     ]);
   });
 
-  it('re-pairs a device with a new code for the same kind and name, revoking the old credential', async () => {
+  it('requires explicit removal instead of revoking a device through a Re-pair shortcut', async () => {
     daemon({ paired: true });
     render(<DevicesSettings />);
-    await waitFor(() => screen.getByText('Phone'));
-    fireEvent.click(screen.getByRole('button', { name: 'Re-pair Phone' }));
-    await waitFor(() => screen.getByText('NEWCODE234'));
-    expect(invoked('device.pair.create')).toEqual([
-      { name: 'device.pair.create', input: { kind: 'human', name: 'Phone' } },
-    ]);
-    expect(invoked('device.revoke')).toEqual([
-      { name: 'device.revoke', input: { deviceId: 'phone-1' } },
-    ]);
-    expect(screen.getByRole('link', { name: `${location.origin}/pair#NEWCODE234` })).toBeTruthy();
+    await screen.findByText('Phone');
+    expect(screen.queryByRole('button', { name: 'Re-pair Phone' })).toBeNull();
+    expect(invoked('device.revoke')).toEqual([]);
+    expect(screen.getByText(/Pairing is report-only/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh devices' }));
+    await waitFor(() => expect(invoked('device.list')).toHaveLength(2));
   });
 
   it('adds a device of the chosen kind', async () => {
