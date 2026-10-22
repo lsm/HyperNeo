@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -15,7 +15,7 @@ import { NeoAskTodoRepository } from '../../../src/storage/repositories/neo-ask-
 import { readNeoPublications } from '../../../../web/src/neo/publication-client.ts';
 
 const sandboxProof = process.env.HYPERNEO_TEST_DISABLE_SANDBOX !== '1';
-test(`root startup, reads, resume and publication (${sandboxProof ? 'real OS sandbox proof' : 'transport fixture, sandbox disabled'})`, async () => {
+async function verifyNeoGithubSource(githubSource: 'store' | 'daemon-gh') {
   const isolated = mkdtempSync(join(tmpdir(), 'neo-sdk-publication-'));
   const requestId = randomUUID();
   const githubToken = 'ghp_synthetic_loopback_only_012345678901234567890123456789';
@@ -32,11 +32,17 @@ test(`root startup, reads, resume and publication (${sandboxProof ? 'real OS san
   await mkdir(shellHome);
   await writeFile(join(shellHome, '.zshenv'), 'export GH_TOKEN=synthetic-inherited-owner-token\n');
   const ghBin = join(isolated, 'bin');
+  const daemonGhConfig = join(isolated, 'daemon-gh');
   await mkdir(ghBin);
+  await mkdir(daemonGhConfig);
   await writeFile(
     join(ghBin, 'gh'),
     `#!/bin/sh
-if [ "$GH_TOKEN" != '${githubToken}' ]; then
+if [ "$*" = 'auth token --hostname github.com' ] && [ "$GH_CONFIG_DIR" = '${daemonGhConfig}' ]; then
+  printf '%s' '${githubToken}'
+  exit 0
+fi
+if [ "$GH_TOKEN" != '${githubToken}' ] && [ "$GH_CONFIG_DIR" != '${daemonGhConfig}' ]; then
   printf 'GitHub authentication unavailable\\n' >&2
   exit 1
 fi
@@ -44,7 +50,7 @@ if [ "$*" != 'pr view https://github.com/lsm/HyperNeo/pull/8148 --json number' ]
   printf 'Unexpected synthetic GitHub request\\n' >&2
   exit 1
 fi
-printf '{"number":8148,"authenticatedByDaemon":true}\\n'
+printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
 `,
     { mode: 0o755 }
   );
@@ -293,9 +299,10 @@ printf '{"number":8148,"authenticatedByDaemon":true}\\n'
     COPILOT_GITHUB_TOKEN: '',
     DEFAULT_MODEL: 'haiku',
     PATH: `${ghBin}:${process.env.PATH}`,
-    GH_TOKEN: 'synthetic-environment-token',
+    GH_TOKEN: githubSource === 'store' ? 'synthetic-environment-token' : '',
+    GH_CONFIG_DIR: daemonGhConfig,
     HYPERNEO_PROVIDER_CREDENTIAL_KEY: 'synthetic-credential-encryption-key',
-    GITHUB_TOKEN: 'synthetic-inherited-owner-token',
+    GITHUB_TOKEN: githubSource === 'store' ? 'synthetic-inherited-owner-token' : '',
     GITHUB_ACTIONS: 'true',
     ZDOTDIR: shellHome,
   };
@@ -406,9 +413,18 @@ printf '{"number":8148,"authenticatedByDaemon":true}\\n'
     });
     hub.registerTransport(transport);
     await transport.initialize();
-    expect(await hub.request('space.github.setToken', { token: githubToken })).toMatchObject({
-      success: true,
-    });
+    if (githubSource === 'store')
+      expect(await hub.request('space.github.setToken', { token: githubToken })).toMatchObject({
+        success: true,
+      });
+    else
+      expect(
+        execFileSync(
+          join(ghBin, 'gh'),
+          ['pr', 'view', 'https://github.com/lsm/HyperNeo/pull/8148', '--json', 'number'],
+          { env: { GH_CONFIG_DIR: daemonGhConfig }, encoding: 'utf8' }
+        )
+      ).toContain('8148');
     const { servers } = await hub.request<{ servers: Array<{ id: string }> }>(
       'mcp.registry.list',
       {}
@@ -661,10 +677,14 @@ printf '{"number":8148,"authenticatedByDaemon":true}\\n'
     if (process.env.VERIFY_EVIDENCE_DIR) {
       await mkdir(process.env.VERIFY_EVIDENCE_DIR, { recursive: true });
       await writeFile(
-        join(process.env.VERIFY_EVIDENCE_DIR, 'neo-goal-cycle-sdk.json'),
+        join(
+          process.env.VERIFY_EVIDENCE_DIR,
+          githubSource === 'store' ? 'neo-goal-cycle-sdk.json' : 'neo-goal-cycle-sdk-daemon-gh.json'
+        ),
         JSON.stringify(
           {
             approvalProbeResults,
+            githubSource,
             sandboxProof,
             sandboxOff,
             storedSandboxOverride,
@@ -790,4 +810,10 @@ printf '{"number":8148,"authenticatedByDaemon":true}\\n'
       else process.env[key] = value;
     }
   }
-}, 90000);
+}
+
+test.each(['store', 'daemon-gh'] as const)(
+  `root startup, reads, resume and publication: %s (${sandboxProof ? 'real OS sandbox proof' : 'transport fixture, sandbox disabled'})`,
+  verifyNeoGithubSource,
+  90000
+);
