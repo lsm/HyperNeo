@@ -1,0 +1,51 @@
+{
+  "phase": "after",
+  "width": 390,
+  "controls": [
+    {
+      "name": "less — Scheduled check-in: Publish the guide",
+      "right": 347.5,
+      "bottom": 449.1875,
+      "parentRight": 359.5,
+      "parentBottom": 457.1875
+    },
+    {
+      "name": "less — Message from Neo to Synthetic worker",
+      "right": 347.5,
+      "bottom": 712.515625,
+      "parentRight": 359.5,
+      "parentBottom": 720.515625
+    },
+    {
+      "name": "less — Edited: show revision history",
+      "right": 370,
+      "bottom": 508.78125,
+      "parentRight": 370,
+      "parentBottom": 508.78125
+    },
+    {
+      "name": "less — Not delivered: Neo never got this message.",
+      "right": 366,
+      "bottom": 589.703125,
+      "parentRight": 370,
+      "parentBottom": 589.703125
+    }
+  ],
+  "wakeBodyOpens": false,
+  "focusAfterOpen": "less — Scheduled check-in: Publish the guide",
+  "focusAfterClose": "more — Scheduled check-in: Publish the guide",
+  "sessionBodyOpens": false,
+  "selectedText": "Synthetic sessi",
+  "sessionFinalLine": {
+    "lastRight": 180.140625,
+    "lastBottom": 711.515625,
+    "buttonWidth": 32.015625,
+    "buttonBottom": 712.515625,
+    "available": 167.359375
+  },
+  "questionLink": "05bcd117-b284-4dbd-8b55-c6b6c8865080",
+  "viewport": {
+    "width": 390,
+    "scrollWidth": 390
+  }
+}

@@ -370,7 +370,6 @@ describe('Neo reads after applying the choice in the same wake', () => {
     const { question } = await conflict();
     const caller: OperationCaller = {
       ...owner,
-      neoTurn: { messageId: 'synthetic-wake', human: true, isLive: () => true },
     };
     expect((await call('neo.home.read', { path: 'notes.md' }, caller)).ok).toBe(false);
     await approve(question.id);

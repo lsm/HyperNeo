@@ -4,7 +4,6 @@ import { z } from 'zod';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import { resumedPromptUuid } from '../agent/restart-turn-recovery.ts';
 import { NeoAskEntrySchema } from './ask-entries.ts';
 import {
   addNeoTodo,
@@ -156,9 +155,9 @@ export function createNeoAskRecordOperations(
           goalId,
         }: { sessionId: string; projectId: string | null; goalId: string | null },
         input: z.infer<typeof Open>,
-        caller: OperationCaller
+        _caller: OperationCaller
       ): Promise<AskReceipt | Rejection> => {
-        const origin = caller.neoTurn ? resumedPromptUuid(caller.neoTurn.messageId) : null;
+        const origin = null;
         const ask =
           store.findAsk(sessionId, origin, input.title, goalId) ??
           store.openAsk({

@@ -19,15 +19,15 @@ const model = {
 afterEach(() => setModelsCache(new Map()));
 
 test.each(['deepseek', 'anthropic'] as const)(
-  'keeps a session override through %s response-model resolution without changing catalog or native thresholds',
+  'applies the same session setting through %s response-model resolution',
   async (provider) => {
     const selected = { ...model, provider };
     const responseModel = { ...selected, id: 'fixture-response', autoCompactPercent: 90 };
     setModelsCache(new Map([['global', [selected, responseModel]]]));
     const session = {
       id: 'neo:fixture',
-      config: { model: selected.id, provider },
-      metadata: { neoAutoCompactPercent: 70 },
+      config: { model: selected.id, provider, autoCompactPercent: 70 },
+      metadata: {},
     } as Session;
     const metadata = await getSessionContextModelInfo(session);
     const response = {
@@ -52,6 +52,6 @@ test.each(['deepseek', 'anthropic'] as const)(
     expect((await getModelInfo(selected.id, 'global', provider))?.autoCompactPercent).toBe(80);
     expect(
       (await getSessionContextModelInfo({ ...session, id: 'ordinary' }))?.autoCompactPercent
-    ).toBe(80);
+    ).toBe(70);
   }
 );

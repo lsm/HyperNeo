@@ -13,7 +13,7 @@ import { JobQueueRepository } from '../../../packages/daemon/src/storage/reposit
 import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import { createOperationMcpServer } from '../../../packages/daemon/src/lib/operations/mcp-server.ts';
-import { restrictNeoQuery } from '../../../packages/daemon/src/lib/neo/session-policy.ts';
+import { neoPrompt as buildNeoPrompt } from '../../../packages/daemon/src/lib/neo/prompt.ts';
 
 const run = resolve(process.argv[2] ?? '');
 const port = Number(process.argv[3] ?? 9362);
@@ -93,7 +93,7 @@ const execute = async (neo: boolean) => {
     stderr: (data) => writeFileSync(join(run, `${mode}-stderr.log`), data, { flag: 'a' }),
     maxTurns: 8,
   };
-  if (neo) restrictNeoQuery(options, 'neo:verify-handoff');
+  if (neo) options.systemPrompt = { type: 'custom', prompt: buildNeoPrompt(), snapshot: false };
   const stream = query({ prompt: neo ? neoPrompt : 'Send the complete synthetic report in one operation call.', options });
   try { for await (const event of stream) writeFileSync(join(run, `${mode}-events.jsonl`), `${JSON.stringify(event)}\n`, { flag: 'a' }); }
   finally { stream.close(); }

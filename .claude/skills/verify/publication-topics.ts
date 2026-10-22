@@ -7,7 +7,6 @@ import { Database } from '../../../packages/daemon/src/storage/database.ts';
 import { createReactiveDatabase } from '../../../packages/daemon/src/storage/reactive-database.ts';
 import { InternalEventBus } from '../../../packages/daemon/src/lib/internal-event-bus.ts';
 import { NeoService } from '../../../packages/daemon/src/lib/neo/service.ts';
-import { NeoCoordinatorTurn } from '../../../packages/daemon/src/lib/neo/coordinator-turn.ts';
 import { MessageQueue } from '../../../packages/daemon/src/lib/agent/message-queue.ts';
 import { QueryRunner } from '../../../packages/daemon/src/lib/agent/query-runner.ts';
 import { createNeoPublicationOperation } from '../../../packages/daemon/src/lib/neo/publication-operation.ts';
@@ -45,11 +44,9 @@ const neo = new NeoService(db, { getSessionAsync: async () => undefined } as nev
 neo.repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
 const queue = new MessageQueue();
 queue.start();
-const active = new NeoCoordinatorTurn(db, root, { isLive: () => true });
 const runner = new QueryRunner({
   session: { id: root }, db, messageQueue: queue, stateManager: { setProcessing: async () => {} }, logger: { debug: () => {} },
   firstMessageReceived: true,
-  markHolderInputConsumed: (uuid: string) => db.getSDKMessageRepo().markDeliveryConsumedByUuids(root, [uuid]),
 } as never);
 db.getSDKMessageRepo().saveSDKMessage(root, {
   type: 'user', uuid: 'todo-event', session_id: root, parent_tool_use_id: null, inputKind: 'system',
@@ -88,23 +85,21 @@ const server = Bun.serve({
 });
 
 const stream = query({
-  prompt: runner.createMessageGeneratorWrapper(1, undefined, active),
+  prompt: runner.createMessageGeneratorWrapper(1),
   options: {
     cwd: join(run, 'workspace'), executable: 'bun', pathToClaudeCodeExecutable: resolveSDKCliPath(), model: 'claude-sonnet-4-20250514',
     tools: [], permissionMode: 'bypassPermissions', allowDangerouslySkipPermissions: true, settingSources: [],
     env: { ...process.env, ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`, ANTHROPIC_API_KEY: 'sk-devproxy-test-key', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' },
-    mcpServers: { 'hyperneo-operations': createOperationMcpServer(registry, () => ({ sessionId: root, role: 'neo', neoTurn: active.identity() })) },
+    mcpServers: { 'hyperneo-operations': createOperationMcpServer(registry, () => ({ sessionId: root, role: 'neo' })) },
     stderr: (data) => writeFileSync(join(run, 'sdk-stderr.log'), data, { flag: 'a' }),
     maxTurns: 8,
   },
 });
 const watchdog = setTimeout(() => {
-  active.dispose();
   stream.close();
 }, 30000);
 try {
   for await (const event of stream) {
-    active.noteCarried(event);
     if (event.type === 'result') break;
   }
   const published = (neo.publications.list(conversation) ?? []).map(({ shortText, fullText }) => ({ shortText, fullText }));
@@ -116,7 +111,6 @@ try {
   console.log(join(run, 'evidence.json'));
 } finally {
   clearTimeout(watchdog);
-  active.dispose();
   queue.clear();
   queue.stop();
   stream.close();

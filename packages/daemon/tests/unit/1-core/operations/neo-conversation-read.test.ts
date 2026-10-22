@@ -23,7 +23,6 @@ const neo: OperationCaller = {
   source: 'mcp',
   role: 'neo',
   sessionId: root.sessionId,
-  neoTurn: { messageId: 'current', human: false, isLive: () => true },
 };
 const image = {
   type: 'image',
@@ -163,8 +162,6 @@ describe('neo.conversation.read', () => {
     { source: 'internal', role: 'neo' },
     { ...neo, role: 'universal_read' },
     { ...neo, sessionId: 'neo:unbound' },
-    { ...neo, neoTurn: undefined },
-    { ...neo, neoTurn: { ...neo.neoTurn!, isLive: () => false } },
   ] as OperationCaller[])(
     'rejects unauthorized callers before reading history: %o',
     async (caller) => {

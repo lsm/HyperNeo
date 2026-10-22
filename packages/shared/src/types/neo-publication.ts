@@ -13,7 +13,7 @@ export interface NeoPublicationRevision {
   readonly shortText: string;
   readonly fullText: string;
   readonly createdAt: string;
-  readonly producerInput: NeoInputOrigin;
+  readonly producerInput?: NeoInputOrigin;
   readonly askOrigin?: NeoInputOrigin;
   readonly awaiting?: string;
 }
@@ -21,8 +21,8 @@ export interface NeoPublicationRevision {
 export interface NeoPublicationInput extends ArtifactProjection {
   readonly conversationId: string;
   readonly publicationId: string;
-  readonly askOrigin: NeoInputOrigin;
-  readonly producerInput: NeoInputOrigin;
+  readonly askOrigin?: NeoInputOrigin;
+  readonly producerInput?: NeoInputOrigin;
   readonly shortText: string;
   readonly fullText: string;
   readonly links: readonly NeoPublicationLink[];

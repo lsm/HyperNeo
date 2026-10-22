@@ -75,6 +75,17 @@ try {
   assert.equal((await ordinaryLive.optionsBuilder.build()).settings?.autoCompactWindow, undefined);
   evidence.ordinaryMetadata = await getSessionContextModelInfo(ordinaryLive.getSessionData());
   assert.equal((evidence.ordinaryMetadata as ModelInfo).autoCompactPercent, 80);
+  await ordinaryLive.stateManager.setProcessing('ordinary-busy-setting');
+  await hub.request('session.update', { sessionId: ordinary, config: { autoCompactPercent: 70 } });
+  assert.equal((await getSessionContextModelInfo(ordinaryLive.getSessionData()))?.autoCompactPercent, 80);
+  await ordinaryLive.stateManager.setIdle();
+  const ordinaryInfo = await getSessionContextModelInfo(ordinaryLive.getSessionData());
+  assert.equal(ordinaryInfo?.autoCompactPercent, 70);
+  assert.equal((await ordinaryLive.optionsBuilder.build()).settings?.autoCompactWindow, 733_000);
+  const ordinaryContext = await new ContextFetcher(ordinary).fetch({ getContextUsage: async () => sdkUsage } as unknown as Query, ordinaryInfo);
+  assert.equal(ordinaryContext?.autoCompactThreshold, 700_000);
+  evidence.ordinaryExplicit = { info: ordinaryInfo, threshold: ordinaryContext?.autoCompactThreshold };
+
   const repo = new NeoRepository(app.db.getDatabase());
   const project = 'synthetic-project';
   repo.saveProject({ id: project, title: 'Synthetic project', summary: '', context: '' }, 0);
@@ -89,6 +100,14 @@ try {
     await assert.rejects(call('neo.preferences.set', { ...preference, autoCompactPercent }));
   }
   await call('neo.preferences.set', { ...preference, autoCompactPercent: 70 });
+  for (const target of [live, ordinaryLive]) {
+    await target.stateManager.setIdle();
+    await hub.request('session.update', { sessionId: target.getSessionData().id, config: { autoCompactPercent: 80 } });
+    await target.stateManager.setProcessing('setting-pending-at-restart');
+    await hub.request('session.update', { sessionId: target.getSessionData().id, config: { autoCompactPercent: 70 } });
+    assert.equal(target.getSessionData().config.autoCompactPercent, 80);
+    assert.equal(target.getSessionData().metadata.pendingAutoCompactPercent, 70);
+  }
   evidence.beforeRestart = app.db.getGlobalSettings().neo?.preferences;
   await transport.close(); await app.cleanup();
   app = await createDaemonApp({ config, verbose: false });
@@ -96,8 +115,13 @@ try {
   const restored = await app.sessionManager.getSessionForControl(sessionId); assert(restored);
   evidence.afterRestart = await getSessionContextModelInfo(restored.getSessionData());
   assert.equal((evidence.afterRestart as ModelInfo).autoCompactPercent, 70);
+  const ordinaryRestored = await app.sessionManager.getSessionForControl(ordinary); assert(ordinaryRestored);
+  assert.equal((await getSessionContextModelInfo(ordinaryRestored.getSessionData()))?.autoCompactPercent, 70);
+  assert.equal(restored.getSessionData().metadata.pendingAutoCompactPercent, undefined);
+  assert.equal(ordinaryRestored.getSessionData().metadata.pendingAutoCompactPercent, undefined);
+  evidence.ordinaryAfterRestart = await getSessionContextModelInfo(ordinaryRestored.getSessionData());
   evidence.health = { port: app.server.port, persistedPreference: app.db.getGlobalSettings().neo?.preferences };
-  console.log(`PASS public Neo percentage save/snapshot, busy deferral, idle threshold/reserve, ordinary isolation, project identity and restart. ${run}/evidence/observed.json`);
+  console.log(`PASS public Neo percentage save/snapshot, busy deferral, idle threshold/reserve, ordinary default + explicit setting parity, project identity and restart. ${run}/evidence/observed.json`);
 } finally {
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
   await transport.close(); await app.cleanup(); setModelsCache(new Map());

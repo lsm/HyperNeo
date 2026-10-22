@@ -264,7 +264,7 @@ describe('neo.preferences.set', () => {
     }
   );
 
-  test('applies at idle only to Neo bindings and restores model metadata when omitted', async () => {
+  test('writes the ordinary session setting only for Neo without a special restart', async () => {
     const base = {
       model: 'deepseek-v4-flash',
       provider: 'deepseek' as const,
@@ -279,8 +279,10 @@ describe('neo.preferences.set', () => {
       (await getSessionContextModelInfo(db.getSession(id)!))?.autoCompactPercent;
     busy = true;
     await invoke('neo.preferences.set', { ...base, autoCompactPercent: 70 });
-    expect(await percentage('neo:root')).toBe(80);
-    expect(updated).toHaveLength(0);
+    expect(updated).toContainEqual([
+      'neo:root',
+      expect.objectContaining({ config: expect.objectContaining({ autoCompactPercent: 70 }) }),
+    ]);
     busy = false;
     for (const id of ['neo:root', 'ordinary', 'worker']) {
       const event = await events.publish('session.updated', {
@@ -288,7 +290,7 @@ describe('neo.preferences.set', () => {
         processingState: { status: 'idle' },
       });
       expect(event.failures).toEqual([]);
-      expect(await percentage(id)).toBe(id.startsWith('neo:') ? 70 : 80);
+      expect(await percentage(id)).toBe(id === 'neo:root' ? 70 : 80);
     }
     const info = await getSessionContextModelInfo(db.getSession('neo:root')!);
     expect(contextBudgetThreshold(info!.contextWindow!, info!.autoCompactPercent)).toBe(700_000);
@@ -305,7 +307,7 @@ describe('neo.preferences.set', () => {
     expect(db.getGlobalSettings().neo?.preferences).not.toHaveProperty('autoCompactPercent');
   });
 
-  test('rebuilds the percentage with the newly aligned model and thinking', async () => {
+  test('updates ordinary model configuration without a Neo percentage restart', async () => {
     db.updateSession('neo:root', {
       config: {
         ...db.getSession('neo:root')!.config,
@@ -320,7 +322,7 @@ describe('neo.preferences.set', () => {
       thinkingLevel: 'think8k',
       autoCompactPercent: 70,
     });
-    expect(restarted.at(-1)).toMatchObject({
+    expect(db.getSession('neo:root')?.config).toMatchObject({
       model: 'claude-opus',
       provider: 'anthropic',
       thinkingLevel: 'think8k',

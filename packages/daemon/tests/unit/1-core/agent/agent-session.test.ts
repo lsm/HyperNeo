@@ -5038,7 +5038,7 @@ describe('AgentSession', () => {
     });
 
     it.each(['neo', 'worker', 'ordinary'] as const)(
-      'preserves the intended %s query boundary across all live MCP refresh paths',
+      'refreshes %s MCP servers through the ordinary session path',
       async (kind) => {
         const sqlite = new SqliteDatabase(':memory:');
         createNeoTables(sqlite);
@@ -5071,15 +5071,11 @@ describe('AgentSession', () => {
           agentSession.replaceAllRuntimeMcpServers({ replacement });
           expect(agentSession.getSessionData().config.mcpServers).toEqual({ replacement });
           await Promise.resolve();
-          if (kind === 'neo') {
-            expect(setMcpServers).not.toHaveBeenCalled();
-          } else {
-            expect(setMcpServers).toHaveBeenCalledTimes(4);
-            expect(setMcpServers).toHaveBeenLastCalledWith({
-              'hyperneo-operations': agentSession.getOperationMcpServer(),
-              replacement,
-            });
-          }
+          expect(setMcpServers).toHaveBeenCalledTimes(4);
+          expect(setMcpServers).toHaveBeenLastCalledWith({
+            'hyperneo-operations': agentSession.getOperationMcpServer(),
+            replacement,
+          });
         } finally {
           agentSession.queryObject = null;
           await agentSession.cleanup();
@@ -5087,31 +5083,6 @@ describe('AgentSession', () => {
         }
       }
     );
-
-    it('keeps the active holder query operations server bound during MCP refreshes', () => {
-      const session = makeMockSession();
-      session.id = 'neo:holder';
-      const { mockDb, mockMessageHub, mockInternalEventBus, mockGetApiKey } = makeMocks();
-      (mockDb as unknown as { getDatabase: () => unknown }).getDatabase = () => ({
-        prepare: () => ({ get: () => ({ kind: 'neo' }) }),
-      });
-      const agentSession = new AgentSession(
-        session,
-        mockDb,
-        mockMessageHub,
-        mockInternalEventBus,
-        mockGetApiKey
-      );
-      const setMcpServers = mock(async () => ({ added: [], removed: [], errors: {} }));
-      agentSession.queryObject = {
-        setMcpServers,
-      } as unknown as import('@anthropic-ai/claude-agent-sdk').Query;
-      const added = { type: 'sdk', name: 'later' } as McpServerConfig;
-      agentSession.mergeRuntimeMcpServers({ later: added });
-      agentSession.reconcileEffectiveMcpServers();
-      expect(setMcpServers).not.toHaveBeenCalled();
-      expect(agentSession.getSessionData().config.mcpServers?.later).toBe(added);
-    });
 
     it('records per-server attach errors against the MCP registry', async () => {
       const mockSession = makeMockSession();
@@ -5885,7 +5856,6 @@ describe('AgentSession', () => {
           .catch(() => {});
         agentSession.messageQueue.stop();
         expect(agentSession.messageQueue.hasPendingOrInFlight(uuid)).toBe(true);
-        expect(agentSession.steerNeoInput(uuid)).toBe(false);
         expect(await agentSession.reconcileStrandedDeliveries()).toBe(1);
         expect(db.getJobQueueRepo().activeDeliveryMessageUuids(sessionId)).toContain(uuid);
         expect(await agentSession.reconcileStrandedDeliveries()).toBe(0);

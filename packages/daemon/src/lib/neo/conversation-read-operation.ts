@@ -26,7 +26,6 @@ export function requireNeoConversationReader(
   return (caller.source === 'rpc' && caller.principal === 'local') ||
     (caller.source === 'mcp' &&
       caller.role === 'neo' &&
-      !!caller.neoTurn?.isLive() &&
       !!binding &&
       binding.sessionId === caller.sessionId &&
       binding.kind === 'neo')

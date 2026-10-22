@@ -32,7 +32,6 @@ const input = {
 const caller = (sessionId = root.sessionId): OperationCaller => ({
   source: 'mcp',
   sessionId,
-  neoTurn: { messageId: 'm-2', human: true, isLive: () => true },
 });
 let db: Database;
 let publications: NeoPublicationRepository;
@@ -54,11 +53,6 @@ beforeEach(() => {
         getBinding: (id) => [root, holder].find((item) => item.sessionId === id) ?? null,
         getRootBinding: () => root,
         publications,
-        resolveAskOrigin: () => ({ sessionId: root.sessionId, messageId: 'new-human-question' }),
-        resolveHumanAskOrigin: () => ({
-          sessionId: root.sessionId,
-          messageId: 'new-human-question',
-        }),
         notify: () => notified++,
       },
       () => new Date('2026-10-16T10:00:00.000Z')
@@ -103,21 +97,16 @@ describe('neo.publication.edit', () => {
     expect(notified).toBe(1);
   });
 
-  test('returns the answered message and current revision through the only revision operation', async () => {
+  test('edits without inferring an answered message', async () => {
     expect(registry.get('neo.publication.correct')).toBeUndefined();
     const result = await call('edit', {
       publicationId: original,
       requestId: 'r1',
       shortText: 'Updated.',
     });
-    const current = publications.get(conversation, original)!;
     expect(result).toMatchObject({
       accepted: true,
-      answered: {
-        message: { sessionId: root.sessionId, messageId: 'new-human-question' },
-        publicationId: original,
-        revisionId: current.revisionId,
-      },
+      answered: null,
     });
   });
 
@@ -170,20 +159,6 @@ describe('neo.publication.edit', () => {
     expect(publications.get(conversation, second)?.shortText).toBe(input.shortText);
   });
 
-  test('rechecks the live caller at the revision write boundary', async () => {
-    let checks = 0;
-    const who = caller();
-    const turn = { ...who.neoTurn!, isLive: () => ++checks <= 2 };
-    expect(
-      await call(
-        'edit',
-        { publicationId: original, requestId: 'r1', shortText: 'Stale.' },
-        { ...who, neoTurn: turn }
-      )
-    ).toMatchObject({ accepted: false, reason: 'publication_superseded' });
-    expect(publications.get(conversation, original)?.shortText).toBe(input.shortText);
-  });
-
   test.each([
     { publicationId: original, requestId: 'r1' },
     { publicationId: original, shortText: 'No identity.' },
@@ -199,15 +174,7 @@ describe('neo.publication.edit', () => {
   ] satisfies OperationCaller[])('refuses an unauthorized publisher: %j', async (who) => {
     expect(
       await call('edit', { publicationId: original, requestId: 'r1', shortText: 'Wrong.' }, who)
-    ).toMatchObject({ accepted: false, reason: 'live_avatar_required' });
-    expect(notified).toBe(0);
-  });
-
-  test('refuses a dead publisher before the operation runs', async () => {
-    const who = { ...caller(), neoTurn: { ...caller().neoTurn!, isLive: () => false } };
-    expect(
-      await call('edit', { publicationId: original, requestId: 'r1', shortText: 'Wrong.' }, who)
-    ).toMatchObject({ kind: 'failed', code: 'forbidden' });
+    ).toMatchObject({ accepted: false, reason: 'avatar_required' });
     expect(notified).toBe(0);
   });
 

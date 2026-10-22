@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
-import { neoNoteDeliveryMode } from '../../../../src/lib/neo/session-status.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import {
   InternalEventBus,
@@ -10,18 +9,6 @@ import type { SessionManager } from '../../../../src/lib/session/session-manager
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
 const rootId = 'neo:10000000-0000-4000-8000-000000000002';
-
-describe('neoNoteDeliveryMode', () => {
-  test.each([
-    ['processing', 'defer'],
-    ['queued', 'defer'],
-    ['idle', 'immediate'],
-    ['interrupted', 'immediate'],
-    [null, 'immediate'],
-  ] as const)('a note to a %s Neo is %s', (status, mode) => {
-    expect(neoNoteDeliveryMode(status)).toBe(mode);
-  });
-});
 
 describe('Neo daemon notes', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
@@ -51,13 +38,13 @@ describe('Neo daemon notes', () => {
       .listActiveByPayload('mailbox', { 'to.sessionId': rootId, messageUuid: messageId })
       .map((job) => job.payload.deliveryMode);
 
-  test('a note to a busy Neo waits for its next turn, and one to an idle Neo starts a turn', async () => {
+  test('notes to busy and idle Neo both use immediate ordinary mailbox delivery', async () => {
     await events.publish('session.updated', {
       sessionId: rootId,
       processingState: { status: 'processing' } as never,
     });
     await service.deliverForward(rootId, 'note-busy', 'A card reported.', rootId, null);
-    expect(queued('note-busy')).toEqual(['defer']);
+    expect(queued('note-busy')).toEqual(['immediate']);
     await events.publish('session.updated', {
       sessionId: rootId,
       processingState: { status: 'idle' } as never,

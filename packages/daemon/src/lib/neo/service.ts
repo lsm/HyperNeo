@@ -1,38 +1,29 @@
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
-import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
-import { onHumanDevicesReset } from '../pairing/human-device-reset.ts';
-import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
-import { neoStateNote, restartNeo } from './restart.ts';
-import { projectNeoAskEntries } from './ask-entries.ts';
 import { hostname } from 'node:os';
-import { neoWorkingKey, readNeoWorking } from './working.ts';
 import { fillPrompt, NEO_SESSION_TRACK } from '@hyperneo/prompts';
 import type { GlobalSettings, MessageHub, Provider } from '@hyperneo/shared';
+import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
-import type { MailboxMessageContent } from '../mailbox/entry.ts';
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
-import { type NeoWorkingEvent } from '@hyperneo/shared/types/neo-snapshot';
-import { type NeoModelPreference, neoStandingRules } from '@hyperneo/shared/types/settings';
+import type { NeoWorkingEvent, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
+import { type NeoModelPreference } from '@hyperneo/shared/types/settings';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
-import { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
-import { createNeoTodoRunner, neoTodoCard, type NeoTodoRunner } from './todo-runner.ts';
-import { CodingPrLedgerRepository } from './packs/coding/pr-ledger.ts';
-import { CodingPrEventRepository } from './packs/coding/pr-events.ts';
-import { CodingPrSweepRepository } from './packs/coding/pr-sweep.ts';
-import { CodingTodoPrRepository } from './packs/coding/todo-prs.ts';
 import { NeoCardEventSubscriptionRepository } from '../../storage/repositories/neo-card-event-subscription-repository.ts';
-import { SessionEventSubscriptionRepository } from '../../storage/repositories/session-event-subscription-repository.ts';
 import { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
 import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-origin-repository.ts';
 import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
+import { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
+import { SessionEventSubscriptionRepository } from '../../storage/repositories/session-event-subscription-repository.ts';
+import { createArtifactRefReader } from '../artifacts/read-operations.ts';
 import { BUILD_METADATA } from '../build-metadata.ts';
 import { readWorkerIdentity, sessionWorkerRef } from './worker-identity.ts';
-import type { WorkRef } from '../drivers/types.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
+import type { WorkRef } from '../drivers/types.ts';
+import { runLagPhase } from '../event-loop-activity.ts';
 import type { ExternalEventPublishedPayload } from '../external-events/external-event-service.ts';
 import { sessionEventText } from '../external-events/session-event-delivery.ts';
 import {
@@ -43,23 +34,24 @@ import type { ExternalEvent } from '../external-events/types.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
 import { renderAddress } from '../mailbox/address.ts';
+import type { MailboxMessageContent } from '../mailbox/entry.ts';
 import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
 import { invokeOperation } from '../operations/invoke.ts';
-import type { OperationCaller } from '../operations/registry.ts';
+import { onHumanDevicesReset } from '../pairing/human-device-reset.ts';
 import { remoteDaemons } from '../remote-daemons/registry.ts';
 import type { SessionManager } from '../session/session-manager.ts';
 import { createNeoAskOriginResolver, type NeoAskOrigin } from './ask-origin.ts';
 import {
+  neoCardWorkerSession,
   planNeoCardEventRoute,
   planNeoCardEventSends,
   planNeoCardSend,
   planNeoCardTopicsEnded,
-  neoCardWorkerSession,
 } from './card-events.ts';
 import { readNeoDaemonCommits } from './daemon-commits.ts';
-import { neoNoteDeliveryMode, neoSessionStatus } from './session-status.ts';
 import { driverWorkCaller } from './driver-work.ts';
 import { neoFolderPath } from './folder.ts';
+import { openNeoDefaultSession } from './inbox.ts';
 import { effectiveNeoPreference, planNeoAlignment } from './model-preference.ts';
 import {
   type NeoDeliveryTrigger,
@@ -76,6 +68,10 @@ import {
 import { type NeoDeployReader, readGithubDeploys } from './packs/coding/deploy-checks.ts';
 import { listNeoGithub, type NeoGithubLister } from './packs/coding/github-query.ts';
 import { createCodingPack } from './packs/coding/pack.ts';
+import { CodingPrEventRepository } from './packs/coding/pr-events.ts';
+import { CodingPrLedgerRepository } from './packs/coding/pr-ledger.ts';
+import { CodingPrSweepRepository } from './packs/coding/pr-sweep.ts';
+import { CodingTodoPrRepository } from './packs/coding/todo-prs.ts';
 import { type NeoWorkPrReader, readGithubPrs } from './packs/coding/work-prs.ts';
 import { neoEnabledPacks, neoPackBriefs, neoPacks } from './packs/index.ts';
 import { createLifeAdminPack } from './packs/life-admin/pack.ts';
@@ -86,24 +82,12 @@ import type {
   NeoPackEventRoute,
 } from './packs/types.ts';
 import { neoPrompt } from './prompt.ts';
+import { neoSessionStatus } from './session-status.ts';
 import { createNeoPublisher } from './publication-operation.ts';
-import { openNeoDefaultSession } from './inbox.ts';
-import {
-  type NeoSavedRulesNote,
-  planNeoSavedRulesAppend,
-  planNeoSavedRulesNote,
-  withNeoSavedRules,
-} from './saved-rules.ts';
-import {
-  neoCoordinatorAllowedTools,
-  neoCoordinatorBinding,
-  neoCoordinatorNativeTools,
-} from './session-policy.ts';
 import type { NeoSessionNotice, NeoSessionNoticeGroup } from './session-watch.ts';
 import { NeoSessionWatcher } from './session-watcher.ts';
-import { runLagPhase } from '../event-loop-activity.ts';
-import type { NeoSnapshotRead } from './snapshot-read.ts';
-import { createArtifactRefReader } from '../artifacts/read-operations.ts';
+import { createNeoTodoRunner, type NeoTodoRunner, neoTodoCard } from './todo-runner.ts';
+import { neoWorkingKey, readNeoWorking } from './working.ts';
 
 type NeoFollowedTodoSnapshot = {
   todos: Map<string, NeoTodo>;
@@ -162,8 +146,6 @@ export class NeoService {
   private readonly triggerDeliveryRetryAt = new Map<string, number>();
   private opening: Promise<string> | null = null;
   private readonly deliveries = new Map<string, Promise<void>>();
-  private readonly processingStatus = new Map<string, string>();
-  private readonly savedRules = new Map<string, NeoSavedRulesNote>();
   private readonly log = new Logger('Neo');
   private readonly unsubscribe: () => void;
 
@@ -227,9 +209,7 @@ export class NeoService {
         );
       },
       tellAsk: async (ask, messageId, note) => {
-        const status =
-          this.processingStatus.get(ask.sessionId) ??
-          neoSessionStatus(this.db.getSession(ask.sessionId)?.processingState);
+        const status = neoSessionStatus(this.db.getSession(ask.sessionId)?.processingState);
         if (status !== 'idle' || this.hasDelivery(ask.sessionId, messageId)) return;
         await this.deliverForward(
           ask.sessionId,
@@ -289,13 +269,6 @@ export class NeoService {
       getBinding: (id) => this.repo.getBindingBySession(id),
       getRootBinding: () => this.repo.defaultBinding(),
       hasProject: (id) => !!this.repo.getProject(id),
-      resolveAskOrigin: (input) => this.resolveAskOrigin(input),
-      resolveHumanAskOrigin: (input) => this.resolveHumanAskOrigin(input),
-      inputTrigger: (input) => this.inputTrigger(input),
-      isDeliveredHumanInput: (input) =>
-        this.isHumanInput(input) &&
-        this.db.getSDKMessageRepo().getUserSendStatus(input.sessionId, input.messageId) ===
-          'consumed',
       append: (input) => this.appendPublication(input),
       notify: notifyPublication,
       artifact: createArtifactRefReader(() => this.db.getDatabase()),
@@ -304,28 +277,17 @@ export class NeoService {
       'session.updated',
       async ({ sessionId, processingState, session }) => {
         const status = processingState?.status;
-        const previous = this.processingStatus.get(sessionId);
-        if (status) this.processingStatus.set(sessionId, status);
-        if (status === 'processing' && previous !== 'processing')
-          void this.steerQueuedInputs(sessionId);
         const bound = status || session?.status ? this.repo.getBindingBySession(sessionId) : null;
         if (bound?.kind === 'neo') {
           this.noteWorking();
-          if (status && previous !== status) this.notifyChanged();
+          if (status) this.notifyChanged();
         }
-        if (status !== 'idle') return;
-        const binding = this.repo.getBindingBySession(sessionId);
-        if (binding?.kind === 'neo')
-          await this.alignModelPreference(sessionId).catch((error) =>
-            this.log.warn('Neo model preference not applied', error)
-          );
       },
       { subscriberName: 'neo-work-return' }
     );
     const offStatus = events.subscribe(
       'messages.statusChanged',
       ({ sessionId, status }) => {
-        if (status === 'enqueued' && sessionId) void this.steerQueuedInputs(sessionId);
         if (status === 'failed' && sessionId && this.repo.getBindingBySession(sessionId))
           this.notifyChanged();
       },
@@ -333,24 +295,10 @@ export class NeoService {
     );
     const offDeleted = events.subscribe(
       'session.deleted',
-      ({ sessionId }) => {
-        this.forgetSession(sessionId);
+      () => {
         this.noteWorking();
       },
       { subscriberName: 'neo-session-forget' }
-    );
-    const offCompacted = events.subscribe(
-      'session.compacted',
-      async ({ sessionId }) => {
-        if (this.repo.defaultBinding()?.sessionId !== sessionId) return;
-        await this.deliver(
-          sessionId,
-          crypto.randomUUID(),
-          neoStateNote(await this.openAskEntries()),
-          sessionId
-        ).catch((error) => this.log.warn('Neo state note after compaction pending', error));
-      },
-      { subscriberName: 'neo-compact-state-note' }
     );
     const offExternal = events.subscribe(
       'externalEvent.published',
@@ -367,36 +315,8 @@ export class NeoService {
       offUpdated();
       offStatus();
       offDeleted();
-      offCompacted();
       offExternal();
     };
-  }
-
-  noteSavedRules(caller: OperationCaller, saved: readonly string[]): void {
-    const keep = planNeoSavedRulesNote(
-      { sessionId: caller.sessionId, messageId: caller.neoTurn?.messageId },
-      saved,
-      this.savedRules
-    );
-    if (keep) this.keepSavedRules(keep);
-  }
-
-  private keepSavedRules({
-    key,
-    note,
-    evict,
-  }: {
-    key: string;
-    note: NeoSavedRulesNote;
-    evict: string[];
-  }) {
-    for (const old of [...evict, key]) this.savedRules.delete(old);
-    this.savedRules.set(key, note);
-  }
-
-  resolveHumanAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null {
-    const origin = this.resolveAskOrigin(input);
-    return origin && this.isHumanInput(origin) ? origin : null;
   }
 
   private isHumanInput(input: NeoAskOrigin): boolean {
@@ -410,13 +330,7 @@ export class NeoService {
   }
 
   private appendPublication(input: NeoPublicationInput) {
-    const plan = planNeoSavedRulesAppend(input, this.savedRules, {
-      standingRules: neoStandingRules(this.db.getGlobalSettings?.().neo),
-      stored: !!this.publications.get(input.conversationId, input.publicationId),
-    });
-    const receipt = this.publications.append(withNeoSavedRules(input, plan.rules));
-    if (receipt.accepted && plan.keep) this.keepSavedRules(plan.keep);
-    return receipt;
+    return this.publications.append(input);
   }
 
   modelPreference(): (NeoModelPreference & { saved: boolean }) | null {
@@ -434,33 +348,36 @@ export class NeoService {
     const updated = this.db.updateGlobalSettings({ neo: { ...neo, preferences } });
     this.publishSettings?.(updated);
     const root = this.repo.defaultBinding();
-    if (root)
-      await this.alignModelPreference(root.sessionId).catch((error) =>
-        this.log.warn('Neo model preference not applied', error)
-      );
+    if (!root) return;
+    await this.alignModelPreference(root.sessionId).catch((error) =>
+      this.log.warn('Neo model preference not applied', error)
+    );
+    const session = this.db.getSession(root.sessionId);
+    if (
+      session &&
+      (session.config.autoCompactPercent !== preferences.autoCompactPercent ||
+        session.metadata.pendingAutoCompactPercent !== undefined)
+    )
+      await this.sessions.updateSession(root.sessionId, {
+        config: { ...session.config, autoCompactPercent: preferences.autoCompactPercent },
+      });
   }
 
   private async alignModelPreference(sessionId: string): Promise<void> {
     const preference = this.modelPreference();
-    const stored = this.db.getSession(sessionId);
-    const config = stored?.config;
+    const config = this.db.getSession(sessionId)?.config;
     const plan = preference && config ? planNeoAlignment(config, preference) : null;
-    if (
-      !preference ||
-      !stored ||
-      (!plan && stored.metadata.neoAutoCompactPercent === preference.autoCompactPercent)
-    )
-      return;
+    if (!preference || !plan) return;
     const live = await this.sessions.getSessionForControl(sessionId);
     if (!live) return;
     if (live.isLimitRecoveryPending?.() || live.getRateLimitWatchdogState?.().lastUserMessage)
       return;
     const previousThinking = live.getSessionData().config.thinkingLevel;
-    if (plan?.thinking)
+    if (plan.thinking)
       await this.sessions.updateSession(sessionId, {
         config: { ...live.getSessionData().config, thinkingLevel: preference.thinkingLevel },
       });
-    if (plan?.model) {
+    if (plan.model) {
       let restored = false;
       try {
         const switched = await live.requestModelSwitch(preference.model, preference.provider);
@@ -474,24 +391,6 @@ export class NeoService {
           });
       }
     }
-    const metadata = live.getSessionData().metadata;
-    if (
-      live.getProcessingState().status === 'idle' &&
-      metadata.neoAutoCompactPercent !== preference.autoCompactPercent
-    ) {
-      await this.sessions.updateSession(sessionId, {
-        metadata: { ...metadata, neoAutoCompactPercent: preference.autoCompactPercent },
-      });
-      await live.restartQuery();
-    }
-  }
-
-  readonly snapshotReads = new Map<string, NeoSnapshotRead>();
-
-  private forgetSession(sessionId: string): void {
-    for (const key of this.snapshotReads.keys())
-      if (key.startsWith(`${sessionId}\n`)) this.snapshotReads.delete(key);
-    this.processingStatus.delete(sessionId);
   }
 
   async dispose(): Promise<void> {
@@ -500,7 +399,6 @@ export class NeoService {
     if (this.triggerTimer) clearTimeout(this.triggerTimer);
     this.triggerTimer = undefined;
     this.triggerDeliveryRetryAt.clear();
-    this.processingStatus.clear();
     if (this.watching) await this.watching;
     this.sessionWatcher.flushSessionNoticeGroup();
   }
@@ -543,29 +441,12 @@ export class NeoService {
     return { ...message, fromName: from.label, toName: to.label };
   }
 
-  restart() {
-    return restartNeo({
-      open: () => this.open(),
-      clear: async (sessionId) => {
-        const live = await this.sessions.getSessionForControl(sessionId);
-        if (!live) throw new Error(`Neo session ${sessionId} is not available.`);
-        await live.startFreshContext();
-      },
-      note: (sessionId, text) => this.deliver(sessionId, crypto.randomUUID(), text, sessionId),
-      entries: () => this.openAskEntries(),
-    });
-  }
-
-  private async openAskEntries() {
-    const entries = projectNeoAskEntries(
-      this.todos.listOpenAsks(),
-      this.todos,
-      this.todoSessions,
-      this.installedPacks()
-    );
-    return Promise.all(
-      entries.map(async (entry) => ({ ...entry, todos: await this.todoWorkers(entry.todos) }))
-    );
+  async restart(): Promise<{ ok: true; sessionId: string }> {
+    const sessionId = await this.open();
+    const live = await this.sessions.getSessionForControl(sessionId);
+    if (!live) throw new Error(`Neo session ${sessionId} is not available.`);
+    await live.startFreshContext();
+    return { ok: true, sessionId };
   }
 
   open(): Promise<string> {
@@ -595,9 +476,7 @@ export class NeoService {
         detectGit: false,
         config: {
           systemPrompt: neoPrompt(this.packBriefs()),
-          sdkToolsPreset: neoCoordinatorNativeTools(),
-          permissionMode: 'dontAsk',
-          allowedTools: neoCoordinatorAllowedTools(),
+          autoCompactPercent: preference?.autoCompactPercent,
           ...(preference
             ? {
                 model: preference.model,
@@ -608,17 +487,8 @@ export class NeoService {
         },
       });
     }
-    await this.removeTurnLimit(binding.sessionId);
-    await this.alignModelPreference(binding.sessionId);
-    return binding.sessionId;
-  }
 
-  private async removeTurnLimit(sessionId: string): Promise<void> {
-    const session = this.db.getSession(sessionId);
-    if (session?.config?.maxTurns !== undefined)
-      await this.sessions.updateSession(sessionId, {
-        config: { ...session.config, maxTurns: undefined },
-      });
+    return binding.sessionId;
   }
 
   defaultSessionId(): string | undefined {
@@ -631,8 +501,18 @@ export class NeoService {
 
   async recover(): Promise<void> {
     this.sessionWatcher.loadSessionNoticeGroups();
-    const root = this.repo.defaultBinding();
-    if (root) await this.removeTurnLimit(root.sessionId);
+    const id = this.defaultSessionId();
+    const session = id ? this.db.getSession(id) : null;
+    const metadata = session?.metadata as
+      | (NonNullable<typeof session>['metadata'] & { neoAutoCompactPercent?: number })
+      | undefined;
+    if (session && metadata?.neoAutoCompactPercent !== undefined) {
+      const ordinaryMetadata = { ...metadata, neoAutoCompactPercent: undefined };
+      await this.sessions.updateSession(session.id, {
+        config: { ...session.config, autoCompactPercent: metadata.neoAutoCompactPercent },
+        metadata: ordinaryMetadata,
+      });
+    }
   }
 
   async sweepPacks(): Promise<void> {
@@ -846,17 +726,15 @@ export class NeoService {
   }
 
   followedTopics(): { topic: string; session: string | null }[] {
-    return [
-      ...this.cardEvents.listActive().map((row) => ({
-        topic: row.topic,
-        session: neoCardWorkerSession(
-          planNeoCardSend({
-            work: this.followedTodo(row.workId),
-            ref: this.todoSessions.readRef(row.workId),
-          })
-        ),
-      })),
-    ];
+    return this.cardEvents.listActive().map((row) => ({
+      topic: row.topic,
+      session: neoCardWorkerSession(
+        planNeoCardSend({
+          work: this.followedTodo(row.workId),
+          ref: this.todoSessions.readRef(row.workId),
+        })
+      ),
+    }));
   }
 
   private readonly routeCardEvent = (superpipe({})('neo-card-event') as PipelineAPI)
@@ -1024,41 +902,11 @@ export class NeoService {
     this.inputOrigins.record(input, origin, Date.now(), triggerId);
   }
 
-  ownsHumanMessage(caller: OperationCaller): boolean {
-    const turn = caller.neoTurn;
-    return !!turn && !!caller.sessionId && turn.human;
-  }
-
-  stampContinuation(input: NeoAskOrigin, parent: NeoAskOrigin): void {
-    if (!this.repo.getBindingBySession(input.sessionId)) return;
-    this.stampDelivery(input, parent, 'continues');
-  }
-
   inputTrigger(input: NeoAskOrigin): string | null {
     return (
       this.inputOrigins.trigger(input.sessionId, input.messageId) ??
       (this.isHumanInput(input) ? neoHumanTrigger(input.messageId) : null)
     );
-  }
-
-  async steerQueuedInputs(sessionId: string): Promise<void> {
-    if (this.repo.defaultBinding()?.sessionId !== sessionId) return;
-    const status =
-      this.processingStatus.get(sessionId) ??
-      neoSessionStatus(this.db.getSession(sessionId)?.processingState);
-    if (status !== 'processing') return;
-    const repo = this.db.getSDKMessageRepo();
-    const queued = [
-      ...repo.listQueuedInputs(sessionId, 'human'),
-      ...repo.listQueuedInputs(sessionId, 'task'),
-    ].sort((a, b) => a.seq - b.seq);
-    if (!queued.length) return;
-    try {
-      const live = await this.sessions.getSessionForControl(sessionId);
-      for (const { uuid } of queued) live?.steerNeoInput(uuid);
-    } catch (error) {
-      this.log.warn('Queued input not steered into the running Neo turn', error);
-    }
   }
 
   private parentTrigger(parent: NeoAskOrigin | null): string | null {
@@ -1088,12 +936,7 @@ export class NeoService {
         parent_tool_use_id: null,
         inputKind: 'system',
       },
-      deliveryMode: neoCoordinatorBinding(this.db, sessionId)
-        ? neoNoteDeliveryMode(
-            this.processingStatus.get(sessionId) ??
-              neoSessionStatus(this.db.getSession(sessionId)?.processingState)
-          )
-        : 'immediate',
+      deliveryMode: 'immediate',
       jobQueue: queue,
     });
     if (outcome.kind === 'rejected') throw new Error(outcome.reason);

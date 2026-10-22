@@ -1,0 +1,6 @@
+ok    test mode
+ok    database inside the run dir
+ok    web UI served
+ok    RPC answers
+ok    mock model API on 8000
+usable

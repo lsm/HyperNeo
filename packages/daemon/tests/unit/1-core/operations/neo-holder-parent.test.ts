@@ -14,7 +14,7 @@ import type { SessionManager } from '../../../../src/lib/session/session-manager
 import type { Database } from '../../../../src/storage/database.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
-describe('Neo holder sessions', () => {
+describe('Neo ordinary sessions', () => {
   let db: Database;
   let service: NeoService;
   const createSession = vi.fn(async (params: { sessionId: string }) => {
@@ -49,7 +49,7 @@ describe('Neo holder sessions', () => {
     expect(createSession.mock.calls[0][0]).not.toHaveProperty('parentSessionId');
   });
 
-  test('new coordinators have no turn cap; opening a legacy coordinator removes only its stored cap', async () => {
+  test('opening preserves the same configured turn cap as any ordinary session', async () => {
     const root = await service.open();
     expect(createSession.mock.calls[0][0]).not.toHaveProperty('config.maxTurns');
     const base = db.getSession(root)!;
@@ -64,7 +64,7 @@ describe('Neo holder sessions', () => {
       sdkSessionId,
       config: { systemPrompt: 'Stored context' },
     });
-    expect(db.getSession(root)?.config).not.toHaveProperty('maxTurns');
+    expect(db.getSession(root)?.config.maxTurns).toBe(32);
   });
 
   test('cannot use the clone return path into Neo', () => {

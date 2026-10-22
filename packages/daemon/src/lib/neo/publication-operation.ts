@@ -10,18 +10,12 @@ import { defineOperation, type OperationCaller } from '../operations/registry.ts
 import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
 import { unregisteredArtifact } from '../artifacts/file-contracts.ts';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
-import type { NeoAskOrigin } from './ask-origin.ts';
 import {
   NeoPublicationSchema,
   NeoPublicationResultSchema,
   withNeoPublicationAnswer,
 } from './publication.ts';
 import { isMainNeoBinding } from './binding-roles.ts';
-import {
-  NEO_HUMAN_TRIGGER_PREFIX,
-  neoHumanTrigger,
-  requirePublicationTrigger,
-} from './notification-triggers.ts';
 import { neoDerivedId } from './derived-id.ts';
 
 const Draft = NeoPublicationSchema.omit({
@@ -43,11 +37,8 @@ type Receipt = NeoPublicationAppendResult | Rejection;
 type Producer = {
   binding: NeoBinding;
   root: NeoBinding;
-  input: NeoAskOrigin;
-  turn: NonNullable<OperationCaller['neoTurn']>;
 };
-type Proof = Producer & { ask: NeoAskOrigin; answer?: NeoAskOrigin };
-type Triggered = Proof & { triggerId?: string };
+type Proof = Producer;
 type LinkEvidence = {
   link: NeoPublicationLink;
   exists: boolean;
@@ -57,11 +48,7 @@ interface NeoPublicationRuntime {
   getBinding(id: string): NeoBinding | null;
   getRootBinding(): NeoBinding | null;
   hasProject(id: string): boolean;
-  resolveAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
-  resolveHumanAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
   append(input: NeoPublicationInput): Receipt;
-  inputTrigger(input: NeoAskOrigin): string | null;
-  isDeliveredHumanInput(input: NeoAskOrigin): boolean;
   notify(): void;
   artifact: ArtifactRefReader;
 }
@@ -105,58 +92,24 @@ export function requireShortTextCoversTopics(
       };
 }
 
-function publicationIdFor(input: NeoAskOrigin, requestId: string): string {
-  return neoDerivedId(
-    JSON.stringify(['neo.publication.publish', input.sessionId, input.messageId, requestId])
-  );
-}
-
-function readAnswer(
-  draft: Draft,
-  proof: Proof,
-  runtime: NeoPublicationRuntime
-): NeoAskOrigin | null {
-  const triggerId = draft.triggerId;
-  if (
-    !triggerId?.startsWith(NEO_HUMAN_TRIGGER_PREFIX) ||
-    !isMainNeoBinding(proof.binding) ||
-    proof.binding.sessionId !== proof.root.sessionId ||
-    runtime.inputTrigger(proof.input) === triggerId
-  )
-    return null;
-  const answer = {
-    sessionId: proof.root.sessionId,
-    messageId: triggerId.slice(NEO_HUMAN_TRIGGER_PREFIX.length),
-  };
-  return proof.turn.hasInput?.(answer.messageId) && runtime.isDeliveredHumanInput(answer)
-    ? answer
-    : null;
-}
-
 export function requirePublicationProducer(
   caller: OperationCaller,
   binding: NeoBinding | null,
   root: NeoBinding | null
 ): { value: Producer } | { reason: Rejection } {
-  const turn = caller.neoTurn;
   return caller.source === 'mcp' &&
     binding &&
     binding.sessionId === caller.sessionId &&
     isMainNeoBinding(root) &&
-    root.sessionId.startsWith('neo:') &&
     isMainNeoBinding(binding) &&
-    binding.sessionId === root.sessionId &&
-    turn?.messageId &&
-    turn.isLive()
+    binding.sessionId === root.sessionId
     ? {
         value: {
           binding,
           root,
-          input: { sessionId: binding.sessionId, messageId: turn.messageId },
-          turn,
         },
       }
-    : { reason: { accepted: false, reason: 'live_avatar_required' } };
+    : { reason: { accepted: false, reason: 'avatar_required' } };
 }
 
 function publicationLinkProblem({ link, exists }: LinkEvidence): string | null {
@@ -200,10 +153,7 @@ export function requirePublicationLifetime(
   binding: NeoBinding | null,
   root: NeoBinding | null
 ): { value: Proof } | { reason: Rejection } {
-  return caller.neoTurn === proof.turn &&
-    caller.sessionId === proof.input.sessionId &&
-    proof.turn.messageId === proof.input.messageId &&
-    proof.turn.isLive() &&
+  return caller.sessionId === proof.binding.sessionId &&
     binding?.kind === proof.binding.kind &&
     binding.projectId === proof.binding.projectId &&
     binding.sessionId === proof.binding.sessionId &&
@@ -231,25 +181,6 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     .pipe(() => runtime.getRootBinding(), 'caller', 'root')
     .pipe(requirePublicationProducer, ['caller', 'binding', 'root'], 'result:publication')
     .pipe(
-      (producer: Producer): Proof => ({
-        ...producer,
-        ask: runtime.resolveAskOrigin(producer.input) ?? producer.input,
-      }),
-      'publication',
-      'publication'
-    )
-    .pipe(
-      (draft: Draft, proof: Proof) => readAnswer(draft, proof, runtime),
-      ['draft', 'publication'],
-      'answer'
-    )
-    .pipe(
-      (proof: Proof, answer: NeoAskOrigin | null): Proof =>
-        answer ? { ...proof, ask: runtime.resolveAskOrigin(answer) ?? answer, answer } : proof,
-      ['publication', 'answer'],
-      'publication'
-    )
-    .pipe(
       (draft: Draft) => draft.links.map((link) => readLinkEvidence(link, runtime)),
       'draft',
       'links'
@@ -267,29 +198,21 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
         requirePublicationLifetime(
           proof,
           caller,
-          runtime.getBinding(proof.input.sessionId),
+          runtime.getBinding(proof.binding.sessionId),
           runtime.getRootBinding()
         ),
       ['publication', 'caller'],
       'result:publication'
     )
     .pipe(
-      (proof: Proof) =>
-        proof.answer ? neoHumanTrigger(proof.answer.messageId) : runtime.inputTrigger(proof.input),
-      'publication',
-      'trigger'
-    )
-    .pipe(requirePublicationTrigger, ['publication', 'draft', 'trigger'], 'result:publication')
-    .pipe(
-      (draft: Draft, proof: Triggered) => {
+      (draft: Draft, proof: Proof) => {
         const { requestId, ...message } = draft;
         return runtime.append({
           ...message,
-          publicationId: publicationIdFor(proof.answer ?? proof.input, requestId),
-          triggerId: proof.triggerId,
+          publicationId: neoDerivedId(
+            JSON.stringify(['neo.publication.publish', proof.binding.sessionId, requestId])
+          ),
           conversationId: proof.root.sessionId.slice(4),
-          askOrigin: proof.ask,
-          producerInput: proof.input,
         });
       },
       ['draft', 'publication'],
@@ -298,10 +221,7 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     .pipe(
       (receipt: Receipt) => {
         if (receipt.accepted) runtime.notify();
-        return withNeoPublicationAnswer(
-          receipt,
-          receipt.accepted ? runtime.resolveHumanAskOrigin(receipt.publication.askOrigin) : null
-        );
+        return withNeoPublicationAnswer(receipt, null);
       },
       'publication',
       'publication'
@@ -316,7 +236,7 @@ export function createNeoPublicationOperation(publish: ReturnType<typeof createN
   return defineOperation({
     name: 'neo.publication.publish',
     description:
-      'Deliver a message in this conversation. Use a new requestId per message and reuse it only when retrying that send. To answer a human input, copy its triggerId from the daemon human-input envelope, including messages arriving mid-turn. Choose the input this message answers; one publication does not answer every delivered input. The runtime validates this turn and derives publication identity, original request and producer. Scene references must exist and belong to the request. For a document or evidence file, pass the reference artifact.file.register returned in artifacts and say in one sentence what it is; do not paste the document. The human opens it in the app. The answered field identifies the human message answered by this delivery and its publication/revision; null means no human message was resolved. It does not complete background work or require another post.',
+      'Deliver a message in this conversation. Use a new requestId per message and reuse it only when retrying that send. Publishing does not infer which human input was answered. Project links must exist. For a document or evidence file, pass the reference artifact.file.register returned in artifacts and say in one sentence what it is.',
     policy: { safetyClass: 'mutate', roles: ['neo'] },
     inputSchema: Draft,
     resultSchema: NeoPublicationResultSchema,

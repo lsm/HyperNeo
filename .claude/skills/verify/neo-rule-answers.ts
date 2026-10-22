@@ -1,7 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { NeoCoordinatorTurn } from '../../../packages/daemon/src/lib/neo/coordinator-turn.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
@@ -30,8 +29,7 @@ for (const phase of ['initial', 'restart']) {
         if (reply.error) fail(new Error(JSON.stringify(reply.error))); else done(reply.data); };
       ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name, input }, timestamp: new Date().toISOString(), version: '1.0.0' }));
     });
-    let turn: NeoCoordinatorTurn | undefined;
-    const handler = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId: 'neo:10000000-0000-4000-8000-000000000002', role: 'neo', neoTurn: turn?.identity() }));
+    const handler = createOperationMcpHandler(() => app.sessionManager.getOperationRegistry(), () => ({ sessionId: 'neo:10000000-0000-4000-8000-000000000002', role: 'neo' }));
     const mcp = async (name: string, input: unknown) => {
       const result = await handler({ name, input }); evidence.push({ phase, name, input, mcp: result });
       return JSON.parse(result.content[0].text);
@@ -47,10 +45,7 @@ for (const phase of ['initial', 'restart']) {
       for (const [uuid, inputKind, content] of [['event', 'system', 'Synthetic event'], ['human-rule', 'human', edit.add[0]]])
         repo.saveSDKMessage('neo:10000000-0000-4000-8000-000000000002', { type: 'user', uuid, session_id: 'neo:10000000-0000-4000-8000-000000000002', parent_tool_use_id: null, inputKind, message: { role: 'user', content } } as any);
       repo.markDeliveryConsumedByUuid('neo:10000000-0000-4000-8000-000000000002', 'human-rule');
-      turn = new NeoCoordinatorTurn(app.db, 'neo:10000000-0000-4000-8000-000000000002', { isLive: () => true });
-      turn.bind('event'); turn.noteSteered('human-rule');
-      assert.equal((await mcp('neo.rule.save', { add: edit.add, from: edit.add[0], triggerId: 'human:human-rule' })).ok, true);
-      turn.dispose(); turn = undefined;
+      assert.equal((await mcp('neo.rule.save', { add: edit.add, from: edit.add[0], triggerId: 'human:human-rule' })).ok, false);
       await rpc('neo.rule.save', { remove: edit.add, add: edit.remove });
       const declined = await mcp('neo.rule.ask', { askId: 'synthetic-ask', requestId: 'declined', ...edit });
       assert.equal(declined.ok, true);
@@ -104,4 +99,4 @@ for (const phase of ['initial', 'restart']) {
   } finally { ws?.close(); await app.cleanup(); writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2)); }
 }
 writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
-console.log(`PASS: consumed mid-turn human rule save, question-bound add/remove, no unchanged, tampering refused, restart persisted. ${run}/evidence/observed.json`);
+console.log(`PASS: direct model rule save refused, question-bound add/remove, no unchanged, tampering refused, restart persisted. ${run}/evidence/observed.json`);

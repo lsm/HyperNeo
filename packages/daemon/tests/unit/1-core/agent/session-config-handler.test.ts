@@ -64,10 +64,40 @@ describe('SessionConfigHandler', () => {
       daemonHub: mockDaemonHub,
       internalEventBus: mockInternalEventBus,
       settingsManager: mockSettingsManager,
+      getProcessingState: () => ({ status: 'idle' }),
+      restartQuery: mock(async () => {}),
     };
 
     handler = new SessionConfigHandler(ctx);
   });
+
+  it.each(['ordinary', 'neo:fixture'])(
+    'applies the same percentage only at idle for %s',
+    async (id) => {
+      mockSession.id = id;
+      let status = 'processing';
+      const restart = mock(async () => {});
+      const shared = new SessionConfigHandler({
+        session: mockSession,
+        db: mockDb,
+        internalEventBus: mockInternalEventBus,
+        settingsManager: mockSettingsManager,
+        getProcessingState: () => ({ status }),
+        restartQuery: restart,
+      });
+      await shared.updateConfig({ autoCompactPercent: 70 });
+      expect(mockSession.config.autoCompactPercent).toBeUndefined();
+      expect(mockSession.metadata.pendingAutoCompactPercent).toBe(70);
+      expect(restart).not.toHaveBeenCalled();
+      status = 'idle';
+      await shared.applyPendingAutoCompactPercent();
+      expect(mockSession.config.autoCompactPercent).toBe(70);
+      expect(mockSession.metadata.pendingAutoCompactPercent).toBeUndefined();
+      expect(restart).toHaveBeenCalledTimes(1);
+      await shared.updateConfig({ autoCompactPercent: undefined });
+      expect(mockSession.config.autoCompactPercent).toBeUndefined();
+    }
+  );
 
   describe('updateConfig', () => {
     it('should merge config updates with existing config', async () => {

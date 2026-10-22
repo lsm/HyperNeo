@@ -401,7 +401,7 @@ describe('Neo quote reply through live chat and durable intake', () => {
     quote('Neo');
     request.mockImplementationOnce(async () => ({ ok: false, reason: 'Try again.' }));
     submit();
-    await screen.findByRole('button', { name: /^未发送/ });
+    await screen.findByRole('img', { name: /^未发送/ });
     quote('You');
     fireEvent.click(screen.getByRole('button', { name: '编辑' }));
     await waitFor(() => expect(input.value).toBe('Please explain'));

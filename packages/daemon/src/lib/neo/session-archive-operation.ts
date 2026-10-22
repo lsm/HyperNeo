@@ -1,7 +1,6 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { Database } from '../../storage/database.ts';
-import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { workResultSchema, type Result, type WorkRef, type WorkAdapter } from '../drivers/types.ts';
 import {
@@ -13,7 +12,6 @@ import {
 } from '../drivers/work-operations.ts';
 import { isLocalUser } from '../operations/caller.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import { hasNeoHumanWorkInput, neoTurnOrigin } from './work-origin.ts';
 
 const ResultSchema = workResultSchema(z.object({ archived: z.boolean() }));
 type Archived = Result<{ archived: boolean }>;
@@ -21,23 +19,7 @@ type Deps = WorkVerbDeps & { db: Database };
 type ArchiveRoute = { daemon: string } | { local: NonNullable<WorkAdapter['archive']> };
 
 export function admitSessionArchive(ref: WorkRef, caller: OperationCaller, db: Database) {
-  const repo = new NeoRepository(db.getDatabase());
-  const binding = caller.sessionId ? repo.getBindingBySession(caller.sessionId) : null;
-  const turn = caller.neoTurn;
-  if (
-    !isLocalUser(caller) &&
-    !(
-      binding?.kind === 'neo' &&
-      caller.role === 'neo' &&
-      turn?.isLive() &&
-      db.getSession(binding.sessionId)?.status === 'active' &&
-      hasNeoHumanWorkInput(
-        caller,
-        db.getSDKMessageRepo().getStoredPromptsByUuid(binding.sessionId, neoTurnOrigin(turn))
-      )
-    )
-  )
-    return reject('human_only', 'Archive only when the human asks in the current live turn.');
+  if (!isLocalUser(caller)) return reject('human_only', 'This action needs the user.');
   const todo = new NeoTodoSessionRepository(db.getDatabase()).doingTodoOn(ref);
   return todo
     ? reject(
@@ -92,7 +74,7 @@ export function createNeoSessionArchiveOperation(deps: Deps) {
   return defineOperation({
     name: 'neo.session.archive',
     description:
-      'Archive a session by its work.find ref through its driver, only when the human asks in the current live turn. Refuses sessions a doing todo is working in, running or waiting turns, unsupported drivers and unreadable state. Preserves the conversation. archived false means it was already archived. An attached daemon must also support this operation.',
+      'Archive a session by its work.find ref through its driver, only through the human caller. Refuses sessions a doing todo is working in, running or waiting turns, unsupported drivers and unreadable state. Preserves the conversation. archived false means it was already archived. An attached daemon must also support this operation.',
     inputSchema: WorkRefInputSchema,
     resultSchema: ResultSchema,
     policy: { safetyClass: 'mutate', roles: ['neo'] },

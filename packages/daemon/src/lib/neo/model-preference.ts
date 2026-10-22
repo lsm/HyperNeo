@@ -131,7 +131,7 @@ export function createNeoPreferenceOperation(service: NeoService) {
   return defineOperation({
     name: 'neo.preferences.set',
     description:
-      'Set the primary model, provider and thinking level for Neo and its projects, for the user only. Optional fallbacks is an ordered list of model/provider/thinkingLevel entries, each clamped to supported thinking. An empty list disables Neo fallbacks; omitting it preserves the saved chain or today’s general session chain. Recovery continues the same turn on the next available fallback; Neo prefers the primary again after recovery. Optional autoCompactPercent is an integer clamped to 10–100 for Neo context budgets; omitting it restores model metadata/default. Preference changes apply at idle.',
+      'Set the primary model, provider and thinking level for Neo and its projects, for the user only. Optional fallbacks stores an ordered preference list; runtime recovery uses the ordinary session policy. An empty list clears saved fallbacks; omitting it preserves the saved chain. Optional autoCompactPercent is an integer clamped to 10–100 and writes the ordinary per-session context-budget setting; omitting it restores model metadata/default. Percentage changes apply at idle.',
     inputSchema: PreferenceInput,
     resultSchema: PreferenceResult,
     policy: { safetyClass: 'human_only' },

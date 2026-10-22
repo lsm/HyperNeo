@@ -17,7 +17,7 @@ import {
 } from '../../storage/message-search.ts';
 import { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository.ts';
 import { MessageSearchWorkerService } from '../message-search-worker-service.ts';
-import { sessionSdkPath } from '../neo/session-policy.ts';
+import { sessionSdkPath } from '../session/sdk-path.ts';
 import { removeToolResultFromSessionFile } from '../sdk-session-file-manager.ts';
 import type { SessionManager } from '../session-manager.ts';
 import { capSdkMessage } from './message-output-cap.ts';
@@ -87,7 +87,7 @@ export function setupMessageHandlers(
       sdkSessionId = agentSession.getSDKSessionId();
     }
 
-    const sdkWorkspacePath = sessionSdkPath(db, session);
+    const sdkWorkspacePath = sessionSdkPath(session);
     if (!sdkWorkspacePath) {
       throw new Error('Session has no workspace path for SDK session file update');
     }

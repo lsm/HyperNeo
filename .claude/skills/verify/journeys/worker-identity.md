@@ -4,7 +4,8 @@ The additive descriptor is `worker: {id, adapter, name, label, daemon?}`. `name`
 current or null when unavailable; `label` is always `<engine> · <name ?? id>`.
 Only an unbound todo has `worker: null`. Notices always retain a descriptor from
 their ref. Older daemons may omit the field; explicit null never means use an old
-name. IDs/refs address workers; display names never identify them.
+name. IDs/refs address workers; display names never identify them. Current dev removes
+the old restart/compaction seed path; this change preserves that removal.
 
 `workerEngine` in `packages/shared/src/types/worker-identity.ts:20` is the sole
 mapping: codex-desktop → Codex; claude-code/claude-desktop → Claude;
@@ -22,7 +23,6 @@ These are source locations in this change, not proof of native iOS rendering.
 | Neo snapshot | `neo/operations.ts:483` adds `session`; `neo/working.ts:20` adds `working[].worker` from the session row, preserving project titles. |
 | Session state | `state-projection-service.ts:383` and `:466` project `worker`, including fallback broadcasts, from current session storage. |
 | Todo/ask receipts and done pages | `neo/todo-operations.ts:273`, `neo/ask-record-operations.ts:122`, and `neo/ask-entries.ts:228` use `NeoService.todoWorkers` (`neo/service.ts:525`). |
-| Neo context after restart/compaction | `neo/restart.ts:26` carries the descriptor; `neo/service.ts:349` and `:559` reread the records. |
 | Notices | `neo/session-watch.ts:142` captures event titles; `neo/session-watcher.ts:314` stores historical groups. `neo/operations.ts:455` replaces titles, workers and group lines at snapshot read; web `NeoPublicConversation.tsx:317` renders the descriptor. |
 | Work discovery, near matches and status/start receipts | `drivers/find-operation.ts:184` / `:289` and `drivers/work-operations.ts:405` add descriptors from current adapter/work records. Claude CLI search snippets are refreshed from live owner metadata before labeling. |
 | Daemon inventory / inspection | `inventory/snapshot-operation.ts:79` adds session-entry workers; `inventory/session-inspection.ts:117` adds `resource.worker`; both read current rows. |

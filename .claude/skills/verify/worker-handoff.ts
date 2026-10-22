@@ -8,7 +8,7 @@ import { handoffDraftDirectory } from '../../../packages/daemon/src/lib/handoffs
 import { createHandoffOperations } from '../../../packages/daemon/src/lib/handoffs/operations.ts';
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import { createOperationMcpServer } from '../../../packages/daemon/src/lib/operations/mcp-server.ts';
-import { restrictNeoQuery } from '../../../packages/daemon/src/lib/neo/session-policy.ts';
+import { neoPrompt } from '../../../packages/daemon/src/lib/neo/prompt.ts';
 
 const run = resolve(process.argv[2] ?? '');
 const port = Number(process.argv[3] ?? 9361);
@@ -88,7 +88,7 @@ const execute = async (neo: boolean) => {
     stderr: (data) => writeFileSync(join(run, `${mode}-stderr.log`), data, { flag: 'a' }),
     maxTurns: 8,
   };
-  if (neo) restrictNeoQuery(options, 'neo:verify-handoff');
+  if (neo) options.systemPrompt = { type: 'custom', prompt: neoPrompt(), snapshot: false };
   const stream = query({ prompt: 'Run the synthetic handoff verification.', options });
   try { for await (const event of stream) writeFileSync(join(run, `${mode}-events.jsonl`), `${JSON.stringify(event)}\n`, { flag: 'a' }); }
   finally { stream.close(); }

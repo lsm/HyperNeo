@@ -13,8 +13,8 @@ export const NeoPublicationSchema = z
   .object({
     conversationId: z.string().uuid(),
     publicationId: z.string().uuid(),
-    askOrigin: origin,
-    producerInput: origin,
+    askOrigin: origin.optional(),
+    producerInput: origin.optional(),
     shortText: text(2000).describe(
       'What the human reads first; it must stand alone. One topic per publication: publish unrelated topics separately, and when fullText covers more than one topic, name each one here.'
     ),
@@ -50,7 +50,7 @@ export const NeoPublicationSchema = z
             shortText: text(2000),
             fullText: text(16000),
             createdAt: z.string().datetime(),
-            producerInput: origin,
+            producerInput: origin.optional(),
             askOrigin: origin.optional(),
             awaiting: text(500).optional(),
           })

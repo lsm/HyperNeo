@@ -32,7 +32,6 @@ type HomeSyncResult = { value: string | null } | { reason: HomeFailure };
 
 export class NeoHomeRepository {
   private pending: Promise<unknown> = Promise.resolve();
-  private readonly readSyncs = new WeakMap<object, Promise<HomeSyncResult>>();
   constructor(
     readonly root: string,
     private readonly projects: NeoRepository,
@@ -374,12 +373,8 @@ export class NeoHomeRepository {
     });
   }
 
-  save(input: HomeSavePlan, wake?: object): Promise<HomeSaveResult> {
-    return this.sequence(async () => {
-      const result = await this.write(input);
-      if (result.ok && wake) this.readSyncs.set(wake, Promise.resolve({ value: null }));
-      return result;
-    });
+  save(input: HomeSavePlan): Promise<HomeSaveResult> {
+    return this.sequence(() => this.write(input));
   }
 
   private async hasSymbolicLink(path: string): Promise<boolean> {
@@ -419,15 +414,11 @@ export class NeoHomeRepository {
     });
   }
 
-  read(input: HomeReadInput, wake?: object): Promise<HomeReadResult> {
-    return this.sequence(() => this.readDocument(input.path, wake, input.includeRemote));
+  read(input: HomeReadInput): Promise<HomeReadResult> {
+    return this.sequence(() => this.readDocument(input.path, input.includeRemote));
   }
 
-  private async readDocument(
-    path: string,
-    wake?: object,
-    includeRemote = false
-  ): Promise<HomeReadResult> {
+  private async readDocument(path: string, includeRemote = false): Promise<HomeReadResult> {
     if (await this.hasSymbolicLink(path))
       return { ok: false, reason: 'invalid_path: symbolic link.' };
     const metadata = await lstat(join(this.root, '.git')).catch((error) => {
@@ -436,10 +427,7 @@ export class NeoHomeRepository {
     });
     if (!metadata) return { ok: false, reason: 'not_found: home is not initialized.' };
     if (!metadata.isDirectory()) return { ok: false, reason: 'invalid_path: home git directory.' };
-    const remembered = wake && this.readSyncs.get(wake);
-    const attempt = remembered || this.synchronize(true);
-    if (wake && !remembered) this.readSyncs.set(wake, attempt);
-    const synced = await attempt;
+    const synced = await this.synchronize(true);
     if ('reason' in synced) return synced.reason;
     if (await this.hasSymbolicLink(path))
       return { ok: false, reason: 'invalid_path: symbolic link.' };

@@ -105,10 +105,6 @@ export async function parseOperationInput(
   }
 }
 
-function isEndedTurnWrite(operation: OperationDefinition, caller: OperationCaller): boolean {
-  return !!caller.neoTurn && !caller.neoTurn.isLive() && operation.policy?.safetyClass !== 'read';
-}
-
 const DEVICE_OPERATIONS: Record<'relay' | 'daemon', ReadonlySet<string>> = {
   relay: new Set(['neo.snapshot', 'neo.publication.read', 'client.list']),
   daemon: new Set([
@@ -137,7 +133,6 @@ export function isOperationAdmitted(
   caller: OperationCaller
 ): boolean {
   return (
-    !isEndedTurnWrite(operation, caller) &&
     isDeviceAdmitted(operation, caller) &&
     (operation.policy?.caller !== 'local_user' || isLocalUser(caller))
   );
@@ -153,9 +148,7 @@ export function admitOperationCaller(
         reason: {
           kind: 'failed',
           code: 'forbidden',
-          message: isEndedTurnWrite(prepared.operation, caller)
-            ? `Operation ${prepared.operation.name} changes state, and this turn has ended or was superseded`
-            : `Operation ${prepared.operation.name} is not available to this caller`,
+          message: `Operation ${prepared.operation.name} is not available to this caller`,
         },
       };
 }
