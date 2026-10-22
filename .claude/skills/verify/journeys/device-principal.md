@@ -18,8 +18,8 @@ End state:
   made after that is `pending`, and the paired phone's Allow answers `ok`. (With only
   a relay paired, the CLI refuses human codes with `no_human_device: … Pair the phone
   first`; a unit test covers it.)
-- The unpaired client still calls `device.pair.pending`: nothing changes for unpaired
-  connections.
+- The unpaired client is refused `device.pair.pending`: only an active paired
+  human can manage pending codes; an unpaired client gets no self-approval list.
 - The relay calls `client.list` and `neo.snapshot` (what the push relay reads) and is
   refused `device.pair.pending` with "not available to this caller".
 - The second human code is `pending`; redeeming it answers `awaiting_approval`.
