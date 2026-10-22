@@ -232,6 +232,7 @@ describe('Neo todo pull request events', () => {
     '%s reaches its owner without forced completion reads or a global worker sweep',
     async (action) => {
       todo();
+      await service.todoRunner.refresh(() => {});
       const reads = mock(async () => prs);
       service.readPrs = reads;
       await event(action, { body: 'Synthetic feedback', state: 'APPROVED' });

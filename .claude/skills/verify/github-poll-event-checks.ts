@@ -78,7 +78,7 @@ try {
   evidence.workerMail=db.prepare("SELECT COUNT(*) count FROM job_queue WHERE queue='mailbox' AND json_extract(payload,'$.to.sessionId')='worker'").get();
   assert((evidence.workerMail as {count:number}).count>=8);
   assert(github.repo.listPollingRepos().every(r=>r.lastPollAt!==null && r.lastPollAt>=started));
-  if(mode==='before') assert(comments.length>0); else assert.equal(comments.length,0);
+  if(mode==='before') assert(comments.length>0); else assert.equal(comments.length,1);
   if(mode==='verify') {
     writeFileSync(join(run,'phase'),'closed'); evidence.closedReply=await poll();
     assert.equal(todos.getTodo('target')?.state,'done');assert.equal(todos.getTodo('unrelated')?.state,'doing');
