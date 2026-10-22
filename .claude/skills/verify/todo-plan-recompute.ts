@@ -1,0 +1,98 @@
+import assert from 'node:assert/strict';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
+import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
+import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
+import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
+
+const [mode, directory] = process.argv.slice(2), run = resolve(directory);
+assert(['before', 'verify'].includes(mode));
+assert.equal(process.env.NODE_ENV, 'test'); assert.equal(process.env.HOME, join(run, 'home'));
+assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data')); assert.equal(process.env.PATH?.split(':')[0], join(run, 'bin'));
+assert(!existsSync(join(run, 'data/daemon.db')));
+for (const d of ['home/.codex/app-server-control', 'workspace', 'bin', 'evidence']) mkdirSync(join(run, d), {recursive:true});
+const root = 'neo:10000000-0000-4000-8000-000000008229', at = Date.now();
+const url = (n:number) => `https://github.com/synthetic/plan/pull/${n}`;
+const report = 'Complete persisted plan report 🦊\n'.repeat(4000);
+const hash = (s:string) => createHash('sha256').update(s).digest('hex');
+const fixture = Object.fromEntries([1,2,3,4,5,6].map(n => [url(n), {url:url(n), state:n===1||n===3?'MERGED':'OPEN', headRefOid:'a'.repeat(40), reviews:[], statusCheckRollup:[], createdAt:new Date(at-60000).toISOString(), mergedAt:n===1||n===3?new Date(at).toISOString():null}]));
+writeFileSync(join(run, 'prs.json'), JSON.stringify(fixture));
+writeFileSync(join(run, 'bin/gh'), `#!${process.execPath}
+const fs=require('node:fs'),root=${JSON.stringify(run)},args=process.argv.slice(2);
+fs.appendFileSync(root+'/evidence/gh.log',JSON.stringify(args)+'\\n');
+if(args[0]!=='pr'||args[1]!=='view')process.exit(2);
+const rows=JSON.parse(fs.readFileSync(root+'/prs.json','utf8')),row=rows[args.find(s=>s.startsWith('https://'))];
+if(!row)process.exit(2);process.stdout.write(JSON.stringify(row));
+`, {mode:0o700});
+const state = new Database(join(run, 'home/.codex/state_5.sqlite'));
+state.exec('CREATE TABLE projects(id TEXT PRIMARY KEY,name TEXT,updated_at_ms INTEGER);CREATE TABLE project_roots(project_id TEXT,position INTEGER,path TEXT);CREATE TABLE threads(id TEXT PRIMARY KEY,name TEXT,title TEXT,first_user_message TEXT,cwd TEXT,source TEXT,archived INTEGER,updated_at_ms INTEGER,rollout_path TEXT,git_branch TEXT)');
+for (const id of ['flow','restart','blocked']) {
+ const rollout=join(run,`home/.codex/${id}.jsonl`);
+ writeFileSync(rollout,JSON.stringify({timestamp:new Date(at-60000).toISOString(),type:'event_msg',payload:{type:'task_complete',last_agent_message:'Prior synthetic turn'}})+'\n');
+ state.prepare("INSERT INTO threads VALUES (?,?,'','',?,'vscode',0,?,?,NULL)").run(id,id,join(run,'workspace'),at-60000,rollout);
+}
+state.close();
+const calls: Record<string,unknown>[]=[];
+const peer=Bun.serve({unix:join(run,'home/.codex/app-server-control/app-server-control.sock'),fetch(request,server){return server.upgrade(request)?undefined:new Response('websocket',{status:400})},websocket:{message(socket,bytes){
+ const call=JSON.parse(String(bytes));if(!('id' in call))return;calls.push(call);
+ const result=call.method==='thread/turns/list'?{data:[]}:call.method==='thread/resume'?{thread:{id:call.params.threadId,status:{type:'idle'},turns:[]}}:call.method==='turn/start'?{turn:{id:crypto.randomUUID()}}:{};
+ socket.send(JSON.stringify({id:call.id,jsonrpc:'2.0',result}));
+}}});
+const evidence:Record<string,unknown>={mode,calls,inputReport:{bytes:Buffer.byteLength(report),sha256:hash(report)}};
+let app:Awaited<ReturnType<typeof createDaemonApp>>|undefined,ws:WebSocket|undefined;
+let store:NeoAskTodoRepository,sessions:NeoTodoSessionRepository;
+const starts=()=>calls.filter(c=>c.method==='turn/start').length;
+const open=async()=>{
+ app=await createDaemonApp({config:getConfig({port:0,host:'127.0.0.1',dbPath:join(run,'data/daemon.db')}),verbose:false});assert.notEqual(app.server.port,8399);
+ store=new NeoAskTodoRepository(app.db.getDatabase());sessions=new NeoTodoSessionRepository(app.db.getDatabase());
+ ws=new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);await new Promise<void>((done,fail)=>{ws!.onopen=()=>done();ws!.onerror=()=>fail(new Error('RPC unavailable'))});
+};
+const rpc=(name:string,input:unknown)=>new Promise<any>((done,fail)=>{
+ const id=crypto.randomUUID(),timer=setTimeout(()=>fail(new Error(name+' timeout')),20000);
+ ws!.onmessage=e=>{const r=JSON.parse(String(e.data));if(r.id!==id&&r.requestId!==id)return;clearTimeout(timer);r.error?fail(new Error(JSON.stringify(r.error))):done(r.data)};
+ ws!.send(JSON.stringify({id,type:'REQ',sessionId:'global',method:'operation.invoke',data:{name,input},timestamp:new Date().toISOString(),version:'1.0.0'}));
+});
+const refresh=async()=>{
+ const job=app!.jobQueue.enqueue({queue:'neo.work.driver.refresh',payload:{scope:'neo'},runAt:Date.now()}),deadline=Date.now()+25000;
+ while(Date.now()<deadline){const current=app!.jobQueue.getJob(job.id)!;if(current.status==='completed')return current;assert.notEqual(current.status,'dead',JSON.stringify(current));await new Promise(r=>setTimeout(r,20))}
+ throw new Error('Driver refresh did not complete');
+};
+const ask=(id:string)=>store.openAsk({id,title:id,request:'Synthetic ordered work',sessionId:root,projectId:null,originMessageId:null,createdAt:at});
+const add=(id:string,askId:string,n:number,worker?:string)=>{
+ const todo=store.addTodo(id,askId,{title:id,doneWhen:'Synthetic PR merged',check:{pack:'coding',kind:'pr_merged',params:{urls:[url(n)]}},instruction:worker?`Perform ${id}`:null,named:null},at);
+ if(worker)sessions.create(id,{verb:'send',ref:{adapter:'codex-desktop',id:worker}});
+ return todo;
+};
+try {
+ await open();
+ app!.db.createSession({id:root,title:'Synthetic plan proof',workspacePath:join(run,'workspace'),createdAt:new Date(at).toISOString(),lastActiveAt:new Date(at).toISOString(),status:'active',config:{queryMode:'manual'},metadata:{messageCount:0,totalTokens:0,inputTokens:0,outputTokens:0,totalCost:0,toolCallCount:0}});
+ new NeoRepository(app!.db.getDatabase()).reserveBinding({sessionId:root,kind:'neo',projectId:null});
+ ask('flow');add('first','flow',1);add('next','flow',2,'flow');
+ ask('blocked');const blocked=add('held','blocked',5);store.updateTodo(blocked,{state:'blocked',blockedBy:'question',blockedReason:'Synthetic question',report},at);
+ store.askQuestion('hold','blocked',{text:'Synthetic blocker',kind:'yesno',options:null,multiple:false,noLabel:'No',yesLabel:'Yes',startTodos:null,confirm:null},at);
+ add('after-held','blocked',6,'blocked');
+ ask('removed');const removed=add('removed','removed',1,'blocked');store.updateTodo(removed,{state:'removed',reason:'Synthetic explicit removal',report},at);
+ evidence.firstRefresh=await refresh();evidence.firstSnapshot=await rpc('neo.snapshot',{});
+ evidence.initial={first:store.getTodo('first')?.state,next:store.getTodo('next')?.state,starts:starts()};
+ if(mode==='before') {assert.deepEqual(evidence.initial,{first:'done',next:'todo',starts:0});console.log('REPRODUCED: merged facts leave the next todo pending, with no worker dispatch.');}
+ else {
+  assert.deepEqual(evidence.initial,{first:'done',next:'doing',starts:1});
+  await refresh();assert.equal(starts(),1);
+  fixture[url(2)].state='MERGED';fixture[url(2)].mergedAt=new Date().toISOString();writeFileSync(join(run,'prs.json'),JSON.stringify(fixture));
+  evidence.finalReceipt=await rpc('neo.todo.close',{todoId:'next',reason:'Synthetic final merge'});assert.equal((evidence.finalReceipt as any).ok,true);assert.equal(starts(),1);
+  ask('restart');const completed=add('persisted-done','restart',3);store.updateTodo(completed,{state:'done',evidence:'Persisted merge',report},at);add('after-restart','restart',4,'restart');
+  ws!.close();await app!.cleanup();app=undefined;
+  await open();evidence.restartRefresh=await refresh();await refresh();evidence.restartSnapshot=await rpc('neo.snapshot',{});
+  assert.equal(store.getTodo('after-restart')?.state,'doing');assert.equal(starts(),2);
+  assert.equal(store.getTodo('held')?.state,'blocked');assert.equal(store.getTodo('after-held')?.state,'todo');
+  assert.equal(store.getTodo('removed')?.state,'removed');assert.equal(store.getTodo('removed')?.report,report);assert.equal(store.getTodo('persisted-done')?.report,report);
+  evidence.observed={states:store.listTodos('restart').map(t=>({id:t.id,state:t.state})),starts:starts(),removedReportHash:hash(store.getTodo('removed')!.report!)};
+  console.log('PASS: stored plan advances via actual Codex turn/start once, final step does not dispatch, restart recovers once, blocked/removed and report bytes preserved.');
+ }
+}finally{
+ ws?.close();await app?.cleanup();peer.stop(true);writeFileSync(join(run,'evidence/observed.json'),JSON.stringify(evidence,null,2));
+}
