@@ -1,3 +1,4 @@
+import { CodingBranchFactsRepository } from './branch-facts.ts';
 import { CodingMergeFactsRepository } from './merge-facts.ts';
 import { getNeoPackPreference } from '../preferences.ts';
 import { z } from 'zod';
@@ -278,9 +279,11 @@ function codingLedgerSnapshotRow(row: CodingLedgerSnapshotRow) {
 
 export class CodingPrLedgerRepository {
   readonly mergeFacts: CodingMergeFactsRepository;
+  readonly branchFacts: CodingBranchFactsRepository;
 
   constructor(private readonly db: Database) {
     this.mergeFacts = new CodingMergeFactsRepository(db);
+    this.branchFacts = new CodingBranchFactsRepository(db);
   }
 
   policy(repo: string): CodingMergePolicy {

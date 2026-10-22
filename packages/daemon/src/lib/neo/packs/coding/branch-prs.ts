@@ -12,7 +12,7 @@ type NeoWorkBranch = { branch: string; cwd: string };
 type BranchQuery = { cwd: string; branch?: string };
 export type NeoBranchPrReader = (branch: NeoWorkBranch) => Promise<string[]>;
 const NEO_BRANCH_PR_MAX = 2;
-const NEO_BRANCH_PR_READ = 5;
+export const CODING_BRANCH_PR_LIMIT = 5;
 const BranchPrsSchema = z.array(z.object({ url: z.string() }));
 const read = new Map<string, { at: number; urls: string[] }>();
 export function localCodingSessionId(ref: WorkRef | null): string | null {
@@ -50,7 +50,7 @@ async function readNamedGithubBranchPrs(
       '--json',
       'url',
       '--limit',
-      String(NEO_BRANCH_PR_READ),
+      String(CODING_BRANCH_PR_LIMIT),
     ],
     branch.cwd,
     spawnImpl,
@@ -86,15 +86,22 @@ async function resolveCodingBranch(
 }
 
 const runCodingBranchPrs = (superpipe({})('neo-coding-branch-prs') as PipelineAPI)
-  .input(['query', 'spawn'])
+  .input(['query', 'read'])
   .pipe(requireCodingCheckout, 'query', 'result:prs')
   .pipe(resolveCodingBranch, 'prs', 'result:prs')
-  .pipe(readNamedGithubBranchPrs, ['prs', 'spawn'], 'prs')
-  .endAsync('prs') as (query: BranchQuery, spawn: SpawnFn) => Promise<string[]>;
+  .pipe((branch: NeoWorkBranch, read: NeoBranchPrReader) => read(branch), ['prs', 'read'], 'prs')
+  .endAsync('prs') as (query: BranchQuery, read: NeoBranchPrReader) => Promise<string[]>;
 
 export function readGithubBranchPrs(
   query: BranchQuery,
   spawnImpl: SpawnFn = spawnProcess
 ): Promise<string[]> {
-  return runCodingBranchPrs(query, spawnImpl);
+  return runCodingBranchPrs(query, (branch) => readNamedGithubBranchPrs(branch, spawnImpl));
+}
+
+export function readCodingBranchPrs(
+  query: BranchQuery,
+  read: NeoBranchPrReader
+): Promise<string[]> {
+  return runCodingBranchPrs(query, read);
 }
