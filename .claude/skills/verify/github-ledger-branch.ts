@@ -15,7 +15,7 @@ assert.equal(process.env.HYPERNEO_DATA_DIR,join(run,'data'));
 assert(!existsSync(join(run,'data/daemon.db')));
 for(const dir of ['home','data','bin','evidence']) mkdirSync(join(run,dir),{recursive:true});
 process.env.PATH=`${join(run,'bin')}:${process.env.PATH}`;
-const host=process.argv[3]==='enterprise'?'ghe.example':'github.com',repo=host==='github.com'?'synthetic/ledger':`${host}/synthetic/ledger`;
+const host=process.argv[3]?.startsWith('enterprise')?'ghe.example':'github.com',repo=host==='github.com'?'synthetic/ledger':`${host}/synthetic/ledger`;
 const url=`https://${host}/synthetic/ledger/pull/7`;
 writeFileSync(join(run,'phase'),'watch');
 writeFileSync(join(run,'bin/gh'),`#!/usr/bin/env bun
@@ -28,7 +28,7 @@ await Bun.sleep(100);console.log(JSON.stringify([{url:${JSON.stringify(url)}}]))
 const checkout=(name:string)=>{
   const cwd=join(run,name);mkdirSync(cwd);
   execFileSync('git',['init','-b','feature'],{cwd,stdio:'pipe'});
-  execFileSync('git',['remote','add','origin',`https://${host}/synthetic/ledger.git`],{cwd,stdio:'pipe'});
+  execFileSync('git',['remote','add','origin',`https://${host}${process.argv[3]==='enterprise-port'?':8443':''}/synthetic/ledger.git`],{cwd,stdio:'pipe'});
   return {cwd,branch:'feature'};
 };
 const queries=[checkout('one'),checkout('two')];

@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { CodingPrLedgerRepository } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test, spyOn } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
@@ -140,6 +140,52 @@ describe('ledger branch reader', () => {
           .membership
       ).toMatchObject({ status: 'known', urls: [url] });
     } finally {
+      f.cleanup();
+    }
+  });
+  test('port-bearing Enterprise remotes reuse the same host coverage', async () => {
+    const f = fixture();
+    try {
+      const query = f.checkout('port'),
+        read = f.reader(f.db);
+      for (const remote of [
+        'ssh://git@ghe.example:22/synthetic/ledger.git',
+        'https://ghe.example:8443/synthetic/ledger.git',
+      ]) {
+        execFileSync('git', ['remote', 'set-url', 'origin', remote], {
+          cwd: query.cwd,
+          stdio: 'pipe',
+        });
+        expect(await read(query)).toEqual(['https://ghe.example/synthetic/ledger/pull/7']);
+      }
+      expect(f.calls()).toBe(1);
+    } finally {
+      f.cleanup();
+    }
+  });
+  test('transient SQLite contention preserves the shared branch read for every caller', async () => {
+    const f = fixture(),
+      query = f.checkout('busy');
+    const transaction = f.db.transaction.bind(f.db);
+    let failures = 2;
+    const fault = spyOn(f.db, 'transaction').mockImplementation(((fn, mode) => {
+      const commit = transaction(fn, mode);
+      return (...args) => {
+        if (failures-- > 0)
+          throw Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
+        return commit(...args);
+      };
+    }) as typeof f.db.transaction);
+    try {
+      const read = f.reader(f.db);
+      expect(await Promise.all([read(query), read(query)])).toEqual([[url], [url]]);
+      expect(
+        new CodingPrLedgerRepository(f.db).branchFacts.read('synthetic/ledger', 'feature')
+          .membership
+      ).toMatchObject({ status: 'known', urls: [url] });
+      expect(f.calls()).toBe(1);
+    } finally {
+      fault.mockRestore();
       f.cleanup();
     }
   });
