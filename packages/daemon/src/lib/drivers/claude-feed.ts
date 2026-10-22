@@ -163,13 +163,19 @@ export function scheduleClaudeFeed(queue: JobQueueRepository): void {
 }
 
 export const runClaudeFeed = (superpipe({})('work-feed-claude') as PipelineAPI)
-  .input(['queue', 'db', 'root', 'now'])
+  .input(['queue', 'db', 'root', 'now', 'purge'])
   .pipe(scheduleClaudeFeed, 'queue')
   .pipe(readHyperneoSdkSessions, 'db', 'hyperneo')
   .pipe(
-    (db: BunDatabase, hyperneo: ReadonlySet<string>) =>
-      runLagPhase('feed:claude:purge', () => purgeWorkFeedSessions(db, 'claude', [...hyperneo])),
-    ['db', 'hyperneo'],
+    (
+      db: BunDatabase,
+      hyperneo: ReadonlySet<string>,
+      purge?: (sessionIds: string[]) => Promise<void>
+    ) =>
+      runLagPhase('feed:claude:purge', () =>
+        purge ? purge([...hyperneo]) : purgeWorkFeedSessions(db, 'claude', [...hyperneo])
+      ),
+    ['db', 'hyperneo', 'purge'],
     'purged'
   )
   .pipe(
@@ -207,5 +213,6 @@ export const runClaudeFeed = (superpipe({})('work-feed-claude') as PipelineAPI)
   queue: JobQueueRepository,
   db: BunDatabase,
   root: string,
-  now: number
+  now: number,
+  purge?: (sessionIds: string[]) => Promise<void>
 ) => Promise<{ files: number; turns: number }>;

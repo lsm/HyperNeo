@@ -276,6 +276,7 @@ export interface RPCHandlerDependencies {
   spaceManager: SpaceManager;
   jobQueue: JobQueueRepository;
   jobProcessor: JobQueueProcessor;
+  purgeClaudeFeed?: (sessionIds: string[]) => Promise<void>;
   reactiveDb: ReactiveDatabase;
   liveQueries: LiveQueryEngine;
   skillsManager: SkillsManager;
@@ -1761,7 +1762,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       deps.jobQueue,
       deps.db.getDatabase(),
       claudeProjectsRoot(),
-      Date.now()
+      Date.now(),
+      deps.purgeClaudeFeed
     )),
   }));
   deps.jobProcessor.register(WORK_FEED_CODEX, async () => ({
