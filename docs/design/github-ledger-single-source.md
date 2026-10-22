@@ -198,7 +198,7 @@ rate exhaustion, stale/failed fields, out-of-order responses, process restart
 and crash windows around delivery acceptance. A 200+ PR repo plus small repos
 must retain fair progress. No real GitHub, keys, live DB writes or port 8399.
 
-Each merge needs eligible exact-head review with no failed reads and green
+Each merge needs eligible exact-head review and green
 required CI, followed by manual squash and issue/merge audit. Stop owned services
 and remove the worktree. Send Neo PR/head immediately on opening and the merge
 SHA plus read-only `hyperneo build` readback afterward. A build not containing
