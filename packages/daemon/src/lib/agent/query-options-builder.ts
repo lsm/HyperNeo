@@ -41,6 +41,7 @@ import { sessionDoorPath } from '../messaging/session-door.ts';
 import { Logger } from '../logger.ts';
 import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import { neoSecretReadRules } from '../neo/secret-read-rules.ts';
+import { neoReadAccess } from '../neo/read-access.ts';
 import { mergeSessionMcpServers } from '../mcp/built-in-servers.ts';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
 import {
@@ -425,9 +426,11 @@ export class QueryOptionsBuilder {
     const systemPromptConfig = this.buildSystemPrompt();
     const disallowedTools = this.getDisallowedTools();
     const allowedTools = this.getAllowedTools();
-    const additionalDirectories = this.getAdditionalDirectories();
+    const neo = neoCoordinatorBinding(this.ctx.db, session.id);
+    const readAccess = neo ? await neoReadAccess(session.id, this.getCwd()) : undefined;
+    const additionalDirectories = neo ? [] : this.getAdditionalDirectories();
     const handoffDirectory = handoffDraftDirectory(getDataDir(), this.ctx.session.id);
-    additionalDirectories?.push(handoffDirectory);
+    if (!neo) additionalDirectories?.push(handoffDirectory);
     const hooks = this.buildHooks(overrides?.askUserQuestionHook ?? this.askUserQuestionHook);
     const permissionMode = this.getPermissionMode();
     const pluginsFromSkills = [
@@ -470,7 +473,9 @@ export class QueryOptionsBuilder {
       permissionMode,
       allowDangerouslySkipPermissions: permissionMode === 'bypassPermissions',
 
-      sandbox: config.sandbox as Options['sandbox'],
+      sandbox: readAccess
+        ? { ...(config.sandbox as Options['sandbox']), filesystem: readAccess.filesystem }
+        : (config.sandbox as Options['sandbox']),
 
       mcpServers: mergedMcpServers as Options['mcpServers'],
       strictMcpConfig: true,
@@ -483,7 +488,12 @@ export class QueryOptionsBuilder {
 
       cwd: this.getCwd(),
       additionalDirectories,
-      env: { ...mergedEnv, ...compactEnv, HYPERNEO_HANDOFF_DIR: handoffDirectory },
+      env: {
+        ...mergedEnv,
+        ...compactEnv,
+        HYPERNEO_HANDOFF_DIR: handoffDirectory,
+        ...readAccess?.env,
+      },
       executable: config.executable ?? (isRunningUnderBun() ? 'bun' : undefined),
       executableArgs: config.executableArgs,
       pathToClaudeCodeExecutable: sdkCliPath,

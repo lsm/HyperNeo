@@ -73,12 +73,19 @@ export interface SandboxIgnoreViolations {
 
 export interface SandboxSettings {
   enabled?: boolean;
+  failIfUnavailable?: boolean;
   autoAllowBashIfSandboxed?: boolean;
   excludedCommands?: string[];
   allowUnsandboxedCommands?: boolean;
   network?: NetworkSandboxSettings;
   ignoreViolations?: SandboxIgnoreViolations;
   enableWeakerNestedSandbox?: boolean;
+  enableWeakerNetworkIsolation?: boolean;
+  filesystem?: {
+    allowWrite?: string[];
+    denyWrite?: string[];
+    denyRead?: string[];
+  };
 }
 
 export interface McpStdioServerConfig {

@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,6 +14,7 @@ import { readNeoPublications } from '../../../../web/src/neo/publication-client.
 test('recovered root refreshes prompt and tools, resumes SDK history across cwd changes and publishes the reply', async () => {
   const isolated = mkdtempSync(join(tmpdir(), 'neo-sdk-publication-'));
   const requestId = randomUUID();
+  const root = `neo:${randomUUID()}`;
   const approvalProbeFile = join(isolated, 'approval-probe.txt');
   const readProbeFile = join(isolated, 'read-probe.txt');
   const readCheckout = join(isolated, 'data', 'worktrees', 'lsm', 'synthetic', 'neo-read');
@@ -36,11 +37,10 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
     {
       name: 'Bash',
       input: {
-        command: `cat '${readProbeFile}'; printf CHECKOUT_OK > '${readCheckout}/allowed.txt'; printf TEMP_OK > "$TMPDIR/allowed.txt"; (printf BAD > '${workerCheckout}/blocked.txt'); (printf BAD > '${isolated}/data/blocked.txt'); (printf BAD > '${isolated}/data/Neo/blocked.txt'); gh pr view https://github.com/lsm/HyperNeo/pull/8148 --json number; printf SYNTHETIC_UNAPPROVED > '${approvalProbeFile}'`,
+        command: `cat '${readProbeFile}'; printf CHECKOUT_OK > '${readCheckout}/allowed.txt'; printf TEMP_OK > '${join(tmpdir(), 'hyperneo-neo', root, 'allowed.txt')}'; (printf BAD > '${workerCheckout}/blocked.txt'); (printf BAD > '${isolated}/data/blocked.txt'); (printf BAD > '${isolated}/data/Neo/blocked.txt'); gh pr view https://github.com/lsm/HyperNeo/pull/8148 --json number; printf SYNTHETIC_UNAPPROVED > '${approvalProbeFile}'`,
       },
     },
   ];
-  const root = `neo:${randomUUID()}`;
   const historyMarker = `synthetic-history-${randomUUID()}`;
   const oldCwd = join(isolated, 'data', 'Neo', '.coordinators', 'old-root');
   const newCwd = join(isolated, 'data', 'Neo');
@@ -420,15 +420,6 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
       page = await read();
     }
     expect(page.ok).toBe(true);
-    const visibleFailure = page.items.find(
-      (item: NeoPublication) => item.shortText === 'Neo Bash failed.'
-    );
-    expect(visibleFailure?.fullText).toMatch(/operation not permitted/i);
-    expect(visibleFailure?.fullText).toContain('gh auth login');
-    page = {
-      ...page,
-      items: page.items.filter((item: NeoPublication) => item.shortText !== 'Neo Bash failed.'),
-    };
     expect(page.items, JSON.stringify({ calls, receipts, requests, sdkErrors })).toHaveLength(1);
     expect(page.items[0].askOrigin).toBeUndefined();
     expect(page.items[0].producerInput).toBeUndefined();
@@ -487,9 +478,13 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
         JSON.stringify(
           {
             approvalProbeResults,
-            visibleFailure,
             approvalProbeDenied,
             approvalProbeCreatedFile: existsSync(approvalProbeFile),
+            tempWriteAllowed: existsSync(join(tmpdir(), 'hyperneo-neo', root, 'allowed.txt')),
+            checkoutWriteAllowed: existsSync(join(readCheckout, 'allowed.txt')),
+            protectedWritesDenied: [workerCheckout, join(isolated, 'data'), newCwd].every(
+              (path) => !existsSync(join(path, 'blocked.txt'))
+            ),
             sdkSessionId,
             historyMarker,
             oldCwd,
@@ -534,6 +529,7 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
     expect(JSON.stringify(approvalProbeResults)).toContain('gh auth login');
     expect(JSON.stringify(approvalProbeResults)).toMatch(/operation not permitted/i);
     expect(existsSync(join(readCheckout, 'allowed.txt'))).toBe(true);
+    expect(existsSync(join(tmpdir(), 'hyperneo-neo', root, 'allowed.txt'))).toBe(true);
     for (const path of [workerCheckout, join(isolated, 'data'), newCwd])
       expect(existsSync(join(path, 'blocked.txt'))).toBe(false);
     expect(approvalProbeDenied).toBe(true);
@@ -574,6 +570,7 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
     QueryOptionsBuilder.prototype.build = build;
     await transport?.close();
     await daemon?.cleanup();
+    await rm(join(tmpdir(), 'hyperneo-neo', root), { recursive: true, force: true });
     await new Promise<void>((resolve, reject) =>
       fixture.close((cause) => (cause ? reject(cause) : resolve()))
     );

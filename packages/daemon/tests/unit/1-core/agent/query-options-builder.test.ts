@@ -2119,6 +2119,12 @@ describe('QueryOptionsBuilder', () => {
             expect(options.disallowedTools).toEqual(neoSecretReadRules());
             expect(options.disallowedTools).toContain('Read(~/.ssh/**)');
             expect(options.disallowedTools?.every((rule) => rule.startsWith('Read('))).toBe(true);
+            expect(options.additionalDirectories).toEqual([]);
+            expect(options.sandbox?.filesystem?.denyWrite).toEqual(['/test/workspace']);
+            expect(options.sandbox?.filesystem?.allowWrite).not.toContain(handoffDataDir);
+            expect(options.env?.GH_TOKEN).toBe('');
+            expect(options.env?.GITHUB_TOKEN).toBe('');
+            expect(options.env?.GH_CONFIG_DIR).toBe(join(options.env!.TMPDIR!, 'gh'));
           } else {
             expect(options.disallowedTools).toBeUndefined();
           }

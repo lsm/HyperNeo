@@ -4,21 +4,23 @@ import type { NeoPackBrief } from './packs/types.ts';
 import { neoPrompt } from './prompt.ts';
 
 export function neoPromptTools(packs: readonly NeoPackBrief[]) {
-  const tools = [
-    'Read',
-    'Write',
-    'Edit',
-    'NotebookEdit',
-    'Grep',
-    'Glob',
-    'WebSearch',
-    'WebFetch',
-    'Bash',
-  ];
+  const tools = ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash'];
   return {
     systemPrompt: neoPrompt(packs),
     sdkToolsPreset: tools,
-    allowedTools: [`mcp__${OPERATIONS_MCP_SERVER_NAME}__invoke`],
+    allowedTools: [...tools, `mcp__${OPERATIONS_MCP_SERVER_NAME}__invoke`],
+    permissionMode: 'dontAsk' as const,
+    coordinatorMode: false,
+    settingSources: [],
+    sandbox: {
+      enabled: true,
+      failIfUnavailable: true,
+      autoAllowBashIfSandboxed: true,
+      allowUnsandboxedCommands: false,
+      excludedCommands: [],
+      enableWeakerNetworkIsolation: true,
+      network: { allowedDomains: ['*'] },
+    },
   };
 }
 
@@ -29,13 +31,6 @@ export function planNeoSessionConfig(
   if (!session?.config) return null;
   const config = session.config;
   const defaults = neoPromptTools(packs);
-  const current = {
-    ...defaults,
-    allowedTools: [...new Set([...(config.allowedTools ?? []), ...defaults.allowedTools])],
-  };
-  return config.systemPrompt === current.systemPrompt &&
-    JSON.stringify(config.sdkToolsPreset) === JSON.stringify(current.sdkToolsPreset) &&
-    JSON.stringify(config.allowedTools) === JSON.stringify(current.allowedTools)
-    ? null
-    : { ...config, ...current };
+  const current = { ...config, ...defaults };
+  return JSON.stringify(config) === JSON.stringify(current) ? null : current;
 }
