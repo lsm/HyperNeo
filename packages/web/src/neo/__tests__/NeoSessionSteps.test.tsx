@@ -40,7 +40,9 @@ describe('NeoSessionStepsLine', () => {
       <NeoSessionStepsLine steps={steps(false)} renderStep={(item) => <span>{item.id}</span>} />
     );
     const line = screen.getByRole('button', { expanded: false });
-    expect(line.textContent).toContain('Worked 2m 14s · 2 tool calls · 1 thinking');
+    expect(screen.getByText(/Worked 2m 14s/).textContent).toContain(
+      'Worked 2m 14s · 2 tool calls · 1 thinking'
+    );
     expect(screen.queryByText('t1')).toBeNull();
     fireEvent.click(line);
     expect(screen.getByText('t1')).toBeTruthy();
@@ -54,36 +56,35 @@ describe('NeoSessionStepsLine', () => {
         renderStep={() => null}
       />
     );
-    const line = screen.getByRole('button');
-    expect(line.textContent).toMatch(/^Working 0:4\d · 2 tool calls · 1 thinking/);
-    expect(line.textContent).toContain('Thinking…');
+    expect(screen.getByText(/Working/).textContent).toMatch(
+      /^Working 0:4\d · 2 tool calls · 1 thinking/
+    );
+    expect(screen.getByText('Thinking…')).toBeTruthy();
   });
 
   it('reads in Simplified Chinese', () => {
     locale.value = 'zh-Hans';
     expect(sessionStepCountsLabel(steps(false))).toBe('2 次工具调用 · 1 次思考');
     render(<NeoSessionStepsLine steps={steps(false)} renderStep={() => null} />);
-    expect(screen.getByRole('button').textContent).toContain('做了 2m 14s');
+    expect(screen.getByText(/做了 2m 14s/)).toBeTruthy();
   });
 });
 
 describe('NeoToolRow', () => {
   it('opens to its result, and a call still running cannot open', () => {
     render(<NeoToolRow name="Bash" summary="ls -la" result="file.txt" isError={false} />);
-    const row = screen.getByRole('button', { name: 'Bash ls -la' });
+    const row = screen.getByRole('button', { name: 'more — Bash ls -la' });
     expect(screen.queryByText('file.txt')).toBeNull();
     fireEvent.click(row);
     expect(screen.getByText('file.txt')).toBeTruthy();
     cleanup();
     render(<NeoToolRow name="Shot" summary="page" result="" isError={false} />);
-    expect((screen.getByRole('button', { name: 'Shot page' }) as HTMLButtonElement).disabled).toBe(
-      true
-    );
+    expect(screen.getByText('page')).toBeTruthy();
+    expect(screen.queryByRole('button')).toBeNull();
     cleanup();
     render(<NeoToolRow name="Read" summary="a.ts" result={null} isError={false} />);
-    expect((screen.getByRole('button', { name: 'Read a.ts' }) as HTMLButtonElement).disabled).toBe(
-      true
-    );
+    expect(screen.getByText('a.ts')).toBeTruthy();
+    expect(screen.queryByRole('button')).toBeNull();
   });
 });
 
@@ -91,8 +92,9 @@ describe('NeoThinkingRow', () => {
   it('shows the first line, then the rest on tap', () => {
     render(<NeoThinkingRow text={'First line\nSecond line'} />);
     const row = screen.getByRole('button');
-    expect(row.textContent).toBe('ThinkingFirst line');
+    expect(screen.getByText('First line')).toBeTruthy();
+    expect(screen.queryByText(/Second line/)).toBeNull();
     fireEvent.click(row);
-    expect(row.textContent).toContain('Second line');
+    expect(screen.getByText(/Second line/)).toBeTruthy();
   });
 });

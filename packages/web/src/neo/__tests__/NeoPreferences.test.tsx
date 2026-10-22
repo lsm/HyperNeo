@@ -78,40 +78,23 @@ describe('Neo preferences', () => {
     vi.unstubAllGlobals();
   });
 
-  it('opens one control for model and thinking and saves both as Neo’s preference', async () => {
-    const store = makeStore();
-    const saved = vi.fn();
-    api.request.mockImplementation(async (method: string) =>
-      method === 'operation.invoke' ? { ok: true, preferences: {} } : { providers: [] }
-    );
-    render(<NeoPreferences sessionId="neo:root" store={store} onError={vi.fn()} onSaved={saved} />);
-    expect(screen.queryByLabelText('Thinking')).toBeNull();
+  it('links to Neo model Settings without duplicating the model or thinking controls', () => {
+    render(<NeoPreferences sessionId="neo:root" store={makeStore()} onError={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Model and thinking' }));
-    expect(screen.getAllByRole('button', { name: 'Sonnet · Anthropic' })).toHaveLength(1);
-    fireEvent.change(screen.getByRole('slider', { name: 'Thinking' }), { target: { value: '2' } });
-    await waitFor(() =>
-      expect(api.request).toHaveBeenCalledWith('operation.invoke', {
-        name: 'neo.preferences.set',
-        input: { model: 'sonnet', provider: 'anthropic', thinkingLevel: 'think16k' },
-      })
+    expect(screen.getByRole('link', { name: 'Neo model settings' }).getAttribute('href')).toBe(
+      '/settings?tab=neo-model'
     );
-    await waitFor(() => expect(store.refresh).toHaveBeenCalled());
-    expect(saved).toHaveBeenCalled();
-    await waitFor(() =>
-      expect(
-        (screen.getByRole('button', { name: 'Haiku · Anthropic' }) as HTMLButtonElement).disabled
-      ).toBe(false)
-    );
-    fireEvent.click(screen.getByRole('button', { name: 'Haiku · Anthropic' }));
-    await waitFor(() =>
-      expect(api.request).toHaveBeenCalledWith('operation.invoke', {
-        name: 'neo.preferences.set',
-        input: { model: 'haiku', provider: 'anthropic', thinkingLevel: 'off' },
-      })
-    );
-    expect(api.switchModel).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Close model settings' }));
-    expect(screen.queryByLabelText('Thinking')).toBeNull();
+    expect(screen.queryByRole('searchbox')).toBeNull();
+    expect(screen.queryByRole('slider')).toBeNull();
+    expect(api.request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
+  });
+  it('closes the minimal Neo menu on Escape and restores trigger focus', () => {
+    render(<NeoPreferences sessionId="neo:root" store={makeStore()} onError={vi.fn()} />);
+    const trigger = screen.getByRole('button', { name: 'Model and thinking' });
+    fireEvent.click(trigger);
+    fireEvent.keyDown(screen.getByRole('link', { name: 'Neo model settings' }), { key: 'Escape' });
+    expect(screen.queryByRole('link', { name: 'Neo model settings' })).toBeNull();
+    expect(document.activeElement).toBe(trigger);
   });
   it('changes one session’s own model and thinking, ignoring Neo’s preference', async () => {
     const store = makeStore();
@@ -231,13 +214,10 @@ describe('Neo preferences', () => {
     );
     expect(api.request).not.toHaveBeenCalledWith('session.model.switch', expect.anything());
   });
-  it('lets Neo’s preference change while it works, applying from its next reply', () => {
+  it('keeps the settings link available while Neo works', () => {
     render(<NeoPreferences sessionId="neo:root" store={makeStore(true)} onError={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Model and thinking' }));
-    expect(
-      (screen.getByRole('button', { name: 'Haiku · Anthropic' }) as HTMLButtonElement).disabled
-    ).toBe(false);
-    expect(screen.getByText('Neo switches after this reply')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Neo model settings' })).toBeTruthy();
   });
   it('shows Neo’s saved preference rather than the session’s current model', () => {
     render(
@@ -255,7 +235,7 @@ describe('Neo preferences', () => {
   it('shows unsupported thinking honestly and keeps failed updates out of the label', async () => {
     const onError = vi.fn();
     const view = render(
-      <NeoPreferences sessionId="neo:root" store={makeStore()} onError={onError} />
+      <NeoPreferences sessionId="s1" store={makeStore()} onError={onError} forSession />
     );
     fireEvent.click(screen.getByRole('button', { name: 'Model and thinking' }));
     api.request.mockRejectedValue(new Error('Connection lost'));
@@ -263,12 +243,14 @@ describe('Neo preferences', () => {
     await waitFor(() => expect(onError).toHaveBeenCalledWith('Connection lost'));
     expect(screen.getByRole('img', { name: 'Thinking: Off' })).toBeTruthy();
     api.mode = 'off';
-    view.rerender(<NeoPreferences sessionId="neo:root" store={makeStore()} onError={onError} />);
+    view.rerender(
+      <NeoPreferences sessionId="s1" store={makeStore()} onError={onError} forSession />
+    );
     expect(screen.queryByRole('slider', { name: 'Thinking' })).toBeNull();
     expect(screen.getByText('Not available for this model')).toBeTruthy();
   });
   it('filters models, shows no matches, supports arrow keys and restores focus on Escape', () => {
-    render(<NeoPreferences sessionId="neo:root" store={makeStore()} onError={vi.fn()} />);
+    render(<NeoPreferences sessionId="s1" store={makeStore()} onError={vi.fn()} forSession />);
     const trigger = screen.getByRole('button', { name: 'Model and thinking' });
     fireEvent.click(trigger);
     const search = screen.getByRole('searchbox', { name: 'Search models' });
@@ -284,11 +266,5 @@ describe('Neo preferences', () => {
     fireEvent.keyDown(search, { key: 'Escape' });
     expect(screen.queryByRole('searchbox')).toBeNull();
     expect(document.activeElement).toBe(trigger);
-  });
-  it('labels the menu as Neo-wide while ordinary chats keep the per-conversation hint', () => {
-    render(<NeoPreferences sessionId="neo:root" store={makeStore()} onError={vi.fn()} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Model and thinking' }));
-    expect(screen.getByText('For Neo and all its projects')).toBeTruthy();
-    expect(screen.queryByText('For this conversation')).toBeNull();
   });
 });

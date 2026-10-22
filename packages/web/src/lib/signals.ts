@@ -95,6 +95,7 @@ export type SettingsSection =
   | 'devices'
   | 'remote-daemons'
   | 'skills'
+  | 'neo-model'
   | 'models'
   | 'usage'
   | 'shortcuts'
