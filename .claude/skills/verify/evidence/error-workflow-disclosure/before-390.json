@@ -1,0 +1,27 @@
+{
+  "phase": "before",
+  "width": 390,
+  "synthetic": true,
+  "source": "real isolated daemon session.error and Space RPC",
+  "errorTitleClickExpanded": "true",
+  "errorSelection": "Synthetic technical deta",
+  "errorControl": {
+    "right": 340,
+    "bottom": 212,
+    "text": "Technical Details",
+    "name": null,
+    "parentRight": 357
+  },
+  "workflowCount": "Level 3: 5 of 7 workflows auto-close without review",
+  "workflowControl": {
+    "right": 301,
+    "top": 518.25,
+    "parentRight": 301,
+    "text": "Hide details",
+    "name": null
+  },
+  "document": {
+    "width": 390,
+    "scrollWidth": 390
+  }
+}
