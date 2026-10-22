@@ -361,22 +361,21 @@ describe.each(['neo'] as const)('AgentSession %s coordinator handoff', (kind) =>
     expect(agent.messageQueue.size()).toBe(0);
   });
 
-  it('keeps a successor admitted through a turn longer than the consumption timeout', async () => {
+  it('bounds successor admission while preserving it for delivery after the current turn', async () => {
     const previous = process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
     process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = '50';
     try {
       const { second, firstQuery } = await admitSuccessor();
-      let settled = false;
-      void second.then(
-        () => (settled = true),
-        () => (settled = true)
+      await expect(second).rejects.toThrow('Delivery not consumed within timeout');
+      expect(db.getSDKMessageRepo().getDeliveryContent(agent.session.id, 'ask-B')?.sendStatus).toBe(
+        'enqueued'
       );
-      await new Promise((resolve) => setTimeout(resolve, 200));
-      expect(settled).toBe(false);
-      expect(agent.messageQueue.hasPendingOrInFlight('ask-B')).toBe(true);
+      expect(received).toEqual(['ask-A']);
       finishFirst.resolve();
       await firstQuery;
-      await expect(second).resolves.toEqual({ outcome: 'completed' });
+      const retry = agent.driveDeliveryTurn('ask-B', 'ask-B');
+      await secondReady.promise;
+      await expect(retry).resolves.toEqual({ outcome: 'completed' });
       expect(received).toEqual(['ask-A', 'ask-B']);
       const nextQuery = agent.queryPromise;
       finishSecond.resolve();

@@ -160,18 +160,25 @@ export async function verifySpentAdmission(
     const call = (name: string, input: unknown = {}) =>
       hub.request<Record<string, unknown>>('operation.invoke', { name, input });
     await start();
-    await hub!.request('providers.create', {
-      params: {
-        providerId: 'anthropic',
-        displayName: 'Synthetic model',
-        kind: 'built_in',
-        authType: 'api_key',
-        isEnabled: true,
-        isDefault: true,
-        sortOrder: 0,
-      },
-      credentials: { apiKey: 'sk-synthetic-loopback-only' },
-    });
+    const params = {
+      providerId: 'anthropic',
+      displayName: 'Synthetic model',
+      kind: 'built_in',
+      authType: 'api_key',
+      isEnabled: true,
+      isDefault: true,
+      sortOrder: 0,
+    };
+    const credentials = { apiKey: 'sk-synthetic-loopback-only' };
+    if (kind === 'ordinary' && !daemon!.db.providers.getProviderByProviderId('anthropic'))
+      daemon!.db.providers.createProvider({ ...params, kind: 'built_in', authType: 'api_key' });
+    const { providers } = await hub!.request<{
+      providers: Array<{ id: string; providerId: string }>;
+    }>('providers.list', {});
+    const existing = providers.find((provider) => provider.providerId === 'anthropic');
+    evidence.providerSetup = existing ? 'existing' : 'new';
+    if (existing) await hub!.request('providers.update', { id: existing.id, params, credentials });
+    else await hub!.request('providers.create', { params, credentials });
     sessionId =
       kind === 'neo'
         ? String((await call('neo.open')).sessionId)

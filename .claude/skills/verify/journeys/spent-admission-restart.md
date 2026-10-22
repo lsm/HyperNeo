@@ -6,6 +6,10 @@ ephemeral loopback model server. The helper pins the SDK subprocess endpoint to
 that loopback fixture, without replacing its transport. Provider credentials
 exist only in the synthetic DB, GitHub is stubbed, and the live daemon is never
 called. Browser rendering and real providers are not exercised.
+The ordinary fixture pre-seeds an Anthropic provider record to cover CI's
+already-configured state. Setup lists providers and uses create/update RPC as
+appropriate, storing the synthetic credential in the run's DB. Evidence records
+`providerSetup`; the same proof works with a new or existing provider.
 
 ### P0a: bounded admission (CI acceptance)
 
