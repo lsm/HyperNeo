@@ -2,17 +2,11 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 
-const [port, run] = process.argv.slice(2);
+export async function verifyScheduleSummary(page, { port, run }) {
 assert(port && run && port !== '8399');
 const log = readFileSync(`${run}/daemon.log`, 'utf8');
 assert(log.includes('HyperNeo Test Server') && log.includes(`Database: ${run}/`));
 const surface = JSON.parse(readFileSync(`${run}/evidence/schedule-web-seed.json`, 'utf8')).find(item => item.name === 'session');
-const { chromium } = createRequire(import.meta.url)('playwright');
-const browser = await chromium.launch({ headless:true,
-  ...(process.env.VERIFY_BROWSER ? { executablePath:process.env.VERIFY_BROWSER } : {}),
-});
-try {
-  const page = await browser.newPage({ viewport:{ width:390, height:1000 }, locale:'en-US' });
   let block = true;
   let capture;
   const held = new Promise(resolve => { capture = resolve; });
@@ -58,4 +52,16 @@ try {
   assert.equal(failed,'Schedules');
   assert.equal(recovered,'Schedules · 2');
   console.log(`PASS: unknown loading/failed count and real successful retry count. ${run}/evidence/schedule-summary.json`);
-} finally { await browser.close(); }
+}
+
+if (typeof process !== 'undefined' && process.argv[1]?.endsWith('/session-schedule-summary.mjs')) {
+  const [port, run] = process.argv.slice(2);
+  const { chromium } = createRequire(import.meta.url)('playwright');
+  const browser = await chromium.launch({ headless: true,
+    ...(process.env.VERIFY_BROWSER ? { executablePath: process.env.VERIFY_BROWSER } : {}),
+  });
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 1000 }, locale: 'en-US' });
+    await verifyScheduleSummary(page, { port, run });
+  } finally { await browser.close(); }
+}
