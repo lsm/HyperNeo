@@ -5,7 +5,7 @@ projection requirements relayed through Neo. This document changes no runtime
 API. Reconcile further interface changes through Neo before an API implementation
 PR. The backend lane owns its separate todo-from-facts design and todo decisions.
 
-The proposed [todo-state consumer design (lsm/HyperNeo#8132)](https://github.com/lsm/HyperNeo/pull/8132)
+The proposed [todo-state consumer design (lsm/HyperNeo#8150)](https://github.com/lsm/HyperNeo/pull/8150)
 consumes this contract and owns todo binding, precedence and stall policy. Only
 relevant `facts_changed` transitions reset a stall; `observation_only` never does.
 
