@@ -36,6 +36,7 @@ import { McpEnablementRepository } from './repositories/mcp-enablement-repositor
 import { SkillRepository } from './repositories/skill-repository.ts';
 import { WorkspaceHistoryRepository } from './repositories/workspace-history-repository.ts';
 import { WorkerAgentMemoryEmbedder } from './repositories/agent-memory-worker-embedder.ts';
+import type { WorkChatKind } from './work-chat-search.ts';
 import {
   SDKStatusReader,
   projectSDKStatusPage,
@@ -372,6 +373,24 @@ export class Database {
     if (this.getDbPath() === ':memory:')
       return readSDKMessagePage(this.sdkMessageRepo, { sessionId, page });
     return this.getSDKReader().readMessages({ sessionId, page });
+  }
+
+  async searchWorkChatsAsync(
+    query: string,
+    limit: number,
+    semantic?: { vector: Float32Array; model: string },
+    kinds?: readonly WorkChatKind[]
+  ) {
+    if (this.getDbPath() === ':memory:')
+      return this.sdkMessageRepo.searchWorkChats(query, limit, semantic, kinds);
+    return this.getSDKReader().readWorkChats({
+      query,
+      limit,
+      semantic: semantic
+        ? { model: semantic.model, vector: Array.from(semantic.vector) }
+        : undefined,
+      kinds,
+    });
   }
 
   private getSDKReader() {

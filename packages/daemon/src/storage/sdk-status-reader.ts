@@ -3,6 +3,7 @@ import { emitStructuredLogEvent } from '../lib/logger.ts';
 import type { StructuredLogEvent } from '@hyperneo/shared';
 import type { SDKMessageRepository, SendStatus } from './repositories/sdk-message-repository.ts';
 import type { SQLiteQueryObservabilityOptions } from './sqlite-query-observability.ts';
+import type { WorkChatKind, WorkChatMatch } from './work-chat-search.ts';
 
 export type SDKStatusArgs = { sessionId: string; status: SendStatus; limit: number };
 export type SDKStatusPage = {
@@ -22,8 +23,14 @@ export type SDKMessagePage = {
   hasMore: boolean;
   backgroundTaskMessages: ReturnType<SDKMessageRepository['getBackgroundTaskMessages']>;
 };
-type SDKReadArgs = SDKStatusArgs | SDKPageArgs;
-export type SDKReadResult = SDKStatusPage | SDKMessagePage;
+export type WorkSearchArgs = {
+  query: string;
+  limit: number;
+  semantic?: { vector: number[]; model: string };
+  kinds?: readonly WorkChatKind[];
+};
+type SDKReadArgs = SDKStatusArgs | SDKPageArgs | WorkSearchArgs;
+export type SDKReadResult = SDKStatusPage | SDKMessagePage | WorkChatMatch[];
 export type SDKStatusRequest = {
   id: number;
   epoch: number;
@@ -113,6 +120,9 @@ export class SDKStatusReader {
   private worker: Worker | null = null;
   private queue: Promise<unknown> = Promise.resolve();
   private waiting = 0;
+  private searches = 0;
+  private running = false;
+  private pending: { search: boolean; run: () => Promise<void> }[] = [];
   private epoch = 0;
   private id = 0;
   private closing: Promise<void> | null = null;
@@ -134,20 +144,47 @@ export class SDKStatusReader {
     return this.enqueue(args) as Promise<SDKMessagePage>;
   }
 
+  readWorkChats(args: WorkSearchArgs): Promise<WorkChatMatch[]> {
+    return this.enqueue(args) as Promise<WorkChatMatch[]>;
+  }
+
   private enqueue(args: SDKReadArgs): Promise<SDKReadResult> {
     if (this.closing) return Promise.reject(new Error('SDK reader closed'));
-    if (this.waiting >= 16) return Promise.reject(new Error('SDK reader queue full'));
+    const search = 'query' in args;
+    if ((search ? this.searches : this.waiting) >= (search ? 3 : 16))
+      return Promise.reject(new Error('SDK reader queue full'));
     const epoch = this.epoch,
       queuedAt = performance.now();
-    this.waiting++;
-    const next = this.queue.then(() => {
-      if (epoch !== this.epoch) throw new Error('SDK reader generation failed');
-      return this.exchange(args, queuedAt) as Promise<SDKReadResult>;
+    if (search) this.searches++;
+    else this.waiting++;
+    return new Promise((resolve, reject) => {
+      this.pending.push({
+        search,
+        run: async () => {
+          try {
+            if (epoch !== this.epoch) throw new Error('SDK reader generation failed');
+            resolve((await this.exchange(args, queuedAt)) as SDKReadResult);
+          } catch (error) {
+            reject(error);
+          } finally {
+            if (search) this.searches--;
+            else this.waiting--;
+          }
+        },
+      });
+      if (!this.running) {
+        this.running = true;
+        this.queue = this.drain();
+      }
     });
-    this.queue = next.catch(() => {});
-    return next.finally(() => {
-      this.waiting--;
-    });
+  }
+
+  private async drain() {
+    while (this.pending.length) {
+      const next = this.pending.findIndex((entry) => !entry.search);
+      await this.pending.splice(Math.max(0, next), 1)[0].run();
+    }
+    this.running = false;
   }
 
   close(): Promise<void> {
@@ -186,7 +223,13 @@ export class SDKStatusReader {
           module: 'hyperneo:daemon:sqlite.worker',
           args: ['sqlite.worker.request'],
           metadata: {
-            operation: args ? ('page' in args ? 'sdk-page' : 'sdk-status') : 'close',
+            operation: args
+              ? 'query' in args
+                ? 'work-search'
+                : 'page' in args
+                  ? 'sdk-page'
+                  : 'sdk-status'
+              : 'close',
             id,
             epoch,
             outcome: error ? 'error' : 'ok',

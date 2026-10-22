@@ -485,19 +485,20 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
   const searchChats = (
     text: string,
     kinds: readonly WorkChatKind[]
-  ): Promise<readonly WorkChatMatch[]> =>
-    recent<{ chats: Promise<readonly WorkChatMatch[]> }>(
-      recentSearches,
-      `${kinds.join(',')}:${text}`,
-      () => ({
-        chats: recent(recentVectors, text, () => ({ semantic: embedQuery(text) })).semantic.then(
-          (vectors) =>
-            context.deps.db
-              .getSDKMessageRepo()
-              .searchWorkChats(text, WORK_CHAT_LIMIT, vectors, kinds)
-        ),
-      })
-    ).chats;
+  ): Promise<readonly WorkChatMatch[]> => {
+    const key = `${kinds.join(',')}:${text}`;
+    return recent<{ chats: Promise<readonly WorkChatMatch[]> }>(recentSearches, key, () => {
+      const chats = recent(recentVectors, text, () => ({
+        semantic: embedQuery(text),
+      })).semantic.then((vectors) =>
+        context.deps.db.searchWorkChatsAsync(text, WORK_CHAT_LIMIT, vectors, kinds)
+      );
+      void chats.catch(() => {
+        if (recentSearches.get(key)?.chats === chats) recentSearches.delete(key);
+      });
+      return { chats };
+    }).chats;
+  };
   const ownChats = (text: string) => searchChats(text, ['message', 'task']);
   const adapters = [
     createHyperneoAdapter({

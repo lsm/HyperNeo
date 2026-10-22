@@ -29,7 +29,13 @@ worker.onmessage = ({ data }) => {
   const { id, epoch, args } = data,
     started = performance.now(),
     queueMs = Date.now() - data.sentAt;
-  workerOperation = args ? ('page' in args ? 'sdk-page' : 'sdk-status') : 'close';
+  workerOperation = args
+    ? 'query' in args
+      ? 'work-search'
+      : 'page' in args
+        ? 'sdk-page'
+        : 'sdk-status'
+    : 'close';
   try {
     let result: SDKReadResult | null = null;
     if (!args) {
@@ -46,6 +52,12 @@ worker.onmessage = ({ data }) => {
         repository = new SDKMessageRepository(db);
       }
       result = db.transaction(() => {
+        if ('query' in args) {
+          const semantic = args.semantic
+            ? { model: args.semantic.model, vector: Float32Array.from(args.semantic.vector) }
+            : undefined;
+          return repository!.searchWorkChats(args.query, args.limit, semantic, args.kinds);
+        }
         if ('page' in args) return readSDKMessagePage(repository!, args);
         return projectSDKStatusPage(
           repository!.getUserMessagesByStatus(
