@@ -1,3 +1,4 @@
+import { receivedNeoHumanInput } from './human-input.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { hostname } from 'node:os';
 import { fillPrompt, NEO_SESSION_TRACK } from '@hyperneo/prompts';
@@ -266,6 +267,7 @@ export class NeoService {
       }
     };
     this.publish = createNeoPublisher({
+      receivedHumanInput: (sessionId, id) => !!receivedNeoHumanInput(this, sessionId, id),
       getBinding: (id) => this.repo.getBindingBySession(id),
       getRootBinding: () => this.repo.defaultBinding(),
       hasProject: (id) => !!this.repo.getProject(id),

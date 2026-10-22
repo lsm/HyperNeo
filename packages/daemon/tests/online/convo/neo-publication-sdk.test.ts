@@ -8,9 +8,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
+import { NeoAskTodoRepository } from '../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { readNeoPublications } from '../../../../web/src/neo/publication-client.ts';
 
-test('real SDK sends root Neo its system prompt and the stored human message, and publishes the reply', async () => {
+test('real SDK sends root Neo its system prompt and the stored human message, and publishes and asks back with explicit human references', async () => {
   const isolated = mkdtempSync(join(tmpdir(), 'neo-sdk-publication-'));
   const requestId = randomUUID();
   const shortText = 'The fictional moon garden is ready.';
@@ -79,22 +80,40 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
           for (const item of result.content ?? [])
             if (item.text) receipts.push(JSON.parse(item.text));
     }
-    const publishing = active && round < 3;
+    const publishing = active && round < 4;
     const block = publishing
       ? {
           type: 'tool_use',
           id: `tool-fictional-${++round}`,
           name: invoke!.name,
           input: {
-            name: round <= 2 ? 'neo.publication.publish' : 'neo.rule.save',
+            name:
+              round <= 2
+                ? 'neo.publication.publish'
+                : round === 3
+                  ? 'neo.rule.save'
+                  : 'neo.question.ask',
             input:
               round <= 2
-                ? { requestId: 'fictional-send', shortText, fullText, links: [] }
-                : {
-                    messageId: requestId,
-                    from: 'Tell me about the fictional moon garden. Keep synthetic garden changes as drafts.',
-                    add: ['Keep synthetic garden changes as drafts.'],
-                  },
+                ? {
+                    requestId: 'fictional-send',
+                    shortText,
+                    fullText,
+                    links: [],
+                    replyTo: [requestId],
+                  }
+                : round === 3
+                  ? {
+                      messageId: requestId,
+                      from: 'Tell me about the fictional moon garden. Keep synthetic garden changes as drafts.',
+                      add: ['Keep synthetic garden changes as drafts.'],
+                    }
+                  : {
+                      askId: 'fictional-garden',
+                      kind: 'reply',
+                      text: 'Which synthetic flower?',
+                      replyTo: [requestId],
+                    },
           },
         }
       : { type: 'text', text: 'Done.' };
@@ -246,6 +265,16 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
     });
     expect(opened.ok).toBe(true);
     expect(opened.sessionId).toMatch(/^neo:/);
+    const todos = new NeoAskTodoRepository(daemon.db.getDatabase());
+    todos.openAsk({
+      id: 'fictional-garden',
+      projectId: null,
+      sessionId: opened.sessionId,
+      originMessageId: null,
+      title: 'Garden',
+      request: 'Compare fictional flowers',
+      createdAt: 1,
+    });
     const accepted = await hub.request<{ ok: boolean; messageId: string }>('operation.invoke', {
       name: 'neo.message.send',
       input: {
@@ -276,11 +305,12 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
       shortText,
       fullText,
       links: [],
+      replyTo: [requestId],
     });
     const end = Date.now() + 15000;
-    while (calls.length < 4 && Date.now() < end)
+    while (calls.length < 5 && Date.now() < end)
       await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(calls).toEqual(['tool_use', 'tool_use', 'tool_use', 'text']);
+    expect(calls).toEqual(['tool_use', 'tool_use', 'tool_use', 'tool_use', 'text']);
     expect(receipts).toMatchObject([
       {
         accepted: true,
@@ -293,10 +323,21 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
         publication: { publicationId: page.items[0].publicationId },
       },
       { ok: true, standingRules: ['Keep synthetic garden changes as drafts.'] },
+      { ok: true, question: { replyTo: [requestId] } },
     ]);
     expect(daemon.db.getGlobalSettings().neo?.standingRules).toEqual([
       'Keep synthetic garden changes as drafts.',
     ]);
+    expect(todos.listQuestions('fictional-garden')).toEqual([
+      expect.objectContaining({ replyTo: [requestId] }),
+    ]);
+    const question = todos.listQuestions('fictional-garden')[0];
+    expect(
+      await hub.request('operation.invoke', {
+        name: 'neo.question.get',
+        input: { questionId: question.id },
+      })
+    ).toMatchObject({ ok: true, question: { replyTo: [requestId] } });
     expect((await read()).items).toEqual(page.items);
     const webRead = await readNeoPublications(
       { conversationId: opened.sessionId.slice(4), after: 0 },
@@ -317,6 +358,7 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
             calls,
             receipts,
             publication: page.items[0],
+            question,
             webRead,
             daemonPort: daemon.server.port,
             mockPort: address.port,

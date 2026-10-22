@@ -261,10 +261,19 @@ export class NeoPublicationRepository {
   toldSince(conversationId: string, askOrigin: NeoInputOrigin, since: string): boolean {
     return !!this.db
       .prepare(`SELECT 1 FROM neo_publications WHERE conversation_id = ?
-        AND json_extract(payload_json, '$.askOrigin.sessionId') = ?
-        AND json_extract(payload_json, '$.askOrigin.messageId') = ?
+        AND ((json_extract(payload_json, '$.askOrigin.sessionId') = ?
+          AND json_extract(payload_json, '$.askOrigin.messageId') = ?)
+          OR (? = 'neo:' || conversation_id AND EXISTS (
+            SELECT 1 FROM json_each(payload_json, '$.replyTo') WHERE value = ?)))
         AND created_at >= ? LIMIT 1`)
-      .get(conversationId, askOrigin.sessionId, askOrigin.messageId, since);
+      .get(
+        conversationId,
+        askOrigin.sessionId,
+        askOrigin.messageId,
+        askOrigin.sessionId,
+        askOrigin.messageId,
+        since
+      );
   }
 
   hasTrigger(conversationId: string, triggerId: string, publicationId: string): boolean {

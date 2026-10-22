@@ -75,6 +75,8 @@ export const NEO_REFUSALS: Readonly<Record<string, string>> = {
     'The reply does not match the publication schema. Fix the fields and publish again.',
   invalid_recipient_binding:
     'This session is not the one bound to the card, so it cannot report on it. Report from the card’s working session.',
+  invalid_reply_to:
+    'A replyTo id is not a consumed human message in this Neo conversation. Cite received human message ids from this conversation, or omit replyTo to leave attribution unspecified.',
   invalid_report:
     'A report needs status reported or failed and at most 12000 characters of text. Fix the report and send it again.',
   invalid_target_binding:
