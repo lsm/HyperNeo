@@ -31,10 +31,12 @@
     ```
 
     The isolated daemon uses an ephemeral port. Its real WebSocket RPC records
-    an early 1.35 s blocking phase followed by 122 metadata phase pairs. The
-    resulting 249 records reproduce the live tick's 64 retained plus 185 dropped
-    records on the previous source. End state: `observed.json` retains that early
-    phase and reports zero drops within the bounded 256-record ring. Larger
+    an early 1.35 s blocking phase followed by 138 metadata phase pairs. The
+    resulting 281 records cover the live startup tick's 249 records and a later
+    steady-state tick's 280 records. The earlier 122-pair fixture reproduced the
+    startup tick's 64 retained plus 185 dropped; 138 pairs also overflowed the
+    intermediate 256-record cap. End state: `observed.json` retains that early
+    phase and reports zero drops within the bounded 512-record ring. Larger
     bursts still drop the oldest records and disclose the drop count. The helper
     stops its daemon in `finally`. This proves retention and payload privacy,
     not scanner causality or a fix for physical disk stalls.

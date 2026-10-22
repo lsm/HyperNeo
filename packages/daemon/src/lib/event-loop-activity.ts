@@ -45,7 +45,7 @@ export class EventLoopActivity {
   }
 
   private add(entry: Activity): void {
-    if (this.entries.length === 256) {
+    if (this.entries.length === 512) {
       this.entries.shift();
       this.dropped++;
     }

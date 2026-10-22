@@ -12,12 +12,12 @@ describe('Event-loop diagnostic activity', () => {
     activity.record('stale.rpc');
     expect(activity.drain().entries).toHaveLength(1);
     now = 1500;
-    for (let i = 0; i < 262; i++) activity.record(`job.${i}`);
+    for (let i = 0; i < 518; i++) activity.record(`job.${i}`);
     const report = activity.drain();
-    expect(report.entries).toHaveLength(256);
+    expect(report.entries).toHaveLength(512);
     expect(report.dropped).toBe(6);
     expect(report.entries[0].name).toBe('job.6');
-    expect(report.entries.at(-1)?.name).toBe('job.261');
+    expect(report.entries.at(-1)?.name).toBe('job.517');
     expect(activity.drain()).toEqual({ entries: [], dropped: 0 });
   });
 
