@@ -173,7 +173,7 @@ async function prepareClone(
       if (result.code !== 0) return refuse(`${phase}: ${result.stderr.trim()}`);
     }
     const refs = await effects.run(
-      ['git', 'for-each-ref', '--format=%(refname)', 'refs/remotes/origin/', 'refs/heads/'],
+      ['git', 'for-each-ref', '--format=%(refname)'],
       plan.destination
     );
     if (refs.code !== 0) return refuse(`clone_refs_failed: ${refs.stderr.trim()}`);
@@ -202,11 +202,11 @@ async function prepareClone(
     return {
       value: {
         directory: plan.destination,
-        release: () => rm(plan.destination, { recursive: true }),
+        release: () => rm(plan.destination, { recursive: true, force: true }),
       },
     };
   } finally {
-    if (!ready) await rm(plan.destination, { recursive: true });
+    if (!ready) await rm(plan.destination, { recursive: true, force: true });
   }
 }
 

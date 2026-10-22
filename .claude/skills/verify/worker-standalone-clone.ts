@@ -34,6 +34,8 @@ git(source, 'config', 'user.name', 'Repo Worker');
 git(source, 'config', 'user.email', 'repo-worker@example.invalid');
 git(source, 'config', 'commit.gpgsign', 'false');
 const before = git(source, 'rev-parse', 'HEAD');
+git(source, 'tag', 'source-only', before);
+git(source, 'pack-refs', '--all');
 writeFileSync(join(remote, 'code.txt'), 'remote update');
 git(remote, 'commit', '-am', 'new base');
 const latest = git(remote, 'rev-parse', 'HEAD');
@@ -77,6 +79,7 @@ try {
   assert.equal(git(worker, 'rev-parse', '--git-common-dir'), '.git');
   assert.equal(git(worker, 'rev-parse', 'HEAD'), latest);
   assert.equal(git(worker, 'rev-parse', 'refs/remotes/origin/dev'), latest);
+  assert.equal(git(worker, 'for-each-ref', '--format=%(refname)'), 'refs/remotes/origin/dev');
   git(worker, 'switch', 'dev');
   assert.equal(git(worker, 'rev-parse', 'HEAD'), latest);
   assert.equal(git(worker, 'remote', 'get-url', 'origin'), remote);
@@ -117,7 +120,7 @@ try {
   const refused = await rpc('work.start', request) as { ok: boolean; detail?: string };
   assert.equal(refused.ok, false);
   assert.match(refused.detail ?? '', /fetch_failed/);
-  evidence.push({ port: app.server.port, worker, ownGit: true, independentObjectInodes: true, workerCommitAbsentInSource: true, dirtySourcePreserved: true, localIdentityPreserved: true, targetBranchVerified: true, lfsExplicitlyRefusedBeforeLaunch: true, failedStartCloneReleased: true, confirmedCloneRetained: true, status, scope: 'actual daemon/RPC/Git; synthetic Claude CLI; no OS sandbox claim in slice 1' });
+  evidence.push({ port: app.server.port, worker, ownGit: true, independentObjectInodes: true, workerCommitAbsentInSource: true, dirtySourcePreserved: true, localIdentityPreserved: true, targetBranchVerified: true, onlyVerifiedRefRetained: true, lfsExplicitlyRefusedBeforeLaunch: true, failedStartCloneReleased: true, confirmedCloneRetained: true, status, scope: 'actual daemon/RPC/Git; synthetic Claude CLI; no OS sandbox claim in slice 1' });
   console.log(`PASS prepared standalone clone, independent commit, dirty source preservation and explicit refusal: ${run}/evidence/observed.json`);
 } finally {
   ws?.close();
