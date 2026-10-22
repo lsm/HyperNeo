@@ -1010,6 +1010,13 @@ describe('QueryOptionsBuilder', () => {
   describe('provider settings', () => {
     it('should not override SDK auto-compaction settings for native anthropic provider', () => {
       expect(buildProviderSettings('anthropic')).toBeUndefined();
+      for (const provider of ['anthropic', 'anthropic-copilot', 'anthropic-codex', 'glm']) {
+        expect(buildProviderSettings(provider, 1_000_000, undefined, 70)).toBeUndefined();
+        expect(buildProviderSettings(provider, 1_000_000, undefined, 70, 70)).toEqual({
+          autoCompactEnabled: true,
+          autoCompactWindow: 733_000,
+        });
+      }
     });
 
     it('should not override SDK auto-compaction for anthropic-codex (handled natively)', () => {
