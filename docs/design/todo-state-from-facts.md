@@ -50,7 +50,7 @@ only on real progress, and persist it so a restart doesn’t reset it.
 ## Delete
 
 - The 6 state writers.
-- The in-memory idle/checked/savedRules maps.
+- The in-memory idle/checked maps.
 - The three result-inference fallbacks.
 - The second ladder.
 - `pack_coding_pr_claims`, the per-todo card event subscriptions and the `claimed` switch.
