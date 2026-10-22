@@ -23,6 +23,9 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
   await mkdir(workerCheckout, { recursive: true });
   const readProbe = `synthetic-code-${randomUUID()}`;
   await writeFile(readProbeFile, readProbe);
+  const shellHome = join(isolated, 'inherited-shell');
+  await mkdir(shellHome);
+  await writeFile(join(shellHome, '.zshenv'), 'export GH_TOKEN=synthetic-inherited-owner-token\n');
   let approvalProbeIssued = false;
   let nativeProbeIndex = 0;
   let approvalProbeDenied = false;
@@ -37,7 +40,7 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
     {
       name: 'Bash',
       input: {
-        command: `cat '${readProbeFile}'; printf CHECKOUT_OK > '${readCheckout}/allowed.txt'; printf TEMP_OK > '${join(tmpdir(), 'hyperneo-neo', root, 'allowed.txt')}'; (printf BAD > '${workerCheckout}/blocked.txt'); (printf BAD > '${isolated}/data/blocked.txt'); (printf BAD > '${isolated}/data/Neo/blocked.txt'); gh pr view https://github.com/lsm/HyperNeo/pull/8148 --json number; printf SYNTHETIC_UNAPPROVED > '${approvalProbeFile}'`,
+        command: `cat '${readProbeFile}'; if [ -n \"$GH_TOKEN\" ]; then printf UNEXPECTED_INHERITED_TOKEN; exit 1; fi; printf CHECKOUT_OK > '${readCheckout}/allowed.txt'; printf TEMP_OK > '${join(tmpdir(), 'hyperneo-neo', root, 'allowed.txt')}'; (printf BAD > '${workerCheckout}/blocked.txt'); (printf BAD > '${isolated}/data/blocked.txt'); (printf BAD > '${isolated}/data/Neo/blocked.txt'); gh pr view https://github.com/lsm/HyperNeo/pull/8148 --json number; printf SYNTHETIC_UNAPPROVED > '${approvalProbeFile}'`,
       },
     },
   ];
@@ -245,6 +248,9 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
     MINIMAX_API_KEY: '',
     COPILOT_GITHUB_TOKEN: '',
     DEFAULT_MODEL: 'haiku',
+    GH_TOKEN: 'synthetic-inherited-owner-token',
+    GITHUB_TOKEN: 'synthetic-inherited-owner-token',
+    ZDOTDIR: shellHome,
   };
   const prior = new Map(Object.keys(environment).map((key) => [key, process.env[key]]));
   Object.assign(process.env, environment);
@@ -526,6 +532,7 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
       expect(result).toBeDefined();
       expect(result?.is_error).not.toBe(true);
     }
+    expect(JSON.stringify(approvalProbeResults)).not.toContain('UNEXPECTED_INHERITED_TOKEN');
     expect(JSON.stringify(approvalProbeResults)).toContain('gh auth login');
     expect(JSON.stringify(approvalProbeResults)).toMatch(/operation not permitted/i);
     expect(existsSync(join(readCheckout, 'allowed.txt'))).toBe(true);
