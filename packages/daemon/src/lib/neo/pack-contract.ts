@@ -40,6 +40,17 @@ export interface NeoTodoCheckResult {
   blocked?: { reason: string; nextAction: string };
 }
 
+export type NeoTodoJudgement =
+  | { state: 'done'; evidence: string | null }
+  | { state: 'failed'; reason: string }
+  | { state: 'blocked'; reason: string }
+  | { state: 'no_opinion' };
+
+export interface NeoTodoFactJudge<Facts = unknown> {
+  readFacts(todo: NeoTodo): Promise<Facts>;
+  judge(todo: NeoTodo, facts: Facts): NeoTodoJudgement;
+}
+
 export interface NeoTodoPack {
   schema(db: Database): void;
   check(todo: NeoTodo): Promise<NeoTodoCheckResult | null>;
@@ -74,7 +85,7 @@ export interface NeoPackPreferenceDeclaration {
   askWhen?: { key: string; equals: unknown };
 }
 
-export interface NeoPack extends NeoPackBrief {
+export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
   preferences?: Record<string, NeoPackPreferenceDeclaration>;
   todos?: NeoTodoPack;
   sweep?(now: number): Promise<void>;
