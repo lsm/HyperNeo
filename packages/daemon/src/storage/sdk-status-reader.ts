@@ -1,3 +1,4 @@
+import type { Fact, NeoMessageStatusRef } from '../lib/neo/message-status.ts';
 import type { MessageFeedArgs } from './sdk-message-feed-read.ts';
 import type { LiveQueryEvaluation } from './live-query.ts';
 import { capSdkMessage } from '../lib/rpc-handlers/message-output-cap.ts';
@@ -31,8 +32,18 @@ export type WorkSearchArgs = {
   semantic?: { vector: number[]; model: string };
   kinds?: readonly WorkChatKind[];
 };
-type SDKReadArgs = SDKStatusArgs | SDKPageArgs | WorkSearchArgs | MessageFeedArgs;
-export type SDKReadResult = SDKStatusPage | SDKMessagePage | WorkChatMatch[] | LiveQueryEvaluation;
+type SDKReadArgs =
+  | SDKStatusArgs
+  | SDKPageArgs
+  | WorkSearchArgs
+  | MessageFeedArgs
+  | { neoMessageStatus: NeoMessageStatusRef[] };
+export type SDKReadResult =
+  | SDKStatusPage
+  | SDKMessagePage
+  | WorkChatMatch[]
+  | LiveQueryEvaluation
+  | Fact[];
 export type SDKStatusRequest = {
   id: number;
   epoch: number;
@@ -154,6 +165,10 @@ export class SDKStatusReader {
     return this.enqueue(args) as Promise<LiveQueryEvaluation>;
   }
 
+  readNeoMessageStatusFacts(refs: NeoMessageStatusRef[]): Promise<Fact[]> {
+    return this.enqueue({ neoMessageStatus: refs }) as Promise<Fact[]>;
+  }
+
   private enqueue(args: SDKReadArgs): Promise<SDKReadResult> {
     if (this.closing) return Promise.reject(new Error('SDK reader closed'));
     const search = 'query' in args;
@@ -232,11 +247,13 @@ export class SDKStatusReader {
             operation: args
               ? 'query' in args
                 ? 'work-search'
-                : 'feed' in args
-                  ? 'message-feed'
-                  : 'page' in args
-                    ? 'sdk-page'
-                    : 'sdk-status'
+                : 'neoMessageStatus' in args
+                  ? 'neo-message-status'
+                  : 'feed' in args
+                    ? 'message-feed'
+                    : 'page' in args
+                      ? 'sdk-page'
+                      : 'sdk-status'
               : 'close',
             id,
             epoch,

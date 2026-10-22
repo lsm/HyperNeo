@@ -6,6 +6,9 @@ around the existing handler, including asynchronous completion. Those elapsed
 times include awaits; they are context, not proof of CPU or blocking time.
 A normal 250 ms monitor tick drains the ring. Starts from an older tick do not
 survive; a completion during the delayed tick can still name a long operation.
+The ring retains at most 512 records per tick; larger bursts discard the oldest
+records and disclose `droppedActivities`. A retained asynchronous phase includes
+awaited time and cannot by itself attribute an event-loop block.
 
 | Scheduled work | Actual default period | Recorded phase | Owning code |
 |---|---|---|---|

@@ -53,7 +53,7 @@ export class NeoConversationReader {
     private readonly presentStatus: NeoMessageStatusPresenter = (items) => [...items]
   ) {}
 
-  read(page: NeoConversationPage, humanView = false) {
+  async read(page: NeoConversationPage, humanView = false) {
     const cursor = page.after ?? page.before;
     const direction = page.after ? 'ASC' : 'DESC';
     const rows = this.db
@@ -107,9 +107,9 @@ export class NeoConversationReader {
       return { cursor, role: row.role, publication };
     });
     const statuses = new Map(
-      this.presentStatus(items.flatMap((item) => (item.role === 'human' ? [item.ask] : []))).map(
-        (ask) => [ask.requestId, ask]
-      )
+      (
+        await this.presentStatus(items.flatMap((item) => (item.role === 'human' ? [item.ask] : [])))
+      ).map((ask) => [ask.requestId, ask])
     );
     return neoConversationPage(
       items.map((item) =>

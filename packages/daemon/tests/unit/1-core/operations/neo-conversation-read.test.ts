@@ -76,7 +76,7 @@ describe('neo.conversation.read', () => {
   test('returns original human words, attribution and image references with full Neo replies', async () => {
     const storedAsk = ask(1);
     const storedReply = publish(1);
-    const rows = reader.read({ conversationId, limit: 50 });
+    const rows = await reader.read({ conversationId, limit: 50 });
     expect(rows.items.map((item) => item.role)).toEqual(['human', 'neo']);
     expect(rows.items[0]).toMatchObject({
       role: 'human',
@@ -99,7 +99,7 @@ describe('neo.conversation.read', () => {
     }
   });
 
-  test('pages both directions without losing equal-timestamp entries or mixing conversations', () => {
+  test('pages both directions without losing equal-timestamp entries or mixing conversations', async () => {
     for (let n = 1; n <= 5; n++) {
       ask(n);
       publish(n);
@@ -110,20 +110,20 @@ describe('neo.conversation.read', () => {
       db.getDatabase()
         .prepare(`UPDATE ${table} SET created_at = ?`)
         .run('2026-10-16T10:00:00.000Z');
-    const complete = reader.read({ conversationId, limit: 100 }).items;
+    const complete = (await reader.read({ conversationId, limit: 100 })).items;
     expect(complete).toHaveLength(10);
     expect(new Set(complete.map((item) => JSON.stringify(item.cursor))).size).toBe(10);
-    let backwards = reader.read({ conversationId, limit: 2 });
+    let backwards = await reader.read({ conversationId, limit: 2 });
     const collected = [...backwards.items];
     while (backwards.items.length) {
-      backwards = reader.read({ conversationId, limit: 2, before: backwards.nextBefore! });
+      backwards = await reader.read({ conversationId, limit: 2, before: backwards.nextBefore! });
       collected.unshift(...backwards.items);
     }
     expect(collected).toEqual(complete);
-    let forwards = reader.read({ conversationId, limit: 2, after: complete[0].cursor });
+    let forwards = await reader.read({ conversationId, limit: 2, after: complete[0].cursor });
     const later = [...forwards.items];
     while (forwards.items.length) {
-      forwards = reader.read({ conversationId, limit: 2, after: forwards.nextAfter! });
+      forwards = await reader.read({ conversationId, limit: 2, after: forwards.nextAfter! });
       later.push(...forwards.items);
     }
     expect(later).toEqual(complete.slice(1));
@@ -142,7 +142,7 @@ describe('neo.conversation.read', () => {
     );
     expect(revised.accepted).toBe(true);
     for (let n = 2; n <= 12; n++) publish(n);
-    const full = reader.read({ conversationId, limit: 100 }).items;
+    const full = (await reader.read({ conversationId, limit: 100 })).items;
     expect(full[0]).toMatchObject({
       role: 'neo',
       publication: {

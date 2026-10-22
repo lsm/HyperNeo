@@ -1,3 +1,4 @@
+import { readMessageFacts, type NeoMessageStatusRef } from '../lib/neo/message-status.ts';
 import { readMessageFeed, type MessageFeedArgs } from './sdk-message-feed-read.ts';
 import { runLagPhase } from '../lib/event-loop-activity.ts';
 import { Database as BunDatabase } from './sqlite-compat.ts';
@@ -368,6 +369,12 @@ export class Database {
     if (this.getDbPath() === ':memory:')
       return projectSDKStatusPage(this.getUserMessagesByStatus(sessionId, status, limit), status);
     return this.getSDKReader().read({ sessionId, status, limit });
+  }
+
+  async getNeoMessageStatusFactsAsync(refs: NeoMessageStatusRef[]) {
+    if (this.getDbPath() === ':memory:')
+      return this.getDatabase().transaction(() => readMessageFacts(this.getDatabase(), refs))();
+    return this.getSDKReader().readNeoMessageStatusFacts(refs);
   }
 
   async getMessageFeedAsync(args: MessageFeedArgs) {

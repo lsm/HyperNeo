@@ -50,24 +50,25 @@ export function createNeoConversationReadOperation(
     .pipe(() => repo.conversationId(), 'page', 'conversation')
     .pipe(requirePublicationConversation, ['page', 'conversation'], 'result:page')
     .pipe(
-      (page: NeoConversationPage, caller: OperationCaller) => ({
+      async (page: NeoConversationPage, caller: OperationCaller) => ({
         ok: true as const,
         conversationId: page.conversationId,
-        ...ledger.read(page, caller.source === 'rpc'),
+        ...(await ledger.read(page, caller.source === 'rpc')),
       }),
       ['page', 'caller'],
       'page'
     )
-    .end('page') as (
+    .endAsync('page') as (
     page: NeoConversationPage,
     caller: OperationCaller
-  ) =>
+  ) => Promise<
     | Rejected
     | ({
         ok: true;
         conversationId: string;
-      } & ReturnType<NeoConversationReader['read']>);
-  const resultSchema: z.ZodType<ReturnType<typeof read>> = z.union([
+      } & Awaited<ReturnType<NeoConversationReader['read']>>)
+  >;
+  const resultSchema: z.ZodType<Awaited<ReturnType<typeof read>>> = z.union([
     z.object({
       ok: z.literal(false),
       reason: z.enum(['reader_not_authorized', 'conversation_not_found']),
@@ -123,7 +124,7 @@ export function createNeoConversationReadOperation(
     inputSchema: NeoConversationReadInput,
     resultSchema,
     execute: async (page, caller) => {
-      const result = read(page, caller);
+      const result = await read(page, caller);
       return result.ok
         ? {
             ...result,

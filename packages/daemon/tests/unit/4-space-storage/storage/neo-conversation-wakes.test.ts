@@ -56,7 +56,7 @@ function put(
   }
 }
 
-test('an empty wake view excludes human, malformed, forwarded, non-user and foreign origins', () => {
+test('an empty wake view excludes human, malformed, forwarded, non-user and foreign origins', async () => {
   put('human', 0, { trigger: 'human:human' });
   put('malformed', 0, { trigger: 'scheduled_wake:{invalid' });
   put('forwarded', 0, { origin: `neo:${foreignId}` });
@@ -67,12 +67,12 @@ test('an empty wake view excludes human, malformed, forwarded, non-user and fore
     .run(`neo:${conversationId}`, 'orphan', '{}', at);
   expect(wakes.latest(conversationId, 10)).toEqual([]);
   expect(
-    new NeoConversationReader(db.getDatabase()).read({ conversationId, limit: 10 }).items
+    (await new NeoConversationReader(db.getDatabase()).read({ conversationId, limit: 10 })).items
   ).toEqual([]);
   expect(wakes.latest(foreignId, 10).map((w) => w.scheduleId)).toEqual(['foreign']);
 });
 
-test('latest and both cursor directions retain timestamp/SDK-sequence ordering and conversation scope', () => {
+test('latest and both cursor directions retain timestamp/SDK-sequence ordering and conversation scope', async () => {
   put('first');
   put('second', 100);
   put('third', 100);
@@ -88,18 +88,18 @@ test('latest and both cursor directions retain timestamp/SDK-sequence ordering a
   });
   expect(wakes.get(foreignId, 'second')).toBeNull();
   const reader = new NeoConversationReader(db.getDatabase());
-  const all = reader.read({ conversationId, limit: 10 }).items;
+  const all = (await reader.read({ conversationId, limit: 10 })).items;
   expect(all.map((item) => (item.role === 'wake' ? item.wake.scheduleId : null))).toEqual([
     'first',
     'second',
     'third',
   ]);
-  const latest = reader.read({ conversationId, limit: 1 });
-  const previous = reader.read({ conversationId, limit: 1, before: latest.nextBefore! });
+  const latest = await reader.read({ conversationId, limit: 1 });
+  const previous = await reader.read({ conversationId, limit: 1, before: latest.nextBefore! });
   expect(previous.items).toEqual([all[1]]);
-  expect(reader.read({ conversationId, limit: 1, after: previous.nextAfter! }).items).toEqual([
-    all[2],
-  ]);
+  expect(
+    (await reader.read({ conversationId, limit: 1, after: previous.nextAfter! })).items
+  ).toEqual([all[2]]);
 });
 
 test.each([false, true])(
