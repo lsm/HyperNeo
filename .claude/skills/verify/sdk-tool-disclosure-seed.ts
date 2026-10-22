@@ -18,7 +18,7 @@ try {
     else assert(messages.saveSDKMessage(worker, message));
   };
   if (long) {
-    save({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'synthetic-long-read', name: 'Read', input: { file_path: 'long-synthetic.txt' } }] } });
+    save({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'synthetic-long-read', name: 'Bash', input: { command: 'synthetic-long-output' } }] } });
     save({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'synthetic-long-read', content: 'Synthetic long result line.\n'.repeat(200) }] } });
   }
   save({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'synthetic-agent', name: 'Agent', input: { subagent_type: 'Explore', description: 'Synthetic exploration', prompt: 'Find synthetic evidence' } }] } });
@@ -26,5 +26,6 @@ try {
   save({ type: 'user', parent_tool_use_id: 'synthetic-agent', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'synthetic-nested-read', content: 'Nested synthetic evidence.\nShort nested ending.' }] } });
   save({ type: 'tool_progress', parent_tool_use_id: 'synthetic-agent', tool_use_id: 'synthetic-nested-read', tool_name: 'Read', elapsed_time_seconds: 3 });
   save({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'synthetic-agent', content: 'Synthetic subagent final evidence.\n\n' + (long ? 'Synthetic long paragraph.\n\n'.repeat(100) : '') + 'Short final paragraph.' }] } });
+  if (long) for (let i = 0; i < 20; i++) save({ type: 'user', message: { role: 'user', content: `Synthetic later message ${i}` } });
   writeFileSync(`${run}/evidence/sdk-tool-seed.json`, JSON.stringify({ worker, synthetic: true }, null, 2));
 } finally { db.close(); }

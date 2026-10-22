@@ -9,15 +9,22 @@ export async function verifyToolScroll(page, { port, run, width, phase }) {
   await page.setViewportSize({ width, height: 1000 });
   const observed = { width, phase, cases: [] };
   for (const [title, name, content] of [
-    ['long-synthetic.txt', 'Read long-synthetic.txt', 'Synthetic long result line.'],
+    ['synthetic-long-output', 'Bash synthetic-long-output', 'Synthetic long result line.'],
     ['Synthetic exploration', 'Explore Synthetic exploration', 'Short final paragraph.'],
   ]) {
     await page.goto(`http://127.0.0.1:${port}/session/${worker}`);
     const card = page.getByText(title, { exact: true }).first().locator('xpath=ancestor::div[contains(@class,"rounded-lg")][1]');
     const more = card.getByRole('button', { name: `more — ${name}`, exact: true });
     await more.waitFor();
+    await more.click();
+    await card.locator('pre,p').filter({ hasText: content }).first().waitFor();
+    await card.getByRole('button', { name: `less — ${name}`, exact: true }).click();
+    await more.scrollIntoViewIfNeeded();
+    await more.hover();
+    await page.mouse.wheel(0, -250);
     await more.scrollIntoViewIfNeeded();
     await more.focus();
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const before = await card.evaluate(el => el.getBoundingClientRect().top);
     await page.keyboard.press('Enter');
     await card.locator('pre,p').filter({ hasText: content }).first().waitFor();
