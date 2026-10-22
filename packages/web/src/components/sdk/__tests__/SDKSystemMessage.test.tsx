@@ -146,6 +146,7 @@ describe('SDKSystemMessage', () => {
 
       const button = container.querySelector('button')!;
       fireEvent.click(button);
+      expect(container.querySelector('details')?.open).toBe(true);
 
       expect(container.textContent).toContain('Working Directory');
       expect(container.textContent).toContain('/home/user/project');
@@ -157,6 +158,7 @@ describe('SDKSystemMessage', () => {
 
       const button = container.querySelector('button')!;
       fireEvent.click(button);
+      expect(container.querySelector('details')?.open).toBe(true);
 
       expect(container.textContent).toContain('Tools (3)');
       expect(container.textContent).toContain('Read');
@@ -175,6 +177,7 @@ describe('SDKSystemMessage', () => {
 
       const button = container.querySelector('button')!;
       fireEvent.click(button);
+      expect(container.querySelector('details')?.open).toBe(true);
 
       expect(container.textContent).toContain('MCP Servers (2)');
       expect(container.textContent).toContain('filesystem');
@@ -191,6 +194,7 @@ describe('SDKSystemMessage', () => {
 
       const button = container.querySelector('button')!;
       fireEvent.click(button);
+      expect(container.querySelector('details')?.open).toBe(true);
 
       expect(container.textContent).toContain('Slash Commands (3)');
       expect(container.textContent).toContain('/help');
@@ -204,6 +208,7 @@ describe('SDKSystemMessage', () => {
 
       const button = container.querySelector('button')!;
       fireEvent.click(button);
+      expect(container.querySelector('details')?.open).toBe(true);
 
       expect(container.textContent).toContain('Agents (2)');
       expect(container.textContent).toContain('Explore');
@@ -219,6 +224,7 @@ describe('SDKSystemMessage', () => {
 
       const button = container.querySelector('button')!;
       fireEvent.click(button);
+      expect(container.querySelector('details')?.open).toBe(true);
 
       expect(container.textContent).toContain('API Key Source: project');
       expect(container.textContent).toContain('Output: streaming');
@@ -1081,13 +1087,14 @@ describe('SDKSystemMessage', () => {
 
       const button = container.querySelector('button')!;
 
-      expect(container.textContent).not.toContain('Working Directory');
+      expect(container.querySelector('details')?.open).toBe(false);
 
       fireEvent.click(button);
+      expect(container.querySelector('details')?.open).toBe(true);
       expect(container.textContent).toContain('Working Directory');
 
-      fireEvent.click(button);
-      expect(container.querySelector('.mt-3.pt-3')).toBeFalsy();
+      fireEvent.click(container.querySelector('button[aria-expanded="true"]')!);
+      expect(container.querySelector('details')?.open).toBe(false);
     });
 
     it('should toggle compact boundary metadata', () => {
@@ -1106,21 +1113,15 @@ describe('SDKSystemMessage', () => {
     });
   });
 
-  describe('Chevron Rotation', () => {
-    it('should rotate chevron when expanded', () => {
-      const message = createInitMessage();
-      const { container } = render(<SDKSystemMessage message={message} />);
-
-      const button = container.querySelector('button')!;
-      const svg = container.querySelectorAll('svg')[1];
-
-      expect(svg?.className.baseVal || svg?.getAttribute('class')).not.toContain('rotate-180');
-
-      fireEvent.click(button);
-      const rotatedSvg = container.querySelectorAll('svg')[1];
-      expect(rotatedSvg?.className.baseVal || rotatedSvg?.getAttribute('class')).toContain(
-        'rotate-180'
-      );
+  describe('Initialization control direction', () => {
+    it('shows the shared more and less words', () => {
+      const { getByRole } = render(<SDKSystemMessage message={createInitMessage()} />);
+      const more = getByRole('button', { name: 'more — Session Started', exact: true });
+      expect(more.textContent).toContain('▾');
+      fireEvent.click(more);
+      const less = getByRole('button', { name: 'less — Session Started', exact: true });
+      expect(less.textContent).toContain('▴');
+      expect(less.getAttribute('aria-expanded')).toBe('true');
     });
   });
 });
