@@ -4,6 +4,7 @@ import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { capSdkMessage } from '../../../../src/lib/rpc-handlers/message-output-cap';
 import {
   SDKStatusReader,
+  sdkReadLogMetadata,
   type SDKStatusReply,
   type SDKReadResult,
   type SDKStatusRequest,
@@ -306,4 +307,23 @@ test('status and paged reads share the serial reader and retain full projected r
   expect(await second).toEqual(result);
   expect(workers).toHaveLength(1);
   await reader.close();
+});
+
+test('mixed SQL summaries cannot be attributed to the last page or status request', () => {
+  const summary = {
+    event: 'summary',
+    executionCount: 2,
+    queries: [{ fingerprint: 'status-sql' }, { fingerprint: 'page-sql' }],
+  };
+  for (const operation of ['sdk-page', 'sdk-status', 'close']) {
+    const emitted = sdkReadLogMetadata(summary, operation);
+    expect(emitted).toEqual(summary);
+    expect(emitted).not.toHaveProperty('workerOperation');
+  }
+  const slow = { event: 'slow', fingerprint: 'page-sql', durationMs: 280 };
+  expect(sdkReadLogMetadata(slow, 'sdk-page')).toEqual({
+    ...slow,
+    workerOperation: 'sdk-page',
+  });
+  expect(summary).not.toHaveProperty('workerOperation');
 });
