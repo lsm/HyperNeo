@@ -590,3 +590,43 @@ test('a memory daemon can read an external file off main and close that reader',
   await reader.close();
   expect(worker.stopped).toBe(true);
 });
+
+for (const failure of [
+  'unable to open database file',
+  'database is locked',
+  'no such column: archived',
+  'crash',
+  'timeout',
+]) {
+  test(`Codex snapshot ${failure} preserves the correct request boundary`, async () => {
+    const { reader, workers } = fixture(failure === 'timeout' ? 5 : 1000);
+    const results = Promise.allSettled([
+      reader.readCodexSnapshot('/synthetic-codex.sqlite', true),
+      reader.read(args),
+    ]);
+    await tick();
+    const known = !['crash', 'timeout'].includes(failure);
+    if (failure === 'crash') workers[0].crash();
+    else if (known)
+      workers[0].onmessage?.({
+        data: {
+          ...workers[0].requests[0],
+          error: failure,
+          finishedAt: Date.now(),
+          workerMs: 0,
+          queueMs: 0,
+        },
+      } as MessageEvent<SDKStatusReply>);
+    await tick();
+    if (known && !workers[0].stopped) workers[0].reply(workers[0].requests[1], page);
+    const settled = await results;
+    expect(settled.map((row) => row.status)).toEqual(
+      known ? ['rejected', 'fulfilled'] : ['rejected', 'rejected']
+    );
+    if (known) {
+      expect(settled[1].status === 'fulfilled' && settled[1].value).toEqual(page);
+      expect(workers[0].stopped).toBe(false);
+    }
+    await reader.close();
+  });
+}

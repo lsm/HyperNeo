@@ -32,9 +32,10 @@ const NativeWorker = globalThis.Worker;
 const warm = WorkerAgentMemoryEmbedder.prototype.warm;
 WorkerAgentMemoryEmbedder.prototype.warm = () => {};
 const fixture = pathToFileURL(join(run, 'reader.ts')).href;
-writeFileSync(join(run, 'reader.ts'), `import { installCodexSnapshotWait } from ${JSON.stringify(pathToFileURL(resolve('.claude/skills/verify/codex-snapshot-wait.ts')).href)}; installCodexSnapshotWait(${JSON.stringify(run)},${waitMs},'worker'); const pending=[]; globalThis.onmessage=e=>pending.push(e); await import(${JSON.stringify(pathToFileURL(resolve('packages/daemon/src/storage/sdk-status-worker.ts')).href)}); const dispatch=globalThis.onmessage; for(const event of pending) dispatch(event);`);
+writeFileSync(join(run, 'reader.ts'), `import { installCodexSnapshotWait } from ${JSON.stringify(pathToFileURL(resolve('.claude/skills/verify/codex-snapshot-wait.ts')).href)}; installCodexSnapshotWait(${JSON.stringify(run)},${waitMs},'worker'); const pending=[]; const {existsSync,writeFileSync}=await import('node:fs'); const send=globalThis.postMessage.bind(globalThis); globalThis.postMessage=data=>{if(data.error&&existsSync(${JSON.stringify(join(run,'hold-error'))})){writeFileSync(${JSON.stringify(join(run,'error-reply-pending'))},'pending');const timer=setInterval(()=>{if(existsSync(${JSON.stringify(join(run,'release-error'))})){clearInterval(timer);send(data);}},1);}else send(data);}; globalThis.onmessage=e=>pending.push(e); await import(${JSON.stringify(pathToFileURL(resolve('packages/daemon/src/storage/sdk-status-worker.ts')).href)}); const dispatch=globalThis.onmessage; for(const event of pending) dispatch(event);`);
+let readerStarts = 0;
 globalThis.Worker = function (url: string | URL, options?: WorkerOptions) {
-  if (String(url).endsWith('/sdk-status-worker.ts')) return bridge ? new SDKBunWorkerBridge(fixture) : new NativeWorker(fixture, options);
+  if (String(url).endsWith('/sdk-status-worker.ts')) { readerStarts++; return bridge ? new SDKBunWorkerBridge(fixture) : new NativeWorker(fixture, options); }
   return new NativeWorker(url, options);
 } as unknown as typeof Worker;
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
@@ -107,13 +108,38 @@ try {
   assert(Number(evidence.maxHealthMs) < 250, 'independent health exceeded250ms');
   assert(reads.length && reads.every(read => read.thread === 'worker'), 'snapshot still read on main');
   if (!waitMs) assert(rpcMs < 250, 'ordinary-data work.find exceeded250ms');
+  const {sessionId} = await hub.request<{sessionId:string}>('session.create', {workspacePath:run,config:{queryMode:'manual'}});
+  const full = 'Complete unrelated SDK text 🦊\n'.repeat(100);
+  app.db.saveUserMessage(sessionId, {type:'user',uuid:'surviving-sdk',parent_tool_use_id:null,message:{role:'user',content:full}} as never, 'consumed');
+  const admitted = new Set<string>();
+  for (const method of ['getUserMessagesByStatusAsync','getSDKMessagePageAsync','searchWorkChatsAsync']) {
+    const original = Reflect.get(app.db, method);
+    Reflect.set(app.db, method, (...params:unknown[]) => { admitted.add(method); return Reflect.apply(original, app!.db, params); });
+  }
+  writeFileSync(join(run,'hold-error'),'hold');
   renameSync(statePath, statePath + '.retained');
   try {
-    const failed = await find();
-    evidence.unavailable = failed;
-    assert(failed.unreachable.length > 0);
-    assert(!existsSync(statePath), 'readonly failure created an external DB');
-  } finally { renameSync(statePath + '.retained', statePath); }
+    const failed = find();
+    for(let n=0;!existsSync(join(run,'error-reply-pending'))&&n<500;n++) await Bun.sleep(10);
+    assert(existsSync(join(run,'error-reply-pending')),'external error reply was not reached');
+    const queued = Promise.allSettled([
+      hub.request<{messages:{text:string}[]}>('session.messages.byStatus',{sessionId,status:'consumed',limit:1}),
+      hub.request<{sdkMessages:{uuid:string}[]}>('message.sdkMessages',{sessionId,limit:1}),
+      hub.request<{unreachable:unknown[]}>('operation.invoke',{name:'work.find',input:{text:'absent quokka needle',adapters:['hyperneo'],localOnly:true,limit:1}}),
+    ]);
+    for(let n=0;admitted.size<3&&n<500;n++) await Bun.sleep(10);
+    assert.equal(admitted.size,3,'unrelated RPCs did not reach reader admission');
+    writeFileSync(join(run,'release-error'),'release');
+    const unreachable = await failed, outcomes = await queued;
+    evidence.errorIsolation = {unreachable, statuses:outcomes.map(row=>row.status), failures:outcomes.filter(row=>row.status==='rejected').map(row=>String(row.reason)), readerStarts, search:outcomes[2].status==='fulfilled'?outcomes[2].value:null};
+    assert(unreachable.unreachable.length>0);
+    assert.deepEqual(outcomes.map(row=>row.status),['fulfilled','fulfilled','fulfilled']);
+    assert(outcomes[0].status==='fulfilled'&&outcomes[0].value.messages[0].text===full);
+    assert(outcomes[1].status==='fulfilled'&&outcomes[1].value.sdkMessages[0].uuid==='surviving-sdk');
+    assert(outcomes[2].status==='fulfilled'&&outcomes[2].value.unreachable.length===0);
+    assert.equal(readerStarts,1,'known external error restarted the shared reader');
+    assert(!existsSync(statePath),'readonly failure created an external DB');
+  } finally { writeFileSync(join(run,'release-error'),'release'); renameSync(statePath + '.retained', statePath); }
   assert.deepEqual((await find()).unreachable, []);
   assert.equal(evidence.before, digest());
   evidence.recovered = true;
