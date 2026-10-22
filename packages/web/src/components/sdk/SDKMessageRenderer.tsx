@@ -1,7 +1,5 @@
-import { ChevronRightGlyph } from '../icons/common-glyphs.tsx';
 import type { JSX } from 'preact';
 import { memo } from 'preact/compat';
-import { useState } from 'preact/hooks';
 import { NativeContentDisclosure } from '../ui/NativeContentDisclosure.tsx';
 import type {
   SDKAuthStatusMessage,
@@ -148,32 +146,24 @@ function isToolResultUserMessage(message: SDKMessage): boolean {
 }
 
 function SystemInitPill({ message }: { message: SystemInitMessage }) {
-  const [expanded, setExpanded] = useState(false);
-
   return (
     <div class="py-1 px-2">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        class="flex items-center gap-2 text-[10px] text-fg-faint hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
-      >
-        <ChevronRightGlyph
-          class={`w-3 h-3 transition-transform flex-shrink-0 ${expanded ? 'rotate-90' : ''}`}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-          pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
-        />
-        <span class="font-medium">{message.model ?? 'unknown model'}</span>
-        {message.mcp_servers && message.mcp_servers.length > 0 && (
-          <span>
-            · {message.mcp_servers.length} MCP server
-            {message.mcp_servers.length !== 1 ? 's' : ''}
+      <NativeContentDisclosure
+        label="Session details"
+        class="[&>summary]:p-0 [&>summary]:min-h-0 text-[10px] text-fg-faint"
+        summary={
+          <span class="inline-flex max-w-full items-center gap-2">
+            <span class="font-medium">{message.model ?? 'unknown model'}</span>
+            {message.mcp_servers && message.mcp_servers.length > 0 && (
+              <span>
+                · {message.mcp_servers.length} MCP server
+                {message.mcp_servers.length !== 1 ? 's' : ''}
+              </span>
+            )}
+            {message.tools && <span>· {message.tools.length} tools</span>}
           </span>
-        )}
-        {message.tools && <span>· {message.tools.length} tools</span>}
-      </button>
-
-      {expanded && (
+        }
+      >
         <div class="mt-1.5 ml-5 space-y-1.5 text-[10px] text-fg-faint">
           {message.cwd && (
             <div>
@@ -210,7 +200,7 @@ function SystemInitPill({ message }: { message: SystemInitMessage }) {
             </div>
           )}
         </div>
-      )}
+      </NativeContentDisclosure>
     </div>
   );
 }

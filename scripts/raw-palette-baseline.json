@@ -3,7 +3,7 @@
   "areas": {
     "(root)": 1,
     "components": 60,
-    "components/sdk": 42,
+    "components/sdk": 38,
     "components/settings": 5,
     "components/space": 45,
     "components/ui": 7,

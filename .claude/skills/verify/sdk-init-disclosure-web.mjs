@@ -26,11 +26,21 @@ export async function verifySdkInit(page, { daemon, fixture, run, width, phase }
       assert.equal(await control().evaluate(b => b === document.activeElement), true);
       await card.getByText('/synthetic/project').click();
       assert.equal(await control().getAttribute('aria-expanded'), 'true');
+      const start = await card.getByText('/synthetic/project').evaluate(el => {
+        const range = document.createRange();range.setStart(el.firstChild, 0);range.setEnd(el.firstChild, 3);
+        const r = range.getBoundingClientRect();return { x:r.x,y:r.y,height:r.height };
+      });
+      await page.mouse.move(start.x + 1, start.y + start.height / 2);await page.mouse.down();
+      await page.mouse.move(start.x + 45, start.y + start.height / 2, { steps:6 });await page.mouse.up();
+      assert((await page.evaluate(() => window.getSelection()?.toString())).length >= 3);
+      assert.equal(await control().getAttribute('aria-expanded'), 'true');
     }
     await control().scrollIntoViewIfNeeded();
     await page.screenshot({ path: `${dir}/component-${section}-open-${width}.png`, animations: 'disabled', scale: 'css' });
     const entry = { section, titleOpens };
     if (after) {
+      entry.viewport = await page.evaluate(() => ({ width:innerWidth,scrollWidth:document.documentElement.scrollWidth }));
+      assert.equal(entry.viewport.width, entry.viewport.scrollWidth);
       entry.placement = await control().evaluate(b => { const r = b.getBoundingClientRect(), p = b.closest('.flow-root').getBoundingClientRect();return { right:r.right,parentRight:p.right }; });
       assert(Math.abs(entry.placement.right - entry.placement.parentRight) <= 14);
       await control().press('Space');

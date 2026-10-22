@@ -1,6 +1,5 @@
-import { CheckGlyph, ChevronDownGlyph, CloseGlyph } from '../icons/common-glyphs.tsx';
+import { CheckGlyph, CloseGlyph } from '../icons/common-glyphs.tsx';
 import type { ComponentChildren } from 'preact';
-import { useState } from 'preact/hooks';
 import { NativeContentDisclosure } from '../ui/NativeContentDisclosure.tsx';
 import type {
   SDKAPIRetryMessage,
@@ -391,46 +390,35 @@ function PluginInstallMessage({ message }: { message: SDKPluginInstallMessage })
 }
 
 function SystemInitMessage({ message }: { message: Extract<SystemMessage, { subtype: 'init' }> }) {
-  const [showDetails, setShowDetails] = useState(false);
-
   return (
     <div class="py-2 bg-cat-indigo/10 rounded border border-cat-indigo/40">
-      <button
-        onClick={() => setShowDetails(!showDetails)}
-        class="w-full flex items-center justify-between hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition-colors -m-1 p-1 rounded"
-      >
-        <div class="flex items-center gap-2">
-          <svg
-            class="w-4 h-4 text-cat-indigo"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M13 10V3L4 14h7v7l9-11h-7z"
-            />
-          </svg>
-          <div class="text-xs">
-            <span class="font-medium text-cat-indigo">Session Started</span>
-            <span class="text-cat-indigo ml-2">
-              {message.model.replace('claude-', '')} • {message.permissionMode}
-            </span>
+      <NativeContentDisclosure
+        label="Session Started"
+        summary={
+          <div class="inline-flex max-w-full items-center gap-2">
+            <svg
+              class="w-4 h-4 text-cat-indigo"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M13 10V3L4 14h7v7l9-11h-7z"
+              />
+            </svg>
+            <div class="text-xs">
+              <span class="font-medium text-cat-indigo">Session Started</span>
+              <span class="text-cat-indigo ml-2">
+                {message.model.replace('claude-', '')} • {message.permissionMode}
+              </span>
+            </div>
           </div>
-        </div>
-        <ChevronDownGlyph
-          class={`w-4 h-4 text-cat-indigo transition-transform ${showDetails ? 'rotate-180' : ''}`}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-          pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
-        />
-      </button>
-
-      {showDetails && (
-        <div class="mt-3 pt-3 border-t border-cat-indigo/40 space-y-2 text-sm">
+        }
+      >
+        <div class="mx-3 mb-3 mt-3 pt-3 border-t border-cat-indigo/40 space-y-2 text-sm">
           <div>
             <div class="text-xs font-semibold text-cat-indigo mb-1">Working Directory</div>
             <div class="font-mono text-xs text-cat-indigo bg-cat-indigo/15 px-2 py-1 rounded">
@@ -517,7 +505,7 @@ function SystemInitMessage({ message }: { message: Extract<SystemMessage, { subt
             API Key Source: {message.apiKeySource} • Output: {message.output_style}
           </div>
         </div>
-      )}
+      </NativeContentDisclosure>
     </div>
   );
 }
