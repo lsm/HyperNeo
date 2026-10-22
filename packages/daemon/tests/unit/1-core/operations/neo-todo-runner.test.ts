@@ -22,6 +22,13 @@ import { createTables, runMigrations } from '../../../../src/storage/schema/inde
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 const ref = { adapter: 'hyperneo', id: 'worker-1' };
+const receipt = { executionId: ref.id, inputId: 'input-1' };
+const observed = (text: string, at: number) => ({
+  receipt,
+  state: 'observed',
+  exchange: [{ at, role: 'agent', text }],
+  exchangeCut: false,
+});
 const completed = (value: unknown): OperationOutcome =>
   ({ kind: 'completed', value }) as OperationOutcome;
 
@@ -78,9 +85,12 @@ function setup(
       beforeInvoke?.(name);
       calls.push({ name, input });
       if (name === 'work.start')
-        return completed({ ok: true, value: { ref, lastActivityAt: 1_000, link: '/session/w' } });
+        return completed({
+          ok: true,
+          value: { ref, receipt, lastActivityAt: 1_000, link: '/session/w' },
+        });
       if (name === 'work.send')
-        return completed(sendResult ?? { ok: true, value: { delivered: true } });
+        return completed(sendResult ?? { ok: true, value: { delivered: true, receipt } });
       return completed(status);
     },
     packs: () => [pack],
@@ -370,6 +380,7 @@ describe('neo todo runner', () => {
       value: {
         status: 'done',
         lastActivityAt: 4000,
+        inputEvidence: observed('Later PR https://github.com/a/b/pull/9', 3000),
         exchange: [
           { at: 1000, role: 'user', text: String(calls[0].input.message) },
           { at: 3000, role: 'agent', text: 'Later PR https://github.com/a/b/pull/9' },
@@ -416,6 +427,7 @@ describe('neo todo runner', () => {
         status: 'done',
         lastActivityAt: 2_000,
         lastReply: 'Opened the PR',
+        inputEvidence: observed('Opened https://github.com/a/b/pull/1', 2000),
         exchange: [
           { at: 1_500, role: 'user', text: String(calls[0].input.message) },
           { at: 2_000, role: 'agent', text: 'Opened https://github.com/a/b/pull/1' },
@@ -1074,6 +1086,7 @@ describe('blocked todos', () => {
         status: 'done',
         lastActivityAt: 2_000,
         lastReply: 'Opened the PR',
+        inputEvidence: observed('Opened the PR', 2000),
         exchange: [opening, { at: 2_000, role: 'agent', text: 'Opened the PR' }],
       },
     });
@@ -1186,6 +1199,7 @@ describe('stopped worker ladder', () => {
       value: {
         status: 'done',
         lastActivityAt: 2_000,
+        inputEvidence: observed('Pushed the first half.', 2000),
         exchange: [
           { at: 1_500, role: 'user', text: String(harness.calls[0]?.input.message ?? 'Hi') },
           { at: 2_000, role: 'agent', text: 'Pushed the first half.' },

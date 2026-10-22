@@ -8,6 +8,7 @@ import { NeoRepository } from '../../../packages/daemon/src/storage/repositories
 import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
+import { sdkMessageBodyAt } from '../../../packages/daemon/src/storage/repositories/sdk-message-body-read.ts';
 
 const [mode, directory] = process.argv.slice(2);
 const run = resolve(directory);
@@ -23,6 +24,11 @@ const root = 'neo:10000000-0000-4000-8000-000000008230';
 const at = Date.now();
 const report = '  Complete explicit worker result 🔬\n'.repeat(1000) + '\n';
 const prior = '  Previously stored report 🦊\n';
+const uuids = new Map<string, string>();
+const uuid = (id: string) => {
+  if (!uuids.has(id)) uuids.set(id, crypto.randomUUID());
+  return uuids.get(id)!;
+};
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
 const pr = 'https://github.com/synthetic/results/pull/1';
 writeFileSync(join(run, 'pr.json'), JSON.stringify({ url: pr, state: 'OPEN', headRefOid: 'a'.repeat(40), reviews: [], statusCheckRollup: [] }));
@@ -55,7 +61,7 @@ let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let ws: WebSocket | undefined;
 let store: NeoAskTodoRepository;
 let sessions: NeoTodoSessionRepository;
-const evidence: Record<string, unknown> = { mode, calls, report: { bytes: Buffer.byteLength(report), sha256: hash(`Agent: ${report}`) } };
+const evidence: Record<string, unknown> = { mode, calls, report: { sourceBytes: Buffer.byteLength(report), storedBytes: Buffer.byteLength(`Agent: ${report}`), sha256: hash(`Agent: ${report}`) } };
 const open = async () => {
   app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
   assert.notEqual(app.server.port, 8399);
@@ -88,8 +94,8 @@ const refresh = async () => {
 };
 const seedSession = (id: string) => app!.db.createSession({ id, title: 'Synthetic result proof', workspacePath: join(run, 'workspace'), createdAt: new Date(at).toISOString(), lastActiveAt: new Date(at + 100).toISOString(), status: 'active', config: { queryMode: 'manual' }, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
 const put = (worker: string, id: string, type: string, text: string, consumed: number) => {
-  const body = type === 'result' ? { type, subtype: 'success', result: text, is_error: false } : { type, message: { content: [{ type: 'text', text }] } };
-  app!.db.getDatabase().prepare("INSERT INTO sdk_messages(id,session_id,sdk_uuid,message_type,sdk_message,timestamp,send_status,consumed_seq,is_terminal) VALUES (?,?,?,?,?,?,'consumed',?,?)").run(id, worker, id, type, JSON.stringify(body), new Date(at + consumed).toISOString(), consumed, type === 'result' ? 1 : 0);
+  const body = type === 'result' ? { type, uuid: uuid(id), subtype: 'success', result: text, is_error: false } : { type, uuid: uuid(id), message: { content: [{ type: 'text', text }] } };
+  app!.db.getDatabase().prepare("INSERT INTO sdk_messages(id,session_id,sdk_uuid,message_type,sdk_message,timestamp,send_status,consumed_seq,is_terminal) VALUES (?,?,?,?,?,?,'consumed',?,?)").run(id, worker, uuid(id), type, JSON.stringify(body), new Date(at + consumed).toISOString(), consumed, type === 'result' ? 1 : 0);
 };
 const seed = (id: string, packed: boolean, receipt: boolean) => {
   store.openAsk({ id, title: id, request: 'Synthetic explicit worker result', sessionId: root, projectId: null, originMessageId: null, createdAt: at });
@@ -98,7 +104,7 @@ const seed = (id: string, packed: boolean, receipt: boolean) => {
   const ref = { adapter: 'hyperneo', id };
   sessions.create(id, { verb: 'send', ref });
   sessions.recordRef(id, ref, at);
-  sessions.recordSent(id, { inputBefore: at, opening: `Perform ${id}`, ...(receipt ? { receipt: { executionId: id, inputId: `${id}-input` } } : {}) });
+  sessions.recordSent(id, { inputBefore: at, opening: `Perform ${id}`, ...(receipt ? { receipt: { executionId: id, inputId: uuid(`${id}-input`) } } : {}) });
   store.updateTodo(todo, { state: 'doing', startedAt: at, report: prior }, at);
   put(id, `${id}-input`, 'user', `Perform ${id}`, 10);
   put(id, `${id}-result`, 'result', report, 20);
@@ -115,8 +121,9 @@ try {
   seed('human', false, true);
   const next = store.addTodo('next', 'explicit', { title: 'Next after facts', doneWhen: 'Human checks next', instruction: 'Perform next', named: null }, at);
   sessions.create(next.id, { verb: 'send', ref: { adapter: 'codex-desktop', id: 'next' } });
-  const sdkHash = () => hash(JSON.stringify(app!.db.getDatabase().prepare("SELECT * FROM sdk_messages WHERE session_id IN ('legacy','explicit','human') ORDER BY seq").all()));
+  const sdkHash = () => hash(JSON.stringify(app!.db.getDatabase().prepare(`SELECT id,session_id,sdk_uuid,message_type,${sdkMessageBodyAt('sdk_messages.rowid')} AS message,timestamp,send_status,consumed_seq,is_terminal FROM sdk_messages WHERE session_id IN ('legacy','explicit','human') ORDER BY seq`).all()));
   const original = sdkHash();
+  evidence.sdkBefore = sdkHash();
   await refresh();
   evidence.initial = ['legacy', 'explicit', 'human', 'next'].map((id) => store.getTodo(id));
   evidence.initialSnapshot = await rpc('neo.snapshot', {});
@@ -148,15 +155,29 @@ try {
     assert.equal(store.getTodo('legacy')?.report, prior);
     assert.equal(store.getTodo('explicit')?.report, `Agent: ${report}`);
     assert.equal(store.getTodo('explicit')?.state, 'doing');
+    evidence.restartedEvidence = await rpc('work.status', { ref: { adapter: 'hyperneo', id: 'explicit' }, receipt: { executionId: 'explicit', inputId: uuid('explicit-input') } });
+    assert.equal((evidence.restartedEvidence as any).value.inputEvidence.state, 'observed');
+    assert.equal((evidence.restartedEvidence as any).value.inputEvidence.replyReport, `Agent: ${report}`);
     assert.equal(starts(), 0);
     writeFileSync(join(run, 'pr.json'), JSON.stringify({ url: pr, state: 'MERGED', mergedAt: new Date().toISOString(), headRefOid: 'a'.repeat(40), reviews: [], statusCheckRollup: [] }));
+    evidence.factClose = await rpc('neo.todo.close', { todoId: 'explicit', reason: 'Synthetic pack fact now met' });
+    assert.equal((evidence.factClose as any).ok, true);
     await refresh();
     await refresh();
     assert.equal(store.getTodo('explicit')?.state, 'done');
     assert.equal(store.getTodo('next')?.state, 'doing');
     assert.equal(starts(), 1);
     assert.equal(store.getTodo('explicit')?.report, `Agent: ${report}`);
+    evidence.sdkAfter = sdkHash();
     assert.equal(sdkHash(), original);
+    ws!.close();
+    await app!.cleanup();
+    app = undefined;
+    await open();
+    await refresh();
+    assert.equal(starts(), 1);
+    assert.equal(store.getTodo('legacy')?.state, 'removed');
+    assert.equal(store.getTodo('explicit')?.report, `Agent: ${report}`);
     evidence.finalSnapshot = await rpc('neo.snapshot', {});
     evidence.final = { states: ['legacy','explicit','human','next'].map((id) => ({ id, state: store.getTodo(id)?.state })), starts: starts(), storedReportHash: hash(store.getTodo('explicit')!.report!), sdkStorageUnchanged: true };
     console.log('PASS: only receipt-bound results replace reports; prose cannot finish a pack todo; human confirmation, exact bytes, restart/removal and fact-driven next dispatch preserved.');

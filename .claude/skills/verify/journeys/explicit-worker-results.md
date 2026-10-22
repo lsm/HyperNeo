@@ -25,11 +25,15 @@ operation, retaining the same report bytes.
 Repeat refresh, remove the legacy todo through RPC, and reopen the daemon. The
 removed todo stays removed with its old report; the receipt-bound report remains
 identical. Only after the fixture PR merges may the pack finish its todo and
-actually dispatch the next worker through `turn/start`. Repeating the fact sends
-nothing twice. SDK input/result rows remain unchanged. Stored states and real
+actually dispatch the next worker through `turn/start`. The helper requests an
+explicit fact recheck through the close operation, bypassing the normal check
+interval; the earlier identical request while the PR was open was refused. Repeating the fact sends
+nothing twice. Logical SDK input/result bytes remain unchanged across the daemon
+restart (normal body-split storage maintenance may relocate their physical rows). Stored states and real
 `neo.snapshot` RPC replies are saved in `evidence/observed.json`, alongside actual
 worker peer calls and report byte/hash evidence; `evidence/gh.log` shows fixture
-reads. The helper closes its daemon, RPC socket and worker peer in finally.
+reads. The helper closes its daemon, RPC socket and worker peer in finally. The
+synthetic Neo has no provider: informational note consumption is not verified.
 
 `before` mode on the pre-change revision reproduces the bug: an opening-matched
 result without a receipt replaces the previous report. Contract tests cover the
