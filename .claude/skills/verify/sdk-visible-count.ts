@@ -65,9 +65,11 @@ try {
   const retained = db.prepare('SELECT COUNT(*) AS count, SUM(length(sdk_message)) AS bodyBytes FROM sdk_messages WHERE session_id = ?').get(sessionId);
   evidence.retained = retained;
   assert.equal((retained as { count: number }).count, count + 1);
+  assert.equal((retained as { bodyBytes: number }).bodyBytes, count * body.length + retryBody.length);
   console.log(JSON.stringify(evidence, null, 2));
   assert(Math.max(0, ...calls) < 250, 'Visible count exceeded 250ms');
   assert(lagMs < 1000, 'Event loop blocked >=1s');
+  assert(rpcMs < 250, 'Retry RPC exceeded 250ms');
 } finally {
   if (heartbeat) clearInterval(heartbeat);
   SDKMessageRepository.prototype.recomputeVisibleMessageCount = original;
