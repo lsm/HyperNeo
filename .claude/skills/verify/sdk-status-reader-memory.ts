@@ -32,6 +32,16 @@ try {
  evidence.rpcMs=performance.now()-at;
  if(mode==='baseline'){assert('error' in result);assert(result.error.includes('file-backed'));evidence.error=result.error;}
  else {assert('value' in result);const page=result.value as {total:number;messages:{text:string}[]};assert.equal(page.total,1);assert.equal(page.messages[0].text,text+'\nSecond');evidence.total=page.total;}
+ if(mode!=='baseline') {
+  const pageAt=performance.now();
+  const page=await rpc('message.sdkMessages',{sessionId,limit:20}) as {sdkMessages:{uuid:string;message:{content:unknown}}[];hasMore:boolean;backgroundTaskMessages:unknown[]};
+  evidence.pageMs=performance.now()-pageAt;
+  assert.equal(page.sdkMessages.length,1);assert.equal(page.sdkMessages[0].uuid,'memory-user');
+  assert.deepEqual(page.sdkMessages[0].message.content,[{type:'text',text},{type:'image'},{type:'text',text:'Second'}]);
+  assert.equal(page.hasMore,false);assert.deepEqual(page.backgroundTaskMessages,[]);
+  const repeated=await rpc('message.sdkMessages',{sessionId,limit:20});assert.deepEqual(repeated,page);
+  evidence.repeatedPageMatched=true;
+ }
  assert.equal(hash(),before);evidence.bodySha256=before;
  assert.equal((await rpc('system.health') as {status:string}).status,'ok');evidence.health='ok';
 } finally {ws?.close();await app.cleanup();globalThis.Worker=NativeWorker;await writeFile(join(run,'evidence/memory.json'),JSON.stringify(evidence,null,2));}
