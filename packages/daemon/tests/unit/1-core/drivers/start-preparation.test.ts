@@ -20,11 +20,12 @@ describe('workStartPreparation', () => {
       hostileConfig,
       '[commit]\n gpgsign = true\n[gpg]\n program = /synthetic/unavailable-signer\n'
     );
+    const inheritedEnv = { ...process.env, GIT_CONFIG_GLOBAL: hostileConfig };
     const run = async (command: readonly string[], directory: string) => {
       const result = spawnSync(command[0], command.slice(1), {
         cwd: directory,
         encoding: 'utf8',
-        env: { ...process.env, GIT_CONFIG_GLOBAL: hostileConfig },
+        env: { ...inheritedEnv, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' },
       });
       return { code: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
     };

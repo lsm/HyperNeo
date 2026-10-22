@@ -162,7 +162,7 @@ async function prepareClone(
       if (result.code !== 0) return refuse(`${phase}: ${result.stderr.trim()}`);
     }
     const refs = await effects.run(
-      ['git', 'for-each-ref', '--format=%(refname)', 'refs/remotes/origin/'],
+      ['git', 'for-each-ref', '--format=%(refname)', 'refs/remotes/origin/', 'refs/heads/'],
       plan.destination
     );
     if (refs.code !== 0) return refuse(`clone_refs_failed: ${refs.stderr.trim()}`);
