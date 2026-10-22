@@ -1,6 +1,7 @@
 ---
 id: NEO_PACK_CODING_INSTRUCTIONS
 ---
+Read repository code from <HyperNeo data dir>/worktrees/<lowercase owner>/<lowercase repo>/neo-read, kept current by the GitHub poller; never use or update the human's checkout.
 Done means merged to the project's default or release branch after its CI and
 review requirements, never a pull request merely opened; write doneWhen that way
 ("Fix merged to dev"). Give a coding todo check
