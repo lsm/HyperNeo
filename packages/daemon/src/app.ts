@@ -78,7 +78,11 @@ import {
   isHttpExtension,
   isRpcExtension,
 } from './lib/external-events/extension-manager.ts';
-import { GitHubEventExtension } from './lib/external-events/github/index.ts';
+import {
+  GitHubEventExtension,
+  GITHUB_CREDENTIAL_SERVICE,
+  GITHUB_CREDENTIAL_ACCOUNT,
+} from './lib/external-events/github/index.ts';
 import { createNeoReadCheckoutSync } from './lib/neo/read-checkout-sync.ts';
 import { pullRequestNumbersOfTopics } from './lib/github/parse-pr-url.ts';
 import { composeLongHorizonSubscriptionPattern } from './lib/external-events/long-horizon-subscription-pattern.ts';
@@ -742,7 +746,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       jobProcessor,
       skillsManager,
       db.appMcpServers,
-      () => credentialManager.getCredentialStore().get('neokai.external-events.github', 'default')
+      () =>
+        credentialManager
+          .getCredentialStore()
+          .get(GITHUB_CREDENTIAL_SERVICE, GITHUB_CREDENTIAL_ACCOUNT)
     );
 
     sessionManager.start();
