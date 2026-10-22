@@ -28,7 +28,7 @@ const insert = db.prepare(`INSERT INTO neo_session_messages
   (conversation_id,message_id,from_session,to_session,text,created_at) VALUES (?,?,?,?,?,?)`);
 const count = Number(process.env.VERIFY_HISTORY_ROWS ?? 200000);
 const body = 'Synthetic inbound history. '.repeat(160);
-for (let offset = 0; offset < count; offset += 1000) {
+for (let offset = 0; process.env.VERIFY_HISTORY_EXISTING !== '1' && offset < count; offset += 1000) {
   db.transaction(() => {
     for (let i = offset; i < Math.min(offset + 1000, count); i++) {
       insert.run(conversation, `perf-${i}`, i < 30 ? 'neo:synthetic' : 'worker:synthetic',

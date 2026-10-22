@@ -24,3 +24,10 @@ process startup. `evidence/history-latency.json` records every duration and fail
 if any is over budget. The original code returned correct rows in
 336/617/325 ms. This reproduces a slow snapshot on synthetic stored history;
 it does not establish the native cause of all historical off-CPU stalls.
+
+Fixed fresh-database evidence returned the same rows in 17/14/13 ms. To check
+upgrade preservation, stop the regression run, relaunch the fixed build with
+that same synthetic run directory, then run the helper with
+`VERIFY_HISTORY_EXISTING=1`. That mode reads the existing fixture without
+seeding again. Both fresh and upgrade checks must pass. Stop the owned daemon
+and mock using the shared cleanup after each run.
