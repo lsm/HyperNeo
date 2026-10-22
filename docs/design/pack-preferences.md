@@ -63,9 +63,9 @@ The first-use question is **generated from the declaration** and sent through th
 | `humanSignoff` | `globs`: path globs, plus `label:<name>` entries for labels, for example `docs/design/**`, `docs/architecture/**`, `label:needs-human` | A PR that touches a matching path or carries a matching label is held for the human whatever the merge policy. |
 | `sessionStrategy` | enum: `long_lived` (default), `per_task`, `per_pr` | How Neo reuses or creates sessions on dispatch; before an answer it uses `long_lived` without storing it. See Session strategy. |
 
-**Where paths and labels come from.** The ledger's GraphQL read (`CODING_LEDGER_QUERY`, `pr-ledger.ts:101-115`) fetches neither today.
+**Where paths and labels come from.** The ledger's GraphQL read (`CODING_LEDGER_QUERY`, `pr-ledger-source.ts`) fetches neither today.
 
-- **Review authors:** the reviews fetch (`pr-ledger.ts:102`) gains `author { login }`. Its nodes carry only `state` and `commit { oid }` today, and `reviewDecision` doesn't say who approved, so without the login a `review_bot` repo can't tell the bot's approval from anyone else's.
+- **Review authors:** the reviews fetch (`FIELDS`, `pr-ledger-source.ts`) gains `author { login }`. Its nodes carry only `state` and `commit { oid }` today, and `reviewDecision` doesn't say who approved, so without the login a `review_bot` repo can't tell the bot's approval from anyone else's.
 - **Labels:** `labels(first: 100) { pageInfo { hasNextPage } nodes { name } }` is added to the open-PR fields and read on every ledger pass. A truncated label page counts as matching, so the PR is held, the same as the paths case below.
 - **Paths:** fetched only for repos whose `humanSignoff` has path globs, and only for an open PR whose head differs from the head stored with its last path list. That's one small `files(first: 100) { nodes { path } }` query per new head. It stays within the existing `CODING_LEDGER_MIN_RATE` budget check, so a low rate limit skips the read and the PR stays held until paths are known. The list is stored on the ledger row (`paths_json`, `paths_head`). A PR with more than 100 files counts as matching, so it's held.
 
