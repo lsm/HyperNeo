@@ -157,3 +157,59 @@ test('supported memory DB keeps complete status text without opening a file work
     await db.close();
   }
 });
+
+test('paged memory read retains child/background projection and complete stored tool output', async () => {
+  const db = await createTestDb();
+  try {
+    db.createSession(createTestSession('memory-page'));
+    db.saveSDKMessage('memory-page', {
+      type: 'assistant',
+      uuid: 'parent',
+      parent_tool_use_id: null,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'child-tool', name: 'Bash', input: {} }],
+      },
+    } as SDKMessage);
+    const full = 'complete tool result\n'.repeat(2000);
+    db.saveUserMessage(
+      'memory-page',
+      {
+        type: 'user',
+        uuid: 'child',
+        parent_tool_use_id: 'child-tool',
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 'child-result', content: full }],
+        },
+      } as SDKMessage,
+      'consumed'
+    );
+    db.saveSDKMessage('memory-page', {
+      type: 'system',
+      subtype: 'task_started',
+      uuid: 'background',
+      task_id: 'memory-task',
+    } as SDKMessage);
+    const stored = db
+      .getDatabase()
+      .prepare('SELECT sdk_message FROM sdk_message_bodies ORDER BY seq')
+      .all();
+    const page = await db.getSDKMessagePageAsync('memory-page', { limit: 1 });
+    expect(page.sdkMessages.map((m) => m.uuid)).toEqual(['parent', 'child']);
+    expect(page.hasMore).toBe(true);
+    expect(page.backgroundTaskMessages.map((m) => m.uuid)).toContain('background');
+    const child = page.sdkMessages[1] as {
+      output_capped?: boolean;
+      message: { content: { content: string; output_capped: unknown }[] };
+    };
+    expect(child.output_capped).toBe(true);
+    expect(child.message.content[0].content).toHaveLength(16 * 1024);
+    expect(child.message.content[0].output_capped).toEqual({ chars: full.length });
+    expect(
+      db.getDatabase().prepare('SELECT sdk_message FROM sdk_message_bodies ORDER BY seq').all()
+    ).toEqual(stored);
+  } finally {
+    await db.close();
+  }
+});
