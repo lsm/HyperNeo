@@ -214,6 +214,8 @@ export class NeoService {
     this.builtinPacks = [
       createCodingPack({
         readPrs: (urls) => this.readPrs(urls),
+        readRefStates: (refs) => this.readRefStates(refs),
+        listGithub: (args) => this.listGithub(args),
         todoPrs: this.todoPrs,
         prLedger: new CodingPrLedgerRepository(db.getDatabase()),
         prSweep: new CodingPrSweepRepository(db.getDatabase()),

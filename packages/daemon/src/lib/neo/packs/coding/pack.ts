@@ -1,3 +1,6 @@
+import { createCodingGithubReadOperation } from './github-read-operation.ts';
+import { readGithubRefStates, type NeoRefStateReader } from './ask-prs.ts';
+import { listNeoGithub, type NeoGithubLister } from './github-query.ts';
 import { createCodingClaudeOwnerReader } from './claude-pr-owners.ts';
 import { NEO_PACK_CODING_INSTRUCTIONS, NEO_PACK_CODING_WORKER_RULES } from '@hyperneo/prompts';
 import { type CodingTodoPrRepository, createCodingTodoPack } from './todo-prs.ts';
@@ -23,6 +26,8 @@ export const CODING_PACK_BRIEF: NeoPackBrief = {
 
 export function createCodingPack(deps: {
   readPrs: NeoWorkPrReader;
+  readRefStates?: NeoRefStateReader;
+  listGithub?: NeoGithubLister;
   todoPrs: CodingTodoPrRepository;
   prLedger: CodingPrLedgerRepository;
   prSweep: CodingPrSweepRepository;
@@ -39,6 +44,13 @@ export function createCodingPack(deps: {
   );
   return {
     ...CODING_PACK_BRIEF,
+    operations: [
+      createCodingGithubReadOperation({
+        readPrs: deps.readPrs,
+        readRefStates: deps.readRefStates ?? readGithubRefStates,
+        listGithub: deps.listGithub ?? listNeoGithub,
+      }),
+    ],
     preferences: {
       mergePolicy: {
         label: { en: 'Merge policy', 'zh-Hans': '合并规则' },

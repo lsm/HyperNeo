@@ -27,12 +27,6 @@ import { NEO_SNAPSHOT_UNCHANGED_GUIDANCE } from './snapshot-read.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { THINKING_LEVELS } from '@hyperneo/shared';
 import { z } from 'zod';
-import { NeoGithubReadResult, readNeoGithubRef } from './packs/coding/github-read.ts';
-import {
-  NeoGithubQuery,
-  NeoGithubQueryResult,
-  queryNeoGithub,
-} from './packs/coding/github-query.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import { defineOperation } from '../operations/registry.ts';
 import { isLocalUser } from '../operations/caller.ts';
@@ -252,9 +246,6 @@ const RulesResult = z.union([
   z.object({ ok: z.literal(true), standingRules: z.array(z.string()) }),
 ]);
 const PackRead = z.object({ id: z.string().trim().min(1).max(80) });
-const GithubRead = NeoGithubQuery.partial({ repo: true })
-  .extend({ url: z.string().trim().min(1).max(500).optional() })
-  .refine((input) => !input.url !== !input.repo, 'Pass either url or repo.');
 const PackReadResult = z.union([
   Failure,
   z.object({
@@ -679,18 +670,6 @@ export function createNeoOperations(service: NeoService) {
     | z.infer<typeof Failure>
     | { ok: true; project: NonNullable<ReturnType<NeoService['repo']['getProject']>> }
   >;
-  const readGithub = path(
-    'neo.github.read',
-    async (
-      input: z.infer<typeof GithubRead>
-    ): Promise<NeoGithubReadResult | NeoGithubQueryResult> =>
-      input.url
-        ? await readNeoGithubRef(service, input.url)
-        : await queryNeoGithub((args: string[]) => service.listGithub(args), {
-            ...input,
-            repo: input.repo!,
-          })
-  );
   const readPack = path('neo.pack.read', ({ id }: z.infer<typeof PackRead>) => {
     const pack = service.pack(id);
     if (!pack)
@@ -828,15 +807,12 @@ export function createNeoOperations(service: NeoService) {
       policy: { safetyClass: 'human_only' },
       execute: (input, caller) => trackSession(input, caller, Date.now()),
     }),
-    defineOperation({
-      name: 'neo.github.read',
-      description:
-        'Read GitHub as it is now. With {url}, one pull request or issue: a pull request returns its state (OPEN, MERGED or CLOSED), checks (passing, failing, pending or none), review verdict on its current head (approved, changes_requested or none), merge blockers and title; an issue returns its state, how it closed (completed, not_planned or duplicate), the merged pull request that closed it, and its parent issue. With {repo: "owner/name", kind: "pr" or "issue", state: "open", "merged", "closed" or "all", by: "created", "updated", "merged" or "closed", since, until (ISO times) or withinHours (the last N hours up to now), limit}, a list: every match in that window with number, title, url, state, createdAt, updatedAt, mergedAt and closedAt, newest first, truncated when more matched than limit, and window {by, since, until} saying what the read covered (until is the read time when you leave it out, so leave it out for "recently" or "last N hours"). by defaults to merged for state merged, closed for closed, otherwise created. Use the list for any question about what happened in a time range ("which PRs merged in the last 2 hours") instead of guessing numbers and reading them one by one. Read-only.',
-      inputSchema: GithubRead,
-      resultSchema: z.union([NeoGithubReadResult, NeoGithubQueryResult]),
-      policy: { safetyClass: 'read', roles: ['neo'] },
-      execute: readGithub,
-    }),
+    ...service.installedPacks().flatMap((pack) =>
+      (pack.operations ?? []).map((operation) => ({
+        ...operation,
+        execute: path(operation.name, operation.execute),
+      }))
+    ),
     defineOperation({
       name: 'neo.pack.read',
       description:

@@ -4,6 +4,7 @@ import type { WorkRef, WorkStatus } from '../drivers/types.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
 import type { ExternalEvent } from '../external-events/types.ts';
 import type { NeoStatusLine } from './status-codes.ts';
+import type { OperationDefinition } from '../operations/registry.ts';
 
 export interface NeoCardEventSubscription {
   workId: string;
@@ -86,6 +87,7 @@ export interface NeoPackPreferenceDeclaration {
 }
 
 export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
+  operations?: readonly OperationDefinition[];
   preferences?: Record<string, NeoPackPreferenceDeclaration>;
   todos?: NeoTodoPack;
   sweep?(now: number): Promise<void>;
