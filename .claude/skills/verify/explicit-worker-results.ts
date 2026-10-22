@@ -180,6 +180,7 @@ try {
     assert.equal(store.getTodo('legacy')?.report, prior);
     assert.equal(store.getTodo('explicit')?.report, `Agent: ${report}`);
     assert.equal(store.getTodo('explicit')?.state, 'doing');
+    assert.equal(recipientMessages().filter((text) => text.includes(noReply)).length, 1);
     evidence.restartedEvidence = await rpc('work.status', { ref: { adapter: 'hyperneo', id: 'explicit' }, receipt: { executionId: 'explicit', inputId: uuid('explicit-input') } });
     assert.equal((evidence.restartedEvidence as any).value.inputEvidence.state, 'observed');
     assert.equal((evidence.restartedEvidence as any).value.inputEvidence.replyReport, `Agent: ${report}`);

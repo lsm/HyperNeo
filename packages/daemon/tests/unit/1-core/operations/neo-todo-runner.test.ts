@@ -433,6 +433,40 @@ describe('neo todo runner', () => {
     }
   );
 
+  test('does not relay a turn that predates this dispatch or belongs to the replaced worker', async () => {
+    const h = setup(false);
+    try {
+      const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+      await h.runner.start(todo.id);
+      const dispatch = h.sessions.inputs.list(todo.id)[0];
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: dispatch.acceptedAt - 1,
+          turnEnds: [{ id: 'old', at: dispatch.acceptedAt - 1, message: 'Old worker turn' }],
+        },
+      });
+      await h.runner.refresh(() => {});
+      expect(h.told).toEqual([]);
+      h.sessions.recordRef(todo.id, { ...ref, id: 'replacement' });
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: dispatch.acceptedAt + 1,
+          turnEnds: [
+            { id: 'wrong-worker', at: dispatch.acceptedAt + 1, message: 'Wrong worker turn' },
+          ],
+        },
+      });
+      await h.runner.refresh(() => {});
+      expect(h.told).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('starts a todo in its session, settles its report and lets the pack tick it done', async () => {
     const { store, sessions, runner, calls, told, add, setStatus } = setup(true);
     const todo = add({ pack: 'coding', kind: 'pr_merged', params: {} });

@@ -97,6 +97,7 @@ describe('live Claude CLI status evidence', () => {
         lastActivityAt: Date.parse(replyAt),
         lastReply: 'answer',
         lastReplyAt: Date.parse(replyAt),
+        turnEnds: [{ id: expect.any(String), at: Date.parse(replyAt), message: 'answer' }],
         inputEvidence: {
           receipt,
           state: 'observed',
