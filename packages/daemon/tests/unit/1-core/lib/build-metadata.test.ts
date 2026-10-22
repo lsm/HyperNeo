@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'bun:test';
 import daemonPackageJson from '../../../../package.json' with { type: 'json' };
-import * as metadata from '../../../../src/lib/build-metadata';
 import { execFileSync } from 'node:child_process';
 import {
   BUILD_METADATA,
   UNKNOWN_VERSION,
   readBuildCommit,
+  readReleaseBuildCommit,
   readBuildMetadata,
 } from '../../../../src/lib/build-metadata';
 
@@ -84,10 +84,6 @@ describe('release build commit shared by web and daemon', () => {
     },
     { environment: {}, expected: SHA },
   ])('reports the same release commit for $expected', ({ environment, expected }) => {
-    const read = Reflect.get(metadata, 'readReleaseBuildCommit') as (
-      environment: Record<string, string | undefined>,
-      gitHead: () => string
-    ) => string | undefined;
-    expect(read(environment, () => SHA)).toBe(expected);
+    expect(readReleaseBuildCommit(environment, () => SHA)).toBe(expected);
   });
 });

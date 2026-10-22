@@ -18,10 +18,14 @@ export const reloadStaleWebBuild = (superpipe({})('web-build-reconnect') as Pipe
     'changed'
   )
   .pipe(
-    (changed: boolean, reload: () => void) => {
-      if (changed) reload();
+    (changed: boolean, build: { commit?: string }, bundleCommit: string, reload: () => void) => {
+      if (!changed) return;
+      const key = `hyperneo:web-build-reload:${bundleCommit}:${build.commit}`;
+      if (sessionStorage.getItem(key)) return;
+      sessionStorage.setItem(key, '1');
+      reload();
     },
-    ['changed', 'reload']
+    ['changed', 'build', 'bundleCommit', 'reload']
   )
   .endAsync('changed') as (
   hub: MessageHub,

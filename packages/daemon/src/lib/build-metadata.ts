@@ -44,6 +44,16 @@ export function readBuildCommit(
   }
 }
 
+export function readReleaseBuildCommit(
+  env: Record<string, string | undefined>,
+  gitHead: () => string = sourceGitHead
+): string | undefined {
+  return readBuildCommit(
+    { HYPERNEO_BUILD_COMMIT: env.GITHUB_SHA || env.HYPERNEO_BUILD_COMMIT },
+    gitHead
+  );
+}
+
 function sourceGitHead(): string {
   return execFileSync('git', ['rev-parse', 'HEAD'], {
     cwd: dirname(fileURLToPath(import.meta.url)),

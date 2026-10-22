@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
-import { mkdirSync, readdirSync, writeFileSync, openSync, closeSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, writeFileSync, openSync, closeSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const [directory, portText = '9394', mode = 'verify'] = process.argv.slice(2);
@@ -33,9 +33,17 @@ function command(args, name, commit) {
   return child;
 }
 async function build(commit) {
-  const child = command(['run', '--cwd', 'packages/web', 'build'], `build-${commit[0]}`, commit);
+  const args = mode === 'compile'
+    ? ['scripts/build-binary.ts', '--target', `bun-${process.platform}-${process.arch}`]
+    : ['run', '--cwd', 'packages/web', 'build'];
+  const child = command(args, `build-${commit[0]}`, commit);
   const code = await new Promise((accept, reject) => { child.once('error', reject); child.once('exit', accept); });
   assert.equal(code, 0, 'web build failed');
+  if (mode === 'compile') {
+    const log = readFileSync(`${run}/build-${commit[0]}.log`, 'utf8');
+    assert(log.includes(`Build commit: ${commit}`), 'compiler stamp differs from web override');
+    evidence.observations.push({ stage: 'compiler-stamp', commit, target: `${process.platform}-${process.arch}` });
+  }
 }
 async function stopDaemon() {
   if (!daemon) return;
@@ -56,7 +64,7 @@ async function startDaemon(commit) {
   throw new Error('isolated daemon did not become ready');
 }
 async function read(page, expected, stage) {
-  await page.waitForFunction(() => window.__messageHubReady && window.connectionManager?.isConnected(), { timeout: 20000 });
+  await page.waitForFunction(() => window.__messageHubReady && window.connectionManager?.isConnected(), null, { timeout: 20000 });
   const value = await page.evaluate(async () => ({
     build: await window.__messageHub.request('operation.invoke', { name: 'system.build', input: {} }),
     loads: Number(sessionStorage.getItem('verify-build-loads')),
@@ -108,7 +116,7 @@ try {
     await pause(3000);
     assert.equal((await read(page, commitB, 'stale-page')).loads, 1);
   } else {
-    await page.waitForFunction(() => Number(sessionStorage.getItem('verify-build-loads')) === 2, { timeout: 20000 });
+    await page.waitForFunction(() => Number(sessionStorage.getItem('verify-build-loads')) === 2, null, { timeout: 20000 });
     assert.equal((await read(page, commitB, 'changed-build-reloaded')).navigation, 'reload');
     await pause(2000);
     assert.equal((await read(page, commitB, 'new-build-stable')).loads, 2);
