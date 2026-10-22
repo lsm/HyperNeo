@@ -82,7 +82,7 @@ import type {
   NeoPack,
   NeoPackBrief,
   NeoPackEventRoute,
-} from './packs/types.ts';
+} from './pack-contract.ts';
 import { neoPromptTools, planNeoSessionConfig } from './session-config.ts';
 import { neoSessionStatus } from './session-status.ts';
 import { createNeoPublisher } from './publication-operation.ts';

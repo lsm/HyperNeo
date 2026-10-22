@@ -1,6 +1,6 @@
 import type { Session, SessionConfig } from '@hyperneo/shared';
 import { OPERATIONS_MCP_SERVER_NAME } from '../mcp/built-in-servers.ts';
-import type { NeoPackBrief } from './packs/types.ts';
+import type { NeoPackBrief } from './pack-contract.ts';
 import { neoPrompt } from './prompt.ts';
 
 export function neoPromptTools(packs: readonly NeoPackBrief[]) {

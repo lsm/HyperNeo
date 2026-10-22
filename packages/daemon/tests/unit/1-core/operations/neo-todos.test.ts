@@ -4,7 +4,7 @@ import {
   createNeoTodoOperations,
   type NeoTodoControls,
 } from '../../../../src/lib/neo/todo-operations.ts';
-import type { NeoPack } from '../../../../src/lib/neo/packs/types.ts';
+import type { NeoPack } from '../../../../src/lib/neo/pack-contract.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';

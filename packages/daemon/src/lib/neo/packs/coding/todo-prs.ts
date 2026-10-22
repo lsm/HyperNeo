@@ -8,7 +8,7 @@ import {
   parsePrUrl,
   pullRequestUrlOfTopic,
 } from '../../../github/parse-pr-url.ts';
-import type { NeoTodoCheckResult, NeoTodoPack } from '../types.ts';
+import type { NeoTodoCheckResult, NeoTodoPack } from '../../pack-contract.ts';
 import type { CodingPrState } from './pr-ledger.ts';
 import { neoStatusLine, type NeoStatusLine } from '../../status-codes.ts';
 import { createCodingPackTables } from './schema/coding-tables.ts';

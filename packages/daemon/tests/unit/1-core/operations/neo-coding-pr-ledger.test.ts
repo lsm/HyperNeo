@@ -12,7 +12,7 @@ import {
   planCodingLedgerRead,
   reconcileCodingPrLedger,
 } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
-import type { NeoSessionFacts } from '../../../../src/lib/neo/packs/types.ts';
+import type { NeoSessionFacts } from '../../../../src/lib/neo/pack-contract.ts';
 import { createCodingPack } from '../../../../src/lib/neo/packs/coding/pack.ts';
 import { CodingTodoPrRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';

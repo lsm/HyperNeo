@@ -7,7 +7,7 @@ import { applyPackPreferenceAnswer } from '../../../storage/repositories/pack-pr
 import { defineOperation } from '../../operations/registry.ts';
 import { PackPreferenceInput, validatePackPreference } from './preference-operations.ts';
 import { formatPreferenceProposal } from './preference-proposal.ts';
-import type { NeoPack } from './types.ts';
+import type { NeoPack } from '../pack-contract.ts';
 
 const Ask = z
   .object({

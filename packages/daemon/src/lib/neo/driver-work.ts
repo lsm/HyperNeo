@@ -31,7 +31,7 @@ import {
 import { WORK_MESSAGE_MAX } from '../drivers/work-operations.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 import type { OperationCaller } from '../operations/registry.ts';
-import type { NeoSessionFacts } from './packs/types.ts';
+import type { NeoSessionFacts } from './pack-contract.ts';
 import { NeoReadWorkTarget } from './read-work.ts';
 
 const NeoStartWorkTarget = z.object({
