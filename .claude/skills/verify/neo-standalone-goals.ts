@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 
 const run = resolve(process.argv[2]);
@@ -46,6 +47,9 @@ try {
     hasNeoGoals: !!db.prepare("SELECT 1 FROM sqlite_master WHERE name='neo_goals'").get(),
   };
   assert.deepEqual(evidence.storage, { spaceGoals: { n: 0 }, spaceEvents: { n: 0 }, hasNeoGoals: true });
+  const ask = new NeoAskTodoRepository(db).openAsk({ id: 'synthetic-ask', sessionId: ownerSessionId, projectId: null, goalId: input.goalId, originMessageId: null, title: 'Goal-owned ask', request: 'Retain this association', createdAt: Date.now() });
+  evidence.ask = { ask: new NeoAskTodoRepository(db).getAsk(ask.id) };
+  assert.equal(evidence.ask.ask.goalId, input.goalId);
   for (let i = 0; i < 10; i++) assert((await rpc('goal.journal.append', { ...input, runId: `run-${i}`, done: `Cycle ${i}`, effect: 'Reader tried it', worked: 'Examples' })).accepted);
   assert((await rpc('goal.journal.append', { ...input, runId: 'run-9', done: 'Retried last cycle', effect: 'Reader tried it', worked: 'Examples' })).accepted);
   assert((await rpc('goal.session.update', { ...input, worksNote: 'Examples help', progress: 40 })).accepted);
@@ -62,12 +66,15 @@ try {
   const schedule = evidence.schedules.schedules.find((s: any) => s.sourceId === input.goalId);
   assert.deepEqual(schedule.cadence, { kind: 'every', everyMs: 900000 });
   assert.equal(schedule.nudgeEvery, 2);
+  evidence.beforeReopen = await rpc('goal.session.get', input);
   ws!.close(); await app!.cleanup(); app = undefined;
   await open();
   evidence.reopened = await rpc('goal.session.get', input);
   evidence.reopenedJournal = await rpc('goal.journal.list', input);
+  evidence.reopenedAsk = { ask: new NeoAskTodoRepository(app!.db.getDatabase()).getAsk(evidence.ask.ask.id) };
+  assert.equal(evidence.reopenedAsk.ask.goalId, input.goalId);
   evidence.foreignKeys = app!.db.getDatabase().prepare('PRAGMA foreign_key_check').all();
-  assert.deepEqual(evidence.reopened, evidence.goal);
+  assert.deepEqual(evidence.reopened, evidence.beforeReopen);
   assert.equal(evidence.reopenedJournal.entries.length, 10);
   assert.deepEqual(evidence.foreignKeys, []);
   console.log(`PASS: standalone goal, retained journal, schedule restoration and daemon reopen. ${run}/evidence/neo-standalone-goals.json`);

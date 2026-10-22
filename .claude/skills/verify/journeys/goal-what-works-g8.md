@@ -20,7 +20,7 @@ the existing neo.home.save flow, produces a mandate-changed fact, and reconcilia
 through goal.session.update removes it. The returned commit is journal evidence.
 Facts reads must never change mandateRev or home HEAD. After ten entries, facts
 must request compaction; goal.session.update worksNote must preserve all ten rows,
-save the note/cursor and atomically record journal_compacted.
+atomically save the note/cursor without writing Space events.
 
 Repeat with new RUN directories and final arguments `wake` and `nudge`. These
 exercise the actual scheduler fire and mailbox delivery. `wake` creates ten new
@@ -33,11 +33,11 @@ failure is expected and is not autonomous-model proof.
 
 Each mode writes `evidence/goal-what-works.json`, including exact RPC receipts or
 actual mailbox payload and scheduler outcome. The test-first `all` run records
-false compaction/mandate checks, a rejected worksNote input and no audit/cursor.
+false compaction/mandate checks, a rejected worksNote input and no note/cursor.
 
 The existing INTEGER works_note_through stores the number of retained entries
 covered by the note. This avoids timestamp ties and unstable SQLite rowids; run-id
 retries replace their entry and do not increment it. Unit contracts cover the
 9/10 boundary after compaction, retry, same-millisecond entries, owner scope,
-audit-failure rollback and unrelated home commits. No journal rows are removed.
+cursor-write failure rollback and unrelated home commits. No journal rows are removed.
 Compaction quality and the choice of goal refinement remain model judgments.

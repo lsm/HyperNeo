@@ -77,7 +77,7 @@ describe('session goal detail reads', () => {
         doneTest: 'Public',
       });
       expect(created.goal.worksNote).toBeNull();
-      db.prepare('UPDATE space_goals SET works_note = ? WHERE id = ?').run(
+      db.prepare('UPDATE neo_goals SET works_note = ? WHERE id = ?').run(
         'Concrete examples work',
         created.goal.id
       );
@@ -88,7 +88,7 @@ describe('session goal detail reads', () => {
         'Concrete examples work'
       );
       expect(
-        db.prepare('SELECT works_note FROM space_goals WHERE id = ?').get(created.goal.id)
+        db.prepare('SELECT works_note FROM neo_goals WHERE id = ?').get(created.goal.id)
       ).toEqual({ works_note: 'Concrete examples work' });
     } finally {
       db.close();
@@ -133,7 +133,7 @@ describe('goal mandate reconciliation facts', () => {
       expect(after.facts.lines.some((line: string) => line.startsWith('Mandate changed:'))).toBe(
         false
       );
-      expect(db.prepare('SELECT facts_lines FROM space_goals WHERE id=?').get(goal.id)).toEqual({
+      expect(db.prepare('SELECT facts_lines FROM neo_goals WHERE id=?').get(goal.id)).toEqual({
         facts_lines: null,
       });
     } finally {
@@ -180,19 +180,14 @@ describe('goal what-works compaction', () => {
         })
       ).toMatchObject({ accepted: true, goal: { worksNote: 'Small examples bring readers' } });
       expect(
-        db.prepare('SELECT works_note_through FROM space_goals WHERE id=?').get(goal.id)
+        db.prepare('SELECT works_note_through FROM neo_goals WHERE id=?').get(goal.id)
       ).toEqual({ works_note_through: 10 });
       const events = db
         .prepare(
           "SELECT source,new_state FROM space_goal_events WHERE goal_id=? AND event_type='journal_compacted'"
         )
         .all(goal.id) as { source: string; new_state: string }[];
-      expect(events).toHaveLength(1);
-      expect(events[0].source).toBe('neo');
-      expect(JSON.parse(events[0].new_state)).toMatchObject({
-        worksNote: 'Small examples bring readers',
-        worksNoteThrough: 10,
-      });
+      expect(events).toEqual([]);
       expect((await call('goal.journal.list', { goalId: goal.id })).entries).toHaveLength(10);
       expect((await call('goal.facts', { goalId: goal.id })).facts.lines).not.toContain(
         'What-works compaction due'
@@ -232,7 +227,7 @@ describe('goal what-works compaction', () => {
       db.close();
     }
   });
-  test('audit failure rolls the note and cursor back together', async () => {
+  test('cursor write failure rolls the note and cursor back together', async () => {
     const { db, call } = setup();
     try {
       const goal = (await call('goal.session.create', { title: 'Guide', doneTest: 'Published' }))
@@ -244,13 +239,13 @@ describe('goal what-works compaction', () => {
         worked: 'Examples',
       });
       db.exec(
-        "CREATE TRIGGER refuse_compaction BEFORE INSERT ON space_goal_events WHEN NEW.event_type='journal_compacted' BEGIN SELECT RAISE(ABORT,'synthetic audit failure'); END"
+        "CREATE TRIGGER refuse_compaction BEFORE UPDATE OF works_note_through ON neo_goals BEGIN SELECT RAISE(ABORT,'synthetic cursor failure'); END"
       );
       await expect(
         call('goal.session.update', { goalId: goal.id, worksNote: 'Examples help' })
-      ).rejects.toThrow('synthetic audit failure');
+      ).rejects.toThrow('synthetic cursor failure');
       expect(
-        db.prepare('SELECT works_note,works_note_through FROM space_goals WHERE id=?').get(goal.id)
+        db.prepare('SELECT works_note,works_note_through FROM neo_goals WHERE id=?').get(goal.id)
       ).toEqual({ works_note: null, works_note_through: null });
       expect((await call('goal.journal.list', { goalId: goal.id })).entries).toHaveLength(1);
     } finally {
@@ -306,7 +301,7 @@ describe('goal-owned schedules', () => {
           const facts = await schedules.facts(id);
           if (change === 'schedule_deleted') scheduler.delete(scheduler.repo.get(row.id)!);
           else if (change === 'goal_deleted')
-            db.prepare('DELETE FROM space_goals WHERE id = ?').run(id);
+            db.prepare('DELETE FROM neo_goals WHERE id = ?').run(id);
           else await call('goal.session.update', { goalId: id, status: change });
           return facts;
         },
@@ -326,11 +321,11 @@ describe('goal-owned schedules', () => {
           expect(scheduler.repo.get(row.id)).toMatchObject({ status: 'done', pendingJobId: null });
         else {
           expect(scheduler.repo.get(row.id)).toBeNull();
-          expect(
-            db.prepare('SELECT facts_lines FROM space_goals WHERE id = ?').get(goal.id)
-          ).toEqual({
-            facts_lines: null,
-          });
+          expect(db.prepare('SELECT facts_lines FROM neo_goals WHERE id = ?').get(goal.id)).toEqual(
+            {
+              facts_lines: null,
+            }
+          );
         }
       } finally {
         clock.mockRestore();
@@ -435,7 +430,7 @@ describe('goal-owned schedules', () => {
       };
       const stored = () =>
         (
-          db.prepare('SELECT facts_lines FROM space_goals WHERE id = ?').get(goal.id) as {
+          db.prepare('SELECT facts_lines FROM neo_goals WHERE id = ?').get(goal.id) as {
             facts_lines: string | null;
           }
         ).facts_lines;
@@ -623,7 +618,7 @@ describe('session-owned goals', () => {
       db
         .prepare('SELECT event_type, source, space_id FROM space_goal_events WHERE goal_id = ?')
         .all(created.goal.id)
-    ).toEqual([{ event_type: 'created', source: 'neo', space_id: null }]);
+    ).toEqual([]);
     db.close();
   });
 
@@ -693,12 +688,7 @@ describe('session-owned goals', () => {
           'SELECT event_type, source FROM space_goal_events WHERE goal_id = ? ORDER BY rowid'
         )
         .all(created.goal.id)
-    ).toEqual([
-      { event_type: 'created', source: 'neo' },
-      { event_type: 'status_changed', source: 'human' },
-      { event_type: 'status_changed', source: 'neo' },
-      { event_type: 'status_changed', source: 'neo' },
-    ]);
+    ).toEqual([]);
     expect(audited).toEqual([
       'goal.session.create',
       'goal.session.update',

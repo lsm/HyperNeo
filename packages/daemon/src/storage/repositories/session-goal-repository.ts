@@ -33,7 +33,7 @@ const JSON_FIELDS = new Set<keyof SessionGoalPatch>(['metrics', 'nextSteps']);
 const SELECT = `SELECT id, owner_session_id AS ownerSessionId, title, description, status, type,
   priority, metrics, done_test AS doneTest, summary, works_note AS worksNote, progress, next_steps AS nextSteps,
   mandate_ref AS mandateRef, mandate_rev AS mandateRev, created_at AS createdAt,
-  updated_at AS updatedAt, completed_at AS completedAt, revision FROM space_goals`;
+  updated_at AS updatedAt, completed_at AS completedAt, revision FROM neo_goals`;
 
 type Row = Omit<SessionGoal, 'metrics' | 'nextSteps'> & { metrics: string; nextSteps: string };
 
@@ -73,7 +73,7 @@ export class SessionGoalRepository {
   create(
     ownerSessionId: string,
     draft: SessionGoalDraft,
-    source: SpaceGoalEventSource,
+    _source: SpaceGoalEventSource,
     now: number,
     changed?: (goal: SessionGoal) => void
   ): SessionGoal {
@@ -81,7 +81,7 @@ export class SessionGoalRepository {
     this.db.transaction(() => {
       this.db
         .prepare(
-          `INSERT INTO space_goals (id, owner_session_id, title, description, type, priority,
+          `INSERT INTO neo_goals (id, owner_session_id, title, description, type, priority,
              metrics, done_test, summary, progress, next_steps, mandate_ref, mandate_rev,
              created_at, updated_at, revision)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
@@ -103,17 +103,16 @@ export class SessionGoalRepository {
           now,
           now
         );
-      this.recordEvent(id, 'created', source, null, this.get(id), now);
       changed?.(this.get(id)!);
     })();
-    this.reactiveDb?.notifyChange('space_goals');
+    this.reactiveDb?.notifyChange('neo_goals');
     return this.get(id)!;
   }
 
   update(
     goal: SessionGoal,
     patch: SessionGoalPatch,
-    source: SpaceGoalEventSource,
+    _source: SpaceGoalEventSource,
     now: number,
     changed?: (goal: SessionGoal) => void
   ): SessionGoal {
@@ -126,7 +125,7 @@ export class SessionGoalRepository {
       const compaction = patch.worksNote === undefined ? null : this.factState(goal.id);
       this.db
         .prepare(
-          `UPDATE space_goals SET ${keys.map((key) => `${COLUMNS[key]} = ?, `).join('')}updated_at = ?,
+          `UPDATE neo_goals SET ${keys.map((key) => `${COLUMNS[key]} = ?, `).join('')}updated_at = ?,
              revision = revision + 1${completedAt.length ? ', completed_at = ?' : ''} WHERE id = ?`
         )
         .run(
@@ -139,23 +138,12 @@ export class SessionGoalRepository {
         );
       if (compaction) {
         this.db
-          .prepare('UPDATE space_goals SET works_note_through = ? WHERE id = ?')
+          .prepare('UPDATE neo_goals SET works_note_through = ? WHERE id = ?')
           .run(compaction.entries, goal.id);
-        const previous = { ...goal, worksNoteThrough: compaction.through };
-        const next = { ...this.get(goal.id)!, worksNoteThrough: compaction.entries };
-        this.recordEvent(goal.id, 'journal_compacted', source, previous, next, now);
       }
-      this.recordEvent(
-        goal.id,
-        patch.status && patch.status !== goal.status ? 'status_changed' : 'updated',
-        source,
-        goal,
-        this.get(goal.id),
-        now
-      );
       changed?.(this.get(goal.id)!);
     })();
-    this.reactiveDb?.notifyChange('space_goals');
+    this.reactiveDb?.notifyChange('neo_goals');
     return this.get(goal.id)!;
   }
 
@@ -199,8 +187,8 @@ export class SessionGoalRepository {
   } {
     const row = this.db
       .prepare(`SELECT facts_lines AS lines, works_note AS note, works_note_through AS through,
-        (SELECT COUNT(*) FROM goal_journal WHERE goal_id = space_goals.id) AS entries
-        FROM space_goals WHERE id = ?`)
+        (SELECT COUNT(*) FROM goal_journal WHERE goal_id = neo_goals.id) AS entries
+        FROM neo_goals WHERE id = ?`)
       .get(id) as {
       lines: string | null;
       note: string | null;
@@ -212,20 +200,20 @@ export class SessionGoalRepository {
 
   wakeSchedule(id: string): WakeSchedule | null {
     const row = this.db
-      .prepare('SELECT wake_schedule AS config FROM space_goals WHERE id = ?')
+      .prepare('SELECT wake_schedule AS config FROM neo_goals WHERE id = ?')
       .get(id) as { config: string | null };
     return row.config ? (JSON.parse(row.config) as WakeSchedule) : null;
   }
 
   saveWakeSchedule(id: string, config: WakeSchedule): void {
     this.db
-      .prepare('UPDATE space_goals SET wake_schedule = ? WHERE id = ?')
+      .prepare('UPDATE neo_goals SET wake_schedule = ? WHERE id = ?')
       .run(JSON.stringify(config), id);
   }
 
   recordFacts(id: string, lines: readonly string[]): void {
     this.db
-      .prepare('UPDATE space_goals SET facts_lines = ? WHERE id = ?')
+      .prepare('UPDATE neo_goals SET facts_lines = ? WHERE id = ?')
       .run(JSON.stringify(lines), id);
   }
 
@@ -246,29 +234,5 @@ export class SessionGoalRepository {
         )
         .all(goalId, before, before, limit) as JournalRow[]
     ).map((row) => ({ ...row, evidence: JSON.parse(row.evidence) }));
-  }
-
-  private recordEvent(
-    goalId: string,
-    type: 'created' | 'updated' | 'status_changed' | 'journal_compacted',
-    source: SpaceGoalEventSource,
-    previous: SessionGoal | null,
-    next: SessionGoal | null,
-    now: number
-  ): void {
-    this.db
-      .prepare(
-        `INSERT INTO space_goal_events (id, goal_id, event_type, source, previous_state, new_state, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        generateUUID(),
-        goalId,
-        type,
-        source,
-        previous ? JSON.stringify(previous) : null,
-        next ? JSON.stringify(next) : null,
-        now
-      );
   }
 }

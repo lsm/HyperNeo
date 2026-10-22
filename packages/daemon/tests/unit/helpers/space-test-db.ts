@@ -350,7 +350,7 @@ export function createSpaceTables(db: BunDatabase): void {
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_goals (
 			id TEXT PRIMARY KEY,
-			space_id TEXT,
+			space_id TEXT NOT NULL,
 			title TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL DEFAULT 'active'
@@ -385,8 +385,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			works_note_through INTEGER,
 			facts_lines TEXT,
 			wake_schedule TEXT,
-			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
-			CHECK ((space_id IS NULL) <> (owner_session_id IS NULL))
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_space_goals_space ON space_goals(space_id, status)`);

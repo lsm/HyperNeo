@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { SessionGoalRepository } from '../../../../src/storage/repositories/session-goal-repository';
 import { NeoConversationReader } from '../../../../src/storage/repositories/neo-conversation-reader';
 import {
   NEO_WAKE_SELECT,
@@ -100,6 +101,36 @@ test('latest and both cursor directions retain timestamp/SDK-sequence ordering a
   expect(
     (await reader.read({ conversationId, limit: 1, after: previous.nextAfter! })).items
   ).toEqual([all[2]]);
+});
+
+test('a standalone goal wake retains its title and journal addition', () => {
+  const goals = new SessionGoalRepository(db.getDatabase());
+  const goal = goals.create(
+    `neo:${conversationId}`,
+    { title: 'Independent goal', doneTest: 'Published' },
+    'neo',
+    at
+  );
+  put('goal-wake', 0, {
+    trigger: `scheduled_wake:${JSON.stringify({ scheduleId: 'schedule', sourceKind: 'goal', sourceId: goal.id })}`,
+  });
+  const entry = goals.appendJournal(
+    goal.id,
+    `neo:${conversationId}`,
+    {
+      runId: 'goal-wake',
+      done: 'Read',
+      effect: 'Reader learned',
+      worked: 'Examples',
+      evidence: [],
+    },
+    at
+  );
+  expect(wakes.get(conversationId, 'goal-wake')).toMatchObject({
+    title: 'Independent goal',
+    additions: [{ kind: 'journal', id: entry.id, label: 'Reader learned' }],
+  });
+  expect(wakes.get(foreignId, 'goal-wake')).toBeNull();
 });
 
 test.each([false, true])(

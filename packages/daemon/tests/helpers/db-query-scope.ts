@@ -36,6 +36,7 @@ export const EXCLUDED_TABLE_NAMES: string[] = [
   'voice_recordings',
   'pairing_codes',
   'goal_journal',
+  'neo_goals',
   'neo_session_messages',
   'neo_todo_sessions',
   'work_delivery_inputs',

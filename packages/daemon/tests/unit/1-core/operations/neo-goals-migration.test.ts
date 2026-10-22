@@ -77,6 +77,28 @@ describe('standalone goal upgrade', () => {
       db.close();
     }
   });
+  test('keeps genuine Space goals, their event and legacy Rooms goal bytes', () => {
+    const db = legacy();
+    try {
+      db.exec(`INSERT INTO spaces(id,slug,workspace_path,name,created_at,updated_at) VALUES('space','space','/synthetic','Space',1,1);
+        INSERT INTO space_goals(id,space_id,title,created_at,updated_at) VALUES('space-goal','space','Space goal',1,1);
+        INSERT INTO space_goal_events(id,space_id,goal_id,event_type,source,created_at) VALUES('event','space','space-goal','created','rpc',1);
+        INSERT INTO rooms(id,name,created_at,updated_at) VALUES('room','Legacy room',1,1);
+        INSERT INTO goals(id,room_id,title,created_at,updated_at) VALUES('legacy','room','Legacy goal',1,1)`);
+      const tables = ['space_goals', 'space_goal_events', 'goals'];
+      const before = tables.map((table) => snapshot(db, table));
+      migrate(db);
+      expect(tables.map((table) => snapshot(db, table))).toEqual(before);
+      expect(() =>
+        db.exec(
+          "INSERT INTO space_goals(id,title,created_at,updated_at) VALUES('unowned','No space',1,1)"
+        )
+      ).toThrow();
+      expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
   test('refuses a session goal without changing rows or schema or marking success', () => {
     const db = legacy();
     try {
