@@ -85,7 +85,7 @@ describe('Session RPC Handlers — session.messages.byStatus', () => {
   beforeEach(async () => {
     messageHubData = createMockMessageHub();
     eventBus = createMockInternalEventBus();
-    getUserMessagesByStatus = mock(() => ({
+    getUserMessagesByStatus = mock(async () => ({
       messages: [
         {
           type: 'user',
@@ -110,7 +110,7 @@ describe('Session RPC Handlers — session.messages.byStatus', () => {
     const sessionManager = {
       getSessionAsync,
       getSessionForControl: getSessionAsync,
-      getDatabase: () => ({ getUserMessagesByStatus }),
+      getDatabase: () => ({ getUserMessagesByStatusAsync: getUserMessagesByStatus }),
     } as unknown as SessionManager;
     const { setupSessionHandlers } = await import(
       '../../../../src/lib/rpc-handlers/session-handlers'
@@ -156,6 +156,14 @@ describe('Session RPC Handlers — session.messages.byStatus', () => {
     await handler!({ sessionId: 'session-1', status: 'enqueued' }, {});
 
     expect(getUserMessagesByStatus).toHaveBeenCalledWith('session-1', 'enqueued', 20);
+  });
+
+  it('reports a reader failure instead of returning stale or fabricated status', async () => {
+    getUserMessagesByStatus.mockRejectedValueOnce(new Error('SDK reader stopped'));
+    const handler = messageHubData.handlers.get('session.messages.byStatus');
+    await expect(handler!({ sessionId: 'session-1', status: 'consumed' }, {})).rejects.toThrow(
+      'SDK reader stopped'
+    );
   });
 
   it.each([0, -1, 1.5, 1001, Number.NaN, Number.POSITIVE_INFINITY, '20'])(
