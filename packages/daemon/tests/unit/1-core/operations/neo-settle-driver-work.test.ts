@@ -26,12 +26,20 @@ const work: NeoWork = Object.freeze({
   updatedAt: 100,
 });
 const ref: WorkRef = { adapter: 'codex-desktop', id: 'thread-1' };
+const receipt = { executionId: ref.id, inputId: 'dispatched-input' };
+const sent = { inputBefore: 150, opening: work.instruction, receipt };
 const status = (value: Record<string, unknown>) => ({
   kind: 'completed' as const,
   value: {
     ok: true,
     value: {
       lastActivityAt: 200,
+      inputEvidence: {
+        receipt,
+        state: 'observed',
+        exchangeCut: false,
+        exchange: [{ at: 200, role: 'agent', text: String(value.lastReply ?? 'Shipped.') }],
+      },
       exchange: [
         { at: 151, role: 'user', text: work.instruction },
         { at: 200, role: 'agent', text: String(value.lastReply ?? 'Shipped.') },
@@ -42,7 +50,7 @@ const status = (value: Record<string, unknown>) => ({
 });
 const evidence = (extra: Partial<NeoDriverSettleEvidence> = {}): NeoDriverSettleEvidence => ({
   startedAt: 150,
-  sent: null,
+  sent,
   outcome: status({ status: 'done', lastReply: 'Shipped.', lastReplyAt: 200 }),
   priorLiveStatus: null,
   continuing: false,
@@ -56,6 +64,13 @@ describe('planNeoDriverSettlement', () => {
       landed: null,
       cardStatus: 'done',
       settled: { status: 'reported', report: 'Agent: Shipped.' },
+    });
+  });
+
+  test('a finished session without its dispatch receipt has no result', () => {
+    expect(planNeoDriverSettlement(work, evidence({ sent: null }))).toMatchObject({
+      cardStatus: 'done',
+      settled: null,
     });
   });
 
@@ -104,7 +119,7 @@ describe('settleNeoDriverWork', () => {
     const calls: string[] = [];
     const deps: NeoDriverSettleDeps = {
       readStartedAt: () => 150,
-      readSent: () => null,
+      readSent: () => sent,
       readLiveStatus: () => null,
       isContinuing: () => false,
       readStatus: async (_work, _ref, since) => {
