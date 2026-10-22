@@ -47,3 +47,21 @@ body is removed. Ninety durable visible asks stay within the public100-row page
 bounds. Both readers serve the existing normalized text-block content exactly.
 The initial helper attempts used the wrong body-column name/content shape and
 are retained as inconclusive, not performance evidence.
+
+The natural (`VERIFY_NATIVE_WAIT_MS=0`) native run uses the production worker
+entry point directly without a fixture readiness buffer. The controlled/IPC
+fixture buffer exists only for its extra instrumentation import. Repeat with
+`VERIFY_STATUS_FAULT=1 VERIFY_NATIVE_WAIT_MS=0` to make the first native worker
+throw: public RPC must reject, independent health stays available, and the next
+read opens a replacement with identical complete content/statuses and body hash.
+Zero target SQL calls on main is asserted for every file-backed `verify` run.
+`slowThresholdMs=0` in this synthetic helper records individual SQL and snapshot
+transaction times; this is never a production logging setting.
+
+For supported Deno, run the same natural file-backed helper with Deno2.9.4
+instead of Bun (`deno run -A --config packages/daemon/deno.json <helper> verify
+<run>`), with a fresh `DENO_DIR` inside the run. A Bun executable remains on PATH
+for the independent health probe. Repeat memory separately. Both runtimes must
+serve both nonempty public pages and acknowledge worker close during cleanup.
+The natural cold-worker RPC overhead is part of the reported result; a 1200ms
+controlled stalled read still misses250ms even when main lag is below1s.

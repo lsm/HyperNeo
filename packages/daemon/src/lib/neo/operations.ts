@@ -341,7 +341,7 @@ export function neoReorganizeRuntime(service: NeoService): NeoReorganizeRuntime 
 
 export function createNeoOperations(service: NeoService) {
   const messageStatuses: NeoMessageStatusPresenter = (items) =>
-    readNeoMessageStatuses(service.db.getDatabase(), items);
+    readNeoMessageStatuses((refs) => service.db.getNeoMessageStatusFactsAsync(refs), items);
   const snapshots = new Map<string, ReturnType<typeof buildSnapshot>>();
   function path<I, O>(name: string, action: (input: I, caller: OperationCaller) => O | Promise<O>) {
     return (superpipe({})(name) as PipelineAPI)

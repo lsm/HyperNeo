@@ -17,7 +17,7 @@ test('retired attribution upgrades preserve wake history and legacy publications
     const wake = seedNeoWake(raw, conversationId);
     wake.finish();
     const reader = new NeoConversationReader(raw);
-    const before = reader.read({ conversationId, limit: 100 });
+    const before = await reader.read({ conversationId, limit: 100 });
     runMigration339(raw);
     runMigration377(raw);
     raw.exec(`INSERT INTO neo_input_origins
@@ -31,7 +31,7 @@ test('retired attribution upgrades preserve wake history and legacy publications
     const retired = raw.prepare('SELECT * FROM neo_input_origins ORDER BY message_id').all();
     runMigration443(raw);
     runMigration443(raw);
-    expect(reader.read({ conversationId, limit: 100 })).toEqual(before);
+    expect(await reader.read({ conversationId, limit: 100 })).toEqual(before);
     expect(raw.prepare('SELECT message_id FROM session_schedule_wakes').all()).toEqual([
       { message_id: wake.messageId },
     ]);
@@ -68,7 +68,7 @@ test('legacy unstamped results keep their recorded continuation boundary after u
       .run(sessionId, continuation, sessionId, wake.messageId, 2, 'scheduled_wake:{}');
     const retired = raw.prepare('SELECT * FROM neo_input_origins ORDER BY message_id').all();
     runMigration443(raw);
-    const items = new NeoConversationReader(raw).read({ conversationId, limit: 100 }).items;
+    const items = (await new NeoConversationReader(raw).read({ conversationId, limit: 100 })).items;
     expect(items).toEqual([
       expect.objectContaining({
         role: 'wake',

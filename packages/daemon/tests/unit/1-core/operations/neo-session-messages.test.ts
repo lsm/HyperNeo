@@ -39,7 +39,7 @@ describe('planNeoSessionMessage', () => {
 });
 
 describe('NeoConversationReader session rows', () => {
-  test('the human sees what Neo sent and Neo publications, never what other sessions sent Neo; Neo still reads all of it', () => {
+  test('the human sees what Neo sent and Neo publications, never what other sessions sent Neo; Neo still reads all of it', async () => {
     const db = new Database(':memory:');
     runMigrations(db, () => {});
     createTables(db);
@@ -61,7 +61,7 @@ describe('NeoConversationReader session rows', () => {
       triggerId: 'human:m-1',
     });
     const reader = new NeoConversationReader(db);
-    const page = reader.read({ conversationId: root.conversationId, limit: 10 }, true);
+    const page = await reader.read({ conversationId: root.conversationId, limit: 10 }, true);
     expect(
       page.items.map((item) =>
         item.role === 'session'
@@ -75,9 +75,9 @@ describe('NeoConversationReader session rows', () => {
       'Rebase on dev',
     ]);
     expect(
-      reader
-        .read({ conversationId: root.conversationId, limit: 10 })
-        .items.flatMap((item) => (item.role === 'session' ? [item.message.text] : []))
+      (await reader.read({ conversationId: root.conversationId, limit: 10 })).items.flatMap(
+        (item) => (item.role === 'session' ? [item.message.text] : [])
+      )
     ).toEqual(['Rebase on dev', 'Rebased, CI is green', 'fullstack 2: fixed the bot finding']);
     db.close();
   });
