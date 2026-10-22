@@ -31,6 +31,7 @@ function readMessageFacts(db: Database, items: readonly Ask[]): Fact[] {
   }));
   const rows = db
     .prepare(`SELECT (SELECT COALESCE(send_status, 'consumed') FROM sdk_messages
+      INDEXED BY idx_sdk_messages_session_uuid
       WHERE session_id = json_extract(ref.value, '$.sessionId') AND message_type = 'user'
       AND sdk_uuid = json_extract(ref.value, '$.messageId') ORDER BY timestamp ASC LIMIT 1) AS sendStatus,
       s.processing_state AS processing FROM json_each(?) ref LEFT JOIN sessions s
