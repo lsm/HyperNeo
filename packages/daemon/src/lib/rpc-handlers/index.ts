@@ -463,7 +463,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   const unsubLiveQuery = setupLiveQueryHandlers(
     deps.messageHub,
     deps.liveQueries,
-    deps.db.getDatabase()
+    deps.db.getDatabase(),
+    (args) => deps.db.getMessageFeedAsync(args)
   );
 
   registerAppMcpHandlers(deps.messageHub, {

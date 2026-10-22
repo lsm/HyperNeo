@@ -1,3 +1,4 @@
+import { readMessageFeed, type MessageFeedArgs } from './sdk-message-feed-read.ts';
 import { runLagPhase } from '../lib/event-loop-activity.ts';
 import { Database as BunDatabase } from './sqlite-compat.ts';
 import { Logger } from '../lib/logger.ts';
@@ -367,6 +368,12 @@ export class Database {
     if (this.getDbPath() === ':memory:')
       return projectSDKStatusPage(this.getUserMessagesByStatus(sessionId, status, limit), status);
     return this.getSDKReader().read({ sessionId, status, limit });
+  }
+
+  async getMessageFeedAsync(args: MessageFeedArgs) {
+    if (this.getDbPath() === ':memory:')
+      return this.getDatabase().transaction(() => readMessageFeed(this.getDatabase(), args))();
+    return this.getSDKReader().readMessageFeed(args);
   }
 
   async getSDKMessagePageAsync(sessionId: string, page: SDKPageParams = {}) {
