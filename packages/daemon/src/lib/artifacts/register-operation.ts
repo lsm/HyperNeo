@@ -15,12 +15,14 @@ import { admitArtifactCapture } from './file-policy.ts';
 import { loadRegistrationBinding } from './registration-binding.ts';
 import { withStoredArtifactDescriptor } from '../runtime-artifact-open.ts';
 import { readSync } from 'node:fs';
+import { ArtifactBundleSchema, artifactBundleLimit, bindArtifactBundle } from './bundle.ts';
 
 export const RegisterArtifactInput = z.strictObject({
   requestId: z.string().min(1).max(200),
   context: z.strictObject({ kind: z.enum(['todo', 'ask']), id: z.string().min(1).max(200) }),
   path: z.string().min(1).max(4096),
   title: z.string().trim().min(1).max(200),
+  bundle: ArtifactBundleSchema.optional(),
 });
 type Input = z.infer<typeof RegisterArtifactInput>;
 const textKinds = new Map<string, ArtifactRef['kind']>([
@@ -31,6 +33,7 @@ const textKinds = new Map<string, ArtifactRef['kind']>([
   ['json', 'json'],
   ['log', 'log'],
   ['txt', 'text'],
+  ['css', 'text'],
 ]);
 const instances = new WeakMap<Database, ReturnType<typeof registrationService>>();
 const refused = (reason: ArtifactRefusal['reason']): ArtifactRefusal => ({
@@ -77,7 +80,18 @@ function registrationService(db: Database, data: string, home: string) {
   };
   async function prepare(input: Input, caller: OperationCaller) {
     const plan = await admitArtifactCapture(input.context, input.path, caller, policy);
-    return 'accepted' in plan ? { reason: plan } : { value: plan };
+    if ('accepted' in plan) return { reason: plan };
+    if (!input.bundle) return { value: { ...plan, bundle: undefined } };
+    const bound = bindArtifactBundle(db, input.context, input.bundle);
+    if ('reason' in bound) return bound;
+    const limit = artifactBundleLimit(0, bound.value);
+    if (limit) return { reason: limit };
+    return {
+      value: {
+        ...plan,
+        bundle: [...input.bundle].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
+      },
+    };
   }
   type Plan = Extract<Awaited<ReturnType<typeof prepare>>, { value: unknown }>['value'];
   async function capture(plan: Plan, input: Input, caller: OperationCaller) {
@@ -126,7 +140,13 @@ function registrationService(db: Database, data: string, home: string) {
     if (!snapshot.accepted) return snapshot;
     const kind = await storedKind(root, snapshot.sha256, plan.relativePath);
     if (!kind.accepted) return kind;
-    if (!kind.value) return refused('unsupported_type');
+    if (!kind.value || (plan.bundle && kind.value !== 'html')) return refused('unsupported_type');
+    if (plan.bundle) {
+      const bound = bindArtifactBundle(db, input.context, plan.bundle);
+      if ('reason' in bound) return bound.reason;
+      const limit = artifactBundleLimit(snapshot.byteLength, bound.value);
+      if (limit) return limit;
+    }
     return finish(() =>
       registry.save(
         input.context,
@@ -142,7 +162,8 @@ function registrationService(db: Database, data: string, home: string) {
         },
         producer,
         plan.relativePath,
-        { kind: 'worktree' }
+        { kind: 'worktree' },
+        plan.bundle
       )
     );
   }
@@ -174,7 +195,7 @@ export function createArtifactRegistration(
   return defineOperation({
     name: 'artifact.file.register',
     description:
-      'Snapshot a regular file in a persisted work/ask workspace. Supply a stable requestId, context, path and short title. Publishes only an immutable reference; source and stored bytes are retained. No new filesystem roots or sharing rights.',
+      'Snapshot a regular file in a persisted work/ask workspace. Supply a stable requestId, context, path and short title. Optional HTML bundle entries map relative names to already registered CSS/raster IDs in this same context (64 entries including HTML, 64 MiB total); never crawl or fetch assets. Publishes only an immutable reference; source and stored bytes are retained. No new filesystem roots or sharing rights.',
     inputSchema: RegisterArtifactInput,
     resultSchema: z.union([
       ArtifactRefusalSchema,

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { ArtifactBundleEntry } from '../../lib/artifacts/bundle.ts';
 import type { ArtifactRef, ArtifactFileMetadata } from '@hyperneo/shared/types/artifact-file';
 import type { Database } from '../sqlite-compat.ts';
 import type { ArtifactContext } from '../../lib/artifacts/file-policy.ts';
@@ -29,23 +30,27 @@ export class ArtifactFileRepository {
     artifact: ArtifactRef,
     producer: string,
     sourcePath: string,
-    revision?: ArtifactFileMetadata['revision']
+    revision?: ArtifactFileMetadata['revision'],
+    bundle?: readonly ArtifactBundleEntry[]
   ) {
-    this.db
-      .prepare(`INSERT INTO artifact_files VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(
-        artifact.artifactId,
-        context.kind,
-        context.id,
-        requestId,
-        fingerprint,
-        sha256,
-        artifact.byteLength,
-        JSON.stringify({ accepted: true, artifact, ...(revision ? { revision } : {}) }),
-        producer,
-        sourcePath,
-        Date.now()
-      );
+    this.db.prepare(`INSERT INTO artifact_files VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      artifact.artifactId,
+      context.kind,
+      context.id,
+      requestId,
+      fingerprint,
+      sha256,
+      artifact.byteLength,
+      JSON.stringify({
+        accepted: true,
+        artifact,
+        ...(revision ? { revision } : {}),
+        ...(bundle ? { bundle } : {}),
+      }),
+      producer,
+      sourcePath,
+      Date.now()
+    );
     return { accepted: true as const, artifact };
   }
 }
