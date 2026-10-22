@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render } from '@testing-library/preact';
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import { ToolResultCard } from '../tools/ToolResultCard.tsx';
@@ -8,7 +8,7 @@ import { MessageHydrationContext } from '../chat-display-mode.ts';
 afterEach(cleanup);
 
 describe('SDK tool and subagent disclosures', () => {
-  it('keeps tool titles inert and reads details only through the shared control', () => {
+  it('keeps tool titles inert and reads details only through the shared control', async () => {
     const onExpand = vi.fn();
     const view = render(
       <ToolResultCard
@@ -27,7 +27,9 @@ describe('SDK tool and subagent disclosures', () => {
     more.focus();
     fireEvent.click(more);
     expect(onExpand).toHaveBeenCalledTimes(1);
-    fireEvent.click(view.getByText('Synthetic readable result'));
+    const output = view.container.querySelector('pre');
+    await waitFor(() => expect(output?.textContent).toContain('Synthetic readable result'));
+    fireEvent.click(output!);
     const less = view.getByRole('button', { name: 'less — Read synthetic.txt', exact: true });
     expect(less.getAttribute('aria-expanded')).toBe('true');
     expect(document.activeElement).toBe(less);

@@ -18,12 +18,26 @@ export async function verifySdkTools(page, { port, run, width, phase }) {
   const readControl = () => read.getByRole('button', after ? { name: /^(more|less) — Read synthetic.txt$/ } : { name: /^Read/ });
   await shot(page, readControl(), `${dir}/tool-closed-${width}.png`);
   await readControl().press('Enter');
-  await read.locator('pre').waitFor();
+  await read.locator('pre').filter({ hasText: 'Synthetic tool detail.' }).waitFor();
   if (after) {
     assert.equal(await readControl().evaluate(b => b === document.activeElement), true);
     await read.locator('pre').click();
     assert.equal(await readControl().getAttribute('aria-expanded'), 'true');
     observations.controls.push(await metric(readControl()));
+    const start = await read.locator('pre').evaluate(el => {
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT); let node;
+      while ((node = walker.nextNode())) {
+        const at = node.textContent.indexOf('Synthetic'); if (at < 0) continue;
+        const range = document.createRange(); range.setStart(node, at); range.setEnd(node, at + 3);
+        const r = range.getBoundingClientRect(); return { x: r.x, y: r.y, height: r.height };
+      }
+      throw new Error('Synthetic result text missing');
+    });
+    await page.mouse.move(start.x + 1, start.y + start.height / 2); await page.mouse.down();
+    await page.mouse.move(start.x + 45, start.y + start.height / 2, { steps: 6 }); await page.mouse.up();
+    observations.selectedText = await page.evaluate(() => window.getSelection()?.toString());
+    assert.match(observations.selectedText, /^Syn/);
+    assert.equal(await readControl().getAttribute('aria-expanded'), 'true');
   }
   await shot(page, readControl(), `${dir}/tool-open-${width}.png`);
   await readControl().press('Space');
@@ -44,7 +58,10 @@ export async function verifySdkTools(page, { port, run, width, phase }) {
     assert.equal(await agentControl().evaluate(b => b === document.activeElement), true);
     await subagent.getByText('Find synthetic evidence', { exact: true }).click();
     assert.equal(await agentControl().getAttribute('aria-expanded'), 'true');
-    observations.controls.push(await metric(agentControl()));
+    const m = await metric(agentControl());
+    m.lastLine = await subagent.locator('p').filter({ hasText: 'Short final paragraph.' }).evaluate(el => { const r = el.getBoundingClientRect(); return { bottom: r.bottom, right: r.right }; });
+    assert(Math.abs(m.bottom - m.lastLine.bottom) <= 7);
+    observations.controls.push(m);
   }
   const nested = subagent.getByText('nested-synthetic.txt', { exact: true }).locator('xpath=ancestor::div[contains(@class,"rounded-lg")][1]');
   const nestedControl = () => nested.getByRole('button', after ? { name: /^(more|less) — Read nested-synthetic.txt$/ } : { name: /^Read/ });

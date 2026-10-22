@@ -245,7 +245,7 @@ describe('ToolResultCard Component', () => {
       expect(screen.getByText('Read')).toBeTruthy();
     });
 
-    it('should toggle expand/collapse on header click', async () => {
+    it('should toggle through the explicit control', async () => {
       render(
         <ToolResultCard
           toolName="Bash"
@@ -265,7 +265,7 @@ describe('ToolResultCard Component', () => {
         expect(screen.getByText('Input:')).toBeTruthy();
       });
 
-      fireEvent.click(header!);
+      fireEvent.click(screen.getByRole('button', { name: /^less — / }));
 
       await waitFor(() => {
         expect(screen.queryByText('Input:')).toBeNull();
@@ -406,7 +406,7 @@ describe('ToolResultCard Component', () => {
       );
 
       const header = document.querySelector('button')!;
-      const xSvg = header.querySelector('svg.text-danger');
+      const xSvg = header.parentElement.querySelector('svg.text-danger');
       expect(xSvg).toBeTruthy();
     });
   });
@@ -1816,7 +1816,11 @@ describe('ToolResultCard onExpand', () => {
     );
     const header = getAllByRole('button')[0];
     fireEvent.click(header);
-    fireEvent.click(header);
+    fireEvent.click(
+      getAllByRole('button').find((button) =>
+        button.getAttribute('aria-label')?.startsWith('less — ')
+      )!
+    );
     expect(onExpand).toHaveBeenCalledTimes(1);
   });
 });
