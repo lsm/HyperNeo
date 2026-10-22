@@ -563,9 +563,10 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
       await new Promise((resolve) => setTimeout(resolve, 50));
     expect(publicationReady).toBe(true);
     const workingStatus = await statusPage();
-    expect(workingStatus.items).toEqual([
-      expect.objectContaining({ requestId, messageStatus: 'working' }),
-    ]);
+    expect(
+      workingStatus.items,
+      JSON.stringify({ requestId, processing: daemon.db.getSession(root)?.processingState })
+    ).toEqual([expect.objectContaining({ requestId, messageStatus: 'working' })]);
     releasePublication();
     const read = () =>
       hub.request<{ ok: boolean; items: NeoPublication[] }>('operation.invoke', {
