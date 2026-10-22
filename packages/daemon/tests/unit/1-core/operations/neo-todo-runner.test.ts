@@ -1424,7 +1424,10 @@ describe('current explicit removal behavior before recompute', () => {
         state: 'open',
         startTodos: [remaining.id],
       });
-      expect(h.store.listTodos('ask').map((todo) => todo.id)).toEqual([remaining.id]);
+      expect(h.store.listTodos('ask').map(({ id, state }) => ({ id, state }))).toEqual([
+        { id: removed.id, state: 'removed' },
+        { id: remaining.id, state: 'todo' },
+      ]);
       expect(await remove(h, removed.id)).toMatchObject({ ok: false });
       expect(h.store.getQuestion(question.id)?.startTodos).toEqual([remaining.id]);
     } finally {
