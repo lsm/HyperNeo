@@ -70,6 +70,7 @@ describe('claude-desktop start', () => {
       silent?: boolean;
       checkout?: { repo: string; linked: boolean };
       permissionMode?: string;
+      importedPermissionMode?: string;
       desktop?: 'imported' | 'never';
     } = {}
   ) {
@@ -129,6 +130,7 @@ describe('claude-desktop start', () => {
               cwd,
               title: 'Bigger font',
               lastActivityAt: clock,
+              permissionMode: options.importedPermissionMode,
             })
           );
         }
@@ -233,6 +235,25 @@ describe('claude-desktop start', () => {
     });
     expect(handoffs).toBe(1);
     expect(clock).toBe(1_000);
+  });
+
+  test('B1 prepares the session without executing the actual task in the CLI', async () => {
+    await adapter().start!(request, user);
+    expect(spawned[0].at(-1)).not.toContain(request.message);
+  });
+
+  test('B1 does not dispatch work when Desktop imports a different permission mode', async () => {
+    const result = await adapter({
+      permissionMode: 'bypassPermissions',
+      importedPermissionMode: 'acceptEdits',
+    }).start!(request, user);
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'not_delivered',
+      detail: expect.stringContaining('permission mode'),
+    });
+    expect(spawned.every((args) => !args.includes(request.message))).toBe(true);
+    expect(inbox).toEqual([]);
   });
 
   test('the worker permission mode setting runs the first turn; Desktop gets no flag', async () => {
