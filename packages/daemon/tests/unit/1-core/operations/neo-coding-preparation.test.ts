@@ -190,6 +190,7 @@ describe('prepareCodingExecution', () => {
     expect(git(f.directory, 'rev-parse', 'HEAD')).toBe(f.before);
     expect(readFileSync(join(f.directory, 'file'), 'utf8')).toBe('uncommitted user work');
     await prepared.value.release();
+    await prepared.value.release();
     expect(existsSync(f.destination)).toBe(false);
     expect(readFileSync(join(f.directory, 'file'), 'utf8')).toBe('uncommitted user work');
   });
@@ -247,6 +248,15 @@ describe('prepareCodingExecution', () => {
   test('prepares the fetched target and preserves dirty user checkout', async () => {
     const f = fixture();
     git(f.directory, 'branch', 'local-only', f.before);
+    for (const ref of [
+      'refs/stash',
+      'refs/notes/test',
+      'refs/remotes/other/dev',
+      'refs/tags/local-only',
+      'refs/custom/test',
+    ])
+      git(f.directory, 'update-ref', ref, f.before);
+    git(f.directory, 'pack-refs', '--all');
     const result = await prepareCodingExecution(f.request, f.effects);
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(result.reason);
@@ -254,6 +264,9 @@ describe('prepareCodingExecution', () => {
     expect(git(f.directory, 'rev-parse', 'HEAD')).toBe(f.before);
     expect(readFileSync(join(f.directory, 'file'), 'utf8')).toBe('uncommitted user work');
     expect(git(f.destination, 'rev-parse', 'refs/remotes/origin/dev')).toBe(f.latest);
+    expect(git(f.destination, 'for-each-ref', '--format=%(refname)')).toBe(
+      'refs/remotes/origin/dev'
+    );
     git(f.destination, 'switch', 'dev');
     expect(git(f.destination, 'rev-parse', 'HEAD')).toBe(f.latest);
     expect(
@@ -437,6 +450,24 @@ describe('prepareCodingExecution', () => {
       expect(readFileSync(join(f.directory, 'file'), 'utf8')).toBe('uncommitted user work');
     }
   );
+
+  test('a real clone refusal remains a value when its destination has disappeared', async () => {
+    const f = fixture();
+    const result = await prepareCodingExecution(f.request, {
+      run: async (command, cwd) => {
+        if (command[1] !== 'clone') return f.effects.run(command, cwd);
+        const failed = await f.effects.run(
+          ['git', 'clone', '--no-local', '--upload-pack=false', '--', f.directory, f.destination],
+          cwd
+        );
+        expect(failed.code).not.toBe(0);
+        rmSync(f.destination, { recursive: true, force: true });
+        return failed;
+      },
+    });
+    expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('clone_failed:') });
+    expect(existsSync(f.destination)).toBe(false);
+  });
 
   test('an existing empty destination is never claimed or removed', async () => {
     const f = fixture();
