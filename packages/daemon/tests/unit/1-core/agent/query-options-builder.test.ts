@@ -955,7 +955,9 @@ describe('QueryOptionsBuilder', () => {
         mockSession.id = 'neo:fixture';
         mockSession.config.model = 'fixture-native';
         mockSession.metadata.neoAutoCompactPercent = 70;
-        expect((await builder.build()).settings?.autoCompactWindow).toBe(733_000);
+        const overridden = await builder.build();
+        expect(overridden.settings?.autoCompactWindow).toBe(733_000);
+        expect(overridden.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('733000');
         mockSession.id = 'ordinary';
         expect((await builder.build()).settings?.autoCompactWindow).toBeUndefined();
         mockSession.id = 'neo:fixture';
