@@ -33,3 +33,13 @@ cannot create facts, ref changes invalidate evidence, and unconfirmed acceptance
 survives actual DB close/reopen. This slice proves retention of the latest send,
 not an append-only obligation history, delivery deadlines, retries, idle queue
 activation, first worker output, canonical owner recovery or new UI states.
+
+The accepted Claude inbox has no pending submission ID. Its persisted todo anchor
+must retain the pre-send baseline (zero in this empty synthetic transcript), both
+before and after restart. This is an attribution boundary, not a consumption or
+turn-start claim: `delivered` remains false, `unconfirmed` true and the exact
+receipt survives. `unconfirmedAnchor` in the evidence records that boundary.
+The #8198 reproduction writes the actual synthetic inbox bytes, retains the
+receipt and then fails with `null !== 0` before the parser fix. Explicit pending
+submission IDs and ambiguous non-delivery still wait without a baseline anchor;
+the driver/runner contracts cover these cases and database reopen separately.
