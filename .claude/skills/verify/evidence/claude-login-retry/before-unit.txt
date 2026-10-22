@@ -1,0 +1,58 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:7:14). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 /Users/lsm/focus/worktrees/claude-login-retry/packages/daemon
+
+ ❯ tests/unit/1-core/agent/query-retry-routing.test.ts (90 tests | 2 failed) 9ms
+   ❯ Claude login recovery (3)
+     × restarts a Claude query once after authentication rejection 3ms
+     × surfaces a persistent login failure after that retry 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/1-core/agent/query-retry-routing.test.ts > Claude login recovery > restarts a Claude query once after authentication rejection
+AssertionError: expected 'terminal' to be 'claude_auth_retry' // Object.is equality
+
+Expected: "claude_auth_retry"
+Received: "terminal"
+
+ ❯ tests/unit/1-core/agent/query-retry-routing.test.ts:1105:35
+    1103|   it('restarts a Claude query once after authentication rejection', ()…
+    1104|     const decision = decideQueryRetry({ errorSignal: signal({ rawText:…
+    1105|     expect(decision.route.action).toBe('claude_auth_retry');
+       |                                   ^
+    1106|   });
+    1107|   it('surfaces a persistent login failure after that retry', () => {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/unit/1-core/agent/query-retry-routing.test.ts > Claude login recovery > surfaces a persistent login failure after that retry
+AssertionError: expected { action: 'terminal', …(2) } to deeply equal { action: 'terminal', …(2) }
+
+- Expected
++ Received
+
+  {
+    "action": "terminal",
+    "category": "authentication",
+-   "messageHint": "claude_login_failed",
++   "messageHint": undefined,
+  }
+
+ ❯ tests/unit/1-core/agent/query-retry-routing.test.ts:1109:28
+    1107|   it('surfaces a persistent login failure after that retry', () => {
+    1108|     const decision = decideQueryRetry({ errorSignal: signal({ rawText:…
+    1109|     expect(decision.route).toEqual({ action: 'terminal', category: Err…
+       |                            ^
+    1110|   });
+    1111|   it('does not restart an interrupted Claude query or another provider…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 88 passed (90)
+   Start at  18:57:09
+   Duration  193ms (transform 73%, setup 11%, tests 7%, import 7%, worker 2%)
+

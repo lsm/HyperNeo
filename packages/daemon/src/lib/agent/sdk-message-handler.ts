@@ -1135,7 +1135,7 @@ export class SDKMessageHandler {
       const preRecoveryPlan = isSDKResultMessage(message)
         ? this.routeResultTurnEnd({
             isTopLevel: isTopLevelResult,
-            isSuccess: isSDKResultSuccess(message),
+            isSuccess: isSDKResultSuccess(message) && message.is_error !== true,
             isLimitError: false,
             isLimitRecoveryEngaged: null,
             confirmsArmedClear: observesArmedClearResult,
@@ -1187,7 +1187,7 @@ export class SDKMessageHandler {
 
       const resultEventInput = (): TurnEndResultEvent => ({
         isTopLevel: isTopLevelResult,
-        isSuccess: isSDKResultSuccess(message),
+        isSuccess: isSDKResultSuccess(message) && message.is_error !== true,
         isLimitError: resultLimitError,
         isLimitRecoveryEngaged: isTopLevelResult ? limitEngaged : null,
         confirmsArmedClear: observesArmedClearResult,
@@ -1489,7 +1489,7 @@ export class SDKMessageHandler {
       cache_read_input_tokens: 0,
     };
 
-    if (usage.input_tokens > 0 || usage.output_tokens > 0) {
+    if (message.is_error !== true && (usage.input_tokens > 0 || usage.output_tokens > 0)) {
       this.circuitBreaker.markSuccess();
     }
 
@@ -1502,9 +1502,11 @@ export class SDKMessageHandler {
     }
     this.acknowledgedPersistedUserThisTurn = false;
 
-    await internalEventBus.publish('session.errorClear', {
-      sessionId: session.id,
-    });
+    if (message.is_error !== true) {
+      await internalEventBus.publish('session.errorClear', {
+        sessionId: session.id,
+      });
+    }
 
     if (confirmsArmedClear) {
       this.suppressIdleOnTurnEnd = false;

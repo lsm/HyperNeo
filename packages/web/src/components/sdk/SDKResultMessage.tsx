@@ -13,7 +13,7 @@ interface Props {
 
 export function SDKResultMessage({ message }: Props) {
   const [showDetails, setShowDetails] = useState(false);
-  const isSuccess = isSDKResultSuccess(message);
+  const isSuccess = isSDKResultSuccess(message) && message.is_error !== true;
   const isError = isSDKResultError(message);
 
   const usage = (message as unknown as { usage?: Record<string, number | undefined> }).usage ?? {};

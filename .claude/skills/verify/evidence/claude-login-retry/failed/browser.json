@@ -1,0 +1,9 @@
+{
+  "passed": true,
+  "widths": [
+    1280,
+    390
+  ],
+  "notice": "Claude login failed — sign in again",
+  "neoStatus": "needs you"
+}

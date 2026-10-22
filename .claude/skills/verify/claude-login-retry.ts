@@ -4,6 +4,8 @@ import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
+import { resolveNeoEntry } from '../../../packages/shared/src/web-entry.ts';
+import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
 import { createMockApiServer } from '../../../packages/daemon/tests/helpers/mock-api-server.ts';
 
 const run = resolve(process.argv[2]);
@@ -20,7 +22,7 @@ copyFileSync('.claude/skills/verify/gh-stub.sh', join(run, 'bin/gh'));
 process.env.PATH = `${join(run, 'bin')}:${process.env.PATH}`;
 const mock = await createMockApiServer({ port: 8001 });
 await mock.start();
-const evidence: Record<string, unknown> = { scenario, requests: 0, processes: [], errors: [] };
+const evidence: Record<string, unknown> = { scenario, requests: 0, processes: [], responses: [], errors: [] };
 const proxy = createServer(async (req, res) => {
   const chunks: Buffer[] = [];
   for await (const chunk of req) chunks.push(Buffer.from(chunk));
@@ -28,12 +30,14 @@ const proxy = createServer(async (req, res) => {
   if (req.url?.includes('/messages') && !req.url.includes('count_tokens') && body.includes('CLAUDE_LOGIN_RECOVERED')) {
     evidence.requests = Number(evidence.requests) + 1;
     if (scenario === 'fail' || (evidence.processes as unknown[]).length === 1) {
+      (evidence.responses as unknown[]).push({ process: (evidence.processes as unknown[]).length, status: 401 });
       res.writeHead(401, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ type: 'error', error: { type: 'authentication_error', message: 'OAuth token revoked' } }));
       return;
     }
   }
   const upstream = await fetch(mock.serverUrl + req.url, { method: req.method, headers: { 'content-type': 'application/json' }, ...(req.method !== 'GET' ? { body } : {}) });
+  if (req.url?.includes('/messages') && body.includes('CLAUDE_LOGIN_RECOVERED')) (evidence.responses as unknown[]).push({ process: (evidence.processes as unknown[]).length, status: upstream.status });
   res.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') ?? 'application/json' });
   if (upstream.body) for await (const chunk of upstream.body) res.write(chunk);
   res.end();
@@ -46,8 +50,9 @@ assert.notEqual(app.server.port, 8399);
 const hub = new MessageHub({ defaultSessionId: 'global' });
 const transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
 hub.registerTransport(transport);
-const until = async (check: () => Promise<boolean> | boolean, label: string) => {
-  const deadline = Date.now() + 45000;
+let web: ReturnType<typeof Bun.serve> | undefined;
+const until = async (check: () => Promise<boolean> | boolean, label: string, timeout = 45000) => {
+  const deadline = Date.now() + timeout;
   while (!(await check())) { assert(Date.now() < deadline, label); await new Promise(done => setTimeout(done, 100)); }
 };
 try {
@@ -83,12 +88,31 @@ try {
     assert.equal((evidence.errors as unknown[]).length, 0);
   }
   assert.equal((evidence.processes as unknown[]).length, 2);
+  if (process.argv.includes('--serve')) {
+    const root = resolve('packages/web/dist');
+    web = Bun.serve({ hostname: '127.0.0.1', port: 0, websocket: createWebSocketHandlers(app.transport, app.sessionManager), async fetch(req, server) {
+      const path = new URL(req.url).pathname;
+      app.observeRequest(req);
+      if (path.startsWith('/ws')) {
+        if (server.upgrade(req, { data: { connectionSessionId: 'global', device: app.authenticateUpgrade(req, server.requestIP(req)?.address ?? null) } })) return;
+        return new Response('Upgrade failed', { status: 500 });
+      }
+      const file = resolve(root, '.' + path);
+      if (file.startsWith(root + '/') && await Bun.file(file).exists()) return new Response(Bun.file(file));
+      const neo = resolveNeoEntry(new URL(req.url));
+      if (neo?.kind === 'redirect') return Response.redirect(new URL(neo.location, req.url));
+      return new Response(Bun.file(`${root}${neo?.kind === 'entry' ? neo.path : '/index.html'}`));
+    } });
+    evidence.port = web.port;
+    assert.notEqual(web.port, 8399);
+  }
   evidence.pass = true;
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
   console.log(`PASS ${scenario}: ${run}/evidence/observed.json`);
-  if (process.argv.includes('--serve')) await until(() => existsSync(join(run, 'browser-done')), 'browser proof not finished in 45s');
+  if (process.argv.includes('--serve')) await until(() => existsSync(join(run, 'browser-done')), 'browser proof not finished in 5 minutes', 300000);
 } finally {
   writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
+  web?.stop(true);
   await transport.close(); await app.cleanup();
   proxy.closeAllConnections(); await new Promise<void>(done => proxy.close(() => done())); await mock.stop();
 }

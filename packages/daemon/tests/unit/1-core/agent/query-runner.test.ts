@@ -4999,7 +4999,7 @@ describe('QueryRunner', () => {
       expect(buildSpy).toHaveBeenCalledTimes(4);
     });
 
-    it('should NOT retry 401 authentication errors (terminal)', async () => {
+    it('restarts once for Claude 401 then reports a terminal authentication error', async () => {
       buildSpy.mockRejectedValue(new Error('401 Unauthorized'));
 
       const ctx = createContext();
@@ -5007,7 +5007,7 @@ describe('QueryRunner', () => {
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
-      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(buildSpy).toHaveBeenCalledTimes(2);
     });
 
     it('should NOT retry 402 quota/billing errors (terminal)', async () => {
@@ -6735,7 +6735,7 @@ describe('QueryRunner', () => {
     });
 
     it('invalidates the attempt token when the run exits without a retry', async () => {
-      buildSpy.mockRejectedValue(new Error('401 Unauthorized'));
+      buildSpy.mockRejectedValue(new Error('403 Forbidden'));
 
       const ctx = createContext();
       runner = new QueryRunner(ctx);

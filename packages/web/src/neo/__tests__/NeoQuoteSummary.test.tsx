@@ -41,6 +41,7 @@ function Chat({
   const store = {
     agentState: signal({ status: 'idle' }),
     isWorking: signal(false),
+    error: signal(null),
   } as unknown as SessionStore;
   const conversation = projectNeoPublicConversation(
     sessionId,

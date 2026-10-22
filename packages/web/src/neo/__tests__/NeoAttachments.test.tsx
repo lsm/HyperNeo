@@ -40,6 +40,7 @@ function composer(sessionId = crypto.randomUUID(), onError = vi.fn()) {
   const store = {
     sessionInfo: signal(null),
     isWorking: signal(false),
+    error: signal(null),
     agentState: signal({ status: 'idle' }),
   } as unknown as SessionStore;
   return (

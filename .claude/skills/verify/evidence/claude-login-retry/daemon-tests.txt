@@ -1,0 +1,12 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:7:14). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 /Users/lsm/focus/worktrees/claude-login-retry/packages/daemon
+
+
+ Test Files  3 passed (3)
+      Tests  797 passed (797)
+   Start at  19:04:22
+   Duration  10.31s (tests 88%, transform 9%, import 3%)
+

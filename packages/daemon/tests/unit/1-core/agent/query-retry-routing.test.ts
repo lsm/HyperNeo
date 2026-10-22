@@ -231,12 +231,12 @@ describe('query-retry-routing', () => {
       expected: { action: 'api_validation', text: '**API Error (400)**: prompt is too long' },
     },
     {
-      name: 'parseable 401 routes to api_validation before auth category',
+      name: 'Claude 401 refreshes login before showing an API validation error',
       signal: {
         rawText: '401 Unauthorized',
         apiValidationText: '**API Error (401)**: Unauthorized',
       },
-      expected: { action: 'api_validation', text: '**API Error (401)**: Unauthorized' },
+      expected: { action: 'claude_auth_retry' },
     },
     {
       name: 'structured rate-limit signal drives terminal category',

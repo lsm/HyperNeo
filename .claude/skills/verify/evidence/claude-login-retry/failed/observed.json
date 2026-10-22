@@ -1,0 +1,40 @@
+{
+  "scenario": "fail",
+  "requests": 5,
+  "processes": [
+    49021,
+    49078
+  ],
+  "responses": [
+    {
+      "process": 1,
+      "status": 401
+    },
+    {
+      "process": 1,
+      "status": 401
+    },
+    {
+      "process": 2,
+      "status": 401
+    },
+    {
+      "process": 2,
+      "status": 404
+    },
+    {
+      "process": 2,
+      "status": 401
+    },
+    {
+      "process": 2,
+      "status": 401
+    }
+  ],
+  "errors": [
+    "Claude login failed — sign in again"
+  ],
+  "sessionId": "neo:ca822751-de84-4c6d-9c66-7aafcbcd5310",
+  "port": 60221,
+  "pass": true
+}

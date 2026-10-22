@@ -6724,7 +6724,7 @@ describe('SDKMessageHandler', () => {
       );
 
       expect(onResultLimitError).not.toHaveBeenCalled();
-      expect(publishedTopics()).toContain('query.trigger');
+      expect(publishedTopics()).not.toContain('query.trigger');
     });
 
     it('feeds a captured structured rate_limit_event into the assessment', async () => {
@@ -6851,7 +6851,7 @@ describe('SDKMessageHandler', () => {
       );
 
       expect(onResultLimitError).not.toHaveBeenCalled();
-      expect(publishedTopics()).toContain('query.trigger');
+      expect(publishedTopics()).not.toContain('query.trigger');
     });
 
     it('ignores allowed rate-limit telemetry when assessing a later api error', async () => {
@@ -6876,7 +6876,7 @@ describe('SDKMessageHandler', () => {
       );
 
       expect(onResultLimitError).not.toHaveBeenCalled();
-      expect(publishedTopics()).toContain('query.trigger');
+      expect(publishedTopics()).not.toContain('query.trigger');
     });
 
     it('clears the captured rate-limit event after recovery engages', async () => {
@@ -7019,7 +7019,7 @@ describe('SDKMessageHandler', () => {
       );
 
       expect(onResultLimitError).toHaveBeenCalledTimes(1);
-      expect(publishedTopics()).toContain('query.trigger');
+      expect(publishedTopics()).not.toContain('query.trigger');
     });
   });
 

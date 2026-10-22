@@ -1,0 +1,30 @@
+2026-10-22T22:58:37.843Z [hyperneo:daemon:database] SDK body startup mode selected: {"mode":"dual-write","reason":"copy_incomplete"} +0ms
+2026-10-22T22:58:37.910Z [hyperneo:daemon:worktreemanager] No .git found traversing from: /private/tmp/hn-login-before-KjtL4C/home +67ms
+2026-10-22T22:58:37.910Z [hyperneo:daemon:worktreemanager] No .git found traversing from: /private/tmp/hn-login-before-KjtL4C/home +0ms
+2026-10-22T22:58:37.910Z [hyperneo:daemon:worktreemanager] createWorktree: no git root found for repoPath=/private/tmp/hn-login-before-KjtL4C/home +0ms
+2026-10-22T22:58:38.903Z [hyperneo:daemon:providers:factory] Anthropic Copilot provider registration is still pending. +993ms
+2026-10-22T22:58:39.217Z [hyperneo:daemon:sdkmessagehandler 195ff2ed-e24a-4661-85d3-c573cd104d0e] API retry: attempt 1/10, delay 619ms, status 401, error authentication_failed +314ms
+2026-10-22T22:58:39.848Z [hyperneo:daemon:sdkmessagehandler 195ff2ed-e24a-4661-85d3-c573cd104d0e] API retry: attempt 2/10, delay 1089ms, status 401, error authentication_failed +632ms
+2026-10-22T22:58:40.944Z [hyperneo:daemon:sdkmessagehandler 195ff2ed-e24a-4661-85d3-c573cd104d0e] API retry: attempt 3/10, delay 2025ms, status 401, error authentication_failed +1096ms
+2026-10-22T22:58:42.978Z [hyperneo:daemon:sdkmessagehandler 195ff2ed-e24a-4661-85d3-c573cd104d0e] API retry: attempt 4/10, delay 4450ms, status 401, error authentication_failed +2034ms
+2026-10-22T22:58:47.436Z [hyperneo:daemon:sdkmessagehandler 195ff2ed-e24a-4661-85d3-c573cd104d0e] API retry: attempt 5/10, delay 8302ms, status 401, error authentication_failed +4458ms
+2026-10-22T22:58:55.745Z [hyperneo:daemon:sdkmessagehandler 195ff2ed-e24a-4661-85d3-c573cd104d0e] API retry: attempt 6/10, delay 16989ms, status 401, error authentication_failed +8309ms
+2026-10-22T22:59:12.769Z [hyperneo:daemon:sdkmessagehandler 195ff2ed-e24a-4661-85d3-c573cd104d0e] API retry: attempt 7/10, delay 37698ms, status 401, error authentication_failed +17023ms
+46 | const hub = new MessageHub({ defaultSessionId: 'global' });
+47 | const transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
+48 | hub.registerTransport(transport);
+49 | const until = async (check: () => Promise<boolean> | boolean, label: string) => {
+50 |   const deadline = Date.now() + 45000;
+51 |   while (!(await check())) { assert(Date.now() < deadline, label); await new Promise(done => setTimeout(done, 100)); }
+                                  ^
+AssertionError: replacement SDK did not complete the original prompt
+ generatedMessage: false,
+     actual: false,
+   expected: true,
+   operator: "==",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /Users/lsm/focus/worktrees/claude-login-retry/.claude/skills/verify/claude-login-retry.ts:51:30
+
+Bun v1.4.3 (macOS arm64)
