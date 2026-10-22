@@ -1,0 +1,79 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:29:30). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 /Users/lsm/focus/worktrees/web-todo-disclosure/packages/web
+
+ ❯ src/components/ui/__tests__/ContentDisclosureControl.test.tsx (9 tests | 1 failed) 13ms
+   ❯ ContentDisclosureControl voice labels (9)
+     × offers an icon-only presentation without losing its name or button semantics 8ms
+ ❯ src/neo/__tests__/NeoAskTodos.test.tsx (42 tests | 2 failed) 248ms
+   ❯ NeoAskTodos (27)
+     × uses an explicit trailing control so clicking todo text never expands or collapses it 7ms
+     × aligns todo actions in one trailing column and uses a quiet icon with an accessible name 2ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/neo/__tests__/NeoAskTodos.test.tsx > NeoAskTodos > uses an explicit trailing control so clicking todo text never expands or collapses it
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ src/neo/__tests__/NeoAskTodos.test.tsx:126:66
+    124|     expect(app.queryByText(data.todos[0].report!.trim())).toBeNull();
+    125|     const more = app.getByRole('button', { name: 'more — Show details:…
+    126|     expect(more.parentElement?.classList.contains('self-start')).toBe(…
+       |                                                                  ^
+    127|     fireEvent.click(more);
+    128|     fireEvent.click(app.getByText('Todo a'));
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  src/neo/__tests__/NeoAskTodos.test.tsx > NeoAskTodos > aligns todo actions in one trailing column and uses a quiet icon with an accessible name
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ src/neo/__tests__/NeoAskTodos.test.tsx:144:46
+    142|     for (const item of data.todos) {
+    143|       const row = app.container.querySelector(`[data-ask-todo="${item.…
+    144|       expect(row.classList.contains('grid')).toBe(true);
+       |                                              ^
+    145|       expect(row.classList.contains('grid-cols-[1rem_minmax(0,1fr)_aut…
+    146|       expect(row.classList.contains('items-start')).toBe(true);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  src/components/ui/__tests__/ContentDisclosureControl.test.tsx > ContentDisclosureControl voice labels > offers an icon-only presentation without losing its name or button semantics
+AssertionError: expected undefined to be 'more' // Object.is equality
+
+- Expected:
+"more"
+
++ Received:
+undefined
+
+ ❯ src/components/ui/__tests__/ContentDisclosureControl.test.tsx:16:60
+     14|     render(<ContentDisclosureControl iconOnly expanded={false} onToggl…
+     15|     const control = screen.getByRole('button', { name: 'Show more' });
+     16|     expect(control.querySelector('.sr-only')?.textContent).toBe('more'…
+       |                                                            ^
+     17|     expect(control.classList.contains('text-fg-faint')).toBe(true);
+     18|     expect(control.style.float).toBe('');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  3 failed | 48 passed (51)
+   Start at  12:06:19
+   Duration  862ms (transform 31%, environment 24%, tests 24%, setup 15%, import 5%, worker 1%)
+

@@ -1,0 +1,11 @@
+{
+  "baseline": "e5cb75be6294fbfeb8134f935879b66e896aa8c6",
+  "sourceDaemonRun": "/private/tmp/web-todo-disclosure-proof-v2",
+  "isolatedPort": 9486,
+  "helperSha256": "cefc21e66e5a0708e6e40a4907779119add4939891a5451a339705c61e9f08cb",
+  "afterSourceHashes": {
+    "packages/web/src/neo/NeoAskTodos.tsx": "f505d45dd36993578b226facf7ad9a81f22781ef86b0db7118c9d61b94f4940a",
+    "packages/web/src/components/ui/ContentDisclosureControl.tsx": "82523b2dbb56dab3c594447c748a60b03ae33b0c848947e925c6c64efe442199"
+  },
+  "beforeAndAfterUseSameHelper": true
+}

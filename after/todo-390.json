@@ -1,0 +1,179 @@
+{
+  "phase": "after",
+  "width": 390,
+  "before": [
+    {
+      "row": {
+        "x": 37,
+        "y": 520,
+        "right": 353,
+        "width": 316,
+        "height": 85
+      },
+      "status": {
+        "x": 63,
+        "y": 581,
+        "right": 233.5625,
+        "width": 170.5625,
+        "height": 16
+      },
+      "control": {
+        "x": 325,
+        "y": 530,
+        "right": 353,
+        "width": 28,
+        "height": 28
+      },
+      "label": "more — Show details: Synthetic step 1",
+      "expanded": "false",
+      "glyph": "▾",
+      "hiddenWord": "absolute",
+      "color": "rgb(103, 107, 117)"
+    },
+    {
+      "row": {
+        "x": 37,
+        "y": 605,
+        "right": 353,
+        "width": 316,
+        "height": 53
+      },
+      "status": {
+        "x": 63,
+        "y": 634,
+        "right": 315,
+        "width": 252,
+        "height": 16
+      },
+      "control": {
+        "x": 325,
+        "y": 614,
+        "right": 353,
+        "width": 28,
+        "height": 28
+      },
+      "label": "more — Show details: Synthetic step 2",
+      "expanded": "false",
+      "glyph": "▾",
+      "hiddenWord": "absolute",
+      "color": "rgb(103, 107, 117)"
+    },
+    {
+      "row": {
+        "x": 37,
+        "y": 658,
+        "right": 353,
+        "width": 316,
+        "height": 53
+      },
+      "status": {
+        "x": 63,
+        "y": 687,
+        "right": 315,
+        "width": 252,
+        "height": 16
+      },
+      "control": {
+        "x": 325,
+        "y": 667,
+        "right": 353,
+        "width": 28,
+        "height": 28
+      },
+      "label": "more — Show details: Synthetic step 3",
+      "expanded": "false",
+      "glyph": "▾",
+      "hiddenWord": "absolute",
+      "color": "rgb(103, 107, 117)"
+    }
+  ],
+  "expanded": [
+    {
+      "row": {
+        "x": 37,
+        "y": 119,
+        "right": 353,
+        "width": 316,
+        "height": 885
+      },
+      "status": {
+        "x": 63,
+        "y": 180,
+        "right": 233.5625,
+        "width": 170.5625,
+        "height": 320
+      },
+      "control": {
+        "x": 325,
+        "y": 129,
+        "right": 353,
+        "width": 28,
+        "height": 28
+      },
+      "label": "less — Hide details: Synthetic step 1",
+      "expanded": "true",
+      "glyph": "▴",
+      "hiddenWord": "absolute",
+      "color": "rgb(103, 107, 117)"
+    },
+    {
+      "row": {
+        "x": 37,
+        "y": 1004,
+        "right": 353,
+        "width": 316,
+        "height": 53
+      },
+      "status": {
+        "x": 63,
+        "y": 1033,
+        "right": 315,
+        "width": 252,
+        "height": 16
+      },
+      "control": {
+        "x": 325,
+        "y": 1013,
+        "right": 353,
+        "width": 28,
+        "height": 28
+      },
+      "label": "more — Show details: Synthetic step 2",
+      "expanded": "false",
+      "glyph": "▾",
+      "hiddenWord": "absolute",
+      "color": "rgb(103, 107, 117)"
+    },
+    {
+      "row": {
+        "x": 37,
+        "y": 1057,
+        "right": 353,
+        "width": 316,
+        "height": 53
+      },
+      "status": {
+        "x": 63,
+        "y": 1086,
+        "right": 315,
+        "width": 252,
+        "height": 16
+      },
+      "control": {
+        "x": 325,
+        "y": 1066,
+        "right": 353,
+        "width": 28,
+        "height": 28
+      },
+      "label": "more — Show details: Synthetic step 3",
+      "expanded": "false",
+      "glyph": "▾",
+      "hiddenWord": "absolute",
+      "color": "rgb(103, 107, 117)"
+    }
+  ],
+  "keyboard": "Enter and Space pass",
+  "focusRetained": true,
+  "bulk": "Expand all / Collapse all pass"
+}
