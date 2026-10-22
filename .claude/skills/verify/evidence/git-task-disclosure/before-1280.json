@@ -9,5 +9,8 @@
     "parentRight": 1264
   },
   "fullDiffLoaded": true,
-  "kickoffTitleClickExpanded": "true"
+  "diffControl": null,
+  "selectedFileReset": true,
+  "kickoffTitleClickExpanded": "true",
+  "kickoffSelection": "Synthetic kickoff endin"
 }

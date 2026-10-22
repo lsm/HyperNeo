@@ -22,7 +22,18 @@ opening them. Auth/credential files and the live daemon are never read.
 In persistent headless Playwright with en-US locale and five-second locator
 timeouts, import `git-task-disclosure-web.mjs` and call
 `verifyGitTask(page, {run, port:9396, width, phase})` for1280 and390 widths.
-Use before on original controls, after on the rebuilt fix. JSON and six PNGs
+Use before on original controls, after on the rebuilt fix. For a reproducible
+before build, use a separate owned worktree at
+`dc2a30e06d6dcab1052122a5feb4419f459f9994`, install frozen dependencies there and
+build its web package. Run the current seed helper from the PR checkout, copy
+its `git-task-gh-stub.sh` into that original checkout's verify directory, then
+launch from the original checkout against the seeded run. Import the **current**
+`git-task-disclosure-web.mjs` from the PR checkout for both phases. It records
+`diffControl: null` before because there is no collapse control; the after phase
+asserts the actual footer bounds. Stop that daemon before launching the rebuilt
+PR checkout with a fresh run. Keep the original checkout's revision and the
+helper SHA256 alongside the evidence; remove the owned before worktree after
+preserving its evidence and the copied fixture. JSON and six PNGs
 per width/phase go into `<run>/evidence/`.
 
 | Surface / claim | Observable check |
