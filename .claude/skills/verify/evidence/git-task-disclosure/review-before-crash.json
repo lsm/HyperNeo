@@ -1,0 +1,12 @@
+{
+  "originalAppCommit": "dc2a30e06d6dcab1052122a5feb4419f459f9994",
+  "helperCommit": "7ed116dbb7eda727f0ed4e157349bc96a673e646",
+  "run": "/private/tmp/hn-git-task-review-before-vbGE2D",
+  "width": 1280,
+  "phase": "before",
+  "error": {
+    "name": "TypeError",
+    "message": "Cannot read properties of undefined (reading 'parentRight')",
+    "stack": "TypeError: Cannot read properties of undefined (reading 'parentRight')\n    at Module.verifyGitTask (/Users/lsm/focus/worktrees/disclosure-git-task/.claude/skills/verify/git-task-disclosure-web.mjs:67:31)\n    at async /Users/lsm/.codex/worktrees/c9ea898c/neokai/.node_repl_cell_73.mjs:68:1499"
+  }
+}
