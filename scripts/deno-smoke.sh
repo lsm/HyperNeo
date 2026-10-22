@@ -207,6 +207,10 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_READER_PATH="$REPO_ROOT/packages/daemon/src/
     const snapshot = await reader.readCodexSnapshot(externalPath, false);
     if (snapshot.roots[0]?.projectId !== "p1" || snapshot.folders[0]?.openCount !== 1 || snapshot.threads[0]?.id !== "t1") Deno.exit(1);
     console.log("[deno-smoke] Codex external snapshot shared reader ok");
+    const failed = reader.readCodexSnapshot(externalPath + ".missing",false).then(() => false, () => true);
+    const status = reader.read({sessionId:"synthetic-empty",status:"consumed",limit:1});
+    if (!await failed || (await status).total !== 0) Deno.exit(1);
+    console.log("[deno-smoke] Codex external error preserves queued SDK read");
   } finally { await reader.close(); }
 '; then dump_log; exit 1; fi
 

@@ -253,7 +253,7 @@ export class SDKStatusReader {
       const finish = (
         error?: Error,
         result?: SDKReadResult | null,
-        timing?: { workerMs: number; queueMs: number; finishedAt: number }
+        timing?: { workerMs: number; queueMs: number; finishedAt: number; error?: string }
       ) => {
         if (settled) return;
         settled = true;
@@ -292,9 +292,11 @@ export class SDKStatusReader {
           },
         });
         if (error) {
-          this.worker = null;
-          this.epoch++;
-          worker.terminate();
+          if (!args || !('codexSnapshot' in args) || !timing?.error) {
+            this.worker = null;
+            this.epoch++;
+            worker.terminate();
+          }
           reject(error);
         } else resolve(result ?? null);
       };

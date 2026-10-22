@@ -17,3 +17,7 @@ below250ms; the delayed find still exceeds250ms. The no-delay run checks RPC
 latency separately. Retain evidence/observed.json and folder-reads.jsonl, including
 failures. The helper closes owned workers/app/socket/probe in finally. No real
 external DB or credential files are read or copied; no deployment is performed.
+The helper holds an actual missing-file error reply until status/page/HyperNeo
+search RPCs queue behind it. All three must succeed on the same reader with full
+SDK text retained. Matching known external errors stay local; crashes/timeouts
+still fail the generation. The fixture delays the reply, never fabricates it.
