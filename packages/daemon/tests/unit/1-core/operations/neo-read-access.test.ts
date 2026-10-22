@@ -28,6 +28,9 @@ test('a missing dedicated token leaves gh unauthenticated without inherited-toke
     GH_ENTERPRISE_TOKEN: '',
     GITHUB_ENTERPRISE_TOKEN: '',
     GH_CONFIG_DIR: join(access.env.TMPDIR, 'gh'),
+    ZDOTDIR: access.env.TMPDIR,
+    BASH_ENV: '/dev/null',
+    ENV: '/dev/null',
     GH_PROMPT_DISABLED: '1',
   });
   expect(access.filesystem.denyWrite).toEqual(['/synthetic/Neo']);

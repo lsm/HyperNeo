@@ -24,7 +24,9 @@ There is no command parser or unsandboxed retry. The strict SDK sandbox uses
 
 In test mode the dedicated token store is not read. Actual `gh pr view` therefore
 reports unauthenticated with an isolated empty GH_CONFIG_DIR; it must never use an
-inherited GH_TOKEN/GITHUB_TOKEN or the human's gh login. Focused read-access tests
+inherited GH_TOKEN/GITHUB_TOKEN or the human's gh login. A synthetic `.zshenv`
+also attempts to re-export an owner token: the isolated ZDOTDIR must prevent that
+reinjection. No real shell startup or auth file is read. Focused read-access tests
 also cover injected synthetic tokens and explicit store failures. Preserve the JSON
 outside the worktree before cleanup. The scripted model proves runtime wiring,
 not spontaneous model behavior or a real token's GitHub scopes.

@@ -37,6 +37,9 @@ export async function neoReadAccess(
     },
     env: {
       TMPDIR: temp,
+      ZDOTDIR: temp,
+      BASH_ENV: '/dev/null',
+      ENV: '/dev/null',
       GH_TOKEN: token ?? '',
       GITHUB_TOKEN: '',
       GH_ENTERPRISE_TOKEN: '',
