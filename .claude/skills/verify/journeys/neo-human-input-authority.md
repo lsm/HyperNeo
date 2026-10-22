@@ -21,7 +21,9 @@ changed-content retries are refused.
 
 The installed SDK sees the id and invokes `neo.rule.save` citing that id plus
 an exact complete text part from the human message. The actual daemon persists the rule
-without a holder/turn object. Focused operations contracts refuse unknown,
+without a holder/turn object. Each directly added or removed rule must appear
+verbatim in the cited text part; an unrelated greeting authorizes no rule edit.
+Paraphrases use the existing question-bound confirmation path. Focused operations contracts refuse unknown,
 foreign, non-human, unconsumed and non-conversation ids, as well as a quote not
 in that human input or a fragment of an otherwise valid text part. Client-originated local human edits and question-bound
 consent continue to work. Message ids identify received input; they do not

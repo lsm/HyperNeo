@@ -197,12 +197,6 @@ export async function verifySpentAdmission(
       for (const server of servers)
         await hub.request('mcp.registry.setEnabled', { id: server.id, enabled: false });
       evidence.port = daemon.server.port;
-      const { servers } = await hub.request<{ servers: Array<{ id: string }> }>(
-        'mcp.registry.list',
-        {}
-      );
-      for (const server of servers)
-        await hub.request('mcp.registry.setEnabled', { id: server.id, enabled: false });
     };
     const call = (name: string, input: unknown = {}) =>
       hub.request<Record<string, unknown>>('operation.invoke', { name, input });
