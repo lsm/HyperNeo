@@ -32,12 +32,17 @@ class TestWorker {
   terminate() {
     this.stopped = true;
   }
-  reply(request: SessionEventWriteRequest, outcome?: IngestExternalEventOutcome | number | Job[]) {
+  reply(
+    request: SessionEventWriteRequest,
+    outcome?: IngestExternalEventOutcome | number | Job[],
+    error?: string
+  ) {
     this.onmessage?.({
       data: {
         id: request.id,
         epoch: request.epoch,
         outcome,
+        error,
         workerMs: 0,
         queueMs: 0,
         finishedAt: Date.now(),
@@ -250,3 +255,37 @@ test('lost claim reply remains unknown without replay or local fallback', async 
   expect(workers[0].stopped).toBe(true);
   await writer.close();
 });
+
+test.each(['SQLITE_BUSY: database is locked', 'claim SQL error'])(
+  'a known claim failure preserves unrelated queued writes: %s',
+  async (error) => {
+    const { writer, workers } = fixture();
+    const results = Promise.allSettled([
+      writer.claimJobs({ method: 'dequeue', args: ['synthetic', 5] }),
+      writer.ingest(event),
+      writer.purgeClaudeFeed(['sdk-one']),
+      writer.cleanupJobs({ beforeMs: 123, completed: [] }),
+    ]);
+    try {
+      await tick();
+      workers[0].reply(workers[0].requests[0], undefined, error);
+      await tick();
+      expect(workers[0].stopped).toBe(false);
+      expect(workers[0].requests[1].event).toEqual(event);
+      workers[0].reply(workers[0].requests[1], outcome);
+      await tick();
+      workers[0].reply(workers[0].requests[2]);
+      await tick();
+      workers[0].reply(workers[0].requests[3], 4);
+      expect((await results).map((result) => result.status)).toEqual([
+        'rejected',
+        'fulfilled',
+        'fulfilled',
+        'fulfilled',
+      ]);
+      expect(workers).toHaveLength(1);
+    } finally {
+      await writer.close();
+    }
+  }
+);
