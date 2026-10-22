@@ -1,3 +1,4 @@
+import { countPendingTurns, readPendingTurns } from './turn-vectors.ts';
 import { readMessageFacts, type NeoMessageStatusRef } from '../lib/neo/message-status.ts';
 import { readMessageFeed, type MessageFeedArgs } from './sdk-message-feed-read.ts';
 import { runLagPhase } from '../lib/event-loop-activity.ts';
@@ -405,6 +406,18 @@ export class Database {
         : undefined,
       kinds,
     });
+  }
+
+  async readPendingTurnsAsync(model: string, dimensions: number, limit: number) {
+    if (this.getDbPath() === ':memory:')
+      return readPendingTurns(this.getDatabase(), model, dimensions, limit);
+    return this.getSDKReader().readPendingTurns(model, dimensions, limit);
+  }
+
+  async countPendingTurnsAsync(model: string, dimensions: number) {
+    if (this.getDbPath() === ':memory:')
+      return countPendingTurns(this.getDatabase(), model, dimensions);
+    return this.getSDKReader().countPendingTurns(model, dimensions);
   }
 
   private getSDKReader() {

@@ -1,3 +1,4 @@
+import { countPendingTurns, readPendingTurns } from './turn-vectors.ts';
 import { readMessageFacts } from '../lib/neo/message-status.ts';
 import { readMessageFeed } from './sdk-message-feed-read.ts';
 import { Database } from './sqlite-compat.ts';
@@ -34,13 +35,15 @@ worker.onmessage = ({ data }) => {
   workerOperation = args
     ? 'query' in args
       ? 'work-search'
-      : 'neoMessageStatus' in args
-        ? 'neo-message-status'
-        : 'feed' in args
-          ? 'message-feed'
-          : 'page' in args
-            ? 'sdk-page'
-            : 'sdk-status'
+      : 'turnVectors' in args
+        ? 'turn-vectors'
+        : 'neoMessageStatus' in args
+          ? 'neo-message-status'
+          : 'feed' in args
+            ? 'message-feed'
+            : 'page' in args
+              ? 'sdk-page'
+              : 'sdk-status'
     : 'close';
   try {
     let result: SDKReadResult | null = null;
@@ -63,6 +66,12 @@ worker.onmessage = ({ data }) => {
             ? { model: args.semantic.model, vector: Float32Array.from(args.semantic.vector) }
             : undefined;
           return repository!.searchWorkChats(args.query, args.limit, semantic, args.kinds);
+        }
+        if ('turnVectors' in args) {
+          const { model, dimensions, limit } = args.turnVectors;
+          return limit === null
+            ? countPendingTurns(db!, model, dimensions)
+            : readPendingTurns(db!, model, dimensions, limit);
         }
         if ('neoMessageStatus' in args) return readMessageFacts(db!, args.neoMessageStatus);
         if ('feed' in args) return readMessageFeed(db!, args);
@@ -98,3 +107,5 @@ worker.onmessage = ({ data }) => {
     });
   }
 };
+
+worker.postMessage({ ready: true });

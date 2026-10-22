@@ -27,7 +27,7 @@ Database.prototype.prepare=(function(sql:string,...rest:unknown[]){const stmt=Re
 const compatURL=new URL('../../../packages/daemon/src/storage/sqlite-compat.ts',import.meta.url).href;
 const fixture=join(run,'reader.ts'),sourceURL=new URL('../../../packages/daemon/src/storage/sdk-status-worker.ts',import.meta.url).href;
 writeFileSync(fixture,`const {Database}=await import(${JSON.stringify(compatURL)});const prepare=Database.prototype.prepare;Database.prototype.prepare=function(sql,...rest){const stmt=prepare.call(this,sql,...rest);if(!(${matches.toString()})(sql))return stmt;return new Proxy(stmt,{get(target,key){const value=Reflect.get(target,key);if(key!=='all')return typeof value==='function'?value.bind(target):value;return(...args)=>{if(${waitMs})Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,${waitMs});return value.apply(target,args);};}});};await import(${JSON.stringify(sourceURL)});postMessage({proofReady:true});`);
-let faultPending=process.env.VERIFY_STATUS_FAULT==='1';const faultPath=join(run,'fault-reader.ts');writeFileSync(faultPath,"onmessage=()=>{throw new Error('Synthetic Neo facts worker crash');};\n");
+let faultPending=process.env.VERIFY_STATUS_FAULT==='1';const faultPath=join(run,'fault-reader.ts');writeFileSync(faultPath,"onmessage=()=>{throw new Error('Synthetic Neo facts worker crash');}; postMessage({ready:true});\n");
 globalThis.Worker=function(url:string|URL,options?:WorkerOptions){
  if(!String(url).endsWith('/sdk-status-worker.ts'))return new NativeWorker(url,options);
  if(faultPending){faultPending=false;const worker=new NativeWorker(pathToFileURL(faultPath).href,{type:'module'});workers.push(worker);return worker;}

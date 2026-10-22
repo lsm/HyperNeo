@@ -2,10 +2,17 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { embedPendingTurns } from '../../../../src/lib/drivers/turn-embedding';
 import { runMigration297 } from '../../../../src/storage/schema/m297-message-search-vectors';
 import { Database } from '../../../../src/storage/sqlite-compat';
-import { readPendingTurns } from '../../../../src/storage/turn-vectors';
+import { countPendingTurns, readPendingTurns } from '../../../../src/storage/turn-vectors';
 
 describe('embedPendingTurns', () => {
   let db: Database;
+  const storage = {
+    getDatabase: () => db,
+    readPendingTurnsAsync: async (model: string, dimensions: number, limit: number) =>
+      readPendingTurns(db, model, dimensions, limit),
+    countPendingTurnsAsync: async (model: string, dimensions: number) =>
+      countPendingTurns(db, model, dimensions),
+  };
   const embedded: string[] = [];
   const embedder = {
     model: 'test-model',
@@ -36,13 +43,13 @@ describe('embedPendingTurns', () => {
   afterEach(() => db.close());
 
   test('embeds the newest pending turns once, skipping tasks, system notices and short text', async () => {
-    expect(await embedPendingTurns(db, embedder)).toEqual({ embedded: 2, remaining: 0 });
+    expect(await embedPendingTurns(storage, embedder)).toEqual({ embedded: 2, remaining: 0 });
     expect(embedded.map((text) => text.slice(0, 16))).toEqual([
       'the newest turn ',
       'an older turn ab',
     ]);
     expect(embedded[0]).toHaveLength(2_000);
-    expect(await embedPendingTurns(db, embedder)).toEqual({ embedded: 0, remaining: 0 });
+    expect(await embedPendingTurns(storage, embedder)).toEqual({ embedded: 0, remaining: 0 });
     const row = db
       .prepare(
         `SELECT model, dimensions, length(embedding) AS bytes FROM message_search_vectors WHERE content_id = 4`
@@ -52,7 +59,7 @@ describe('embedPendingTurns', () => {
   });
 
   test('picks up turns added after the newest vector before older backfill', async () => {
-    await embedPendingTurns(db, embedder);
+    await embedPendingTurns(storage, embedder);
     db.prepare(
       `INSERT INTO message_search_content (kind, message_type, body) VALUES ('message', 'user', ?)`
     ).run('a brand new turn about fonts');
@@ -69,14 +76,14 @@ describe('embedPendingTurns', () => {
         return [text.length, 1, 0];
       },
     };
-    await embedPendingTurns(db, changing);
+    await embedPendingTurns(storage, changing);
     expect(
       db.prepare(`SELECT content_id FROM message_search_vectors ORDER BY content_id`).all()
     ).toEqual([{ content_id: 1 }]);
   });
 
   test('re-embeds turns from another model and drops vectors with their turn', async () => {
-    await embedPendingTurns(db, embedder);
+    await embedPendingTurns(storage, embedder);
     expect(readPendingTurns(db, 'next-model', 3, 10).map((turn) => turn.id)).toEqual([4, 1]);
     db.exec(`DELETE FROM message_search_content WHERE id = 4`);
     expect(
@@ -89,16 +96,43 @@ describe('embedPendingTurns', () => {
       `INSERT INTO message_search_content (kind, message_type, body) VALUES ('message', 'user', ?)`
     );
     for (let n = 0; n < 70; n++) insert.run(`backlog turn number ${n} about fonts`);
-    expect(await embedPendingTurns(db, embedder, 0)).toEqual({ embedded: 32, remaining: 40 });
-    expect(await embedPendingTurns(db, embedder)).toEqual({ embedded: 40, remaining: 0 });
+    expect(await embedPendingTurns(storage, embedder, 0)).toEqual({ embedded: 32, remaining: 40 });
+    expect(await embedPendingTurns(storage, embedder)).toEqual({ embedded: 40, remaining: 0 });
   });
 
   test('drains older backlog in the same run after a short batch of new turns', async () => {
-    await embedPendingTurns(db, embedder, 0);
+    await embedPendingTurns(storage, embedder, 0);
     db.exec(`DELETE FROM message_search_vectors WHERE content_id = 1`);
     db.prepare(
       `INSERT INTO message_search_content (kind, message_type, body) VALUES ('message', 'user', ?)`
     ).run('a brand new turn about fonts');
-    expect(await embedPendingTurns(db, embedder)).toEqual({ embedded: 2, remaining: 0 });
+    expect(await embedPendingTurns(storage, embedder)).toEqual({ embedded: 2, remaining: 0 });
+  });
+  test('awaits pending reads before embedding and rejects unavailable storage without a sync fallback', async () => {
+    let release!: (turns: ReturnType<typeof readPendingTurns>) => void;
+    const selected = readPendingTurns(db, embedder.model, embedder.dimensions, 32);
+    const pending = embedPendingTurns(
+      {
+        ...storage,
+        readPendingTurnsAsync: () =>
+          new Promise((resolve) => {
+            release = resolve;
+          }),
+      },
+      embedder,
+      0
+    );
+    expect(embedded).toEqual([]);
+    expect(db.prepare('SELECT content_id FROM message_search_vectors').all()).toEqual([]);
+    release(selected);
+    expect(await pending).toEqual({ embedded: 2, remaining: 0 });
+    const unavailable = {
+      ...storage,
+      readPendingTurnsAsync: async () => {
+        throw new Error('reader unavailable');
+      },
+    };
+    await expect(embedPendingTurns(unavailable, embedder)).rejects.toThrow('reader unavailable');
+    expect(embedded).toHaveLength(2);
   });
 });

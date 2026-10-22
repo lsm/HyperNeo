@@ -1755,7 +1755,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   );
   scheduleNeoNightlyReorganize(deps.jobQueue, Date.now() + NEO_REORGANIZE_IDLE_MS, null);
   deps.jobProcessor.register(WORK_TURN_EMBED, () =>
-    runTurnEmbedding(deps.jobQueue, deps.db.getDatabase(), deps.db.getEmbedder())
+    runTurnEmbedding(deps.jobQueue, deps.db, deps.db.getEmbedder())
   );
   deps.jobProcessor.register(WORK_FEED_CLAUDE, async () => ({
     ...(await runClaudeFeed(

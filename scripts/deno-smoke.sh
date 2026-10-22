@@ -184,6 +184,22 @@ if ! SMOKE_WS_URL="ws://localhost:$PORT/ws" SMOKE_WORKSPACE_PATH="$WORK_DIR" den
 	exit 1
 fi
 
+if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_READER_PATH="$REPO_ROOT/packages/daemon/src/storage/sdk-status-reader.ts" deno eval --config "$REPO_ROOT/packages/daemon/deno.json" '
+  const { SDKStatusReader } = await import("file://" + Deno.env.get("SMOKE_READER_PATH"));
+  const { DatabaseSync } = await import("node:sqlite");
+  const db = new DatabaseSync(Deno.env.get("SMOKE_DB_PATH"));
+  const body = "Complete synthetic turn-range history";
+  const id = Number(db.prepare("INSERT INTO message_search_content(kind,source_id,session_id,message_type,title,body,timestamp) VALUES (?,?,?,?,?,?,?)").run("message","deno-turn-range","synthetic","user","Synthetic",body,1).lastInsertRowid);
+  db.close();
+  const reader = new SDKStatusReader(Deno.env.get("SMOKE_DB_PATH"));
+  try {
+    const rows = await reader.readPendingTurns("synthetic-model",3,32);
+    if (!rows.some(row => row.id === id && row.text === body && row.bodyLength === body.length)) Deno.exit(1);
+    if (await reader.countPendingTurns("synthetic-model",3) !== rows.length) Deno.exit(1);
+    console.log("[deno-smoke] Turn-vector range/pending/count shared reader ok");
+  } finally { await reader.close(); }
+'; then dump_log; exit 1; fi
+
 if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_WRITER_PATH="$REPO_ROOT/packages/daemon/src/lib/external-events/session-event-writer.ts" deno eval --config "$REPO_ROOT/packages/daemon/deno.json" '
   const { SessionEventWriter } = await import("file://" + Deno.env.get("SMOKE_WRITER_PATH"));
   const writer = new SessionEventWriter(Deno.env.get("SMOKE_DB_PATH"));

@@ -1,3 +1,4 @@
+import type { PendingTurn } from './turn-vectors.ts';
 import type { Fact, NeoMessageStatusRef } from '../lib/neo/message-status.ts';
 import type { MessageFeedArgs } from './sdk-message-feed-read.ts';
 import type { LiveQueryEvaluation } from './live-query.ts';
@@ -37,13 +38,16 @@ type SDKReadArgs =
   | SDKPageArgs
   | WorkSearchArgs
   | MessageFeedArgs
-  | { neoMessageStatus: NeoMessageStatusRef[] };
+  | { neoMessageStatus: NeoMessageStatusRef[] }
+  | { turnVectors: { model: string; dimensions: number; limit: number | null } };
 export type SDKReadResult =
   | SDKStatusPage
   | SDKMessagePage
   | WorkChatMatch[]
   | LiveQueryEvaluation
-  | Fact[];
+  | Fact[]
+  | PendingTurn[]
+  | number;
 export type SDKStatusRequest = {
   id: number;
   epoch: number;
@@ -53,6 +57,7 @@ export type SDKStatusRequest = {
   queryObservability?: SQLiteQueryObservabilityOptions;
 };
 export type SDKStatusReply =
+  | { ready: true }
   | { log: StructuredLogEvent }
   | {
       id: number;
@@ -131,6 +136,7 @@ export function sdkReadLogMetadata(metadata: Record<string, unknown>, workerOper
 
 export class SDKStatusReader {
   private worker: Worker | null = null;
+  private readonly ready = new WeakSet<Worker>();
   private queue: Promise<unknown> = Promise.resolve();
   private waiting = 0;
   private searches = 0;
@@ -167,6 +173,14 @@ export class SDKStatusReader {
 
   readNeoMessageStatusFacts(refs: NeoMessageStatusRef[]): Promise<Fact[]> {
     return this.enqueue({ neoMessageStatus: refs }) as Promise<Fact[]>;
+  }
+
+  readPendingTurns(model: string, dimensions: number, limit: number): Promise<PendingTurn[]> {
+    return this.enqueue({ turnVectors: { model, dimensions, limit } }) as Promise<PendingTurn[]>;
+  }
+
+  countPendingTurns(model: string, dimensions: number): Promise<number> {
+    return this.enqueue({ turnVectors: { model, dimensions, limit: null } }) as Promise<number>;
   }
 
   private enqueue(args: SDKReadArgs): Promise<SDKReadResult> {
@@ -227,7 +241,8 @@ export class SDKStatusReader {
       epoch = this.epoch,
       started = performance.now();
     return new Promise((resolve, reject) => {
-      let settled = false;
+      let settled = false,
+        sent = false;
       const finish = (
         error?: Error,
         result?: SDKReadResult | null,
@@ -247,13 +262,15 @@ export class SDKStatusReader {
             operation: args
               ? 'query' in args
                 ? 'work-search'
-                : 'neoMessageStatus' in args
-                  ? 'neo-message-status'
-                  : 'feed' in args
-                    ? 'message-feed'
-                    : 'page' in args
-                      ? 'sdk-page'
-                      : 'sdk-status'
+                : 'turnVectors' in args
+                  ? 'turn-vectors'
+                  : 'neoMessageStatus' in args
+                    ? 'neo-message-status'
+                    : 'feed' in args
+                      ? 'message-feed'
+                      : 'page' in args
+                        ? 'sdk-page'
+                        : 'sdk-status'
               : 'close',
             id,
             epoch,
@@ -286,6 +303,11 @@ export class SDKStatusReader {
       };
       worker.onmessage = ({ data }: MessageEvent<SDKStatusReply>) => {
         if (this.worker !== worker) return;
+        if ('ready' in data) {
+          this.ready.add(worker);
+          send();
+          return;
+        }
         if ('log' in data) {
           emitStructuredLogEvent({
             ...data.log,
@@ -297,18 +319,23 @@ export class SDKStatusReader {
         if (data.id !== id || data.epoch !== epoch) return;
         finish(data.error ? new Error(data.error) : undefined, data.result, data);
       };
-      try {
-        worker.postMessage({
-          id,
-          epoch,
-          dbPath: this.dbPath,
-          sentAt: Date.now(),
-          args,
-          queryObservability: this.queryObservability,
-        } satisfies SDKStatusRequest);
-      } catch (error) {
-        finish(error instanceof Error ? error : new Error(String(error)));
-      }
+      const send = () => {
+        if (sent || settled) return;
+        try {
+          worker.postMessage({
+            id,
+            epoch,
+            dbPath: this.dbPath,
+            sentAt: Date.now(),
+            args,
+            queryObservability: this.queryObservability,
+          } satisfies SDKStatusRequest);
+          sent = true;
+        } catch (error) {
+          finish(error instanceof Error ? error : new Error(String(error)));
+        }
+      };
+      if (this.ready.has(worker)) send();
     });
   }
 }
