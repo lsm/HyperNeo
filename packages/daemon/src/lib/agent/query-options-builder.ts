@@ -41,6 +41,8 @@ import { sessionDoorPath } from '../messaging/session-door.ts';
 import { Logger } from '../logger.ts';
 import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import { neoSecretReadRules } from '../neo/secret-read-rules.ts';
+import { neoReadAccess } from '../neo/read-access.ts';
+import { neoReadSandbox, neoReadTools } from '../neo/session-config.ts';
 import { mergeSessionMcpServers } from '../mcp/built-in-servers.ts';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
 import {
@@ -425,9 +427,13 @@ export class QueryOptionsBuilder {
     const systemPromptConfig = this.buildSystemPrompt();
     const disallowedTools = this.getDisallowedTools();
     const allowedTools = this.getAllowedTools();
-    const additionalDirectories = this.getAdditionalDirectories();
-    const handoffDirectory = handoffDraftDirectory(getDataDir(), this.ctx.session.id);
-    additionalDirectories?.push(handoffDirectory);
+    const neo = neoCoordinatorBinding(this.ctx.db, session.id);
+    const readAccess = neo ? await neoReadAccess(session.id, this.getCwd()) : undefined;
+    const additionalDirectories = neo ? [] : this.getAdditionalDirectories();
+    const handoffDirectory = neo
+      ? undefined
+      : handoffDraftDirectory(getDataDir(), this.ctx.session.id);
+    if (handoffDirectory) additionalDirectories?.push(handoffDirectory);
     const hooks = this.buildHooks(overrides?.askUserQuestionHook ?? this.askUserQuestionHook);
     const permissionMode = this.getPermissionMode();
     const pluginsFromSkills = [
@@ -470,7 +476,12 @@ export class QueryOptionsBuilder {
       permissionMode,
       allowDangerouslySkipPermissions: permissionMode === 'bypassPermissions',
 
-      sandbox: config.sandbox as Options['sandbox'],
+      sandbox: readAccess
+        ? {
+            ...neoReadSandbox(),
+            filesystem: readAccess.filesystem,
+          }
+        : (config.sandbox as Options['sandbox']),
 
       mcpServers: mergedMcpServers as Options['mcpServers'],
       strictMcpConfig: true,
@@ -483,7 +494,12 @@ export class QueryOptionsBuilder {
 
       cwd: this.getCwd(),
       additionalDirectories,
-      env: { ...mergedEnv, ...compactEnv, HYPERNEO_HANDOFF_DIR: handoffDirectory },
+      env: {
+        ...mergedEnv,
+        ...compactEnv,
+        HYPERNEO_HANDOFF_DIR: handoffDirectory,
+        ...readAccess?.env,
+      },
       executable: config.executable ?? (isRunningUnderBun() ? 'bun' : undefined),
       executableArgs: config.executableArgs,
       pathToClaudeCodeExecutable: sdkCliPath,
@@ -820,7 +836,7 @@ export class QueryOptionsBuilder {
   }
 
   private getAllowedTools(): string[] {
-    const config = this.ctx.session.config;
+    const config = this.admittedConfig();
 
     if (config.allowedTools && config.allowedTools.length > 0) {
       return [...config.allowedTools];
@@ -966,11 +982,12 @@ export class QueryOptionsBuilder {
   }
 
   private getPermissionMode(): PermissionMode {
-    if (this.ctx.session.config.permissionMode) {
-      if (this.ctx.session.config.permissionMode === 'default') {
+    const config = this.admittedConfig();
+    if (config.permissionMode) {
+      if (config.permissionMode === 'default') {
         return 'bypassPermissions';
       }
-      return this.ctx.session.config.permissionMode;
+      return config.permissionMode;
     }
 
     const globalSettings = this.ctx.settingsManager.getGlobalSettings();
@@ -1077,7 +1094,10 @@ export class QueryOptionsBuilder {
   }
 
   private admittedConfig(session: Session = this.ctx.session): Session['config'] {
-    return stripRejectedSessionConfig(session.config);
+    const config = stripRejectedSessionConfig(session.config);
+    return neoCoordinatorBinding(this.ctx.db, session.id)
+      ? { ...config, ...neoReadTools() }
+      : config;
   }
 
   private getSDKCliPath(): string | undefined {

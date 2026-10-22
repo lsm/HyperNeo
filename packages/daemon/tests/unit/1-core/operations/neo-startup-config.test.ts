@@ -12,17 +12,7 @@ import type { CreateSessionParams } from '../../../../src/lib/session/session-li
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
 const root = 'neo:synthetic-startup';
-const tools = [
-  'Read',
-  'Write',
-  'Edit',
-  'NotebookEdit',
-  'Grep',
-  'Glob',
-  'WebSearch',
-  'WebFetch',
-  'Bash',
-];
+const tools = ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash'];
 
 describe('Neo startup configuration', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
@@ -77,10 +67,7 @@ describe('Neo startup configuration', () => {
       expect(restored.config.systemPrompt).toBe(neoPrompt(service.packBriefs()));
       expect(restored.config.systemPrompt).toContain('the human sees none of your assistant text');
       expect(restored.config.sdkToolsPreset).toEqual(tools);
-      expect(restored.config.allowedTools).toEqual([
-        'mcp__fetch-mcp__fetch',
-        'mcp__hyperneo-operations__invoke',
-      ]);
+      expect(restored.config.allowedTools).toEqual([...tools, 'mcp__hyperneo-operations__invoke']);
       expect(restored).toMatchObject({
         sdkSessionId: session.sdkSessionId,
         sdkOriginPath: session.sdkOriginPath,
@@ -91,8 +78,8 @@ describe('Neo startup configuration', () => {
         model: session.config.model,
         maxTokens: 8192,
         disallowedTools: ['Read(/synthetic/keep)'],
-        settingSources: session.config.settingSources,
-        permissionMode: 'acceptEdits',
+        settingSources: [],
+        permissionMode: 'dontAsk',
         autoCompactPercent: 70,
       });
       await service[method]();
@@ -100,7 +87,7 @@ describe('Neo startup configuration', () => {
     }
   );
 
-  test('refreshing tools does not auto-approve native mutation under acceptEdits', async () => {
+  test('refreshing tools approves reading and sandboxed Bash without native mutation', async () => {
     const session = createTestSession(root);
     session.config = { ...session.config, permissionMode: 'acceptEdits', allowedTools: ['Read'] };
     db.createSession(session);
@@ -109,9 +96,10 @@ describe('Neo startup configuration', () => {
     const config = db.getSession(root)!.config;
     expect(config.sdkToolsPreset).toContain('Bash');
     expect(config.allowedTools).toContain('Read');
-    for (const tool of ['Bash', 'Write', 'Edit', 'NotebookEdit'])
+    expect(config.allowedTools).toContain('Bash');
+    for (const tool of ['Write', 'Edit', 'NotebookEdit'])
       expect(config.allowedTools).not.toContain(tool);
-    expect(config.permissionMode).toBe('acceptEdits');
+    expect(config.permissionMode).toBe('dontAsk');
   });
 
   test('new roots start with current prompt and native tools', async () => {
@@ -119,7 +107,7 @@ describe('Neo startup configuration', () => {
     expect(db.getSession(id)?.config).toMatchObject({
       systemPrompt: neoPrompt(service.packBriefs()),
       sdkToolsPreset: tools,
-      allowedTools: ['mcp__hyperneo-operations__invoke'],
+      allowedTools: [...tools, 'mcp__hyperneo-operations__invoke'],
     });
   });
 
@@ -136,5 +124,33 @@ describe('Neo startup configuration', () => {
     await service.recover();
     expect(service.defaultSessionId()).toBeUndefined();
     expect(updateSession).not.toHaveBeenCalled();
+  });
+
+  test('a recovered root can read with a strict Bash sandbox and cannot approve native writes', async () => {
+    const session = createTestSession(root);
+    session.config.allowedTools = ['Write', 'Edit', 'NotebookEdit'];
+    session.config.coordinatorMode = true;
+    db.createSession(session);
+    service.repo.reserveBinding({ sessionId: root, projectId: null, kind: 'neo' });
+    await service.recover();
+    const config = db.getSession(root)!.config;
+    expect(config.allowedTools).toEqual([
+      'Read',
+      'Grep',
+      'Glob',
+      'WebSearch',
+      'WebFetch',
+      'Bash',
+      'mcp__hyperneo-operations__invoke',
+    ]);
+    expect(config.permissionMode).toBe('dontAsk');
+    expect(config.coordinatorMode).toBe(false);
+    expect(config.sandbox).toMatchObject({
+      enabled: true,
+      failIfUnavailable: true,
+      allowUnsandboxedCommands: false,
+      enableWeakerNetworkIsolation: true,
+      excludedCommands: [],
+    });
   });
 });

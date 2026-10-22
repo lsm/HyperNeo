@@ -2099,6 +2099,15 @@ describe('QueryOptionsBuilder', () => {
           mockSession.config.sdkToolsPreset = ['AskUserQuestion'];
           mockSession.config.allowedTools = ['AskUserQuestion'];
           mockSession.config.permissionMode = 'acceptEdits';
+          mockSession.config.coordinatorMode = kind === 'neo';
+          mockSession.config.agent = 'Mutator';
+          mockSession.config.agents = {
+            Mutator: {
+              description: 'Synthetic stored mutation',
+              prompt: 'Synthetic',
+              tools: ['Write', 'Edit'],
+            },
+          };
           const resumedBuilder = new QueryOptionsBuilder({
             ...mockContext,
             db: {
@@ -2111,15 +2120,72 @@ describe('QueryOptionsBuilder', () => {
           expect(options.resume).toBe(mockSession.sdkSessionId);
           expect(options.model).toBe('default');
           expect(options.maxTurns).toBe(Infinity);
-          expect(options.tools).toEqual([...tools]);
-          expect(options.allowedTools?.includes('AskUserQuestion')).toBe(true);
-          expect(options.permissionMode).toBe('acceptEdits');
+          expect(options.tools).toEqual(
+            kind === 'neo' ? ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash'] : [...tools]
+          );
+          if (kind === 'neo') {
+            expect(options.allowedTools).toEqual([
+              'Read',
+              'Grep',
+              'Glob',
+              'WebSearch',
+              'WebFetch',
+              'Bash',
+              'mcp__hyperneo-operations__invoke',
+            ]);
+            expect(options.permissionMode).toBe('dontAsk');
+            expect(options.agent).toBeUndefined();
+            expect(options.agents).toBeUndefined();
+            expect(resumedBuilder.getCurrentPermissionMode()).toBe('dontAsk');
+          } else {
+            expect(options.permissionMode).toBe('acceptEdits');
+            expect(options.allowedTools).toContain('AskUserQuestion');
+          }
           expect(options.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code' });
           if (kind === 'neo') {
             expect(options.disallowedTools).toEqual(neoSecretReadRules());
             expect(options.disallowedTools).toContain('Read(~/.ssh/**)');
             expect(options.disallowedTools?.every((rule) => rule.startsWith('Read('))).toBe(true);
+            expect(options.additionalDirectories).toEqual([]);
+            expect(options.sandbox?.filesystem?.denyWrite).toEqual(['/test/workspace']);
+            expect(options.sandbox?.filesystem?.allowWrite).not.toContain(handoffDataDir);
+            expect(options.env?.HYPERNEO_HANDOFF_DIR).toBeUndefined();
+            expect(options.env?.GH_TOKEN).toBe('');
+            expect(options.env?.GITHUB_TOKEN).toBe('');
+            expect(options.env?.GH_CONFIG_DIR).toBe(join(options.env!.TMPDIR!, 'gh'));
+            for (const sandbox of [
+              undefined,
+              {
+                enabled: false,
+                failIfUnavailable: false,
+                allowUnsandboxedCommands: true,
+                excludedCommands: ['gh'],
+                allowAppleEvents: true,
+                enableWeakerNestedSandbox: true,
+                ignoreViolations: { file: ['*'] },
+              },
+            ]) {
+              mockSession.config.sandbox = sandbox;
+              const enforced = await resumedBuilder.build();
+              expect(enforced.sandbox).toMatchObject({
+                enabled: true,
+                failIfUnavailable: true,
+                allowUnsandboxedCommands: false,
+                excludedCommands: [],
+                enableWeakerNetworkIsolation: true,
+              });
+              expect(enforced.sandbox?.filesystem?.allowWrite).not.toContain('/test/workspace');
+              for (const key of [
+                'allowAppleEvents',
+                'enableWeakerNestedSandbox',
+                'ignoreViolations',
+              ])
+                expect(enforced.sandbox).not.toHaveProperty(key);
+            }
           } else {
+            expect(options.env?.HYPERNEO_HANDOFF_DIR).toBe(
+              join(handoffDataDir, 'handoffs', encodeURIComponent(mockSession.id), 'drafts')
+            );
             expect(options.disallowedTools).toBeUndefined();
           }
         } finally {

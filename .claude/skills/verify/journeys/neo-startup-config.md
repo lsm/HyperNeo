@@ -22,12 +22,12 @@ the actual daemon at the ordinary Neo cwd. No live session, transcript or DB is 
 Through session.get and Neo message/publication RPC, verify the stored and model-received
 prompt is neoPrompt(packBriefs), native Read/Bash tools are present, the prior marker still
 reaches the model, SDK session identity is unchanged, the shared lifecycle copied the
-transcript to the new cwd, and the human-visible publication is readable. The resumed fixture uses dontAsk: an
-unapproved native Bash request must be denied without creating its marker file,
-while the operations MCP publication still succeeds. Native tool availability does
-not pre-approve Bash or file mutations; existing native approval settings remain. The scripted
-reply proves transport/config/publication plumbing; it is not evidence of a real model's
-spontaneous decision to publish. Missing transcript data cannot be reconstructed by this
+transcript to the new cwd, and the human-visible publication is readable. The resumed fixture uses dontAsk with
+Read/Grep/Glob/web/Bash approved and native mutation tools unavailable. Follow
+[Neo read sandbox](neo-read-sandbox.md) for its actual OS write-denial and explicit
+tool-error checks. The scripted reply proves transport/config/publication
+plumbing; it is not evidence of a real model's spontaneous decision to publish.
+Missing transcript data cannot be reconstructed by this
 config refresh and is not claimed recovered.
 
 Save `$RUN/evidence/neo-goal-cycle-sdk.json` outside the worktree; it contains startup

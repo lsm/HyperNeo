@@ -3,23 +3,34 @@ import { OPERATIONS_MCP_SERVER_NAME } from '../mcp/built-in-servers.ts';
 import type { NeoPackBrief } from './pack-contract.ts';
 import { neoPrompt } from './prompt.ts';
 
-export function neoPromptTools(packs: readonly NeoPackBrief[]) {
-  const tools = [
-    'Read',
-    'Write',
-    'Edit',
-    'NotebookEdit',
-    'Grep',
-    'Glob',
-    'WebSearch',
-    'WebFetch',
-    'Bash',
-  ];
+export function neoReadSandbox() {
   return {
-    systemPrompt: neoPrompt(packs),
-    sdkToolsPreset: tools,
-    allowedTools: [`mcp__${OPERATIONS_MCP_SERVER_NAME}__invoke`],
+    enabled: true,
+    failIfUnavailable: true,
+    autoAllowBashIfSandboxed: true,
+    allowUnsandboxedCommands: false,
+    excludedCommands: [],
+    enableWeakerNetworkIsolation: true,
+    network: { allowedDomains: ['*'] },
   };
+}
+
+export function neoReadTools() {
+  const tools = ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash'];
+  return {
+    sdkToolsPreset: tools,
+    allowedTools: [...tools, `mcp__${OPERATIONS_MCP_SERVER_NAME}__invoke`],
+    permissionMode: 'dontAsk' as const,
+    coordinatorMode: false,
+    settingSources: [],
+    agent: undefined,
+    agents: undefined,
+    sandbox: neoReadSandbox(),
+  };
+}
+
+export function neoPromptTools(packs: readonly NeoPackBrief[]) {
+  return { systemPrompt: neoPrompt(packs), ...neoReadTools() };
 }
 
 export function planNeoSessionConfig(
@@ -29,13 +40,6 @@ export function planNeoSessionConfig(
   if (!session?.config) return null;
   const config = session.config;
   const defaults = neoPromptTools(packs);
-  const current = {
-    ...defaults,
-    allowedTools: [...new Set([...(config.allowedTools ?? []), ...defaults.allowedTools])],
-  };
-  return config.systemPrompt === current.systemPrompt &&
-    JSON.stringify(config.sdkToolsPreset) === JSON.stringify(current.sdkToolsPreset) &&
-    JSON.stringify(config.allowedTools) === JSON.stringify(current.allowedTools)
-    ? null
-    : { ...config, ...current };
+  const current = { ...config, ...defaults };
+  return JSON.stringify(config) === JSON.stringify(current) ? null : current;
 }

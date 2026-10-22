@@ -1,8 +1,8 @@
 import { expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,14 +14,47 @@ import { SessionScheduleRepository } from '../../../src/storage/repositories/ses
 import { NeoAskTodoRepository } from '../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { readNeoPublications } from '../../../../web/src/neo/publication-client.ts';
 
-test('recovered root refreshes prompt and tools, resumes SDK history across cwd changes and publishes the reply', async () => {
+const sandboxProof = process.env.HYPERNEO_TEST_DISABLE_SANDBOX !== '1';
+test(`root startup, reads, resume and publication (${sandboxProof ? 'real OS sandbox proof' : 'transport fixture, sandbox disabled'})`, async () => {
   const isolated = mkdtempSync(join(tmpdir(), 'neo-sdk-publication-'));
   const requestId = randomUUID();
+  const root = `neo:${randomUUID()}`;
   const approvalProbeFile = join(isolated, 'approval-probe.txt');
+  const readProbeFile = join(isolated, 'read-probe.txt');
+  const readCheckout = join(isolated, 'data', 'worktrees', 'lsm', 'synthetic', 'neo-read');
+  const workerCheckout = join(isolated, 'data', 'worktrees', 'lsm', 'synthetic', 'worker-id');
+  await mkdir(readCheckout, { recursive: true });
+  await mkdir(workerCheckout, { recursive: true });
+  const readProbe = `synthetic-code-${randomUUID()}`;
+  await writeFile(readProbeFile, readProbe);
+  const shellHome = join(isolated, 'inherited-shell');
+  await mkdir(shellHome);
+  await writeFile(join(shellHome, '.zshenv'), 'export GH_TOKEN=synthetic-inherited-owner-token\n');
   let approvalProbeIssued = false;
+  let nativeProbeIndex = 0;
   let approvalProbeDenied = false;
   const approvalProbeResults: unknown[] = [];
-  const root = `neo:${randomUUID()}`;
+  const nativeReadProbes = [
+    { name: 'Read', input: { file_path: readProbeFile } },
+    {
+      name: 'Grep',
+      input: { pattern: 'synthetic-code-', path: readProbeFile, output_mode: 'content' },
+    },
+    { name: 'Glob', input: { pattern: 'read-probe.txt', path: isolated } },
+    {
+      name: 'Bash',
+      input: {
+        command: sandboxProof
+          ? `cat '${readProbeFile}'; if [ -n "$HYPERNEO_HANDOFF_DIR" ]; then printf UNWRITABLE_HANDOFF_ADVERTISED; exit 1; fi; if [ -n \"$GH_TOKEN\" ]; then printf UNEXPECTED_INHERITED_TOKEN; exit 1; fi; printf CHECKOUT_OK > '${readCheckout}/allowed.txt'; printf TEMP_OK > '${join(tmpdir(), 'hyperneo-neo', root, 'allowed.txt')}'; (printf BAD > '${workerCheckout}/blocked.txt'); (printf BAD > '${isolated}/data/blocked.txt'); (printf BAD > '${isolated}/data/Neo/blocked.txt'); gh pr view https://github.com/lsm/HyperNeo/pull/8148 --json number; printf SYNTHETIC_UNAPPROVED > '${approvalProbeFile}'`
+          : `cat '${readProbeFile}'; if [ -n "$HYPERNEO_HANDOFF_DIR" ]; then printf UNWRITABLE_HANDOFF_ADVERTISED; exit 1; fi; if [ -n \"$GH_TOKEN\" ]; then printf UNEXPECTED_INHERITED_TOKEN; exit 1; fi; gh pr view https://github.com/lsm/HyperNeo/pull/8148 --json number`,
+      },
+    },
+    { name: 'Write', input: { file_path: approvalProbeFile, content: 'NATIVE_WRITE_BYPASS' } },
+    {
+      name: 'Edit',
+      input: { file_path: readProbeFile, old_string: readProbe, new_string: 'NATIVE_EDIT_BYPASS' },
+    },
+  ];
   const historyMarker = `synthetic-history-${randomUUID()}`;
   const oldCwd = join(isolated, 'data', 'Neo', '.coordinators', 'old-root');
   const newCwd = join(isolated, 'data', 'Neo');
@@ -111,8 +144,9 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
           if (result.type !== 'tool_result' || !id || receivedToolCalls.has(id)) continue;
           receivedToolCalls.add(id);
           approvalProbeResults.push(result);
-          if (id === 'tool-approval-probe') {
-            approvalProbeDenied = result.is_error === true;
+          if (result.tool_use_id?.startsWith('tool-read-probe-')) {
+            if (result.tool_use_id === 'tool-read-probe-3')
+              approvalProbeDenied = result.is_error === true;
             continue;
           }
           if (id.startsWith('tool-fictional-'))
@@ -121,7 +155,7 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
         }
       }
     }
-    const approvalProbe = active && !approvalProbeIssued;
+    const approvalProbe = active && nativeProbeIndex < nativeReadProbes.length;
     if (approvalProbe) approvalProbeIssued = true;
     const publishing = active && !approvalProbe && round < 4;
     if (publishing && round === 0) {
@@ -131,9 +165,8 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
     const block = approvalProbe
       ? {
           type: 'tool_use',
-          id: 'tool-approval-probe',
-          name: 'Bash',
-          input: { command: `printf SYNTHETIC_UNAPPROVED > '${approvalProbeFile}'` },
+          id: `tool-read-probe-${nativeProbeIndex}`,
+          ...nativeReadProbes[nativeProbeIndex++],
         }
       : publishing
         ? {
@@ -241,6 +274,10 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
     MINIMAX_API_KEY: '',
     COPILOT_GITHUB_TOKEN: '',
     DEFAULT_MODEL: 'haiku',
+    GH_TOKEN: 'synthetic-inherited-owner-token',
+    GITHUB_TOKEN: 'synthetic-inherited-owner-token',
+    GITHUB_ACTIONS: 'true',
+    ZDOTDIR: shellHome,
   };
   const prior = new Map(Object.keys(environment).map((key) => [key, process.env[key]]));
   Object.assign(process.env, environment);
@@ -253,6 +290,7 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
     const options = await build.apply(this, args);
     return {
       ...options,
+      sandbox: sandboxProof ? options.sandbox : { enabled: false },
       stderr: (data) => {
         sdkErrors.push(data);
         options.stderr?.(data);
@@ -381,6 +419,44 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
     });
     expect(opened.ok).toBe(true);
     expect(opened.sessionId).toBe(root);
+    const sandboxOff = await hub.request('session.sandbox.switch', {
+      sessionId: root,
+      sandboxEnabled: false,
+    });
+    expect(sandboxOff).toMatchObject({
+      success: false,
+      sandboxEnabled: true,
+      error: expect.stringContaining('Neo requires'),
+    });
+    await hub.request('session.update', {
+      sessionId: root,
+      config: {
+        ...storedAtStartup.config,
+        sdkToolsPreset: ['Read', 'Grep', 'Glob', 'Bash', 'Write', 'Edit', 'NotebookEdit'],
+        allowedTools: [
+          'Read',
+          'Grep',
+          'Glob',
+          'Bash',
+          'Write',
+          'Edit',
+          'NotebookEdit',
+          'mcp__hyperneo-operations__invoke',
+        ],
+        permissionMode: 'acceptEdits',
+        coordinatorMode: true,
+        sandbox: {
+          enabled: false,
+          allowUnsandboxedCommands: true,
+          excludedCommands: ['gh'],
+          allowAppleEvents: true,
+          enableWeakerNestedSandbox: true,
+          ignoreViolations: { file: ['*'] },
+        },
+      },
+    });
+    const storedSandboxOverride = daemon.db.getSession(root)?.config.sandbox;
+    expect(storedSandboxOverride?.enabled).toBe(false);
     const schedule = new SessionScheduleRepository(daemon.db.getDatabase()).create(
       {
         target: { adapter: 'hyperneo', id: opened.sessionId },
@@ -459,7 +535,10 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
       });
     let page = await read();
     const deadline = Date.now() + 45000;
-    while (!page.items?.length && Date.now() < deadline) {
+    while (
+      !page.items?.some((item: NeoPublication) => item.shortText === shortText) &&
+      Date.now() < deadline
+    ) {
       await new Promise((resolve) => setTimeout(resolve, 100));
       page = await read();
     }
@@ -475,9 +554,9 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
       replyTo: [requestId],
     });
     const end = Date.now() + 15000;
-    while (calls.length < 6 && Date.now() < end)
+    while (calls.length < nativeReadProbes.length + 5 && Date.now() < end)
       await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(calls).toEqual(['tool_use', 'tool_use', 'tool_use', 'tool_use', 'tool_use', 'text']);
+    expect(calls).toEqual([...Array(nativeReadProbes.length + 4).fill('tool_use'), 'text']);
     expect(receipts).toMatchObject([
       {
         accepted: true,
@@ -563,8 +642,16 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
         JSON.stringify(
           {
             approvalProbeResults,
+            sandboxProof,
+            sandboxOff,
+            storedSandboxOverride,
             approvalProbeDenied,
             approvalProbeCreatedFile: existsSync(approvalProbeFile),
+            tempWriteAllowed: existsSync(join(tmpdir(), 'hyperneo-neo', root, 'allowed.txt')),
+            checkoutWriteAllowed: existsSync(join(readCheckout, 'allowed.txt')),
+            protectedWritesDenied: [workerCheckout, join(isolated, 'data'), newCwd].every(
+              (path) => !existsSync(join(path, 'blocked.txt'))
+            ),
             sdkSessionId,
             historyMarker,
             oldCwd,
@@ -599,11 +686,45 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
       );
     }
     expect(approvalProbeIssued).toBe(true);
+    expect(JSON.stringify(approvalProbeResults)).toContain(readProbe);
+    expect(JSON.stringify(approvalProbeResults)).not.toContain(
+      'Permission to use Bash has been denied'
+    );
+    for (const index of [0, 1, 2]) {
+      const result = (approvalProbeResults as { tool_use_id: string; is_error?: boolean }[]).find(
+        (result) => result.tool_use_id === `tool-read-probe-${index}`
+      );
+      expect(result).toBeDefined();
+      expect(result?.is_error).not.toBe(true);
+    }
+    expect(JSON.stringify(approvalProbeResults)).not.toContain('UNWRITABLE_HANDOFF_ADVERTISED');
+    expect(JSON.stringify(approvalProbeResults)).not.toContain('UNEXPECTED_INHERITED_TOKEN');
+    expect(JSON.stringify(approvalProbeResults)).toContain('GH_TOKEN environment variable');
+    if (sandboxProof) {
+      expect(JSON.stringify(approvalProbeResults)).toMatch(/operation not permitted/i);
+      expect(existsSync(join(readCheckout, 'allowed.txt'))).toBe(true);
+      expect(existsSync(join(tmpdir(), 'hyperneo-neo', root, 'allowed.txt'))).toBe(true);
+      for (const path of [workerCheckout, join(isolated, 'data'), newCwd])
+        expect(existsSync(join(path, 'blocked.txt'))).toBe(false);
+    }
+    for (const index of [4, 5]) {
+      const result = (approvalProbeResults as { tool_use_id: string; is_error?: boolean }[]).find(
+        (result) => result.tool_use_id === `tool-read-probe-${index}`
+      );
+      expect(result?.is_error).toBe(true);
+    }
+    expect(readFileSync(readProbeFile, 'utf8')).toBe(readProbe);
+    expect(nativeToolsSeen[0]).not.toEqual(expect.arrayContaining(['Write']));
+    expect(nativeToolsSeen[0]).not.toEqual(expect.arrayContaining(['Edit']));
     expect(approvalProbeDenied).toBe(true);
     expect(existsSync(approvalProbeFile)).toBe(false);
     expect(storedAtStartup.config.systemPrompt).toBe(neoPrompt());
     expect(storedAtStartup.config.sdkToolsPreset).toContain('Read');
     expect(storedAtStartup.config.sdkToolsPreset).toContain('Bash');
+    expect(storedAtStartup.config.sandbox).toMatchObject({
+      enabled: true,
+      failIfUnavailable: true,
+    });
     expect(nativeToolsSeen[0]).toEqual(expect.arrayContaining(['Read', 'Bash']));
     expect(historySeen.length).toBeGreaterThan(0);
     expect(historySeen.every(Boolean)).toBe(true);
@@ -638,6 +759,7 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
     QueryOptionsBuilder.prototype.build = build;
     await transport?.close();
     await daemon?.cleanup();
+    await rm(join(tmpdir(), 'hyperneo-neo', root), { recursive: true, force: true });
     await new Promise<void>((resolve, reject) =>
       fixture.close((cause) => (cause ? reject(cause) : resolve()))
     );
