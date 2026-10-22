@@ -47,27 +47,38 @@ CI uses this mode; it is not OS-containment evidence. Production options stay st
 
 The daemon supplies Neo's `GH_TOKEN` through the poller's existing composed
 `credentialManager.getCredentialStore()` instance (`neokai.external-events.github`,
-account `default`), then `GH_TOKEN ?? GITHUB_TOKEN` if the item is absent or
-unavailable. Its existing Keychain/database fallback and pending token replacement
-semantics are preserved. Test mode uses only its synthetic encrypted DB store;
-no new store or direct Keychain access is introduced for Neo.
+account `default`), then `GH_TOKEN ?? GITHUB_TOKEN`, then the daemon’s existing
+GitHub CLI login via `gh auth token --hostname <GH_HOST or github.com>`. The CLI
+lookup runs in the daemon’s ordinary GitHub lookup environment, before Neo’s
+isolated `GH_CONFIG_DIR` is applied. Its stdout stays internal to the runtime
+reader; it is never logged or saved. No auth file is parsed or copied. Existing Keychain/database fallback and pending
+token replacement semantics are preserved. The store fixture uses only its
+synthetic encrypted DB; no new store or direct Keychain access is introduced for Neo. CLI failure, timeout,
+empty or oversized output leaves Neo visibly unauthenticated.
 No token is stored in session config or printed in evidence. The human approved
 this existing, potentially write-capable token in question
 `79a6141f-f688-40b4-a403-ad52f9f3e30f`; a dedicated read-only token is deferred.
-That later step changes only the runtime token source. Missing tokens leave gh
-unauthenticated in an isolated empty `GH_CONFIG_DIR`, with no auth-file fallback.
+That later step changes only the runtime token source. When all approved sources
+are unavailable, gh stays unauthenticated in Neo’s isolated empty `GH_CONFIG_DIR`;
+Neo never receives the daemon’s auth files.
 
-The fixture saves a synthetic token through `space.github.setToken` into its own
-encrypted DB, while the environment contains a conflicting synthetic token. It
-puts a local `gh` stub on PATH.
-Actual SDK Bash must run `gh pr view`, and the stub checks the token privately and
-returns PR number 8148 with `authenticatedByDaemon:true`. An absent/wrong token
-returns a visible authentication error. No GitHub network request is made. A synthetic
-`.zshenv` tries to replace the token; isolated `ZDOTDIR` must prevent that reinjection.
-Focused tests also cover the supplied shared-store reader, GH_TOKEN precedence,
-GITHUB_TOKEN fallback, missing or failed runtime providers and disappearing checkout-inventory entries. Preserve the JSON
-outside the worktree before cleanup. This proves runtime wiring, not the real token's
-GitHub scopes or spontaneous model behavior.
+The fixture runs two source cases with a local `gh` stub. `store` saves a synthetic
+token through `space.github.setToken` into the isolated encrypted DB, with a
+conflicting environment token. `daemon-gh` has no stored or environment token;
+parent-context `gh pr view` works through the fake CLI login. Its `gh auth token`
+reply is available only in that fake daemon configuration context. The stub reads
+no files and makes no network request. Both cases must deliver the same synthetic
+token to actual SDK Bash so `gh pr view` returns PR 8148 with
+`authenticatedByDaemon:true`. An absent/wrong token returns an authentication error.
+
+Inspect both `neo-goal-cycle-sdk.json` (store) and
+`neo-goal-cycle-sdk-daemon-gh.json` (CLI login). The latter must pass independently:
+a passing store case alone did not prove the real laptop’s auth route in #8221.
+A synthetic `.zshenv` tries to replace the token; isolated `ZDOTDIR` prevents that
+reinjection. Focused runtime-token tests cover source precedence and CLI refusal,
+unavailability, empty/oversized output and timeout. Preserve the JSON outside the
+worktree before cleanup. These fixtures prove wiring for the simulated sources;
+live source status and live GitHub success require separate readback.
 
 After merge/rollout, record the laptop RPC commit readback via `hyperneo build`.
 Neo then runs `gh pr view` itself from its sandboxed Bash and relays the actual tool

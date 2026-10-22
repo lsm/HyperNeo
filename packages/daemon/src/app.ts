@@ -85,6 +85,7 @@ import {
 } from './lib/external-events/github/index.ts';
 import { createNeoReadCheckoutSync } from './lib/neo/read-checkout-sync.ts';
 import { pullRequestNumbersOfTopics } from './lib/github/parse-pr-url.ts';
+import { readDaemonGithubToken } from './lib/github/runtime-token.ts';
 import { composeLongHorizonSubscriptionPattern } from './lib/external-events/long-horizon-subscription-pattern.ts';
 import { SessionEventSubscriptionRepository } from './storage/repositories/session-event-subscription-repository.ts';
 import { SpaceAgentSubscriptionRepository } from './storage/repositories/space-agent-subscription-repository.ts';
@@ -747,9 +748,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       skillsManager,
       db.appMcpServers,
       () =>
-        credentialManager
-          .getCredentialStore()
-          .get(GITHUB_CREDENTIAL_SERVICE, GITHUB_CREDENTIAL_ACCOUNT)
+        readDaemonGithubToken(() =>
+          credentialManager
+            .getCredentialStore()
+            .get(GITHUB_CREDENTIAL_SERVICE, GITHUB_CREDENTIAL_ACCOUNT)
+        )
     );
 
     sessionManager.start();
