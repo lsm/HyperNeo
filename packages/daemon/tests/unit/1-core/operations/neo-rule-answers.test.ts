@@ -65,7 +65,7 @@ async function propose(requestId = 'request', change = edit) {
   return (result as { value: { questionId: string } }).value.questionId;
 }
 describe('human-approved standing rules', () => {
-  test('a cited consumed human input authorizes only a quote from this conversation', async () => {
+  test('a cited consumed human input authorizes only a complete text part from this conversation', async () => {
     const messageId = crypto.randomUUID();
     const content = 'Ask before publishing. Replace the old synthetic rule.';
     expect(
@@ -82,6 +82,12 @@ describe('human-approved standing rules', () => {
     expect(
       await invoke('neo.rule.save', { ...input, from: 'Words absent from the human message.' })
     ).toMatchObject({ value: { ok: false } });
+    for (const from of ['e', 'Ask before publishing.']) {
+      expect(await invoke('neo.rule.save', { ...input, from })).toMatchObject({
+        value: { ok: false },
+      });
+      expect(saved()).toEqual(['Old synthetic rule.', 'Keep this rule.']);
+    }
     expect(await invoke('neo.rule.save', input)).toMatchObject({
       value: { ok: true, standingRules: ['Keep this rule.', ...edit.add] },
     });
