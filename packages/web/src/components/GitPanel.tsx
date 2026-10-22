@@ -7,11 +7,12 @@ import {
   GitPendingIcon as PendingIcon,
   GitCheckDotIcon as CheckDotIcon,
   GitDotIcon as DotIcon,
+  GitChevronIcon as ChevronIcon,
   GitCopyIcon as CopyIcon,
   GitCheckSmallIcon as CheckSmallIcon,
   GitExternalLinkIcon as ExternalLinkIcon,
 } from './icons/panel-icons.tsx';
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type {
   GitCheckSummary,
   GitFileStatusKind,
@@ -24,8 +25,6 @@ import { getGitFileDiff } from '../lib/api-helpers.ts';
 import { useGitSessionStatus } from '../hooks/useGitSessionStatus.ts';
 import { copyToClipboard } from '../lib/utils.ts';
 import { cn } from '../lib/utils.ts';
-import { ContentDisclosureControl } from './ui/ContentDisclosureControl.tsx';
-import { NativeContentDisclosure } from './ui/NativeContentDisclosure.tsx';
 import { InspectPanel } from './ui/InspectPanel.tsx';
 
 interface GitPanelProps {
@@ -324,6 +323,8 @@ function PullRequestRow({ pullRequest }: { pullRequest: GitPullRequestSummary })
 }
 
 function ChecksRow({ checks, githubError }: { checks: GitCheckSummary[]; githubError?: string }) {
+  const [open, setOpen] = useState(false);
+
   if (checks.length === 0) {
     return (
       <SummaryRow
@@ -349,43 +350,38 @@ function ChecksRow({ checks, githubError }: { checks: GitCheckSummary[]; githubE
   const tone = failed ? 'danger' : pending ? 'pending' : 'success';
 
   return (
-    <NativeContentDisclosure
-      label="Git checks"
-      summary={
-        <span class="inline-flex max-w-[calc(100%-3rem)] items-center gap-3 text-sm text-fg-soft">
-          <span
-            class={cn(
-              'flex h-5 w-5 flex-shrink-0 items-center justify-center',
-              tone === 'danger'
-                ? 'text-danger-soft'
-                : tone === 'pending'
-                  ? 'text-warning'
-                  : 'text-success-soft'
-            )}
-          >
-            {failed ? <ErrorIcon /> : pending ? <PendingIcon /> : <ChecksIcon />}
-          </span>
-          <span class="min-w-0 flex-1 truncate text-left">{label}</span>
-          <span class="flex-shrink-0 text-xs text-fg-faint">{checks.length} total</span>
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        class="flex w-full min-w-0 items-center gap-3 rounded-md text-sm text-fg-soft transition-colors hover:text-fg"
+        aria-expanded={open}
+        data-testid="git-checks-toggle"
+      >
+        <span
+          class={cn(
+            'flex h-5 w-5 flex-shrink-0 items-center justify-center',
+            tone === 'danger'
+              ? 'text-danger-soft'
+              : tone === 'pending'
+                ? 'text-warning'
+                : 'text-success-soft'
+          )}
+        >
+          {failed ? <ErrorIcon /> : pending ? <PendingIcon /> : <ChecksIcon />}
         </span>
-      }
-    >
-      {(control) =>
-        control && (
-          <>
-            <ul
-              class="mt-1 max-h-60 space-y-0.5 overflow-y-auto pl-8"
-              data-testid="git-checks-list"
-            >
-              {checks.map((check) => (
-                <CheckItem key={`${check.name}:${check.state}:${check.url ?? ''}`} check={check} />
-              ))}
-            </ul>
-            <div class="flow-root px-3 pb-2">{control}</div>
-          </>
-        )
-      }
-    </NativeContentDisclosure>
+        <span class="min-w-0 flex-1 truncate text-left">{label}</span>
+        <span class="flex-shrink-0 text-xs text-fg-faint">{checks.length} total</span>
+        <ChevronIcon open={open} />
+      </button>
+      {open && (
+        <ul class="mt-1 max-h-60 space-y-0.5 overflow-y-auto pl-8" data-testid="git-checks-list">
+          {checks.map((check) => (
+            <CheckItem key={`${check.name}:${check.state}:${check.url ?? ''}`} check={check} />
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -626,17 +622,6 @@ function DiffPreview({ file, sessionId }: { file: GitReviewFile | null; sessionI
   const [loadingFull, setLoadingFull] = useState(false);
   const [expandError, setExpandError] = useState<string | null>(null);
   const expandSeq = useRef(0);
-  const panelRef = useRef<HTMLElement>(null);
-  const restoreFocus = useRef(false);
-  const id = useId();
-  const isExpanded = file !== null && expandedPath === file.path;
-  useLayoutEffect(() => {
-    if (!restoreFocus.current) return;
-    restoreFocus.current = false;
-    panelRef.current
-      ?.querySelector<HTMLButtonElement>(`button[aria-controls="${id}"]`)
-      ?.focus({ preventScroll: true });
-  }, [isExpanded, id]);
 
   const fileKey = file
     ? `${file.path} ${file.additions} ${file.deletions} ${file.patchTruncated} ${hashString(file.patch ?? '')}`
@@ -659,6 +644,7 @@ function DiffPreview({ file, sessionId }: { file: GitReviewFile | null; sessionI
     );
   }
 
+  const isExpanded = expandedPath === file.path;
   const shownPatch = isExpanded ? fullPatch : file.patch;
 
   const handleExpand = async () => {
@@ -674,7 +660,6 @@ function DiffPreview({ file, sessionId }: { file: GitReviewFile | null; sessionI
       }
       setFullPatch(result.patch);
       setFullTruncated(result.truncated);
-      restoreFocus.current = true;
       setExpandedPath(file.path);
     } catch (err) {
       if (requestId !== expandSeq.current) return;
@@ -685,7 +670,7 @@ function DiffPreview({ file, sessionId }: { file: GitReviewFile | null; sessionI
   };
 
   return (
-    <section ref={panelRef} class="flex min-h-0 flex-[1.5] flex-col">
+    <section class="flex min-h-0 flex-[1.5] flex-col">
       <div class="flex flex-shrink-0 items-center justify-between gap-3 border-b border-line px-4 py-3">
         <div class="min-w-0">
           <h3 class="truncate font-mono text-xs text-fg-soft" title={file.path}>
@@ -701,55 +686,37 @@ function DiffPreview({ file, sessionId }: { file: GitReviewFile | null; sessionI
         </div>
       </div>
 
-      <div
-        class={cn(
-          'min-h-0 flex-1 overflow-auto',
-          shownPatch ? 'bg-surface/50' : !file.patchTruncated && 'flex items-center justify-center'
-        )}
-      >
-        <div id={id}>
-          {shownPatch ? (
-            <pre class="min-w-max p-3 text-[11px] leading-relaxed">
-              <DiffLines patch={shownPatch} />
-            </pre>
-          ) : (
-            <div class="flex min-h-0 items-center justify-center px-6 py-6 text-center">
-              <p class="text-sm text-fg-faint">
-                No inline diff available for this file. This can happen for untracked or binary
-                files.
-              </p>
-            </div>
-          )}
-        </div>
-        {file.patchTruncated && (
-          <div class="flow-root px-3 pb-3 text-[11px]">
-            {!isExpanded && (
-              <p class="font-mono text-warning/80">Diff truncated for panel preview.</p>
+      {shownPatch ? (
+        <div class="min-h-0 flex-1 overflow-auto bg-surface/50">
+          <pre class="min-w-max p-3 text-[11px] leading-relaxed">
+            <DiffLines patch={shownPatch} />
+            {!isExpanded && file.patchTruncated && (
+              <div class="pt-2">
+                <button
+                  type="button"
+                  onClick={handleExpand}
+                  disabled={loadingFull}
+                  class="rounded-md border border-line bg-fill/30 px-2 py-1 font-mono text-[11px] text-fg-soft transition-colors hover:bg-fill hover:text-fg disabled:opacity-50"
+                  data-testid="git-expand-diff"
+                >
+                  {loadingFull ? 'Loading…' : 'Expand full diff'}
+                </button>
+                <p class="mt-1 font-mono text-warning/80">Diff truncated for panel preview.</p>
+              </div>
             )}
             {isExpanded && fullTruncated && (
-              <p class="font-mono text-warning/80">Full diff still truncated.</p>
+              <div class="pt-2 font-mono text-warning/80">Full diff still truncated.</div>
             )}
-            {expandError && <p class="font-mono text-danger-soft">{expandError}</p>}
-            {loadingFull && <p role="status">Loading…</p>}
-            <ContentDisclosureControl
-              expanded={isExpanded}
-              aria-label="Full diff"
-              aria-controls={id}
-              aria-busy={loadingFull}
-              disabled={loadingFull}
-              data-testid="git-expand-diff"
-              onToggle={() => {
-                if (isExpanded) {
-                  restoreFocus.current = true;
-                  setExpandedPath(null);
-                } else {
-                  void handleExpand();
-                }
-              }}
-            />
-          </div>
-        )}
-      </div>
+            {expandError && <div class="pt-2 font-mono text-danger-soft">{expandError}</div>}
+          </pre>
+        </div>
+      ) : (
+        <div class="flex min-h-0 flex-1 items-center justify-center px-6 text-center">
+          <p class="text-sm text-fg-faint">
+            No inline diff available for this file. This can happen for untracked or binary files.
+          </p>
+        </div>
+      )}
     </section>
   );
 }

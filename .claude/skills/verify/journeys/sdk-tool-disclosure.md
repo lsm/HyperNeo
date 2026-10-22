@@ -1,5 +1,9 @@
 # Explicit SDK tool and subagent disclosures (#8101)
 
+> Historical migration journey: legacy rendering has been restored. For current
+> legacy verification use [legacy-chat-compact.md](legacy-chat-compact.md); the
+> explicit-more assertions below describe the superseded migration, not current behavior.
+
 Use shared isolated setup, synthetic data only and a fresh run. Build web first.
 Keep the launch terminal alive; use a free port other than 8399:
 

@@ -1,0 +1,16 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:29:30). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 /Users/lsm/focus/worktrees/legacy-chat-compact/packages/web
+
+
+ Test Files  40 passed (40)
+      Tests  1381 passed (1381)
+   Start at  13:52:45
+   Duration  2.45s (transform 32%, environment 29%, setup 20%, tests 14%, import 4%, worker 1%)
+
+Environment  happy-dom was created 40 times · 9.30s total, 29% of tracked time
+             create it once per worker with pool: 'vmThreads' (keeps per-file isolation) or isolate: false (shares it across files)
+             learn more: https://vitest.dev/guide/improving-performance#test-environments
+

@@ -1,0 +1,167 @@
+$ vite build
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vite.config.ts:8:28). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+You or a plugin you are using have set `optimizeDeps.esbuildOptions` but this option is now deprecated. Vite now uses Rolldown to optimize the dependencies. Please use `optimizeDeps.rolldownOptions` instead.
+vite v8.3.0 building client environment for production...
+transforming...
+✓ 4023 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/neo/index.html                                       1.89 kB │ gzip:     0.59 kB
+dist/index.html                                           3.25 kB │ gzip:     1.22 kB
+dist/assets/KaTeX_Size3-Regular-CTq5MqoE.woff             4.42 kB
+dist/assets/KaTeX_Size4-Regular-Dl5lxZxV.woff2            4.92 kB
+dist/assets/KaTeX_Size2-Regular-Dy4dx90m.woff2            5.20 kB
+dist/assets/KaTeX_Size1-Regular-mCD8mA8B.woff2            5.46 kB
+dist/assets/KaTeX_Size4-Regular-BF-4gkZK.woff             5.98 kB
+dist/assets/KaTeX_Size2-Regular-oD1tc_U0.woff             6.18 kB
+dist/assets/KaTeX_Size1-Regular-C195tn64.woff             6.49 kB
+dist/assets/KaTeX_Caligraphic-Regular-Di6jR-x-.woff2      6.90 kB
+dist/assets/KaTeX_Caligraphic-Bold-Dq_IR9rO.woff2         6.91 kB
+dist/assets/KaTeX_Size3-Regular-DgpXs0kz.ttf              7.58 kB
+dist/assets/KaTeX_Caligraphic-Regular-CTRA-rTL.woff       7.65 kB
+dist/assets/KaTeX_Caligraphic-Bold-BEiXGLvX.woff          7.71 kB
+dist/assets/KaTeX_Script-Regular-D3wIWfF6.woff2           9.64 kB
+dist/assets/KaTeX_SansSerif-Regular-DDBCnlJ7.woff2       10.34 kB
+dist/assets/KaTeX_Size4-Regular-DWFBv043.ttf             10.36 kB
+dist/assets/KaTeX_Script-Regular-D5yQViql.woff           10.58 kB
+dist/assets/KaTeX_Fraktur-Regular-CTYiF6lA.woff2         11.31 kB
+dist/assets/KaTeX_Fraktur-Bold-CL6g_b3V.woff2            11.34 kB
+dist/assets/KaTeX_Size2-Regular-B7gKUWhC.ttf             11.50 kB
+dist/assets/KaTeX_SansSerif-Italic-C3H0VqGB.woff2        12.02 kB
+dist/assets/KaTeX_SansSerif-Bold-D1sUS0GD.woff2          12.21 kB
+dist/assets/KaTeX_Size1-Regular-Dbsnue_I.ttf             12.22 kB
+dist/assets/KaTeX_SansSerif-Regular-CS6fqUqJ.woff        12.31 kB
+dist/assets/KaTeX_Caligraphic-Regular-wX97UBjC.ttf       12.34 kB
+dist/assets/KaTeX_Caligraphic-Bold-ATXxdsX0.ttf          12.36 kB
+dist/assets/KaTeX_Fraktur-Regular-Dxdc4cR9.woff          13.20 kB
+dist/assets/KaTeX_Fraktur-Bold-BsDP51OF.woff             13.29 kB
+dist/assets/KaTeX_Typewriter-Regular-CO6r4hn1.woff2      13.56 kB
+dist/assets/KaTeX_SansSerif-Italic-DN2j7dab.woff         14.11 kB
+dist/assets/KaTeX_SansSerif-Bold-DbIhKOiC.woff           14.40 kB
+dist/assets/KaTeX_Typewriter-Regular-C0xS9mPB.woff       16.02 kB
+dist/assets/KaTeX_Math-BoldItalic-CZnvNsCZ.woff2         16.40 kB
+dist/assets/KaTeX_Math-Italic-t53AETM-.woff2             16.44 kB
+dist/assets/KaTeX_Script-Regular-C5JkGWo-.ttf            16.64 kB
+dist/assets/KaTeX_Main-BoldItalic-DxDJ3AOS.woff2         16.78 kB
+dist/assets/KaTeX_Main-Italic-NWA7e6Wa.woff2             16.98 kB
+dist/assets/KaTeX_Math-BoldItalic-iY-2wyZ7.woff          18.66 kB
+dist/assets/KaTeX_Math-Italic-DA0__PXp.woff              18.74 kB
+dist/assets/KaTeX_Main-BoldItalic-SpSLRI95.woff          19.41 kB
+dist/assets/KaTeX_SansSerif-Regular-BNo7hRIc.ttf         19.43 kB
+dist/assets/KaTeX_Fraktur-Regular-CB_wures.ttf           19.57 kB
+dist/assets/KaTeX_Fraktur-Bold-BdnERNNW.ttf              19.58 kB
+dist/assets/KaTeX_Main-Italic-BMLOBm91.woff              19.67 kB
+dist/assets/KaTeX_SansSerif-Italic-YYjJ1zSn.ttf          22.36 kB
+dist/assets/KaTeX_SansSerif-Bold-CFMepnvq.ttf            24.50 kB
+dist/assets/KaTeX_Main-Bold-Cx986IdX.woff2               25.32 kB
+dist/assets/KaTeX_Main-Regular-B22Nviop.woff2            26.27 kB
+dist/assets/KaTeX_Typewriter-Regular-D3Ib7_Hf.ttf        27.55 kB
+dist/assets/KaTeX_AMS-Regular-BQhdFMY1.woff2             28.07 kB
+dist/assets/KaTeX_Main-Bold-Jm3AIy58.woff                29.91 kB
+dist/assets/KaTeX_Main-Regular-Dr94JaBh.woff             30.77 kB
+dist/assets/KaTeX_Math-BoldItalic-B3XSjfu4.ttf           31.19 kB
+dist/assets/KaTeX_Math-Italic-flOr_0UB.ttf               31.30 kB
+dist/assets/KaTeX_Main-BoldItalic-DzxPMmG6.ttf           32.96 kB
+dist/assets/KaTeX_AMS-Regular-DMm9YOAa.woff              33.51 kB
+dist/assets/KaTeX_Main-Italic-3WenGoN9.ttf               33.58 kB
+dist/assets/KaTeX_Main-Bold-waoOVXN0.ttf                 51.33 kB
+dist/assets/KaTeX_Main-Regular-ypZvNtVU.ttf              53.58 kB
+dist/assets/KaTeX_AMS-Regular-DRggAlZN.ttf               63.63 kB
+dist/assets/neo-DyF1wU3f.css                             14.82 kB │ gzip:     3.80 kB
+dist/assets/vendor-katex-DEcVZfaU.css                    28.83 kB │ gzip:     7.92 kB
+dist/assets/ConnectionOverlay-DTpalhI5.css              162.24 kB │ gzip:    25.83 kB
+dist/assets/pie-WAS4IAKB-KF7tqalX.js                      0.08 kB │ gzip:     0.09 kB
+dist/assets/info-A6RAGUB7-DA5IPuDG.js                     0.08 kB │ gzip:     0.09 kB
+dist/assets/radar-RG4KPBEZ-BL1dZJuX.js                    0.08 kB │ gzip:     0.09 kB
+dist/assets/packet-AYTQ26CC-CfN3OV1h.js                   0.08 kB │ gzip:     0.09 kB
+dist/assets/cynefin-OW5HDTMX-D0HZd1E7.js                  0.08 kB │ gzip:     0.09 kB
+dist/assets/treemap-WGGIJYW6-CoRZjSie.js                  0.08 kB │ gzip:     0.09 kB
+dist/assets/wardley-WFR3VGLG-DFiB34EB.js                  0.08 kB │ gzip:     0.09 kB
+dist/assets/gitGraph-4MIJSDKK-BOKOM-kD.js                 0.08 kB │ gzip:     0.10 kB
+dist/assets/railroad-74A4TZTK-D7oJS94E.js                 0.08 kB │ gzip:     0.10 kB
+dist/assets/treeView-Q6P3EWNA-UXt6X4NL.js                 0.08 kB │ gzip:     0.10 kB
+dist/assets/railroad-peg-WCYAUIDC-DbtuL8jQ.js             0.08 kB │ gzip:     0.10 kB
+dist/assets/architecture-7GRP2DOG-Cgd0wzmF.js             0.08 kB │ gzip:     0.10 kB
+dist/assets/railroad-abnf-HS5TGJTU-Cc--THeH.js            0.08 kB │ gzip:     0.10 kB
+dist/assets/railroad-ebnf-LZEXJU2U-DQUdBW1B.js            0.08 kB │ gzip:     0.10 kB
+dist/assets/eventmodeling-NTZA5JFV-CusoDqID.js            0.09 kB │ gzip:     0.10 kB
+dist/assets/models-B9o0Jgkm.js                            0.16 kB │ gzip:     0.16 kB │ map:      1.35 kB
+dist/assets/NeoModelSettings-BiQ866Cz.js                  0.22 kB │ gzip:     0.18 kB │ map:      0.36 kB
+dist/assets/space-utils-DUcX4CY2.js                       0.35 kB │ gzip:     0.20 kB │ map:      8.54 kB
+dist/assets/Spinner-DxpIa8-P.js                           0.38 kB │ gzip:     0.29 kB │ map:      0.99 kB
+dist/assets/space-constants-CpyjCXHK.js                   0.50 kB │ gzip:     0.28 kB │ map:      1.22 kB
+dist/assets/signals-DRQ_QEtK.js                           0.57 kB │ gzip:     0.31 kB │ map:      4.35 kB
+dist/assets/AppearanceSettings-DLrSdKji.js                0.57 kB │ gzip:     0.36 kB │ map:      1.41 kB
+dist/assets/session-processing-phase-URGuRW4B.js          0.65 kB │ gzip:     0.35 kB │ map:      4.28 kB
+dist/assets/toast-CeLThSeG.js                             0.77 kB │ gzip:     0.45 kB │ map:      2.34 kB
+dist/assets/export-import-utils-DS8hjSvV.js               0.92 kB │ gzip:     0.59 kB │ map:      3.14 kB
+dist/assets/rolldown-runtime-Dd_uD5pT.js                  1.10 kB │ gzip:     0.62 kB
+dist/assets/ShortcutsSettings-jfSjAbs1.js                 1.31 kB │ gzip:     0.72 kB │ map:      3.41 kB
+dist/assets/SettingsSection-PWBdjByf.js                   1.38 kB │ gzip:     0.57 kB │ map:      4.32 kB
+dist/assets/ConfirmModal-Dbi_7QxC.js                      1.52 kB │ gzip:     0.71 kB │ map:      3.45 kB
+dist/assets/AutonomyWorkflowSummary-D0qPZ2kV.js           1.65 kB │ gzip:     0.84 kB │ map:      4.59 kB
+dist/assets/task-status-C54nqJZH.js                       1.77 kB │ gzip:     0.59 kB │ map:      4.22 kB
+dist/assets/FormField-CR0srofc.js                         2.01 kB │ gzip:     0.98 kB │ map:      5.29 kB
+dist/assets/AboutSection-y_Rjvlwt.js                      2.18 kB │ gzip:     1.13 kB │ map:      3.85 kB
+dist/assets/utils-CjV8cAcI.js                             2.22 kB │ gzip:     1.08 kB │ map:      8.22 kB
+dist/assets/ToolsModal.utils-DvEIjc-R.js                  2.34 kB │ gzip:     0.87 kB │ map:      7.27 kB
+dist/assets/CloneIcon-CCxPn0-M.js                         2.42 kB │ gzip:     1.22 kB │ map:      9.65 kB
+dist/assets/ModelPicker-ubbKjRWr.js                       2.54 kB │ gzip:     1.41 kB │ map:      8.10 kB
+dist/assets/ExaSettings-W_yh9Dpo.js                       2.85 kB │ gzip:     1.41 kB │ map:      6.62 kB
+dist/assets/skills-store-BjxwA9UM.js                      2.89 kB │ gzip:     1.03 kB │ map:      8.91 kB
+dist/assets/UsageAnalytics-C7Av-3HB.js                    3.64 kB │ gzip:     1.55 kB │ map:      9.28 kB
+dist/assets/SpaceConfigurePage-BJye3mlT.js                4.05 kB │ gzip:     1.72 kB │ map:      8.10 kB
+dist/assets/RemoteDaemonsSettings-BENGPAgA.js             4.34 kB │ gzip:     1.68 kB │ map:     12.74 kB
+dist/assets/VoiceSettings-CNGlk2xo.js                     5.20 kB │ gzip:     1.95 kB │ map:     14.60 kB
+dist/assets/GeneralSettings-D5rs843Y.js                   5.71 kB │ gzip:     1.96 kB │ map:     17.57 kB
+dist/assets/ModelPoolEditor-BYDDSRT3.js                   5.78 kB │ gzip:     2.16 kB │ map:     17.18 kB
+dist/assets/SpaceGoals-BpH8piQd.js                        7.22 kB │ gzip:     2.66 kB │ map:     28.28 kB
+dist/assets/DevicesSettings-BMpCkigu.js                   7.93 kB │ gzip:     2.80 kB │ map:     22.71 kB
+dist/assets/ToolsEditor-C40mkLzw.js                       8.90 kB │ gzip:     3.31 kB │ map:     25.46 kB
+dist/assets/preact.module-CpZEhT9-.js                    11.15 kB │ gzip:     4.68 kB │ map:     27.42 kB
+dist/assets/signals.module-BGcLaj1i.js                   11.41 kB │ gzip:     4.30 kB │ map:     31.86 kB
+dist/assets/SpaceOverview-CpQGdoVG.js                    11.92 kB │ gzip:     3.78 kB │ map:     28.74 kB
+dist/assets/ThinkingLevelIcon-4NvV9Gn6.js                12.22 kB │ gzip:     5.01 kB │ map:     34.49 kB
+dist/assets/SessionsPage-CulRIoiE.js                     13.55 kB │ gzip:     5.07 kB │ map:     41.17 kB
+dist/assets/AppMcpServersSettings-BqSbeDZx.js            14.79 kB │ gzip:     4.41 kB │ map:     41.69 kB
+dist/assets/SpaceMemories-C0hrnvoR.js                    14.91 kB │ gzip:     5.04 kB │ map:     41.73 kB
+dist/assets/SpaceLongHorizonAgents-DM7suptb.js           16.68 kB │ gzip:     5.65 kB │ map:     48.28 kB
+dist/assets/SkillsRegistry-DeK2YZrT.js                   19.32 kB │ gzip:     4.77 kB │ map:     53.38 kB
+dist/assets/SpaceTasks-Ewr-GsLA.js                       19.51 kB │ gzip:     6.38 kB │ map:     54.14 kB
+dist/assets/SpaceIsland-BKNwJRrP.js                      20.96 kB │ gzip:     7.22 kB │ map:     61.73 kB
+dist/assets/ModelsSettings-GMcKxyFH.js                   21.54 kB │ gzip:     6.17 kB │ map:     64.38 kB
+dist/assets/WorkflowList-BNAScsIP.js                     22.71 kB │ gzip:     6.62 kB │ map:     61.65 kB
+dist/assets/ProviderLogo-CxyLcn7_.js                     33.11 kB │ gzip:    13.52 kB │ map:    108.26 kB
+dist/assets/ConnectionOverlay-DE5RxfyE.js                51.88 kB │ gzip:    16.96 kB │ map:    172.59 kB
+dist/assets/ProvidersSettings-C0JDn4Yv.js                54.82 kB │ gzip:    15.32 kB │ map:    181.20 kB
+dist/assets/tool-utils-pJC-Xmbh.js                       61.76 kB │ gzip:    19.55 kB │ map:    202.07 kB
+dist/assets/SpaceSettings-BT4iF4WJ.js                    80.37 kB │ gzip:    21.27 kB │ map:    249.17 kB
+dist/assets/SpaceTaskPane-BnyXf_ez.js                    99.99 kB │ gzip:    28.30 kB │ map:    345.51 kB
+dist/assets/VisualWorkflowEditor-BP3Wb-AU.js            118.14 kB │ gzip:    31.13 kB │ map:    388.41 kB
+dist/assets/vendor-markdown-B5FXYQCD.js                 141.47 kB │ gzip:    42.07 kB │ map:    878.18 kB
+dist/assets/neo-D603CZEr.js                             159.50 kB │ gzip:    51.82 kB │ map:    591.87 kB
+dist/assets/connection-manager-DOFqx0by.js              209.66 kB │ gzip:    57.25 kB │ map:    678.00 kB
+dist/assets/main-rpHa60WR.js                            234.09 kB │ gzip:    65.78 kB │ map:    900.36 kB
+dist/assets/ChatContainer-y-hFVkgM.js                   252.78 kB │ gzip:    66.61 kB │ map:    767.20 kB
+dist/assets/vendor-katex-DUn-gl-9.js                    282.83 kB │ gzip:    85.65 kB │ map:  1,043.85 kB
+dist/assets/vendor-hljs-DonltFgc.js                   1,089.74 kB │ gzip:   361.01 kB │ map:  2,585.79 kB
+dist/assets/vendor-mermaid-CRDzHlSt.js                4,871.70 kB │ gzip: 1,378.38 kB │ map: 15,962.29 kB
+
+[33m[INEFFECTIVE_DYNAMIC_IMPORT] [0m../../node_modules/.bun/@floating-ui+dom@1.8.0/node_modules/@floating-ui/dom/dist/floating-ui.dom.mjs is dynamically imported by ../ui/src/internal/floating-provider.tsx but also statically imported by ../ui/src/internal/floating-provider.tsx, dynamic import will not move module into another chunk.
+
+[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 3.83s
+[33m[PLUGIN_TIMINGS] [0mPlugin hooks ran for 2.1s of this 3.8s build (56%).
+The slowest hooks, timed inside each callback (the wait before a callback starts is excluded, the time it awaits is included):
+  - vite:build-import-analysis generateBundle (26%, 1.0s, 1 call)
+Additional hook time came from the hooks below and from hooks under 1s.
+1 hook is listed without a time. Its calls overlapped, so the time inside one call includes work from other calls. To find its cost, profile the build with `node --cpu-prof`:
+  - vite:build-html transform (2 calls)
+See https://rolldown.rs/reference/InputOptions.checks#plugintimings for more details.
+

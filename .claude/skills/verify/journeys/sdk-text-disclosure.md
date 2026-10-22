@@ -1,5 +1,9 @@
 # SDK thinking and synthetic text disclosures (#8100)
 
+> Historical migration journey: legacy rendering has been restored. For current
+> legacy verification use [legacy-chat-compact.md](legacy-chat-compact.md); the
+> explicit-more assertions below describe the superseded migration, not current behavior.
+
 Use shared setup with synthetic data only, a fresh run and a free port other than
 8399. Build the web package before launch. Keep the launch terminal alive:
 

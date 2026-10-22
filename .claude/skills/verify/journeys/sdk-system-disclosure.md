@@ -1,5 +1,9 @@
 # Explicit SDK system diagnostics and raw JSON (#8179, part of #8102)
 
+> Historical migration journey: legacy rendering has been restored. For current
+> legacy verification use [legacy-chat-compact.md](legacy-chat-compact.md); the
+> explicit-more assertions below describe the superseded migration, not current behavior.
+
 Use the shared isolated setup with synthetic data and a fresh run. Build web
 first; no provider/model turn is needed. Never use 8399 or a live DB:
 

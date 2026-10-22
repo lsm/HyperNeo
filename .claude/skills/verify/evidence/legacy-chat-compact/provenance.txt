@@ -1,0 +1,15 @@
+Historical rendering rollback audit
+Neo and shared disclosure primitives: unchanged from c2b2e1e0e7
+Theme tokens substituted only where restored raw palette classes violate current guard.
+
+packages/web/src/components/sdk/SyntheticMessageBlock.tsx: verbatim
+packages/web/src/components/sdk/ThinkingBlock.tsx: restored rendering plus current theme tokens
+packages/web/src/components/sdk/SubagentBlock.tsx: verbatim
+packages/web/src/components/sdk/tools/ToolResultCard.tsx: verbatim
+packages/web/src/components/sdk/SDKMessageRenderer.tsx: restored rendering plus current theme tokens
+packages/web/src/components/sdk/SDKSystemMessage.tsx: restored rendering plus current theme tokens
+
+Base: c2b2e1e0e7b5a7259304c4eac523c1fbf3ed93d8
+Failing reproduction commit: 67ac525d6af6f9418a838f4b04d0cf0b8761a19f
+Real browser: Chrome, synthetic isolated daemon; both widths pass after, both fail before.
+Other legacy surfaces: restored component tests; not browser verified.

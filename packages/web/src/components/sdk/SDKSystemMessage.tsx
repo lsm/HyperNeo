@@ -1,6 +1,6 @@
-import { CheckGlyph, CloseGlyph } from '../icons/common-glyphs.tsx';
+import { CheckGlyph, ChevronDownGlyph, CloseGlyph } from '../icons/common-glyphs.tsx';
 import type { ComponentChildren } from 'preact';
-import { NativeContentDisclosure } from '../ui/NativeContentDisclosure.tsx';
+import { useState } from 'preact/hooks';
 import type {
   SDKAPIRetryMessage,
   SDKHookProgressMessage,
@@ -273,30 +273,39 @@ function TaskNotificationMessage({ message }: { message: SDKTaskNotificationMess
 }
 
 function MemoryRecallMessage({ message }: { message: SDKMemoryRecallMessage }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
   return (
     <div class="my-2 rounded-lg border border-cat-violet/40 bg-cat-violet/10 p-3 text-sm text-cat-violet">
-      <NativeContentDisclosure
-        label="Memory recalled"
-        summary={
-          <>
-            <div class="inline-flex max-w-full items-center gap-2">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M4 7v10c0 2 1 3 3 3h10c2 0 3-1 3-3V7c0-2-1-3-3-3H7C5 4 4 5 4 7z"
-                />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h8" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 8h8" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16h8" />
-              </svg>
-              <span class="font-semibold">Memory recalled</span>
-              <span class="text-xs opacity-80">({message.memories.length} items)</span>
-            </div>
-          </>
-        }
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        class="w-full flex items-center justify-between"
       >
+        <div class="flex items-center gap-2">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M4 7v10c0 2 1 3 3 3h10c2 0 3-1 3-3V7c0-2-1-3-3-3H7C5 4 4 5 4 7z"
+            />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h8" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 8h8" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16h8" />
+          </svg>
+          <span class="font-semibold">Memory recalled</span>
+          <span class="text-xs opacity-80">({message.memories.length} items)</span>
+        </div>
+        <ChevronDownGlyph
+          class={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+          pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
+        />
+      </button>
+
+      {isExpanded && (
         <div class="mt-2 space-y-1">
           {message.memories.map((memory, index) => (
             <div
@@ -308,7 +317,7 @@ function MemoryRecallMessage({ message }: { message: SDKMemoryRecallMessage }) {
             </div>
           ))}
         </div>
-      </NativeContentDisclosure>
+      )}
     </div>
   );
 }
@@ -390,35 +399,46 @@ function PluginInstallMessage({ message }: { message: SDKPluginInstallMessage })
 }
 
 function SystemInitMessage({ message }: { message: Extract<SystemMessage, { subtype: 'init' }> }) {
+  const [showDetails, setShowDetails] = useState(false);
+
   return (
     <div class="py-2 bg-cat-indigo/10 rounded border border-cat-indigo/40">
-      <NativeContentDisclosure
-        label="Session Started"
-        summary={
-          <div class="inline-flex max-w-full items-center gap-2">
-            <svg
-              class="w-4 h-4 text-cat-indigo"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M13 10V3L4 14h7v7l9-11h-7z"
-              />
-            </svg>
-            <div class="text-xs">
-              <span class="font-medium text-cat-indigo">Session Started</span>
-              <span class="text-cat-indigo ml-2">
-                {message.model.replace('claude-', '')} • {message.permissionMode}
-              </span>
-            </div>
-          </div>
-        }
+      <button
+        onClick={() => setShowDetails(!showDetails)}
+        class="w-full flex items-center justify-between hover:bg-accent/15 transition-colors -m-1 p-1 rounded"
       >
-        <div class="mx-3 mb-3 mt-3 pt-3 border-t border-cat-indigo/40 space-y-2 text-sm">
+        <div class="flex items-center gap-2">
+          <svg
+            class="w-4 h-4 text-cat-indigo"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M13 10V3L4 14h7v7l9-11h-7z"
+            />
+          </svg>
+          <div class="text-xs">
+            <span class="font-medium text-cat-indigo">Session Started</span>
+            <span class="text-cat-indigo ml-2">
+              {message.model.replace('claude-', '')} • {message.permissionMode}
+            </span>
+          </div>
+        </div>
+        <ChevronDownGlyph
+          class={`w-4 h-4 text-cat-indigo transition-transform ${showDetails ? 'rotate-180' : ''}`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+          pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
+        />
+      </button>
+
+      {showDetails && (
+        <div class="mt-3 pt-3 border-t border-cat-indigo/40 space-y-2 text-sm">
           <div>
             <div class="text-xs font-semibold text-cat-indigo mb-1">Working Directory</div>
             <div class="font-mono text-xs text-cat-indigo bg-cat-indigo/15 px-2 py-1 rounded">
@@ -505,7 +525,7 @@ function SystemInitMessage({ message }: { message: Extract<SystemMessage, { subt
             API Key Source: {message.apiKeySource} • Output: {message.output_style}
           </div>
         </div>
-      </NativeContentDisclosure>
+      )}
     </div>
   );
 }
@@ -568,6 +588,8 @@ function isHookPhaseCompleted(
 }
 
 function HookResponseCard({ message }: { message: SDKHookResponseMessage }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
   const colors = {
     bg: 'bg-surface-raised',
     border: 'border-line',
@@ -581,51 +603,58 @@ function HookResponseCard({ message }: { message: SDKHookResponseMessage }) {
   return (
     <div class="my-2">
       <div class={`border rounded-lg overflow-hidden ${colors.bg} ${colors.border}`}>
-        <NativeContentDisclosure
-          label={message.hook_name}
-          summary={
-            <>
-              <div class="inline-flex max-w-full items-center gap-2 min-w-0 flex-1">
-                <svg
-                  class={`w-5 h-5 flex-shrink-0 ${colors.iconColor}`}
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"
-                  />
-                </svg>
-                <span class={`font-semibold text-sm flex-shrink-0 ${colors.text}`}>
-                  {message.hook_name}
-                </span>
-                <span
-                  class={`text-xs px-1.5 py-0.5 rounded font-mono ${colors.lightText} bg-surface-raised`}
-                >
-                  {message.hook_event}
-                </span>
-                {summary && (
-                  <span class={`text-sm font-mono truncate ${colors.lightText}`}>{summary}</span>
-                )}
-              </div>
-
-              <div class="inline-flex max-w-full items-center gap-2 flex-shrink-0">
-                {message.exit_code !== undefined && message.exit_code !== 0 && (
-                  <CloseGlyph
-                    class="w-4 h-4 text-danger"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                    pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
-                  />
-                )}
-              </div>
-            </>
-          }
+        <button
+          onClick={() => setIsExpanded(!isExpanded)}
+          class="w-full flex items-center justify-between p-3 transition-colors hover:bg-opacity-80 dark:hover:bg-opacity-80"
         >
+          <div class="flex items-center gap-2 min-w-0 flex-1">
+            <svg
+              class={`w-5 h-5 flex-shrink-0 ${colors.iconColor}`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"
+              />
+            </svg>
+            <span class={`font-semibold text-sm flex-shrink-0 ${colors.text}`}>
+              {message.hook_name}
+            </span>
+            <span
+              class={`text-xs px-1.5 py-0.5 rounded font-mono ${colors.lightText} bg-surface-raised`}
+            >
+              {message.hook_event}
+            </span>
+            {summary && (
+              <span class={`text-sm font-mono truncate ${colors.lightText}`}>{summary}</span>
+            )}
+          </div>
+
+          <div class="flex items-center gap-2 flex-shrink-0">
+            {message.exit_code !== undefined && message.exit_code !== 0 && (
+              <CloseGlyph
+                class="w-4 h-4 text-danger"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
+              />
+            )}
+            <ChevronDownGlyph
+              class={`w-5 h-5 transition-transform ${colors.iconColor} ${isExpanded ? 'rotate-180' : ''}`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
+            />
+          </div>
+        </button>
+
+        {isExpanded && (
           <div class={`p-3 border-t bg-surface space-y-2 ${colors.border}`}>
             {message.stdout?.trim() && (
               <pre class="text-xs font-mono whitespace-pre-wrap overflow-x-auto bg-surface-raised p-2 rounded border border-line text-fg">
@@ -641,7 +670,7 @@ function HookResponseCard({ message }: { message: SDKHookResponseMessage }) {
               <div class={`text-xs ${colors.lightText}`}>Exit code: {message.exit_code}</div>
             )}
           </div>
-        </NativeContentDisclosure>
+        )}
       </div>
     </div>
   );
@@ -652,6 +681,8 @@ function CompactBoundaryMessage({
 }: {
   message: Extract<SystemMessage, { subtype: 'compact_boundary' }>;
 }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
   const colors = {
     bg: 'bg-warning/10',
     text: 'text-warning-soft',
@@ -669,32 +700,42 @@ function CompactBoundaryMessage({
         class={`border rounded-lg overflow-hidden ${colors.bg}`}
         style={{ borderColor: colors.borderColor }}
       >
-        <NativeContentDisclosure
-          label="Compact"
-          summary={
-            <>
-              <div class="inline-flex max-w-full items-center gap-2 min-w-0 flex-1">
-                <svg
-                  class={`w-5 h-5 flex-shrink-0 ${colors.iconColor}`}
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                  />
-                </svg>
-                <span class={`font-semibold text-sm flex-shrink-0 ${colors.text}`}>Compact</span>
-                <span class={`text-sm font-mono truncate ${colors.lightText}`}>
-                  {trigger} • {preTokens} tokens
-                </span>
-              </div>
-            </>
-          }
+        <button
+          onClick={() => setIsExpanded(!isExpanded)}
+          class="w-full flex items-center justify-between p-3 transition-colors hover:bg-opacity-80 dark:hover:bg-opacity-80"
         >
+          <div class="flex items-center gap-2 min-w-0 flex-1">
+            <svg
+              class={`w-5 h-5 flex-shrink-0 ${colors.iconColor}`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+              />
+            </svg>
+            <span class={`font-semibold text-sm flex-shrink-0 ${colors.text}`}>Compact</span>
+            <span class={`text-sm font-mono truncate ${colors.lightText}`}>
+              {trigger} • {preTokens} tokens
+            </span>
+          </div>
+
+          <div class="flex items-center gap-2 flex-shrink-0">
+            <ChevronDownGlyph
+              class={`w-5 h-5 transition-transform ${colors.iconColor} ${isExpanded ? 'rotate-180' : ''}`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
+            />
+          </div>
+        </button>
+
+        {isExpanded && (
           <div class="p-3 border-t bg-surface" style={{ borderColor: colors.borderColor }}>
             <div class={`text-xs font-semibold mb-2 ${colors.lightText}`}>Metadata:</div>
             <pre
@@ -703,7 +744,7 @@ function CompactBoundaryMessage({
               {JSON.stringify(message.compact_metadata, null, 2)}
             </pre>
           </div>
-        </NativeContentDisclosure>
+        )}
       </div>
     </div>
   );
