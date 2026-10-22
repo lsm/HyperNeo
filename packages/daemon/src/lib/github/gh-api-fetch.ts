@@ -7,6 +7,8 @@ import {
 import { spawnProcess, type SpawnFn } from '../runtime-spawn/index.ts';
 import { collectWithMaxBuffer, MAX_BUFFER_BYTES } from '../utils/script-utils.ts';
 
+const GITHUB_RESPONSE_MAX_BYTES = 16 * 1_048_576;
+
 export async function fetchGitHubViaCli(
   input: string | URL | Request,
   init: RequestInit = {},
@@ -42,7 +44,7 @@ export async function fetchGitHubViaCli(
   if (init.signal?.aborted) abort();
   try {
     const [out, , code] = await Promise.all([
-      collectWithMaxBuffer(proc.stdout, MAX_BUFFER_BYTES),
+      collectWithMaxBuffer(proc.stdout, GITHUB_RESPONSE_MAX_BYTES),
       collectWithMaxBuffer(proc.stderr, MAX_BUFFER_BYTES),
       proc.exited,
     ]);
@@ -53,7 +55,7 @@ export async function fetchGitHubViaCli(
       throw new Error(
         'GitHub CLI polling unavailable; check gh authentication for the daemon account'
       );
-    if (code !== 0 && response.status < 400)
+    if (code !== 0 && response.status < 400 && response.status !== 304)
       throw new Error('GitHub CLI polling failed before a complete response');
     return new Response([204, 205, 304].includes(response.status) ? null : response.body, {
       status: response.status,
