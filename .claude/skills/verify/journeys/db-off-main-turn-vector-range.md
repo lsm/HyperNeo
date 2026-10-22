@@ -15,3 +15,6 @@ below250ms; the modeled-wait job still exceeds250ms and is not a latency pass or
 physical-disk attribution. The ordinary-data control checks job latency separately.
 All reads reuse the existing shared reader, with no disk fallback on failure.
 The helper closes its probe, app and worker resources in finally.
+The Deno smoke also opens a cold shared reader directly on its fresh synthetic DB.
+Dispatch waits for the worker's handler-ready acknowledgement, with the existing
+request deadline covering startup; no sleep, retry or synchronous fallback is used.

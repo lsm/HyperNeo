@@ -60,6 +60,9 @@ function fixture(timeoutMs = 1000) {
     () => {
       const worker = new TestWorker();
       workers.push(worker);
+      queueMicrotask(() =>
+        worker.onmessage?.({ data: { ready: true } } as MessageEvent<SDKStatusReply>)
+      );
       return worker as unknown as Worker;
     },
     timeoutMs

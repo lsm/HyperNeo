@@ -57,6 +57,7 @@ export type SDKStatusRequest = {
   queryObservability?: SQLiteQueryObservabilityOptions;
 };
 export type SDKStatusReply =
+  | { ready: true }
   | { log: StructuredLogEvent }
   | {
       id: number;
@@ -135,6 +136,7 @@ export function sdkReadLogMetadata(metadata: Record<string, unknown>, workerOper
 
 export class SDKStatusReader {
   private worker: Worker | null = null;
+  private readonly ready = new WeakSet<Worker>();
   private queue: Promise<unknown> = Promise.resolve();
   private waiting = 0;
   private searches = 0;
@@ -239,7 +241,8 @@ export class SDKStatusReader {
       epoch = this.epoch,
       started = performance.now();
     return new Promise((resolve, reject) => {
-      let settled = false;
+      let settled = false,
+        sent = false;
       const finish = (
         error?: Error,
         result?: SDKReadResult | null,
@@ -300,6 +303,11 @@ export class SDKStatusReader {
       };
       worker.onmessage = ({ data }: MessageEvent<SDKStatusReply>) => {
         if (this.worker !== worker) return;
+        if ('ready' in data) {
+          this.ready.add(worker);
+          send();
+          return;
+        }
         if ('log' in data) {
           emitStructuredLogEvent({
             ...data.log,
@@ -311,18 +319,23 @@ export class SDKStatusReader {
         if (data.id !== id || data.epoch !== epoch) return;
         finish(data.error ? new Error(data.error) : undefined, data.result, data);
       };
-      try {
-        worker.postMessage({
-          id,
-          epoch,
-          dbPath: this.dbPath,
-          sentAt: Date.now(),
-          args,
-          queryObservability: this.queryObservability,
-        } satisfies SDKStatusRequest);
-      } catch (error) {
-        finish(error instanceof Error ? error : new Error(String(error)));
-      }
+      const send = () => {
+        if (sent || settled) return;
+        try {
+          worker.postMessage({
+            id,
+            epoch,
+            dbPath: this.dbPath,
+            sentAt: Date.now(),
+            args,
+            queryObservability: this.queryObservability,
+          } satisfies SDKStatusRequest);
+          sent = true;
+        } catch (error) {
+          finish(error instanceof Error ? error : new Error(String(error)));
+        }
+      };
+      if (this.ready.has(worker)) send();
     });
   }
 }
