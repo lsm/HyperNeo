@@ -123,14 +123,48 @@ describe('NeoAskTodos', () => {
     fireEvent.click(app.getByText('Todo a'));
     expect(app.queryByText(data.todos[0].report!.trim())).toBeNull();
     const more = app.getByRole('button', { name: 'more — Show details: Todo a' });
-    expect(getComputedStyle(more).getPropertyValue('float')).toBe('right');
+    expect(more.parentElement?.classList.contains('self-start')).toBe(true);
     fireEvent.click(more);
     fireEvent.click(app.getByText('Todo a'));
     expect(app.getByText(data.todos[0].report!.trim())).toBeTruthy();
     const less = app.getByRole('button', { name: 'less — Hide details: Todo a' });
-    expect(getComputedStyle(less).getPropertyValue('float')).toBe('right');
+    expect(less).toBe(more);
     fireEvent.click(less);
     expect(app.queryByText(data.todos[0].report!.trim())).toBeNull();
+  });
+
+  it('aligns todo actions in one trailing column and uses a quiet icon with an accessible name', () => {
+    locale.value = 'en';
+    const data = detailed();
+    data.todos[0] = {
+      ...data.todos[0],
+      link: '/session/synthetic',
+      worker: {
+        id: 'synthetic',
+        adapter: 'codex-desktop',
+        name: 'Synthetic worker',
+        label: 'Codex · Synthetic worker',
+      },
+    };
+    const onOpen = vi.fn();
+    const app = render(<NeoAskTodos entry={data} onAnswer={vi.fn()} onOpen={onOpen} />);
+    for (const item of data.todos) {
+      const row = app.container.querySelector(`[data-ask-todo="${item.id}"]`)!;
+      expect(row.classList.contains('grid')).toBe(true);
+      expect(row.classList.contains('grid-cols-[1rem_minmax(0,1fr)_auto]')).toBe(true);
+      expect(row.classList.contains('items-start')).toBe(true);
+      const control = app.getByRole('button', { name: `more — Show details: ${item.title}` });
+      expect(control.classList.contains('text-fg-faint')).toBe(true);
+      expect(control.querySelector('[aria-hidden="true"]')?.textContent).toBe('▾');
+      expect(control.querySelector('.sr-only')?.textContent).toBe('more');
+      expect(control.parentElement?.classList.contains('self-start')).toBe(true);
+      fireEvent.click(control);
+      expect(control.getAttribute('aria-expanded')).toBe('true');
+      expect(control.querySelector('[aria-hidden="true"]')?.textContent).toBe('▴');
+      expect(control.parentElement).toBe(row.lastElementChild);
+    }
+    fireEvent.click(app.getByRole('button', { name: 'Open Todo a' }));
+    expect(onOpen).toHaveBeenCalledWith('/session/synthetic', 'Codex · Synthetic worker');
   });
 
   it('collapses three detailed todos by default, opens one, and expands or collapses all including the first', () => {
