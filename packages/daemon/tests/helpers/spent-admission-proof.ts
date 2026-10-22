@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MessageHub, WebSocketClientTransport, subscribeToStructuredLogs } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { holdSdkBodyAdmission } from './sdk-bun-worker-bridge.ts';
 
 export async function verifySpentAdmission(
   kind: 'ordinary' | 'neo',
@@ -22,6 +23,7 @@ export async function verifySpentAdmission(
     if (event.module === 'hyperneo:daemon:message-delivery.lifecycle')
       stages.push({ at: Date.now(), ...event.metadata });
   });
+  let releaseCoverage: (() => void) | undefined;
   let restarted = false;
   let holdNext = false;
   let held = false;
@@ -335,6 +337,7 @@ export async function verifySpentAdmission(
     restarted = true;
     const prepare = Database.prototype.prepare;
     if (scenario === 'history') {
+      releaseCoverage = holdSdkBodyAdmission();
       evidence.historyPageLatencyMs = 50;
       Database.prototype.prepare = function (sql, ...args) {
         const statement = prepare.call(this, sql, ...args);
@@ -400,6 +403,13 @@ export async function verifySpentAdmission(
     );
     if (scenario === 'history') {
       const { sdkSideOnlyWrites } = await import('../../src/storage/sdk-message-body-admission.ts');
+      assert.equal(
+        sdkSideOnlyWrites(daemon!.db.getDatabase()),
+        false,
+        'queued inputs must reach the model before historical coverage finishes'
+      );
+      evidence.receivedBeforeCoverageVerified = [...received];
+      releaseCoverage!();
       await until(
         () => sdkSideOnlyWrites(daemon!.db.getDatabase()),
         'read-only coverage worker did not complete successfully'
@@ -409,13 +419,9 @@ export async function verifySpentAdmission(
     evidence.afterDelivery = sample();
     evidence.messages = await read();
     evidence.received = [...received];
-    if (scenario === 'history')
-      assert(
-        Number(evidence.restartStartupMs) < 1000,
-        'history validation blocked daemon availability'
-      );
     evidence.passed = true;
   } finally {
+    releaseCoverage?.();
     release?.();
     if (process.env.VERIFY_EVIDENCE_DIR) {
       await mkdir(process.env.VERIFY_EVIDENCE_DIR, { recursive: true });

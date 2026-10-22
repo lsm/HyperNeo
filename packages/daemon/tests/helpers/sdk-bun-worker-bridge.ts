@@ -4,6 +4,21 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
+let bodyAdmissionGate: Promise<void> | undefined;
+
+export const sdkBodyAdmissionGate = () => bodyAdmissionGate;
+
+export function holdSdkBodyAdmission(): () => void {
+  let release!: () => void;
+  bodyAdmissionGate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return () => {
+    bodyAdmissionGate = undefined;
+    release();
+  };
+}
+
 export class SDKBunWorkerBridge {
   onmessage: ((event: MessageEvent) => void) | null = null;
   onerror: ((event: ErrorEvent) => void) | null = null;
@@ -12,7 +27,7 @@ export class SDKBunWorkerBridge {
   private ready = false;
   private queued: unknown[] = [];
 
-  constructor(url: string) {
+  constructor(url: string, startGate?: Promise<void>) {
     const home = mkdtempSync(join(tmpdir(), 'sdk-worker-host-'));
     this.child = spawn(
       'bun',
@@ -30,9 +45,12 @@ export class SDKBunWorkerBridge {
     this.child.on('message', (message: unknown) => {
       const reply = message as { ready?: boolean; data?: unknown; error?: string };
       if (reply.ready) {
-        this.ready = true;
-        for (const pending of this.queued) this.child.send(pending);
-        this.queued = [];
+        void (startGate ?? Promise.resolve()).then(() => {
+          if (this.stopped) return;
+          this.ready = true;
+          for (const pending of this.queued) this.child.send(pending);
+          this.queued = [];
+        });
       } else if (reply.error) this.fail(reply.error);
       else this.onmessage?.({ data: reply.data } as MessageEvent);
     });
