@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { vi } from 'vitest';
 import type { Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
@@ -45,6 +46,7 @@ beforeEach(() => {
   process.env.HYPERNEO_DATA_DIR = handoffDataDir;
 });
 afterEach(() => {
+  vi.unstubAllEnvs();
   rmSync(dirname(handoffDataDir), { recursive: true, force: true });
   if (previousDataDir === undefined) delete process.env.HYPERNEO_DATA_DIR;
   else process.env.HYPERNEO_DATA_DIR = previousDataDir;
@@ -2081,6 +2083,8 @@ describe('QueryOptionsBuilder', () => {
     ] as const)(
       'uses ordinary configured options for a %s binding too',
       async (kind, projectId, tools) => {
+        vi.stubEnv('GH_TOKEN', 'synthetic-daemon-query-token');
+        vi.stubEnv('GITHUB_TOKEN', 'synthetic-other-query-token');
         const sqlite = new BunDatabase(':memory:');
         try {
           createNeoTables(sqlite);
