@@ -87,6 +87,10 @@ export async function gitWorktreeProject(folder: string): Promise<string> {
   try {
     const path = join(folder, '.git');
     const info = await runLagPhase('scanner:worktree:metadata', () => stat(path));
+    if (info.isDirectory())
+      return readFile(join(path, 'hyperneo-source-checkout'), 'utf8')
+        .then((source) => source.trim() || folder)
+        .catch(() => folder);
     const stamp = `${info.ino}:${info.mtimeMs}:${info.ctimeMs}:${info.size}`;
     const cached = worktreeProjects.get(folder);
     if (cached?.stamp === stamp) return cached.project;

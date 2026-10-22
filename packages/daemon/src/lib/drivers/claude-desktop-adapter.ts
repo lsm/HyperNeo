@@ -1315,7 +1315,10 @@ export async function startClaudeSession(
       } catch {}
     }
   );
-  if (!started.ok) return started;
+  if (!started.ok) {
+    await prepared?.value.release();
+    return started;
+  }
   const record: ClaudeDesktopRecord = {
     sessionId,
     cliSessionId,

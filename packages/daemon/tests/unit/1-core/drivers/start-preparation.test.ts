@@ -1,4 +1,8 @@
 import { describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync, existsSync, writeFileSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { workStartPreparation as preparation } from '../../../../src/lib/drivers/start-preparation';
 import { workResultSchema, WorkSummarySchema } from '../../../../src/lib/drivers/types';
 import { prepareCodingExecution } from '../../../../src/lib/neo/packs/coding/prepare-execution';
@@ -8,55 +12,57 @@ const location = { directory: '/repo', destination: '/isolated/repo' };
 
 describe('workStartPreparation', () => {
   test('runs a registered coding stage and returns cleanup ownership without starting work', async () => {
-    const calls: unknown[] = [];
-    const commit = 'a'.repeat(40);
-    const prepared = await preparation.prepare(
-      request,
-      location,
-      [{ id: 'coding', prepareExecution: prepareCodingExecution }],
-      {
-        run: async (command, directory) => {
-          calls.push({ command, directory });
-          const listed = command[1] === 'ls-tree' ? '.claude/skills/verify/SKILL.md\n' : '';
-          return { code: 0, stdout: command[1] === 'rev-parse' ? commit : listed, stderr: '' };
-        },
-      }
+    const root = mkdtempSync(join(tmpdir(), 'registered-preparation-'));
+    const source = join(root, 'source');
+    const destination = join(root, 'worker');
+    const hostileConfig = join(root, 'global.gitconfig');
+    writeFileSync(
+      hostileConfig,
+      '[commit]\n gpgsign = true\n[gpg]\n program = /synthetic/unavailable-signer\n'
     );
-    expect(prepared.ok).toBe(true);
-    if (!prepared.ok) throw new Error(prepared.detail);
-    expect(prepared.value.directory).toBe(location.destination);
-    expect(calls).toEqual([
-      {
-        command: ['git', 'fetch', '--no-tags', 'origin', '+refs/heads/dev:refs/remotes/origin/dev'],
-        directory: '/repo',
-      },
-      {
-        command: ['git', 'rev-parse', '--verify', 'refs/remotes/origin/dev^{commit}'],
-        directory: '/repo',
-      },
-      {
-        command: [
-          'git',
-          'ls-tree',
-          '-r',
-          '--name-only',
-          commit,
-          '--',
-          '.claude/skills',
-          'AGENTS.md',
-        ],
-        directory: '/repo',
-      },
-      {
-        command: ['git', 'worktree', 'add', '--detach', '/isolated/repo', commit],
-        directory: '/repo',
-      },
-    ]);
-    await prepared.value.release();
-    expect(calls.at(-1)).toEqual({
-      command: ['git', 'worktree', 'remove', '--force', '/isolated/repo'],
-      directory: '/repo',
-    });
+    const inheritedEnv = { ...process.env, GIT_CONFIG_GLOBAL: hostileConfig };
+    const run = async (command: readonly string[], directory: string) => {
+      const result = spawnSync(command[0], command.slice(1), {
+        cwd: directory,
+        encoding: 'utf8',
+        env: { ...inheritedEnv, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' },
+      });
+      return { code: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+    };
+    try {
+      expect((await run(['git', 'init', '--initial-branch=dev', source], root)).code).toBe(0);
+      await run(['git', 'config', 'user.name', 'Synthetic'], source);
+      await run(['git', 'config', 'user.email', 'synthetic@example.invalid'], source);
+      writeFileSync(join(source, 'AGENTS.md'), '## Verify\nRun the synthetic proof.\n');
+      await run(['git', 'add', '.'], source);
+      const hostile = spawnSync('git', ['commit', '-m', 'hostile control'], {
+        cwd: source,
+        encoding: 'utf8',
+        env: { ...inheritedEnv, GIT_CONFIG_NOSYSTEM: '1' },
+      });
+      expect(hostile.status).not.toBe(0);
+      expect(hostile.stderr).toContain('/synthetic/unavailable-signer');
+      expect((await run(['git', 'commit', '-m', 'initial'], source)).code).toBe(0);
+      await run(['git', 'remote', 'add', 'origin', source], source);
+      const prepared = await preparation.prepare(
+        request,
+        { directory: source, destination },
+        [{ id: 'coding', prepareExecution: prepareCodingExecution }],
+        { run }
+      );
+      expect(prepared.ok).toBe(true);
+      if (!prepared.ok) throw new Error(prepared.detail);
+      expect(prepared.value.directory).toBe(destination);
+      expect(statSync(join(destination, '.git')).isDirectory()).toBe(true);
+      expect((await run(['git', 'rev-parse', 'HEAD'], destination)).stdout).toBe(
+        (await run(['git', 'rev-parse', 'HEAD'], source)).stdout
+      );
+      await prepared.value.release();
+      expect(existsSync(destination)).toBe(false);
+      expect(existsSync(join(source, 'AGENTS.md'))).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test.each(['missing', 'no-stage', 'duplicate'])(

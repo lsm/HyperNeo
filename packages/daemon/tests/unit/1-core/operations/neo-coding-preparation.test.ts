@@ -1,7 +1,16 @@
 import { createCodexDesktopAdapter } from '../../../../src/lib/drivers/codex-desktop-adapter';
+import { gitWorktreeProject } from '../../../../src/lib/drivers/acp-agent-adapter';
 import { workStartPreparation } from '../../../../src/lib/drivers/start-preparation';
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+  existsSync,
+  readFileSync,
+  statSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -11,8 +20,9 @@ import {
 } from '../../../../src/lib/neo/packs/coding/prepare-execution';
 
 const roots: string[] = [];
+const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
 function git(directory: string, ...args: string[]) {
-  const result = spawnSync('git', args, { cwd: directory, encoding: 'utf8' });
+  const result = spawnSync('git', args, { cwd: directory, encoding: 'utf8', env: gitEnv });
   if (result.status !== 0) throw new Error(result.stderr);
   return result.stdout.trim();
 }
@@ -31,6 +41,8 @@ function fixture() {
   git(remote, 'add', '.');
   git(remote, 'commit', '-m', 'initial');
   git(root, 'clone', remote, directory);
+  git(directory, 'config', 'user.name', 'Repo Worker');
+  git(directory, 'config', 'user.email', 'repo-worker@example.invalid');
   const before = git(directory, 'rev-parse', 'HEAD');
   writeFileSync(join(remote, 'file'), 'new');
   git(remote, 'commit', '-am', 'remote advance');
@@ -40,7 +52,11 @@ function fixture() {
   const effects = {
     run: async (command: readonly string[], cwd: string) => {
       calls.push([...command]);
-      const result = spawnSync(command[0], command.slice(1), { cwd, encoding: 'utf8' });
+      const result = spawnSync(command[0], command.slice(1), {
+        cwd,
+        encoding: 'utf8',
+        env: gitEnv,
+      });
       return { code: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
     },
   };
@@ -121,15 +137,144 @@ describe('createCodexDesktopAdapter with coding preparation', () => {
 });
 
 describe('prepareCodingExecution', () => {
+  test('private clones preserve repo-local commit identity and signing configuration only', async () => {
+    const f = fixture();
+    const settings = {
+      'user.signingkey': 'SYNTHETIC-PUBLIC-KEY-ID',
+      'commit.gpgsign': 'true',
+      'gpg.format': 'ssh',
+      'gpg.ssh.program': '/synthetic/signer',
+    };
+    for (const [key, value] of Object.entries(settings)) git(f.directory, 'config', key, value);
+    git(f.directory, 'config', 'credential.helper', 'synthetic-owner-helper');
+    git(f.directory, 'config', 'http.extraHeader', 'synthetic-owner-header');
+    const prepared = await prepareCodingExecution(f.request, f.effects);
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) throw new Error(prepared.reason);
+    expect(git(f.destination, 'config', '--local', 'user.name')).toBe('Repo Worker');
+    expect(git(f.destination, 'config', '--local', 'user.email')).toBe(
+      'repo-worker@example.invalid'
+    );
+    for (const [key, value] of Object.entries(settings))
+      expect(git(f.destination, 'config', '--local', key)).toBe(value);
+    for (const key of ['credential.helper', 'http.extraHeader'])
+      expect(
+        spawnSync('git', ['config', '--local', '--get', key], { cwd: f.destination, env: gitEnv })
+          .status
+      ).toBe(1);
+    await prepared.value.release();
+  });
+
+  test('prepared coding work owns its Git objects and refs without hardlinks to main', async () => {
+    const f = fixture();
+    const prepared = await prepareCodingExecution(f.request, f.effects);
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) throw new Error(prepared.reason);
+    expect(statSync(join(f.destination, '.git')).isDirectory()).toBe(true);
+    expect(git(f.destination, 'rev-parse', '--git-common-dir')).toBe('.git');
+    expect(git(f.destination, 'remote', 'get-url', 'origin')).toBe(f.remote);
+    expect(await gitWorktreeProject(f.destination)).toBe(f.directory);
+    const blob = git(f.directory, 'rev-parse', `${f.latest}:file`);
+    const objectPath = join('.git', 'objects', blob.slice(0, 2), blob.slice(2));
+    const source = statSync(join(f.directory, objectPath));
+    const copy = statSync(join(f.destination, objectPath));
+    expect([copy.dev, copy.ino]).not.toEqual([source.dev, source.ino]);
+    git(f.destination, 'checkout', '-b', 'worker-change');
+    writeFileSync(join(f.destination, 'worker-file'), 'independent worker content');
+    git(f.destination, 'add', 'worker-file');
+    git(f.destination, 'commit', '-m', 'worker-only commit');
+    const workerCommit = git(f.destination, 'rev-parse', 'HEAD');
+    expect(
+      spawnSync('git', ['cat-file', '-e', workerCommit], { cwd: f.directory }).status
+    ).not.toBe(0);
+    expect(git(f.directory, 'rev-parse', 'HEAD')).toBe(f.before);
+    expect(readFileSync(join(f.directory, 'file'), 'utf8')).toBe('uncommitted user work');
+    await prepared.value.release();
+    await prepared.value.release();
+    expect(existsSync(f.destination)).toBe(false);
+    expect(readFileSync(join(f.directory, 'file'), 'utf8')).toBe('uncommitted user work');
+  });
+
+  test('LFS content refuses preparation instead of starting a worker with pointer text', async () => {
+    const f = fixture();
+    writeFileSync(join(f.remote, '.gitattributes'), 'asset.bin filter=lfs\n');
+    writeFileSync(
+      join(f.remote, 'asset.bin'),
+      `version https://git-lfs.github.com/spec/v1\noid sha256:${'a'.repeat(64)}\nsize 19\n`
+    );
+    git(f.remote, 'add', '.');
+    git(f.remote, 'commit', '-m', 'synthetic LFS pointer');
+    const cache = join(f.directory, '..', 'cached-object');
+    writeFileSync(cache, 'synthetic LFS bytes');
+    git(f.directory, 'config', 'filter.lfs.smudge', `cat '${cache}'`);
+    git(f.directory, 'config', 'filter.lfs.required', 'true');
+    git(f.directory, 'fetch', 'origin');
+    const linked = join(f.directory, '..', 'lfs-linked');
+    git(f.directory, 'worktree', 'add', '--detach', linked, 'origin/dev');
+    expect(readFileSync(join(linked, 'asset.bin'), 'utf8')).toBe('synthetic LFS bytes');
+    const result = await prepareCodingExecution(f.request, f.effects);
+    expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('LFS') });
+    expect(existsSync(f.destination)).toBe(false);
+    expect(readFileSync(join(f.directory, 'file'), 'utf8')).toBe('uncommitted user work');
+  });
+
+  test('a source with borrowed objects still produces an independent clone', async () => {
+    const f = fixture();
+    const borrowed = join(f.directory, '..', 'borrowed-source');
+    git(f.directory, 'clone', '--shared', f.directory, borrowed);
+    git(borrowed, 'remote', 'set-url', 'origin', f.remote);
+    const prepared = await prepareCodingExecution({ ...f.request, directory: borrowed }, f.effects);
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) throw new Error(prepared.reason);
+    expect(existsSync(join(f.destination, '.git/objects/info/alternates'))).toBe(false);
+    expect(git(f.destination, 'rev-parse', 'HEAD')).toBe(f.latest);
+    git(f.destination, 'fsck', '--no-reflogs');
+    await prepared.value.release();
+  });
+
+  test('a prepared clone from a linked checkout keeps the main project attribution', async () => {
+    const f = fixture();
+    const linked = join(f.directory, '..', 'linked-source');
+    git(f.directory, 'worktree', 'add', '--detach', linked, 'HEAD');
+    const prepared = await prepareCodingExecution({ ...f.request, directory: linked }, f.effects);
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) throw new Error(prepared.reason);
+    expect(await gitWorktreeProject(prepared.value.directory)).toBe(
+      await gitWorktreeProject(linked)
+    );
+    await prepared.value.release();
+  });
+
   test('prepares the fetched target and preserves dirty user checkout', async () => {
     const f = fixture();
+    git(f.directory, 'branch', 'local-only', f.before);
+    for (const ref of [
+      'refs/stash',
+      'refs/notes/test',
+      'refs/remotes/other/dev',
+      'refs/tags/local-only',
+      'refs/custom/test',
+    ])
+      git(f.directory, 'update-ref', ref, f.before);
+    git(f.directory, 'pack-refs', '--all');
     const result = await prepareCodingExecution(f.request, f.effects);
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(result.reason);
     expect(git(result.value.directory, 'rev-parse', 'HEAD')).toBe(f.latest);
     expect(git(f.directory, 'rev-parse', 'HEAD')).toBe(f.before);
     expect(readFileSync(join(f.directory, 'file'), 'utf8')).toBe('uncommitted user work');
-    expect(f.calls.find((call) => call[1] === 'worktree')?.at(-1)).toBe(f.latest);
+    expect(git(f.destination, 'rev-parse', 'refs/remotes/origin/dev')).toBe(f.latest);
+    expect(git(f.destination, 'for-each-ref', '--format=%(refname)')).toBe(
+      'refs/remotes/origin/dev'
+    );
+    git(f.destination, 'switch', 'dev');
+    expect(git(f.destination, 'rev-parse', 'HEAD')).toBe(f.latest);
+    expect(
+      spawnSync('git', ['show-ref', '--verify', 'refs/remotes/origin/local-only'], {
+        cwd: f.destination,
+        env: gitEnv,
+      }).status
+    ).not.toBe(0);
     await result.value.release();
     expect(existsSync(f.destination)).toBe(false);
   });
@@ -202,7 +347,7 @@ describe('prepareCodingExecution', () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('unexpected preparation');
     expect(result.reason).toContain('fetch_failed');
-    expect(f.calls.some((call) => call[1] === 'worktree')).toBe(false);
+    expect(f.calls.some((call) => call[1] === 'clone')).toBe(false);
     expect(existsSync(f.destination)).toBe(false);
   });
 
@@ -213,7 +358,7 @@ describe('prepareCodingExecution', () => {
       f.effects
     );
     expect(result.ok).toBe(false);
-    expect(f.calls.some((call) => call[1] === 'worktree')).toBe(false);
+    expect(f.calls.some((call) => call[1] === 'clone')).toBe(false);
   });
 
   test("a base that contains the prerequisite's merge is prepared from that merge onward", async () => {
@@ -247,7 +392,7 @@ describe('prepareCodingExecution', () => {
       f.effects
     );
     expect(result).toEqual({ ok: false, reason: `prerequisite_not_in_base: ${missing}` });
-    expect(f.calls.some((call) => call[1] === 'worktree')).toBe(false);
+    expect(f.calls.some((call) => call[1] === 'clone')).toBe(false);
   });
 
   test('invalid targets and commit identifiers reject before effects', async () => {
@@ -286,7 +431,52 @@ describe('prepareCodingExecution', () => {
     expect(calls).toEqual([]);
   });
 
-  test('an existing destination is preserved when worktree creation fails', async () => {
+  test.each(['clone', 'remote', 'checkout', 'for-each-ref', 'update-ref'])(
+    'a failed %s step is explicit and releases only its newly owned clone',
+    async (step) => {
+      const f = fixture();
+      const result = await prepareCodingExecution(f.request, {
+        run: async (command, cwd) => {
+          if (command.includes(step) && (step !== 'remote' || command[2] === 'set-url'))
+            return { code: 1, stdout: '', stderr: 'synthetic refusal' };
+          return f.effects.run(command, cwd);
+        },
+      });
+      expect(result).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('synthetic refusal'),
+      });
+      expect(existsSync(f.destination)).toBe(false);
+      expect(readFileSync(join(f.directory, 'file'), 'utf8')).toBe('uncommitted user work');
+    }
+  );
+
+  test('a real clone refusal remains a value when its destination has disappeared', async () => {
+    const f = fixture();
+    const result = await prepareCodingExecution(f.request, {
+      run: async (command, cwd) => {
+        if (command[1] !== 'clone') return f.effects.run(command, cwd);
+        const failed = await f.effects.run(
+          ['git', 'clone', '--no-local', '--upload-pack=false', '--', f.directory, f.destination],
+          cwd
+        );
+        expect(failed.code).not.toBe(0);
+        rmSync(f.destination, { recursive: true, force: true });
+        return failed;
+      },
+    });
+    expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('clone_failed:') });
+    expect(existsSync(f.destination)).toBe(false);
+  });
+
+  test('an existing empty destination is never claimed or removed', async () => {
+    const f = fixture();
+    mkdirSync(f.destination);
+    expect(await prepareCodingExecution(f.request, f.effects)).toMatchObject({ ok: false });
+    expect(statSync(f.destination).isDirectory()).toBe(true);
+  });
+
+  test('an existing destination is preserved when clone creation fails', async () => {
     const f = fixture();
     writeFileSync(f.destination, 'existing content');
     const result = await prepareCodingExecution(f.request, f.effects);
