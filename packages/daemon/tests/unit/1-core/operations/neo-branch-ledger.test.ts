@@ -1,9 +1,10 @@
+import { CodingPrLedgerRepository } from '../../../../src/lib/neo/packs/coding/pr-ledger.ts';
 import { describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { readGithubBranchPrs } from '../../../../src/lib/neo/packs/coding/branch-prs.ts';
+import { createCodingBranchPrReader } from '../../../../src/lib/neo/packs/coding/branch-reader.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn/index.ts';
@@ -34,8 +35,7 @@ function fixture() {
       kill: () => {},
     };
   };
-  const reader = (_db: Database) => (query: { cwd: string; branch: string }) =>
-    readGithubBranchPrs(query, spawn);
+  const reader = (db: Database) => createCodingBranchPrReader(() => db, spawn);
   return {
     root,
     db,
@@ -63,6 +63,26 @@ describe('ledger branch reader', () => {
       f.cleanup();
     }
   });
+  test('checkout HEAD discovery and invalid locations keep their existing behavior', async () => {
+    const f = fixture();
+    try {
+      const query = f.checkout('head'),
+        read = f.reader(f.db);
+      expect(await read({ cwd: query.cwd })).toEqual([url]);
+      execFileSync('git', ['symbolic-ref', 'HEAD', 'refs/heads/second'], {
+        cwd: query.cwd,
+        stdio: 'pipe',
+      });
+      expect(await read({ cwd: query.cwd })).toEqual([url]);
+      expect(f.calls()).toBe(2);
+      for (const cwd of ['relative', join(f.root, 'absent'), '/invalid\0path'])
+        expect(await read({ cwd })).toEqual([]);
+      expect(await read({ cwd: query.cwd, branch: '' })).toEqual([]);
+      expect(f.calls()).toBe(2);
+    } finally {
+      f.cleanup();
+    }
+  });
   test('a second checkout and a reopened collector use persisted repository coverage', async () => {
     const f = fixture();
     try {
@@ -78,6 +98,159 @@ describe('ledger branch reader', () => {
         reopened.close();
       }
     } finally {
+      f.cleanup();
+    }
+  });
+});
+
+function response(data: unknown, code = 0, error = '', raw = false): ReturnType<SpawnFn> {
+  return {
+    stdout: new Response(raw ? String(data) : JSON.stringify(data)).body,
+    stderr: new Response(error).body,
+    exited: Promise.resolve(code),
+    exitCode: code,
+    kill: () => {},
+  };
+}
+
+describe('branch coverage', () => {
+  test('known empty, stale, failed and recovered reads stay distinct without losing prior data', async () => {
+    const f = fixture();
+    try {
+      const facts = new CodingPrLedgerRepository(f.db).branchFacts;
+      let now = 100,
+        data: unknown = [{ url }],
+        calls = 0;
+      const spawn: SpawnFn = () => {
+        calls++;
+        return response(data);
+      };
+      expect(facts.read('synthetic/ledger', 'feature', now).membership).toMatchObject({
+        status: 'unknown',
+        reason: 'missing',
+      });
+      const first = await facts.refresh('Synthetic/Ledger', 'feature', spawn, () => now);
+      expect(first).toMatchObject({
+        repo: 'synthetic/ledger',
+        coverage: { state: 'all', limit: 5 },
+        membership: { status: 'known', urls: [url] },
+      });
+      now += 120000;
+      expect(facts.read('synthetic/ledger', 'feature', now).membership).toMatchObject({
+        status: 'unknown',
+        reason: 'stale',
+      });
+      data = { unexpected: true };
+      const failed = await facts.refresh('synthetic/ledger', 'feature', spawn, () => now);
+      expect(failed.membership).toMatchObject({
+        status: 'unknown',
+        reason: 'partial',
+        observedAt: 100,
+      });
+      expect(f.db.prepare('SELECT urls_json FROM pack_coding_branch_facts').get()).toEqual({
+        urls_json: JSON.stringify([url]),
+      });
+      data = [{ url }];
+      now++;
+      const recovered = await facts.refresh('synthetic/ledger', 'feature', spawn, () => now);
+      expect(recovered.factRevision).toBe(first.factRevision);
+      expect(recovered.observationRevision).toBeGreaterThan(first.observationRevision);
+      now += 120000;
+      data = [];
+      const empty = await facts.refresh('synthetic/ledger', 'feature', spawn, () => now);
+      expect(empty.membership).toMatchObject({ status: 'known', urls: [] });
+      expect(empty.factRevision).toBeGreaterThan(first.factRevision);
+      expect(calls).toBe(4);
+    } finally {
+      f.cleanup();
+    }
+  });
+  test('over-limit responses refuse instead of claiming a complete empty branch', async () => {
+    const f = fixture();
+    try {
+      const facts = new CodingPrLedgerRepository(f.db).branchFacts;
+      const read = await facts.refresh('synthetic/ledger', 'feature', () =>
+        response(Array.from({ length: 6 }, () => ({ url })))
+      );
+      expect(read.membership).toMatchObject({ status: 'unknown', reason: 'partial' });
+    } finally {
+      f.cleanup();
+    }
+  });
+  test('rate-limited refreshes respect retry-after and do not certify old membership', async () => {
+    const f = fixture();
+    try {
+      const facts = new CodingPrLedgerRepository(f.db).branchFacts;
+      let now = 100,
+        calls = 0;
+      const limited: SpawnFn = () => {
+        calls++;
+        return response('HTTP/2 403\nretry-after: 5\n\n{}', 1, 'secondary rate limit', true);
+      };
+      expect(
+        (await facts.refresh('synthetic/ledger', 'feature', limited, () => now)).membership
+      ).toMatchObject({ status: 'unknown', reason: 'rate_limited' });
+      now++;
+      await facts.refresh('synthetic/ledger', 'feature', limited, () => now);
+      expect(calls).toBe(1);
+      now += 5000;
+      const recovered = await facts.refresh(
+        'synthetic/ledger',
+        'feature',
+        () => {
+          calls++;
+          return response([{ url }]);
+        },
+        () => now
+      );
+      expect(recovered.membership).toMatchObject({ status: 'known', urls: [url] });
+      expect(calls).toBe(2);
+    } finally {
+      f.cleanup();
+    }
+  });
+  test('aliases share collector work and a late response cannot replace newer stored facts', async () => {
+    const f = fixture();
+    let other: Database | undefined;
+    try {
+      f.db
+        .prepare('INSERT INTO pack_coding_repo_aliases(alias,canonical) VALUES(?,?)')
+        .run('old/repo', 'synthetic/ledger');
+      const facts = new CodingPrLedgerRepository(f.db).branchFacts;
+      let finish!: (code: number) => void,
+        calls = 0;
+      const slow: SpawnFn = () => {
+        calls++;
+        return {
+          ...response([{ url }]),
+          exited: new Promise<number>((done) => {
+            finish = done;
+          }),
+        };
+      };
+      const held = facts.refresh('old/repo', 'feature', slow, () => 100);
+      const same = new CodingPrLedgerRepository(f.db).branchFacts.refresh(
+        'Synthetic/Ledger',
+        'feature',
+        slow,
+        () => 100
+      );
+      expect(calls).toBe(1);
+      other = new Database(join(f.root, 'facts.db'));
+      const newer = new CodingPrLedgerRepository(other).branchFacts;
+      const changed = url.replace('/7', '/8');
+      const fast = await newer.refresh(
+        'synthetic/ledger',
+        'feature',
+        () => response([{ url: changed }]),
+        () => 200
+      );
+      finish(0);
+      expect((await held).membership).toEqual(fast.membership);
+      expect((await same).membership).toEqual(fast.membership);
+      expect(newer.read('synthetic/ledger', 'feature', 200).observationRevision).toBe(1);
+    } finally {
+      other?.close();
       f.cleanup();
     }
   });

@@ -65,8 +65,8 @@ import {
   localCodingSessionId,
   type NeoBranchPrReader,
   neoWorkBranch,
-  readGithubBranchPrs,
 } from './packs/coding/branch-prs.ts';
+import { createCodingBranchPrReader } from './packs/coding/branch-reader.ts';
 import { type NeoDeployReader, readGithubDeploys } from './packs/coding/deploy-checks.ts';
 import { listNeoGithub, type NeoGithubLister } from './packs/coding/github-query.ts';
 import { createCodingPack } from './packs/coding/pack.ts';
@@ -131,7 +131,7 @@ export class NeoService {
   filePacks: readonly NeoPack[] = [];
   private readonly builtinPacks: NeoPack[];
   readPrs: NeoWorkPrReader = readGithubPrs;
-  readBranchPrs: NeoBranchPrReader = readGithubBranchPrs;
+  readBranchPrs: NeoBranchPrReader = createCodingBranchPrReader(() => this.db.getDatabase());
   readRefStates: NeoRefStateReader = readGithubRefStates;
   listGithub: NeoGithubLister = (args) => listNeoGithub(args);
   readDeploys: NeoDeployReader = (urls) =>
