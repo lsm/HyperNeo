@@ -67,7 +67,7 @@ async function propose(requestId = 'request', change = edit) {
 describe('human-approved standing rules', () => {
   test('a cited consumed human input authorizes only a complete text part from this conversation', async () => {
     const messageId = crypto.randomUUID();
-    const content = 'Ask before publishing. Replace the old synthetic rule.';
+    const content = 'Ask before publishing. Remove Old synthetic rule.';
     expect(
       await invoke(
         'neo.message.send',
@@ -93,6 +93,30 @@ describe('human-approved standing rules', () => {
     });
     expect(saved()).toEqual(['Keep this rule.', ...edit.add]);
   });
+
+  test.each(['add', 'remove'] as const)(
+    'an unrelated received greeting cannot authorize a rule %s',
+    async (kind) => {
+      const messageId = crypto.randomUUID();
+      await invoke(
+        'neo.message.send',
+        { sessionId: agent.sessionId, requestId: messageId, content: 'hi' },
+        human
+      );
+      const repo = db.getSDKMessageRepo();
+      repo.updateMessageStatus(
+        [repo.findMessageIdByUuid(agent.sessionId!, messageId)!],
+        'consumed'
+      );
+      const input = {
+        messageId,
+        from: 'hi',
+        [kind]: [kind === 'add' ? 'Invented rule.' : 'Old synthetic rule.'],
+      };
+      expect(await invoke('neo.rule.save', input)).toMatchObject({ value: { ok: false } });
+      expect(saved()).toEqual(['Old synthetic rule.', 'Keep this rule.']);
+    }
+  );
 
   test.each(['unknown', 'foreign', 'system', 'task', 'not-in-conversation'])(
     'refuses %s message ids without changing standing rules',
