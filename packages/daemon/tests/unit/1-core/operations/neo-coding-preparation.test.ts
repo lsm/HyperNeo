@@ -194,6 +194,20 @@ describe('prepareCodingExecution', () => {
     expect(readFileSync(join(f.directory, 'file'), 'utf8')).toBe('uncommitted user work');
   });
 
+  test('a source with borrowed objects still produces an independent clone', async () => {
+    const f = fixture();
+    const borrowed = join(f.directory, '..', 'borrowed-source');
+    git(f.directory, 'clone', '--shared', f.directory, borrowed);
+    git(borrowed, 'remote', 'set-url', 'origin', f.remote);
+    const prepared = await prepareCodingExecution({ ...f.request, directory: borrowed }, f.effects);
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) throw new Error(prepared.reason);
+    expect(existsSync(join(f.destination, '.git/objects/info/alternates'))).toBe(false);
+    expect(git(f.destination, 'rev-parse', 'HEAD')).toBe(f.latest);
+    git(f.destination, 'fsck', '--no-reflogs');
+    await prepared.value.release();
+  });
+
   test('a prepared clone from a linked checkout keeps the main project attribution', async () => {
     const f = fixture();
     const linked = join(f.directory, '..', 'linked-source');
