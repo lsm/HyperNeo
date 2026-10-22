@@ -79,6 +79,12 @@ export async function verifySdkText(page, { port, run, width, phase }) {
   await page.screenshot({ path: `${dir}/synthetic-closed-${width}.png`, scale: 'css', animations: 'disabled', timeout: 5000 });
   await more.press('Enter');
   const less = synthetic.getByRole('button', { name: after ? 'less — Synthetic' : 'Show less', exact: true });
+  if (after) {
+    await less.waitFor();
+    const focus = await page.evaluate(() => ({ tag: document.activeElement?.tagName, name: document.activeElement?.getAttribute('aria-label') }));
+    await writeFile(`${dir}/synthetic-focus-${width}.json`, JSON.stringify(focus, null, 2));
+    assert.equal(focus.name, 'less — Synthetic');
+  }
   await less.scrollIntoViewIfNeeded();
   if (after) {
     await synthetic.locator('p').filter({ hasText: 'Short synthetic ending.' }).click();
@@ -92,6 +98,7 @@ export async function verifySdkText(page, { port, run, width, phase }) {
   await page.screenshot({ path: `${dir}/synthetic-open-${width}.png`, scale: 'css', animations: 'disabled', timeout: 5000 });
   await less.press('Space');
   if (after) {
+    assert.equal(await synthetic.getByRole('button', { name: 'more — Synthetic' }).evaluate(b => b === document.activeElement), true);
     for (const metric of observations.controls) assert(Math.abs(metric.parentRight - metric.right) <= 14);
   }
   observations.viewport = await page.evaluate(() => ({ width: innerWidth, scrollWidth: document.documentElement.scrollWidth }));

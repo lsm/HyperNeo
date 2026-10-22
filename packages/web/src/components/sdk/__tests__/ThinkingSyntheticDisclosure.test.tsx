@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render } from '@testing-library/preact';
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ChatDisplayModeContext } from '../chat-display-mode.ts';
 import { SyntheticMessageBlock } from '../SyntheticMessageBlock.tsx';
@@ -83,4 +83,28 @@ describe('SDK thinking and synthetic text disclosures', () => {
     fireEvent.click(view.getByRole('button', { name: 'less — Synthetic', exact: true }));
     expect(view.getByRole('button', { name: 'more — Synthetic', exact: true })).toBeTruthy();
   });
+
+  it.each([true, false])(
+    'retains focus across synthetic control moves (plain=%s)',
+    async (plain) => {
+      vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(500);
+      const view = render(
+        <SyntheticMessageBlock
+          content={`${'Synthetic focus line.\n'.repeat(16)}Short ending.`}
+          renderAsPlainText={plain}
+          showActions={false}
+        />
+      );
+      await waitFor(() => expect(view.getByText(/Short ending\./)).toBeTruthy());
+      const more = view.getByRole('button', { name: 'more — Synthetic', exact: true });
+      more.focus();
+      fireEvent.click(more);
+      const less = await view.findByRole('button', { name: 'less — Synthetic', exact: true });
+      expect(document.activeElement).toBe(less);
+      fireEvent.click(less);
+      expect(document.activeElement).toBe(
+        view.getByRole('button', { name: 'more — Synthetic', exact: true })
+      );
+    }
+  );
 });
