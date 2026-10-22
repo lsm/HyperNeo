@@ -119,3 +119,18 @@ test('deadline and bounded admission reject explicitly without a synchronous wri
   expect(workers[0].requests).toHaveLength(1);
   await writer.close();
 });
+
+test('an idle worker failure cannot be reused by the next command', async () => {
+  const { writer, workers } = fixture();
+  const first = writer.ingest(event);
+  await tick();
+  workers[0].reply(workers[0].requests[0], outcome);
+  await first;
+  workers[0].crash();
+  const next = writer.ingest(event);
+  await tick();
+  expect(workers).toHaveLength(2);
+  workers[1].reply(workers[1].requests[0], outcome);
+  expect(await next).toEqual(outcome);
+  await writer.close();
+});
