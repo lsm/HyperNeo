@@ -1,3 +1,4 @@
+import { capSdkMessage } from '../lib/rpc-handlers/message-output-cap.ts';
 import { emitStructuredLogEvent } from '../lib/logger.ts';
 import type { StructuredLogEvent } from '@hyperneo/shared';
 import type { SDKMessageRepository, SendStatus } from './repositories/sdk-message-repository.ts';
@@ -8,12 +9,27 @@ export type SDKStatusPage = {
   messages: { dbId: string; uuid: string; timestamp: number; status: SendStatus; text: string }[];
   total: number;
 };
+export type SDKPageParams = {
+  limit?: number;
+  before?: number;
+  since?: number;
+  beforeRowid?: number;
+  sinceRowid?: number;
+};
+export type SDKPageArgs = { sessionId: string; page: SDKPageParams };
+export type SDKMessagePage = {
+  sdkMessages: ReturnType<SDKMessageRepository['getSDKMessages']>['messages'];
+  hasMore: boolean;
+  backgroundTaskMessages: ReturnType<SDKMessageRepository['getBackgroundTaskMessages']>;
+};
+type SDKReadArgs = SDKStatusArgs | SDKPageArgs;
+export type SDKReadResult = SDKStatusPage | SDKMessagePage;
 export type SDKStatusRequest = {
   id: number;
   epoch: number;
   dbPath: string;
   sentAt: number;
-  args: SDKStatusArgs | null;
+  args: SDKReadArgs | null;
   queryObservability?: SQLiteQueryObservabilityOptions;
 };
 export type SDKStatusReply =
@@ -21,7 +37,7 @@ export type SDKStatusReply =
   | {
       id: number;
       epoch: number;
-      result?: SDKStatusPage | null;
+      result?: SDKReadResult | null;
       error?: string;
       finishedAt: number;
       workerMs: number;
@@ -57,6 +73,35 @@ export function projectSDKStatusPage(
   };
 }
 
+export function projectSDKStatusMessage(
+  message: ReturnType<SDKMessageRepository['getUserMessagesByStatus']>['messages'][number]
+) {
+  return {
+    ...message,
+    message: { ...message.message, content: extractMessageText(message.message.content) },
+  };
+}
+
+export function readSDKMessagePage(
+  repository: SDKMessageRepository,
+  { sessionId, page }: SDKPageArgs
+): SDKMessagePage {
+  const selected = repository.getSDKMessages(
+    sessionId,
+    page.limit,
+    page.before,
+    page.since,
+    page.beforeRowid,
+    page.sinceRowid,
+    capSdkMessage
+  );
+  return {
+    sdkMessages: selected.messages,
+    hasMore: selected.hasMore,
+    backgroundTaskMessages: repository.getBackgroundTaskMessages(sessionId).map(capSdkMessage),
+  };
+}
+
 export class SDKStatusReader {
   private worker: Worker | null = null;
   private queue: Promise<unknown> = Promise.resolve();
@@ -75,6 +120,14 @@ export class SDKStatusReader {
   ) {}
 
   read(args: SDKStatusArgs): Promise<SDKStatusPage> {
+    return this.enqueue(args) as Promise<SDKStatusPage>;
+  }
+
+  readMessages(args: SDKPageArgs): Promise<SDKMessagePage> {
+    return this.enqueue(args) as Promise<SDKMessagePage>;
+  }
+
+  private enqueue(args: SDKReadArgs): Promise<SDKReadResult> {
     if (this.closing) return Promise.reject(new Error('SDK reader closed'));
     if (this.waiting >= 16) return Promise.reject(new Error('SDK reader queue full'));
     const epoch = this.epoch,
@@ -82,7 +135,7 @@ export class SDKStatusReader {
     this.waiting++;
     const next = this.queue.then(() => {
       if (epoch !== this.epoch) throw new Error('SDK reader generation failed');
-      return this.exchange(args, queuedAt) as Promise<SDKStatusPage>;
+      return this.exchange(args, queuedAt) as Promise<SDKReadResult>;
     });
     this.queue = next.catch(() => {});
     return next.finally(() => {
@@ -101,7 +154,7 @@ export class SDKStatusReader {
       }));
   }
 
-  private exchange(args: SDKStatusArgs | null, queuedAt: number): Promise<SDKStatusPage | null> {
+  private exchange(args: SDKReadArgs | null, queuedAt: number): Promise<SDKReadResult | null> {
     if (this.dbPath === ':memory:')
       return Promise.reject(new Error('SDK reader needs a file-backed DB'));
     const worker = (this.worker ??= this.createWorker());
@@ -112,7 +165,7 @@ export class SDKStatusReader {
       let settled = false;
       const finish = (
         error?: Error,
-        result?: SDKStatusPage | null,
+        result?: SDKReadResult | null,
         timing?: { workerMs: number; queueMs: number; finishedAt: number }
       ) => {
         if (settled) return;
@@ -126,7 +179,7 @@ export class SDKStatusReader {
           module: 'hyperneo:daemon:sqlite.worker',
           args: ['sqlite.worker.request'],
           metadata: {
-            operation: args ? 'sdk-status' : 'close',
+            operation: args ? ('page' in args ? 'sdk-page' : 'sdk-status') : 'close',
             id,
             epoch,
             outcome: error ? 'error' : 'ok',
