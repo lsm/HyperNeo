@@ -52,3 +52,8 @@ The helper closes WebSocket and daemon in finally. Keep the evidence outside the
 worktree before cleanup; stop only any process this helper owns after a failure.
 Live deployment readback and real request/cost measurement remain separate from
 this synthetic characterization. Do not synthesize a live GitHub event.
+
+The acquisition extraction (#8192) keeps `pr-ledger.ts` exports compatible while
+`pr-ledger-source.ts` owns the unchanged query and gh call. Repeat all three
+scenarios before/after; the baseline remains seven initial and three repeated
+requests. This move alone does not reduce reads or expand covered facts.

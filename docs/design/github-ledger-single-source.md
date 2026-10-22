@@ -23,7 +23,7 @@ relative to `packages/daemon/src/`.
 
 | Reader | Current upstream path | Facts its ledger replacement must cover |
 | --- | --- | --- |
-| PR ledger | `lib/neo/packs/coding/pr-ledger.ts:115,599,606` | Repo open/recent-closed enumeration, head, review and CI summaries, ownership observations. |
+| PR ledger | `lib/neo/packs/coding/pr-ledger-source.ts`, `lib/neo/packs/coding/pr-ledger.ts` | Repo open/recent-closed enumeration, head, review and CI summaries, ownership observations. |
 | External events | `lib/external-events/github/github-event-extension.ts:2427` | PR details, comments, inline comments, formal reviews, reactions and individual check runs, with resumable page coverage. |
 | Work cards | `lib/neo/packs/coding/work-prs.ts:223,329` | Head/base, checks, exact-head reviews, body/closing references, rules, signatures and unresolved threads. |
 | Branch cards | `lib/neo/packs/coding/branch-prs.ts:34` | Canonical repository and branch-to-PR membership, including terminal PRs. |
@@ -198,7 +198,7 @@ rate exhaustion, stale/failed fields, out-of-order responses, process restart
 and crash windows around delivery acceptance. A 200+ PR repo plus small repos
 must retain fair progress. No real GitHub, keys, live DB writes or port 8399.
 
-Each merge needs eligible exact-head review with no failed reads and green
+Each merge needs eligible exact-head review and green
 required CI, followed by manual squash and issue/merge audit. Stop owned services
 and remove the worktree. Send Neo PR/head immediately on opening and the merge
 SHA plus read-only `hyperneo build` readback afterward. A build not containing
