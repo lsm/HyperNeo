@@ -1,0 +1,106 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
+import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { WorkerAgentMemoryEmbedder } from '../../../packages/daemon/src/storage/repositories/agent-memory-worker-embedder.ts';
+import { installWorkSearchWait } from './work-search-wait.ts';
+
+const run = resolve(process.argv[2]);
+const waitMs = Number(process.argv[3] ?? 1200);
+assert.equal(process.env.NODE_ENV, 'test');
+assert.equal(process.env.HOME, join(run, 'home'));
+assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
+assert(!existsSync(join(run, 'data')));
+for (const key of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'OPENAI_API_KEY']) assert(!process.env[key], key);
+for (const directory of ['home', 'data', 'bin', 'evidence']) mkdirSync(join(run, directory), { recursive: true });
+copyFileSync('.claude/skills/verify/gh-stub.sh', join(run, 'bin/gh'));
+process.env.PATH = join(run, 'bin') + ':' + process.env.PATH;
+const NativeWorker = globalThis.Worker;
+const warm = WorkerAgentMemoryEmbedder.prototype.warm;
+WorkerAgentMemoryEmbedder.prototype.warm = () => {};
+const fixtureWorker = pathToFileURL(join(run, 'reader.ts')).href;
+writeFileSync(join(run, 'reader.ts'), `import { installWorkSearchWait } from ${JSON.stringify(pathToFileURL(resolve('.claude/skills/verify/work-search-wait.ts')).href)}; installWorkSearchWait(${JSON.stringify(run)}, ${waitMs}, 'worker'); const pending=[]; globalThis.onmessage=e=>pending.push(e); await import(${JSON.stringify(pathToFileURL(resolve('packages/daemon/src/storage/sdk-status-worker.ts')).href)}); const dispatch=globalThis.onmessage; for(const event of pending) dispatch(event);`);
+globalThis.Worker = class extends NativeWorker {
+  constructor(url: string | URL, options?: WorkerOptions) {
+    super(String(url).endsWith('/sdk-status-worker.ts') ? fixtureWorker : url, options);
+  }
+};
+const app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), disableWorktrees: true, verbose: false });
+const transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
+const hub = new MessageHub({ defaultSessionId: 'global' });
+hub.registerTransport(transport);
+let timer: ReturnType<typeof setInterval> | undefined;
+let probe: ReturnType<typeof spawn> | undefined;
+const evidence: Record<string, unknown> = { waitMs, limitation: 'The explicit executing-thread wait models slow storage; it does not reproduce or attribute the live 4.3s physical disk cause. No-delay control is separate.' };
+try {
+  await transport.initialize();
+  const { sessionId } = await hub.request<{ sessionId: string }>('session.create', { title: 'Synthetic vector history', workspacePath: join(run, 'home'), config: { queryMode: 'manual' } });
+  const embedder = app.db.getEmbedder();
+  const vector = Float32Array.from({ length: embedder.dimensions }, (_, i) => i === 0 ? 1 : 0);
+  embedder.embedQuery = async () => vector;
+  const db = app.db.getDatabase();
+  const insert = db.prepare(`INSERT INTO message_search_content(kind,source_id,message_id,session_id,message_type,title,body,timestamp) VALUES ('message',?,?,?,'assistant','Retained history',?,?)`);
+  const save = db.prepare(`INSERT INTO message_search_vectors(content_id,model,dimensions,embedding,embedded_at) VALUES (?,?,?,?,1)`);
+  const body = 'Complete synthetic retained history. '.repeat(120);
+  for (let offset = 0; offset < 10020; offset += 1000) {
+    db.transaction(() => {
+      for (let i = offset; i < Math.min(10020, offset + 1000); i++) {
+        const id = insert.run(`retained-${i}`, `message-${i}`, sessionId, body, i).lastInsertRowid;
+        save.run(id, embedder.model, vector.length, new Uint8Array(vector.buffer));
+      }
+    })();
+    await Bun.sleep(0);
+  }
+  const hash = () => {
+    const digest = createHash('sha256');
+    for (const row of db.prepare(`SELECT m.id,m.body,v.embedding FROM message_search_content m JOIN message_search_vectors v ON v.content_id=m.id ORDER BY m.id`).iterate() as Iterable<{ id: number; body: string; embedding: Uint8Array }>) digest.update(String(row.id)).update(row.body).update(row.embedding);
+    return digest.digest('hex');
+  };
+  const before = hash();
+  await hub.request('session.messages.byStatus', { sessionId, status: 'consumed', limit: 1 });
+  const expected = app.db.getSDKMessageRepo().searchWorkChats('unmatched quokka', 200, { model: embedder.model, vector }, ['message', 'task']);
+  assert.equal(expected[0].sessionId, sessionId);
+  installWorkSearchWait(run, waitMs, 'main');
+  let output = '', errors = '';
+  if (waitMs) {
+    probe = spawn(process.execPath, ['-e', `import {existsSync} from 'node:fs';const ws=new WebSocket('ws://127.0.0.1:${app.server.port}/ws');let at;ws.onopen=()=>{console.log('READY');const t=setInterval(()=>{if(existsSync(${JSON.stringify(join(run, 'read-started'))})){clearInterval(t);at=performance.now();ws.send(JSON.stringify({id:'health',type:'REQ',method:'system.health',data:{},sessionId:'global',version:'1.0.0',timestamp:new Date().toISOString()}));}},1);};ws.onmessage=e=>{const r=JSON.parse(e.data);if(r.requestId==='health'){console.log(JSON.stringify({ms:performance.now()-at,data:r.data}));ws.close();}};`], { stdio: ['ignore', 'pipe', 'pipe'], env: process.env });
+    probe.stdout!.on('data', data => { output += data; });
+    probe.stderr!.on('data', data => { errors += data; });
+    for (let i = 0; !output.includes('READY') && i < 200; i++) await Bun.sleep(10);
+    assert(output.includes('READY'), errors);
+  }
+  let previous = performance.now(), lagMs = 0;
+  timer = setInterval(() => { const now = performance.now(); lagMs = Math.max(lagMs, now - previous - 10); previous = now; }, 10);
+  await Bun.sleep(20);
+  const started = performance.now();
+  const found = await hub.request<{ places: { work: { ref: { id: string }; snippets?: unknown }[] }[] }>('operation.invoke', { name: 'work.find', input: { text: 'unmatched quokka', localOnly: true, adapters: ['hyperneo'], limit: 20 } });
+  const rpcMs = performance.now() - started;
+  await Bun.sleep(20);
+  clearInterval(timer);
+  timer = undefined;
+  for (let i = 0; waitMs && output.trim().split('\n').length < 2 && i < 200; i++) await Bun.sleep(10);
+  const health = waitMs ? JSON.parse(output.trim().split('\n').at(-1)!) : null;
+  const ids = found.places.flatMap(place => place.work.map(work => work.ref.id));
+  assert(ids.includes(sessionId), JSON.stringify(found));
+  const after = hash();
+  const reads = readFileSync(join(run, 'evidence/vector-reads.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  Object.assign(evidence, { sessionId, retainedRows: 10020, before, after, rpcMs, lagMs, health, reads, result: found, runtime: Bun.version });
+  console.log(JSON.stringify(evidence, null, 2));
+  assert.equal(before, after);
+  assert(lagMs < 1000, 'work.find blocked the event loop >=1s');
+  if (waitMs) { assert.equal(health.data.status, 'ok'); assert(health.ms < 250, 'Independent health blocked behind work.find'); }
+  else { assert(rpcMs < 250, 'Natural work.find exceeded250ms'); assert(reads.every(r => r.sqlMs < 250)); }
+} finally {
+  if (timer) clearInterval(timer);
+  probe?.kill();
+  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
+  await transport.close();
+  await app.cleanup();
+  globalThis.Worker = NativeWorker;
+  WorkerAgentMemoryEmbedder.prototype.warm = warm;
+}
