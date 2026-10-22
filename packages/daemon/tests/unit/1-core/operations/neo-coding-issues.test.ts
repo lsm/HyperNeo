@@ -124,7 +124,11 @@ function fixture() {
         {
           title: id,
           doneWhen: 'Issue completed',
-          check: { pack: 'coding', kind: 'issue_closed', params: { issue: 'synthetic/plan#1' } },
+          check: {
+            pack: 'coding',
+            kind: 'issue_closed',
+            params: { issue: id === 'next' ? 'synthetic/plan#2' : 'synthetic/plan#1' },
+          },
           instruction: 'Synthetic stage',
           named: null,
         },
