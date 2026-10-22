@@ -16,6 +16,8 @@ serve `ask.messageStatus` as one string. This additive field is shared by web
 and iOS; their separate display PRs can consume it without placing turns or
 inferring the first unanswered input. Existing `delivery: { state: "failed" }`
 remains for compatibility. No client display change is part of this journey.
+Ordinary delivery status changes emit the existing `neo.changed` refresh event
+for this conversation, so clients can refetch without another human input.
 
 | messageStatus | Daemon fact |
 | --- | --- |

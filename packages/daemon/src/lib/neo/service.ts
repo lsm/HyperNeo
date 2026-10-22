@@ -266,9 +266,8 @@ export class NeoService {
     );
     const offStatus = events.subscribe(
       'messages.statusChanged',
-      ({ sessionId, status }) => {
-        if (status === 'failed' && sessionId && this.repo.getBindingBySession(sessionId))
-          this.notifyChanged();
+      ({ sessionId }) => {
+        if (sessionId && this.repo.getBindingBySession(sessionId)) this.notifyChanged();
       },
       { subscriberName: 'neo-ask-delivery' }
     );
