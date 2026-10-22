@@ -588,8 +588,8 @@ export class SessionRepository {
     const detachChildren = this.db.prepare(
       `UPDATE sessions SET parent_id = NULL WHERE parent_id = ?`
     );
-    const deleteGoals = this.tableExists('space_goals')
-      ? this.db.prepare(`DELETE FROM space_goals WHERE owner_session_id = ?`)
+    const deleteGoals = this.tableExists('neo_goals')
+      ? this.db.prepare(`DELETE FROM neo_goals WHERE owner_session_id = ?`)
       : null;
     const deleteSession = this.db.prepare(`DELETE FROM sessions WHERE id = ?`);
     const tx = this.db.transaction((sessionId: string) => {

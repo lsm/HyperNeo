@@ -158,15 +158,15 @@ describe('goal owner-session migration', () => {
     }
   });
 
-  test('a fresh database takes owner-session goals', () => {
+  test('a fresh database keeps owner-session goals in standalone storage', () => {
     const db = new Database(':memory:');
     try {
       runMigrations(db, () => {});
       createTables(db);
       db.exec(
-        "INSERT INTO space_goals (id, owner_session_id, title, created_at, updated_at) VALUES ('o', 'neo:root', 'Grow', 1, 1)"
+        "INSERT INTO neo_goals (id, owner_session_id, title, created_at, updated_at) VALUES ('o', 'neo:root', 'Grow', 1, 1)"
       );
-      expect(db.prepare("SELECT owner_session_id FROM space_goals WHERE id = 'o'").get()).toEqual({
+      expect(db.prepare("SELECT owner_session_id FROM neo_goals WHERE id = 'o'").get()).toEqual({
         owner_session_id: 'neo:root',
       });
     } finally {

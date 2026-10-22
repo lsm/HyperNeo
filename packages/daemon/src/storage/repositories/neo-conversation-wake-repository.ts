@@ -55,7 +55,7 @@ export class NeoConversationWakeRepository {
       'scheduleId' | 'sourceKind' | 'sourceId'
     > & { legacyInputs?: string[] };
     const goal = this.db
-      .prepare('SELECT title FROM space_goals WHERE id = ? AND owner_session_id = ?')
+      .prepare('SELECT title FROM neo_goals WHERE id = ? AND owner_session_id = ?')
       .get(source.sourceKind === 'goal' ? source.sourceId : null, `neo:${conversationId}`) as {
       title: string;
     } | null;
@@ -102,7 +102,7 @@ export class NeoConversationWakeRepository {
           (json_extract(payload_json, '$.producerInput.sessionId') = ?1 AND json_extract(payload_json, '$.producerInput.messageId') = ?2)
           OR (json_extract(payload_json, '$.askOrigin.sessionId') = ?1 AND json_extract(payload_json, '$.askOrigin.messageId') = ?2))
       UNION ALL SELECT 'journal', j.id, j.effect FROM goal_journal j
-        JOIN space_goals g ON g.id = j.goal_id
+        JOIN neo_goals g ON g.id = j.goal_id
         WHERE j.goal_id = ?4 AND j.run_id = ?2 AND g.owner_session_id = ?1`)
       .all(
         `neo:${conversationId}`,

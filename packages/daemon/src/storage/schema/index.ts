@@ -1,3 +1,4 @@
+import { createNeoGoalsTable } from './m444-neo-goals.ts';
 import { runMigration432 } from './m432-artifact-files.ts';
 import { runMigration429 } from './m429-neo-rule-proposals.ts';
 import { runMigration428 } from './m428-pack-preference-proposals.ts';
@@ -132,6 +133,7 @@ export { runMigration174 } from './migrations.ts';
 // knip-ignore-next-line
 
 export function createTables(db: BunDatabase): void {
+  createNeoGoalsTable(db);
   createNeoTables(db);
   createNeoProjectSchema(db);
   createNeoPublicationTable(db);
@@ -426,7 +428,7 @@ export function createTables(db: BunDatabase): void {
   db.exec(`
       CREATE TABLE IF NOT EXISTS space_goals (
         id TEXT PRIMARY KEY,
-        space_id TEXT,
+        space_id TEXT NOT NULL,
         title TEXT NOT NULL,
         description TEXT NOT NULL DEFAULT '',
         status TEXT NOT NULL DEFAULT 'active'
@@ -459,8 +461,7 @@ export function createTables(db: BunDatabase): void {
         works_note TEXT,
         works_note_through INTEGER,
         facts_lines TEXT,
-        FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
-        CHECK ((space_id IS NULL) <> (owner_session_id IS NULL))
+        FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
       )
     `);
 

@@ -1,3 +1,4 @@
+import { runMigration444 } from './m444-neo-goals.ts';
 import { runMigration443 } from './m443-session-schedule-wakes.ts';
 import { runMigration442 } from './m442-neo-question-reply-to.ts';
 import { runMigration441 } from './m441-neo-outbound-history-index.ts';
@@ -941,6 +942,7 @@ export function runMigrations(
   run(migrationMarkerKey(441), () => runMigration441(db));
   run(migrationMarkerKey(442), () => runMigration442(db));
   run(migrationMarkerKey(443), () => runMigration443(db));
+  run(migrationMarkerKey(444), () => runMigration444(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

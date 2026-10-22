@@ -105,10 +105,10 @@ try {
   evidence.compacted = await rpc('goal.session.update', { ...input, worksNote: 'Small concrete examples help readers try the guide.' });
   evidence.goal = await rpc('goal.session.get', input);
   evidence.journal = await rpc('goal.journal.list', input);
-  evidence.cursor = db.prepare('SELECT works_note_through FROM space_goals WHERE id=?').get(goal.id);
+  evidence.cursor = db.prepare('SELECT works_note_through FROM neo_goals WHERE id=?').get(goal.id);
   evidence.events = db.prepare("SELECT event_type,source,new_state FROM space_goal_events WHERE goal_id=? AND event_type='journal_compacted'").all(goal.id);
   evidence.finalHomeHead = await git('rev-parse', 'HEAD');
-  evidence.checks = { mandateDetected, compactionDetected, noteSaved: evidence.compacted.accepted === true, historyKept: evidence.journal.entries.length === 10, cursorSaved: evidence.cursor.works_note_through === 10, auditRecorded: evidence.events.length === 1, homeUntouched: evidence.finalHomeHead === changed.commit };
+  evidence.checks = { mandateDetected, compactionDetected, noteSaved: evidence.compacted.accepted === true, historyKept: evidence.journal.entries.length === 10, cursorSaved: evidence.cursor.works_note_through === 10, noSpaceEvents: evidence.events.length === 0, homeUntouched: evidence.finalHomeHead === changed.commit };
   assert(Object.values(evidence.checks).every(Boolean), JSON.stringify(evidence.checks));
   console.log(`PASS: actual RPC compaction, preserved journal and confirmed-only mandate reconciliation. ${run}/evidence/goal-what-works.json`);
   }
