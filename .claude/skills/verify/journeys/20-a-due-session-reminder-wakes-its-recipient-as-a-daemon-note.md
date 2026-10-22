@@ -3,9 +3,9 @@
     It creates a session and a one-minute reminder through RPC and waits up to 80 s.
     End state: the session transcript contains one `<daemon-note kind="scheduled_wake">`
     with the reminder text and system input, without a
-    session-message envelope. `neo_input_origins.trigger_id` stores `scheduled_wake:`
-    followed by JSON with `scheduleId`, `sourceKind`, and `sourceId`; the mailbox
-    keeps that origin while SDK storage normalizes synthetic input to `system`.
+    session-message envelope. `session_schedule_wakes.metadata_json` stores JSON
+    with `scheduleId`, `sourceKind`, and `sourceId`; SDK storage normalizes the
+    synthetic input to `system` without writing inherited attribution.
     The schedule reports `fired`, a message id, zero due
     count, a facts digest and its next cadence; the helper pauses it after capturing
     `evidence/session-schedule-fire.json`. Open that session's transcript and capture
