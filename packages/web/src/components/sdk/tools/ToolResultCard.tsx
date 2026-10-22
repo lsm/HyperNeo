@@ -159,7 +159,9 @@ function ToolResultCardBody({
   useLayoutEffect(() => {
     if (!restoreFocus.current) return;
     restoreFocus.current = false;
-    cardRef.current?.querySelector<HTMLButtonElement>(`button[aria-controls="${id}"]`)?.focus();
+    cardRef.current
+      ?.querySelector<HTMLButtonElement>(`button[aria-controls="${id}"]`)
+      ?.focus({ preventScroll: true });
   }, [isExpanded, id]);
   useEffect(() => setIsExpanded(shouldExpand), [shouldExpand]);
   const [deleting, setDeleting] = useState(false);

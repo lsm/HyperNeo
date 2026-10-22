@@ -46,6 +46,16 @@ has no runtime caller on this head. Its inert summary, explicit controls and
 open/closed details are component-tested; no actual-daemon UI proof is claimed
 for that unreachable variant. No iOS or live-provider coverage is claimed.
 
+For long-output focus regression, seed a separate fresh run with `--long` after
+its path. Import `sdk-tool-scroll-web.mjs` in the same persistent browser and call
+`verifyToolScroll(page, { port, run, width, phase })` at 1280 and 390. It opens
+200-line Bash output and a 100-paragraph subagent through Enter after scrolling up through later messages, records both
+header positions and asserts the viewport stays put (within two pixels) while
+the relocated less control retains focus below the viewport. Inspect screenshots
+for the first lines rather than the final lines. This regression fails on the
+old focus restoration at both widths. The regular journey still covers Space
+collapse, restored focus and independent nested controls.
+
 Close the browser and stop only this run with `stop.sh "$RUN"`. Preserve JSON,
 before/after screenshots and doctor output in the PR. No shared SKILL.md or index
 edits are needed.
