@@ -49,6 +49,7 @@ additional merged closing PR is required: the PR’s closing link ties the two.
 An open sub-issue does not become done just because a worker says so or one PR
 has merged. Keep the repository’s review and merge rules. No separate
 PR-to-todo link records or second GitHub poller.
+For release-branch PRs, the worker explicitly links the PR to its sub-issue in GitHub and, after the permitted merge, closes the sub-issue as `COMPLETED`.
 
 In `packages/prompts/src/neo/packs/coding/instructions.md`, replace “Work in
 stages gets one todo per stage, in order” and the old PR-claim/manual-link advice
@@ -107,8 +108,7 @@ must be judged before considering a reminder, even if the worker has stopped.
 - The second ladder.
 - Time-only blocking and its automatic blocked writes.
 - Done-by-manual-tick for pack todos; only the pack’s facts complete them.
-- Scattered PR-to-todo link records; the sub-issue’s GitHub closing links replace them.
-- `pack_coding_pr_claims`, the per-todo card event subscriptions and the `claimed` switch.
+- PR-link code replaced by `issue_closed` only (including per-todo card event subscriptions and the `claimed` switch); keep existing `pr_merged` claim records and their path.
 - `neoAskIdleNote`.
 
 Dropped from the draft: shadow/dual-run compare, backfill, migration review items,
