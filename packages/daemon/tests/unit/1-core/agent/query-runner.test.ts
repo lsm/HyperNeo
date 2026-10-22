@@ -5000,16 +5000,31 @@ describe('QueryRunner', () => {
     });
 
     it('does not restart a GLM key failure or suggest signing in to Claude', async () => {
-      buildSpy.mockRejectedValue(new Error('401 Unauthorized'));
-      const ctx = createContext();
-      ctx.session.config.provider = 'glm';
-      runner = new QueryRunner(ctx);
-      runner.start();
-      await ctx.queryPromise?.catch(() => {});
-      expect(buildSpy).toHaveBeenCalledTimes(1);
-      expect(handleErrorSpy).toHaveBeenCalled();
-      for (const call of handleErrorSpy.mock.calls) {
-        expect(call[3]).not.toBe('Claude login failed — sign in again');
+      const registry = initializeProviders();
+      const previous = registry.get('glm');
+      if (previous) registry.unregister('glm');
+      registry.register({
+        id: 'glm',
+        displayName: 'GLM',
+        isAvailable: async () => true,
+        getAuthStatus: async () => ({ isAuthenticated: true, method: 'api_key' }),
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as unknown as Provider);
+      try {
+        buildSpy.mockRejectedValue(new Error('401 Unauthorized'));
+        const ctx = createContext();
+        ctx.session.config.provider = 'glm';
+        runner = new QueryRunner(ctx);
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+        expect(buildSpy).toHaveBeenCalledTimes(1);
+        expect(handleErrorSpy).toHaveBeenCalled();
+        for (const call of handleErrorSpy.mock.calls) {
+          expect(call[3]).not.toBe('Claude login failed — sign in again');
+        }
+      } finally {
+        registry.unregister('glm');
+        if (previous) registry.register(previous);
       }
     });
 
