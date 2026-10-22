@@ -106,6 +106,15 @@ describe('Neo startup configuration', () => {
     });
   });
 
+  test('a later startup refreshes changed pack guidance', async () => {
+    const id = await service.open();
+    const packs = [{ id: 'synthetic', describe: 'Test domain', guidance: 'New pack instruction' }];
+    vi.spyOn(service, 'packBriefs').mockReturnValue(packs);
+    await service.recover();
+    expect(db.getSession(id)?.config.systemPrompt).toBe(neoPrompt(packs));
+    expect(updateSession).toHaveBeenCalledTimes(1);
+  });
+
   test('recovery without a root does not create one', async () => {
     await service.recover();
     expect(service.defaultSessionId()).toBeUndefined();

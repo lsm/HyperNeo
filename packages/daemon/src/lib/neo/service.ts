@@ -1,6 +1,12 @@
 import { hostname } from 'node:os';
 import { fillPrompt, NEO_SESSION_TRACK } from '@hyperneo/prompts';
-import type { GlobalSettings, MessageHub, Provider } from '@hyperneo/shared';
+import type {
+  GlobalSettings,
+  MessageHub,
+  Provider,
+  Session,
+  SessionConfig,
+} from '@hyperneo/shared';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
@@ -79,7 +85,7 @@ import type {
   NeoPackBrief,
   NeoPackEventRoute,
 } from './packs/types.ts';
-import { neoPrompt } from './prompt.ts';
+import { neoPromptTools, planNeoSessionConfig } from './session-config.ts';
 import { neoSessionStatus } from './session-status.ts';
 import { createNeoPublisher } from './publication-operation.ts';
 import type { NeoSessionNotice, NeoSessionNoticeGroup } from './session-watch.ts';
@@ -435,7 +441,7 @@ export class NeoService {
         workspacePath: neoFolderPath(),
         detectGit: false,
         config: {
-          systemPrompt: neoPrompt(this.packBriefs()),
+          ...neoPromptTools(this.packBriefs()),
           autoCompactPercent: preference?.autoCompactPercent,
           ...(preference
             ? {
@@ -446,10 +452,29 @@ export class NeoService {
             : {}),
         },
       });
+    } else {
+      await this.alignCoordinatorConfig(binding.sessionId);
     }
 
     return binding.sessionId;
   }
+
+  private readonly alignCoordinatorConfig = (superpipe({})('neo-session-config') as PipelineAPI)
+    .input(['sessionId'])
+    .pipe((sessionId: string) => this.db.getSession(sessionId), 'sessionId', 'session')
+    .pipe(
+      (session: Session | null) => planNeoSessionConfig(session, this.packBriefs()),
+      'session',
+      'config'
+    )
+    .pipe(
+      async (session: Session | null, config: SessionConfig | null) => {
+        if (session && config) await this.sessions.updateSession(session.id, { config });
+      },
+      ['session', 'config'],
+      'updated'
+    )
+    .endAsync('updated') as (sessionId: string) => Promise<void>;
 
   defaultSessionId(): string | undefined {
     return this.repo.defaultBinding()?.sessionId;
@@ -462,6 +487,7 @@ export class NeoService {
   async recover(): Promise<void> {
     this.sessionWatcher.loadSessionNoticeGroups();
     const id = this.defaultSessionId();
+    if (id) await this.alignCoordinatorConfig(id);
     const session = id ? this.db.getSession(id) : null;
     const metadata = session?.metadata as
       | (NonNullable<typeof session>['metadata'] & { neoAutoCompactPercent?: number })

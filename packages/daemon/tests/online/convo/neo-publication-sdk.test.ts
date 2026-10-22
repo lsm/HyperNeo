@@ -10,7 +10,7 @@ import { MessageHub, WebSocketClientTransport, type Session } from '@hyperneo/sh
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import { readNeoPublications } from '../../../../web/src/neo/publication-client.ts';
 
-test('real SDK sends root Neo its system prompt and the stored human message, and publishes the reply', async () => {
+test('recovered root refreshes prompt and tools, resumes SDK history across cwd changes and publishes the reply', async () => {
   const isolated = mkdtempSync(join(tmpdir(), 'neo-sdk-publication-'));
   const requestId = randomUUID();
   const root = `neo:${randomUUID()}`;
