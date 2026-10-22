@@ -41,7 +41,7 @@ Run the `neo-branch-ledger`, `neo-branch-prs`, `neo-coding-pr-ledger` and
 `neo-ledger-merge-facts` unit suites from `packages/daemon`. They also cover empty
 membership, stale/failure/recovery, overflow refusal, aliases and deterministic
 out-of-order responses. Fork checkouts also keep GitHub CLI remote priority and
-explicit gh defaults using only local remote/gh-resolved metadata. Repeat all three `github-ledger-consumers.ts` scenarios
+explicit gh defaults using only local remote/gh-resolved metadata. Enterprise HTTPS, SSH and scp-style remotes keep their host-qualified identity, separate from github.com membership; host-qualified gh defaults select the specified server. Repeat the helper with a fresh RUN and append `enterprise` after `"$RUN"` to exercise the actual watcher/reopen path against the fake ghe.example host. Before the fix this returns unknown coverage; after it the same 1/2/0 counts pass without real Enterprise access. Repeat all three `github-ledger-consumers.ts` scenarios
 from the consumer-contract journey. Their seven initial / three repeated lookup
 baseline stays unchanged: this slice reduces duplicate branch demand and restart
 reads, not the other six acquisition families. Synthetic lookup counts are not

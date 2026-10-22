@@ -2,8 +2,18 @@ import simpleGit from 'simple-git';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { buildGitHubLookupEnv } from '../../../github/gh-lookup-helpers.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
-import { CodingPrLedgerRepository, codingRemoteRepo } from './pr-ledger.ts';
+import { CodingPrLedgerRepository } from './pr-ledger.ts';
 import { readCodingBranchPrs } from './branch-prs.ts';
+
+function branchRemoteRepo(remote: string): string | null {
+  const match =
+    /^(?:(?:https?|ssh|git):\/\/)?(?:[^/@\s]+@)?([^/:\s]+)[:/]([^/\s]+\/[^/\s]+?)(?:\.git)?\/*$/i.exec(
+      remote.trim()
+    );
+  return match
+    ? `${match[1].toLowerCase() === 'github.com' ? '' : `${match[1]}/`}${match[2]}`.toLowerCase()
+    : null;
+}
 
 export function createCodingBranchPrReader(
   db: () => Database,
@@ -25,7 +35,7 @@ export function createCodingBranchPrReader(
         const remotes = (await git.getRemotes(true))
           .map((remote) => ({
             ...remote,
-            repo: codingRemoteRepo(remote.refs.fetch) ?? codingRemoteRepo(remote.refs.push),
+            repo: branchRemoteRepo(remote.refs.fetch) ?? branchRemoteRepo(remote.refs.push),
           }))
           .filter((remote) => remote.repo)
           .sort((a, b) => rank(a.name) - rank(b.name));
@@ -38,8 +48,8 @@ export function createCodingBranchPrReader(
         const selected = configured.find((remote) => remote.resolved) ?? configured[0];
         repo =
           selected?.resolved && selected.resolved !== 'base'
-            ? (codingRemoteRepo(`https://${selected.resolved}`) ??
-              codingRemoteRepo(`https://github.com/${selected.resolved}`))
+            ? (branchRemoteRepo(`https://${selected.resolved}`) ??
+              branchRemoteRepo(`https://github.com/${selected.resolved}`))
             : (selected?.repo ?? null);
       } catch {
         return [];
