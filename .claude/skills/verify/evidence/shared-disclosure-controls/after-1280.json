@@ -144,7 +144,36 @@
     }
   },
   {
+    "name": "visible-words-in-accessible-names",
+    "controls": [
+      {
+        "visible": "more",
+        "name": "more — Show details: Synthetic step 1"
+      },
+      {
+        "visible": "more",
+        "name": "more — Show details: Synthetic step 2"
+      },
+      {
+        "visible": "more",
+        "name": "more — Show details: Synthetic step 3"
+      },
+      {
+        "visible": "more",
+        "name": "more — Details"
+      }
+    ]
+  },
+  {
     "name": "todo-body-click",
     "toggledByBody": 0
+  },
+  {
+    "name": "expanded-todo-accessible-name",
+    "accessibleName": "less — Hide details: Synthetic step 1"
+  },
+  {
+    "name": "expanded-history-accessible-name",
+    "accessibleName": "less — Details"
   }
 ]

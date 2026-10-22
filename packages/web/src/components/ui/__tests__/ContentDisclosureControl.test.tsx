@@ -14,6 +14,8 @@ describe('ContentDisclosureControl voice labels', () => {
     ['en', true, 'Hide details: Example task', 'less'],
     ['en', false, 'Details', 'more'],
     ['en', true, 'Details', 'less'],
+    ['en', false, 'Show more', 'more'],
+    ['en', true, 'Show less', 'less'],
     ['zh-Hans', false, '详情', '更多'],
     ['zh-Hans', true, '详情', '收起'],
   ] as const)(

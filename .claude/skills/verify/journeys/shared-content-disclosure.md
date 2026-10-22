@@ -28,7 +28,7 @@ use their own right-aligned final line. Clamped human messages keep a visible
 explicit control. The todo title/body must never toggle on click; only its
 explicit control does. Historical question Details remain readable and closable.
 Check body-text dragging selects text without collapsing, Enter/Space work on the
-control, and no horizontal overflow occurs at either width.
+control, and no horizontal overflow occurs at either width. Every contextual accessible name must include the visible more/less word so voice commands can find it. Shared component contracts cover English and Chinese in both states.
 
 This slice covers primary Neo publication, clamped message, todo and card-history
 controls. Other existing content disclosures are inventoried in issue #8092 for
