@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
+import { readNeoPublications } from '../../../../web/src/neo/publication-client.ts';
 
 test('real SDK sends root Neo its system prompt and the stored human message, and publishes the reply', async () => {
   const isolated = mkdtempSync(join(tmpdir(), 'neo-sdk-publication-'));
@@ -274,6 +275,12 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
       },
     ]);
     expect((await read()).items).toEqual(page.items);
+    const webRead = await readNeoPublications(
+      { conversationId: opened.sessionId.slice(4), after: 0 },
+      async () => hub,
+      () => true
+    );
+    expect(webRead).toEqual({ state: 'ready', items: page.items, nextAfter: 1 });
     await new Promise((resolve) => setTimeout(resolve, 3000));
     expect(nudged, 'ending with Done. keeps the CLI from nudging for visible output').toEqual([]);
     const { neoPrompt } = await import('../../../src/lib/neo/prompt.ts');
@@ -287,6 +294,7 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
             calls,
             receipts,
             publication: page.items[0],
+            webRead,
             daemonPort: daemon.server.port,
             mockPort: address.port,
           },
