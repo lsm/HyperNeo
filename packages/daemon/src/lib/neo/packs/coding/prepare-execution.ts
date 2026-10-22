@@ -110,6 +110,19 @@ async function prepareClone(
 ): Promise<Gate<{ directory: string; release: () => Promise<void> }>> {
   const remote = await effects.run(['git', 'remote', 'get-url', 'origin'], plan.directory);
   if (remote.code !== 0) return refuse(`clone_origin_failed: ${remote.stderr.trim()}`);
+  const config = await effects.run(
+    [
+      'git',
+      'config',
+      '--local',
+      '--null',
+      '--get-regexp',
+      '^(user\\.(name|email|signingkey)|commit\\.gpgsign|gpg\\.(format|program|ssh\\.program|openpgp\\.program|x509\\.program))$',
+    ],
+    plan.directory
+  );
+  if (config.code !== 0 && config.code !== 1)
+    return refuse(`clone_config_failed: ${config.stderr.trim()}`);
   try {
     await mkdir(dirname(plan.destination), { recursive: true });
     await mkdir(plan.destination);
@@ -146,6 +159,14 @@ async function prepareClone(
     for (const { args, cwd, phase } of commands) {
       const result = await effects.run(args, cwd);
       if (result.code !== 0) return refuse(`${phase}: ${result.stderr.trim()}`);
+    }
+    for (const setting of config.stdout.split('\0').filter(Boolean)) {
+      const split = setting.indexOf('\n');
+      const written = await effects.run(
+        ['git', 'config', '--local', '--add', setting.slice(0, split), setting.slice(split + 1)],
+        plan.destination
+      );
+      if (written.code !== 0) return refuse(`clone_config_failed: ${written.stderr.trim()}`);
     }
     await writeFile(
       join(plan.destination, '.git', 'hyperneo-source-checkout'),
