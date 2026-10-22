@@ -1,0 +1,61 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:29:30). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 /Users/lsm/focus/worktrees/disclosure-error-workflow/packages/web
+
+ ❯ src/components/__tests__/ErrorWorkflowDisclosure.test.tsx (6 tests | 2 failed) 29ms
+   ❯ Error and workflow disclosures (6)
+     × removes the empty detail row after workflows change 3ms
+     × removes the empty detail row after level change 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/components/__tests__/ErrorWorkflowDisclosure.test.tsx > Error and workflow disclosures > removes the empty detail row after workflows change
+AssertionError: expected [ …(2) ] to deeply equal [ Array(1) ]
+
+- Expected
++ Received
+
+  [
+    "Level 3: 1 of 1 workflow auto-closes without review",
++   "",
+  ]
+
+ ❯ src/components/__tests__/ErrorWorkflowDisclosure.test.tsx:134:76
+    132|     expect(view.queryByRole('button')).toBeNull();
+    133|     expect(view.queryByTestId('autonomy-workflow-summary-details')).to…
+    134|     expect(Array.from(summary.children, (row) => row.textContent?.trim…
+       |                                                                            ^
+    135|       count.textContent?.trim(),
+    136|     ]);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  src/components/__tests__/ErrorWorkflowDisclosure.test.tsx > Error and workflow disclosures > removes the empty detail row after level change
+AssertionError: expected [ …(2) ] to deeply equal [ Array(1) ]
+
+- Expected
++ Received
+
+  [
+    "Level 5: 1 of 1 workflow auto-closes without review",
++   "",
+  ]
+
+ ❯ src/components/__tests__/ErrorWorkflowDisclosure.test.tsx:134:76
+    132|     expect(view.queryByRole('button')).toBeNull();
+    133|     expect(view.queryByTestId('autonomy-workflow-summary-details')).to…
+    134|     expect(Array.from(summary.children, (row) => row.textContent?.trim…
+       |                                                                            ^
+    135|       count.textContent?.trim(),
+    136|     ]);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 4 passed (6)
+   Start at  03:14:39
+   Duration  479ms (environment 38%, transform 26%, setup 24%, tests 7%, import 4%, worker 1%)
+

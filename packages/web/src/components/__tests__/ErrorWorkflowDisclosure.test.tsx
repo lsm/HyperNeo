@@ -107,4 +107,35 @@ describe('Error and workflow disclosures', () => {
     fireEvent.click(less);
     expect(view.queryByTestId('autonomy-workflow-summary-details')).toBeNull();
   });
+  it.each(['workflows', 'level'])('removes the empty detail row after %s change', (change) => {
+    const blocked: SpaceWorkflowSummary = {
+      id: 'synthetic-workflow',
+      spaceId: 'synthetic-space',
+      name: 'Synthetic blocked workflow',
+      tags: [],
+      nodeCount: 0,
+      createdAt: 0,
+      updatedAt: 0,
+      completionAutonomyLevel: 5,
+    };
+    const view = render(<AutonomyWorkflowSummary level={3} workflows={[blocked]} />);
+    fireEvent.click(view.getByRole('button', { name: 'more — Workflow details', exact: true }));
+    view.rerender(
+      <AutonomyWorkflowSummary
+        level={change === 'level' ? 5 : 3}
+        workflows={[change === 'workflows' ? { ...blocked, completionAutonomyLevel: 2 } : blocked]}
+      />
+    );
+    const summary = view.getByTestId('autonomy-workflow-summary');
+    const count = view.getByTestId('autonomy-workflow-summary-count');
+    expect(count.textContent).toContain('1 of 1');
+    expect(view.queryByRole('button')).toBeNull();
+    expect(view.queryByTestId('autonomy-workflow-summary-details')).toBeNull();
+    expect(Array.from(summary.children, (row) => row.textContent?.trim())).toEqual([
+      count.textContent?.trim(),
+    ]);
+    view.rerender(<AutonomyWorkflowSummary level={3} workflows={[blocked]} />);
+    fireEvent.click(view.getByRole('button', { name: 'less — Workflow details', exact: true }));
+    expect(view.getByRole('button', { name: 'more — Workflow details', exact: true })).toBeTruthy();
+  });
 });

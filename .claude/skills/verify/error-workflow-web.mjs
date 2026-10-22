@@ -100,3 +100,39 @@ export async function verifyErrorWorkflow(page, { run, port = 9396, width, phase
   await writeFile(`${run}/evidence/${phase}-${width}.json`, JSON.stringify(evidence, null, 2) + '\n');
   return evidence;
 }
+
+export async function verifyEmptyWorkflowFooter(page, { run, width, phase, port = 9396 }) {
+  const seed = JSON.parse(await readFile(`${run}/evidence/error-workflow-seed.json`, 'utf8'));
+  await page.setViewportSize({ width, height: 1000 });
+  await page.goto(`http://127.0.0.1:${port}/space/${seed.spaceId}`);
+  if (width < 768) await page.getByRole('button', { name: 'Open navigation menu', exact: true }).click();
+  await page.getByRole('button', { name: 'Space settings', exact: true }).click();
+  if (width < 768) await page.locator('button[aria-label="Close panel"]:visible').click();
+  await page.getByRole('tab', { name: 'Runtime', exact: true }).click();
+  const summary = page.getByTestId('autonomy-workflow-summary');
+  await summary.getByRole('button', { name: 'more — Workflow details', exact: true }).click();
+  await page.getByTestId('autonomy-level-5').click();
+  assert.match(await summary.innerText(), /Level 5: 7 of 7/);
+  assert.equal(await summary.getByRole('button').count(), 0);
+  const result = await summary.evaluate(el => ({
+    text: el.innerText,
+    blankRows: [...el.children].filter(row => !row.textContent.trim()).length,
+    height: el.getBoundingClientRect().height,
+    countHeight: el.firstElementChild.getBoundingClientRect().height,
+  }));
+  await page.screenshot({ path: `${run}/evidence/${phase}-${width}-empty-footer.png`, scale: 'css', animations: 'disabled' });
+  if (phase === 'review-before') {
+    assert.equal(result.blankRows, 1);
+    assert.equal(result.height - result.countHeight, 4);
+  } else {
+    assert.equal(result.blankRows, 0);
+    assert.equal(result.height, result.countHeight);
+  }
+  await page.getByTestId('autonomy-level-3').click();
+  const less = summary.getByRole('button', { name: 'less — Workflow details', exact: true });
+  assert.equal(await less.getAttribute('aria-expanded'), 'true');
+  await less.press('Space');
+  assert.equal(await summary.getByRole('button', { name: 'more — Workflow details', exact: true }).count(), 1);
+  await writeFile(`${run}/evidence/${phase}-${width}-empty-footer.json`, JSON.stringify(result, null, 2) + '\n');
+  return result;
+}
