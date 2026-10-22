@@ -64,6 +64,10 @@ env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_USE_DEV_PROXY=1 \
   HYPERNEO_DATA_DIR="$RUN/data" LOG_LEVEL=warn bun "$PROOF" "$RUN"
 ```
 
+SDK proof helpers disable external registry MCP servers through `mcp.registry.list`
+and `mcp.registry.setEnabled` before opening sessions. Inline operation tools remain
+available; startup must not depend on downloading an external MCP executable.
+
 The helper creates its own GitHub stub, uses an ephemeral daemon port, seeds
 only its synthetic DB, and closes its resources in finally. Keep its evidence
 before removing the run directory. The journey names the checks and any

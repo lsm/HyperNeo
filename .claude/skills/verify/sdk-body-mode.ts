@@ -85,11 +85,17 @@ async function start() {
   startupMs.push(performance.now() - begin);
   await pause(0);
   serving = true;
-  const selected = logs.slice(logAt).find((event) => event.message.includes('SDK body startup mode selected'));
-  assert(selected, 'Startup mode must be visible at WARN'); modes.push(selected.message);
   ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC connect failed')); });
   assert.equal((await rpc('system.health')).status, 'ok');
+  const deadline = Date.now() + 120000;
+  for (;;) {
+    const selected = logs.slice(logAt).find((event) => !event.message.includes('coverage_pending'));
+    if (selected) { modes.push(selected.message); break; }
+    assert(Date.now() < deadline, `Final startup mode not visible at WARN: ${JSON.stringify(logs.slice(logAt))}`);
+    assert.equal((await rpc('system.health')).status, 'ok');
+    await pause();
+  }
 }
 function exercise(prefix: string) {
   const repo = app!.db.getSDKMessageRepo(), db = app!.db.getDatabase();

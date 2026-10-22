@@ -27,7 +27,7 @@ const decide = (superpipe({})('sdkSideBodyStartup') as PipelineAPI)
   missing: boolean;
 }) => string | null;
 
-export async function selectSdkBodyWriteMode(db: Database) {
+function copyFacts(db: Database) {
   const markers = db
     .prepare(
       "SELECT key FROM migration_markers WHERE key IN ('sdk_message_bodies_copy_v1:complete','sdk_message_bodies_copy_v1:reversed')"
@@ -35,6 +35,13 @@ export async function selectSdkBodyWriteMode(db: Database) {
     .all() as { key: string }[];
   const complete = markers.some(({ key }) => key.endsWith(':complete'));
   const reversed = markers.some(({ key }) => key.endsWith(':reversed'));
+  return { complete, reversed };
+}
+
+export type SdkBodyWriteMode = { mode: 'side-only' | 'dual-write'; reason: string | null };
+
+export async function selectSdkBodyWriteMode(db: Database): Promise<SdkBodyWriteMode> {
+  const { complete, reversed } = copyFacts(db);
   let missing = false;
   if (complete && !reversed) {
     let through = 0;
@@ -64,4 +71,46 @@ export async function selectSdkBodyWriteMode(db: Database) {
     }) ?? null;
   modes.set(db, reason === null);
   return { mode: reason === null ? 'side-only' : 'dual-write', reason };
+}
+
+export function startSdkBodyWriteAdmission(
+  db: Database,
+  dbPath: string,
+  report: (mode: SdkBodyWriteMode) => void,
+  createWorker = () =>
+    new Worker(new URL('./sdk-message-body-admission-worker.ts', import.meta.url).href, {
+      type: 'module',
+    })
+): () => void {
+  modes.set(db, false);
+  const reason = decide({ ...copyFacts(db), missing: false });
+  if (reason) {
+    report({ mode: 'dual-write', reason });
+    return () => {};
+  }
+  report({ mode: 'dual-write', reason: 'coverage_pending' });
+  let worker: Worker | undefined;
+  let closed = false;
+  const close = () => {
+    closed = true;
+    worker?.terminate();
+  };
+  const finish = (mode: SdkBodyWriteMode) => {
+    if (closed) return;
+    close();
+    modes.set(db, mode.mode === 'side-only');
+    report(mode);
+  };
+  try {
+    worker = createWorker();
+    worker.onmessage = (event: MessageEvent<SdkBodyWriteMode>) => finish(event.data);
+    worker.onerror = (event) => {
+      event.preventDefault();
+      finish({ mode: 'dual-write', reason: 'coverage_worker_failed' });
+    };
+    worker.postMessage({ dbPath });
+  } catch {
+    finish({ mode: 'dual-write', reason: 'coverage_worker_unavailable' });
+  }
+  return close;
 }
