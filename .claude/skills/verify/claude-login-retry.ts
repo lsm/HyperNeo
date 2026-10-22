@@ -3,6 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { join, resolve } from 'node:path';
+import type { SDKMessage } from '../../../packages/shared/src/sdk/sdk.d.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 import { resolveNeoEntry } from '../../../packages/shared/src/web-entry.ts';
 import { createWebSocketHandlers } from '../../../packages/daemon/src/routes/setup-websocket.ts';
@@ -88,6 +89,15 @@ try {
     assert.equal((evidence.errors as unknown[]).length, 0);
   }
   assert.equal((evidence.processes as unknown[]).length, 2);
+  if (process.argv.includes('--historical-result')) {
+    const text = 'Synthetic GLM key rejected (401)';
+    assert(app.db.saveSDKMessage(sessionId, { type: 'result', subtype: 'success',
+      session_id: sessionId, uuid: crypto.randomUUID(), is_error: true, result: text,
+      duration_ms: 1, duration_api_ms: 1, num_turns: 1, total_cost_usd: 0,
+      usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      modelUsage: {}, permission_denials: [] } as unknown as SDKMessage));
+    evidence.historicalResult = text;
+  }
   if (process.argv.includes('--serve')) {
     const root = resolve('packages/web/dist');
     web = Bun.serve({ hostname: '127.0.0.1', port: 0, websocket: createWebSocketHandlers(app.transport, app.sessionManager), async fetch(req, server) {

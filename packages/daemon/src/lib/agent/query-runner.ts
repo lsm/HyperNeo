@@ -1306,7 +1306,7 @@ export class QueryRunner {
             const authRetry = isSDKAPIRetryMessage(message) && message.error_status === 401;
             const authResult =
               isSDKResultMessage(message) &&
-              (message.is_error === true || message.subtype !== 'success') &&
+              message.is_error === true &&
               ((isSDKResultSuccess(message) && message.api_error_status === 401) ||
                 isClaudeAuthenticationError(
                   isSDKResultSuccess(message) ? message.result : message.errors.join('\n')
@@ -1422,7 +1422,7 @@ export class QueryRunner {
       const isStreamStall = errorMessage.includes(STREAM_STALL_ERROR);
 
       const providerId = session.config.provider as string | undefined;
-      const isProviderSession = providerId && providerId !== 'anthropic' && providerId !== 'glm';
+      const isProviderSession = providerId && providerId !== 'anthropic';
       const limitAssessment = assessLimitError({ rawText: errorMessage });
       const retrySignal: QueryRetryErrorSignal = {
         rawText: errorMessage,

@@ -1,0 +1,45 @@
+{
+  "scenario": "fail",
+  "requests": 6,
+  "processes": [
+    30787,
+    30878
+  ],
+  "responses": [
+    {
+      "process": 1,
+      "status": 401
+    },
+    {
+      "process": 1,
+      "status": 401
+    },
+    {
+      "process": 1,
+      "status": 401
+    },
+    {
+      "process": 2,
+      "status": 404
+    },
+    {
+      "process": 2,
+      "status": 401
+    },
+    {
+      "process": 2,
+      "status": 401
+    },
+    {
+      "process": 2,
+      "status": 401
+    }
+  ],
+  "errors": [
+    "Claude login failed — sign in again"
+  ],
+  "sessionId": "neo:ac064f13-407e-47b9-b078-37754ede8b60",
+  "port": 65534,
+  "historicalResult": "Synthetic GLM key rejected (401)",
+  "pass": true
+}

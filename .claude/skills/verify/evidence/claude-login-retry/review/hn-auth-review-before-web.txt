@@ -1,0 +1,34 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:29:30). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 /Users/lsm/focus/worktrees/claude-login-retry/packages/web
+
+ ❯ src/components/sdk/__tests__/SDKResultMessage.test.tsx (33 tests | 1 failed | 32 skipped) 17ms
+   ❯ SDKResultMessage error flag (1)
+     × shows a failed result even when the SDK subtype says success 16ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/components/sdk/__tests__/SDKResultMessage.test.tsx > SDKResultMessage error flag > shows a failed result even when the SDK subtype says success
+AssertionError: expected '1500→500 tokens•$0.0125•5.00sInput To…' to contain 'OAuth token revoked'
+
+Expected: "OAuth token revoked"
+Received: "1500→500 tokens•$0.0125•5.00sInput Tokens1,500Output Tokens500Cost$0.0125Duration5.00sCache Read: 200 tokensCache Created: 100 tokensCompleted in 3 turns • API time: 4.50sModel Usage Breakdownclaude-3-5-sonnet-20241022Input: 1,500Output: 500Cache Read: 200Cache Created: 100Cost: $0.0125Context: 200,000▴less"
+
+ ❯ src/components/sdk/__tests__/SDKResultMessage.test.tsx:451:35
+    449|     expect(container.firstElementChild.className).not.toContain('bg-su…
+    450|     fireEvent.click(container.querySelector('button'));
+    451|     expect(container.textContent).toContain('OAuth token revoked');
+       |                                   ^
+    452|     expect(container.textContent).toContain('Errors');
+    453|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 32 skipped (33)
+   Start at  19:22:27
+   Duration  433ms (environment 52%, setup 27%, transform 13%, tests 5%, import 2%, worker 1%)
+

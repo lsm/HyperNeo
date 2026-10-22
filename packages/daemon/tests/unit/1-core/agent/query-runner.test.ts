@@ -5018,10 +5018,8 @@ describe('QueryRunner', () => {
         runner.start();
         await ctx.queryPromise?.catch(() => {});
         expect(buildSpy).toHaveBeenCalledTimes(1);
-        expect(handleErrorSpy).toHaveBeenCalled();
-        for (const call of handleErrorSpy.mock.calls) {
-          expect(call[3]).not.toBe('Claude login failed — sign in again');
-        }
+        expect(JSON.stringify(saveSDKMessageSpy.mock.calls)).toContain('401');
+        expect(JSON.stringify(saveSDKMessageSpy.mock.calls)).not.toContain('Claude login failed');
       } finally {
         registry.unregister('glm');
         if (previous) registry.register(previous);

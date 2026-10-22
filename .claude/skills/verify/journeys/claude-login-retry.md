@@ -42,3 +42,14 @@ error styling, no success turn trigger and no errorClear. Retry routing contract
 also protect interruption and other-provider isolation. No actual OAuth rotation,
 credential refresh, external login or deployed-daemon mutation is claimed; the
 SDK owns authentication discovery in its newly started process.
+
+## Historical result text regression
+
+Add `--historical-result` to `fail --serve` to save one synthetic historical
+SDK payload with subtype success and is_error true in this run’s DB. It is
+separate from the real HTTP failure above. The browser helper opens Result
+details and requires its synthetic GLM rejection text in the red Errors section
+at both widths; inspect session-result-error-1280/390.png. The GLM query contract
+also registers a synthetic available GLM provider, makes SDK option construction
+reject with 401, and checks one attempt with the provider API error notice rather
+than a Claude login retry or remediation. No GLM or Claude credential is used.
