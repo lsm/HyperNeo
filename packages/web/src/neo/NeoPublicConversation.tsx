@@ -422,7 +422,7 @@ function PublicEntry({
   onEditUndelivered?: NeoEditUndelivered;
 }) {
   const ask = entry.kind === 'ask' ? entry.ask : null;
-  const undelivered = ask?.delivery?.state === 'failed';
+  const undelivered = ask?.messageStatus === 'failed' || ask?.delivery?.state === 'failed';
   const publication = entry.kind === 'publication' ? entry.publication : null;
   const [expanded, setExpanded] = useState(false);
   const [history, setHistory] = useState(false);

@@ -131,12 +131,10 @@ export function NeoConversation({
     visible
   );
   const statuses = publicConversation
-    ? projectNeoMessageStatuses(
-        publicConversation.entries,
-        progress,
-        store.sessionState?.value?.agentState ?? state,
-        { connected: connectionState.value === 'connected', status: publicConversation.status }
-      )
+    ? projectNeoMessageStatuses(publicConversation.entries, {
+        connected: connectionState.value === 'connected',
+        status: publicConversation.status,
+      })
     : undefined;
   const progressLabel =
     progress !== 'inactive' && (publicConversation || !progress.messageId) ? progress.label : null;

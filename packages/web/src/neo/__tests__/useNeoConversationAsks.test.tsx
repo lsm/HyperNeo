@@ -128,6 +128,7 @@ function Probe({ sessionId }: { sessionId: string | null }) {
           .map((item) => item.requestId)
           .join('|') || 'none'}
       </p>
+      <p>Message states: {asks.items.map((item) => item.messageStatus).join('|')}</p>
       <p>Cursor: {asks.nextAfter}</p>
       <p>More: {String(asks.hasMore)}</p>
       <p>Earlier: {String(asks.hasEarlier)}</p>
@@ -277,9 +278,66 @@ describe('useNeoConversationAsks resource shell', () => {
     expect(readInput()[2]).toEqual({
       conversationId,
       after: 0,
-      before: Number.MAX_SAFE_INTEGER,
+      before: 3,
       limit: 50,
     });
+  });
+
+  it('refreshes the same bubble metadata on neo.changed without a new ask', async () => {
+    serve(
+      pageOf([{ ...ask(1), messageStatus: 'queued' }]),
+      pageOf([], conversationId, 1),
+      pageOf([{ ...ask(1), messageStatus: 'read' }]),
+      pageOf([], conversationId, 1),
+      pageOf([{ ...ask(1), messageStatus: 'answered' }])
+    );
+    online();
+    render(<Probe sessionId={root} />);
+    await waitFor(() => expect(screen.getByText('Message states: queued')).toBeTruthy());
+    for (const status of ['read', 'answered']) {
+      await act(async () => fake.changed.forEach((callback) => callback()));
+      await waitFor(() => expect(screen.getByText(`Message states: ${status}`)).toBeTruthy());
+      expect(texts().rows).toBe(`Rows: ${ask(1).requestId}`);
+      expect(texts().cursor).toBe('Cursor: 1');
+    }
+  });
+
+  it('refreshes an answered input in an earlier loaded page', async () => {
+    const asks = (from: number, to: number, answered = false) =>
+      Array.from({ length: to - from + 1 }, (_, index) => ({
+        ...ask(from + index),
+        messageStatus: answered && from + index === 1 ? 'answered' : 'read',
+      }));
+    let answered = false;
+    fake.respond = (name, input) => {
+      if (name !== 'neo.conversation.asks.read') return Promise.resolve({});
+      const page = input as { after: number; before?: number };
+      return Promise.resolve(
+        page.before === Number.MAX_SAFE_INTEGER
+          ? pageOf(asks(51, 100, answered))
+          : page.before
+            ? pageOf(asks(page.before - 50, page.before - 1, answered))
+            : pageOf([], conversationId, 100)
+      );
+    };
+    online();
+    function EarlierStatusProbe() {
+      const state = useNeoConversationAsks(root);
+      return (
+        <>
+          <p data-testid="old-status">{state.items[0]?.messageStatus}</p>
+          <button onClick={state.loadEarlier}>Earlier</button>
+        </>
+      );
+    }
+    render(<EarlierStatusProbe />);
+    await waitFor(() => expect(screen.getByTestId('old-status').textContent).toBe('read'));
+    fireEvent.click(screen.getByRole('button', { name: 'Earlier' }));
+    await waitFor(() => expect(readCount()).toBe(2));
+    await settle();
+    answered = true;
+    await act(async () => fake.changed.forEach((callback) => callback()));
+    await waitFor(() => expect(screen.getByTestId('old-status').textContent).toBe('answered'));
   });
 
   it('marks an ask already shown as undelivered when a later change reports it failed', async () => {
@@ -298,7 +356,7 @@ describe('useNeoConversationAsks resource shell', () => {
     expect(readInput()[2]).toEqual({
       conversationId,
       after: 0,
-      before: Number.MAX_SAFE_INTEGER,
+      before: 2,
       limit: 50,
     });
     expect(texts().cursor).toBe('Cursor: 1');
@@ -392,7 +450,7 @@ describe('useNeoConversationAsks resource shell', () => {
     expect(readInput()[2]).toEqual({
       conversationId,
       after: 0,
-      before: Number.MAX_SAFE_INTEGER,
+      before: 3,
       limit: 50,
     });
   });

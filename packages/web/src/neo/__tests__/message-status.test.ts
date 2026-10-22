@@ -1,21 +1,23 @@
-import type { AgentProcessingState } from '@hyperneo/shared';
+import {
+  NEO_MESSAGE_STATUSES,
+  type NeoConversationMessageStatus,
+} from '@hyperneo/shared/types/neo-conversation-ask';
 import { describe, expect, it } from 'vitest';
 import {
   admitNeoMessageStatusLink,
   type NeoMessageStatusLink,
-  neoRepliedAsks,
-  placeNeoMessageTurn,
   projectNeoMessageStatuses,
 } from '../message-status.ts';
 import type { NeoPublicEntry } from '../public-conversation.ts';
 
-const ask = (requestId: string, failed = false) =>
+const ask = (requestId: string, messageStatus?: NeoConversationMessageStatus, failed = false) =>
   ({
     kind: 'ask',
     key: requestId,
     ask: {
       requestId,
       askOrigin: { sessionId: 'neo', messageId: requestId },
+      ...(messageStatus ? { messageStatus } : {}),
       ...(failed ? { delivery: { state: 'failed' } } : {}),
     },
   }) as unknown as NeoPublicEntry;
@@ -23,188 +25,62 @@ const reply = (requestId: string) =>
   ({
     kind: 'publication',
     key: `reply-${requestId}`,
-    publication: { askOrigin: { sessionId: 'neo', messageId: requestId } },
-    replyTo: { requestId },
+    publication: {
+      askOrigin: { sessionId: 'neo', messageId: requestId },
+      replyTo: [requestId],
+    },
   }) as unknown as NeoPublicEntry;
-const working: AgentProcessingState = { status: 'processing', messageId: 'B', phase: 'thinking' };
-const starting = { status: 'queued', messageId: 'B' } as AgentProcessingState;
-const idle = { status: 'idle' } as AgentProcessingState;
 const live: NeoMessageStatusLink = { connected: true, status: 'ready' };
 const read = (map: ReadonlyMap<string, string>) => Object.fromEntries(map);
 
 describe('projectNeoMessageStatuses', () => {
-  it('walks a message from received through working to answered', () => {
-    const entries = [ask('A'), reply('A'), ask('B'), ask('C')];
-    expect(read(projectNeoMessageStatuses(entries, 'inactive', idle, live))).toEqual({
-      A: 'answered',
-      B: 'received',
-      C: 'received',
-    });
-    expect(
-      read(projectNeoMessageStatuses(entries, { label: '', messageId: 'B' }, starting, live))
-    ).toEqual({
-      A: 'answered',
-      B: 'queued',
-      C: 'queued',
-    });
-    expect(
-      read(projectNeoMessageStatuses(entries, { label: '', messageId: 'B' }, working, live))
-    ).toEqual({
-      A: 'answered',
-      B: 'working',
-      C: 'queued',
-    });
-    expect(
-      read(projectNeoMessageStatuses([...entries, reply('B')], 'inactive', idle, live))
-    ).toEqual({
-      A: 'answered',
-      B: 'answered',
-      C: 'received',
-    });
-  });
-
-  it('treats any reply as answered and a lost message as failed', () => {
-    expect(
-      read(
-        projectNeoMessageStatuses([ask('A'), reply('A'), ask('B', true)], 'inactive', idle, live)
-      )
-    ).toEqual({
-      A: 'answered',
-      B: 'failed',
-    });
-  });
-
-  it('works on the oldest open message when the turn names none', () => {
+  it('displays every status supplied by the daemon', () => {
     expect(
       read(
         projectNeoMessageStatuses(
-          [ask('A'), ask('B')],
-          { label: '', messageId: null },
-          working,
+          NEO_MESSAGE_STATUSES.map((status) => ask(status, status)),
           live
         )
       )
-    ).toEqual({
-      A: 'working',
-      B: 'queued',
-    });
+    ).toEqual(Object.fromEntries(NEO_MESSAGE_STATUSES.map((status) => [status, status])));
   });
 
-  it('keeps a newer message open when an earlier one is answered after it', () => {
+  it('does not infer working or answered from order or publications', () => {
     expect(
       read(
         projectNeoMessageStatuses(
-          [ask('A'), ask('B'), reply('A')],
-          { label: '', messageId: 'B' },
-          working,
+          [ask('A', 'read'), ask('B', 'queued'), reply('A'), ask('C')],
           live
         )
       )
-    ).toEqual({
-      A: 'answered',
-      B: 'working',
+    ).toEqual({ A: 'read', B: 'queued', C: 'received' });
+  });
+
+  it('keeps the legacy delivery failure visible when the optional status is absent', () => {
+    expect(read(projectNeoMessageStatuses([ask('A', undefined, true)], live))).toEqual({
+      A: 'failed',
     });
   });
 
-  it('never shows a live state without a live link', () => {
-    const entries = [ask('A'), reply('A'), ask('B')];
-    const activity = { label: '', messageId: 'B' };
+  it.each([
+    [{ connected: false, status: 'ready' }, 'disconnected'],
+    [{ connected: true, status: 'unavailable' }, 'stale'],
+  ] as const)('keeps freshness honest when the link is %j', (link, unavailable) => {
     expect(
       read(
-        projectNeoMessageStatuses(entries, activity, working, { connected: false, status: 'ready' })
+        projectNeoMessageStatuses(
+          NEO_MESSAGE_STATUSES.map((status) => ask(status, status)),
+          link
+        )
       )
-    ).toEqual({
-      A: 'answered',
-      B: 'disconnected',
-    });
-    expect(
-      read(
-        projectNeoMessageStatuses(entries, activity, working, {
-          connected: true,
-          status: 'unavailable',
-        })
+    ).toEqual(
+      Object.fromEntries(
+        NEO_MESSAGE_STATUSES.map((status) => [
+          status,
+          status === 'answered' || status === 'failed' ? status : unavailable,
+        ])
       )
-    ).toEqual({ A: 'answered', B: 'stale' });
-  });
-});
-
-describe('Neo answer attribution', () => {
-  it('an explicit human trigger answers its chosen input, not the turn producer as well', () => {
-    const selected = {
-      ...reply('B'),
-      publication: {
-        askOrigin: { sessionId: 'neo', messageId: 'B' },
-        producerInput: { sessionId: 'neo', messageId: 'A' },
-        triggerId: 'human:B',
-      },
-    } as unknown as NeoPublicEntry;
-    expect(
-      read(projectNeoMessageStatuses([ask('A'), ask('B'), selected], 'inactive', idle, live))
-    ).toEqual({ A: 'received', B: 'answered' });
-  });
-  it('a saved selected-answer revision does not answer its different original producer', () => {
-    const selected = {
-      ...reply('B'),
-      publication: {
-        askOrigin: { sessionId: 'neo', messageId: 'B' },
-        producerInput: { sessionId: 'neo', messageId: 'A' },
-        triggerId: 'human:B',
-        revisions: [
-          {
-            producerInput: { sessionId: 'neo', messageId: 'A' },
-            askOrigin: { sessionId: 'neo', messageId: 'B' },
-          },
-        ],
-      },
-    } as unknown as NeoPublicEntry;
-    expect([...neoRepliedAsks([ask('A'), ask('B'), selected])]).toEqual(['B']);
-  });
-  it('recognizes every attributed reply', () => {
-    expect([...neoRepliedAsks([ask('A'), reply('A'), ask('B'), reply('B')])]).toEqual(['A', 'B']);
-  });
-
-  it('attributes current and saved revisions without moving the original reply', () => {
-    const revised = {
-      ...reply('A'),
-      publication: {
-        askOrigin: { sessionId: 'neo', messageId: 'A' },
-        answerInput: { sessionId: 'neo', messageId: 'C' },
-        revisions: [
-          { producerInput: { sessionId: 'neo', messageId: 'B' } },
-          { producerInput: { sessionId: 'other', messageId: 'D' } },
-        ],
-      },
-    } as unknown as NeoPublicEntry;
-    expect([...neoRepliedAsks([ask('A'), revised, ask('B'), ask('C'), ask('D')])]).toEqual([
-      'A',
-      'B',
-      'C',
-    ]);
-  });
-  it('recognizes human origins behind current and earlier forwarded revisions', () => {
-    const revised = {
-      ...reply('A'),
-      publication: {
-        askOrigin: { sessionId: 'neo', messageId: 'A' },
-        answerInput: { sessionId: 'holder', messageId: 'neo-forward:C:0' },
-        answerOrigin: { sessionId: 'neo', messageId: 'C' },
-        revisions: [
-          {
-            producerInput: { sessionId: 'holder', messageId: 'neo-forward:B:0' },
-            askOrigin: { sessionId: 'neo', messageId: 'B' },
-          },
-        ],
-      },
-    } as unknown as NeoPublicEntry;
-    expect([...neoRepliedAsks([ask('A'), revised, ask('B'), ask('C')])]).toEqual(['A', 'B', 'C']);
-  });
-});
-
-describe('placeNeoMessageTurn', () => {
-  it('names no turn while Neo is idle', () => {
-    expect(placeNeoMessageTurn([ask('A')], new Set(), 'inactive')).toMatchObject({
-      working: null,
-    });
+    );
   });
 });
 

@@ -266,6 +266,38 @@ describe('durable public conversation presentation', () => {
     expect(status.getAttribute('title')).toBe('Neo is working on this message now.');
   });
 
+  it.each(['received', 'queued', 'working', 'read', 'answered', 'failed'] as const)(
+    'renders daemon status %s without guessing from an unrelated active turn',
+    (messageStatus) => {
+      connectionState.value = 'connected';
+      const state: AgentProcessingState = {
+        status: 'processing',
+        messageId: 'unrelated-system-input',
+        phase: 'thinking',
+      };
+      const store = {
+        sdkMessages: signal([]),
+        agentState: signal(state),
+        activeSessionId: signal(root),
+        sessionState: signal({ sessionInfo: { id: root }, agentState: state } as SessionState),
+        isRecovering: signal(false),
+        hasMoreMessages: signal(false),
+        error: signal(null),
+        refresh: vi.fn(),
+      } as unknown as SessionStore;
+      const { container } = render(
+        <NeoConversation
+          store={store}
+          sessionId={root}
+          publicConversation={conversation([ask({ messageStatus })], [])}
+        />
+      );
+      const shown = container.querySelector('[data-message-status]');
+      expect(shown?.getAttribute('data-message-status')).toBe(messageStatus);
+      expect(shown?.textContent).toBe(messageStatus[0].toUpperCase() + messageStatus.slice(1));
+    }
+  );
+
   it('revises one stable bubble and opens the saved versions without changing copy or reply', async () => {
     const onQuote = vi.fn();
     const initial = publication({ shortText: 'Original summary', fullText: 'Original **detail**' });

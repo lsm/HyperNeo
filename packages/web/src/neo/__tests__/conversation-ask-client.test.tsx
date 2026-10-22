@@ -73,6 +73,17 @@ function deferred<T>() {
 }
 
 describe('durable conversation ask client', () => {
+  it.each(['received', 'queued', 'working', 'read', 'answered', 'failed'])(
+    'preserves the shared human ask status %s returned by either daemon reader',
+    async (messageStatus) => {
+      const value = { ...ask(), messageStatus };
+      const io = transport(response([value]));
+      expect(await readNeoConversationAsks(page, io.getHub, current)).toMatchObject({
+        state: 'ready',
+        items: [{ messageStatus }],
+      });
+    }
+  );
   it('calls only the bounded ask read and preserves canonical content, whitespace and photo bytes', async () => {
     const items = [
       ask(1, [{ type: 'text', text: '   ' }]),
@@ -234,6 +245,8 @@ describe('durable conversation ask client', () => {
     { askOrigin: { sessionId: '', messageId: ask(1).requestId } },
     { askOrigin: { sessionId: 'x'.repeat(161), messageId: ask(1).requestId } },
     { askOrigin: null },
+    { messageStatus: 'pending' },
+    { messageStatus: null },
     { sequence: 0 },
     { sequence: 0.5 },
     { createdAt: '2026-09-30' },
