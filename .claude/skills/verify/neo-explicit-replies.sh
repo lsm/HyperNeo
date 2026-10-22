@@ -10,6 +10,7 @@ git rev-parse HEAD > "$RUN/evidence/head.txt"
 (cd packages/daemon && env -i HOME="$RUN/home" TMPDIR="$RUN/tmp" PATH="$PATH" NODE_ENV=test \
   node_modules/.bin/vitest run tests/unit/1-core/operations/neo-explicit-replies.test.ts \
   tests/unit/1-core/operations/neo-publication-operation.test.ts \
-  tests/unit/1-core/operations/neo-questions.test.ts) > "$RUN/evidence/unit.log" 2>&1
+  tests/unit/1-core/operations/neo-questions.test.ts \
+  tests/unit/1-core/operations/neo-refusals.test.ts) > "$RUN/evidence/unit.log" 2>&1
 bash .claude/skills/verify/publication-reader.sh "$RUN/sdk" > "$RUN/evidence/sdk.log" 2>&1
 printf 'PASS explicit Neo human reply references: %s\n' "$RUN"
