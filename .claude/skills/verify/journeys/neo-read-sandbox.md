@@ -29,33 +29,48 @@ records it as `is_error:true`. The temp-directory write must also succeed. Neo m
 non-empty value. Ordinary workers retain their handoff draft directory.
 There is no command parser or unsandboxed retry. The strict SDK sandbox uses
 `enableWeakerNetworkIsolation:true` for macOS trustd; network hosts are unrestricted.
-Do not set `HYPERNEO_TEST_DISABLE_SANDBOX=1` for this proof. Ordinary Linux CI sets
-that flag and runs the explicitly labelled transport fixture with sandbox disabled;
-its passing result is not OS-containment evidence. Production options stay strict.
+Do not set `HYPERNEO_TEST_DISABLE_SANDBOX=1` for the OS-containment proof. Also run
+the CI transport control from `packages/daemon`, using its own fresh HOME:
 
-In test mode the dedicated token store is not read. Actual `gh pr view` therefore
-reports unauthenticated with an isolated empty GH_CONFIG_DIR; it must never use an
-inherited GH_TOKEN/GITHUB_TOKEN or the human's gh login. A synthetic `.zshenv`
-also attempts to re-export an owner token: the isolated ZDOTDIR must prevent that
-reinjection. No real shell startup or auth file is read. Focused read-access tests
-also cover injected synthetic tokens, locked stores, non-macOS hosts and invalid
-or disappearing checkout-inventory entries (no parent/sibling write fallback). Missing
-or unavailable dedicated credentials leave gh unauthenticated, never using another
-store or human token. Preserve the JSON
-outside the worktree before cleanup. The scripted model proves runtime wiring,
-not spontaneous model behavior or a real token's GitHub scopes.
+```bash
+RUN=$(mktemp -d /private/tmp/hn-neo-read-transport-XXXXXX)
+mkdir -p "$RUN/home" "$RUN/evidence"
+env -i HOME="$RUN/home" PATH="$PATH" TERM=dumb NODE_ENV=test \
+  HYPERNEO_USE_DEV_PROXY=0 HYPERNEO_TEST_DISABLE_SANDBOX=1 \
+  VERIFY_EVIDENCE_DIR="$RUN/evidence" node_modules/.bin/vitest run \
+  --config vitest.online.config.ts tests/online/convo/neo-publication-sdk.test.ts
+```
 
-The human provisions a NEW fine-grained read-only GitHub token as a macOS generic
-password: service `hyperneo.neo.github`, account `readonly`. Only the daemon's
-runtime KeychainCredentialStore reads that item and supplies GH_TOKEN; it is never
-stored in session config. Contents, pull requests, checks and issues are read-only;
-metadata is implicit. No human token is reused. Do not fetch or print the item in
-a verification shell. Missing-token mode is deliberately unauthenticated.
+The transport fixture must show a successful authenticated Bash PR read, without
+claiming an OS-denied write. Native Write/Edit remain unavailable. Ordinary Linux
+CI uses this mode; it is not OS-containment evidence. Production options stay strict.
+
+The daemon supplies Neo's `GH_TOKEN` through the poller's existing composed
+`credentialManager.getCredentialStore()` instance (`neokai.external-events.github`,
+account `default`), then `GH_TOKEN ?? GITHUB_TOKEN` if the item is absent or
+unavailable. Its existing Keychain/database fallback and pending token replacement
+semantics are preserved. Test mode uses only its synthetic encrypted DB store;
+no new store or direct Keychain access is introduced for Neo.
+No token is stored in session config or printed in evidence. The human approved
+this existing, potentially write-capable token in question
+`79a6141f-f688-40b4-a403-ad52f9f3e30f`; a dedicated read-only token is deferred.
+That later step changes only the runtime token source. Missing tokens leave gh
+unauthenticated in an isolated empty `GH_CONFIG_DIR`, with no auth-file fallback.
+
+The fixture saves a synthetic token through `space.github.setToken` into its own
+encrypted DB, while the environment contains a conflicting synthetic token. It
+puts a local `gh` stub on PATH.
+Actual SDK Bash must run `gh pr view`, and the stub checks the token privately and
+returns PR number 8148 with `authenticatedByDaemon:true`. An absent/wrong token
+returns a visible authentication error. No GitHub network request is made. A synthetic
+`.zshenv` tries to replace the token; isolated `ZDOTDIR` must prevent that reinjection.
+Focused tests also cover the supplied shared-store reader, GH_TOKEN precedence,
+GITHUB_TOKEN fallback, missing or failed runtime providers and disappearing checkout-inventory entries. Preserve the JSON
+outside the worktree before cleanup. This proves runtime wiring, not the real token's
+GitHub scopes or spontaneous model behavior.
 
 After merge/rollout, record the laptop RPC commit readback via `hyperneo build`.
-Have Neo itself read synthetic code with Read/Grep/Bash, run `gh pr view`, then
-attempt a harmless verification comment on this PR from its sandboxed Bash. Record
-GitHub's permission rejection in the tool result. A successful write
-fails the proof: report the incorrectly scoped token to the human. Do not change
-GitHub settings. Keep live read/scope/deployment proof explicitly pending until the
-new token is provisioned and those actual results exist.
+Neo then runs `gh pr view` itself from its sandboxed Bash and relays the actual tool
+result. Do not read credentials or auth files in a verification shell. Keep this
+live proof pending until Neo's result exists. Do not attempt a GitHub write-rejection
+proof: the approved existing token may write. No GitHub settings change is needed.

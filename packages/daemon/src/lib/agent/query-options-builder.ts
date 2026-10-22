@@ -258,6 +258,7 @@ export function buildProviderSettings(
 }
 
 export interface QueryOptionsBuilderContext {
+  getGithubToken?(): Promise<string | null>;
   getOperationMcpServer?(): SdkMcpServerConfig;
   getSpaceBriefing?(): string | undefined;
   readonly session: Session;
@@ -428,7 +429,9 @@ export class QueryOptionsBuilder {
     const disallowedTools = this.getDisallowedTools();
     const allowedTools = this.getAllowedTools();
     const neo = neoCoordinatorBinding(this.ctx.db, session.id);
-    const readAccess = neo ? await neoReadAccess(session.id, this.getCwd()) : undefined;
+    const readAccess = neo
+      ? await neoReadAccess(session.id, this.getCwd(), this.ctx.getGithubToken?.bind(this.ctx))
+      : undefined;
     const additionalDirectories = neo ? [] : this.getAdditionalDirectories();
     const handoffDirectory = neo
       ? undefined

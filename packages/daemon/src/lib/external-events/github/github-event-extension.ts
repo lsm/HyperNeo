@@ -127,8 +127,8 @@ export function parseRateLimitHeaders(res: Response): GitHubRateLimitInfo {
     retryAfter: hasRetryAfter,
   };
 }
-const GITHUB_CREDENTIAL_SERVICE = 'neokai.external-events.github';
-const GITHUB_CREDENTIAL_ACCOUNT = 'default';
+export const GITHUB_CREDENTIAL_SERVICE = 'neokai.external-events.github';
+export const GITHUB_CREDENTIAL_ACCOUNT = 'default';
 const WEBHOOK_EVENTS = [
   'push',
   'pull_request',

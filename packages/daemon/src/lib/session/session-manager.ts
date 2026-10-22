@@ -116,7 +116,8 @@ export class SessionManager {
     private jobQueue: JobQueueRepository,
     private jobProcessor: JobQueueProcessor,
     private skillsManager?: SkillsManager,
-    private appMcpServerRepo?: AppMcpServerRepository
+    private appMcpServerRepo?: AppMcpServerRepository,
+    private getGithubToken?: () => Promise<string | null>
   ) {
     this.logger = new Logger('SessionManager');
     this.worktreeManager = new WorktreeManager();
@@ -175,6 +176,7 @@ export class SessionManager {
       {
         autoReplayPendingMessages: !this.needsSpaceRuntimeProvisioning(session),
         ...runtimeOptions,
+        getGithubToken: this.getGithubToken,
         operationRegistryProvider: () => this.getOperationRegistry(),
         callerScopeResolver: (sessionId) => this.resolveCallerScope(sessionId),
         spaceScopeResolver: (sessionId) => this.resolveSpaceScope(sessionId),
