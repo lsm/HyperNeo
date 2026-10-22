@@ -688,6 +688,58 @@ describe('Message RPC Handlers', () => {
   });
 
   describe('message.sdkMessages', () => {
+    test('awaits the async page door with cursors and returns its complete projection', async () => {
+      const page = {
+        sdkMessages: [
+          { uuid: 'child', parent_tool_use_id: 'tool', message: { content: '完整 child' } },
+        ],
+        hasMore: true,
+        backgroundTaskMessages: [{ uuid: 'task', subtype: 'task_started' }],
+      };
+      const read = mock(async () => page);
+      const db = {
+        getDbPath: () => '/synthetic-page.db',
+        getSDKMessagePageAsync: read,
+      } as unknown as Database;
+      setupMessageHandlers(messageHubData.hub, sessionManagerData.sessionManager, db);
+      const handler = messageHubData.handlers.get('message.sdkMessages')!;
+      expect(
+        await handler(
+          {
+            sessionId: 'session-123',
+            limit: 2,
+            before: 100,
+            since: 50,
+            beforeRowid: 8,
+            sinceRowid: 3,
+          },
+          {}
+        )
+      ).toEqual(page);
+      expect(read).toHaveBeenCalledWith('session-123', {
+        limit: 2,
+        before: 100,
+        since: 50,
+        beforeRowid: 8,
+        sinceRowid: 3,
+      });
+    });
+
+    test('a page worker error rejects instead of reading synchronously', async () => {
+      const read = mock(async () => {
+        throw new Error('SDK reader failed');
+      });
+      const db = {
+        getDbPath: () => '/synthetic-page.db',
+        getSDKMessagePageAsync: read,
+      } as unknown as Database;
+      setupMessageHandlers(messageHubData.hub, sessionManagerData.sessionManager, db);
+      await expect(
+        messageHubData.handlers.get('message.sdkMessages')!({ sessionId: 'session-123' }, {})
+      ).rejects.toThrow('SDK reader failed');
+      expect(sessionManagerData.agentSessionData.mocks.getSDKMessages).not.toHaveBeenCalled();
+    });
+
     test('returns SDK messages', async () => {
       const handler = messageHubData.handlers.get('message.sdkMessages');
       expect(handler).toBeDefined();
