@@ -313,7 +313,7 @@ describe('SDKSystemMessage', () => {
       const message = createHookResponseMessage();
       const { container } = render(<SDKSystemMessage message={message} />);
 
-      expect(container.textContent).not.toContain('All checks passed');
+      expect(container.querySelector('details')?.open).toBe(false);
     });
 
     it('should expand to show full stdout', () => {
@@ -369,13 +369,13 @@ describe('SDKSystemMessage', () => {
 
       const button = container.querySelector('button')!;
 
-      expect(container.textContent).not.toContain('All checks passed');
+      expect(container.querySelector('details')?.open).toBe(false);
 
       fireEvent.click(button);
       expect(container.textContent).toContain('All checks passed');
 
-      fireEvent.click(button);
-      expect(container.querySelector('.p-3.border-t')).toBeFalsy();
+      fireEvent.click(container.querySelector('button[aria-expanded="true"]')!);
+      expect(container.querySelector('details')?.open).toBe(false);
     });
   });
 
@@ -1096,14 +1096,13 @@ describe('SDKSystemMessage', () => {
 
       const button = container.querySelector('button')!;
 
-      expect(container.textContent).not.toContain('Metadata');
+      expect(container.querySelector('details')?.open).toBe(false);
 
       fireEvent.click(button);
       expect(container.textContent).toContain('Metadata');
 
-      fireEvent.click(button);
-      const expandedSection = container.querySelector('.p-3.border-t');
-      expect(expandedSection).toBeFalsy();
+      fireEvent.click(container.querySelector('button[aria-expanded="true"]')!);
+      expect(container.querySelector('details')?.open).toBe(false);
     });
   });
 

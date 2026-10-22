@@ -1,0 +1,50 @@
+{
+  "width": 1280,
+  "phase": "after",
+  "cases": [
+    {
+      "title": "Memory recalled",
+      "titleOpens": false,
+      "delta": 0,
+      "selectedText": "synthe",
+      "placement": {
+        "right": 1239,
+        "parentRight": 1251
+      }
+    },
+    {
+      "title": "synthetic-hook",
+      "titleOpens": false,
+      "delta": 0,
+      "selectedText": "Synthe",
+      "placement": {
+        "right": 1251,
+        "parentRight": 1263
+      }
+    },
+    {
+      "title": "Compact",
+      "titleOpens": false,
+      "delta": 0,
+      "selectedText": "Metada",
+      "placement": {
+        "right": 1251,
+        "parentRight": 1263
+      }
+    },
+    {
+      "title": "Show raw data",
+      "titleOpens": false,
+      "delta": 0,
+      "selectedText": "Synthe",
+      "placement": {
+        "right": 1240,
+        "parentRight": 1252
+      }
+    }
+  ],
+  "viewport": {
+    "width": 1280,
+    "scrollWidth": 1280
+  }
+}

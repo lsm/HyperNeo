@@ -1,0 +1,30 @@
+{
+  "width": 1280,
+  "phase": "before",
+  "cases": [
+    {
+      "title": "Memory recalled",
+      "titleOpens": true,
+      "delta": 0
+    },
+    {
+      "title": "synthetic-hook",
+      "titleOpens": true,
+      "delta": 0
+    },
+    {
+      "title": "Compact",
+      "titleOpens": true,
+      "delta": 0
+    },
+    {
+      "title": "Show raw data",
+      "titleOpens": true,
+      "delta": 0
+    }
+  ],
+  "viewport": {
+    "width": 1280,
+    "scrollWidth": 1280
+  }
+}

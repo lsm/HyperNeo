@@ -2,6 +2,7 @@ import { ChevronRightGlyph } from '../icons/common-glyphs.tsx';
 import type { JSX } from 'preact';
 import { memo } from 'preact/compat';
 import { useState } from 'preact/hooks';
+import { NativeContentDisclosure } from '../ui/NativeContentDisclosure.tsx';
 import type {
   SDKAuthStatusMessage,
   SDKMessage,
@@ -375,10 +376,12 @@ function SDKMessageRendererImpl({
     renderedMessage = (
       <div class="p-3 bg-surface-raised rounded">
         <div class="text-xs text-fg-muted mb-1">Unknown message type: {sdkMessage.type}</div>
-        <details>
-          <summary class="text-xs cursor-pointer text-fg-faint">Show raw data</summary>
+        <NativeContentDisclosure
+          label="Show raw data"
+          summary={<span class="text-xs text-fg-faint">Show raw data</span>}
+        >
           <pre class="text-xs mt-2 overflow-x-auto">{JSON.stringify(sdkMessage, null, 2)}</pre>
-        </details>
+        </NativeContentDisclosure>
       </div>
     );
   }
