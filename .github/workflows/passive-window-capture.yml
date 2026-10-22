@@ -19,3 +19,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: swift test --package-path .claude/skills/verify/window-capture
+      - name: Invalid JSON fails before native capture
+        run: |
+          capture="$(swift build --package-path .claude/skills/verify/window-capture --show-bin-path)/capture-window"
+          if printf '{}' | "$capture" > "$RUNNER_TEMP/capture-error.json"; then exit 1; fi
+          python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r["ok"] is False and r["code"] == "invalid_request" and "png" not in r' "$RUNNER_TEMP/capture-error.json"
