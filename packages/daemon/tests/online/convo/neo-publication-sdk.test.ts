@@ -288,15 +288,15 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
     if (existing) await hub.request('providers.update', { id: existing.id, params, credentials });
     else await hub.request('providers.create', { params, credentials });
 
+    const storedAtStartup = (
+      await hub.request<{ session: Session }>('session.get', { sessionId: root })
+    ).session;
     const opened = await hub.request<{ ok: boolean; sessionId: string }>('operation.invoke', {
       name: 'neo.open',
       input: {},
     });
     expect(opened.ok).toBe(true);
     expect(opened.sessionId).toBe(root);
-    const storedAtStartup = (
-      await hub.request<{ session: Session }>('session.get', { sessionId: root })
-    ).session;
     const accepted = await hub.request<{ ok: boolean; messageId: string }>('operation.invoke', {
       name: 'neo.message.send',
       input: {
