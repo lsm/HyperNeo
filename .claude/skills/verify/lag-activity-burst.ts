@@ -30,7 +30,7 @@ try {
     runLagPhase('scanner:synthetic:blocked', () => {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1350);
     });
-    for (let i = 0; i < 122; i++) runLagPhase('scanner:worktree:metadata', () => {});
+    for (let i = 0; i < 138; i++) runLagPhase('scanner:worktree:metadata', () => {});
     return { accepted: true };
   });
   assert(app.server && app.server.port !== 8399);
