@@ -24,6 +24,7 @@ describe('SDK tool and subagent disclosures', () => {
     expect(onExpand).not.toHaveBeenCalled();
     expect(view.queryByText('Synthetic readable result')).toBeNull();
     const more = view.getByRole('button', { name: 'more — Read synthetic.txt', exact: true });
+    expect(more.getAttribute('aria-controls')).toBeNull();
     more.focus();
     fireEvent.click(more);
     expect(onExpand).toHaveBeenCalledTimes(1);
@@ -33,6 +34,7 @@ describe('SDK tool and subagent disclosures', () => {
     const less = view.getByRole('button', { name: 'less — Read synthetic.txt', exact: true });
     expect(less.getAttribute('aria-expanded')).toBe('true');
     expect(document.activeElement).toBe(less);
+    expect(document.getElementById(less.getAttribute('aria-controls')!)).not.toBeNull();
     fireEvent.click(less);
     expect(view.queryByText('Synthetic readable result')).toBeNull();
     expect(document.activeElement).toBe(
@@ -121,6 +123,7 @@ describe('SDK tool and subagent disclosures', () => {
       name: 'more — Explore Synthetic exploration',
       exact: true,
     });
+    expect(more.getAttribute('aria-controls')).toBeNull();
     more.focus();
     fireEvent.click(more);
     expect(hydrate).toHaveBeenCalledWith([
@@ -134,6 +137,7 @@ describe('SDK tool and subagent disclosures', () => {
       exact: true,
     });
     expect(document.activeElement).toBe(less);
+    expect(document.getElementById(less.getAttribute('aria-controls')!)).not.toBeNull();
     const raw = view.getByText('Unknown message type: tool_progress').closest('details');
     fireEvent.click(view.getByText('Unknown message type: tool_progress'));
     expect(raw?.open).toBe(false);
