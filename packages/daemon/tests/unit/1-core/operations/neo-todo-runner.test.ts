@@ -562,6 +562,32 @@ describe('neo todo runner', () => {
     expect(told).toEqual(['Todo "Rows" failed: Could not start: unavailable: login expired']);
   });
 
+  test('a refused dispatch records failure after a concurrent report write', async () => {
+    const h = setup();
+    const todo = h.add();
+    try {
+      const runner = createNeoTodoRunner({
+        store: h.store,
+        sessions: h.sessions,
+        packs: () => [],
+        invoke: async () => {
+          const current = h.store.getTodo(todo.id)!;
+          h.store.updateTodo(current, { report: 'Concurrent start report' }, current.updatedAt + 1);
+          return completed({ ok: false, reason: 'unavailable', detail: 'Synthetic refusal' });
+        },
+        tell: async () => {},
+        tellAsk: async () => {},
+        changed: () => {},
+      });
+      expect(await runner.start(todo.id)).toMatchObject({
+        ok: true,
+        todo: { state: 'failed', report: 'Concurrent start report' },
+      });
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('a start whose input was accepted but now waits on a prompt keeps its session', async () => {
     const { db, store, add } = setup();
     const todo = add();

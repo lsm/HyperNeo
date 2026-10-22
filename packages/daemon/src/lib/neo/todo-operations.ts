@@ -39,6 +39,7 @@ type Ran = Promise<{ ok: true; todo: NeoTodo } | Rejection>;
 
 export interface NeoTodoControls {
   start(todoId: string): Ran;
+  recompute(todo: NeoTodo, patch: NeoTodoPatch): Promise<NeoTodo>;
   proceed(todoId: string, message: string): Ran;
   retry(todoId: string): Ran;
   stop(todo: NeoTodo): Promise<string | null>;
@@ -299,10 +300,10 @@ export function createNeoTodoOperations(
       },
     };
   };
-  const write = (
+  const write = async (
     plan: { todo: NeoTodo; patch: NeoTodoPatch },
     input?: z.infer<typeof Edit>
-  ): TodoReceipt | Rejection => {
+  ): Promise<TodoReceipt | Rejection> => {
     const checked = plan.todo;
     if (input?.addUrls) {
       const latest = requireNeoOpenTodo(todos.getTodo(plan.todo.id), todos.getAsk(plan.todo.askId));
@@ -326,7 +327,7 @@ export function createNeoTodoOperations(
       const accepted = planNeoTodoDraft(plan.todo, packs(), todos.listTodos(plan.todo.askId));
       if ('reason' in accepted) return accepted.reason;
     }
-    const todo = todos.updateTodo(plan.todo, plan.patch, Date.now());
+    const todo = await controls.recompute(plan.todo, plan.patch);
     return { ok: true, todo, todos: todos.listTodos(todo.askId) };
   };
   const stopAndWrite = async (plan: {

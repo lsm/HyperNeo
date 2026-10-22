@@ -23,9 +23,9 @@ import {
   readDriverSent,
   withWorkGoal,
 } from './driver-work.ts';
-import type { NeoPack, NeoTodoCheckResult } from './pack-contract.ts';
+import type { NeoPack, NeoTodoCheckResult, NeoTodoJudgement } from './pack-contract.ts';
 import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
-import { readNeoTodoCompletion, sameNeoTodoCheck } from './todo-completion.ts';
+import { sameNeoTodoCheck } from './todo-completion.ts';
 import { dispatchNeoInput } from './dispatch-input.ts';
 import { neoMoveTodo, neoTodoRepo } from './todo-repo.ts';
 
@@ -260,9 +260,15 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   const checked = new Map<string, number>();
   const starting = new Set<string>();
   const caller = (ask: NeoAsk) => driverWorkCaller({ originSessionId: ask.sessionId });
+  const recompute = async (
+    todo: NeoTodo,
+    patch: NeoTodoPatch = {},
+    now = Date.now(),
+    judgement: NeoTodoJudgement = { state: 'no_opinion' }
+  ) => store.recompute(todo, patch, now, judgement, (id) => start(id));
   const finish = async (todo: NeoTodo, ask: NeoAsk, patch: NeoTodoPatch | null, now: number) => {
     if (!patch) return todo;
-    const next = store.updateTodo(todo, patch, now);
+    const next = await recompute(todo, patch, now);
     if (next.state === 'done' || next.state === 'failed' || next.state === 'blocked')
       await deps.tell(ask, next, neoTodoNote(next));
     return next;
@@ -465,18 +471,28 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     const ask = store.getAsk(todo.askId);
     if (!packs.length || !ask || now - (checked.get(todo.id) ?? 0) < NEO_TODO_CHECK_MS) return;
     checked.set(todo.id, now);
-    for (const pack of packs) {
-      const result = todo.check
-        ? await readNeoTodoCompletion(deps.packs(), todo)
-        : await pack.check(todo);
+    for (const rule of packs) {
+      const pack =
+        todo.check && deps.packs().find((candidate) => candidate.id === todo.check?.pack);
+      const judgement =
+        pack && pack.readFacts && pack.judge ? pack.judge(todo, await pack.readFacts(todo)) : null;
+      const result = judgement ? null : await rule.check(todo);
       const live = store.getCheckable(todo.id);
-      if (live?.check && sameNeoTodoCheck(todo, live))
-        await finish(
-          live,
-          ask,
-          planNeoTodoCheck(live, result, now, sessions.readRef(live.id) !== null),
-          now
-        );
+      if (!live?.check || !sameNeoTodoCheck(todo, live)) continue;
+      const next = judgement
+        ? await recompute(live, {}, now, judgement)
+        : await finish(
+            live,
+            ask,
+            planNeoTodoCheck(live, result, now, sessions.readRef(live.id) !== null),
+            now
+          );
+      if (
+        judgement &&
+        next.state !== live.state &&
+        ['done', 'failed', 'blocked'].includes(next.state)
+      )
+        await deps.tell(ask, next, neoTodoNote(next));
     }
     relocate(todo.id);
     deps.changed();
@@ -689,6 +705,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
 
   return {
     start,
+    recompute,
     proceed,
     stop,
     async retry(todoId: string) {
@@ -744,6 +761,9 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         );
       }
       for (const ask of store.listOpenAsks()) {
+        const completed = store.listTodos(ask.id).find((todo) => todo.state === 'done');
+        if (completed)
+          await recompute(completed).catch((error) => warn('Todo plan advancement pending', error));
         const note = neoAskIdleNote(ask, store.listTodos(ask.id), store.listQuestions(ask.id));
         if (note)
           await deps

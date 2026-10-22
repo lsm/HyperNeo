@@ -583,7 +583,7 @@ export class NeoService {
     this.todoSessions.create(todo.id, { verb: 'adopt', ref: notice.ref });
     this.todoSessions.recordRef(todo.id, notice.ref, now, notice.link);
     this.todoSessions.recordFollowAnchor(todo.id, now);
-    this.todos.updateTodo(todo, { state: 'doing', startedAt: now }, now);
+    await this.todoRunner.recompute(todo, { state: 'doing', startedAt: now }, now);
     const content = fillPrompt(NEO_SESSION_TRACK, {
       title: JSON.stringify(notice.title),
       ref: JSON.stringify(notice.ref),

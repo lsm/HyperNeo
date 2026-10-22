@@ -25,6 +25,8 @@ describe('producer artifact references on todo evidence', () => {
           new NeoAskTodoRepository(db),
           new NeoTodoSessionRepository(db),
           {
+            recompute: async (todo, patch) =>
+              new NeoAskTodoRepository(db).updateTodo(todo, patch, Date.now()),
             start: async () => ({ ok: false as const, reason: 'not started' }),
             proceed: async () => ({ ok: false as const, reason: 'no session' }),
             retry: async () => ({ ok: false as const, reason: 'not failed' }),

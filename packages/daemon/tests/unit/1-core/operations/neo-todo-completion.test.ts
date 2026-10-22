@@ -72,6 +72,7 @@ function setup(stop: () => Promise<string | null> = async () => null) {
       store,
       sessions,
       {
+        recompute: runner.recompute,
         start: async () => ({ ok: false as const, reason: 'not started' }),
         proceed: async () => ({ ok: false as const, reason: 'no session' }),
         retry: async () => ({ ok: false as const, reason: 'not failed' }),
@@ -397,6 +398,59 @@ describe('coding todo PR ownership through add and edit', () => {
       db.close();
     }
   });
+  test.each(['neo.todo.close', 'neo.todo.remove'])(
+    '%s retains a concurrent report and applies the requested state',
+    async (name) => {
+      const h = setup(async () => {
+        const current = h.store.getTodo('same')!;
+        h.store.updateTodo(
+          current,
+          { report: 'New report while stopping 🦊' },
+          current.updatedAt + 1
+        );
+        return null;
+      });
+      try {
+        h.store.addTodo('same', 'ask', draft([url(1)]), 1);
+        expect(await h.call(name, { todoId: 'same', reason: 'Requested change' })).toMatchObject({
+          ok: true,
+          todo: {
+            state: name === 'neo.todo.close' ? 'done' : 'removed',
+            report: 'New report while stopping 🦊',
+          },
+        });
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
+  test('completion edit retains a report written during its fact read', async () => {
+    const h = setup();
+    try {
+      h.store.addTodo('same', 'ask', draft([url(1)]), 1);
+      const check = h.coding.todos.check;
+      h.coding.todos.check = async (todo) => {
+        const result = await check(todo);
+        const current = h.store.getTodo(todo.id)!;
+        h.store.updateTodo(
+          current,
+          { report: 'Concurrent fact-read report' },
+          current.updatedAt + 1
+        );
+        return result;
+      };
+      expect(
+        await h.call('neo.todo.edit', { todoId: 'same', done: 'met', evidence: 'Merged' })
+      ).toMatchObject({
+        ok: true,
+        todo: { state: 'done', report: 'Concurrent fact-read report' },
+      });
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('URL ownership is scoped to the ask', async () => {
     const { db, store, call } = setup();
     try {
