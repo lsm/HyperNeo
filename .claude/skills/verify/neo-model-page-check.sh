@@ -15,4 +15,5 @@ bash scripts/test-daemon.sh shared > "$RUN/evidence/shared.log" 2>&1
 bun run --cwd packages/web build > "$RUN/evidence/build.log" 2>&1
 NODE_PATH="${NODE_PATH:-/opt/homebrew/lib/node_modules/@playwright/cli/node_modules}" \
   bash .claude/skills/verify/neo-model-settings.sh "$RUN/web" "${2:-9381}" "${3:-9382}" > "$RUN/evidence/journey.log" 2>&1
+[[ "$(git rev-parse HEAD)" == "$(cat "$RUN/evidence/head.txt")" && -z "$(git status --porcelain)" ]]
 printf 'PASS: exact-head checks, web/shared/Neo daemon suites and headless web journey; evidence: %s\n' "$RUN"

@@ -302,22 +302,25 @@ describe('router', () => {
     );
   });
 
-  it('initializes settings routes from tab query parameters', () => {
-    setPath('/settings?tab=neo-model');
-    initializeRouter();
+  it.each(['providers', 'neo-model'])(
+    'initializes settings route %s from tab query parameters',
+    (section) => {
+      setPath(`/settings?tab=${section}`);
+      initializeRouter();
 
-    expect(navSectionSignal.value).toBe('settings');
-    expect(settingsSectionSignal.value).toBe('neo-model');
-    expect(currentSessionIdSignal.value).toBeNull();
+      expect(navSectionSignal.value).toBe('settings');
+      expect(settingsSectionSignal.value).toBe(section);
+      expect(currentSessionIdSignal.value).toBeNull();
 
-    cleanupRouter();
-    settingsSectionSignal.value = 'providers';
-    setPath('/settings?tab=unknown');
-    initializeRouter();
+      cleanupRouter();
+      settingsSectionSignal.value = 'providers';
+      setPath('/settings?tab=unknown');
+      initializeRouter();
 
-    expect(navSectionSignal.value).toBe('settings');
-    expect(settingsSectionSignal.value).toBe('general');
-  });
+      expect(navSectionSignal.value).toBe('settings');
+      expect(settingsSectionSignal.value).toBe('general');
+    }
+  );
 
   it('navigates to settings tabs and updates URL query parameters', () => {
     navigateToSettings('skills');

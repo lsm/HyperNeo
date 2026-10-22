@@ -229,6 +229,12 @@ export function NeoPreferences({
       {open && !forSession && (
         <div
           id="neo-preferences"
+          onKeyDown={(event) => {
+            if (event.key !== 'Escape') return;
+            event.stopPropagation();
+            setOpen(false);
+            trigger.current?.focus();
+          }}
           class="absolute bottom-full left-0 z-30 mb-3 w-60 rounded-xl border border-line bg-surface-raised p-2 shadow-xl"
         >
           <a
