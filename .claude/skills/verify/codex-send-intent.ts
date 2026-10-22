@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { mkdirSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdirSync, existsSync, writeFileSync, appendFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { createServer as createHttpServer } from 'node:http';
 import { join, resolve } from 'node:path';
@@ -22,16 +22,20 @@ const home = join(run, 'home/.codex');
 mkdirSync(join(home, 'ipc'), { recursive: true });
 mkdirSync(join(home, 'app-server-control'), { recursive: true });
 mkdirSync(join(run, 'evidence'), { recursive: true });
+const rollout = join(run, 'synthetic-rollout.jsonl');
+writeFileSync(rollout, '');
 const db = new Database(join(home, 'state_5.sqlite'));
 db.exec(`CREATE TABLE threads (id TEXT, name TEXT, title TEXT, first_user_message TEXT, cwd TEXT, source TEXT, archived INTEGER, updated_at_ms INTEGER, rollout_path TEXT);
 CREATE TABLE projects (id TEXT, name TEXT);
 CREATE TABLE project_roots (project_id TEXT, path TEXT);
 INSERT INTO threads VALUES ('synthetic', 'Synthetic', '', '', '/tmp/synthetic', 'desktop', 0, 1, '/missing-synthetic.jsonl');`);
+db.prepare('UPDATE threads SET rollout_path = ?').run(rollout);
 db.close();
 let owner = 'refused';
 let active = true;
 let loaded = true;
-let resumeError = false;
+let resumeError = '';
+let consumeQueue = false;
 let uncertain = false;
 let refuse = false;
 let startError = false;
@@ -50,7 +54,7 @@ const desktop = createServer((socket) => {
       buffer = buffer.subarray(size + 4);
       calls.push({ desktop: request.method, version: request.version, params: request.params });
       const response = request.method === 'initialize' ? { resultType: 'success', result: { clientId: 'synthetic-client' } }
-        : request.method === 'thread-owner-discovery' ? owner === 'owned' ? { resultType: 'success', handledByClientId: 'fixture-owner' } : { resultType: 'error', error: 'request-version-mismatch' }
+        : request.method === 'thread-owner-discovery' ? owner === 'owned' ? { resultType: 'success', handledByClientId: 'fixture-owner' } : { resultType: 'error', error: owner === 'missing' ? 'no-client-found' : 'request-version-mismatch' }
         : request.method === 'thread-follower-start-turn' ? startError ? { resultType: 'error', error: 'start unavailable' } : { resultType: 'success', result: { result: { turn: { id: 'desktop-started' } } } }
         : refuse ? { resultType: 'error', error: 'NoActiveTurn' } : { resultType: 'success', result: { result: { turnId: 'desktop-active' } } };
       const body = Buffer.from(JSON.stringify({ type: 'response', requestId: request.requestId, ...response }));
@@ -66,11 +70,20 @@ server.on('connection', (socket) => socket.on('message', (bytes) => {
   const request = JSON.parse(String(bytes));
   calls.push({ server: request.method, params: request.params });
   if (request.method === 'thread/resume' && !resumeError) loaded = true;
+  if (request.method === 'thread/queue/add' && consumeQueue) {
+    const text = request.params.input[0].text;
+    const timestamp = new Date().toISOString();
+    appendFileSync(rollout, [
+      { type: 'response_item', timestamp, payload: { type: 'message', role: 'user', id: 'writer-input', content: [{ type: 'input_text', text }] } },
+      { type: 'response_item', timestamp, payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Writer received queued work.' }] } },
+      { type: 'event_msg', timestamp, payload: { type: 'task_complete', last_agent_message: 'Writer received queued work.' } },
+    ].map((entry) => JSON.stringify(entry)).join('\n') + '\n');
+  }
   const result = request.method === 'thread/resume' ? { thread: { id: 'synthetic', status: { type: 'idle' }, turns: [] } }
     : request.method === 'thread/turns/list' ? { data: active ? [{ id: 'server-active', status: 'inProgress' }] : [{ id: 'completed-turn', status: 'completed' }] }
     : request.method === 'turn/start' ? { turn: { id: 'server-started', status: 'inProgress', items: [] } }
     : request.method === 'turn/steer' ? { turnId: 'server-active' } : { queuedSubmission: { id: 'synthetic-queue' } };
-  socket.send(JSON.stringify({ id: request.id, ...(resumeError && request.method === 'thread/resume' ? { error: { code: -32600, message: 'rollout unavailable' } } : !loaded && request.method === 'turn/start' ? { error: { code: -32600, message: 'thread not found: synthetic' } } : serverStartError && request.method === 'turn/start' ? { error: { message: 'start unavailable' } } : uncertain && request.method === 'turn/steer' ? { error: { message: 'connection closed' } } : { result }) }));
+  socket.send(JSON.stringify({ id: request.id, ...(resumeError && request.method === 'thread/resume' ? { error: { code: -32600, message: resumeError } } : !loaded && request.method === 'turn/start' ? { error: { code: -32600, message: 'thread not found: synthetic' } } : serverStartError && request.method === 'turn/start' ? { error: { message: 'start unavailable' } } : uncertain && request.method === 'turn/steer' ? { error: { message: 'connection closed' } } : { result }) }));
 }));
 await new Promise<void>((done) => http.listen(join(home, 'app-server-control/app-server-control.sock'), done));
 let ws: WebSocket | undefined;
@@ -79,7 +92,7 @@ try {
   await app.spaceRuntimeService.ready();
   ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('connection failed')); });
-  const send = (mode?: string, describe = false, adapters = false) => new Promise<any>((done, fail) => {
+  const send = (mode?: string, describe = false, adapters = false, receipt?: { executionId: string; inputId: string }) => new Promise<any>((done, fail) => {
     const id = crypto.randomUUID();
     const timer = setTimeout(() => fail(new Error('RPC timeout')), 10000);
     ws!.onmessage = (event) => {
@@ -88,7 +101,7 @@ try {
       clearTimeout(timer); replies.push(reply);
       if (reply.error) fail(new Error(JSON.stringify(reply.error))); else done(reply.data);
     };
-    ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: adapters ? { name: 'work.adapters', input: {} } : describe ? { name: 'operations.describe', input: { name: 'work.send' } } : { name: 'work.send', input: { ref: { adapter: 'codex-desktop', id: 'synthetic' }, message: 'synthetic marker', ...(mode ? { mode } : {}) } }, timestamp: new Date().toISOString(), version: '1.0.0' }));
+    ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: receipt ? { name: 'work.status', input: { ref: { adapter: 'codex-desktop', id: 'synthetic' }, receipt } } : adapters ? { name: 'work.adapters', input: {} } : describe ? { name: 'operations.describe', input: { name: 'work.send' } } : { name: 'work.send', input: { ref: { adapter: 'codex-desktop', id: 'synthetic' }, message: 'synthetic marker', ...(mode ? { mode } : {}) } }, timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
   const first = await send();
   if (action === 'reproduce') {
@@ -123,13 +136,30 @@ try {
       const request = call as { server?: string; params?: { threadId?: string; input?: { text: string }[] } };
       return request.server === 'turn/start' && request.params?.threadId === 'synthetic' && request.params.input?.[0].text.includes('synthetic marker');
     }));
-    loaded = false; resumeError = true;
+    loaded = false; resumeError = 'rollout unavailable';
     const resumeBefore = calls.length;
     const resumeFailed = await send();
     assert.equal(resumeFailed.reason, 'not_delivered');
     assert.match(resumeFailed.detail, /rollout unavailable/);
     assert(!calls.slice(resumeBefore).some((call) => ['turn/start', 'thread/queue/add'].includes((call as { server: string }).server)));
-    resumeError = false;
+    resumeError = 'thread synthetic already has an active writer'; owner = 'missing'; consumeQueue = true;
+    const writerBefore = calls.length;
+    const writerDelivered = await send();
+    assert.equal(writerDelivered.ok, true, JSON.stringify(writerDelivered));
+    assert.equal(writerDelivered.value.delivered, true);
+    assert.equal(writerDelivered.value.queuedSubmissionId, 'synthetic-queue');
+    assert.deepEqual(writerDelivered.value.receipt, { executionId: 'synthetic', inputId: 'writer-input' });
+    assert(!calls.slice(writerBefore).some((call) => (call as { server?: string }).server === 'turn/start'));
+    const writerRead = await send(undefined, false, false, writerDelivered.value.receipt);
+    assert.equal(writerRead.value.inputEvidence.state, 'observed');
+    assert(writerRead.value.inputEvidence.exchange.some((entry: { role: string; text: string }) => entry.role === 'agent' && entry.text === 'Writer received queued work.'));
+    consumeQueue = false;
+    const writerPending = await send();
+    assert.equal(writerPending.ok, true);
+    assert.equal(writerPending.value.delivered, false);
+    assert.equal(writerPending.value.receipt, undefined);
+    assert.equal(writerPending.value.queuedSubmissionId, 'synthetic-queue');
+    resumeError = ''; owner = 'refused';
     serverStartError = true;
     const serverRefused = await send();
     assert.equal(serverRefused.reason, 'not_delivered');

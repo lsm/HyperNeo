@@ -20,8 +20,17 @@ The idle fixture returns a completed latest turn (as Desktop does), with saved
 history but no loaded app-server runtime. It rejects `turn/start` with -32600
 `thread not found: synthetic` until `thread/resume` loads the runtime.
 The production path must resume with `excludeTurns: true` before starting;
-the send still returns the confirmed turn ID. Resume failure returns
-`not_delivered` with its cause and makes no start or queue request.
+the send still returns the confirmed turn ID. Other resume failures return
+`not_delivered` with their cause and make no start or queue request. When owner
+discovery reports no client and resume returns exactly `thread synthetic already
+has an active writer`, auto reuses the existing queue path without starting
+another writer. The synthetic owner consumes the queued input and writes its reply;
+receipt-bound `work.status` must observe that exact input/reply. A subsequent
+unconsumed queue request stays `delivered: false` even with an older identical
+input in the transcript. Queue acceptance is distinct from consumption and does
+not prove Desktop rendering. After deployment, Neo sends the authorized legitimate
+research-dev input and relays its receipt/reply; verify it read-only using logs or
+RPC. Do not send test messages to the human's live threads.
 On regression commit `09c226b44`, this fixture reproduces the reported
 `thread not found` response through real WebSocket operation.invoke, then
 fails the idle success assertion. This prevents a fixture from silently treating
