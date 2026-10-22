@@ -10173,7 +10173,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
           return new Response(null, { status: 304 });
         }
         return pollingResponseWithHeaders(fullFirstPage, {
-          'X-RateLimit-Remaining': '50',
+          'X-RateLimit-Remaining': '9',
         });
       }
       return pollingResponse([]);
