@@ -120,6 +120,7 @@ are simply recomputed at cut-over.
 New code is only recompute’s “start next” output and the coding pack reading
 sub-issue state; everything else is deletion. Reuse the existing ordered todos,
 dispatch/start path, ledger and facts/judgement seam. No new orchestration layer.
+Moving existing coding code unchanged into its pack adds no behavior.
 
 Steps 1–2’s behavior pins and facts/judgement seam are merged (#8187 completed
 the latter). The remaining cut-over and import cleanup follow below. After this
@@ -137,12 +138,13 @@ for steps 3–6 before starting step 3. One small PR per step:
 5. **Coding sub-issues and the single nudge ladder.** Use `issue_closed` for
    coding judgement and GitHub closing links for PR membership; include the
    coding prompt replacement. Keep ledger-only PR messages. Collapse the two
-   ladders into persisted 20/40/60 nudges and delete time-only blocking. Prove an
+   ladders into persisted 20/40/60 nudges and delete time-only blocking. Prove a
    COMPLETED issue advances its next todo despite a stopped worker; NOT_PLANNED
    fails, open/unreadable does not complete, and reminders never block.
-6. **Delete the remaining old paths.** Remove obsolete PR link records, manual
-   pack-completion routes, maps and helpers listed above, and enforce the final
-   core-to-pack import check. Re-run the full plan journey after deletion.
+6. **Finish the core/pack split.** Move the coding code listed above unchanged
+   into its pack, deleting the core copies/imports before enabling the import
+   check. Remove obsolete PR links, manual pack completion, maps and helpers
+   listed above. Re-run the full plan journey.
 
 Each step carries failing contracts before its change and an isolated daemon
 journey in the verify skill: observe stored state and actual next-worker
