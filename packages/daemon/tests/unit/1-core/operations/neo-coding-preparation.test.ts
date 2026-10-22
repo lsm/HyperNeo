@@ -168,7 +168,9 @@ describe('prepareCodingExecution', () => {
     const prepared = await prepareCodingExecution({ ...f.request, directory: linked }, f.effects);
     expect(prepared.ok).toBe(true);
     if (!prepared.ok) throw new Error(prepared.reason);
-    expect(await gitWorktreeProject(prepared.value.directory)).toBe(f.directory);
+    expect(await gitWorktreeProject(prepared.value.directory)).toBe(
+      await gitWorktreeProject(linked)
+    );
     await prepared.value.release();
   });
 

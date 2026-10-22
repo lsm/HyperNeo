@@ -1,6 +1,7 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { gitWorktreeProject } from '../../../drivers/acp-agent-adapter.ts';
 import type { NeoExecutionPreparation } from '../../pack-contract.ts';
 
 type Request = Parameters<NeoExecutionPreparation>[0];
@@ -146,7 +147,10 @@ async function prepareClone(
       const result = await effects.run(args, cwd);
       if (result.code !== 0) return refuse(`${phase}: ${result.stderr.trim()}`);
     }
-    await writeFile(join(plan.destination, '.git', 'hyperneo-source-checkout'), plan.directory);
+    await writeFile(
+      join(plan.destination, '.git', 'hyperneo-source-checkout'),
+      await gitWorktreeProject(plan.directory)
+    );
     ready = true;
     return {
       value: {
