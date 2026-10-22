@@ -5,7 +5,9 @@ worktree root with a fresh absolute run directory. Follow SKILL.md isolation:
 NODE_ENV=test, fresh HOME/data/DB, no real keys, loopback model and ephemeral
 non-8399 ports. This journey uses the installed SDK and actual WebSocket RPC.
 
-Both an ordinary session and Neo consume a kickoff. Stop only the test daemon,
+Both an ordinary session and Neo consume a kickoff. Hold a real model request,
+send a human input mid-turn, interrupt, then verify that human marker reaches the
+model and no input becomes failed. Stop only the test daemon,
 mark that synthetic input pending for recovery, queue a space_inject head plus
 four markers, then restart against the same synthetic DB/SDK history. The head
 starts at its delivery retry limit to retain the dead-letter regression. Every

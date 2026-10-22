@@ -31,7 +31,6 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Database as SQLite } from '../../../../src/storage/sqlite-compat';
 import { createNeoTables } from '../../../../src/storage/schema/neo';
-import { neoCoordinatorRuntimePath } from '../../../../src/lib/neo/session-policy';
 import { getSDKSessionFilePath } from '../../../../src/lib/sdk-session-file-manager';
 
 const TEST_MODELS: ModelInfo[] = [
@@ -363,7 +362,7 @@ describe('ModelSwitchHandler', () => {
       });
 
       const cases = [
-        { name: 'Neo', binding: 'neo', path: 'coordinator' },
+        { name: 'Neo', binding: 'neo', path: 'workspace' },
         { name: 'delegated worker', binding: 'worker', path: 'workspace' },
         { name: 'ordinary workspace', binding: null, path: 'workspace' },
         { name: 'ordinary worktree', binding: null, path: 'worktree' },
@@ -396,19 +395,13 @@ describe('ModelSwitchHandler', () => {
                 .run(mockSession.id, projectId, scenario.binding);
             }
 
-            const coordinatorPath = neoCoordinatorRuntimePath(mockSession.id);
+            const coordinatorPath = '/test/previous-sdk-origin';
             const workspacePath =
-              scenario.path === 'coordinator'
-                ? coordinatorPath
-                : scenario.path === 'worktree'
-                  ? '/test/worktree'
-                  : (mockSession.workspacePath ?? process.cwd());
+              scenario.path === 'worktree'
+                ? '/test/worktree'
+                : (mockSession.workspacePath ?? process.cwd());
             const decoyPath =
-              scenario.path === 'coordinator'
-                ? process.cwd()
-                : scenario.path === 'worktree'
-                  ? mockSession.workspacePath!
-                  : coordinatorPath;
+              scenario.path === 'worktree' ? mockSession.workspacePath! : coordinatorPath;
             const sdkId = mockSession.sdkSessionId!;
             const transcript = getSDKSessionFilePath(workspacePath, sdkId);
             const decoy = getSDKSessionFilePath(decoyPath, sdkId);

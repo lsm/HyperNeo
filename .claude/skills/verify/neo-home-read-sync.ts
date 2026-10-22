@@ -3,7 +3,6 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 import { spawnProcess } from '../../../packages/daemon/src/lib/runtime-spawn/index.ts';
-import { NeoCoordinatorTurn } from '../../../packages/daemon/src/lib/neo/coordinator-turn.ts';
 import { createOperationMcpServer } from '../../../packages/daemon/src/lib/operations/mcp-server.ts';
 
 const [run] = process.argv.slice(2);
@@ -32,7 +31,6 @@ async function pulls() { return (await readFile(join(run, 'evidence', 'pulls'), 
 const evidence: Record<string, unknown> = { run, peer, remote, root };
 let daemon: Awaited<ReturnType<typeof import('../../../packages/daemon/src/app.ts').createDaemonApp>> | undefined;
 let transport: WebSocketClientTransport | undefined;
-let turn: NeoCoordinatorTurn | undefined;
 let server: ReturnType<typeof createOperationMcpServer> | undefined;
 const { Client } = await import('../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js');
 const { InMemoryTransport } = await import('../../../packages/daemon/node_modules/@modelcontextprotocol/sdk/dist/esm/inMemory.js');
@@ -48,9 +46,7 @@ try {
  const rpc = (name: string, input: unknown) => hub.request<Record<string, unknown>>('operation.invoke', { name, input });
  assert.equal((await rpc('neo.home.init', { remoteUrl: remote })).ok, true);
  const opened = await rpc('neo.open', {}); const sessionId = String(opened.sessionId); assert(sessionId.startsWith('neo:'));
- const nextWake = () => { turn?.dispose(); turn = new NeoCoordinatorTurn(daemon!.db, sessionId, { isLive: () => true }); turn.bind(crypto.randomUUID()); };
- nextWake();
- server = createOperationMcpServer(() => daemon!.sessionManager.getOperationRegistry(), () => ({ sessionId, role: 'neo', neoTurn: turn!.identity() }));
+ server = createOperationMcpServer(() => daemon!.sessionManager.getOperationRegistry(), () => ({ sessionId, role: 'neo' }));
  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
  await server.instance.connect(serverTransport); await client.connect(clientTransport);
  const mcpRead = async (path = 'direction.md') => {
@@ -62,24 +58,24 @@ try {
  await writeFile(join(run, 'evidence', 'neo-home-read-sync.json'), JSON.stringify(evidence, null, 2));
  assert.equal((evidence.first as { content: string }).content, 'Peer one');
  await version('Peer two'); evidence.repeated = await Promise.all([mcpRead(), mcpRead('mandate.md')]);
- assert.deepEqual((evidence.repeated as { content: string }[]).map((x) => x.content), ['Peer one', 'Mandate Peer one']);
- assert.equal(await pulls(), 1); nextWake();
- evidence.secondWake = await mcpRead(); assert.equal((evidence.secondWake as { content: string }).content, 'Peer two'); assert.equal(await pulls(), 2);
- await git(root, 'remote', 'set-url', 'origin', join(run, 'missing.git')); nextWake();
+ assert.deepEqual((evidence.repeated as { content: string }[]).map((x) => x.content), ['Peer two', 'Mandate Peer two']);
+ assert.equal(await pulls(), 3);
+ evidence.secondWake = await mcpRead(); assert.equal((evidence.secondWake as { content: string }).content, 'Peer two'); assert.equal(await pulls(), 4);
+ await git(root, 'remote', 'set-url', 'origin', join(run, 'missing.git'));
  evidence.failed = await mcpRead(); assert.equal((evidence.failed as { ok: boolean }).ok, false);
  await git(root, 'remote', 'set-url', 'origin', remote); await version('Peer three');
- evidence.failedRetry = await mcpRead('mandate.md'); assert.deepEqual(evidence.failedRetry, evidence.failed); assert.equal(await pulls(), 3);
- nextWake(); assert.equal((await mcpRead()).content, 'Peer three'); assert.equal(await pulls(), 4);
+ evidence.failedRetry = await mcpRead('mandate.md'); assert.equal((evidence.failedRetry as { content: string }).content, 'Mandate Peer three'); assert.equal(await pulls(), 6);
+ assert.equal((await mcpRead()).content, 'Peer three'); assert.equal(await pulls(), 7);
  await version('Human four'); evidence.humanFirst = await rpc('neo.home.read', { path: 'direction.md' });
  assert.equal((evidence.humanFirst as { content: string }).content, 'Human four');
  await version('Human five'); evidence.humanSecond = await rpc('neo.home.read', { path: 'direction.md' });
- assert.equal((evidence.humanSecond as { content: string }).content, 'Human five'); assert.equal(await pulls(), 6);
- await writeFile(join(root, 'direction.md'), 'Human uncommitted edit'); const head = await git(root, 'rev-parse', 'HEAD'); nextWake();
+ assert.equal((evidence.humanSecond as { content: string }).content, 'Human five'); assert.equal(await pulls(), 9);
+ await writeFile(join(root, 'direction.md'), 'Human uncommitted edit'); const head = await git(root, 'rev-parse', 'HEAD');
  evidence.dirty = await mcpRead(); assert.match((evidence.dirty as { reason: string }).reason, /dirty/);
  assert.equal(await readFile(join(root, 'direction.md'), 'utf8'), 'Human uncommitted edit'); assert.equal(await git(root, 'rev-parse', 'HEAD'), head);
- assert.equal(await pulls(), 6); evidence.pullCount = await pulls(); evidence.localEditPreserved = true;
+ assert.equal(await pulls(), 9); evidence.pullCount = await pulls(); evidence.localEditPreserved = true;
  console.log(`PASS: home read-sync RPC/MCP proof. ${run}/evidence/neo-home-read-sync.json`);
 } finally {
  await writeFile(join(run, 'evidence', 'neo-home-read-sync.json'), JSON.stringify(evidence, null, 2));
- turn?.dispose(); await client.close(); await server?.instance.close(); await transport?.close(); await daemon?.cleanup();
+ await client.close(); await server?.instance.close(); await transport?.close(); await daemon?.cleanup();
 }

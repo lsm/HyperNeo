@@ -21,10 +21,7 @@ import {
   setModelsCache,
 } from '../../../../src/lib/model-service';
 import { neoPrompt } from '../../../../src/lib/neo/prompt';
-import {
-  neoCoordinatorAllowedTools,
-  neoCoordinatorNativeTools,
-} from '../../../../src/lib/neo/session-policy';
+
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import { SkillsManager } from '../../../../src/lib/skills-manager';
@@ -1435,7 +1432,7 @@ describe('QueryOptionsBuilder', () => {
       expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 24000 });
     });
 
-    it('applies configured Neo effort across a provider without an effort catalog', () => {
+    it('keeps ordinary effort behavior for Neo when the provider has no effort catalog', () => {
       const sqlite = new BunDatabase(':memory:');
       try {
         createNeoTables(sqlite);
@@ -1466,7 +1463,7 @@ describe('QueryOptionsBuilder', () => {
             }),
           },
         });
-        expect(configured.addSessionStateOptions({}).effort).toBe('low');
+        expect(configured.addSessionStateOptions({}).effort).toBeUndefined();
         mockSession.id = generateUUID();
         expect(builder.addSessionStateOptions({}).effort).toBeUndefined();
       } finally {
@@ -2036,10 +2033,10 @@ describe('QueryOptionsBuilder', () => {
 
   describe('tools configuration', () => {
     it.each([
-      ['neo', null, neoCoordinatorNativeTools()],
+      ['neo', null, ['AskUserQuestion']],
       ['worker', 'saas', ['AskUserQuestion']],
     ] as const)(
-      'uses the persisted %s binding for resumed prompts and native questions',
+      'uses ordinary configured options for a %s binding too',
       async (kind, projectId, tools) => {
         const sqlite = new BunDatabase(':memory:');
         try {
@@ -2070,21 +2067,11 @@ describe('QueryOptionsBuilder', () => {
           const options = resumedBuilder.addSessionStateOptions(await resumedBuilder.build());
           expect(options.resume).toBe(mockSession.sdkSessionId);
           expect(options.model).toBe('default');
-          expect(options.maxTurns).toBe(kind === 'worker' ? Infinity : undefined);
+          expect(options.maxTurns).toBe(Infinity);
           expect(options.tools).toEqual([...tools]);
-          expect(options.allowedTools?.includes('AskUserQuestion')).toBe(kind === 'worker');
-          if (kind !== 'worker') {
-            expect(options.allowedTools).toEqual(neoCoordinatorAllowedTools());
-            expect(options.permissionMode).toBe('dontAsk');
-            expect(options.systemPrompt).toEqual({
-              type: 'custom',
-              prompt: neoPrompt(),
-              snapshot: false,
-            });
-          } else {
-            expect(options.permissionMode).toBe('acceptEdits');
-            expect(options.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code' });
-          }
+          expect(options.allowedTools?.includes('AskUserQuestion')).toBe(true);
+          expect(options.permissionMode).toBe('acceptEdits');
+          expect(options.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code' });
         } finally {
           sqlite.close();
         }

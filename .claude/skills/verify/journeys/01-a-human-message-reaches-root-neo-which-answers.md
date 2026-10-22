@@ -15,3 +15,10 @@
    This proves prompt delivery and publication plumbing, not a generative model's choice
    to publish or stay silent. Without a permitted local model, report that behavior as
    unverified; do not use live credentials or treat the script as behavioral acceptance.
+
+   After #8114, the input uses the ordinary SDK prompt feed and contains no
+   holder-owned human-input envelope. The publication test must leave new
+   askOrigin/producerInput unset, preserve idempotent MCP publishing, and observe
+   that ending in plain SDK text creates no automatic publication. The follow-up
+   replyTo PR adds explicit human-message attribution in the Neo conversation
+   write path only.

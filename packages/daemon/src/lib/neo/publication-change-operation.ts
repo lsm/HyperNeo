@@ -9,7 +9,6 @@ import { z } from 'zod';
 import type { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { neoDerivedId } from './derived-id.ts';
-import type { NeoAskOrigin } from './ask-origin.ts';
 import {
   NeoPublicationSchema,
   NeoPublicationResultSchema,
@@ -37,8 +36,6 @@ export interface NeoPublicationChangeRuntime {
   getBinding(id: string): NeoBinding | null;
   getRootBinding(): NeoBinding | null;
   publications: Pick<NeoPublicationRepository, 'get' | 'edit' | 'listRecent'>;
-  resolveAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
-  resolveHumanAskOrigin(input: NeoAskOrigin): NeoAskOrigin | null;
   notify(conversationId: string): void;
 }
 
@@ -103,9 +100,9 @@ function changePipeline(
     .pipe(
       (owned: Owned, caller: OperationCaller) => {
         const live = requirePublicationLifetime(
-          { ...owned.producer, ask: owned.publication.askOrigin },
+          owned.producer,
           caller,
-          runtime.getBinding(owned.producer.input.sessionId),
+          runtime.getBinding(owned.producer.binding.sessionId),
           runtime.getRootBinding()
         );
         return 'reason' in live ? live : { value: owned };
@@ -117,14 +114,7 @@ function changePipeline(
       (owned: Owned, request: never) => {
         const result = change(owned, request);
         if (result.accepted) runtime.notify(result.publication.conversationId);
-        return withNeoPublicationAnswer(
-          result,
-          result.accepted
-            ? runtime.resolveHumanAskOrigin(
-                result.publication.answerOrigin ?? result.publication.askOrigin
-              )
-            : null
-        );
+        return withNeoPublicationAnswer(result, null);
       },
       ['change', 'request'],
       'change'
@@ -150,17 +140,10 @@ export function createNeoPublicationChangeOperations(
           owned.publication.publicationId,
           { shortText: input.shortText, fullText: input.fullText },
           now().toISOString(),
-          owned.producer.input.sessionId,
-          owned.producer.input,
-          neoDerivedId(
-            JSON.stringify([
-              name,
-              owned.producer.input.sessionId,
-              owned.producer.input.messageId,
-              input.requestId,
-            ])
-          ),
-          runtime.resolveAskOrigin(owned.producer.input) ?? owned.producer.input
+          owned.producer.binding.sessionId,
+          undefined,
+          neoDerivedId(JSON.stringify([name, owned.producer.binding.sessionId, input.requestId])),
+          undefined
         )
     );
   const edit = revise('neo.publication.edit', EditInput);

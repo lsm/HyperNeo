@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -149,10 +150,8 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
     HYPERNEO_DATA_DIR: join(isolated, 'data'),
     HYPERNEO_WORKSPACE_PATH: isolated,
     CLAUDE_CONFIG_DIR: join(isolated, 'sdk'),
+    TEST_SDK_SESSION_DIR: join(isolated, 'sdk'),
     ANTHROPIC_BASE_URL: `http://127.0.0.1:${address.port}`,
-    ANTHROPIC_API_KEY: 'sk-fictional-acceptance-only',
-    ANTHROPIC_AUTH_TOKEN: 'fictional-acceptance-only',
-    CLAUDE_CODE_OAUTH_TOKEN: 'fictional-acceptance-only',
     GLM_API_KEY: '',
     OPENAI_API_KEY: '',
     MINIMAX_API_KEY: '',
@@ -164,6 +163,22 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
   let daemon: Awaited<ReturnType<typeof import('../../../src/app.ts').createDaemonApp>> | undefined;
   const hub = new MessageHub({ defaultSessionId: 'global' });
   let transport: WebSocketClientTransport | undefined;
+  const { QueryOptionsBuilder } = await import('../../../src/lib/agent/query-options-builder.ts');
+  const build = QueryOptionsBuilder.prototype.build;
+  QueryOptionsBuilder.prototype.build = async function (...args) {
+    const options = await build.apply(this, args);
+    return {
+      ...options,
+      spawnClaudeCodeProcess: (opts) =>
+        spawn(opts.command, opts.args, {
+          cwd: opts.cwd,
+          env: { ...opts.env, ANTHROPIC_BASE_URL: environment.ANTHROPIC_BASE_URL },
+          stdio: ['pipe', 'pipe', 'pipe'],
+          signal: opts.signal,
+        }),
+    };
+  };
+
   try {
     const { createDaemonApp } = await import('../../../src/app.ts');
     const { getConfig } = await import('../../../src/config.ts');
@@ -188,6 +203,24 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
     });
     hub.registerTransport(transport);
     await transport.initialize();
+    const params = {
+      providerId: 'anthropic',
+      displayName: 'Synthetic local model',
+      kind: 'built_in',
+      authType: 'api_key',
+      isEnabled: true,
+      isDefault: true,
+      sortOrder: 0,
+    };
+    const credentials = { apiKey: 'sk-synthetic-loopback-only' };
+    const { providers } = await hub.request<{ providers: { id: string; providerId: string }[] }>(
+      'providers.list',
+      {}
+    );
+    const existing = providers.find((provider) => provider.providerId === 'anthropic');
+    if (existing) await hub.request('providers.update', { id: existing.id, params, credentials });
+    else await hub.request('providers.create', { params, credentials });
+
     const opened = await hub.request<{ ok: boolean; sessionId: string }>('operation.invoke', {
       name: 'neo.open',
       input: {},
@@ -216,15 +249,13 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
     }
     expect(page.ok).toBe(true);
     expect(page.items, JSON.stringify({ calls, receipts, requests })).toHaveLength(1);
-    const owner = page.items[0].askOrigin.sessionId;
-    expect(owner).toBe(opened.sessionId);
+    expect(page.items[0].askOrigin).toBeUndefined();
+    expect(page.items[0].producerInput).toBeUndefined();
     expect(page.items[0]).toMatchObject({
       publicationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
       shortText,
       fullText,
       links: [],
-      askOrigin: { sessionId: owner, messageId: requestId },
-      producerInput: { sessionId: owner, messageId: requestId },
     });
     const end = Date.now() + 15000;
     while (calls.length < 3 && Date.now() < end)
@@ -281,12 +312,13 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
     const human = (sent[0].human as { type: string; text?: string }[]).filter(
       (part) => part.type === 'text'
     );
-    expect(human.map((part) => part.text)).toEqual([
-      `<human-input>${JSON.stringify({ sessionId: opened.sessionId, messageId: requestId, triggerId: `human:${requestId}` })}</human-input>`,
+    expect(human.map((part) => part.text).slice(-2)).toEqual([
       expect.stringMatching(/^\(local time: \w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+\)$/),
       'Tell me about the fictional moon garden.',
     ]);
+    expect(human.map((part) => part.text).join('\n')).not.toContain('<human-input>');
   } finally {
+    QueryOptionsBuilder.prototype.build = build;
     await transport?.close();
     await daemon?.cleanup();
     await new Promise<void>((resolve, reject) =>

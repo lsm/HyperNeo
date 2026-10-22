@@ -159,9 +159,9 @@ export class NeoPublicationRepository {
     text: { shortText?: string; fullText?: string },
     at: string,
     by: string,
-    input: NeoInputOrigin,
+    input: NeoInputOrigin | undefined,
     revisionId: string,
-    answerOrigin: NeoInputOrigin = input
+    answerOrigin: NeoInputOrigin | undefined = input
   ): NeoPublicationChangeResult {
     return this.db.transaction((): NeoPublicationChangeResult => {
       const reserved = this.db
@@ -190,8 +190,9 @@ export class NeoPublicationRepository {
         const same =
           (text.shortText === undefined || text.shortText === prior.shortText) &&
           (text.fullText === undefined || text.fullText === prior.fullText) &&
-          input.sessionId === prior.producerInput.sessionId &&
-          input.messageId === prior.producerInput.messageId;
+          (!input ||
+            (input.sessionId === prior.producerInput?.sessionId &&
+              input.messageId === prior.producerInput?.messageId));
         return same
           ? { accepted: true, created: false, publication: current }
           : { accepted: false, reason: 'publication_conflict' };

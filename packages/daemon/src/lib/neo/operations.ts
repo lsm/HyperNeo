@@ -5,7 +5,6 @@ import {
   NeoConversationWakeRepository,
   NeoConversationWakeSchema,
 } from '../../storage/repositories/neo-conversation-wake-repository.ts';
-import { neoTurnRequestKey } from './request-key.ts';
 import { readNeoWorking } from './working.ts';
 import { hostname } from 'node:os';
 import {
@@ -21,12 +20,7 @@ import { neoMirroredAliases } from './project-cleanup.ts';
 import { createNeoProjectCleanupApply } from './project-cleanup-apply.ts';
 import type { PlaceGroup } from '../drivers/types.ts';
 import { existsSync } from 'node:fs';
-import { neoPromptText } from './reply-language.ts';
-import {
-  NEO_SNAPSHOT_UNCHANGED_GUIDANCE,
-  planNeoSnapshotRead,
-  rememberNeoSnapshotRead,
-} from './snapshot-read.ts';
+import { NEO_SNAPSHOT_UNCHANGED_GUIDANCE } from './snapshot-read.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { THINKING_LEVELS } from '@hyperneo/shared';
 import { z } from 'zod';
@@ -38,6 +32,7 @@ import {
 } from './packs/coding/github-query.ts';
 import type { OperationCaller } from '../operations/registry.ts';
 import { defineOperation } from '../operations/registry.ts';
+import { isLocalUser } from '../operations/caller.ts';
 import { hashString32 } from '../runtime-hash.ts';
 import type { NeoService } from './service.ts';
 import type { NeoProject } from '@hyperneo/shared/types/neo-context';
@@ -67,7 +62,6 @@ import {
   NEO_MCP_SNAPSHOT_BUDGET,
   neoSnapshotOmitted,
 } from './snapshot-compact.ts';
-import { hasNeoHumanWorkInput, neoTurnOrigin } from './work-origin.ts';
 import { invokeOperation } from '../operations/invoke.ts';
 import {
   NEO_SESSION_MUTES_MAX,
@@ -99,7 +93,7 @@ import {
   PackSettingSchema,
 } from './packs/preference-operations.ts';
 import { createNeoPreferenceOperation } from './model-preference.ts';
-import { planNeoRuleEdit, planNeoSavedRules, requireNeoRuleCitation } from './saved-rules.ts';
+import { planNeoRuleEdit } from './saved-rules.ts';
 
 type ZodShape<T> = { [K in keyof Required<T>]: z.ZodType<T[K]> };
 
@@ -282,63 +276,17 @@ export function neoSnapshotRevision<T extends { ok: boolean }>(
     : { ...snapshot, rev };
 }
 
-export const NEO_HUMAN_TURN_REFUSAL =
-  'Neo can do this only while answering the human’s own chat message, not from a system note.';
-
-function readNeoRuleSource(
-  service: NeoService,
-  caller: OperationCaller,
-  messageId?: string
-): string | null {
-  if (caller.source === 'rpc' && caller.principal === 'local') return null;
-  if (!caller.sessionId || !caller.neoTurn) return '';
-  return neoPromptText(
-    service.db
-      .getSDKMessageRepo()
-      .getStoredPromptsByUuid(caller.sessionId, messageId ?? neoTurnOrigin(caller.neoTurn))
-      .filter((message) => (message as { inputKind?: unknown }).inputKind === 'human')
-  );
-}
-
-function isNeoHumanTurn(service: NeoService, caller: OperationCaller, messageId?: string): boolean {
-  if (caller.source === 'rpc' && caller.principal === 'local') return true;
-  const turn = caller.neoTurn;
-  if (!turn?.isLive() || !caller.sessionId) return false;
-  if (service.db.getSession(caller.sessionId)?.status !== 'active') return false;
-  if (messageId)
-    return (
-      !!turn.hasInput?.(messageId) &&
-      service.db.getSDKMessageRepo().getUserSendStatus(caller.sessionId, messageId) ===
-        'consumed' &&
-      service.db
-        .getSDKMessageRepo()
-        .getStoredPromptsByUuid(caller.sessionId, messageId)
-        .some(
-          (message) =>
-            message.type === 'user' && (message as { inputKind?: unknown }).inputKind === 'human'
-        )
-    );
-  return (
-    service.ownsHumanMessage(caller) &&
-    hasNeoHumanWorkInput(
-      caller,
-      service.db.getSDKMessageRepo().getStoredPromptsByUuid(caller.sessionId, neoTurnOrigin(turn))
-    )
-  );
-}
-
 function admitNeoCaller(
   service: NeoService,
   caller: OperationCaller,
-  name: string,
-  humanMessageId?: string
+  name: string
 ): { value: OperationCaller } | { reason: Rejection } {
-  if (caller.source === 'rpc' && caller.principal === 'local') return { value: caller };
+  if (isLocalUser(caller)) return { value: caller };
   const binding = caller.sessionId ? service.repo.getBindingBySession(caller.sessionId) : null;
   if (caller.source !== 'mcp' || binding?.kind !== 'neo')
     return { reason: { ok: false, reason: 'This operation belongs to Neo.' } };
-  if (name === 'neo.rule.save' && !isNeoHumanTurn(service, caller, humanMessageId))
-    return { reason: { ok: false, reason: NEO_HUMAN_TURN_REFUSAL } };
+  if (name === 'neo.rule.save')
+    return { reason: { ok: false, reason: 'This action needs the user.' } };
   if (['neo.open', 'neo.restart', 'neo.session.track'].includes(name))
     return { reason: { ok: false, reason: 'This action needs the user.' } };
   return { value: caller };
@@ -562,18 +510,8 @@ export function createNeoOperations(service: NeoService) {
   const saveRules = (superpipe({})('neo.rule.save') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
-      (input: z.infer<typeof SaveRules>, caller: OperationCaller) =>
-        admitNeoCaller(service, caller, 'neo.rule.save', input.triggerId?.slice('human:'.length)),
-      ['input', 'caller'],
-      'result:save'
-    )
-    .pipe(
-      (input: z.infer<typeof SaveRules>, caller: OperationCaller) =>
-        requireNeoRuleCitation(
-          input,
-          input.from,
-          readNeoRuleSource(service, caller, input.triggerId?.slice('human:'.length))
-        ),
+      (_input: z.infer<typeof SaveRules>, caller: OperationCaller) =>
+        admitNeoCaller(service, caller, 'neo.rule.save'),
       ['input', 'caller'],
       'result:save'
     )
@@ -593,28 +531,13 @@ export function createNeoOperations(service: NeoService) {
       },
       ['save', 'current']
     )
-    .pipe(
-      (caller: OperationCaller, rules: string[], current: { neo?: NeoSettings }) =>
-        service.noteSavedRules(caller, planNeoSavedRules(neoStandingRules(current.neo), rules)),
-      ['caller', 'save', 'current']
-    )
     .pipe((rules: string[]) => ({ ok: true as const, standingRules: rules }), 'save', 'save')
     .end('save') as (
     input: z.infer<typeof SaveRules>,
     caller: OperationCaller
   ) => z.infer<typeof RulesResult>;
   const read = path('neo.snapshot', async (input: z.infer<typeof Scope>, caller) => {
-    const read = neoSnapshotRevision(await snapshot(caller, input.projectId), input.sinceRev);
-    const turn = caller.source === 'mcp' ? caller.neoTurn?.messageId : undefined;
-    if (!caller.sessionId || !turn) return read;
-    const key = [caller.sessionId, turn, input.projectId].join('\n');
-    const planned = planNeoSnapshotRead(
-      read,
-      service.snapshotReads.get(key) ?? null,
-      service.db.getSDKMessageRepo().latestCompactionSeq(caller.sessionId)
-    );
-    if (planned.remember) rememberNeoSnapshotRead(service.snapshotReads, key, planned.remember);
-    return planned.result;
+    return neoSnapshotRevision(await snapshot(caller, input.projectId), input.sinceRev);
   });
   const restart = path('neo.restart', () => service.restart());
   const open = path('neo.open', async (input: z.infer<typeof Scope>, caller) => {
@@ -651,9 +574,9 @@ export function createNeoOperations(service: NeoService) {
       'result:admission'
     )
     .pipe(
-      (input: SaveRequest, caller: OperationCaller) => ({
+      (input: SaveRequest) => ({
         ...input,
-        id: input.id ?? neoTurnRequestKey(caller, 'neo.project.save', input),
+        id: input.id ?? crypto.randomUUID(),
       }),
       ['input', 'admission'],
       'request'
@@ -722,10 +645,7 @@ export function createNeoOperations(service: NeoService) {
     createNeoIntakeOperation(
       service.db,
       service.repo,
-      (sessionId) => {
-        service.notifyChanged();
-        void service.steerQueuedInputs(sessionId);
-      },
+      () => service.notifyChanged(),
       service.todos
     ),
     createNeoReorganizeOperation(neoReorganizeRuntime(service)),
@@ -734,8 +654,6 @@ export function createNeoOperations(service: NeoService) {
       getBinding: (id) => service.repo.getBindingBySession(id),
       getRootBinding: () => service.repo.defaultBinding(),
       publications: service.publications,
-      resolveAskOrigin: (input) => service.resolveAskOrigin(input),
-      resolveHumanAskOrigin: (input) => service.resolveHumanAskOrigin(input),
       notify: (conversationId) => {
         service.notifyChanged();
         service.notifyPublicationsChanged(conversationId);

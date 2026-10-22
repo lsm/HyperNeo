@@ -27,7 +27,7 @@ import { disposeAcpSessions } from '../acp/acp-model-fetcher.ts';
 import { AcpProvider } from '../providers/acp-provider.ts';
 import type { QueryLike } from './query-like.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { sessionSdkPath } from '../neo/session-policy.ts';
+import { sessionSdkPath } from '../session/sdk-path.ts';
 
 const ONE_M_SUFFIX = /\[1m\]$/i;
 const ACP_SWITCH_DISPOSE_TIMEOUT_MS = 8_000;
@@ -235,8 +235,8 @@ export class ModelSwitchHandler {
   constructor(private ctx: ModelSwitchHandlerContext) {}
 
   private getSDKWorkspacePath(): string {
-    const { session, db } = this.ctx;
-    return sessionSdkPath(db, session) ?? process.cwd();
+    const { session } = this.ctx;
+    return sessionSdkPath(session) ?? process.cwd();
   }
 
   private stripThinkingBlocksIfNeeded(previousProvider: string, newProvider: string): void {

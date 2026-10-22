@@ -5,7 +5,6 @@ import {
   persistAndEnqueueDelivery,
 } from '../../../../src/lib/agent/message-delivery-outbox';
 import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
-import { NeoCoordinatorTurn } from '../../../../src/lib/neo/coordinator-turn';
 import { materializeMailboxFailuresForSession } from '../../../../src/lib/mailbox/cancellation';
 import { createMailboxDeliveryHandler } from '../../../../src/lib/mailbox/delivery';
 import { enqueueMailboxEntry, MAILBOX_LANE } from '../../../../src/lib/mailbox/enqueue';
@@ -99,7 +98,7 @@ describe('createMailboxDeliveryHandler', () => {
     mailbox.close();
   });
 
-  test('actual chat admission gives a holder turn human provenance', async () => {
+  test('chat and session-message admission preserve input kinds', async () => {
     createNeoTables(mailbox.db);
     runMigration279(mailbox.db);
     const handler = createMailboxDeliveryHandler({
@@ -116,27 +115,19 @@ describe('createMailboxDeliveryHandler', () => {
     await handler(chat);
     const injected = claimMailboxJob(
       mailbox,
-      makeEntry({ origin: 'session:agent', messageUuid: 'agent-inject' })
+      makeEntry({
+        origin: 'session:agent',
+        messageUuid: 'agent-inject',
+        message: { ...message, inputKind: 'task' },
+      })
     );
     await handler(injected);
-    const db = {
-      getDatabase: () => mailbox.db,
-      getSDKMessageRepo: () => mailbox.sdkMessageRepo,
-    } as unknown as Database;
-    const directTurn = new NeoCoordinatorTurn(db, SESSION_ID, { isLive: () => true });
-    const injectedTurn = new NeoCoordinatorTurn(db, SESSION_ID, { isLive: () => true });
-    try {
-      directTurn.bind('direct-chat');
-      injectedTurn.bind('agent-inject');
-      expect(mailbox.sdkMessageRepo.getStoredPromptsByUuid(SESSION_ID, 'direct-chat')).toEqual([
-        expect.objectContaining({ inputKind: 'human' }),
-      ]);
-      expect(directTurn.identity()?.human).toBe(true);
-      expect(injectedTurn.identity()?.human).toBe(false);
-    } finally {
-      directTurn.dispose();
-      injectedTurn.dispose();
-    }
+    expect(mailbox.sdkMessageRepo.getStoredPromptsByUuid(SESSION_ID, 'direct-chat')).toEqual([
+      expect.objectContaining({ inputKind: 'human' }),
+    ]);
+    expect(mailbox.sdkMessageRepo.getStoredPromptsByUuid(SESSION_ID, 'agent-inject')).toEqual([
+      expect.objectContaining({ inputKind: 'task' }),
+    ]);
   });
 
   test('re-ensures an older unstamped chat prompt without a content conflict', async () => {

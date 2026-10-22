@@ -8,10 +8,7 @@ import { join } from 'node:path';
 import { MessageHub, WebSocketClientTransport, subscribeToStructuredLogs } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 
-export async function verifySpentAdmission(
-  kind: 'ordinary' | 'neo',
-  acceptance: 'deadline' | 'full'
-): Promise<void> {
+export async function verifySpentAdmission(kind: 'ordinary' | 'neo'): Promise<void> {
   const run = await mkdtemp(join(tmpdir(), 'spent-admission-'));
   const requestId = randomUUID();
   const markers = ['ADMISSION_HEAD', 'QUEUED_ONE', 'QUEUED_TWO', 'QUEUED_THREE', 'QUEUED_FOUR'];
@@ -23,7 +20,14 @@ export async function verifySpentAdmission(
       stages.push({ at: Date.now(), ...event.metadata });
   });
   let restarted = false;
-  const evidence: Record<string, unknown> = { run, kind, acceptance, requestId, requests, stages };
+  let holdNext = false;
+  let held = false;
+  let release: (() => void) | undefined;
+  const hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let midTurnSeen = false;
+  const evidence: Record<string, unknown> = { run, kind, requestId, requests, stages };
   const fixture = createServer(async (req, res) => {
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(Buffer.from(chunk));
@@ -42,6 +46,12 @@ export async function verifySpentAdmission(
     const text = active ? `Visible synthetic recovery reply ${requests.length + 1}` : 'Probe ready';
     if (active) {
       requests.push(text);
+      if (JSON.stringify(body.messages).includes('HUMAN_MID_TURN')) midTurnSeen = true;
+      if (holdNext) {
+        holdNext = false;
+        held = true;
+        await hold;
+      }
       if (restarted)
         for (const marker of markers)
           if (JSON.stringify(body.messages).includes(marker)) received.add(marker);
@@ -204,6 +214,35 @@ export async function verifySpentAdmission(
     const originalId = kind === 'neo' ? requestId : String(original.messageId);
     evidence.firstAccepted = original;
     await waitForReply('Visible synthetic recovery reply 1');
+    const send = (content: string) =>
+      kind === 'neo'
+        ? call('neo.message.send', { sessionId, requestId: randomUUID(), content })
+        : hub!.request('message.send', { sessionId, content });
+    holdNext = true;
+    await send('Check the synthetic recovery garden: HOLD_FOR_INTERRUPT');
+    const heldDeadline = Date.now() + 20000;
+    while (!held && Date.now() < heldDeadline)
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    assert(held, 'model request was not held');
+    evidence.midTurnAccepted = await send('Check the synthetic recovery garden: HUMAN_MID_TURN');
+    const interrupt = hub!.request('client.interrupt', { sessionId });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    release!();
+    evidence.interrupt = await interrupt;
+    const midTurnDeadline = Date.now() + 20000;
+    while (!midTurnSeen && Date.now() < midTurnDeadline)
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    assert(midTurnSeen, 'mid-turn human input never reached the model after interrupt');
+    const midTurnRows = daemon!.db
+      .getDatabase()
+      .prepare(
+        "SELECT send_status FROM sdk_messages WHERE session_id = ? AND message_type = 'user'"
+      )
+      .all(sessionId) as Array<{ send_status: string }>;
+    assert.equal(midTurnRows.filter((row) => row.send_status === 'failed').length, 0);
+    evidence.midTurnReceipt = true;
+    evidence.interruptPreserved = true;
+
     const live = await daemon!.sessionManager.getSessionForControl(sessionId);
     const settled = Date.now() + 10000;
     while (live?.getProcessingState().status !== 'idle' && Date.now() < settled)
@@ -295,65 +334,23 @@ export async function verifySpentAdmission(
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
     };
-    if (kind === 'neo') {
-      await until(
-        () => stages.some((event) => event.messageUuid === ids[0] && event.event === 'query_ready'),
-        'head never reached query_ready'
-      );
-      await until(
-        () => JSON.parse(daemon!.db.getSession(sessionId)!.processingState!).status === 'idle',
-        'session never became idle'
-      );
-      evidence.interrupt = await hub!.request('client.interrupt', { sessionId });
-      evidence.afterInterrupt = rows();
-      assert.equal(
-        rows().filter((row) => ids.includes(row.sdk_uuid) && row.send_status === 'failed').length,
-        0
-      );
-    }
-    if (kind === 'neo' && acceptance === 'deadline') {
-      await until(
-        () =>
-          stages.some(
-            (event) =>
-              event.event === 'slot_released' &&
-              event.messageUuid === ids[0] &&
-              event.outcome === 'parked' &&
-              Number(event.elapsedMs) >= 2500 &&
-              Number(event.elapsedMs) < 6000
-          ),
-        'spent admission did not park within its existing deadline',
-        7000
-      );
-      const head = stages.find(
-        (event) => event.event === 'query_ready' && event.messageUuid === ids[0]
-      );
-      assert.equal(daemon!.db.getJobQueueRepo().getJob(String(head!.jobId))?.retryCount, 8);
-      assert.equal(
-        daemon!.db.getSDKMessageRepo().getDeliveryContent(sessionId, ids[0])?.sendStatus,
-        'enqueued'
-      );
-      evidence.deadlineBounded = true;
-      evidence.fullJourney =
-        'known red until P0b (#8091): queued markers do not yet reach the model';
-    } else {
-      await until(
-        () => markers.every((marker) => received.has(marker)),
-        'queued inputs did not reach the model after restart'
-      );
-      await until(
-        () =>
-          rows()
-            .filter((row) => ids.includes(row.sdk_uuid))
-            .every((row) => row.send_status === 'consumed'),
-        'queued inputs were not consumed'
-      );
-    }
+    await until(
+      () => markers.every((marker) => received.has(marker)),
+      'queued inputs did not reach the model after restart'
+    );
+    await until(
+      () =>
+        rows()
+          .filter((row) => ids.includes(row.sdk_uuid))
+          .every((row) => row.send_status === 'consumed'),
+      'queued inputs were not consumed'
+    );
     evidence.afterDelivery = sample();
     evidence.messages = await read();
     evidence.received = [...received];
     evidence.passed = true;
   } finally {
+    release?.();
     if (process.env.VERIFY_EVIDENCE_DIR) {
       await mkdir(process.env.VERIFY_EVIDENCE_DIR, { recursive: true });
       await writeFile(

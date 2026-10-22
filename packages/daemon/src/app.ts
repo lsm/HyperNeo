@@ -900,10 +900,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       },
       sendNote: async (sessionId, promptUuid) => {
         const messageUuid = `${RESTART_RECOVERY_PREFIX}${promptUuid}`;
-        rpcHandlers.stampNeoContinuation(
-          { sessionId, messageId: messageUuid },
-          { sessionId, messageId: promptUuid }
-        );
         const outcome = await handoffPromptToMailbox({
           to: renderAddress({ kind: 'session', sessionId }),
           origin: 'recovery',

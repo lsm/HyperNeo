@@ -24,7 +24,7 @@ beforeEach(async () => {
 afterEach(() => db.close());
 
 describe('scheduled wakes in the public conversation', () => {
-  test('root turn transitions notify snapshot readers, repeated states and other sessions do not', async () => {
+  test('root status updates notify snapshot readers while other sessions do not', async () => {
     const events = new InternalEventBus<DaemonInternalEventMap>();
     const changed: string[] = [];
     const service = new NeoService(
@@ -44,12 +44,12 @@ describe('scheduled wakes in the public conversation', () => {
           processingState: { status: 'processing' } as never,
         });
       }
-      expect(changed).toEqual(['neo.changed']);
+      expect(changed).toEqual(['neo.changed', 'neo.changed']);
       await events.publish('session.updated', {
         sessionId,
         processingState: { status: 'idle' } as never,
       });
-      expect(changed).toEqual(['neo.changed', 'neo.changed']);
+      expect(changed).toEqual(['neo.changed', 'neo.changed', 'neo.changed']);
     } finally {
       service.dispose();
     }
