@@ -1,3 +1,4 @@
+import superpipe, { type PipelineAPI } from 'superpipe';
 import type { NeoRefState, NeoRefStateReader } from './ask-prs.ts';
 import type { NeoTodo, NeoTodoCheck } from '@hyperneo/shared/types/neo-ask';
 import { neoWorkPrVerdict, type NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
@@ -426,6 +427,40 @@ type CodingTodoFacts = {
   issue?: NeoRefState;
 };
 
+const readIssueFacts = (superpipe({})('coding.issue-facts') as PipelineAPI)
+  .input(['todo', 'readRefs', 'readPrs', 'repo'])
+  .pipe(
+    async (todo: NeoTodo, read: NeoRefStateReader) => {
+      const ref = codingIssueRef(todo.check);
+      return { issue: ref ? (await read([ref]))[0] : undefined };
+    },
+    ['todo', 'readRefs'],
+    'facts'
+  )
+  .pipe(
+    async (facts: Pick<CodingTodoFacts, 'issue'>, read: NeoWorkPrReader) => ({
+      ...facts,
+      prs: facts.issue?.closingPrs?.length ? ((await read(facts.issue.closingPrs)) ?? []) : [],
+    }),
+    ['facts', 'readPrs'],
+    'facts'
+  )
+  .pipe(
+    (facts: Omit<CodingTodoFacts, 'observedAt'>, repo: CodingTodoPrRepository, todo: NeoTodo) => {
+      const observedAt = Date.now();
+      repo.record(todo.id, facts.prs, observedAt);
+      return { ...facts, observedAt };
+    },
+    ['facts', 'repo', 'todo'],
+    'facts'
+  )
+  .endAsync('facts') as (
+  todo: NeoTodo,
+  readRefs: NeoRefStateReader,
+  readPrs: NeoWorkPrReader,
+  repo: CodingTodoPrRepository
+) => Promise<CodingTodoFacts>;
+
 export function createCodingTodoPack(
   repo: CodingTodoPrRepository,
   readPrs: NeoWorkPrReader,
@@ -441,13 +476,8 @@ export function createCodingTodoPack(
   };
   const readFacts = async (todo: NeoTodo): Promise<CodingTodoFacts | null> => {
     if (todo.check && todo.check.pack !== 'coding') return null;
-    if (todo.check?.kind === 'issue_closed') {
-      const ref = codingIssueRef(todo.check);
-      const issue = ref && (await readRefs?.([ref]))?.[0];
-      const prs = issue?.closingPrs?.length ? ((await readPrs(issue.closingPrs)) ?? []) : [];
-      repo.record(todo.id, prs, Date.now());
-      return { issue: issue || undefined, prs, observedAt: Date.now() };
-    }
+    if (todo.check?.kind === 'issue_closed')
+      return readIssueFacts(todo, readRefs ?? (async () => []), readPrs, repo);
     repo.claim(todo.id, claimsOf(todo), Date.now());
     const urls = repo.urls(todo.id);
     if (!urls.length) return todo.check ? { prs: [], observedAt: Date.now() } : null;
