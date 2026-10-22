@@ -1,3 +1,4 @@
+import { saveWorkFeedChunk } from '../../../packages/daemon/src/storage/work-feed.ts';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { SDKMessageRepository } from '../../../packages/daemon/src/storage/repositories/sdk-message-repository.ts';
 import assert from 'node:assert/strict';
@@ -14,7 +15,7 @@ assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert(!existsSync(join(run, 'data/daemon.db')));
-for (const path of ['data', 'home/.codex', 'workspace', 'evidence']) mkdirSync(join(run, path), { recursive: true });
+for (const path of ['data', 'home/.codex', 'workspace', 'evidence', 'bin', 'home/.claude/projects/synthetic']) mkdirSync(join(run, path), { recursive: true });
 const codex = new Database(join(run, 'home/.codex/state_5.sqlite'));
 codex.exec(`CREATE TABLE threads (id TEXT, name TEXT, title TEXT, first_user_message TEXT, cwd TEXT, source TEXT, archived INTEGER, updated_at_ms INTEGER, rollout_path TEXT);
 CREATE TABLE projects (id TEXT, name TEXT, updated_at_ms INTEGER);
@@ -27,6 +28,14 @@ codex.close();
 const db = new Database(join(run, 'data/daemon.db'));
 try {
   runMigrations(db, () => {}); createTables(db); runMigrations(db, () => {});
+  writeFileSync(join(run, 'bin/claude'), '#!/bin/sh\n[ "$1" = agents ] && [ "$2" = --json ] || exit 2\nprintf "agents\\n" >> "$HOME/../evidence/claude-agents.log"\nprintf "[]\\n"\n', { mode: 0o700 });
+  for (let i = 0; i < 10; i++) {
+    const id = `synthetic-history-${i}`, text = `workerhistoryprobe plan ${i}`, at = Date.now();
+    const path = join(run, `home/.claude/projects/synthetic/${id}.jsonl`);
+    const content = JSON.stringify({ type: 'user', cwd: '/synthetic/history', uuid: `${id}-input`, timestamp: new Date(at).toISOString(), message: { content: text } }) + '\n';
+    writeFileSync(path, content);
+    saveWorkFeedChunk(db, 'claude', text, [{ sourceId: `${id}-input`, messageId: `${id}-input`, sessionId: id, role: 'user', text, at }], path, { size: Buffer.byteLength(content), offset: Buffer.byteLength(content), mtime: at });
+  }
   const root = 'neo:10000000-0000-4000-8000-000000008120';
   db.prepare(`INSERT INTO sessions(id,title,workspace_path,created_at,last_active_at,status,config,metadata)
     VALUES (?,'Synthetic Neo',?,'2026-10-21T00:00:00Z','2026-10-21T00:00:00Z','active','{"queryMode":"manual"}','{}')`).run(root, run);

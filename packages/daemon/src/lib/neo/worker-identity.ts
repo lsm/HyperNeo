@@ -1,7 +1,11 @@
 import { parseRemoteAddress } from '../mailbox/address.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import { workerIdentity, type WorkerIdentity } from '@hyperneo/shared/types/worker-identity';
+import {
+  isWorkerAdapter,
+  workerIdentity,
+  type WorkerIdentity,
+} from '@hyperneo/shared/types/worker-identity';
 import type { WorkRef } from '../drivers/types.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
 
@@ -30,7 +34,7 @@ export function sessionWorkerRef(id: string, local: boolean): WorkRef {
   const remote = parseRemoteAddress(id);
   if (remote) return { adapter: 'hyperneo', id: remote.sessionId, daemon: remote.daemonId };
   const split = id.indexOf(':');
-  return !local && split > 0
+  return !local && split > 0 && isWorkerAdapter(id.slice(0, split))
     ? { adapter: id.slice(0, split), id: id.slice(split + 1) }
     : { adapter: 'hyperneo', id };
 }

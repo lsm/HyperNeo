@@ -183,7 +183,11 @@ export function findSessionVerdict(
   if (count) return { name: session, match: count === 1 ? 'exact' : 'ambiguous' };
   const near = searched
     .flatMap((group) =>
-      group.work.map(({ ref, title }) => ({ ref, title, worker: workerIdentity(ref, title) }))
+      group.work.map(({ ref, title, worker }) => ({
+        ref,
+        title,
+        worker: worker ?? workerIdentity(ref, title),
+      }))
     )
     .slice(0, NEAR_SESSIONS);
   return { name: session, match: 'none', near };
@@ -212,7 +216,11 @@ export async function findLocally(
             work: await Promise.all(
               group.work.map(async (work) => {
                 const current = await adapter.status?.(work.ref);
-                return { ...work, title: current?.ok ? current.value.title : work.ref.id };
+                return {
+                  ...work,
+                  title: current?.ok ? current.value.title : work.title,
+                  worker: workerIdentity(work.ref, current?.ok ? current.value.title : null),
+                };
               })
             ),
           }))
@@ -291,7 +299,7 @@ function clampTitle(work: PlaceGroup['work'][number]): PlaceGroup['work'][number
     work.title.length > TITLE_BUDGET_CHARS
       ? `${work.title.slice(0, TITLE_BUDGET_CHARS)}…`
       : work.title;
-  return { ...work, title, worker: workerIdentity(work.ref, title) };
+  return { ...work, title, worker: work.worker ?? workerIdentity(work.ref, title) };
 }
 
 export function fitFindBudget(

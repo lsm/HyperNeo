@@ -17,8 +17,10 @@ const ENGINES: Record<string, string> = {
   space: 'Space',
 };
 
+export const isWorkerAdapter = (adapter: string): boolean => Object.hasOwn(ENGINES, adapter);
+
 export const workerEngine = (adapter: string): string =>
-  Object.hasOwn(ENGINES, adapter) ? ENGINES[adapter] : adapter;
+  isWorkerAdapter(adapter) ? ENGINES[adapter] : adapter;
 
 export function workerIdentity(
   ref: { id: string; adapter: string; daemon?: string },

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 const [port, runText, mode = 'verify'] = process.argv.slice(2);
@@ -63,6 +63,30 @@ try {
     own.close();
     assert(queued.some((row: any) => row.payload.includes('from-name=') && row.payload.includes(`Codex · ${name}`)), 'queued header names the current adapter record');
     replies.push({ queued });
+    const missing = await rpc('operation.invoke', { name: 'message.send', input: { sessionId: root, from: 'session:neo:deleted-sender', message: { type: 'user', message: { content: 'Synthetic missing native sender' }, parent_tool_use_id: null } } });
+    assert.equal(missing.kind, 'accepted');
+    const saved = new Database(join(run, 'data/daemon.db'), { readonly: true });
+    const missingRows = saved.prepare('SELECT payload FROM job_queue WHERE payload LIKE ?').all(`%${missing.messageId}%`);
+    saved.close();
+    assert(missingRows.some((row: any) => row.payload.includes('HyperNeo · neo:deleted-sender')), 'missing native sender keeps full ID');
+    replies.push({ missingRows });
+    const log = join(run, 'evidence/claude-agents.log');
+    const count = () => existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).length : 0;
+    const before = count();
+    for (let i = 0; i < 2; i++) {
+      const history = await rpc('operation.invoke', { name: 'work.find', input: { text: 'workerhistoryprobe', adapters: ['claude-code'], localOnly: true } });
+      const work = history.places.flatMap((place: any) => place.work);
+      assert.equal(work.length, 10);
+      assert(work.every((item: any) => item.title.startsWith('workerhistoryprobe plan ') && item.worker.name === null && item.worker.label === `Claude · ${item.ref.id}`));
+      assert.equal(count() - before, i + 1, 'one actual CLI invocation per batch, fresh read on next batch');
+    }
+    const exact = await rpc('operation.invoke', { name: 'work.find', input: { session: 'workerhistoryprobe plan 0', adapters: ['claude-code'], localOnly: true } });
+    assert.equal(exact.session.match, 'exact');
+    const near = await rpc('operation.invoke', { name: 'work.find', input: { session: 'workerhistoryprobe', adapters: ['claude-code'], localOnly: true } });
+    assert.equal(near.session.match, 'none');
+    assert(near.session.near.every((item: any) => item.title.startsWith('workerhistoryprobe plan ') && item.worker.name === null));
+    replies.push({ claudeCliCalls: count() - before });
+
     }
   }
   console.log(`${mode} PASS`);

@@ -6,7 +6,7 @@ RUN=${2:?usage: worker-identity.sh <port> <fresh-run-dir>}
 if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then echo "port $PORT is busy"; exit 1; fi
 mkdir -p "$RUN/home"
 env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test bun .claude/skills/verify/worker-identity-seed.ts "$RUN"
-env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
+env -i PATH="$RUN/bin:$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
   bun packages/cli/main.ts --port "$PORT" --host 127.0.0.1 --db-path "$RUN/data/daemon.db" > "$RUN/daemon.log" 2>&1 &
 PID=$!
 trap 'kill "$PID" 2>/dev/null || true; wait "$PID" || true' EXIT
