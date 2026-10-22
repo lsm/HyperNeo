@@ -53,7 +53,7 @@ export class NeoConversationWakeRepository {
     const source = JSON.parse(input.metadata) as Pick<
       NeoConversationWake,
       'scheduleId' | 'sourceKind' | 'sourceId'
-    >;
+    > & { legacyInputs?: string[] };
     const goal = this.db
       .prepare('SELECT title FROM space_goals WHERE id = ? AND owner_session_id = ?')
       .get(source.sourceKind === 'goal' ? source.sourceId : null, `neo:${conversationId}`) as {
@@ -80,8 +80,14 @@ export class NeoConversationWakeRepository {
           WHERE m.session_id = ?1 AND m.consumed_seq > ?2 AND m.message_type = 'user'
             AND m.parent_tool_use_id IS NULL AND COALESCE(m.send_status, 'consumed') = 'consumed'
             AND COALESCE(m.is_replay, 0) = 0 AND COALESCE(m.internal_compaction_turn, 0) = 0
-            AND COALESCE(m.first_block_type, 'text') <> 'tool_result'), 9223372036854775807))`)
-      .get(`neo:${conversationId}`, input.consumed, messageId) as {
+            AND COALESCE(m.first_block_type, 'text') <> 'tool_result'
+            AND NOT EXISTS (SELECT 1 FROM json_each(?4) i WHERE i.value = m.sdk_uuid)), 9223372036854775807))`)
+      .get(
+        `neo:${conversationId}`,
+        input.consumed,
+        messageId,
+        JSON.stringify(source.legacyInputs ?? [])
+      ) as {
       timestamp: string;
       summary: unknown;
     } | null;

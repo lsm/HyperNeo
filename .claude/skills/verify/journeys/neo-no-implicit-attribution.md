@@ -21,7 +21,9 @@ written. Unknown, foreign, system, task and queued references remain refused.
 The upgrade fixture starts with legacy publications and a settled wake. It
 copies explicit wake metadata into scheduler-owned history and leaves EVERY
 original attribution row unchanged, including human, continuation and malformed
-rows. Repeating the upgrade keeps the same conversation content. The retired
+rows. Already-recorded legacy continuation boundaries are copied only as
+historical wake metadata, preserving unstamped saved summaries; new deliveries
+create no such boundary. Repeating the upgrade keeps the same conversation content. The retired
 table stays stored but has no runtime readers or writers. Legacy publication
 askOrigin and SDK metadata remain readable; no new lineage is inferred.
 
