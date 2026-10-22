@@ -1,6 +1,6 @@
 # Todo state from facts
 
-**Human-approved design (approval relayed by Neo, 2026-10-21). Implementation follows in separate slices after this document merges.** Manual merge additionally requires eligible exact-head approval, required green CI and Neo’s signed-in approving-run Timeline readback showing zero “Tool failed” rows. Source audit: `dev` at `e5a63573a8` (2026-10-21). This consumes fullstack-3's [GitHub ledger contract (#8135, `51b3a245`)](https://github.com/lsm/HyperNeo/blob/51b3a2451c22016126ac2d0ef1b0e402e12e4661/docs/design/github-ledger-single-source.md): local reads, coalesced refresh, persisted changes and destination receipts. It does not define that API/schema, refresh GitHub, or add a second collector. Neo coordinates any missing capability before implementation.
+**Human-approved design (approval relayed by Neo, 2026-10-21). Implementation follows in separate slices after this document merges.** Manual squash merge requires eligible review-bot approval on the exact current head and required green CI; never enable auto-merge. Source audit: `dev` at `e5a63573a8` (2026-10-21). This consumes fullstack-3's [GitHub ledger contract (#8135, `51b3a245`)](https://github.com/lsm/HyperNeo/blob/51b3a2451c22016126ac2d0ef1b0e402e12e4661/docs/design/github-ledger-single-source.md): local reads, coalesced refresh, persisted changes and destination receipts. It does not define that API/schema, refresh GitHub, or add a second collector. Neo coordinates any missing capability before implementation.
 
 ## Why the current state drifts
 
