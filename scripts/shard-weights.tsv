@@ -254,7 +254,6 @@
 3419	packages/daemon/tests/unit/1-core/operations/neo-intake-notification.test.ts
 92	packages/daemon/tests/unit/1-core/operations/neo-intake.test.ts
 11	packages/daemon/tests/unit/1-core/operations/neo-life-admin-pack.test.ts
-78	packages/daemon/tests/unit/1-core/operations/neo-look-up-guard.test.ts
 863	packages/daemon/tests/unit/1-core/operations/neo-model-preference.test.ts
 603	packages/daemon/tests/unit/1-core/operations/neo-note-delivery-mode.test.ts
 22	packages/daemon/tests/unit/1-core/operations/neo-packs.test.ts
