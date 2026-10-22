@@ -121,6 +121,7 @@ function TodoRow({
   const detail = neoTodoDetail(todo);
   const control = onToggle && (
     <ContentDisclosureControl
+      iconOnly
       expanded={expanded}
       onToggle={onToggle}
       aria-label={t(expanded ? 'todo.hideDetails' : 'todo.showDetails', { title: todo.title })}
@@ -132,7 +133,7 @@ function TodoRow({
       id={`neo-ref-todo-${todo.id}`}
       data-ask-todo={todo.id}
       data-todo-state={todo.state}
-      class={`flex min-w-0 items-start gap-2.5 text-sm ${number === undefined ? 'border-t border-line py-2 first:border-t-0' : 'py-1'}`}
+      class={`grid min-w-0 grid-cols-[1rem_minmax(0,1fr)_auto] items-start gap-x-2.5 text-sm ${number === undefined ? 'border-t border-line py-2 first:border-t-0' : 'py-1'}`}
     >
       {onCheck ? (
         <input
@@ -165,7 +166,6 @@ function TodoRow({
             </span>
           )}
           <div class="flow-root">
-            {!expanded && control}
             <span
               data-todo-status
               class={`block ${onToggle && !expanded ? 'truncate' : 'break-words'} text-xs ${number === undefined && todo.state === 'blocked' ? 'text-warning' : 'text-fg-muted'}`}
@@ -192,20 +192,24 @@ function TodoRow({
                 </span>
               )}
             </div>
-            {expanded && control}
           </div>
         )}
       </div>
-      {todo.link && todo.state !== 'removed' && onOpen && (
-        <button
-          type="button"
-          class={neoSecondaryClass}
-          aria-label={t('todo.openTitle', { title: todo.title })}
-          onClick={() => onOpen(todo.link!, todo.worker?.label ?? todo.title)}
-        >
-          <NeoSessionMark kind={neoSessionKind(todo.worker?.adapter, todo.link)} />
-          {t('todo.open')}
-        </button>
+      {(control || (todo.link && todo.state !== 'removed' && onOpen)) && (
+        <div class="flex shrink-0 items-center justify-end gap-2 self-start">
+          {todo.link && todo.state !== 'removed' && onOpen && (
+            <button
+              type="button"
+              class={neoSecondaryClass}
+              aria-label={t('todo.openTitle', { title: todo.title })}
+              onClick={() => onOpen(todo.link!, todo.worker?.label ?? todo.title)}
+            >
+              <NeoSessionMark kind={neoSessionKind(todo.worker?.adapter, todo.link)} />
+              {t('todo.open')}
+            </button>
+          )}
+          {control}
+        </div>
       )}
     </div>
   );

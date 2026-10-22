@@ -18,6 +18,9 @@ try {
       if (width < 800) await page.getByRole('button', { name: /^Your work/ }).click();
       const card = page.locator('[data-ask="collapse-card"]:visible');
       await card.waitFor();
+      await page.evaluate(async () => {
+        await Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished.catch(() => {})));
+      });
       const rows = card.locator('[data-ask-todo]');
       assert.equal(await rows.count(), 3);
       assert.equal(await card.locator('[data-worker-label]').count(), 1);
@@ -29,16 +32,16 @@ try {
         const word = button.querySelector('.sr-only');
         return { row:rect(row), status:rect(status), control:rect(button), label:button.getAttribute('aria-label'), expanded:button.getAttribute('aria-expanded'), glyph:button.querySelector('[aria-hidden]')?.textContent, hiddenWord:word ? getComputedStyle(word).position : null, color:getComputedStyle(button).color };
       }));
-      const before = await measure();
       await card.screenshot({ path:`${out}/todo-collapsed-${width}.png` });
+      const before = await measure();
       const first = card.getByRole('button', { name:/details: Synthetic step 1$/ });
       await first.focus(); await page.keyboard.press('Enter');
       await card.locator('[data-todo-details]').waitFor();
       assert.equal(await card.locator('[data-todo-details]').count(), 1);
       const focusRetained = await first.evaluate(node => node === document.activeElement);
       if (phase === 'after') assert(focusRetained);
-      const expanded = await measure();
       await card.screenshot({ path:`${out}/todo-expanded-${width}.png` });
+      const expanded = await measure();
       if (!focusRetained) await first.focus();
       await page.keyboard.press('Space');
       assert.equal(await card.locator('[data-todo-details]').count(), 0);
@@ -55,7 +58,7 @@ try {
           assert(Math.abs(row.status.x-before[0].status.x)<1, 'status text shares one left edge');
           assert.equal(row.control.width,28);
           assert.equal(row.glyph,'▾'); assert.equal(row.hiddenWord,'absolute');
-          assert(Math.abs(expanded[index].control.x-row.control.x)<1, 'expansion keeps the action column');
+          assert(Math.abs(expanded[index].control.right-expanded[index].row.right)<1, 'expansion keeps the action column');
           assert(Math.abs((expanded[index].control.y-expanded[index].row.y)-(row.control.y-row.row.y))<2, 'expansion keeps its row-top anchor');
         }
         assert.equal(expanded[0].glyph,'▴');
