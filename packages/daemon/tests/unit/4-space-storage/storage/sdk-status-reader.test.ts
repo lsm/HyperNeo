@@ -424,3 +424,30 @@ test('search backpressure preserves SDK admission and queued SDK reads finish fi
   expect(await third).toEqual([]);
   await reader.close();
 });
+
+test('live feeds share status admission and keep explicit error recovery', async () => {
+  const { reader, workers } = fixture();
+  const feed = { feed: 'full' as const, sessionId: 'synthetic-session', limit: 20 };
+  const result = {
+    rows: [{ id: 'complete', message: { content: 'retained text' } }],
+    hashes: { hash: 17, rowHashes: [['complete', 12] as [unknown, number]] },
+  };
+  const first = reader.readMessageFeed(feed),
+    status = reader.read(args);
+  await tick();
+  expect(workers[0].requests[0].args).toEqual(feed);
+  workers[0].reply(workers[0].requests[0], result);
+  expect(await first).toEqual(result);
+  await tick();
+  workers[0].reply(workers[0].requests[1], page);
+  expect(await status).toEqual(page);
+  const failed = reader.readMessageFeed(feed).catch((error) => String(error));
+  await tick();
+  workers[0].crash();
+  expect(await failed).toContain('synthetic failure');
+  const next = reader.readMessageFeed({ ...feed, feed: 'compact' });
+  await tick();
+  workers[1].reply(workers[1].requests[0], result);
+  expect(await next).toEqual(result);
+  await reader.close();
+});
