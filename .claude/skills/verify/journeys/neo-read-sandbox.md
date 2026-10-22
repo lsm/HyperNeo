@@ -18,7 +18,9 @@ Inspect `neo-goal-cycle-sdk.json`: actual Read/Grep/Glob return synthetic code;
 Bash reads it without a permission denial. Its writes to an exact per-repository
 `<data>/worktrees/<owner>/<repo>/neo-read` leaf succeed. A worker-id sibling,
 the data directory and Neo's cwd remain unwritable. Bash returns an explicit non-zero tool error with OS-denial stderr; the SDK
-records it as `is_error:true`. The temp-directory write must also succeed.
+records it as `is_error:true`. The temp-directory write must also succeed. Neo must not advertise a
+`HYPERNEO_HANDOFF_DIR` outside its writable roots; the Bash probe refuses a
+non-empty value. Ordinary workers retain their handoff draft directory.
 There is no command parser or unsandboxed retry. The strict SDK sandbox uses
 `enableWeakerNetworkIsolation:true` for macOS trustd; network hosts are unrestricted.
 Do not set `HYPERNEO_TEST_DISABLE_SANDBOX=1` for this proof. Ordinary Linux CI sets

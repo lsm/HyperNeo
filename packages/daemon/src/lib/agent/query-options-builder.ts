@@ -429,8 +429,10 @@ export class QueryOptionsBuilder {
     const neo = neoCoordinatorBinding(this.ctx.db, session.id);
     const readAccess = neo ? await neoReadAccess(session.id, this.getCwd()) : undefined;
     const additionalDirectories = neo ? [] : this.getAdditionalDirectories();
-    const handoffDirectory = handoffDraftDirectory(getDataDir(), this.ctx.session.id);
-    if (!neo) additionalDirectories?.push(handoffDirectory);
+    const handoffDirectory = neo
+      ? undefined
+      : handoffDraftDirectory(getDataDir(), this.ctx.session.id);
+    if (handoffDirectory) additionalDirectories?.push(handoffDirectory);
     const hooks = this.buildHooks(overrides?.askUserQuestionHook ?? this.askUserQuestionHook);
     const permissionMode = this.getPermissionMode();
     const pluginsFromSkills = [
