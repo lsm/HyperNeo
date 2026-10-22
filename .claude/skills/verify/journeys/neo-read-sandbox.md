@@ -33,8 +33,11 @@ Do not set `HYPERNEO_TEST_DISABLE_SANDBOX=1` for this proof. Ordinary Linux CI s
 that flag and runs the explicitly labelled transport fixture with sandbox disabled;
 its passing result is not OS-containment evidence. Production options stay strict.
 
-The daemon supplies Neo's `GH_TOKEN` at runtime from its existing GitHub environment:
-`GH_TOKEN ?? GITHUB_TOKEN`. This is the same precedence the GitHub poller uses.
+The daemon supplies Neo's `GH_TOKEN` at runtime from its existing GitHub poller
+credential: Keychain service `neokai.external-events.github`, account `default`,
+then `GH_TOKEN ?? GITHUB_TOKEN` if the item is absent or unavailable. This matches
+the poller's credential-store-first precedence. Test mode and non-macOS hosts use
+only the environment; the synthetic SDK fixture never reads a real credential.
 No token is stored in session config or printed in evidence. The human approved
 this existing, potentially write-capable token in question
 `79a6141f-f688-40b4-a403-ad52f9f3e30f`; a dedicated read-only token is deferred.
@@ -46,8 +49,8 @@ Actual SDK Bash must run `gh pr view`, and the stub checks the token privately a
 returns PR number 8148 with `authenticatedByDaemon:true`. An absent/wrong token
 returns a visible authentication error. No GitHub network request is made. A synthetic
 `.zshenv` tries to replace the token; isolated `ZDOTDIR` must prevent that reinjection.
-Focused tests also cover GH_TOKEN precedence, GITHUB_TOKEN fallback, missing or failed
-runtime providers and disappearing checkout-inventory entries. Preserve the JSON
+Focused tests also cover the existing store precedence, GH_TOKEN precedence,
+GITHUB_TOKEN fallback, missing or failed runtime providers and disappearing checkout-inventory entries. Preserve the JSON
 outside the worktree before cleanup. This proves runtime wiring, not the real token's
 GitHub scopes or spontaneous model behavior.
 

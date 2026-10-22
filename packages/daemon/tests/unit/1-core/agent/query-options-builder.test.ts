@@ -2154,7 +2154,7 @@ describe('QueryOptionsBuilder', () => {
             expect(options.sandbox?.filesystem?.denyWrite).toEqual(['/test/workspace']);
             expect(options.sandbox?.filesystem?.allowWrite).not.toContain(handoffDataDir);
             expect(options.env?.HYPERNEO_HANDOFF_DIR).toBeUndefined();
-            expect(options.env?.GH_TOKEN).toBe('');
+            expect(options.env?.GH_TOKEN).toBe('synthetic-daemon-query-token');
             expect(options.env?.GITHUB_TOKEN).toBe('');
             expect(options.env?.GH_CONFIG_DIR).toBe(join(options.env!.TMPDIR!, 'gh'));
             for (const sandbox of [

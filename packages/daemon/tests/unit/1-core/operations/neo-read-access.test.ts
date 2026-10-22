@@ -55,12 +55,13 @@ test('an unavailable poller store falls back to the daemon environment', async (
   runtimePlatform.mockReturnValue('darwin');
   vi.stubEnv('NODE_ENV', 'production');
   vi.stubEnv('GH_TOKEN', 'synthetic-environment-token');
-  vi.spyOn(KeychainCredentialStore.prototype, 'get').mockRejectedValue(
-    new Error('Synthetic locked store')
-  );
+  const get = vi
+    .spyOn(KeychainCredentialStore.prototype, 'get')
+    .mockRejectedValue(new Error('Synthetic locked store'));
   const access = await neoReadAccess('synthetic-poller-locked', '/synthetic/Neo');
   roots.push(access.env.TMPDIR);
   expect(access.env.GH_TOKEN).toBe('synthetic-environment-token');
+  expect(get).toHaveBeenCalledWith('neokai.external-events.github', 'default');
 });
 
 test('only exact existing Neo checkout leaves become writable, never worker siblings', () => {
