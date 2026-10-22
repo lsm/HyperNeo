@@ -71,6 +71,41 @@ afterEach(async () => {
 });
 
 describe('Neo home save', () => {
+  test.each(['first save', 'legacy ignore'])('preserves runtime folders on %s', async (state) => {
+    const prior = process.env.GIT_CONFIG_GLOBAL;
+    try {
+      if (state === 'first save') {
+        await rm(root, { recursive: true });
+        await mkdir(root);
+        const config = join(fixture, 'gitconfig');
+        await writeFile(
+          config,
+          '[user]\n name = Verify Neo\n email = verify@example.invalid\n[commit]\n gpgsign = false\n'
+        );
+        process.env.GIT_CONFIG_GLOBAL = config;
+      } else {
+        await writeFile(join(root, '.gitignore'), '.coordinators/\n');
+        await git('commit', '-am', 'Legacy runtime ignore');
+      }
+      for (const dir of ['.coordinators', '.claude', 'worktrees']) {
+        await mkdir(join(root, dir, 'verify'), { recursive: true });
+        await writeFile(join(root, dir, 'verify', 'private.md'), `Synthetic ${dir} bytes.`);
+      }
+      expect(await save({ path: 'digest.md', content: 'Curated.' })).toMatchObject({ ok: true });
+      expect(await readFile(join(root, 'digest.md'), 'utf8')).toBe('Curated.');
+      for (const dir of ['.coordinators', '.claude', 'worktrees']) {
+        expect(await readFile(join(root, dir, 'verify', 'private.md'), 'utf8')).toBe(
+          `Synthetic ${dir} bytes.`
+        );
+        expect(await git('ls-files', '--', dir)).toBe('');
+        expect(await git('show', 'HEAD:.gitignore')).toContain(`${dir}/`);
+      }
+      expect(await git('status', '--porcelain')).toBe('');
+    } finally {
+      if (prior === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = prior;
+    }
+  });
   test('commits one curated file without changing its bytes, and unchanged retry adds no commit', async () => {
     const input = {
       path: 'projects/verify/digest.md',

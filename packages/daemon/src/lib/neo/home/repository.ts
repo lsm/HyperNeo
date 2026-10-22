@@ -30,6 +30,8 @@ export type HomeResult =
 
 type HomeSyncResult = { value: string | null } | { reason: HomeFailure };
 
+const HOME_RUNTIME_DIRS = ['.coordinators', '.claude', 'worktrees'];
+
 export class NeoHomeRepository {
   private pending: Promise<unknown> = Promise.resolve();
   constructor(
@@ -474,23 +476,26 @@ export class NeoHomeRepository {
     const dirty = metadata
       ? (await this.git(['status', '--porcelain', '-z', '--untracked-files=all'])).text
           .split('\0')
-          .some((entry) => entry && !entry.startsWith('?? .coordinators/'))
+          .some(
+            (entry) => entry && !HOME_RUNTIME_DIRS.some((dir) => entry.startsWith(`?? ${dir}/`))
+          )
       : (
           await readdir(this.root).catch((error) => {
             if (error.code !== 'ENOENT') throw error;
             return [];
           })
-        ).some((name) => name !== '.coordinators');
+        ).some((name) => !HOME_RUNTIME_DIRS.includes(name));
     if (dirty) return { ok: false, reason: 'dirty: review existing home changes before saving.' };
-    if (input.resolution) {
-      if (!metadata)
-        return { ok: false, reason: 'stale_conflict: the home repository is missing.' };
+    if (metadata)
       for (const path of paths)
         if (!(await this.git(['check-ignore', '-q', '--', path], true)).code)
           return {
             ok: false,
             reason: 'ignored_path: this document or decision log is git-ignored.',
           };
+    if (input.resolution) {
+      if (!metadata)
+        return { ok: false, reason: 'stale_conflict: the home repository is missing.' };
       return applyHomeChoice(this.root, input, (args, failure, network, cwd) =>
         this.git(args, failure, network, cwd)
       );
@@ -562,11 +567,9 @@ export class NeoHomeRepository {
     await mkdir(this.root, { recursive: true });
     await this.git(['init', '--quiet']);
     const hasHead = !(await this.git(['rev-parse', '--verify', 'HEAD'], true)).code;
-    const ignores = (await this.git(['show', 'HEAD:.gitignore'], true)).text
-      .split('\n')
-      .includes('.coordinators/');
+    const ignores = (await this.git(['show', 'HEAD:.gitignore'], true)).text.split('\n');
     const paths = ['README.md', '.gitignore', 'direction.md'];
-    if (!hasHead || !ignores) {
+    if (!hasHead || !HOME_RUNTIME_DIRS.every((dir) => ignores.includes(`${dir}/`))) {
       const changes = (
         await this.git(
           hasHead
@@ -575,7 +578,10 @@ export class NeoHomeRepository {
         )
       ).text
         .split('\0')
-        .filter((entry) => entry && !(hasHead && entry.startsWith('?? .coordinators/')));
+        .filter(
+          (entry) =>
+            entry && !(hasHead && HOME_RUNTIME_DIRS.some((dir) => entry.startsWith(`?? ${dir}/`)))
+        );
       const interrupted =
         !hasHead &&
         changes.length === paths.length &&
@@ -605,10 +611,11 @@ export class NeoHomeRepository {
         }
       );
       const ignore = originalIgnore ?? '';
-      if (!ignore.split('\n').includes('.coordinators/'))
+      const missing = HOME_RUNTIME_DIRS.filter((dir) => !ignore.split('\n').includes(`${dir}/`));
+      if (missing.length)
         await writeFile(
           join(this.root, '.gitignore'),
-          `${ignore}${!ignore || ignore.endsWith('\n') ? '' : '\n'}.coordinators/\n`
+          `${ignore}${!ignore || ignore.endsWith('\n') ? '' : '\n'}${missing.map((dir) => `${dir}/`).join('\n')}\n`
         );
       try {
         await this.git(['add', '--', ...paths]);

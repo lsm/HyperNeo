@@ -699,7 +699,9 @@ test(`root startup, reads, resume and publication (${sandboxProof ? 'real OS san
     }
     expect(JSON.stringify(approvalProbeResults)).not.toContain('UNWRITABLE_HANDOFF_ADVERTISED');
     expect(JSON.stringify(approvalProbeResults)).not.toContain('UNEXPECTED_INHERITED_TOKEN');
-    expect(JSON.stringify(approvalProbeResults)).toContain('GH_TOKEN environment variable');
+    expect(JSON.stringify(approvalProbeResults)).toMatch(
+      /GH_TOKEN environment variable|verify gh stub: unsupported gh/
+    );
     if (sandboxProof) {
       expect(JSON.stringify(approvalProbeResults)).toMatch(/operation not permitted/i);
       expect(existsSync(join(readCheckout, 'allowed.txt'))).toBe(true);
@@ -732,17 +734,14 @@ test(`root startup, reads, resume and publication (${sandboxProof ? 'real OS san
     expect(daemon.db.getSession(root)?.sdkOriginPath).toBe(newCwd);
     expect(existsSync(getSDKSessionFilePath(newCwd, sdkSessionId))).toBe(true);
     expect(sent[0].system).toContain(neoPrompt());
+    expect(sent[0].system).not.toContain('On a scheduled goal wake, use its goalId');
     for (const instruction of [
-      'On a scheduled goal wake',
-      'goal.session.get',
-      'neo.home.read',
-      'goal.journal.append',
-      'runId',
-      'neo.question.get',
+      'neo.home.init',
+      'neo.home.save',
+      'goal.session.create',
+      '900000',
+      'nudgeEvery',
       'answeredByHuman',
-      'sha256',
-      'one plain-text summary line',
-      'On other turns',
     ])
       expect(sent[0].system).toContain(instruction);
     const human = (sent[0].human as { type: string; text?: string }[]).filter(

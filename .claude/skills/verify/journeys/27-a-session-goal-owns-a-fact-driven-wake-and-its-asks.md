@@ -5,7 +5,7 @@
     model calls `neo.ask.open` through the real MCP door with that `goalId`.
     End state: `evidence/goal-schedule.json` contains the linked ask, a delivered
     `<daemon-note kind="scheduled_wake">` in root Neo's transcript with mandate
-    and journal run identity, the exact same digest from `goal.facts`, and an
+    and journal run identity, the full goal-cycle instructions prefixed inside that wake, the exact same digest from `goal.facts`, and an
     empty summary after delivery. Reading facts twice before delivery preserves
     the delta. Updating progress to 40 produces only `- Progress: 0` and
     `+ Progress: 40`. Pausing removes the job, resuming restores it, and completing
