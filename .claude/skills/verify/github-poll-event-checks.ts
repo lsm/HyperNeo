@@ -32,7 +32,7 @@ if(args[0]==='pr' && args[1]==='view') {
  kind='poll-request'; const path=args.find(a=>a.startsWith('/repos/')||a==='/user'); if(!path) process.exit(2);
  body=[];
  if(path==='/user') body={login:'synthetic-account'};
- else if(path.includes('/a-heavy/pulls/comments')) body=Array.from({length:8},(_,i)=>({id:100+i,body:'Synthetic review '+i,pull_request_url:url,html_url:url+'#discussion_r'+i,user:{login:'synthetic-reviewer'},created_at:now,updated_at:now}));
+ else if(path.includes('/a-heavy/pulls/comments')) body=Array.from({length:8},(_,i)=>({id:100+i,body:'Synthetic review '+i,commit_id:'a'.repeat(40),pull_request_url:url,html_url:url+'#discussion_r'+i,user:{login:'synthetic-reviewer'},created_at:now,updated_at:now}));
  else if(/\\/pulls\\/7(?:\\?|$)/.test(path)) body={number:7,state:phase==='closed'?'closed':'open',mergeable:true,merged:phase==='closed',merged_at:phase==='closed'?now:null,head:{sha:'a'.repeat(40)}};
  else if(path.includes('/a-heavy/pulls?') && phase==='closed') body=[{number:7,state:'closed',merged_at:now,head:{sha:'a'.repeat(40)},html_url:url,updated_at:now,user:{login:'synthetic-human'}}];
  else if(path.includes('/check-runs')) body={check_runs:[]};
