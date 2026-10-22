@@ -47,3 +47,41 @@ test('retired attribution upgrades preserve wake history and legacy publications
     db.close();
   }
 });
+
+test('legacy unstamped results keep their recorded continuation boundary after upgrade', async () => {
+  const db = await createTestDb();
+  try {
+    db.createSession(createTestSession(sessionId));
+    const raw = db.getDatabase();
+    const wake = seedNeoWake(raw, conversationId, false);
+    const continuation = 'legacy-question-continuation';
+    wake.continuation(continuation);
+    const terminal = wake.finish('Saved legacy summary.', false);
+    runMigration339(raw);
+    runMigration377(raw);
+    raw.exec(`INSERT INTO neo_input_origins
+      SELECT session_id, message_id, session_id, message_id, fired_at,
+        'scheduled_wake:' || metadata_json FROM session_schedule_wakes;
+      DELETE FROM session_schedule_wakes`);
+    raw
+      .prepare('INSERT INTO neo_input_origins VALUES (?, ?, ?, ?, ?, ?)')
+      .run(sessionId, continuation, sessionId, wake.messageId, 2, 'scheduled_wake:{}');
+    const retired = raw.prepare('SELECT * FROM neo_input_origins ORDER BY message_id').all();
+    runMigration443(raw);
+    const items = new NeoConversationReader(raw).read({ conversationId, limit: 100 }).items;
+    expect(items).toEqual([
+      expect.objectContaining({
+        role: 'wake',
+        wake: expect.objectContaining({
+          settledAt: Date.parse(terminal.timestamp),
+          summary: 'Saved legacy summary.',
+        }),
+      }),
+    ]);
+    expect(raw.prepare('SELECT * FROM neo_input_origins ORDER BY message_id').all()).toEqual(
+      retired
+    );
+  } finally {
+    db.close();
+  }
+});
