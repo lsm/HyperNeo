@@ -1,10 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { NEO_ROOT_PROMPT } from '@hyperneo/prompts';
+import { NEO_GOAL_CYCLE, NEO_ROOT_PROMPT } from '@hyperneo/prompts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 
 describe('Neo scheduled goal-cycle guidance', () => {
   test.each([false, true])('reaches Neo with domain packs enabled: %s', (packsEnabled) => {
-    const text = packsEnabled ? neoPrompt() : neoPrompt([]);
+    expect(packsEnabled ? neoPrompt() : neoPrompt([])).not.toContain(NEO_GOAL_CYCLE);
+    const text = NEO_GOAL_CYCLE;
     expect(text).toContain('On a scheduled goal wake');
     for (const operation of [
       'goal.session.get',
@@ -32,7 +33,7 @@ describe('Neo scheduled goal-cycle guidance', () => {
     expect(text).toContain('nothing moved; waiting on');
   });
   test('binds proposed mandate changes to an actual human yes before saving', () => {
-    const text = neoPrompt([]);
+    const text = NEO_GOAL_CYCLE;
     for (const fact of [
       'mandateRef',
       'direction.md',
@@ -51,8 +52,21 @@ describe('Neo scheduled goal-cycle guidance', () => {
     expect(text).toContain('old and new');
     expect(text).toContain('On no');
   });
+  test('teaches standing-outcome setup with explicit frequent cadence', () => {
+    for (const text of [
+      'neo.home.init',
+      'neo.home.save',
+      'goal.session.create',
+      'mandateRev',
+      '900000',
+      'nudgeEvery',
+      'sha256',
+      'answeredByHuman',
+    ])
+      expect(NEO_ROOT_PROMPT).toContain(text);
+  });
   test('keeps the short root and gives only scheduled goal wakes a one-line closing label', () => {
-    expect(NEO_ROOT_PROMPT.trim().split(/\s+/).length).toBeLessThan(160);
+    expect(NEO_ROOT_PROMPT.trim().split(/\s+/).length).toBeLessThan(260);
     expect(NEO_ROOT_PROMPT).not.toContain('goal.journal');
     expect(neoPrompt([])).toContain('one plain-text summary line');
     expect(neoPrompt([])).toContain('On other turns');

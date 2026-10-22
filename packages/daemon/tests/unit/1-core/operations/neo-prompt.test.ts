@@ -8,11 +8,12 @@ import {
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 describe('root Neo system prompt', () => {
   test('assembles core guidance with the short root, replacing the Claude Code preset', () => {
-    expect(neoPrompt([])).toBe(`${NEO_ROOT_PROMPT}\n\n${NEO_GOAL_CYCLE}\n\n${NEO_ROOT_TURN_END}`);
+    expect(neoPrompt([])).toBe(`${NEO_ROOT_PROMPT}\n\n${NEO_ROOT_TURN_END}`);
+    expect(neoPrompt([])).not.toContain(NEO_GOAL_CYCLE);
     expect(NEO_ROOT_TURN_END).toContain('On a scheduled goal wake');
     expect(NEO_ROOT_TURN_END).toContain('On other turns');
     expect(NEO_ROOT_TURN_END).toContain('end the turn without text');
-    expect(NEO_ROOT_PROMPT.split(/\s+/).length).toBeLessThan(160);
+    expect(NEO_ROOT_PROMPT.split(/\s+/).length).toBeLessThan(260);
     expect(NEO_ROOT_PROMPT).toContain('neo.publication.publish');
     expect(NEO_ROOT_PROMPT).not.toContain('triggerId');
     for (const fact of ['work.find', 'work.send', 'neo.rule.save'])
