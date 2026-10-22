@@ -6,7 +6,7 @@ import {
   CodingTodoPrRepository,
   createCodingTodoPack,
 } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
-import type { NeoPack } from '../../../../src/lib/neo/packs/types.ts';
+import type { NeoPack } from '../../../../src/lib/neo/pack-contract.ts';
 import {
   readNeoTodoCompletion,
   requireNeoTodoMayFinish,

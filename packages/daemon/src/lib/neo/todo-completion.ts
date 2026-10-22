@@ -1,5 +1,5 @@
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
-import type { NeoPack, NeoTodoCheckResult } from './packs/types.ts';
+import type { NeoPack, NeoTodoCheckResult } from './pack-contract.ts';
 
 type Gate<T> = { value: T } | { reason: { ok: false; reason: string } };
 

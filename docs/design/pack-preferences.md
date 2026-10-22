@@ -34,7 +34,7 @@ Growth path: a convention that keeps mattering and can be checked in code is tur
 
 ## Settings (core)
 
-A pack declares its settings next to its other hooks, as a new optional field on `NeoPack` (`packages/daemon/src/lib/neo/packs/types.ts:60`):
+A pack declares its settings next to its other hooks, as a new optional field on `NeoPack` (`packages/daemon/src/lib/neo/pack-contract.ts:78`):
 
 ```ts
 preferences?: Record<string, {

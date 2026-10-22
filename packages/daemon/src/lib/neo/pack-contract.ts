@@ -1,9 +1,9 @@
 import type { NeoTodo, NeoTodoCheck } from '@hyperneo/shared/types/neo-ask';
-import type { WorkExecutionPreparation } from '../../drivers/start-preparation.ts';
-import type { WorkRef, WorkStatus } from '../../drivers/types.ts';
-import type { Database } from '../../../storage/sqlite-compat.ts';
-import type { ExternalEvent } from '../../external-events/types.ts';
-import type { NeoStatusLine } from '../status-codes.ts';
+import type { WorkExecutionPreparation } from '../drivers/start-preparation.ts';
+import type { WorkRef, WorkStatus } from '../drivers/types.ts';
+import type { Database } from '../../storage/sqlite-compat.ts';
+import type { ExternalEvent } from '../external-events/types.ts';
+import type { NeoStatusLine } from './status-codes.ts';
 
 export interface NeoCardEventSubscription {
   workId: string;

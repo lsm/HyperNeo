@@ -8,7 +8,7 @@ import type {
 } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { NeoTodoTargetSchema } from './driver-work.ts';
-import type { NeoPack } from './packs/types.ts';
+import type { NeoPack } from './pack-contract.ts';
 import { neoTodoHome, neoTodoRepo } from './todo-repo.ts';
 import {
   readNeoTodoCompletion,

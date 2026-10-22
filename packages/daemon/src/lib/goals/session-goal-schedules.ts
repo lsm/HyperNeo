@@ -3,7 +3,7 @@ import type { SessionGoal } from '@hyperneo/shared/types/session-goal';
 import type { SessionGoalRepository } from '../../storage/repositories/session-goal-repository.ts';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { SessionScheduleCadence } from '../../storage/repositories/session-schedule-repository.ts';
-import type { NeoPack } from '../neo/packs/types.ts';
+import type { NeoPack } from '../neo/pack-contract.ts';
 import type { ScheduleSource, SessionScheduler } from '../scheduler/session-schedules.ts';
 
 export class SessionGoalSchedules implements ScheduleSource {

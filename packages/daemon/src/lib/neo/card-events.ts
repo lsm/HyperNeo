@@ -2,7 +2,7 @@ import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import { isNeoWorkClosedDone } from '@hyperneo/shared/types/neo-snapshot';
 import type { WorkRef } from '../drivers/types.ts';
 import type { ExternalEvent } from '../external-events/types.ts';
-import type { NeoCardEventSubscription, NeoPack, NeoPackEventRoute } from './packs/types.ts';
+import type { NeoCardEventSubscription, NeoPack, NeoPackEventRoute } from './pack-contract.ts';
 
 export interface NeoCardSendTarget {
   work: Pick<NeoWork, 'id' | 'status' | 'report' | 'sessionId'> | null;

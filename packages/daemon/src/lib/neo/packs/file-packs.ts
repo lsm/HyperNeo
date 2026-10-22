@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { NEO_BUILTIN_PACK_BRIEFS } from './index.ts';
-import type { NeoPack } from './types.ts';
+import type { NeoPack } from '../pack-contract.ts';
 
 interface NeoPackSkill {
   name: string;
