@@ -19,7 +19,8 @@ import {
 import { authorizeArtifactCaller, type ArtifactContext } from './file-policy.ts';
 import { loadRegistrationBinding } from './registration-binding.ts';
 import { readArtifactChunk } from './read-snapshot.ts';
-import { prepareArtifactHtml } from './html-preview.ts';
+import { prepareArtifactHtml, type ArtifactHtmlAsset } from './html-preview.ts';
+import { ArtifactBundleSchema, artifactBundleLimit, bindArtifactBundle } from './bundle.ts';
 
 const unavailable = () => ({ accepted: false as const, reason: 'unavailable' as const });
 const ListInput = z.strictObject({
@@ -107,21 +108,59 @@ export function createArtifactReadOperations(
       return { accepted: false as const, reason: 'unsupported_type' as const };
     if (row.byte_length > ARTIFACT_DEFAULT_LIMITS.documentPreviewBytes)
       return { accepted: false as const, reason: 'size_limit' as const };
-    const chunks: Buffer[] = [];
-    for (let offset = 0; ; ) {
-      const chunk = await readChunk(
-        join(data, 'artifacts'),
-        row,
-        offset,
-        ARTIFACT_DEFAULT_LIMITS.readBytes
+    const stored = JSON.parse(row.receipt).bundle;
+    const manifest =
+      stored === undefined
+        ? { success: true as const, data: [] }
+        : ArtifactBundleSchema.safeParse(stored);
+    if (!manifest.success) return unavailable();
+    const bound = bindArtifactBundle(database(), rowContext(row), manifest.data);
+    if ('reason' in bound) return bound.reason;
+    const limit = artifactBundleLimit(
+      row.byte_length,
+      bound.value,
+      ARTIFACT_DEFAULT_LIMITS.documentPreviewBytes
+    );
+    if (limit) return limit;
+    async function full(snapshot: StoredArtifactFile) {
+      const chunks: Buffer[] = [];
+      for (let offset = 0; ; ) {
+        const chunk = await readChunk(
+          join(data, 'artifacts'),
+          snapshot,
+          offset,
+          ARTIFACT_DEFAULT_LIMITS.readBytes
+        );
+        if (!chunk.accepted) return { reason: chunk };
+        chunks.push(Buffer.from(chunk.data, 'base64'));
+        offset = chunk.nextOffset;
+        if (chunk.complete) return { value: Buffer.concat(chunks) };
+      }
+    }
+    const source = await full(row);
+    if ('reason' in source) return source.reason;
+    const assets = new Map<string, ArtifactHtmlAsset>();
+    for (const asset of bound.value) {
+      const content = await full(asset.row);
+      if ('reason' in content) return content.reason;
+      assets.set(
+        asset.path,
+        asset.mediaType === 'text/css'
+          ? { kind: 'css', data: new TextDecoder().decode(content.value) }
+          : {
+              kind: 'image',
+              data: `data:${asset.mediaType};base64,${content.value.toString('base64')}`,
+            }
       );
-      if (!chunk.accepted) return chunk;
-      chunks.push(Buffer.from(chunk.data, 'base64'));
-      offset = chunk.nextOffset;
-      if (chunk.complete) break;
     }
     if (!('value' in authorizeRow(row, caller))) return unavailable();
-    const prepared = prepareArtifactHtml(new TextDecoder().decode(Buffer.concat(chunks)));
+    const prepared = prepareArtifactHtml(new TextDecoder().decode(source.value), assets);
+    if (
+      stored !== undefined &&
+      prepared &&
+      Buffer.byteLength(prepared.document) > ARTIFACT_DEFAULT_LIMITS.documentPreviewBytes
+    )
+      return { accepted: false as const, reason: 'size_limit' as const };
     return prepared
       ? { accepted: true as const, sha256: row.sha256, ...prepared }
       : { accepted: false as const, reason: 'size_limit' as const };

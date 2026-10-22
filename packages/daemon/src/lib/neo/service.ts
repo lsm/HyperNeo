@@ -2,7 +2,13 @@ import { receivedNeoHumanInput } from './human-input.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { hostname } from 'node:os';
 import { fillPrompt, NEO_SESSION_TRACK } from '@hyperneo/prompts';
-import type { GlobalSettings, MessageHub, Provider } from '@hyperneo/shared';
+import type {
+  GlobalSettings,
+  MessageHub,
+  Provider,
+  Session,
+  SessionConfig,
+} from '@hyperneo/shared';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
@@ -25,12 +31,14 @@ import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
 import type { ExternalEventPublishedPayload } from '../external-events/external-event-service.ts';
+import { requireClosedPrEvent } from '../external-events/session-subscription-close.ts';
 import { sessionEventText } from '../external-events/session-event-delivery.ts';
 import {
   SESSION_EVENT_SCOPE,
   SessionExternalEventStore,
 } from '../external-events/session-external-event-store.ts';
 import type { ExternalEvent } from '../external-events/types.ts';
+import { pullRequestUrlOfTopic } from '../github/parse-pr-url.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
 import { renderAddress } from '../mailbox/address.ts';
@@ -75,7 +83,7 @@ import type {
   NeoPackBrief,
   NeoPackEventRoute,
 } from './packs/types.ts';
-import { neoPrompt } from './prompt.ts';
+import { neoPromptTools, planNeoSessionConfig } from './session-config.ts';
 import { neoSessionStatus } from './session-status.ts';
 import { createNeoPublisher } from './publication-operation.ts';
 import type { NeoSessionNotice, NeoSessionNoticeGroup } from './session-watch.ts';
@@ -436,7 +444,7 @@ export class NeoService {
         workspacePath: neoFolderPath(),
         detectGit: false,
         config: {
-          systemPrompt: neoPrompt(this.packBriefs()),
+          ...neoPromptTools(this.packBriefs()),
           autoCompactPercent: preference?.autoCompactPercent,
           ...(preference
             ? {
@@ -447,10 +455,29 @@ export class NeoService {
             : {}),
         },
       });
+    } else {
+      await this.alignCoordinatorConfig(binding.sessionId);
     }
 
     return binding.sessionId;
   }
+
+  private readonly alignCoordinatorConfig = (superpipe({})('neo-session-config') as PipelineAPI)
+    .input(['sessionId'])
+    .pipe((sessionId: string) => this.db.getSession(sessionId), 'sessionId', 'session')
+    .pipe(
+      (session: Session | null) => planNeoSessionConfig(session, this.packBriefs()),
+      'session',
+      'config'
+    )
+    .pipe(
+      async (session: Session | null, config: SessionConfig | null) => {
+        if (session && config) await this.sessions.updateSession(session.id, { config });
+      },
+      ['session', 'config'],
+      'updated'
+    )
+    .endAsync('updated') as (sessionId: string) => Promise<void>;
 
   defaultSessionId(): string | undefined {
     return this.repo.defaultBinding()?.sessionId;
@@ -463,6 +490,7 @@ export class NeoService {
   async recover(): Promise<void> {
     this.sessionWatcher.loadSessionNoticeGroups();
     const id = this.defaultSessionId();
+    if (id) await this.alignCoordinatorConfig(id);
     const session = id ? this.db.getSession(id) : null;
     const metadata = session?.metadata as
       | (NonNullable<typeof session>['metadata'] & { neoAutoCompactPercent?: number })
@@ -709,11 +737,19 @@ export class NeoService {
       'result:event'
     )
     .pipe(
-      (event: ExternalEvent) =>
-        this.todoRunner.checkNow(
+      (event: ExternalEvent) => {
+        const read = this.todoPrs.latest(pullRequestUrlOfTopic(event.topic) ?? '');
+        const head = event.payload.headSha ?? event.payload.commitId;
+        return this.todoRunner.checkNow(
           this.packs().flatMap((pack) => pack.todos?.event(event) ?? []),
-          (message, error) => this.log.warn(message, error)
-        ),
+          (message, error) => this.log.warn(message, error),
+          'value' in
+            requireClosedPrEvent({
+              record: { event, state: 'published', createdAt: 0, updatedAt: 0 },
+            }) ||
+            (typeof head === 'string' && (!read || read.readAt < event.occurredAt))
+        );
+      },
       'event',
       'checked'
     )
@@ -749,9 +785,6 @@ export class NeoService {
       ['event', 'route'],
       'delivered'
     )
-    .pipe(async () => {
-      await this.todoRunner.refresh((message, error) => this.log.warn(message, error));
-    }, 'delivered')
     .pipe((route: NeoPackEventRoute) => {
       for (const row of route.ending) this.cardEvents.end(row.workId, row.topic, Date.now());
     }, 'route')

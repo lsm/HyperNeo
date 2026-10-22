@@ -1,12 +1,12 @@
 import { expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
+import { MessageHub, WebSocketClientTransport, type Session } from '@hyperneo/shared';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
 import { createScheduleDelivery } from '../../../src/lib/scheduler/session-schedule-delivery.ts';
 import { createOperationRegistry } from '../../../src/lib/operations/registry.ts';
@@ -14,9 +14,20 @@ import { SessionScheduleRepository } from '../../../src/storage/repositories/ses
 import { NeoAskTodoRepository } from '../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { readNeoPublications } from '../../../../web/src/neo/publication-client.ts';
 
-test('real SDK sends root Neo its system prompt and the stored human message, and publishes and asks back with explicit human references', async () => {
+test('recovered root refreshes prompt and tools, resumes SDK history across cwd changes and publishes the reply', async () => {
   const isolated = mkdtempSync(join(tmpdir(), 'neo-sdk-publication-'));
   const requestId = randomUUID();
+  const approvalProbeFile = join(isolated, 'approval-probe.txt');
+  let approvalProbeIssued = false;
+  let approvalProbeDenied = false;
+  const approvalProbeResults: unknown[] = [];
+  const root = `neo:${randomUUID()}`;
+  const historyMarker = `synthetic-history-${randomUUID()}`;
+  const oldCwd = join(isolated, 'data', 'Neo', '.coordinators', 'old-root');
+  const newCwd = join(isolated, 'data', 'Neo');
+  let sdkSessionId = '';
+  const historySeen: boolean[] = [];
+  const nativeToolsSeen: string[][] = [];
   const shortText = 'The fictional moon garden is ready.';
   const fullText = '## Fictional garden\n\nThe moon garden has three blue flowers.';
   const calls: string[] = [];
@@ -53,7 +64,13 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
         role?: string;
         content?:
           | string
-          | { type: string; text?: string; tool_use_id?: string; content?: { text?: string }[] }[];
+          | {
+              type: string;
+              text?: string;
+              content?: { text?: string }[];
+              tool_use_id?: string;
+              is_error?: boolean;
+            }[];
       }[];
       tools?: { name: string }[];
       system?: string | { text: string }[];
@@ -79,59 +96,72 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
             message.role === 'user' && JSON.stringify(message).includes('fictional moon garden')
         )?.content,
       });
-    if (active)
+    if (active) {
+      historySeen.push(JSON.stringify(body.messages).includes(historyMarker));
+      nativeToolsSeen.push((body.tools ?? []).map((tool) => tool.name));
       for (const message of body.messages ?? []) {
         if (!Array.isArray(message.content)) continue;
         for (const result of message.content) {
           const id = result.tool_use_id;
-          if (
-            result.type !== 'tool_result' ||
-            !id?.startsWith('tool-fictional-') ||
-            receivedToolCalls.has(id)
-          )
-            continue;
-          for (const item of result.content ?? [])
-            if (item.text) receipts.push(JSON.parse(item.text));
+          if (result.type !== 'tool_result' || !id || receivedToolCalls.has(id)) continue;
           receivedToolCalls.add(id);
+          approvalProbeResults.push(result);
+          if (id === 'tool-approval-probe') {
+            approvalProbeDenied = result.is_error === true;
+            continue;
+          }
+          if (id.startsWith('tool-fictional-'))
+            for (const item of result.content ?? [])
+              if (item.text) receipts.push(JSON.parse(item.text));
         }
       }
-    const publishing = active && round < 4;
-    const block = publishing
+    }
+    const approvalProbe = active && !approvalProbeIssued;
+    if (approvalProbe) approvalProbeIssued = true;
+    const publishing = active && !approvalProbe && round < 4;
+    const block = approvalProbe
       ? {
           type: 'tool_use',
-          id: `tool-fictional-${++round}`,
-          name: invoke!.name,
-          input: {
-            name:
-              round <= 2
-                ? 'neo.publication.publish'
-                : round === 3
-                  ? 'neo.rule.save'
-                  : 'neo.question.ask',
-            input:
-              round <= 2
-                ? {
-                    requestId: 'fictional-send',
-                    shortText,
-                    fullText,
-                    links: [],
-                    replyTo: [requestId],
-                  }
-                : round === 3
-                  ? {
-                      messageId: requestId,
-                      from: 'Tell me about the fictional moon garden. Keep synthetic garden changes as drafts.',
-                      add: ['Keep synthetic garden changes as drafts.'],
-                    }
-                  : {
-                      askId: 'fictional-garden',
-                      kind: 'reply',
-                      text: 'Which synthetic flower?',
-                      replyTo: [requestId],
-                    },
-          },
+          id: 'tool-approval-probe',
+          name: 'Bash',
+          input: { command: `printf SYNTHETIC_UNAPPROVED > '${approvalProbeFile}'` },
         }
-      : { type: 'text', text: 'Done.' };
+      : publishing
+        ? {
+            type: 'tool_use',
+            id: `tool-fictional-${++round}`,
+            name: invoke!.name,
+            input: {
+              name:
+                round <= 2
+                  ? 'neo.publication.publish'
+                  : round === 3
+                    ? 'neo.rule.save'
+                    : 'neo.question.ask',
+              input:
+                round <= 2
+                  ? {
+                      requestId: 'fictional-send',
+                      shortText,
+                      fullText,
+                      links: [],
+                      replyTo: [requestId],
+                    }
+                  : round === 3
+                    ? {
+                        messageId: requestId,
+                        from: 'Tell me about the fictional moon garden. Keep synthetic garden changes as drafts.',
+                        add: ['Keep synthetic garden changes as drafts.'],
+                      }
+                    : {
+                        askId: 'fictional-garden',
+                        kind: 'reply',
+                        text: 'Which synthetic flower?',
+                        replyTo: [requestId],
+                      },
+            },
+          }
+        : { type: 'text', text: 'Done.' };
     if (active) calls.push(block.type);
     const message = {
       id: `msg-fictional-${randomUUID()}`,
@@ -139,7 +169,7 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
       role: 'assistant',
       model: 'claude-haiku-4-5-20251001',
       content: [block],
-      stop_reason: publishing ? 'tool_use' : 'end_turn',
+      stop_reason: approvalProbe || publishing ? 'tool_use' : 'end_turn',
       stop_sequence: null,
       usage: { input_tokens: 100, output_tokens: 30 },
     };
@@ -163,17 +193,19 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
     event('content_block_start', {
       type: 'content_block_start',
       index: 0,
-      content_block: publishing ? { ...block, input: {} } : { type: 'text', text: '' },
+      content_block:
+        block.type === 'tool_use' ? { ...block, input: {} } : { type: 'text', text: '' },
     });
     event('content_block_delta', {
       type: 'content_block_delta',
       index: 0,
-      delta: publishing
-        ? {
-            type: 'input_json_delta',
-            partial_json: JSON.stringify('input' in block ? block.input : {}),
-          }
-        : { type: 'text_delta', text: 'Done.' },
+      delta:
+        block.type === 'tool_use'
+          ? {
+              type: 'input_json_delta',
+              partial_json: JSON.stringify('input' in block ? block.input : {}),
+            }
+          : { type: 'text_delta', text: 'Done.' },
     });
     event('content_block_stop', { type: 'content_block_stop', index: 0 });
     event('message_delta', {
@@ -227,6 +259,63 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
   };
 
   try {
+    const { query } = await import('@anthropic-ai/claude-agent-sdk');
+    const { resolveSDKCliPath } = await import('../../../src/lib/agent/sdk-cli-resolver.ts');
+    const { getSDKSessionFilePath } = await import('../../../src/lib/sdk-session-file-manager.ts');
+    await mkdir(oldCwd, { recursive: true });
+    const seedTurn = query({
+      prompt: historyMarker,
+      options: {
+        cwd: oldCwd,
+        executable: 'bun',
+        pathToClaudeCodeExecutable: resolveSDKCliPath(),
+        model: 'claude-haiku-4-5-20251001',
+        tools: [],
+        settingSources: [],
+        permissionMode: 'bypassPermissions',
+        allowDangerouslySkipPermissions: true,
+        env: { ...process.env, ANTHROPIC_API_KEY: 'sk-synthetic-loopback-only' },
+      },
+    });
+    try {
+      for await (const event of seedTurn)
+        if (event.type === 'result') sdkSessionId = event.session_id;
+    } finally {
+      seedTurn.close();
+    }
+    expect(sdkSessionId).not.toBe('');
+    expect(existsSync(getSDKSessionFilePath(oldCwd, sdkSessionId))).toBe(true);
+    const { Database } = await import('../../../src/storage/database.ts');
+    const { createReactiveDatabase } = await import('../../../src/storage/reactive-database.ts');
+    const { NeoRepository } = await import('../../../src/storage/repositories/neo-repository.ts');
+    const { createTestSession } = await import('../../helpers/database.ts');
+    const seed = new Database(join(isolated, 'daemon.db'));
+    try {
+      await seed.initialize(createReactiveDatabase(seed));
+      seed.createSession({
+        ...createTestSession(root),
+        workspacePath: newCwd,
+        sdkSessionId,
+        sdkOriginPath: oldCwd,
+        config: {
+          model: 'claude-haiku-4-5-20251001',
+          maxTokens: 8192,
+          temperature: 1,
+          provider: 'anthropic',
+          permissionMode: 'dontAsk',
+          settingSources: [],
+          systemPrompt: 'You are Neo, the user’s personal context coordinator.',
+          sdkToolsPreset: [],
+        },
+      });
+      new NeoRepository(seed.getDatabase()).reserveBinding({
+        sessionId: root,
+        kind: 'neo',
+        projectId: null,
+      });
+    } finally {
+      seed.close();
+    }
     const { createDaemonApp } = await import('../../../src/app.ts');
     const { getConfig } = await import('../../../src/config.ts');
     daemon = await createDaemonApp({
@@ -274,12 +363,15 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
     if (existing) await hub.request('providers.update', { id: existing.id, params, credentials });
     else await hub.request('providers.create', { params, credentials });
 
+    const storedAtStartup = (
+      await hub.request<{ session: Session }>('session.get', { sessionId: root })
+    ).session;
     const opened = await hub.request<{ ok: boolean; sessionId: string }>('operation.invoke', {
       name: 'neo.open',
       input: {},
     });
     expect(opened.ok).toBe(true);
-    expect(opened.sessionId).toMatch(/^neo:/);
+    expect(opened.sessionId).toBe(root);
     const schedule = new SessionScheduleRepository(daemon.db.getDatabase()).create(
       {
         target: { adapter: 'hyperneo', id: opened.sessionId },
@@ -360,9 +452,9 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
       replyTo: [requestId],
     });
     const end = Date.now() + 15000;
-    while (calls.length < 5 && Date.now() < end)
+    while (calls.length < 6 && Date.now() < end)
       await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(calls).toEqual(['tool_use', 'tool_use', 'tool_use', 'tool_use', 'text']);
+    expect(calls).toEqual(['tool_use', 'tool_use', 'tool_use', 'tool_use', 'tool_use', 'text']);
     expect(receipts).toMatchObject([
       {
         accepted: true,
@@ -406,6 +498,24 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
         join(process.env.VERIFY_EVIDENCE_DIR, 'neo-goal-cycle-sdk.json'),
         JSON.stringify(
           {
+            approvalProbeResults,
+            approvalProbeDenied,
+            approvalProbeCreatedFile: existsSync(approvalProbeFile),
+            sdkSessionId,
+            historyMarker,
+            oldCwd,
+            newCwd,
+            historySeen,
+            nativeToolsSeen,
+            storedAtStartup: {
+              sdkSessionId: storedAtStartup.sdkSessionId,
+              config: storedAtStartup.config,
+            },
+            afterResume: {
+              sdkSessionId: daemon.db.getSession(root)?.sdkSessionId,
+              sdkOriginPath: daemon.db.getSession(root)?.sdkOriginPath,
+            },
+            transcriptAtNewCwd: existsSync(getSDKSessionFilePath(newCwd, sdkSessionId)),
             sent,
             calls,
             receipts,
@@ -421,6 +531,18 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
         )
       );
     }
+    expect(approvalProbeIssued).toBe(true);
+    expect(approvalProbeDenied).toBe(true);
+    expect(existsSync(approvalProbeFile)).toBe(false);
+    expect(storedAtStartup.config.systemPrompt).toBe(neoPrompt());
+    expect(storedAtStartup.config.sdkToolsPreset).toContain('Read');
+    expect(storedAtStartup.config.sdkToolsPreset).toContain('Bash');
+    expect(nativeToolsSeen[0]).toEqual(expect.arrayContaining(['Read', 'Bash']));
+    expect(historySeen.length).toBeGreaterThan(0);
+    expect(historySeen.every(Boolean)).toBe(true);
+    expect(daemon.db.getSession(root)?.sdkSessionId).toBe(sdkSessionId);
+    expect(daemon.db.getSession(root)?.sdkOriginPath).toBe(newCwd);
+    expect(existsSync(getSDKSessionFilePath(newCwd, sdkSessionId))).toBe(true);
     expect(sent[0].system).toContain(neoPrompt());
     for (const instruction of [
       'On a scheduled goal wake',

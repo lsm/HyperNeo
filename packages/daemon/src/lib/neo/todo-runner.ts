@@ -707,10 +707,11 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     },
     async checkNow(
       todoIds: readonly string[],
-      warn: (message: string, error: unknown) => void
+      warn: (message: string, error: unknown) => void,
+      force = true
     ): Promise<void> {
       for (const todo of store.listCheckable().filter((item) => todoIds.includes(item.id))) {
-        checked.delete(todo.id);
+        if (force) checked.delete(todo.id);
         await check(todo, Date.now()).catch((error) => warn('Todo check pending', error));
       }
     },
