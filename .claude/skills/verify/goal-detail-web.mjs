@@ -20,8 +20,8 @@ try {
     await page.goto(`http://127.0.0.1:${port}/neo`);
     if(entrypoint === 'goals' && width === 390) await page.getByRole('button',{name:'Your work',exact:true}).click();
     const strip=entrypoint === 'schedule' ? page.locator(`[data-session-schedules="${seed.root}"]`) : page.getByRole('region',{name:'Goals',exact:true});
-    if(entrypoint === 'schedule') await strip.locator('summary').click();
-    await strip.getByRole('button',{name:'Publish useful guide',exact:true}).click();
+    if(entrypoint === 'schedule') await strip.getByRole('button',{name:'more — Schedules',exact:true}).click();
+    await strip.getByRole('button',{name:'more — Publish useful guide',exact:true}).click();
     await strip.getByText('Concrete examples work',{exact:true}).waitFor();
     for(const text of ['readers: 30','useful: true','Write examples','Guide for adopters'])
       await strip.getByText(text,{exact:true}).waitFor();
@@ -39,7 +39,7 @@ try {
     const ids=await journal.locator('[data-journal-entry]').evaluateAll(rows=>rows.map(row=>row.getAttribute('data-journal-entry')));
     assert.deepEqual(ids,seed.ids);
     const latest=journal.locator(`[data-journal-entry="${seed.ids[0]}"]`);
-    await latest.locator('summary').click();
+    await latest.getByRole('button',{name:'more — Effect 21',exact:true}).click();
     const evidence=latest.getByRole('link',{name:'Guide PR 21',exact:true});
     assert.equal(await evidence.getAttribute('href'),'https://github.com/example/synthetic-repo/pull/21');
     await latest.getByText('Published draft 21',{exact:true}).waitFor();

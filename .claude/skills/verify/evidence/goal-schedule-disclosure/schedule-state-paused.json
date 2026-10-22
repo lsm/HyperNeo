@@ -1,0 +1,28 @@
+{
+  "id": "02a105bc-28c0-416a-a852-aa81d622cfa3",
+  "status": "paused",
+  "sourceLabel": "Publish useful guide",
+  "target": {
+    "adapter": "hyperneo",
+    "id": "neo:ccd8757a-71dc-4ea6-852d-7f3ddc01fb24"
+  },
+  "sourceKind": "goal",
+  "sourceId": "1e7eb7ab-6e2a-40bf-8860-a7576fa3ffc2",
+  "note": null,
+  "cadence": {
+    "kind": "every",
+    "everyMs": 3600000
+  },
+  "nudgeEvery": 4,
+  "nextRunAt": null,
+  "pendingJobId": null,
+  "dueCount": 0,
+  "factsDigest": null,
+  "lastRunAt": null,
+  "lastOutcome": null,
+  "lastSkipReason": null,
+  "lastMessageId": null,
+  "createdBySession": "neo:ccd8757a-71dc-4ea6-852d-7f3ddc01fb24",
+  "createdAt": 1792635345702,
+  "updatedAt": 1792635740882
+}

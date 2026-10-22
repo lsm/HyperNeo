@@ -1,0 +1,6 @@
+{
+  "error": "TimeoutError: locator.click: Timeout 5000ms exceeded.\nCall log:\n  - waiting for locator('[data-session-schedules=\"e9c8e935-3ec0-4629-882a-7cd6129e10de\"]').getByRole('button', { name: 'Refresh schedules', exact: true })\n",
+  "summary": "Schedules\n▾\nmore",
+  "open": null,
+  "refreshVisible": false
+}
