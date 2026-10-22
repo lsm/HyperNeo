@@ -14,6 +14,14 @@ try {
     if (width < 800) await page.getByRole('button', { name: /^Your work/ }).click();
     const card = page.locator('[data-ask="worker-card"]:visible');
     await card.waitFor();
+    await page.evaluate(async () => {
+      await Promise.all(document.getAnimations().filter((animation) => animation.effect?.getComputedTiming().iterations !== Infinity).map((animation) => animation.finished.catch(() => {})));
+    });
+    await page.waitForFunction(() => {
+      const card = document.querySelector('[data-ask="worker-card"]');
+      const box = card?.getBoundingClientRect();
+      return box && box.left >= 0 && box.right <= innerWidth && box.top < innerHeight;
+    });
     const text = await card.innerText();
     await page.screenshot({ path: `${run}/evidence/worker-${mode}-${width}.png` });
     observed.push({ width, text, fits: await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth) });

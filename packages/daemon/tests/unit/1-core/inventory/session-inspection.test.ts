@@ -145,6 +145,12 @@ describe('bounded inspection presentation', () => {
       123
     );
     expect(result.resource).toEqual({
+      worker: {
+        id: row.id,
+        adapter: 'hyperneo',
+        name: resource.name,
+        label: `HyperNeo · ${resource.name}`,
+      },
       kind: 'session',
       id: row.id,
       name: 'x'.repeat(160),

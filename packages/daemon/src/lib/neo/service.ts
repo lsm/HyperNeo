@@ -1,3 +1,4 @@
+import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { onHumanDevicesReset } from '../pairing/human-device-reset.ts';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
@@ -29,6 +30,7 @@ import { NeoPublicationRepository } from '../../storage/repositories/neo-publica
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
 import { BUILD_METADATA } from '../build-metadata.ts';
+import { readWorkerIdentity, sessionWorkerRef } from './worker-identity.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
 import type { ExternalEventPublishedPayload } from '../external-events/external-event-service.ts';
@@ -344,7 +346,7 @@ export class NeoService {
         await this.deliver(
           sessionId,
           crypto.randomUUID(),
-          neoStateNote(this.openAskEntries()),
+          neoStateNote(await this.openAskEntries()),
           sessionId
         ).catch((error) => this.log.warn('Neo state note after compaction pending', error));
       },
@@ -503,6 +505,44 @@ export class NeoService {
     this.sessionWatcher.flushSessionNoticeGroup();
   }
 
+  readWorker(ref: WorkRef) {
+    if (ref.adapter === 'hyperneo' && !ref.daemon)
+      return Promise.resolve(workerIdentity(ref, this.db.getSession(ref.id)?.title ?? null));
+    return readWorkerIdentity(ref, (ref) =>
+      invokeOperation(
+        this.sessions.getOperationRegistry(),
+        'work.status',
+        { ref },
+        { source: 'internal' }
+      )
+    );
+  }
+
+  readSessionWorker(id: string) {
+    return this.readWorker(sessionWorkerRef(id, !!this.db.getSession(id)));
+  }
+
+  async todoWorkers<T extends NeoTodo>(todos: readonly T[]): Promise<T[]> {
+    const links = this.todoSessions.readLinksForTodos(todos.map((todo) => todo.id));
+    const reads = new Map<string, ReturnType<typeof this.readWorker>>();
+    return Promise.all(
+      todos.map(async (todo) => {
+        const ref = links.get(todo.id)?.worker;
+        const key = JSON.stringify(ref);
+        if (ref && !reads.has(key)) reads.set(key, this.readWorker(ref));
+        return { ...todo, worker: ref ? await reads.get(key)! : null };
+      })
+    );
+  }
+
+  async messageNames<T extends { fromSession: string; toSession: string }>(message: T) {
+    const [from, to] = await Promise.all([
+      this.readSessionWorker(message.fromSession),
+      this.readSessionWorker(message.toSession),
+    ]);
+    return { ...message, fromName: from.label, toName: to.label };
+  }
+
   restart() {
     return restartNeo({
       open: () => this.open(),
@@ -516,12 +556,15 @@ export class NeoService {
     });
   }
 
-  private openAskEntries() {
-    return projectNeoAskEntries(
+  private async openAskEntries() {
+    const entries = projectNeoAskEntries(
       this.todos.listOpenAsks(),
       this.todos,
       this.todoSessions,
       this.installedPacks()
+    );
+    return Promise.all(
+      entries.map(async (entry) => ({ ...entry, todos: await this.todoWorkers(entry.todos) }))
     );
   }
 

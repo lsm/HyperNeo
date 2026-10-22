@@ -1,3 +1,5 @@
+import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
+import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -25,6 +27,7 @@ const ResultSchema = z.union([
     accepted: z.literal(true),
     capturedAt: z.number().int().nonnegative(),
     resource: z.object({
+      worker: WorkerIdentitySchema.optional(),
       kind: z.literal('session'),
       id: z.string(),
       name: z.string().max(160),
@@ -111,6 +114,7 @@ export function presentSessionInspection(
     accepted: true,
     capturedAt,
     resource: {
+      worker: workerIdentity({ adapter: 'hyperneo', id: row.id }, row.name),
       kind: 'session',
       id: row.id,
       name: row.name.slice(0, 160),

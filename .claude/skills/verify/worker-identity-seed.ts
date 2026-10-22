@@ -1,3 +1,5 @@
+import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { SDKMessageRepository } from '../../../packages/daemon/src/storage/repositories/sdk-message-repository.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -15,7 +17,7 @@ assert(!existsSync(join(run, 'data/daemon.db')));
 for (const path of ['data', 'home/.codex', 'workspace', 'evidence']) mkdirSync(join(run, path), { recursive: true });
 const codex = new Database(join(run, 'home/.codex/state_5.sqlite'));
 codex.exec(`CREATE TABLE threads (id TEXT, name TEXT, title TEXT, first_user_message TEXT, cwd TEXT, source TEXT, archived INTEGER, updated_at_ms INTEGER, rollout_path TEXT);
-CREATE TABLE projects (id TEXT, name TEXT);
+CREATE TABLE projects (id TEXT, name TEXT, updated_at_ms INTEGER);
 CREATE TABLE project_roots (project_id TEXT, path TEXT);`);
 const ref = { adapter: 'codex-desktop', id: 'synthetic-worker' };
 const rollout = join(run, 'worker.jsonl');
@@ -36,5 +38,10 @@ try {
   const sessions = new NeoTodoSessionRepository(db);
   sessions.create('worker-todo', { verb: 'send', ref });
   sessions.recordRef('worker-todo', ref, Date.now(), 'codex://threads/synthetic-worker');
+  const group = { id: 'worker-group', at: Date.now(), line: 'Historical name needs you', notices: [
+    { key: 'worker-notice', ref, title: 'Creation-time name', kind: 'needs_you', at: Date.now() },
+    { key: 'missing-notice', ref: { adapter: 'codex-desktop', id: 'missing-worker' }, title: 'Old deleted name', kind: 'needs_you', at: Date.now() },
+  ] };
+  new SDKMessageRepository(db).saveSDKMessage(root, { type: 'system', subtype: 'session_notices', uuid: group.id, session_id: root, content: group.line, group } as unknown as SDKMessage);
   writeFileSync(join(run, 'evidence/seed.json'), JSON.stringify({ root, ref, synthetic: true }, null, 2));
 } finally { db.close(); }

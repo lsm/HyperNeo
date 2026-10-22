@@ -1,3 +1,4 @@
+import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { qualifyRemoteOrigin } from '../mailbox/address.ts';
@@ -25,6 +26,8 @@ import {
   WorkStartedSchema,
   workResultSchema,
   type Rejected,
+  type Result,
+  type WorkSummary,
   type WorkAdapter,
   type WorkRef,
   type WorkRejection,
@@ -399,6 +402,15 @@ export async function stopWork(
   );
 }
 
+function presentWorkIdentity<T extends WorkSummary>(result: Result<T>): Result<T> {
+  return result.ok
+    ? {
+        ...result,
+        value: { ...result.value, worker: workerIdentity(result.value.ref, result.value.title) },
+      }
+    : result;
+}
+
 const runStartWork = (superpipe({})('start-work') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
   .pipe(routeStart, ['input', 'deps'], 'result:outcome')
@@ -419,6 +431,7 @@ const runStartWork = (superpipe({})('start-work') as PipelineAPI)
   .pipe(selectSendOrigin, ['input', 'caller'], 'from')
   .pipe(workReplyInput, ['input', 'from', 'caller', 'deps'], 'deliveryInput')
   .pipe(startWork, ['outcome', 'deliveryInput', 'from', 'caller', 'deps'], 'outcome')
+  .pipe(presentWorkIdentity, 'outcome', 'outcome')
   .endAsync('outcome') as (
   input: StartInput,
   caller: OperationCaller,
@@ -442,6 +455,7 @@ const runWorkStatus = (superpipe({})('work-status') as PipelineAPI)
   .input(['input', 'deps'])
   .pipe(routeStatus, ['input', 'deps'], 'result:outcome')
   .pipe(readWorkStatus, ['outcome', 'input', 'deps'], 'outcome')
+  .pipe(presentWorkIdentity, 'outcome', 'outcome')
   .endAsync('outcome') as (input: StatusInput, deps: WorkVerbDeps) => Promise<StatusResult>;
 
 type QueuedInput = SendInput | z.infer<typeof WithdrawWorkInputSchema>;

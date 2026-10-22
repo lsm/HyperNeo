@@ -219,7 +219,7 @@ describe('work verb operations', () => {
   test('keeps delivery facts in driver result schemas', () => {
     for (const fact of [{ queuedSubmissionId: 'q1' }, { steeredIntoTurnId: 't1' }]) {
       const result = { ok: true, value: { delivered: false, ...fact } };
-      expect(SendWorkResultSchema.parse(result)).toEqual(result);
+      expect(SendWorkResultSchema.parse(result)).toMatchObject(result);
     }
   });
 
@@ -427,7 +427,7 @@ describe('work verb operations', () => {
       const ref = { adapter: adapter.id, id: 'work' };
       expect(
         await call('work.send', { ref, message: 'next' }, undefined, undefined, [adapter])
-      ).toEqual(result);
+      ).toMatchObject(result);
       const forwarded: unknown[] = [];
       expect(
         await call(
@@ -438,7 +438,7 @@ describe('work verb operations', () => {
             return result;
           }
         )
-      ).toEqual(result);
+      ).toMatchObject(result);
       expect(forwarded).toEqual([
         {
           daemon: 'laptop',
@@ -815,7 +815,7 @@ describe('work verb operations', () => {
       };
       expect(
         await call('work.status', { ref, since: 5, receipt }, undefined, undefined, [adapter])
-      ).toEqual(result);
+      ).toMatchObject(result);
       expect(received).toEqual([[ref, 5, receipt]]);
       const forwarded: unknown[] = [];
       expect(

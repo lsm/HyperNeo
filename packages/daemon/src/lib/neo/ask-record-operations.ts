@@ -116,8 +116,11 @@ export function createNeoAskRecordOperations(
   isNeoSession: (sessionId: string) => boolean,
   knownProjects: () => readonly { id: string; title: string }[],
   packs: () => readonly NeoPack[] = () => [],
-  readGoal: (id: string) => SessionGoal | null = () => null
+  readGoal: (id: string) => SessionGoal | null = () => null,
+  project: <T extends NeoTodo>(todos: readonly T[]) => Promise<T[]> = async (todos) => [...todos]
 ) {
+  const present = async (result: AskReceipt | Rejection) =>
+    result.ok ? { ...result, todos: await project(result.todos) } : result;
   const open = (superpipe({})('neo.ask.open') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(
@@ -288,7 +291,7 @@ export function createNeoAskRecordOperations(
       inputSchema: Open,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => open(input, caller),
+      execute: async (input, caller) => present(await open(input, caller)),
     }),
     defineOperation({
       name: 'neo.ask.settle',
@@ -297,7 +300,7 @@ export function createNeoAskRecordOperations(
       inputSchema: Settle,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => settle(input, caller),
+      execute: async (input, caller) => present(await settle(input, caller)),
     }),
   ];
 }

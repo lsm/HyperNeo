@@ -670,7 +670,18 @@ describe('work.find session', () => {
     expect(missed?.session).toEqual({
       name: 'iOS',
       match: 'none',
-      near: [{ ref: { adapter: 'claude-desktop', id: 'coordinator' }, title: 'Neo iOS app' }],
+      near: [
+        {
+          ref: { adapter: 'claude-desktop', id: 'coordinator' },
+          title: 'Neo iOS app',
+          worker: {
+            id: 'coordinator',
+            adapter: 'claude-desktop',
+            name: 'Neo iOS app',
+            label: 'Claude · Neo iOS app',
+          },
+        },
+      ],
     });
     expect(missed?.places).toEqual([]);
   });

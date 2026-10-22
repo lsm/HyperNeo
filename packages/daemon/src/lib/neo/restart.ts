@@ -5,7 +5,7 @@ export type NeoRestartDeps = {
   open: () => Promise<string>;
   clear: (sessionId: string) => Promise<void>;
   note: (sessionId: string, text: string) => Promise<void>;
-  entries: () => NeoAskEntry[];
+  entries: () => NeoAskEntry[] | Promise<NeoAskEntry[]>;
 };
 
 const NEO_STATE_NOTE_ASKS = 50;
@@ -23,7 +23,7 @@ export function neoStateNote(entries: readonly NeoAskEntry[]): string {
         state: todo.state,
         status: todo.status,
         doneWhen: todo.doneWhen,
-        ...(todo.link ? { worker: todo.link } : {}),
+        worker: todo.worker ?? null,
       })),
     questions: questions
       .filter((question) => question.state === 'open')
@@ -50,7 +50,8 @@ export const restartNeo = (superpipe({})('neo.restart') as PipelineAPI)
     'cleared'
   )
   .pipe(
-    (deps: NeoRestartDeps, sessionId: string) => deps.note(sessionId, neoStateNote(deps.entries())),
+    async (deps: NeoRestartDeps, sessionId: string) =>
+      deps.note(sessionId, neoStateNote(await deps.entries())),
     ['deps', 'sessionId'],
     'noted'
   )
