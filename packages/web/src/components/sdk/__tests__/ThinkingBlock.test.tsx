@@ -162,16 +162,16 @@ describe('ThinkingBlock', () => {
 
         const showMoreButton = container.querySelector('button');
         expect(showMoreButton).toBeTruthy();
-        expect(showMoreButton?.textContent).toContain('more');
+        expect(showMoreButton?.textContent).toContain('Show more');
 
         fireEvent.click(showMoreButton as HTMLElement);
 
-        expect(container.textContent).toContain('less');
+        expect(container.textContent).toContain('Show less');
 
         const showLessButton = container.querySelector('button');
         fireEvent.click(showLessButton as HTMLElement);
 
-        expect(container.textContent).toContain('more');
+        expect(container.textContent).toContain('Show more');
       } finally {
         if (originalScrollHeight) {
           Object.defineProperty(HTMLElement.prototype, 'scrollHeight', originalScrollHeight);
@@ -313,16 +313,15 @@ describe('ThinkingBlock', () => {
 });
 
 describe('ThinkingBlock in compact display mode', () => {
-  it('uses a native keyboard-focusable disclosure control', () => {
+  it('opens from the keyboard', () => {
     const { container, getByRole } = render(
       <ChatDisplayModeContext.Provider value="compact">
         <ThinkingBlock content="Weighing both options" />
       </ChatDisplayModeContext.Provider>
     );
     const header = getByRole('button');
-    expect(header.tagName).toBe('BUTTON');
-    expect(header.tabIndex).toBe(0);
-    fireEvent.click(header);
+    expect(header.getAttribute('tabindex')).toBe('0');
+    fireEvent.keyDown(header, { key: 'Enter' });
     expect(container.textContent).toContain('Weighing both options');
   });
 

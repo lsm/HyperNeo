@@ -1,5 +1,9 @@
 # Shared initialization controls (#8180, final part of #8102)
 
+> Historical migration journey: legacy rendering has been restored. For current
+> legacy verification use [legacy-chat-compact.md](legacy-chat-compact.md); the
+> explicit-more assertions below describe the superseded migration, not current behavior.
+
 There is **no active runtime caller** for these initialization variants on this
 head: normal SDKMessageRenderer hides init, no production caller passes its
 `taskContext` flag, and nested init is filtered before SDKSystemMessage dispatch, and direct init is

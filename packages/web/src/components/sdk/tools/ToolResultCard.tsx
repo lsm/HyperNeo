@@ -1,18 +1,13 @@
-import { CheckGlyph, CloseGlyph } from '../../icons/common-glyphs.tsx';
+import { CheckGlyph, ChevronDownGlyph, CloseGlyph } from '../../icons/common-glyphs.tsx';
 import { getToolConfig } from './tool-registry.ts';
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import type { ToolResultCardProps } from './tool-types.ts';
 import { ToolIcon } from './ToolIcon.tsx';
 import { ToolSummary } from './ToolSummary.tsx';
 import { TaskProgressLine } from './TaskProgressLine.tsx';
 import { DiffViewer } from './DiffViewer.tsx';
 import { CodeViewer } from './CodeViewer.tsx';
-import {
-  getToolDisplayName,
-  getToolColors,
-  getOutputDisplayText,
-  getToolHeader,
-} from './tool-utils.ts';
+import { getToolDisplayName, getToolColors, getOutputDisplayText } from './tool-utils.ts';
 import { isFileReadOutput, isFileEditOutput, isFileWriteOutput } from './sdk-tool-types.ts';
 import { cn } from '../../../lib/utils.ts';
 import { connectionManager } from '../../../lib/connection-manager.ts';
@@ -21,8 +16,6 @@ import { ConfirmModal } from '../../ui/ConfirmModal.tsx';
 import { ReadImagePreview } from './ReadImagePreview.tsx';
 import { type CappedOutput, FullOutputNotice, useFullToolOutput } from './FullOutputNotice.tsx';
 import { useFoldedActivity } from '../chat-display-mode.ts';
-import { ContentDisclosureControl } from '../../ui/ContentDisclosureControl.tsx';
-import { NativeContentDisclosure } from '../../ui/NativeContentDisclosure.tsx';
 
 const imageMediaTypes = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
@@ -153,16 +146,6 @@ function ToolResultCardBody({
       ? defaultExpanded
       : !folded && (getToolConfig(toolName).defaultExpanded || false);
   const [isExpanded, setIsExpanded] = useState(shouldExpand);
-  const cardRef = useRef<HTMLDivElement>(null);
-  const restoreFocus = useRef(false);
-  const id = useId();
-  useLayoutEffect(() => {
-    if (!restoreFocus.current) return;
-    restoreFocus.current = false;
-    cardRef.current
-      ?.querySelector<HTMLButtonElement>(`button[id="${id}-control"]`)
-      ?.focus({ preventScroll: true });
-  }, [isExpanded, id]);
   useEffect(() => setIsExpanded(shouldExpand), [shouldExpand]);
   const [deleting, setDeleting] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -198,20 +181,6 @@ function ToolResultCardBody({
       setDeleting(false);
     }
   };
-
-  const control = disableExpand ? null : (
-    <ContentDisclosureControl
-      expanded={isExpanded}
-      id={`${id}-control`}
-      aria-controls={isExpanded ? id : undefined}
-      aria-label={[displayName, getToolHeader(toolName, input).detail].filter(Boolean).join(' ')}
-      onToggle={() => {
-        restoreFocus.current = true;
-        if (!isExpanded) onExpand?.();
-        setIsExpanded(!isExpanded);
-      }}
-    />
-  );
 
   if (variant === 'compact') {
     return (
@@ -320,7 +289,6 @@ function ToolResultCardBody({
 
   const card = (
     <div
-      ref={cardRef}
       class={cn(
         'border rounded-lg overflow-hidden',
         isRunning && 'relative',
@@ -329,8 +297,18 @@ function ToolResultCardBody({
         className
       )}
     >
-      <div class="flow-root p-3">
-        <div class="inline-flex max-w-full items-center gap-2 min-w-0">
+      <button
+        onClick={() => {
+          if (disableExpand) return;
+          if (!isExpanded) onExpand?.();
+          setIsExpanded(!isExpanded);
+        }}
+        class={cn(
+          'w-full flex items-center justify-between p-3 transition-colors',
+          'hover:bg-opacity-80 dark:hover:bg-opacity-80'
+        )}
+      >
+        <div class="flex items-center gap-2 min-w-0 flex-1">
           <ToolIcon toolName={toolName} size="md" />
           <span class={cn('font-semibold text-sm flex-shrink-0', colors.text)}>{displayName}</span>
           <span class={cn('text-sm font-mono truncate', colors.lightText)}>
@@ -338,7 +316,7 @@ function ToolResultCardBody({
           </span>
         </div>
 
-        <div class="inline-flex items-center gap-2 ml-2 align-middle">
+        <div class="flex items-center gap-2 flex-shrink-0">
           {lineCountDisplay}
           {notificationIsSuccess && (
             <CheckGlyph
@@ -366,14 +344,26 @@ function ToolResultCardBody({
               pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
             />
           )}
+          {!disableExpand && (
+            <ChevronDownGlyph
+              class={cn(
+                'w-5 h-5 transition-transform',
+                colors.iconColor,
+                isExpanded ? 'rotate-180' : ''
+              )}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
+            />
+          )}
         </div>
-        {!isExpanded && control}
-      </div>
+      </button>
 
       {isRunning && taskProgress && <TaskProgressLine progress={taskProgress} />}
 
       {isExpanded && (
-        <div id={id} class={cn('p-3 border-t bg-surface space-y-3', colors.border)}>
+        <div class={cn('p-3 border-t bg-surface space-y-3', colors.border)}>
           <FullOutputNotice capped={capped} />
           {taskNotification && (taskNotification.summary || taskNotification.usage) && (
             <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
@@ -432,10 +422,8 @@ function ToolResultCardBody({
                   filePath={output.filePath}
                 />
                 {output.structuredPatch.length > 0 && variant === 'detailed' && (
-                  <NativeContentDisclosure
-                    label="Structured patch"
-                    summary={<span class="text-xs text-fg-muted">Structured patch</span>}
-                  >
+                  <details>
+                    <summary class="text-xs text-fg-muted cursor-pointer">Structured patch</summary>
                     <CodeViewer
                       code={structuredPatchToDiff(output.structuredPatch)}
                       filePath={output.filePath}
@@ -444,7 +432,7 @@ function ToolResultCardBody({
                       showHeader={false}
                       maxHeight="none"
                     />
-                  </NativeContentDisclosure>
+                  </details>
                 )}
                 {output.gitDiff && (
                   <div class="text-xs text-fg-muted">
@@ -651,7 +639,6 @@ function ToolResultCardBody({
         </div>
       )}
 
-      {isExpanded && !disableExpand && <div class="flow-root px-3 pb-3">{control}</div>}
       <ConfirmModal
         isOpen={showConfirmModal}
         onClose={() => setShowConfirmModal(false)}

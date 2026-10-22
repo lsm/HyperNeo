@@ -1,5 +1,9 @@
 # Explicit Git and task-kickoff controls (#8104)
 
+> Historical migration journey: legacy rendering has been restored. For current
+> legacy verification use [legacy-chat-compact.md](legacy-chat-compact.md); the
+> explicit-more assertions below describe the superseded migration, not current behavior.
+
 Use the shared isolated setup, fresh HOME/data/DB and free ports other than8399.
 Build web first. No model or provider credential is required. The Git workspace,
 completed Space task and consumed kickoff are synthetic; no task is dispatched.

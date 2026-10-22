@@ -5,18 +5,9 @@ import { render, fireEvent, waitFor } from '@testing-library/preact';
 import { SyntheticMessageBlock } from '../SyntheticMessageBlock';
 
 vi.mock('../../chat/MarkdownRenderer.tsx', () => ({
-  default: ({
-    content,
-    class: className,
-    trailing,
-  }: {
-    content: string;
-    class?: string;
-    trailing?: import('preact').ComponentChildren;
-  }) => (
+  default: ({ content, class: className }: { content: string; class?: string }) => (
     <div data-testid="markdown-renderer" class={className}>
       {content}
-      {trailing}
     </div>
   ),
 }));
@@ -660,7 +651,7 @@ describe('SyntheticMessageBlock', () => {
 
         const toggle = container.querySelector('[data-testid="synthetic-toggle"]');
         expect(toggle).toBeTruthy();
-        expect(toggle?.textContent).toContain('more');
+        expect(toggle?.textContent).toContain('Show more');
       } finally {
         if (originalScrollHeight) {
           Object.defineProperty(HTMLElement.prototype, 'scrollHeight', originalScrollHeight);
@@ -688,14 +679,14 @@ describe('SyntheticMessageBlock', () => {
         );
 
         const toggle = container.querySelector('[data-testid="synthetic-toggle"]');
-        expect(toggle?.textContent).toContain('more');
+        expect(toggle?.textContent).toContain('Show more');
 
         fireEvent.click(toggle as HTMLElement);
-        expect(container.textContent).toContain('less');
+        expect(container.textContent).toContain('Show less');
 
         const showLessButton = container.querySelector('[data-testid="synthetic-toggle"]');
         fireEvent.click(showLessButton as HTMLElement);
-        expect(container.textContent).toContain('more');
+        expect(container.textContent).toContain('Show more');
       } finally {
         if (originalScrollHeight) {
           Object.defineProperty(HTMLElement.prototype, 'scrollHeight', originalScrollHeight);

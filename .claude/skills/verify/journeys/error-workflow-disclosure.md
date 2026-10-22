@@ -1,5 +1,9 @@
 # Explicit error/workflow details (#8103)
 
+> Historical migration journey: legacy rendering has been restored. For current
+> legacy verification use [legacy-chat-compact.md](legacy-chat-compact.md); the
+> explicit-more assertions below describe the superseded migration, not current behavior.
+
 Use the shared isolated setup. This journey needs no provider turn or key. Build
 web first, choose free ports (9396 and mock 8000 below), and create a fresh run:
 

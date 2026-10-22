@@ -1,6 +1,6 @@
-import { useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { ChevronDownGlyph, ChevronUpGlyph } from '../icons/common-glyphs.tsx';
+import { useState, useRef, useLayoutEffect } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
-import { ContentDisclosureControl } from '../ui/ContentDisclosureControl.tsx';
 import { useFoldedActivity } from './chat-display-mode.ts';
 
 interface ThinkingBlockProps {
@@ -33,22 +33,20 @@ export function ThinkingBlock({
   thinnedChars = 0,
   onOpen,
 }: ThinkingBlockProps) {
-  const [expanded, setExpanded] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
   const [needsTruncation, setNeedsTruncation] = useState(false);
   const contentRef = useRef<HTMLPreElement>(null);
   const folded = useFoldedActivity();
+  const [open, setOpen] = useState(false);
 
   const previewMaxHeight = PREVIEW_LINE_COUNT * LINE_HEIGHT_PX;
 
   useLayoutEffect(() => {
     if (contentRef.current) {
-      const scrollHeight = Math.max(
-        contentRef.current.scrollHeight,
-        contentRef.current.getBoundingClientRect().height
-      );
+      const scrollHeight = contentRef.current.scrollHeight;
       setNeedsTruncation(scrollHeight > previewMaxHeight);
     }
-  }, [content, previewMaxHeight, folded, expanded]);
+  }, [content, previewMaxHeight, folded, open]);
 
   const hasText = typeof content === 'string' && content.trim().length > 0;
   if (!hasText && thinnedChars <= 0) {
@@ -57,8 +55,8 @@ export function ThinkingBlock({
 
   const charCount = hasText ? content.length : thinnedChars;
   const toggleOpen = () => {
-    if (folded && !expanded) onOpen?.();
-    setExpanded(!expanded);
+    if (!open) onOpen?.();
+    setOpen(!open);
   };
 
   const statsText =
@@ -77,70 +75,117 @@ export function ThinkingBlock({
       )}
       data-testid="thinking-block"
     >
-      <div class="flow-root px-3 py-2">
-        <div class={cn('inline-flex items-center gap-2', colors.bg)}>
-          <svg
-            class={cn('w-4 h-4 flex-shrink-0', colors.iconColor)}
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
-            />
-          </svg>
-          <span class={cn('text-sm font-semibold', colors.text)}>Thinking</span>
-          <span class={cn('text-xs', colors.lightText)}>{statsText}</span>
-        </div>
-
-        {(!folded || expanded) && (
-          <>
-            <div class={cn('my-2 border-t', colors.border)} />
-            <div
-              class={cn(
-                'relative',
-                expanded ? 'contents' : 'block bg-surface',
-                !compact && !expanded && needsTruncation && 'overflow-hidden'
-              )}
-              style={
-                !compact && !expanded && needsTruncation
-                  ? { maxHeight: `${previewMaxHeight}px` }
-                  : undefined
+      <div
+        class={cn('flex items-center gap-2 px-3 py-2', colors.bg, folded && 'cursor-pointer')}
+        role={folded ? 'button' : undefined}
+        tabIndex={folded ? 0 : undefined}
+        aria-expanded={folded ? open : undefined}
+        onClick={folded ? toggleOpen : undefined}
+        onKeyDown={
+          folded
+            ? (event: KeyboardEvent) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                toggleOpen();
               }
+            : undefined
+        }
+      >
+        <svg
+          class={cn('w-4 h-4 flex-shrink-0', colors.iconColor)}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
+          />
+        </svg>
+        <span class={cn('text-sm font-semibold', colors.text)}>Thinking</span>
+        <span class={cn('text-xs', colors.lightText)}>{statsText}</span>
+      </div>
+
+      {(!folded || open) && (
+        <div class={cn('relative border-t', colors.border)}>
+          <div
+            class={cn(
+              'p-3 bg-surface',
+              !compact && !isExpanded && needsTruncation && 'overflow-hidden'
+            )}
+            style={
+              !compact && !isExpanded && needsTruncation
+                ? { maxHeight: `${previewMaxHeight + 24}px` }
+                : {}
+            }
+          >
+            <pre
+              ref={contentRef}
+              class={cn(
+                'text-sm font-mono',
+                colors.text,
+                compact ? 'whitespace-normal break-words line-clamp-1' : 'whitespace-pre-wrap'
+              )}
             >
-              <pre
-                ref={contentRef}
+              {hasText ? content : 'Loading…'}
+            </pre>
+          </div>
+
+          {!compact && needsTruncation && !isExpanded && (
+            <div
+              class="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-surface to-transparent pointer-events-none"
+              aria-hidden="true"
+            />
+          )}
+
+          {!compact && needsTruncation && (
+            <div class={cn('flex justify-center py-2 border-t bg-surface', colors.border)}>
+              <button
+                onClick={() => setIsExpanded(!isExpanded)}
                 class={cn(
-                  expanded ? 'inline' : 'block',
-                  'text-sm font-mono',
-                  colors.text,
-                  compact
-                    ? 'whitespace-normal break-words line-clamp-1'
-                    : 'whitespace-pre-wrap break-words'
+                  'flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors',
+                  'hover:bg-warning/15',
+                  colors.text
                 )}
               >
-                {hasText ? content : 'Loading…'}
-              </pre>
-              {!compact && needsTruncation && !expanded && (
-                <div
-                  class="absolute bottom-0 inset-x-0 h-12 bg-gradient-to-t from-surface to-transparent pointer-events-none"
-                  aria-hidden="true"
-                />
-              )}
+                {isExpanded ? (
+                  <>
+                    <ChevronUpGlyph
+                      class="w-3.5 h-3.5"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      pathProps={{
+                        strokeLinecap: 'round',
+                        strokeLinejoin: 'round',
+                        strokeWidth: 2,
+                      }}
+                    />
+                    Show less
+                  </>
+                ) : (
+                  <>
+                    <ChevronDownGlyph
+                      class="w-3.5 h-3.5"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      pathProps={{
+                        strokeLinecap: 'round',
+                        strokeLinejoin: 'round',
+                        strokeWidth: 2,
+                      }}
+                    />
+                    Show more
+                  </>
+                )}
+              </button>
             </div>
-          </>
-        )}
-        {(folded || (!compact && needsTruncation)) && (
-          <ContentDisclosureControl
-            expanded={expanded}
-            onToggle={toggleOpen}
-            aria-label="Thinking"
-          />
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
       {isRunning && <div class="running-shimmer" aria-hidden="true" />}
     </div>

@@ -121,9 +121,7 @@ describe('Overflow Protection', () => {
 
       const button = container.querySelector('button');
       expect(button).toBeTruthy();
-      expect(button?.getAttribute('aria-label')).toBe(
-        `more — ${defaultInput.subagent_type} ${defaultInput.description}`
-      );
+      expect(button?.className).toContain('w-full');
     });
   });
 
