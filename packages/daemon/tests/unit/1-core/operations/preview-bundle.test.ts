@@ -12,6 +12,12 @@ const pixel =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
 describe('registered relative CSS and raster bundles', () => {
+  test('refuses repeated asset expansion before constructing an oversized document', () => {
+    const assets = new Map([
+      ['chart.png', { kind: 'image' as const, data: 'data:image/png;base64,' + 'A'.repeat(4096) }],
+    ]);
+    expect(prepareArtifactHtml('<img src="chart.png">'.repeat(1024), assets) === null).toBe(true);
+  });
   test('refuses aggregate bundle bytes beyond 64 MiB while admitting the exact limit', () => {
     const assets = [{ row: { byte_length: 64 * 1024 * 1024 - 1 } }];
     expect(artifactBundleLimit(1, assets)).toBeNull();
