@@ -1,8 +1,9 @@
 import type { MessageHub, MessageImage } from '@hyperneo/shared';
-import type {
-  NeoConversationAsk,
-  NeoConversationAskPageItem,
-  NeoConversationImageRef,
+import {
+  NEO_MESSAGE_STATUSES,
+  type NeoConversationAsk,
+  type NeoConversationAskPageItem,
+  type NeoConversationImageRef,
 } from '@hyperneo/shared/types/neo-conversation-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { invokeOperation } from '../lib/operations.ts';
@@ -132,6 +133,8 @@ function ask(value: unknown, page: Cursor): NeoConversationAskPageItem | null {
     return null;
   const content = askContent(row.content);
   if (!content) return null;
+  const messageStatus = NEO_MESSAGE_STATUSES.find((status) => status === row.messageStatus);
+  if (row.messageStatus !== undefined && !messageStatus) return null;
   const replyTo = object(row.replyTo);
   return {
     conversationId: page.conversationId,
@@ -140,6 +143,7 @@ function ask(value: unknown, page: Cursor): NeoConversationAskPageItem | null {
     sequence: row.sequence,
     createdAt: row.createdAt,
     content,
+    ...(messageStatus ? { messageStatus } : {}),
     ...(object(row.delivery)?.state === 'failed' ? { delivery: { state: 'failed' as const } } : {}),
     ...(replyTo &&
     (replyTo.kind === 'question' || replyTo.kind === 'todo' || replyTo.kind === 'message') &&

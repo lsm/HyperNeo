@@ -69,19 +69,27 @@ export function placeAskTail(
 
 export function syncAskDelivery(state: NeoAskState, response: ConversationAskRead): NeoAskState {
   if (response.state !== 'ready') return state;
-  const read = new Map(
-    response.items.map((item) => [item.requestId, item.delivery?.state === 'failed'] as const)
-  );
-  const stale = (item: NeoAskItem) =>
-    read.has(item.requestId) && read.get(item.requestId) !== (item.delivery?.state === 'failed');
+  const read = new Map(response.items.map((item) => [item.requestId, item] as const));
+  const stale = (item: NeoAskItem) => {
+    const current = read.get(item.requestId);
+    return (
+      current &&
+      (current.messageStatus !== item.messageStatus ||
+        (current.delivery?.state === 'failed') !== (item.delivery?.state === 'failed'))
+    );
+  };
   if (!state.items.some(stale)) return state;
   return {
     ...state,
     items: state.items.map((item) => {
-      if (!stale(item)) return item;
-      if (read.get(item.requestId)) return { ...item, delivery: { state: 'failed' as const } };
-      const { delivery: _, ...delivered } = item;
-      return delivered;
+      const current = read.get(item.requestId);
+      if (!current || !stale(item)) return item;
+      const { delivery: _, messageStatus: __, ...authored } = item;
+      return {
+        ...authored,
+        ...(current.messageStatus ? { messageStatus: current.messageStatus } : {}),
+        ...(current.delivery ? { delivery: current.delivery } : {}),
+      };
     }),
   };
 }
@@ -172,13 +180,19 @@ export function useNeoConversationAsks(rootSessionId: string | null) {
           if (!current()) return;
           publish((tail ? applyAskTail : applyAskPage)(before, response));
           if (changed && !tail && value.status === 'ready' && value.items.length > 0) {
-            const recent = await readNeoConversationAsks(
-              { conversationId, after: 0, before: Number.MAX_SAFE_INTEGER, limit: LIMIT },
-              async () => hub,
-              current
-            );
-            if (!current()) return;
-            publish(syncAskDelivery(value, recent));
+            const oldest = value.items[0].sequence;
+            let before = value.nextAfter + 1;
+            while (before > oldest) {
+              const recent = await readNeoConversationAsks(
+                { conversationId, after: 0, before, limit: LIMIT },
+                async () => hub,
+                current
+              );
+              if (!current()) return;
+              publish(syncAskDelivery(value, recent));
+              if (recent.state !== 'ready' || recent.items.length === 0) break;
+              before = recent.items[0].sequence;
+            }
           }
           inFlight = false;
           if (pending && value.status === 'ready') void update(true);

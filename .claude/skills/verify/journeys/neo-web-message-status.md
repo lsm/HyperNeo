@@ -20,7 +20,9 @@ owns the turn. Read's title explicitly says it has not been answered.
 The fixture then records ordinary consumption and emits the existing neo.changed
 event through a harmless synthetic mute preference. Both pages must refresh the
 same queued input to Read. An explicit publication plus another refresh changes
-it to Answered, with no added human input or page reload. No status is inferred
+it to Answered, with no added human input or page reload. The hook contract
+also loads an earlier page and verifies that neo.changed refreshes a cited input
+there, preserving the loaded history and cursor. No status is inferred
 from message position, publications in the visible page, or SDK turn state.
 
 Evidence: evidence/neo-web-message-status.json and status-{initial,read,answered}

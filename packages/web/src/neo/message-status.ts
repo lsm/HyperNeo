@@ -1,25 +1,14 @@
-import type { AgentProcessingState } from '@hyperneo/shared';
+import type { NeoConversationMessageStatus } from '@hyperneo/shared/types/neo-conversation-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { NeoProcessingActivity } from './processing-activity.ts';
-import {
-  neoPublicationAnswerOrigins,
-  type NeoPublicConversation,
-  type NeoPublicEntry,
-} from './public-conversation.ts';
+import type { NeoPublicConversation, NeoPublicEntry } from './public-conversation.ts';
 
-export type NeoMessageStatus =
-  | 'received'
-  | 'queued'
-  | 'working'
-  | 'answered'
-  | 'failed'
-  | 'disconnected'
-  | 'stale';
+export type NeoMessageStatus = NeoConversationMessageStatus | 'disconnected' | 'stale';
 
 export const NEO_MESSAGE_STATUS_LABELS: Record<NeoMessageStatus, string> = {
   received: 'Received',
   queued: 'Queued',
   working: 'Working',
+  read: 'Read',
   answered: 'Answered',
   failed: 'Failed',
   disconnected: 'Disconnected',
@@ -30,6 +19,7 @@ export const NEO_MESSAGE_STATUS_TITLES: Record<NeoMessageStatus, string> = {
   received: 'Neo accepted this message. No reply yet.',
   queued: 'Neo will start on this after what it is doing now.',
   working: 'Neo is working on this message now.',
+  read: 'Neo read this message but has not answered it.',
   answered: 'Neo replied to this message. A reply is not finished work.',
   failed: 'This message did not reach Neo.',
   disconnected: 'Not connected to the daemon, so this status is not current.',
@@ -37,57 +27,7 @@ export const NEO_MESSAGE_STATUS_TITLES: Record<NeoMessageStatus, string> = {
 };
 
 type Ask = Extract<NeoPublicEntry, { kind: 'ask' }>;
-type Turn = { replied: ReadonlySet<string>; working: string | null; waiting: ReadonlySet<string> };
 export type NeoMessageStatusLink = { connected: boolean; status: NeoPublicConversation['status'] };
-
-export function neoRepliedAsks(entries: readonly NeoPublicEntry[]): ReadonlySet<string> {
-  const answered = new Set(
-    entries.flatMap((entry) =>
-      entry.kind === 'publication'
-        ? neoPublicationAnswerOrigins(entry.publication).map((origin) =>
-            JSON.stringify([origin.sessionId, origin.messageId])
-          )
-        : []
-    )
-  );
-  return new Set(
-    entries.flatMap((entry) =>
-      entry.kind === 'ask' &&
-      answered.has(JSON.stringify([entry.ask.askOrigin.sessionId, entry.ask.askOrigin.messageId]))
-        ? [entry.ask.requestId]
-        : []
-    )
-  );
-}
-
-export function placeNeoMessageTurn(
-  entries: readonly NeoPublicEntry[],
-  replied: ReadonlySet<string>,
-  activity: NeoProcessingActivity
-): Turn {
-  const lastAnswered = entries.findLastIndex(
-    (entry) => entry.kind === 'ask' && replied.has(entry.ask.requestId)
-  );
-  const open = entries
-    .slice(lastAnswered + 1)
-    .filter(
-      (entry): entry is Ask =>
-        entry.kind === 'ask' &&
-        entry.ask.delivery?.state !== 'failed' &&
-        !replied.has(entry.ask.requestId)
-    )
-    .map((entry) => entry.ask.requestId);
-  if (activity === 'inactive') return { replied, working: null, waiting: new Set() };
-  const working =
-    activity.messageId && open.includes(activity.messageId)
-      ? activity.messageId
-      : (open[0] ?? null);
-  return {
-    replied,
-    working,
-    waiting: new Set(open.slice(working ? open.indexOf(working) + 1 : 0)),
-  };
-}
 
 export function admitNeoMessageStatusLink(
   link: NeoMessageStatusLink
@@ -98,44 +38,29 @@ export function admitNeoMessageStatusLink(
 
 export function describeNeoMessageStatus(
   ask: Ask['ask'],
-  turn: Turn,
-  agentState: AgentProcessingState,
   link: { value: NeoMessageStatusLink } | { reason: 'disconnected' | 'stale' }
 ): NeoMessageStatus {
-  if (ask.delivery?.state === 'failed') return 'failed';
-  if (turn.replied.has(ask.requestId)) return 'answered';
-  if ('reason' in link) return link.reason;
-  if (turn.working === ask.requestId)
-    return agentState.status === 'processing' && agentState.phase !== 'initializing'
-      ? 'working'
-      : 'queued';
-  return turn.waiting.has(ask.requestId) ? 'queued' : 'received';
+  const status = ask.messageStatus ?? (ask.delivery?.state === 'failed' ? 'failed' : 'received');
+  if (status === 'failed' || status === 'answered') return status;
+  return 'reason' in link ? link.reason : status;
 }
 
 export function describeNeoMessageStatuses(
   entries: readonly NeoPublicEntry[],
-  turn: Turn,
-  agentState: AgentProcessingState,
   link: { value: NeoMessageStatusLink } | { reason: 'disconnected' | 'stale' }
 ): ReadonlyMap<string, NeoMessageStatus> {
   return new Map(
     entries.flatMap((entry) =>
-      entry.kind === 'ask'
-        ? [[entry.ask.requestId, describeNeoMessageStatus(entry.ask, turn, agentState, link)]]
-        : []
+      entry.kind === 'ask' ? [[entry.ask.requestId, describeNeoMessageStatus(entry.ask, link)]] : []
     )
   );
 }
 
 export const projectNeoMessageStatuses = (superpipe({})('neo-message-statuses') as PipelineAPI)
-  .input(['entries', 'activity', 'agentState', 'link'])
-  .pipe(neoRepliedAsks, 'entries', 'replied')
-  .pipe(placeNeoMessageTurn, ['entries', 'replied', 'activity'], 'turn')
+  .input(['entries', 'link'])
   .pipe(admitNeoMessageStatusLink, 'link', 'admitted')
-  .pipe(describeNeoMessageStatuses, ['entries', 'turn', 'agentState', 'admitted'], 'statuses')
+  .pipe(describeNeoMessageStatuses, ['entries', 'admitted'], 'statuses')
   .end('statuses') as (
   entries: readonly NeoPublicEntry[],
-  activity: NeoProcessingActivity,
-  agentState: AgentProcessingState,
   link: NeoMessageStatusLink
 ) => ReadonlyMap<string, NeoMessageStatus>;

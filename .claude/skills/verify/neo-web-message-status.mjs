@@ -63,6 +63,7 @@ try {
     const shown = {};
     for (const state of states) shown[state] = await article(page, state).locator('[data-message-status]').textContent();
     observed.widths.push({ width, initialLabels: shown });
+    await article(page, 'read').scrollIntoViewIfNeeded();
     await page.screenshot({ path: `${run}/evidence/status-initial-${width}.png`, fullPage: true });
     save();
     for (const state of states) assert.equal(shown[state], state[0].toUpperCase() + state.slice(1));
@@ -74,6 +75,7 @@ try {
   for (const { page, width } of pages) {
     await article(page, 'queued').locator('[data-message-status="read"]').waitFor();
     observed.widths.find((row) => row.width === width).afterConsumption = 'Read';
+    await article(page, 'queued').scrollIntoViewIfNeeded();
     await page.screenshot({ path: `${run}/evidence/status-read-${width}.png`, fullPage: true });
   }
   sql(publication(crypto.randomUUID(), [ids.queued]));
@@ -81,6 +83,7 @@ try {
   for (const { page, width } of pages) {
     await article(page, 'queued').locator('[data-message-status="answered"]').waitFor();
     observed.widths.find((row) => row.width === width).afterReply = 'Answered';
+    await article(page, 'queued').scrollIntoViewIfNeeded();
     await page.screenshot({ path: `${run}/evidence/status-answered-${width}.png`, fullPage: true });
   }
   observed.inputsAfter = rpc('neo.conversation.asks.read', { conversationId }).items.length;

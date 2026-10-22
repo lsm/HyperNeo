@@ -245,6 +245,8 @@ describe('durable conversation ask client', () => {
     { askOrigin: { sessionId: '', messageId: ask(1).requestId } },
     { askOrigin: { sessionId: 'x'.repeat(161), messageId: ask(1).requestId } },
     { askOrigin: null },
+    { messageStatus: 'pending' },
+    { messageStatus: null },
     { sequence: 0 },
     { sequence: 0.5 },
     { createdAt: '2026-09-30' },
