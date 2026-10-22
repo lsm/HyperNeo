@@ -1097,6 +1097,109 @@ describe('codex-desktop adapter status and send', () => {
   });
 
   test.each([false, true])(
+    'an undiscovered active writer accepts idle input through its queue (consumed: %s)',
+    async (consumed) => {
+      const queued: string[] = [];
+      const receipt = { executionId: 'idle', inputId: 'writer-input' };
+      const driver = adapter(0, '', async () => ({
+        call: async (method, params) => {
+          if (method === 'thread/turns/list')
+            return { data: [{ id: 'done', status: 'completed' }] };
+          if (method === 'thread/resume')
+            throw new Error(
+              'thread/resume: {"code":-32600,"message":"thread idle already has an active writer"}'
+            );
+          if (method !== 'thread/queue/add') throw new Error('Must not start another writer');
+          const text = (params.input as { text: string }[])[0].text;
+          queued.push(text);
+          if (consumed)
+            appendFileSync(
+              join(dir, 'finished.jsonl'),
+              `\n${heardAs(receipt.inputId, text)}\n${saidAt('Received queued work.')}`
+            );
+          return { queuedSubmission: { id: 'writer-queue' } };
+        },
+        close: () => {},
+      }));
+      expect(await driver.send!(ref('idle'), 'continue saved work', user)).toEqual({
+        ok: true,
+        value: {
+          delivered: consumed,
+          queuedSubmissionId: 'writer-queue',
+          ...(consumed ? { receipt } : {}),
+        },
+      });
+      expect(queued).toEqual(['continue saved work']);
+      if (consumed)
+        expect(await driver.status!(ref('idle'), undefined, receipt)).toMatchObject({
+          ok: true,
+          value: {
+            inputEvidence: {
+              state: 'observed',
+              receipt,
+              exchange: [
+                { role: 'user', text: 'continue saved work' },
+                { role: 'agent', text: 'Received queued work.' },
+              ],
+            },
+          },
+        });
+      expect(spawned).toEqual([]);
+    }
+  );
+
+  test.each([0, 1])(
+    'active-writer CLI queue returns its receipt or refusal: %s',
+    async (exitCode) => {
+      const driver = adapter(
+        exitCode,
+        'queue refused',
+        async () => ({
+          call: async (method) => {
+            if (method === 'thread/turns/list') return { data: [] };
+            if (method === 'thread/resume')
+              throw new Error('thread idle already has an active writer');
+            throw new Error('thread/queue/add: method not found (-32601)');
+          },
+          close: () => {},
+        }),
+        undefined,
+        'writer-cli-queue\n'
+      );
+      expect(await driver.send!(ref('idle'), 'continue', user)).toEqual(
+        exitCode === 0
+          ? {
+              ok: true,
+              value: { delivered: false, queuedSubmissionId: 'writer-cli-queue' },
+            }
+          : { ok: false, reason: 'not_delivered', detail: 'queue refused' }
+      );
+      expect(spawned).toEqual([['codex', 'queue', '--thread=idle', '--message=continue']]);
+    }
+  );
+
+  test.each([
+    ['thread/resume', 'thread other already has an active writer'],
+    ['turn/start', 'thread idle already has an active writer'],
+  ])('does not queue for a different thread or a start failure: %s', async (phase, error) => {
+    const driver = adapter(0, '', async () => ({
+      call: async (method) => {
+        if (method === 'thread/turns/list') return { data: [] };
+        if (method === phase) throw new Error(error);
+        if (method === 'thread/resume') return {};
+        throw new Error('Must not queue');
+      },
+      close: () => {},
+    }));
+    expect(await driver.send!(ref('idle'), 'continue', user)).toEqual({
+      ok: false,
+      reason: 'not_delivered',
+      detail: error,
+    });
+    expect(spawned).toEqual([]);
+  });
+
+  test.each([false, true])(
     'resumes saved idle work before sending, or reports resume failure: %s',
     async (resumeFails) => {
       const calls: Array<[string, Record<string, unknown>]> = [];
