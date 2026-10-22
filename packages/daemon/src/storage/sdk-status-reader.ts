@@ -1,3 +1,4 @@
+import type { CodexSnapshot } from '../lib/drivers/codex-desktop-adapter.ts';
 import type { PendingTurn } from './turn-vectors.ts';
 import type { Fact, NeoMessageStatusRef } from '../lib/neo/message-status.ts';
 import type { MessageFeedArgs } from './sdk-message-feed-read.ts';
@@ -39,6 +40,7 @@ type SDKReadArgs =
   | WorkSearchArgs
   | MessageFeedArgs
   | { neoMessageStatus: NeoMessageStatusRef[] }
+  | { codexSnapshot: { statePath: string; includeClosed: boolean } }
   | { turnVectors: { model: string; dimensions: number; limit: number | null } };
 export type SDKReadResult =
   | SDKStatusPage
@@ -47,7 +49,8 @@ export type SDKReadResult =
   | LiveQueryEvaluation
   | Fact[]
   | PendingTurn[]
-  | number;
+  | number
+  | CodexSnapshot;
 export type SDKStatusRequest = {
   id: number;
   epoch: number;
@@ -183,6 +186,10 @@ export class SDKStatusReader {
     return this.enqueue({ turnVectors: { model, dimensions, limit: null } }) as Promise<number>;
   }
 
+  readCodexSnapshot(statePath: string, includeClosed: boolean): Promise<CodexSnapshot> {
+    return this.enqueue({ codexSnapshot: { statePath, includeClosed } }) as Promise<CodexSnapshot>;
+  }
+
   private enqueue(args: SDKReadArgs): Promise<SDKReadResult> {
     if (this.closing) return Promise.reject(new Error('SDK reader closed'));
     const search = 'query' in args;
@@ -234,7 +241,7 @@ export class SDKStatusReader {
   }
 
   private exchange(args: SDKReadArgs | null, queuedAt: number): Promise<SDKReadResult | null> {
-    if (this.dbPath === ':memory:')
+    if (this.dbPath === ':memory:' && args && !('codexSnapshot' in args))
       return Promise.reject(new Error('SDK reader needs a file-backed DB'));
     const worker = (this.worker ??= this.createWorker());
     const id = ++this.id,
@@ -246,7 +253,7 @@ export class SDKStatusReader {
       const finish = (
         error?: Error,
         result?: SDKReadResult | null,
-        timing?: { workerMs: number; queueMs: number; finishedAt: number }
+        timing?: { workerMs: number; queueMs: number; finishedAt: number; error?: string }
       ) => {
         if (settled) return;
         settled = true;
@@ -262,15 +269,17 @@ export class SDKStatusReader {
             operation: args
               ? 'query' in args
                 ? 'work-search'
-                : 'turnVectors' in args
-                  ? 'turn-vectors'
-                  : 'neoMessageStatus' in args
-                    ? 'neo-message-status'
-                    : 'feed' in args
-                      ? 'message-feed'
-                      : 'page' in args
-                        ? 'sdk-page'
-                        : 'sdk-status'
+                : 'codexSnapshot' in args
+                  ? 'codex-snapshot'
+                  : 'turnVectors' in args
+                    ? 'turn-vectors'
+                    : 'neoMessageStatus' in args
+                      ? 'neo-message-status'
+                      : 'feed' in args
+                        ? 'message-feed'
+                        : 'page' in args
+                          ? 'sdk-page'
+                          : 'sdk-status'
               : 'close',
             id,
             epoch,
@@ -283,9 +292,11 @@ export class SDKStatusReader {
           },
         });
         if (error) {
-          this.worker = null;
-          this.epoch++;
-          worker.terminate();
+          if (!args || !('codexSnapshot' in args) || !timing?.error) {
+            this.worker = null;
+            this.epoch++;
+            worker.terminate();
+          }
           reject(error);
         } else resolve(result ?? null);
       };

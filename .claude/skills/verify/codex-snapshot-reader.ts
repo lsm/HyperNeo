@@ -1,0 +1,154 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, symlinkSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { renameSync } from 'node:fs';
+import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
+import { readCodexSnapshot } from '../../../packages/daemon/src/lib/drivers/codex-desktop-adapter.ts';
+import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
+import type { PlaceGroup } from '../../../packages/daemon/src/lib/drivers/types.ts';
+import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { WorkerAgentMemoryEmbedder } from '../../../packages/daemon/src/storage/repositories/agent-memory-worker-embedder.ts';
+import { SDKBunWorkerBridge } from '../../../packages/daemon/tests/helpers/sdk-bun-worker-bridge.ts';
+import { installCodexSnapshotWait } from './codex-snapshot-wait.ts';
+
+const run = resolve(process.argv[2]);
+const waitMs = Number(process.argv[3] ?? 1200);
+const bridge = process.argv[4] === 'bridge';
+assert(run.startsWith('/private/tmp/'));
+assert.equal(process.env.NODE_ENV, 'test');
+assert.equal(process.env.HOME, join(run, 'home'));
+assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
+assert(!existsSync(join(run, 'data')));
+for (const key of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'OPENAI_API_KEY']) assert(!process.env[key]);
+for (const directory of ['home', 'data', 'bin', 'evidence']) mkdirSync(join(run, directory), { recursive: true });
+copyFileSync('.claude/skills/verify/gh-stub.sh', join(run, 'bin/gh'));
+symlinkSync(process.execPath, join(run, 'bin/bun'));
+process.env.PATH = join(run, 'bin') + ':' + process.env.PATH;
+const NativeWorker = globalThis.Worker;
+const warm = WorkerAgentMemoryEmbedder.prototype.warm;
+WorkerAgentMemoryEmbedder.prototype.warm = () => {};
+const fixture = pathToFileURL(join(run, 'reader.ts')).href;
+writeFileSync(join(run, 'reader.ts'), `import { installCodexSnapshotWait } from ${JSON.stringify(pathToFileURL(resolve('.claude/skills/verify/codex-snapshot-wait.ts')).href)}; installCodexSnapshotWait(${JSON.stringify(run)},${waitMs},'worker'); const pending=[]; const {existsSync,writeFileSync}=await import('node:fs'); const send=globalThis.postMessage.bind(globalThis); globalThis.postMessage=data=>{if(data.error&&existsSync(${JSON.stringify(join(run,'hold-error'))})){writeFileSync(${JSON.stringify(join(run,'error-reply-pending'))},'pending');const timer=setInterval(()=>{if(existsSync(${JSON.stringify(join(run,'release-error'))})){clearInterval(timer);send(data);}},1);}else send(data);}; globalThis.onmessage=e=>pending.push(e); await import(${JSON.stringify(pathToFileURL(resolve('packages/daemon/src/storage/sdk-status-worker.ts')).href)}); const dispatch=globalThis.onmessage; for(const event of pending) dispatch(event);`);
+let readerStarts = 0;
+globalThis.Worker = function (url: string | URL, options?: WorkerOptions) {
+  if (String(url).endsWith('/sdk-status-worker.ts')) { readerStarts++; return bridge ? new SDKBunWorkerBridge(fixture) : new NativeWorker(fixture, options); }
+  return new NativeWorker(url, options);
+} as unknown as typeof Worker;
+let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
+let timer: ReturnType<typeof setInterval> | undefined;
+let probe: ReturnType<typeof spawn> | undefined;
+let transport: WebSocketClientTransport | undefined;
+const evidence: Record<string, unknown> = { runtime: Bun.version, waitMs, bridge, surface: 'public work.find Codex Desktop / independent system.health RPC', limitation: 'Executing-thread wait models slow external folders read, not physical storage causality or a <=250ms affected-RPC pass.' };
+try {
+  const statePath = join(run, 'home/.codex/state_5.sqlite');
+  mkdirSync(join(run, 'home/.codex'), { recursive: true });
+  const external = new Database(statePath);
+  external.exec('CREATE TABLE projects(id TEXT,name TEXT,updated_at_ms INTEGER); CREATE TABLE project_roots(project_id TEXT,position INTEGER,path TEXT); CREATE TABLE threads(id TEXT,name TEXT,title TEXT,first_user_message TEXT,cwd TEXT,source TEXT,archived INTEGER,updated_at_ms INTEGER,rollout_path TEXT,git_branch TEXT)');
+  const focus = join(run, 'projects/p0');
+  const thread = external.prepare('INSERT INTO threads VALUES (?,?,?,?,?,?,?,?,?,?)');
+  external.transaction(() => {
+    for (let n = 0; n < 200; n++) {
+      external.prepare('INSERT INTO projects VALUES (?,?,?)').run(`p${n}`, `Project${n}`, n);
+      external.prepare('INSERT INTO project_roots VALUES (?,0,?)').run(`p${n}`, join(run, `projects/p${n}`));
+    }
+    for (let n = 0; n < 10000; n++) thread.run(`thread-${n}`, `Thread${n}`, '', `Complete synthetic history 🦊${n} `.repeat(120), join(run, `projects/p${n % 200}`), n % 13 === 0 ? 'subagent' : 'vscode', n % 3 === 0 ? 1 : 0, 100000 + n, '', null);
+  })();
+  external.close();
+  const digest = () => createHash('sha256').update(readFileSync(statePath)).digest('hex');
+  evidence.before = digest();
+  const snapshot = readCodexSnapshot(statePath, true);
+  const expected = snapshot.threads.filter(row => row.folder === focus).slice(0, 20);
+  const folder = snapshot.folders.find(row => row.folder === focus)!;
+  evidence.expectedIds = expected.map(row => row.id);
+  app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db'), workspaceRoot: run }), disableWorktrees: true, disableGoalProcessing: true, verbose: false });
+  await app.jobProcessor.stop();
+  assert.notEqual(app.server.port, 8399);
+  const url = `ws://127.0.0.1:${app.server.port}/ws`;
+  probe = spawn(process.execPath, ['-e', `const ws=new WebSocket(${JSON.stringify(url)});let stop=false,id=0,at=0;const samples=[];const send=()=>{if(stop){console.log(JSON.stringify({samples}));ws.close();return;}at=performance.now();ws.send(JSON.stringify({id:String(++id),type:'REQ',method:'system.health',data:{},sessionId:'global',version:'1.0.0',timestamp:new Date().toISOString()}));};ws.onopen=()=>{console.log('READY');send();};ws.onmessage=e=>{const r=JSON.parse(e.data);if((r.requestId??r.id)!==String(id))return;if(r.error)throw new Error(JSON.stringify(r.error));samples.push(performance.now()-at);setTimeout(send,10);};process.stdin.on('data',()=>{stop=true;});setTimeout(()=>process.exit(2),30000).unref();`], { env: process.env, stdio: ['pipe', 'pipe', 'pipe'] });
+  let output = '', errors = '';
+  probe.stdout!.on('data', data => { output += String(data); });
+  probe.stderr!.on('data', data => { errors += String(data); });
+  const exited = new Promise((done, fail) => { probe!.once('exit', done); probe!.once('error', fail); });
+  for (let i = 0; !output.includes('READY') && i < 500; i++) await Bun.sleep(10);
+  assert(output.includes('READY'), errors);
+  transport = new WebSocketClientTransport({ url, autoReconnect: false });
+  const hub = new MessageHub({ defaultSessionId: 'global' });
+  hub.registerTransport(transport);
+  await transport.initialize();
+  const find = () => hub.request<{ places: PlaceGroup[]; unreachable: unknown[] }>('operation.invoke', { name: 'work.find', input: { adapters: ['codex-desktop'], folder: focus, includeClosed: true, localOnly: true, limit: 20 } });
+  installCodexSnapshotWait(run, waitMs, 'main');
+  let previous = performance.now(), lagMs = 0;
+  timer = setInterval(() => { const now = performance.now(); lagMs = Math.max(lagMs, now - previous - 10); previous = now; }, 10);
+  await Bun.sleep(30);
+  const started = performance.now();
+  const result = await find();
+  const rpcMs = performance.now() - started;
+  await Bun.sleep(30);
+  clearInterval(timer); timer = undefined;
+  probe.stdin!.end('stop');
+  assert.equal(await exited, 0, errors);
+  const health = JSON.parse(output.trim().split('\n').at(-1)!).samples as number[];
+  const reads = readFileSync(join(run, 'evidence/folder-reads.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  Object.assign(evidence, { lagMs, maxHealthMs: Math.max(...health), healthReplies: health.length, rpcMs, result, reads, after: digest() });
+  assert.deepEqual(result.unreachable, []);
+  assert.equal(result.places.length, 1);
+  const group = result.places[0];
+  assert.equal(group.openCount, folder.openCount);
+  assert.equal(group.archivedCount, folder.archivedCount);
+  assert.deepEqual(group.work.map(row => row.ref.id), expected.map(row => row.id));
+  assert.deepEqual(group.work.map(row => row.title), expected.map(row => row.title));
+  assert.deepEqual(group.work.map(row => row.status), expected.map(row => row.archived ? 'stopped' : 'done'));
+  assert.equal(evidence.before, evidence.after, 'external DB bytes changed');
+  console.log(JSON.stringify({ run, lagMs, maxHealthMs: evidence.maxHealthMs, rpcMs, thread: reads[0]?.thread }));
+  assert(lagMs < 1000, `main loop blocked ${lagMs}ms`);
+  assert(Number(evidence.maxHealthMs) < 250, 'independent health exceeded250ms');
+  assert(reads.length && reads.every(read => read.thread === 'worker'), 'snapshot still read on main');
+  if (!waitMs) assert(rpcMs < 250, 'ordinary-data work.find exceeded250ms');
+  const {sessionId} = await hub.request<{sessionId:string}>('session.create', {workspacePath:run,config:{queryMode:'manual'}});
+  const full = 'Complete unrelated SDK text 🦊\n'.repeat(100);
+  app.db.saveUserMessage(sessionId, {type:'user',uuid:'surviving-sdk',parent_tool_use_id:null,message:{role:'user',content:full}} as never, 'consumed');
+  const admitted = new Set<string>();
+  for (const method of ['getUserMessagesByStatusAsync','getSDKMessagePageAsync','searchWorkChatsAsync']) {
+    const original = Reflect.get(app.db, method);
+    Reflect.set(app.db, method, (...params:unknown[]) => { admitted.add(method); return Reflect.apply(original, app!.db, params); });
+  }
+  writeFileSync(join(run,'hold-error'),'hold');
+  renameSync(statePath, statePath + '.retained');
+  try {
+    const failed = find();
+    for(let n=0;!existsSync(join(run,'error-reply-pending'))&&n<500;n++) await Bun.sleep(10);
+    assert(existsSync(join(run,'error-reply-pending')),'external error reply was not reached');
+    const queued = Promise.allSettled([
+      hub.request<{messages:{text:string}[]}>('session.messages.byStatus',{sessionId,status:'consumed',limit:1}),
+      hub.request<{sdkMessages:{uuid:string}[]}>('message.sdkMessages',{sessionId,limit:1}),
+      hub.request<{unreachable:unknown[]}>('operation.invoke',{name:'work.find',input:{text:'absent quokka needle',adapters:['hyperneo'],localOnly:true,limit:1}}),
+    ]);
+    for(let n=0;admitted.size<3&&n<500;n++) await Bun.sleep(10);
+    assert.equal(admitted.size,3,'unrelated RPCs did not reach reader admission');
+    writeFileSync(join(run,'release-error'),'release');
+    const unreachable = await failed, outcomes = await queued;
+    evidence.errorIsolation = {unreachable, statuses:outcomes.map(row=>row.status), failures:outcomes.filter(row=>row.status==='rejected').map(row=>String(row.reason)), readerStarts, search:outcomes[2].status==='fulfilled'?outcomes[2].value:null};
+    assert(unreachable.unreachable.length>0);
+    assert.deepEqual(outcomes.map(row=>row.status),['fulfilled','fulfilled','fulfilled']);
+    assert(outcomes[0].status==='fulfilled'&&outcomes[0].value.messages[0].text===full);
+    assert(outcomes[1].status==='fulfilled'&&outcomes[1].value.sdkMessages[0].uuid==='surviving-sdk');
+    assert(outcomes[2].status==='fulfilled'&&outcomes[2].value.unreachable.length===0);
+    assert.equal(readerStarts,1,'known external error restarted the shared reader');
+    assert(!existsSync(statePath),'readonly failure created an external DB');
+  } finally { writeFileSync(join(run,'release-error'),'release'); renameSync(statePath + '.retained', statePath); }
+  assert.deepEqual((await find()).unreachable, []);
+  assert.equal(evidence.before, digest());
+  evidence.recovered = true;
+} finally {
+  if (timer) clearInterval(timer);
+  probe?.kill();
+  await transport?.close();
+  await app?.cleanup();
+  globalThis.Worker = NativeWorker;
+  WorkerAgentMemoryEmbedder.prototype.warm = warm;
+  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify(evidence, null, 2));
+}

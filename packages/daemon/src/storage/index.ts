@@ -420,6 +420,10 @@ export class Database {
     return this.getSDKReader().countPendingTurns(model, dimensions);
   }
 
+  readCodexSnapshotAsync(statePath: string, includeClosed: boolean) {
+    return this.getSDKReader().readCodexSnapshot(statePath, includeClosed);
+  }
+
   private getSDKReader() {
     return (this.sdkStatusReader ??= new SDKStatusReader(
       this.getDbPath(),

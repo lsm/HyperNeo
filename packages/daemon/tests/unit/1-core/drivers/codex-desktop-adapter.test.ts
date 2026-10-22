@@ -7,6 +7,8 @@ import {
   codexProjectFolder,
   createCodexDesktopAdapter,
   readCodexThread,
+  readCodexSnapshot,
+  type CodexSnapshot,
 } from '../../../../src/lib/drivers/codex-desktop-adapter';
 import type { SpawnFn } from '../../../../src/lib/runtime-spawn';
 import { Database } from '../../../../src/storage/sqlite-compat';
@@ -82,7 +84,7 @@ describe('codex-desktop adapter against a Codex state database', () => {
 
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  function adapter() {
+  function adapter(readSnapshot?: (path: string, closed: boolean) => Promise<CodexSnapshot>) {
     return createCodexDesktopAdapter({
       bootstrapServer: () => Promise.reject(new Error('not used')),
       prepareDesktopProject: async () => 'project-1',
@@ -90,6 +92,7 @@ describe('codex-desktop adapter against a Codex state database', () => {
         throw new Error('not used');
       },
       statePath,
+      readSnapshot,
       worktreesDir: dir,
       machine: 'laptop',
       now: () => NOW,
@@ -102,6 +105,23 @@ describe('codex-desktop adapter against a Codex state database', () => {
       newId: () => 'abcd1234-0000',
     });
   }
+
+  test('async snapshot preserves discovery and a rejected reader never falls back to disk on main', async () => {
+    const query = { includeClosed: true, limit: 20 };
+    const expected = await adapter().find(query);
+    const calls: unknown[] = [];
+    const asyncAdapter = adapter(async (path, closed) => {
+      calls.push({ path, closed });
+      return readCodexSnapshot(path, closed);
+    });
+    expect(await asyncAdapter.find(query)).toEqual(expected);
+    expect(calls).toEqual([{ path: statePath, closed: true }]);
+    await expect(
+      adapter(async () => {
+        throw new Error('snapshot unavailable');
+      }).find(query)
+    ).rejects.toThrow('snapshot unavailable');
+  });
 
   test('links all roots of one Codex project while preserving separate project IDs', async () => {
     const db = new Database(statePath);

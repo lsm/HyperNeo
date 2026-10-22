@@ -1,3 +1,4 @@
+import { readCodexSnapshot } from './codex-desktop-read.ts';
 import { countPendingTurns, readPendingTurns } from './turn-vectors.ts';
 import { readMessageFacts } from '../lib/neo/message-status.ts';
 import { readMessageFeed } from './sdk-message-feed-read.ts';
@@ -35,15 +36,17 @@ worker.onmessage = ({ data }) => {
   workerOperation = args
     ? 'query' in args
       ? 'work-search'
-      : 'turnVectors' in args
-        ? 'turn-vectors'
-        : 'neoMessageStatus' in args
-          ? 'neo-message-status'
-          : 'feed' in args
-            ? 'message-feed'
-            : 'page' in args
-              ? 'sdk-page'
-              : 'sdk-status'
+      : 'codexSnapshot' in args
+        ? 'codex-snapshot'
+        : 'turnVectors' in args
+          ? 'turn-vectors'
+          : 'neoMessageStatus' in args
+            ? 'neo-message-status'
+            : 'feed' in args
+              ? 'message-feed'
+              : 'page' in args
+                ? 'sdk-page'
+                : 'sdk-status'
     : 'close';
   try {
     let result: SDKReadResult | null = null;
@@ -51,6 +54,8 @@ worker.onmessage = ({ data }) => {
       db?.close();
       db = null;
       repository = null;
+    } else if ('codexSnapshot' in args) {
+      result = readCodexSnapshot(args.codexSnapshot.statePath, args.codexSnapshot.includeClosed);
     } else {
       if (!db) {
         db = new Database(data.dbPath, {
