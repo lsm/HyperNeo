@@ -106,7 +106,6 @@ describe('neo.publication.edit', () => {
     });
     expect(result).toMatchObject({
       accepted: true,
-      answered: null,
     });
   });
 

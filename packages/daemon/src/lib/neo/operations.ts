@@ -778,14 +778,7 @@ export function createNeoOperations(service: NeoService) {
     ...createNeoQuestionOperations(
       service.todos,
       (ask, question, note) =>
-        service.deliverForward(
-          ask.sessionId,
-          `neo-question:${question.id}`,
-          note,
-          ask.sessionId,
-          ask.originMessageId ? { sessionId: ask.sessionId, messageId: ask.originMessageId } : null,
-          'continues'
-        ),
+        service.deliverForward(ask.sessionId, `neo-question:${question.id}`, note, ask.sessionId),
       (todoId) => service.todoRunner.start(todoId),
       (caller, id) => !!caller.sessionId && !!receivedNeoHumanInput(service, caller.sessionId, id)
     ),

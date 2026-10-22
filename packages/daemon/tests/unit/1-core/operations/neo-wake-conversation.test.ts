@@ -204,19 +204,17 @@ describe('scheduled wakes in the public conversation', () => {
       .prepare("UPDATE sdk_messages SET timestamp = ? WHERE message_type = 'user'")
       .run('2026-10-20T12:00:00.000Z');
     db.getDatabase()
-      .prepare('UPDATE neo_input_origins SET stamped_at = ?')
+      .prepare('UPDATE session_schedule_wakes SET fired_at = ?')
       .run(Date.parse('2026-10-20T12:00:00.000Z'));
     db.getDatabase()
       .prepare(
-        'INSERT INTO neo_input_origins(session_id,message_id,origin_session_id,origin_message_id,stamped_at,trigger_id) VALUES (?,?,?,?,?,?)'
+        'INSERT INTO session_schedule_wakes(session_id,message_id,fired_at,metadata_json) VALUES (?,?,?,?)'
       )
       .run(
         sessionId,
         'not-delivered',
-        sessionId,
-        'not-delivered',
         Date.now(),
-        'scheduled_wake:{"scheduleId":"skip","sourceKind":"goal","sourceId":"skip"}'
+        '{"scheduleId":"skip","sourceKind":"goal","sourceId":"skip"}'
       );
     const reader = new NeoConversationReader(db.getDatabase());
     const full = reader.read({ conversationId, limit: 100 }).items;
