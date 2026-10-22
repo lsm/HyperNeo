@@ -18,7 +18,7 @@ export function neoPromptTools(packs: readonly NeoPackBrief[]) {
   return {
     systemPrompt: neoPrompt(packs),
     sdkToolsPreset: tools,
-    allowedTools: [...tools, `mcp__${OPERATIONS_MCP_SERVER_NAME}__invoke`],
+    allowedTools: [`mcp__${OPERATIONS_MCP_SERVER_NAME}__invoke`],
   };
 }
 
@@ -28,7 +28,11 @@ export function planNeoSessionConfig(
 ): SessionConfig | null {
   if (!session?.config) return null;
   const config = session.config;
-  const current = neoPromptTools(packs);
+  const defaults = neoPromptTools(packs);
+  const current = {
+    ...defaults,
+    allowedTools: [...new Set([...(config.allowedTools ?? []), ...defaults.allowedTools])],
+  };
   return config.systemPrompt === current.systemPrompt &&
     JSON.stringify(config.sdkToolsPreset) === JSON.stringify(current.sdkToolsPreset) &&
     JSON.stringify(config.allowedTools) === JSON.stringify(current.allowedTools)
