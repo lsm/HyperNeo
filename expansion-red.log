@@ -1,0 +1,37 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (packages/daemon/vitest.config.ts:7:14). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 /Users/lsm/focus/worktrees/preview-relative-bundles/packages/daemon
+
+ ❯ tests/unit/1-core/operations/preview-bundle.test.ts (6 tests | 1 failed | 5 skipped) 14ms
+   ❯ registered relative CSS and raster bundles (6)
+     × refuses repeated asset expansion before constructing an oversized document 13ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/1-core/operations/preview-bundle.test.ts > registered relative CSS and raster bundles > refuses repeated asset expansion before constructing an oversized document
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ tests/unit/1-core/operations/preview-bundle.test.ts:19:88
+     17|       ['chart.png', { kind: 'image' as const, data: 'data:image/png;ba…
+     18|     ]);
+     19|     expect(prepareArtifactHtml('<img src="chart.png">'.repeat(1024), a…
+       |                                                                                        ^
+     20|   });
+     21|   test('refuses aggregate bundle bytes beyond 64 MiB while admitting t…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 5 skipped (6)
+   Start at  00:27:01
+   Duration  364ms (transform 69%, import 22%, setup 5%, tests 4%, worker 1%)
+

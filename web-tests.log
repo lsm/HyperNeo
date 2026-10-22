@@ -1,0 +1,130 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:29:30). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 /Users/lsm/focus/worktrees/preview-relative-bundles/packages/web
+
+TypeError: Invalid URL
+    at new URL (node:internal/url:911:25)
+    at new URL (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/url/URL.js:17:13)
+    at FetchRequestReferrerUtility.getInitialReferrer (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/fetch/utilities/FetchRequestReferrerUtility.js:49:70)
+    at new Request (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/fetch/Request.js:98:69)
+    at new Request (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/window/WindowContextClassExtender.js:124:9)
+    at new Fetch (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/fetch/Fetch.js:78:19)
+    at BrowserFrameNavigator.navigate (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/browser/utilities/BrowserFrameNavigator.js:187:23)
+    at DetachedBrowserFrame.goto (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/browser/detached-browser/DetachedBrowserFrame.js:152:38)
+    at WindowPageOpenUtility.openPage (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/window/WindowPageOpenUtility.js:47:14)
+    at GlobalWindow.open (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/window/BrowserWindow.js:1861:38) {
+  code: 'ERR_INVALID_URL',
+  input: 'null',
+  base: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4='
+}
+TypeError: Invalid URL
+    at new URL (node:internal/url:911:25)
+    at new URL (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/url/URL.js:17:13)
+    at FetchRequestReferrerUtility.getInitialReferrer (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/fetch/utilities/FetchRequestReferrerUtility.js:49:70)
+    at new Request (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/fetch/Request.js:98:69)
+    at new Request (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/window/WindowContextClassExtender.js:124:9)
+    at new Fetch (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/fetch/Fetch.js:78:19)
+    at BrowserFrameNavigator.navigate (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/browser/utilities/BrowserFrameNavigator.js:187:23)
+    at DetachedBrowserFrame.goto (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/browser/detached-browser/DetachedBrowserFrame.js:152:38)
+    at WindowPageOpenUtility.openPage (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/window/WindowPageOpenUtility.js:47:14)
+    at GlobalWindow.open (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/window/BrowserWindow.js:1861:38) {
+  code: 'ERR_INVALID_URL',
+  input: 'null',
+  base: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4='
+}
+TypeError: Invalid URL
+    at new URL (node:internal/url:911:25)
+    at new URL (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/url/URL.js:17:13)
+    at FetchRequestReferrerUtility.getInitialReferrer (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/fetch/utilities/FetchRequestReferrerUtility.js:49:70)
+    at new Request (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/fetch/Request.js:98:69)
+    at new Request (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/window/WindowContextClassExtender.js:124:9)
+    at new Fetch (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/fetch/Fetch.js:78:19)
+    at BrowserFrameNavigator.navigate (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/browser/utilities/BrowserFrameNavigator.js:187:23)
+    at DetachedBrowserFrame.goto (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/browser/detached-browser/DetachedBrowserFrame.js:152:38)
+    at WindowPageOpenUtility.openPage (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/window/WindowPageOpenUtility.js:47:14)
+    at GlobalWindow.open (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/window/BrowserWindow.js:1861:38) {
+  code: 'ERR_INVALID_URL',
+  input: 'null',
+  base: 'data:image/png;base64,iVBORw0KGgo='
+}
+TypeError: Invalid URL
+    at new URL (node:internal/url:911:25)
+    at new URL (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/url/URL.js:17:13)
+    at FetchRequestReferrerUtility.getInitialReferrer (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/fetch/utilities/FetchRequestReferrerUtility.js:49:70)
+    at new Request (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/fetch/Request.js:98:69)
+    at new Request (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/window/WindowContextClassExtender.js:124:9)
+    at new Fetch (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/fetch/Fetch.js:78:19)
+    at BrowserFrameNavigator.navigate (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/browser/utilities/BrowserFrameNavigator.js:187:23)
+    at DetachedBrowserFrame.goto (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/browser/detached-browser/DetachedBrowserFrame.js:152:38)
+    at WindowPageOpenUtility.openPage (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/window/WindowPageOpenUtility.js:47:14)
+    at GlobalWindow.open (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/window/BrowserWindow.js:1861:38) {
+  code: 'ERR_INVALID_URL',
+  input: 'null',
+  base: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4='
+}
+TypeError: Invalid URL
+    at new URL (node:internal/url:911:25)
+    at new URL (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/url/URL.js:17:13)
+    at FetchRequestReferrerUtility.getInitialReferrer (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/fetch/utilities/FetchRequestReferrerUtility.js:49:70)
+    at new Request (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/fetch/Request.js:98:69)
+    at new Request (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/window/WindowContextClassExtender.js:124:9)
+    at new Fetch (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/fetch/Fetch.js:78:19)
+    at BrowserFrameNavigator.navigate (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/browser/utilities/BrowserFrameNavigator.js:187:23)
+    at DetachedBrowserFrame.goto (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/browser/detached-browser/DetachedBrowserFrame.js:152:38)
+    at WindowPageOpenUtility.openPage (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/window/WindowPageOpenUtility.js:47:14)
+    at GlobalWindow.open (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/window/BrowserWindow.js:1861:38) {
+  code: 'ERR_INVALID_URL',
+  input: 'null',
+  base: 'data:image/png%09text/html;base64,PHNjcmlwdD4='
+}
+TypeError: Invalid URL
+    at new URL (node:internal/url:911:25)
+    at new URL (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/url/URL.js:17:13)
+    at FetchRequestReferrerUtility.getInitialReferrer (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/fetch/utilities/FetchRequestReferrerUtility.js:49:70)
+    at new Request (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/fetch/Request.js:98:69)
+    at new Request (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/window/WindowContextClassExtender.js:124:9)
+    at new Fetch (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/fetch/Fetch.js:78:19)
+    at BrowserFrameNavigator.navigate (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/browser/utilities/BrowserFrameNavigator.js:187:23)
+    at DetachedBrowserFrame.goto (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/browser/detached-browser/DetachedBrowserFrame.js:152:38)
+    at WindowPageOpenUtility.openPage (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/window/WindowPageOpenUtility.js:47:14)
+    at GlobalWindow.open (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/window/BrowserWindow.js:1861:38) {
+  code: 'ERR_INVALID_URL',
+  input: 'null',
+  base: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4='
+}
+TypeError: Invalid URL
+    at new URL (node:internal/url:911:25)
+    at new URL (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/url/URL.js:17:13)
+    at FetchRequestReferrerUtility.getInitialReferrer (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/fetch/utilities/FetchRequestReferrerUtility.js:49:70)
+    at new Request (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/fetch/Request.js:98:69)
+    at new Request (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/window/WindowContextClassExtender.js:124:9)
+    at new Fetch (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/fetch/Fetch.js:78:19)
+    at BrowserFrameNavigator.navigate (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/browser/utilities/BrowserFrameNavigator.js:187:23)
+    at DetachedBrowserFrame.goto (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/browser/detached-browser/DetachedBrowserFrame.js:152:38)
+    at WindowPageOpenUtility.openPage (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/window/WindowPageOpenUtility.js:47:14)
+    at GlobalWindow.open (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/window/BrowserWindow.js:1861:38) {
+  code: 'ERR_INVALID_URL',
+  input: 'null',
+  base: 'data:image/png,%89%50%4E%47%0D%0A'
+}
+GET https://example.com/chart.png 404 (Not Found)
+GET https://example.com/chart.png 404 (Not Found)
+DOMException [NotSupportedError]: Failed to load script "https://example.com/s.js". JavaScript file loading is disabled.
+    at HTMLScriptElement.#loadScript (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/nodes/html-script-element/HTMLScriptElement.js:549:31)
+    at HTMLScriptElement.[connectedToDocument] (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/nodes/html-script-element/HTMLScriptElement.js:315:33)
+    at HTMLScriptElement.[connectedToNode] (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/nodes/node/Node.js:801:53)
+    at HTMLBodyElement.[appendChild] (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/nodes/node/Node.js:421:45)
+    at HTMLBodyElement.[appendChild] (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/nodes/element/Element.js:1102:62)
+    at HTMLParser.parseRawTextElementContent (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/html-parser/HTMLParser.js:654:61)
+    at HTMLParser.parse (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/html-parser/HTMLParser.js:244:30)
+    at HTMLDocument.write (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/nodes/document/Document.js:1274:16)
+    at DetachedBrowserFrame.set content [as content] (file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/browser/detached-browser/DetachedBrowserFrame.js:60:30)
+    at file:///Users/lsm/focus/worktrees/preview-relative-bundles/node_modules/.bun/happy-dom@20.14.3/node_modules/happy-dom/lib/browser/utilities/BrowserFrameNavigator.js:250:31
+
+ Test Files  11 passed (11)
+      Tests  275 passed (275)
+   Start at  00:37:42
+   Duration  1.40s (environment 31%, transform 25%, setup 24%, tests 15%, import 4%, worker 1%)
+

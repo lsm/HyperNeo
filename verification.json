@@ -1,0 +1,36 @@
+{
+  "head": "398444b46227021dd6ab07729fc3927af6792862",
+  "base": "ffc5235781dc9746f6f0d49d9bd1e5327e5be5be",
+  "daemonRuntime": "Bun1.4.2",
+  "artifactTests": 121,
+  "artifactTestFiles": 14,
+  "webTests": 275,
+  "webTestFiles": 11,
+  "fullChecks": "pass",
+  "webBuild": "pass",
+  "operationTransport": "operation.invoke via real isolated daemon on9417",
+  "restart": "identical after retained-source rename and own daemon restart",
+  "webWidths": [
+    1280,
+    390
+  ],
+  "offHostRequests": [],
+  "iOSRendering": {
+    "repositoryHead": "fa7f9d80a14aa74328299ab8a4e9577625200424",
+    "tests": 1,
+    "runs": 4,
+    "widths": [
+      320,
+      402
+    ],
+    "languages": [
+      "en",
+      "zh-Hans"
+    ],
+    "preparedBytesMatchFinalDaemon": true,
+    "preparedDocumentSha256": "3b51b898da2d200184534e71cae04e2d227e53e4c5906ca3008d7896dc452666",
+    "surface": "hosted production sheet/WKWebView over AppRig using captured actual RPC bytes; physical taps/live native connection not claimed"
+  },
+  "services": "stopped; own iOS proof simulator/worktree removed",
+  "storage": "all snapshots/exports/fixtures retained; no migration"
+}

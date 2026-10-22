@@ -1,0 +1,15 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:7:14). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 /Users/lsm/focus/worktrees/preview-relative-bundles/packages/daemon
+
+
+ Test Files  14 passed (14)
+      Tests  121 passed (121)
+   Start at  00:35:40
+   Duration  11.86s (tests 86%, transform 6%, import 6%, setup 2%)
+
+    Isolate  14 workers spawned · ~66ms startup each (spawn + environment, per file)
+             at least ~852ms faster with isolate: false — reuses workers across files instead of one per file
+

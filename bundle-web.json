@@ -1,0 +1,19 @@
+{
+  "widths": {
+    "390": {
+      "registeredCss": true,
+      "rasterAndCssBackground": true,
+      "opaqueSandbox": true,
+      "unlistedAssetDenied": true,
+      "exactOriginalSource": true
+    },
+    "1280": {
+      "registeredCss": true,
+      "rasterAndCssBackground": true,
+      "opaqueSandbox": true,
+      "unlistedAssetDenied": true,
+      "exactOriginalSource": true
+    }
+  },
+  "requestsOutsideHost": []
+}

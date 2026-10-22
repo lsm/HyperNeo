@@ -1,0 +1,11 @@
+{
+ "reply": {
+  "status": "ok",
+  "version": "0.45.2",
+  "uptime": 3828,
+  "sessions": {
+   "active": 1,
+   "total": 2
+  }
+ }
+}

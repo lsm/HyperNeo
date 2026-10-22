@@ -1,0 +1,27 @@
+{
+  "ref": {
+    "daemonId": "a7656ad5-a3a5-46cf-93b6-9d2ba3d553d3",
+    "artifactId": "a69fcdb1-3d19-41c0-89a0-b9b53029b157",
+    "title": "Bundled report",
+    "kind": "html",
+    "byteLength": 443
+  },
+  "prepared": {
+    "accepted": true,
+    "sha256": "c78b55058d102ebbaf87551d5bb77b32e0cbb5ccb8c19b2ac9810e1a9d2af14b",
+    "document": "<!doctype html><html><head><meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src &#x27;none&#x27;; script-src &#x27;none&#x27;; connect-src &#x27;none&#x27;; style-src &#x27;unsafe-inline&#x27;; img-src data: blob:; font-src &#x27;none&#x27;; media-src &#x27;none&#x27;; object-src &#x27;none&#x27;; frame-src &#x27;none&#x27;; worker-src &#x27;none&#x27;; base-uri &#x27;none&#x27;; form-action &#x27;none&#x27;\"><style>body{font:17px system-ui;margin:0;padding:28px;background:#f5f8f6;color:#223f35}h1{font-size:30px}.bundle{color:#13713d}.chart{background-image:url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAIAAABvFaqvAAAAH0lEQVR4nGN41mNDFcQwatCoQaMGjRo0atCoQQNvEADxaMeuOCcmmgAAAABJRU5ErkJggg==);border:8px solid white;border-radius:12px}p{max-width:580px;line-height:1.6}</style></head><body><p>IMMUTABLE FIELD NOTES · 22</p><h1 class=\"bundle\">Bundled report</h1><p>The stylesheet and chart come only from explicitly registered snapshots.</p><img class=\"chart\" src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAIAAABvFaqvAAAAH0lEQVR4nGN41mNDFcQwatCoQaMGjRo0atCoQQNvEADxaMeuOCcmmgAAAABJRU5ErkJggg==\" alt=\"Captured chart\" width=\"120\" height=\"120\"><p>End of bundled report.</p></body></html>",
+    "links": [],
+    "scriptsRemoved": true
+  },
+  "bundle": [
+    {
+      "path": "styles/theme.css",
+      "artifactId": "e5339853-12ed-4485-b7e7-ab8f26bb9ee6"
+    },
+    {
+      "path": "images/chart.png",
+      "artifactId": "0e249392-51f0-41ea-a48a-36fa339ac033"
+    }
+  ],
+  "source": "<!doctype html><link rel=\"stylesheet\" href=\"styles/theme.css\"><p>IMMUTABLE FIELD NOTES · 22</p><h1 class=\"bundle\">Bundled report</h1><p>The stylesheet and chart come only from explicitly registered snapshots.</p><img class=\"chart\" src=\"images/chart.png\" alt=\"Captured chart\" width=\"120\" height=\"120\"><img src=\"unlisted.png\" alt=\"Unlisted\"><script>window.__bundleProbe=\"ran\";parent.__bundleProbe=\"escaped\"</script><p>End of bundled report.</p>"
+}

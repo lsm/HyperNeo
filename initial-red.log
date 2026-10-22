@@ -1,0 +1,123 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:7:14). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 /Users/lsm/focus/worktrees/preview-relative-bundles/packages/daemon
+
+30 |  assert.equal(result.kind, 'completed', JSON.stringify(result));
+31 |  return (result as { kind: 'completed'; value: Record<string, unknown> }).value;
+32 | };
+33 | const input = { requestId: 'bundle-html', context, path: 'report.html', title: 'Bundled report' };
+34 | const css = await call('artifact.file.register', { ...input, requestId: 'bundle-css', path: 'theme.css', title: 'Theme' });
+35 | assert.equal(css.accepted, true, JSON.stringify(css));
+            ^
+AssertionError: {"accepted":false,"reason":"unsupported_type"}
+
+false !== true
+
+ generatedMessage: false,
+     actual: false,
+   expected: true,
+   operator: "strictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /Users/lsm/focus/worktrees/preview-relative-bundles/.claude/skills/verify/preview-bundle.ts:35:8
+
+Bun v1.4.3 (macOS arm64)
+ ❯ tests/unit/1-core/operations/preview-bundle.test.ts (4 tests | 4 failed) 331ms
+   ❯ registered relative CSS and raster bundles (4)
+     × accepts explicit registered IDs and rejects unsafe, duplicate or excessive aliases 3ms
+     × renders only explicit snapshot assets and resolves CSS images relative to the sheet 4ms
+     × never admits network imports, missing aliases or executable assets through CSS 1ms
+     × registers and reopens an authorized immutable bundle through real native operations 322ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/1-core/operations/preview-bundle.test.ts > registered relative CSS and raster bundles > accepts explicit registered IDs and rejects unsafe, duplicate or excessive aliases
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ tests/unit/1-core/operations/preview-bundle.test.ts:16:84
+     14|     const input = { requestId: 'bundle', context: { kind: 'todo', id: …
+     15|     const entry = { path: 'styles/theme.css', artifactId: 'css' };
+     16|     expect(RegisterArtifactInput.safeParse({ ...input, bundle: [entry]…
+       |                                                                                    ^
+     17|     for (const path of ['../a.css', '/a.css', 'https://example.com/a.c…
+     18|       expect(RegisterArtifactInput.safeParse({ ...input, bundle: [{ ..…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  tests/unit/1-core/operations/preview-bundle.test.ts > registered relative CSS and raster bundles > renders only explicit snapshot assets and resolves CSS images relative to the sheet
+AssertionError: expected '<!doctype html><html><head><meta char…' to contain '.bundle{color:#13713d;background-imag…'
+
+Expected: ".bundle{color:#13713d;background-image:url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==)}"
+Received: "<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src &#x27;none&#x27;; script-src &#x27;none&#x27;; connect-src &#x27;none&#x27;; style-src &#x27;unsafe-inline&#x27;; img-src data: blob:; font-src &#x27;none&#x27;; media-src &#x27;none&#x27;; object-src &#x27;none&#x27;; frame-src &#x27;none&#x27;; worker-src &#x27;none&#x27;; base-uri &#x27;none&#x27;; form-action &#x27;none&#x27;"></head><body><h1 class="bundle">Bundled report</h1></body></html>"
+
+ ❯ tests/unit/1-core/operations/preview-bundle.test.ts:31:31
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  tests/unit/1-core/operations/preview-bundle.test.ts > registered relative CSS and raster bundles > never admits network imports, missing aliases or executable assets through CSS
+AssertionError: expected '<!doctype html><html><head><meta char…' to contain 'p{background:none;mask:none;color:#13…'
+
+Expected: "p{background:none;mask:none;color:#13713d}"
+Received: "<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src &#x27;none&#x27;; script-src &#x27;none&#x27;; connect-src &#x27;none&#x27;; style-src &#x27;unsafe-inline&#x27;; img-src data: blob:; font-src &#x27;none&#x27;; media-src &#x27;none&#x27;; object-src &#x27;none&#x27;; frame-src &#x27;none&#x27;; worker-src &#x27;none&#x27;; base-uri &#x27;none&#x27;; form-action &#x27;none&#x27;"></head><body><p>Kept</p></body></html>"
+
+ ❯ tests/unit/1-core/operations/preview-bundle.test.ts:50:31
+     48|     expect(prepared.document).not.toContain('@import');
+     49|     expect(prepared.document).not.toContain('canary.invalid');
+     50|     expect(prepared.document).toContain('p{background:none;mask:none;c…
+       |                               ^
+     51|     expect(prepared.document).toContain('Kept');
+     52|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  tests/unit/1-core/operations/preview-bundle.test.ts > registered relative CSS and raster bundles > registers and reopens an authorized immutable bundle through real native operations
+Error: Command failed: bun /Users/lsm/focus/worktrees/preview-relative-bundles/.claude/skills/verify/preview-bundle.ts /private/var/folders/rh/gyr4f8tn57l2qk62t40hmdvm0000gn/T/preview-bundle-m5U9Vi
+30 |  assert.equal(result.kind, 'completed', JSON.stringify(result));
+31 |  return (result as { kind: 'completed'; value: Record<string, unknown> }).value;
+32 | };
+33 | const input = { requestId: 'bundle-html', context, path: 'report.html', title: 'Bundled report' };
+34 | const css = await call('artifact.file.register', { ...input, requestId: 'bundle-css', path: 'theme.css', title: 'Theme' });
+35 | assert.equal(css.accepted, true, JSON.stringify(css));
+            ^
+AssertionError: {"accepted":false,"reason":"unsupported_type"}
+
+false !== true
+
+ generatedMessage: false,
+     actual: false,
+   expected: true,
+   operator: "strictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /Users/lsm/focus/worktrees/preview-relative-bundles/.claude/skills/verify/preview-bundle.ts:35:8
+
+Bun v1.4.3 (macOS arm64)
+
+ ❯ ../../.claude/skills/verify/preview-bundle.ts:35:8
+ ❯ tests/unit/1-core/operations/preview-bundle.test.ts:57:20
+     55|     const root = realpathSync(mkdtempSync(join(tmpdir(), 'preview-bund…
+     56|     mkdirSync(join(root, 'home'));
+     57|     const output = execFileSync('bun', [fileURLToPath(new URL('../../.…
+       |                    ^
+     58|       env: { PATH: process.env.PATH, HOME: join(root, 'home'), NODE_EN…
+     59|     });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed (4)
+   Start at  00:12:40
+   Duration  717ms (tests 50%, transform 37%, import 11%, setup 2%)
+
