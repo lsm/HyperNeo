@@ -24,7 +24,10 @@ first PR's events. The first poll returns eight feedback comments. Inspect
   not tested; the job processor is stopped before the fixture is seeded.
 - Both repositories acquire a fresh last-poll timestamp. The feedback burst
   makes one completion read, reusing the existing two-minute check interval
-  thereafter. It does not sweep the unrelated todo or its worker.
+  thereafter. Each comment carries its original commit ID. A head-bound event
+  newer than the cached PR observation still forces a fresh read before routing;
+  historical comments reuse that newer observation. The burst does not sweep the
+  unrelated todo or its worker.
 - A second poll reports the target PR merged. It forces a fresh check despite
   the recent interval: the target todo becomes done immediately, while the
   unrelated todo remains doing.
