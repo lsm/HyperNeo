@@ -75,6 +75,13 @@ describe('GitHub polling fairness', () => {
         repo,
         pollingEnabled: true,
       });
+    const heavy = extension.repo.getWatchedRepo('test-space', 'verify-test', 'a-heavy')!;
+    extension.repo.updatePollCursor(heavy.id, {
+      lastSeenAt: 0,
+      recentPullRequestHeadShas: Object.fromEntries(
+        Array.from({ length: 201 }, (_, i) => [i + 1, `head-${i + 1}`])
+      ),
+    });
     await start();
     try {
       for (cycle = 1; cycle <= 80; cycle++) {
