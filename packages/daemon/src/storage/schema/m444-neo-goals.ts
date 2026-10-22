@@ -30,10 +30,12 @@ export function createNeoGoalsTable(db: Database): void {
 
 function tableSql(db: Database, table: string): string {
   return (
-    db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(table) as {
-      sql: string;
-    }
-  ).sql;
+    (
+      db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(table) as {
+        sql: string;
+      } | null
+    )?.sql ?? ''
+  );
 }
 
 function rebuild(db: Database, table: string, sql: string): void {
@@ -58,7 +60,7 @@ export function runMigration444(db: Database): void {
   const journal = tableSql(db, 'goal_journal');
   const asks = tableSql(db, 'neo_asks');
   const legacy = /REFERENCES\s+space_goals/i;
-  if (db.prepare('SELECT 1 FROM space_goals WHERE space_id IS NULL LIMIT 1').get())
+  if (goals && db.prepare('SELECT 1 FROM space_goals WHERE space_id IS NULL LIMIT 1').get())
     throw new Error(
       'm444_legacy_session_goals: preserve existing goals; migration requires explicit reconciliation'
     );
@@ -75,7 +77,7 @@ export function runMigration444(db: Database): void {
       if (legacy.test(journal))
         rebuild(db, 'goal_journal', journal.replace(legacy, 'REFERENCES neo_goals'));
       if (legacy.test(asks)) rebuild(db, 'neo_asks', asks.replace(legacy, 'REFERENCES neo_goals'));
-      if (!/space_id\s+TEXT\s+NOT\s+NULL/i.test(goals))
+      if (goals && !/space_id\s+TEXT\s+NOT\s+NULL/i.test(goals))
         rebuild(
           db,
           'space_goals',
@@ -90,7 +92,10 @@ export function runMigration444(db: Database): void {
         'space_goals',
         'space_goal_events',
       ])
-        if (db.prepare('SELECT 1 FROM pragma_foreign_key_check(?) LIMIT 1').get(table))
+        if (
+          tableSql(db, table) &&
+          db.prepare('SELECT 1 FROM pragma_foreign_key_check(?) LIMIT 1').get(table)
+        )
           throw new Error(`m444_foreign_key_violation: ${table}`);
     })();
   } finally {
