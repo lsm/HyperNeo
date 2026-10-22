@@ -208,6 +208,25 @@ describe('driverWorkCaller', () => {
 });
 
 describe('readDriverOutcome', () => {
+  test('an accepted inbox receipt is unconfirmed input, not a queued submission', () => {
+    const ref = { adapter: 'claude-code', id: 'owned-cli' };
+    const receipt = { executionId: ref.id, inputId: 'inbox-input' };
+    const delivery = { delivered: false, unconfirmed: true as const, receipt };
+    expect(
+      readDriverOutcome(
+        { verb: 'send', ref },
+        { kind: 'completed', value: { ok: true, value: delivery } }
+      )
+    ).toEqual({ ref, delivery, receipt });
+    const queued = { ...delivery, queuedSubmissionId: 'pending-inbox' };
+    expect(
+      readDriverOutcome(
+        { verb: 'send', ref },
+        { kind: 'completed', value: { ok: true, value: queued } }
+      )
+    ).toEqual({ ref, delivery: queued, receipt, queued: true });
+  });
+
   test('Copilot pending receipt is accepted queued work with its original attribution', () => {
     const ref = { adapter: 'copilot-cli', id: 'owned-session' };
     const receipt = { executionId: ref.id, inputId: 'queued-input' };
