@@ -451,3 +451,42 @@ test('live feeds share status admission and keep explicit error recovery', async
   expect(await next).toEqual(result);
   await reader.close();
 });
+
+test('Neo status facts share the serial metadata reader without transferring ask content', async () => {
+  const { reader, workers } = fixture();
+  const refs = [
+    {
+      conversationId: 'synthetic-conversation',
+      requestId: 'request-1',
+      askOrigin: { sessionId: args.sessionId, messageId: 'message-1' },
+    },
+  ];
+  const facts = [{ sendStatus: 'consumed', processing: null, answered: true }];
+  const first = reader.read(args),
+    next = reader.readNeoMessageStatusFacts(refs);
+  await tick();
+  expect(workers[0].requests).toHaveLength(1);
+  workers[0].reply(workers[0].requests[0], page);
+  expect(await first).toEqual(page);
+  await tick();
+  expect(workers).toHaveLength(1);
+  expect(workers[0].requests[1].args).toEqual({ neoMessageStatus: refs });
+  workers[0].reply(workers[0].requests[1], facts);
+  expect(await next).toEqual(facts);
+  await reader.close();
+});
+
+test('a failed Neo fact request rejects and a fresh request uses a replacement reader', async () => {
+  const { reader, workers } = fixture();
+  const failed = reader.readNeoMessageStatusFacts([]);
+  const rejected = expect(failed).rejects.toThrow('synthetic failure');
+  await tick();
+  workers[0].crash();
+  await rejected;
+  const next = reader.readNeoMessageStatusFacts([]);
+  await tick();
+  expect(workers).toHaveLength(2);
+  workers[1].reply(workers[1].requests[0], []);
+  expect(await next).toEqual([]);
+  await reader.close();
+});

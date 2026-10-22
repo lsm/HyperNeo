@@ -1,3 +1,4 @@
+import { readMessageFacts } from '../lib/neo/message-status.ts';
 import { readMessageFeed } from './sdk-message-feed-read.ts';
 import { Database } from './sqlite-compat.ts';
 import { SDKMessageRepository } from './repositories/sdk-message-repository.ts';
@@ -33,11 +34,13 @@ worker.onmessage = ({ data }) => {
   workerOperation = args
     ? 'query' in args
       ? 'work-search'
-      : 'feed' in args
-        ? 'message-feed'
-        : 'page' in args
-          ? 'sdk-page'
-          : 'sdk-status'
+      : 'neoMessageStatus' in args
+        ? 'neo-message-status'
+        : 'feed' in args
+          ? 'message-feed'
+          : 'page' in args
+            ? 'sdk-page'
+            : 'sdk-status'
     : 'close';
   try {
     let result: SDKReadResult | null = null;
@@ -61,6 +64,7 @@ worker.onmessage = ({ data }) => {
             : undefined;
           return repository!.searchWorkChats(args.query, args.limit, semantic, args.kinds);
         }
+        if ('neoMessageStatus' in args) return readMessageFacts(db!, args.neoMessageStatus);
         if ('feed' in args) return readMessageFeed(db!, args);
         if ('page' in args) return readSDKMessagePage(repository!, args);
         return projectSDKStatusPage(

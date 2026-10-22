@@ -8,10 +8,11 @@ import type { Database } from '../../storage/sqlite-compat.ts';
 import { parseProcessingState } from '../session/space-session-reads.ts';
 
 type Ask = NeoConversationAsk | NeoConversationAskPageItem;
-type Fact = { sendStatus: string | null; processing: string | null; answered: boolean };
-export type NeoMessageStatusPresenter = <T extends Ask>(items: readonly T[]) => T[];
+export type NeoMessageStatusRef = Pick<Ask, 'conversationId' | 'requestId' | 'askOrigin'>;
+export type Fact = { sendStatus: string | null; processing: string | null; answered: boolean };
+export type NeoMessageStatusPresenter = <T extends Ask>(items: readonly T[]) => T[] | Promise<T[]>;
 
-function readMessageFacts(db: Database, items: readonly Ask[]): Fact[] {
+export function readMessageFacts(db: Database, items: readonly NeoMessageStatusRef[]): Fact[] {
   if (!items.length) return [];
   const answered = new Set<string>();
   for (const conversation of new Set(items.map((item) => item.conversationId))) {
@@ -74,7 +75,21 @@ function presentMessageStatuses<T extends Ask>(items: readonly T[], facts: reado
 }
 
 export const readNeoMessageStatuses = (superpipe({})('neo-message-statuses') as PipelineAPI)
-  .input(['db', 'items'])
-  .pipe(readMessageFacts, ['db', 'items'], 'facts')
+  .input(['readFacts', 'items'])
+  .pipe(
+    (readFacts: (refs: NeoMessageStatusRef[]) => Promise<Fact[]>, items: readonly Ask[]) =>
+      readFacts(
+        items.map(({ conversationId, requestId, askOrigin }) => ({
+          conversationId,
+          requestId,
+          askOrigin,
+        }))
+      ),
+    ['readFacts', 'items'],
+    'facts'
+  )
   .pipe(presentMessageStatuses, ['items', 'facts'], 'items')
-  .end('items') as <T extends Ask>(db: Database, items: readonly T[]) => T[];
+  .endAsync('items') as <T extends Ask>(
+  readFacts: (refs: NeoMessageStatusRef[]) => Promise<Fact[]>,
+  items: readonly T[]
+) => Promise<T[]>;

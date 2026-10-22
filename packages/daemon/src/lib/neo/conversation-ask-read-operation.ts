@@ -91,9 +91,12 @@ export const NeoConversationAskPageSchema = z.object({
   messageStatus: z.enum(NEO_MESSAGE_STATUSES).optional(),
 });
 
-function readAskStatus(result: Result, presentStatus: NeoMessageStatusPresenter): Result {
+async function readAskStatus(
+  result: Result,
+  presentStatus: NeoMessageStatusPresenter
+): Promise<Result> {
   if (!result.ok) return result;
-  return { ...result, items: presentStatus(result.items) };
+  return { ...result, items: await presentStatus(result.items) };
 }
 
 export function neoConversationImageId(sequence: number, index: number): string {
@@ -167,13 +170,13 @@ const read = (superpipe({})('neo-conversation-ask-read') as PipelineAPI)
   )
   .pipe(readAskStatus, ['page', 'presentStatus'], 'page')
   .pipe(readAskImageRefs, ['request', 'page', 'ledger'], 'page')
-  .end('page') as (
+  .endAsync('page') as (
   request: AskPage,
   caller: OperationCaller,
   repo: NeoRepository,
   ledger: NeoConversationAskRepository,
   presentStatus: NeoMessageStatusPresenter
-) => Result;
+) => Promise<Result>;
 
 export function createNeoConversationAskReadOperation(
   repo: NeoRepository,

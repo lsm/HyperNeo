@@ -68,7 +68,7 @@ describe('scheduled wakes in the public conversation', () => {
     expect(result.kind).toBe('completed');
     if (result.kind !== 'completed') throw new Error('Read failed');
     expect(operation.resultSchema.safeParse(result.value).success).toBe(true);
-    const wakes = (result.value as ReturnType<NeoConversationReader['read']>).items.filter(
+    const wakes = (result.value as Awaited<ReturnType<NeoConversationReader['read']>>).items.filter(
       (item) => item.role === 'wake'
     );
     expect(wakes).toHaveLength(1);
@@ -89,31 +89,33 @@ describe('scheduled wakes in the public conversation', () => {
     expect(JSON.stringify(wakes)).not.toContain('Not from this wake');
   });
 
-  test('a separately allocated terminal settles its consumed wake without additions', () => {
+  test('a separately allocated terminal settles its consumed wake without additions', async () => {
     const fixture = seedNeoWake(db.getDatabase(), conversationId, false);
     const reader = new NeoConversationReader(db.getDatabase());
-    const read = () =>
-      reader.read({ conversationId, limit: 100 }).items.find((item) => item.role === 'wake');
-    const cursor = read()!.cursor;
-    expect(read()).toMatchObject({ wake: { settledAt: null, summary: null, additions: [] } });
+    const read = async () =>
+      (await reader.read({ conversationId, limit: 100 })).items.find(
+        (item) => item.role === 'wake'
+      );
+    const cursor = (await read())!.cursor;
+    expect(await read()).toMatchObject({ wake: { settledAt: null, summary: null, additions: [] } });
     const result = fixture.finish();
     expect(result.consumed).toBeGreaterThan(fixture.input.consumed);
     db.getDatabase()
       .prepare('UPDATE sdk_messages SET timestamp = ? WHERE sdk_uuid = ?')
       .run(result.timestamp, fixture.messageId);
-    expect(read()).toMatchObject({
+    expect(await read()).toMatchObject({
       wake: {
         settledAt: Date.parse(result.timestamp),
         summary: 'Guide cycle complete.',
         additions: [],
       },
     });
-    expect(read()!.cursor).toEqual(cursor);
+    expect((await read())!.cursor).toEqual(cursor);
     db.getDatabase().exec('UPDATE sessions SET processing_state = \'{"status":"processing"}\'');
-    expect(read()).toMatchObject({ wake: { settledAt: Date.parse(result.timestamp) } });
+    expect(await read()).toMatchObject({ wake: { settledAt: Date.parse(result.timestamp) } });
   });
 
-  test('a terminal after the next consumed input cannot settle an earlier wake', () => {
+  test('a terminal after the next consumed input cannot settle an earlier wake', async () => {
     const fixture = seedNeoWake(db.getDatabase(), conversationId, false);
     const next = fixture.nextInput();
     const terminal = fixture.finish('Only the later input finished.');
@@ -121,45 +123,45 @@ describe('scheduled wakes in the public conversation', () => {
     expect(terminal.consumed).toBeGreaterThan(next.consumed);
     const reader = new NeoConversationReader(db.getDatabase());
     expect(
-      reader.read({ conversationId, limit: 100 }).items.find((item) => item.role === 'wake')
+      (await reader.read({ conversationId, limit: 100 })).items.find((item) => item.role === 'wake')
     ).toMatchObject({
       wake: { settledAt: null, summary: null, additions: [] },
     });
   });
 
-  test('later turns do not replace an already settled wake summary', () => {
+  test('later turns do not replace an already settled wake summary', async () => {
     const fixture = seedNeoWake(db.getDatabase(), conversationId, false);
     const terminal = fixture.finish();
     fixture.nextInput();
     fixture.finish('An unrelated later summary.');
     const reader = new NeoConversationReader(db.getDatabase());
     expect(
-      reader.read({ conversationId, limit: 100 }).items.find((item) => item.role === 'wake')
+      (await reader.read({ conversationId, limit: 100 })).items.find((item) => item.role === 'wake')
     ).toMatchObject({
       wake: { settledAt: Date.parse(terminal.timestamp), summary: 'Guide cycle complete.' },
     });
   });
 
-  test('inherited question and recovery triggers do not create extra wake rows', () => {
+  test('inherited question and recovery triggers do not create extra wake rows', async () => {
     const fixture = seedNeoWake(db.getDatabase(), conversationId);
     fixture.continuation('neo-question:answered');
     fixture.continuation(`restart-recovery:${fixture.messageId}`);
     const reader = new NeoConversationReader(db.getDatabase());
     expect(
-      reader.read({ conversationId, limit: 100 }).items.filter((row) => row.role === 'wake')
+      (await reader.read({ conversationId, limit: 100 })).items.filter((row) => row.role === 'wake')
     ).toHaveLength(1);
     expect(
       new NeoConversationWakeRepository(db.getDatabase()).latest(conversationId, 30)
     ).toHaveLength(1);
   });
 
-  test('a recovered wake settles through its recorded origin without creating a new wake', () => {
+  test('a recovered wake settles through its recorded origin without creating a new wake', async () => {
     const fixture = seedNeoWake(db.getDatabase(), conversationId, false);
     fixture.continuation(`restart-recovery:${fixture.messageId}`);
     const terminal = fixture.finish();
-    const wakes = new NeoConversationReader(db.getDatabase())
-      .read({ conversationId, limit: 100 })
-      .items.filter((row) => row.role === 'wake');
+    const wakes = (
+      await new NeoConversationReader(db.getDatabase()).read({ conversationId, limit: 100 })
+    ).items.filter((row) => row.role === 'wake');
     expect(wakes).toHaveLength(1);
     expect(wakes[0]).toMatchObject({
       wake: { settledAt: Date.parse(terminal.timestamp), summary: 'Guide cycle complete.' },
@@ -195,7 +197,7 @@ describe('scheduled wakes in the public conversation', () => {
     });
   });
 
-  test('equal-time wakes page both ways and exclude other sessions, skips and undelivered origins', () => {
+  test('equal-time wakes page both ways and exclude other sessions, skips and undelivered origins', async () => {
     const foreign = '10000000-0000-4000-8000-000000000006';
     db.createSession(createTestSession(`neo:${foreign}`));
     seedNeoWake(db.getDatabase(), foreign, false);
@@ -217,30 +219,32 @@ describe('scheduled wakes in the public conversation', () => {
         '{"scheduleId":"skip","sourceKind":"goal","sourceId":"skip"}'
       );
     const reader = new NeoConversationReader(db.getDatabase());
-    const full = reader.read({ conversationId, limit: 100 }).items;
+    const full = (await reader.read({ conversationId, limit: 100 })).items;
     expect(full).toHaveLength(4);
     expect(full.every((item) => item.role === 'wake')).toBe(true);
-    const last = reader.read({ conversationId, limit: 2 });
-    const first = reader.read({ conversationId, limit: 2, before: last.nextBefore! });
+    const last = await reader.read({ conversationId, limit: 2 });
+    const first = await reader.read({ conversationId, limit: 2, before: last.nextBefore! });
     expect([...first.items, ...last.items]).toEqual(full);
-    expect(reader.read({ conversationId, limit: 2, after: first.nextAfter! }).items).toEqual(
-      last.items
-    );
+    expect(
+      (await reader.read({ conversationId, limit: 2, after: first.nextAfter! })).items
+    ).toEqual(last.items);
   });
 
-  test('compaction and intercepted recovery results do not settle a working wake', () => {
+  test('compaction and intercepted recovery results do not settle a working wake', async () => {
     const fixture = seedNeoWake(db.getDatabase(), conversationId, false);
     const reader = new NeoConversationReader(db.getDatabase());
-    const read = () =>
-      reader.read({ conversationId, limit: 100 }).items.find((item) => item.role === 'wake');
+    const read = async () =>
+      (await reader.read({ conversationId, limit: 100 })).items.find(
+        (item) => item.role === 'wake'
+      );
     const compaction = fixture.finish();
     db.getSDKMessageRepo().markResultInternalCompactionTurn(sessionId, compaction.uuid);
-    expect(read()).toMatchObject({ wake: { settledAt: null, summary: null } });
+    expect(await read()).toMatchObject({ wake: { settledAt: null, summary: null } });
     const intercepted = fixture.finish();
     db.getSDKMessageRepo().markResultRecoveryIntercepted(sessionId, intercepted.uuid);
-    expect(read()).toMatchObject({ wake: { settledAt: null, summary: null } });
+    expect(await read()).toMatchObject({ wake: { settledAt: null, summary: null } });
     const terminal = fixture.finish();
-    expect(read()).toMatchObject({
+    expect(await read()).toMatchObject({
       wake: { settledAt: Date.parse(terminal.timestamp), summary: 'Guide cycle complete.' },
     });
   });

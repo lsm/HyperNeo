@@ -28,11 +28,11 @@ let notifications: string[];
 const invoke = (name: string, input: unknown, caller = human) =>
   invokeOperation(createOperationRegistry(createNeoOperations(service)), name, input, caller);
 
-async function input() {
+async function input(content = 'Compare synthetic drafts.') {
   const requestId = crypto.randomUUID();
-  expect(
-    await invoke('neo.message.send', { sessionId, requestId, content: 'Compare synthetic drafts.' })
-  ).toMatchObject({ value: { ok: true, messageId: requestId } });
+  expect(await invoke('neo.message.send', { sessionId, requestId, content })).toMatchObject({
+    value: { ok: true, messageId: requestId },
+  });
   return requestId;
 }
 
@@ -229,3 +229,87 @@ test('ordinary delivery changes notify clients to refetch computed status withou
   });
   expect(notifications).toEqual([]);
 });
+
+test.each(['neo.conversation.asks.read', 'neo.conversation.read'])(
+  '%s awaits asynchronous status facts without copying human content into the request',
+  async (name) => {
+    const content = 'Complete human research result 🦊\n'.repeat(300);
+    const id = await input(content);
+    delivered(id, 'consumed');
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const facts = mock(async () => {
+      await gate;
+      return [{ sendStatus: 'consumed', processing: null, answered: true }];
+    });
+    Object.assign(db, { getNeoMessageStatusFactsAsync: facts });
+    let completed = false;
+    const pending = invoke(name, { conversationId }).then((result) => {
+      completed = true;
+      return result;
+    });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(completed).toBe(false);
+      expect(facts.mock.calls).toEqual([
+        [
+          [
+            {
+              conversationId,
+              requestId: id,
+              askOrigin: { sessionId, messageId: id },
+            },
+          ],
+        ],
+      ]);
+    } finally {
+      release();
+    }
+    const result = await pending;
+    expect(result.kind).toBe('completed');
+    if (result.kind !== 'completed') throw new Error('Status read failed');
+    const page = result.value as {
+      items: Array<NeoConversationAsk | { role: string; ask?: NeoConversationAsk }>;
+    };
+    const item = page.items[0];
+    const ask = 'role' in item ? item.ask : item;
+    expect(ask).toMatchObject({
+      requestId: id,
+      content: [{ type: 'text', text: content }],
+      messageStatus: 'answered',
+    });
+    expect(service.asks.find(conversationId, id)?.content).toEqual([
+      { type: 'text', text: content },
+    ]);
+  }
+);
+
+test.each(['neo.conversation.asks.read', 'neo.conversation.read'])(
+  '%s propagates a file-reader failure instead of serving synchronous status facts',
+  async (name) => {
+    await input();
+    Object.assign(db, {
+      getNeoMessageStatusFactsAsync: mock(async () => {
+        throw new Error('Synthetic async status reader unavailable');
+      }),
+    });
+    expect(await invoke(name, { conversationId })).toMatchObject({ kind: 'failed' });
+  }
+);
+
+test.each(['neo.conversation.asks.read', 'neo.conversation.read'])(
+  '%s refuses a foreign conversation before an asynchronous fact request',
+  async (name) => {
+    const facts = mock(async () => []);
+    Object.assign(db, { getNeoMessageStatusFactsAsync: facts });
+    expect(
+      await invoke(name, { conversationId: '10000000-0000-4000-8000-000000000099' })
+    ).toMatchObject({
+      kind: 'completed',
+      value: { ok: false, reason: 'conversation_not_found' },
+    });
+    expect(facts).not.toHaveBeenCalled();
+  }
+);
