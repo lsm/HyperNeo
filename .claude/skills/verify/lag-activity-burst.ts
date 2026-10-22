@@ -26,6 +26,10 @@ const stop = startDaemonLagDiagnostics(app.messageHub, () => {});
 let ws: WebSocket | undefined;
 try {
   await new Promise((done) => setTimeout(done, 300));
+  runLagPhase('unrelated:synthetic:startup', () => {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1350);
+  });
+  await new Promise((done) => setTimeout(done, 300));
   app.messageHub.onRequest('verify.activityBurst', () => {
     runLagPhase('scanner:synthetic:blocked', () => {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1350);
