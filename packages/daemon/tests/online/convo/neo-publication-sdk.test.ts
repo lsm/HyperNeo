@@ -16,11 +16,30 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
   const requestId = randomUUID();
   const approvalProbeFile = join(isolated, 'approval-probe.txt');
   const readProbeFile = join(isolated, 'read-probe.txt');
+  const readCheckout = join(isolated, 'data', 'worktrees', 'lsm', 'synthetic', 'neo-read');
+  const workerCheckout = join(isolated, 'data', 'worktrees', 'lsm', 'synthetic', 'worker-id');
+  await mkdir(readCheckout, { recursive: true });
+  await mkdir(workerCheckout, { recursive: true });
   const readProbe = `synthetic-code-${randomUUID()}`;
   await writeFile(readProbeFile, readProbe);
   let approvalProbeIssued = false;
+  let nativeProbeIndex = 0;
   let approvalProbeDenied = false;
   const approvalProbeResults: unknown[] = [];
+  const nativeReadProbes = [
+    { name: 'Read', input: { file_path: readProbeFile } },
+    {
+      name: 'Grep',
+      input: { pattern: 'synthetic-code-', path: readProbeFile, output_mode: 'content' },
+    },
+    { name: 'Glob', input: { pattern: 'read-probe.txt', path: isolated } },
+    {
+      name: 'Bash',
+      input: {
+        command: `cat '${readProbeFile}'; printf CHECKOUT_OK > '${readCheckout}/allowed.txt'; printf TEMP_OK > "$TMPDIR/allowed.txt"; (printf BAD > '${workerCheckout}/blocked.txt'); (printf BAD > '${isolated}/data/blocked.txt'); (printf BAD > '${isolated}/data/Neo/blocked.txt'); gh pr view https://github.com/lsm/HyperNeo/pull/8148 --json number; printf SYNTHETIC_UNAPPROVED > '${approvalProbeFile}'`,
+      },
+    },
+  ];
   const root = `neo:${randomUUID()}`;
   const historyMarker = `synthetic-history-${randomUUID()}`;
   const oldCwd = join(isolated, 'data', 'Neo', '.coordinators', 'old-root');
@@ -102,25 +121,23 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
       if (Array.isArray(content))
         for (const result of content.filter((item) => item.type === 'tool_result')) {
           approvalProbeResults.push(result);
-          if (result.tool_use_id === 'tool-approval-probe') {
-            approvalProbeDenied = result.is_error === true;
+          if (result.tool_use_id?.startsWith('tool-read-probe-')) {
+            if (result.tool_use_id === 'tool-read-probe-3')
+              approvalProbeDenied = result.is_error === true;
             continue;
           }
           for (const item of result.content ?? [])
             if (item.text) receipts.push(JSON.parse(item.text));
         }
     }
-    const approvalProbe = active && !approvalProbeIssued;
+    const approvalProbe = active && nativeProbeIndex < nativeReadProbes.length;
     if (approvalProbe) approvalProbeIssued = true;
     const publishing = active && !approvalProbe && round < 4;
     const block = approvalProbe
       ? {
           type: 'tool_use',
-          id: 'tool-approval-probe',
-          name: 'Bash',
-          input: {
-            command: `cat '${readProbeFile}'; printf SYNTHETIC_UNAPPROVED > '${approvalProbeFile}'`,
-          },
+          id: `tool-read-probe-${nativeProbeIndex}`,
+          ...nativeReadProbes[nativeProbeIndex++],
         }
       : publishing
         ? {
@@ -395,11 +412,23 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
       });
     let page = await read();
     const deadline = Date.now() + 45000;
-    while (!page.items?.length && Date.now() < deadline) {
+    while (
+      !page.items?.some((item: NeoPublication) => item.shortText === shortText) &&
+      Date.now() < deadline
+    ) {
       await new Promise((resolve) => setTimeout(resolve, 100));
       page = await read();
     }
     expect(page.ok).toBe(true);
+    const visibleFailure = page.items.find(
+      (item: NeoPublication) => item.shortText === 'Neo Bash failed.'
+    );
+    expect(visibleFailure?.fullText).toMatch(/operation not permitted/i);
+    expect(visibleFailure?.fullText).toContain('gh auth login');
+    page = {
+      ...page,
+      items: page.items.filter((item: NeoPublication) => item.shortText !== 'Neo Bash failed.'),
+    };
     expect(page.items, JSON.stringify({ calls, receipts, requests, sdkErrors })).toHaveLength(1);
     expect(page.items[0].askOrigin).toBeUndefined();
     expect(page.items[0].producerInput).toBeUndefined();
@@ -411,9 +440,9 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
       replyTo: [requestId],
     });
     const end = Date.now() + 15000;
-    while (calls.length < 6 && Date.now() < end)
+    while (calls.length < 9 && Date.now() < end)
       await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(calls).toEqual(['tool_use', 'tool_use', 'tool_use', 'tool_use', 'tool_use', 'text']);
+    expect(calls).toEqual([...Array(8).fill('tool_use'), 'text']);
     expect(receipts).toMatchObject([
       {
         accepted: true,
@@ -458,6 +487,7 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
         JSON.stringify(
           {
             approvalProbeResults,
+            visibleFailure,
             approvalProbeDenied,
             approvalProbeCreatedFile: existsSync(approvalProbeFile),
             sdkSessionId,
@@ -494,6 +524,18 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
     expect(JSON.stringify(approvalProbeResults)).not.toContain(
       'Permission to use Bash has been denied'
     );
+    for (const index of [0, 1, 2]) {
+      const result = (approvalProbeResults as { tool_use_id: string; is_error?: boolean }[]).find(
+        (result) => result.tool_use_id === `tool-read-probe-${index}`
+      );
+      expect(result).toBeDefined();
+      expect(result?.is_error).not.toBe(true);
+    }
+    expect(JSON.stringify(approvalProbeResults)).toContain('gh auth login');
+    expect(JSON.stringify(approvalProbeResults)).toMatch(/operation not permitted/i);
+    expect(existsSync(join(readCheckout, 'allowed.txt'))).toBe(true);
+    for (const path of [workerCheckout, join(isolated, 'data'), newCwd])
+      expect(existsSync(join(path, 'blocked.txt'))).toBe(false);
     expect(approvalProbeDenied).toBe(true);
     expect(existsSync(approvalProbeFile)).toBe(false);
     expect(storedAtStartup.config.systemPrompt).toBe(neoPrompt());
