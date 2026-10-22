@@ -171,7 +171,10 @@ describe('neo.github.read list form', () => {
           `2026-10-15T1${index < 6 ? 0 : 1}:${String(index * 4).padStart(2, '0')}:00Z`
         )
       );
-      const list = mock(async (_args: string[]) => merged);
+      const list = mock(async (_args: string[]) => ({
+        data: merged,
+        at: new Date().toISOString(),
+      }));
       service.listGithub = list;
       const result = await invokeOperation(
         createOperationRegistry(createNeoOperations(service)),
@@ -182,7 +185,7 @@ describe('neo.github.read list form', () => {
       expect(list.mock.calls[0]?.[0]).toContain(`merged:${since}..${until}`);
       const open = mock(async (_args: string[]) => {
         await new Promise((resolve) => setTimeout(resolve, 20));
-        return [pr(1, new Date().toISOString())];
+        return { data: [pr(1, new Date().toISOString())], at: new Date().toISOString() };
       });
       service.listGithub = open;
       const latest = (await invokeOperation(

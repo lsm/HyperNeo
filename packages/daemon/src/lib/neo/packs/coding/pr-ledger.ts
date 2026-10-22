@@ -1,3 +1,4 @@
+import { CodingQueryFactsRepository } from './query-facts.ts';
 import { CodingWorkFactsRepository } from './work-facts.ts';
 import { CodingBranchFactsRepository } from './branch-facts.ts';
 import { CodingMergeFactsRepository } from './merge-facts.ts';
@@ -282,11 +283,13 @@ export class CodingPrLedgerRepository {
   readonly mergeFacts: CodingMergeFactsRepository;
   readonly branchFacts: CodingBranchFactsRepository;
   readonly workFacts: CodingWorkFactsRepository;
+  readonly queryFacts: CodingQueryFactsRepository;
 
   constructor(private readonly db: Database) {
     this.mergeFacts = new CodingMergeFactsRepository(db);
     this.branchFacts = new CodingBranchFactsRepository(db);
     this.workFacts = new CodingWorkFactsRepository(db);
+    this.queryFacts = new CodingQueryFactsRepository(db);
   }
 
   policy(repo: string): CodingMergePolicy {

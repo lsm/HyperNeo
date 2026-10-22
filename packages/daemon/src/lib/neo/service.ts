@@ -68,7 +68,8 @@ import {
 } from './packs/coding/branch-prs.ts';
 import { createCodingBranchPrReader } from './packs/coding/branch-reader.ts';
 import { type NeoDeployReader, readGithubDeploys } from './packs/coding/deploy-checks.ts';
-import { listNeoGithub, type NeoGithubLister } from './packs/coding/github-query.ts';
+import type { NeoGithubLister } from './packs/coding/github-query.ts';
+import { createCodingQueryReader } from './packs/coding/query-reader.ts';
 import { createCodingPack } from './packs/coding/pack.ts';
 import { CodingPrEventRepository } from './packs/coding/pr-events.ts';
 import { CodingPrLedgerRepository } from './packs/coding/pr-ledger.ts';
@@ -134,7 +135,7 @@ export class NeoService {
   readPrs: NeoWorkPrReader = createCodingWorkPrReader(() => this.db.getDatabase());
   readBranchPrs: NeoBranchPrReader = createCodingBranchPrReader(() => this.db.getDatabase());
   readRefStates: NeoRefStateReader = readGithubRefStates;
-  listGithub: NeoGithubLister = (args) => listNeoGithub(args);
+  listGithub: NeoGithubLister = createCodingQueryReader(() => this.db.getDatabase());
   readDeploys: NeoDeployReader = (urls) =>
     readGithubDeploys(urls, () =>
       readNeoDaemonCommits({ name: hostname(), commit: BUILD_METADATA.commit }, remoteDaemons)
@@ -216,7 +217,7 @@ export class NeoService {
       createCodingPack({
         readPrs: (urls) => this.readPrs(urls),
         readRefStates: (refs) => this.readRefStates(refs),
-        listGithub: (args) => this.listGithub(args),
+        listGithub: (args, coverage) => this.listGithub(args, coverage),
         todoPrs: this.todoPrs,
         prLedger: new CodingPrLedgerRepository(db.getDatabase()),
         prSweep: new CodingPrSweepRepository(db.getDatabase()),
