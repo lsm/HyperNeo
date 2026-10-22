@@ -31,3 +31,24 @@ The helper restores its publisher injection and closes its probe, lock holder,
 socket and daemon in finally. Never poll the live daemon to manufacture evidence.
 After deployment, read build/PID and existing performance logs only. No migration,
 index, data cleanup or other writer family belongs to this unit.
+
+Repeat `verify` with `VERIFY_WRITER_IPC=1` for the real Bun worker reached through
+the Node-harness JSON IPC bridge; this is not a synchronous fake. Repeat with
+`VERIFY_WRITER_MEMORY=1` for the public poll RPC on the supported no-disk database;
+that run uses 64 history rows and no cross-process lock.
+
+For native failure boundaries, use a second fresh directory and the same isolated
+environment to run `bun .claude/skills/verify/session-event-writer-fault.ts "$RUN"`.
+It wraps the production native worker only in synthetic fixture modules: failure
+before the INSERT, rollback after the INSERT, failure after commit before reply,
+and a swallowed committed reply reaching its deadline. The fixture waits for its
+own ready handshake before dispatch. It verifies complete 2.43 MB result bytes,
+no publication without a commit acknowledgement, no client replay, canonical
+terminal duplicates on explicit re-observation, fresh-worker recovery and closure.
+A committed event with a lost reply remains stored but is not automatically
+broadcast; this unit does not promise exactly-once notification. The no-disk
+service path is checked independently. Evidence is `evidence/fault.json`.
+
+Transaction call stacks in the RPC helper are proof-only instrumentation of the
+main connection, including transactions prepared during startup. They attribute
+other writer stalls without moving or optimizing those writer families here.
