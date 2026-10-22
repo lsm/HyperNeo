@@ -1,9 +1,12 @@
 import { expect, test } from 'bun:test';
 import { createTestDb, createTestSession } from '../../../helpers/database';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { capSdkMessage } from '../../../../src/lib/rpc-handlers/message-output-cap';
 import {
   SDKStatusReader,
+  sdkReadLogMetadata,
   type SDKStatusReply,
+  type SDKReadResult,
   type SDKStatusRequest,
 } from '../../../../src/storage/sdk-status-reader';
 
@@ -19,7 +22,7 @@ class TestWorker {
   terminate() {
     this.stopped = true;
   }
-  reply(request: SDKStatusRequest, result: typeof page | null) {
+  reply(request: SDKStatusRequest, result: SDKReadResult | null) {
     this.onmessage?.({
       data: {
         id: request.id,
@@ -156,4 +159,171 @@ test('supported memory DB keeps complete status text without opening a file work
   } finally {
     await db.close();
   }
+});
+
+test('paged memory read retains child/background projection and complete stored tool output', async () => {
+  const db = await createTestDb();
+  try {
+    db.createSession(createTestSession('memory-page'));
+    db.saveSDKMessage('memory-page', {
+      type: 'assistant',
+      uuid: 'parent',
+      parent_tool_use_id: null,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'child-tool', name: 'Bash', input: {} }],
+      },
+    } as SDKMessage);
+    const full = 'complete tool result\n'.repeat(2000);
+    db.saveUserMessage(
+      'memory-page',
+      {
+        type: 'user',
+        uuid: 'child',
+        parent_tool_use_id: 'child-tool',
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 'child-result', content: full }],
+        },
+      } as SDKMessage,
+      'consumed'
+    );
+    db.saveSDKMessage('memory-page', {
+      type: 'system',
+      subtype: 'task_started',
+      uuid: 'background',
+      task_id: 'memory-task',
+    } as SDKMessage);
+    const stored = db
+      .getDatabase()
+      .prepare('SELECT sdk_message FROM sdk_message_bodies ORDER BY seq')
+      .all();
+    const page = await db.getSDKMessagePageAsync('memory-page', { limit: 1 });
+    expect(page.sdkMessages.map((m) => m.uuid)).toEqual(['parent', 'child']);
+    expect(page.hasMore).toBe(true);
+    expect(page.backgroundTaskMessages.map((m) => m.uuid)).toContain('background');
+    const child = page.sdkMessages[1] as {
+      output_capped?: boolean;
+      message: { content: { content: string; output_capped: unknown }[] };
+    };
+    expect(child.output_capped).toBe(true);
+    expect(child.message.content[0].content).toHaveLength(16 * 1024);
+    expect(child.message.content[0].output_capped).toEqual({ chars: full.length });
+    expect(
+      db.getDatabase().prepare('SELECT sdk_message FROM sdk_message_bodies ORDER BY seq').all()
+    ).toEqual(stored);
+  } finally {
+    await db.close();
+  }
+});
+
+test('reader projections change only returned pages, never original or full-output bodies', async () => {
+  const db = await createTestDb();
+  try {
+    db.createSession(createTestSession('projected-page'));
+    const full = 'complete output 🦊\n'.repeat(4000);
+    db.saveUserMessage(
+      'projected-page',
+      {
+        type: 'user',
+        uuid: 'projected-user',
+        parent_tool_use_id: null,
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Visible text' },
+            { type: 'tool_result', tool_use_id: 'tool', content: full },
+          ],
+        },
+      } as SDKMessage,
+      'consumed'
+    );
+    const repo = db.getSDKMessageRepo();
+    const original = repo.getSDKMessages('projected-page', 1);
+    const projected = repo.getSDKMessages(
+      'projected-page',
+      1,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      capSdkMessage
+    );
+    expect(projected.messages).toEqual(original.messages.map(capSdkMessage));
+    expect(projected.messages[0]).toMatchObject({ output_capped: true });
+    expect(
+      repo.getSDKMessages(
+        'projected-page',
+        1,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        capSdkMessage
+      )
+    ).toEqual(projected);
+    const status = repo.getUserMessagesByStatus('projected-page', 'consumed', 1, 'asc', (m) => ({
+      ...m,
+      message: { ...m.message, content: 'Projected text' },
+    }));
+    expect(status.messages[0].message.content).toBe('Projected text');
+    expect(repo.getSDKMessages('projected-page', 1)).toEqual(original);
+    expect(repo.getMessageByUuid('projected-page', 'projected-user')).toMatchObject({
+      message: { content: [{ text: 'Visible text' }, { content: full }] },
+    });
+  } finally {
+    await db.close();
+  }
+});
+
+test('status and paged reads share the serial reader and retain full projected replies', async () => {
+  const { reader, workers } = fixture();
+  const first = reader.read(args);
+  const second = reader.readMessages({
+    sessionId: args.sessionId,
+    page: { limit: 2, before: 100, beforeRowid: 4 },
+  });
+  await tick();
+  workers[0].reply(workers[0].requests[0], page);
+  expect(await first).toEqual(page);
+  await tick();
+  expect(workers[0].requests[1].args).toEqual({
+    sessionId: args.sessionId,
+    page: { limit: 2, before: 100, beforeRowid: 4 },
+  });
+  const result = {
+    sdkMessages: [
+      {
+        type: 'user',
+        uuid: 'child',
+        timestamp: 1,
+        message: { role: 'user', content: '完整 projected reply' },
+      },
+    ],
+    hasMore: true,
+    backgroundTaskMessages: [],
+  } as SDKReadResult;
+  workers[0].reply(workers[0].requests[1], result);
+  expect(await second).toEqual(result);
+  expect(workers).toHaveLength(1);
+  await reader.close();
+});
+
+test('mixed SQL summaries cannot be attributed to the last page or status request', () => {
+  const summary = {
+    event: 'summary',
+    executionCount: 2,
+    queries: [{ fingerprint: 'status-sql' }, { fingerprint: 'page-sql' }],
+  };
+  for (const operation of ['sdk-page', 'sdk-status', 'close']) {
+    const emitted = sdkReadLogMetadata(summary, operation);
+    expect(emitted).toEqual(summary);
+    expect(emitted).not.toHaveProperty('workerOperation');
+  }
+  const slow = { event: 'slow', fingerprint: 'page-sql', durationMs: 280 };
+  expect(sdkReadLogMetadata(slow, 'sdk-page')).toEqual({
+    ...slow,
+    workerOperation: 'sdk-page',
+  });
+  expect(summary).not.toHaveProperty('workerOperation');
 });

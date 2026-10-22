@@ -122,22 +122,34 @@ interface ComposedMessagePage {
   hasMore: boolean;
 }
 
+export type SDKMessageProjection = (
+  message: SDKMessage & { timestamp: number }
+) => SDKMessage & { timestamp: number };
+
 export function composeMessagePage(
-  topLevelRows: PaginationMessageRow[],
+  topLevelRows: Iterable<PaginationMessageRow>,
   limit: number,
-  fetchSubagentRows: (toolUseIds: string[]) => SubagentMessageRow[]
+  fetchSubagentRows: (toolUseIds: string[]) => Iterable<SubagentMessageRow>,
+  project?: SDKMessageProjection
 ): ComposedMessagePage {
   const projected: Array<SDKMessage & { timestamp: number }> = [];
   for (const row of topLevelRows) {
-    projected.push(projectTopLevelMessageRow(row));
-    if (projected.length >= limit) break;
+    if (projected.length > 0 && projected.length >= limit) {
+      if (project) continue;
+      break;
+    }
+    const message = projectTopLevelMessageRow(row);
+    projected.push(project ? project(message) : message);
   }
 
   const topLevelMessages = projected.reverse();
   const hasMore = topLevelMessages.length === limit;
   const toolUseIds = collectToolUseIds(topLevelMessages);
   const subagentRows = toolUseIds.length > 0 ? fetchSubagentRows(toolUseIds) : [];
-  const subagentMessages = subagentRows.map((row) => projectSubagentMessageRow(row));
+  const subagentMessages = Array.from(subagentRows, (row) => {
+    const message = projectSubagentMessageRow(row);
+    return project ? project(message) : message;
+  });
 
   return {
     messages: [...topLevelMessages, ...subagentMessages] as ComposedMessagePage['messages'],

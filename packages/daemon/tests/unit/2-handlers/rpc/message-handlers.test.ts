@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageHub, Session } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
+import { capSdkMessage } from '../../../../src/lib/rpc-handlers/message-output-cap';
 import { setupMessageHandlers } from '../../../../src/lib/rpc-handlers/message-handlers';
 import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { Database } from '../../../../src/storage/database';
@@ -105,6 +106,33 @@ function createMockSessionManager(): {
 
   const sessionManager = {
     ...mocks,
+    getDatabase: () => ({
+      getSDKMessagePageAsync: async (
+        _sessionId: string,
+        page: {
+          limit?: number;
+          before?: number;
+          since?: number;
+          beforeRowid?: number;
+          sinceRowid?: number;
+        }
+      ) => {
+        const result = agentSessionData.mocks.getSDKMessages(
+          page.limit,
+          page.before,
+          page.since,
+          page.beforeRowid,
+          page.sinceRowid
+        );
+        return {
+          sdkMessages: result.messages.map(capSdkMessage),
+          hasMore: result.hasMore,
+          backgroundTaskMessages: agentSessionData.mocks
+            .getBackgroundTaskMessages()
+            .map(capSdkMessage),
+        };
+      },
+    }),
   } as unknown as SessionManager;
 
   return { sessionManager, mocks, agentSessionData };
@@ -688,6 +716,82 @@ describe('Message RPC Handlers', () => {
   });
 
   describe('message.sdkMessages', () => {
+    test('awaits the async page door with cursors and returns its complete projection', async () => {
+      const page = {
+        sdkMessages: [
+          { uuid: 'child', parent_tool_use_id: 'tool', message: { content: '完整 child' } },
+        ],
+        hasMore: true,
+        backgroundTaskMessages: [{ uuid: 'task', subtype: 'task_started' }],
+      };
+      const read = mock(async () => page);
+      const db = {
+        getDbPath: () => '/synthetic-page.db',
+        getSDKMessagePageAsync: read,
+      } as unknown as Database;
+      setupMessageHandlers(messageHubData.hub, sessionManagerData.sessionManager, db);
+      const handler = messageHubData.handlers.get('message.sdkMessages')!;
+      expect(
+        await handler(
+          {
+            sessionId: 'session-123',
+            limit: 2,
+            before: 100,
+            since: 50,
+            beforeRowid: 8,
+            sinceRowid: 3,
+          },
+          {}
+        )
+      ).toEqual(page);
+      expect(read).toHaveBeenCalledWith('session-123', {
+        limit: 2,
+        before: 100,
+        since: 50,
+        beforeRowid: 8,
+        sinceRowid: 3,
+      });
+    });
+
+    test('a page worker error rejects instead of reading synchronously', async () => {
+      const read = mock(async () => {
+        throw new Error('SDK reader failed');
+      });
+      const db = {
+        getDbPath: () => '/synthetic-page.db',
+        getSDKMessagePageAsync: read,
+      } as unknown as Database;
+      setupMessageHandlers(messageHubData.hub, sessionManagerData.sessionManager, db);
+      await expect(
+        messageHubData.handlers.get('message.sdkMessages')!({ sessionId: 'session-123' }, {})
+      ).rejects.toThrow('SDK reader failed');
+      expect(sessionManagerData.agentSessionData.mocks.getSDKMessages).not.toHaveBeenCalled();
+    });
+
+    test('conversation fallback uses the async page door without an agent session', async () => {
+      sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(null);
+      const page = { sdkMessages: [], hasMore: false, backgroundTaskMessages: [] };
+      const read = mock(async () => page);
+      const db = {
+        getDbPath: () => '/synthetic-page.db',
+        getSDKMessagePageAsync: read,
+      } as unknown as Database;
+      setupMessageHandlers(messageHubData.hub, sessionManagerData.sessionManager, db);
+      expect(
+        await messageHubData.handlers.get('message.sdkMessages')!(
+          { sessionId: 'conv:synthetic' },
+          {}
+        )
+      ).toEqual(page);
+      expect(read).toHaveBeenCalledWith('conv:synthetic', {
+        limit: undefined,
+        before: undefined,
+        since: undefined,
+        beforeRowid: undefined,
+        sinceRowid: undefined,
+      });
+    });
+
     test('returns SDK messages', async () => {
       const handler = messageHubData.handlers.get('message.sdkMessages');
       expect(handler).toBeDefined();
