@@ -7,6 +7,10 @@ import {
 } from '../icons/panel-icons.tsx';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import {
+  AUTO_COMPACT_PERCENT_DEFAULT,
+  AUTO_COMPACT_PERCENT_MIN,
+  AUTO_COMPACT_PERCENT_MAX,
+  resolveAutoCompactPercent,
   getThinkingOptionsForProvider,
   THINKING_LEVEL_LABELS,
   type FallbackModelEntry,
@@ -43,6 +47,7 @@ interface RawModelEntry {
   alias?: string;
   provider?: string;
   thinkingLevels?: ThinkingLevel[];
+  autoCompactPercent?: number;
 }
 
 interface ModelPickerModalProps {
@@ -417,10 +422,26 @@ function NeoModelSettings({
 }) {
   const preference = globalSettings.value?.neo?.preferences;
   const [draft, setDraft] = useState<NeoModelPreference | null>(preference ?? null);
+  const [percent, setPercent] = useState(
+    String(preference?.autoCompactPercent ?? AUTO_COMPACT_PERCENT_DEFAULT)
+  );
   const [picker, setPicker] = useState<'primary' | 'fallback' | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  useEffect(() => setDraft(preference ?? null), [preference]);
+  useEffect(() => {
+    setDraft(preference ?? null);
+    setPercent(String(preference?.autoCompactPercent ?? AUTO_COMPACT_PERCENT_DEFAULT));
+  }, [preference]);
+  const primary = availableModels.find(
+    (model) => model.id === draft?.model && model.provider === draft?.provider
+  );
+  const unchanged = Number(percent) === AUTO_COMPACT_PERCENT_DEFAULT;
+  const effectivePercent = resolveAutoCompactPercent(
+    unchanged ? primary?.autoCompactPercent : Number(percent)
+  );
+  const threshold = primary?.contextWindow
+    ? Math.floor((primary.contextWindow * effectivePercent) / 100)
+    : null;
   const busy = loading || saving || connectionState.value !== 'connected';
   const chain = draft?.fallbacks ?? [];
   const providers = [...groupedModels.entries()]
@@ -453,6 +474,14 @@ function NeoModelSettings({
   }
   async function save() {
     if (!draft || busy) return;
+    if (!percent.trim() || !Number.isInteger(Number(percent))) {
+      setError('Enter a whole number from 10 to 100.');
+      return;
+    }
+    const { autoCompactPercent: _previousPercent, ...base } = draft;
+    const next = unchanged
+      ? base
+      : { ...base, autoCompactPercent: resolveAutoCompactPercent(Number(percent)) };
     setSaving(true);
     setError('');
     try {
@@ -460,9 +489,10 @@ function NeoModelSettings({
       if (!hub) throw new Error('Reconnect before changing Neo models.');
       const result = await invokeOperation<
         { ok: true; preferences: NeoModelPreference } | { ok: false; reason: string }
-      >(hub, 'neo.preferences.set', draft);
+      >(hub, 'neo.preferences.set', next);
       if (!result.ok) throw new Error(result.reason);
       setDraft(result.preferences);
+      setPercent(String(result.preferences.autoCompactPercent ?? AUTO_COMPACT_PERCENT_DEFAULT));
       toast.success('Neo models saved');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not save Neo models.');
@@ -490,6 +520,32 @@ function NeoModelSettings({
         <Button variant="secondary" size="xs" disabled={busy} onClick={() => setPicker('primary')}>
           Change Neo primary
         </Button>
+      </div>
+      <div class="space-y-2">
+        <label class="block text-sm text-fg-soft" for="neo-auto-compact">
+          Auto-compact percentage
+        </label>
+        <input
+          id="neo-auto-compact"
+          type="number"
+          min={AUTO_COMPACT_PERCENT_MIN}
+          max={AUTO_COMPACT_PERCENT_MAX}
+          step={1}
+          value={percent}
+          disabled={busy || !draft}
+          onInput={(event) => setPercent(event.currentTarget.value)}
+          aria-describedby="neo-auto-compact-help"
+          class="w-24 rounded border border-line bg-surface px-2 py-1 text-sm text-fg"
+        />
+        <p id="neo-auto-compact-help" class="text-xs text-fg-faint">
+          {unchanged
+            ? 'Default (90%): provider behavior unchanged.'
+            : 'Custom threshold for Neo only. Applied after the current reply.'}
+          {threshold !== null
+            ? ` ${threshold.toLocaleString('en-US')} of ${primary?.contextWindow.toLocaleString('en-US')} tokens (${effectivePercent}%).`
+            : ' Context window unavailable for this model.'}{' '}
+          At 100%, compaction follows the provider’s limits.
+        </p>
       </div>
       <p class="text-xs text-fg-faint">
         Usable fallback providers: {providers.join(', ') || 'None available'}
@@ -566,6 +622,7 @@ function NeoModelSettings({
           onSelect={(model) => {
             if (picker === 'primary')
               setDraft({
+                ...draft,
                 model: model.id,
                 provider: model.provider,
                 thinkingLevel: 'off',
@@ -593,7 +650,7 @@ function NeoModelSettings({
   );
 }
 
-export function ModelsSettings() {
+export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) {
   const settings = globalSettings.value;
   const [fallbackModels, setFallbackModels] = useState<FallbackModelEntry[]>(
     settings?.fallbackModels ?? []
@@ -663,6 +720,9 @@ export function ModelsSettings() {
           thinkingLevels: modelsResponse.models.find(
             (raw) => raw.id === model.id && (raw.provider ?? model.provider) === model.provider
           )?.thinkingLevels,
+          autoCompactPercent: modelsResponse.models.find(
+            (raw) => raw.id === model.id && (raw.provider ?? model.provider) === model.provider
+          )?.autoCompactPercent,
         }))
       );
 
@@ -852,6 +912,34 @@ export function ModelsSettings() {
   const overrideEntries = Object.entries(modelFallbackMap);
   const defaultModel = findDefaultModel(availableModels, settings?.model, settings?.modelProvider);
 
+  if (neoOnly)
+    return (
+      <SettingsSection
+        title="Neo model"
+        description="Model, provider, thinking and compaction for Neo and its projects. Changes apply after the current reply."
+      >
+        {loadError && (
+          <p role="alert" class="text-sm text-danger">
+            {loadError.message}
+          </p>
+        )}
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={handleRefresh}
+          disabled={loading || refreshing}
+        >
+          Refresh models
+        </Button>
+        <NeoModelSettings
+          availableModels={availableModels}
+          groupedModels={groupedModels}
+          providerAuthStatuses={providerAuthStatuses}
+          loading={loading}
+        />
+      </SettingsSection>
+    );
+
   return (
     <SettingsSection
       title="Models"
@@ -910,12 +998,6 @@ export function ModelsSettings() {
         </div>
       )}
       <div class="space-y-3">
-        <NeoModelSettings
-          availableModels={availableModels}
-          groupedModels={groupedModels}
-          providerAuthStatuses={providerAuthStatuses}
-          loading={loading}
-        />
         <div class="space-y-3 rounded-xl border border-line bg-surface p-4">
           <div>
             <h4 class="text-[13px] font-semibold text-fg">Default Model</h4>
