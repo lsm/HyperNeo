@@ -14,6 +14,26 @@ env -i HOME="$FAULT/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$FAULT/d
   bun .claude/skills/verify/sdk-status-reader-fault.ts "$FAULT"
 ```
 
+For supported in-memory configuration and Node-hosted online-test parity:
+
+```bash
+MEM=$(mktemp -d /private/tmp/hn-sdk-status-memory-XXXXXX)
+mkdir -p "$MEM/home"
+env -i HOME="$MEM/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$MEM/data" LOG_LEVEL=warn \
+  bun .claude/skills/verify/sdk-status-reader-memory.ts verify "$MEM"
+```
+
+This RPC journey must preserve complete mixed-block text and body SHA in `:memory:`.
+On the pre-fix source use `baseline` to record the file-backed error immediately
+at the same RPC. `bridge` instead uses a fresh file DB and the online harness's
+Bun-process IPC bridge to a real native Bun worker, then verifies the same result.
+The bridge is test-only: Vitest runs its daemon in Node without Web Worker; only
+the SDK reader factory is injected, with no synchronous read/reply mock. Its host
+gets an empty test HOME/data directory and no provider keys. CI still exercises
+the production factory through Deno smoke; native Bun is exercised by this journey.
+The in-memory path explicitly uses its own existing connection and shared text
+projection; it does not read disk or handle a failed file-backed worker.
+
 The first helper owns an actual daemon and calls public `session.create`,
 `session.messages.byStatus` and `system.health` over WebSocket. Both sessions are
 manual; no model turn starts. Production writers/derivation seed 24 complete large

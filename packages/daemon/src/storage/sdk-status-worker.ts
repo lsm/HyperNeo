@@ -1,7 +1,12 @@
 import { Database } from './sqlite-compat.ts';
 import { SDKMessageRepository } from './repositories/sdk-message-repository.ts';
 import { subscribeToStructuredLogs } from '../lib/logger.ts';
-import type { SDKStatusPage, SDKStatusReply, SDKStatusRequest } from './sdk-status-reader.ts';
+import {
+  projectSDKStatusPage,
+  type SDKStatusPage,
+  type SDKStatusReply,
+  type SDKStatusRequest,
+} from './sdk-status-reader.ts';
 
 const worker = globalThis as unknown as {
   onmessage: (event: { data: SDKStatusRequest }) => void;
@@ -12,19 +17,6 @@ let repository: SDKMessageRepository | null = null;
 subscribeToStructuredLogs((log) => {
   if (log.module === 'hyperneo:daemon:sqlite.query') worker.postMessage({ log });
 });
-
-function extractMessageText(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
-  return content
-    .map((block) => {
-      if (typeof block !== 'object' || block === null) return '';
-      const record = block as Record<string, unknown>;
-      return record.type === 'text' && typeof record.text === 'string' ? record.text : '';
-    })
-    .filter(Boolean)
-    .join('\n');
-}
 
 worker.onmessage = ({ data }) => {
   const { id, epoch, args } = data,
@@ -48,16 +40,7 @@ worker.onmessage = ({ data }) => {
       const page = db.transaction(() =>
         repository!.getUserMessagesByStatus(args.sessionId, args.status, args.limit)
       )();
-      result = {
-        total: page.total,
-        messages: page.messages.map((message) => ({
-          dbId: message.dbId,
-          uuid: message.uuid ?? '',
-          timestamp: message.timestamp,
-          status: args.status,
-          text: extractMessageText(message.message.content),
-        })),
-      };
+      result = projectSDKStatusPage(page, args.status);
     }
     worker.postMessage({
       id,

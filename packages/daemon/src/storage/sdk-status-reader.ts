@@ -1,6 +1,6 @@
 import { emitStructuredLogEvent } from '../lib/logger.ts';
 import type { StructuredLogEvent } from '@hyperneo/shared';
-import type { SendStatus } from './repositories/sdk-message-repository.ts';
+import type { SDKMessageRepository, SendStatus } from './repositories/sdk-message-repository.ts';
 import type { SQLiteQueryObservabilityOptions } from './sqlite-query-observability.ts';
 
 export type SDKStatusArgs = { sessionId: string; status: SendStatus; limit: number };
@@ -27,6 +27,35 @@ export type SDKStatusReply =
       workerMs: number;
       queueMs: number;
     };
+
+function extractMessageText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((block) => {
+      if (typeof block !== 'object' || block === null) return '';
+      const record = block as Record<string, unknown>;
+      return record.type === 'text' && typeof record.text === 'string' ? record.text : '';
+    })
+    .filter(Boolean)
+    .join('\n');
+}
+
+export function projectSDKStatusPage(
+  page: ReturnType<SDKMessageRepository['getUserMessagesByStatus']>,
+  status: SendStatus
+): SDKStatusPage {
+  return {
+    total: page.total,
+    messages: page.messages.map((message) => ({
+      dbId: message.dbId,
+      uuid: message.uuid ?? '',
+      timestamp: message.timestamp,
+      status,
+      text: extractMessageText(message.message.content),
+    })),
+  };
+}
 
 export class SDKStatusReader {
   private worker: Worker | null = null;

@@ -5,13 +5,16 @@ import { join } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { SDKBunWorkerBridge } from '../../../packages/daemon/tests/helpers/sdk-bun-worker-bridge.ts';
 
 const [mode,run]=process.argv.slice(2);
-assert(['baseline','verify'].includes(mode));assert(run.startsWith('/private/tmp/'));
+assert(['baseline','verify','bridge'].includes(mode));assert(run.startsWith('/private/tmp/'));
 assert.equal(process.env.NODE_ENV,'test');assert.equal(process.env.HOME,join(run,'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR,join(run,'data'));
 await mkdir(join(run,'evidence'),{recursive:true});
-const app=await createDaemonApp({config:{...getConfig({host:'127.0.0.1',dbPath:':memory:',workspaceRoot:run}),port:0,disableWorktrees:true,disableGoalProcessing:true},standalone:false,verbose:false});
+const NativeWorker=globalThis.Worker;
+if(mode==='bridge') globalThis.Worker=function(url:string|URL,options?:WorkerOptions) { return String(url).endsWith('/sdk-status-worker.ts')?new SDKBunWorkerBridge(String(url)):new NativeWorker(url,options); } as unknown as typeof Worker;
+const app=await createDaemonApp({config:{...getConfig({host:'127.0.0.1',dbPath:mode==='bridge'?join(run,'data/daemon.db'):':memory:',workspaceRoot:run}),port:0,disableWorktrees:true,disableGoalProcessing:true},standalone:false,verbose:false});
 assert.notEqual(app.server.port,8399);
 let ws:WebSocket|undefined;const evidence:Record<string,unknown>={mode,dbPath:app.db.getDbPath()};
 try {
@@ -31,4 +34,4 @@ try {
  else {assert('value' in result);const page=result.value as {total:number;messages:{text:string}[]};assert.equal(page.total,1);assert.equal(page.messages[0].text,text+'\nSecond');evidence.total=page.total;}
  assert.equal(hash(),before);evidence.bodySha256=before;
  assert.equal((await rpc('system.health') as {status:string}).status,'ok');evidence.health='ok';
-} finally {ws?.close();await app.cleanup();await writeFile(join(run,'evidence/memory.json'),JSON.stringify(evidence,null,2));}
+} finally {ws?.close();await app.cleanup();globalThis.Worker=NativeWorker;await writeFile(join(run,'evidence/memory.json'),JSON.stringify(evidence,null,2));}

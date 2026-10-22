@@ -36,7 +36,7 @@ import { McpEnablementRepository } from './repositories/mcp-enablement-repositor
 import { SkillRepository } from './repositories/skill-repository.ts';
 import { WorkspaceHistoryRepository } from './repositories/workspace-history-repository.ts';
 import { WorkerAgentMemoryEmbedder } from './repositories/agent-memory-worker-embedder.ts';
-import { SDKStatusReader } from './sdk-status-reader.ts';
+import { SDKStatusReader, projectSDKStatusPage } from './sdk-status-reader.ts';
 import {
   type AgentMemoryEmbedder,
   AgentMemoryRepository,
@@ -357,7 +357,9 @@ export class Database {
     return this.sdkMessageRepo.getUserMessagesByStatus(sessionId, status, limit, direction);
   }
 
-  getUserMessagesByStatusAsync(sessionId: string, status: SendStatus, limit: number) {
+  async getUserMessagesByStatusAsync(sessionId: string, status: SendStatus, limit: number) {
+    if (this.getDbPath() === ':memory:')
+      return projectSDKStatusPage(this.getUserMessagesByStatus(sessionId, status, limit), status);
     return (this.sdkStatusReader ??= new SDKStatusReader(
       this.getDbPath(),
       undefined,
