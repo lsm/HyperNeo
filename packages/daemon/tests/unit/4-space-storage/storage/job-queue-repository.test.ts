@@ -413,6 +413,39 @@ describe('JobQueueRepository', () => {
   });
 
   describe('getLatestByPayload', () => {
+    it('keeps queue and session scope plus rowid ties for full message payloads', () => {
+      const body = 'Complete stored report 🦊'.repeat(1000);
+      const payload = { to: { sessionId: 'target' }, messageUuid: 'message', body };
+      repository.enqueue({ queue: 'mailbox', payload, createdAt: 100 });
+      const latest = repository.enqueue({ queue: 'mailbox', payload, createdAt: 100 });
+      repository.markDeadIfActive(latest.id, 'latest failure');
+      repository.enqueue({ queue: 'other', payload, createdAt: 200 });
+      repository.enqueue({
+        queue: 'mailbox',
+        payload: { ...payload, to: { sessionId: 'other' } },
+        createdAt: 200,
+      });
+      const found = repository.getLatestByPayload('mailbox', {
+        'to.sessionId': 'target',
+        messageUuid: 'message',
+      });
+      expect(found?.id).toBe(latest.id);
+      expect(found?.error).toBe('latest failure');
+      expect(found?.payload).toEqual(payload);
+      expect(repository.getLatestByPayload('mailbox', { messageUuid: 'absent' })).toBeNull();
+      expect(repository.getLatestByPayload('mailbox', {})).toBeNull();
+    });
+
+    it('preserves explicit JSON null matching separately from absent fields', () => {
+      const missing = repository.enqueue({ queue: 'mailbox', payload: {} });
+      const explicit = repository.enqueue({ queue: 'mailbox', payload: { messageUuid: null } });
+      repository.enqueue({ queue: 'mailbox', payload: {} });
+      expect(repository.getLatestByPayload('mailbox', { messageUuid: null })?.id).toBe(explicit.id);
+      expect(repository.getLatestByPayload('mailbox', { messageUuid: null })?.id).not.toBe(
+        missing.id
+      );
+    });
+
     it('returns the newest queue row matching payload fields across statuses', () => {
       repository.enqueue({ queue: 'mailbox', payload: { id: 'entry-1', attempt: 1 } });
       const newest = repository.enqueue({
