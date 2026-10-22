@@ -1,0 +1,1214 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:29:30). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 /Users/lsm/focus/worktrees/disclosure-git-task/packages/web
+
+ ❯ src/components/__tests__/GitPanel.test.tsx (24 tests | 2 failed) 69ms
+   ❯ GitPanel (24)
+     × keeps check labels inert and uses the explicit footer control 15ms
+     × loads a full diff through more and returns to its preview through less 11ms
+ ❯ src/components/space/thread/minimal/MinimalThreadFeed.test.tsx (100 tests | 1 failed) 114ms
+   ❯ MinimalThreadFeed (100)
+     ❯ Task kickoff event (8)
+       × keeps the kickoff title/body inert with a separate explicit control 12ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/components/__tests__/GitPanel.test.tsx > GitPanel > keeps check labels inert and uses the explicit footer control
+TestingLibraryElementError: Unable to find an accessible element with the role "button" and name "more — Git checks"
+
+Here are the accessible roles:
+
+  heading:
+
+  Name "Review":
+  [36m<h2[39m
+    [33mclass[39m=[32m"text-sm font-semibold text-fg"[39m
+  [36m/>[39m
+
+  Name "Branch":
+  [36m<h3[39m
+    [33mclass[39m=[32m"truncate text-sm font-semibold text-fg"[39m
+  [36m/>[39m
+
+  Name "Changed files":
+  [36m<h3[39m
+    [33mclass[39m=[32m"text-xs font-medium uppercase tracking-wide text-fg-faint"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  button:
+
+  Name "Refresh review":
+  [36m<button[39m
+    [33maria-label[39m=[32m"Refresh review"[39m
+    [33mclass[39m=[32m"rounded-lg p-1.5 text-fg-faint transition-colors hover:bg-fill-soft hover:text-fg disabled:opacity-50"[39m
+    [33mtitle[39m=[32m"Refresh review"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "1 check passing 1 total":
+  [36m<button[39m
+    [33maria-expanded[39m=[32m"true"[39m
+    [33mclass[39m=[32m"flex w-full min-w-0 items-center gap-3 rounded-md text-sm text-fg-soft transition-colors hover:text-fg"[39m
+    [33mdata-testid[39m=[32m"git-checks-toggle"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  list:
+
+  Name "":
+  [36m<ul[39m
+    [33mclass[39m=[32m"mt-1 max-h-60 space-y-0.5 overflow-y-auto pl-8"[39m
+    [33mdata-testid[39m=[32m"git-checks-list"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  listitem:
+
+  Name "":
+  [36m<li />[39m
+
+  --------------------------------------------------
+  link:
+
+  Name "synthetic-build completed":
+  [36m<a[39m
+    [33mclass[39m=[32m"flex min-w-0 items-center gap-2 rounded px-1 py-0.5 text-xs hover:bg-fill-soft text-fg-muted hover:text-fg-soft"[39m
+    [33mhref[39m=[32m"https://example.invalid/ci"[39m
+    [33mrel[39m=[32m"noreferrer"[39m
+    [33mtarget[39m=[32m"_blank"[39m
+    [33mtitle[39m=[32m"Open CI run: https://example.invalid/ci"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"flex h-full min-w-0 flex-col overflow-hidden"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"flex h-[52px] flex-shrink-0 items-center gap-2 px-4 pr-14"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"min-w-0 flex-1"[39m
+        [36m>[39m
+          [36m<h2[39m
+            [33mclass[39m=[32m"text-sm font-semibold text-fg"[39m
+          [36m>[39m
+            [0mReview[0m
+          [36m</h2>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"truncate text-xs text-fg-faint"[39m
+          [36m>[39m
+            [0mmain[0m
+          [36m</p>[39m
+        [36m</div>[39m
+        [36m<button[39m
+          [33maria-label[39m=[32m"Refresh review"[39m
+          [33mclass[39m=[32m"rounded-lg p-1.5 text-fg-faint transition-colors hover:bg-fill-soft hover:text-fg disabled:opacity-50"[39m
+          [33mtitle[39m=[32m"Refresh review"[39m
+          [33mtype[39m=[32m"button"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mclass[39m=[32m"h-4 w-4"[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"[39m
+              [33mstroke-linecap[39m=[32m"round"[39m
+              [33mstroke-linejoin[39m=[32m"round"[39m
+              [33mstroke-width[39m=[32m"2"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+        [36m</button>[39m
+      [36m</div>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"flex min-h-0 flex-1 flex-col"[39m
+      [36m>[39m
+        [36m<section[39m
+          [33mclass[39m=[32m"flex-shrink-0 border-b border-line px-4 py-4"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"flex items-start justify-between gap-4"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"min-w-0"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"flex items-center gap-2"[39m
+              [36m>[39m
+                [36m<h3[39m
+                  [33mclass[39m=[32m"truncate text-sm font-semibold text-fg"[39m
+                [36m>[39m
+                  [0mBranch[0m
+                [36m</h3>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"rounded-full px-2 py-0.5 text-[11px] font-medium bg-warning/10 text-warning"[39m
+                [36m>[39m
+                  [0mLocal[0m
+                [36m</span>[39m
+              [36m</div>[39m
+              [36m<p[39m
+                [33mclass[39m=[32m"mt-1 truncate text-xs text-fg-faint"[39m
+                [33mtitle[39m=[32m"main -> main"[39m
+              [36m>[39m
+                [0mmain -&gt; main[0m
+              [36m</p>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"flex flex-shrink-0 items-center gap-2 font-mono text-sm"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"text-success-soft"[39m
+              [36m>[39m
+                [0m+[0m
+                [0m0[0m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"text-danger-soft"[39m
+              [36m>[39m
+                [0m-[0m
+                [0m0[0m
+              [36m</span>[39m
+            [36m</div>[39m
+          [36m</div>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"mt-4 space-y-2"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"flex min-w-0 items-center gap-3 text-sm"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"flex h-5 w-5 flex-shrink-0 items-center justify-center text-fg-soft"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33mclass[39m=[32m"h-5 w-5"[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M7 5v14M17 5v3a4 4 0 0 1-4 4H7M17 5a2 2 0 1 0-4 0 2 2 0 0 0 4 0ZM9 19a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM19 19a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z"[39m
+                    [33mstroke-linecap[39m=[32m"round"[39m
+                    [33mstroke-linejoin[39m=[32m"round"[39m
+                    [33mstroke-width[39m=[32m"1.8"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"min-w-0 flex-1 truncate text-fg-faint"[39m
+              [36m>[39m
+                [0mNo pull request found[0m
+              [36m</span>[39m
+            [36m</div>[39m
+            [36m<div>[39m
+              [36m<button[39m
+                [33maria-expanded[39m=[32m"true"[39m
+                [33mclass[39m=[32m"flex w-full min-w-0 items-center gap-3 rounded-md text-sm text-fg-soft transition-colors hover:text-fg"[39m
+                [33mdata-testid[39m=[32m"git-checks-toggle"[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"flex h-5 w-5 flex-shrink-0 items-center justify-center text-success-soft"[39m
+                [36m>[39m
+                  [36m<svg[39m
+                    [33mclass[39m=[32m"h-5 w-5"[39m
+                    [33mfill[39m=[32m"none"[39m
+                    [33mstroke[39m=[32m"currentColor"[39m
+                    [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [36m>[39m
+                    [36m<path[39m
+                      [33md[39m=[32m"M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"[39m
+                      [33mstroke-linecap[39m=[32m"round"[39m
+                      [33mstroke-linejoin[39m=[32m"round"[39m
+                      [33mstroke-width[39m=[32m"1.8"[39m
+                    [36m/>[39m
+                  [36m</svg>[39m
+                [36m</span>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"min-w-0 flex-1 truncate text-left"[39m
+                [36m>[39m
+                  [0m1 check passing[0m
+                [36m</span>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"flex-shrink-0 text-xs text-fg-faint"[39m
+                [36m>[39m
+                  [0m1[0m
+                  [0m total[0m
+                [36m</span>[39m
+                [36m<svg[39m
+                  [33mclass[39m=[32m"h-3 w-3 flex-shrink-0 text-fg-faint transition-transform rotate-90"[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M9 5l7 7-7 7"[39m
+                    [33mstroke-linecap[39m=[32m"round"[39m
+                    [33mstroke-linejoin[39m=[32m"round"[39m
+                    [33mstroke-width[39m=[32m"2.5"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+              [36m</button>[39m
+              [36m<ul[39m
+                [33mclass[39m=[32m"mt-1 max-h-60 space-y-0.5 overflow-y-auto pl-8"[39m
+                [33mdata-testid[39m=[32m"git-checks-list"[39m
+              [36m>[39m
+                [36m<li>[39m
+                  [36m<a[39m
+                    [33mclass[39m=[32m"flex min-w-0 items-center gap-2 rounded px-1 py-0.5 text-xs hover:bg-fill-soft text-fg-muted hover:text-fg-soft"[39m
+                    [33mhref[39m=[32m"https://example.invalid/ci"[39m
+                    [33mrel[39m=[32m"noreferrer"[39m
+                    [33mtarget[39m=[32m"_blank"[39m
+                    [33mtitle[39m=[32m"Open CI run: https://example.invalid/ci"[39m
+                  [36m>[39m
+                    [36m<span[39m
+                      [33mclass[39m=[32m"flex h-4 w-4 flex-shrink-0 items-center justify-center text-success-soft"[39m
+                    [36m>[39m
+                      [36m<svg[39m
+                        [33mclass[39m=[32m"h-3.5 w-3.5"[39m
+                        [33mfill[39m=[32m"none"[39m
+                        [33mstroke[39m=[32m"currentColor"[39m
+                        [33mviewBox[39m=[32m"0 0 24 24"[39m
+                      [36m>[39m
+                        [36m<path[39m
+                          [33md[39m=[32m"M4.5 12.75 10 18.25 19.5 6.5"[39m
+                          [33mstroke-linecap[39m=[32m"round"[39m
+                          [33mstroke-linejoin[39m=[32m"round"[39m
+                          [33mstroke-width[39m=[32m"2.5"[39m
+                        [36m/>[39m
+                      [36m</svg>[39m
+                    [36m</span>[39m
+                    [36m<span[39m
+                      [33mclass[39m=[32m"min-w-0 flex-1 truncate text-fg-soft"[39m
+                    [36m>[39m
+                      [0msynthetic-build[0m
+                    [36m</span>[39m
+                    [36m<span[39m
+                      [33mclass[39m=[32m"flex-shrink-0 text-[11px] capitalize text-fg-faint"[39m
+                    [36m>[39m
+                      [0mcompleted[0m
+                    [36m</span>[39m
+                  [36m</a>[39m
+                [36m</li>[39m
+              [36m</ul>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"flex min-w-0 items-center gap-3 text-sm"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"flex h-5 w-5 flex-shrink-0 items-center justify-center text-success-soft"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33mclass[39m=[32m"h-5 w-5"[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M4 12h6M14 12h6M10 12a2 2 0 1 0 4 0 2 2 0 0 0-4 0Z"[39m
+                    [33mstroke-linecap[39m=[32m"round"[39m
+                    [33mstroke-linejoin[39m=[32m"round"[39m
+                    [33mstroke-width[39m=[32m"1.8"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"min-w-0 flex-1 truncate text-fg-soft"[39m
+              [36m>[39m
+                [0m0 ahead commits[0m
+              [36m</span>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"flex min-w-0 items-center gap-3 text-sm"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"flex h-5 w-5 flex-shrink-0 items-center justify-center text-fg-soft"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33mclass[39m=[32m"h-5 w-5"[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M4.5 17.5h15M6.5 6.5h11a1 1 0 0 1 1 1v8.5h-13V7.5a1 1 0 0 1 1-1Z"[39m
+                    [33mstroke-linecap[39m=[32m"round"[39m
+                    [33mstroke-linejoin[39m=[32m"round"[39m
+                    [33mstroke-width[39m=[32m"1.8"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"min-w-0 flex-1 truncate text-fg-soft"[39m
+              [36m>[39m
+                [0mrepo[0m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"flex-shrink-0 text-xs text-fg-faint"[39m
+              [36m>[39m
+                [0mWorkspace[0m
+              [36m</span>[39m
+            [36m</div>[39m
+          [36m</div>[39m
+        [36m</section>[39m
+        [36m<section[39m
+          [33mclass[39m=[32m"flex min-h-0 flex-1 flex-col border-b border-line px-3 py-3"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"mb-2 flex items-center justify-between gap-3"[39m
+          [36m>[39m
+            [36m<h3[39m
+              [33mclass[39m=[32m"text-xs font-medium uppercase tracking-wide text-fg-faint"[39m
+            [36m>[39m
+              [0mChanged files[0m
+            [36m</h3>[39m
+            [36m<span[39m
+              [33mclass[39m=[32m"text-xs text-fg-faint"[39m
+            [36m>[39m
+              [0mClean[0m
+            [36m</span>[39m
+          [36m</div>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"rounded-lg bg-white/[0.03] px-3 py-4 text-sm text-fg-faint"[39m
+          [36m>[39m
+            [0mWorking tree is clean.[0m
+          [36m</div>[39m
+        [36m</section>[39m
+        [36m<section[39m
+          [33mclass[39m=[32m"flex min-h-0 flex-[1.5] items-center justify-center px-6 text-center"[39m
+        [36m>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"text-sm text-fg-faint"[39m
+          [36m>[39m
+            [0mSelect a changed file to review its diff.[0m
+          [36m</p>[39m
+        [36m</section>[39m
+      [36m</div>[39m
+    [36m</div>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/.bun/@testing-library+dom@8.20.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ ../../node_modules/.bun/@testing-library+dom@8.20.1/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ ../../node_modules/.bun/@testing-library+dom@8.20.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.bun/@testing-library+dom@8.20.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ src/components/__tests__/GitPanel.test.tsx:189:23
+    187|     const view = renderPanel();
+    188|     fireEvent.click(view.getByText('1 check passing'));
+    189|     const more = view.getByRole('button', { name: 'more — Git checks',…
+       |                       ^
+    190|     expect(more.getAttribute('aria-expanded')).toBe('false');
+    191|     more.focus();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  src/components/__tests__/GitPanel.test.tsx > GitPanel > loads a full diff through more and returns to its preview through less
+TestingLibraryElementError: Unable to find an accessible element with the role "button" and name "more — Full diff"
+
+Here are the accessible roles:
+
+  heading:
+
+  Name "Review":
+  [36m<h2[39m
+    [33mclass[39m=[32m"text-sm font-semibold text-fg"[39m
+  [36m/>[39m
+
+  Name "Branch":
+  [36m<h3[39m
+    [33mclass[39m=[32m"truncate text-sm font-semibold text-fg"[39m
+  [36m/>[39m
+
+  Name "Changed files":
+  [36m<h3[39m
+    [33mclass[39m=[32m"text-xs font-medium uppercase tracking-wide text-fg-faint"[39m
+  [36m/>[39m
+
+  Name "src/foo.ts":
+  [36m<h3[39m
+    [33mclass[39m=[32m"truncate font-mono text-xs text-fg-soft"[39m
+    [33mtitle[39m=[32m"src/foo.ts"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  button:
+
+  Name "Refresh review":
+  [36m<button[39m
+    [33maria-label[39m=[32m"Refresh review"[39m
+    [33mclass[39m=[32m"rounded-lg p-1.5 text-fg-faint transition-colors hover:bg-fill-soft hover:text-fg disabled:opacity-50"[39m
+    [33mtitle[39m=[32m"Refresh review"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "M src/foo.ts +5 -1":
+  [36m<button[39m
+    [33mclass[39m=[32m"flex min-w-0 flex-1 items-center gap-2 px-1 py-1.5"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "Copy path src/foo.ts":
+  [36m<button[39m
+    [33maria-label[39m=[32m"Copy path src/foo.ts"[39m
+    [33mclass[39m=[32m"flex-shrink-0 rounded p-1 text-fg-faint opacity-0 transition-opacity hover:bg-fill hover:text-fg-soft group-hover:opacity-100"[39m
+    [33mdata-testid[39m=[32m"git-copy-path"[39m
+    [33mtitle[39m=[32m"Copy path"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "Expand full diff":
+  [36m<button[39m
+    [33mclass[39m=[32m"rounded-md border border-line bg-white/[0.03] px-2 py-1 font-mono text-[11px] text-fg-soft transition-colors hover:bg-fill hover:text-fg disabled:opacity-50"[39m
+    [33mdata-testid[39m=[32m"git-expand-diff"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  searchbox:
+
+  Name "":
+  [36m<input[39m
+    [33mclass[39m=[32m"mb-2 w-full rounded-md border border-line bg-white/[0.03] px-2 py-1 text-xs text-fg-soft placeholder:text-fg-faint focus:border-line-strong focus:outline-none"[39m
+    [33mdata-testid[39m=[32m"git-file-search"[39m
+    [33mplaceholder[39m=[32m"Filter files…"[39m
+    [33mtype[39m=[32m"search"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  link:
+
+  Name "Open src/foo.ts in editor":
+  [36m<a[39m
+    [33maria-label[39m=[32m"Open src/foo.ts in editor"[39m
+    [33mclass[39m=[32m"flex-shrink-0 rounded p-1 text-fg-faint opacity-0 transition-opacity hover:bg-fill hover:text-fg-soft group-hover:opacity-100"[39m
+    [33mhref[39m=[32m"vscode://file/repo/src/foo.ts"[39m
+    [33mrel[39m=[32m"noreferrer"[39m
+    [33mtarget[39m=[32m"_blank"[39m
+    [33mtitle[39m=[32m"Open in editor (VS Code)"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"flex h-full min-w-0 flex-col overflow-hidden"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"flex h-[52px] flex-shrink-0 items-center gap-2 px-4 pr-14"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"min-w-0 flex-1"[39m
+        [36m>[39m
+          [36m<h2[39m
+            [33mclass[39m=[32m"text-sm font-semibold text-fg"[39m
+          [36m>[39m
+            [0mReview[0m
+          [36m</h2>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"truncate text-xs text-fg-faint"[39m
+          [36m>[39m
+            [0mmain[0m
+          [36m</p>[39m
+        [36m</div>[39m
+        [36m<button[39m
+          [33maria-label[39m=[32m"Refresh review"[39m
+          [33mclass[39m=[32m"rounded-lg p-1.5 text-fg-faint transition-colors hover:bg-fill-soft hover:text-fg disabled:opacity-50"[39m
+          [33mtitle[39m=[32m"Refresh review"[39m
+          [33mtype[39m=[32m"button"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33mclass[39m=[32m"h-4 w-4"[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"[39m
+              [33mstroke-linecap[39m=[32m"round"[39m
+              [33mstroke-linejoin[39m=[32m"round"[39m
+              [33mstroke-width[39m=[32m"2"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+        [36m</button>[39m
+      [36m</div>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"flex min-h-0 flex-1 flex-col"[39m
+      [36m>[39m
+        [36m<section[39m
+          [33mclass[39m=[32m"flex-shrink-0 border-b border-line px-4 py-4"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"flex items-start justify-between gap-4"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"min-w-0"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"flex items-center gap-2"[39m
+              [36m>[39m
+                [36m<h3[39m
+                  [33mclass[39m=[32m"truncate text-sm font-semibold text-fg"[39m
+                [36m>[39m
+                  [0mBranch[0m
+                [36m</h3>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"rounded-full px-2 py-0.5 text-[11px] font-medium bg-warning/10 text-warning"[39m
+                [36m>[39m
+                  [0mLocal[0m
+                [36m</span>[39m
+              [36m</div>[39m
+              [36m<p[39m
+                [33mclass[39m=[32m"mt-1 truncate text-xs text-fg-faint"[39m
+                [33mtitle[39m=[32m"main -> main"[39m
+              [36m>[39m
+                [0mmain -&gt; main[0m
+              [36m</p>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"flex flex-shrink-0 items-center gap-2 font-mono text-sm"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"text-success-soft"[39m
+              [36m>[39m
+                [0m+[0m
+                [0m0[0m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"text-danger-soft"[39m
+              [36m>[39m
+                [0m-[0m
+                [0m0[0m
+              [36m</span>[39m
+            [36m</div>[39m
+          [36m</div>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"mt-4 space-y-2"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"flex min-w-0 items-center gap-3 text-sm"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"flex h-5 w-5 flex-shrink-0 items-center justify-center text-fg-soft"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33mclass[39m=[32m"h-5 w-5"[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M7 5v14M17 5v3a4 4 0 0 1-4 4H7M17 5a2 2 0 1 0-4 0 2 2 0 0 0 4 0ZM9 19a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM19 19a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z"[39m
+                    [33mstroke-linecap[39m=[32m"round"[39m
+                    [33mstroke-linejoin[39m=[32m"round"[39m
+                    [33mstroke-width[39m=[32m"1.8"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"min-w-0 flex-1 truncate text-fg-faint"[39m
+              [36m>[39m
+                [0mNo pull request found[0m
+              [36m</span>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"flex min-w-0 items-center gap-3 text-sm"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"flex h-5 w-5 flex-shrink-0 items-center justify-center text-fg-soft"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33mclass[39m=[32m"h-5 w-5"[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"[39m
+                    [33mstroke-linecap[39m=[32m"round"[39m
+                    [33mstroke-linejoin[39m=[32m"round"[39m
+                    [33mstroke-width[39m=[32m"1.8"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"min-w-0 flex-1 truncate text-fg-faint"[39m
+              [36m>[39m
+                [0mNo checks found[0m
+              [36m</span>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"flex min-w-0 items-center gap-3 text-sm"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"flex h-5 w-5 flex-shrink-0 items-center justify-center text-success-soft"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33mclass[39m=[32m"h-5 w-5"[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M4 12h6M14 12h6M10 12a2 2 0 1 0 4 0 2 2 0 0 0-4 0Z"[39m
+                    [33mstroke-linecap[39m=[32m"round"[39m
+                    [33mstroke-linejoin[39m=[32m"round"[39m
+                    [33mstroke-width[39m=[32m"1.8"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"min-w-0 flex-1 truncate text-fg-soft"[39m
+              [36m>[39m
+                [0m0 ahead commits[0m
+              [36m</span>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"flex min-w-0 items-center gap-3 text-sm"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"flex h-5 w-5 flex-shrink-0 items-center justify-center text-fg-soft"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33mclass[39m=[32m"h-5 w-5"[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M4.5 17.5h15M6.5 6.5h11a1 1 0 0 1 1 1v8.5h-13V7.5a1 1 0 0 1 1-1Z"[39m
+                    [33mstroke-linecap[39m=[32m"round"[39m
+                    [33mstroke-linejoin[39m=[32m"round"[39m
+                    [33mstroke-width[39m=[32m"1.8"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"min-w-0 flex-1 truncate text-fg-soft"[39m
+              [36m>[39m
+                [0mrepo[0m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"flex-shrink-0 text-xs text-fg-faint"[39m
+              [36m>[39m
+                [0mWorkspace[0m
+              [36m</span>[39m
+            [36m</div>[39m
+          [36m</div>[39m
+        [36m</section>[39m
+        [36m<section[39m
+          [33mclass[39m=[32m"flex min-h-0 flex-1 flex-col border-b border-line px-3 py-3"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"mb-2 flex items-center justify-between gap-3"[39m
+          [36m>[39m
+            [36m<h3[39m
+              [33mclass[39m=[32m"text-xs font-medium uppercase tracking-wide text-fg-faint"[39m
+            [36m>[39m
+              [0mChanged files[0m
+            [36m</h3>[39m
+            [36m<span[39m
+              [33mclass[39m=[32m"text-xs text-fg-faint"[39m
+            [36m>[39m
+              [0m1 file[0m
+            [36m</span>[39m
+          [36m</div>[39m
+          [36m<input[39m
+            [33mclass[39m=[32m"mb-2 w-full rounded-md border border-line bg-white/[0.03] px-2 py-1 text-xs text-fg-soft placeholder:text-fg-faint focus:border-line-strong focus:outline-none"[39m
+            [33mdata-testid[39m=[32m"git-file-search"[39m
+            [33mplaceholder[39m=[32m"Filter files…"[39m
+            [33mtype[39m=[32m"search"[39m
+          [36m/>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"min-h-0 flex-1 space-y-0.5 overflow-y-auto"[39m
+          [36m>[39m
+            [36m<div>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"group flex w-full min-w-0 items-center gap-1 rounded-md px-1 text-left text-xs transition-colors bg-fill text-fg"[39m
+                [33mtitle[39m=[32m"src/foo.ts"[39m
+              [36m>[39m
+                [36m<button[39m
+                  [33mclass[39m=[32m"flex min-w-0 flex-1 items-center gap-2 px-1 py-1.5"[39m
+                  [33mtype[39m=[32m"button"[39m
+                [36m>[39m
+                  [36m<span[39m
+                    [33mclass[39m=[32m"w-4 flex-shrink-0 font-mono text-warning"[39m
+                  [36m>[39m
+                    [0mM[0m
+                  [36m</span>[39m
+                  [36m<span[39m
+                    [33mclass[39m=[32m"min-w-0 flex-1 truncate font-mono"[39m
+                  [36m>[39m
+                    [0msrc/foo.ts[0m
+                  [36m</span>[39m
+                  [36m<span[39m
+                    [33mclass[39m=[32m"flex flex-shrink-0 items-center gap-1 font-mono"[39m
+                  [36m>[39m
+                    [36m<span[39m
+                      [33mclass[39m=[32m"text-success-soft"[39m
+                    [36m>[39m
+                      [0m+[0m
+                      [0m5[0m
+                    [36m</span>[39m
+                    [36m<span[39m
+                      [33mclass[39m=[32m"text-danger-soft"[39m
+                    [36m>[39m
+                      [0m-[0m
+                      [0m1[0m
+                    [36m</span>[39m
+                  [36m</span>[39m
+                [36m</button>[39m
+                [36m<button[39m
+                  [33maria-label[39m=[32m"Copy path src/foo.ts"[39m
+                  [33mclass[39m=[32m"flex-shrink-0 rounded p-1 text-fg-faint opacity-0 transition-opacity hover:bg-fill hover:text-fg-soft group-hover:opacity-100"[39m
+                  [33mdata-testid[39m=[32m"git-copy-path"[39m
+                  [33mtitle[39m=[32m"Copy path"[39m
+                  [33mtype[39m=[32m"button"[39m
+                [36m>[39m
+                  [36m<svg[39m
+                    [33mclass[39m=[32m"h-3.5 w-3.5"[39m
+                    [33mfill[39m=[32m"none"[39m
+                    [33mstroke[39m=[32m"currentColor"[39m
+                    [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [36m>[39m
+                    [36m<path[39m
+                      [33md[39m=[32m"M8 8H6.5A1.5 1.5 0 0 0 5 9.5v8A1.5 1.5 0 0 0 6.5 19h8a1.5 1.5 0 0 0 1.5-1.5V16M9.5 5h8A1.5 1.5 0 0 1 19 6.5v8A1.5 1.5 0 0 1 17.5 16h-8A1.5 1.5 0 0 1 8 14.5v-8A1.5 1.5 0 0 1 9.5 5Z"[39m
+                      [33mstroke-linecap[39m=[32m"round"[39m
+                      [33mstroke-linejoin[39m=[32m"round"[39m
+                      [33mstroke-width[39m=[32m"1.8"[39m
+                    [36m/>[39m
+                  [36m</svg>[39m
+                [36m</button>[39m
+                [36m<a[39m
+                  [33maria-label[39m=[32m"Open src/foo.ts in editor"[39m
+                  [33mclass[39m=[32m"flex-shrink-0 rounded p-1 text-fg-faint opacity-0 transition-opacity hover:bg-fill hover:text-fg-soft group-hover:opacity-100"[39m
+                  [33mhref[39m=[32m"vscode://file/repo/src/foo.ts"[39m
+                  [33mrel[39m=[32m"noreferrer"[39m
+                  [33mtarget[39m=[32m"_blank"[39m
+                  [33mtitle[39m=[32m"Open in editor (VS Code)"[39m
+                [36m>[39m
+                  [36m<svg[39m
+                    [33mclass[39m=[32m"h-3.5 w-3.5"[39m
+                    [33mfill[39m=[32m"none"[39m
+                    [33mstroke[39m=[32m"currentColor"[39m
+                    [33mviewBox[39m=[32m"0 0 24 24"[39m
+                  [36m>[39m
+                    [36m<path[39m
+                      [33md[39m=[32m"M14 5h5v5M19 5l-8 8M12 5H7a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"[39m
+                      [33mstroke-linecap[39m=[32m"round"[39m
+                      [33mstroke-linejoin[39m=[32m"round"[39m
+                      [33mstroke-width[39m=[32m"1.8"[39m
+                    [36m/>[39m
+                  [36m</svg>[39m
+                [36m</a>[39m
+              [36m</div>[39m
+            [36m</div>[39m
+          [36m</div>[39m
+        [36m</section>[39m
+        [36m<section[39m
+          [33mclass[39m=[32m"flex min-h-0 flex-[1.5] flex-col"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"flex flex-shrink-0 items-center justify-between gap-3 border-b border-line px-4 py-3"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"min-w-0"[39m
+            [36m>[39m
+              [36m<h3[39m
+                [33mclass[39m=[32m"truncate font-mono text-xs text-fg-soft"[39m
+                [33mtitle[39m=[32m"src/foo.ts"[39m
+              [36m>[39m
+                [0msrc/foo.ts[0m
+              [36m</h3>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"flex flex-shrink-0 items-center gap-2 font-mono text-xs"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"text-success-soft"[39m
+              [36m>[39m
+                [0m+[0m
+                [0m5[0m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"text-danger-soft"[39m
+              [36m>[39m
+                [0m-[0m
+                [0m1[0m
+              [36m</span>[39m
+            [36m</div>[39m
+          [36m</div>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"min-h-0 flex-1 overflow-auto bg-surface/50"[39m
+          [36m>[39m
+            [36m<pre[39m
+              [33mclass[39m=[32m"min-w-max p-3 text-[11px] leading-relaxed"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"font-mono bg-emerald-400/10 text-success-soft"[39m
+              [36m>[39m
+                [0m+synthetic preview[0m
+              [36m</div>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"pt-2"[39m
+              [36m>[39m
+                [36m<button[39m
+                  [33mclass[39m=[32m"rounded-md border border-line bg-white/[0.03] px-2 py-1 font-mono text-[11px] text-fg-soft transition-colors hover:bg-fill hover:text-fg disabled:opacity-50"[39m
+                  [33mdata-testid[39m=[32m"git-expand-diff"[39m
+                  [33mtype[39m=[32m"button"[39m
+                [36m>[39m
+                  [0mExpand full diff[0m
+                [36m</button>[39m
+                [36m<p[39m
+                  [33mclass[39m=[32m"mt-1 font-mono text-warning/80"[39m
+                [36m>[39m
+                  [0mDiff truncated for panel preview.[0m
+                [36m</p>[39m
+              [36m</div>[39m
+            [36m</pre>[39m
+          [36m</div>[39m
+        [36m</section>[39m
+      [36m</div>[39m
+    [36m</div>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/.bun/@testing-library+dom@8.20.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ ../../node_modules/.bun/@testing-library+dom@8.20.1/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ ../../node_modules/.bun/@testing-library+dom@8.20.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.bun/@testing-library+dom@8.20.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ src/components/__tests__/GitPanel.test.tsx:223:23
+    221|     fireEvent.click(view.getByText('+synthetic preview'));
+    222|     expect(mockedGetGitFileDiff).not.toHaveBeenCalled();
+    223|     const more = view.getByRole('button', { name: 'more — Full diff', …
+       |                       ^
+    224|     more.focus();
+    225|     fireEvent.click(more);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  src/components/space/thread/minimal/MinimalThreadFeed.test.tsx > MinimalThreadFeed > Task kickoff event > keeps the kickoff title/body inert with a separate explicit control
+TestingLibraryElementError: Unable to find an accessible element with the role "button" and name "more — Task kickoff"
+
+Here are the accessible roles:
+
+  button:
+
+  Name "Task sent to Coder Agent 5:13 PM":
+  [36m<button[39m
+    [33maria-expanded[39m=[32m"true"[39m
+    [33mclass[39m=[32m"flex max-w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-xs text-fg-muted transition-colors hover:bg-fill-soft hover:text-fg-soft focus:outline-none focus-visible:ring-2 focus-visible:ring-fg-muted/60"[39m
+    [33mdata-testid[39m=[32m"minimal-thread-task-kickoff"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "Open Coder Agent session":
+  [36m<button[39m
+    [33maria-label[39m=[32m"Open Coder Agent session"[39m
+    [33mclass[39m=[32m"-m-1 flex min-h-11 max-w-full items-center gap-3 rounded-lg p-1 pr-2 text-left transition-colors hover:bg-surface-raised/55 active:bg-surface-raised/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"[39m
+    [33mdata-testid[39m=[32m"minimal-thread-agent-open"[39m
+    [33mtitle[39m=[32m"Open session"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "Copy message":
+  [36m<button[39m
+    [33maria-label[39m=[32m"Copy message"[39m
+    [33mclass[39m=[32m"inline-flex items-center justify-center rounded-lg transition-all duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-surface-raised text-fg-muted hover:text-fg p-2"[39m
+    [33mtitle[39m=[32m"Copy message"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "Open in session":
+  [36m<button[39m
+    [33maria-label[39m=[32m"Open in session"[39m
+    [33mclass[39m=[32m"inline-flex items-center justify-center rounded-lg transition-all duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-surface-raised text-fg-muted hover:text-fg p-2"[39m
+    [33mtitle[39m=[32m"Open in session"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "Copy message":
+  [36m<button[39m
+    [33maria-label[39m=[32m"Copy message"[39m
+    [33mclass[39m=[32m"inline-flex items-center justify-center rounded-lg transition-all duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-surface-raised text-fg-muted hover:text-fg p-2"[39m
+    [33mtitle[39m=[32m"Copy message"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"px-4 py-4 space-y-6"[39m
+      [33mdata-testid[39m=[32m"space-task-event-feed-minimal"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mdata-agent-color[39m=[32m"#0f766e"[39m
+        [33mdata-agent-label[39m=[32m"Coder Agent"[39m
+        [33mdata-testid[39m=[32m"minimal-thread-turn"[39m
+        [33mdata-turn-state[39m=[32m"task_kickoff"[39m
+      [36m>[39m
+        [36m<button[39m
+          [33maria-expanded[39m=[32m"true"[39m
+          [33mclass[39m=[32m"flex max-w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-xs text-fg-muted transition-colors hover:bg-fill-soft hover:text-fg-soft focus:outline-none focus-visible:ring-2 focus-visible:ring-fg-muted/60"[39m
+          [33mdata-testid[39m=[32m"minimal-thread-task-kickoff"[39m
+          [33mtype[39m=[32m"button"[39m
+        [36m>[39m
+          [36m<svg[39m
+            [33maria-hidden[39m=[32m"true"[39m
+            [33mclass[39m=[32m"h-3 w-3 shrink-0 transition-transform rotate-90"[39m
+            [33mfill[39m=[32m"none"[39m
+            [33mstroke[39m=[32m"currentColor"[39m
+            [33mviewBox[39m=[32m"0 0 24 24"[39m
+          [36m>[39m
+            [36m<path[39m
+              [33md[39m=[32m"M9 5l7 7-7 7"[39m
+              [33mstroke-linecap[39m=[32m"round"[39m
+              [33mstroke-linejoin[39m=[32m"round"[39m
+              [33mstroke-width[39m=[32m"2"[39m
+            [36m/>[39m
+          [36m</svg>[39m
+          [36m<span[39m
+            [33mclass[39m=[32m"truncate"[39m
+          [36m>[39m
+            [0mTask sent to[0m
+            [0m [0m
+            [36m<span[39m
+              [33mstyle[39m=[32m"color: #0f766e;"[39m
+            [36m>[39m
+              [0mCoder Agent[0m
+            [36m</span>[39m
+          [36m</span>[39m
+          [36m<span[39m
+            [33mclass[39m=[32m"shrink-0 text-[11px] text-fg-faint"[39m
+          [36m>[39m
+            [0m5:13 PM[0m
+          [36m</span>[39m
+        [36m</button>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"mt-2 max-w-full md:max-w-[86%] rounded-lg border border-line bg-surface/40 px-3 py-2 text-sm text-fg-soft"[39m
+          [33mdata-testid[39m=[32m"minimal-thread-task-kickoff-body"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mdata-testid[39m=[32m"md"[39m
+          [36m>[39m
+            [0m## Your Task #7
+
+**Title:** Fix login
+**Description:** Repair the form[0m
+          [36m</div>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+      [36m<div[39m
+        [33mdata-agent-color[39m=[32m"#42C7B5"[39m
+        [33mdata-agent-label[39m=[32m"Coder Agent"[39m
+        [33mdata-testid[39m=[32m"minimal-thread-turn"[39m
+        [33mdata-turn-state[39m=[32m"completed"[39m
+      [36m>[39m
+        [36m<button[39m
+          [33maria-label[39m=[32m"Open Coder Agent session"[39m
+          [33mclass[39m=[32m"-m-1 flex min-h-11 max-w-full items-center gap-3 rounded-lg p-1 pr-2 text-left transition-colors hover:bg-surface-raised/55 active:bg-surface-raised/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"[39m
+          [33mdata-testid[39m=[32m"minimal-thread-agent-open"[39m
+          [33mtitle[39m=[32m"Open session"[39m
+          [33mtype[39m=[32m"button"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33maria-hidden[39m=[32m"true"[39m
+            [33mclass[39m=[32m"h-9 w-9 shrink-0 rounded-md flex items-center justify-center text-sm font-bold text-dark-950"[39m
+            [33mstyle[39m=[32m"background-color: #42C7B5;"[39m
+          [36m>[39m
+            [0mC[0m
+          [36m</div>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"flex flex-col gap-0.5 min-w-0"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"flex flex-wrap items-baseline gap-x-2 gap-y-0.5 min-w-0"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"font-semibold leading-tight"[39m
+                [33mstyle[39m=[32m"color: #0f766e;"[39m
+              [36m>[39m
+                [0mCODER[0m
+              [36m</span>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"text-[11px] text-fg-muted leading-tight"[39m
+              [33mdata-testid[39m=[32m"minimal-thread-agent-meta"[39m
+            [36m>[39m
+              [0m0[0m
+              [0m [0m
+              [0mtool calls[0m
+              [0m · [0m
+              [0m1[0m
+              [0m [0m
+              [0mmessage[0m
+              [0m · [0m
+              [0m1s[0m
+            [36m</div>[39m
+          [36m</div>[39m
+        [36m</button>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"mt-1.5 w-fit max-w-full md:max-w-[86%]"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"rounded-lg px-3 py-2 bg-surface-raised border border-line"[39m
+            [33mdata-testid[39m=[32m"minimal-thread-agent-bubble"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"text-sm text-fg leading-relaxed [&_a]:text-accent"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mdata-testid[39m=[32m"md"[39m
+              [36m>[39m
+                [0mWorking on it[0m
+              [36m</div>[39m
+            [36m</div>[39m
+          [36m</div>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"flex items-center gap-2 mt-2 px-1 "[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"relative inline-block"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"text-xs text-fg-muted"[39m
+              [36m>[39m
+                [0m05:13 PM[0m
+              [36m</span>[39m
+            [36m</div>[39m
+            [36m<button[39m
+              [33maria-label[39m=[32m"Copy message"[39m
+              [33mclass[39m=[32m"inline-flex items-center justify-center rounded-lg transition-all duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-surface-raised text-fg-muted hover:text-fg p-2"[39m
+              [33mtitle[39m=[32m"Copy message"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33mclass[39m=[32m"w-5 h-5"[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-linejoin[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"2"[39m
+                [36m/>[39m
+              [36m</svg>[39m
+            [36m</button>[39m
+            [36m<button[39m
+              [33maria-label[39m=[32m"Open in session"[39m
+              [33mclass[39m=[32m"inline-flex items-center justify-center rounded-lg transition-all duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-surface-raised text-fg-muted hover:text-fg p-2"[39m
+              [33mtitle[39m=[32m"Open in session"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33mclass[39m=[32m"w-5 h-5"[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-linejoin[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"2"[39m
+                [36m/>[39m
+              [36m</svg>[39m
+            [36m</button>[39m
+          [36m</div>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"flex justify-end"[39m
+        [33mdata-agent-color[39m=[32m"#42C7B5"[39m
+        [33mdata-agent-label[39m=[32m"Coder Agent"[39m
+        [33mdata-from-label[39m=[32m"User"[39m
+        [33mdata-message-kind[39m=[32m"human"[39m
+        [33mdata-testid[39m=[32m"minimal-thread-turn"[39m
+        [33mdata-to-label[39m=[32m"Coder Agent"[39m
+        [33mdata-turn-state[39m=[32m"message"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"max-w-[85%] md:max-w-[86%] w-auto"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"bg-accent text-accent-fg rounded-[20px] px-4 py-2 leading-relaxed break-words"[39m
+            [33mdata-testid[39m=[32m"minimal-thread-human-bubble"[39m
+          [36m>[39m
+            [36m<p[39m
+              [33mclass[39m=[32m"whitespace-pre-wrap break-words"[39m
+            [36m>[39m
+              [0m## Your Task #7
+
+Again[0m
+            [36m</p>[39m
+          [36m</div>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"flex items-center gap-2 mt-2 px-1 justify-end"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"relative inline-block"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"text-xs text-fg-muted"[39m
+              [36m>[39m
+                [0m05:13 PM[0m
+              [36m</span>[39m
+            [36m</div>[39m
+            [36m<button[39m
+              [33maria-label[39m=[32m"Copy message"[39m
+              [33mclass[39m=[32m"inline-flex items-center justify-center rounded-lg transition-all duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-surface-raised text-fg-muted hover:text-fg p-2"[39m
+              [33mtitle[39m=[32m"Copy message"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33mclass[39m=[32m"w-5 h-5"[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mstroke[39m=[32m"currentColor"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"[39m
+                  [33mstroke-linecap[39m=[32m"round"[39m
+                  [33mstroke-linejoin[39m=[32m"round"[39m
+                  [33mstroke-width[39m=[32m"2"[39m
+                [36m/>[39m
+              [36m</svg>[39m
+            [36m</button>[39m
+          [36m</div>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+    [36m</div>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/.bun/@testing-library+dom@8.20.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ ../../node_modules/.bun/@testing-library+dom@8.20.1/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ ../../node_modules/.bun/@testing-library+dom@8.20.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.bun/@testing-library+dom@8.20.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ src/components/space/thread/minimal/MinimalThreadFeed.test.tsx:2696:27
+    2694|       render(<MinimalThreadFeed parsedRows={kickoffRows()} />);
+    2695|       fireEvent.click(screen.getByTestId('minimal-thread-task-kickoff'…
+    2696|       const more = screen.getByRole('button', { name: 'more — Task kic…
+       |                           ^
+    2697|       expect(more.getAttribute('aria-expanded')).toBe('false');
+    2698|       more.focus();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  3 failed | 121 passed (124)
+   Start at  03:40:20
+   Duration  537ms (transform 36%, tests 23%, environment 23%, setup 12%, import 5%, worker 1%)
+

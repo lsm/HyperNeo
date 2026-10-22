@@ -2690,6 +2690,24 @@ describe('MinimalThreadFeed', () => {
       expect(screen.queryByTestId('minimal-thread-task-kickoff-body')).toBeNull();
     });
 
+    it('keeps the kickoff title/body inert with a separate explicit control', () => {
+      render(<MinimalThreadFeed parsedRows={kickoffRows()} />);
+      fireEvent.click(screen.getByTestId('minimal-thread-task-kickoff'));
+      const more = screen.getByRole('button', { name: 'more — Task kickoff', exact: true });
+      expect(more.getAttribute('aria-expanded')).toBe('false');
+      more.focus();
+      fireEvent.click(more);
+      const less = screen.getByRole('button', { name: 'less — Task kickoff', exact: true });
+      expect(document.activeElement).toBe(less);
+      fireEvent.click(screen.getByTestId('minimal-thread-task-kickoff-body'));
+      expect(less.getAttribute('aria-expanded')).toBe('true');
+      fireEvent.click(less);
+      expect(screen.getByRole('button', { name: 'more — Task kickoff', exact: true })).toBe(
+        document.activeElement
+      );
+      expect(screen.queryByTestId('minimal-thread-task-kickoff-body')).toBeNull();
+    });
+
     it('renders later Your Task messages as ordinary message bubbles', () => {
       render(<MinimalThreadFeed parsedRows={kickoffRows()} />);
 

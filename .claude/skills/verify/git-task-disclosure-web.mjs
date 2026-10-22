@@ -1,0 +1,73 @@
+import assert from 'node:assert/strict';
+import { readFile, writeFile } from 'node:fs/promises';
+
+export async function verifyGitTask(page, { run, width, phase, port = 9396 }) {
+  const after = phase === 'after';
+  const seed = JSON.parse(await readFile(`${run}/evidence/git-task-seed.json`, 'utf8'));
+  const result = { width, phase, synthetic: true, github: 'local gh stub; Git and task RPC/LiveQuery are real' };
+  await page.setViewportSize({width,height:1000});
+  await page.goto(`http://127.0.0.1:${port}/session/${seed.worker}`);
+  await page.getByRole('button',{name:'Conversation info',exact:true}).click();
+  await page.getByRole('tab',{name:'Changes',exact:true}).click();
+  const label = page.getByText('1 check failing',{exact:true});
+  await label.click();
+  const checkControl = () => after ? page.getByRole('button',{name:/^(more|less) — Git checks$/}) : page.getByTestId('git-checks-toggle');
+  result.checkTitleClickExpanded = await checkControl().getAttribute('aria-expanded');
+  assert.equal(result.checkTitleClickExpanded,after?'false':'true');
+  if(!after) await checkControl().click();
+  await page.screenshot({path:`${run}/evidence/${phase}-${width}-checks-closed.png`,scale:'css',animations:'disabled'});
+  await checkControl().press('Enter');
+  const checks = page.getByTestId('git-checks-list');
+  await checks.waitFor();
+  assert.equal(await checks.getByRole('link',{name:/Synthetic build/}).getAttribute('href'),'https://example.invalid/ci/1');
+  await label.click();
+  if(!after) await checkControl().click();
+  assert.equal(await checkControl().getAttribute('aria-expanded'),'true');
+  await checkControl().scrollIntoViewIfNeeded();
+  result.checksControl = await checkControl().evaluate(el=>({right:el.getBoundingClientRect().right,parentRight:el.parentElement.getBoundingClientRect().right}));
+  await page.screenshot({path:`${run}/evidence/${phase}-${width}-checks-open.png`,scale:'css',animations:'disabled'});
+  await checkControl().press('Space');
+  const diff = page.getByTestId('git-expand-diff');
+  await diff.scrollIntoViewIfNeeded();
+  await page.screenshot({path:`${run}/evidence/${phase}-${width}-diff-preview.png`,scale:'css',animations:'disabled'});
+  const patchSection = page.locator('section').filter({has:page.locator('h3[title="big.txt"]')}).last();
+  assert.equal(await patchSection.getByText('+Synthetic final diff ending',{exact:true}).count(),0);
+  await diff.press('Enter');
+  await patchSection.getByText('+Synthetic final diff ending',{exact:true}).waitFor();
+  result.fullDiffLoaded = true;
+  if(after) {
+    const less = page.getByRole('button',{name:'less — Full diff',exact:true});
+    assert(await less.evaluate(el=>el===document.activeElement));
+    await less.scrollIntoViewIfNeeded();
+    result.diffControl = await less.evaluate(el=>({right:el.getBoundingClientRect().right,parentRight:el.parentElement.getBoundingClientRect().right}));
+    await page.screenshot({path:`${run}/evidence/${phase}-${width}-diff-full.png`,scale:'css',animations:'disabled'});
+    await less.press('Space');
+    assert.equal(await patchSection.getByText('+Synthetic final diff ending',{exact:true}).count(),0);
+    assert(await page.getByRole('button',{name:'more — Full diff',exact:true}).evaluate(el=>el===document.activeElement));
+  } else {
+    assert.equal(await page.getByRole('button',{name:/less/}).count(),0);
+    await patchSection.getByText('+Synthetic final diff ending',{exact:true}).scrollIntoViewIfNeeded();
+    await page.screenshot({path:`${run}/evidence/${phase}-${width}-diff-full.png`,scale:'css',animations:'disabled'});
+  }
+  await page.goto(`http://127.0.0.1:${port}/space/${seed.spaceId}/task/${seed.taskId}`);
+  const kickoff = page.getByTestId('minimal-thread-task-kickoff');
+  await kickoff.click();
+  result.kickoffTitleClickExpanded = after ? await page.getByRole('button',{name:'more — Task kickoff',exact:true}).getAttribute('aria-expanded') : await kickoff.getAttribute('aria-expanded');
+  assert.equal(result.kickoffTitleClickExpanded,after?'false':'true');
+  if(!after) await kickoff.click();
+  await page.screenshot({path:`${run}/evidence/${phase}-${width}-kickoff-closed.png`,scale:'css',animations:'disabled'});
+  await (after?page.getByRole('button',{name:'more — Task kickoff',exact:true}):kickoff).press('Enter');
+  const body = page.getByTestId('minimal-thread-task-kickoff-body');
+  await body.waitFor();
+  assert.match(await body.innerText(),/Synthetic kickoff ending/);
+  await body.getByText('Synthetic kickoff ending.',{exact:true}).click();
+  const control = after?page.getByRole('button',{name:'less — Task kickoff',exact:true}):kickoff;
+  assert.equal(await control.getAttribute('aria-expanded'),'true');
+  await control.scrollIntoViewIfNeeded();
+  await page.screenshot({path:`${run}/evidence/${phase}-${width}-kickoff-open.png`,scale:'css',animations:'disabled'});
+  await control.press('Space');
+  assert.equal(await body.count(),0);
+  if(after) assert(await page.getByRole('button',{name:'more — Task kickoff',exact:true}).evaluate(el=>el===document.activeElement));
+  await writeFile(`${run}/evidence/${phase}-${width}.json`,JSON.stringify(result,null,2)+'\n');
+  return result;
+}

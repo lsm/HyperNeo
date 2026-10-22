@@ -1,0 +1,13 @@
+{
+  "width": 390,
+  "phase": "before",
+  "synthetic": true,
+  "github": "local gh stub; Git and task RPC/LiveQuery are real",
+  "checkTitleClickExpanded": "true",
+  "checksControl": {
+    "right": 374,
+    "parentRight": 374
+  },
+  "fullDiffLoaded": true,
+  "kickoffTitleClickExpanded": "true"
+}

@@ -173,6 +173,70 @@ describe('GitPanel', () => {
     });
   });
 
+  it('keeps check labels inert and uses the explicit footer control', async () => {
+    const status = makeStatus();
+    status.review!.checks = [
+      {
+        name: 'synthetic-build',
+        state: 'completed',
+        bucket: 'pass',
+        url: 'https://example.invalid/ci',
+      },
+    ];
+    setStatus(status);
+    const view = renderPanel();
+    fireEvent.click(view.getByText('1 check passing'));
+    const more = view.getByRole('button', { name: 'more — Git checks', exact: true });
+    expect(more.getAttribute('aria-expanded')).toBe('false');
+    more.focus();
+    fireEvent.click(more);
+    const less = view.getByRole('button', { name: 'less — Git checks', exact: true });
+    expect(document.activeElement).toBe(less);
+    expect(view.getByRole('link', { name: /synthetic-build/ }).getAttribute('href')).toBe(
+      'https://example.invalid/ci'
+    );
+    fireEvent.click(view.getByText('1 check passing'));
+    expect(less.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(less);
+    expect(
+      view
+        .getByRole('button', { name: 'more — Git checks', exact: true })
+        .getAttribute('aria-expanded')
+    ).toBe('false');
+  });
+
+  it('loads a full diff through more and returns to its preview through less', async () => {
+    const status = makeStatus();
+    status.review!.files = [makeFile({ patch: '+synthetic preview', patchTruncated: true })];
+    setStatus(status);
+    mockedGetGitFileDiff.mockResolvedValue({
+      sessionId: 'session-1',
+      path: 'src/foo.ts',
+      patch: '+synthetic full ending',
+      truncated: false,
+      additions: 1,
+      deletions: 0,
+    });
+    const view = renderPanel();
+    fireEvent.click(view.getByText('+synthetic preview'));
+    expect(mockedGetGitFileDiff).not.toHaveBeenCalled();
+    const more = view.getByRole('button', { name: 'more — Full diff', exact: true });
+    more.focus();
+    fireEvent.click(more);
+    await waitFor(() => expect(view.getByText('+synthetic full ending')).toBeTruthy());
+    const less = view.getByRole('button', { name: 'less — Full diff', exact: true });
+    expect(document.activeElement).toBe(less);
+    fireEvent.click(view.getByText('+synthetic full ending'));
+    expect(less.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(less);
+    expect(view.queryByText('+synthetic full ending')).toBeNull();
+    expect(view.getByText('+synthetic preview')).toBeTruthy();
+    expect(view.getByRole('button', { name: 'more — Full diff', exact: true })).toBe(
+      document.activeElement
+    );
+    expect(mockedGetGitFileDiff).toHaveBeenCalledTimes(1);
+  });
+
   describe('file list', () => {
     it('groups files into Staged and Unstaged based on the working-tree flags', () => {
       setStatus(
