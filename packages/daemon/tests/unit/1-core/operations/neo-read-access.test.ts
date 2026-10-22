@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
+import * as fs from 'node:fs';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,6 +14,10 @@ const { runtimePlatform } = vi.hoisted(() => ({ runtimePlatform: vi.fn(() => pro
 vi.mock('node:os', async (importOriginal) => ({
   ...(await importOriginal<typeof import('node:os')>()),
   platform: runtimePlatform,
+}));
+
+vi.mock('node:fs', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:fs')>()),
 }));
 
 const roots: string[] = [];
@@ -88,3 +93,32 @@ test.each(['linux', 'win32'] as const)(
     expect(get).not.toHaveBeenCalled();
   }
 );
+
+test('unrelated owner and repo directory names never prevent safe checkout enumeration', () => {
+  const data = mkdtempSync(join(tmpdir(), 'neo-read-names-'));
+  roots.push(data);
+  const leaf = join(data, 'worktrees/lsm/hyperneo/neo-read');
+  for (const path of [
+    leaf,
+    join(data, 'worktrees/owner with space/repo/neo-read'),
+    join(data, 'worktrees/lsm/@unrelated/neo-read'),
+  ])
+    mkdirSync(path, { recursive: true });
+  expect(neoReadCheckoutPaths(data)).toEqual([leaf]);
+});
+
+test('a checkout owner removed during enumeration is skipped without wider grants', () => {
+  const data = mkdtempSync(join(tmpdir(), 'neo-read-vanished-'));
+  roots.push(data);
+  const owner = join(data, 'worktrees/lsm');
+  mkdirSync(join(owner, 'hyperneo/neo-read'), { recursive: true });
+  const read = fs.readdirSync;
+  vi.spyOn(fs, 'readdirSync').mockImplementationOnce(((
+    ...args: Parameters<typeof fs.readdirSync>
+  ) => {
+    const entries = read(...args);
+    rmSync(owner, { recursive: true });
+    return entries;
+  }) as typeof fs.readdirSync);
+  expect(neoReadCheckoutPaths(data)).toEqual([]);
+});

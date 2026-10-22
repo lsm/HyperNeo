@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -48,6 +48,11 @@ test(`root startup, reads, resume and publication (${sandboxProof ? 'real OS san
           ? `cat '${readProbeFile}'; if [ -n "$HYPERNEO_HANDOFF_DIR" ]; then printf UNWRITABLE_HANDOFF_ADVERTISED; exit 1; fi; if [ -n \"$GH_TOKEN\" ]; then printf UNEXPECTED_INHERITED_TOKEN; exit 1; fi; printf CHECKOUT_OK > '${readCheckout}/allowed.txt'; printf TEMP_OK > '${join(tmpdir(), 'hyperneo-neo', root, 'allowed.txt')}'; (printf BAD > '${workerCheckout}/blocked.txt'); (printf BAD > '${isolated}/data/blocked.txt'); (printf BAD > '${isolated}/data/Neo/blocked.txt'); gh pr view https://github.com/lsm/HyperNeo/pull/8148 --json number; printf SYNTHETIC_UNAPPROVED > '${approvalProbeFile}'`
           : `cat '${readProbeFile}'; if [ -n "$HYPERNEO_HANDOFF_DIR" ]; then printf UNWRITABLE_HANDOFF_ADVERTISED; exit 1; fi; if [ -n \"$GH_TOKEN\" ]; then printf UNEXPECTED_INHERITED_TOKEN; exit 1; fi; gh pr view https://github.com/lsm/HyperNeo/pull/8148 --json number`,
       },
+    },
+    { name: 'Write', input: { file_path: approvalProbeFile, content: 'NATIVE_WRITE_BYPASS' } },
+    {
+      name: 'Edit',
+      input: { file_path: readProbeFile, old_string: readProbe, new_string: 'NATIVE_EDIT_BYPASS' },
     },
   ];
   const historyMarker = `synthetic-history-${randomUUID()}`;
@@ -418,7 +423,27 @@ test(`root startup, reads, resume and publication (${sandboxProof ? 'real OS san
       sessionId: root,
       config: {
         ...storedAtStartup.config,
-        sandbox: { enabled: false, allowUnsandboxedCommands: true, excludedCommands: ['gh'] },
+        sdkToolsPreset: ['Read', 'Grep', 'Glob', 'Bash', 'Write', 'Edit', 'NotebookEdit'],
+        allowedTools: [
+          'Read',
+          'Grep',
+          'Glob',
+          'Bash',
+          'Write',
+          'Edit',
+          'NotebookEdit',
+          'mcp__hyperneo-operations__invoke',
+        ],
+        permissionMode: 'acceptEdits',
+        coordinatorMode: true,
+        sandbox: {
+          enabled: false,
+          allowUnsandboxedCommands: true,
+          excludedCommands: ['gh'],
+          allowAppleEvents: true,
+          enableWeakerNestedSandbox: true,
+          ignoreViolations: { file: ['*'] },
+        },
       },
     });
     const storedSandboxOverride = daemon.db.getSession(root)?.config.sandbox;
@@ -615,6 +640,15 @@ test(`root startup, reads, resume and publication (${sandboxProof ? 'real OS san
       for (const path of [workerCheckout, join(isolated, 'data'), newCwd])
         expect(existsSync(join(path, 'blocked.txt'))).toBe(false);
     }
+    for (const index of [4, 5]) {
+      const result = (approvalProbeResults as { tool_use_id: string; is_error?: boolean }[]).find(
+        (result) => result.tool_use_id === `tool-read-probe-${index}`
+      );
+      expect(result?.is_error).toBe(true);
+    }
+    expect(readFileSync(readProbeFile, 'utf8')).toBe(readProbe);
+    expect(nativeToolsSeen[0]).not.toEqual(expect.arrayContaining(['Write']));
+    expect(nativeToolsSeen[0]).not.toEqual(expect.arrayContaining(['Edit']));
     expect(approvalProbeDenied).toBe(true);
     expect(existsSync(approvalProbeFile)).toBe(false);
     expect(storedAtStartup.config.systemPrompt).toBe(neoPrompt());
