@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import { createTestDb, createTestSession } from '../../../helpers/database';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { capSdkMessage } from '../../../../src/lib/rpc-handlers/message-output-cap';
 import {
   SDKStatusReader,
   type SDKStatusReply,
@@ -209,6 +210,54 @@ test('paged memory read retains child/background projection and complete stored 
     expect(
       db.getDatabase().prepare('SELECT sdk_message FROM sdk_message_bodies ORDER BY seq').all()
     ).toEqual(stored);
+  } finally {
+    await db.close();
+  }
+});
+
+test('reader projections change only returned pages, never original or full-output bodies', async () => {
+  const db = await createTestDb();
+  try {
+    db.createSession(createTestSession('projected-page'));
+    const full = 'complete output 🦊\n'.repeat(4000);
+    db.saveUserMessage(
+      'projected-page',
+      {
+        type: 'user',
+        uuid: 'projected-user',
+        parent_tool_use_id: null,
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Visible text' },
+            { type: 'tool_result', tool_use_id: 'tool', content: full },
+          ],
+        },
+      } as SDKMessage,
+      'consumed'
+    );
+    const repo = db.getSDKMessageRepo();
+    const original = repo.getSDKMessages('projected-page', 1);
+    const projected = repo.getSDKMessages(
+      'projected-page',
+      1,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      capSdkMessage
+    );
+    expect(projected.messages).toEqual(original.messages.map(capSdkMessage));
+    expect(projected.messages[0]).toMatchObject({ output_capped: true });
+    const status = repo.getUserMessagesByStatus('projected-page', 'consumed', 1, 'asc', (m) => ({
+      ...m,
+      message: { ...m.message, content: 'Projected text' },
+    }));
+    expect(status.messages[0].message.content).toBe('Projected text');
+    expect(repo.getSDKMessages('projected-page', 1)).toEqual(original);
+    expect(repo.getMessageByUuid('projected-page', 'projected-user')).toMatchObject({
+      message: { content: [{ text: 'Visible text' }, { content: full }] },
+    });
   } finally {
     await db.close();
   }
