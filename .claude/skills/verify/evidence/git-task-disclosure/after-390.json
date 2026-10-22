@@ -1,0 +1,20 @@
+{
+  "width": 390,
+  "phase": "after",
+  "synthetic": true,
+  "github": "local gh stub; Git and task RPC/LiveQuery are real",
+  "checkTitleClickExpanded": "false",
+  "checksControl": {
+    "right": 362,
+    "parentRight": 374
+  },
+  "fullDiffLoaded": true,
+  "diffSelection": "Synthetic final",
+  "diffControl": {
+    "right": 366,
+    "parentRight": 378
+  },
+  "selectedFileReset": true,
+  "kickoffTitleClickExpanded": "false",
+  "kickoffSelection": "Synthetic kickoff endin"
+}

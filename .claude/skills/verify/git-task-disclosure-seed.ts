@@ -1,0 +1,35 @@
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
+import { SpaceRepository } from '../../../packages/daemon/src/storage/repositories/space-repository.ts';
+import { SpaceTaskRepository } from '../../../packages/daemon/src/storage/repositories/space-task-repository.ts';
+import { SDKMessageRepository } from '../../../packages/daemon/src/storage/repositories/sdk-message-repository.ts';
+import type { SDKMessage } from '../../../packages/shared/src/sdk/sdk.d.ts';
+const run = resolve(process.argv[2]);
+assert(process.env.NODE_ENV === 'test' && process.env.HOME === `${run}/home`);
+execFileSync('bun', ['.claude/skills/verify/step-result-disclosure-seed.ts', run], { stdio: 'inherit' });
+const { worker } = JSON.parse(readFileSync(`${run}/evidence/steps-seed.json`, 'utf8'));
+const workspace = `${run}/workspace`;
+mkdirSync(workspace);
+const git = (...args: string[]) => execFileSync('git', args, { cwd: workspace, encoding: 'utf8' });
+git('init', '-b', 'main');
+git('config', 'user.name', 'Synthetic Proof');git('config', 'user.email', 'synthetic@example.invalid');
+writeFileSync(`${workspace}/big.txt`, 'original\n');writeFileSync(`${workspace}/small.txt`, 'original\n');
+git('add', '.');git('commit', '-m', 'Synthetic base');
+writeFileSync(`${workspace}/big.txt`, Array.from({ length: 700 }, (_, i) => `Synthetic diff line ${i}: ${'content '.repeat(8)}\n`).join('') + 'Synthetic final diff ending\n');
+writeFileSync(`${workspace}/small.txt`, 'Synthetic small file\n');
+const db = new Database(`${run}/data/daemon.db`);
+try {
+  db.prepare('UPDATE sessions SET workspace_path=? WHERE id=?').run(workspace, worker);
+  const space = new SpaceRepository(db).createSpace({ name: 'Synthetic kickoff space', slug: 'synthetic-kickoff', workspacePath: workspace });
+  const task = new SpaceTaskRepository(db).createTask({ spaceId: space.id, title: 'Synthetic kickoff proof', status: 'done' });
+  const session = crypto.randomUUID();
+  db.prepare(`INSERT INTO sessions(id,title,workspace_path,type,session_context,created_at,last_active_at,status,config,metadata) VALUES (?,'Synthetic kickoff worker',?,'worker',?,datetime('now'),datetime('now'),'active','{"queryMode":"manual"}',?)`).run(session,workspace,JSON.stringify({spaceId:space.id,taskId:task.id}),JSON.stringify({promptProvenance:{nodeId:'synthetic-node',agentName:'Coder Agent'}}));
+  const body = '## Your Task #1\n\nSynthetic kickoff details. '.repeat(8) + '\n\nSynthetic kickoff ending.';
+  new SDKMessageRepository(db).saveUserMessage(session, { type:'user',uuid:crypto.randomUUID(),session_id:session,parent_tool_use_id:null,isSynthetic:true,inputKind:'task',taskKickoff:true,message:{role:'user',content:body} } as unknown as SDKMessage, 'consumed', 'human');
+  writeFileSync(`${run}/evidence/git-task-seed.json`,JSON.stringify({ worker,spaceId:space.id,taskId:task.id,session,workspace,synthetic:true },null,2));
+  writeFileSync(`${run}/pr.json`,JSON.stringify({number:1,title:'Synthetic pull request',url:'https://example.invalid/pr/1',state:'OPEN',isDraft:false,headRefName:'main',baseRefName:'main'}));
+  writeFileSync(`${run}/checks.json`,JSON.stringify([{name:'Synthetic build',state:'SUCCESS',bucket:'pass',link:'https://example.invalid/ci/1'},{name:'Synthetic lint',state:'FAILURE',bucket:'fail',link:'https://example.invalid/ci/2'}]));
+} finally { db.close(); }

@@ -2672,7 +2672,11 @@ describe('MinimalThreadFeed', () => {
 
       const toggle = screen.getByTestId('minimal-thread-task-kickoff');
       expect(toggle.textContent).toContain('Task sent to Coder Agent');
-      expect(toggle.getAttribute('aria-expanded')).toBe('false');
+      expect(
+        screen
+          .getByRole('button', { name: 'more — Task kickoff', exact: true })
+          .getAttribute('aria-expanded')
+      ).toBe('false');
       expect(screen.queryByTestId('minimal-thread-task-kickoff-body')).toBeNull();
       expect(container.textContent).not.toContain('Fix login');
       expect(container.querySelectorAll('[data-turn-state="task_kickoff"]')).toHaveLength(1);
@@ -2681,12 +2685,32 @@ describe('MinimalThreadFeed', () => {
     it('expands to the full task text on click and collapses again', () => {
       render(<MinimalThreadFeed parsedRows={kickoffRows()} />);
 
-      const toggle = screen.getByTestId('minimal-thread-task-kickoff');
-      fireEvent.click(toggle);
-      expect(toggle.getAttribute('aria-expanded')).toBe('true');
-      expect(screen.getByTestId('minimal-thread-task-kickoff-body').textContent).toBe(kickoffText);
+      fireEvent.click(screen.getByRole('button', { name: 'more — Task kickoff', exact: true }));
+      const less = screen.getByRole('button', { name: 'less — Task kickoff', exact: true });
+      expect(less.getAttribute('aria-expanded')).toBe('true');
+      expect(screen.getByTestId('minimal-thread-task-kickoff-body').textContent).toContain(
+        kickoffText
+      );
 
-      fireEvent.click(toggle);
+      fireEvent.click(less);
+      expect(screen.queryByTestId('minimal-thread-task-kickoff-body')).toBeNull();
+    });
+
+    it('keeps the kickoff title/body inert with a separate explicit control', () => {
+      render(<MinimalThreadFeed parsedRows={kickoffRows()} />);
+      fireEvent.click(screen.getByTestId('minimal-thread-task-kickoff'));
+      const more = screen.getByRole('button', { name: 'more — Task kickoff', exact: true });
+      expect(more.getAttribute('aria-expanded')).toBe('false');
+      more.focus();
+      fireEvent.click(more);
+      const less = screen.getByRole('button', { name: 'less — Task kickoff', exact: true });
+      expect(document.activeElement).toBe(less);
+      fireEvent.click(screen.getByTestId('minimal-thread-task-kickoff-body'));
+      expect(less.getAttribute('aria-expanded')).toBe('true');
+      fireEvent.click(less);
+      expect(screen.getByRole('button', { name: 'more — Task kickoff', exact: true })).toBe(
+        document.activeElement
+      );
       expect(screen.queryByTestId('minimal-thread-task-kickoff-body')).toBeNull();
     });
 
@@ -2772,9 +2796,8 @@ describe('MinimalThreadFeed', () => {
       ];
       render(<MinimalThreadFeed parsedRows={rows} />);
 
-      const kickoff = screen.getByTestId('minimal-thread-task-kickoff');
-      fireEvent.click(kickoff);
-      expect(screen.getByTestId('minimal-thread-task-kickoff-body').textContent).toBe(
+      fireEvent.click(screen.getByRole('button', { name: 'more — Task kickoff', exact: true }));
+      expect(screen.getByTestId('minimal-thread-task-kickoff-body').textContent).toContain(
         'Plain kickoff prose without any heading'
       );
       const bubbles = screen.getAllByTestId('minimal-thread-human-bubble');

@@ -1,4 +1,4 @@
-import { ChevronRightGlyph } from '../../../icons/common-glyphs.tsx';
+import { NativeContentDisclosure } from '../../../ui/NativeContentDisclosure.tsx';
 import MarkdownRenderer from '../../../chat/MarkdownRenderer.tsx';
 import type { ParsedThreadRow } from '../space-task-thread-events';
 import type { ActiveTurnSummary } from '@hyperneo/shared';
@@ -23,7 +23,7 @@ import { SpaceTaskThreadMessageActions } from '../SpaceTaskThreadMessageActions'
 import { useVisibleTick } from '../../../../hooks/useVisibleTick';
 import { formatDuration, formatClock, agentInitial, shortAgentName } from './minimal-mock-data';
 import { getAgentColor, getAgentTextColor } from '../space-task-thread-agent-colors';
-import { useState, useMemo } from 'preact/hooks';
+import { useMemo } from 'preact/hooks';
 import { DeliveryStateBadge } from '../../../ui/DeliveryStateBadge';
 import { SyntheticMessageBlock } from '../../../sdk/SyntheticMessageBlock';
 import { memo } from 'preact/compat';
@@ -676,7 +676,6 @@ function AgentTurnRow({
 }
 
 function TaskKickoffTurn({ turn }: { turn: TaskKickoffFeedTurn }) {
-  const [expanded, setExpanded] = useState(false);
   const color = getAgentTextColor(turn.agent);
   const undelivered = turn.deliveryState !== null && turn.deliveryState !== 'delivered';
   return (
@@ -686,40 +685,40 @@ function TaskKickoffTurn({ turn }: { turn: TaskKickoffFeedTurn }) {
       data-agent-label={turn.agent}
       data-agent-color={color}
     >
-      <button
-        type="button"
-        class="flex max-w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-xs text-fg-muted transition-colors hover:bg-fill-soft hover:text-fg-soft focus:outline-none focus-visible:ring-2 focus-visible:ring-fg-muted/60"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((open) => !open)}
-        data-testid="minimal-thread-task-kickoff"
+      <NativeContentDisclosure
+        label="Task kickoff"
+        summary={
+          <span
+            class="inline-flex max-w-[calc(100%-3rem)] items-center gap-2 text-xs text-fg-muted"
+            data-testid="minimal-thread-task-kickoff"
+          >
+            <span class="truncate">
+              {undelivered ? 'Task for' : 'Task sent to'}{' '}
+              <span style={{ color }}>{turn.agent}</span>
+            </span>
+            {undelivered ? (
+              <DeliveryStateBadge
+                state={turn.deliveryState}
+                class="shrink-0"
+                test-id="minimal-thread-delivery-state"
+              />
+            ) : null}
+            <span class="shrink-0 text-[11px] text-fg-faint">{formatClock(turn.createdAt)}</span>
+          </span>
+        }
       >
-        <ChevronRightGlyph
-          class={`h-3 w-3 shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          aria-hidden="true"
-        />
-        <span class="truncate">
-          {undelivered ? 'Task for' : 'Task sent to'} <span style={{ color }}>{turn.agent}</span>
-        </span>
-        {undelivered ? (
-          <DeliveryStateBadge
-            state={turn.deliveryState}
-            class="shrink-0"
-            test-id="minimal-thread-delivery-state"
-          />
-        ) : null}
-        <span class="shrink-0 text-[11px] text-fg-faint">{formatClock(turn.createdAt)}</span>
-      </button>
-      {expanded ? (
-        <div
-          class={`mt-2 ${TASK_THREAD_AGENT_BUBBLE_WIDTH_CLASS} rounded-lg border border-line bg-surface/40 px-3 py-2 text-sm text-fg-soft`}
-          data-testid="minimal-thread-task-kickoff-body"
-        >
-          <MarkdownRenderer content={turn.body} />
-        </div>
-      ) : null}
+        {(control) =>
+          control && (
+            <div
+              class={`mt-2 ${TASK_THREAD_AGENT_BUBBLE_WIDTH_CLASS} rounded-lg border border-line bg-surface/40 px-3 py-2 text-sm text-fg-soft`}
+              data-testid="minimal-thread-task-kickoff-body"
+            >
+              <MarkdownRenderer content={turn.body} />
+              <div class="flow-root">{control}</div>
+            </div>
+          )
+        }
+      </NativeContentDisclosure>
     </div>
   );
 }

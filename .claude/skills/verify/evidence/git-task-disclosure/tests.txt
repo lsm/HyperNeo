@@ -1,0 +1,12 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:29:30). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 /Users/lsm/focus/worktrees/disclosure-git-task/packages/web
+
+
+ Test Files  3 passed (3)
+      Tests  127 passed (127)
+   Start at  04:10:14
+   Duration  787ms (environment 35%, transform 29%, setup 20%, tests 11%, import 3%, worker 1%)
+
