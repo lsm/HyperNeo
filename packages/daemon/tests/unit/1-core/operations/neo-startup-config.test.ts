@@ -97,6 +97,20 @@ describe('Neo startup configuration', () => {
     }
   );
 
+  test('refreshing tools does not auto-approve native mutation under acceptEdits', async () => {
+    const session = createTestSession(root);
+    session.config = { ...session.config, permissionMode: 'acceptEdits', allowedTools: ['Read'] };
+    db.createSession(session);
+    service.repo.reserveBinding({ sessionId: root, projectId: null, kind: 'neo' });
+    await service.open();
+    const config = db.getSession(root)!.config;
+    expect(config.sdkToolsPreset).toContain('Bash');
+    expect(config.allowedTools).toContain('Read');
+    for (const tool of ['Bash', 'Write', 'Edit', 'NotebookEdit'])
+      expect(config.allowedTools).not.toContain(tool);
+    expect(config.permissionMode).toBe('acceptEdits');
+  });
+
   test('new roots start with current prompt and native tools', async () => {
     const id = await service.open();
     expect(db.getSession(id)?.config).toMatchObject({
