@@ -439,6 +439,17 @@ export class QueryOptionsBuilder {
       ...this.buildPluginsFromSkills(),
       ...this.buildPluginsFromBuiltinSkills(),
     ];
+    const providerSettings = buildProviderSettings(
+      providerId,
+      modelInfo?.contextWindow,
+      this.ctx.session.config.model,
+      modelInfo?.autoCompactPercent,
+      modelInfo?.autoCompactPercentOverride
+    );
+    const compactEnv =
+      modelInfo?.autoCompactPercentOverride !== undefined && providerSettings?.autoCompactWindow
+        ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(providerSettings.autoCompactWindow) }
+        : {};
     const mergedEnv = this.getMergedEnvironmentVars(providerContext.sdkConfig.envVars);
     const sdkCliPath = this.getSDKCliPath();
 
@@ -477,22 +488,14 @@ export class QueryOptionsBuilder {
 
       cwd: this.getCwd(),
       additionalDirectories,
-      env: { ...mergedEnv, HYPERNEO_HANDOFF_DIR: handoffDirectory },
+      env: { ...mergedEnv, ...compactEnv, HYPERNEO_HANDOFF_DIR: handoffDirectory },
       executable: config.executable ?? (isRunningUnderBun() ? 'bun' : undefined),
       executableArgs: config.executableArgs,
       pathToClaudeCodeExecutable: sdkCliPath,
 
       settingSources:
         config.settingSources ?? this.ctx.settingsManager.getGlobalSettings().settingSources,
-      settings: withSdkTranscriptRetention(
-        buildProviderSettings(
-          providerId,
-          modelInfo?.contextWindow,
-          this.ctx.session.config.model,
-          modelInfo?.autoCompactPercent,
-          modelInfo?.autoCompactPercentOverride
-        )
-      ),
+      settings: withSdkTranscriptRetention(providerSettings),
 
       includePartialMessages: config.includePartialMessages ?? true,
 

@@ -23,7 +23,9 @@ Observe in `$RUN/evidence/observed.json`:
   but effective session metadata stays 80. Its idle event applies 70.
 - The production context resolver and ContextFetcher consume a synthetic SDK
   usage response: 1,000,000 capacity gives a 700,000 effective threshold. Existing
-  explicit native-provider SDK settings add the 33,000 reserve, giving 733,000. This is
+  explicit native-provider SDK settings add the 33,000 reserve, giving 733,000. The real AgentSession options builder must put 733,000 in
+  both SDK settings and CLAUDE_CODE_AUTO_COMPACT_WINDOW; the ordinary native
+  session gets no override. This is
   synthetic usage through the production computation, not a real model turn.
 - An ordinary session remains at model metadata 80. Opening a project returns
   the same root session. Current dev uses one Neo conversation for project/topic

@@ -6,6 +6,8 @@ import type { Query, SDKControlGetContextUsageResponse } from '@anthropic-ai/cla
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { getSessionContextModelInfo, setModelsCache } from '../../../packages/daemon/src/lib/model-service.ts';
+import { AnthropicProvider } from '../../../packages/daemon/src/lib/providers/anthropic-provider.ts';
+import { getProviderRegistry } from '../../../packages/daemon/src/lib/providers/registry.ts';
 import { ContextFetcher } from '../../../packages/daemon/src/lib/agent/context-fetcher.ts';
 import { buildProviderSettings } from '../../../packages/daemon/src/lib/agent/query-options-builder.ts';
 import { enforceContextBudget } from '../../../packages/daemon/src/lib/agent/context-budget-enforcement.ts';
@@ -47,6 +49,12 @@ try {
   assert.equal((await info())?.autoCompactPercent, 70);
   evidence.snapshot = await call('neo.snapshot');
   assert.equal((evidence.snapshot as { preferences: { autoCompactPercent: number } }).preferences.autoCompactPercent, 70);
+  getProviderRegistry().register(new AnthropicProvider({}));
+  const sdkOptions = await live.optionsBuilder.build();
+  evidence.builtSdkWindow = sdkOptions.settings?.autoCompactWindow;
+  evidence.builtSdkEnvWindow = sdkOptions.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+  assert.equal(evidence.builtSdkWindow, 733_000);
+  assert.equal(evidence.builtSdkEnvWindow, '733000');
   const sdkUsage = { model: model.id, totalTokens: 710_000, maxTokens: 1_000_000, rawMaxTokens: 1_000_000, percentage: 71, categories: [{ name: 'Autocompact buffer', tokens: 33_000 }], memoryFiles: [], mcpTools: [], agents: [], gridRows: [], apiUsage: null, isAutoCompactEnabled: true, autoCompactThreshold: 900_000 } as SDKControlGetContextUsageResponse;
   evidence.context = await new ContextFetcher(sessionId).fetch({ getContextUsage: async () => sdkUsage } as unknown as Query, await info());
   assert.equal((evidence.context as { autoCompactThreshold: number }).autoCompactThreshold, 700_000);
@@ -64,6 +72,7 @@ try {
   const ordinary = await app.sessionManager.createSession({ workspacePath: run, config: preference });
   const ordinaryLive = await app.sessionManager.getSessionForControl(ordinary); assert(ordinaryLive);
   await ordinaryLive.stateManager.setIdle();
+  assert.equal((await ordinaryLive.optionsBuilder.build()).settings?.autoCompactWindow, undefined);
   evidence.ordinaryMetadata = await getSessionContextModelInfo(ordinaryLive.getSessionData());
   assert.equal((evidence.ordinaryMetadata as ModelInfo).autoCompactPercent, 80);
   const repo = new NeoRepository(app.db.getDatabase());
