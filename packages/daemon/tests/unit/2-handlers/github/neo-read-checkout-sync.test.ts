@@ -13,7 +13,10 @@ describe('Neo reads a current default-branch checkout', () => {
       'bun',
       [
         fileURLToPath(
-          new URL('../../../../../../.claude/skills/verify/neo-read-checkout-sync.ts', import.meta.url)
+          new URL(
+            '../../../../../../.claude/skills/verify/neo-read-checkout-sync.ts',
+            import.meta.url
+          )
         ),
         'verify',
         run,

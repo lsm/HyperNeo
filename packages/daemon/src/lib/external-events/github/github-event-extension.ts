@@ -159,6 +159,7 @@ interface GitHubEventExtensionOptions {
   autoReconcileWebhooks?: boolean;
   sessionRepoReferenced?: (owner: string, repo: string) => boolean;
   subscribedPullRequests?: (watched: { spaceId: string; owner: string; repo: string }) => number[];
+  syncReadCheckout?: (watched: GitHubPollingRepo, request: typeof fetch) => Promise<unknown>;
 }
 
 interface GitHubTokenStatus {
@@ -3427,6 +3428,32 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         reactionsFullyPolled = false;
         partialScan = true;
         break;
+      }
+    }
+
+    if (
+      this.options.syncReadCheckout &&
+      Date.now() >= this.rateLimitedUntil &&
+      (latestRateLimit?.remaining ?? Infinity) >= RATE_LIMIT_LOW_REMAINING_THRESHOLD + 2
+    ) {
+      try {
+        await this.options.syncReadCheckout(watched, (async (input, init) => {
+          if (
+            Date.now() < this.rateLimitedUntil ||
+            (latestRateLimit?.remaining ?? Infinity) <= RATE_LIMIT_LOW_REMAINING_THRESHOLD
+          )
+            throw new Error('GitHub quota reserve reached');
+          const response = await fetchPage(input, {
+            ...init,
+            headers: gitHubPollingHeaders(token),
+            signal: AbortSignal.timeout(GITHUB_POLL_REQUEST_TIMEOUT_MS),
+          });
+          latestRateLimit = parseRateLimitHeaders(response);
+          if (latestRateLimit.limited) this.applyRateLimit(latestRateLimit);
+          return response;
+        }) as typeof fetch);
+      } catch (error) {
+        pollErrorMessage ??= `Neo read checkout: ${error instanceof Error ? error.message : String(error)}`;
       }
     }
 
