@@ -22,6 +22,8 @@ const human: OperationCaller = { source: 'rpc', principal: 'local' };
 const neo: OperationCaller = { source: 'mcp', sessionId, role: 'neo' };
 let db: Awaited<ReturnType<typeof createTestDb>>;
 let service: NeoService;
+let bus: InternalEventBus<DaemonInternalEventMap>;
+let notifications: string[];
 
 const invoke = (name: string, input: unknown, caller = human) =>
   invokeOperation(createOperationRegistry(createNeoOperations(service)), name, input, caller);
@@ -67,11 +69,17 @@ async function reads(page: Record<string, unknown> = {}) {
 beforeEach(async () => {
   db = await createTestDb();
   db.createSession(createTestSession(sessionId));
+  bus = new InternalEventBus<DaemonInternalEventMap>();
+  notifications = [];
   service = new NeoService(
     db,
     {} as SessionManager,
-    { event: mock(() => {}) } as unknown as MessageHub,
-    new InternalEventBus<DaemonInternalEventMap>()
+    {
+      event: mock((name: string) => {
+        notifications.push(name);
+      }),
+    } as unknown as MessageHub,
+    bus
   );
   service.deliverForward = async () => {};
   service.repo.reserveBinding({ sessionId, kind: 'neo', projectId: null });
@@ -204,4 +212,20 @@ test('image-reference reads retain the same daemon status field', async () => {
     requestId: id,
     messageStatus: 'read',
   });
+});
+
+test('ordinary delivery changes notify clients to refetch computed status without another input', async () => {
+  const id = await input();
+  notifications.length = 0;
+  delivered(id, 'consumed');
+  await bus.publish('messages.statusChanged', { sessionId, messageIds: [id], status: 'consumed' });
+  expect(notifications).toContain('neo.changed');
+  expect((await reads())[0].messageStatus).toBe('read');
+  notifications.length = 0;
+  await bus.publish('messages.statusChanged', {
+    sessionId: 'unrelated',
+    messageIds: [id],
+    status: 'consumed',
+  });
+  expect(notifications).toEqual([]);
 });
