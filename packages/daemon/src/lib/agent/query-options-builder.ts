@@ -42,6 +42,7 @@ import { Logger } from '../logger.ts';
 import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import { neoSecretReadRules } from '../neo/secret-read-rules.ts';
 import { neoReadAccess } from '../neo/read-access.ts';
+import { neoReadSandbox } from '../neo/session-config.ts';
 import { mergeSessionMcpServers } from '../mcp/built-in-servers.ts';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
 import {
@@ -476,7 +477,11 @@ export class QueryOptionsBuilder {
       allowDangerouslySkipPermissions: permissionMode === 'bypassPermissions',
 
       sandbox: readAccess
-        ? { ...(config.sandbox as Options['sandbox']), filesystem: readAccess.filesystem }
+        ? {
+            ...(config.sandbox as Options['sandbox']),
+            ...neoReadSandbox(),
+            filesystem: readAccess.filesystem,
+          }
         : (config.sandbox as Options['sandbox']),
 
       mcpServers: mergedMcpServers as Options['mcpServers'],

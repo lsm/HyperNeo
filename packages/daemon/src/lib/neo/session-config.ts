@@ -3,6 +3,18 @@ import { OPERATIONS_MCP_SERVER_NAME } from '../mcp/built-in-servers.ts';
 import type { NeoPackBrief } from './packs/types.ts';
 import { neoPrompt } from './prompt.ts';
 
+export function neoReadSandbox() {
+  return {
+    enabled: true,
+    failIfUnavailable: true,
+    autoAllowBashIfSandboxed: true,
+    allowUnsandboxedCommands: false,
+    excludedCommands: [],
+    enableWeakerNetworkIsolation: true,
+    network: { allowedDomains: ['*'] },
+  };
+}
+
 export function neoPromptTools(packs: readonly NeoPackBrief[]) {
   const tools = ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash'];
   return {
@@ -12,15 +24,7 @@ export function neoPromptTools(packs: readonly NeoPackBrief[]) {
     permissionMode: 'dontAsk' as const,
     coordinatorMode: false,
     settingSources: [],
-    sandbox: {
-      enabled: true,
-      failIfUnavailable: true,
-      autoAllowBashIfSandboxed: true,
-      allowUnsandboxedCommands: false,
-      excludedCommands: [],
-      enableWeakerNetworkIsolation: true,
-      network: { allowedDomains: ['*'] },
-    },
+    sandbox: neoReadSandbox(),
   };
 }
 

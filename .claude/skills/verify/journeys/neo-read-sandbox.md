@@ -2,7 +2,10 @@
 
 Run from the worktree root. Read the shared SKILL.md setup first. No real DB,
 credential/auth file or port 8399; no GUI interaction. This journey owns and stops
-its actual daemon, SDK and loopback scripted model. Workers are unaffected.
+its actual daemon, SDK and loopback scripted model. Workers are unaffected. The journey first attempts the ordinary sandbox-off RPC
+for Neo and requires a visible refusal; it then writes a disabled sandbox through
+generic session.update. The subsequent actual SDK query must still enforce the
+mandatory sandbox, with no excluded commands or unsandboxed retry.
 
 ```bash
 RUN=$(mktemp -d /private/tmp/hn-neo-read-proof-XXXXXX)
