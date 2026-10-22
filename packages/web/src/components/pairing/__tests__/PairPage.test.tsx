@@ -1,4 +1,4 @@
-import { fireEvent, render, waitFor } from '@testing-library/preact';
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PairPage } from '../PairPage.tsx';
 
@@ -18,7 +18,10 @@ const pressPair = (view: ReturnType<typeof render>) =>
 
 describe('PairPage', () => {
   afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it('fills the code from the link, pairs this browser, and drops the code from the address', async () => {
@@ -31,12 +34,15 @@ describe('PairPage', () => {
     });
     pressPair(view);
     await waitFor(() => view.getByText('This browser is paired.'));
-    expect(fetchMock).toHaveBeenCalledWith('/pair', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ code: 'ABCDE23456', name: 'Work laptop' }),
-    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/pair',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ code: 'ABCDE23456', name: 'Work laptop' }),
+      })
+    );
     expect(rewrite).toHaveBeenCalledWith(null, '', location.pathname);
     expect(view.getByRole('link', { name: 'Open HyperNeo' }).getAttribute('href')).toBe('/');
   });
@@ -50,14 +56,126 @@ describe('PairPage', () => {
     await waitFor(() => expect(code()).toBe('NEWCODE234'));
   });
 
-  it('says to tap Allow on a paired device while the code waits for it', async () => {
-    const view = openPairPage('#ABCDE23456', answer(403, { error: 'awaiting_approval' }));
-    pressPair(view);
-    await waitFor(() =>
-      view.getByText(
-        'This code needs Allow first. Tap Allow on your paired phone, then pair again.'
-      )
+  it('pairs after Allow elsewhere without another click or re-entering the code', async () => {
+    let approved = false;
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify(approved ? {} : { error: 'awaiting_approval' }), {
+          status: approved ? 200 : 403,
+        })
     );
+    const view = openPairPage('#ABCDE23456', fetchMock);
+    pressPair(view);
+    await view.findByText(
+      'Waiting for Allow on a paired phone or browser. This page will finish pairing automatically.'
+    );
+    approved = true;
+    await waitFor(() => view.getByText('This browser is paired.'), { timeout: 5000 });
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(1);
+    expect(view.queryByRole('button', { name: 'Allow' })).toBeNull();
+  });
+
+  it('cancels the wait without redeeming after a later approval', async () => {
+    const fetchMock = answer(403, { error: 'awaiting_approval' });
+    const view = openPairPage('#ABCDE23456', fetchMock);
+    pressPair(view);
+    await view.findByText(
+      'Waiting for Allow on a paired phone or browser. This page will finish pairing automatically.'
+    );
+    fireEvent.click(view.getByRole('button', { name: 'Stop waiting' }));
+    const calls = fetchMock.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 2100));
+    expect(fetchMock).toHaveBeenCalledTimes(calls);
+    expect(view.getByRole('button', { name: 'Pair this browser' })).toHaveProperty(
+      'disabled',
+      false
+    );
+  });
+
+  it('stops a hung request at the wait deadline', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(
+      (_url, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init.signal.addEventListener('abort', () =>
+            reject(new DOMException('Aborted', 'AbortError'))
+          );
+        })
+    );
+    const view = openPairPage('#ABCDE23456', fetchMock);
+    pressPair(view);
+    await vi.advanceTimersByTimeAsync(10 * 60_000 + 1);
+    expect(view.getByText(/Pairing timed out/)).toBeTruthy();
+    expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(true);
+  });
+
+  it('explains recovery if cancellation races a redeemed code', async () => {
+    let redeemed = false;
+    const fetchMock = vi.fn(
+      (_url, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          redeemed = true;
+          init.signal.addEventListener('abort', () =>
+            reject(new DOMException('Aborted', 'AbortError'))
+          );
+        })
+    );
+    const view = openPairPage('#ABCDE23456', fetchMock);
+    pressPair(view);
+    expect(redeemed).toBe(true);
+    fireEvent.click(view.getByRole('button', { name: 'Stop waiting' }));
+    expect(
+      view.getByText(/check Devices on a paired device before making a new code/)
+    ).toBeTruthy();
+    expect(view.getByRole('button', { name: 'Pair this browser' })).toHaveProperty(
+      'disabled',
+      false
+    );
+  });
+
+  it('pauses pending redemption offline and resumes with the same code', async () => {
+    const online = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
+    let approved = false;
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify(approved ? {} : { error: 'awaiting_approval' }), {
+          status: approved ? 200 : 403,
+        })
+    );
+    const view = openPairPage('#ABCDE23456', fetchMock);
+    pressPair(view);
+    await view.findByRole('button', { name: 'Stop waiting' });
+    online.mockReturnValue(false);
+    const calls = fetchMock.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 2100));
+    expect(fetchMock).toHaveBeenCalledTimes(calls);
+    approved = true;
+    online.mockReturnValue(true);
+    await waitFor(() => view.getByText('This browser is paired.'), { timeout: 5000 });
+  });
+
+  it('does not redeem while hidden and resumes in the foreground', async () => {
+    const visible = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    const fetchMock = answer(200, {});
+    const view = openPairPage('#ABCDE23456', fetchMock);
+    pressPair(view);
+    await view.findByText('Pairing paused. Return to this page with a connection to continue.');
+    expect(fetchMock).not.toHaveBeenCalled();
+    visible.mockReturnValue('visible');
+    await waitFor(() => view.getByText('This browser is paired.'), { timeout: 5000 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops pending redemption when the page leaves', async () => {
+    const fetchMock = answer(403, { error: 'awaiting_approval' });
+    const view = openPairPage('#ABCDE23456', fetchMock);
+    pressPair(view);
+    await view.findByText(
+      'Waiting for Allow on a paired phone or browser. This page will finish pairing automatically.'
+    );
+    view.unmount();
+    await new Promise((resolve) => setTimeout(resolve, 2100));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('explains a wrong code and a lockout', async () => {

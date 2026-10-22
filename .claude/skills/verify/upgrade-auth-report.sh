@@ -25,7 +25,7 @@ CRED=$(curl -s -X POST "http://127.0.0.1:$PORT/pair" -H 'content-type: applicati
 call() {
   local start end ok
   start=$(python3 -c 'import time;print(time.time())')
-  ok=$(env VERIFY_PORT="$PORT" "$@" bun .claude/skills/verify/rpc.ts device.pair.pending '{}' | python3 -c "import json,sys;print(json.load(sys.stdin)['reply']['ok'])")
+  ok=$(env VERIFY_PORT="$PORT" "$@" bun .claude/skills/verify/rpc.ts client.list '{}' | python3 -c "import json,sys;print(json.load(sys.stdin)['reply']['ok'])")
   end=$(python3 -c 'import time;print(time.time())')
   echo "served=$ok in $(python3 -c "print(round(($end-$start)*1000))") ms"
 }

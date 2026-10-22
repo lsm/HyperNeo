@@ -112,7 +112,7 @@ describe('device pairing', () => {
       status: 403,
       body: { error: 'awaiting_approval' },
     });
-    const pending = await call('device.pair.pending', {}, human);
+    const pending = await call('device.pair.pending', {}, pairedHuman(laptop.body.deviceId));
     expect(pending.pending).toEqual([
       { id: next.codeId, kind: 'human', name: null, expiresAt: next.expiresAt },
     ]);
@@ -140,6 +140,26 @@ describe('device pairing', () => {
     });
     expect((await pair(next.code, 'Phone')).status).toBe(200);
     db.close();
+  });
+
+  test('only an active paired human can see codes waiting for Allow', async () => {
+    const h = setup();
+    try {
+      const first = await h.call('device.pair.create', { kind: 'human' }, door);
+      const phone = await h.pair(first.code);
+      await h.call('device.pair.create', { kind: 'human', name: 'Not this device' }, door);
+      for (const caller of [human, door, agent, pairedHuman('missing')])
+        expect((await h.call('device.pair.pending', {}, caller)).ok).toBe(false);
+      expect(
+        (await h.call('device.pair.pending', {}, pairedHuman(phone.body.deviceId))).pending
+      ).toHaveLength(1);
+      h.repo.revokeDevice(phone.body.deviceId, h.clock.now());
+      expect((await h.call('device.pair.pending', {}, pairedHuman(phone.body.deviceId))).ok).toBe(
+        false
+      );
+    } finally {
+      h.db.close();
+    }
   });
 
   test('any paired device ends the first-device window; with no human device the CLI says pair the phone first', async () => {

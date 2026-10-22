@@ -73,7 +73,7 @@ function daemon(state: { paired: boolean; pending?: unknown[] }) {
   mockRequest.mockImplementation(async (method: string, params?: Invocation) => {
     if (!params) throw new Error(`unexpected call ${method}`);
     const { name, input } = params;
-    if (!state.paired && name !== 'device.pair.pending')
+    if (!state.paired)
       return {
         ok: false,
         reason: 'not_paired: only a paired human device or the local CLI can manage devices.',

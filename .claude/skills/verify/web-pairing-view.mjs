@@ -43,7 +43,7 @@ try {
     await page.waitForTimeout(4000);
     result.appUrl = page.url();
   } else {
-    result.awaiting = await page.getByText('This code needs Allow first.', { exact: false }).innerText();
+    result.awaiting = await page.getByText('Waiting for Allow on a paired phone or browser.', { exact: false }).innerText();
     await shot(page, 'awaiting', [page.getByLabel('Pairing code')]);
   }
   writeFileSync(`${run}/evidence/web-pairing-${mode}.json`, JSON.stringify({ wrong, ...result }, null, 2));

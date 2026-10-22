@@ -33,7 +33,7 @@ NEXT=$(cli pair --name Phone)
 CODE=$(echo "$NEXT" | field "['code']")
 echo "2 second CLI code: $(echo "$NEXT" | field "['approval']")"
 echo "  POST /pair before Allow -> $(pair "$CODE" Phone) $(show)"
-echo "  pending (codes hidden): $(rpc device.pair.pending '{}' | field "['reply']['pending'][0]['kind']")"
+echo "  pending (codes hidden): $(VERIFY_CREDENTIAL=$LAPTOP rpc device.pair.pending '{}' | field "['reply']['pending'][0]['kind']")"
 echo "  approve from the paired laptop -> $(VERIFY_CREDENTIAL=$LAPTOP rpc device.pair.approve "{\"codeId\":\"$(echo "$NEXT" | field "['codeId']")\"}" | field "['reply']['ok']")"
 echo "  POST /pair after Allow -> $(pair "$CODE" Phone) $(show)"
 CRED=$(python3 -c "import json;print(json.load(open('$RUN/pair.json'))['credential'])")
