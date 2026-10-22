@@ -2122,10 +2122,14 @@ describe('QueryOptionsBuilder', () => {
             expect(options.additionalDirectories).toEqual([]);
             expect(options.sandbox?.filesystem?.denyWrite).toEqual(['/test/workspace']);
             expect(options.sandbox?.filesystem?.allowWrite).not.toContain(handoffDataDir);
+            expect(options.env?.HYPERNEO_HANDOFF_DIR).toBeUndefined();
             expect(options.env?.GH_TOKEN).toBe('');
             expect(options.env?.GITHUB_TOKEN).toBe('');
             expect(options.env?.GH_CONFIG_DIR).toBe(join(options.env!.TMPDIR!, 'gh'));
           } else {
+            expect(options.env?.HYPERNEO_HANDOFF_DIR).toBe(
+              join(handoffDataDir, 'handoffs', encodeURIComponent(mockSession.id), 'drafts')
+            );
             expect(options.disallowedTools).toBeUndefined();
           }
         } finally {

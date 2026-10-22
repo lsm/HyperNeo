@@ -45,8 +45,8 @@ test(`root startup, reads, resume and publication (${sandboxProof ? 'real OS san
       name: 'Bash',
       input: {
         command: sandboxProof
-          ? `cat '${readProbeFile}'; if [ -n \"$GH_TOKEN\" ]; then printf UNEXPECTED_INHERITED_TOKEN; exit 1; fi; printf CHECKOUT_OK > '${readCheckout}/allowed.txt'; printf TEMP_OK > '${join(tmpdir(), 'hyperneo-neo', root, 'allowed.txt')}'; (printf BAD > '${workerCheckout}/blocked.txt'); (printf BAD > '${isolated}/data/blocked.txt'); (printf BAD > '${isolated}/data/Neo/blocked.txt'); gh pr view https://github.com/lsm/HyperNeo/pull/8148 --json number; printf SYNTHETIC_UNAPPROVED > '${approvalProbeFile}'`
-          : `cat '${readProbeFile}'; if [ -n \"$GH_TOKEN\" ]; then printf UNEXPECTED_INHERITED_TOKEN; exit 1; fi; gh pr view https://github.com/lsm/HyperNeo/pull/8148 --json number`,
+          ? `cat '${readProbeFile}'; if [ -n "$HYPERNEO_HANDOFF_DIR" ]; then printf UNWRITABLE_HANDOFF_ADVERTISED; exit 1; fi; if [ -n \"$GH_TOKEN\" ]; then printf UNEXPECTED_INHERITED_TOKEN; exit 1; fi; printf CHECKOUT_OK > '${readCheckout}/allowed.txt'; printf TEMP_OK > '${join(tmpdir(), 'hyperneo-neo', root, 'allowed.txt')}'; (printf BAD > '${workerCheckout}/blocked.txt'); (printf BAD > '${isolated}/data/blocked.txt'); (printf BAD > '${isolated}/data/Neo/blocked.txt'); gh pr view https://github.com/lsm/HyperNeo/pull/8148 --json number; printf SYNTHETIC_UNAPPROVED > '${approvalProbeFile}'`
+          : `cat '${readProbeFile}'; if [ -n "$HYPERNEO_HANDOFF_DIR" ]; then printf UNWRITABLE_HANDOFF_ADVERTISED; exit 1; fi; if [ -n \"$GH_TOKEN\" ]; then printf UNEXPECTED_INHERITED_TOKEN; exit 1; fi; gh pr view https://github.com/lsm/HyperNeo/pull/8148 --json number`,
       },
     },
   ];
@@ -585,6 +585,7 @@ test(`root startup, reads, resume and publication (${sandboxProof ? 'real OS san
       expect(result).toBeDefined();
       expect(result?.is_error).not.toBe(true);
     }
+    expect(JSON.stringify(approvalProbeResults)).not.toContain('UNWRITABLE_HANDOFF_ADVERTISED');
     expect(JSON.stringify(approvalProbeResults)).not.toContain('UNEXPECTED_INHERITED_TOKEN');
     expect(JSON.stringify(approvalProbeResults)).toContain('GH_TOKEN environment variable');
     if (sandboxProof) {
