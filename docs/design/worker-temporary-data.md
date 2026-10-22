@@ -1,5 +1,7 @@
 # Worker temporary data
 
+Status: Design proposal; human approval is required before implementation.
+
 ## 1. Core: session-owned temporary directories
 
 Reuse the worker start/end paths and existing scheduler. Create one private temporary
