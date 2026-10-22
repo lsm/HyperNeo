@@ -383,7 +383,14 @@ export class Database {
   ) {
     if (this.getDbPath() === ':memory:')
       return this.sdkMessageRepo.searchWorkChats(query, limit, semantic, kinds);
-    return this.getSDKReader().readWorkChats({ query, limit, semantic, kinds });
+    return this.getSDKReader().readWorkChats({
+      query,
+      limit,
+      semantic: semantic
+        ? { model: semantic.model, vector: Array.from(semantic.vector) }
+        : undefined,
+      kinds,
+    });
   }
 
   private getSDKReader() {

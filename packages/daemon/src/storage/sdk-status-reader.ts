@@ -26,7 +26,7 @@ export type SDKMessagePage = {
 export type WorkSearchArgs = {
   query: string;
   limit: number;
-  semantic?: { vector: Float32Array; model: string };
+  semantic?: { vector: number[]; model: string };
   kinds?: readonly WorkChatKind[];
 };
 type SDKReadArgs = SDKStatusArgs | SDKPageArgs | WorkSearchArgs;

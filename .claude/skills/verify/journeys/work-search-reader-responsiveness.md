@@ -48,3 +48,9 @@ and a real native Bun worker. Typed arrays are not preserved by its JSON IPC;
 the tests-first request lost its vector length and returned no semantic match.
 The request DTO must carry numeric arrays and reconstruct the query vector in
 the worker. Require the same semantic snippets/ranking and retained hash.
+
+The bridge regression is committed before its DTO fix: semantic work.find
+returned no match when the typed array became an object. The fixed bridge and
+native controls both return the expected match/snippets with the same complete
+retained hash; the fixture symlinks its own Bun binary into its refusing stub
+PATH so its IPC host uses the same pinned runtime as the daemon.

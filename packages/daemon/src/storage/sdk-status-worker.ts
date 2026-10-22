@@ -52,8 +52,12 @@ worker.onmessage = ({ data }) => {
         repository = new SDKMessageRepository(db);
       }
       result = db.transaction(() => {
-        if ('query' in args)
-          return repository!.searchWorkChats(args.query, args.limit, args.semantic, args.kinds);
+        if ('query' in args) {
+          const semantic = args.semantic
+            ? { model: args.semantic.model, vector: Float32Array.from(args.semantic.vector) }
+            : undefined;
+          return repository!.searchWorkChats(args.query, args.limit, semantic, args.kinds);
+        }
         if ('page' in args) return readSDKMessagePage(repository!, args);
         return projectSDKStatusPage(
           repository!.getUserMessagesByStatus(

@@ -355,7 +355,7 @@ test('status and work search return their own complete output on the same reader
   const search = reader.readWorkChats({
     query: 'meaning',
     limit: 20,
-    semantic: { model: 'fixture', vector: new Float32Array([1, 0]) },
+    semantic: { model: 'fixture', vector: [1, 0] },
     kinds: ['message'],
   });
   await tick();

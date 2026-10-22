@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, symlinkSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -22,6 +22,7 @@ assert(!existsSync(join(run, 'data')));
 for (const key of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'OPENAI_API_KEY']) assert(!process.env[key], key);
 for (const directory of ['home', 'data', 'bin', 'evidence']) mkdirSync(join(run, directory), { recursive: true });
 copyFileSync('.claude/skills/verify/gh-stub.sh', join(run, 'bin/gh'));
+symlinkSync(process.execPath, join(run, 'bin/bun'));
 process.env.PATH = join(run, 'bin') + ':' + process.env.PATH;
 const NativeWorker = globalThis.Worker;
 const warm = WorkerAgentMemoryEmbedder.prototype.warm;
