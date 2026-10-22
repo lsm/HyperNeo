@@ -16,6 +16,7 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
   const approvalProbeFile = join(isolated, 'approval-probe.txt');
   let approvalProbeIssued = false;
   let approvalProbeDenied = false;
+  const approvalProbeResults: unknown[] = [];
   const root = `neo:${randomUUID()}`;
   const historyMarker = `synthetic-history-${randomUUID()}`;
   const oldCwd = join(isolated, 'data', 'Neo', '.coordinators', 'old-root');
@@ -95,6 +96,7 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
       const content = body.messages?.at(-1)?.content;
       if (Array.isArray(content))
         for (const result of content.filter((item) => item.type === 'tool_result')) {
+          approvalProbeResults.push(result);
           if (result.tool_use_id === 'tool-approval-probe') {
             approvalProbeDenied = result.is_error === true;
             continue;
@@ -155,17 +157,19 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
     event('content_block_start', {
       type: 'content_block_start',
       index: 0,
-      content_block: publishing ? { ...block, input: {} } : { type: 'text', text: '' },
+      content_block:
+        block.type === 'tool_use' ? { ...block, input: {} } : { type: 'text', text: '' },
     });
     event('content_block_delta', {
       type: 'content_block_delta',
       index: 0,
-      delta: publishing
-        ? {
-            type: 'input_json_delta',
-            partial_json: JSON.stringify('input' in block ? block.input : {}),
-          }
-        : { type: 'text_delta', text: 'Done.' },
+      delta:
+        block.type === 'tool_use'
+          ? {
+              type: 'input_json_delta',
+              partial_json: JSON.stringify('input' in block ? block.input : {}),
+            }
+          : { type: 'text_delta', text: 'Done.' },
     });
     event('content_block_stop', { type: 'content_block_stop', index: 0 });
     event('message_delta', {
@@ -384,6 +388,7 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
         join(process.env.VERIFY_EVIDENCE_DIR, 'neo-goal-cycle-sdk.json'),
         JSON.stringify(
           {
+            approvalProbeResults,
             approvalProbeDenied,
             approvalProbeCreatedFile: existsSync(approvalProbeFile),
             sdkSessionId,
