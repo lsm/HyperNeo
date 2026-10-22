@@ -1,0 +1,478 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:29:30). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 /Users/lsm/focus/worktrees/disclosure-error-workflow/packages/web
+
+ ❯ src/components/__tests__/ErrorWorkflowDisclosure.test.tsx (4 tests | 4 failed) 30ms
+   ❯ Error and workflow disclosures (4)
+     × keeps technical details selectable and uses the explicit control 25ms
+     × preserves externally controlled state and callbacks 2ms
+     × supports default-open details without title toggling 2ms
+     × keeps workflow counts inert and preserves blocking requirements 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/components/__tests__/ErrorWorkflowDisclosure.test.tsx > Error and workflow disclosures > keeps technical details selectable and uses the explicit control
+TestingLibraryElementError: Unable to find an accessible element with the role "button" and name "more — Technical Details"
+
+Here are the accessible roles:
+
+  dialog:
+
+  Name "":
+  [36m<div[39m
+    [33maria-modal[39m=[32m"true"[39m
+    [33mclass[39m=[32m"relative w-full bg-surface-overlay rounded-lg shadow-xl border border-line-strong animate-scaleIn flex flex-col max-h-[90vh] max-w-2xl"[39m
+    [33mrole[39m=[32m"dialog"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  heading:
+
+  Name "Error Details":
+  [36m<h2[39m
+    [33mclass[39m=[32m"text-sm font-semibold text-fg"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  button:
+
+  Name "Close modal":
+  [36m<button[39m
+    [33maria-label[39m=[32m"Close modal"[39m
+    [33mclass[39m=[32m"ml-auto text-fg-muted hover:text-fg transition-colors p-1 rounded hover:bg-fill-strong"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "Technical Details":
+  [36m<button[39m
+    [33maria-expanded[39m=[32m"true"[39m
+    [33mclass[39m=[32m"flex items-center justify-between w-full text-left transition-colors"[39m
+  [36m/>[39m
+
+  Name "Copy Error Report":
+  [36m<button[39m
+    [33mclass[39m=[32m"inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-all duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:opacity-50 disabled:cursor-not-allowed bg-surface-raised hover:bg-fill-strong text-fg border border-line-strong hover:border-line-strong active:scale-[0.98] text-sm px-3 py-1.5 flex items-center gap-2"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "Close":
+  [36m<button[39m
+    [33mclass[39m=[32m"inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-all duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:opacity-50 disabled:cursor-not-allowed bg-accent-hover hover:bg-accent-hover text-accent-fg shadow-sm hover:shadow active:scale-[0.98] text-sm px-3 py-1.5"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  term:
+
+  Name "":
+  [36m<dt[39m
+    [33mclass[39m=[32m"font-medium text-fg-muted mb-1"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<dt[39m
+    [33mclass[39m=[32m"font-medium text-fg-muted mb-1"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  definition:
+
+  Name "":
+  [36m<dd[39m
+    [33mclass[39m=[32m"text-fg-soft font-mono text-xs bg-surface p-2 rounded break-all"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<dd[39m
+    [33mclass[39m=[32m"text-fg-soft"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+
+Ignored nodes: comments, script, style
+[36m<body[39m
+  [33mstyle[39m=[32m"overflow: hidden;"[39m
+[36m>[39m
+  [36m<div />[39m
+  [36m<div[39m
+    [33mdata-portal[39m=[32m"true"[39m
+  [36m>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"fixed inset-0 z-50 flex items-center justify-center p-4 animate-fadeIn"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"absolute inset-0 bg-scrim backdrop-blur-sm cursor-pointer"[39m
+      [36m/>[39m
+      [36m<div[39m
+        [33maria-modal[39m=[32m"true"[39m
+        [33mclass[39m=[32m"relative w-full bg-surface-overlay rounded-lg shadow-xl border border-line-strong animate-scaleIn flex flex-col max-h-[90vh] max-w-2xl"[39m
+        [33mrole[39m=[32m"dialog"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"flex items-center justify-between px-4 py-3 border-b border-line flex-shrink-0"[39m
+        [36m>[39m
+          [36m<h2[39m
+            [33mclass[39m=[32m"text-sm font-semibold text-fg"[39m
+          [36m>[39m
+            [0mError Details[0m
+          [36m</h2>[39m
+          [36m<button[39m
+            [33maria-label[39m=[32m"Close modal"[39m
+            [33mclass[39m=[32m"ml-auto text-fg-muted hover:text-fg transition-colors p-1 rounded hover:bg-fill-strong"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [36m<svg[39m
+              [33mclass[39m=[32m"w-4 h-4"[39m
+              [33mfill[39m=[32m"none"[39m
+              [33mstroke[39m=[32m"currentColor"[39m
+              [33mviewBox[39m=[32m"0 0 24 24"[39m
+            [36m>[39m
+              [36m<path[39m
+                [33md[39m=[32m"M6 18L18 6M6 6l12 12"[39m
+                [33mstroke-linecap[39m=[32m"round"[39m
+                [33mstroke-linejoin[39m=[32m"round"[39m
+                [33mstroke-width[39m=[32m"2"[39m
+              [36m/>[39m
+            [36m</svg>[39m
+          [36m</button>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"p-4 overflow-y-auto flex-1"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"space-y-4"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"flex items-center gap-3"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"text-2xl"[39m
+              [36m>[39m
+                [0m⚙️[0m
+              [36m</span>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"flex-1"[39m
+              [36m>[39m
+                [36m<div[39m
+                  [33mclass[39m=[32m"inline-block px-3 py-1 rounded-full text-xs font-medium border bg-fg-faint/10 text-fg-muted border-fg-faint/30"[39m
+                [36m>[39m
+                  [0mSYSTEM[0m
+                  [0m ERROR[0m
+                [36m</div>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"ml-2 text-xs text-fg-faint"[39m
+                [36m>[39m
+                  [0mCode: [0m
+                  [0mSYNTHETIC[0m
+                [36m</span>[39m
+              [36m</div>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"text-xs text-fg-faint"[39m
+              [36m>[39m
+                [0m8:00:00 PM[0m
+              [36m</span>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"p-4 rounded-lg bg-surface-raised border border-line"[39m
+            [36m>[39m
+              [36m<p[39m
+                [33mclass[39m=[32m"text-fg"[39m
+              [36m>[39m
+                [0mSynthetic error report[0m
+              [36m</p>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"border-line border border-line rounded-lg px-4"[39m
+            [36m>[39m
+              [36m<button[39m
+                [33maria-expanded[39m=[32m"true"[39m
+                [33mclass[39m=[32m"flex items-center justify-between w-full text-left transition-colors"[39m
+              [36m>[39m
+                [36m<div[39m
+                  [33mclass[39m=[32m"flex items-center gap-2 py-2 text-fg-muted hover:text-fg-soft"[39m
+                [36m>[39m
+                  [36m<span[39m
+                    [33mclass[39m=[32m"text-sm font-medium"[39m
+                  [36m>[39m
+                    [0mTechnical Details[0m
+                  [36m</span>[39m
+                [36m</div>[39m
+                [36m<svg[39m
+                  [33mclass[39m=[32m"w-4 h-4 transition-transform duration-200 rotate-180"[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M19 9l-7 7-7-7"[39m
+                    [33mstroke-linecap[39m=[32m"round"[39m
+                    [33mstroke-linejoin[39m=[32m"round"[39m
+                    [33mstroke-width[39m=[32m"2"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+              [36m</button>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"transition-all duration-200 ease-in-out"[39m
+                [33mstyle[39m=[32m"height: 0px; overflow: hidden;"[39m
+              [36m>[39m
+                [36m<div[39m
+                  [33mclass[39m=[32m"pt-2"[39m
+                [36m>[39m
+                  [36m<div[39m
+                    [33mclass[39m=[32m"space-y-3 text-sm"[39m
+                  [36m>[39m
+                    [36m<div>[39m
+                      [36m<dt[39m
+                        [33mclass[39m=[32m"font-medium text-fg-muted mb-1"[39m
+                      [36m>[39m
+                        [0mError Message:[0m
+                      [36m</dt>[39m
+                      [36m<dd[39m
+                        [33mclass[39m=[32m"text-fg-soft font-mono text-xs bg-surface p-2 rounded break-all"[39m
+                      [36m>[39m
+                        [0mSynthetic technical detail[0m
+                      [36m</dd>[39m
+                    [36m</div>[39m
+                    [36m<div>[39m
+                      [36m<dt[39m
+                        [33mclass[39m=[32m"font-medium text-fg-muted mb-1"[39m
+                      [36m>[39m
+                        [0mRecoverable:[0m
+                      [36m</dt>[39m
+                      [36m<dd[39m
+                        [33mclass[39m=[32m"text-fg-soft"[39m
+                      [36m>[39m
+                        [36m<span[39m
+                          [33mclass[39m=[32m"text-success"[39m
+                        [36m>[39m
+                          [0m✓ Yes - you can retry[0m
+                        [36m</span>[39m
+                      [36m</dd>[39m
+                    [36m</div>[39m
+                  [36m</div>[39m
+                [36m</div>[39m
+              [36m</div>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"flex items-center justify-between pt-2"[39m
+            [36m>[39m
+              [36m<button[39m
+                [33mclass[39m=[32m"inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-all duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:opacity-50 disabled:cursor-not-allowed bg-surface-raised hover:bg-fill-strong text-fg border border-line-strong hover:border-line-strong active:scale-[0.98] text-sm px-3 py-1.5 flex items-center gap-2"[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [36m<svg[39m
+                  [33mclass[39m=[32m"w-4 h-4"[39m
+                  [33mfill[39m=[32m"none"[39m
+                  [33mstroke[39m=[32m"currentColor"[39m
+                  [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [36m>[39m
+                  [36m<path[39m
+                    [33md[39m=[32m"M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"[39m
+                    [33mstroke-linecap[39m=[32m"round"[39m
+                    [33mstroke-linejoin[39m=[32m"round"[39m
+                    [33mstroke-width[39m=[32m"2"[39m
+                  [36m/>[39m
+                [36m</svg>[39m
+                [0mCopy Error Report[0m
+              [36m</button>[39m
+              [36m<button[39m
+                [33mclass[39m=[32m"inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-all duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:opacity-50 disabled:cursor-not-allowed bg-accent-hover hover:bg-accent-hover text-accent-fg shadow-sm hover:shadow active:scale-[0.98] text-sm px-3 py-1.5"[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [0mClose[0m
+              [36m</button>[39m
+            [36m</div>[39m
+          [36m</div>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+    [36m</div>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/.bun/@testing-library+dom@8.20.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ ../../node_modules/.bun/@testing-library+dom@8.20.1/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ ../../node_modules/.bun/@testing-library+dom@8.20.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.bun/@testing-library+dom@8.20.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ src/components/__tests__/ErrorWorkflowDisclosure.test.tsx:28:23
+     26|     );
+     27|     fireEvent.click(view.getByText('Technical Details', { exact: true …
+     28|     const more = view.getByRole('button', { name: 'more — Technical De…
+       |                       ^
+     29|     expect(more.getAttribute('aria-expanded')).toBe('false');
+     30|     more.focus();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  src/components/__tests__/ErrorWorkflowDisclosure.test.tsx > Error and workflow disclosures > preserves externally controlled state and callbacks
+AssertionError: expected "vi.fn()" to not be called at all, but actually been called 1 times
+
+Received:
+
+  1st vi.fn() call:
+
+    Array [
+      true,
+    ]
+
+
+Number of calls: 1
+
+ ❯ src/components/__tests__/ErrorWorkflowDisclosure.test.tsx:54:26
+     52|     const view = render(content(false));
+     53|     fireEvent.click(view.getByText('Synthetic heading'));
+     54|     expect(onChange).not.toHaveBeenCalled();
+       |                          ^
+     55|     fireEvent.click(view.getByRole('button', { name: 'more — Details',…
+     56|     expect(onChange).toHaveBeenLastCalledWith(true);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  src/components/__tests__/ErrorWorkflowDisclosure.test.tsx > Error and workflow disclosures > supports default-open details without title toggling
+TestingLibraryElementError: Unable to find an accessible element with the role "button" and name "less — Details"
+
+Here are the accessible roles:
+
+  button:
+
+  Name "Synthetic heading":
+  [36m<button[39m
+    [33maria-expanded[39m=[32m"false"[39m
+    [33mclass[39m=[32m"flex items-center justify-between w-full text-left transition-colors"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"border-line"[39m
+    [36m>[39m
+      [36m<button[39m
+        [33maria-expanded[39m=[32m"false"[39m
+        [33mclass[39m=[32m"flex items-center justify-between w-full text-left transition-colors"[39m
+      [36m>[39m
+        [36m<span>[39m
+          [0mSynthetic heading[0m
+        [36m</span>[39m
+        [36m<svg[39m
+          [33mclass[39m=[32m"w-4 h-4 transition-transform duration-200"[39m
+          [33mfill[39m=[32m"none"[39m
+          [33mstroke[39m=[32m"currentColor"[39m
+          [33mviewBox[39m=[32m"0 0 24 24"[39m
+        [36m>[39m
+          [36m<path[39m
+            [33md[39m=[32m"M19 9l-7 7-7-7"[39m
+            [33mstroke-linecap[39m=[32m"round"[39m
+            [33mstroke-linejoin[39m=[32m"round"[39m
+            [33mstroke-width[39m=[32m"2"[39m
+          [36m/>[39m
+        [36m</svg>[39m
+      [36m</button>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"transition-all duration-200 ease-in-out"[39m
+        [33mstyle[39m=[32m"height: 0px; overflow: hidden;"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"pt-2"[39m
+        [36m>[39m
+          [36m<p>[39m
+            [0mSynthetic detail[0m
+          [36m</p>[39m
+        [36m</div>[39m
+      [36m</div>[39m
+    [36m</div>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/.bun/@testing-library+dom@8.20.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ ../../node_modules/.bun/@testing-library+dom@8.20.1/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ ../../node_modules/.bun/@testing-library+dom@8.20.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.bun/@testing-library+dom@8.20.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ src/components/__tests__/ErrorWorkflowDisclosure.test.tsx:77:10
+     75|     expect(
+     76|       view
+     77|         .getByRole('button', { name: 'less — Details', exact: true })
+       |          ^
+     78|         .getAttribute('aria-expanded')
+     79|     ).toBe('true');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  src/components/__tests__/ErrorWorkflowDisclosure.test.tsx > Error and workflow disclosures > keeps workflow counts inert and preserves blocking requirements
+TestingLibraryElementError: Unable to find an accessible element with the role "button" and name "more — Workflow details"
+
+Here are the accessible roles:
+
+  button:
+
+  Name "Show details":
+  [36m<button[39m
+    [33maria-expanded[39m=[32m"false"[39m
+    [33mclass[39m=[32m"text-fg-muted hover:text-fg-soft transition-colors"[39m
+    [33mdata-testid[39m=[32m"autonomy-workflow-summary-toggle"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"space-y-1"[39m
+      [33mdata-testid[39m=[32m"autonomy-workflow-summary"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"flex items-center gap-2 text-xs text-fg-muted"[39m
+      [36m>[39m
+        [36m<span[39m
+          [33mdata-testid[39m=[32m"autonomy-workflow-summary-count"[39m
+        [36m>[39m
+          [0mLevel [0m
+          [0m3[0m
+          [0m:[0m
+          [0m [0m
+          [36m<span[39m
+            [33mclass[39m=[32m"text-fg-soft font-medium tabular-nums"[39m
+          [36m>[39m
+            [0m0[0m
+            [0m of [0m
+            [0m1[0m
+          [36m</span>[39m
+          [0m [0m
+          [0mworkflow auto-closes[0m
+          [0m without review[0m
+        [36m</span>[39m
+        [36m<button[39m
+          [33maria-expanded[39m=[32m"false"[39m
+          [33mclass[39m=[32m"text-fg-muted hover:text-fg-soft transition-colors"[39m
+          [33mdata-testid[39m=[32m"autonomy-workflow-summary-toggle"[39m
+          [33mtype[39m=[32m"button"[39m
+        [36m>[39m
+          [0mShow details[0m
+        [36m</button>[39m
+      [36m</div>[39m
+    [36m</div>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/.bun/@testing-library+dom@8.20.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ ../../node_modules/.bun/@testing-library+dom@8.20.1/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ ../../node_modules/.bun/@testing-library+dom@8.20.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.bun/@testing-library+dom@8.20.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ src/components/__tests__/ErrorWorkflowDisclosure.test.tsx:95:23
+     93|     const view = render(<AutonomyWorkflowSummary level={3} workflows={…
+     94|     fireEvent.click(view.getByTestId('autonomy-workflow-summary-count'…
+     95|     const more = view.getByRole('button', { name: 'more — Workflow det…
+       |                       ^
+     96|     expect(more.getAttribute('aria-expanded')).toBe('false');
+     97|     more.focus();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed (4)
+   Start at  02:55:04
+   Duration  467ms (environment 38%, transform 25%, setup 25%, tests 8%, import 4%, worker 1%)
+

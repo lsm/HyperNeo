@@ -20,8 +20,9 @@ describe('Collapsible', () => {
           <p>Content</p>
         </Collapsible>
       );
-      const trigger = container.querySelector('button');
+      const trigger = container.querySelector('span');
       expect(trigger?.textContent).toContain('Click to expand');
+      expect(trigger?.closest('button')).toBeNull();
     });
 
     it('should render children content', () => {
@@ -32,16 +33,6 @@ describe('Collapsible', () => {
       );
       const content = container.querySelector('p');
       expect(content?.textContent).toBe('Collapsible content');
-    });
-
-    it('should render chevron icon', () => {
-      const { container } = render(
-        <Collapsible trigger={<span>Trigger</span>}>
-          <p>Content</p>
-        </Collapsible>
-      );
-      const svg = container.querySelector('svg');
-      expect(svg).toBeTruthy();
     });
 
     it('should apply custom className', () => {
@@ -96,35 +87,6 @@ describe('Collapsible', () => {
         const button = container.querySelector('button');
         expect(button?.getAttribute('aria-expanded')).toBe('false');
       });
-    });
-
-    it('should rotate chevron when open', async () => {
-      const { container } = render(
-        <Collapsible trigger={<span>Trigger</span>}>
-          <p>Content</p>
-        </Collapsible>
-      );
-
-      const trigger = container.querySelector('button');
-      trigger?.click();
-
-      await waitFor(() => {
-        const svg = container.querySelector('svg');
-        const svgClass = svg?.getAttribute('class') || '';
-        expect(svgClass).toContain('rotate-180');
-      });
-    });
-
-    it('should not rotate chevron when closed', () => {
-      const { container } = render(
-        <Collapsible trigger={<span>Trigger</span>}>
-          <p>Content</p>
-        </Collapsible>
-      );
-
-      const svg = container.querySelector('svg');
-      const svgClass = svg?.getAttribute('class') || '';
-      expect(svgClass).not.toContain('rotate-180');
     });
   });
 
@@ -231,7 +193,7 @@ describe('Collapsible', () => {
       trigger?.click();
 
       await waitFor(() => {
-        expect(trigger?.getAttribute('aria-expanded')).toBe('false');
+        expect(container.querySelector('button')?.getAttribute('aria-expanded')).toBe('false');
       });
     });
   });
@@ -284,30 +246,6 @@ describe('Collapsible', () => {
   });
 
   describe('Styling', () => {
-    it('should have full width trigger', () => {
-      const { container } = render(
-        <Collapsible trigger={<span>Trigger</span>}>
-          <p>Content</p>
-        </Collapsible>
-      );
-
-      const button = container.querySelector('button');
-      expect(button?.className).toContain('w-full');
-    });
-
-    it('should have flex layout for trigger', () => {
-      const { container } = render(
-        <Collapsible trigger={<span>Trigger</span>}>
-          <p>Content</p>
-        </Collapsible>
-      );
-
-      const button = container.querySelector('button');
-      expect(button?.className).toContain('flex');
-      expect(button?.className).toContain('items-center');
-      expect(button?.className).toContain('justify-between');
-    });
-
     it('should have transition classes on content', () => {
       const { container } = render(
         <Collapsible trigger={<span>Trigger</span>}>
@@ -317,18 +255,6 @@ describe('Collapsible', () => {
 
       const contentWrapper = container.querySelector('.transition-all');
       expect(contentWrapper).toBeTruthy();
-    });
-
-    it('should have transition on chevron', () => {
-      const { container } = render(
-        <Collapsible trigger={<span>Trigger</span>}>
-          <p>Content</p>
-        </Collapsible>
-      );
-
-      const svg = container.querySelector('svg');
-      const svgClass = svg?.getAttribute('class') || '';
-      expect(svgClass).toContain('transition-transform');
     });
 
     it('should have padding on content', () => {

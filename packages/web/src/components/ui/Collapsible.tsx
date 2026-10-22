@@ -1,10 +1,11 @@
-import { ChevronDownGlyph } from '../icons/common-glyphs.tsx';
+import { ContentDisclosureControl } from './ContentDisclosureControl.tsx';
 import { ComponentChildren } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
 
 export interface CollapsibleProps {
   trigger: ComponentChildren;
+  label?: string;
   children: ComponentChildren;
   defaultOpen?: boolean;
   open?: boolean;
@@ -15,12 +16,16 @@ export interface CollapsibleProps {
 export function Collapsible({
   trigger,
   children,
+  label = 'Details',
   defaultOpen = false,
   open: controlledOpen,
   onOpenChange,
   class: className,
 }: CollapsibleProps) {
   const [internalOpen, setInternalOpen] = useState(defaultOpen);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const restoreFocus = useRef(false);
+  const id = useId();
   const contentRef = useRef<HTMLDivElement>(null);
   const [height, setHeight] = useState<number | undefined>(defaultOpen ? undefined : 0);
 
@@ -33,6 +38,26 @@ export function Collapsible({
     }
     onOpenChange?.(newOpen);
   };
+
+  useLayoutEffect(() => {
+    if (!restoreFocus.current) return;
+    restoreFocus.current = false;
+    rootRef.current
+      ?.querySelector<HTMLButtonElement>(`button[aria-controls="${id}"]`)
+      ?.focus({ preventScroll: true });
+  }, [isOpen, id]);
+
+  const control = (
+    <ContentDisclosureControl
+      expanded={isOpen}
+      aria-label={label}
+      aria-controls={id}
+      onToggle={() => {
+        restoreFocus.current = true;
+        toggle();
+      }}
+    />
+  );
 
   useEffect(() => {
     if (contentRef.current) {
@@ -49,23 +74,15 @@ export function Collapsible({
   }, [isOpen]);
 
   return (
-    <div class={cn('border-line', className)}>
-      <button
-        onClick={toggle}
-        class="flex items-center justify-between w-full text-left transition-colors"
-        aria-expanded={isOpen}
-      >
+    <div ref={rootRef} class={cn('border-line', className)}>
+      <div class="flow-root">
         {trigger}
-        <ChevronDownGlyph
-          class={cn('w-4 h-4 transition-transform duration-200', isOpen && 'rotate-180')}
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        />
-      </button>
+        {!isOpen && control}
+      </div>
 
       <div
         ref={contentRef}
+        id={id}
         style={{
           height: height !== undefined ? `${height}px` : 'auto',
           overflow: height !== undefined && height === 0 ? 'hidden' : 'visible',
@@ -73,6 +90,7 @@ export function Collapsible({
         class="transition-all duration-200 ease-in-out"
       >
         <div class="pt-2">{children}</div>
+        {isOpen && <div class="flow-root">{control}</div>}
       </div>
     </div>
   );
