@@ -9,11 +9,7 @@ import { z } from 'zod';
 import type { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { neoDerivedId } from './derived-id.ts';
-import {
-  NeoPublicationSchema,
-  NeoPublicationResultSchema,
-  withNeoPublicationAnswer,
-} from './publication.ts';
+import { NeoPublicationSchema, NeoPublicationResultSchema } from './publication.ts';
 import { requirePublicationLifetime, requirePublicationProducer } from './publication-operation.ts';
 
 type Producer = Extract<ReturnType<typeof requirePublicationProducer>, { value: unknown }>['value'];
@@ -114,7 +110,7 @@ function changePipeline(
       (owned: Owned, request: never) => {
         const result = change(owned, request);
         if (result.accepted) runtime.notify(result.publication.conversationId);
-        return withNeoPublicationAnswer(result, null);
+        return result;
       },
       ['change', 'request'],
       'change'
@@ -122,7 +118,7 @@ function changePipeline(
     .end('change') as (
     input: unknown,
     caller: OperationCaller
-  ) => ReturnType<typeof withNeoPublicationAnswer>;
+  ) => NeoPublicationChangeResult | Rejection;
 }
 
 export function createNeoPublicationChangeOperations(

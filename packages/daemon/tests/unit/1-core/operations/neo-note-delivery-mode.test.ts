@@ -43,13 +43,13 @@ describe('Neo daemon notes', () => {
       sessionId: rootId,
       processingState: { status: 'processing' } as never,
     });
-    await service.deliverForward(rootId, 'note-busy', 'A card reported.', rootId, null);
+    await service.deliverForward(rootId, 'note-busy', 'A card reported.', rootId);
     expect(queued('note-busy')).toEqual(['immediate']);
     await events.publish('session.updated', {
       sessionId: rootId,
       processingState: { status: 'idle' } as never,
     });
-    await service.deliverForward(rootId, 'note-idle', 'A card reported.', rootId, null);
+    await service.deliverForward(rootId, 'note-idle', 'A card reported.', rootId);
     expect(queued('note-idle')).toEqual(['immediate']);
   });
 
@@ -59,7 +59,7 @@ describe('Neo daemon notes', () => {
       sessionId: 'chat-1',
       processingState: { status: 'processing' } as never,
     });
-    await service.deliverForward('chat-1', 'brief-1', 'Do the work.', rootId, null);
+    await service.deliverForward('chat-1', 'brief-1', 'Do the work.', rootId);
     expect(
       db
         .getJobQueueRepo()

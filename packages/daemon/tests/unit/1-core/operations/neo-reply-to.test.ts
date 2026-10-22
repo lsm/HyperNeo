@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
 import {
   createNeoIntakeOperation,
-  neoReplyAuthor,
   neoQuoteFact,
   neoReplyFact,
   neoReplySnapshot,
@@ -405,29 +404,6 @@ describe('neoQuoteFact', () => {
       'The human replied to their earlier message "Ship it":'
     );
     expect(neoQuoteFact({ kind: 'message', id: 'm' })).toBeNull();
-  });
-});
-
-describe('neoReplyAuthor', () => {
-  test("names the ask's owner, else the message's writer, else whoever answered the human's message", () => {
-    const ask = { sessionId: holder } as never;
-    const reply = {
-      replyTo: { kind: 'question' as const, id: 'q' },
-      ask,
-      question: null,
-      todo: null,
-    };
-    const publication = { producerInput: { sessionId: 'neo:holder:c2' } };
-    const asked = { askOrigin: { sessionId: 'neo:holder:c3' } };
-    const forwards = [
-      { hop: 1, toSessionId: 'neo:holder:c5' },
-      { hop: 0, toSessionId: 'neo:holder:c4' },
-    ];
-    expect(neoReplyAuthor(reply, publication, null, [])).toBe(holder);
-    expect(neoReplyAuthor(null, publication, null, [])).toBe('neo:holder:c2');
-    expect(neoReplyAuthor(null, null, asked, [])).toBe('neo:holder:c3');
-    expect(neoReplyAuthor(null, null, asked, forwards)).toBe('neo:holder:c5');
-    expect(neoReplyAuthor(null, null, null, [])).toBeNull();
   });
 });
 

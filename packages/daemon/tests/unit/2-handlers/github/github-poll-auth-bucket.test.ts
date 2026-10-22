@@ -209,8 +209,8 @@ describe('authenticated GitHub polling transport', () => {
             `HTTP/2.0 ${status} Synthetic\r\nRetry-After: 120\r\nX-RateLimit-Limit: 5000\r\nX-RateLimit-Resource: core\r\n\r\n${status === 304 ? '' : '{"message":"secondary rate limit"}'}`
           ),
           stderr: stream(''),
-          exited: Promise.resolve(status === 403 ? 1 : 0),
-          exitCode: status === 403 ? 1 : 0,
+          exited: Promise.resolve(1),
+          exitCode: 1,
           kill() {},
         };
       };
@@ -227,6 +227,49 @@ describe('authenticated GitHub polling transport', () => {
       if (status === 304) expect(await response.text()).toBe('');
     });
   }
+
+  function response(status: number, body: string, code = 0): SpawnFn {
+    return () => ({
+      stdout: new Response(`HTTP/2.0 ${status} Synthetic\r\n\r\n${body}`).body!,
+      stderr: new Response('').body!,
+      exited: Promise.resolve(code),
+      exitCode: code,
+      kill() {},
+    });
+  }
+
+  test('a complete 100-comment page larger than the script buffer keeps every body byte', async () => {
+    const rows = Array.from({ length: 100 }, (_, id) => ({ id, body: 'x'.repeat(16_384) }));
+    const result = await fetchGitHubViaCli(
+      'https://api.github.com/repos/synthetic/private/pulls/comments?per_page=100',
+      {},
+      response(200, JSON.stringify(rows))
+    );
+    expect(await result.json()).toEqual(rows);
+  });
+
+  test('an oversized GitHub response still refuses instead of parsing truncated data', async () => {
+    await expect(
+      fetchGitHubViaCli(
+        'https://api.github.com/repos/synthetic/private/pulls/comments?per_page=100',
+        {},
+        response(200, 'x'.repeat(16 * 1_048_576 + 1))
+      )
+    ).rejects.toThrow('size limit');
+  });
+
+  test.each([200, 302])(
+    'nonzero exit with HTTP %s remains an incomplete response',
+    async (status) => {
+      await expect(
+        fetchGitHubViaCli(
+          'https://api.github.com/repos/synthetic/private/pulls',
+          {},
+          response(status, '[]', 1)
+        )
+      ).rejects.toThrow('failed before a complete response');
+    }
+  );
 
   test('an already-aborted request starts no credential helper', async () => {
     const controller = new AbortController();

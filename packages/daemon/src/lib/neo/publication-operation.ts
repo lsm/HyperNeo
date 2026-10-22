@@ -10,11 +10,7 @@ import { defineOperation, type OperationCaller } from '../operations/registry.ts
 import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
 import { unregisteredArtifact } from '../artifacts/file-contracts.ts';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
-import {
-  NeoPublicationSchema,
-  NeoPublicationResultSchema,
-  withNeoPublicationAnswer,
-} from './publication.ts';
+import { NeoPublicationSchema, NeoPublicationResultSchema } from './publication.ts';
 import { isMainNeoBinding } from './binding-roles.ts';
 import { neoDerivedId } from './derived-id.ts';
 
@@ -231,15 +227,12 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     .pipe(
       (receipt: Receipt) => {
         if (receipt.accepted) runtime.notify();
-        return withNeoPublicationAnswer(receipt, null);
+        return receipt;
       },
       'publication',
       'publication'
     )
-    .end('publication') as (
-    input: unknown,
-    caller: OperationCaller
-  ) => ReturnType<typeof withNeoPublicationAnswer>;
+    .end('publication') as (input: unknown, caller: OperationCaller) => Receipt;
 }
 
 export function createNeoPublicationOperation(publish: ReturnType<typeof createNeoPublisher>) {

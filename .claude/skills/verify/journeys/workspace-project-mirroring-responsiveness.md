@@ -35,9 +35,10 @@ explicit timeout error and termination, and confirms the queued mirror proceeds
 and completion clears its timer. This is technical worker failure protection;
 the private memory fallback does not claim off-thread filesystem responsiveness.
 
-For the associated wake-query attribution, run `wake-live-size.ts verify 9379
+For the associated scheduler wake-history query, run `wake-live-size.ts verify 9379
 "$RUN"` in another fresh isolated HOME/data directory using the same environment.
-It seeds 107,991 synthetic SDK headers and 2,112 origins across 13 sessions,
+It seeds 107,991 synthetic SDK headers and 2,112 pending
+`session_schedule_wakes` metadata rows across 13 sessions,
 then checks zero and two scheduled wakes through the repository and snapshot
 RPC. It reports execution plans, VM steps and SQLite page-cache misses. These
 are synthetic cardinalities, not copied live layout or physical disk reads.

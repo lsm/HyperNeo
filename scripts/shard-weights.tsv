@@ -235,7 +235,6 @@
 19	packages/daemon/tests/unit/1-core/operations/metadata-editor.test.ts
 97	packages/daemon/tests/unit/1-core/operations/metadata-standalone.test.ts
 630	packages/daemon/tests/unit/1-core/operations/neo-ask-evidence.test.ts
-282	packages/daemon/tests/unit/1-core/operations/neo-ask-origin.test.ts
 5	packages/daemon/tests/unit/1-core/operations/neo-binding-roles.test.ts
 36	packages/daemon/tests/unit/1-core/operations/neo-branch-prs.test.ts
 2735	packages/daemon/tests/unit/1-core/operations/neo-card-pr-events.test.ts
@@ -564,7 +563,6 @@
 3	packages/daemon/tests/unit/4-space-storage/storage/m336-neo-work-pr-claim-scores.test.ts
 5	packages/daemon/tests/unit/4-space-storage/storage/m337-neo-ask-item-check-kind-life-admin.test.ts
 3	packages/daemon/tests/unit/4-space-storage/storage/m338-neo-driver-checked-at.test.ts
-3	packages/daemon/tests/unit/4-space-storage/storage/m339-neo-input-origins.test.ts
 3	packages/daemon/tests/unit/4-space-storage/storage/m340-neo-session-seen.test.ts
 4	packages/daemon/tests/unit/4-space-storage/storage/m341-neo-ask-item-reported.test.ts
 3	packages/daemon/tests/unit/4-space-storage/storage/m342-neo-ask-item-options.test.ts
@@ -703,6 +701,7 @@
 11683	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-42_test.ts
 3347	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-43_test.ts
 2300	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-44_test.ts
+118	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-443-session-schedule-wakes.test.ts
 6642	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-45_test.ts
 13445	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-47_test.ts
 993	packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-48_test.ts

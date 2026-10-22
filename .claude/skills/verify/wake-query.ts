@@ -39,11 +39,11 @@ try {
   const put = db.prepare(
     'INSERT INTO sdk_messages (id,session_id,message_type,sdk_uuid,sdk_message,timestamp) VALUES (?,?,?,?,?,?)'
   );
-  const origin = db.prepare(
-    'INSERT INTO neo_input_origins (session_id,message_id,origin_session_id,origin_message_id,stamped_at,trigger_id) VALUES (?,?,?,?,?,?)'
+  const wake = db.prepare(
+    'INSERT INTO session_schedule_wakes (session_id,message_id,metadata_json,fired_at) VALUES (?,?,?,?)'
   );
   const sdkRows = 140000,
-    originRows = sdkRows / 100;
+    wakeRows = sdkRows / 100;
   const body = JSON.stringify({ type: 'user', message: { content: 'synthetic '.repeat(150) } });
   db.transaction(() => {
     for (let i = 0; i < sdkRows; i++) {
@@ -56,7 +56,7 @@ try {
         body,
         '2026-10-20T00:00:00.000Z'
       );
-      if (i % 100 === 0) origin.run(id, `u${i}`, id, `u${i}`, 1792454400000 + i, `human:u${i}`);
+      if (i % 100 === 0) wake.run(id, `pending-u${i}`, JSON.stringify({scheduleId: `wake-${i}`, sourceKind: "schedule", sourceId: `s${i}`}), 1792454400000 + i);
     }
   })();
   const sql = NEO_WAKE_SELECT + ' ORDER BY at DESC, sequence DESC LIMIT ?';
@@ -102,11 +102,12 @@ try {
     if (positive)
       for (const i of [0, 100])
         db.prepare(
-          'UPDATE neo_input_origins SET trigger_id=? WHERE session_id=? AND message_id=?'
+          'UPDATE session_schedule_wakes SET metadata_json=?, message_id=? WHERE session_id=? AND message_id=?'
         ).run(
-          `scheduled_wake:${JSON.stringify({ scheduleId: `wake-${i}`, sourceKind: 'schedule', sourceId: `s${i}` })}`,
+          JSON.stringify({ scheduleId: `wake-${i}`, sourceKind: 'schedule', sourceId: `s${i}` }),
+          `u${i}`,
           root,
-          `u${i}`
+          `pending-u${i}`
         );
     const result = spawnSync(
       '/usr/bin/python3',
@@ -140,14 +141,14 @@ try {
     surface:
       'real isolated daemon neo.snapshot WebSocket plus actual Bun wake repository and query plan',
     fixture:
-      '140k synthetic SDK headers with 1.5KB bodies; 1400 own human origins; zero then two scheduled wakes; default un-analyzed indexes',
+      '140k synthetic SDK headers with 1.5KB bodies; 1400 pending schedule-wake metadata rows; zero then two scheduled wakes; default un-analyzed indexes',
     sdkRows,
-    originRows,
+    wakeRows,
     mode,
     sqliteVersion: db.prepare('SELECT sqlite_version() AS version').get(),
     counter:
       'SQLite public C API stmt VM_STEP and db CACHE_MISS/HIT deltas via Python linked library; page reads are SQLite cache misses, not physical disk reads; fresh connection not OS cache flush',
-    workBudget: originRows * 40 + 1000,
+    workBudget: wakeRows * 40 + 1000,
     cases,
   };
   writeFileSync(join(run, 'observed.json'), JSON.stringify(report, null, 2));
@@ -156,7 +157,7 @@ try {
     for (const c of cases)
       assert(
         (c.coldConnection as { vmSteps: number }).vmSteps <= report.workBudget,
-        'wake lookup work must scale with origins, not all SDK session messages'
+        'wake lookup work must scale with wake metadata, not all SDK session messages'
       );
   else
     assert(

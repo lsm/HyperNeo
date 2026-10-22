@@ -214,7 +214,7 @@ describe('NeoService.moveAsk', () => {
     db.close();
   });
 
-  test('a moved-ask note hands the ask over without the human’s publish trigger; a forward keeps it', async () => {
+  test('moved and forwarded notes use ordinary mailbox delivery without a human trigger', async () => {
     service.repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
     db.createSession(createTestSession('holder:drivers'));
     db.getSDKMessageRepo().saveSDKMessage(root, {
@@ -225,21 +225,15 @@ describe('NeoService.moveAsk', () => {
       inputKind: 'human',
       message: { role: 'user', content: 'Fix login' },
     } as unknown as SDKUserMessage);
-    const parent = { sessionId: root, messageId: 'm-a1' };
-    await service.deliverForward('holder:drivers', 'neo-moved:a1', 'Moved.', root, parent, null);
-    await service.deliverForward(
-      'holder:drivers',
+    await service.deliverForward('holder:drivers', 'neo-moved:a1', 'Moved.', root);
+    await service.deliverForward('holder:drivers', 'neo-forward:m-a1:0', 'Forwarded.', root);
+    const jobs = db
+      .getJobQueueRepo()
+      .listActiveByPayload('mailbox', { 'to.sessionId': 'holder:drivers' });
+    expect(jobs.map((job) => job.payload.messageUuid).sort()).toEqual([
       'neo-forward:m-a1:0',
-      'Forwarded.',
-      root,
-      parent,
-      'continues'
-    );
-    expect(service.inputTrigger({ sessionId: 'holder:drivers', messageId: 'neo-moved:a1' })).toBe(
-      null
-    );
-    expect(
-      service.inputTrigger({ sessionId: 'holder:drivers', messageId: 'neo-forward:m-a1:0' })
-    ).toBe('human:m-a1');
+      'neo-moved:a1',
+    ]);
+    expect(jobs.every((job) => job.payload.message.inputKind === 'system')).toBe(true);
   });
 });

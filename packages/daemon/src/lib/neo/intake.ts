@@ -208,25 +208,6 @@ export function neoReplySnapshot(
   };
 }
 
-export function neoReplyAuthor(
-  reply: NeoReply | null,
-  publication: { producerInput: { sessionId: string } } | null,
-  asked: { askOrigin: { sessionId: string } } | null,
-  forwards: readonly { hop: number; toSessionId: string }[]
-): string | null {
-  const answering = forwards.reduce<{ hop: number; toSessionId: string } | null>(
-    (latest, forward) => (!latest || forward.hop > latest.hop ? forward : latest),
-    null
-  );
-  return (
-    reply?.ask?.sessionId ??
-    publication?.producerInput.sessionId ??
-    answering?.toSessionId ??
-    asked?.askOrigin.sessionId ??
-    null
-  );
-}
-
 export function recordNeoReplyAnswer(
   receipt: IntakeResult,
   reply: NeoReply | null,

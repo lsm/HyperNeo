@@ -1,7 +1,7 @@
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { Database } from '../../src/storage/sqlite-compat.ts';
 import { NeoAskTodoRepository } from '../../src/storage/repositories/neo-ask-todo-repository.ts';
-import { NeoInputOriginRepository } from '../../src/storage/repositories/neo-input-origin-repository.ts';
+import { SessionScheduleRepository } from '../../src/storage/repositories/session-schedule-repository.ts';
 import { NeoPublicationRepository } from '../../src/storage/repositories/neo-publication-repository.ts';
 import { SDKMessageRepository } from '../../src/storage/repositories/sdk-message-repository.ts';
 import { SessionGoalRepository } from '../../src/storage/repositories/session-goal-repository.ts';
@@ -18,13 +18,13 @@ export function seedNeoWake(db: Database, conversationId: string, additions = tr
   const scheduleId = crypto.randomUUID();
   const messageId = `schedule:${scheduleId}:${Date.now()}`;
   const sdk = new SDKMessageRepository(db);
-  const origins = new NeoInputOriginRepository(db);
-  origins.record(
-    { sessionId, messageId },
-    { sessionId, messageId },
-    Date.now(),
-    `scheduled_wake:${JSON.stringify({ scheduleId, sourceKind: 'goal', sourceId: goal.id })}`
+  new SessionScheduleRepository(db).recordWake(
+    sessionId,
+    messageId,
+    { scheduleId, sourceKind: 'goal', sourceId: goal.id },
+    Date.now()
   );
+  const legacyInputs = new Set([messageId]);
   const saveInput = (uuid: string, content: string) => {
     sdk.saveUserMessage(
       sessionId,
@@ -53,12 +53,7 @@ export function seedNeoWake(db: Database, conversationId: string, additions = tr
     return saveInput(uuid, 'An unrelated next input.');
   };
   const continuation = (uuid: string) => {
-    origins.record(
-      { sessionId, messageId: uuid },
-      { sessionId, messageId },
-      Date.now(),
-      origins.trigger(sessionId, messageId)
-    );
+    legacyInputs.add(uuid);
     boundInput = uuid;
     return saveInput(uuid, 'Continue the same wake.');
   };
@@ -157,9 +152,9 @@ export function seedNeoWake(db: Database, conversationId: string, additions = tr
           ? {
               ...message,
               neoInputOrigin: { sessionId, messageId: boundInput },
-              neoAskOrigin: origins.get(sessionId, boundInput) ?? {
+              neoAskOrigin: {
                 sessionId,
-                messageId: boundInput,
+                messageId: legacyInputs.has(boundInput) ? messageId : boundInput,
               },
             }
           : message

@@ -1,4 +1,4 @@
-import type { NeoPublication, NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
+import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import { z } from 'zod';
 import { ArtifactRefSchema } from '../artifacts/file-contracts.ts';
 
@@ -70,31 +70,8 @@ export const NeoPublicationResultSchema = z.union([
       sequence: z.number().int().positive(),
       createdAt: z.string(),
     }),
-    answered: z
-      .object({ message: origin, publicationId: z.uuid(), revisionId: z.uuid() })
-      .nullable(),
   }),
 ]);
-
-export function withNeoPublicationAnswer(
-  receipt:
-    | { accepted: false; reason: string; detail?: string }
-    | { accepted: true; created: boolean; publication: NeoPublication },
-  message: { sessionId: string; messageId: string } | null
-) {
-  return receipt.accepted
-    ? {
-        ...receipt,
-        answered: message
-          ? {
-              message,
-              publicationId: receipt.publication.publicationId,
-              revisionId: receipt.publication.revisionId ?? receipt.publication.publicationId,
-            }
-          : null,
-      }
-    : receipt;
-}
 
 export function admitNeoPublication(
   input: unknown
