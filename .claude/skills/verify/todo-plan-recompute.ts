@@ -25,16 +25,16 @@ const url = (n: number) => `https://github.com/synthetic/plan/pull/${n}`;
 const report = 'Complete persisted plan report 🦊\n'.repeat(4000);
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
 const fixture = Object.fromEntries(
-  [1, 2, 3, 4, 5, 6].map((n) => [
+  [1, 2, 3, 4, 5, 6, 7].map((n) => [
     url(n),
     {
       url: url(n),
-      state: n === 1 || n === 3 ? 'MERGED' : 'OPEN',
+      state: n === 1 || n === 3 || n === 7 ? 'MERGED' : 'OPEN',
       headRefOid: 'a'.repeat(40),
       reviews: [],
       statusCheckRollup: [],
       createdAt: new Date(at - 60000).toISOString(),
-      mergedAt: n === 1 || n === 3 ? new Date(at).toISOString() : null,
+      mergedAt: n === 1 || n === 3 || n === 7 ? new Date(at).toISOString() : null,
     },
   ])
 );
@@ -46,7 +46,9 @@ const fs=require('node:fs'),root=${JSON.stringify(run)},args=process.argv.slice(
 fs.appendFileSync(root+'/evidence/gh.log',JSON.stringify(args)+'\\n');
 if(args[0]!=='pr'||args[1]!=='view')process.exit(2);
 const rows=JSON.parse(fs.readFileSync(root+'/prs.json','utf8')),row=rows[args.find(s=>s.startsWith('https://'))];
-if(!row)process.exit(2);process.stdout.write(JSON.stringify(row));
+if(!row)process.exit(2);
+if(row.pause){fs.writeFileSync(root+'/read-started','');while(!fs.existsSync(root+'/read-release'))await Bun.sleep(10);}
+process.stdout.write(JSON.stringify(row));
 `,
   { mode: 0o700 }
 );
@@ -249,6 +251,61 @@ try {
     assert.deepEqual(evidence.initial, { first: 'done', next: 'doing', starts: 1 });
     await refresh();
     assert.equal(starts(), 1);
+    store.askQuestion(
+      'running-question',
+      'flow',
+      {
+        text: 'A question about later work',
+        kind: 'yesno',
+        options: null,
+        multiple: false,
+        noLabel: 'No',
+        yesLabel: 'Yes',
+        startTodos: null,
+      },
+      Date.now()
+    );
+    const rollout = join(run, 'home/.codex/flow.jsonl');
+    writeFileSync(
+      rollout,
+      JSON.stringify({
+        timestamp: new Date(Date.now() + 1000).toISOString(),
+        type: 'event_msg',
+        payload: { type: 'task_complete', last_agent_message: 'Synthetic report after question' },
+      }) + '\n',
+      { flag: 'a' }
+    );
+    ws!.close();
+    await app!.cleanup();
+    app = undefined;
+    await open();
+    await refresh();
+    evidence.runningQuestion = {
+      state: store.getTodo('next')?.state,
+      report: store.getTodo('next')?.report,
+    };
+    assert.equal(store.getTodo('next')?.state, 'doing');
+    assert.match(store.getTodo('next')?.report ?? '', /Synthetic report after question/);
+    assert.equal(starts(), 1);
+    ask('race');
+    add('race-close', 'race', 7);
+    fixture[url(7)].pause = true;
+    writeFileSync(join(run, 'prs.json'), JSON.stringify(fixture));
+    const closing = rpc('neo.todo.close', {
+      todoId: 'race-close',
+      reason: 'Merged during report update',
+    });
+    const deadline = Date.now() + 15000;
+    while (!existsSync(join(run, 'read-started'))) {
+      assert(Date.now() < deadline, 'fact read did not reach the upstream stub');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const concurrent = store.getTodo('race-close')!;
+    store.updateTodo(concurrent, { report }, concurrent.updatedAt + 1);
+    writeFileSync(join(run, 'read-release'), '');
+    evidence.concurrentClose = await closing;
+    assert.equal((evidence.concurrentClose as any).todo.state, 'done');
+    assert.equal(store.getTodo('race-close')?.report, report);
     fixture[url(2)].state = 'MERGED';
     fixture[url(2)].mergedAt = new Date().toISOString();
     writeFileSync(join(run, 'prs.json'), JSON.stringify(fixture));

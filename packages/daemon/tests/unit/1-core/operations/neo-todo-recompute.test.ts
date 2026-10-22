@@ -22,6 +22,7 @@ function fixture() {
   let store: NeoAskTodoRepository;
   let sessions: NeoTodoSessionRepository;
   const starts: string[] = [];
+  let activity = 1;
   const facts = new Map<string, NeoTodoJudgement>();
   const pack = {
     id: 'synthetic',
@@ -86,7 +87,7 @@ function fixture() {
             ok: true,
             value: {
               status: 'stopped',
-              lastActivityAt: 1,
+              lastActivityAt: activity,
               lastReply: 'Complete synthetic report',
             },
           },
@@ -102,6 +103,9 @@ function fixture() {
   return {
     facts,
     starts,
+    progress: () => {
+      activity = Date.now() + 1;
+    },
     get store() {
       return store;
     },
@@ -198,6 +202,36 @@ describe('ordered ask progression from facts', () => {
       expect(f.starts).toHaveLength(0);
     }
   );
+
+  test('an ask question holds pending work without pausing an already dispatched worker', async () => {
+    const f = fixture();
+    f.add('running');
+    f.add('pending');
+    await f.runner.start('running');
+    f.store.askQuestion(
+      'question',
+      'ask',
+      {
+        text: 'Choose the later step',
+        kind: 'yesno',
+        options: null,
+        multiple: false,
+        noLabel: 'No',
+        yesLabel: 'Yes',
+        startTodos: null,
+      },
+      Date.now()
+    );
+    await f.runner.checkNow(['running', 'pending'], (_message, error) => {
+      throw error;
+    });
+    expect(f.store.getTodo('running')?.state).toBe('doing');
+    expect(f.store.getTodo('pending')?.state).toBe('blocked');
+    f.progress();
+    await f.refresh();
+    expect(f.store.getTodo('running')?.report).toContain('Complete synthetic report');
+    expect(f.starts).toHaveLength(1);
+  });
 
   test('removed stays removed despite done facts and restart', async () => {
     const f = fixture();
