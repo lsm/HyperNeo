@@ -77,6 +77,8 @@ try {
   assert.equal(git(worker, 'rev-parse', '--git-common-dir'), '.git');
   assert.equal(git(worker, 'rev-parse', 'HEAD'), latest);
   assert.equal(git(worker, 'rev-parse', 'refs/remotes/origin/dev'), latest);
+  git(worker, 'switch', 'dev');
+  assert.equal(git(worker, 'rev-parse', 'HEAD'), latest);
   assert.equal(git(worker, 'remote', 'get-url', 'origin'), remote);
   const blob = git(source, 'rev-parse', `${latest}:code.txt`);
   const object = join('.git/objects', blob.slice(0, 2), blob.slice(2));
@@ -103,11 +105,19 @@ try {
   assert.notEqual(failedDirectory, worker);
   assert.equal(existsSync(failedDirectory), false, 'unconfirmed start releases its private clone');
   assert.equal(existsSync(worker), true, 'confirmed worker clone is retained');
+  writeFileSync(join(remote, '.gitattributes'), 'asset.bin filter=lfs\n');
+  writeFileSync(join(remote, 'asset.bin'), `version https://git-lfs.github.com/spec/v1\noid sha256:${'a'.repeat(64)}\nsize 19\n`);
+  git(remote, 'add', '.');
+  git(remote, 'commit', '-m', 'synthetic LFS pointer');
+  const lfsRefused = await rpc('work.start', request) as { ok: boolean; detail?: string };
+  assert.equal(lfsRefused.ok, false);
+  assert.match(lfsRefused.detail ?? '', /LFS.*smudge filter lfs failed/s);
+  assert.equal(readFileSync(join(run, 'evidence/worker-cwd'), 'utf8'), failedDirectory);
   git(source, 'remote', 'set-url', 'origin', join(run, 'absent-remote'));
   const refused = await rpc('work.start', request) as { ok: boolean; detail?: string };
   assert.equal(refused.ok, false);
   assert.match(refused.detail ?? '', /fetch_failed/);
-  evidence.push({ port: app.server.port, worker, ownGit: true, independentObjectInodes: true, workerCommitAbsentInSource: true, dirtySourcePreserved: true, localIdentityPreserved: true, failedStartCloneReleased: true, confirmedCloneRetained: true, status, scope: 'actual daemon/RPC/Git; synthetic Claude CLI; no OS sandbox claim in slice 1' });
+  evidence.push({ port: app.server.port, worker, ownGit: true, independentObjectInodes: true, workerCommitAbsentInSource: true, dirtySourcePreserved: true, localIdentityPreserved: true, targetBranchVerified: true, lfsExplicitlyRefusedBeforeLaunch: true, failedStartCloneReleased: true, confirmedCloneRetained: true, status, scope: 'actual daemon/RPC/Git; synthetic Claude CLI; no OS sandbox claim in slice 1' });
   console.log(`PASS prepared standalone clone, independent commit, dirty source preservation and explicit refusal: ${run}/evidence/observed.json`);
 } finally {
   ws?.close();

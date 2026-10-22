@@ -253,7 +253,6 @@ describe('prepareCodingExecution', () => {
     expect(git(result.value.directory, 'rev-parse', 'HEAD')).toBe(f.latest);
     expect(git(f.directory, 'rev-parse', 'HEAD')).toBe(f.before);
     expect(readFileSync(join(f.directory, 'file'), 'utf8')).toBe('uncommitted user work');
-    expect(f.calls.find((call) => call[1] === 'checkout')?.at(-1)).toBe(f.latest);
     expect(git(f.destination, 'rev-parse', 'refs/remotes/origin/dev')).toBe(f.latest);
     git(f.destination, 'switch', 'dev');
     expect(git(f.destination, 'rev-parse', 'HEAD')).toBe(f.latest);
@@ -425,7 +424,7 @@ describe('prepareCodingExecution', () => {
       const f = fixture();
       const result = await prepareCodingExecution(f.request, {
         run: async (command, cwd) => {
-          if (command[1] === step && (step !== 'remote' || command[2] === 'set-url'))
+          if (command.includes(step) && (step !== 'remote' || command[2] === 'set-url'))
             return { code: 1, stdout: '', stderr: 'synthetic refusal' };
           return f.effects.run(command, cwd);
         },

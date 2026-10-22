@@ -152,9 +152,20 @@ async function prepareClone(
         phase: 'clone_origin_failed',
       },
       {
-        args: ['git', 'checkout', '--detach', commit],
+        args: [
+          'git',
+          '-c',
+          'filter.lfs.smudge=false',
+          '-c',
+          'filter.lfs.process=',
+          '-c',
+          'filter.lfs.required=true',
+          'checkout',
+          '--detach',
+          commit,
+        ],
         cwd: plan.destination,
-        phase: 'clone_checkout_failed',
+        phase: 'clone_checkout_failed (Git LFS materialization is unsupported)',
       },
     ];
     for (const { args, cwd, phase } of commands) {

@@ -19,13 +19,15 @@ are read, and no model/provider is needed.
 
 The returned prepared directory must contain its own `.git` directory, start at
 the freshly fetched remote commit, pin `origin/<target>` to that same commit
-without source-local aliases, keep the original upstream and contain no Git
+without source-local branch aliases (including `git switch dev`), keep the original upstream and contain no Git
 object hardlinks to the source. Focused Git tests also start from a source that
 borrows objects: `--dissociate` must leave no alternates dependency in the clone. A real edit/add/commit in that directory must
 use the source repo-local identity/signing policy and produce a commit absent
 from the source object store, preserving source HEAD and
 dirty bytes. A synthetic CLI refusal after preparation must release only its new
-clone, keeping the confirmed worker clone. A subsequent start with an unavailable remote must visibly refuse before
+clone, keeping the confirmed worker clone. A tracked Git LFS file must explicitly refuse preparation before CLI launch: this slice
+does not materialize LFS objects, download them or copy their cache/credentials.
+A subsequent start with an unavailable remote must visibly refuse before
 launching work, without falling back to stale HEAD. `evidence/observed.json` retains
 all RPC replies and the independent-storage observations. Focused daemon tests also
 cover project attribution, existing-destination preservation, partial failure cleanup
