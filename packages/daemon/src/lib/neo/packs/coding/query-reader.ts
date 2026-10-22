@@ -12,6 +12,10 @@ export function createCodingQueryReader(
   return async (_args, coverage) => {
     ledger ??= new CodingPrLedgerRepository(db());
     const fact = await ledger.queryFacts.refresh(coverage, spawn, now);
-    return fact.view.status === 'known' ? fact.view.value : null;
+    return {
+      data: fact.view.status === 'known' ? fact.view.value : null,
+      at: new Date(fact.view.observedAt ?? now()).toISOString(),
+      coverage: fact.coverage.query,
+    };
   };
 }

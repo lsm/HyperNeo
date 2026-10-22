@@ -8,7 +8,7 @@ type Failure = { ok: false; reason: string };
 export type NeoGithubLister = (
   args: string[],
   coverage: NeoGithubCollection
-) => Promise<unknown | null>;
+) => Promise<{ data: unknown | null; at: string; coverage?: NeoGithubCollection }>;
 
 const When = z.string().datetime({ offset: true });
 
@@ -59,7 +59,7 @@ export const NeoGithubQueryResult = z.union([
 export type NeoGithubQueryResult = z.infer<typeof NeoGithubQueryResult>;
 
 type By = 'created' | 'updated' | 'merged' | 'closed';
-export type NeoGithubCollection = Omit<NeoGithubQuery, 'withinHours' | 'by'> & { by: By };
+export type NeoGithubCollection = Omit<NeoGithubQuery, 'by'> & { by: By };
 type Plan = { query: NeoGithubQuery; by: By; search: string; args: string[] };
 
 export function planNeoGithubQuery(
@@ -125,8 +125,17 @@ export function planNeoGithubQuery(
 
 export function presentNeoGithubQuery(
   plan: Plan,
-  listed: { data: unknown | null; at: string }
+  listed: { data: unknown | null; at: string; coverage?: NeoGithubCollection }
 ): { value: NeoGithubQueryResult } | { reason: Failure } {
+  if (listed.coverage) {
+    const actual = planNeoGithubQuery({
+      ...listed.coverage,
+      repo: plan.query.repo,
+      withinHours: undefined,
+    });
+    if ('reason' in actual) return actual;
+    plan = actual.value;
+  }
   const parsed = NeoGithubQueryItems.safeParse(listed.data);
   if (!parsed.success)
     return {
@@ -175,10 +184,7 @@ export const queryNeoGithub = (superpipe({})('neo-github-query') as PipelineAPI)
   .input(['list', 'query'])
   .pipe(planNeoGithubQuery, 'query', 'result:query')
   .pipe(
-    async (list: NeoGithubLister, plan: Plan) => {
-      const data = await list(plan.args, { ...plan.query, by: plan.by });
-      return { data, at: new Date().toISOString() };
-    },
+    (list: NeoGithubLister, plan: Plan) => list(plan.args, { ...plan.query, by: plan.by }),
     ['list', 'query'],
     'listed'
   )

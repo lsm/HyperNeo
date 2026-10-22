@@ -203,7 +203,7 @@ test('known aliases and case coalesce, and relative windows retain the resolved 
       kind: 'pr',
       state: 'all',
       by: 'created',
-      since: relative.window.since,
+      withinHours: 6,
       limit: 50,
     });
   }
@@ -356,3 +356,40 @@ for (const mode of ['relative', 'growth']) {
     }
   }, 30000);
 }
+
+test('rolling windows retain the actual winning interval and reject a late earlier interval', async () => {
+  const f = fixture(true),
+    release = f.hold();
+  const older = { ...coverage, withinHours: 3 },
+    newer = { ...older, since: '2026-10-15T10:30:00Z' };
+  const held = f.facts.refresh(older, f.spawn, () => 100);
+  const db = new Database(f.path);
+  databases.push(db);
+  const facts = new CodingPrLedgerRepository(db).queryFacts;
+  const spawn: SpawnFn = () => ({
+    stdout: new Response(JSON.stringify(raw('Newer'))).body,
+    stderr: new Response('').body,
+    exited: Promise.resolve(0),
+    exitCode: 0,
+    kill: () => {},
+  });
+  const current = await facts.refresh(newer, spawn, () => 200);
+  release();
+  expect(await held).toEqual(current);
+  expect(current.coverage.query.since).toBe(newer.since);
+  f.data(null, 1);
+  const failed = await f.facts.refresh(
+    { ...newer, since: '2026-10-15T11:00:00Z' },
+    f.spawn,
+    () => 300
+  );
+  expect(failed.view).toMatchObject({ status: 'unknown', reason: 'failed', observedAt: 200 });
+  expect(failed.coverage.query.since).toBe(newer.since);
+  const distinct = await f.facts.refresh({ ...newer, withinHours: 6 }, spawn, () => 400);
+  expect(distinct.coverage.query.withinHours).toBe(6);
+  expect(f.facts.read(newer, 200).coverage.query.withinHours).toBe(3);
+  const rows = db.prepare('SELECT count(*) AS n FROM pack_coding_query_facts').get() as {
+    n: number;
+  };
+  expect(rows.n).toBe(2);
+});

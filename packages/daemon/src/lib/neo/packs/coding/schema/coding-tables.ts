@@ -31,6 +31,7 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
   );
   CREATE TABLE IF NOT EXISTS pack_coding_query_facts (
     subject TEXT PRIMARY KEY CHECK (json_valid(subject)),
+    coverage_json TEXT NOT NULL CHECK (json_valid(coverage_json)),
     fact_revision INTEGER NOT NULL,
     observation_revision INTEGER NOT NULL,
     value_json TEXT CHECK (value_json IS NULL OR json_valid(value_json)),

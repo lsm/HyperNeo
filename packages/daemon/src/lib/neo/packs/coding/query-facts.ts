@@ -11,6 +11,7 @@ import {
 } from './github-query.ts';
 
 type Row = {
+  coverage_json: string;
   fact_revision: number;
   observation_revision: number;
   value_json: string | null;
@@ -40,7 +41,15 @@ export class CodingQueryFactsRepository {
       since: input.since,
       until: input.until,
       limit: input.limit,
+      withinHours: input.withinHours,
     };
+  }
+
+  private subject(coverage: NeoGithubCollection) {
+    return JSON.stringify({
+      ...coverage,
+      since: coverage.withinHours ? undefined : coverage.since,
+    });
   }
 
   private row(subject: string): Row | null {
@@ -51,7 +60,7 @@ export class CodingQueryFactsRepository {
 
   read(input: NeoGithubCollection, now = Date.now(), maxAgeMs = 120_000) {
     const coverage = this.coverage(input),
-      row = this.row(JSON.stringify(coverage));
+      row = this.row(this.subject(coverage));
     const reason = !row
       ? 'missing'
       : (row.reason ??
@@ -60,7 +69,10 @@ export class CodingQueryFactsRepository {
       ? (JSON.parse(row.value_json) as z.infer<typeof NeoGithubQueryItems>)
       : null;
     return {
-      coverage: { kind: 'bounded-query' as const, query: coverage },
+      coverage: {
+        kind: 'bounded-query' as const,
+        query: row ? (JSON.parse(row.coverage_json) as NeoGithubCollection) : coverage,
+      },
       factRevision: row?.fact_revision ?? 0,
       observationRevision: row?.observation_revision ?? 0,
       view: reason
@@ -86,7 +98,7 @@ export class CodingQueryFactsRepository {
     now = Date.now
   ): Promise<ReturnType<CodingQueryFactsRepository['read']>> {
     const coverage = this.coverage(input),
-      subject = JSON.stringify(coverage);
+      subject = this.subject(coverage);
     let reads = pending.get(this.db);
     if (!reads) {
       reads = new Map();
@@ -111,7 +123,7 @@ export class CodingQueryFactsRepository {
   ) {
     let value: z.infer<typeof NeoGithubQueryItems> | null = null;
     try {
-      const plan = planNeoGithubQuery(coverage);
+      const plan = planNeoGithubQuery({ ...coverage, withinHours: undefined });
       if ('value' in plan) {
         const parsed = NeoGithubQueryItems.safeParse(await listNeoGithub(plan.value.args, spawn));
         if (parsed.success) value = parsed.data;
@@ -126,17 +138,23 @@ export class CodingQueryFactsRepository {
       const before = this.row(subject);
       if ((before?.observation_revision ?? 0) !== revision) return;
       const at = now(),
-        json = value ? JSON.stringify(value) : (before?.value_json ?? null);
+        json = value ? JSON.stringify(value) : (before?.value_json ?? null),
+        covered = value
+          ? JSON.stringify(coverage)
+          : (before?.coverage_json ?? JSON.stringify(coverage));
       this.db
         .prepare(`INSERT INTO pack_coding_query_facts
-        (subject,fact_revision,observation_revision,value_json,observed_at,attempted_at,reason)
-        VALUES(?,?,?,?,?,?,?) ON CONFLICT(subject) DO UPDATE SET
+        (subject,coverage_json,fact_revision,observation_revision,value_json,observed_at,attempted_at,reason)
+        VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(subject) DO UPDATE SET
+        coverage_json=excluded.coverage_json,
         fact_revision=excluded.fact_revision,observation_revision=excluded.observation_revision,
         value_json=excluded.value_json,observed_at=excluded.observed_at,
         attempted_at=excluded.attempted_at,reason=excluded.reason`)
         .run(
           subject,
-          (before?.fact_revision ?? 0) + (value && json !== before?.value_json ? 1 : 0),
+          covered,
+          (before?.fact_revision ?? 0) +
+            (value && (json !== before?.value_json || covered !== before?.coverage_json) ? 1 : 0),
           revision + 1,
           json,
           value ? at : (before?.observed_at ?? null),

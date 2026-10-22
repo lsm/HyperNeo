@@ -44,3 +44,21 @@ remains unverified until the whole reader lane is measured.
 The helper closes socket and daemon in finally. Retain evidence outside the
 worktree. After merge, confirm automatic deployment through owner RPC, verify
 ancestry and remove the worktree. Never force a live poll or deploy/restart.
+
+
+For relative-window regressions, repeat the helper in fresh runs with a third
+argument `relative` and `growth`. `relative` sends five identical `withinHours:3`
+requests 20 ms apart while fake gh is held 300 ms. They must make one lookup and
+all report the same actual search, lower bound and observation upper bound.
+`growth` makes four settled relative queries: four fresh lookups, one stored
+semantic query row. Before the fix these modes fail five-versus-one and
+four-versus-one respectively. Each mode saves `evidence/query-ledger.json`.
+
+Rolling collection identity includes the duration, not a new millisecond lower
+bound per invocation. Its stored coverage retains the actual interval selected
+by the winning acquisition. Different durations and explicit fixed windows stay
+separate. Failure retains the prior successful interval, and late responses may
+not replace newer intervals or values. No rows or stored history are pruned;
+this removes per-invocation rolling-query growth, not the cardinality of distinct
+explicit query subjects. Any future retention/deletion policy needs separate
+authorization under the standing data-preservation rule.
