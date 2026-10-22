@@ -35,6 +35,13 @@ describe('workStartPreparation', () => {
       await run(['git', 'config', 'user.email', 'synthetic@example.invalid'], source);
       writeFileSync(join(source, 'AGENTS.md'), '## Verify\nRun the synthetic proof.\n');
       await run(['git', 'add', '.'], source);
+      const hostile = spawnSync('git', ['commit', '-m', 'hostile control'], {
+        cwd: source,
+        encoding: 'utf8',
+        env: { ...inheritedEnv, GIT_CONFIG_NOSYSTEM: '1' },
+      });
+      expect(hostile.status).not.toBe(0);
+      expect(hostile.stderr).toContain('/synthetic/unavailable-signer');
       expect((await run(['git', 'commit', '-m', 'initial'], source)).code).toBe(0);
       await run(['git', 'remote', 'add', 'origin', source], source);
       const prepared = await preparation.prepare(
