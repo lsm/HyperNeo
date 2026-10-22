@@ -74,7 +74,8 @@ import { CodingPrEventRepository } from './packs/coding/pr-events.ts';
 import { CodingPrLedgerRepository } from './packs/coding/pr-ledger.ts';
 import { CodingPrSweepRepository } from './packs/coding/pr-sweep.ts';
 import { CodingTodoPrRepository } from './packs/coding/todo-prs.ts';
-import { type NeoWorkPrReader, readGithubPrs } from './packs/coding/work-prs.ts';
+import { type NeoWorkPrReader } from './packs/coding/work-prs.ts';
+import { createCodingWorkPrReader } from './packs/coding/work-reader.ts';
 import { neoEnabledPacks, neoPackBriefs, neoPacks } from './packs/index.ts';
 import { createLifeAdminPack } from './packs/life-admin/pack.ts';
 import type {
@@ -130,7 +131,7 @@ export class NeoService {
   private disposed = false;
   filePacks: readonly NeoPack[] = [];
   private readonly builtinPacks: NeoPack[];
-  readPrs: NeoWorkPrReader = readGithubPrs;
+  readPrs: NeoWorkPrReader = createCodingWorkPrReader(() => this.db.getDatabase());
   readBranchPrs: NeoBranchPrReader = createCodingBranchPrReader(() => this.db.getDatabase());
   readRefStates: NeoRefStateReader = readGithubRefStates;
   listGithub: NeoGithubLister = (args) => listNeoGithub(args);
