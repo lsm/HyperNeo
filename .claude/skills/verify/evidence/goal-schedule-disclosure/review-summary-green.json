@@ -1,0 +1,6 @@
+{
+  "loading": "Schedules",
+  "failed": "Schedules",
+  "recovered": "Schedules · 2",
+  "injection": "Only the first list reply was held/refused; retry and other RPCs use the real daemon."
+}
