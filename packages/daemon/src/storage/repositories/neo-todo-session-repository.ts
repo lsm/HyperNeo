@@ -1,3 +1,4 @@
+import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import type { WorkRef } from '../../lib/drivers/types.ts';
 import type { NeoDriverTarget } from '../../lib/neo/driver-work.ts';
 import type { Database } from '../sqlite-compat.ts';
@@ -14,12 +15,22 @@ export function neoSafeSessionLink(
   return /^\/(?!\/)/.test(link) ? link : null;
 }
 
-type StoredLinks = { ref: string | null; link: string | null; remote: string | null };
+type StoredLinks = {
+  target?: string | null;
+  ref: string | null;
+  link: string | null;
+  remote: string | null;
+};
 
 function sessionLinks(row: StoredLinks | null | undefined) {
-  const ref = row?.ref ? (JSON.parse(row.ref) as WorkRef) : null;
+  const ref: WorkRef | null = row?.ref
+    ? JSON.parse(row.ref)
+    : row?.target
+      ? (JSON.parse(row.target).ref ?? null)
+      : null;
   const remote = neoSafeSessionLink(row?.remote, true);
   return {
+    worker: ref ? workerIdentity(ref, null) : null,
     link:
       neoSafeSessionLink(row?.link, !!ref?.daemon) ??
       remote ??
@@ -64,14 +75,16 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
 
   readLinks(todoId: string): { link: string | null; remoteLink: string | null } {
     const row = this.db
-      .prepare('SELECT ref, link, remote_link AS remote FROM neo_todo_sessions WHERE todo_id = ?')
+      .prepare(
+        'SELECT target, ref, link, remote_link AS remote FROM neo_todo_sessions WHERE todo_id = ?'
+      )
       .get(todoId) as StoredLinks | null;
     return sessionLinks(row);
   }
 
   readLinksForTodos(todoIds: readonly string[]) {
     const rows = this.db
-      .prepare(`SELECT todo_id AS todoId, ref, link, remote_link AS remote
+      .prepare(`SELECT todo_id AS todoId, target, ref, link, remote_link AS remote
         FROM neo_todo_sessions WHERE todo_id IN (SELECT value FROM json_each(?))`)
       .all(JSON.stringify(todoIds)) as (StoredLinks & { todoId: string })[];
     return new Map(rows.map((row) => [row.todoId, sessionLinks(row)]));

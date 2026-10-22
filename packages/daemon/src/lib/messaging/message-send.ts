@@ -151,7 +151,7 @@ const digest = (text: string) => createHash('sha256').update(text).digest('hex')
 type SendResult = z.infer<typeof SendMessageResultSchema>;
 
 export type SessionStatusRead = (sessionId: string) => string | null;
-export type SessionTitleRead = (sessionId: string) => string | null;
+export type SessionTitleRead = (sessionId: string) => string | null | Promise<string | null>;
 export type SessionSendLimiter = {
   admit(origin: string, to: string, text: string): string | null;
   release(origin: string, to: string, text: string): void;
@@ -342,14 +342,14 @@ export function releaseUnsentSend(
   return sent;
 }
 
-export function stampSessionMessage(
+export async function stampSessionMessage(
   input: SendInput,
   origin: string,
   sessionTitle: SessionTitleRead
-): SendInput {
+): Promise<SendInput> {
   const sender = sessionSender(origin);
   if (sender === null) return input;
-  const name = sender === origin ? null : sessionTitle(sender);
+  const name = await sessionTitle(sender);
   const content = wrapSessionContent(input.message.message.content, { sessionId: sender, name });
   return {
     ...input,

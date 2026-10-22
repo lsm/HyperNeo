@@ -322,7 +322,7 @@ function NoticeRow({
                   {time.label}
                 </time>
               )}
-              {neoAppLabel(notice.ref.adapter)} · {notice.title}{' '}
+              {notice.worker?.label ?? `${neoAppLabel(notice.ref.adapter)} · ${notice.title}`}{' '}
               <span class={notice.kind === 'needs_you' ? 'font-medium text-fg' : ''}>
                 {t(`chat.notice.${notice.kind}`)}
               </span>

@@ -3,7 +3,7 @@ import { appendFileSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const args = process.argv.slice(2);
+const args = process.argv.slice(2).filter((arg) => arg !== '--include');
 appendFileSync(join(root, 'evidence', 'gh.log'), `${JSON.stringify(args)}\n`);
 if (args[0] === 'pr' && args[1] === 'view') {
  await Bun.write(Bun.stdout, readFileSync(join(root, 'pr.json'), 'utf8')); process.exit(0);
