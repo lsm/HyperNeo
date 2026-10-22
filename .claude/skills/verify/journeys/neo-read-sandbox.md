@@ -29,9 +29,21 @@ records it as `is_error:true`. The temp-directory write must also succeed. Neo m
 non-empty value. Ordinary workers retain their handoff draft directory.
 There is no command parser or unsandboxed retry. The strict SDK sandbox uses
 `enableWeakerNetworkIsolation:true` for macOS trustd; network hosts are unrestricted.
-Do not set `HYPERNEO_TEST_DISABLE_SANDBOX=1` for this proof. Ordinary Linux CI sets
-that flag and runs the explicitly labelled transport fixture with sandbox disabled;
-its passing result is not OS-containment evidence. Production options stay strict.
+Do not set `HYPERNEO_TEST_DISABLE_SANDBOX=1` for the OS-containment proof. Also run
+the CI transport control from `packages/daemon`, using its own fresh HOME:
+
+```bash
+RUN=$(mktemp -d /private/tmp/hn-neo-read-transport-XXXXXX)
+mkdir -p "$RUN/home" "$RUN/evidence"
+env -i HOME="$RUN/home" PATH="$PATH" TERM=dumb NODE_ENV=test \
+  HYPERNEO_USE_DEV_PROXY=0 HYPERNEO_TEST_DISABLE_SANDBOX=1 \
+  VERIFY_EVIDENCE_DIR="$RUN/evidence" node_modules/.bin/vitest run \
+  --config vitest.online.config.ts tests/online/convo/neo-publication-sdk.test.ts
+```
+
+The transport fixture must show a successful authenticated Bash PR read, without
+claiming an OS-denied write. Native Write/Edit remain unavailable. Ordinary Linux
+CI uses this mode; it is not OS-containment evidence. Production options stay strict.
 
 The daemon supplies Neo's `GH_TOKEN` at runtime from its existing GitHub poller
 credential: Keychain service `neokai.external-events.github`, account `default`,
