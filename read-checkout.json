@@ -1,0 +1,64 @@
+{
+  "mode": "verify",
+  "initial": "3603c8accecd1fc3aae4a16489edc85d30fd68c3",
+  "humanBefore": {
+    "head": "3603c8accecd1fc3aae4a16489edc85d30fd68c3",
+    "remote": "3603c8accecd1fc3aae4a16489edc85d30fd68c3",
+    "bytes": "human uncommitted work\n",
+    "status": "M answer.txt"
+  },
+  "firstPoll": {
+    "count": 0
+  },
+  "pollCursor": {
+    "lastSeenAt": 0,
+    "etags": {},
+    "processedPages": {
+      "issue_comments": 1,
+      "review_comments": 1,
+      "pulls": 1
+    },
+    "recentPullRequestNumbers": [],
+    "subscribedPullRequestNumbers": [],
+    "recentPullRequestHeadShas": {},
+    "recentPullRequestHeadRepos": {},
+    "checkRunEtags": {},
+    "checkRunLegacyPrs": {},
+    "checkRunPollingEnabledAt": 1792647403078,
+    "checkRunHeadLastSeenAt": {},
+    "checkRunHeadPendingLastSeenAt": {},
+    "pullsSeedInProgress": false,
+    "seenReactionIds": {},
+    "reactionEtags": {},
+    "mergeConflictStates": {},
+    "mergeConflictSequences": {},
+    "mergeConflictEtags": {},
+    "seenReviewIds": {},
+    "reviewEtags": {},
+    "reviewLastSeenAt": {},
+    "endpointLastSeenAt": {
+      "issue_comments": 1792561003087,
+      "review_comments": 1792561003249
+    },
+    "endpointPendingLastSeenAt": {},
+    "lastPollError": null,
+    "lastPartialPollError": null,
+    "lastReactionPollAt": null,
+    "lastPollCredentialFingerprint": "none"
+  },
+  "checkoutPath": "/private/tmp/hn-neo-read-green-vXaALk/data/worktrees/synthetic/neo-read-proof/neo-read",
+  "created": true,
+  "originAdvanced": "228caa13f0319b8fda03ac98c4689414d77b5a64",
+  "secondPoll": {
+    "count": 0
+  },
+  "humanAfter": {
+    "head": "3603c8accecd1fc3aae4a16489edc85d30fd68c3",
+    "remote": "3603c8accecd1fc3aae4a16489edc85d30fd68c3",
+    "bytes": "human uncommitted work\n",
+    "status": "M answer.txt"
+  },
+  "readHead": "228caa13f0319b8fda03ac98c4689414d77b5a64",
+  "content": "version two\n",
+  "verified": true
+}

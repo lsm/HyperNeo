@@ -1,0 +1,12 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:7:14). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 /Users/lsm/focus/worktrees/neo-read-checkout-sync/packages/daemon
+
+
+ Test Files  29 passed (29)
+      Tests  837 passed (837)
+   Start at  01:39:24
+   Duration  115.15s (tests 95%, transform 3%, import 1%)
+
