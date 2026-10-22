@@ -1,3 +1,4 @@
+import { GitHubPollSlice } from './github-poll-slice.ts';
 import { runLagPhase } from '../../event-loop-activity.ts';
 import { createHash } from 'node:crypto';
 import type { MessageHub } from '@hyperneo/shared';
@@ -1027,12 +1028,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       return 0;
     }
     let count = 0;
-    for (const repo of this.repo.listPollingRepos()) {
+    const repos = this.repo
+      .listPollingRepos()
+      .sort((a, b) => (a.lastPollAt ?? 0) - (b.lastPollAt ?? 0));
+    for (const [index, repo] of repos.entries()) {
       if (Date.now() < this.rateLimitedUntil) break;
       if (this.reapUnreferencedSessionRepo(repo)) continue;
       const spaceConfig = await this.context.config.getSpaceConfig(repo.spaceId, this.sourceId);
       if (spaceConfig && !spaceConfig.enabled) continue;
-      count += await this.pollWatchedRepo(repo, fetchImpl);
+      count += await this.pollWatchedRepo(repo, fetchImpl, repos.length - index);
     }
     return count;
   }
@@ -1053,8 +1057,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const spaceConfig = await this.context.config.getSpaceConfig(spaceId, this.sourceId);
     if (spaceConfig && !spaceConfig.enabled) return 0;
     let count = 0;
-    for (const repo of this.repo.listPollingRepos(spaceId)) {
-      count += await this.pollWatchedRepo(repo, fetchImpl);
+    const repos = this.repo
+      .listPollingRepos(spaceId)
+      .sort((a, b) => (a.lastPollAt ?? 0) - (b.lastPollAt ?? 0));
+    for (const [index, repo] of repos.entries()) {
+      count += await this.pollWatchedRepo(repo, fetchImpl, repos.length - index);
       if (Date.now() < this.rateLimitedUntil) break;
     }
     return count;
@@ -2395,11 +2402,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
   async pollWatchedRepo(
     watched: GitHubWatchedRepo,
-    fetchImpl: typeof fetch = fetch
+    fetchImpl: typeof fetch = fetch,
+    reposRemaining = 1
   ): Promise<number> {
     this.pollCycleCredentialGeneration = this.credentialGeneration;
     try {
-      return await this.pollWatchedRepoCore(watched, fetchImpl);
+      return await this.pollWatchedRepoCore(watched, fetchImpl, reposRemaining);
     } catch (err) {
       if (this.pollCycleCredentialGeneration === this.credentialGeneration) {
         this.repo.recordPollFailure(
@@ -2418,11 +2426,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
   private async pollWatchedRepoCore(
     watched: GitHubWatchedRepo,
-    fetchImpl: typeof fetch = fetch
+    fetchImpl: typeof fetch = fetch,
+    reposRemaining?: number
   ): Promise<number> {
     if (!this.context) return 0;
     let count = 0;
     const cursor = watched.pollCursor ?? {};
+    const slice = new GitHubPollSlice(cursor.pollResume, reposRemaining);
     const etags = cursor.etags ?? {};
     const processedPages = cursor.processedPages ?? {};
     const recentPullRequestNumbers = cursor.recentPullRequestNumbers ?? [];
@@ -2474,10 +2484,24 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     let reactionsFullyPolled = true;
     let pullsFetchedResumedPage = false;
 
+    const fetchPage: typeof fetch = (async (input, init) => {
+      const response = await fetchImpl(input, init);
+      slice.observe(response);
+      if (response.ok || response.status === 304) {
+        accessible = true;
+        this.pollCycleAccessible = true;
+      }
+      return response;
+    }) as typeof fetch;
     const token = await this.resolveToken();
     this.seedKnownLogin(cursor.selfLogin, token);
     this.pollCycleCredentialFingerprint = credentialFingerprint(token);
-    for (const endpoint of endpoints) {
+    for (const [stage, endpoint] of endpoints.entries()) {
+      if (!slice.starts(stage)) continue;
+      if (!slice.take({ stage })) {
+        partialScan = true;
+        break;
+      }
       const page = processedPages[endpoint.key] ?? 1;
       if (endpoint.key === 'pulls' && page > 1) pullsFetchedResumedPage = true;
       const query = new URLSearchParams();
@@ -2517,7 +2541,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
       let response: Response;
       try {
-        response = await fetchImpl(url, {
+        response = await fetchPage(url, {
           headers,
           signal: AbortSignal.timeout(GITHUB_POLL_REQUEST_TIMEOUT_MS),
         });
@@ -2718,26 +2742,50 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       let checkRunRateLimited = false;
       const baseCheckRunWatermark = checkRunPollingEnabledAt ?? watermarks.committed;
       const watchedBaseRepoPath = gitHubRepoPath(watched.owner, watched.repo);
-      for (const [headRef, prNumbers] of pullRequestNumbersByHeadRef) {
+      for (const [headRef, prNumbers] of slice.items(
+        3,
+        [...pullRequestNumbersByHeadRef],
+        ([head]) => head
+      )) {
         const { repoPath: headRepoPath, headSha } = parseHeadRefKey(headRef);
         const fallbackPrNumbers = prNumbers;
+        const resumingHead = slice.start?.stage === 3 && slice.start.item === headRef;
         const headWatermark =
           checkRunHeadLastSeenAt[headRef] ??
-          checkRunHeadPendingLastSeenAt[headRef] ??
+          (resumingHead ? undefined : checkRunHeadPendingLastSeenAt[headRef]) ??
           baseCheckRunWatermark;
-        let headPending = Math.max(headWatermark, checkRunHeadPendingLastSeenAt[headRef] ?? 0);
+        let headPending = Math.max(
+          headWatermark,
+          checkRunHeadPendingLastSeenAt[headRef] ?? 0,
+          resumingHead ? (slice.start?.pending ?? 0) : 0
+        );
         let headSucceeded = true;
         let headPruned = false;
         const repoPathsToQuery =
           headRepoPath !== watchedBaseRepoPath
             ? [headRepoPath, watchedBaseRepoPath]
             : [headRepoPath];
-        const supersededCheckKeys = new Set<string>();
+        const supersededCheckKeys = new Set<string>(resumingHead ? slice.start?.superseded : []);
         const seenCheckRunIds = new Set<number | string>();
-        for (const checkRunRepoPath of repoPathsToQuery) {
+        for (const checkRunRepoPath of slice.repos(headRef, repoPathsToQuery)) {
           if (headPruned) break;
-          let page = 1;
+          let page = slice.page(3, headRef, checkRunRepoPath);
           while (true) {
+            if (
+              !slice.take({
+                stage: 3,
+                item: headRef,
+                repo: checkRunRepoPath,
+                page,
+                superseded: [...supersededCheckKeys],
+                pending: headPending,
+              })
+            ) {
+              partialScan = true;
+              checkRunRateLimited = true;
+              headSucceeded = false;
+              break;
+            }
             const query = new URLSearchParams({
               status: 'completed',
               filter: 'all',
@@ -2751,7 +2799,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             }
             let response: Response;
             try {
-              response = await fetchImpl(
+              response = await fetchPage(
                 `${GITHUB_API_BASE}/repos/${checkRunRepoPath}/commits/${encodeURIComponent(headSha)}/check-runs?${query.toString()}`,
                 {
                   headers: checkRunHeaders,
@@ -2960,9 +3008,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       ]),
     ];
     const missingPullRequests = new Set<number>();
-    for (const prNumber of trackedPullRequestNumbers) {
+    for (const prNumber of slice.items(4, trackedPullRequestNumbers, String)) {
       if (partialScan) break;
-      if (!canPollReactions(latestRateLimit?.remaining)) {
+      if (!canPollPullRequests(latestRateLimit?.remaining)) {
+        partialScan = true;
+        break;
+      }
+      if (!slice.take({ stage: 4, item: String(prNumber) })) {
         partialScan = true;
         break;
       }
@@ -2971,7 +3023,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         mergeHeaders['If-None-Match'] = mergeConflictEtags[prNumber];
       let mergeResponse: Response;
       try {
-        mergeResponse = await fetchImpl(`${base}/pulls/${prNumber}`, {
+        mergeResponse = await fetchPage(`${base}/pulls/${prNumber}`, {
           headers: mergeHeaders,
           signal: AbortSignal.timeout(GITHUB_POLL_REQUEST_TIMEOUT_MS),
         });
@@ -3079,10 +3131,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
     }
 
-    for (const prNumber of trackedPullRequestNumbers) {
+    for (const prNumber of slice.items(5, trackedPullRequestNumbers, String)) {
       if (missingPullRequests.has(prNumber)) continue;
       if (partialScan) break;
-      if (!canPollReactions(latestRateLimit?.remaining)) {
+      if (!canPollPullRequests(latestRateLimit?.remaining)) {
         partialScan = true;
         break;
       }
@@ -3090,11 +3142,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (!(prNumber in reviewLastSeenAt)) {
         reviewLastSeenAt[prNumber] = watermarks.committed;
       }
-      let reviewPage = 1;
+      let reviewPage = slice.page(5, String(prNumber));
       let reviewScanComplete = false;
       let reviewScanSinglePage = false;
       let reviewPendingEtag: string | null = null;
       while (true) {
+        if (!slice.take({ stage: 5, item: String(prNumber), page: reviewPage })) {
+          partialScan = true;
+          break;
+        }
         const reviewHeaders = gitHubPollingHeaders(token);
         if (reviewPage === 1 && reviewEtags[prNumber]) {
           reviewHeaders['If-None-Match'] = reviewEtags[prNumber];
@@ -3102,7 +3158,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         if (reviewPage > 1) reviewQuery.set('page', String(reviewPage));
         let reviewResponse: Response;
         try {
-          reviewResponse = await fetchImpl(
+          reviewResponse = await fetchPage(
             `${base}/pulls/${prNumber}/reviews?${reviewQuery.toString()}`,
             {
               headers: reviewHeaders,
@@ -3195,7 +3251,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           reviewScanSinglePage = reviewPage === 1;
           break;
         }
-        if (!canPollReactions(reviewRateLimit.remaining)) {
+        if (!canPollPullRequests(reviewRateLimit.remaining)) {
           partialScan = true;
           break;
         }
@@ -3218,10 +3274,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
     }
 
-    for (const prNumber of trackedPullRequestNumbers) {
+    for (const prNumber of slice.items(6, trackedPullRequestNumbers, String)) {
       if (missingPullRequests.has(prNumber)) continue;
       if (partialScan) break;
       if (!canPollReactions(latestRateLimit?.remaining)) {
+        reactionsFullyPolled = false;
+        partialScan = true;
+        break;
+      }
+      if (!slice.take({ stage: 6, item: String(prNumber) })) {
         reactionsFullyPolled = false;
         partialScan = true;
         break;
@@ -3231,7 +3292,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (reactionEtags[prNumber]) reactionHeaders['If-None-Match'] = reactionEtags[prNumber];
       let response: Response;
       try {
-        response = await fetchImpl(`${base}/issues/${prNumber}/reactions?${query.toString()}`, {
+        response = await fetchPage(`${base}/issues/${prNumber}/reactions?${query.toString()}`, {
           headers: reactionHeaders,
           signal: AbortSignal.timeout(GITHUB_POLL_REQUEST_TIMEOUT_MS),
         });
@@ -3347,6 +3408,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (!etagTracked) delete checkRunEtags[key];
     }
     const pullsCheckRunDeferred = pullsFetchedResumedPage;
+    const incompleteScan =
+      partialScan || hasBacklog || pullsCheckRunDeferred || cursor.pollResume !== undefined;
     const credentialGenerationStale =
       this.pollCycleCredentialGeneration !== null &&
       this.pollCycleCredentialGeneration !== this.credentialGeneration;
@@ -3360,19 +3423,16 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       : accessible
         ? pollErrorMessage != null
           ? pollErrorMessage
-          : partialScan || hasBacklog || pullsCheckRunDeferred
+          : incompleteScan
             ? (cursor.lastPartialPollError ?? 'poll cycle incomplete — some endpoints unchecked')
             : null
         : committedLastPollError != null
           ? null
           : (cursor.lastPartialPollError ?? null);
     const cursorPayload: PollCursor = {
-      lastSeenAt:
-        partialScan || hasBacklog || pullsCheckRunDeferred
-          ? watermarks.committed
-          : watermarks.pending,
-      pendingLastSeenAt:
-        partialScan || hasBacklog || pullsCheckRunDeferred ? watermarks.pending : undefined,
+      pollResume: slice.next,
+      lastSeenAt: incompleteScan ? watermarks.committed : watermarks.pending,
+      pendingLastSeenAt: incompleteScan ? watermarks.pending : undefined,
       etags,
       processedPages,
       recentPullRequestNumbers,
@@ -3530,6 +3590,10 @@ function gitHubPollingHeaders(token: string | undefined): Record<string, string>
   };
   if (token) headers.Authorization = `Bearer ${token}`;
   return headers;
+}
+
+function canPollPullRequests(remaining: number | undefined): boolean {
+  return remaining === undefined || remaining >= RATE_LIMIT_LOW_REMAINING_THRESHOLD;
 }
 
 function canPollReactions(rateLimitRemaining: number | undefined): boolean {

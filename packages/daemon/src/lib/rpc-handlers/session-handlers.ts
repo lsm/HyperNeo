@@ -97,28 +97,6 @@ export async function detectStrandedProviders(
   return stranded;
 }
 
-function extractMessageText(content: unknown): string {
-  if (typeof content === 'string') {
-    return content;
-  }
-
-  if (!Array.isArray(content)) {
-    return '';
-  }
-
-  return content
-    .map((block) => {
-      if (typeof block !== 'object' || block === null) return '';
-      const record = block as Record<string, unknown>;
-      if (record.type === 'text' && typeof record.text === 'string') {
-        return record.text;
-      }
-      return '';
-    })
-    .filter(Boolean)
-    .join('\n');
-}
-
 export interface SessionHandlerDeps {
   ensureSession(target: SessionTarget): Promise<EnsureSessionOutcome>;
   resolveClones?: ResolveClones;
@@ -930,16 +908,7 @@ export function setupSessionHandlers(
     }
 
     const db = sessionManager.getDatabase();
-    const result = db.getUserMessagesByStatus(targetSessionId, status, limit);
-    const messages = result.messages.map((message) => ({
-      dbId: message.dbId,
-      uuid: message.uuid ?? '',
-      timestamp: message.timestamp,
-      status,
-      text: extractMessageText(message.message.content),
-    }));
-
-    return { messages, total: result.total };
+    return db.getUserMessagesByStatusAsync(targetSessionId, status, limit);
   });
 
   messageHub.onRequest('session.messages.removePending', async (data) => {

@@ -1,7 +1,9 @@
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import { generateUUID } from '@hyperneo/shared';
+import type { GitHubPollResume } from './github-poll-slice.ts';
 
 export interface PollCursor {
+  pollResume?: GitHubPollResume;
   lastSeenAt?: number;
   pendingLastSeenAt?: number;
   etags?: Record<string, string>;

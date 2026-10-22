@@ -9,6 +9,7 @@
 #      handler registration lives in setupRPCHandlers, invisible to unit shards)
 #   3. migrations ran — sqlite_master holds > 80 tables (read-only probe)
 #   4. SIGTERM triggers a graceful shutdown
+#   5. a manual session status read opens and closes the read-only SDK worker
 #
 # Requires: deno on PATH (CI pins 2.9.4), curl, and node_modules populated by
 # `bun install` (Deno resolves workspace npm deps from it).
@@ -26,6 +27,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
 PORT="${DENO_SMOKE_PORT:-9283}"
+[[ "$PORT" != 8399 ]]
 BOOT_TIMEOUT="${DENO_SMOKE_BOOT_TIMEOUT:-120}"
 DENO_SMOKE_BIN="${DENO_SMOKE_BIN:-}"
 
@@ -41,6 +43,7 @@ fi
 WORK_DIR="$(mktemp -d)"
 DB_PATH="$WORK_DIR/deno-smoke.db"
 LOG_FILE="$WORK_DIR/daemon.log"
+mkdir -p "$WORK_DIR/home"
 
 DAEMON_PID=""
 cleanup() {
@@ -63,11 +66,11 @@ if [ -n "$DENO_SMOKE_BIN" ]; then
 fi
 
 if [ -n "$DENO_SMOKE_BIN" ]; then
-	HYPERNEO_PORT="$PORT" DB_PATH="$DB_PATH" \
+	env -i PATH="$PATH" NODE_ENV=test HOME="$WORK_DIR/home" HYPERNEO_DATA_DIR="$WORK_DIR/data" HYPERNEO_WORKSPACE_PATH="$WORK_DIR" HYPERNEO_PORT="$PORT" DB_PATH="$DB_PATH" \
 		"$DENO_SMOKE_BIN" > "$LOG_FILE" 2>&1 &
 else
 	cd "$REPO_ROOT/packages/daemon"
-	HYPERNEO_PORT="$PORT" DB_PATH="$DB_PATH" \
+	env -i PATH="$PATH" NODE_ENV=test HOME="$WORK_DIR/home" HYPERNEO_DATA_DIR="$WORK_DIR/data" HYPERNEO_WORKSPACE_PATH="$WORK_DIR" HYPERNEO_PORT="$PORT" DB_PATH="$DB_PATH" \
 		deno run -A main.ts > "$LOG_FILE" 2>&1 &
 fi
 DAEMON_PID=$!
@@ -145,6 +148,26 @@ if ! SMOKE_WS_URL="ws://localhost:$PORT/ws" deno eval '
 		console.error("[deno-smoke] FAIL: /ws handshake errored");
 		Deno.exit(1);
 	});
+'; then
+	dump_log
+	exit 1
+fi
+
+if ! SMOKE_WS_URL="ws://localhost:$PORT/ws" SMOKE_WORKSPACE_PATH="$WORK_DIR" deno eval '
+	const ws = new WebSocket(Deno.env.get("SMOKE_WS_URL"));
+	const timer = setTimeout(() => { console.error("SDK status reader RPC timed out"); Deno.exit(1); }, 15000);
+	const send = (id, method, data) => ws.send(JSON.stringify({ id, method, data, type:"REQ", sessionId:"global", version:"1.0.0", timestamp:new Date().toISOString() }));
+	ws.onopen = () => send("create", "session.create", {workspacePath:Deno.env.get("SMOKE_WORKSPACE_PATH"), config:{queryMode:"manual"}});
+	ws.onmessage = ({data}) => {
+		const reply = JSON.parse(data), id = reply.requestId ?? reply.id;
+		if (id !== "create" && id !== "status") return;
+		if (reply.error) { console.error(JSON.stringify(reply.error)); Deno.exit(1); }
+		if (id === "create") send("status", "session.messages.byStatus", {sessionId:reply.data.sessionId, status:"consumed", limit:20});
+		else {
+			if (reply.data.total !== 0 || reply.data.messages.length !== 0) Deno.exit(1);
+			clearTimeout(timer); console.log("[deno-smoke] SDK status reader RPC ok"); ws.close(); Deno.exit(0);
+		}
+	};
 '; then
 	dump_log
 	exit 1
