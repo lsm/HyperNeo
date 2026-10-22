@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { runMigration444 } from '../../../../src/storage/schema/m444-neo-goals.ts';
 import { runMigration406 } from '../../../../src/storage/schema/m406-goal-owner-session.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
@@ -38,6 +39,16 @@ function legacy() {
 const migrate = (db: Database) => runMigrations(db, () => {});
 
 describe('standalone goal upgrade', () => {
+  test('minimal historical schemas without Space tables still upgrade', () => {
+    const db = new Database(':memory:');
+    try {
+      runMigration444(db);
+      expect(db.prepare('SELECT COUNT(*) AS n FROM neo_goals').get()).toEqual({ n: 0 });
+      expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
   test('preserves 266 asks, parent and child rows, rowids, indexes and triggers', () => {
     const db = legacy();
     try {
