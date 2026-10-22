@@ -39,7 +39,7 @@ describe('Step and result disclosures', () => {
       expect(body.closest('button')).toBeNull();
       fireEvent.click(body);
       expect(less.getAttribute('aria-expanded')).toBe('true');
-      expect(less.style.cssFloat).toBe('right');
+      expect(less.style.getPropertyValue('float')).toBe('right');
       fireEvent.click(less);
       expect(screen.getByText('Thinking preview')).toBeTruthy();
     }
@@ -92,9 +92,9 @@ describe('Step and result disclosures', () => {
     );
     fireEvent.click(screen.getByText(/Worked/));
     expect(screen.queryByText('Synthetic step detail')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: /more.*Show steps/ }));
+    fireEvent.click(screen.getByRole('button', { name: /more.*Show.*steps/ }));
     const detail = screen.getByText('Synthetic step detail');
-    const less = screen.getByRole('button', { name: /less.*Hide steps/ });
+    const less = screen.getByRole('button', { name: /less.*Hide.*steps/ });
     expect(detail.compareDocumentPosition(less) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.click(detail);
     expect(less.getAttribute('aria-expanded')).toBe('true');
@@ -146,11 +146,11 @@ describe('Step and result disclosures', () => {
     const view = render(<TurnStatusLine turn={turn} expanded={false} onToggle={toggle} />);
     fireEvent.click(screen.getByText(/Worked for/));
     expect(toggle).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: /more.*Show steps/ }));
+    fireEvent.click(screen.getByRole('button', { name: /more.*Show.*steps/ }));
     expect(toggle).toHaveBeenCalledOnce();
     view.rerender(<TurnStatusLine turn={turn} expanded={true} onToggle={toggle} />);
     expect(
-      screen.getByRole('button', { name: /less.*Hide steps/ }).getAttribute('aria-expanded')
+      screen.getByRole('button', { name: /less.*Hide.*steps/ }).getAttribute('aria-expanded')
     ).toBe('true');
   });
 });
