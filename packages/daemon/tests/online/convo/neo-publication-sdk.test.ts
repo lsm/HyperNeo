@@ -262,6 +262,7 @@ test(`root startup, reads, resume and publication (${sandboxProof ? 'real OS san
     DEFAULT_MODEL: 'haiku',
     GH_TOKEN: 'synthetic-inherited-owner-token',
     GITHUB_TOKEN: 'synthetic-inherited-owner-token',
+    GITHUB_ACTIONS: 'true',
     ZDOTDIR: shellHome,
   };
   const prior = new Map(Object.keys(environment).map((key) => [key, process.env[key]]));
