@@ -52,6 +52,21 @@ const fakeJob: Job = {
 };
 
 describe('createCleanupHandler', () => {
+  it('surfaces worker failure without deleting or rescheduling on the main connection', async () => {
+    const old = Date.now() - 8 * 24 * 60 * 60 * 1000;
+    db.prepare(`INSERT INTO job_queue
+      (id,queue,status,payload,priority,max_retries,retry_count,run_at,created_at,completed_at)
+      VALUES ('old-worker-proof','some.queue','completed','{}',0,3,0,?,?,?)`).run(old, old, old);
+    const handler = createCleanupHandler(jobQueue, async () => {
+      throw new Error('writer unavailable');
+    });
+    await expect(handler(fakeJob)).rejects.toThrow('writer unavailable');
+    expect(jobQueue.getJob('old-worker-proof')).not.toBeNull();
+    expect(jobQueue.listJobs({ queue: JOB_QUEUE_CLEANUP, status: 'pending', limit: 10 })).toEqual(
+      []
+    );
+  });
+
   let db: Database;
   let jobQueue: JobQueueRepository;
 
