@@ -184,6 +184,21 @@ if ! SMOKE_WS_URL="ws://localhost:$PORT/ws" SMOKE_WORKSPACE_PATH="$WORK_DIR" den
 	exit 1
 fi
 
+if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_WRITER_PATH="$REPO_ROOT/packages/daemon/src/lib/external-events/session-event-writer.ts" deno eval --config "$REPO_ROOT/packages/daemon/deno.json" '
+  const { SessionEventWriter } = await import("file://" + Deno.env.get("SMOKE_WRITER_PATH"));
+  const writer = new SessionEventWriter(Deno.env.get("SMOKE_DB_PATH"));
+  try {
+    const event = { id:"deno-writer", spaceId:"sessions", source:"github", topic:"github/synthetic/writer/pull_request/1.review_submitted", dedupeKey:"deno-once", occurredAt:1, ingestedAt:2, summary:"Synthetic", payload:{body:"complete synthetic result"} };
+    const first = await writer.ingest(event);
+    const duplicate = await writer.ingest({...event,id:"deno-duplicate"});
+    if (first.action !== "ingested" || duplicate.action !== "duplicate" || duplicate.eventId !== event.id) Deno.exit(1);
+    console.log("[deno-smoke] session event writer commit/dedupe ok");
+  } finally { await writer.close(); }
+'; then
+  dump_log
+  exit 1
+fi
+
 if ! SMOKE_DB_PATH="$DB_PATH" deno eval '
 	const { DatabaseSync } = await import("node:sqlite");
 	const db = new DatabaseSync(Deno.env.get("SMOKE_DB_PATH"), { readOnly: true });
