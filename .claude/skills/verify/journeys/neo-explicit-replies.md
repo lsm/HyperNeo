@@ -12,7 +12,9 @@ No real provider, credential file, live database or port 8399 is used.
 
 The installed SDK receives the intake-stored human message id and invokes
 `neo.publication.publish` with `replyTo: [id]`, retries it idempotently, and
-invokes `neo.question.ask` citing the same id. The actual web publication reader
+invokes `neo.question.ask` citing the same id. A real scheduled-note delivery also
+appears through neo.conversation.read using explicit scheduler metadata; it
+creates no origin stamp. The actual web publication reader
 preserves the reference, and `neo.question.get` returns the stored question's
 reference. A publication answers only the human inputs it names; a question
 asks back without marking its inputs answered. Omitting replyTo stays supported.

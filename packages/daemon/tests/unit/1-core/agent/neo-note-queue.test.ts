@@ -208,7 +208,7 @@ describe('Neo note queue', () => {
   it('keeps delivery retry identity without suppressing messages by subject', async () => {
     const harness = await makeHarness('neo:retry');
     for (const id of ['w1:stall:1', 'w1:stall:1', 'w1:stall:2']) {
-      await harness.service.deliverForward(harness.sessionId, id, 'fact', harness.sessionId, null);
+      await harness.service.deliverForward(harness.sessionId, id, 'fact', harness.sessionId);
     }
     expect(mailboxed(harness, 'w1:stall:1')).toBe(1);
     expect(mailboxed(harness, 'w1:stall:2')).toBe(1);

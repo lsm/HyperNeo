@@ -8,6 +8,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
+import { createScheduleDelivery } from '../../../src/lib/scheduler/session-schedule-delivery.ts';
+import { createOperationRegistry } from '../../../src/lib/operations/registry.ts';
+import { SessionScheduleRepository } from '../../../src/storage/repositories/session-schedule-repository.ts';
 import { NeoAskTodoRepository } from '../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { readNeoPublications } from '../../../../web/src/neo/publication-client.ts';
 
@@ -265,6 +268,43 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
     });
     expect(opened.ok).toBe(true);
     expect(opened.sessionId).toMatch(/^neo:/);
+    const schedule = new SessionScheduleRepository(daemon.db.getDatabase()).create(
+      {
+        target: { adapter: 'hyperneo', id: opened.sessionId },
+        sourceKind: 'reminder',
+        sourceId: 'fictional-wake',
+        note: 'Check the synthetic schedule',
+        cadence: { kind: 'every', everyMs: 60000 },
+        nudgeEvery: 1,
+        createdBySession: null,
+      },
+      Date.now()
+    );
+    await createScheduleDelivery(daemon.db, () => createOperationRegistry([])).deliver(
+      schedule,
+      'fictional-wake-message',
+      'Check the synthetic schedule'
+    );
+    const conversation = () =>
+      hub.request<{ items: { role: string; wake?: { scheduleId: string; sourceId: string } }[] }>(
+        'operation.invoke',
+        { name: 'neo.conversation.read', input: { conversationId: opened.sessionId.slice(4) } }
+      );
+    let history = await conversation();
+    const wakeDeadline = Date.now() + 15000;
+    while (!history.items.some((item) => item.role === 'wake') && Date.now() < wakeDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      history = await conversation();
+    }
+    expect(history.items).toEqual([
+      expect.objectContaining({
+        role: 'wake',
+        wake: expect.objectContaining({ scheduleId: schedule.id, sourceId: 'fictional-wake' }),
+      }),
+    ]);
+    expect(
+      daemon.db.getDatabase().prepare('SELECT COUNT(*) AS count FROM neo_input_origins').get()
+    ).toEqual({ count: 0 });
     const todos = new NeoAskTodoRepository(daemon.db.getDatabase());
     todos.openAsk({
       id: 'fictional-garden',
@@ -359,6 +399,7 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
             receipts,
             publication: page.items[0],
             question,
+            wakeHistory: history,
             webRead,
             daemonPort: daemon.server.port,
             mockPort: address.port,

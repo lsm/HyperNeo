@@ -51,7 +51,8 @@ describe('Neo publication without runtime input attribution', () => {
 
   test('publishes without a holder and leaves answered input unspecified', () => {
     const receipt = publish(draft, caller);
-    expect(receipt).toMatchObject({ accepted: true, created: true, answered: null });
+    expect(receipt).toMatchObject({ accepted: true, created: true });
+    expect(receipt).not.toHaveProperty('answered');
     expect(ledger.list(conversationId)).toEqual([expect.objectContaining({ shortText: 'Ready' })]);
     const stored = ledger.list(conversationId)![0];
     expect(stored.askOrigin).toBeUndefined();

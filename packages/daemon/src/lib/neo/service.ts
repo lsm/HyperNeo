@@ -13,7 +13,6 @@ import type { Database } from '../../storage/database.ts';
 import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import { NeoCardEventSubscriptionRepository } from '../../storage/repositories/neo-card-event-subscription-repository.ts';
 import { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
-import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-origin-repository.ts';
 import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
@@ -41,7 +40,6 @@ import { invokeOperation } from '../operations/invoke.ts';
 import { onHumanDevicesReset } from '../pairing/human-device-reset.ts';
 import { remoteDaemons } from '../remote-daemons/registry.ts';
 import type { SessionManager } from '../session/session-manager.ts';
-import { createNeoAskOriginResolver, type NeoAskOrigin } from './ask-origin.ts';
 import {
   neoCardWorkerSession,
   planNeoCardEventRoute,
@@ -54,11 +52,6 @@ import { driverWorkCaller } from './driver-work.ts';
 import { neoFolderPath } from './folder.ts';
 import { openNeoDefaultSession } from './inbox.ts';
 import { effectiveNeoPreference, planNeoAlignment } from './model-preference.ts';
-import {
-  type NeoDeliveryTrigger,
-  neoDeliveryTrigger,
-  neoHumanTrigger,
-} from './notification-triggers.ts';
 import { type NeoRefStateReader, readGithubRefStates } from './packs/coding/ask-prs.ts';
 import {
   localCodingSessionId,
@@ -137,8 +130,6 @@ export class NeoService {
     readGithubDeploys(urls, () =>
       readNeoDaemonCommits({ name: hostname(), commit: BUILD_METADATA.commit }, remoteDaemons)
     );
-  readonly resolveAskOrigin: ReturnType<typeof createNeoAskOriginResolver>;
-  readonly inputOrigins: NeoInputOriginRepository;
   readonly notifyChanged: () => void;
   private readonly noteWorking: () => void;
   private workingKey = '';
@@ -195,31 +186,17 @@ export class NeoService {
         invokeOperation(this.sessions.getOperationRegistry(), name, input, caller),
       packs: () => this.installedPacks(),
       tell: (ask, todo, note, key) => {
-        const parent = ask.originMessageId
-          ? { sessionId: ask.sessionId, messageId: ask.originMessageId }
-          : null;
-        const resolved = parent && this.resolveAskOrigin(parent);
-        const origin = resolved && this.db.getSession(resolved.sessionId) ? resolved : parent;
         return this.deliverForward(
-          origin?.sessionId ?? ask.sessionId,
+          ask.sessionId,
           key ?? `neo-todo:${todo.id}:${todo.updatedAt}`,
           note,
-          ask.sessionId,
-          origin,
-          'continues'
+          ask.sessionId
         );
       },
       tellAsk: async (ask, messageId, note) => {
         const status = neoSessionStatus(this.db.getSession(ask.sessionId)?.processingState);
         if (status !== 'idle' || this.hasDelivery(ask.sessionId, messageId)) return;
-        await this.deliverForward(
-          ask.sessionId,
-          messageId,
-          note,
-          ask.sessionId,
-          ask.originMessageId ? { sessionId: ask.sessionId, messageId: ask.originMessageId } : null,
-          'continues'
-        );
+        await this.deliverForward(ask.sessionId, messageId, note, ask.sessionId);
       },
       changed: this.notifyChanged,
     });
@@ -242,14 +219,6 @@ export class NeoService {
       createLifeAdminPack(),
     ];
     for (const pack of this.builtinPacks) pack.todos?.schema(db.getDatabase());
-    const inputOrigins = new NeoInputOriginRepository(db.getDatabase());
-    this.inputOrigins = inputOrigins;
-    this.resolveAskOrigin = createNeoAskOriginResolver({
-      getBinding: (id) => this.repo.getBindingBySession(id),
-      getPrompts: (sessionId, messageId) =>
-        this.db.getSDKMessageRepo().getStoredPromptsByUuid(sessionId, messageId),
-      getStamp: (sessionId, messageId) => inputOrigins.get(sessionId, messageId),
-    });
     const notifyPublication = () => {
       try {
         void hub.event('neo.changed', {});
@@ -319,16 +288,6 @@ export class NeoService {
       offDeleted();
       offExternal();
     };
-  }
-
-  private isHumanInput(input: NeoAskOrigin): boolean {
-    return this.db
-      .getSDKMessageRepo()
-      .getStoredPromptsByUuid(input.sessionId, input.messageId)
-      .some(
-        (message) =>
-          message.type === 'user' && 'inputKind' in message && message.inputKind === 'human'
-      );
   }
 
   private appendPublication(input: NeoPublicationInput) {
@@ -864,11 +823,9 @@ export class NeoService {
     sessionId: string,
     messageId: string,
     content: MailboxMessageContent,
-    fromSessionId: string,
-    ask: NeoAskOrigin | null,
-    trigger: NeoDeliveryTrigger
+    fromSessionId: string
   ): Promise<void> {
-    return this.deliver(sessionId, messageId, content, fromSessionId, ask, trigger);
+    return this.deliver(sessionId, messageId, content, fromSessionId);
   }
 
   logReorganize(line: string): void {
@@ -879,40 +836,16 @@ export class NeoService {
     sessionId: string,
     messageId: string,
     content: MailboxMessageContent,
-    originSessionId: string,
-    parent: NeoAskOrigin | null = null,
-    trigger: NeoDeliveryTrigger = null
+    originSessionId: string
   ): Promise<void> {
     const key = `${sessionId}:${messageId}`;
     const existing = this.deliveries.get(key);
     if (existing) return existing;
     const delivery = Promise.resolve()
-      .then(() => this.stampDelivery({ sessionId, messageId }, parent, trigger))
       .then(() => this.enqueueDelivery(sessionId, messageId, content, originSessionId))
       .finally(() => this.deliveries.delete(key));
     this.deliveries.set(key, delivery);
     return delivery;
-  }
-
-  private stampDelivery(
-    input: NeoAskOrigin,
-    parent: NeoAskOrigin | null,
-    trigger: NeoDeliveryTrigger
-  ): void {
-    const origin = (parent ? this.resolveAskOrigin(parent) : null) ?? input;
-    const triggerId = neoDeliveryTrigger(trigger, () => this.parentTrigger(parent));
-    this.inputOrigins.record(input, origin, Date.now(), triggerId);
-  }
-
-  inputTrigger(input: NeoAskOrigin): string | null {
-    return (
-      this.inputOrigins.trigger(input.sessionId, input.messageId) ??
-      (this.isHumanInput(input) ? neoHumanTrigger(input.messageId) : null)
-    );
-  }
-
-  private parentTrigger(parent: NeoAskOrigin | null): string | null {
-    return parent ? this.inputTrigger(parent) : null;
   }
 
   private async enqueueDelivery(

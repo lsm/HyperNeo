@@ -4,7 +4,6 @@ import {
   SessionScheduleRepository,
   type SessionSchedule,
 } from '../../storage/repositories/session-schedule-repository.ts';
-import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-origin-repository.ts';
 import type { WorkStatus } from '../drivers/types.ts';
 import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
 import { renderAddress } from '../mailbox/address.ts';
@@ -79,11 +78,11 @@ export function createScheduleDelivery(db: Database, registry: () => OperationRe
           .length
       )
         return;
-      new NeoInputOriginRepository(db.getDatabase()).record(
-        { sessionId: ref.id, messageId },
-        { sessionId: ref.id, messageId },
-        Date.now(),
-        origin
+      new SessionScheduleRepository(db.getDatabase()).recordWake(
+        ref.id,
+        messageId,
+        { scheduleId: schedule.id, sourceKind: schedule.sourceKind, sourceId: schedule.sourceId },
+        Date.now()
       );
       const sent = await handoffPromptToMailbox({
         to: renderAddress({ kind: 'session', sessionId: ref.id }),
