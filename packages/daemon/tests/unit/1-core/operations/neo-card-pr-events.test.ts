@@ -228,6 +228,20 @@ describe('Neo todo pull request events', () => {
       expect(sent).toHaveLength(1);
     }
   );
+  test.each(['review_submitted', 'review_comment_polled', 'comment_polled', 'reaction_added'])(
+    '%s reaches its owner without forced completion reads or a global worker sweep',
+    async (action) => {
+      todo();
+      const reads = mock(async () => prs);
+      service.readPrs = reads;
+      await event(action, { body: 'Synthetic feedback', state: 'APPROVED' });
+      expect(sent).toHaveLength(1);
+      expect(sent[0].ref).toEqual(ref);
+      expect(reads).not.toHaveBeenCalled();
+      expect(service.todos.getTodo('todo')?.state).toBe('doing');
+    }
+  );
+
   test('merge delivery refreshes evidence, checks the todo and wakes its owning Neo once', async () => {
     const row = todo();
     prs = [{ ...open, state: 'MERGED' }];
