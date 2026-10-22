@@ -1,0 +1,12 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:29:30). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 /Users/lsm/focus/worktrees/disclosure-error-workflow/packages/web
+
+
+ Test Files  5 passed (5)
+      Tests  68 passed (68)
+   Start at  03:02:28
+   Duration  855ms (environment 36%, setup 25%, tests 21%, transform 15%, import 3%, worker 1%)
+

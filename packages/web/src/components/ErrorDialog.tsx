@@ -104,12 +104,9 @@ export function ErrorDialog({ isOpen, onClose, error, isDev: _isDev = false }: E
         )}
 
         <Collapsible
-          trigger={
-            <div class="flex items-center gap-2 py-2 text-fg-muted hover:text-fg-soft">
-              <span class="text-sm font-medium">Technical Details</span>
-            </div>
-          }
-          class="border border-line rounded-lg px-4"
+          label="Technical Details"
+          trigger={<span class="text-sm font-medium text-fg-muted">Technical Details</span>}
+          class="border border-line rounded-lg px-4 py-2"
         >
           <div class="space-y-3 text-sm">
             <div>

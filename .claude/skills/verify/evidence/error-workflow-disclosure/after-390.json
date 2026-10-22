@@ -1,0 +1,29 @@
+{
+  "phase": "after",
+  "width": 390,
+  "synthetic": true,
+  "source": "real isolated daemon session.error and Space RPC",
+  "errorTitleClickExpanded": "false",
+  "errorSelection": "Synthetic technical deta",
+  "errorControl": {
+    "right": 340,
+    "top": 850,
+    "bottom": 866,
+    "text": "▴\nless",
+    "name": "less — Technical Details",
+    "parentRight": 340
+  },
+  "workflowCount": "Level 3: 5 of 7 workflows auto-close without review",
+  "workflowSelection": "Synthetic block",
+  "workflowControl": {
+    "right": 334,
+    "top": 595.75,
+    "parentRight": 334,
+    "text": "▴\nless",
+    "name": "less — Workflow details"
+  },
+  "document": {
+    "width": 390,
+    "scrollWidth": 390
+  }
+}

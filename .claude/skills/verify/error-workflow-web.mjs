@@ -25,6 +25,7 @@ export async function verifyErrorWorkflow(page, { run, port = 9396, width, phase
   assert.equal(await errorLess.getAttribute('aria-expanded'), 'true');
   if (after) assert(await errorLess.evaluate(el => el === document.activeElement));
   const technicalBody = dialog.getByText('Synthetic technical detail. '.repeat(45).trim(), { exact: true });
+  await page.waitForFunction(() => document.querySelector('[role=dialog] div[style*="height"]')?.style.height === 'auto');
   await technicalBody.click();
   assert.equal(await errorLess.getAttribute('aria-expanded'), 'true');
   const textRect = await technicalBody.boundingBox();
@@ -37,9 +38,13 @@ export async function verifyErrorWorkflow(page, { run, port = 9396, width, phase
   await errorLess.scrollIntoViewIfNeeded();
   evidence.errorControl = await errorLess.evaluate(el => {
     const r = el.getBoundingClientRect();
-    return { right: r.right, bottom: r.bottom, text: el.innerText, name: el.getAttribute('aria-label'), parentRight: el.parentElement.getBoundingClientRect().right };
+    return { right: r.right, top: r.top, bottom: r.bottom, text: el.innerText, name: el.getAttribute('aria-label'), parentRight: el.parentElement.getBoundingClientRect().right };
   });
-  if (after) assert(Math.abs(evidence.errorControl.right - evidence.errorControl.parentRight) < 2);
+  if (after) {
+    assert(Math.abs(evidence.errorControl.right - evidence.errorControl.parentRight) < 2);
+    const stack = await dialog.locator('pre').last().boundingBox();
+    assert(evidence.errorControl.top >= stack.y + stack.height - 2);
+  }
   await page.screenshot({ path: `${run}/evidence/${phase}-${width}-error-open.png`, scale: 'css', animations: 'disabled' });
   await errorLess.press('Space');
   const errorMore = after ? dialog.getByRole('button', { name: 'more — Technical Details', exact: true }) : errorControl;
@@ -70,6 +75,13 @@ export async function verifyErrorWorkflow(page, { run, port = 9396, width, phase
   const details = summary.getByTestId('autonomy-workflow-summary-details');
   assert.match(await details.innerText(), /Synthetic blocked workflow — requires level 5 or higher/);
   assert.equal(await workflowLess.getAttribute('aria-expanded'), 'true');
+  const workflowText = await summary.getByText('Synthetic blocked workflow', { exact: true }).boundingBox();
+  await page.mouse.move(workflowText.x + 2, workflowText.y + 6);
+  await page.mouse.down();
+  await page.mouse.move(workflowText.x + Math.min(workflowText.width - 2, 90), workflowText.y + 6, { steps: 8 });
+  await page.mouse.up();
+  evidence.workflowSelection = await page.evaluate(() => window.getSelection()?.toString());
+  assert(evidence.workflowSelection?.length > 2);
   evidence.workflowControl = await workflowLess.evaluate(el => {
     const r = el.getBoundingClientRect(), p = el.parentElement.getBoundingClientRect();
     return { right: r.right, top: r.top, parentRight: p.right, text: el.innerText, name: el.getAttribute('aria-label') };

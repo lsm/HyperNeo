@@ -27,6 +27,7 @@ describe('Error and workflow disclosures', () => {
     fireEvent.click(view.getByText('Technical Details', { exact: true }));
     const more = view.getByRole('button', { name: 'more — Technical Details', exact: true });
     expect(more.getAttribute('aria-expanded')).toBe('false');
+    expect(document.getElementById(more.getAttribute('aria-controls')!)).not.toBeNull();
     more.focus();
     fireEvent.click(more);
     const less = view.getByRole('button', { name: 'less — Technical Details', exact: true });

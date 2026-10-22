@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'preact/hooks';
+import { useId, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { SpaceAutonomyLevel, SpaceWorkflowSummary } from '@hyperneo/shared';
 import { isWorkflowAutoClosingAtLevel } from '@hyperneo/shared';
+import { ContentDisclosureControl } from '../ui/ContentDisclosureControl.tsx';
 import { cn } from '../../lib/utils.ts';
 
 interface AutonomyWorkflowSummaryProps {
@@ -23,6 +24,16 @@ export function AutonomyWorkflowSummary({
   compact = false,
 }: AutonomyWorkflowSummaryProps) {
   const [expanded, setExpanded] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const restoreFocus = useRef(false);
+  const id = useId();
+  useLayoutEffect(() => {
+    if (!restoreFocus.current) return;
+    restoreFocus.current = false;
+    rootRef.current
+      ?.querySelector<HTMLButtonElement>(`button[id="${id}-toggle"]`)
+      ?.focus({ preventScroll: true });
+  }, [expanded, id]);
 
   const { autonomous, total, blocking } = useMemo(() => {
     let auto = 0;
@@ -47,10 +58,23 @@ export function AutonomyWorkflowSummary({
 
   const hasDetails = blocking.length > 0;
   const textSize = compact ? 'text-[11px]' : 'text-xs';
+  const control = hasDetails && (
+    <ContentDisclosureControl
+      id={`${id}-toggle`}
+      expanded={expanded}
+      aria-label="Workflow details"
+      aria-controls={expanded ? id : undefined}
+      data-testid="autonomy-workflow-summary-toggle"
+      onToggle={() => {
+        restoreFocus.current = true;
+        setExpanded(!expanded);
+      }}
+    />
+  );
 
   return (
-    <div class={cn('space-y-1', className)} data-testid="autonomy-workflow-summary">
-      <div class={cn('flex items-center gap-2', textSize, 'text-fg-muted')}>
+    <div ref={rootRef} class={cn('space-y-1', className)} data-testid="autonomy-workflow-summary">
+      <div class={cn('flow-root', textSize, 'text-fg-muted')}>
         <span data-testid="autonomy-workflow-summary-count">
           Level {level}:{' '}
           <span class="text-fg-soft font-medium tabular-nums">
@@ -58,21 +82,12 @@ export function AutonomyWorkflowSummary({
           </span>{' '}
           {total === 1 ? 'workflow auto-closes' : 'workflows auto-close'} without review
         </span>
-        {hasDetails && (
-          <button
-            type="button"
-            onClick={() => setExpanded((prev) => !prev)}
-            data-testid="autonomy-workflow-summary-toggle"
-            class="text-fg-muted hover:text-fg-soft transition-colors"
-            aria-expanded={expanded}
-          >
-            {expanded ? 'Hide details' : 'Show details'}
-          </button>
-        )}
+        {!expanded && control}
       </div>
 
       {expanded && hasDetails && (
         <ul
+          id={id}
           class={cn('space-y-1 pl-2 border-l border-line', textSize, 'text-fg-muted')}
           data-testid="autonomy-workflow-summary-details"
         >
@@ -84,6 +99,7 @@ export function AutonomyWorkflowSummary({
           ))}
         </ul>
       )}
+      {expanded && <div class="flow-root">{control}</div>}
     </div>
   );
 }
