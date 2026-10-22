@@ -1,3 +1,4 @@
+import { readReleaseBuildCommit } from '../daemon/src/lib/build-metadata.ts';
 import preact from '@preact/preset-vite';
 import tailwindcss from '@tailwindcss/vite';
 import { resolve } from 'path';
@@ -6,7 +7,12 @@ import { neoRoutePlugin } from './neo-route-plugin.ts';
 
 const repoTmpDir = resolve(__dirname, '../../tmp').replace(/\\/g, '/');
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
+  define: {
+    __WEB_BUILD_COMMIT__: JSON.stringify(
+      command === 'build' ? (readReleaseBuildCommit(process.env) ?? null) : null
+    ),
+  },
   plugins: [neoRoutePlugin(), preact(), tailwindcss()],
 
   root: 'src',
@@ -114,4 +120,4 @@ export default defineConfig({
     ],
     extensions: ['.ts', '.tsx', '.js', '.jsx', '.json'],
   },
-});
+}));
