@@ -1,10 +1,4 @@
-import {
-  ChevronRightGlyph,
-  ChevronDownGlyph,
-  ChevronUpGlyph,
-  CloseGlyph,
-} from './common-glyphs.tsx';
-import { cn } from '../../lib/utils.ts';
+import { ChevronDownGlyph, ChevronUpGlyph, CloseGlyph } from './common-glyphs.tsx';
 
 const outlineAttributes = { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor' } as const;
 const roundedPathAttributes = { 'stroke-linecap': 'round', 'stroke-linejoin': 'round' } as const;
@@ -38,16 +32,6 @@ export function GitCopyIcon() {
         d="M8 8H6.5A1.5 1.5 0 0 0 5 9.5v8A1.5 1.5 0 0 0 6.5 19h8a1.5 1.5 0 0 0 1.5-1.5V16M9.5 5h8A1.5 1.5 0 0 1 19 6.5v8A1.5 1.5 0 0 1 17.5 16h-8A1.5 1.5 0 0 1 8 14.5v-8A1.5 1.5 0 0 1 9.5 5Z"
       />
     </svg>
-  );
-}
-
-export function GitChevronIcon({ open }: { open: boolean }) {
-  return (
-    <ChevronRightGlyph
-      class={cn('h-3 w-3 flex-shrink-0 text-fg-faint transition-transform', open && 'rotate-90')}
-      {...outlineAttributes}
-      pathProps={{ 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'stroke-width': 2.5 }}
-    />
   );
 }
 
