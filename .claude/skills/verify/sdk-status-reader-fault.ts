@@ -11,7 +11,7 @@ assert(run.startsWith('/private/tmp/')); assert.equal(process.env.NODE_ENV, 'tes
 assert.equal(process.env.HOME, join(run,'home')); assert.equal(process.env.HYPERNEO_DATA_DIR, join(run,'data'));
 await mkdir(join(run,'evidence'),{recursive:true});
 const faultPath = join(run,'fault-worker.ts');
-await writeFile(faultPath, "self.onmessage = () => { throw new Error('synthetic SDK reader crash'); };\n");
+await writeFile(faultPath, "self.onmessage = () => { throw new Error('synthetic SDK reader crash'); }; postMessage({ready:true});\n");
 const NativeWorker = globalThis.Worker; let first = true;
 globalThis.Worker = function(url: string | URL, options?: WorkerOptions) {
   if(first && String(url).endsWith('/sdk-status-worker.ts')) { first=false; return new NativeWorker(new URL('file://'+faultPath).href,options); }

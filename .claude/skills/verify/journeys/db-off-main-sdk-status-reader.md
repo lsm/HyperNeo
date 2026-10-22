@@ -66,7 +66,8 @@ Web Worker termination does not emit an error; the real 30-second deadline must
 reject that RPC while an independent health RPC remains available. A new request
 may open a replacement and return complete data. This is not an affected-RPC
 latency pass during failure. The separate fault helper injects an actually
-throwing worker entry, proving native onerror rejection, health responsiveness
+throwing worker entry that acknowledges handler readiness before accepting the crash
+request, proving native onerror rejection, health responsiveness
 and later recovery through the real RPC, without main-thread fallback.
 
 On tests-first `dcb7d4159d`, use the same helper with `baseline` in another fresh

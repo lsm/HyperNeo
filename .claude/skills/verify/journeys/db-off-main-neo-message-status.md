@@ -52,7 +52,7 @@ The natural (`VERIFY_NATIVE_WAIT_MS=0`) native run uses the production worker
 entry point directly without a fixture readiness buffer. The controlled/IPC
 fixture buffer exists only for its extra instrumentation import. Repeat with
 `VERIFY_STATUS_FAULT=1 VERIFY_NATIVE_WAIT_MS=0` to make the first native worker
-throw: public RPC must reject, independent health stays available, and the next
+announce handler readiness then throw on the request: public RPC must reject, independent health stays available, and the next
 read opens a replacement with identical complete content/statuses and body hash.
 Zero target SQL calls on main is asserted for every file-backed `verify` run.
 `slowThresholdMs=0` in this synthetic helper records individual SQL and snapshot
