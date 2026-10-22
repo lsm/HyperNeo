@@ -1,4 +1,4 @@
-import type { Session } from '@hyperneo/shared';
+import { resolveAutoCompactPercent, type Session } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Database } from '../../storage/database.ts';
 import { SettingsManager } from '../settings-manager.ts';
@@ -10,6 +10,8 @@ export interface SessionConfigHandlerContext {
   readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 
   settingsManager: SettingsManager;
+  getProcessingState(): { status: string };
+  restartQuery(): Promise<void>;
 }
 
 export class SessionConfigHandler {
@@ -17,19 +19,55 @@ export class SessionConfigHandler {
 
   constructor(private ctx: SessionConfigHandlerContext) {
     this.logger = new Logger(`SessionConfigHandler ${ctx.session.id}`);
+    const pending = ctx.session.metadata.pendingAutoCompactPercent;
+    if (pending !== undefined) {
+      ctx.session.config = { ...ctx.session.config, autoCompactPercent: pending ?? undefined };
+      delete ctx.session.metadata.pendingAutoCompactPercent;
+      ctx.db.updateSession(ctx.session.id, {
+        config: ctx.session.config,
+        metadata: ctx.session.metadata,
+      });
+    }
   }
 
   async updateConfig(configUpdates: Partial<Session['config']>): Promise<void> {
     const { session, db, internalEventBus } = this.ctx;
 
-    session.config = { ...session.config, ...configUpdates };
-    db.updateSession(session.id, { config: session.config });
+    const changes = { ...configUpdates };
+    let refresh = false;
+    if ('autoCompactPercent' in changes) {
+      const percent =
+        changes.autoCompactPercent === undefined
+          ? undefined
+          : resolveAutoCompactPercent(changes.autoCompactPercent);
+      if (this.ctx.getProcessingState().status !== 'idle') {
+        session.metadata = { ...session.metadata, pendingAutoCompactPercent: percent ?? null };
+        delete changes.autoCompactPercent;
+      } else {
+        refresh = session.config.autoCompactPercent !== percent;
+        changes.autoCompactPercent = percent;
+        delete session.metadata.pendingAutoCompactPercent;
+      }
+    }
+    session.config = { ...session.config, ...changes };
+    db.updateSession(session.id, {
+      config: session.config,
+      ...('autoCompactPercent' in configUpdates ? { metadata: session.metadata } : {}),
+    });
 
     await internalEventBus.publish('session.updated', {
       sessionId: session.id,
       source: 'config-update',
       session: { config: session.config },
     });
+    if (refresh) await this.ctx.restartQuery();
+  }
+
+  async applyPendingAutoCompactPercent(): Promise<boolean> {
+    const pending = this.ctx.session.metadata.pendingAutoCompactPercent;
+    if (pending === undefined || this.ctx.getProcessingState().status !== 'idle') return false;
+    await this.updateConfig({ autoCompactPercent: pending ?? undefined });
+    return true;
   }
 
   applyCommittedInputDraft(text: string | null): void {

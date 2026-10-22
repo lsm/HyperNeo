@@ -1,4 +1,5 @@
-import type { ContextInfo, ModelInfo, Session } from '@hyperneo/shared';
+import type { SessionContextModelInfo } from '../model-service.ts';
+import type { ContextInfo, Session } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Logger } from '../logger.ts';
 import {
@@ -91,7 +92,8 @@ const runEnforceContextBudget = (
     providerSkipsEnforcement: (ctx: ContextBudgetEnforcementCtx) =>
       !ctx.providerId ||
       ctx.providerId === 'acp' ||
-      NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(ctx.providerId),
+      (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(ctx.providerId) &&
+        ctx.contextInfo.autoCompactPercentOverride === undefined),
     limitRecoveryOwnsTurn: (ctx: ContextBudgetEnforcementCtx) =>
       ctx.stateManager.getState().status === 'rate_limit_cooldown' || ctx.limitRecoveryPending,
     deadCompactionCleared: (ctx: ContextBudgetEnforcementCtx) => ctx.clearedDeadCompaction,
@@ -132,7 +134,7 @@ export function enforceContextBudget(
 export interface ContextBudgetReevaluationCtx {
   session: Session;
   trackerInfo: ContextInfo;
-  resolveModelInfo: () => Promise<ModelInfo | null>;
+  resolveModelInfo: () => Promise<SessionContextModelInfo | null>;
   limitRecoveryPending: boolean;
   contextTracker: ContextTracker;
   messageQueue: MessageQueue;
@@ -145,7 +147,7 @@ export interface ContextBudgetReevaluationCtx {
   queueClearEpochAtStart: number;
   userInterruptEpochAtStart: number;
   supersededQueued: boolean;
-  modelInfo: ModelInfo | null;
+  modelInfo: SessionContextModelInfo | null;
   compactionEnqueued: boolean;
 }
 
@@ -185,6 +187,7 @@ export function runReevaluationEnforcement(
         ? modelInfo.contextWindow
         : trackerInfo.totalCapacity,
     autoCompactPercent: modelInfo ? modelInfo.autoCompactPercent : trackerInfo.autoCompactPercent,
+    autoCompactPercentOverride: modelInfo?.autoCompactPercentOverride,
   };
   const outcome = enforceContextBudget({
     sessionId: ctx.session.id,

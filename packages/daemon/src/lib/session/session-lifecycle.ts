@@ -502,11 +502,19 @@ export class SessionLifecycle {
   }
 
   async update(sessionId: string, updates: Partial<Session>): Promise<void> {
-    this.db.updateSession(sessionId, updates);
-
     const agentSession = this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
-    if (agentSession) {
-      agentSession.updateMetadata(updates);
+    if (agentSession && updates.config && 'autoCompactPercent' in updates.config) {
+      const { config, ...metadata } = updates;
+      agentSession.updateMetadata(metadata);
+      await agentSession.updateConfig(config);
+      updates = {
+        ...updates,
+        config: agentSession.getSessionData().config,
+        metadata: agentSession.getSessionData().metadata,
+      };
+    } else {
+      this.db.updateSession(sessionId, updates);
+      if (agentSession) agentSession.updateMetadata(updates);
     }
 
     await this.internalEventBus

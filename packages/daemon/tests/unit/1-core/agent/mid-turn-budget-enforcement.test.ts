@@ -121,6 +121,48 @@ async function tick(ms: number): Promise<void> {
 }
 
 describe('AgentSession mid-turn context budget enforcement', () => {
+  it.each([
+    ['neo:explicit', 70, 1],
+    ['neo:default', undefined, 0],
+    ['ordinary', 70, 1],
+  ] as const)(
+    'uses the same explicit setting for native %s',
+    async (id, percent, expectedInterrupts) => {
+      const session = createAgentSession();
+      const data = session.getSessionData();
+      data.id = id;
+      data.config.provider = 'anthropic';
+      data.config.autoCompactPercent = percent;
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              {
+                id: data.config.model,
+                name: 'Fixture',
+                provider: 'anthropic',
+                available: true,
+                contextWindow: 1_000_000,
+              },
+            ],
+          ],
+        ])
+      );
+      const harness = makeQuery();
+      harness.usageMock.mockResolvedValue({
+        ...makeUsageResponse(),
+        totalTokens: 700_000,
+        maxTokens: 1_000_000,
+        rawMaxTokens: 1_000_000,
+        categories: [],
+      });
+      session.queryObject = harness.query;
+      spyOn(session.lifecycleManager, 'restart').mockResolvedValue(undefined);
+      await session.midTurnContextBudgetCheck();
+      expect(harness.interruptMock).toHaveBeenCalledTimes(expectedInterrupts);
+    }
+  );
   beforeEach(() => {
     setModelsCache(new Map());
   });

@@ -281,6 +281,8 @@ export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
 
   thinkingLevel?: ThinkingLevel;
 
+  autoCompactPercent?: number;
+
   queryMode?: 'immediate' | 'manual';
 
   tools?: ToolsConfig;
@@ -369,6 +371,7 @@ export interface PendingModelSwitch {
 }
 
 export interface SessionMetadata {
+  pendingAutoCompactPercent?: number | null;
   messageCount: number;
   progress?: SessionProgress;
   totalTokens: number;
@@ -662,6 +665,7 @@ export interface ContextInfo {
   autoCompactThreshold?: number;
   sdkAutoCompactThreshold?: number;
   autoCompactPercent?: number;
+  autoCompactPercentOverride?: number;
   daemonBackstopActive?: boolean;
   isAutoCompactEnabled?: boolean;
   messageBreakdown?: ContextMessageBreakdown;

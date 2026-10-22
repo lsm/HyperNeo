@@ -346,10 +346,19 @@ export class NeoService {
     const updated = this.db.updateGlobalSettings({ neo: { ...neo, preferences } });
     this.publishSettings?.(updated);
     const root = this.repo.defaultBinding();
-    if (root)
-      await this.alignModelPreference(root.sessionId).catch((error) =>
-        this.log.warn('Neo model preference not applied', error)
-      );
+    if (!root) return;
+    await this.alignModelPreference(root.sessionId).catch((error) =>
+      this.log.warn('Neo model preference not applied', error)
+    );
+    const session = this.db.getSession(root.sessionId);
+    if (
+      session &&
+      (session.config.autoCompactPercent !== preferences.autoCompactPercent ||
+        session.metadata.pendingAutoCompactPercent !== undefined)
+    )
+      await this.sessions.updateSession(root.sessionId, {
+        config: { ...session.config, autoCompactPercent: preferences.autoCompactPercent },
+      });
   }
 
   private async alignModelPreference(sessionId: string): Promise<void> {
@@ -427,6 +436,7 @@ export class NeoService {
         detectGit: false,
         config: {
           systemPrompt: neoPrompt(this.packBriefs()),
+          autoCompactPercent: preference?.autoCompactPercent,
           ...(preference
             ? {
                 model: preference.model,
@@ -437,6 +447,7 @@ export class NeoService {
         },
       });
     }
+
     return binding.sessionId;
   }
 
@@ -450,6 +461,18 @@ export class NeoService {
 
   async recover(): Promise<void> {
     this.sessionWatcher.loadSessionNoticeGroups();
+    const id = this.defaultSessionId();
+    const session = id ? this.db.getSession(id) : null;
+    const metadata = session?.metadata as
+      | (NonNullable<typeof session>['metadata'] & { neoAutoCompactPercent?: number })
+      | undefined;
+    if (session && metadata?.neoAutoCompactPercent !== undefined) {
+      const ordinaryMetadata = { ...metadata, neoAutoCompactPercent: undefined };
+      await this.sessions.updateSession(session.id, {
+        config: { ...session.config, autoCompactPercent: metadata.neoAutoCompactPercent },
+        metadata: ordinaryMetadata,
+      });
+    }
   }
 
   async sweepPacks(): Promise<void> {

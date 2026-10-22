@@ -930,6 +930,41 @@ describe('QueryOptionsBuilder', () => {
       }
     );
 
+    it('uses the same explicit native percentage for an ordinary session and Neo', async () => {
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              {
+                id: 'fixture-native',
+                name: 'Fixture',
+                provider: 'anthropic',
+                available: true,
+                contextWindow: 1_000_000,
+              },
+            ],
+          ],
+        ])
+      );
+      try {
+        builder = new QueryOptionsBuilder({ ...mockContext, db: undefined });
+        mockSession.id = 'neo:fixture';
+        mockSession.config.model = 'fixture-native';
+        mockSession.config.autoCompactPercent = 70;
+        const overridden = await builder.build();
+        expect(overridden.settings?.autoCompactWindow).toBe(733_000);
+        expect(overridden.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('733000');
+        mockSession.id = 'ordinary';
+        expect((await builder.build()).settings?.autoCompactWindow).toBe(733_000);
+        mockSession.id = 'neo:fixture';
+        delete mockSession.config.autoCompactPercent;
+        expect((await builder.build()).settings?.autoCompactWindow).toBeUndefined();
+      } finally {
+        setModelsCache(new Map());
+      }
+    });
+
     it('should not override SDK auto-compaction settings for native anthropic provider', async () => {
       const options = await builder.build();
       expect(options.settings).toEqual({ cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS });
@@ -1007,6 +1042,13 @@ describe('QueryOptionsBuilder', () => {
   describe('provider settings', () => {
     it('should not override SDK auto-compaction settings for native anthropic provider', () => {
       expect(buildProviderSettings('anthropic')).toBeUndefined();
+      for (const provider of ['anthropic', 'anthropic-copilot', 'anthropic-codex', 'glm']) {
+        expect(buildProviderSettings(provider, 1_000_000, undefined, 70)).toBeUndefined();
+        expect(buildProviderSettings(provider, 1_000_000, undefined, 70, 70)).toEqual({
+          autoCompactEnabled: true,
+          autoCompactWindow: 733_000,
+        });
+      }
     });
 
     it('should not override SDK auto-compaction for anthropic-codex (handled natively)', () => {

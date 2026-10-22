@@ -21,7 +21,7 @@ import {
 } from './query-options-builder.js';
 
 type ContextMetadata =
-  | Pick<
+  | (Pick<
       ModelInfo,
       | 'id'
       | 'alias'
@@ -30,7 +30,7 @@ type ContextMetadata =
       | 'preferContextWindowMetadata'
       | 'autoCompactPercent'
       | 'provider'
-    >
+    > & { autoCompactPercentOverride?: number })
   | null
   | undefined;
 
@@ -186,7 +186,13 @@ export class ContextFetcher {
     }
 
     const responseMetadata = await getModelInfo(responseModel, cacheKey, providerId);
-    return responseMetadata ?? modelMetadata;
+    return responseMetadata && modelMetadata?.autoCompactPercentOverride !== undefined
+      ? {
+          ...responseMetadata,
+          autoCompactPercent: modelMetadata.autoCompactPercentOverride,
+          autoCompactPercentOverride: modelMetadata.autoCompactPercentOverride,
+        }
+      : (responseMetadata ?? modelMetadata);
   }
 
   private static settleCapacityMismatch(
@@ -325,12 +331,17 @@ export class ContextFetcher {
       isAutocompactCategory(category.name)
     )?.tokens;
     const armedAutoCompactWindow =
-      useMetadata && modelMetadata?.provider && positiveInteger(modelMetadata.contextWindow)
+      (useMetadata || modelMetadata?.autoCompactPercentOverride !== undefined) &&
+      modelMetadata?.provider &&
+      positiveInteger(modelMetadata.contextWindow)
         ? buildProviderSettings(
             modelMetadata.provider,
-            modelMetadata.contextWindow,
+            modelMetadata.autoCompactPercentOverride !== undefined
+              ? capacity
+              : modelMetadata.contextWindow,
             modelMetadata.id,
-            modelMetadata.autoCompactPercent
+            modelMetadata.autoCompactPercent,
+            modelMetadata.autoCompactPercentOverride
           )?.autoCompactWindow
         : undefined;
     const thresholdCapacity = armedAutoCompactWindow ?? capacity;
@@ -409,7 +420,11 @@ export class ContextFetcher {
     }
     const enforcementProvider = modelMetadata?.provider;
     let daemonBackstopActive = false;
-    if (enforcementProvider && !NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(enforcementProvider)) {
+    if (
+      enforcementProvider &&
+      (!NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(enforcementProvider) ||
+        modelMetadata?.autoCompactPercentOverride !== undefined)
+    ) {
       const effectivePercent = resolveAutoCompactPercent(modelMetadata?.autoCompactPercent);
       const budgetThreshold = scaledAutoCompactWindow(capacity, modelMetadata?.autoCompactPercent);
       const rawThresholdKnown =
@@ -460,6 +475,7 @@ export class ContextFetcher {
       autoCompactThreshold,
       sdkAutoCompactThreshold: rawSdkAutoCompactThreshold,
       autoCompactPercent: modelMetadata?.autoCompactPercent,
+      autoCompactPercentOverride: modelMetadata?.autoCompactPercentOverride,
       daemonBackstopActive,
       isAutoCompactEnabled: response.isAutoCompactEnabled,
       messageBreakdown,

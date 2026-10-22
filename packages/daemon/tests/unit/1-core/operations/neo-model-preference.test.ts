@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageHub, ModelInfo, Session } from '@hyperneo/shared';
-import { setModelsCache } from '../../../../src/lib/model-service.ts';
+import { getSessionContextModelInfo, setModelsCache } from '../../../../src/lib/model-service.ts';
 import {
   clampNeoThinking,
   effectiveNeoPreference,
@@ -19,6 +19,9 @@ import {
   InternalEventBus,
   type DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus.ts';
+import { contextBudgetThreshold } from '../../../../src/lib/agent/context-budget-decision.ts';
+import { buildProviderSettings } from '../../../../src/lib/agent/query-options-builder.ts';
+import { autoCompactReserveTokens } from '../../../../src/lib/agent/context-tracker.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
 const user: OperationCaller = { source: 'rpc', principal: 'local' };
@@ -27,6 +30,8 @@ const flash = {
   provider: 'deepseek',
   thinkingModes: 'on',
   available: true,
+  contextWindow: 1_000_000,
+  autoCompactPercent: 80,
 } as ModelInfo;
 const opus = {
   id: 'claude-opus',
@@ -139,8 +144,11 @@ describe('neo.preferences.set', () => {
   let service: NeoService;
   let switched: unknown[];
   let updated: unknown[];
+  let restarted: unknown[];
   let created: unknown[];
   let recovering: boolean;
+  let busy: boolean;
+  let events: InternalEventBus<DaemonInternalEventMap>;
   let switchFailure: 'refused' | 'throws' | 'pending' | undefined;
 
   beforeEach(async () => {
@@ -153,12 +161,18 @@ describe('neo.preferences.set', () => {
     setModelsCache(new Map([['global', [flash, opus]]]));
     switched = [];
     updated = [];
+    restarted = [];
     created = [];
     recovering = false;
+    busy = false;
     switchFailure = undefined;
     const sessions = {
       getSessionForControl: async (sessionId: string) => ({
         isLimitRecoveryPending: () => false,
+        restartQuery: async () => {
+          restarted.push(db.getSession(sessionId)?.config);
+        },
+        getProcessingState: () => ({ status: busy ? 'processing' : 'idle' }),
         getRateLimitWatchdogState: () => ({
           lastUserMessage: recovering ? { uuid: 'limited-turn' } : null,
         }),
@@ -192,11 +206,12 @@ describe('neo.preferences.set', () => {
         created.push(params);
       },
     };
+    events = new InternalEventBus<DaemonInternalEventMap>();
     service = new NeoService(
       db,
       sessions as unknown as SessionManager,
       { event: mock(() => {}) } as unknown as MessageHub,
-      new InternalEventBus<DaemonInternalEventMap>()
+      events
     );
     service.repo.reserveBinding({ sessionId: 'neo:root', kind: 'neo', projectId: null });
   });
@@ -214,6 +229,105 @@ describe('neo.preferences.set', () => {
       caller
     );
   }
+
+  test.each([
+    [1, 10],
+    [70, 70],
+    [101, 100],
+  ])('clamps percentage %s to %s and exposes it in settings/snapshot', async (input, expected) => {
+    const preference = {
+      model: 'deepseek-v4-flash',
+      provider: 'deepseek',
+      thinkingLevel: 'off',
+      autoCompactPercent: input,
+    };
+    expect(await invoke('neo.preferences.set', preference)).toMatchObject({
+      value: { ok: true, preferences: { autoCompactPercent: expected } },
+    });
+    expect(db.getGlobalSettings().neo?.preferences).toMatchObject({ autoCompactPercent: expected });
+    expect(await invoke('neo.snapshot', {})).toMatchObject({
+      value: { preferences: { autoCompactPercent: expected, saved: true } },
+    });
+  });
+
+  test.each([70.5, '70', null, true, Number.NaN, Number.POSITIVE_INFINITY])(
+    'rejects invalid percentage %s without saving',
+    async (autoCompactPercent) => {
+      const result = await invoke('neo.preferences.set', {
+        model: 'claude-opus',
+        provider: 'anthropic',
+        thinkingLevel: 'off',
+        autoCompactPercent,
+      });
+      expect(result).toMatchObject({ kind: 'failed', code: 'invalid_input' });
+      expect(db.getGlobalSettings().neo?.preferences).toBeUndefined();
+    }
+  );
+
+  test('writes the ordinary session setting only for Neo without a special restart', async () => {
+    const base = {
+      model: 'deepseek-v4-flash',
+      provider: 'deepseek' as const,
+      thinkingLevel: 'off' as const,
+    };
+    for (const id of ['neo:root', 'ordinary', 'worker']) {
+      if (id !== 'neo:root') db.createSession(createTestSession(id));
+      db.updateSession(id, { config: { ...db.getSession(id)!.config, ...base } });
+    }
+    service.repo.reserveBinding({ sessionId: 'worker', kind: 'worker', projectId: null });
+    const percentage = async (id: string) =>
+      (await getSessionContextModelInfo(db.getSession(id)!))?.autoCompactPercent;
+    busy = true;
+    await invoke('neo.preferences.set', { ...base, autoCompactPercent: 70 });
+    expect(updated).toContainEqual([
+      'neo:root',
+      expect.objectContaining({ config: expect.objectContaining({ autoCompactPercent: 70 }) }),
+    ]);
+    busy = false;
+    for (const id of ['neo:root', 'ordinary', 'worker']) {
+      const event = await events.publish('session.updated', {
+        sessionId: id,
+        processingState: { status: 'idle' },
+      });
+      expect(event.failures).toEqual([]);
+      expect(await percentage(id)).toBe(id === 'neo:root' ? 70 : 80);
+    }
+    const info = await getSessionContextModelInfo(db.getSession('neo:root')!);
+    expect(contextBudgetThreshold(info!.contextWindow!, info!.autoCompactPercent)).toBe(700_000);
+    expect(
+      buildProviderSettings('deepseek', info!.contextWindow, info!.id, info!.autoCompactPercent)
+        ?.autoCompactWindow
+    ).toBe(700_000 + autoCompactReserveTokens('deepseek'));
+    expect(buildProviderSettings('anthropic', 1_000_000, 'claude-opus', 70)).toBeUndefined();
+    expect(await getSessionContextModelInfo(db.getSession('ordinary')!)).toMatchObject({
+      autoCompactPercent: 80,
+    });
+    await invoke('neo.preferences.set', base);
+    expect(await percentage('neo:root')).toBe(80);
+    expect(db.getGlobalSettings().neo?.preferences).not.toHaveProperty('autoCompactPercent');
+  });
+
+  test('updates ordinary model configuration without a Neo percentage restart', async () => {
+    db.updateSession('neo:root', {
+      config: {
+        ...db.getSession('neo:root')!.config,
+        model: 'deepseek-v4-flash',
+        provider: 'deepseek',
+        thinkingLevel: 'off',
+      },
+    });
+    await invoke('neo.preferences.set', {
+      model: 'claude-opus',
+      provider: 'anthropic',
+      thinkingLevel: 'think8k',
+      autoCompactPercent: 70,
+    });
+    expect(db.getSession('neo:root')?.config).toMatchObject({
+      model: 'claude-opus',
+      provider: 'anthropic',
+      thinkingLevel: 'think8k',
+    });
+  });
 
   test('saves one preference, shows it in the snapshot and switches idle Neo sessions', async () => {
     expect(await invoke('neo.snapshot', {})).toMatchObject({

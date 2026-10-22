@@ -29,3 +29,7 @@ uses synthetic Anthropic models; the former Neo-only execution journey was retir
 [model runtime removal](neo-coordinator-model-fallback-backend.md). Stored Neo
 fallback preferences no longer override the ordinary session recovery policy. No real account quota or GUI session
 is used. The Settings PR contains no new fallback execution policy.
+
+The auto-compaction percentage control in #8121 keeps its existing preference
+and snapshot API. Its value writes the ordinary per-session setting; verify
+its daemon behavior with [per-session compaction](neo-auto-compact-percentage.md).

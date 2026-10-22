@@ -1,5 +1,10 @@
 import { runLagPhase } from './event-loop-activity.ts';
-import type { ModelInfo, ProviderRecord, Session } from '@hyperneo/shared';
+import {
+  resolveAutoCompactPercent,
+  type ModelInfo,
+  type ProviderRecord,
+  type Session,
+} from '@hyperneo/shared';
 import type {
   Provider,
   ProviderFailureErrorKind,
@@ -1610,15 +1615,17 @@ export function getSessionModelCacheKey(session: Pick<Session, 'id' | 'config'>)
     : 'global';
 }
 
+export type SessionContextModelInfo = ModelInfo & { autoCompactPercentOverride?: number };
+
 export async function getSessionContextModelInfo(
-  session: Pick<Session, 'id' | 'config'>
-): Promise<ModelInfo | null> {
+  session: Pick<Session, 'id' | 'config'> & Partial<Pick<Session, 'metadata'>>
+): Promise<SessionContextModelInfo | null> {
   return (await resolveSessionContextModelInfo(session)).modelInfo;
 }
 
 export async function resolveSessionContextModelInfo(
-  session: Pick<Session, 'id' | 'config'>
-): Promise<{ cacheKey: string; modelInfo: ModelInfo | null }> {
+  session: Pick<Session, 'id' | 'config'> & Partial<Pick<Session, 'metadata'>>
+): Promise<{ cacheKey: string; modelInfo: SessionContextModelInfo | null }> {
   const cacheKey = getSessionModelCacheKey(session);
   if (cacheKey !== 'global' && session.config.provider && session.config.providerConfig) {
     await ensureScopedProviderCatalogModels(
@@ -1627,7 +1634,18 @@ export async function resolveSessionContextModelInfo(
       session.config.providerConfig
     );
   }
-  return { cacheKey, modelInfo: await getSessionModelInfo(session, cacheKey) };
+  const modelInfo = await getSessionModelInfo(session, cacheKey);
+  const percent =
+    session.config.autoCompactPercent === undefined
+      ? undefined
+      : resolveAutoCompactPercent(session.config.autoCompactPercent);
+  return {
+    cacheKey,
+    modelInfo:
+      modelInfo && percent !== undefined
+        ? { ...modelInfo, autoCompactPercent: percent, autoCompactPercentOverride: percent }
+        : modelInfo,
+  };
 }
 
 export async function getSessionModelInfo(

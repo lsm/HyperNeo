@@ -1,3 +1,4 @@
+import { ContentDisclosureControl } from '../components/ui/ContentDisclosureControl.tsx';
 import { NeoWakeRow } from './NeoWakeRow.tsx';
 import type { NeoSessionMessage } from '@hyperneo/shared/types/neo-session-message';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
@@ -565,20 +566,10 @@ function PublicEntry({
           </div>
         )}
         {(() => {
-          const fold = (word: 'chat.foldMore' | 'chat.foldLess') => (
-            <>
-              {' '}
-              <button
-                type="button"
-                aria-expanded={expanded}
-                onClick={() => setExpanded(!expanded)}
-                class="text-accent hover:underline"
-              >
-                {t(word)}
-              </button>
-            </>
+          const fold = (
+            <ContentDisclosureControl expanded={expanded} onToggle={() => setExpanded(!expanded)} />
           );
-          const more = hasDetails && !expanded ? fold('chat.foldMore') : undefined;
+          const more = hasDetails && !expanded ? fold : undefined;
           const body = /^[\s]*\d+[.)]?[\s]*$/.test(text) ? (
             <p class="whitespace-pre-wrap text-base leading-relaxed">
               {text}
@@ -610,7 +601,7 @@ function PublicEntry({
                   </div>
                   <MarkdownRenderer
                     content={full}
-                    trailing={fold('chat.foldLess')}
+                    trailing={fold}
                     references={references.full}
                     onReference={openReference}
                     class="neo-markdown neo-markdown-assistant text-sm leading-relaxed"

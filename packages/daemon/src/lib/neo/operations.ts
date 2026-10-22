@@ -182,6 +182,7 @@ const SnapshotOk = z.object({
           })
         )
         .optional(),
+      autoCompactPercent: z.number().int().optional(),
       saved: z.boolean(),
     })
     .nullable()
