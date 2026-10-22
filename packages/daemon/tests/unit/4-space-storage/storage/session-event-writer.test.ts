@@ -242,19 +242,24 @@ test('lost cleanup reply is unknown without replaying a possible committed clean
   await writer.close();
 });
 
-test('lost claim reply remains unknown without replay or local fallback', async () => {
-  const { writer, workers } = fixture();
-  const request = { method: 'dequeue' as const, args: ['synthetic', 5] as [string, number] };
-  const result = writer.claimJobs(request);
-  const failure = expect(result).rejects.toThrow('outcome unknown');
-  await tick();
-  expect(workers[0].requests[0].claimJobs).toEqual(request);
-  workers[0].crash();
-  await failure;
-  expect(workers[0].requests).toHaveLength(1);
-  expect(workers[0].stopped).toBe(true);
-  await writer.close();
-});
+test.each(['crash', 'timeout'])(
+  'lost claim reply remains unknown and flushes queued writes: %s',
+  async (mode) => {
+    const { writer, workers } = fixture(mode === 'timeout' ? 20 : 1000);
+    const request = { method: 'dequeue' as const, args: ['synthetic', 5] as [string, number] };
+    const result = writer.claimJobs(request);
+    const queued = writer.ingest(event).catch(String);
+    const failure = expect(result).rejects.toThrow('outcome unknown');
+    await tick();
+    expect(workers[0].requests[0].claimJobs).toEqual(request);
+    if (mode === 'crash') workers[0].crash();
+    await failure;
+    expect(await queued).toContain('generation failed before dispatch');
+    expect(workers[0].requests).toHaveLength(1);
+    expect(workers[0].stopped).toBe(true);
+    await writer.close();
+  }
+);
 
 test.each(['SQLITE_BUSY: database is locked', 'claim SQL error'])(
   'a known claim failure preserves unrelated queued writes: %s',

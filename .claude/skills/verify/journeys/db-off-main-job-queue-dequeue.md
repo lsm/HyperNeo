@@ -26,3 +26,8 @@ overlapping processor ticks; stop must drain the accepted handlers without loss.
 The online multiple-steer case waits for both exact user UUIDs in the SDK page,
 not just an older-message count or an empty enqueued queue. Strict acknowledgement,
 timestamp and consumed-count assertions and the existing timeout remain in place.
+The same helper aborts the second synthetic claim row to prove rollback, then
+holds a separate connection's write lock until the worker reports SQLITE_BUSY.
+Ingest/purge/cleanup queued behind each known error must complete on the same
+worker; complete ingested bodies and pending job tokens are checked. Lost reply,
+worker death and timeout still fail the generation without replay.

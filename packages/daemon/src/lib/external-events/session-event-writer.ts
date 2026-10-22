@@ -153,9 +153,11 @@ export class SessionEventWriter {
           },
         });
         if (error) {
-          this.worker = null;
-          this.epoch++;
-          worker.terminate();
+          if (!claimJobs || !reply?.error || unknown) {
+            this.worker = null;
+            this.epoch++;
+            worker.terminate();
+          }
           reject(
             unknown
               ? new Error(
