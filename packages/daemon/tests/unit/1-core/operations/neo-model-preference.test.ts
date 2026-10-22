@@ -306,16 +306,24 @@ describe('neo.preferences.set', () => {
   });
 
   test('rebuilds the percentage with the newly aligned model and thinking', async () => {
+    db.updateSession('neo:root', {
+      config: {
+        ...db.getSession('neo:root')!.config,
+        model: 'deepseek-v4-flash',
+        provider: 'deepseek',
+        thinkingLevel: 'off',
+      },
+    });
     await invoke('neo.preferences.set', {
-      model: 'deepseek-v4-flash',
-      provider: 'deepseek',
-      thinkingLevel: 'off',
+      model: 'claude-opus',
+      provider: 'anthropic',
+      thinkingLevel: 'think8k',
       autoCompactPercent: 70,
     });
     expect(restarted.at(-1)).toMatchObject({
-      model: 'deepseek-v4-flash',
-      provider: 'deepseek',
-      thinkingLevel: 'off',
+      model: 'claude-opus',
+      provider: 'anthropic',
+      thinkingLevel: 'think8k',
     });
   });
 
