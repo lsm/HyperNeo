@@ -303,11 +303,11 @@ describe('router', () => {
   });
 
   it('initializes settings routes from tab query parameters', () => {
-    setPath('/settings?tab=providers');
+    setPath('/settings?tab=neo-model');
     initializeRouter();
 
     expect(navSectionSignal.value).toBe('settings');
-    expect(settingsSectionSignal.value).toBe('providers');
+    expect(settingsSectionSignal.value).toBe('neo-model');
     expect(currentSessionIdSignal.value).toBeNull();
 
     cleanupRouter();

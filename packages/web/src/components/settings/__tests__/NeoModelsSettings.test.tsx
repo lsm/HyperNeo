@@ -15,7 +15,7 @@ vi.mock('../../../lib/api-helpers.ts', () => ({
   listProviderAuthStatus: () => auth(),
   updateGlobalSettings: vi.fn(),
 }));
-import { ModelsSettings } from '../ModelsSettings.tsx';
+import { NeoModelSettings } from '../NeoModelSettings.tsx';
 import { globalSettings } from '../../../lib/state.ts';
 
 const primary = { model: 'opus', provider: 'anthropic', thinkingLevel: 'think24k' };
@@ -53,7 +53,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 async function editor() {
-  render(<ModelsSettings />);
+  render(<NeoModelSettings />);
   const section = await screen.findByRole('region', { name: 'Neo models' });
   await waitFor(() =>
     expect(
@@ -141,7 +141,7 @@ test('lists only runnable providers and limits thinking to the server catalog', 
 
 test('selects a primary when Neo preferences have never been saved', async () => {
   (globalSettings as { value: GlobalSettings | null }).value = { settingSources: [] };
-  render(<ModelsSettings />);
+  render(<NeoModelSettings />);
   const ui = within(await screen.findByRole('region', { name: 'Neo models' }));
   const change = ui.getByRole('button', { name: 'Change Neo primary' });
   await waitFor(() => expect(change.hasAttribute('disabled')).toBe(false));
@@ -214,3 +214,23 @@ test.each(['', '70.5'])(
     expect(request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
   }
 );
+
+test('an omitted override keeps model metadata and stays omitted when saving thinking', async () => {
+  request.mockImplementation(async (method, data) => {
+    if (method === 'models.list')
+      return { models: models.map((model) => ({ ...model, autoCompactPercent: 80 })) };
+    if (method === 'operation.invoke') return { ok: true, preferences: data.input };
+    throw new Error(`Unexpected ${method}`);
+  });
+  const ui = await editor();
+  expect((ui.getByLabelText('Auto-compact percentage') as HTMLInputElement).value).toBe('90');
+  expect(ui.getByText(/800,000.*1,000,000.*80%/)).toBeTruthy();
+  fireEvent.change(ui.getByLabelText('Neo primary thinking'), { target: { value: 'off' } });
+  fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'neo.preferences.set',
+      input: { ...primary, thinkingLevel: 'off', fallbacks: [glm, copilot] },
+    })
+  );
+});
