@@ -95,11 +95,11 @@ describe('NeoGoals', () => {
       expect(screen.getByText(text)).toBeTruthy();
     expect(container.querySelector('time')?.dateTime).toBe(new Date(at).toISOString());
   });
-  it('opens the selected goal’s scoped details from its title and closes them again', async () => {
+  it('opens scoped details with the explicit control and closes them again', async () => {
     render(<NeoGoals sessionId="root" />);
     await screen.findByText(effect);
     expect(screen.queryByText('Public guide')).toBeNull();
-    const title = screen.getByRole('button', { name: 'Publish guide' });
+    const title = screen.getByRole('button', { name: 'more — Publish guide' });
     fireEvent.click(title);
     await screen.findByText('Concrete examples work');
     expect(screen.getByText('Public guide')).toBeTruthy();

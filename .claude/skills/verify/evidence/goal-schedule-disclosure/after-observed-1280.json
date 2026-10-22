@@ -1,0 +1,104 @@
+[
+  {
+    "width": 1280,
+    "entrypoint": "schedule",
+    "phase": "after",
+    "stripBodyOpens": false,
+    "journalBodyOpens": false,
+    "ids": [
+      "c5a41b81-2216-467a-a2f4-b1c00cddd9ef",
+      "1eb48b27-38e4-48c3-b32f-8463b7053ae5",
+      "a3a31524-ab2c-4874-9fc1-da17218bc90c",
+      "2cdbe6eb-a3e8-4c54-9f7a-61b34e22d856",
+      "4060768b-3a7e-4b76-a1a9-b3085b99f11c",
+      "7ec7d83d-eb0b-400f-858b-12330abb4916",
+      "2568b2d8-57c6-42ae-b785-d705c0e658f0",
+      "4ee2f9e1-6ee0-4f8d-a9b0-6a1fa376e83e",
+      "bf5ceb7c-5f17-485a-93f4-fa227b3e0ac0",
+      "9e366fe5-7916-48f0-9021-994e987bb309",
+      "4235d2e5-8c36-404d-9ba2-e114b4d985b9",
+      "f4c33a89-d07d-4d7a-8f56-886549ccd2fd",
+      "e26f36c4-9adb-49cb-ad86-c01b2828b0ba",
+      "026b2268-9afa-47b5-aaae-4ebb5f3214c4",
+      "0829c85b-2898-4647-9cb5-0364ed8267eb",
+      "8a615e2f-b2ad-475e-9e03-254facb3e453",
+      "f0e61454-00bb-4460-bd51-5cc4bac4bfe0",
+      "41bff1d9-5f1b-4fb3-91fd-73d50e8f7555",
+      "f3244c9d-8b40-4dc7-9605-9f9c487c35b2",
+      "56d08960-f5d3-4855-8256-382d6e5707da",
+      "f988eec6-7857-4988-9638-1034cef06706"
+    ],
+    "journalControl": {
+      "name": "less — Effect 21",
+      "right": 677.390625,
+      "bottom": 448,
+      "parentRight": 689.390625,
+      "parentBottom": 456
+    },
+    "goalControl": {
+      "name": "less — Publish useful guide",
+      "right": 689.390625,
+      "bottom": 1837,
+      "parentRight": 689.390625,
+      "parentBottom": 1837
+    },
+    "stripControl": {
+      "name": "less — Schedules",
+      "right": 689.390625,
+      "bottom": 393,
+      "parentRight": 701.390625,
+      "parentBottom": 401
+    },
+    "viewport": {
+      "width": 1280,
+      "scrollWidth": 1280
+    }
+  },
+  {
+    "width": 1280,
+    "entrypoint": "goals",
+    "phase": "after",
+    "journalBodyOpens": false,
+    "ids": [
+      "c5a41b81-2216-467a-a2f4-b1c00cddd9ef",
+      "1eb48b27-38e4-48c3-b32f-8463b7053ae5",
+      "a3a31524-ab2c-4874-9fc1-da17218bc90c",
+      "2cdbe6eb-a3e8-4c54-9f7a-61b34e22d856",
+      "4060768b-3a7e-4b76-a1a9-b3085b99f11c",
+      "7ec7d83d-eb0b-400f-858b-12330abb4916",
+      "2568b2d8-57c6-42ae-b785-d705c0e658f0",
+      "4ee2f9e1-6ee0-4f8d-a9b0-6a1fa376e83e",
+      "bf5ceb7c-5f17-485a-93f4-fa227b3e0ac0",
+      "9e366fe5-7916-48f0-9021-994e987bb309",
+      "4235d2e5-8c36-404d-9ba2-e114b4d985b9",
+      "f4c33a89-d07d-4d7a-8f56-886549ccd2fd",
+      "e26f36c4-9adb-49cb-ad86-c01b2828b0ba",
+      "026b2268-9afa-47b5-aaae-4ebb5f3214c4",
+      "0829c85b-2898-4647-9cb5-0364ed8267eb",
+      "8a615e2f-b2ad-475e-9e03-254facb3e453",
+      "f0e61454-00bb-4460-bd51-5cc4bac4bfe0",
+      "41bff1d9-5f1b-4fb3-91fd-73d50e8f7555",
+      "f3244c9d-8b40-4dc7-9605-9f9c487c35b2",
+      "56d08960-f5d3-4855-8256-382d6e5707da",
+      "f988eec6-7857-4988-9638-1034cef06706"
+    ],
+    "journalControl": {
+      "name": "less — Effect 21",
+      "right": 1239,
+      "bottom": 606,
+      "parentRight": 1251,
+      "parentBottom": 614
+    },
+    "goalControl": {
+      "name": "less — Publish useful guide",
+      "right": 1251,
+      "bottom": 1690,
+      "parentRight": 1251,
+      "parentBottom": 1690
+    },
+    "viewport": {
+      "width": 1280,
+      "scrollWidth": 1280
+    }
+  }
+]

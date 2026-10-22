@@ -14,12 +14,12 @@ plus a session goal and 21 journal entries through actual RPC. The browser link
 comes from the configured origin, not the rewrite. Only
 works_note is seeded directly in the synthetic DB: G8 owns its write/compaction.
 
-Open `/neo` at 1280/390px and test both entry points: expand Schedules and select
-the goal title, then open the title in Goals (inside Your work on mobile). Metrics,
+Open `/neo` at 1280/390px and test both entry points: use the explicit more control for Schedules and then for its
+goal details, or use more on the goal card in Goals (inside Your work on mobile). Metrics,
 done-test, next steps and what-works must be visible. Its mandate link must match
 the synthetic origin and recorded revision; no external navigation is performed.
 Load older journal entries: all 21 must remain newest-first, with entry-id paging,
-and opening the newest entry must show its action, worked/failed text and actual
+and using more on the newest entry must show its action, worked/failed text and actual
 PR evidence href. Inspect `evidence/goal-definition-{schedule,goals}-{1280,390}.png`,
 `goal-detail-{schedule,goals}-{1280,390}.png` and
 `goal-detail-web.json`; long content scrolls inside the schedule strip or work panel.

@@ -1,3 +1,4 @@
+import { ContentDisclosureControl } from '../components/ui/ContentDisclosureControl.tsx';
 import { GoalDefinition } from '../components/SessionSchedules.tsx';
 import type { GoalJournalEntry, SessionGoal } from '@hyperneo/shared/types/session-goal';
 import type { SessionScheduleListResult } from '@hyperneo/shared/types/session-schedule';
@@ -106,16 +107,7 @@ function GoalList({ sessionId }: { sessionId: string }) {
           data-neo-goal={goal.id}
           class="space-y-2 rounded-lg border border-line p-3 text-sm"
         >
-          <h3 class="break-words font-medium">
-            <button
-              type="button"
-              aria-expanded={selected === goal.id}
-              class="text-left text-accent hover:underline"
-              onClick={() => setSelected(selected === goal.id ? null : goal.id)}
-            >
-              {goal.title}
-            </button>
-          </h3>
+          <h3 class="break-words font-medium">{goal.title}</h3>
           <p class="text-xs text-fg-muted">
             <span>{t(types[goal.type])}</span>
             {goal.status === 'paused' && (
@@ -159,10 +151,17 @@ function GoalList({ sessionId }: { sessionId: string }) {
               </time>
             )}
           </p>
-          <p class="break-words text-xs text-fg-muted">
-            {effect === null ? t('goals.noJournal') : effect}
-          </p>
-          {selected === goal.id && <GoalDefinition ownerSessionId={sessionId} goalId={goal.id} />}
+          <div class="flow-root">
+            <span class="break-words text-xs text-fg-muted">
+              {effect === null ? t('goals.noJournal') : effect}
+            </span>
+            {selected === goal.id && <GoalDefinition ownerSessionId={sessionId} goalId={goal.id} />}
+            <ContentDisclosureControl
+              expanded={selected === goal.id}
+              onToggle={() => setSelected(selected === goal.id ? null : goal.id)}
+              aria-label={goal.title}
+            />
+          </div>
         </article>
       ))}
     </section>
