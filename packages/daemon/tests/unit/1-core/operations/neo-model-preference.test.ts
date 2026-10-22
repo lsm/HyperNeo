@@ -144,6 +144,7 @@ describe('neo.preferences.set', () => {
   let service: NeoService;
   let switched: unknown[];
   let updated: unknown[];
+  let restarted: unknown[];
   let created: unknown[];
   let recovering: boolean;
   let busy: boolean;
@@ -160,6 +161,7 @@ describe('neo.preferences.set', () => {
     setModelsCache(new Map([['global', [flash, opus]]]));
     switched = [];
     updated = [];
+    restarted = [];
     created = [];
     recovering = false;
     busy = false;
@@ -167,7 +169,9 @@ describe('neo.preferences.set', () => {
     const sessions = {
       getSessionForControl: async (sessionId: string) => ({
         isLimitRecoveryPending: () => false,
-        restartQuery: async () => {},
+        restartQuery: async () => {
+          restarted.push(db.getSession(sessionId)?.config);
+        },
         getProcessingState: () => ({ status: busy ? 'processing' : 'idle' }),
         getRateLimitWatchdogState: () => ({
           lastUserMessage: recovering ? { uuid: 'limited-turn' } : null,
@@ -299,6 +303,20 @@ describe('neo.preferences.set', () => {
     await invoke('neo.preferences.set', base);
     expect(await percentage('neo:root')).toBe(80);
     expect(db.getGlobalSettings().neo?.preferences).not.toHaveProperty('autoCompactPercent');
+  });
+
+  test('rebuilds the percentage with the newly aligned model and thinking', async () => {
+    await invoke('neo.preferences.set', {
+      model: 'deepseek-v4-flash',
+      provider: 'deepseek',
+      thinkingLevel: 'off',
+      autoCompactPercent: 70,
+    });
+    expect(restarted.at(-1)).toMatchObject({
+      model: 'deepseek-v4-flash',
+      provider: 'deepseek',
+      thinkingLevel: 'off',
+    });
   });
 
   test('saves one preference, shows it in the snapshot and switches idle Neo sessions', async () => {
