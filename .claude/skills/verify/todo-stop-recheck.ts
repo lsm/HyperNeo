@@ -31,9 +31,10 @@ const removedId = 'removed-history';
 const completeReport = 'Complete synthetic worker result 🦊\n'.repeat(4000);
 const reportHash = (report: string) => createHash('sha256').update(report).digest('hex');
 const rpcTimes: { name: string; ms: number }[] = [];
-let maxSqlMs = 0, maxLagMs = 0, peakRssBytes = process.memoryUsage().rss, lastTick = performance.now();
+let sqlExecutions = 0, maxSqlMs = 0, maxLagMs = 0, peakRssBytes = process.memoryUsage().rss, lastTick = performance.now();
 const unsubscribe = subscribeToStructuredLogs(log => {
   if (!pinRemoval || log.module !== 'hyperneo:daemon:sqlite.query' || log.metadata.workerKind) return;
+  if (log.metadata.event === 'summary') sqlExecutions += Number(log.metadata.executionCount ?? 0);
   if (typeof log.metadata.durationMs === 'number') maxSqlMs = Math.max(maxSqlMs, log.metadata.durationMs);
   for (const q of (log.metadata.queries ?? []) as { maxDurationMs: number }[]) maxSqlMs = Math.max(maxSqlMs, q.maxDurationMs);
 });
@@ -64,7 +65,7 @@ const evidence: Record<string, unknown> = { peerCalls };
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let ws: WebSocket | undefined;
 try {
-  app = await createDaemonApp({ config: getConfig({ port, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), sqlQueryObservability: pinRemoval ? { slowThresholdMs:250, summaryIntervalMs:0, maxQueryGroups:1000, summaryQueryLimit:1000 } : undefined, verbose: false });
+  app = await createDaemonApp({ config: { ...getConfig({ port, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), ...(pinRemoval ? { sqlQueryObservability: { slowThresholdMs:250, summaryIntervalMs:0, maxQueryGroups:1000, summaryQueryLimit:1000 } } : {}) }, verbose: false });
   await app.spaceRuntimeService.ready();
   const db = app.db.getDatabase();
   db.prepare("INSERT INTO sessions(id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?, 'Synthetic stop proof', ?, ?, ?, 'active', '{\"queryMode\":\"manual\"}', '{}')").run(root, join(run, 'workspace'), new Date(old).toISOString(), new Date(old).toISOString());
@@ -106,10 +107,11 @@ try {
   };
   if (pinRemoval) {
     const removeHandler = createOperationMcpHandler(() => app!.sessionManager.getOperationRegistry(), () => ({sessionId:root,role:'neo'}));
+    const removalAt=performance.now();
     const reply = await removeHandler({name:'neo.todo.remove',input:{todoId:removedId,reason:'Synthetic explicit removal'}});
     assert.equal(reply.content[0].type,'text');
     const receipt=JSON.parse(reply.content[0].text);
-    evidence.removalReceipt=receipt;
+    evidence.removalReceipt=receipt; evidence.removalMcpMs=performance.now()-removalAt;
     assert.equal(receipt.ok,true,JSON.stringify(receipt));
     assert.equal(receipt.todo.state,'removed');
     assert.equal(store.getTodo(removedId)?.report,completeReport);
@@ -150,7 +152,7 @@ try {
     evidence.removedAfterResume={state:removed.state,bytes:Buffer.byteLength(removed.report!),sha256:reportHash(removed.report!)};
     const starts=peerCalls.filter(call => (call as {method:string}).method==='turn/start').length;
     ws.close(); await app.cleanup(); app=undefined;
-    app=await createDaemonApp({config:getConfig({port,host:'127.0.0.1',dbPath:join(run,'data/daemon.db')}),sqlQueryObservability:{slowThresholdMs:250,summaryIntervalMs:0,maxQueryGroups:1000,summaryQueryLimit:1000},verbose:false});
+    app=await createDaemonApp({config:{...getConfig({port,host:'127.0.0.1',dbPath:join(run,'data/daemon.db')}),sqlQueryObservability:{slowThresholdMs:250,summaryIntervalMs:0,maxQueryGroups:1000,summaryQueryLimit:1000}},verbose:false});
     await app.spaceRuntimeService.ready();
     ws=new WebSocket(`ws://127.0.0.1:${port}/ws`);
     await new Promise<void>((done,fail)=>{ws!.onopen=()=>done();ws!.onerror=()=>fail(new Error('restart RPC connect failed'));});
@@ -167,5 +169,5 @@ try {
   ws?.close(); await app?.cleanup(); peer.stop(true);
   if(lagTimer)clearInterval(lagTimer);
   unsubscribe();
-  if(pinRemoval){evidence.metrics={maxLagMs,maxObservedSqlMs:maxSqlMs,peakSampledRssBytes:peakRssBytes,rpcTimes};writeFileSync(join(run,'evidence/observed.json'),JSON.stringify(evidence,null,2));}
+  if(pinRemoval){evidence.metrics={maxLagMs,maxObservedSqlMs:maxSqlMs,sqlExecutions,peakSampledRssBytes:peakRssBytes,rpcTimes};writeFileSync(join(run,'evidence/observed.json'),JSON.stringify(evidence,null,2));assert(sqlExecutions>0,'SQL timing unavailable: no executions observed');}
 }
