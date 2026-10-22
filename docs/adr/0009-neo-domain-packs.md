@@ -20,7 +20,7 @@ have grown into Neo's core:
 | Decisions | `service.ts`: the PR refresh pipeline, done checks that wait while CI runs, the stalled-merge reminder, PR links in the follow pass. |
 | Checklist | The `pr_merged` item check kind (m318 CHECK constraint, op schema). |
 | Prompts | `neo/work/goal-merge.md`, `done-check-prs-{live,stale,ready}.md`; examples in `system/prompt.md` ("for code usually merged…", "Merged in #6099"); place resolution phrased as git remotes and worktrees; the merge example in `root-rule-save.md`; the `/merg/` regex in `withWorkGoal`. |
-| Neo's own reads | `look-up-guard.ts` `decideNeoTool`: every tool, a nudge for local changes, a block for shared state. |
+| Neo's own reads | Static SDK `Read(path)` denials in `secret-read-rules.ts`; the command-parsing hook has been removed. |
 | Drivers | Worktree placement (`planWorkPlacement`) and git-remote matching in `work.find`. |
 
 The domain-agnostic core is everything else: asks and their checklists, cards
@@ -57,9 +57,9 @@ follow-up and reminder pipelines, delivery bookkeeping, standing rules,
 publications and consultations. It also keeps three things that look
 domain-specific but are not packs' to change:
 
-- Neo's tool rule (`decideNeoTool` in `look-up-guard.ts`). It bounds what
-  Neo's native tools may change; a pack that loosened it would grant
-  privileges by being installed.
+- Neo's static SDK secret-path read rules (`secret-read-rules.ts`). Packs do
+  not change these permissions. Command lines are never a safety boundary;
+  direct-write isolation belongs to the environment, outside domain packs.
 - Placement and git-remote matching, which belong to the driver adapters that
   start work in a folder and were just unified across Codex, Claude and
   HyperNeo (#6170, #6198). Only the prose about worktrees and remotes moves

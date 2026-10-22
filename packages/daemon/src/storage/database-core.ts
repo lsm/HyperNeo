@@ -32,7 +32,10 @@ import {
 import { Database as BunDatabase } from './sqlite-compat.ts';
 import { assertSupportedDatabaseVersion } from './schema/upgrade-floor.ts';
 import { backfillSdkMessageColumns } from './schema/m413-sdk-message-columns.ts';
-import { selectSdkBodyWriteMode } from './sdk-message-body-admission.ts';
+import {
+  selectSdkBodyWriteMode,
+  startSdkBodyWriteAdmission,
+} from './sdk-message-body-admission.ts';
 import { migrateSdkMessageBodies } from './sdk-message-body-copy.ts';
 import {
   reserveSdkBodyBackupPath,
@@ -64,6 +67,7 @@ export class DatabaseCore {
   private bodyCopyAbort: AbortController | null = null;
   private bodyCopyRetry: ReturnType<typeof setTimeout> | null = null;
   private bodyCopyClosed = false;
+  private bodyAdmissionCancel: (() => void) | null = null;
 
   constructor(
     private dbPath: string,
@@ -122,11 +126,15 @@ export class DatabaseCore {
       createTables(this.db);
       await backfillSdkMessageColumns(this.db, (progress) => this.logger.info(progress));
 
-      const bodyMode = await selectSdkBodyWriteMode(this.db);
-      this.logger.warn(`SDK body startup mode selected: ${JSON.stringify(bodyMode)}`);
+      const reportBodyMode = (mode: Awaited<ReturnType<typeof selectSdkBodyWriteMode>>) =>
+        this.logger.warn(`SDK body startup mode selected: ${JSON.stringify(mode)}`);
+      if (this.dbPath === ':memory:') reportBodyMode(await selectSdkBodyWriteMode(this.db));
+      else
+        this.bodyAdmissionCancel = startSdkBodyWriteAdmission(this.db, this.dbPath, reportBodyMode);
 
       configureMessageSearchFts(this.db);
     } catch (error) {
+      this.bodyAdmissionCancel?.();
       if (this.db !== null) {
         try {
           this.db.close();
@@ -260,6 +268,7 @@ export class DatabaseCore {
   }
 
   close(): void {
+    this.bodyAdmissionCancel?.();
     this.bodyCopyClosed = true;
     this.bodyCopyAbort?.abort();
     if (this.bodyCopyRetry) clearTimeout(this.bodyCopyRetry);

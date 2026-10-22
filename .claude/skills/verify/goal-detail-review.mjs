@@ -38,7 +38,7 @@ try {
   await page.goto(`http://127.0.0.1:${port}/neo`);
   await page.getByRole('button',{name:'Your work',exact:true}).click();
   const goals=page.getByRole('region',{name:'Goals',exact:true});
-  await goals.getByRole('button',{name:'Publish useful guide',exact:true}).click();
+  await goals.getByRole('button',{name:'more — Publish useful guide',exact:true}).click();
   const pending=await held;
   const journal=goals.getByRole('region',{name:'Journal',exact:true});
   await journal.getByRole('status').waitFor();

@@ -7,8 +7,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MessageHub, WebSocketClientTransport, subscribeToStructuredLogs } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { holdSdkBodyAdmission } from './sdk-bun-worker-bridge.ts';
 
-export async function verifySpentAdmission(kind: 'ordinary' | 'neo'): Promise<void> {
+export async function verifySpentAdmission(
+  kind: 'ordinary' | 'neo',
+  scenario: 'interrupted' | 'idle' | 'history' = 'interrupted'
+): Promise<void> {
   const run = await mkdtemp(join(tmpdir(), 'spent-admission-'));
   const requestId = randomUUID();
   const markers = ['ADMISSION_HEAD', 'QUEUED_ONE', 'QUEUED_TWO', 'QUEUED_THREE', 'QUEUED_FOUR'];
@@ -19,6 +23,7 @@ export async function verifySpentAdmission(kind: 'ordinary' | 'neo'): Promise<vo
     if (event.module === 'hyperneo:daemon:message-delivery.lifecycle')
       stages.push({ at: Date.now(), ...event.metadata });
   });
+  let releaseCoverage: (() => void) | undefined;
   let restarted = false;
   let holdNext = false;
   let held = false;
@@ -32,6 +37,7 @@ export async function verifySpentAdmission(kind: 'ordinary' | 'neo'): Promise<vo
   const evidence: Record<string, unknown> = {
     run,
     kind,
+    scenario,
     requestId,
     requests,
     stages,
@@ -191,6 +197,12 @@ export async function verifySpentAdmission(kind: 'ordinary' | 'neo'): Promise<vo
       for (const server of servers)
         await hub.request('mcp.registry.setEnabled', { id: server.id, enabled: false });
       evidence.port = daemon.server.port;
+      const { servers } = await hub.request<{ servers: Array<{ id: string }> }>(
+        'mcp.registry.list',
+        {}
+      );
+      for (const server of servers)
+        await hub.request('mcp.registry.setEnabled', { id: server.id, enabled: false });
     };
     const call = (name: string, input: unknown = {}) =>
       hub.request<Record<string, unknown>>('operation.invoke', { name, input });
@@ -248,50 +260,52 @@ export async function verifySpentAdmission(kind: 'ordinary' | 'neo'): Promise<vo
       kind === 'neo'
         ? call('neo.message.send', { sessionId, requestId: randomUUID(), content })
         : hub!.request('message.send', { sessionId, content });
-    holdNext = true;
-    await send('Check the synthetic recovery garden: HOLD_FOR_INTERRUPT');
-    const heldDeadline = Date.now() + 20000;
-    while (!held && Date.now() < heldDeadline)
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    assert(held, 'model request was not held');
-    evidence.midTurnAccepted = await send('Check the synthetic recovery garden: HUMAN_MID_TURN');
-    const interrupt = hub!.request('client.interrupt', { sessionId });
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    release!();
-    evidence.interrupt = await interrupt;
-    const midTurnDeadline = Date.now() + 20000;
-    while (!midTurnSeen && Date.now() < midTurnDeadline)
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    assert(midTurnSeen, 'mid-turn human input never reached the model after interrupt');
-    const midTurnRows = daemon!.db
-      .getDatabase()
-      .prepare(
-        "SELECT send_status FROM sdk_messages WHERE session_id = ? AND message_type = 'user'"
-      )
-      .all(sessionId) as Array<{ send_status: string }>;
-    assert.equal(midTurnRows.filter((row) => row.send_status === 'failed').length, 0);
-    evidence.midTurnReceipt = true;
-    evidence.interruptPreserved = true;
-
+    if (scenario === 'interrupted') {
+      holdNext = true;
+      await send('Check the synthetic recovery garden: HOLD_FOR_INTERRUPT');
+      const heldDeadline = Date.now() + 20000;
+      while (!held && Date.now() < heldDeadline)
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      assert(held, 'model request was not held');
+      evidence.midTurnAccepted = await send('Check the synthetic recovery garden: HUMAN_MID_TURN');
+      const interrupt = hub!.request('client.interrupt', { sessionId });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      release!();
+      evidence.interrupt = await interrupt;
+      const midTurnDeadline = Date.now() + 20000;
+      while (!midTurnSeen && Date.now() < midTurnDeadline)
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      assert(midTurnSeen, 'mid-turn human input never reached the model after interrupt');
+      const midTurnRows = daemon!.db
+        .getDatabase()
+        .prepare(
+          "SELECT send_status FROM sdk_messages WHERE session_id = ? AND message_type = 'user'"
+        )
+        .all(sessionId) as Array<{ send_status: string }>;
+      assert.equal(midTurnRows.filter((row) => row.send_status === 'failed').length, 0);
+      evidence.midTurnReceipt = true;
+      evidence.interruptPreserved = true;
+    }
     const live = await daemon!.sessionManager.getSessionForControl(sessionId);
     const settled = Date.now() + 10000;
     while (live?.getProcessingState().status !== 'idle' && Date.now() < settled)
       await new Promise((resolve) => setTimeout(resolve, 100));
-    await transport!.close();
-    await daemon!.cleanup();
-    daemon = undefined;
+    assert.equal(live?.getProcessingState().status, 'idle');
+    evidence.beforeRestart = { processing: live?.getProcessingState(), requests: [...requests] };
     const { Database } = await import('../../src/storage/sqlite-compat.ts');
     const seed = new Database(dbPath);
-    seed
-      .prepare(
-        "UPDATE sdk_messages SET send_status = 'enqueued' WHERE session_id = ? AND sdk_uuid = ?"
-      )
-      .run(sessionId, originalId);
-    seed
-      .prepare(`UPDATE job_queue SET status = 'pending', run_at = ?, completed_at = NULL,
+    if (scenario === 'interrupted')
+      seed
+        .prepare(
+          "UPDATE sdk_messages SET send_status = 'enqueued' WHERE session_id = ? AND sdk_uuid = ?"
+        )
+        .run(sessionId, originalId);
+    if (scenario === 'interrupted')
+      seed
+        .prepare(`UPDATE job_queue SET status = 'pending', run_at = ?, completed_at = NULL,
       payload = json_set(payload, '$.origin', 'recovery', '$.released', json('true'))
       WHERE queue = 'message_delivery' AND json_extract(payload, '$.messageUuid') = ?`)
-      .run(Date.now(), originalId);
+        .run(Date.now(), originalId);
     const { SDKMessageRepository } = await import(
       '../../src/storage/repositories/sdk-message-repository.ts'
     );
@@ -301,7 +315,21 @@ export async function verifySpentAdmission(kind: 'ordinary' | 'neo'): Promise<vo
     const messages = new SDKMessageRepository(seed);
     const jobs = new JobQueueRepository(seed);
     const ids: string[] = [];
-    const queuedAt = Date.now() + 10;
+    if (scenario === 'history') {
+      const body = JSON.stringify({ type: 'result', subtype: 'success', result: 'x'.repeat(8192) });
+      const insert = seed.prepare(`INSERT INTO sdk_messages
+        (id,session_id,sdk_message,timestamp,message_type) VALUES (?,?,?,?,?)`);
+      seed.transaction(() => {
+        for (let index = 0; index < 30000; index++)
+          insert.run(`archive-${index}`, 'synthetic-history', body, Date.now(), 'result');
+        seed.exec(`INSERT INTO sdk_message_bodies(seq,sdk_message)
+          SELECT seq,sdk_message FROM sdk_messages WHERE session_id='synthetic-history'`);
+        seed.exec(`INSERT OR IGNORE INTO migration_markers(key,applied_at)
+          VALUES ('sdk_message_bodies_copy_v1:complete',1)`);
+      })();
+      evidence.historyRows = 30000;
+    }
+    const queuedAt = Date.now() + 1500;
     for (const marker of markers) {
       const uuid = randomUUID();
       ids.push(uuid);
@@ -329,12 +357,41 @@ export async function verifySpentAdmission(kind: 'ordinary' | 'neo'): Promise<vo
         runAt: queuedAt + ids.length,
         maxRetries: 8,
       });
-      if (marker === markers[0])
+      if (scenario === 'interrupted' && marker === markers[0])
         seed.prepare('UPDATE job_queue SET retry_count = max_retries WHERE id = ?').run(queued.id);
     }
     seed.close();
+    await transport!.close();
+    await daemon!.cleanup();
+    daemon = undefined;
+    evidence.restartCount = 1;
     restarted = true;
-    await start();
+    const prepare = Database.prototype.prepare;
+    if (scenario === 'history') {
+      releaseCoverage = holdSdkBodyAdmission();
+      evidence.historyPageLatencyMs = 50;
+      Database.prototype.prepare = function (sql, ...args) {
+        const statement = prepare.call(this, sql, ...args);
+        if (!sql.includes('SELECT seq FROM sdk_messages WHERE seq>')) return statement;
+        return new Proxy(statement, {
+          get(target, property) {
+            if (property === 'all')
+              return (...params: unknown[]) => {
+                Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+                return target.all(...params);
+              };
+            return Reflect.get(target, property, target);
+          },
+        });
+      };
+    }
+    const startupAt = Date.now();
+    try {
+      await start();
+    } finally {
+      Database.prototype.prepare = prepare;
+    }
+    evidence.restartStartupMs = Date.now() - startupAt;
     const rows = () =>
       daemon!.db
         .getDatabase()
@@ -375,16 +432,37 @@ export async function verifySpentAdmission(kind: 'ordinary' | 'neo'): Promise<vo
           .every((row) => row.send_status === 'consumed'),
       'queued inputs were not consumed'
     );
+    if (scenario === 'history') {
+      const { sdkSideOnlyWrites } = await import('../../src/storage/sdk-message-body-admission.ts');
+      assert.equal(
+        sdkSideOnlyWrites(daemon!.db.getDatabase()),
+        false,
+        'queued inputs must reach the model before historical coverage finishes'
+      );
+      evidence.receivedBeforeCoverageVerified = [...received];
+      releaseCoverage!();
+      await until(
+        () => sdkSideOnlyWrites(daemon!.db.getDatabase()),
+        'read-only coverage worker did not complete successfully'
+      );
+      evidence.coverageVerified = true;
+    }
     evidence.afterDelivery = sample();
     evidence.messages = await read();
     evidence.received = [...received];
     evidence.passed = true;
   } finally {
+    releaseCoverage?.();
     release?.();
     if (process.env.VERIFY_EVIDENCE_DIR) {
       await mkdir(process.env.VERIFY_EVIDENCE_DIR, { recursive: true });
       await writeFile(
-        join(process.env.VERIFY_EVIDENCE_DIR, `spent-admission-${kind}.json`),
+        join(
+          process.env.VERIFY_EVIDENCE_DIR,
+          scenario === 'interrupted'
+            ? `spent-admission-${kind}.json`
+            : `spent-admission-${scenario}-${kind}.json`
+        ),
         JSON.stringify(evidence, null, 2)
       );
     }

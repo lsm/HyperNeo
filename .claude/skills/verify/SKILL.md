@@ -64,11 +64,9 @@ env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_USE_DEV_PROXY=1 \
   HYPERNEO_DATA_DIR="$RUN/data" LOG_LEVEL=warn bun "$PROOF" "$RUN"
 ```
 
-For scripted-model proofs, list `mcp.registry.list` and set each registry server
-`enabled: false` with `mcp.registry.setEnabled` in the synthetic DB before opening
-a session. Keep the inline operations MCP server. The default `fetch-mcp` invokes
-`npx` and can wait on network-dependent initialization; it is outside these
-proofs and must not obscure actual model receipt or queue assertions.
+SDK proof helpers disable external registry MCP servers through `mcp.registry.list`
+and `mcp.registry.setEnabled` before opening sessions. Inline operation tools remain
+available; startup must not depend on downloading an external MCP executable.
 
 The helper creates its own GitHub stub, uses an ephemeral daemon port, seeds
 only its synthetic DB, and closes its resources in finally. Keep its evidence

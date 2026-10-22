@@ -1,11 +1,8 @@
-import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { z } from 'zod';
 
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
-import type { HookInput, Options } from '@anthropic-ai/claude-agent-sdk';
 import type { Database as SQLite } from '../../../../src/storage/sqlite-compat.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 import type { Database } from '../../../../src/storage/database.ts';
