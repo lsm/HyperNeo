@@ -102,6 +102,13 @@ export function readSDKMessagePage(
   };
 }
 
+export function sdkReadLogMetadata(metadata: Record<string, unknown>, workerOperation: string) {
+  return {
+    ...metadata,
+    ...(metadata.event === 'summary' ? {} : { workerOperation }),
+  };
+}
+
 export class SDKStatusReader {
   private worker: Worker | null = null;
   private queue: Promise<unknown> = Promise.resolve();

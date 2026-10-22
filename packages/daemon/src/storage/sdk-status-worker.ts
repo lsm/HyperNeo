@@ -5,6 +5,7 @@ import {
   projectSDKStatusPage,
   projectSDKStatusMessage,
   readSDKMessagePage,
+  sdkReadLogMetadata,
   type SDKReadResult,
   type SDKStatusReply,
   type SDKStatusRequest,
@@ -19,7 +20,9 @@ let repository: SDKMessageRepository | null = null;
 let workerOperation = 'sdk-status';
 subscribeToStructuredLogs((log) => {
   if (log.module === 'hyperneo:daemon:sqlite.query')
-    worker.postMessage({ log: { ...log, metadata: { ...log.metadata, workerOperation } } });
+    worker.postMessage({
+      log: { ...log, metadata: sdkReadLogMetadata(log.metadata, workerOperation) },
+    });
 });
 
 worker.onmessage = ({ data }) => {

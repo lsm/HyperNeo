@@ -67,3 +67,13 @@ The helper asserts full ordinary content and stored SHA retention. Unit suites,
 including mixed status/page FIFO/error contracts, remain CI-only. Post-deploy measurement belongs to the perf lane, grouped
 by deployed commit/PID, read-only; `workerOperation=sdk-page` identifies page SQL
 while the existing shared `workerKind=sdk-status` label remains compatible.
+
+
+For summary attribution, run the same isolated `sdk-status-reader-memory.ts bridge`
+command with `VERIFY_SQL_SUMMARY=verify`. It uses real public status/page RPCs and
+an actual native worker, enables a one-second SQL interval and records the mixed
+fingerprints in `evidence/memory.json`. Summary records must have no
+`workerOperation`; individual slow statements retain their own status/page label.
+On the pre-fix contract commit, `VERIFY_SQL_SUMMARY=baseline` records the erroneous
+last-page label. Full ordinary text, repeated replies and stored SHA must still
+match. This is an observability proof, not a new performance benchmark.
