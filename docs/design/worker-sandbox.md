@@ -15,7 +15,7 @@ Placement and instructions alone protect neither main nor credentials.
 
 ## 1. Write boundary and the two proof limits
 
-Use each engine’s built-in macOS Seatbelt sandbox, never command parsing. Codex
+For restricted workers, use each engine’s built-in macOS Seatbelt sandbox, never command parsing. Codex
 starts with [`workspace-write`](https://developers.openai.com/codex/config-reference); tool-writable roots are its worker checkout, its
 own Git metadata and specific needed temp/cache paths, never main or a broad home
 ancestor. Claude Code enables its built-in sandbox with the same roots, no excluded
@@ -48,22 +48,38 @@ Evidence/scripts: `/Users/lsm/focus/verification/worker-sandbox-2026-10-22/proof
 
 ## 2. Worker checkout location
 
-Claude starts use `<HyperNeo data dir>/worktrees/<repo>/<id>`
-(`~/.hyperneo/worktrees` on this laptop). Codex keeps `~/.codex/worktrees`.
-Neither uses `~/focus/worktrees` or a `.claude/worktrees` directory inside main.
+Proposed: Claude starts use `<HyperNeo data dir>/worktrees/<repo>/<id>`
+(`~/.hyperneo/worktrees` on this laptop), replacing the current in-main
+`.claude/worktrees` location. Codex keeps `~/.codex/worktrees`.
+Neither proposed worker location uses `~/focus/worktrees` or `.claude/worktrees` inside main.
 The clone recommendation changes Git storage, not these worker locations.
 
-## 3. Credentials
+## 3. Reusable session access and credentials
 
-Start with a scrubbed environment: no inherited API keys/tokens, auth sockets or
-shell-profile reinjection. Deny sandbox reads of `~/.config`, `~/.ssh`, `~/.docker`,
-`~/.kube`, `~/.npmrc` and engine auth files; match native Read permissions for Claude.
-Deny Keychain/1Password IPC where the engine’s OS policy supports it; name any
-uncovered access rather than promise credential secrecy. The only worker GitHub
-credential is a human-provided fine-grained token limited to that repository and
-needed permissions. It is visible to its receiving process; no host-wide token or
-other service credential is handed over. No credential contents were read for this page.
+Access belongs to a long-lived session, reused across tasks; never create a session
+per task. Most workers default to restricted: their own worktree, scrubbed environment,
+no service keys. Normal edit/build/test/commit/push and opening/merging PRs use one
+fine-grained GitHub token scoped to the repository and needed permissions.
+
+At creation, the human may explicitly grant an ops/deploy session specific keys
+(e.g. `WOODPECKER_TOKEN`, `CLOUDFLARE_API_TOKEN`) and wider filesystem roots, up to
+broad machine access. Store writable roots, key names and broader access on the
+session; grants are human-approved, visible in the UI and revocable. Projects/packs
+may suggest defaults; they cannot approve them. Revocation stops the running worker;
+resume omits the grant. Already disclosed keys need rotation to become unusable.
+Neo dispatches coding to the restricted
+pool and deploy/server checks to an appropriately granted session, never widening
+a coding session to fit a task.
+
+Move keys out of `~/.zshrc` into one store (Keychain or 1Password, chosen for the
+deployment). On start/resume, the daemon injects only that session’s granted keys.
+Scrub inherited API keys/tokens, auth sockets and shell-profile reinjection.
+For restricted sessions, deny reads of `~/.config`, `~/.ssh`, `~/.docker`, `~/.kube`,
+`~/.npmrc` and engine auth files; match native Read permissions for Claude. Deny
+Keychain/1Password IPC where the engine’s OS policy supports it; state uncovered
+access explicitly. A granted key is visible to the agent: prefer narrowly scoped
+tokens, never grant Alpaca/trading keys. No credential contents were read for this page.
 
 ## 4. Deferred
 
-“Use without seeing” (broker, per-service adapters and grants UI) waits for containers/OAP isolation.
+“Use without seeing” (broker and per-service adapters) waits for containers/OAP isolation.
