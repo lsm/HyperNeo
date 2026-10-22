@@ -2,11 +2,10 @@ import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import type { Database } from '../../storage/database.ts';
 import type { Session } from '@hyperneo/shared';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
-import { getDataDir } from '../data-dir.ts';
 import { OPERATIONS_MCP_SERVER_NAME } from '../mcp/built-in-servers.ts';
 import { getSDKProjectDir } from '../sdk-session-file-manager.ts';
 import { neoFolderPath } from './folder.ts';
-import { neoSecretReadRules, neoToolGuard } from './look-up-guard.ts';
+import { neoSecretReadRules } from './secret-read-rules.ts';
 import { neoSettingsPackBriefs } from './packs/index.ts';
 import type { NeoPackBrief } from './packs/types.ts';
 import { neoPrompt } from './prompt.ts';
@@ -102,19 +101,4 @@ export function restrictNeoQuery(
   options.mcpServers = operations ? { [OPERATIONS_MCP_SERVER_NAME]: operations } : {};
   options.allowedTools = neoCoordinatorAllowedTools();
   options.disallowedTools = [...(options.disallowedTools ?? []), ...neoCoordinatorDeniedReads()];
-  options.hooks = {
-    ...options.hooks,
-    PreToolUse: [
-      {
-        hooks: [
-          neoToolGuard({
-            home: homedir(),
-            dataDir: getDataDir(),
-            own: options.cwd ? [options.cwd] : [],
-          }),
-        ],
-      },
-      ...(options.hooks?.PreToolUse ?? []),
-    ],
-  };
 }

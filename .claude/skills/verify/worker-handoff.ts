@@ -47,16 +47,16 @@ const server = Bun.serve({
     } else {
       if (step === 0) tool = { name: 'mcp__hyperneo-operations__invoke', input: { name: 'handoff.read', input: { reference } } };
       if (step === 1) tool = { name: 'Read', input: { file_path: reference.path } };
-      if (step === 2) tool = { name: 'Read', input: { file_path: privateFile } };
+      if (step === 2) tool = { name: 'mcp__hyperneo-operations__invoke', input: { name: 'handoff.read', input: { reference: { ...reference, path: privateFile } } } };
       if (step === 3) {
         chmodSync(reference.path as string, 0o600);
         writeFileSync(reference.path as string, 'SYNTHETIC_TAMPERED_BYTES');
-        tool = { name: 'Read', input: { file_path: reference.path } };
+        tool = { name: 'mcp__hyperneo-operations__invoke', input: { name: 'handoff.read', input: { reference } } };
       }
       if (step === 4) {
         const path = join(dirname(reference.path as string), 'linked.md');
         symlinkSync(privateFile, path);
-        tool = { name: 'Read', input: { file_path: path } };
+        tool = { name: 'mcp__hyperneo-operations__invoke', input: { name: 'handoff.read', input: { reference: { ...reference, path, name: 'linked.md' } } } };
       }
     }
     const id = `${mode}-${step++}`;
@@ -105,7 +105,8 @@ try {
   assert(results['neo-1'].includes('SYNTHETIC_HANDOFF_REPORT'));
   for (const id of ['neo-2', 'neo-3', 'neo-4']) assert(!results[id].includes('SYNTHETIC_PRIVATE_MUST_NOT_BE_READ'));
   assert(results['neo-3'].includes('tampered'));
-  assert(results['neo-2'].includes('denied') || results['neo-2'].includes("can't"));
+  assert.equal(object(results['neo-2']).kind, 'rejected');
+  assert.equal(object(results['neo-4']).kind, 'rejected');
   writeFileSync(join(run, 'evidence.json'), JSON.stringify({ reference, reportBytes: Buffer.byteLength(text), actualWorkerWriteAndMcpPublish: true, actualNeoMcpRead: true, actualNeoNativeRead: true, tamperedDenied: true, privateSiblingDenied: true, symlinkDenied: true, results }, null, 2));
   console.log(join(run, 'evidence.json'));
 } finally { await server.stop(true); }

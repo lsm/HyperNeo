@@ -17,7 +17,7 @@ inspection; the suspected paths below need reproductions before implementation.
 | Part | First wrong decision / current boundary | Proposed change |
 |---|---|---|
 | Send | [`message-send.ts:40`](../../packages/daemon/src/lib/messaging/message-send.ts#L40) requires the SDK envelope; [`invoke.ts:77`](../../packages/daemon/src/lib/operations/invoke.ts#L77) returns schema diagnostics without a corrective example. Incident calls repeatedly omitted `type` or `parent_tool_use_id`. | Extend **the same `message.send` operation** with `{to, text, files?}`; normalize once into its current admission, identity, routing and persistence pipeline. Keep the existing SDK shape accepted. Invalid input includes a minimal valid example for each shape. |
-| File | The worker's workspace is under the daemon data directory. [`session-policy.ts:110`](../../packages/daemon/src/lib/neo/session-policy.ts#L110) grants Neo only its own workspace; [`look-up-guard.ts:190`](../../packages/daemon/src/lib/neo/look-up-guard.ts#L190) blocks other data-directory paths after canonicalization. | Add a daemon-managed **per-session outbox**, explicitly writable by that worker and readable by Neo through the narrow exception below. Do not allow another worker's workspace or all of `~/.hyperneo`. |
+| File | Worker workspaces are under the daemon data directory. The former Neo command/read hook has been removed; static SDK secret-path Read rules remain. | Add a daemon-managed **per-session outbox**, explicitly writable by that worker and readable by Neo through the narrow exception below. Do not allow another worker's workspace or all of `~/.hyperneo`. |
 | Reply | [`work-turns.ts:3`](../../packages/daemon/src/storage/work-turns.ts#L3) cuts text at 4,000 characters; lines 39–75 read a bounded search-index tail. [`hyperneo-adapter.ts:409`](../../packages/daemon/src/lib/drivers/hyperneo-adapter.ts#L409) projects agent replies from `result` only. [`driver-work.ts:372`](../../packages/daemon/src/lib/neo/driver-work.ts#L372) cuts attribution at the next user input, and line 498 can turn an empty observed exchange into “without a written reply.” | Read local conversation replies from authoritative SDK storage, with stable anchors and continuation cursors. Bind todo reports to the acknowledged input and actual consumed-turn evidence, rather than a search tail or text match alone. Preserve assistant text when a result has no text; deduplicate when both contain the reply. |
 | Answered | [`coordinator-turn.ts:95`](../../packages/daemon/src/lib/neo/coordinator-turn.ts#L95) tracks carried human inputs internally, but its identity exposes one original trigger. [`publication-operation.ts:78`](../../packages/daemon/src/lib/neo/publication-operation.ts#L78) **already accepts an explicit alternate delivered human trigger**. The missing link is making that ID available with the input. | Surface daemon-authored human message IDs and `triggerId` in every human input envelope, including mid-turn delivery. Neo selects the human input it actually answers using the existing publication field. |
 
@@ -32,8 +32,9 @@ Messages and todo reports carry these structured references plus the readable
 artifact path. Paths are local to their originating daemon; remote delivery must
 transfer the artifact explicitly or report unavailable, never reinterpret a path.
 
-Neo's read guard admits only the canonical published-artifact subtree; it keeps
-all other data-directory, credential-name and secret-file checks. Publication
+The handoff.read operation verifies the canonical published-artifact subtree.
+Neo no longer has a custom native Read hook; only static SDK secret-path Read
+rules remain. Publication
 accepts only regular files from the caller's registered draft directory: reject
 traversal, symlinks, hard links and cross-session references; snapshot through the
 validated open descriptor, not a second path lookup. Published artifacts are immutable through the API/SDK contract: publication never
@@ -59,12 +60,11 @@ Names are single non-secret filenames of at most 128 ASCII characters; file
 contents may be arbitrary bytes. Content-addressed published paths embed SHA-256
 and retain their originating session and persistent local daemon id. Reads hash
 the entire descriptor stream before returning a base64 chunk (maximum 256 KiB);
-`nextOffset`/`complete` allow complete retrieval without trimming. Neo native Read
-uses the same hash preflight. Drafts, outbox parent directories, searches/shell
-reads of private daemon data and secret filenames remain outside its exception.
-The native SDK Read tool still owns its subsequent filesystem open; the verified
-operation returns only bytes captured from the descriptor it hashed. Neither
-interface claims protection against a same-user process changing the SDK itself.
+`nextOffset`/`complete` allow complete retrieval without trimming. Use handoff.read
+for hash-verified bytes; native SDK Read is an ordinary filesystem read and no
+longer has the deleted hook's hash preflight or data-directory exception. The
+verified operation returns only bytes captured from the descriptor it hashed.
+Environment isolation remains separate; neither interface is an OS sandbox.
 PR2 accepts `message.send {to, text, files?, idempotencyKey?}` as well as the
 legacy nested SDK envelope. `files` contains complete published references, not
 source paths. At most 20 explicit references are accepted per send; additional
@@ -156,10 +156,10 @@ Production-line estimates are contracts to remeasure against fresh `dev`; tests
 ride their change. Each bug gets a committed failing reproduction before its fix.
 
 1. **Outbox artifacts** (~150–200 production lines): daemon storage/lifecycle,
-   worker write-root registration and exact Neo guard exception. Test cross-session
+   worker write-root registration and verified handoff.read access. Test cross-session
    paths, symlink/hard-link races, secret names, restart, disk-full and retention
    through workspace removal. Verify a worker-created synthetic report is readable
-   through Neo's actual Read door, while a sibling data-directory file is denied.
+   through Neo's handoff.read door, while a sibling data-directory reference is denied.
 2. **Simple `message.send`** (~100–180 lines; depends on 1): schema normalization,
    spill and references using existing send pipeline. Test both shapes, useful
    errors, UTF-8 boundary, 8 KiB report byte/hash equality, identity, remote

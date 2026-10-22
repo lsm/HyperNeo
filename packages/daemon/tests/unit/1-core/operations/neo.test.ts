@@ -1,11 +1,11 @@
-import { homedir, tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { z } from 'zod';
 
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
-import type { HookInput, Options } from '@anthropic-ai/claude-agent-sdk';
+import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import type { Database as SQLite } from '../../../../src/storage/sqlite-compat.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 import type { Database } from '../../../../src/storage/database.ts';
@@ -378,7 +378,7 @@ describe('Neo MVP', () => {
     expect(service.repo.getProject('private')).toBeNull();
   });
 
-  test('query restriction gives Neo its tools and guard and drops plugins, settings and extra MCP servers', async () => {
+  test('query restriction retains tools without injecting a guard and drops plugins, settings and extra MCP servers', async () => {
     const operationServer = { type: 'stdio' as const, command: 'operations' };
     const options: Options = {
       tools: ['Bash', 'Read', 'Edit', 'Write'],
@@ -399,43 +399,7 @@ describe('Neo MVP', () => {
     expect(options.agents).toEqual({});
     expect(options.cwd).toBe(neoCoordinatorRuntimePath('neo:runtime-test'));
     expect(options.cwd).not.toBe(process.cwd());
-    const guard = options.hooks!.PreToolUse![0].hooks[0];
-    const write = (file_path: string) =>
-      guard(
-        {
-          hook_event_name: 'PreToolUse',
-          tool_name: 'Write',
-          tool_input: { file_path, content: 'x' },
-          tool_use_id: 'tool-1',
-          session_id: 'sdk-1',
-          transcript_path: '/tmp/t.jsonl',
-          cwd: options.cwd!,
-        } as HookInput,
-        'tool-1',
-        { signal: new AbortController().signal }
-      );
-    expect(await write(join(options.cwd!, 'check.ts'))).toEqual({});
-    const bash = (command: string) =>
-      guard(
-        {
-          hook_event_name: 'PreToolUse',
-          tool_name: 'Bash',
-          tool_input: { command },
-          tool_use_id: 'tool-2',
-          session_id: 'sdk-1',
-          transcript_path: '/tmp/t.jsonl',
-          cwd: options.cwd!,
-        } as HookInput,
-        'tool-2',
-        { signal: new AbortController().signal }
-      );
-    expect(await bash(`rm -rf ${join(tmpdir(), 'another-process-file')}`)).toMatchObject({
-      hookSpecificOutput: { permissionDecision: 'deny' },
-    });
-    expect(await bash('rm -f old-check.ts')).toEqual({});
-    expect(await write(join(homedir(), 'focus', 'app', 'a.ts'))).toMatchObject({
-      hookSpecificOutput: { additionalContext: expect.stringContaining('hand changes to a card') },
-    });
+    expect(options.hooks).toBeUndefined();
   });
 
   test('every Neo session may create a project and revise one at its current revision', async () => {

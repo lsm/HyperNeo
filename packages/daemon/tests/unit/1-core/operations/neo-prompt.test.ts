@@ -113,7 +113,7 @@ describe('neoCoordinatorNativeTools', () => {
 });
 
 describe('neoCoordinatorAllowedTools', () => {
-  test('approves whole tools for root and topic alike, leaving the line to the guard', () => {
+  test('approves native tools without shell-command permission rules', () => {
     expect(neoCoordinatorAllowedTools()).toEqual([
       ...NEO_TOOLS,
       'mcp__hyperneo-operations__invoke',
@@ -123,7 +123,7 @@ describe('neoCoordinatorAllowedTools', () => {
 });
 
 describe('neoCoordinatorDeniedReads', () => {
-  test('blocks credentials, shell profiles, env files and the daemon data folder', () => {
+  test('keeps direct SDK Read rules for sensitive paths', () => {
     expect(neoCoordinatorDeniedReads()).toEqual(
       expect.arrayContaining([
         'Read(~/.ssh/**)',
@@ -134,11 +134,10 @@ describe('neoCoordinatorDeniedReads', () => {
     );
   });
 
-  test('restricted Neo queries carry the denials and the look-up guard first', () => {
+  test('restricted Neo queries carry SDK read denials without adding a hook', () => {
     const options: Options = { disallowedTools: ['Task'] };
     restrictNeoQuery(options);
     expect(options.disallowedTools).toEqual(['Task', ...neoCoordinatorDeniedReads()]);
-    expect(options.hooks?.PreToolUse?.[0]?.matcher).toBeUndefined();
-    expect(options.hooks?.PreToolUse?.[0]?.hooks).toHaveLength(1);
+    expect(options.hooks).toBeUndefined();
   });
 });
