@@ -34,22 +34,27 @@ Add a CI check: core may not import from `packs/`.
 ## Coding plans are GitHub epics
 
 Multi-step coding work gets one epic issue and one sub-issue per step. Create
-the epic, all sub-issues and all ordered stage todos up front. Each todo names
-its sub-issue as `owner/repo#N` in its coding check. The ask’s todo order drives
-execution; the epic mirrors that plan on GitHub, not a second scheduler.
+the epic, all sub-issues and all ordered stage todos up front. Each todo uses
+`{pack: "coding", kind: "issue_closed", params: {issue: "owner/repo#N"}}`.
+Validate `params.issue` as a well-formed `owner/repo#N`.
+Existing `pr_merged` todos keep working as they are.
+The ask’s todo order drives execution; the epic mirrors that plan on GitHub,
+not a second scheduler.
 
 A PR links to its todo through `Closes owner/repo#N` naming that sub-issue.
 `pack.readFacts` reads the sub-issue and its linked PRs through the existing
-ledger; `pack.judge` says done when the sub-issue is closed. An open sub-issue
-does not become done just because a worker says so or one PR has merged. Keep
-the repository’s review and merge rules; unavailable facts are not proof of
-completion. No separate PR-to-todo link records or second GitHub poller.
+ledger; `pack.judge` says done when the sub-issue closes as `COMPLETED`, failed
+when it closes as `NOT_PLANNED`, and no opinion if facts are unreadable. No
+additional merged closing PR is required: the PR’s closing link ties the two.
+An open sub-issue does not become done just because a worker says so or one PR
+has merged. Keep the repository’s review and merge rules. No separate
+PR-to-todo link records or second GitHub poller.
 
 In `packages/prompts/src/neo/packs/coding/instructions.md`, replace “Work in
 stages gets one todo per stage, in order” and the old PR-claim/manual-link advice
 with:
 
-> For work in stages, create the epic and all stage todos up front, in order, with one sub-issue named by each todo as owner/repo#N; each PR says Closes owner/repo#N for its sub-issue, and the coding pack completes the todo when the sub-issue closes.
+> For work in stages, create the epic and all stage todos up front, in order, with one sub-issue named by each todo as owner/repo#N; each PR says Closes owner/repo#N for its sub-issue, and the coding pack completes the todo when the sub-issue closes as COMPLETED.
 
 ## One state writer
 
@@ -129,12 +134,12 @@ for steps 3–6 before starting step 3. One small PR per step:
 4. **Explicit worker results.** Keep the dispatch-id-bound result fact and delete
    the three inference fallbacks. A worker’s prose cannot complete a pack todo;
    preserve existing result/report bytes and the non-pack human confirmation.
-5. **Coding sub-issues and the single nudge ladder.** Use sub-issue closure for
+5. **Coding sub-issues and the single nudge ladder.** Use `issue_closed` for
    coding judgement and GitHub closing links for PR membership; include the
    coding prompt replacement. Keep ledger-only PR messages. Collapse the two
    ladders into persisted 20/40/60 nudges and delete time-only blocking. Prove an
-   issue closing advances its next todo despite a stopped worker; an open issue
-   or unreadable facts do not complete it; reminders never block it.
+   COMPLETED issue advances its next todo despite a stopped worker; NOT_PLANNED
+   fails, open/unreadable does not complete, and reminders never block.
 6. **Delete the remaining old paths.** Remove obsolete PR link records, manual
    pack-completion routes, maps and helpers listed above, and enforce the final
    core-to-pack import check. Re-run the full plan journey after deletion.
