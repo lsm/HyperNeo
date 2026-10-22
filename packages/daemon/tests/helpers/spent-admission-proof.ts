@@ -32,8 +32,20 @@ export async function verifySpentAdmission(
     release = resolve;
   });
   let midTurnSeen = false;
-  const evidence: Record<string, unknown> = { run, kind, scenario, requestId, requests, stages };
+  const sdkErrors: string[] = [];
+  const allRequests: string[] = [];
+  const evidence: Record<string, unknown> = {
+    run,
+    kind,
+    scenario,
+    requestId,
+    requests,
+    stages,
+    sdkErrors,
+    allRequests,
+  };
   const fixture = createServer(async (req, res) => {
+    allRequests.push(req.url ?? '');
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(Buffer.from(chunk));
     const body = JSON.parse(Buffer.concat(chunks).toString() || '{}');
@@ -50,6 +62,9 @@ export async function verifySpentAdmission(
       ) && JSON.stringify(body.messages).includes('synthetic recovery garden');
     const text = active ? `Visible synthetic recovery reply ${requests.length + 1}` : 'Probe ready';
     if (active) {
+      evidence.inputWithMessageId ??= JSON.stringify(body.messages).includes(
+        `[message id: ${requestId}]`
+      );
       requests.push(text);
       if (JSON.stringify(body.messages).includes('HUMAN_MID_TURN')) midTurnSeen = true;
       if (holdNext) {
@@ -140,6 +155,11 @@ export async function verifySpentAdmission(
     const options = await build.apply(this, args);
     return {
       ...options,
+      debugFile: join(run, 'sdk-debug.log'),
+      stderr: (data) => {
+        sdkErrors.push(data);
+        options.stderr?.(data);
+      },
       spawnClaudeCodeProcess: (opts) =>
         spawn(opts.command, opts.args, {
           cwd: opts.cwd,
@@ -170,13 +190,13 @@ export async function verifySpentAdmission(
       });
       hub.registerTransport(transport);
       await transport.initialize();
-      evidence.port = daemon.server.port;
       const { servers } = await hub.request<{ servers: Array<{ id: string }> }>(
         'mcp.registry.list',
         {}
       );
       for (const server of servers)
         await hub.request('mcp.registry.setEnabled', { id: server.id, enabled: false });
+      evidence.port = daemon.server.port;
     };
     const call = (name: string, input: unknown = {}) =>
       hub.request<Record<string, unknown>>('operation.invoke', { name, input });
@@ -225,6 +245,11 @@ export async function verifySpentAdmission(
     const originalId = kind === 'neo' ? requestId : String(original.messageId);
     evidence.firstAccepted = original;
     await waitForReply('Visible synthetic recovery reply 1');
+    assert.equal(
+      evidence.inputWithMessageId,
+      kind === 'neo',
+      'only human Neo intake adds its message id'
+    );
     const send = (content: string) =>
       kind === 'neo'
         ? call('neo.message.send', { sessionId, requestId: randomUUID(), content })
