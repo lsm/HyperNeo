@@ -198,6 +198,25 @@ describe('Neo todo pull request events', () => {
     await publisher.publish(record);
   }
 
+  test('archived local workers are never card-event targets', async () => {
+    db.createSession({ ...createTestSession('archived-worker'), status: 'archived' });
+    todo({ adapter: 'hyperneo', id: 'archived-worker' });
+    await event('review_submitted', { body: 'Fresh review' });
+    expect(sent).toHaveLength(0);
+    expect(db.getSession('archived-worker')?.status).toBe('archived');
+  });
+
+  test('archived subscriptions remain stored but are not delivery targets', () => {
+    db.createSession({ ...createTestSession('archived-worker'), status: 'archived' });
+    const subscriptions = new SessionEventSubscriptionRepository(db.getDatabase());
+    subscriptions.upsert({
+      sessionId: 'archived-worker',
+      topic: 'github/lsm/hyperneo/pull_request/7.*',
+    });
+    expect(subscriptions.listAll()).toHaveLength(0);
+    expect(subscriptions.listBySession('archived-worker')).toHaveLength(1);
+  });
+
   test('a todo CI failure reaches its actual target without a neo_work row', async () => {
     todo();
     await event('check_failed', { checkName: 'Web Tests', conclusion: 'failure' });

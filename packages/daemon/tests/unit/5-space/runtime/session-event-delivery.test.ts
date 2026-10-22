@@ -222,17 +222,22 @@ describe('mailSessionEvent', () => {
 });
 
 describe('SessionEventSubscriptionRepository.listAll', () => {
-  test('lists every session subscription in the order they were made', () => {
+  test('lists active subscriptions in order without deleting archived subscriptions', () => {
     const db = new Database(':memory:');
-    db.exec('CREATE TABLE sessions (id TEXT PRIMARY KEY)');
+    db.exec("CREATE TABLE sessions (id TEXT PRIMARY KEY, status TEXT DEFAULT 'active')");
     db.exec("INSERT INTO sessions (id) VALUES ('s1'), ('s2')");
+    db.exec("INSERT INTO sessions (id, status) VALUES ('s3', 'archived')");
     runMigration329(db);
     const repo = new SessionEventSubscriptionRepository(db);
     repo.upsert({ sessionId: 's2', topic: PR_TOPIC });
     repo.upsert({ sessionId: 's1', topic: 'github/acme/widgets/pull_request/8.*' });
+    repo.upsert({ sessionId: 's3', topic: PR_TOPIC });
     expect(repo.listAll().map((row) => [row.sessionId, row.topic])).toEqual([
       ['s2', PR_TOPIC],
       ['s1', 'github/acme/widgets/pull_request/8.*'],
     ]);
+    expect(repo.listBySession('s3')).toHaveLength(1);
+    db.exec("UPDATE sessions SET status = 'active' WHERE id = 's3'");
+    expect(repo.listAll().map((row) => row.sessionId)).toEqual(['s2', 's1', 's3']);
   });
 });
