@@ -75,6 +75,46 @@ describe('HyperNeo todo reply attribution', () => {
   });
   afterEach(() => db.close());
 
+  test.each(['', report])(
+    'exposes a complete explicit SDK turn end, including silence: %s',
+    async (message) => {
+      put('terminal', 'result', message, 20);
+      const detail = await status();
+      expect(detail.value).toMatchObject({
+        ok: true,
+        value: {
+          turnEnds: [{ id: expect.any(String), at: 20000, message }],
+        },
+      });
+    }
+  );
+
+  test('an empty SDK result carries its actual final assistant message', async () => {
+    put('assistant', 'assistant', report, null);
+    put('terminal', 'result', '', 20);
+    expect((await status()).value).toMatchObject({
+      ok: true,
+      value: {
+        turnEnds: [{ message: report }],
+      },
+    });
+  });
+
+  test('internal compaction and intercepted recovery records cannot replace a final message', async () => {
+    put('assistant', 'assistant', report, null);
+    put('intercepted', 'result', 'INTERNAL RECOVERY', 15);
+    db.prepare("UPDATE sdk_messages SET recovery_intercepted=1 WHERE id='intercepted'").run();
+    put('compaction', 'assistant', 'INTERNAL COMPACTION', null);
+    db.prepare("UPDATE sdk_messages SET internal_compaction_turn=1 WHERE id='compaction'").run();
+    put('terminal', 'result', '', 20);
+    expect((await status()).value).toMatchObject({
+      ok: true,
+      value: {
+        turnEnds: [{ message: report }],
+      },
+    });
+  });
+
   test('mid-turn human input does not sever the complete assistant report or borrow a later turn', async () => {
     put('mid-turn', 'user', 'Human clarification', 15);
     put('report', 'assistant', report, null);

@@ -1,11 +1,7 @@
 import { runMigration418 } from '../../../../src/storage/schema/m418-sdk-message-bodies';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { spaceTaskControl } from '../../../../src/lib/rpc-handlers/family-operations/drivers';
-import {
-  NEO_WORK_UNVERIFIED_REPLY_NOTE,
-  readDriverFollowUp,
-  readDriverSettlement,
-} from '../../../../src/lib/neo/driver-work';
+import { readDriverFollowUp, readDriverSettlement } from '../../../../src/lib/neo/driver-work';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   createSpaceAdapter,
@@ -221,21 +217,13 @@ describe('space adapter start, status and stop', () => {
     expect(readDriverFollowUp(outcome, 30)).toBeNull();
     expect(
       readDriverSettlement({ updatedAt: 10 }, outcome, 50, 10, true, 'original ask')
-    ).toMatchObject({
-      status: 'reported',
-      report: `${NEO_WORK_UNVERIFIED_REPLY_NOTE}\n\nMerged in #5600`,
-    });
+    ).toBeNull();
     db.exec(
       "UPDATE space_tasks SET completed_at = 60, updated_at = 60, result = 'New completion' WHERE id = 't2'"
     );
     const next = { kind: 'completed' as const, value: await adapter().status!(ref('t2')) };
-    expect(readDriverFollowUp(next, 40)).toBe(
-      `${NEO_WORK_UNVERIFIED_REPLY_NOTE}\n\nNew completion`
-    );
-    expect(readDriverSettlement({ updatedAt: 40 }, next, 70, 40, true, 'new ask')).toMatchObject({
-      status: 'reported',
-      report: `${NEO_WORK_UNVERIFIED_REPLY_NOTE}\n\nNew completion`,
-    });
+    expect(readDriverFollowUp(next, 40)).toBeNull();
+    expect(readDriverSettlement({ updatedAt: 40 }, next, 70, 40, true, 'new ask')).toBeNull();
   });
 
   test('missing completion metadata is not replaced by the task activity time', async () => {
@@ -563,10 +551,7 @@ describe('space adapter send', () => {
       const outcome = { kind: 'completed' as const, value: result };
       expect(
         readDriverSettlement({ updatedAt: at }, outcome, at + 30, at + 1, true, 'Build the report')
-      ).toEqual({
-        status: 'reported',
-        report: `${NEO_WORK_UNVERIFIED_REPLY_NOTE}\n\nTask artifact summary`,
-      });
+      ).toBeNull();
       expect(readDriverFollowUp(outcome, at + 15)).toBeNull();
     };
     await assertTaskResult(true);

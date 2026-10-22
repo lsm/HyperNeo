@@ -24,6 +24,7 @@ function fixture() {
   const starts: string[] = [];
   let activity = 1;
   const facts = new Map<string, NeoTodoJudgement>();
+  const receipt = { executionId: 'synthetic-worker', inputId: 'dispatched-input' };
   const pack = {
     id: 'synthetic',
     describe: 'Synthetic facts',
@@ -76,6 +77,7 @@ function fixture() {
               ok: true,
               value: {
                 ref: { adapter: 'hyperneo', id: 'synthetic-worker' },
+                receipt,
                 lastActivityAt: Date.now(),
               },
             },
@@ -90,6 +92,14 @@ function fixture() {
               lastActivityAt: activity,
               ...(activity > 1
                 ? {
+                    inputEvidence: {
+                      receipt,
+                      state: 'observed',
+                      exchangeCut: false,
+                      exchange: [
+                        { at: activity, role: 'agent', text: 'Complete synthetic report' },
+                      ],
+                    },
                     exchange: [
                       { at: activity - 1, role: 'user', text: starts.at(-1)! },
                       { at: activity, role: 'agent', text: 'Complete synthetic report' },

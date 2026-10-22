@@ -173,7 +173,14 @@ export const WorkStartedSchema = WorkSummarySchema.extend({
   receipt: WorkInputReceiptSchema.optional(),
 });
 
+export const WorkTurnEndSchema = z.object({
+  id: z.string().min(1),
+  at: z.number(),
+  message: z.string(),
+});
+
 export const WorkDetailSchema = WorkSummarySchema.extend({
+  turnEnds: z.array(WorkTurnEndSchema).optional(),
   inputEvidence: WorkInputEvidenceSchema.optional(),
   startReceipt: WorkInputReceiptSchema.optional(),
   execution: z.object({ directory: z.string().min(1), machine: z.string().min(1) }).optional(),

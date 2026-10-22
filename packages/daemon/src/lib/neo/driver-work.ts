@@ -27,6 +27,7 @@ import {
   WorkRefSchema,
   type WorkStatus,
   WorkStatusSchema,
+  WorkTurnEndSchema,
 } from '../drivers/types.ts';
 import { WORK_MESSAGE_MAX } from '../drivers/work-operations.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
@@ -182,8 +183,6 @@ export function readDriverOutcome(
     ...(receipt ? { receipt } : {}),
   };
 }
-
-const SETTLE_GRACE_MS = 10 * 60_000;
 
 const DriverStatusSchema = z.discriminatedUnion('ok', [
   z.object({
@@ -382,43 +381,6 @@ export function readDriverActivity(
   return { status, lastActivityAt, lastReply };
 }
 
-export function readDriverCardExchange(outcome: OperationOutcome, sent: DriverSent | null) {
-  const value = parseDriverStatus(outcome);
-  if (!value || !sent) return null;
-  const entries = value.exchange ?? [];
-  const start = entries.findIndex(
-    (entry) =>
-      entry.role === 'user' &&
-      entry.at > sent.inputBefore &&
-      entry.text.replace(/\s+/g, ' ').includes(sent.opening)
-  );
-  if (start < 0) return null;
-  const next = entries.findIndex((entry, index) => index > start && entry.role === 'user');
-  const replies = entries.slice(start + 1, next < 0 ? undefined : next);
-  return {
-    current: next < 0,
-    start: entries[start].at,
-    end:
-      next < 0 && ['running', 'queued', 'needs_you'].includes(value.status)
-        ? null
-        : (replies.at(-1)?.at ?? entries[start].at),
-    replies,
-  };
-}
-
-function isDriverCardCurrent(outcome: OperationOutcome, sent: DriverSent | null): boolean {
-  const value = parseDriverStatus(outcome);
-  if (!value) return false;
-  if (value.exchange !== undefined) return readDriverCardExchange(outcome, sent)?.current ?? false;
-  return (
-    !sent ||
-    !(value.recentInputs ?? []).some(
-      (input) =>
-        input.at > sent.inputBefore && !input.text.replace(/\s+/g, ' ').includes(sent.opening)
-    )
-  );
-}
-
 const EXCHANGE_REPORT_LIMIT = 12_000;
 
 export function driverExchangeReport(
@@ -449,18 +411,6 @@ export function driverExchangeReport(
   }
   const trimmed = parts.length - 1 - tail.length;
   return [...head, parts[0], `(${trimmed} messages in between trimmed.)`, ...tail].join('\n\n');
-}
-
-export const NEO_WORK_UNANCHORED_SETTLE_MS = 3 * 60 * 60 * 1000;
-
-export const NEO_WORK_UNANCHORED_NOTE =
-  "Neo's message was never found in that session, so this is the session's latest reply, not a confirmed answer to the work item. Check it against the work item before telling the human.";
-
-export const NEO_WORK_UNVERIFIED_REPLY_NOTE =
-  'Reply attribution is unverified: matching input/reply history was unavailable. Check this latest reply against the work item before treating it as its answer.';
-
-function unverifiedDriverReply(reply: string | undefined): string | null {
-  return reply ? `${NEO_WORK_UNVERIFIED_REPLY_NOTE}\n\n${reply}` : null;
 }
 
 type DriverInputAttribution =
@@ -540,18 +490,9 @@ function settleAttributedDriverWork(
   return null;
 }
 
-function readUnanchoredSettlement(
-  work: Pick<NeoWork, 'updatedAt'>,
-  value: { status: string; lastActivityAt: number; lastReplyAt?: number; lastReply?: string },
-  now: number
-): { status: 'reported'; report: string } | null {
-  if (value.status !== 'done' || value.lastReplyAt === undefined) return null;
-  if (value.lastReplyAt <= work.updatedAt) return null;
-  if (now - value.lastActivityAt < NEO_WORK_UNANCHORED_SETTLE_MS) return null;
-  return {
-    status: 'reported',
-    report: `${NEO_WORK_UNANCHORED_NOTE}\n\n${value.lastReply || NEO_DRIVER_NO_REPLY}`,
-  };
+export function readDriverTurnEnds(outcome: OperationOutcome) {
+  const ends = z.array(WorkTurnEndSchema).safeParse(parseDriverStatus(outcome)?.turnEnds);
+  return ends.success ? ends.data : [];
 }
 
 export function readDriverFollowUp(
@@ -576,23 +517,16 @@ export function readDriverFollowUp(
       ...attribution,
       replies: attribution.replies.filter((entry) => entry.at > since),
     });
-  if (value.exchange === undefined)
-    return (value.lastReplyAt ?? value.lastActivityAt) > since && isDriverCardCurrent(outcome, sent)
-      ? unverifiedDriverReply(value.lastReply)
-      : null;
-  const own = readDriverCardExchange(outcome, sent);
-  const replies = own?.replies.filter((entry) => entry.at > since);
-  const report = replies?.length ? driverExchangeReport(replies, false, null) : null;
-  return attribution ? unverifiedDriverReply(report ?? undefined) : report;
+  return null;
 }
 
 export function readDriverSettlement(
-  work: Pick<NeoWork, 'updatedAt'>,
+  _work: Pick<NeoWork, 'updatedAt'>,
   outcome: OperationOutcome,
-  now: number,
-  startedAt: number | null = null,
-  requireFresh = false,
-  opening: string | null = null,
+  _now: number,
+  _startedAt: number | null = null,
+  _requireFresh = false,
+  _opening: string | null = null,
   receipt?: WorkDelivery['receipt']
 ): { status: 'reported' | 'failed'; report: string } | null {
   const reply = parseDriverStatusReply(outcome);
@@ -602,36 +536,8 @@ export function readDriverSettlement(
       ? { status: 'failed', report: `The work is gone: ${reply.detail}` }
       : null;
   }
-  const { status, lastActivityAt, lastReplyAt, exchange, exchangeCut } = reply.value;
   const attribution = readDriverInputAttribution(outcome, receipt);
-  if (attribution?.state === 'unverified' && attribution.replyAvailability) return null;
-  if (attribution && attribution.state !== 'unverified')
-    return settleAttributedDriverWork(status, attribution);
-  if (requireFresh && startedAt === null)
-    return opening ? null : readUnanchoredSettlement(work, reply.value, now);
-  const fresh = lastActivityAt > (startedAt ?? work.updatedAt);
-  if (!fresh && (requireFresh || now - work.updatedAt < SETTLE_GRACE_MS)) return null;
-  const report = driverExchangeReport(exchange, exchangeCut ?? false, opening);
-  if (opening && !report && exchange !== undefined) return null;
-  if (
-    exchange === undefined &&
-    opening &&
-    !isDriverCardCurrent(outcome, {
-      opening,
-      inputBefore: (startedAt ?? work.updatedAt) - 1,
-    })
-  )
-    return null;
-  const said =
-    report && !attribution ? report : unverifiedDriverReply(report ?? reply.value.lastReply);
-  if (status === 'done') {
-    const staleReply =
-      requireFresh && startedAt !== null && lastReplyAt !== undefined && lastReplyAt <= startedAt;
-    if (staleReply) return null;
-    return { status: 'reported', report: said || NEO_DRIVER_NO_REPLY };
-  }
-  if (status === 'failed' || status === 'stopped') {
-    return { status: 'failed', report: `It ${status}.${said ? ` ${said}` : ''}` };
-  }
-  return null;
+  return attribution && attribution.state !== 'unverified'
+    ? settleAttributedDriverWork(reply.value.status, attribution)
+    : null;
 }

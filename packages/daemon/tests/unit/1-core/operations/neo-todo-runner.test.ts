@@ -22,6 +22,13 @@ import { createTables, runMigrations } from '../../../../src/storage/schema/inde
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 const ref = { adapter: 'hyperneo', id: 'worker-1' };
+const receipt = { executionId: ref.id, inputId: 'input-1' };
+const observed = (text: string, at: number) => ({
+  receipt,
+  state: 'observed',
+  exchange: [{ at, role: 'agent', text }],
+  exchangeCut: false,
+});
 const completed = (value: unknown): OperationOutcome =>
   ({ kind: 'completed', value }) as OperationOutcome;
 
@@ -78,9 +85,12 @@ function setup(
       beforeInvoke?.(name);
       calls.push({ name, input });
       if (name === 'work.start')
-        return completed({ ok: true, value: { ref, lastActivityAt: 1_000, link: '/session/w' } });
+        return completed({
+          ok: true,
+          value: { ref, receipt, lastActivityAt: 1_000, link: '/session/w' },
+        });
       if (name === 'work.send')
-        return completed(sendResult ?? { ok: true, value: { delivered: true } });
+        return completed(sendResult ?? { ok: true, value: { delivered: true, receipt } });
       return completed(status);
     },
     packs: () => [pack],
@@ -370,6 +380,7 @@ describe('neo todo runner', () => {
       value: {
         status: 'done',
         lastActivityAt: 4000,
+        inputEvidence: observed('Later PR https://github.com/a/b/pull/9', 3000),
         exchange: [
           { at: 1000, role: 'user', text: String(calls[0].input.message) },
           { at: 3000, role: 'agent', text: 'Later PR https://github.com/a/b/pull/9' },
@@ -391,6 +402,71 @@ describe('neo todo runner', () => {
     expect(told).toEqual([]);
     db.close();
   });
+  test.each(['', '  Final worker message 🔬\n'.repeat(400)])(
+    'relays a terminal message verbatim as a report without changing the todo result: %s',
+    async (message) => {
+      const h = setup(false);
+      try {
+        const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+        await h.runner.start(todo.id);
+        const dispatch = h.sessions.inputs.list(todo.id)[0];
+        const prior = 'Keep the stored result';
+        h.store.updateTodo(h.store.getTodo(todo.id)!, { report: prior }, Date.now());
+        h.setStatus({
+          ok: true,
+          value: {
+            status: 'done',
+            lastActivityAt: dispatch.acceptedAt + 100,
+            lastReply: 'Unverified prose says complete',
+            turnEnds: [{ id: 'turn-1', at: dispatch.acceptedAt + 100, message }],
+          },
+        });
+        await h.runner.refresh(() => {});
+        expect(h.told).toContain(
+          `Worker turn report (todo ${todo.id}, dispatch ${dispatch.id}):\n\n${message || 'worker ended its turn with no reply'}`
+        );
+        expect(h.toldKeys).toContain(`neo-todo-turn:${todo.id}:${dispatch.id}:turn-1`);
+        expect(h.store.getTodo(todo.id)).toMatchObject({ state: 'doing', report: prior });
+      } finally {
+        h.db.close();
+      }
+    }
+  );
+
+  test('does not relay a turn that predates this dispatch or belongs to the replaced worker', async () => {
+    const h = setup(false);
+    try {
+      const todo = h.add({ pack: 'coding', kind: 'pr_merged', params: {} });
+      await h.runner.start(todo.id);
+      const dispatch = h.sessions.inputs.list(todo.id)[0];
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: dispatch.acceptedAt - 1,
+          turnEnds: [{ id: 'old', at: dispatch.acceptedAt - 1, message: 'Old worker turn' }],
+        },
+      });
+      await h.runner.refresh(() => {});
+      expect(h.told).toEqual([]);
+      h.sessions.recordRef(todo.id, { ...ref, id: 'replacement' });
+      h.setStatus({
+        ok: true,
+        value: {
+          status: 'done',
+          lastActivityAt: dispatch.acceptedAt + 1,
+          turnEnds: [
+            { id: 'wrong-worker', at: dispatch.acceptedAt + 1, message: 'Wrong worker turn' },
+          ],
+        },
+      });
+      await h.runner.refresh(() => {});
+      expect(h.told).toEqual([]);
+    } finally {
+      h.db.close();
+    }
+  });
+
   test('starts a todo in its session, settles its report and lets the pack tick it done', async () => {
     const { store, sessions, runner, calls, told, add, setStatus } = setup(true);
     const todo = add({ pack: 'coding', kind: 'pr_merged', params: {} });
@@ -416,6 +492,7 @@ describe('neo todo runner', () => {
         status: 'done',
         lastActivityAt: 2_000,
         lastReply: 'Opened the PR',
+        inputEvidence: observed('Opened https://github.com/a/b/pull/1', 2000),
         exchange: [
           { at: 1_500, role: 'user', text: String(calls[0].input.message) },
           { at: 2_000, role: 'agent', text: 'Opened https://github.com/a/b/pull/1' },
@@ -1074,6 +1151,7 @@ describe('blocked todos', () => {
         status: 'done',
         lastActivityAt: 2_000,
         lastReply: 'Opened the PR',
+        inputEvidence: observed('Opened the PR', 2000),
         exchange: [opening, { at: 2_000, role: 'agent', text: 'Opened the PR' }],
       },
     });
@@ -1186,6 +1264,7 @@ describe('stopped worker ladder', () => {
       value: {
         status: 'done',
         lastActivityAt: 2_000,
+        inputEvidence: observed('Pushed the first half.', 2000),
         exchange: [
           { at: 1_500, role: 'user', text: String(harness.calls[0]?.input.message ?? 'Hi') },
           { at: 2_000, role: 'agent', text: 'Pushed the first half.' },

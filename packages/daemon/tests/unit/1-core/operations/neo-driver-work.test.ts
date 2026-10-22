@@ -18,9 +18,6 @@ import {
   driverWorkCall,
   driverWorkCaller,
   NEO_CARD_CONFIRM_MS,
-  NEO_WORK_UNANCHORED_NOTE,
-  NEO_WORK_UNANCHORED_SETTLE_MS,
-  NEO_WORK_UNVERIFIED_REPLY_NOTE,
   type NeoDriverTarget,
   NeoDriverTargetSchema,
   neoCardSent,
@@ -471,77 +468,25 @@ describe('readDriverSettlement', () => {
     value: { ok: true, value: { lastActivityAt: 200, ...value } },
   });
 
-  test('settles finished, failed and stopped work that moved after it was handed over', () => {
-    const settle = (outcome: Parameters<typeof readDriverSettlement>[1], now = 150) =>
-      readDriverSettlement(work, outcome, now);
-    expect(settle(status({ status: 'done', lastReply: 'Shipped.' }))).toEqual({
-      status: 'reported',
-      report: `${NEO_WORK_UNVERIFIED_REPLY_NOTE}\n\nShipped.`,
-    });
-    expect(settle(status({ status: 'done' }))).toEqual({
-      status: 'reported',
-      report: 'It finished without a written reply.',
-    });
-    expect(settle(status({ status: 'failed', lastReply: 'Tests broke.' }))).toEqual({
-      status: 'failed',
-      report: `It failed. ${NEO_WORK_UNVERIFIED_REPLY_NOTE}\n\nTests broke.`,
-    });
-    expect(settle(status({ status: 'stopped' }))).toEqual({
-      status: 'failed',
-      report: 'It stopped.',
-    });
-  });
+  test.each(['done', 'failed', 'stopped'])(
+    'does not infer %s results from latest prose',
+    (state) => {
+      const outcome = status({ status: state, lastReply: 'Shipped.', lastReplyAt: 200 });
+      for (const now of [150, 100 + 10 * 60_000, 100 + 4 * 60 * 60_000]) {
+        expect(readDriverSettlement(work, outcome, now)).toBeNull();
+        expect(readDriverSettlement(work, outcome, now, 100, true)).toBeNull();
+        expect(readDriverSettlement(work, outcome, now, null, true)).toBeNull();
+      }
+    }
+  );
 
-  test('compares status with the start time the backend reported, on its own clock', () => {
-    const work = { updatedAt: 100 };
-    const done = {
-      kind: 'completed' as const,
-      value: { ok: true, value: { status: 'done', lastActivityAt: 250 } },
-    };
-    expect(readDriverSettlement(work, done, 150, 300)).toBeNull();
-    expect(readDriverSettlement(work, done, 150, 200)).toMatchObject({ status: 'reported' });
-  });
-
-  test('never settles on activity older than a send or continue, even after the grace', () => {
-    const work = { updatedAt: 100 };
-    const stale = {
-      kind: 'completed' as const,
-      value: { ok: true, value: { status: 'done', lastActivityAt: 50, lastReply: 'Old reply.' } },
-    };
-    const later = 100 + 10 * 60_000;
-    expect(readDriverSettlement(work, stale, later, 100)).toMatchObject({ status: 'reported' });
-    expect(readDriverSettlement(work, stale, later, 100, true)).toBeNull();
-  });
-
-  test('settles an unanchored send on the latest reply once the session has been quiet for hours', () => {
-    const work = { updatedAt: 100 };
-    const reply = (lastReplyAt: number, status = 'done') => ({
-      kind: 'completed' as const,
-      value: {
-        ok: true,
-        value: { status, lastActivityAt: 1_000, lastReplyAt, lastReply: 'Shipped it.' },
-      },
-    });
-    const quiet = 1_000 + NEO_WORK_UNANCHORED_SETTLE_MS;
-    expect(readDriverSettlement(work, reply(900), quiet - 1, null, true)).toBeNull();
-    expect(readDriverSettlement(work, reply(50), quiet, null, true)).toBeNull();
-    expect(readDriverSettlement(work, reply(900, 'running'), quiet, null, true)).toBeNull();
-    expect(readDriverSettlement(work, reply(900), quiet, null, true)).toEqual({
-      status: 'reported',
-      report: `${NEO_WORK_UNANCHORED_NOTE}\n\nShipped it.`,
-    });
-  });
-
-  test('keeps waiting on running, unreachable or unreadable status and briefly on stale status, and fails gone work', () => {
+  test('keeps waiting without a result and fails explicitly gone work', () => {
     const settle = (outcome: Parameters<typeof readDriverSettlement>[1], now = 150) =>
       readDriverSettlement(work, outcome, now);
     expect(settle(status({ status: 'running' }))).toBeNull();
     expect(settle(status({ status: 'needs_you' }))).toBeNull();
     expect(settle(status({ status: 'done', lastActivityAt: 100 }))).toBeNull();
-    expect(settle(status({ status: 'done', lastActivityAt: 100 }), 100 + 10 * 60_000)).toEqual({
-      status: 'reported',
-      report: 'It finished without a written reply.',
-    });
+    expect(settle(status({ status: 'done', lastActivityAt: 100 }), 100 + 10 * 60_000)).toBeNull();
     expect(
       settle({
         kind: 'completed',

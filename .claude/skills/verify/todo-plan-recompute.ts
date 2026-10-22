@@ -308,7 +308,8 @@ try {
       report: store.getTodo('next')?.report,
     };
     assert.equal(store.getTodo('next')?.state, 'doing');
-    assert.match(store.getTodo('next')?.report ?? '', /Synthetic report after question/);
+    assert.equal(sessions.readSent('next')?.receipt, undefined);
+    assert.equal(store.getTodo('next')?.report, null);
     assert.equal(starts(), 1);
     ask('race');
     add('race-close', 'race', 7);

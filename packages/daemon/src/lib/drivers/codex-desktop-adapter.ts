@@ -126,6 +126,7 @@ export interface CodexThreadDetail {
 }
 
 export interface CodexTurnState {
+  turnEnds?: WorkDetail['turnEnds'];
   marker: string | null;
   outcome?: 'asked' | 'errored';
   reply: string | null;
@@ -534,8 +535,30 @@ export async function readCodexTurn(
     const openedPrs = readOpenedPrs
       ? readOpenedPrs(detail.thread.rolloutPath, lines)
       : codexOpenedPrs(lines);
+    const turnEnds = lines.flatMap((line) => {
+      const entry = parseLine(line),
+        payload = entry?.payload ?? {},
+        at = workEntryTime(entry?.timestamp);
+      return entry?.type === 'event_msg' &&
+        payload.type === 'task_complete' &&
+        at !== undefined &&
+        at > (since ?? -Infinity)
+        ? [
+            {
+              id:
+                typeof payload.turn_id === 'string' && payload.turn_id
+                  ? payload.turn_id
+                  : String(at),
+              at,
+              message:
+                typeof payload.last_agent_message === 'string' ? payload.last_agent_message : '',
+            },
+          ]
+        : [];
+    });
     return {
       ...codexTurnState(lines),
+      ...(turnEnds.length ? { turnEnds } : {}),
       inputs: codexRecentInputs(lines, since),
       ...(since !== undefined ? { exchange: codexExchange(lines, since, truncated) } : {}),
       ...(openedPrs.length ? { openedPrs } : {}),
@@ -561,6 +584,7 @@ export async function describeCodexThread(
       place: { machine: deps.machine, folder, name: root?.name || basename(folder) || folder },
       ...workExecutionLocation(thread.folder, deps.machine),
       status: turnStatus(thread, state, deps.now()),
+      ...(state.turnEnds?.length ? { turnEnds: state.turnEnds } : {}),
       lastActivityAt: thread.updatedAt,
       link: `codex://threads/${thread.id}`,
       ...(state.reply ? { lastReply: state.reply } : {}),

@@ -21,7 +21,10 @@ send nothing again. Completing the final todo through `neo.todo.close` sends
 no further work.
 
 With a non-start ask question open, the dispatched worker stays doing and its
-fresh attributed report is stored; pending work still waits. The helper then
+unreceipted reply is not stored as a result; pending work still waits.
+This synthetic app-server send returns a turn id but no input receipt. The
+explicit-worker-results journey separately proves storage from matching
+dispatch receipts. The helper then
 pauses a real completion RPC inside its synthetic GitHub read, records a new
 report, and releases the read. The RPC must return done with the complete new
 report retained, rather than silently returning success with a pending todo.

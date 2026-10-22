@@ -1,7 +1,6 @@
 import { describe, expect, mock, test } from 'bun:test';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import {
-  NEO_WORK_UNVERIFIED_REPLY_NOTE,
   readDriverFollowUp,
   readDriverInputAttribution,
   readDriverSettlement,
@@ -145,6 +144,34 @@ describe('readDriverSettlement', () => {
     ).toBe('Agent: Raised it.\n\n(Later replies were not read; this is not the whole exchange.)');
   });
 
+  test.each([
+    ['missing', undefined],
+    ['other input', observed(['Raised it.'], false, { ...receipt, inputId: 'other' })],
+    ['other execution', observed(['Raised it.'], false, { ...receipt, executionId: 'other' })],
+    ['malformed', { receipt, state: 'observed' }],
+  ])('rejects %s result evidence despite an exact opening match', (_, inputEvidence) => {
+    const outcome = status({ inputEvidence });
+    expect(readDriverSettlement(work, outcome, 500, 140, true, opening, receipt)).toBeNull();
+    expect(readDriverFollowUp(outcome, 0, { inputBefore: 149, opening, receipt })).toBeNull();
+  });
+
+  test('keeps complete receipt-bound report bytes for settlement and follow-up', () => {
+    const report = '  Complete explicit result 🔬\n'.repeat(1000) + '\n';
+    const outcome = status({
+      inputEvidence: {
+        ...observed([]),
+        replyAvailability: 'complete',
+        replyReport: report,
+        replyAt: 200,
+      },
+    });
+    expect(readDriverSettlement(work, outcome, 500, null, true, opening, receipt)).toEqual({
+      status: 'reported',
+      report,
+    });
+    expect(readDriverFollowUp(outcome, 0, { inputBefore: 149, opening, receipt })).toBe(report);
+  });
+
   test('waits on running work and on an input still pending', () => {
     expect(
       readDriverSettlement(
@@ -187,7 +214,7 @@ describe('readDriverSettlement', () => {
     });
   });
 
-  test('labels a reply unverified when evidence for the receipt is unavailable', () => {
+  test('does not infer a result when evidence for the receipt is unavailable', () => {
     const settled = readDriverSettlement(
       work,
       status({ inputEvidence: { receipt, state: 'unavailable' } }),
@@ -197,14 +224,11 @@ describe('readDriverSettlement', () => {
       opening,
       receipt
     );
-    expect(settled?.report.startsWith(NEO_WORK_UNVERIFIED_REPLY_NOTE)).toBe(true);
-    expect(settled?.report).toContain('Agent: Raised it.');
+    expect(settled).toBeNull();
   });
 
-  test('keeps a card without a receipt on the opening match', () => {
-    expect(readDriverSettlement(work, status({}), 500, 140, true, opening)?.report).toBe(
-      'Agent: Raised it.'
-    );
+  test('cannot turn an opening match without a receipt into a result', () => {
+    expect(readDriverSettlement(work, status({}), 500, 140, true, opening)).toBeNull();
   });
 });
 
@@ -227,10 +251,8 @@ describe('readDriverFollowUp', () => {
     ).toBeNull();
   });
 
-  test('labels a follow-up unverified without matching evidence', () => {
-    expect(
-      readDriverFollowUp(status({}), 0, sent)?.startsWith(NEO_WORK_UNVERIFIED_REPLY_NOTE)
-    ).toBe(true);
+  test('does not publish a follow-up without matching evidence', () => {
+    expect(readDriverFollowUp(status({}), 0, sent)).toBeNull();
   });
 });
 

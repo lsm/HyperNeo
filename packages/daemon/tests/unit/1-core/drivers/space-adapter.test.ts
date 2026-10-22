@@ -264,7 +264,7 @@ describe('space adapter against the space tables', () => {
           ],
         },
       });
-      expect(settle(detail)).toEqual({ status: 'reported', report: 'Agent: Parser fixed' });
+      expect(settle(detail)).toBeNull();
       expect(settle(await adapter().status!(ref, base + 2))).toBeNull();
     });
 
@@ -296,10 +296,7 @@ describe('space adapter against the space tables', () => {
       write('s1', 2, 'result', { result: 'Provider error', is_error: true });
       const detail = await adapter().status!(ref, base);
       expect(detail).toMatchObject({ value: { status: 'failed', lastReplyAt: base + 2 } });
-      expect(settle(detail)).toMatchObject({
-        status: 'failed',
-        report: expect.stringContaining('Provider error'),
-      });
+      expect(settle(detail)).toBeNull();
       db.exec("UPDATE space_long_horizon_agents SET status = 'paused' WHERE id = 'a1'");
       expect(await adapter().status!(ref, base)).toMatchObject({ value: { status: 'needs_you' } });
     });
