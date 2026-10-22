@@ -57,7 +57,7 @@ kind, filter and requested interval; one partial list cannot certify another.
 
 Worker observations keep their source `WorkRef`, observation time and provenance
 separate from GitHub facts. The ledger does not interpret a worker's claim as a
-GitHub merge, check result or human approval. `todoId`, dispatch generation,
+GitHub merge, check result or human approval. `todoId`, dispatch id,
 todo-to-worker binding, precedence and stall policy belong to the todo side.
 
 ## Proposed local read surface
@@ -108,7 +108,7 @@ from a similar SHA. A daemon build is an independently observed runtime fact;
 GitHub ancestry evidence connects that build to a merge commit.
 
 Reviews bind to their reviewed head and reviewer; retain verdict time, engine
-and failed-read/blocked evidence needed by existing merge policy. Check results
+and eligibility evidence required by the repository's saved merge policy. Check results
 bind to head, suite/run, app and attempt; retain pending/failing/superseded
 states. Blockers bind to the relevant head/base and covered rules, signatures
 and threads. A head/base change invalidates incompatible current coverage while
