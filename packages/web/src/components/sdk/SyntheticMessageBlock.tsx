@@ -69,6 +69,8 @@ export function SyntheticMessageBlock({
   const [isExpanded, setIsExpanded] = useState(false);
   const [needsCollapse, setNeedsCollapse] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const restoreFocus = useRef(false);
   const previewMaxHeight = PREVIEW_LINE_COUNT * LINE_HEIGHT_PX;
 
   useLayoutEffect(() => {
@@ -91,6 +93,12 @@ export function SyntheticMessageBlock({
     return () => observer.disconnect();
   }, [previewMaxHeight]);
 
+  useLayoutEffect(() => {
+    if (!restoreFocus.current) return;
+    restoreFocus.current = false;
+    cardRef.current?.querySelector<HTMLButtonElement>('[data-testid="synthetic-toggle"]')?.focus();
+  }, [isExpanded]);
+
   const showRouteBadge = Boolean(fromAgent && toAgent);
   const empty = isEmpty(content);
   const copyText = extractCopyText(content);
@@ -98,7 +106,10 @@ export function SyntheticMessageBlock({
   const control = needsCollapse ? (
     <ContentDisclosureControl
       expanded={isExpanded}
-      onToggle={() => setIsExpanded(!isExpanded)}
+      onToggle={() => {
+        restoreFocus.current = true;
+        setIsExpanded(!isExpanded);
+      }}
       aria-label="Synthetic"
       data-testid="synthetic-toggle"
     />
@@ -111,6 +122,7 @@ export function SyntheticMessageBlock({
     <div
       class="border border-warning/50 rounded-lg overflow-hidden bg-surface-raised/60"
       data-testid="synthetic-card"
+      ref={cardRef}
     >
       <div class="flex items-center gap-2 px-3 py-2 border-b border-warning/50 flex-wrap">
         <svg

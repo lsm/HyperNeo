@@ -34,7 +34,7 @@ projection is loaded. It records viewport screenshots and JSON under
 | Full-mode thinking keeps its six-line preview | More opens, body click leaves it open, less returns to preview |
 | Short last line shares the footer | Control and final text bottoms align within five CSS pixels |
 | Long last line can use a new line | Desktop long ending forces the control below the text, right aligned |
-| Synthetic Markdown uses the shared control | Enter expands, paragraph click does not collapse, Space collapses; last paragraph shares less |
+| Synthetic Markdown uses the shared control | Enter expands and keeps focus on less after it moves to the paragraph; Space collapses and restores focus to more; paragraph click does not collapse |
 | Selection is safe | Drag actual Short ending text and verify selected bytes and unchanged expansion |
 | Desktop / phone fit | No horizontal page overflow; inspect footer, clipped preview, text and composer |
 

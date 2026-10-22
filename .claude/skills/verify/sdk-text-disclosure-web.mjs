@@ -98,7 +98,9 @@ export async function verifySdkText(page, { port, run, width, phase }) {
   await page.screenshot({ path: `${dir}/synthetic-open-${width}.png`, scale: 'css', animations: 'disabled', timeout: 5000 });
   await less.press('Space');
   if (after) {
-    assert.equal(await synthetic.getByRole('button', { name: 'more — Synthetic' }).evaluate(b => b === document.activeElement), true);
+    const collapsedFocus = await synthetic.getByRole('button', { name: 'more — Synthetic' }).evaluate(b => ({ focused: b === document.activeElement, name: b.getAttribute('aria-label') }));
+    assert.equal(collapsedFocus.focused, true);
+    await writeFile(`${dir}/synthetic-focus-collapsed-${width}.json`, JSON.stringify(collapsedFocus, null, 2));
     for (const metric of observations.controls) assert(Math.abs(metric.parentRight - metric.right) <= 14);
   }
   observations.viewport = await page.evaluate(() => ({ width: innerWidth, scrollWidth: document.documentElement.scrollWidth }));
