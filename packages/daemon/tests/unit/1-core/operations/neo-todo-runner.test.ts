@@ -1223,6 +1223,78 @@ describe('stopped worker ladder', () => {
     h.db.close();
   });
 
+  test('a stopped-session block clears on running activity without a new reply and starts a fresh stop ladder', async () => {
+    const h = await stopped(null);
+    try {
+      for (const minutes of [30, 60, 90]) await h.at(minutes);
+      const report = h.store.getTodo(h.todo.id)!.report;
+      h.setStatus({ ok: true, value: { status: 'running', lastActivityAt: 2_000 } });
+      await h.at(91);
+      expect(h.store.getTodo(h.todo.id)).toMatchObject({
+        state: 'doing',
+        blockedBy: null,
+        blockedReason: null,
+        nextAction: null,
+        report,
+      });
+      h.setStatus({ ok: true, value: { status: 'stopped', lastActivityAt: 2_000 } });
+      await h.at(92);
+      expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
+      for (const minutes of [121, 151, 181]) await h.at(minutes);
+      expect(h.store.getTodo(h.todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'worker' });
+    } finally {
+      h.clock.mockRestore();
+      h.db.close();
+    }
+  });
+
+  test('new session activity clears the block even if that turn finished between refreshes', async () => {
+    const h = await stopped(null);
+    try {
+      for (const minutes of [30, 60, 90]) await h.at(minutes);
+      h.setStatus({ ok: true, value: { status: 'done', lastActivityAt: Date.now() + MIN } });
+      await h.at(92);
+      expect(h.store.getTodo(h.todo.id)).toMatchObject({ state: 'doing', blockedBy: null });
+    } finally {
+      h.clock.mockRestore();
+      h.db.close();
+    }
+  });
+
+  test('starting a sibling on the same session clears the stopped block without waiting for a new reply', async () => {
+    const h = await stopped(null);
+    try {
+      for (const minutes of [30, 60, 90]) await h.at(minutes);
+      h.clock.mockReturnValue(Date.now() + MIN);
+      const sibling = h.add();
+      await h.runner.start(sibling.id);
+      await h.at(92);
+      expect(h.store.getTodo(h.todo.id)).toMatchObject({
+        state: 'doing',
+        blockedBy: null,
+        blockedReason: null,
+      });
+      expect(h.store.getTodo(sibling.id)?.state).toBe('doing');
+    } finally {
+      h.clock.mockRestore();
+      h.db.close();
+    }
+  });
+
+  test('an unchanged stopped session stays blocked across refreshes', async () => {
+    const h = await stopped(null);
+    try {
+      for (const minutes of [30, 60, 90, 120, 180]) await h.at(minutes);
+      const held = h.store.getTodo(h.todo.id)!;
+      await h.runner.refresh(() => {});
+      expect(h.store.getTodo(h.todo.id)).toEqual(held);
+      expect(h.told.filter((note) => note.includes('is blocked'))).toHaveLength(1);
+    } finally {
+      h.clock.mockRestore();
+      h.db.close();
+    }
+  });
+
   test('a todo nothing checks waits quietly while its pull request is open', async () => {
     const h = await stopped(null);
     h.setPrOpen(true);
