@@ -5,11 +5,7 @@ import { neoProjectMoveReason } from '@hyperneo/shared/types/neo-project-tree';
 import { parseGitHubRefUrl } from '../github/parse-pr-url.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
-import {
-  readGithubRefStates,
-  type NeoRefState,
-  type NeoRefStateReader,
-} from './packs/coding/ask-prs.ts';
+import { type NeoRefState, type NeoRefStateReader } from './packs/coding/ask-prs.ts';
 
 const Failure = z.object({ ok: z.literal(false), reason: z.string() });
 const Move = z.object({
@@ -56,10 +52,7 @@ export function requireNeoEpic(
     : { reason: { ok: false, reason: 'epic_unavailable' } };
 }
 
-export function createNeoProjectTreeOperations(
-  repo: NeoRepository,
-  read: NeoRefStateReader = readGithubRefStates
-) {
+export function createNeoProjectTreeOperations(repo: NeoRepository, read: NeoRefStateReader) {
   const authorize = (caller: OperationCaller) =>
     requireNeoTreeAuthor(
       caller,

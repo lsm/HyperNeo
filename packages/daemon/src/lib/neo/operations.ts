@@ -690,7 +690,7 @@ export function createNeoOperations(service: NeoService) {
     stop: (todo) => service.todoRunner.stop(todo),
   };
   return [
-    ...createNeoProjectTreeOperations(service.repo),
+    ...createNeoProjectTreeOperations(service.repo, (refs) => service.readRefStates(refs)),
     createNeoProjectForgetOperation(service.repo),
     createNeoIntakeOperation(
       service.db,

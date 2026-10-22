@@ -60,7 +60,8 @@ import { driverWorkCaller } from './driver-work.ts';
 import { neoFolderPath } from './folder.ts';
 import { openNeoDefaultSession } from './inbox.ts';
 import { effectiveNeoPreference, planNeoAlignment } from './model-preference.ts';
-import { type NeoRefStateReader, readGithubRefStates } from './packs/coding/ask-prs.ts';
+import type { NeoRefStateReader } from './packs/coding/ask-prs.ts';
+import { createCodingRefReader } from './packs/coding/ref-reader.ts';
 import {
   localCodingSessionId,
   type NeoBranchPrReader,
@@ -134,7 +135,9 @@ export class NeoService {
   private readonly builtinPacks: NeoPack[];
   readPrs: NeoWorkPrReader = createCodingWorkPrReader(() => this.db.getDatabase());
   readBranchPrs: NeoBranchPrReader = createCodingBranchPrReader(() => this.db.getDatabase());
-  readRefStates: NeoRefStateReader = readGithubRefStates;
+  readRefStates: NeoRefStateReader = createCodingRefReader(
+    () => new CodingPrLedgerRepository(this.db.getDatabase()).refFacts
+  );
   listGithub: NeoGithubLister = createCodingQueryReader(() => this.db.getDatabase());
   readDeploys: NeoDeployReader = (urls) =>
     readGithubDeploys(urls, () =>
