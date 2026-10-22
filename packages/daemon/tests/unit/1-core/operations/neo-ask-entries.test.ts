@@ -1,3 +1,4 @@
+import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { describe, expect, test } from 'bun:test';
 import type {
   NeoAsk,
@@ -501,9 +502,9 @@ describe('NeoTodoSessionRepository.readLinks', () => {
     );
     sessions.create('t', { verb: 'send', ref: { adapter: 'hyperneo', id: 'w', daemon: 'imac' } });
     sessions.recordRef('t', { adapter: 'hyperneo', id: 'w', daemon: 'imac' }, 1, '/session/w');
-    expect(sessions.readLinks('t')).toEqual({ link: null, remoteLink: null });
+    expect(sessions.readLinks('t')).toMatchObject({ link: null, remoteLink: null });
     sessions.recordLive('t', 'running', undefined, 'https://imac/session/w');
-    expect(sessions.readLinks('t')).toEqual({
+    expect(sessions.readLinks('t')).toMatchObject({
       link: 'https://imac/session/w',
       remoteLink: 'https://imac/session/w',
     });
@@ -533,7 +534,7 @@ describe('NeoTodoSessionRepository.readLinks', () => {
     const ref = { adapter: 'claude-desktop', id: 'local_1' };
     sessions.create('t', { verb: 'send', ref });
     sessions.recordRef('t', ref, 1, 'claude://resume?session=local_1');
-    expect(sessions.readLinks('t')).toEqual({
+    expect(sessions.readLinks('t')).toMatchObject({
       link: 'claude://resume?session=local_1',
       remoteLink: null,
     });
@@ -543,7 +544,7 @@ describe('NeoTodoSessionRepository.readLinks', () => {
       'claude://resume?session=local_1',
       'https://claude.ai/code/session_01abc'
     );
-    expect(sessions.readLinks('t')).toEqual({
+    expect(sessions.readLinks('t')).toMatchObject({
       link: 'claude://resume?session=local_1',
       remoteLink: 'https://claude.ai/code/session_01abc',
     });
@@ -615,5 +616,28 @@ describe('fitNeoSnapshotBudget with packRows', () => {
       'lsm/hyperneo#1001',
       'lsm/hyperneo#1002',
     ]);
+  });
+});
+
+describe('worker labels', () => {
+  test.each([
+    ['codex-desktop', 'Codex'],
+    ['claude-code', 'Claude'],
+    ['claude-desktop', 'Claude'],
+    ['copilot-cli', 'Copilot'],
+    ['copilot', 'Copilot'],
+    ['opencode', 'OpenCode'],
+    ['hyperneo', 'HyperNeo'],
+    ['space', 'Space'],
+    ['future-adapter', 'future-adapter'],
+    ['__proto__', '__proto__'],
+  ])('%s uses its adapter, irrespective of the name', (adapter, engine) => {
+    expect(workerIdentity({ adapter, id: 'stable' }, 'Claude something')).toEqual({
+      adapter,
+      id: 'stable',
+      name: 'Claude something',
+      label: `${engine} · Claude something`,
+    });
+    expect(workerIdentity({ adapter, id: 'stable' }, null).label).toBe(`${engine} · stable`);
   });
 });

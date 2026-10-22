@@ -1,3 +1,4 @@
+import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { hostname } from 'node:os';
 import { fillPrompt, NEO_SESSION_TRACK } from '@hyperneo/prompts';
 import type { GlobalSettings, MessageHub, Provider } from '@hyperneo/shared';
@@ -19,6 +20,7 @@ import { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-se
 import { SessionEventSubscriptionRepository } from '../../storage/repositories/session-event-subscription-repository.ts';
 import { createArtifactRefReader } from '../artifacts/read-operations.ts';
 import { BUILD_METADATA } from '../build-metadata.ts';
+import { readWorkerIdentity, sessionWorkerRef } from './worker-identity.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
@@ -399,6 +401,44 @@ export class NeoService {
     this.triggerDeliveryRetryAt.clear();
     if (this.watching) await this.watching;
     this.sessionWatcher.flushSessionNoticeGroup();
+  }
+
+  readWorker(ref: WorkRef) {
+    if (ref.adapter === 'hyperneo' && !ref.daemon)
+      return Promise.resolve(workerIdentity(ref, this.db.getSession(ref.id)?.title ?? null));
+    return readWorkerIdentity(ref, (ref) =>
+      invokeOperation(
+        this.sessions.getOperationRegistry(),
+        'work.status',
+        { ref },
+        { source: 'internal' }
+      )
+    );
+  }
+
+  readSessionWorker(id: string) {
+    return this.readWorker(sessionWorkerRef(id, !!this.db.getSession(id)));
+  }
+
+  async todoWorkers<T extends NeoTodo>(todos: readonly T[]): Promise<T[]> {
+    const links = this.todoSessions.readLinksForTodos(todos.map((todo) => todo.id));
+    const reads = new Map<string, ReturnType<typeof this.readWorker>>();
+    return Promise.all(
+      todos.map(async (todo) => {
+        const ref = links.get(todo.id)?.worker;
+        const key = JSON.stringify(ref);
+        if (ref && !reads.has(key)) reads.set(key, this.readWorker(ref));
+        return { ...todo, worker: ref ? await reads.get(key)! : null };
+      })
+    );
+  }
+
+  async messageNames<T extends { fromSession: string; toSession: string }>(message: T) {
+    const [from, to] = await Promise.all([
+      this.readSessionWorker(message.fromSession),
+      this.readSessionWorker(message.toSession),
+    ]);
+    return { ...message, fromName: from.label, toName: to.label };
   }
 
   async restart(): Promise<{ ok: true; sessionId: string }> {

@@ -1,3 +1,5 @@
+import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
+import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 import type { DaemonInventoryPage, DaemonSnapshot } from '@hyperneo/shared/types/daemon-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -12,6 +14,7 @@ const InputSchema = z
   .default({ limit: 20, includeArchived: false });
 type SnapshotInput = z.infer<typeof InputSchema>;
 const EntrySchema = z.object({
+  worker: WorkerIdentitySchema.optional(),
   id: z.string(),
   name: z.string().max(160),
   status: z.string().nullable(),
@@ -72,6 +75,9 @@ export function presentDaemonSnapshot(
         .sort((a, b) => b.updatedAt - a.updatedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
         .slice(0, limit)
         .map((entry) => ({
+          ...(page.kind === 'session'
+            ? { worker: workerIdentity({ adapter: 'hyperneo', id: entry.id }, entry.name) }
+            : {}),
           id: entry.id,
           name: entry.name.slice(0, 160),
           status: entry.status,

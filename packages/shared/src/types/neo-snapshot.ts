@@ -1,3 +1,4 @@
+import type { WorkerIdentity } from './worker-identity.ts';
 import type { NeoSessionMessage } from './neo-session-message.ts';
 import type { NeoConversationWake } from './neo-wake.ts';
 import type { NeoAskEntry, NeoStatusCode } from './neo-ask.ts';
@@ -143,6 +144,7 @@ export function neoWorkPrVerdict(
 }
 
 export interface NeoSessionNotice {
+  worker?: WorkerIdentity;
   key: string;
   ref: { adapter: string; daemon?: string; id: string };
   title: string;
@@ -170,6 +172,7 @@ export interface NeoPackSetting {
 }
 
 export interface NeoSnapshot {
+  session?: WorkerIdentity | null;
   packPreferences?: NeoPackSetting[];
   ok: true;
   rev?: string;
@@ -194,6 +197,7 @@ export interface NeoSnapshot {
 export type NeoWorkingStatus = 'queued' | 'processing' | 'rate_limit_cooldown';
 
 export interface NeoWorkingSession {
+  worker?: WorkerIdentity;
   sessionId: string;
   projectId: string | null;
   title: string;

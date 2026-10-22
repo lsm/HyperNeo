@@ -1,3 +1,4 @@
+import type { NeoSessionMessage } from '@hyperneo/shared/types/neo-session-message';
 import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import { NeoConversationWakeSchema } from '../../storage/repositories/neo-conversation-wake-repository.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -34,7 +35,8 @@ export function requireNeoConversationReader(
 
 export function createNeoConversationReadOperation(
   repo: NeoRepository,
-  ledger: NeoConversationReader
+  ledger: NeoConversationReader,
+  present: (message: NeoSessionMessage) => Promise<NeoSessionMessage> = async (message) => message
 ) {
   const read = (superpipe({})('neo-conversation-read') as PipelineAPI)
     .input(['page', 'caller'])
@@ -120,6 +122,18 @@ export function createNeoConversationReadOperation(
     policy: { safetyClass: 'read', roles: ['neo'] },
     inputSchema: NeoConversationReadInput,
     resultSchema,
-    execute: async (page, caller) => read(page, caller),
+    execute: async (page, caller) => {
+      const result = read(page, caller);
+      return result.ok
+        ? {
+            ...result,
+            items: await Promise.all(
+              result.items.map(async (item) =>
+                item.role === 'session' ? { ...item, message: await present(item.message) } : item
+              )
+            ),
+          }
+        : result;
+    },
   });
 }
