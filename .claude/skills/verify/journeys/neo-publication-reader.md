@@ -1,0 +1,27 @@
+# Authored Neo replies reach the public-conversation reader
+
+Run from the worktree root:
+
+```bash
+bash .claude/skills/verify/publication-reader.sh /tmp/hyperneo-publication-reader-fresh
+```
+
+Use a fresh absolute run directory. Shared isolation from SKILL.md applies:
+`env -i`, `NODE_ENV=test`, its own HOME/data/DB, synthetic DB-stored credentials,
+GitHub stub, an ephemeral daemon and a loopback model on ephemeral ports. No
+live daemon, real provider or credential file is used. Resources close in finally.
+
+The installed SDK receives a human message, invokes `neo.publication.publish`
+through MCP, retries the same publication idempotently, then ends in plain text.
+The web's actual `readNeoPublications` client reads that newly authored reply
+through the test daemon's WebSocket RPC. It must return `ready` with the same
+stored text and no inferred askOrigin/producerInput; plain terminal text must not
+add a publication. Previously the daemon accepted these replies but the web
+reader returned `unavailable`, making the public conversation unreadable.
+
+`evidence/neo-goal-cycle-sdk.json` records model requests, SDK tool receipts,
+stored publication and the actual web-reader result. `evidence/sdk.log` and
+`evidence/web.log` record checks. The web contracts also cover origin-less
+revisions alongside legacy attributed replies, malformed optional origins,
+public conversation rendering and bounded reads. This is a daemon-to-web-client
+proof plus component rendering; no GUI or browser rendering is claimed.
