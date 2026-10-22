@@ -4,8 +4,11 @@ Run from the worktree root. Read the shared SKILL.md setup first. No real DB,
 credential/auth file or port 8399; no GUI interaction. This journey owns and stops
 its actual daemon, SDK and loopback scripted model. Workers are unaffected. The journey first attempts the ordinary sandbox-off RPC
 for Neo and requires a visible refusal; it then writes a disabled sandbox through
-generic session.update. The subsequent actual SDK query must still enforce the
-mandatory sandbox, with no excluded commands or unsandboxed retry.
+generic session.update, together with Write/Edit approvals, coordinator mode and
+weaker sandbox flags. The subsequent actual SDK query must retain the complete
+approved read-only policy: no mutating native tools or agents, no excluded commands,
+unknown weaker settings or unsandboxed retry. Explicit native Write/Edit attempts
+return tool errors and leave synthetic bytes untouched.
 
 ```bash
 RUN=$(mktemp -d /private/tmp/hn-neo-read-proof-XXXXXX)
@@ -35,7 +38,8 @@ reports unauthenticated with an isolated empty GH_CONFIG_DIR; it must never use 
 inherited GH_TOKEN/GITHUB_TOKEN or the human's gh login. A synthetic `.zshenv`
 also attempts to re-export an owner token: the isolated ZDOTDIR must prevent that
 reinjection. No real shell startup or auth file is read. Focused read-access tests
-also cover injected synthetic tokens, locked stores and non-macOS hosts. Missing
+also cover injected synthetic tokens, locked stores, non-macOS hosts and invalid
+or disappearing checkout-inventory entries (no parent/sibling write fallback). Missing
 or unavailable dedicated credentials leave gh unauthenticated, never using another
 store or human token. Preserve the JSON
 outside the worktree before cleanup. The scripted model proves runtime wiring,

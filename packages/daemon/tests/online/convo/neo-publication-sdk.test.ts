@@ -531,9 +531,9 @@ test(`root startup, reads, resume and publication (${sandboxProof ? 'real OS san
       replyTo: [requestId],
     });
     const end = Date.now() + 15000;
-    while (calls.length < 9 && Date.now() < end)
+    while (calls.length < nativeReadProbes.length + 5 && Date.now() < end)
       await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(calls).toEqual([...Array(8).fill('tool_use'), 'text']);
+    expect(calls).toEqual([...Array(nativeReadProbes.length + 4).fill('tool_use'), 'text']);
     expect(receipts).toMatchObject([
       {
         accepted: true,

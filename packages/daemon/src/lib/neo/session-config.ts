@@ -15,17 +15,22 @@ export function neoReadSandbox() {
   };
 }
 
-export function neoPromptTools(packs: readonly NeoPackBrief[]) {
+export function neoReadTools() {
   const tools = ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash'];
   return {
-    systemPrompt: neoPrompt(packs),
     sdkToolsPreset: tools,
     allowedTools: [...tools, `mcp__${OPERATIONS_MCP_SERVER_NAME}__invoke`],
     permissionMode: 'dontAsk' as const,
     coordinatorMode: false,
     settingSources: [],
+    agent: undefined,
+    agents: undefined,
     sandbox: neoReadSandbox(),
   };
+}
+
+export function neoPromptTools(packs: readonly NeoPackBrief[]) {
+  return { systemPrompt: neoPrompt(packs), ...neoReadTools() };
 }
 
 export function planNeoSessionConfig(

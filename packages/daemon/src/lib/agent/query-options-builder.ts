@@ -42,7 +42,7 @@ import { Logger } from '../logger.ts';
 import { neoCoordinatorBinding } from '../neo/session-policy.ts';
 import { neoSecretReadRules } from '../neo/secret-read-rules.ts';
 import { neoReadAccess } from '../neo/read-access.ts';
-import { neoReadSandbox } from '../neo/session-config.ts';
+import { neoReadSandbox, neoReadTools } from '../neo/session-config.ts';
 import { mergeSessionMcpServers } from '../mcp/built-in-servers.ts';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
 import {
@@ -478,7 +478,6 @@ export class QueryOptionsBuilder {
 
       sandbox: readAccess
         ? {
-            ...(config.sandbox as Options['sandbox']),
             ...neoReadSandbox(),
             filesystem: readAccess.filesystem,
           }
@@ -837,7 +836,7 @@ export class QueryOptionsBuilder {
   }
 
   private getAllowedTools(): string[] {
-    const config = this.ctx.session.config;
+    const config = this.admittedConfig();
 
     if (config.allowedTools && config.allowedTools.length > 0) {
       return [...config.allowedTools];
@@ -983,11 +982,12 @@ export class QueryOptionsBuilder {
   }
 
   private getPermissionMode(): PermissionMode {
-    if (this.ctx.session.config.permissionMode) {
-      if (this.ctx.session.config.permissionMode === 'default') {
+    const config = this.admittedConfig();
+    if (config.permissionMode) {
+      if (config.permissionMode === 'default') {
         return 'bypassPermissions';
       }
-      return this.ctx.session.config.permissionMode;
+      return config.permissionMode;
     }
 
     const globalSettings = this.ctx.settingsManager.getGlobalSettings();
@@ -1094,7 +1094,10 @@ export class QueryOptionsBuilder {
   }
 
   private admittedConfig(session: Session = this.ctx.session): Session['config'] {
-    return stripRejectedSessionConfig(session.config);
+    const config = stripRejectedSessionConfig(session.config);
+    return neoCoordinatorBinding(this.ctx.db, session.id)
+      ? { ...config, ...neoReadTools() }
+      : config;
   }
 
   private getSDKCliPath(): string | undefined {
