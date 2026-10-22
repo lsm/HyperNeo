@@ -1,4 +1,6 @@
 import { expect, test } from 'bun:test';
+import { createTestDb, createTestSession } from '../../../helpers/database';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 import {
   SDKStatusReader,
   type SDKStatusReply,
@@ -125,4 +127,33 @@ test('backpressure refuses excess requests instead of accumulating unbounded wor
   workers[0].crash();
   expect((await accepted).every((r) => r.status === 'rejected')).toBe(true);
   await reader.close();
+});
+
+test('supported memory DB keeps complete status text without opening a file worker', async () => {
+  const db = await createTestDb();
+  try {
+    db.createSession(createTestSession('memory-status'));
+    const text = 'Complete memory text 🦊\n'.repeat(2000);
+    const message = {
+      type: 'user',
+      uuid: 'memory-user',
+      parent_tool_use_id: null,
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text }, { type: 'image' }, { type: 'text', text: 'Second' }],
+      },
+    } as SDKMessage;
+    db.saveUserMessage('memory-status', message, 'consumed');
+    const stored = db.getDatabase().prepare('SELECT sdk_message FROM sdk_message_bodies').all();
+    const page = await db.getUserMessagesByStatusAsync('memory-status', 'consumed', 20);
+    expect(page.total).toBe(1);
+    expect(page.messages[0].text).toBe(text + '\nSecond');
+    expect(page.messages[0].uuid).toBe('memory-user');
+    expect(page.messages[0].status).toBe('consumed');
+    expect(db.getDatabase().prepare('SELECT sdk_message FROM sdk_message_bodies').all()).toEqual(
+      stored
+    );
+  } finally {
+    await db.close();
+  }
 });
