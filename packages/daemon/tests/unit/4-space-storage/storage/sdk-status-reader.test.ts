@@ -401,3 +401,22 @@ test('memory work search retains semantic output and every stored body', async (
     await db.close();
   }
 });
+
+test('search backpressure preserves SDK admission and queued SDK reads finish first', async () => {
+  const { reader, workers } = fixture();
+  const first = reader.readWorkChats({ query: 'first', limit: 1 });
+  const second = reader.readWorkChats({ query: 'second', limit: 1 });
+  await expect(reader.readWorkChats({ query: 'excess', limit: 1 })).rejects.toThrow('queue full');
+  const statuses = Array.from({ length: 16 }, () => reader.read(args));
+  workers[0].reply(workers[0].requests[0], []);
+  await first;
+  for (let i = 0; i < statuses.length; i++) {
+    await tick();
+    workers[0].reply(workers[0].requests[i + 1], page);
+    expect(await statuses[i]).toEqual(page);
+  }
+  await tick();
+  workers[0].reply(workers[0].requests[17], []);
+  expect(await second).toEqual([]);
+  await reader.close();
+});

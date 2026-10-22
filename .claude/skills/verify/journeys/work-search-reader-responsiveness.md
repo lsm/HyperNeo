@@ -33,14 +33,10 @@ disk fallback. The supported no-disk `:memory:` configuration remains explicit.
 The helper closes its probe, WebSocket and daemon in finally. Browser rendering,
 real embedding quality, physical I/O bounds and deployed performance are separate.
 
-Measured on the committed fix with pinned Bun1.4.2: the delayed case had
-5.99 ms main lag and 0.48 ms independent health latency, versus 1232/1239 ms
-on the tests-first source. The no-delay control took 58.86 ms at the public
-RPC and 14.07 ms for the largest vector SQL read. The delayed RPC still took
-1265 ms. All 10,020 indexed bodies/embeddings hash to
-`3ce3df87dac94246be56038cdeb31538cdada8cdbec0e051bcc289a358ae501c`
-before and after. Ranking, hit counts, scores and semantic snippets are compared
-to the existing repository result within each run, not just session presence.
+Pinned Bun1.4.2 ordinary controls take 55.81 ms RPC / 13.21 ms SQL natively
+and 70.51 / 18.46 ms through IPC. The modeled-wait case retains a 1262 ms RPC,
+4.60 ms main lag and 0.37 ms independent health. Full retained SHA is
+`3ce3df87dac94246be56038cdeb31538cdada8cdbec0e051bcc289a358ae501c`.
 
 For the Node-hosted online-test boundary, add `0 bridge` after a fresh run
 directory. This runs the same public search via the existing isolated IPC host
@@ -54,3 +50,11 @@ returned no match when the typed array became an object. The fixed bridge and
 native controls both return the expected match/snippets with the same complete
 retained hash; the fixture symlinks its own Bun binary into its refusing stub
 PATH so its IPC host uses the same pinned runtime as the daemon.
+
+For contention pass `1200 native priority` (or `1200 bridge priority`) after
+a fresh run directory. Two distinct real searches each wait 1200 ms. Status
+and page RPCs must finish before 1800 ms from the first search, ahead of the
+second search's wait. The FIFO baseline takes 2477 ms; priority takes 1267/1273 ms.
+Two search slots have separate admission from all 16 SDK slots; queued SDK reads
+run first. An active SQLite call remains uninterruptible and its timeout fails
+the shared generation: this does not prove SDK latency below 250 ms during it.
