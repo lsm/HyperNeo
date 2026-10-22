@@ -1,5 +1,6 @@
 import { Database } from '../../storage/sqlite-compat.ts';
 import { purgeWorkFeedSessions } from '../../storage/work-feed.ts';
+import { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import { subscribeToStructuredLogs } from '../logger.ts';
 import { ingestExternalEvent } from './ingest-external-event-pipeline.ts';
 import { SessionExternalEventStore } from './session-external-event-store.ts';
@@ -14,16 +15,26 @@ let store: SessionExternalEventStore | null = null;
 let workerOperation = 'session-event-ingest';
 subscribeToStructuredLogs((log) => {
   if (log.module === 'hyperneo:daemon:sqlite.query')
-    worker.postMessage({ log: { ...log, metadata: { ...log.metadata, workerOperation } } });
+    worker.postMessage({
+      log: {
+        ...log,
+        metadata:
+          log.metadata.event === 'summary' ? log.metadata : { ...log.metadata, workerOperation },
+      },
+    });
 });
 worker.onmessage = async ({ data }) => {
   const { id, epoch, event } = data,
     started = performance.now(),
     queueMs = Date.now() - data.sentAt;
-  workerOperation = data.purgeClaudeSessions ? 'claude-feed-purge' : 'session-event-ingest';
+  workerOperation = data.cleanupJobs
+    ? 'job-queue-cleanup'
+    : data.purgeClaudeSessions
+      ? 'claude-feed-purge'
+      : 'session-event-ingest';
   try {
     let outcome;
-    if (!event && !data.purgeClaudeSessions) {
+    if (!event && !data.purgeClaudeSessions && !data.cleanupJobs) {
       db?.close();
       db = null;
       store = null;
@@ -33,7 +44,12 @@ worker.onmessage = async ({ data }) => {
         db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000');
         store = new SessionExternalEventStore(db);
       }
-      if (data.purgeClaudeSessions)
+      if (data.cleanupJobs) {
+        const queue = new JobQueueRepository(db);
+        outcome = queue.cleanup(data.cleanupJobs.beforeMs);
+        for (const { queue: name, beforeMs } of data.cleanupJobs.completed)
+          outcome += queue.cleanupCompleted(name, beforeMs);
+      } else if (data.purgeClaudeSessions)
         await purgeWorkFeedSessions(db, 'claude', data.purgeClaudeSessions);
       else
         outcome = db.transaction(() => {

@@ -202,6 +202,16 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_WRITER_PATH="$REPO_ROOT/packages/daemon/src/
       if (rows.length !== 1 || rows[0].kind !== "codex" || rows[0].body !== "complete retained result") Deno.exit(1);
     } finally { db.close(); }
     console.log("[deno-smoke] Claude feed purge preserves other feed kinds");
+    const cleanupDb = new DatabaseSync(Deno.env.get("SMOKE_DB_PATH"));
+    try {
+      const now = Date.now(), hour = 3600000;
+      const insert = cleanupDb.prepare("INSERT INTO job_queue(id,queue,status,payload,priority,max_retries,retry_count,run_at,created_at,completed_at) VALUES(?,?,?,?,0,3,0,?,?,?)");
+      for (const [id,queue,status,age] of [["deno-cleanup-old","synthetic-cleanup","completed",8*24*hour],["deno-cleanup-reminder","longHorizonAgentReminder.fire","completed",2*hour],["deno-cleanup-keep","longHorizonAgentReminder.fire","failed",2*hour]]) insert.run(id,queue,status,"{\"body\":\"complete retained job\"}",now-age,now-age,now-age);
+      const count = await writer.cleanupJobs({beforeMs:now-7*24*hour,completed:[{queue:"longHorizonAgentReminder.fire",beforeMs:now-hour}]});
+      const rows = cleanupDb.prepare("SELECT id,payload FROM job_queue WHERE id LIKE ?").all("deno-cleanup-%");
+      if (count !== 2 || rows.length !== 1 || rows[0].id !== "deno-cleanup-keep" || JSON.parse(rows[0].payload).body !== "complete retained job") Deno.exit(1);
+    } finally { cleanupDb.close(); }
+    console.log("[deno-smoke] job cleanup preserves cutoffs and retained payloads");
     console.log("[deno-smoke] session event writer commit/dedupe ok");
   } finally { await writer.close(); }
 '; then

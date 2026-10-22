@@ -1,5 +1,6 @@
 import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import { JOB_QUEUE_CLEANUP, LONG_HORIZON_AGENT_REMINDER_FIRE } from '../job-queue-constants.ts';
+import type { JobCleanup } from '../external-events/session-event-writer.ts';
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const DEFAULT_MAX_AGE_MS = 7 * 24 * ONE_HOUR_MS;
@@ -9,12 +10,25 @@ const QUEUE_COMPLETED_MAX_AGE_MS: Record<string, number> = {
   [LONG_HORIZON_AGENT_REMINDER_FIRE]: ONE_HOUR_MS,
 };
 
-export function createCleanupHandler(jobQueue: JobQueueRepository) {
+export function createCleanupHandler(
+  jobQueue: JobQueueRepository,
+  cleanup?: (params: JobCleanup) => Promise<number>
+) {
   return async (_job: Job): Promise<{ deletedJobs: number; nextRunAt: number }> => {
     const now = Date.now();
-    let deletedJobs = jobQueue.cleanup(now - DEFAULT_MAX_AGE_MS);
-    for (const [queue, maxAgeMs] of Object.entries(QUEUE_COMPLETED_MAX_AGE_MS)) {
-      deletedJobs += jobQueue.cleanupCompleted(queue, now - maxAgeMs);
+    const params = {
+      beforeMs: now - DEFAULT_MAX_AGE_MS,
+      completed: Object.entries(QUEUE_COMPLETED_MAX_AGE_MS).map(([queue, maxAgeMs]) => ({
+        queue,
+        beforeMs: now - maxAgeMs,
+      })),
+    };
+    let deletedJobs: number;
+    if (cleanup) deletedJobs = await cleanup(params);
+    else {
+      deletedJobs = jobQueue.cleanup(params.beforeMs);
+      for (const { queue, beforeMs } of params.completed)
+        deletedJobs += jobQueue.cleanupCompleted(queue, beforeMs);
     }
 
     const nextRunAt = now + NEXT_RUN_DELAY_MS;

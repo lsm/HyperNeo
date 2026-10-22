@@ -37,9 +37,12 @@ Connection freshness stays a transport fact for the clients, outside this enum.
 The unit contracts call both actual operations against synthetic storage and
 check every state, precise ownership, explicit selected replies, questions,
 legacy and foreign publications, pagination and image-reference reads. The
-installed SDK receives the stored human id. While the loopback model is paused
-before publishing, the real RPC reports working for that exact input. The SDK
-then invokes publish and ask through MCP; both real RPC reads report answered
+installed SDK receives the stored human id. Before sending it, the fixture waits
+for its earlier scheduled wake to be consumed and the session
+to return idle; wake history persistence alone does not establish turn ownership.
+The working assertion stays exact and does not accept another input's active turn.
+While the loopback model is paused before publishing, the real RPC reports working
+for that exact input. The SDK then invokes publish and ask through MCP; both reads report answered
 for the explicitly published id. A later human input reaches the model and ends
 without a publication; RPC reports it read while the first stays answered. The
 ordinary/Neo/large-history one-restart proof also remains green.

@@ -20,12 +20,13 @@ class TestWorker {
   }
   postMessage(request: SessionEventWriteRequest) {
     this.requests.push(request);
-    if (!request.event && !request.purgeClaudeSessions) queueMicrotask(() => this.reply(request));
+    if (!request.event && !request.purgeClaudeSessions && !request.cleanupJobs)
+      queueMicrotask(() => this.reply(request));
   }
   terminate() {
     this.stopped = true;
   }
-  reply(request: SessionEventWriteRequest, outcome?: IngestExternalEventOutcome) {
+  reply(request: SessionEventWriteRequest, outcome?: IngestExternalEventOutcome | number) {
     this.onmessage?.({
       data: {
         id: request.id,
@@ -197,5 +198,35 @@ test('lost purge reply is unknown and never replayed on the next writer generati
   expect(workers[1].requests[0].purgeClaudeSessions).toEqual(['sdk-two']);
   workers[1].reply(workers[1].requests[0]);
   await next;
+  await writer.close();
+});
+
+test('cleanup preserves cutoff arguments and returns the committed count before draining', async () => {
+  const { writer, workers } = fixture();
+  const params = { beforeMs: 123, completed: [{ queue: 'reminder', beforeMs: 456 }] };
+  const cleanup = writer.cleanupJobs(params);
+  const purge = writer.purgeClaudeFeed(['sdk-one']);
+  await tick();
+  expect(workers[0].requests).toHaveLength(1);
+  expect(workers[0].requests[0].cleanupJobs).toEqual(params);
+  workers[0].reply(workers[0].requests[0], 4);
+  expect(await cleanup).toBe(4);
+  await tick();
+  expect(workers[0].requests[1].purgeClaudeSessions).toEqual(['sdk-one']);
+  const closing = writer.close();
+  workers[0].reply(workers[0].requests[1]);
+  await purge;
+  await closing;
+  expect(workers).toHaveLength(1);
+  expect(workers[0].stopped).toBe(true);
+});
+
+test('lost cleanup reply is unknown without replaying a possible committed cleanup', async () => {
+  const { writer, workers } = fixture();
+  const failed = writer.cleanupJobs({ beforeMs: 123, completed: [] }).catch(String);
+  await tick();
+  workers[0].crash();
+  expect(await failed).toContain('outcome unknown for job-queue-cleanup');
+  expect(workers[0].requests).toHaveLength(1);
   await writer.close();
 });

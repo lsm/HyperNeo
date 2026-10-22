@@ -1261,7 +1261,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       SKILL_VALIDATE,
       createSkillValidateHandler(skillsManager, db.appMcpServers)
     );
-    jobProcessor.register(JOB_QUEUE_CLEANUP, createCleanupHandler(jobQueue));
+    jobProcessor.register(
+      JOB_QUEUE_CLEANUP,
+      createCleanupHandler(
+        jobQueue,
+        sessionEventWriter ? (params) => sessionEventWriter!.cleanupJobs(params) : undefined
+      )
+    );
     jobProcessor.register(
       MEMORY_CONSOLIDATION,
       createMemoryConsolidationHandler(db.agentMemory, jobQueue)

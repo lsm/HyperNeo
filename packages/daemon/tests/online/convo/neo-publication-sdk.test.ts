@@ -533,6 +533,21 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
     expect(
       daemon.db.getDatabase().prepare('SELECT COUNT(*) AS count FROM neo_input_origins').get()
     ).toEqual({ count: 0 });
+    const wakeConsumed = () =>
+      Boolean(daemon!.db.getMessageByStatusAndUuid(root, 'consumed', 'fictional-wake-message'));
+    let wakeSession = (await hub.request<{ session: Session }>('session.get', { sessionId: root }))
+      .session;
+    const wakeIdleDeadline = Date.now() + 15000;
+    while (
+      (!wakeConsumed() || JSON.parse(wakeSession.processingState ?? '{}').status !== 'idle') &&
+      Date.now() < wakeIdleDeadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      wakeSession = (await hub.request<{ session: Session }>('session.get', { sessionId: root }))
+        .session;
+    }
+    expect(wakeConsumed()).toBe(true);
+    expect(JSON.parse(wakeSession.processingState ?? '{}')).toMatchObject({ status: 'idle' });
     const todos = new NeoAskTodoRepository(daemon.db.getDatabase());
     todos.openAsk({
       id: 'fictional-garden',
@@ -563,9 +578,10 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
       await new Promise((resolve) => setTimeout(resolve, 50));
     expect(publicationReady).toBe(true);
     const workingStatus = await statusPage();
-    expect(workingStatus.items).toEqual([
-      expect.objectContaining({ requestId, messageStatus: 'working' }),
-    ]);
+    expect(
+      workingStatus.items,
+      JSON.stringify({ requestId, processing: daemon.db.getSession(root)?.processingState })
+    ).toEqual([expect.objectContaining({ requestId, messageStatus: 'working' })]);
     releasePublication();
     const read = () =>
       hub.request<{ ok: boolean; items: NeoPublication[] }>('operation.invoke', {

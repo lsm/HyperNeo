@@ -4,6 +4,11 @@ import type { SQLiteQueryObservabilityOptions } from '../../storage/sqlite-query
 import type { IngestExternalEventOutcome } from './ingest-external-event-pipeline.ts';
 import type { ExternalEvent } from './types.ts';
 
+export type JobCleanup = {
+  beforeMs: number;
+  completed: { queue: string; beforeMs: number }[];
+};
+
 export type SessionEventWriteRequest = {
   id: number;
   epoch: number;
@@ -11,6 +16,7 @@ export type SessionEventWriteRequest = {
   sentAt: number;
   event: ExternalEvent | null;
   purgeClaudeSessions?: string[];
+  cleanupJobs?: JobCleanup;
   queryObservability?: SQLiteQueryObservabilityOptions;
 };
 export type SessionEventWriteReply =
@@ -19,7 +25,7 @@ export type SessionEventWriteReply =
   | {
       id: number;
       epoch: number;
-      outcome?: IngestExternalEventOutcome;
+      outcome?: IngestExternalEventOutcome | number;
       error?: string;
       finishedAt: number;
       workerMs: number;
@@ -53,10 +59,15 @@ export class SessionEventWriter {
     return this.write(null, sessionIds).then(() => {});
   }
 
+  cleanupJobs(params: JobCleanup): Promise<number> {
+    return this.write(null, undefined, params) as Promise<number>;
+  }
+
   private write(
     event: ExternalEvent | null,
-    purgeClaudeSessions?: string[]
-  ): Promise<IngestExternalEventOutcome | undefined> {
+    purgeClaudeSessions?: string[],
+    cleanupJobs?: JobCleanup
+  ): Promise<IngestExternalEventOutcome | number | undefined> {
     if (this.closing) return Promise.reject(new Error('Session event writer closed'));
     if (this.waiting >= 16) return Promise.reject(new Error('Session event writer queue full'));
     this.waiting++;
@@ -65,7 +76,7 @@ export class SessionEventWriter {
     const result = this.queue.then(() => {
       if (epoch !== this.epoch)
         throw new Error('Session event writer generation failed before dispatch');
-      return this.exchange(event, queuedAt, purgeClaudeSessions);
+      return this.exchange(event, queuedAt, purgeClaudeSessions, cleanupJobs);
     });
     this.queue = result
       .catch(() => {})
@@ -89,12 +100,20 @@ export class SessionEventWriter {
   private exchange(
     event: ExternalEvent | null,
     queuedAt: number,
-    purgeClaudeSessions?: string[]
-  ): Promise<IngestExternalEventOutcome | undefined> {
+    purgeClaudeSessions?: string[],
+    cleanupJobs?: JobCleanup
+  ): Promise<IngestExternalEventOutcome | number | undefined> {
     const worker = (this.worker ??= this.createWorker()),
       id = ++this.id,
       epoch = this.epoch,
-      started = performance.now();
+      started = performance.now(),
+      operation = cleanupJobs
+        ? 'job-queue-cleanup'
+        : purgeClaudeSessions
+          ? 'claude-feed-purge'
+          : event
+            ? 'session-event-ingest'
+            : 'session-event-close';
     return new Promise((resolve, reject) => {
       let settled = false,
         sent = false;
@@ -112,11 +131,7 @@ export class SessionEventWriter {
           module: 'hyperneo:daemon:sqlite.worker',
           args: ['sqlite.worker.request'],
           metadata: {
-            operation: purgeClaudeSessions
-              ? 'claude-feed-purge'
-              : event
-                ? 'session-event-ingest'
-                : 'session-event-close',
+            operation,
             id,
             epoch,
             outcome: error ? (unknown ? 'unknown' : 'error') : 'ok',
@@ -134,7 +149,7 @@ export class SessionEventWriter {
           reject(
             unknown
               ? new Error(
-                  `Session event writer outcome unknown for ${event?.id ?? 'claude-feed-purge'}: ${error.message}; not replayed`
+                  `Session event writer outcome unknown for ${event?.id ?? operation}: ${error.message}; not replayed`
                 )
               : error
           );
@@ -145,7 +160,7 @@ export class SessionEventWriter {
           finish(
             new Error('Session event writer timeout'),
             undefined,
-            sent && (event !== null || purgeClaudeSessions !== undefined)
+            sent && operation !== 'session-event-close'
           ),
         this.timeoutMs
       );
@@ -157,11 +172,7 @@ export class SessionEventWriter {
           this.epoch++;
           worker.terminate();
         } else
-          finish(
-            new Error(error.message),
-            undefined,
-            sent && (event !== null || purgeClaudeSessions !== undefined)
-          );
+          finish(new Error(error.message), undefined, sent && operation !== 'session-event-close');
       };
       worker.onmessage = ({ data }: MessageEvent<SessionEventWriteReply>) => {
         if (this.worker !== worker) return;
@@ -191,6 +202,7 @@ export class SessionEventWriter {
             sentAt: Date.now(),
             event,
             purgeClaudeSessions,
+            cleanupJobs,
             queryObservability: this.queryObservability,
           } satisfies SessionEventWriteRequest);
           sent = true;
