@@ -1,0 +1,69 @@
+import { cleanup, fireEvent, render } from '@testing-library/preact';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ChatDisplayModeContext } from '../chat-display-mode.ts';
+import { SyntheticMessageBlock } from '../SyntheticMessageBlock.tsx';
+import { ThinkingBlock } from '../ThinkingBlock.tsx';
+
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
+
+describe('SDK thinking and synthetic text disclosures', () => {
+  it('opens folded thinking only through the explicit control and preserves lazy reading', () => {
+    const onOpen = vi.fn();
+    const view = render(
+      <ChatDisplayModeContext.Provider value="compact">
+        <ThinkingBlock content="" thinnedChars={1200} onOpen={onOpen} />
+      </ChatDisplayModeContext.Provider>
+    );
+    fireEvent.click(view.getByText('Thinking', { exact: true }));
+    expect(view.queryByText('Loading…')).toBeNull();
+    expect(onOpen).not.toHaveBeenCalled();
+    const more = view.getByRole('button', { name: 'more — Thinking', exact: true });
+    expect(more.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(more);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    fireEvent.click(view.getByText('Loading…'));
+    const less = view.getByRole('button', { name: 'less — Thinking', exact: true });
+    expect(less.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(less);
+    expect(view.queryByText('Loading…')).toBeNull();
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses explicit more and less for a long thinking preview without body toggling', () => {
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(500);
+    const content = 'A synthetic line.\n'.repeat(10) + 'Short ending.';
+    const view = render(<ThinkingBlock content={content} />);
+    const more = view.getByRole('button', { name: 'more — Thinking', exact: true });
+    expect(more.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(view.getByText(content, { exact: true }));
+    expect(more.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(more);
+    const less = view.getByRole('button', { name: 'less — Thinking', exact: true });
+    expect(less.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(view.getByText(content, { exact: true }));
+    expect(less.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(less);
+    expect(view.getByRole('button', { name: 'more — Thinking', exact: true })).toBeTruthy();
+  });
+
+  it('uses the shared control for long synthetic text while the text remains inert', () => {
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(500);
+    const content = 'Synthetic body line.\n'.repeat(16) + 'Short ending.';
+    const view = render(
+      <SyntheticMessageBlock content={content} renderAsPlainText showActions={false} />
+    );
+    const more = view.getByRole('button', { name: 'more — Synthetic', exact: true });
+    fireEvent.click(view.getByText(content, { exact: true }));
+    expect(more.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(more);
+    const less = view.getByRole('button', { name: 'less — Synthetic', exact: true });
+    expect(less.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(view.getByText(content, { exact: true }));
+    expect(less.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(less);
+    expect(view.getByRole('button', { name: 'more — Synthetic', exact: true })).toBeTruthy();
+  });
+});
