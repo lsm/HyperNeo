@@ -75,6 +75,7 @@ function describeCliWork(
       place: { machine: deps.machine, name: 'Claude Code', ...(folder ? { folder } : {}) },
       status: live.status,
       lastActivityAt: transcript?.lastAt ?? 0,
+      ...(transcript?.turnEnds?.length ? { turnEnds: transcript.turnEnds } : {}),
       ...(transcript?.reply ? { lastReply: transcript.reply } : {}),
       ...(transcript?.replyAt !== undefined ? { lastReplyAt: transcript.replyAt } : {}),
       ...(transcript

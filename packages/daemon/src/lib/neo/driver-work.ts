@@ -27,6 +27,7 @@ import {
   WorkRefSchema,
   type WorkStatus,
   WorkStatusSchema,
+  WorkTurnEndSchema,
 } from '../drivers/types.ts';
 import { WORK_MESSAGE_MAX } from '../drivers/work-operations.ts';
 import type { OperationOutcome } from '../operations/invoke.ts';
@@ -487,6 +488,11 @@ function settleAttributedDriverWork(
           : `It ${status}.${said ? ` ${said}` : ''}`,
     };
   return null;
+}
+
+export function readDriverTurnEnds(outcome: OperationOutcome) {
+  const ends = z.array(WorkTurnEndSchema).safeParse(parseDriverStatus(outcome)?.turnEnds);
+  return ends.success ? ends.data : [];
 }
 
 export function readDriverFollowUp(

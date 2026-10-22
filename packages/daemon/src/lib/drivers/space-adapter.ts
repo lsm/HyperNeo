@@ -7,6 +7,7 @@ import {
   readHyperneoInputs,
   readHyperneoExchange,
   readHyperneoLastResult,
+  readHyperneoTurnEnds,
 } from './hyperneo-adapter.ts';
 import { withExchange, workEntryTime } from './work-messages.ts';
 import { readSpaceInputEvidence } from './space-input-evidence.ts';
@@ -664,10 +665,12 @@ export function createSpaceAdapter(deps: SpaceAdapterDeps): WorkAdapter {
         ? readSpaceAgents(deps.db(), true, ref.id.slice(AGENT_REF.length))[0]?.sessionId
         : readActiveNode(deps.db(), ref.id)?.agentSessionId;
       const last = agent && sessionId ? readHyperneoLastResult(deps.db(), sessionId) : null;
+      const turnEnds = sessionId ? readHyperneoTurnEnds(deps.db(), sessionId, since) : [];
       return {
         ...result,
         value: {
           ...result.value,
+          ...(turnEnds.length ? { turnEnds } : {}),
           ...(last?.reply
             ? { lastReply: last.reply.slice(0, 4_000), lastReplyAt: workEntryTime(last.at) }
             : {}),

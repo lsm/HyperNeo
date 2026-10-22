@@ -21,6 +21,7 @@ import {
   readDriverOpenedPrs,
   readDriverSendBaseline,
   readDriverSent,
+  readDriverTurnEnds,
   withWorkGoal,
 } from './driver-work.ts';
 import type { NeoPack, NeoTodoCheckResult, NeoTodoJudgement } from './pack-contract.ts';
@@ -426,7 +427,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         ...(since !== null ? { since } : {}),
         ...(receipt ? { receipt } : {}),
       });
-      observe(card.id, outcome);
+      await observe(card.id, outcome, ref);
       return outcome;
     },
     recordStartedAt: (id, at) => sessions.recordStartedAt(id, at),
@@ -498,11 +499,44 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     deps.changed();
   };
 
-  const observe = (id: string, outcome: OperationOutcome) => {
+  const observe = async (id: string, outcome: OperationOutcome, ref: WorkRef) => {
     const todo = store.getTodo(id);
     if (todo)
       for (const pack of deps.packs()) pack.todos?.openedPrs?.(todo, readDriverOpenedPrs(outcome));
     if (todo) relocate(id);
+    const ask = todo && store.getAsk(todo.askId);
+    const current = sessions.readRef(id);
+    if (
+      !todo ||
+      !ask ||
+      ask.status !== 'open' ||
+      !['doing', 'blocked'].includes(todo.state) ||
+      current?.adapter !== ref.adapter ||
+      current.id !== ref.id ||
+      current.daemon !== ref.daemon
+    )
+      return;
+    const inputs = sessions.inputs.list(id);
+    for (const turn of readDriverTurnEnds(outcome)) {
+      const dispatch = inputs.findLast((input) => {
+        const result = input.outcome;
+        return (
+          input.acceptedAt <= turn.at &&
+          result &&
+          'ref' in result &&
+          result.ref.adapter === ref.adapter &&
+          result.ref.id === ref.id &&
+          result.ref.daemon === ref.daemon
+        );
+      });
+      if (dispatch)
+        await deps.tell(
+          ask,
+          todo,
+          `Worker turn report (todo ${id}, dispatch ${dispatch.id}):\n\n${turn.message || 'worker ended its turn with no reply'}`,
+          `neo-todo-turn:${id}:${dispatch.id}:${turn.id}`
+        );
+    }
   };
 
   const follow = (superpipe({})('neo-todo-follow') as PipelineAPI)
@@ -531,7 +565,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           since: sent?.inputBefore ?? since,
           ...(sent?.receipt ? { receipt: sent.receipt } : {}),
         });
-        observe(todo.id, outcome);
+        await observe(todo.id, outcome, target.ref);
         const live = readDriverLive(outcome);
         if (live) sessions.recordLive(todo.id, live.status, live.link, live.remoteLink);
         await noteNeedsYou(todo.id, target.ask, live);

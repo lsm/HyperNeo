@@ -352,6 +352,40 @@ export function readHyperneoSession(db: BunDatabase, id: string): HyperneoSessio
   return row ?? null;
 }
 
+export function readHyperneoTurnEnds(
+  db: BunDatabase,
+  sessionId: string,
+  since?: number
+): NonNullable<WorkDetail['turnEnds']> {
+  if (since === undefined) return [];
+  const rows = db
+    .prepare(`SELECT CAST(m.rowid AS TEXT) AS id, m.timestamp,
+    COALESCE(NULLIF(json_extract(${sdkMessageBodyAt('m.rowid')}, '$.result'), ''),
+      (SELECT group_concat(json_extract(block.value, '$.text'), char(10)) FROM json_each((
+        SELECT CASE json_type(${sdkMessageBodyAt('a.rowid')}, '$.message.content')
+          WHEN 'array' THEN json_extract(${sdkMessageBodyAt('a.rowid')}, '$.message.content') ELSE '[]' END
+        FROM sdk_messages a WHERE a.session_id=m.session_id AND a.message_type='assistant'
+          AND a.parent_tool_use_id IS NULL AND a.rowid<m.rowid
+          AND a.rowid>COALESCE((SELECT MAX(p.rowid) FROM sdk_messages p
+            WHERE p.session_id=m.session_id AND p.message_type='result' AND p.parent_tool_use_id IS NULL
+              AND COALESCE(p.internal_compaction_turn,0)=0 AND p.rowid<m.rowid),0)
+        ORDER BY a.rowid DESC LIMIT 1
+      )) block WHERE json_extract(block.value, '$.type')='text'), '') AS message
+    FROM sdk_messages m WHERE m.session_id=? AND m.message_type='result' AND m.parent_tool_use_id IS NULL
+      AND COALESCE(m.internal_compaction_turn,0)=0
+      AND NOT (COALESCE(m.recovery_intercepted,0)=1 AND COALESCE(m.recovery_billing_terminal,0)=0)
+      AND m.timestamp>? ORDER BY m.rowid`)
+    .all(sessionId, new Date(since).toISOString()) as {
+    id: string;
+    timestamp: string;
+    message: string;
+  }[];
+  return rows.flatMap((row) => {
+    const at = workEntryTime(row.timestamp);
+    return at === undefined ? [] : [{ id: row.id, at, message: row.message }];
+  });
+}
+
 export function readHyperneoLastResult(db: BunDatabase, id: string): HyperneoLastResult | null {
   const row = db
     .prepare(
@@ -462,11 +496,13 @@ export function describeHyperneoWork(
   since?: number
 ): Result<WorkDetail> {
   const work = toWork(row, deps.machine);
+  const turnEnds = readHyperneoTurnEnds(deps.db(), row.id, since);
   const last = readHyperneoLastResult(deps.db(), row.id);
   return {
     ok: true,
     value: {
       ...work,
+      ...(turnEnds.length ? { turnEnds } : {}),
       status: work.status === 'done' && last?.failed ? 'failed' : work.status,
       ...(last?.reply
         ? { lastReply: last.reply.slice(0, REPLY_LIMIT), lastReplyAt: timestamp(last.at) }

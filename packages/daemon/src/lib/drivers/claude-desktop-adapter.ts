@@ -421,6 +421,7 @@ function assistantText(line: string): string | null {
 }
 
 export interface ClaudeTranscriptState {
+  turnEnds?: WorkDetail['turnEnds'];
   reply: string | null;
   replyAt?: number;
   inputs: WorkInput[];
@@ -430,6 +431,7 @@ export interface ClaudeTranscriptState {
 }
 
 interface ClaudeTranscriptEntry {
+  uuid?: unknown;
   type?: unknown;
   isSidechain?: unknown;
   timestamp?: unknown;
@@ -470,6 +472,7 @@ export function claudeTranscriptState(
   since?: number,
   truncated = false
 ): ClaudeTranscriptState {
+  const turnEnds: NonNullable<WorkDetail['turnEnds']> = [];
   const inputs: WorkInput[] = [];
   const exchange: WorkExchangeEntry[] = [];
   let turn: string[] = [];
@@ -494,6 +497,26 @@ export function claudeTranscriptState(
       turn = fresh ? [said] : [...turn, said];
       fresh = false;
       replyAt = at;
+    }
+    if (
+      entry.type === 'assistant' &&
+      entry.isSidechain !== true &&
+      claudeTurnEnded(entry) &&
+      at !== undefined &&
+      at > (since ?? -Infinity)
+    ) {
+      const content = entry.message?.content;
+      turnEnds.push({
+        id: typeof entry.uuid === 'string' && entry.uuid ? entry.uuid : String(at),
+        at,
+        message: Array.isArray(content)
+          ? content
+              .flatMap((part: { type?: unknown; text?: unknown }) =>
+                part?.type === 'text' && typeof part.text === 'string' ? [part.text] : []
+              )
+              .join('\n')
+          : '',
+      });
     }
     if (entry.type === 'assistant' && entry.isSidechain !== true) ended = claudeTurnEnded(entry);
     const text = claudeInputText(entry);
@@ -523,6 +546,7 @@ export function claudeTranscriptState(
   const openedPrs = claudeOpenedPrs(lines);
   const reply = turnReply(turn);
   return {
+    ...(turnEnds.length ? { turnEnds } : {}),
     reply,
     ...(reply !== null && replyAt !== undefined ? { replyAt } : {}),
     inputs: recentWorkInputs(inputs, since),
@@ -585,6 +609,7 @@ export function describeClaudeSession(
     value: {
       ...work,
       lastActivityAt: Math.max(work.lastActivityAt, transcript.lastAt),
+      ...(transcript.turnEnds?.length ? { turnEnds: transcript.turnEnds } : {}),
       ...(transcript.reply ? { lastReply: transcript.reply } : {}),
       ...(transcript.reply && transcript.replyAt !== undefined
         ? { lastReplyAt: transcript.replyAt }
