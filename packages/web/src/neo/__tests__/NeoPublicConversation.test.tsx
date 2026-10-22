@@ -122,7 +122,9 @@ describe('durable public conversation presentation', () => {
       />
     );
     expect(screen.queryByLabelText('Message accepted')).toBeNull();
-    fireEvent.click(screen.getByLabelText('Not delivered: Neo never got this message.'));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'more — Not delivered: Neo never got this message.' })
+    );
     expect(screen.getByText('Not delivered: Neo never got this message.')).toBeTruthy();
     fireEvent.click(screen.getByLabelText('Edit and send again'));
     expect(onEditUndelivered).toHaveBeenCalledWith(failed);
@@ -304,7 +306,7 @@ describe('durable public conversation presentation', () => {
     expect(bubble.querySelector('time')!.dateTime).toBe(originalTime);
     await screen.findByText('Latest summary');
     expect(screen.queryByRole('region', { name: 'Revision history' })).toBeNull();
-    const edited = screen.getByRole('button', { name: 'Edited: show revision history' });
+    const edited = screen.getByRole('button', { name: 'more — Edited: show revision history' });
     fireEvent.click(edited);
     expect(edited.getAttribute('aria-expanded')).toBe('true');
     const history = screen.getByRole('region', { name: 'Revision history' });
@@ -671,7 +673,7 @@ describe('PendingAsk', () => {
     );
     expect(container.querySelector('.neo-message-bubble')?.className).toContain('!border-danger');
     expect(screen.queryByText('Not sent: Neo is busy.')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Not sent: Neo is busy.' }));
+    fireEvent.click(screen.getByRole('button', { name: 'more — Not sent: Neo is busy.' }));
     expect(screen.getByText('Not sent: Neo is busy.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));

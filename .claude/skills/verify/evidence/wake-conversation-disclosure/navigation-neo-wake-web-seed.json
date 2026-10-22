@@ -1,0 +1,33 @@
+{
+  "root": "neo:da7e2d39-e73d-4c05-b75e-0cd0cea5e77c",
+  "complete": "8d197181-443a-49ad-b647-09625d42cb33",
+  "empty": "32b91241-f68d-4a02-93bb-84094b022686",
+  "active": "3ff28ed5-3200-4cc8-8cfa-cb77537e9d9b",
+  "additions": [
+    {
+      "kind": "ask",
+      "id": "14111837-939e-4960-8297-ebcb2046efba",
+      "label": "Publish guide"
+    },
+    {
+      "kind": "todo",
+      "id": "08c514a5-8d34-4392-95de-f467af83c197",
+      "label": "Review guide"
+    },
+    {
+      "kind": "question",
+      "id": "03959cbe-60ca-4954-9685-62a418045bbe",
+      "label": "Which language?"
+    },
+    {
+      "kind": "publication",
+      "id": "0ea69d39-06b6-4cd3-9479-59423231a611",
+      "label": "Guide ready."
+    },
+    {
+      "kind": "journal",
+      "id": "9819fe48-dead-4655-b446-05f3d14056a5",
+      "label": "Guide ready."
+    }
+  ]
+}

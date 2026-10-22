@@ -1,3 +1,4 @@
+import { NativeContentDisclosure } from '../components/ui/NativeContentDisclosure.tsx';
 import { ContentDisclosureControl } from '../components/ui/ContentDisclosureControl.tsx';
 import { NeoWakeRow } from './NeoWakeRow.tsx';
 import type { NeoSessionMessage } from '@hyperneo/shared/types/neo-session-message';
@@ -248,22 +249,29 @@ function SessionMessageRow({
   const to = message.toName ?? message.toSession;
   const time = messageTime(message.createdAt);
   return (
-    <details
+    <NativeContentDisclosure
       data-public-entry={entryKey}
-      aria-label={t('chat.sessionMessageLabel', { from, to })}
-      class="neo-arrive group mx-auto max-w-[94%] text-xs text-fg-muted"
+      label={t('chat.sessionMessageLabel', { from, to })}
+      class="neo-arrive mx-auto max-w-[94%] text-xs text-fg-muted"
+      summary={
+        <span class="inline-flex max-w-full flex-wrap items-center gap-2">
+          {time && (
+            <time dateTime={time.iso} title={time.full} class="text-[11px] text-fg-faint">
+              {time.label}
+            </time>
+          )}
+          <span class="shrink-0 font-medium text-fg">{t('chat.sessionMessage', { from, to })}</span>
+          <span class="min-w-0 truncate">{message.text.split('\n')[0]}</span>
+        </span>
+      }
     >
-      <summary class="flex min-h-9 cursor-pointer list-none items-center gap-2 rounded-md px-3 hover:bg-fill-soft">
-        {time && (
-          <time dateTime={time.iso} title={time.full} class="text-[11px] text-fg-faint">
-            {time.label}
-          </time>
-        )}
-        <span class="shrink-0 font-medium text-fg">{t('chat.sessionMessage', { from, to })}</span>
-        <span class="min-w-0 truncate">{message.text.split('\n')[0]}</span>
-      </summary>
-      <p class="whitespace-pre-wrap break-words px-3 pb-2 pt-1 text-fg">{message.text}</p>
-    </details>
+      {(control) => (
+        <p class="flow-root whitespace-pre-wrap break-words px-3 pb-2 pt-1 text-fg">
+          {message.text}
+          {control}
+        </p>
+      )}
+    </NativeContentDisclosure>
   );
 }
 
@@ -484,17 +492,9 @@ function PublicEntry({
           </time>
         )}
         {publication && (publication.editedAt || publication.revisions?.length) ? (
-          <button
-            type="button"
-            data-publication-edited
-            aria-label={t('chat.editedHistory')}
-            aria-expanded={history}
-            aria-controls={`${anchor}-history`}
-            onClick={() => setHistory(!history)}
-            class="text-[11px] text-fg-faint hover:text-fg hover:underline"
-          >
+          <span data-publication-edited class="text-[11px] text-fg-faint">
             {t('chat.edited')}
-          </button>
+          </span>
         ) : null}
         {ask && !undelivered && (
           <span
@@ -524,16 +524,14 @@ function PublicEntry({
           </span>
         )}
         {undelivered && (
-          <button
-            type="button"
+          <span
+            role="img"
             aria-label={notDelivered}
             title={notDelivered}
-            aria-expanded={showReason}
-            onClick={() => setShowReason((shown) => !shown)}
             class="inline-flex self-center text-danger"
           >
             <NeoIcon name="alert" class="!h-3.5 !w-3.5" />
-          </button>
+          </span>
         )}
       </div>
       <div
@@ -625,11 +623,26 @@ function PublicEntry({
           );
         })()}
       </div>
-      {publication && history && (
-        <NeoPublicationHistory publication={publication} id={`${anchor}-history`} />
-      )}
-      {undelivered && showReason && (
-        <p class="mt-1 px-1 text-right text-xs text-danger">{notDelivered}</p>
+      {publication && (publication.editedAt || publication.revisions?.length) ? (
+        <div class="flow-root mt-1">
+          {history && <NeoPublicationHistory publication={publication} id={`${anchor}-history`} />}
+          <ContentDisclosureControl
+            expanded={history}
+            onToggle={() => setHistory(!history)}
+            aria-label={t('chat.editedHistory')}
+            aria-controls={`${anchor}-history`}
+          />
+        </div>
+      ) : null}
+      {undelivered && (
+        <div class="flow-root mt-1 px-1 text-xs text-danger">
+          {showReason && <span>{notDelivered}</span>}
+          <ContentDisclosureControl
+            expanded={showReason}
+            onToggle={() => setShowReason(!showReason)}
+            aria-label={notDelivered}
+          />
+        </div>
       )}
       <div class={`mt-1 flex items-center gap-3 ${ask ? 'justify-end' : ''}`}>
         {undelivered && onEditUndelivered && !restored && (
@@ -755,16 +768,14 @@ export function PendingAsk({
           </span>
         )}
         {failed && (
-          <button
-            type="button"
+          <span
+            role="img"
             aria-label={notSent}
             title={notSent}
-            aria-expanded={showReason}
-            onClick={() => setShowReason((shown) => !shown)}
             class="inline-flex self-center text-danger"
           >
             <NeoIcon name="alert" class="!h-3.5 !w-3.5" />
-          </button>
+          </span>
         )}
       </div>
       <div
@@ -796,7 +807,16 @@ export function PendingAsk({
           <p class="whitespace-pre-wrap text-base leading-relaxed">{ask.text}</p>
         </NeoClampedText>
       </div>
-      {failed && showReason && <p class="mt-1 px-1 text-right text-xs text-danger">{notSent}</p>}
+      {failed && (
+        <div class="flow-root mt-1 px-1 text-xs text-danger">
+          {showReason && <span>{notSent}</span>}
+          <ContentDisclosureControl
+            expanded={showReason}
+            onToggle={() => setShowReason(!showReason)}
+            aria-label={notSent}
+          />
+        </div>
+      )}
       {failed && (
         <div class="mt-1 flex items-center justify-end gap-1">
           <button

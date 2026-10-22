@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
+import { NeoSessionMessageRepository } from '../../../packages/daemon/src/storage/repositories/neo-session-message-repository.ts';
+import { NeoConversationAskRepository } from '../../../packages/daemon/src/storage/repositories/neo-conversation-ask-repository.ts';
+import { SDKMessageRepository } from '../../../packages/daemon/src/storage/repositories/sdk-message-repository.ts';
+import { NeoPublicationRepository } from '../../../packages/daemon/src/storage/repositories/neo-publication-repository.ts';
+import { seedNeoWake } from '../../../packages/daemon/tests/helpers/neo-wake-corpus.ts';
+import type { SDKMessage } from '../../../packages/shared/src/sdk/sdk.d.ts';
+const run = process.argv[2];
+assert(run && process.env.NODE_ENV === 'test');
+execFileSync('bun', ['.claude/skills/verify/neo-todo-collapse-seed.ts', run], { stdio: 'inherit' });
+const { root } = JSON.parse(readFileSync(`${run}/evidence/seed.json`, 'utf8'));
+const conversationId = root.slice(4);
+const db = new Database(`${run}/data/daemon.db`);
+try {
+  const wake = seedNeoWake(db, conversationId);
+  wake.finish('Synthetic wake finished.');
+  const publications = new NeoPublicationRepository(db);
+  const pub = '50000000-0000-4000-8000-000000008098';
+  const origin = { sessionId: root, messageId: pub };
+  assert(publications.append({ conversationId, publicationId: pub, askOrigin: origin, producerInput: origin, shortText: 'Synthetic original reply', fullText: 'Synthetic original history detail', links: [] }).accepted);
+  assert(publications.edit(conversationId, pub, { shortText: 'Synthetic latest reply', fullText: 'Synthetic latest reply' }, new Date().toISOString(), 'human', origin, '50000000-0000-4000-8000-000000008099').accepted);
+  new NeoSessionMessageRepository(db).record({ conversationId, messageId: 'synthetic-session-message', fromSession: root, fromName: 'Neo', toSession: 'synthetic-worker', toName: 'Synthetic worker', text: 'Synthetic session preview\nSynthetic session detail. '.repeat(15), createdAt: new Date().toISOString() });
+  const failed = '60000000-0000-4000-8000-000000008098';
+  assert(new NeoConversationAskRepository(db).append({ conversationId, requestId: failed, askOrigin: { sessionId: root, messageId: failed }, content: 'Synthetic stored delivery failure' }).accepted);
+  new SDKMessageRepository(db).saveUserMessage(root, { type: 'user', uuid: failed, session_id: root, message: { role: 'user', content: 'Synthetic stored delivery failure' } } as SDKMessage, 'failed', 'human');
+  writeFileSync(`${run}/evidence/wake-conversation-seed.json`, JSON.stringify({ root, pub, failed, wake: wake.scheduleId, additions: wake.expected }, null, 2));
+} finally { db.close(); }
