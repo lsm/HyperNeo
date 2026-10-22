@@ -736,7 +736,7 @@ printf '{"number":8148,"authenticatedByDaemon":true}\\n'
     expect(readFileSync(readProbeFile, 'utf8')).toBe(readProbe);
     expect(nativeToolsSeen[0]).not.toEqual(expect.arrayContaining(['Write']));
     expect(nativeToolsSeen[0]).not.toEqual(expect.arrayContaining(['Edit']));
-    expect(approvalProbeDenied).toBe(true);
+    expect(approvalProbeDenied).toBe(sandboxProof);
     expect(existsSync(approvalProbeFile)).toBe(false);
     expect(storedAtStartup.config.systemPrompt).toBe(neoPrompt());
     expect(storedAtStartup.config.sdkToolsPreset).toContain('Read');
