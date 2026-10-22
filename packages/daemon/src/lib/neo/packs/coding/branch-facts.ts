@@ -74,6 +74,7 @@ export class CodingBranchFactsRepository {
           }
         : {
             status: 'known' as const,
+            source: 'github-branch-list' as const,
             urls: JSON.parse(row!.urls_json!) as string[],
             observedAt: row!.observed_at!,
           },

@@ -15,11 +15,32 @@ export function createCodingBranchPrReader(
     readCodingBranchPrs(query, async (branch) => {
       let repo: string | null;
       try {
-        repo = codingRemoteRepo(
-          await simpleGit({ baseDir: branch.cwd, timeout: { block: 3000 } })
-            .env(buildGitHubLookupEnv())
-            .raw(['remote', 'get-url', 'origin'])
+        const git = simpleGit({ baseDir: branch.cwd, timeout: { block: 3000 } }).env(
+          buildGitHubLookupEnv()
         );
+        const rank = (name: string) => {
+          const index = ['upstream', 'github', 'origin'].indexOf(name.toLowerCase());
+          return index < 0 ? 3 : index;
+        };
+        const remotes = (await git.getRemotes(true))
+          .map((remote) => ({
+            ...remote,
+            repo: codingRemoteRepo(remote.refs.fetch) ?? codingRemoteRepo(remote.refs.push),
+          }))
+          .filter((remote) => remote.repo)
+          .sort((a, b) => rank(a.name) - rank(b.name));
+        const configured = await Promise.all(
+          remotes.map(async (remote) => ({
+            ...remote,
+            resolved: (await git.getConfig(`remote.${remote.name}.gh-resolved`)).value,
+          }))
+        );
+        const selected = configured.find((remote) => remote.resolved) ?? configured[0];
+        repo =
+          selected?.resolved && selected.resolved !== 'base'
+            ? (codingRemoteRepo(`https://${selected.resolved}`) ??
+              codingRemoteRepo(`https://github.com/${selected.resolved}`))
+            : (selected?.repo ?? null);
       } catch {
         return [];
       }
