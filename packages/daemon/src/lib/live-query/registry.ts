@@ -43,6 +43,7 @@ import {
 } from './queries/sessions.ts';
 import {
   MESSAGES_BY_SESSION_SQL,
+  messageRowFingerprint,
   DEBOUNCE_SDK_MESSAGES_MS,
   mapMessageRow,
   mapThinMessageRow,
@@ -174,17 +175,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
           return scope.sessionId === targetSessionId;
         };
       },
-      rowFingerprint: (row) =>
-        row.messageType === 'hyperneo_action'
-          ? row
-          : {
-              content: row.content,
-              timestamp: row.timestamp,
-              sendStatus: row.sendStatus,
-              origin: row.origin,
-              rowid: row.rowid,
-              deliveryRetryInfo: row.deliveryRetryInfo,
-            },
+      rowFingerprint: messageRowFingerprint,
     },
   ],
   [

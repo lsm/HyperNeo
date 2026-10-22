@@ -1109,3 +1109,62 @@ describe('setupLiveQueryHandlers: per-client subscription cap', () => {
     expect(setup.mockRouter.getClientSubscriptionCount('client-1')).toBe(0);
   });
 });
+
+describe('message subscription asynchronous admission', () => {
+  test('pending snapshots reserve capacity, replacement wins, and failure releases its slot', async () => {
+    const db = createDb();
+    const reactive = createReactiveDatabase({ getDatabase: () => db } as never);
+    const engine = new LiveQueryEngine(db, reactive);
+    const setup = createMockSetup({ subscriptionCap: 1 });
+    const reads: {
+      resolve(value: { rows: Record<string, unknown>[] }): void;
+      reject(error: Error): void;
+    }[] = [];
+    const read = () =>
+      new Promise<{ rows: Record<string, unknown>[] }>((resolve, reject) =>
+        reads.push({ resolve, reject })
+      );
+    const cleanup = setupLiveQueryHandlers(setup.hub, engine, db, read);
+    const subscribe = (subscriptionId: string) =>
+      setup.callHandler('liveQuery.subscribe', {
+        queryName: 'messages.bySession',
+        params: ['synthetic-session', 20],
+        subscriptionId,
+      });
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+    try {
+      const first = subscribe('same').catch((error) => String(error));
+      await flush();
+      expect(setup.sentMessages).toEqual([]);
+      expect(setup.mockRouter.getClientSubscriptionCount('client-1')).toBe(1);
+      await expect(subscribe('over-cap')).rejects.toThrow('subscription cap');
+      const replacement = subscribe('same');
+      await flush();
+      reads[0].resolve({ rows: [{ id: 'old' }] });
+      await flush();
+      expect(setup.sentMessages).toEqual([]);
+      reads[1].resolve({
+        rows: [
+          { id: 'new', message: { type: 'user', message: { role: 'user', content: 'complete' } } },
+        ],
+      });
+      expect(await replacement).toEqual({ ok: true });
+      expect(await first).toContain('disposed');
+      expect(setup.sentMessages.map((sent) => sent.message.data.rows)).toMatchObject([
+        [{ id: 'new' }],
+      ]);
+      expect(setup.mockRouter.getClientSubscriptionCount('client-1')).toBe(1);
+      await setup.callHandler('liveQuery.unsubscribe', { subscriptionId: 'same' });
+      expect(setup.mockRouter.getClientSubscriptionCount('client-1')).toBe(0);
+      const failed = subscribe('failure');
+      await flush();
+      reads[2].reject(new Error('synthetic worker unavailable'));
+      await expect(failed).rejects.toThrow('synthetic worker unavailable');
+      expect(setup.mockRouter.getClientSubscriptionCount('client-1')).toBe(0);
+    } finally {
+      cleanup();
+      engine.dispose();
+      db.close();
+    }
+  });
+});

@@ -1,3 +1,5 @@
+import type { MessageFeedArgs } from '../../storage/sdk-message-feed-read.ts';
+import type { LiveQueryEvaluation } from '../../storage/live-query.ts';
 import { Logger } from '../logger.ts';
 import type {
   MessageHub,
@@ -53,7 +55,8 @@ const log = new Logger('live-query-handlers');
 export function setupLiveQueryHandlers(
   messageHub: MessageHub,
   liveQueries: LiveQueryEngine,
-  db: BunDatabase
+  db: BunDatabase,
+  readMessageFeed?: (args: MessageFeedArgs) => Promise<LiveQueryEvaluation>
 ): () => void {
   const subscriptions = new Map<string, Map<string, LiveQueryHandle<Record<string, unknown>>>>();
 
@@ -62,7 +65,9 @@ export function setupLiveQueryHandlers(
   const sessionsListBase = NAMED_QUERY_REGISTRY.get('sessions.list')!;
   const activeRegistry = new Map(NAMED_QUERY_REGISTRY);
 
-  const stmtBackgroundTaskMetadata = db.prepare(BACKGROUND_TASK_METADATA_SQL);
+  const stmtBackgroundTaskMetadata = readMessageFeed
+    ? undefined
+    : db.prepare(BACKGROUND_TASK_METADATA_SQL);
   for (const [queryName, mapRow] of [
     ['messages.bySession', mapMessageRow],
     ['messages.bySession.compact', mapThinMessageRow],
@@ -73,7 +78,7 @@ export function setupLiveQueryHandlers(
       mapResult: (_rawRows, params) => {
         const sessionId = params[0];
         if (typeof sessionId !== 'string' || sessionId.length === 0) return undefined;
-        const rows = stmtBackgroundTaskMetadata.all(
+        const rows = stmtBackgroundTaskMetadata!.all(
           sessionId,
           sessionId,
           sessionId,
@@ -106,9 +111,11 @@ export function setupLiveQueryHandlers(
   const stmtGroup = db.prepare('SELECT ref_id, group_type FROM session_groups WHERE id = ?');
   const stmtTask = db.prepare('SELECT room_id FROM tasks WHERE id = ?');
   const stmtSpace = db.prepare('SELECT id FROM spaces WHERE id = ?');
-  const stmtSession = db.prepare('SELECT id FROM sessions WHERE id = ?');
+  const stmtSession = readMessageFeed
+    ? undefined
+    : db.prepare('SELECT id FROM sessions WHERE id = ?');
 
-  messageHub.onRequest('liveQuery.subscribe', (data, context) => {
+  messageHub.onRequest('liveQuery.subscribe', async (data, context) => {
     const { queryName, subscriptionId } = data as LiveQuerySubscribeRequest;
     const params = [...((data as LiveQuerySubscribeRequest).params ?? [])];
     const { clientId, sessionId } = context;
@@ -120,6 +127,7 @@ export function setupLiveQueryHandlers(
     const router = messageHub.getRouter();
 
     const namedQuery = activeRegistry.get(queryName);
+    const asyncFeed = !!readMessageFeed && MESSAGE_FEED_QUERIES.has(queryName);
     if (!namedQuery) {
       throw new Error(`Unknown query name: "${queryName}"`);
     }
@@ -202,7 +210,7 @@ export function setupLiveQueryHandlers(
       if (typeof targetSessionId !== 'string' || targetSessionId.length === 0) {
         throw new Error(`Unauthorized: ${queryName} requires a non-empty sessionId`);
       }
-      if (!stmtSession.get(targetSessionId)) {
+      if (!asyncFeed && !stmtSession!.get(targetSessionId)) {
         throw new Error(`Unauthorized: session "${targetSessionId}" not found`);
       }
       const limit = params[1];
@@ -245,14 +253,26 @@ export function setupLiveQueryHandlers(
       }
     }
 
-    const { sql, mapRow } = namedQuery;
+    const { sql } = namedQuery;
+    const mapRow = asyncFeed ? undefined : namedQuery.mapRow;
     const applyMapRow = (row: Record<string, unknown>) => (mapRow ? mapRow(row) : row);
     const applyMapRows = (rows: Record<string, unknown>[]) => rows.map(applyMapRow);
 
     let snapshotDeliveryFailed = false;
     let snapshotTooLarge = false;
 
-    const handle = liveQueries.subscribe(
+    let handle: LiveQueryHandle<Record<string, unknown>> | undefined;
+    const release = () => {
+      handle?.dispose();
+      if (subscriptions.get(clientId) !== clientSubs || clientSubs.get(subscriptionId) !== handle)
+        return;
+      clientSubs.delete(subscriptionId);
+      if (!clientSubs.size) subscriptions.delete(clientId);
+      router?.releaseClientSubscription(clientId);
+    };
+    router?.addClientSubscription(clientId);
+    const register = liveQueries.subscribe.bind(
+      liveQueries,
       sql,
       params,
       (diff: QueryDiff<Record<string, unknown>>) => {
@@ -344,11 +364,7 @@ export function setupLiveQueryHandlers(
           if (diff.type === 'snapshot') {
             snapshotTooLarge = true;
           } else {
-            handle.dispose();
-            const subs = subscriptions.get(clientId);
-            subs?.delete(subscriptionId);
-            if (subs?.size === 0) subscriptions.delete(clientId);
-            router.releaseClientSubscription(clientId);
+            release();
           }
           return;
         }
@@ -362,19 +378,37 @@ export function setupLiveQueryHandlers(
             log.warn(
               `liveQuery: delta delivery failed for client ${clientId}; disposing subscription ${subscriptionId}`
             );
-            handle.dispose();
-            const subs = subscriptions.get(clientId);
-            if (subs) {
-              subs.delete(subscriptionId);
-              if (subs.size === 0) subscriptions.delete(clientId);
-            }
-            router.releaseClientSubscription(clientId);
+            release();
           }
         }
       },
       {
         debounceMs: namedQuery.debounceMs,
-        getMetadata: namedQuery.mapResult,
+        evaluateAsync: asyncFeed
+          ? () =>
+              readMessageFeed!({
+                sessionId: params[0] as string,
+                limit: params[1] as number,
+                feed: queryName === 'messages.bySession.compact' ? 'compact' : 'full',
+              })
+          : undefined,
+        onError: (error) => {
+          release();
+          router?.sendToClient(
+            clientId,
+            createEventMessage({
+              method: 'liveQuery.error',
+              sessionId,
+              data: {
+                subscriptionId,
+                code: 'QUERY_FAILED',
+                message: error.message,
+                phase: 'delta',
+              },
+            })
+          );
+        },
+        getMetadata: asyncFeed ? undefined : namedQuery.mapResult,
         scopeFilter: namedQuery.buildScopeFilter?.(params, db),
         metadataScopeFilter: namedQuery.metadataScopeFilter,
         rowFingerprint: namedQuery.rowFingerprint,
@@ -384,21 +418,28 @@ export function setupLiveQueryHandlers(
       }
     );
 
-    if (snapshotTooLarge) {
-      handle.dispose();
-      throw new Error('MESSAGE_TOO_LARGE: Live query snapshot exceeds the outbound size limit');
-    }
+    try {
+      handle = register();
+      clientSubs.set(subscriptionId, handle);
+      await handle.ready;
+      if (clientSubs.get(subscriptionId) !== handle)
+        throw new Error('Live query subscription disposed');
 
-    if (snapshotDeliveryFailed) {
-      handle.dispose();
-      throw new MessageHubHandlerError(
-        'Live query snapshot delivery failed; subscription was not established',
-        ErrorCode.INTERNAL_ERROR
-      );
-    }
+      if (snapshotTooLarge) {
+        throw new Error('MESSAGE_TOO_LARGE: Live query snapshot exceeds the outbound size limit');
+      }
 
-    router?.addClientSubscription(clientId);
-    clientSubs.set(subscriptionId, handle);
+      if (snapshotDeliveryFailed) {
+        throw new MessageHubHandlerError(
+          'Live query snapshot delivery failed; subscription was not established',
+          ErrorCode.INTERNAL_ERROR
+        );
+      }
+    } catch (error) {
+      if (handle) release();
+      else router?.releaseClientSubscription(clientId);
+      throw error;
+    }
     log.debug(
       `liveQuery.subscribe: registered subscription ${subscriptionId} for client ${clientId}, query=${queryName}`
     );

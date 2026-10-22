@@ -197,6 +197,38 @@ describe('chat/thread lifecycle recovery — SessionStore', () => {
     expect(resubscribe.params).toEqual(hub.subscribeCalls[0].params);
   });
 
+  it('resubscribes after a message reader failure and ignores superseded errors', async () => {
+    await sessionStore.select('session-1');
+    const subscriptionId = hub.subscriptionId!;
+    const rows = [
+      {
+        id: 'retained',
+        uuid: 'retained',
+        type: 'user',
+        message: { role: 'user', content: 'complete' },
+      },
+    ];
+    hub.fire('liveQuery.snapshot', { subscriptionId, rows, version: 1 });
+    hub.fire('liveQuery.error', {
+      subscriptionId: 'old',
+      code: 'QUERY_FAILED',
+      message: 'reader failed',
+      phase: 'delta',
+    });
+    expect(hub.subscribeCalls).toHaveLength(1);
+    hub.fire('liveQuery.error', {
+      subscriptionId,
+      code: 'QUERY_FAILED',
+      message: 'reader failed',
+      phase: 'delta',
+    });
+    await vi.waitFor(() => expect(hub.subscribeCalls).toHaveLength(2));
+    expect(hub.subscribeCalls[1]).toEqual(hub.subscribeCalls[0]);
+    expect(sessionStore.sdkMessages.value).toEqual(rows);
+    hub.fire('liveQuery.snapshot', { subscriptionId, rows, version: 2 });
+    expect(sessionStore.sdkMessages.value).toEqual(rows);
+  });
+
   it('re-applies a fresh snapshot after reconnect, replacing stale messages', async () => {
     await sessionStore.select('session-1');
     const subId = hub.subscriptionId!;

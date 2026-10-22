@@ -297,3 +297,16 @@ function mapMessageRowAs(
 
   return { ...shape(parsed), ...extras };
 }
+
+export function messageRowFingerprint(row: Record<string, unknown>): unknown {
+  return row.messageType === 'hyperneo_action'
+    ? row
+    : {
+        content: row.content,
+        timestamp: row.timestamp,
+        sendStatus: row.sendStatus,
+        origin: row.origin,
+        rowid: row.rowid,
+        deliveryRetryInfo: row.deliveryRetryInfo,
+      };
+}

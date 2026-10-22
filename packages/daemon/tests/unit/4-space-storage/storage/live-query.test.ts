@@ -1116,3 +1116,174 @@ describe('extractTables', () => {
     expect(tables).not.toContain('sub');
   });
 });
+
+describe('LiveQueryEngine asynchronous evaluation', () => {
+  const sql = 'SELECT id, name FROM items';
+  const deferred = <T>() => {
+    let resolve!: (value: T) => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<T>((yes, no) => {
+      resolve = yes;
+      reject = no;
+    });
+    return { promise, resolve, reject };
+  };
+  type Result = { rows: Record<string, unknown>[]; metadata?: Record<string, unknown> };
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+  let db: BunDatabase;
+  let reactive: MockReactiveDatabase;
+  let engine: LiveQueryEngine;
+  beforeEach(() => {
+    db = createTestDb();
+    reactive = createMockReactiveDatabase();
+    engine = new LiveQueryEngine(
+      db,
+      reactive as unknown as ConstructorParameters<typeof LiveQueryEngine>[1]
+    );
+  });
+  afterEach(() => {
+    engine.dispose();
+    db.close();
+  });
+
+  test('awaits the initial read then catches up without starving on in-flight invalidation', async () => {
+    const reads = [deferred<Result>(), deferred<Result>()];
+    let calls = 0;
+    const diffs: QueryDiff[] = [];
+    const options = { evaluateAsync: () => reads[calls++].promise };
+    const handle = engine.subscribe(sql, [], (diff) => diffs.push(diff), options);
+    expect(diffs).toEqual([]);
+    await flush();
+    reactive.bumpAndFire('items');
+    reads[0].resolve({ rows: [{ id: 'stale', name: 'old snapshot' }] });
+    await flush();
+    expect(diffs).toMatchObject([
+      { type: 'snapshot', rows: [{ id: 'stale', name: 'old snapshot' }] },
+    ]);
+    reads[1].resolve({ rows: [{ id: 'current', name: 'complete bytes' }], metadata: { count: 1 } });
+    await (handle as typeof handle & { ready: Promise<void> }).ready;
+    await flush();
+    expect(diffs).toMatchObject([
+      { type: 'snapshot', rows: [{ id: 'stale', name: 'old snapshot' }] },
+      {
+        type: 'delta',
+        rows: [{ id: 'current', name: 'complete bytes' }],
+        metadata: { count: 1 },
+      },
+    ]);
+    expect(handle.get()).toEqual(diffs[1].rows);
+    expect(calls).toBe(2);
+  });
+
+  test('disposal and same-key replacement cannot resurrect an old reply', async () => {
+    const old = deferred<Result>(),
+      next = deferred<Result>();
+    const diffs: QueryDiff[] = [];
+    const first = engine.subscribe(sql, [], (diff) => diffs.push(diff), {
+      evaluateAsync: () => old.promise,
+    });
+    const rejected = (first as typeof first & { ready: Promise<void> }).ready.catch((error) =>
+      String(error)
+    );
+    await flush();
+    first.dispose();
+    const second = engine.subscribe(sql, [], (diff) => diffs.push(diff), {
+      evaluateAsync: () => next.promise,
+    });
+    await flush();
+    old.resolve({ rows: [{ id: 'old' }] });
+    await flush();
+    expect(diffs).toEqual([]);
+    next.resolve({ rows: [{ id: 'new' }] });
+    await (second as typeof second & { ready: Promise<void> }).ready;
+    expect(await rejected).toContain('disposed');
+    expect(diffs).toMatchObject([{ type: 'snapshot', rows: [{ id: 'new' }] }]);
+  });
+
+  test('initial errors reject, update errors notify, and a new subscription can recover', async () => {
+    const failed = deferred<Result>();
+    const initial = engine.subscribe(sql, [], () => {}, { evaluateAsync: () => failed.promise });
+    const rejected = (initial as typeof initial & { ready: Promise<void> }).ready.catch((error) =>
+      String(error)
+    );
+    await flush();
+    failed.reject(new Error('synthetic reader failed'));
+    expect(await rejected).toContain('synthetic reader failed');
+    const errors: string[] = [],
+      diffs: QueryDiff[] = [];
+    let calls = 0;
+    const options = {
+      evaluateAsync: async () => {
+        if (calls++) throw new Error('synthetic update failed');
+        return { rows: [{ id: 'healthy' }] };
+      },
+      onError: (error: Error) => errors.push(error.message),
+    };
+    const recovered = engine.subscribe(sql, [], (diff) => diffs.push(diff), options);
+    await (recovered as typeof recovered & { ready: Promise<void> }).ready;
+    reactive.bumpAndFire('items');
+    await flush();
+    await flush();
+    expect(errors).toEqual(['synthetic update failed']);
+    expect(diffs).toMatchObject([{ type: 'snapshot', rows: [{ id: 'healthy' }] }]);
+  });
+
+  test('shared pending subscribers receive snapshots once and raw fingerprints preserve hidden-body changes', async () => {
+    const read = deferred<Result>(),
+      first: QueryDiff[] = [],
+      second: QueryDiff[] = [];
+    let calls = 0;
+    const options = {
+      evaluateAsync: async () => {
+        calls++;
+        if (calls === 1) return read.promise;
+        return {
+          rows: [{ id: 'same', content: 'existing wire cap' }],
+          hashes: { hash: 2, rowHashes: [['same', 2] as [unknown, number]] },
+        };
+      },
+    };
+    const a = engine.subscribe(sql, [], (diff) => first.push(diff), options);
+    const b = engine.subscribe(sql, [], (diff) => second.push(diff), options);
+    await flush();
+    read.resolve({
+      rows: [{ id: 'same', content: 'existing wire cap' }],
+      hashes: { hash: 1, rowHashes: [['same', 1]] },
+    } as Result);
+    await Promise.all([
+      (a as typeof a & { ready: Promise<void> }).ready,
+      (b as typeof b & { ready: Promise<void> }).ready,
+    ]);
+    expect(calls).toBe(1);
+    expect(first).toHaveLength(1);
+    expect(second).toHaveLength(1);
+    a.dispose();
+    reactive.bumpAndFire('items');
+    await flush();
+    await flush();
+    expect(first).toHaveLength(1);
+    expect(second[1]).toMatchObject({
+      type: 'delta',
+      updated: [{ id: 'same', content: 'existing wire cap' }],
+    });
+    expect(second[1].metadata).toBeUndefined();
+  });
+
+  test('engine close rejects pending readiness and suppresses all late snapshots', async () => {
+    const read = deferred<Result>(),
+      diffs: QueryDiff[] = [];
+    const handle = engine.subscribe(sql, [], (diff) => diffs.push(diff), {
+      evaluateAsync: () => read.promise,
+    });
+    const rejected = (handle as typeof handle & { ready: Promise<void> }).ready.catch((error) =>
+      String(error)
+    );
+    await flush();
+    engine.dispose();
+    read.resolve({ rows: [{ id: 'late' }] });
+    await flush();
+    expect(await rejected).toContain('disposed');
+    expect(diffs).toEqual([]);
+    expect(() => engine.subscribe(sql, [], () => {})).toThrow('disposed');
+  });
+});
