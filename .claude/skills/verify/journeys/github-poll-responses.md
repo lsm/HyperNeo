@@ -3,6 +3,10 @@
 Read `../SKILL.md`. This helper owns an isolated daemon, a fresh database and a
 fake gh executable. No model, GUI, real GitHub request or credentials are used.
 Direct HTTP is refused. The daemon uses an ephemeral loopback port, never 8399.
+Read-checkout sync stays enabled. `github-poll-git.ts` supplies a local bare
+origin, exact synthetic URL rewrites in this run's HOME and its actual commit;
+the fake API supplies matching repository/default-ref metadata. No real clone
+or human Git configuration is used.
 
 From the worktree root:
 

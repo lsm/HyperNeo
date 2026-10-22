@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createPollingGitFixture } from './github-poll-git.ts';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
@@ -15,6 +16,7 @@ assert.equal(process.env.PATH?.split(':')[0], join(run, 'bin'));
 assert.equal(process.env.GH_TOKEN, undefined); assert.equal(process.env.GITHUB_TOKEN, undefined);
 mkdirSync(join(run, 'bin')); mkdirSync(join(run, 'evidence'));
 const when = Date.now() - 10_000;
+const defaultHead = createPollingGitFixture(run, ['synthetic/conditional', 'synthetic/large']);
 writeFileSync(join(run, 'bin/gh'), `#!${process.execPath}
 const fs=require('node:fs'),root=${JSON.stringify(run)},args=process.argv.slice(2);
 if(args[0]!=='api'||!args.includes('--include')) process.exit(2);
@@ -22,6 +24,8 @@ const path=args.find(a=>a.startsWith('/repos/')||a==='/user'); if(!path)process.
 const url=new URL(path,'https://api.github.com'),conditional=args.some(a=>a.startsWith('If-None-Match:'));
 const status=conditional?304:200,repo=url.pathname.split('/')[3];let body=[];
 if(path==='/user')body={login:'synthetic-human'};
+else if(/^\\/repos\\/synthetic\\/(conditional|large)$/.test(url.pathname))body={default_branch:'main'};
+else if(url.pathname.endsWith('/git/ref/heads/main'))body={object:{sha:${JSON.stringify(defaultHead)}}};
 else if(url.pathname.endsWith('/check-runs'))body={check_runs:[]};
 else if(/\\/pulls\\/7$/.test(url.pathname))body={number:7,state:'open',mergeable:true,head:{sha:'a'.repeat(40)}};
 else if(repo==='large'&&url.pathname.endsWith('/pulls/comments')&&url.searchParams.get('page')!=='2') {
