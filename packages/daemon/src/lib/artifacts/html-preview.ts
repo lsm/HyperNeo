@@ -42,6 +42,27 @@ export interface ArtifactHtmlLink {
   readonly href: string;
 }
 
+export interface ArtifactHtmlAsset {
+  readonly kind: 'css' | 'image';
+  readonly data: string;
+}
+type Assets = ReadonlyMap<string, ArtifactHtmlAsset>;
+
+function resource(target: unknown, assets: Assets, base = '') {
+  if (typeof target !== 'string' || /[\\\u0000-\u001f\u007f]/.test(target)) return null;
+  const href = target.trim();
+  if (/^(?:[a-z][a-z0-9+.-]*:|\/)/i.test(href)) return null;
+  try {
+    const url = new URL(href, 'https://bundle.invalid/' + base);
+    if (url.search || url.hash) return null;
+    const path = decodeURIComponent(url.pathname.slice(1));
+    const asset = assets.get(path);
+    return asset ? { path, ...asset } : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface PreparedArtifactHtml {
   readonly document: string;
   readonly links: readonly ArtifactHtmlLink[];
@@ -61,7 +82,7 @@ function stripComments(css: string): string | null {
   }
 }
 
-function cleanCss(css: string): string {
+function cleanCss(css: string, assets: Assets, base = ''): string {
   const source = stripComments(css);
   if (
     source === null ||
@@ -81,7 +102,12 @@ function cleanCss(css: string): string {
       .trim()
       .replace(/^(['"])(.*)\1$/s, '$2');
     out += source.slice(at, match.index);
-    out += RASTER.test(target) ? source.slice(match.index, close + 1) : 'none';
+    const asset = resource(target, assets, base);
+    out += RASTER.test(target)
+      ? source.slice(match.index, close + 1)
+      : asset?.kind === 'image' && RASTER.test(asset.data)
+        ? `url(${asset.data})`
+        : 'none';
     at = opener.lastIndex = close + 1;
   }
   out += source.slice(at);
@@ -132,22 +158,43 @@ function linkTarget(href: unknown): string | null {
 function cleanChildren(
   children: readonly Child[],
   links: ArtifactHtmlLink[],
-  removed: { scripts: boolean }
+  removed: { scripts: boolean },
+  assets: Assets
 ): Content[] {
   return children.flatMap((child): Content[] => {
     if (child.type === 'text') return [child];
     if (child.type !== 'element') return [];
-    return cleanElement(child, links, removed);
+    return cleanElement(child, links, removed, assets);
   });
 }
 
 function cleanElement(
   element: Element,
   links: ArtifactHtmlLink[],
-  removed: { scripts: boolean }
+  removed: { scripts: boolean },
+  assets: Assets
 ): Content[] {
   const tag = element.tagName.toLowerCase();
   if (Object.keys(element.properties).some((name) => /^on/i.test(name))) removed.scripts = true;
+  if (tag === 'link') {
+    const rel = element.properties.rel;
+    const stylesheet = (Array.isArray(rel) ? rel.join(' ') : String(rel ?? ''))
+      .toLowerCase()
+      .split(/\s+/)
+      .includes('stylesheet');
+    const asset = stylesheet ? resource(element.properties.href, assets) : null;
+    const css = asset?.kind === 'css' ? cleanCss(asset.data, assets, asset.path) : '';
+    return css
+      ? [
+          {
+            type: 'element',
+            tagName: 'style',
+            properties: {},
+            children: [{ type: 'text', value: css }],
+          },
+        ]
+      : [];
+  }
   if (DROPPED.has(tag)) {
     if (scripted(element)) removed.scripts = true;
     return [];
@@ -162,20 +209,25 @@ function cleanElement(
   const children = cleanChildren(
     'content' in element && element.content ? element.content.children : element.children,
     links,
-    removed
+    removed,
+    assets
   );
   if (!KEPT.has(tag)) return children;
-  if (tag === 'img' && !RASTER.test(String(element.properties.src ?? '').trim())) return [];
+  if (tag === 'img' && !RASTER.test(String(element.properties.src ?? '').trim())) {
+    const asset = resource(element.properties.src, assets);
+    if (asset?.kind !== 'image' || !RASTER.test(asset.data)) return [];
+    element = { ...element, properties: { ...element.properties, src: asset.data } };
+  }
   const allowed = new Set([...GLOBAL_PROPERTIES, ...(PROPERTIES[tag] ?? [])]);
   const properties = Object.fromEntries(
     Object.entries(element.properties).filter(([name]) => allowed.has(name))
   );
   if (typeof properties.style === 'string') {
-    properties.style = cleanCss(properties.style);
+    properties.style = cleanCss(properties.style, assets);
     if (!properties.style) delete properties.style;
   }
   if (tag === 'style') {
-    const css = cleanCss(textOf(element));
+    const css = cleanCss(textOf(element), assets);
     return css ? [{ ...element, properties: {}, children: [{ type: 'text', value: css }] }] : [];
   }
   return [{ ...element, tagName: tag, properties, children }];
@@ -241,7 +293,10 @@ function parseBounded(html: string): Root | null {
   return fromParse5(document) as Root;
 }
 
-export function prepareArtifactHtml(html: string): PreparedArtifactHtml | null {
+export function prepareArtifactHtml(
+  html: string,
+  assets: Assets = new Map()
+): PreparedArtifactHtml | null {
   const tree = parseBounded(html);
   if (!tree) return null;
   const links: ArtifactHtmlLink[] = [];
@@ -250,10 +305,10 @@ export function prepareArtifactHtml(html: string): PreparedArtifactHtml | null {
       Object.keys(find(tree, tag)?.properties ?? {}).some((name) => /^on/i.test(name))
     ),
   };
-  const head = cleanChildren(find(tree, 'head')?.children ?? [], links, removed).filter(
+  const head = cleanChildren(find(tree, 'head')?.children ?? [], links, removed, assets).filter(
     (child) => child.type === 'element' && (child.tagName === 'title' || child.tagName === 'style')
   );
-  const body = cleanChildren(find(tree, 'body')?.children ?? [], links, removed);
+  const body = cleanChildren(find(tree, 'body')?.children ?? [], links, removed, assets);
   const element = (tagName: string, properties: Element['properties'], children: Content[]) =>
     ({ type: 'element', tagName, properties, children }) as Element;
   const document: Root = {

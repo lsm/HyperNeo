@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
@@ -8,16 +8,18 @@ import { createArtifactRegistration } from '../../../packages/daemon/src/lib/art
 import { createArtifactReadOperations } from '../../../packages/daemon/src/lib/artifacts/read-operations.ts';
 import { createOperationRegistry } from '../../../packages/daemon/src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../packages/daemon/src/lib/operations/invoke.ts';
+import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
+import { NeoTodoSessionRepository } from '../../../packages/daemon/src/storage/repositories/neo-todo-session-repository.ts';
 const root = realpathSync(resolve(process.argv[2] ?? ''));
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(root, 'home'));
 execFileSync('bun', [fileURLToPath(new URL('./preview-register.ts', import.meta.url)), root, 'seed'], { env: process.env });
 const data = join(root, 'data');
 const workspace = join(root, 'workspace');
-const pixel = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
-const html = '<!doctype html><link rel="stylesheet" href="styles/theme.css"><h1 class="bundle">Bundled report</h1><img src="images/chart.png" alt="Captured chart" width="120" height="120"><img src="unlisted.png" alt="Unlisted"><script>parent.escape()</script><p>End of bundled report.</p>';
+const pixel = 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAIAAABvFaqvAAAAH0lEQVR4nGN41mNDFcQwatCoQaMGjRo0atCoQQNvEADxaMeuOCcmmgAAAABJRU5ErkJggg==';
+const html = '<!doctype html><link rel="stylesheet" href="styles/theme.css"><p>IMMUTABLE FIELD NOTES · 22</p><h1 class="bundle">Bundled report</h1><p>The stylesheet and chart come only from explicitly registered snapshots.</p><img class="chart" src="images/chart.png" alt="Captured chart" width="120" height="120"><img src="unlisted.png" alt="Unlisted"><script>window.__bundleProbe="ran";parent.__bundleProbe="escaped"</script><p>End of bundled report.</p>';
 writeFileSync(join(workspace, 'report.html'), html);
-writeFileSync(join(workspace, 'theme.css'), '.bundle{color:#13713d;background-image:url(../images/chart.png)}');
+writeFileSync(join(workspace, 'theme.css'), 'body{font:17px system-ui;margin:0;padding:28px;background:#f5f8f6;color:#223f35}h1{font-size:30px}.bundle{color:#13713d}.chart{background-image:url(../images/chart.png);border:8px solid white;border-radius:12px}p{max-width:580px;line-height:1.6}');
 writeFileSync(join(workspace, 'chart.png'), Buffer.from(pixel, 'base64'));
 writeFileSync(join(workspace, 'unlisted.png'), Buffer.from(pixel, 'base64'));
 if (process.argv[3] === 'seed') { console.log('seeded explicit bundle fixture'); process.exit(0); }
@@ -54,10 +56,26 @@ assert.deepEqual(await call('artifact.file.register', { ...input, bundle }), fir
 assert.deepEqual(await call('artifact.file.register', { ...input, bundle: [...bundle].reverse() }), first);
 assert.deepEqual(await call('artifact.file.register', { ...input, bundle: [{ ...bundle[0], path: 'other.css' }, bundle[1]] }), { accepted: false, reason: 'source_changed' });
 assert.deepEqual(await call('artifact.file.register', { ...input, requestId: 'unknown-asset', bundle: [{ path: 'missing.png', artifactId: 'unknown' }] }), { accepted: false, reason: 'unavailable' });
+writeFileSync(join(workspace, 'large.css'), ' '.repeat(2 * 1024 * 1024));
+const large = await call('artifact.file.register', { ...input, requestId: 'large-css', path: 'large.css' });
+assert.equal(large.accepted, true);
+const largeBundle = await call('artifact.file.register', { ...input, requestId: 'large-bundle', bundle: [{ path: 'large.css', artifactId: (large.artifact as { artifactId: string }).artifactId }] });
+assert.equal(largeBundle.accepted, true);
+assert.deepEqual(await call('artifact.file.html', { artifactId: (largeBundle.artifact as { artifactId: string }).artifactId }), { accepted: false, reason: 'size_limit' });
+
 const markdown = await call('artifact.file.register', { ...input, requestId: 'markdown', path: 'report.md', title: 'Markdown' });
 assert.equal(markdown.accepted, true);
 assert.deepEqual(await call('artifact.file.register', { ...input, requestId: 'wrong-kind', bundle: [{ path: 'a.css', artifactId: (markdown.artifact as { artifactId: string }).artifactId }] }), { accepted: false, reason: 'unsupported_type' });
 assert.deepEqual(await call('artifact.file.register', { ...input, bundle }, { ...caller, sessionId: 'foreign' }), { accepted: false, reason: 'unavailable' });
+new NeoAskTodoRepository(db).addTodo('foreign-todo', 'ask', { title: 'Foreign', doneWhen: '', check: null, instruction: '', named: null }, 1);
+const sessions = new NeoTodoSessionRepository(db);
+sessions.create('foreign-todo', { verb: 'start', adapter: 'hyperneo', place: { machine: 'local', name: 'Foreign synthetic', folder: workspace } });
+sessions.recordRef('foreign-todo', { adapter: 'hyperneo', id: 'foreign' });
+db.prepare("INSERT INTO sessions (id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES ('foreign','Synthetic',?,'now','now','active','{}','{}')").run(workspace);
+const foreign = await call('artifact.file.register', { ...input, context: { kind: 'todo', id: 'foreign-todo' }, requestId: 'foreign-css', path: 'theme.css' }, { ...caller, sessionId: 'foreign' });
+assert.equal(foreign.accepted, true);
+assert.deepEqual(await call('artifact.file.register', { ...input, requestId: 'foreign-asset', bundle: [{ path: 'theme.css', artifactId: (foreign.artifact as { artifactId: string }).artifactId }] }), { accepted: false, reason: 'unavailable' });
+
 mkdirSync(join(workspace, 'retained'));
 for (const file of ['theme.css', 'chart.png', 'report.html']) renameSync(join(workspace, file), join(workspace, 'retained', file));
 assert.deepEqual(await call('artifact.file.register', { ...input, bundle }), first);

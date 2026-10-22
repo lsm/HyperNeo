@@ -6,11 +6,17 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { prepareArtifactHtml } from '../../../../src/lib/artifacts/html-preview.ts';
 import { RegisterArtifactInput } from '../../../../src/lib/artifacts/register-operation.ts';
+import { artifactBundleLimit } from '../../../../src/lib/artifacts/bundle.ts';
 
 const pixel =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
 describe('registered relative CSS and raster bundles', () => {
+  test('refuses aggregate bundle bytes beyond 64 MiB while admitting the exact limit', () => {
+    const assets = [{ row: { byte_length: 64 * 1024 * 1024 - 1 } }];
+    expect(artifactBundleLimit(1, assets)).toBeNull();
+    expect(artifactBundleLimit(2, assets)).toEqual({ accepted: false, reason: 'size_limit' });
+  });
   test('accepts explicit registered IDs and rejects unsafe, duplicate or excessive aliases', () => {
     const input = {
       requestId: 'bundle',
