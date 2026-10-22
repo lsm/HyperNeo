@@ -23,6 +23,9 @@ describe('NeoClampedText', () => {
     const clamped = container.querySelector<HTMLElement>('[data-clamped]');
     expect(clamped?.className).toBe('overflow-hidden');
     expect(clamped?.style.maxHeight).toMatch(/^\d+px$/);
+    expect(
+      getComputedStyle(screen.getByRole('button', { name: 'Show more' })).getPropertyValue('float')
+    ).toBe('right');
     fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
     expect(container.querySelector('[data-clamped]')).toBeNull();
     expect(container.querySelector<HTMLElement>('div')?.style.maxHeight).toBe('');
