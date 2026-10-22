@@ -1,3 +1,4 @@
+import { SessionEventWriter } from './lib/external-events/session-event-writer.ts';
 import { createSessionScheduleFire } from './lib/scheduler/session-schedule-fire.ts';
 import { createScheduleDelivery } from './lib/scheduler/session-schedule-delivery.ts';
 import type { TaskCore } from '@hyperneo/shared/types/task-core';
@@ -387,6 +388,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
   const { config, verbose = true, standalone = false } = options;
   let startupLogCaptureCleanup: (() => void) | null = null;
   let unsubscribeProviderFailureChanges: (() => void) | null = null;
+  let sessionEventWriter: SessionEventWriter | null = null;
   let eventLoopWatchdog: EventLoopWatchdogHandle | null = null;
   let eventLoopLagLogStopped = false;
   let stopEventLoopLagLog = (): void => {
@@ -834,9 +836,19 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const externalEventStore = new ExternalEventStore(db.getDatabase(), reactiveDb);
     const externalEventService = new ExternalEventService(externalEventStore, internalEventBus);
     const sessionExternalEventStore = new SessionExternalEventStore(db.getDatabase());
+    sessionEventWriter =
+      db.getDbPath() === ':memory:'
+        ? null
+        : new SessionEventWriter(
+            db.getDbPath(),
+            undefined,
+            undefined,
+            config.sqlQueryObservability
+          );
     const sessionExternalEventService = new ExternalEventService(
       sessionExternalEventStore,
-      internalEventBus
+      internalEventBus,
+      sessionEventWriter ? (event) => sessionEventWriter!.ingest(event) : undefined
     );
     const sessionEventSubscriptions = new SessionEventSubscriptionRepository(db.getDatabase());
     const sessionTopicSources: (() => readonly { topic: string; session?: string | null }[])[] = [];
@@ -1664,6 +1676,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           await extensionManager.stopExtension(extension.sourceId);
         }
         logInfo('[Daemon] External event extensions stopped');
+        await sessionEventWriter
+          ?.close()
+          .catch((error) => logError('[Daemon] Session event writer close failed:', error));
 
         const providerRegistry = getProviderRegistry();
         await Promise.allSettled(
@@ -1756,6 +1771,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     startupLogCaptureCleanup?.();
     unsubscribeProviderFailureChanges?.();
     await invalidateInFlightModelLoads();
+    await sessionEventWriter?.close().catch(() => {});
     restoreConsoleCapture();
     strandedStartupFileLogCapture = closeFileLogCapture;
     throw error;

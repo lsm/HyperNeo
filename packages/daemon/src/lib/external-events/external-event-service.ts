@@ -1,6 +1,9 @@
 import type { InternalEventBus } from '../internal-event-bus.ts';
 import { type ExternalEventStore, ExternalEventValidationError } from './external-event-store.ts';
-import { ingestExternalEvent } from './ingest-external-event-pipeline.ts';
+import {
+  ingestExternalEvent,
+  type IngestExternalEventOutcome,
+} from './ingest-external-event-pipeline.ts';
 import { SESSION_EVENT_SCOPE } from './session-external-event-store.ts';
 import type { ExternalEvent } from './types.ts';
 
@@ -44,14 +47,14 @@ export class ExternalEventService implements ExternalEventPublisher {
     private readonly store: Pick<ExternalEventStore, 'store' | 'getById'>,
     private readonly bus: InternalEventBus<{
       'externalEvent.published': ExternalEventPublishedPayload;
-    }>
+    }>,
+    private readonly ingest?: (event: ExternalEvent) => Promise<IngestExternalEventOutcome>
   ) {}
 
   async publish(event: ExternalEvent): Promise<PublishResult> {
-    const outcome = ingestExternalEvent(
-      { store: (candidate) => this.store.store(candidate) },
-      event
-    );
+    const outcome = this.ingest
+      ? await this.ingest(event)
+      : ingestExternalEvent({ store: (candidate) => this.store.store(candidate) }, event);
 
     if (outcome.action === 'invalid') {
       throw new ExternalEventValidationError(outcome.reason);
