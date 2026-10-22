@@ -31,10 +31,11 @@ metadata when the ID is known; never choose the first match or another app.
 For Claude the app bundle identifier is `com.anthropic.claudefordesktop`.
 
 Choose a fresh output leaf inside your evidence directory; it must not exist.
-Replace the example ID with the window selected for this verification:
+This example uses the exact OS title. Add windowId when it is known, especially
+when multiple windows have that title:
 
 ```bash
-printf '%s\n' '{"appBundleId":"com.anthropic.claudefordesktop","title":"Claude","windowId":181,"evidenceDir":"/absolute/evidence/run-unique/desktop-window"}' |
+printf '%s\n' '{"appBundleId":"com.anthropic.claudefordesktop","title":"Claude","evidenceDir":"/absolute/evidence/run-unique/desktop-window"}' |
   "$CAPTURE"
 ```
 

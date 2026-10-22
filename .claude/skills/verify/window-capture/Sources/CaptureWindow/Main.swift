@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import WindowCaptureCore
 
@@ -12,6 +13,7 @@ struct Main {
             } catch {
                 throw CaptureFailure(code: "invalid_request", detail: "Expected JSON on stdin: appBundleId, title and/or windowId, evidenceDir. \(error)")
             }
+            _ = NSApplication.shared
             let result = try await capture(request, api: ScreenCapture())
             FileHandle.standardOutput.write(try JSONEncoder().encode(result) + Data("\n".utf8))
         } catch {
