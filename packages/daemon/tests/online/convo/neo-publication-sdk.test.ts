@@ -14,7 +14,8 @@ import { SessionScheduleRepository } from '../../../src/storage/repositories/ses
 import { NeoAskTodoRepository } from '../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { readNeoPublications } from '../../../../web/src/neo/publication-client.ts';
 
-test('recovered root refreshes prompt and tools, resumes SDK history across cwd changes and publishes the reply', async () => {
+const sandboxProof = process.env.HYPERNEO_TEST_DISABLE_SANDBOX !== '1';
+test(`root startup, reads, resume and publication (${sandboxProof ? 'real OS sandbox proof' : 'transport fixture, sandbox disabled'})`, async () => {
   const isolated = mkdtempSync(join(tmpdir(), 'neo-sdk-publication-'));
   const requestId = randomUUID();
   const root = `neo:${randomUUID()}`;
@@ -43,7 +44,9 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
     {
       name: 'Bash',
       input: {
-        command: `cat '${readProbeFile}'; if [ -n \"$GH_TOKEN\" ]; then printf UNEXPECTED_INHERITED_TOKEN; exit 1; fi; printf CHECKOUT_OK > '${readCheckout}/allowed.txt'; printf TEMP_OK > '${join(tmpdir(), 'hyperneo-neo', root, 'allowed.txt')}'; (printf BAD > '${workerCheckout}/blocked.txt'); (printf BAD > '${isolated}/data/blocked.txt'); (printf BAD > '${isolated}/data/Neo/blocked.txt'); gh pr view https://github.com/lsm/HyperNeo/pull/8148 --json number; printf SYNTHETIC_UNAPPROVED > '${approvalProbeFile}'`,
+        command: sandboxProof
+          ? `cat '${readProbeFile}'; if [ -n \"$GH_TOKEN\" ]; then printf UNEXPECTED_INHERITED_TOKEN; exit 1; fi; printf CHECKOUT_OK > '${readCheckout}/allowed.txt'; printf TEMP_OK > '${join(tmpdir(), 'hyperneo-neo', root, 'allowed.txt')}'; (printf BAD > '${workerCheckout}/blocked.txt'); (printf BAD > '${isolated}/data/blocked.txt'); (printf BAD > '${isolated}/data/Neo/blocked.txt'); gh pr view https://github.com/lsm/HyperNeo/pull/8148 --json number; printf SYNTHETIC_UNAPPROVED > '${approvalProbeFile}'`
+          : `cat '${readProbeFile}'; if [ -n \"$GH_TOKEN\" ]; then printf UNEXPECTED_INHERITED_TOKEN; exit 1; fi; gh pr view https://github.com/lsm/HyperNeo/pull/8148 --json number`,
       },
     },
   ];
@@ -272,6 +275,7 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
     const options = await build.apply(this, args);
     return {
       ...options,
+      sandbox: sandboxProof ? options.sandbox : { enabled: false },
       stderr: (data) => {
         sdkErrors.push(data);
         options.stderr?.(data);
@@ -530,6 +534,7 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
         JSON.stringify(
           {
             approvalProbeResults,
+            sandboxProof,
             approvalProbeDenied,
             approvalProbeCreatedFile: existsSync(approvalProbeFile),
             tempWriteAllowed: existsSync(join(tmpdir(), 'hyperneo-neo', root, 'allowed.txt')),
@@ -581,16 +586,22 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
     }
     expect(JSON.stringify(approvalProbeResults)).not.toContain('UNEXPECTED_INHERITED_TOKEN');
     expect(JSON.stringify(approvalProbeResults)).toContain('gh auth login');
-    expect(JSON.stringify(approvalProbeResults)).toMatch(/operation not permitted/i);
-    expect(existsSync(join(readCheckout, 'allowed.txt'))).toBe(true);
-    expect(existsSync(join(tmpdir(), 'hyperneo-neo', root, 'allowed.txt'))).toBe(true);
-    for (const path of [workerCheckout, join(isolated, 'data'), newCwd])
-      expect(existsSync(join(path, 'blocked.txt'))).toBe(false);
+    if (sandboxProof) {
+      expect(JSON.stringify(approvalProbeResults)).toMatch(/operation not permitted/i);
+      expect(existsSync(join(readCheckout, 'allowed.txt'))).toBe(true);
+      expect(existsSync(join(tmpdir(), 'hyperneo-neo', root, 'allowed.txt'))).toBe(true);
+      for (const path of [workerCheckout, join(isolated, 'data'), newCwd])
+        expect(existsSync(join(path, 'blocked.txt'))).toBe(false);
+    }
     expect(approvalProbeDenied).toBe(true);
     expect(existsSync(approvalProbeFile)).toBe(false);
     expect(storedAtStartup.config.systemPrompt).toBe(neoPrompt());
     expect(storedAtStartup.config.sdkToolsPreset).toContain('Read');
     expect(storedAtStartup.config.sdkToolsPreset).toContain('Bash');
+    expect(storedAtStartup.config.sandbox).toMatchObject({
+      enabled: true,
+      failIfUnavailable: true,
+    });
     expect(nativeToolsSeen[0]).toEqual(expect.arrayContaining(['Read', 'Bash']));
     expect(historySeen.length).toBeGreaterThan(0);
     expect(historySeen.every(Boolean)).toBe(true);

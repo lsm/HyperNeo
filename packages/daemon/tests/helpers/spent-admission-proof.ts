@@ -155,6 +155,7 @@ export async function verifySpentAdmission(
     const options = await build.apply(this, args);
     return {
       ...options,
+      sandbox: { enabled: false },
       debugFile: join(run, 'sdk-debug.log'),
       stderr: (data) => {
         sdkErrors.push(data);

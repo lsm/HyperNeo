@@ -21,13 +21,18 @@ the data directory and Neo's cwd remain unwritable. Bash returns an explicit non
 records it as `is_error:true`. The temp-directory write must also succeed.
 There is no command parser or unsandboxed retry. The strict SDK sandbox uses
 `enableWeakerNetworkIsolation:true` for macOS trustd; network hosts are unrestricted.
+Do not set `HYPERNEO_TEST_DISABLE_SANDBOX=1` for this proof. Ordinary Linux CI sets
+that flag and runs the explicitly labelled transport fixture with sandbox disabled;
+its passing result is not OS-containment evidence. Production options stay strict.
 
 In test mode the dedicated token store is not read. Actual `gh pr view` therefore
 reports unauthenticated with an isolated empty GH_CONFIG_DIR; it must never use an
 inherited GH_TOKEN/GITHUB_TOKEN or the human's gh login. A synthetic `.zshenv`
 also attempts to re-export an owner token: the isolated ZDOTDIR must prevent that
 reinjection. No real shell startup or auth file is read. Focused read-access tests
-also cover injected synthetic tokens and explicit store failures. Preserve the JSON
+also cover injected synthetic tokens, locked stores and non-macOS hosts. Missing
+or unavailable dedicated credentials leave gh unauthenticated, never using another
+store or human token. Preserve the JSON
 outside the worktree before cleanup. The scripted model proves runtime wiring,
 not spontaneous model behavior or a real token's GitHub scopes.
 
