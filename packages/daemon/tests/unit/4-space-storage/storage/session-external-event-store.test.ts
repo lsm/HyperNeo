@@ -1,3 +1,4 @@
+import { ingestExternalEvent } from '../../../../src/lib/external-events/ingest-external-event-pipeline';
 import { beforeEach, describe, expect, test } from 'bun:test';
 import {
   type ExternalEventPublishedPayload,
@@ -83,5 +84,66 @@ describe('session-scoped publishing', () => {
     await router.publish(event({ spaceId: 'space-1' }));
     await router.publish(event());
     expect(routed).toEqual(['spaces:space-1', `sessions:${SESSION_EVENT_SCOPE}`]);
+  });
+});
+
+describe('session-scoped asynchronous persistence', () => {
+  test('publication waits for the committed canonical event and keeps duplicate bytes', async () => {
+    const bus = createInternalEventBus<{
+      'externalEvent.published': ExternalEventPublishedPayload;
+    }>();
+    const seen: ExternalEventPublishedPayload[] = [];
+    bus.subscribe(
+      'externalEvent.published',
+      (payload) => {
+        seen.push(payload);
+      },
+      { subscriberName: 'writer-contract' }
+    );
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const service = new ExternalEventService(store, bus, async (candidate) => {
+      await gate;
+      return ingestExternalEvent({ store: (e) => store.store(e) }, candidate);
+    });
+    const original = event({ payload: { body: 'complete synthetic report 🦊\n'.repeat(1000) } });
+    const pending = service.publish(original);
+    await Promise.resolve();
+    expect(store.getById(original.id)).toBeNull();
+    expect(seen).toEqual([]);
+    release();
+    expect(await pending).toEqual({ outcome: 'published', eventId: original.id });
+    expect(seen).toHaveLength(1);
+    expect(seen[0].payload).toEqual(original.payload);
+    const stored = store.getById(original.id);
+    expect(
+      await service.publish(event({ id: 'duplicate', payload: { body: 'different' } }))
+    ).toEqual({ outcome: 'duplicate_terminal', eventId: original.id });
+    expect(store.getById(original.id)).toEqual(stored);
+    expect(seen).toHaveLength(1);
+  });
+
+  test('unknown write failure never publishes or silently replays the command', async () => {
+    const bus = createInternalEventBus<{
+      'externalEvent.published': ExternalEventPublishedPayload;
+    }>();
+    const seen: ExternalEventPublishedPayload[] = [];
+    bus.subscribe(
+      'externalEvent.published',
+      (payload) => {
+        seen.push(payload);
+      },
+      { subscriberName: 'writer-failure' }
+    );
+    let calls = 0;
+    const service = new ExternalEventService(store, bus, async () => {
+      calls++;
+      throw new Error('session writer outcome unknown');
+    });
+    await expect(service.publish(event())).rejects.toThrow('outcome unknown');
+    expect(calls).toBe(1);
+    expect(seen).toEqual([]);
   });
 });
