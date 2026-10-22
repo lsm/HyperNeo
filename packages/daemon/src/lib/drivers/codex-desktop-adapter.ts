@@ -4,7 +4,13 @@ import { workStartPreparation, type WorkExecutionPreparer } from './start-prepar
 import { basename, join } from 'node:path';
 import { z } from 'zod';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { Database } from '../../storage/sqlite-compat.ts';
+import {
+  OWN_THREADS,
+  THREAD_COLUMNS,
+  withCodexState,
+  readCodexSnapshot,
+} from '../../storage/codex-desktop-read.ts';
+export { readCodexSnapshot, withCodexState } from '../../storage/codex-desktop-read.ts';
 import { gitWorktreeProject } from './acp-agent-adapter.ts';
 import type { WorkChatMatch } from '../../storage/work-chat-search.ts';
 import type { SpawnFn } from '../runtime-spawn/index.ts';
@@ -52,14 +58,8 @@ import { reject } from './work-operations.ts';
 import { steerCodexDesktopTurn, type CodexSendGate } from './codex-desktop-handoff.ts';
 import { type GitCheckout, planWorkPlacement } from './work-placement.ts';
 
-const OWN_THREADS = `cwd IS NOT NULL AND COALESCE(source, '') NOT LIKE '%subagent%'`;
-const THREAD_TITLE = `substr(COALESCE(NULLIF(name, ''), NULLIF(title, ''), NULLIF(first_user_message, '')), 1, 200)`;
-const THREAD_COLUMNS = `id, COALESCE(NULLIF(substr(trim(replace(replace(${THREAD_TITLE}, char(13), ' '), char(10), ' ')), 1, 80), ''), 'Untitled thread') AS title,
-  cwd AS folder, COALESCE(archived, 0) AS archived, COALESCE(updated_at_ms, 0) AS updatedAt`;
 const THREADS_PER_PLACE = 20;
-const CLOSED_THREADS = 500;
 const RECENT_MS = 2 * 60_000;
-const BUSY_TIMEOUT_MS = 2_000;
 const ROLLOUT_TAIL_BYTES = 4 * 1024 * 1024;
 const QUEUE_TIMEOUT_MS = 30_000;
 const START_RECEIPT_TRIES = 10;
@@ -101,6 +101,7 @@ const sendLog = new Logger('codex-send');
 export interface CodexDesktopAdapterDeps {
   prepareExecution?: WorkExecutionPreparer;
   statePath: string;
+  readSnapshot?: (statePath: string, includeClosed: boolean) => Promise<CodexSnapshot>;
   desktopSocketPath?: string;
   worktreesDir: string;
   machine: string;
@@ -139,72 +140,6 @@ type Gate<Value> = { value: Value } | { reason: Rejected };
 interface CodexPlace extends CodexFolderRow {
   name: string;
   known: boolean;
-}
-
-function readCodexStateOnce<T>(path: string, read: (db: Database) => T): T {
-  const db = runLagPhase(
-    'scanner:codex_desktop:open',
-    () => new Database(path, { readonly: true })
-  );
-  try {
-    runLagPhase('scanner:codex_desktop:configure', () =>
-      db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`)
-    );
-    return runLagPhase('scanner:codex_desktop:query', () => read(db));
-  } finally {
-    runLagPhase('scanner:codex_desktop:close', () => db.close());
-  }
-}
-
-export function withCodexState<T>(statePath: string, read: (db: Database) => T): T {
-  try {
-    return readCodexStateOnce(statePath, read);
-  } catch (error) {
-    if (!/unable to open database file|readonly database/.test(String(error))) throw error;
-    return readCodexStateOnce(`file:${encodeURI(statePath)}?immutable=1`, read);
-  }
-}
-
-export function readCodexSnapshot(statePath: string, includeClosed: boolean): CodexSnapshot {
-  return withCodexState(statePath, (db) => ({
-    roots: runLagPhase(
-      'scanner:codex_desktop:roots',
-      () =>
-        db
-          .prepare(
-            `SELECT p.id AS projectId, COALESCE(p.name, '') AS name, r.path AS folder,
-             COALESCE(p.updated_at_ms, 0) AS lastActiveAt
-             FROM projects p JOIN project_roots r ON r.project_id = p.id WHERE r.path IS NOT NULL`
-          )
-          .all() as CodexRootRow[]
-    ),
-    folders: runLagPhase(
-      'scanner:codex_desktop:folders',
-      () =>
-        db
-          .prepare(
-            `SELECT cwd AS folder, SUM(COALESCE(archived, 0) = 0) AS openCount,
-             SUM(COALESCE(archived, 0) != 0) AS archivedCount,
-             COALESCE(MAX(updated_at_ms), 0) AS lastActiveAt FROM threads WHERE ${OWN_THREADS} GROUP BY cwd`
-          )
-          .all() as CodexFolderRow[]
-    ),
-    threads: runLagPhase(
-      'scanner:codex_desktop:threads',
-      () =>
-        db
-          .prepare(
-            `SELECT * FROM (
-             SELECT ${THREAD_COLUMNS} FROM threads WHERE ${OWN_THREADS} AND COALESCE(archived, 0) = 0
-             UNION ALL
-             SELECT * FROM (SELECT ${THREAD_COLUMNS} FROM threads
-               WHERE ${OWN_THREADS} AND ? = 1 AND COALESCE(archived, 0) != 0
-               ORDER BY updatedAt DESC LIMIT ${CLOSED_THREADS}))
-           ORDER BY updatedAt DESC`
-          )
-          .all(includeClosed ? 1 : 0) as CodexThreadRow[]
-    ),
-  }));
 }
 
 export async function codexProjectFolder(
@@ -327,9 +262,14 @@ export function buildCodexGroups(
     });
 }
 
-export function loadCodexSnapshot(query: FindQuery, deps: CodexDesktopAdapterDeps): CodexSnapshot {
+export async function loadCodexSnapshot(
+  query: FindQuery,
+  deps: CodexDesktopAdapterDeps
+): Promise<CodexSnapshot> {
   return runLagPhase('scanner:codex_desktop', () =>
-    readCodexSnapshot(deps.statePath, query.includeClosed)
+    deps.readSnapshot
+      ? deps.readSnapshot(deps.statePath, query.includeClosed)
+      : readCodexSnapshot(deps.statePath, query.includeClosed)
   );
 }
 

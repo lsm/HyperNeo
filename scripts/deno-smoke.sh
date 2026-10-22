@@ -197,6 +197,16 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_READER_PATH="$REPO_ROOT/packages/daemon/src/
     if (!rows.some(row => row.id === id && row.text === body && row.bodyLength === body.length)) Deno.exit(1);
     if (await reader.countPendingTurns("synthetic-model",3) !== rows.length) Deno.exit(1);
     console.log("[deno-smoke] Turn-vector range/pending/count shared reader ok");
+    const externalPath = Deno.env.get("SMOKE_DB_PATH") + ".codex";
+    const external = new DatabaseSync(externalPath);
+    external.exec("CREATE TABLE projects(id TEXT,name TEXT,updated_at_ms INTEGER); CREATE TABLE project_roots(project_id TEXT,path TEXT); CREATE TABLE threads(id TEXT,name TEXT,title TEXT,first_user_message TEXT,cwd TEXT,source TEXT,archived INTEGER,updated_at_ms INTEGER)");
+    external.prepare("INSERT INTO projects VALUES (?,?,?)").run("p1","Synthetic Codex",1);
+    external.prepare("INSERT INTO project_roots VALUES (?,?)").run("p1","/synthetic");
+    external.prepare("INSERT INTO threads VALUES (?,?,?,?,?,?,?,?)").run("t1","Complete thread","","Full retained history","/synthetic","vscode",0,2);
+    external.close();
+    const snapshot = await reader.readCodexSnapshot(externalPath, false);
+    if (snapshot.roots[0]?.projectId !== "p1" || snapshot.folders[0]?.openCount !== 1 || snapshot.threads[0]?.id !== "t1") Deno.exit(1);
+    console.log("[deno-smoke] Codex external snapshot shared reader ok");
   } finally { await reader.close(); }
 '; then dump_log; exit 1; fi
 

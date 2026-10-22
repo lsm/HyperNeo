@@ -556,3 +556,37 @@ test('a cold reader waits for its handler before sending the accepted turn-range
     await reader.close();
   }
 });
+
+test('external Codex snapshots share the reader with status requests', async () => {
+  const { reader, workers } = fixture();
+  const status = reader.read(args);
+  const snapshot = reader.readCodexSnapshot('/synthetic-codex.sqlite', true);
+  await tick();
+  workers[0].reply(workers[0].requests[0], page);
+  await status;
+  await tick();
+  const rows = {
+    roots: [],
+    folders: [{ folder: '/synthetic', openCount: 3, archivedCount: 2, lastActiveAt: 5 }],
+    threads: [],
+  };
+  expect(workers[0].requests[1].args).toEqual({
+    codexSnapshot: { statePath: '/synthetic-codex.sqlite', includeClosed: true },
+  });
+  workers[0].reply(workers[0].requests[1], rows);
+  expect(await snapshot).toEqual(rows);
+  expect(workers).toHaveLength(1);
+  await reader.close();
+});
+
+test('a memory daemon can read an external file off main and close that reader', async () => {
+  const worker = new TestWorker();
+  const reader = new SDKStatusReader(':memory:', () => worker as unknown as Worker);
+  const snapshot = reader.readCodexSnapshot('/synthetic-codex.sqlite', false);
+  worker.onmessage?.({ data: { ready: true } } as MessageEvent<SDKStatusReply>);
+  const rows = { roots: [], folders: [], threads: [] };
+  worker.reply(worker.requests[0], rows);
+  expect(await snapshot).toEqual(rows);
+  await reader.close();
+  expect(worker.stopped).toBe(true);
+});

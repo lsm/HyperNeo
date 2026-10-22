@@ -39,7 +39,10 @@ import {
   startCodexBootstrapServer,
 } from '../../drivers/codex-app-server.ts';
 import { startCodexDesktopTurn } from '../../drivers/codex-desktop-handoff.ts';
-import { createCodexDesktopAdapter } from '../../drivers/codex-desktop-adapter.ts';
+import {
+  createCodexDesktopAdapter,
+  type CodexSnapshot,
+} from '../../drivers/codex-desktop-adapter.ts';
 import { createFindWorkOperation } from '../../drivers/find-operation.ts';
 import { createReadWorkOperation } from '../../drivers/read-operation.ts';
 import {
@@ -323,6 +326,7 @@ function acpAgentAdapters(
 }
 
 function codexDesktopAdapters(
+  readSnapshot: (statePath: string, includeClosed: boolean) => Promise<CodexSnapshot>,
   searchChats: (text: string, kinds: readonly WorkChatKind[]) => Promise<readonly WorkChatMatch[]>,
   prepareExecution: WorkExecutionPreparer
 ): WorkAdapter[] {
@@ -332,6 +336,7 @@ function codexDesktopAdapters(
   return [
     createCodexDesktopAdapter({
       statePath,
+      readSnapshot,
       desktopSocketPath: join(codexHome, 'ipc', 'ipc.sock'),
       prepareExecution,
       worktreesDir: join(codexHome, 'worktrees'),
@@ -532,7 +537,12 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       searchChats: ownChats,
       tasks: spaceTaskControl(context),
     }),
-    ...codexDesktopAdapters(searchChats, prepareExecution),
+    ...codexDesktopAdapters(
+      (statePath, includeClosed) =>
+        context.deps.db.readCodexSnapshotAsync(statePath, includeClosed),
+      searchChats,
+      prepareExecution
+    ),
     ...claudeDesktopAdapters(
       searchChats,
       prepareExecution,
