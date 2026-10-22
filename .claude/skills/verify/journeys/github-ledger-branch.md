@@ -40,7 +40,8 @@ Rate refusals remain unknown until retry-after permits another attempt.
 Run the `neo-branch-ledger`, `neo-branch-prs`, `neo-coding-pr-ledger` and
 `neo-ledger-merge-facts` unit suites from `packages/daemon`. They also cover empty
 membership, stale/failure/recovery, overflow refusal, aliases and deterministic
-out-of-order responses. Repeat all three `github-ledger-consumers.ts` scenarios
+out-of-order responses. Fork checkouts also keep GitHub CLI remote priority and
+explicit gh defaults using only local remote/gh-resolved metadata. Repeat all three `github-ledger-consumers.ts` scenarios
 from the consumer-contract journey. Their seven initial / three repeated lookup
 baseline stays unchanged: this slice reduces duplicate branch demand and restart
 reads, not the other six acquisition families. Synthetic lookup counts are not
