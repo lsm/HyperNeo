@@ -21,3 +21,25 @@
     diagnostic limits. A recent activity is correlation, not proof of cause;
     asynchronous phase duration includes awaits. This journey proves diagnostic
     output, not the cause of any real laptop block. Live logs remain read-only.
+
+    To reproduce the post-restart diagnostic overflow with synthetic activity:
+
+    ```bash
+    RUN=$(mktemp -d /private/tmp/hn-lag-burst-XXXXXX)
+    env -i PATH="$PATH" HOME="$RUN/home" HYPERNEO_DATA_DIR="$RUN/data" NODE_ENV=test \
+      bun .claude/skills/verify/lag-activity-burst.ts "$RUN"
+    ```
+
+    The isolated daemon uses an ephemeral port. Its real WebSocket RPC records
+    an early 1.35 s blocking phase followed by 138 metadata phase pairs. The
+    resulting 281 records cover the live startup tick's 249 records and a later
+    steady-state tick's 280 records. The earlier 122-pair fixture reproduced the
+    startup tick's 64 retained plus 185 dropped; 138 pairs also overflowed the
+    intermediate 256-record cap. End state: `observed.json` retains that early
+    phase and reports zero drops within the bounded 512-record ring. Larger
+    bursts still drop the oldest records and disclose the drop count. The helper
+    first emits an unrelated synthetic startup stall, then selects the burst
+    report by its named phase so earlier background stalls cannot poison proof.
+    It separately asserts the selected report's lag exceeds one second.
+    The helper stops its daemon in `finally`. This proves retention and payload privacy,
+    not scanner causality or a fix for physical disk stalls.
