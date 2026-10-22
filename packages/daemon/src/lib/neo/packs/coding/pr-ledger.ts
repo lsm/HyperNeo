@@ -1,3 +1,4 @@
+import { CodingMergeFactsRepository } from './merge-facts.ts';
 import { getNeoPackPreference } from '../preferences.ts';
 import { z } from 'zod';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
@@ -276,7 +277,11 @@ function codingLedgerSnapshotRow(row: CodingLedgerSnapshotRow) {
 }
 
 export class CodingPrLedgerRepository {
-  constructor(private readonly db: Database) {}
+  readonly mergeFacts: CodingMergeFactsRepository;
+
+  constructor(private readonly db: Database) {
+    this.mergeFacts = new CodingMergeFactsRepository(db);
+  }
 
   policy(repo: string): CodingMergePolicy {
     const read = (key: string) => {
