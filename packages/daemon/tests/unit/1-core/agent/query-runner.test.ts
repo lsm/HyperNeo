@@ -4999,10 +4999,25 @@ describe('QueryRunner', () => {
       expect(buildSpy).toHaveBeenCalledTimes(4);
     });
 
+    it('does not restart a GLM key failure or suggest signing in to Claude', async () => {
+      buildSpy.mockRejectedValue(new Error('401 Unauthorized'));
+      const ctx = createContext();
+      ctx.session.config.provider = 'glm';
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(handleErrorSpy).toHaveBeenCalled();
+      for (const call of handleErrorSpy.mock.calls) {
+        expect(call[3]).not.toBe('Claude login failed — sign in again');
+      }
+    });
+
     it('restarts once for Claude 401 then reports a terminal authentication error', async () => {
       buildSpy.mockRejectedValue(new Error('401 Unauthorized'));
 
       const ctx = createContext();
+      ctx.session.config.provider = 'anthropic';
       runner = new QueryRunner(ctx);
       runner.start();
       await ctx.queryPromise?.catch(() => {});

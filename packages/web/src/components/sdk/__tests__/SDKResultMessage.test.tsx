@@ -447,5 +447,8 @@ describe('SDKResultMessage error flag', () => {
     );
     expect(container.firstElementChild.className).toContain('bg-danger');
     expect(container.firstElementChild.className).not.toContain('bg-success');
+    fireEvent.click(container.querySelector('button'));
+    expect(container.textContent).toContain('OAuth token revoked');
+    expect(container.textContent).toContain('Errors');
   });
 });
