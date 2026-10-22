@@ -1,0 +1,113 @@
+{
+  "observedAt": "2026-10-22T06:30:15.753224+00:00",
+  "build": "8b69dddb41d60602ee163478b8d3d8bf1a9367fa",
+  "startupMs": 1792649691452,
+  "snapshotBeforeFirstCompletedRepo": "live-0617.json",
+  "initialOldestFirstOrder": [
+    "open-agent-protocol",
+    "hyperneo-review-test",
+    "money",
+    "ops",
+    "dolmen",
+    "neo-ios",
+    "hyperneo-review",
+    "research",
+    "HyperNeo",
+    "qlark"
+  ],
+  "hyperneoPosition": 9,
+  "currentRows": [
+    {
+      "repo": "HyperNeo",
+      "last_poll_at": 1792650565958,
+      "updated_at": 1792650565958,
+      "resume": "{\"stage\":4,\"item\":\"7811\"}",
+      "partialError": "GitHub CLI polling failed before a complete response"
+    },
+    {
+      "repo": "hyperneo-review-test",
+      "last_poll_at": 1792650225361,
+      "updated_at": 1792650225361,
+      "resume": null,
+      "partialError": null
+    },
+    {
+      "repo": "neo-ios",
+      "last_poll_at": 1792650272386,
+      "updated_at": 1792650272386,
+      "resume": null,
+      "partialError": null
+    },
+    {
+      "repo": "open-agent-protocol",
+      "last_poll_at": 1792650206733,
+      "updated_at": 1792650206733,
+      "resume": "{\"stage\":5,\"item\":\"1353\",\"page\":1}",
+      "partialError": "poll cycle incomplete \u2014 some endpoints unchecked"
+    },
+    {
+      "repo": "dolmen",
+      "last_poll_at": 1792650261264,
+      "updated_at": 1792650261264,
+      "resume": null,
+      "partialError": null
+    },
+    {
+      "repo": "hyperneo-review",
+      "last_poll_at": 1792650499888,
+      "updated_at": 1792650499888,
+      "resume": null,
+      "partialError": "poll cycle incomplete \u2014 some endpoints unchecked"
+    },
+    {
+      "repo": "ops",
+      "last_poll_at": 1792650243263,
+      "updated_at": 1792650243263,
+      "resume": null,
+      "partialError": null
+    },
+    {
+      "repo": "money",
+      "last_poll_at": 1792650236499,
+      "updated_at": 1792650236499,
+      "resume": null,
+      "partialError": null
+    },
+    {
+      "repo": "qlark",
+      "last_poll_at": 1792650591839,
+      "updated_at": 1792650591840,
+      "resume": null,
+      "partialError": null
+    },
+    {
+      "repo": "research",
+      "last_poll_at": 1792650520265,
+      "updated_at": 1792650520265,
+      "resume": null,
+      "partialError": null
+    }
+  ],
+  "schedulerHasRunAfterRestart": true,
+  "evidenceFiles": [
+    "previews-relay-diagnosis.json",
+    "previews-relay-subscription-load.json",
+    "scheduler-rearm-existing-test.txt"
+  ],
+  "sourceFacts": {
+    "serialOldestFirst": "github-event-extension.ts:1047-1055",
+    "nextTimerOnlyAfterPass": "github-event-extension.ts:1198-1216",
+    "requestLimit64": "github-poll-slice.ts:13",
+    "singleRequestTimeoutMs": 30000,
+    "readCheckoutAfterRepoScan": "github-event-extension.ts:3430-3459",
+    "oldPartialErrorRetainedOnIncompleteScan": "github-event-extension.ts:3498-3508"
+  },
+  "conclusion": "The scheduler executed after restart; HyperNeo is late in a serial pass. No stuck-resume or re-arm bug reproduced. Large subscribed-PR scans and only end-of-repo timestamp commits explain why these timestamps alone do not identify a stopped timer.",
+  "unknowns": [
+    "Per-request versus publication wall-time is not retained.",
+    "Actual previews UI read remains for the previews lane."
+  ],
+  "changes": "No source, settings, live DB or daemon changes. No new PR for an unproven scheduler bug.",
+  "followupEvidence": "previews-relay-pass-completed.json",
+  "finalConclusion": "Same deployed process completed one serial pass: every enabled repo timestamp advanced after startup, HyperNeo resume moved from stage4/item7652 to7811 and its standalone read clone now exists. No scheduler/re-arm/resume fix is justified by this observation. Poll latency remains high; this is not a two-minute freshness claim."
+}

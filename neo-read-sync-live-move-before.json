@@ -1,0 +1,18 @@
+{
+  "observedAt": "2026-10-22T06:34:49.529841+00:00",
+  "liveBuild": {
+    "commit": "16af79ddb1a68fefa5f7adc78c15c8555ca953c5",
+    "version": "0.45.2",
+    "pid": 57749,
+    "startedAt": 1792650823660,
+    "uptime": 65897.122292,
+    "health": "ok"
+  },
+  "githubDev": "16af79ddb1a68fefa5f7adc78c15c8555ca953c5",
+  "path": "/Users/lsm/.hyperneo/worktrees/lsm/hyperneo/neo-read",
+  "head": "20408df89026dbf654832869ccb87d01ddb4ba94",
+  "originDev": "20408df89026dbf654832869ccb87d01ddb4ba94",
+  "branch": "HEAD",
+  "status": "",
+  "reflog": "20408df89026dbf654832869ccb87d01ddb4ba94 HEAD@{2026-10-22 02:29:25 -0400} checkout: moving from dev to origin/dev\n20408df89026dbf654832869ccb87d01ddb4ba94 HEAD@{2026-10-22 02:29:24 -0400} clone: from github.com:lsm/HyperNeo.git"
+}

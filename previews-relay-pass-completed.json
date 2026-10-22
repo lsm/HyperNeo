@@ -1,0 +1,94 @@
+{
+  "observedAt": "2026-10-22T06:30:34.812638+00:00",
+  "startupMs": 1792649691452,
+  "rows": [
+    {
+      "repo": "HyperNeo",
+      "last_poll_at": 1792650565958,
+      "resume": "{\"stage\":4,\"item\":\"7811\"}",
+      "lastError": null,
+      "partialError": "GitHub CLI polling failed before a complete response"
+    },
+    {
+      "repo": "hyperneo-review-test",
+      "last_poll_at": 1792650225361,
+      "resume": null,
+      "lastError": null,
+      "partialError": null
+    },
+    {
+      "repo": "neo-ios",
+      "last_poll_at": 1792650272386,
+      "resume": null,
+      "lastError": null,
+      "partialError": null
+    },
+    {
+      "repo": "open-agent-protocol",
+      "last_poll_at": 1792650206733,
+      "resume": "{\"stage\":5,\"item\":\"1353\",\"page\":1}",
+      "lastError": null,
+      "partialError": "poll cycle incomplete \u2014 some endpoints unchecked"
+    },
+    {
+      "repo": "dolmen",
+      "last_poll_at": 1792650261264,
+      "resume": null,
+      "lastError": null,
+      "partialError": null
+    },
+    {
+      "repo": "hyperneo-review",
+      "last_poll_at": 1792650499888,
+      "resume": null,
+      "lastError": null,
+      "partialError": "poll cycle incomplete \u2014 some endpoints unchecked"
+    },
+    {
+      "repo": "ops",
+      "last_poll_at": 1792650243263,
+      "resume": null,
+      "lastError": null,
+      "partialError": null
+    },
+    {
+      "repo": "money",
+      "last_poll_at": 1792650236499,
+      "resume": null,
+      "lastError": null,
+      "partialError": null
+    },
+    {
+      "repo": "qlark",
+      "last_poll_at": 1792650591839,
+      "resume": null,
+      "lastError": null,
+      "partialError": null
+    },
+    {
+      "repo": "research",
+      "last_poll_at": 1792650520265,
+      "resume": null,
+      "lastError": null,
+      "partialError": null
+    }
+  ],
+  "allAdvancedAfterCurrentStartup": true,
+  "cloneCandidates": [
+    {
+      "path": "/Users/lsm/.hyperneo/worktrees/lsm/hyperneo/neo-read",
+      "exists": true,
+      "standaloneGit": true
+    },
+    {
+      "path": "/Users/lsm/.hyperneo/data/worktrees/lsm/hyperneo/neo-read",
+      "exists": false,
+      "standaloneGit": false
+    }
+  ],
+  "readClone": {
+    "path": "/Users/lsm/.hyperneo/worktrees/lsm/hyperneo/neo-read",
+    "head": "20408df89026dbf654832869ccb87d01ddb4ba94",
+    "branch": "HEAD"
+  }
+}

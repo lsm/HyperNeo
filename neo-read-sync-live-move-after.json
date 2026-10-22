@@ -1,0 +1,22 @@
+{
+  "observedAt": "2026-10-22T06:47:16.442056+00:00",
+  "path": "/Users/lsm/.hyperneo/worktrees/lsm/hyperneo/neo-read",
+  "liveBuild": {
+    "commit": "6c6126d01811089361975fa5df1b36618e765a70",
+    "version": "0.45.2",
+    "pid": 7360,
+    "startedAt": 1792651354584,
+    "uptime": 281906.803167,
+    "health": "ok"
+  },
+  "githubDev": "6c6126d01811089361975fa5df1b36618e765a70",
+  "head": "6c6126d01811089361975fa5df1b36618e765a70",
+  "originDev": "6c6126d01811089361975fa5df1b36618e765a70",
+  "branch": "HEAD",
+  "status": "",
+  "standaloneGit": true,
+  "containsRealMove": "16af79ddb1a68fefa5f7adc78c15c8555ca953c5",
+  "headReflog": "6c6126d01811089361975fa5df1b36618e765a70 HEAD@{2026-10-22 02:41:01 -0400} checkout: moving from 20408df89026dbf654832869ccb87d01ddb4ba94 to origin/dev\n20408df89026dbf654832869ccb87d01ddb4ba94 HEAD@{2026-10-22 02:29:25 -0400} checkout: moving from dev to origin/dev\n20408df89026dbf654832869ccb87d01ddb4ba94 HEAD@{2026-10-22 02:29:24 -0400} clone: from github.com:lsm/HyperNeo.git",
+  "originReflog": "6c6126d01811089361975fa5df1b36618e765a70 origin/dev@{2026-10-22 02:41:01 -0400} fetch origin: fast-forward",
+  "interventions": "None: no manual fetch/checkout, forced poll, restart, deploy, live DB writes or human checkout changes."
+}
