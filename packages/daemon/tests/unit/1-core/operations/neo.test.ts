@@ -206,7 +206,7 @@ describe('Neo MVP', () => {
     });
   });
 
-  test('standing rules start empty, the human adds them, and Neo cannot without a human turn', async () => {
+  test('standing rules start empty, the human adds them, and Neo needs a received human citation', async () => {
     expect(await invoke('neo.snapshot')).toMatchObject({ value: { standingRules: [] } });
     const root = await service.open();
     const rules = ['Ask before deleting anything.'];
@@ -230,7 +230,7 @@ describe('Neo MVP', () => {
         { remove: rules },
         { source: 'mcp', role: 'neo', sessionId: holder }
       )
-    ).toMatchObject({ value: { ok: false, reason: 'This action needs the user.' } });
+    ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('human') } });
     expect(settings.neo?.standingRules).toEqual(rules);
   });
 

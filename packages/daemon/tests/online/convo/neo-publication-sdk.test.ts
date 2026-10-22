@@ -20,6 +20,7 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
   const requests: { path: string; tools: number; active: boolean }[] = [];
   const sent: { system: string; human: unknown }[] = [];
   const nudged: string[] = [];
+  const sdkErrors: string[] = [];
   let round = 0;
   const fixture = createServer(async (req, res) => {
     if (req.url?.startsWith('/v1/models')) {
@@ -78,15 +79,22 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
           for (const item of result.content ?? [])
             if (item.text) receipts.push(JSON.parse(item.text));
     }
-    const publishing = active && round < 2;
+    const publishing = active && round < 3;
     const block = publishing
       ? {
           type: 'tool_use',
           id: `tool-fictional-${++round}`,
           name: invoke!.name,
           input: {
-            name: 'neo.publication.publish',
-            input: { requestId: 'fictional-send', shortText, fullText, links: [] },
+            name: round <= 2 ? 'neo.publication.publish' : 'neo.rule.save',
+            input:
+              round <= 2
+                ? { requestId: 'fictional-send', shortText, fullText, links: [] }
+                : {
+                    messageId: requestId,
+                    from: 'Tell me about the fictional moon garden. Keep synthetic garden changes as drafts.',
+                    add: ['Keep synthetic garden changes as drafts.'],
+                  },
           },
         }
       : { type: 'text', text: 'Done.' };
@@ -170,6 +178,10 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
     const options = await build.apply(this, args);
     return {
       ...options,
+      stderr: (data) => {
+        sdkErrors.push(data);
+        options.stderr?.(data);
+      },
       spawnClaudeCodeProcess: (opts) =>
         spawn(opts.command, opts.args, {
           cwd: opts.cwd,
@@ -204,6 +216,12 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
     });
     hub.registerTransport(transport);
     await transport.initialize();
+    const { servers } = await hub.request<{ servers: Array<{ id: string }> }>(
+      'mcp.registry.list',
+      {}
+    );
+    for (const server of servers)
+      await hub.request('mcp.registry.setEnabled', { id: server.id, enabled: false });
     const params = {
       providerId: 'anthropic',
       displayName: 'Synthetic local model',
@@ -233,7 +251,8 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
       input: {
         sessionId: opened.sessionId,
         requestId,
-        content: 'Tell me about the fictional moon garden.',
+        content:
+          'Tell me about the fictional moon garden. Keep synthetic garden changes as drafts.',
       },
     });
     expect(accepted).toMatchObject({ ok: true, messageId: requestId });
@@ -249,7 +268,7 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
       page = await read();
     }
     expect(page.ok).toBe(true);
-    expect(page.items, JSON.stringify({ calls, receipts, requests })).toHaveLength(1);
+    expect(page.items, JSON.stringify({ calls, receipts, requests, sdkErrors })).toHaveLength(1);
     expect(page.items[0].askOrigin).toBeUndefined();
     expect(page.items[0].producerInput).toBeUndefined();
     expect(page.items[0]).toMatchObject({
@@ -259,9 +278,9 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
       links: [],
     });
     const end = Date.now() + 15000;
-    while (calls.length < 3 && Date.now() < end)
+    while (calls.length < 4 && Date.now() < end)
       await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(calls).toEqual(['tool_use', 'tool_use', 'text']);
+    expect(calls).toEqual(['tool_use', 'tool_use', 'tool_use', 'text']);
     expect(receipts).toMatchObject([
       {
         accepted: true,
@@ -273,6 +292,10 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
         created: false,
         publication: { publicationId: page.items[0].publicationId },
       },
+      { ok: true, standingRules: ['Keep synthetic garden changes as drafts.'] },
+    ]);
+    expect(daemon.db.getGlobalSettings().neo?.standingRules).toEqual([
+      'Keep synthetic garden changes as drafts.',
     ]);
     expect((await read()).items).toEqual(page.items);
     const webRead = await readNeoPublications(
@@ -322,9 +345,10 @@ test('real SDK sends root Neo its system prompt and the stored human message, an
     );
     expect(human.map((part) => part.text).slice(-2)).toEqual([
       expect.stringMatching(/^\(local time: \w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+\)$/),
-      'Tell me about the fictional moon garden.',
+      'Tell me about the fictional moon garden. Keep synthetic garden changes as drafts.',
     ]);
     expect(human.map((part) => part.text).join('\n')).not.toContain('<human-input>');
+    expect(human.map((part) => part.text)).toContain(`[message id: ${requestId}]`);
   } finally {
     QueryOptionsBuilder.prototype.build = build;
     await transport?.close();

@@ -25,12 +25,37 @@ describe('neoIntakeMessage', () => {
       '(local time: Sun 2026-10-18 21:10 EDT)'
     );
     expect(message.message.content).toEqual([
+      { type: 'text', text: `[message id: ${input.requestId}]` },
       { type: 'text', text: '(local time: Sun 2026-10-18 21:10 EDT)' },
       { type: 'text', text: 'The human replied to the Neo message "Ready?":' },
       { type: 'text', text: 'Ship it' },
     ]);
     expect(message.humanContent).toEqual([{ type: 'text', text: 'Ship it' }]);
   });
+
+  test.each([null, '(local time: Sun 2026-10-18 21:10 EDT)'])(
+    'retrying a pre-id input preserves its stored text and metadata (%s)',
+    (time) => {
+      const initial = neoIntakeMessage(input, 'neo', null, time);
+      const legacy = {
+        ...initial,
+        message: { ...initial.message, content: initial.message.content.slice(1) },
+      };
+      if (!time) delete legacy.humanContent;
+      const retry = neoIntakeMessage(
+        input,
+        'neo',
+        null,
+        neoRetryLocalTime(legacy, 'fresh'),
+        legacy
+      );
+      expect(retry).toEqual(legacy);
+      expect(
+        neoIntakeMessage({ ...input, content: 'Changed words' }, 'neo', null, time, legacy).message
+          .content
+      ).not.toEqual(legacy.message.content);
+    }
+  );
 
   test('a retry keeps the time its first attempt stored, and adds none to an older prompt', () => {
     const first = neoIntakeMessage(input, 'neo', null, '(local time: Sun 2026-10-18 21:10 EDT)');
