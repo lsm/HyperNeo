@@ -15,8 +15,17 @@ describe('workStartPreparation', () => {
     const root = mkdtempSync(join(tmpdir(), 'registered-preparation-'));
     const source = join(root, 'source');
     const destination = join(root, 'worker');
+    const hostileConfig = join(root, 'global.gitconfig');
+    writeFileSync(
+      hostileConfig,
+      '[commit]\n gpgsign = true\n[gpg]\n program = /synthetic/unavailable-signer\n'
+    );
     const run = async (command: readonly string[], directory: string) => {
-      const result = spawnSync(command[0], command.slice(1), { cwd: directory, encoding: 'utf8' });
+      const result = spawnSync(command[0], command.slice(1), {
+        cwd: directory,
+        encoding: 'utf8',
+        env: { ...process.env, GIT_CONFIG_GLOBAL: hostileConfig },
+      });
       return { code: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
     };
     try {

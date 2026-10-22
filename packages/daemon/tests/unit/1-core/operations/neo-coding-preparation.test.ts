@@ -232,6 +232,8 @@ describe('prepareCodingExecution', () => {
     expect(readFileSync(join(f.directory, 'file'), 'utf8')).toBe('uncommitted user work');
     expect(f.calls.find((call) => call[1] === 'checkout')?.at(-1)).toBe(f.latest);
     expect(git(f.destination, 'rev-parse', 'refs/remotes/origin/dev')).toBe(f.latest);
+    git(f.destination, 'switch', 'dev');
+    expect(git(f.destination, 'rev-parse', 'HEAD')).toBe(f.latest);
     expect(
       spawnSync('git', ['show-ref', '--verify', 'refs/remotes/origin/local-only'], {
         cwd: f.destination,
