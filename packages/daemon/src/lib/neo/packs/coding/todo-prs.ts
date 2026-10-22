@@ -1,3 +1,4 @@
+import type { NeoRefState, NeoRefStateReader } from './ask-prs.ts';
 import type { NeoTodo, NeoTodoCheck } from '@hyperneo/shared/types/neo-ask';
 import { neoWorkPrVerdict, type NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
@@ -352,6 +353,8 @@ export function codingTodoRepository(
   todo: Pick<NeoTodo, 'check' | 'named'>,
   claimed: readonly string[] = []
 ): string | null {
+  const issue = todo.check?.kind === 'issue_closed' && codingIssueRef(todo.check);
+  if (issue) return neoGitRepo(`github.com/${issue.owner}/${issue.repo}`);
   const urls = todo.check?.pack === 'coding' ? todo.check.params.urls : null;
   const pr = [...(Array.isArray(urls) ? urls : []), ...claimed]
     .map((url) => (typeof url === 'string' ? parsePrUrl(url) : null))
@@ -370,7 +373,28 @@ function codingCheckRefs(check: NeoTodoCheck | null): string[] {
   });
 }
 
+function codingIssueRef(check: NeoTodoCheck | null) {
+  const match =
+    typeof check?.params.issue === 'string'
+      ? /^([\w.-]+)\/([\w.-]+)#([1-9]\d*)$/.exec(check.params.issue)
+      : null;
+  return match && Number.isSafeInteger(Number(match[3]))
+    ? { owner: match[1], repo: match[2], number: Number(match[3]) }
+    : null;
+}
+
+function codingIssueCheck(issue: NeoRefState | undefined): NeoTodoCheckResult {
+  return issue?.kind === 'issue' && issue.state === 'CLOSED'
+    ? issue.stateReason === 'COMPLETED'
+      ? { done: true, evidence: `${issue.url} completed` }
+      : issue.stateReason === 'NOT_PLANNED'
+        ? { done: false, evidence: null, failed: `${issue.url} closed as NOT_PLANNED` }
+        : { done: false, evidence: null }
+    : { done: false, evidence: null };
+}
+
 export function codingTodoDoneWhen(check: NeoTodoCheck): string | null {
+  if (check.kind === 'issue_closed') return `${check.params.issue} completed`;
   if (check.kind !== 'pr_merged') return null;
   const refs = codingCheckRefs(check);
   return refs.length
@@ -381,6 +405,10 @@ export function codingTodoDoneWhen(check: NeoTodoCheck): string | null {
 export function codingTodoCheckRefusal(
   draft: Pick<NeoTodo, 'check' | 'instruction'>
 ): string | null {
+  if (draft.check?.kind === 'issue_closed')
+    return codingIssueRef(draft.check)
+      ? null
+      : 'issue_closed_invalid_issue: params.issue must be owner/repo#N.';
   if (draft.check?.kind !== 'pr_merged') return null;
   if (!draft.instruction && !codingCheckRefs(draft.check).length)
     return 'pr_merged_needs_urls: a todo with no instruction opens no pull request; name each one in params.urls.';
@@ -395,12 +423,14 @@ type CodingTodoFacts = {
   prs: readonly NeoWorkPr[];
   observedAt: number;
   incomplete?: true;
+  issue?: NeoRefState;
 };
 
 export function createCodingTodoPack(
   repo: CodingTodoPrRepository,
   readPrs: NeoWorkPrReader,
-  ledger?: CodingLedgerState
+  ledger?: CodingLedgerState,
+  readRefs?: NeoRefStateReader
 ): NeoTodoPack & NeoTodoFactJudge<CodingTodoFacts | null> {
   const claimsOf = (todo: NeoTodo) => {
     const recorded = new Set(repo.prs(todo.id).flatMap((pr) => codingPrKey(pr.url) ?? []));
@@ -411,6 +441,13 @@ export function createCodingTodoPack(
   };
   const readFacts = async (todo: NeoTodo): Promise<CodingTodoFacts | null> => {
     if (todo.check && todo.check.pack !== 'coding') return null;
+    if (todo.check?.kind === 'issue_closed') {
+      const ref = codingIssueRef(todo.check);
+      const issue = ref && (await readRefs?.([ref]))?.[0];
+      const prs = issue?.closingPrs?.length ? ((await readPrs(issue.closingPrs)) ?? []) : [];
+      repo.record(todo.id, prs, Date.now());
+      return { issue: issue || undefined, prs, observedAt: Date.now() };
+    }
     repo.claim(todo.id, claimsOf(todo), Date.now());
     const urls = repo.urls(todo.id);
     if (!urls.length) return todo.check ? { prs: [], observedAt: Date.now() } : null;
@@ -429,13 +466,17 @@ export function createCodingTodoPack(
     judge: (todo, facts) => {
       if (!facts || facts.incomplete || todo.check?.pack !== 'coding')
         return { state: 'no_opinion' };
-      const result = codingTodoCheck(todo.check.kind, facts.prs, facts.observedAt);
+      const result =
+        todo.check.kind === 'issue_closed'
+          ? codingIssueCheck(facts.issue)
+          : codingTodoCheck(todo.check.kind, facts.prs, facts.observedAt);
       if (result?.failed) return { state: 'failed', reason: result.failed };
       return result?.done ? { state: 'done', evidence: result.evidence } : { state: 'no_opinion' };
     },
     schema: createCodingPackTables,
     repository: (todo) => codingTodoRepository(todo, todo.id ? repo.urls(todo.id) : []),
     openedPrs: (todo, urls) =>
+      todo.check?.kind !== 'issue_closed' &&
       repo.claim(
         todo.id,
         [...claimsOf(todo), ...urls.map((url) => ({ url, claim: 'branch' as const }))],
@@ -445,7 +486,11 @@ export function createCodingTodoPack(
       const facts = await readFacts(todo);
       if (!facts) return null;
       if (facts.incomplete) return todo.check ? { done: false, evidence: null } : null;
-      return todo.check ? codingTodoCheck(todo.check.kind, facts.prs, facts.observedAt) : null;
+      return todo.check?.kind === 'issue_closed'
+        ? codingIssueCheck(facts.issue)
+        : todo.check
+          ? codingTodoCheck(todo.check.kind, facts.prs, facts.observedAt)
+          : null;
     },
     statusLine: (todo) => codingTodoStatusLine(todo, repo.prs(todo.id), ledger),
     waiting: (todo) => repo.prs(todo.id).some((pr) => pr.state === 'OPEN'),
@@ -487,7 +532,7 @@ export function createCodingTodoPack(
       return null;
     },
     topics: (todo) =>
-      repo.urls(todo.id).flatMap((url) => {
+      (todo.check?.kind === 'issue_closed' ? [] : repo.urls(todo.id)).flatMap((url) => {
         const parsed = (repo.latest(url)?.pr.state ?? 'OPEN') === 'OPEN' ? parsePrUrl(url) : null;
         return parsed ? [buildPrEventTopicPattern(parsed)] : [];
       }),

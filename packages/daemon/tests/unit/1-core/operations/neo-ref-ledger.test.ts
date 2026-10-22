@@ -205,7 +205,10 @@ test('local coverage distinguishes stale/failure and preserves issue parent and 
     parent: { url: 'https://github.com/synthetic/refs/issues/1' },
     timelineItems: { nodes: [{ createdAt: '2026-10-19T11:00:00Z' }] },
     closedByPullRequestsReferences: {
-      nodes: [{ url, merged: true, mergedAt: '2026-10-20T10:00:00Z', baseRefName: 'dev' }],
+      nodes: [
+        { url, merged: true, mergedAt: '2026-10-20T10:00:00Z', baseRefName: 'dev' },
+        { url: url + '0', merged: false, baseRefName: 'release' },
+      ],
     },
   };
   f.data({ data: { repository: { defaultBranchRef: { name: 'dev' }, issueOrPullRequest: node } } });
@@ -217,6 +220,8 @@ test('local coverage distinguishes stale/failure and preserves issue parent and 
       title: 'Epic',
       done: true,
       closedBy: url,
+      stateReason: 'COMPLETED',
+      closingPrs: [url, url + '0'],
       parent: { url: node.parent.url, at: Date.parse('2026-10-19T11:00:00Z') },
       merges: [{ url, base: 'dev', at: Date.parse('2026-10-20T10:00:00Z') }],
     },

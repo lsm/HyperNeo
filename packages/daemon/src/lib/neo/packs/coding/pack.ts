@@ -40,8 +40,11 @@ export function createCodingPack(deps: {
 }): NeoPack {
   const readClaudeOwners = deps.readClaudeOwners ?? createCodingClaudeOwnerReader();
   const ledgerSkips = new Map<string, number>();
-  const todos = createCodingTodoPack(deps.todoPrs, deps.readPrs, (url) =>
-    deps.prLedger.stateOf(url)
+  const todos = createCodingTodoPack(
+    deps.todoPrs,
+    deps.readPrs,
+    (url) => deps.prLedger.stateOf(url),
+    deps.readRefStates ?? createCodingRefReader(() => deps.prLedger.refFacts)
   );
   return {
     ...CODING_PACK_BRIEF,

@@ -46,6 +46,23 @@ export class NeoTodoSessionRepository extends NeoDriverSessionRows {
     this.inputs = new WorkDeliveryInputRepository(db);
   }
 
+  readNudge(todoId: string): { since: number; nudges: number } | null {
+    const row = this.db
+      .prepare(
+        "SELECT value_json FROM pack_facts WHERE todo_id = ? AND pack = 'core' AND key = 'nudge'"
+      )
+      .get(todoId) as { value_json: string } | null;
+    return row ? JSON.parse(row.value_json) : null;
+  }
+
+  recordNudge(todoId: string, incident: { since: number; nudges: number }): void {
+    this.db
+      .prepare(
+        "INSERT INTO pack_facts (todo_id, pack, key, value_json) VALUES (?, 'core', 'nudge', ?) ON CONFLICT(todo_id, pack, key) DO UPDATE SET value_json = excluded.value_json"
+      )
+      .run(todoId, JSON.stringify(incident));
+  }
+
   doingTodoOn(
     ref: WorkRef,
     startedAfter: number | null = null
