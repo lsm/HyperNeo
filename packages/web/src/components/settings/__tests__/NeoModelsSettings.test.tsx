@@ -28,6 +28,7 @@ const models = [primary, glm, copilot, { model: 'router/test', provider: 'openro
     display_name: m.model,
     description: '',
     available: true,
+    contextWindow: 1_000_000,
     thinkingLevels:
       m.provider === 'anthropic-copilot' ? ['off', 'think32k'] : ['off', 'think8k', 'think24k'],
   })
@@ -155,3 +156,61 @@ test('selects a primary when Neo preferences have never been saved', async () =>
     })
   );
 });
+
+test('saves 70 percent with the model and previews the effective token threshold', async () => {
+  const ui = await editor();
+  fireEvent.input(ui.getByLabelText('Auto-compact percentage'), { target: { value: '70' } });
+  expect(ui.getByText(/700,000.*1,000,000/)).toBeTruthy();
+  fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'neo.preferences.set',
+      input: { ...primary, fallbacks: [glm, copilot], autoCompactPercent: 70 },
+    })
+  );
+});
+
+test.each([
+  [1, 10],
+  [101, 100],
+])('clamps percentage %s to %s on save', async (input, expected) => {
+  const ui = await editor();
+  fireEvent.input(ui.getByLabelText('Auto-compact percentage'), {
+    target: { value: String(input) },
+  });
+  fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'neo.preferences.set',
+      input: { ...primary, fallbacks: [glm, copilot], autoCompactPercent: expected },
+    })
+  );
+});
+
+test('90 resets an explicit override to the unchanged provider default', async () => {
+  (globalSettings as { value: GlobalSettings | null }).value = {
+    neo: { preferences: { ...primary, autoCompactPercent: 70 } },
+  } as GlobalSettings;
+  const ui = await editor();
+  expect((ui.getByLabelText('Auto-compact percentage') as HTMLInputElement).value).toBe('70');
+  fireEvent.input(ui.getByLabelText('Auto-compact percentage'), { target: { value: '90' } });
+  expect(ui.getByText(/Default.*unchanged/)).toBeTruthy();
+  fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'neo.preferences.set',
+      input: primary,
+    })
+  );
+});
+
+test.each(['', '70.5'])(
+  'rejects invalid percentage %s without sending a preference',
+  async (value) => {
+    const ui = await editor();
+    fireEvent.input(ui.getByLabelText('Auto-compact percentage'), { target: { value } });
+    fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
+    expect((await ui.findByRole('alert')).textContent).toContain('whole number');
+    expect(request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
+  }
+);
