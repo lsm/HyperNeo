@@ -213,11 +213,11 @@ describe('Neo live durable intake', () => {
       submit('Do not lose this');
       expect((input as HTMLTextAreaElement).value).toBe('');
       expect(screen.queryByRole('button', { name: 'Remove note.txt' })).toBeNull();
-      await screen.findByRole('button', { name: /^Not sent/ });
+      await screen.findByRole('img', { name: /^Not sent/ });
       fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
       await waitFor(() => expect(asks()).toHaveLength(2));
       expect(asks()[1][1].input).toEqual(asks()[0][1].input);
-      await waitFor(() => expect(screen.queryByRole('button', { name: /^Not sent/ })).toBeNull());
+      await waitFor(() => expect(screen.queryByRole('img', { name: /^Not sent/ })).toBeNull());
       expect((input as HTMLTextAreaElement).value).toBe('');
     }
   );
@@ -234,7 +234,7 @@ describe('Neo live durable intake', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
     await waitFor(() => expect((input as HTMLTextAreaElement).value).toBe('Try this later'));
     expect(screen.getByRole('button', { name: 'Remove Photo 1' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /^Not sent/ })).toBeNull();
+    expect(screen.queryByRole('img', { name: /^Not sent/ })).toBeNull();
   });
 
   it('keeps later text and attachments while accepting only one repeated submit', async () => {

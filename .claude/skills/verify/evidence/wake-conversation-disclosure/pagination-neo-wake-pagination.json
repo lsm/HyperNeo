@@ -1,0 +1,40 @@
+[
+  {
+    "viewport": "desktop",
+    "before": {
+      "x": 24,
+      "y": 240.04812622070312,
+      "width": 175.328125,
+      "height": 109.1875
+    },
+    "after": {
+      "x": 44.828125,
+      "y": 240.1875,
+      "width": 652.71875,
+      "height": 36
+    },
+    "scrollBefore": 80,
+    "scrollAfter": 131,
+    "hiddenHeight": 109.1875,
+    "delta": 0.139373779296875
+  },
+  {
+    "viewport": "mobile",
+    "before": {
+      "x": 20,
+      "y": 240.04847717285156,
+      "width": 350,
+      "height": 109.18748474121094
+    },
+    "after": {
+      "x": 30.5,
+      "y": 240.1875,
+      "width": 329,
+      "height": 51
+    },
+    "scrollBefore": 80,
+    "scrollAfter": 131,
+    "hiddenHeight": 109.1875,
+    "delta": 0.1390228271484375
+  }
+]

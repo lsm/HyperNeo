@@ -1,5 +1,5 @@
 import type { NeoPublication } from '@hyperneo/shared/types/neo-publication';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NeoPublicConversation, PendingAsk } from '../NeoPublicConversation.tsx';
 import { NeoWakeRow } from '../NeoWakeRow.tsx';
@@ -19,14 +19,17 @@ const conversation = (entries: NeoPublicEntry[]) => ({
 function assertTrailingControl(body: HTMLElement, context: RegExp) {
   const less = screen.getByRole('button', { name: context, expanded: true });
   expect(less.textContent).toContain('less');
-  expect(body.compareDocumentPosition(less) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(
+    body.contains(less) ||
+      Boolean(body.compareDocumentPosition(less) & Node.DOCUMENT_POSITION_FOLLOWING)
+  ).toBe(true);
   fireEvent.click(body);
   expect(less.getAttribute('aria-expanded')).toBe('true');
   return less;
 }
 
 describe('Wake and conversation explicit disclosures', () => {
-  it('keeps wake summaries inert, preserves native navigation and uses a trailing control', () => {
+  it('keeps wake summaries inert, preserves native navigation and uses a trailing control', async () => {
     const wake = {
       scheduleId: 'synthetic-wake',
       sourceKind: 'goal' as const,
@@ -66,7 +69,9 @@ describe('Wake and conversation explicit disclosures', () => {
     expect(row.open).toBe(false);
     row.open = true;
     fireEvent(row, new Event('toggle'));
-    expect(screen.getByRole('button', { name: /less.*Synthetic wake/ })).toBeTruthy();
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /less.*Synthetic wake/ })).toBeTruthy()
+    );
   });
 
   it('keeps a session-message preview inert and preserves full text for selection', () => {

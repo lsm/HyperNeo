@@ -1,0 +1,11 @@
+{
+  "phase": "before",
+  "width": 390,
+  "controls": [],
+  "wakeBodyOpens": true,
+  "sessionBodyOpens": true,
+  "viewport": {
+    "width": 390,
+    "scrollWidth": 390
+  }
+}
