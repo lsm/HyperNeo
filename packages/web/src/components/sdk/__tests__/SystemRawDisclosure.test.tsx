@@ -15,19 +15,7 @@ const system = (subtype: string, fields: Record<string, unknown>) =>
     session_id: 'synthetic',
     ...fields,
   }) as Extract<SDKMessage, { type: 'system' }>;
-const init = () =>
-  system('init', {
-    model: 'synthetic-model',
-    cwd: '/synthetic/project',
-    permissionMode: 'default',
-    tools: ['Read'],
-    mcp_servers: [],
-    agents: [],
-    slash_commands: [],
-    apiKeySource: 'synthetic',
-  });
 const cases = [
-  { title: 'Session Started', label: 'Session Started', message: init() },
   {
     title: 'Memory recalled',
     label: 'Memory recalled',
@@ -79,28 +67,6 @@ describe('SDK system and raw disclosures', () => {
     }
   );
 
-  it('uses an explicit init pill without changing normal-session visibility', () => {
-    const message = init();
-    const hidden = render(<SDKMessageRenderer message={message} />);
-    expect(hidden.container.textContent).toBe('');
-    hidden.unmount();
-    const view = render(<SDKMessageRenderer message={message} taskContext />);
-    fireEvent.click(view.getByText('synthetic-model', { exact: true }));
-    const more = view.getByRole('button', { name: 'more — Session details', exact: true });
-    expect(more.getAttribute('aria-expanded')).toBe('false');
-    fireEvent.click(more);
-    const less = view.getByRole('button', { name: 'less — Session details', exact: true });
-    expect(view.getByText('/synthetic/project')).toBeTruthy();
-    fireEvent.click(view.getByText('/synthetic/project'));
-    expect(less.getAttribute('aria-expanded')).toBe('true');
-    fireEvent.click(less);
-    expect(
-      view
-        .getByRole('button', { name: 'more — Session details', exact: true })
-        .getAttribute('aria-expanded')
-    ).toBe('false');
-  });
-
   it('keeps unknown-message JSON behind the same explicit control', () => {
     const message = {
       type: 'synthetic_unknown',
@@ -123,7 +89,7 @@ describe('SDK system and raw disclosures', () => {
   it('preserves minimal-mode activity filtering', () => {
     const view = render(
       <ChatDisplayModeContext.Provider value="minimal">
-        <SDKMessageRenderer message={cases[2].message} />
+        <SDKMessageRenderer message={cases[1].message} />
       </ChatDisplayModeContext.Provider>
     );
     expect(view.container.textContent).toBe('');

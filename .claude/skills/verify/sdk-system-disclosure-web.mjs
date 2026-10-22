@@ -16,7 +16,7 @@ export async function verifySdkSystem(page, { port, run, width, phase }) {
   ]) {
     await page.goto(`http://127.0.0.1:${port}/session/${worker}`);
     const heading = page.getByText(title, { exact: true });
-    const card = heading.locator(title === 'Show raw data' ? 'xpath=ancestor::details[1]' : 'xpath=ancestor::*[contains(@class,"rounded")][1]');
+    const card = heading.locator(after || title === 'Show raw data' ? 'xpath=ancestor::details[1]' : 'xpath=ancestor::*[contains(@class,"rounded")][1]');
     await heading.waitFor();
     const control = () => after ? card.getByRole('button', { name: new RegExp(`^(more|less) — ${label}$`) }) : title === 'Show raw data' ? card.locator('summary') : card.getByRole('button').first();
     await heading.click();
@@ -41,13 +41,27 @@ export async function verifySdkSystem(page, { port, run, width, phase }) {
       assert(Math.abs(entry.delta) <= 2, `${label} moved ${entry.delta}px`);
       await card.getByText(detail, { exact: title !== 'Show raw data' }).click();
       assert.equal(await control().getAttribute('aria-expanded'), 'true');
+      const start = await card.getByText(detail, { exact: title !== 'Show raw data' }).evaluate((el, text) => {
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT); let node;
+        while ((node = walker.nextNode())) {
+          const at = node.textContent.indexOf(text); if (at < 0) continue;
+          const range = document.createRange(); range.setStart(node, at); range.setEnd(node, at + 3);
+          const r = range.getBoundingClientRect(); return { x: r.x, y: r.y, height: r.height };
+        }
+        throw new Error('Synthetic selection text missing');
+      }, detail);
+      await page.mouse.move(start.x + 1, start.y + start.height / 2); await page.mouse.down();
+      await page.mouse.move(start.x + 45, start.y + start.height / 2, { steps: 6 }); await page.mouse.up();
+      entry.selectedText = await page.evaluate(() => window.getSelection()?.toString());
+      assert(entry.selectedText.length >= 3);
+      assert.equal(await control().getAttribute('aria-expanded'), 'true');
     }
     await control().scrollIntoViewIfNeeded();
     await page.screenshot({ path: `${dir}/${label}-open-${width}.png`, animations: 'disabled', scale: 'css' });
     if (after) {
       entry.placement = await control().evaluate(b => { const r = b.getBoundingClientRect(), p = b.closest('.flow-root').getBoundingClientRect();return {right:r.right,parentRight:p.right}; });
       assert(Math.abs(entry.placement.right - entry.placement.parentRight) <= 14);
-      await page.keyboard.press('Space');
+      await control().press('Space');
       assert.equal(await control().getAttribute('aria-expanded'), 'false');
       assert.equal(await control().evaluate(el => el === document.activeElement), true);
     } else await control().click();
