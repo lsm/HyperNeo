@@ -1098,3 +1098,41 @@ describe('classifyQueryRetryRoute for a silent model stream', () => {
     );
   });
 });
+
+describe('Claude login recovery', () => {
+  it('restarts a Claude query once after authentication rejection', () => {
+    const decision = decideQueryRetry({
+      errorSignal: signal({ rawText: '401 OAuth token revoked' }),
+      env: env({ hasConsumedPrompt: true }),
+    });
+    expect(decision.route.action).toBe('claude_auth_retry');
+  });
+  it('surfaces a persistent login failure after that retry', () => {
+    const decision = decideQueryRetry({
+      errorSignal: signal({ rawText: '401 OAuth token revoked' }),
+      env: env({ attempt: 1, hasConsumedPrompt: true }),
+    });
+    expect(decision.route).toEqual({
+      action: 'terminal',
+      category: ErrorCategory.AUTHENTICATION,
+      messageHint: 'claude_login_failed',
+    });
+  });
+  it('does not restart an interrupted Claude query or another provider', () => {
+    for (const input of [
+      env({
+        lifecycle: {
+          processingStatus: 'interrupted',
+          abortSignalAborted: true,
+          isLimitRecoveryPending: false,
+        },
+      }),
+      env({ providerFamily: 'provider' }),
+    ]) {
+      expect(
+        decideQueryRetry({ errorSignal: signal({ rawText: '401 unauthorized' }), env: input }).route
+          .action
+      ).not.toBe('claude_auth_retry');
+    }
+  });
+});

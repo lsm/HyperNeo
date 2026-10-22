@@ -3613,6 +3613,22 @@ describe('SDKMessageHandler', () => {
       });
     });
 
+    it('does not clear a failure when the SDK success subtype carries is_error', async () => {
+      await handler.handleMessage({
+        type: 'result',
+        subtype: 'success',
+        is_error: true,
+        result: '401 OAuth token revoked',
+        uuid: 'auth-result',
+        usage: { input_tokens: 0, output_tokens: 0 },
+        total_cost_usd: 0,
+        modelUsage: {},
+      } as unknown as SDKMessage);
+      expect(emitSpy).not.toHaveBeenCalledWith('session.errorClear', {
+        sessionId: 'test-session-id',
+      });
+    });
+
     it('should emit session.errorClear event', async () => {
       const message: SDKMessage = {
         type: 'result',

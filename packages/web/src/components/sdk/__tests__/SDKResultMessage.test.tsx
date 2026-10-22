@@ -437,3 +437,15 @@ describe('SDKResultMessage', () => {
     });
   });
 });
+
+describe('SDKResultMessage error flag', () => {
+  it('shows a failed result even when the SDK subtype says success', () => {
+    const { container } = render(
+      <SDKResultMessage
+        message={createSuccessResult({ is_error: true, result: 'OAuth token revoked' })}
+      />
+    );
+    expect(container.firstElementChild.className).toContain('bg-danger');
+    expect(container.firstElementChild.className).not.toContain('bg-success');
+  });
+});
