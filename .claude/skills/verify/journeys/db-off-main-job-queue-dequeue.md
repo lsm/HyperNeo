@@ -23,3 +23,6 @@ jobs in the same fixture DB. `evidence/dequeue.json` verifies20unique claims and
 completions, complete payloads, wrong-token rejection, FIFO heads/tail and exempt
 session exclusion. Unit coverage also holds a claim reply across stop and races
 overlapping processor ticks; stop must drain the accepted handlers without loss.
+The online multiple-steer case waits for both exact user UUIDs in the SDK page,
+not just an older-message count or an empty enqueued queue. Strict acknowledgement,
+timestamp and consumed-count assertions and the existing timeout remain in place.

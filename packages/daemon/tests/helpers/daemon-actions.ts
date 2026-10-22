@@ -187,9 +187,9 @@ export async function interrupt(daemon: DaemonServerContext, sessionId: string):
 export async function waitForSdkMessages(
   daemon: DaemonServerContext,
   sessionId: string,
-  options: { minCount?: number; timeout?: number } = {}
+  options: { minCount?: number; timeout?: number; userMessageIds?: string[] } = {}
 ): Promise<{ sdkMessages: Array<Record<string, unknown>>; hasMore: boolean }> {
-  const { minCount = 1, timeout = 5000 } = options;
+  const { minCount = 1, timeout = 5000, userMessageIds = [] } = options;
   const start = Date.now();
 
   while (Date.now() - start < timeout) {
@@ -197,7 +197,12 @@ export async function waitForSdkMessages(
       sessionId,
     })) as { sdkMessages: Array<Record<string, unknown>>; hasMore: boolean };
 
-    if (result.sdkMessages.length >= minCount) {
+    if (
+      result.sdkMessages.length >= minCount &&
+      userMessageIds.every((id) =>
+        result.sdkMessages.some((message) => message.type === 'user' && message.uuid === id)
+      )
+    ) {
       return result;
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
