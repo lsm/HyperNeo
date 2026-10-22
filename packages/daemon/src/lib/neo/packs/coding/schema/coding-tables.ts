@@ -29,6 +29,18 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
     read_at INTEGER NOT NULL,
     PRIMARY KEY (repo, number)
   );
+  CREATE TABLE IF NOT EXISTS pack_coding_merge_facts (
+    repo TEXT NOT NULL,
+    number INTEGER NOT NULL,
+    fact_revision INTEGER NOT NULL,
+    observation_revision INTEGER NOT NULL,
+    value_json TEXT CHECK (value_json IS NULL OR json_valid(value_json)),
+    source TEXT,
+    observed_at INTEGER,
+    attempted_at INTEGER NOT NULL,
+    reason TEXT CHECK (reason IS NULL OR reason IN ('failed', 'partial', 'rate_limited', 'not_authorized')),
+    PRIMARY KEY (repo, number)
+  );
   CREATE TABLE IF NOT EXISTS pack_coding_repo_aliases (
     alias TEXT PRIMARY KEY,
     canonical TEXT NOT NULL

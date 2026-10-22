@@ -6,32 +6,6 @@ import { CodingPrLedgerRepository } from '../../../../src/lib/neo/packs/coding/p
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
-type Merge = { state: 'OPEN' | 'MERGED' | 'CLOSED'; mergeCommit: string | null };
-type Outcome = { value: Merge; source: string } | { reason: 'failed' | 'partial' | 'rate_limited' };
-type Read = {
-  repo: string;
-  number: number;
-  factRevision: number;
-  observationRevision: number;
-  merge: {
-    status: string;
-    value?: Merge;
-    reason?: string;
-    observedAt?: number;
-    attemptedAt?: number;
-    source?: string;
-  };
-};
-type Store = {
-  record(
-    repo: string,
-    number: number,
-    outcome: Outcome,
-    at: number,
-    expectedRevision: number
-  ): boolean;
-  read(repo: string, number: number, now: number, maxAgeMs: number): Read;
-};
 const repo = 'synthetic/ledger',
   source = 'github-pr-detail',
   merged = { state: 'MERGED', mergeCommit: 'c'.repeat(40) } as const;
@@ -39,7 +13,7 @@ function setup(path = ':memory:') {
   const db = new Database(path);
   createCodingPackTables(db);
   const ledger = new CodingPrLedgerRepository(db);
-  const facts = (ledger as CodingPrLedgerRepository & { mergeFacts: Store }).mergeFacts;
+  const facts = ledger.mergeFacts;
   return { db, ledger, facts };
 }
 
@@ -105,7 +79,7 @@ describe('ledger merge facts', () => {
     }
   });
 
-  for (const reason of ['failed', 'partial', 'rate_limited'] as const)
+  for (const reason of ['failed', 'partial', 'rate_limited', 'not_authorized'] as const)
     test(`latest ${reason} reads unknown while prior successful bytes remain`, () => {
       const { db, facts } = setup();
       try {
@@ -135,6 +109,25 @@ describe('ledger merge facts', () => {
         db.close();
       }
     });
+
+  test('an initial refused acquisition stays unknown until a successful retry', () => {
+    const { db, facts } = setup();
+    try {
+      expect(facts.record(repo, 7, { reason: 'failed' }, 100, 0)).toBe(true);
+      expect(facts.read(repo, 7, 100, 10)).toMatchObject({
+        factRevision: 0,
+        observationRevision: 1,
+        merge: { status: 'unknown', reason: 'failed', attemptedAt: 100 },
+      });
+      expect(facts.record(repo, 7, { value: merged, source }, 110, 1)).toBe(true);
+      expect(facts.read(repo, 7, 110, 10)).toMatchObject({
+        factRevision: 1,
+        merge: { status: 'known', value: merged },
+      });
+    } finally {
+      db.close();
+    }
+  });
 
   test('a late acquisition cannot replace a newer result, including after reopen', () => {
     const dir = mkdtempSync(join(tmpdir(), 'ledger-merge-facts-'));
