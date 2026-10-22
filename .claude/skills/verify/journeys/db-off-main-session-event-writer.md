@@ -52,3 +52,13 @@ service path is checked independently. Evidence is `evidence/fault.json`.
 Transaction call stacks in the RPC helper are proof-only instrumentation of the
 main connection, including transactions prepared during startup. They attribute
 other writer stalls without moving or optimizing those writer families here.
+
+With pinned Deno 2.9.4 available, use a fresh directory and the isolated setup:
+`VERIFY_DENO_BIN=/absolute/path/to/deno bun .claude/skills/verify/session-event-writer-startup.ts verify "$RUN"`.
+`baseline` records the unfixed first-message loss. The parent seeds only m331
+into a synthetic DB. A cold Deno child imports only the writer client and starts
+a native worker whose fixture delays importing the production handler by50ms.
+No fixture queues or re-sends its request. Phase evidence proves imports finish;
+startup must then ingest the complete body once and close normally. The native
+ready acknowledgement gates the first dispatch, and duplicate ready frames must
+not dispatch it twice. `evidence/startup.json` and `child.log` retain the outcome.
