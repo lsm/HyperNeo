@@ -9,6 +9,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { WorkerAgentMemoryEmbedder } from '../../../packages/daemon/src/storage/repositories/agent-memory-worker-embedder.ts';
 import { installWorkSearchWait } from './work-search-wait.ts';
+import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 import type { PlaceGroup } from '../../../packages/daemon/src/lib/drivers/types.ts';
 import { SDKBunWorkerBridge } from '../../../packages/daemon/tests/helpers/sdk-bun-worker-bridge.ts';
 
@@ -16,6 +17,7 @@ const run = resolve(process.argv[2]);
 const waitMs = Number(process.argv[3] ?? 1200);
 const bridge = process.argv[4] === 'bridge';
 const priority = process.argv[5] === 'priority';
+const fanout = process.argv[5] === 'fanout';
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
@@ -25,6 +27,13 @@ for (const directory of ['home', 'data', 'bin', 'evidence']) mkdirSync(join(run,
 copyFileSync('.claude/skills/verify/gh-stub.sh', join(run, 'bin/gh'));
 symlinkSync(process.execPath, join(run, 'bin/bun'));
 process.env.PATH = join(run, 'bin') + ':' + process.env.PATH;
+if (fanout) {
+  mkdirSync(join(run, 'home/.codex'), { recursive: true });
+  mkdirSync(join(run, 'home/.claude/projects'), { recursive: true });
+  const state = new Database(join(run, 'home/.codex/state_5.sqlite'));
+  state.exec('CREATE TABLE projects(id TEXT,name TEXT,updated_at_ms INTEGER); CREATE TABLE project_roots(project_id TEXT,position INTEGER,path TEXT); CREATE TABLE threads(id TEXT,name TEXT,title TEXT,first_user_message TEXT,cwd TEXT,source TEXT,archived INTEGER,updated_at_ms INTEGER,rollout_path TEXT,git_branch TEXT)');
+  state.close();
+}
 const NativeWorker = globalThis.Worker;
 const warm = WorkerAgentMemoryEmbedder.prototype.warm;
 WorkerAgentMemoryEmbedder.prototype.warm = () => {};
@@ -63,6 +72,10 @@ try {
     })();
     await Bun.sleep(0);
   }
+  if (fanout) {
+    const id = db.prepare("INSERT INTO message_search_content(kind,source_id,message_id,session_id,message_type,title,body,timestamp) VALUES ('claude','synthetic-claude','claude-message','synthetic-claude','assistant','Retained Claude history',?,1)").run(body).lastInsertRowid;
+    save.run(id, embedder.model, vector.length, new Uint8Array(vector.buffer));
+  }
   const hash = () => {
     const digest = createHash('sha256');
     for (const row of db.prepare(`SELECT m.id,m.body,v.embedding FROM message_search_content m JOIN message_search_vectors v ON v.content_id=m.id ORDER BY m.id`).iterate() as Iterable<{ id: number; body: string; embedding: Uint8Array }>) digest.update(String(row.id)).update(row.body).update(row.embedding);
@@ -85,7 +98,7 @@ try {
   timer = setInterval(() => { const now = performance.now(); lagMs = Math.max(lagMs, now - previous - 10); previous = now; }, 10);
   await Bun.sleep(20);
   const started = performance.now();
-  const requestSearch = (text: string) => hub.request<{ places: PlaceGroup[] }>('operation.invoke', { name: 'work.find', input: { text, localOnly: true, adapters: ['hyperneo'], limit: 20 } });
+  const requestSearch = (text: string) => hub.request<{ places: PlaceGroup[]; unreachable: { source: string; reason: string }[] }>('operation.invoke', { name: 'work.find', input: { text, localOnly: true, adapters: fanout ? ['hyperneo', 'codex-desktop', 'claude-code'] : ['hyperneo'], limit: 20 } });
   const firstSearch = requestSearch('unmatched quokka');
   const order: string[] = [];
   const sdkMs: Record<string, number> = {};
@@ -116,9 +129,10 @@ try {
   assert.deepEqual(observed.snippets?.map(({ match, at, role, text, handle }) => ({ match, at, role, text, messageId: handle.messageId, sessionId: handle.sessionId })), expected[0].snippets);
   const after = hash();
   const reads = readFileSync(join(run, 'evidence/vector-reads.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
-  Object.assign(evidence, { sessionId, retainedRows: 10020, before, after, rpcMs, lagMs, health, reads, result: found, runtime: Bun.version });
+  Object.assign(evidence, { sessionId, retainedRows: fanout ? 10021 : 10020, before, after, rpcMs, lagMs, health, reads, result: found, runtime: Bun.version });
   console.log(JSON.stringify(evidence, null, 2));
   assert.equal(before, after);
+  if (fanout) { assert.deepEqual(found.unreachable, []); assert(ids.includes('synthetic-claude'), 'Claude search result lost from fanout'); }
   assert(lagMs < 1000, 'work.find blocked the event loop >=1s');
   if (waitMs) { assert.equal(health.data.status, 'ok'); assert(health.ms < 250, 'Independent health blocked behind work.find'); }
   else { assert(rpcMs < 250, 'Natural work.find exceeded250ms'); assert(reads.every(r => r.sqlMs < 250)); }

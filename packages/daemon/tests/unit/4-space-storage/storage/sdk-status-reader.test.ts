@@ -406,6 +406,7 @@ test('search backpressure preserves SDK admission and queued SDK reads finish fi
   const { reader, workers } = fixture();
   const first = reader.readWorkChats({ query: 'first', limit: 1 });
   const second = reader.readWorkChats({ query: 'second', limit: 1 });
+  const third = reader.readWorkChats({ query: 'third', limit: 1 });
   await expect(reader.readWorkChats({ query: 'excess', limit: 1 })).rejects.toThrow('queue full');
   const statuses = Array.from({ length: 16 }, () => reader.read(args));
   workers[0].reply(workers[0].requests[0], []);
@@ -418,5 +419,8 @@ test('search backpressure preserves SDK admission and queued SDK reads finish fi
   await tick();
   workers[0].reply(workers[0].requests[17], []);
   expect(await second).toEqual([]);
+  await tick();
+  workers[0].reply(workers[0].requests[18], []);
+  expect(await third).toEqual([]);
   await reader.close();
 });
