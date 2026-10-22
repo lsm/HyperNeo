@@ -159,6 +159,11 @@ function TodoRow({
               {t('todo.new')}
             </span>
           )}
+          {todo.worker && (
+            <span data-worker-label class="block break-words text-xs text-fg-muted">
+              {todo.worker.label}
+            </span>
+          )}
           <div class="flow-root">
             {!expanded && control}
             <span
@@ -196,9 +201,9 @@ function TodoRow({
           type="button"
           class={neoSecondaryClass}
           aria-label={t('todo.openTitle', { title: todo.title })}
-          onClick={() => onOpen(todo.link!, todo.title)}
+          onClick={() => onOpen(todo.link!, todo.worker?.label ?? todo.title)}
         >
-          <NeoSessionMark kind={neoSessionKind(null, todo.link)} />
+          <NeoSessionMark kind={neoSessionKind(todo.worker?.adapter, todo.link)} />
           {t('todo.open')}
         </button>
       )}

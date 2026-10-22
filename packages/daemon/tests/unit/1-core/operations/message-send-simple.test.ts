@@ -32,7 +32,7 @@ describe('simple message.send worker handoff', () => {
   const registry = () =>
     createOperationRegistry([
       createSendMessageOperation(mailbox.jobQueue, (id) =>
-        [sender, 'neo:root', 'neo:second'].includes(id) ? 'active' : null
+        [sender, 'neo:root', 'neo:second', 'ordinary-target'].includes(id) ? 'active' : null
       ),
     ]);
   const send = (input: unknown, catalog = registry()) =>
@@ -62,6 +62,18 @@ describe('simple message.send worker handoff', () => {
     else process.env.HYPERNEO_DATA_DIR = before;
     rmSync(root, { recursive: true, force: true });
   });
+
+  test.each(['neo:root', 'ordinary-target'])(
+    'session messages to %s retain their envelope without a human id',
+    async (to) => {
+      await accepted({ to, text: 'Synthetic agent report.' });
+      const entry = JSON.parse(mailbox.rows()[0].payload);
+      expect(entry.message.inputKind).toBe('task');
+      expect(JSON.stringify(entry.message.message.content)).toContain('Synthetic agent report.');
+      expect(JSON.stringify(entry.message.message.content)).toContain(sender);
+      expect(JSON.stringify(entry.message.message.content)).not.toContain('[message id:');
+    }
+  );
 
   test('one 8KB report call reaches Neo as a complete hash-checked file reference', async () => {
     const receipt = await accepted({ to: 'neo:root', text: report });

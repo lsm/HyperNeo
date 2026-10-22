@@ -1,9 +1,11 @@
+import type { WorkerIdentity } from './worker-identity.ts';
 export interface DaemonInventoryLink {
   readonly kind: string;
   readonly id: string;
 }
 
 export interface DaemonInventoryEntry {
+  readonly worker?: WorkerIdentity;
   readonly id: string;
   readonly name: string;
   readonly status: string | null;

@@ -52,6 +52,18 @@ function toSchedule(row: Row): SessionSchedule {
 export class SessionScheduleRepository {
   constructor(private readonly db: BunDatabase) {}
 
+  recordWake(
+    sessionId: string,
+    messageId: string,
+    metadata: { scheduleId: string; sourceKind: string; sourceId: string },
+    firedAt: number
+  ): void {
+    this.db
+      .prepare(`INSERT OR IGNORE INTO session_schedule_wakes
+      (session_id, message_id, metadata_json, fired_at) VALUES (?, ?, ?, ?)`)
+      .run(sessionId, messageId, JSON.stringify(metadata), firedAt);
+  }
+
   create(input: NewSessionSchedule, nextRunAt: number, now = Date.now()): SessionSchedule {
     const id = generateUUID();
     const { cadence } = input;

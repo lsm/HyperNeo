@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
-import type { NeoPack, NeoTodoCheckResult } from '../../../../src/lib/neo/packs/types.ts';
+import type { NeoPack, NeoTodoCheckResult } from '../../../../src/lib/neo/pack-contract.ts';
 import {
   createNeoTodoRunner,
   neoAskIdleNote,
@@ -17,6 +17,7 @@ import {
 import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
 import { NeoTodoSessionRepository } from '../../../../src/storage/repositories/neo-todo-session-repository.ts';
+import { createNeoTodoOperations } from '../../../../src/lib/neo/todo-operations.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
@@ -1390,5 +1391,127 @@ describe('planNeoTodoIdle', () => {
     expect(at(60, 1)).toEqual({ kind: 'remind', nudges: 2 });
     expect(at(90, 2)).toEqual({ kind: 'block' });
     expect(at(300, 3)).toBeNull();
+  });
+});
+
+describe('current explicit removal behavior before recompute', () => {
+  const remove = (h: ReturnType<typeof setup>, todoId: string) => {
+    const operation = createNeoTodoOperations(
+      h.store,
+      h.sessions,
+      h.runner,
+      () => [],
+      () => null
+    ).find((operation) => operation.name === 'neo.todo.remove')!;
+    return operation.execute(operation.inputSchema.parse({ todoId, reason: 'Synthetic removal' }), {
+      source: 'mcp',
+      sessionId: 'neo',
+      role: 'neo',
+    });
+  };
+
+  test('removal prunes only its pending start choice and cannot be applied twice', async () => {
+    const h = setup();
+    try {
+      const removed = h.add(),
+        remaining = h.add();
+      h.store.joinStartQuestion(removed, Date.now());
+      h.store.joinStartQuestion(remaining, Date.now());
+      const question = h.store.listQuestions('ask').find((question) => question.kind === 'start')!;
+      expect(question.startTodos).toEqual([removed.id, remaining.id]);
+      expect(await remove(h, removed.id)).toMatchObject({ ok: true, todo: { state: 'removed' } });
+      expect(h.store.getQuestion(question.id)).toMatchObject({
+        state: 'open',
+        startTodos: [remaining.id],
+      });
+      expect(h.store.listTodos('ask').map(({ id, state }) => ({ id, state }))).toEqual([
+        { id: removed.id, state: 'removed' },
+        { id: remaining.id, state: 'todo' },
+      ]);
+      expect(await remove(h, removed.id)).toMatchObject({ ok: false });
+      expect(h.store.getQuestion(question.id)?.startTodos).toEqual([remaining.id]);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a stop refusal leaves the working todo and its complete report unchanged', async () => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      await h.runner.start(todo.id);
+      const report = 'Complete worker result 🦊\n'.repeat(4000);
+      h.store.updateTodo(h.store.getTodo(todo.id)!, { report }, Date.now());
+      const before = h.store.getTodo(todo.id);
+      h.setStatus({ ok: false, reason: 'synthetic_stop_refused' });
+      expect(await remove(h, todo.id)).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining('synthetic_stop_refused'),
+      });
+      expect(h.store.getTodo(todo.id)).toEqual(before);
+      expect(h.calls.filter((call) => call.name === 'work.stop')).toHaveLength(1);
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('reused worker activity and restart cannot revive a removed todo or discard its report', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'neo-todo-removal-pin-'));
+    const path = join(dir, 'synthetic.db');
+    const h = setup(null, path);
+    let closed = false;
+    try {
+      const todo = h.add();
+      await h.runner.start(todo.id);
+      const report = 'Complete previous result 🦊\n'.repeat(4000);
+      h.store.updateTodo(h.store.getTodo(todo.id)!, { report }, Date.now());
+      expect(await remove(h, todo.id)).toMatchObject({ ok: true });
+      const removed = h.store.getTodo(todo.id);
+      const sibling = h.add();
+      await h.runner.start(sibling.id);
+      expect(h.sessions.readRef(sibling.id)).toEqual(h.sessions.readRef(todo.id));
+      h.setStatus({ ok: true, value: { status: 'running', lastActivityAt: Date.now() } });
+      await h.runner.refresh(() => {});
+      expect(h.store.getTodo(todo.id)).toEqual(removed);
+      h.db.close();
+      closed = true;
+      const db = new Database(path);
+      try {
+        const store = new NeoAskTodoRepository(db),
+          sessions = new NeoTodoSessionRepository(db);
+        const effects: string[] = [];
+        const runner = createNeoTodoRunner({
+          store,
+          sessions,
+          packs: () => [],
+          invoke: async (_caller, name) => {
+            effects.push(name);
+            return completed({
+              ok: true,
+              value: { status: 'running', lastActivityAt: Date.now() },
+            });
+          },
+          tell: async () => {},
+          tellAsk: async () => {},
+          changed: () => {},
+        });
+        await runner.refresh(() => {});
+        await runner.refresh(() => {});
+        expect(await runner.start(todo.id)).toMatchObject({ ok: false });
+        expect(await runner.proceed(todo.id, 'Stale continuation')).toMatchObject({ ok: false });
+        expect(await runner.retry(todo.id)).toMatchObject({ ok: false });
+        expect(store.getTodo(todo.id)).toEqual(removed);
+        expect(store.getTodo(todo.id)?.report).toBe(report);
+        expect(store.getTodo(sibling.id)?.state).toBe('doing');
+        expect(
+          effects.filter((name) => ['work.start', 'work.send', 'work.stop'].includes(name))
+        ).toEqual([]);
+      } finally {
+        db.close();
+      }
+    } finally {
+      if (!closed) h.db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

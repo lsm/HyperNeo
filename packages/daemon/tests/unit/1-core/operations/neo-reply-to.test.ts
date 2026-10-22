@@ -1,9 +1,9 @@
+import { runMigration442 } from '../../../../src/storage/schema/m442-neo-question-reply-to.ts';
 import { runMigration433 } from '../../../../src/storage/schema/m433-neo-question-document.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
 import {
   createNeoIntakeOperation,
-  neoReplyAuthor,
   neoQuoteFact,
   neoReplyFact,
   neoReplySnapshot,
@@ -49,6 +49,7 @@ describe('neo.message.send replyTo', () => {
     runMigration420(mailbox.db);
     runMigration427(mailbox.db);
     runMigration433(mailbox.db);
+    runMigration442(mailbox.db);
     createNeoPublicationTable(mailbox.db);
     runMigration344(mailbox.db);
     for (const id of [root, holder])
@@ -113,7 +114,8 @@ describe('neo.message.send replyTo', () => {
           .get(requestId) as { sdk_message: string }
       ).sdk_message
     );
-    const [time, ...content] = stored.message.content;
+    const [identifier, time, ...content] = stored.message.content;
+    expect(identifier.text).toBe(`[message id: ${requestId}]`);
     expect(time.text).toMatch(/^\(local time: \w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+\)$/);
     return { ...stored, message: { ...stored.message, content } };
   };
@@ -402,29 +404,6 @@ describe('neoQuoteFact', () => {
       'The human replied to their earlier message "Ship it":'
     );
     expect(neoQuoteFact({ kind: 'message', id: 'm' })).toBeNull();
-  });
-});
-
-describe('neoReplyAuthor', () => {
-  test("names the ask's owner, else the message's writer, else whoever answered the human's message", () => {
-    const ask = { sessionId: holder } as never;
-    const reply = {
-      replyTo: { kind: 'question' as const, id: 'q' },
-      ask,
-      question: null,
-      todo: null,
-    };
-    const publication = { producerInput: { sessionId: 'neo:holder:c2' } };
-    const asked = { askOrigin: { sessionId: 'neo:holder:c3' } };
-    const forwards = [
-      { hop: 1, toSessionId: 'neo:holder:c5' },
-      { hop: 0, toSessionId: 'neo:holder:c4' },
-    ];
-    expect(neoReplyAuthor(reply, publication, null, [])).toBe(holder);
-    expect(neoReplyAuthor(null, publication, null, [])).toBe('neo:holder:c2');
-    expect(neoReplyAuthor(null, null, asked, [])).toBe('neo:holder:c3');
-    expect(neoReplyAuthor(null, null, asked, forwards)).toBe('neo:holder:c5');
-    expect(neoReplyAuthor(null, null, null, [])).toBeNull();
   });
 });
 

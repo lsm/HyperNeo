@@ -567,6 +567,32 @@ describe('SDKMessageHandler', () => {
       );
     });
 
+    it('persists an auto-denied tool message without resetting the session', async () => {
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'permission_denied',
+        tool_name: 'Bash',
+        tool_use_id: 'denied-tool',
+        decision_reason_type: 'mode',
+        message: 'Bash was denied by dontAsk mode.',
+        uuid: 'denied-message',
+        session_id: 'test-session-id',
+      };
+
+      await expect(handler.handleMessage(message)).resolves.toBeUndefined();
+
+      expect(saveSDKMessageSpy).toHaveBeenCalledWith('test-session-id', message);
+      expect(message.message).toBe('Bash was denied by dontAsk mode.');
+      expect(publishSpy).toHaveBeenCalledWith(
+        'state.sdkMessages.delta',
+        expect.objectContaining({ added: [message] }),
+        { channel: 'session:test-session-id' }
+      );
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(lifecycleStopSpy).not.toHaveBeenCalled();
+      expect(messageQueueClearSpy).not.toHaveBeenCalled();
+    });
+
     it('should normalize missing usage on messages with BetaMessage (bridge provider crash guard)', async () => {
       const message: SDKMessage = {
         type: 'assistant',

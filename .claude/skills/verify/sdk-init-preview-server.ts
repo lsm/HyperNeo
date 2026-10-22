@@ -1,0 +1,20 @@
+import assert from 'node:assert/strict';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { createRequire } from 'node:module';
+const run = resolve(process.argv[2]), port = Number(process.argv[3]), daemon = Number(process.argv[4]);
+assert(process.env.NODE_ENV === 'test' && port !== 8399 && daemon !== 8399);
+const outdir = join(run, 'component');
+mkdirSync(outdir, { recursive: true });
+const fixtureRequire = createRequire(resolve('packages/web/package.json'));
+const build = await Bun.build({ plugins: [{ name: 'fixture-preact', setup(builder) { builder.onResolve({ filter: /^preact(?:\/.*)?$/ }, ({ path }) => ({ path: fixtureRequire.resolve(path) })); } }], entrypoints: ['.claude/skills/verify/sdk-init-preview.tsx'], outdir, target: 'browser', tsconfig: 'packages/web/tsconfig.json', define: { 'process.env.NODE_ENV': '"production"', 'import.meta.env.PROD': 'true', 'import.meta.env.DEV': 'false', 'import.meta.env.MODE': '"production"' } });
+assert(build.success, JSON.stringify(build.logs));
+const css = readFileSync('packages/web/dist/index.html', 'utf8').match(/href="([^\"]+\.css)"/)[1];
+writeFileSync(join(outdir, 'index.html'), `<html><head><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="http://127.0.0.1:${daemon}${css}"></head><body><div id="root"></div><script type="module" src="/sdk-init-preview.js"></script></body></html>`);
+Bun.serve({ hostname: '127.0.0.1', port, fetch(req) {
+  const name = new URL(req.url).pathname === '/' ? 'index.html' : new URL(req.url).pathname.slice(1);
+  const file = resolve(outdir, name);
+  if (!file.startsWith(outdir + '/')) return new Response('', { status: 404 });
+  return new Response(Bun.file(file));
+} });
+console.log(`Component-only preview: http://127.0.0.1:${port}`);

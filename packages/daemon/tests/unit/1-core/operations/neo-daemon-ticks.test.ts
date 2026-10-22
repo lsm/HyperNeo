@@ -94,8 +94,8 @@ describe('deploy checks', () => {
     });
     expect(calls.map((args) => args.slice(0, 4))).toEqual([
       ['gh', 'pr', 'view', pull(7123)],
-      ['gh', 'api', `repos/lsm/HyperNeo/compare/${MERGE}...${RUNNING}`],
-      ['gh', 'api', `repos/lsm/HyperNeo/compare/${MERGE}...${old}`],
+      ['gh', 'api', `repos/lsm/HyperNeo/compare/${MERGE}...${RUNNING}`, '--include'],
+      ['gh', 'api', `repos/lsm/HyperNeo/compare/${MERGE}...${old}`, '--include'],
     ]);
   });
 });

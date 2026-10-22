@@ -1,3 +1,4 @@
+import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import type { NeoWorkingSession, NeoWorkingStatus } from '@hyperneo/shared/types/neo-snapshot';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 
@@ -6,6 +7,7 @@ type Row = {
   projectId: string | null;
   title: string | null;
   status: string | null;
+  name?: string | null;
 };
 
 const WORKING = new Set<string>(['queued', 'processing', 'rate_limit_cooldown']);
@@ -15,6 +17,7 @@ export function projectNeoWorking(rows: readonly Row[]): NeoWorkingSession[] {
     .filter((row) => WORKING.has(row.status ?? ''))
     .map((row) => ({
       sessionId: row.sessionId,
+      worker: workerIdentity({ adapter: 'hyperneo', id: row.sessionId }, row.name ?? null),
       projectId: row.projectId,
       title: row.title ?? 'Neo',
       status: row.status as NeoWorkingStatus,
@@ -32,7 +35,7 @@ export function readNeoWorking(db: BunDatabase): NeoWorkingSession[] {
   return projectNeoWorking(
     db
       .prepare(
-        `SELECT b.session_id AS sessionId, b.concern_id AS projectId, c.title AS title,
+        `SELECT b.session_id AS sessionId, b.concern_id AS projectId, c.title AS title, s.title AS name,
            CASE WHEN json_valid(s.processing_state)
              THEN json_extract(s.processing_state, '$.status') END AS status
            FROM neo_session_bindings b

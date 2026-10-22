@@ -39,7 +39,7 @@ try {
   assert.equal(schedule?.last_outcome, 'fired');
   assert.equal(schedule?.status, 'active');
   assert(!jobs.some((job) => job.error));
-  assert(db.query('SELECT * FROM neo_input_origins WHERE message_id = ?').get(String(schedule?.last_message_id)));
+  assert(db.query('SELECT * FROM session_schedule_wakes WHERE message_id = ?').get(String(schedule?.last_message_id)));
   console.log(`PASS: open Neo with unreadable processing state delivered its goal wake. ${run}/evidence/goal-unreadable-state.json`);
 } finally {
   db.query('UPDATE sessions SET processing_state = ? WHERE id = ?').run(previous.processing_state, ownerSessionId);

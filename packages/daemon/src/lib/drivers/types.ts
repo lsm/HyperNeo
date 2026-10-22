@@ -1,3 +1,4 @@
+import { WorkerIdentitySchema } from './worker-identity-schema.ts';
 import { z } from 'zod';
 import type { WorkTurnPage } from '../../storage/work-turn-page.ts';
 import { workStartConfiguration } from './start-configuration.ts';
@@ -45,6 +46,7 @@ const DesktopUIEvidenceSchema = z.object({
 });
 
 export const WorkSummarySchema = z.object({
+  worker: WorkerIdentitySchema.optional(),
   ref: WorkRefSchema,
   title: z.string(),
   place: PlaceSchema,

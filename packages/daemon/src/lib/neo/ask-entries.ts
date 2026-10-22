@@ -12,7 +12,7 @@ import { z } from 'zod';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import type { NeoPack } from './packs/types.ts';
+import type { NeoPack } from './pack-contract.ts';
 import { neoStartQuestionLine } from './start-question.ts';
 import {
   NeoStatusCodesSchema,
@@ -229,7 +229,8 @@ export function createNeoDoneTodosOperation(
   store: NeoAskTodoRepository,
   sessions: NeoTodoSessionRepository,
   packs: () => readonly NeoPack[],
-  admit: (caller: OperationCaller) => { value: OperationCaller } | { reason: Rejection }
+  admit: (caller: OperationCaller) => { value: OperationCaller } | { reason: Rejection },
+  project: <T extends NeoTodo>(todos: readonly T[]) => Promise<T[]> = async (todos) => [...todos]
 ) {
   const read = (superpipe({})('neo.ask.doneTodos') as PipelineAPI)
     .input(['input', 'caller'])
@@ -272,6 +273,9 @@ export function createNeoDoneTodosOperation(
       }),
     ]),
     policy: { safetyClass: 'read', roles: ['neo'] },
-    execute: async (input, caller) => read(input, caller),
+    execute: async (input, caller) => {
+      const result = read(input, caller);
+      return result.ok ? { ...result, todos: await project(result.todos) } : result;
+    },
   });
 }

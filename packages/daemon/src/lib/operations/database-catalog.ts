@@ -1,3 +1,6 @@
+import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
+import { readWorkerIdentity, sessionWorkerRef } from '../neo/worker-identity.ts';
+import { invokeOperation } from './invoke.ts';
 import { createArtifactReadOperations } from '../artifacts/read-operations.ts';
 import { createArtifactReferenceResolve } from '../artifacts/resolve-operation.ts';
 import { createArtifactRegistration } from '../artifacts/register-operation.ts';
@@ -90,7 +93,16 @@ export function createDatabaseOperationCatalog(
       transitionTask: (input) =>
         transitionStandaloneTask(db.getDatabase(), input, () => db.notifyChange('space_tasks')),
       sessionStatus: (sessionId) => readSessionField(db, 'status', sessionId),
-      sessionTitle: (sessionId) => readSessionField(db, 'title', sessionId),
+      sessionTitle: async (id) => {
+        const title = readSessionField(db, 'title', id);
+        return title !== null
+          ? workerIdentity({ adapter: 'hyperneo', id }, title).label
+          : (
+              await readWorkerIdentity(sessionWorkerRef(id, false), (ref) =>
+                invokeOperation(registry, 'work.status', { ref }, { source: 'internal' })
+              )
+            ).label;
+      },
       sessionSent: (sent) => {
         const neo = new NeoRepository(db.getDatabase());
         const sessionId = neo.defaultBinding()?.sessionId;

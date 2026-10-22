@@ -5,7 +5,6 @@ import { SessionScheduler } from '../../../../src/lib/scheduler/session-schedule
 import { z } from 'zod';
 import { createSessionScheduleFire } from '../../../../src/lib/scheduler/session-schedule-fire';
 import { createOperationRegistry, defineOperation } from '../../../../src/lib/operations/registry';
-import { NeoInputOriginRepository } from '../../../../src/storage/repositories/neo-input-origin-repository';
 import { createTestDb, createTestSession } from '../../../helpers/database';
 
 let db: Awaited<ReturnType<typeof createTestDb>>;
@@ -55,8 +54,13 @@ describe('createScheduleDelivery', () => {
         message: { content: '<daemon-note kind="scheduled_wake">\nCheck release\n</daemon-note>' },
       },
     });
-    const trigger = new NeoInputOriginRepository(db.getDatabase()).trigger('recipient', messageId)!;
-    expect(JSON.parse(trigger.slice('scheduled_wake:'.length))).toEqual({
+    const wake = db
+      .getDatabase()
+      .prepare(
+        'SELECT metadata_json AS metadata FROM session_schedule_wakes WHERE session_id = ? AND message_id = ?'
+      )
+      .get('recipient', messageId) as { metadata: string };
+    expect(JSON.parse(wake.metadata)).toEqual({
       scheduleId: row.id,
       sourceKind: 'reminder',
       sourceId: 'release',

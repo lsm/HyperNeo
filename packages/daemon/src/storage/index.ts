@@ -36,7 +36,13 @@ import { McpEnablementRepository } from './repositories/mcp-enablement-repositor
 import { SkillRepository } from './repositories/skill-repository.ts';
 import { WorkspaceHistoryRepository } from './repositories/workspace-history-repository.ts';
 import { WorkerAgentMemoryEmbedder } from './repositories/agent-memory-worker-embedder.ts';
-import { SDKStatusReader, projectSDKStatusPage } from './sdk-status-reader.ts';
+import type { WorkChatKind } from './work-chat-search.ts';
+import {
+  SDKStatusReader,
+  projectSDKStatusPage,
+  readSDKMessagePage,
+  type SDKPageParams,
+} from './sdk-status-reader.ts';
 import {
   type AgentMemoryEmbedder,
   AgentMemoryRepository,
@@ -360,16 +366,40 @@ export class Database {
   async getUserMessagesByStatusAsync(sessionId: string, status: SendStatus, limit: number) {
     if (this.getDbPath() === ':memory:')
       return projectSDKStatusPage(this.getUserMessagesByStatus(sessionId, status, limit), status);
+    return this.getSDKReader().read({ sessionId, status, limit });
+  }
+
+  async getSDKMessagePageAsync(sessionId: string, page: SDKPageParams = {}) {
+    if (this.getDbPath() === ':memory:')
+      return readSDKMessagePage(this.sdkMessageRepo, { sessionId, page });
+    return this.getSDKReader().readMessages({ sessionId, page });
+  }
+
+  async searchWorkChatsAsync(
+    query: string,
+    limit: number,
+    semantic?: { vector: Float32Array; model: string },
+    kinds?: readonly WorkChatKind[]
+  ) {
+    if (this.getDbPath() === ':memory:')
+      return this.sdkMessageRepo.searchWorkChats(query, limit, semantic, kinds);
+    return this.getSDKReader().readWorkChats({
+      query,
+      limit,
+      semantic: semantic
+        ? { model: semantic.model, vector: Array.from(semantic.vector) }
+        : undefined,
+      kinds,
+    });
+  }
+
+  private getSDKReader() {
     return (this.sdkStatusReader ??= new SDKStatusReader(
       this.getDbPath(),
       undefined,
       undefined,
       this.options?.queryObservability
-    )).read({
-      sessionId,
-      status,
-      limit,
-    });
+    ));
   }
 
   getMessageByStatusAndUuid(

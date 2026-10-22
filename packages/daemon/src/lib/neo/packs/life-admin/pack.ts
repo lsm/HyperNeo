@@ -1,5 +1,5 @@
 import { NEO_PACK_LIFE_ADMIN_INSTRUCTIONS } from '@hyperneo/prompts';
-import type { NeoPack, NeoPackBrief } from '../types.ts';
+import type { NeoPack, NeoPackBrief } from '../../pack-contract.ts';
 
 export const LIFE_ADMIN_PACK_BRIEF: NeoPackBrief = {
   id: 'life-admin',

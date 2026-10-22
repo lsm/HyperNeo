@@ -18,7 +18,10 @@ derive columns through the production chunked backfill, and retain complete tool
 results. The mixed fixture deliberately removes half its side copies, retaining
 their legacy bodies; startup must serve in dual-write mode. Its own synthetic
 missing copies are restored before the next restart. The completed laptop fixture
-must choose side-only immediately. All eight production writers are exercised in
+serves in dual-write/coverage_pending while its read-only coverage worker runs,
+then chooses side-only. The helper waits for the final non-pending WARN mode
+before exercising writers, including after each restart; pending is never treated
+as the final mode. All eight production writers are exercised in
 both runs; side bodies remain complete and the logical hash survives restart.
 Fifty real health/transcript RPCs return full tool results. This is not a GUI test.
 
@@ -39,8 +42,11 @@ hash remains identical across restart. Seeding and deliberate full-digest reads
 are measurement probes, not production RPC workloads. The helper closes its
 WebSocket and daemon in `finally`; unit suites run only in CI.
 
-Mode selection runs after numbered migrations/backfill and checks gaps in bounded
-yielding batches. No live mode switch occurs. Unified reads retain side-first
+Mode selection starts after numbered migrations/backfill. An already-completed
+copy is checked in bounded yielding batches in a read-only worker while the
+daemon serves safely in dual-write mode. Only successful verification enables
+side-only writes; missing bodies or worker failure retain dual writes. Copy
+completion during a process does not schedule a new verification until restart. Unified reads retain side-first
 COALESCE until slice 11; all writes always keep a complete side body, and pending,
 reversed or incomplete copies also update the legacy body atomically. Startup
 mode is logged at production WARN. Permanent backups are retained. Slice 11 must

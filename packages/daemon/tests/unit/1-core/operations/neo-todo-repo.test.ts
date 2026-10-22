@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import { createNeoAskRecordOperations } from '../../../../src/lib/neo/ask-record-operations.ts';
 import { codingTodoRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
-import type { NeoPack } from '../../../../src/lib/neo/packs/types.ts';
+import type { NeoPack } from '../../../../src/lib/neo/pack-contract.ts';
 import { createNeoTodoOperations } from '../../../../src/lib/neo/todo-operations.ts';
 import { neoMoveTodo, neoTodoRepo } from '../../../../src/lib/neo/todo-repo.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';

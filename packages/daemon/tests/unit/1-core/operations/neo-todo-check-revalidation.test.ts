@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
-import type { NeoPack, NeoTodoCheckResult } from '../../../../src/lib/neo/packs/types.ts';
+import type { NeoPack, NeoTodoCheckResult } from '../../../../src/lib/neo/pack-contract.ts';
 import { createNeoTodoRunner } from '../../../../src/lib/neo/todo-runner.ts';
 import type { OperationOutcome } from '../../../../src/lib/operations/invoke.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';

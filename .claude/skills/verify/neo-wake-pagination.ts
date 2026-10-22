@@ -28,7 +28,7 @@ try {
   const wake=seedNeoWake(db,id);
   wake.finish('Guide check complete.');
   const publication=wake.expected.find(item=>item.kind==='publication')!.id;
-  db.prepare('UPDATE neo_input_origins SET stamped_at=? WHERE message_id=?').run(now,wake.messageId);
+  db.prepare('UPDATE session_schedule_wakes SET fired_at=? WHERE message_id=?').run(now,wake.messageId);
   db.prepare('UPDATE neo_publications SET created_at=? WHERE publication_id=?').run(new Date(now+1000).toISOString(),publication);
   let cached = '';
   for(let index=0;index<49;index++) {

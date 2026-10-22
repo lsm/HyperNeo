@@ -37,6 +37,7 @@ export function GitHubConnectionCard({
   const connected = tokenStatus?.configured === true && !tokenInvalid;
   const tokenWriteDisabled = busy || disabled || tokenStatusUnknown;
   const pollingDisabled = busy || disabled;
+  const externalToken = tokenStatus?.source === 'env' || tokenStatus?.source === 'gh';
   const [replaceMode, setReplaceMode] = useState(false);
   const showInput = !connected || tokenInvalid || replaceMode;
   return (
@@ -69,7 +70,10 @@ export function GitHubConnectionCard({
               </span>
             )}
             {tokenStatus?.source === 'env' && (
-              <span class="text-fg-faint">(token from GITHUB_TOKEN env var)</span>
+              <span class="text-fg-faint">(token from GH_TOKEN / GITHUB_TOKEN env)</span>
+            )}
+            {tokenStatus?.source === 'gh' && (
+              <span class="text-fg-faint">(authenticated gh CLI)</span>
             )}
             {tokenInvalid && (
               <span class="text-danger-soft" data-testid="github-token-invalid-error">
@@ -86,7 +90,7 @@ export function GitHubConnectionCard({
                 class="st-act disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {connected
-                  ? tokenStatus?.source === 'env'
+                  ? externalToken
                     ? 'Replace with keychain token'
                     : 'Replace token'
                   : 'Replace invalid token'}
@@ -95,7 +99,7 @@ export function GitHubConnectionCard({
             <button
               type="button"
               onClick={onClearToken}
-              disabled={tokenWriteDisabled || tokenStatus?.source === 'env'}
+              disabled={tokenWriteDisabled || externalToken}
               class="st-act st-act-danger disabled:cursor-not-allowed disabled:opacity-50"
             >
               Disconnect

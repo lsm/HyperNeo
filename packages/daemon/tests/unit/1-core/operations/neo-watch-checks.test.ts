@@ -4,7 +4,7 @@ import type { MessageHub } from '@hyperneo/shared';
 import type { NeoAsk, NeoAskItem, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoRefState } from '../../../../src/lib/neo/packs/coding/ask-prs.ts';
 import { readNeoGithubRef } from '../../../../src/lib/neo/packs/coding/github-read.ts';
-import type { NeoPack } from '../../../../src/lib/neo/packs/types.ts';
+import type { NeoPack } from '../../../../src/lib/neo/pack-contract.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
 import {
   InternalEventBus,

@@ -1,0 +1,45 @@
+{
+  "width": 1280,
+  "phase": "after",
+  "controls": [
+    {
+      "name": "less — Read synthetic.txt",
+      "right": 1251,
+      "bottom": 556,
+      "parentRight": 1263,
+      "parentBottom": 568
+    },
+    {
+      "name": "less — Explore Synthetic exploration",
+      "right": 1238,
+      "bottom": 826.375,
+      "parentRight": 1251,
+      "parentBottom": 850.5625,
+      "lastLine": {
+        "bottom": 832.375,
+        "right": 479.328125
+      }
+    },
+    {
+      "name": "less — Read nested-synthetic.txt",
+      "right": 1238,
+      "bottom": 930.1875,
+      "parentRight": 1250,
+      "parentBottom": 942.1875
+    },
+    {
+      "name": "less — Unknown message type: tool_progress",
+      "right": 1231,
+      "bottom": 685.1875,
+      "parentRight": 1243,
+      "parentBottom": 693.1875
+    }
+  ],
+  "toolTitleOpens": false,
+  "selectedText": "Synthe",
+  "subagentTitleOpens": false,
+  "viewport": {
+    "width": 1280,
+    "scrollWidth": 1280
+  }
+}

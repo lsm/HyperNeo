@@ -1,0 +1,83 @@
+import { strict as assert } from 'node:assert';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { subscribeToStructuredLogs } from '../../../packages/daemon/src/lib/logger.ts';
+import { createCodingPack } from '../../../packages/daemon/src/lib/neo/packs/coding/pack.ts';
+import { CodingPrEventRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-events.ts';
+import { CodingPrLedgerRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
+import { CodingPrSweepRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-sweep.ts';
+import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
+import { NeoAskTodoRepository } from '../../../packages/daemon/src/storage/repositories/neo-ask-todo-repository.ts';
+import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
+
+const [portText, runText] = process.argv.slice(2), port = Number(portText), run = resolve(runText);
+assert(port > 0 && port !== 8399);
+assert.equal(process.env.NODE_ENV, 'test');
+assert.equal(process.env.HOME, join(run, 'home'));
+assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
+assert.equal(process.env.PATH?.split(':')[0], join(run, 'bin'));
+assert(!existsSync(join(run, 'data/daemon.db')));
+for(const d of ['home','bin','evidence','workspace'])mkdirSync(join(run,d),{recursive:true});
+const ghJson=join(run,'pr.json'), ghLog=join(run,'evidence/gh.log');
+writeFileSync(join(run,'bin/gh'),`#!/bin/sh\nprintf '%s\\n' "$*" >> '${ghLog}'\nif [ "$1" != pr ] || [ "$2" != view ]; then exit 1; fi\ncat '${ghJson}'\n`,{mode:0o700});
+const root='neo:10000000-0000-4000-8000-000000008186';
+const url='https://github.com/verify-test/facts/pull/8', report='Complete synthetic result 🦊\n'.repeat(4000);
+const hash=(s:string)=>createHash('sha256').update(s).digest('hex');
+const evidence:Record<string,unknown>={inputReport:{bytes:Buffer.byteLength(report),sha256:hash(report)}};
+let maxLagMs=0, previous=performance.now(), maxSqlMs=0, executions=0, peakRss=process.memoryUsage().rss;
+const timer=setInterval(()=>{const now=performance.now();maxLagMs=Math.max(maxLagMs,now-previous-10);previous=now;peakRss=Math.max(peakRss,process.memoryUsage().rss)},10);
+const unsubscribe=subscribeToStructuredLogs(log=>{
+ if(log.module!=='hyperneo:daemon:sqlite.query'||log.metadata.workerKind)return;
+ if(log.metadata.event==='summary')executions+=Number(log.metadata.executionCount??0);
+ if(typeof log.metadata.durationMs==='number')maxSqlMs=Math.max(maxSqlMs,log.metadata.durationMs);
+ for(const q of (log.metadata.queries??[]) as {maxDurationMs:number}[])maxSqlMs=Math.max(maxSqlMs,q.maxDurationMs);
+});
+let app:Awaited<ReturnType<typeof createDaemonApp>>|undefined, ws:WebSocket|undefined;
+const times:{name:string;ms:number}[]=[];
+try {
+ app=await createDaemonApp({config:{...getConfig({port,host:'127.0.0.1',dbPath:join(run,'data/daemon.db')}),sqlQueryObservability:{slowThresholdMs:250,summaryIntervalMs:0,maxQueryGroups:1000,summaryQueryLimit:1000}},verbose:false});
+ await app.spaceRuntimeService.ready();
+ const db=app.db.getDatabase(), now=Date.now();
+ db.prepare("INSERT INTO sessions(id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?,'Synthetic pack facts',?,?,?,'active','{\"queryMode\":\"manual\"}','{}')").run(root,join(run,'workspace'),new Date(now).toISOString(),new Date(now).toISOString());
+ new NeoRepository(db).reserveBinding({sessionId:root,kind:'neo',projectId:null});
+ const store=new NeoAskTodoRepository(db);
+ store.openAsk({id:'facts-ask',sessionId:root,projectId:null,originMessageId:null,title:'Synthetic facts',request:'Read observed facts',createdAt:now});
+ const todo=store.addTodo('facts-todo','facts-ask',{title:'Land synthetic PR',doneWhen:'PR merged',check:{pack:'coding',kind:'pr_merged',params:{urls:[url]}},instruction:null,named:null},now);
+ store.updateTodo(todo,{report},now);
+ const fixture=(state:string)=>writeFileSync(ghJson,JSON.stringify({url,state,headRefOid:'synthetic-head',reviews:[],statusCheckRollup:[],createdAt:new Date(now).toISOString(),...(state==='MERGED'?{mergedAt:new Date(now+1).toISOString()}: {})}));
+ fixture('OPEN');
+ ws=new WebSocket(`ws://127.0.0.1:${port}/ws`);
+ await new Promise<void>((done,fail)=>{ws!.onopen=()=>done();ws!.onerror=()=>fail(new Error('isolated RPC connect failed'))});
+ const rpc=(name:string,input:unknown)=>new Promise<Record<string,unknown>>((done,fail)=>{
+  const id=crypto.randomUUID(), at=performance.now(), timeout=setTimeout(()=>fail(new Error(name+' timeout')),15000);
+  ws!.onmessage=e=>{const r=JSON.parse(String(e.data));if(r.id!==id&&r.requestId!==id)return;clearTimeout(timeout);times.push({name,ms:performance.now()-at});if(r.error)fail(new Error(JSON.stringify(r.error)));else done(r.data)};
+  ws!.send(JSON.stringify({id,type:'REQ',sessionId:'global',method:'operation.invoke',data:{name,input},timestamp:new Date().toISOString(),version:'1.0.0'}));
+ });
+ evidence.refused=await rpc('neo.todo.close',{todoId:todo.id,reason:'Synthetic claim'});
+ assert.equal((evidence.refused as {ok:boolean}).ok,false);
+ assert.equal(store.getTodo(todo.id)?.state,'todo');
+ let reads=0, upstream:'OPEN'|'MERGED'='MERGED';
+ const pack=createCodingPack({readPrs:async urls=>{reads++;return urls.map(url=>({url,state:upstream,checks:'passing',review:'none'}))},todoPrs:new CodingTodoPrRepository(db),prLedger:new CodingPrLedgerRepository(db),prSweep:new CodingPrSweepRepository(db),prEvents:new CodingPrEventRepository(db),prSweepDeps:{tell:async()=>true,wake:async()=>{}},projectRepos:()=>[]});
+ const before=store.getTodo(todo.id), facts=await pack.readFacts!(before!);
+ assert.deepEqual(store.getTodo(todo.id),before);
+ upstream='OPEN'; const afterRead=reads;
+ const judged=pack.judge!(before!,facts);
+ assert.deepEqual(judged,{state:'done',evidence:'#8 merged'});
+ assert.deepEqual(pack.judge!(before!,facts),judged);assert.equal(reads,afterRead);
+ evidence.factBoundary={judged,readerCalls:reads,pureReplayReaderCalls:reads-afterRead,todoUnchanged:true};
+ fixture('MERGED');
+ evidence.closed=await rpc('neo.todo.close',{todoId:todo.id,reason:'Observed merge'});
+ assert.equal((evidence.closed as {ok:boolean}).ok,true);
+ const final=store.getTodo(todo.id)!;
+ assert.equal(final.state,'done');assert.equal(final.evidence,'Observed merge');assert.equal(final.report,report);
+ evidence.stored={state:final.state,evidence:final.evidence,reportBytes:Buffer.byteLength(final.report!),reportSha256:hash(final.report!)};
+ console.log('PASS: fact read leaves todo unchanged; pure replay uses captured facts; real RPC refuses then completes with full report retained.');
+} catch(error){evidence.error=String(error);throw error}
+finally {
+ ws?.close();await app?.cleanup();clearInterval(timer);unsubscribe();
+ evidence.metrics={maxLagMs,maxRetainedObservedSqlMs:maxSqlMs,sqlExecutions:executions,peakSampledRssBytes:peakRss,rpcTimes:times};
+ writeFileSync(join(run,'evidence/observed.json'),JSON.stringify(evidence,null,2));
+}

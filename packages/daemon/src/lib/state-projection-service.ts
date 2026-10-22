@@ -1,3 +1,4 @@
+import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import type { MessageHub, AgentProcessingState, IClientEventGateway } from '@hyperneo/shared';
 import { capSdkMessage } from './rpc-handlers/message-output-cap.ts';
 import type { SessionManager } from './session-manager.ts';
@@ -379,6 +380,10 @@ export class StateProjectionService {
     const error = this.errorCache.get(sessionId) || null;
 
     return {
+      worker: workerIdentity(
+        { adapter: 'hyperneo', id: sessionData.id },
+        this.db ? (this.db.getSession(sessionData.id)?.title ?? null) : sessionData.title
+      ),
       sessionInfo: sessionData,
       agentState: agentState,
       commandsData: {
@@ -458,6 +463,10 @@ export class StateProjectionService {
       if (cachedProcessingState && cachedSession) {
         try {
           const fallbackState = {
+            worker: workerIdentity(
+              { adapter: 'hyperneo', id: cachedSession.id },
+              this.db?.getSession(cachedSession.id)?.title ?? null
+            ),
             sessionInfo: cachedSession,
             agentState: cachedProcessingState,
             commandsData: { availableCommands: this.commandsCache.get(sessionId) || [] },

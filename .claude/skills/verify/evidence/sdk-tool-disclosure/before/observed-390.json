@@ -1,0 +1,11 @@
+{
+  "width": 390,
+  "phase": "before",
+  "controls": [],
+  "toolTitleOpens": true,
+  "subagentTitleOpens": true,
+  "viewport": {
+    "width": 390,
+    "scrollWidth": 390
+  }
+}

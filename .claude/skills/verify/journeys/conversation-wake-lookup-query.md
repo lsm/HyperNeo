@@ -1,7 +1,7 @@
 ## Conversation wake lookup query
 
 Run the actual isolated daemon with synthetic HOME/data/DB and a free non-8399
-port. The helper seeds 140,000 SDK headers, 1,400 input origins, then zero and two
+port. The helper seeds 140,000 SDK headers, 1,400 pending schedule-wake metadata rows, then zero and two
 scheduled wakes. No model, credentials, live data or GUI is involved.
 
 ```bash

@@ -1,6 +1,6 @@
 import { isAbsolute, resolve } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { NeoExecutionPreparation } from '../types.ts';
+import type { NeoExecutionPreparation } from '../../pack-contract.ts';
 
 type Request = Parameters<NeoExecutionPreparation>[0];
 type Effects = Parameters<NeoExecutionPreparation>[1];

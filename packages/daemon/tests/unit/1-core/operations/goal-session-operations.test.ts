@@ -5,7 +5,7 @@ import { SessionScheduler } from '../../../../src/lib/scheduler/session-schedule
 import { createSessionScheduleFire } from '../../../../src/lib/scheduler/session-schedule-fire.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository.ts';
-import type { NeoPack } from '../../../../src/lib/neo/packs/types.ts';
+import type { NeoPack } from '../../../../src/lib/neo/pack-contract.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
 import { SessionGoalRepository } from '../../../../src/storage/repositories/session-goal-repository.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';

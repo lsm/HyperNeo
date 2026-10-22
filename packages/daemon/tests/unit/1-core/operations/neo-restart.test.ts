@@ -18,6 +18,9 @@ describe('neo.restart operation', () => {
       db,
       {
         getSessionForControl: async () => ({ startFreshContext: clear }),
+        updateSession: async (id: string, updates: Parameters<typeof db.updateSession>[1]) => {
+          db.updateSession(id, updates);
+        },
       } as unknown as SessionManager,
       { event: mock(() => {}) } as unknown as MessageHub,
       events

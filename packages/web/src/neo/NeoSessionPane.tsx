@@ -173,7 +173,9 @@ export function NeoSessionPane({
         >
           <NeoIcon name="back" />
         </button>
-        <h2 class="min-w-0 truncate text-sm font-medium text-fg">{title}</h2>
+        <h2 class="min-w-0 truncate text-sm font-medium text-fg">
+          {store.sessionState.value?.worker?.label ?? title}
+        </h2>
       </header>
       <div
         ref={scroller}

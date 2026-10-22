@@ -1038,6 +1038,7 @@ export class SDKMessageHandler {
     if (
       'message' in message &&
       message.message &&
+      typeof message.message === 'object' &&
       !(message.message as unknown as Record<string, unknown>).usage
     ) {
       (message.message as unknown as Record<string, unknown>).usage = {

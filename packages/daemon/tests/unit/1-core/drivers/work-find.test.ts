@@ -1,6 +1,8 @@
+import { createClaudeCodeAdapter } from '../../../../src/lib/drivers/claude-code-adapter';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   createFindWorkOperation,
+  findLocally,
   combineFindResults,
   FIND_AGENT_RESULT_BUDGET_CHARS,
 } from '../../../../src/lib/drivers/find-operation';
@@ -670,7 +672,18 @@ describe('work.find session', () => {
     expect(missed?.session).toEqual({
       name: 'iOS',
       match: 'none',
-      near: [{ ref: { adapter: 'claude-desktop', id: 'coordinator' }, title: 'Neo iOS app' }],
+      near: [
+        {
+          ref: { adapter: 'claude-desktop', id: 'coordinator' },
+          title: 'Neo iOS app',
+          worker: {
+            id: 'coordinator',
+            adapter: 'claude-desktop',
+            name: 'Neo iOS app',
+            label: 'Claude · Neo iOS app',
+          },
+        },
+      ],
     });
     expect(missed?.places).toEqual([]);
   });
@@ -699,5 +712,56 @@ describe('work.find session', () => {
     );
     expect(twins.session?.match).toBe('ambiguous');
     expect(twins.places).toHaveLength(2);
+  });
+});
+
+describe('Claude history identity refresh', () => {
+  test('keeps a historical search title when the owner is unavailable without claiming a current name', async () => {
+    const source = group('synthetic', '/synthetic', 'claude-code', 1);
+    source.work[0].title = 'Historical heron plan';
+    const result = await findLocally(
+      [
+        {
+          id: 'claude-code',
+          capabilities: ['find', 'status'],
+          find: () => [source],
+          status: async () => ({ ok: false, reason: 'not_found', detail: 'No live owner' }),
+        },
+      ],
+      { includeClosed: false, limit: 20 }
+    );
+    expect(result.groups[0].work[0]).toMatchObject({
+      title: 'Historical heron plan',
+      worker: {
+        adapter: 'claude-code',
+        id: 'claude-code-1',
+        name: null,
+        label: 'Claude · claude-code-1',
+      },
+    });
+  });
+
+  test('one discovery read serves a concurrent history batch and the next batch reads again', async () => {
+    let reads = 0;
+    const adapter = createClaudeCodeAdapter({
+      machine: 'synthetic',
+      desktopSessions: async () => new Set(),
+      searchChats: async () =>
+        Array.from({ length: 10 }, (_, i) => ({
+          ...chat(`history-${i}`),
+          kind: 'claude' as const,
+        })),
+      liveSessions: async () => {
+        reads++;
+        await new Promise((done) => setTimeout(done, 0));
+        return [];
+      },
+    });
+    const query = { text: 'history', includeClosed: false, limit: 20 };
+    const first = await findLocally([adapter], query);
+    expect(first.groups.flatMap((group) => group.work)).toHaveLength(10);
+    expect(reads).toBe(1);
+    await findLocally([adapter], query);
+    expect(reads).toBe(2);
   });
 });

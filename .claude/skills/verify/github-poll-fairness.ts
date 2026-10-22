@@ -1,3 +1,4 @@
+import { createServer } from 'node:http';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -49,6 +50,23 @@ globalThis.fetch = (async (input: string | URL | Request) => {
   }
   return Response.json(body, { headers: { 'X-RateLimit-Remaining': String(resume ? 5000 : --remaining), 'X-RateLimit-Reset': '1' } });
 }) as typeof fetch;
+const broker = createServer(async (req, res) => {
+  try {
+    let text = '';
+    for await (const chunk of req) text += chunk;
+    const args = JSON.parse(text) as string[];
+    assert.equal(args[0], 'api');
+    assert(args.includes('--include'));
+    const path = args.find(arg => arg.startsWith('/repos/') || arg === '/user');
+    assert(path);
+    const response = await globalThis.fetch(`https://api.github.com${path}`);
+    res.end(`HTTP/2.0 ${response.status} Synthetic\r\n${[...response.headers].map(([k, v]) => `${k}: ${v}`).join('\r\n')}\r\n\r\n${await response.text()}`);
+  } catch { res.statusCode = 500; res.end('invalid fixture'); }
+});
+await new Promise<void>(done => broker.listen(0, '127.0.0.1', done));
+const brokerPort = (broker.address() as { port: number }).port;
+assert(brokerPort !== 8399);
+writeFileSync(join(run, 'bin/gh'), `#!${process.execPath}\nconst args = process.argv.slice(2);\nif (args[0] !== 'api' || !args.includes('--include')) process.exit(2);\nconst response = await fetch('http://127.0.0.1:${brokerPort}', {method:'POST', body:JSON.stringify(args)});\nprocess.stdout.write(await response.text());\n`, { mode: 0o700 });
 const app = await createDaemonApp({ config: getConfig({ port, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
 let ws: WebSocket | undefined;
 const evidence: unknown[] = [];
@@ -131,4 +149,5 @@ try {
   ws?.close();
   await app.cleanup();
   globalThis.fetch = realFetch;
+  await new Promise<void>(done => broker.close(() => done()));
 }

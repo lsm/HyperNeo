@@ -37,7 +37,7 @@ import type { CodingArtifactProfile } from '../../workflows/coding-artifact-prof
 import type { SpaceWorkflowManager } from '../../workflows/workflow-manager.ts';
 import type { RPCHandlerDependencies } from '../index.ts';
 import type { SessionScheduler } from '../../scheduler/session-schedules.ts';
-import type { NeoPack } from '../../neo/packs/types.ts';
+import type { NeoPack } from '../../neo/pack-contract.ts';
 
 export interface FamilyOperationContext {
   readonly driverCleanup?: (() => Promise<void>)[];

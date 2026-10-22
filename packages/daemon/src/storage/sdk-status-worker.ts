@@ -3,7 +3,10 @@ import { SDKMessageRepository } from './repositories/sdk-message-repository.ts';
 import { subscribeToStructuredLogs } from '../lib/logger.ts';
 import {
   projectSDKStatusPage,
-  type SDKStatusPage,
+  projectSDKStatusMessage,
+  readSDKMessagePage,
+  sdkReadLogMetadata,
+  type SDKReadResult,
   type SDKStatusReply,
   type SDKStatusRequest,
 } from './sdk-status-reader.ts';
@@ -14,16 +17,27 @@ const worker = globalThis as unknown as {
 };
 let db: Database | null = null;
 let repository: SDKMessageRepository | null = null;
+let workerOperation = 'sdk-status';
 subscribeToStructuredLogs((log) => {
-  if (log.module === 'hyperneo:daemon:sqlite.query') worker.postMessage({ log });
+  if (log.module === 'hyperneo:daemon:sqlite.query')
+    worker.postMessage({
+      log: { ...log, metadata: sdkReadLogMetadata(log.metadata, workerOperation) },
+    });
 });
 
 worker.onmessage = ({ data }) => {
   const { id, epoch, args } = data,
     started = performance.now(),
     queueMs = Date.now() - data.sentAt;
+  workerOperation = args
+    ? 'query' in args
+      ? 'work-search'
+      : 'page' in args
+        ? 'sdk-page'
+        : 'sdk-status'
+    : 'close';
   try {
-    let result: SDKStatusPage | null = null;
+    let result: SDKReadResult | null = null;
     if (!args) {
       db?.close();
       db = null;
@@ -37,10 +51,25 @@ worker.onmessage = ({ data }) => {
         db.exec('PRAGMA query_only=ON; PRAGMA busy_timeout=5000');
         repository = new SDKMessageRepository(db);
       }
-      const page = db.transaction(() =>
-        repository!.getUserMessagesByStatus(args.sessionId, args.status, args.limit)
-      )();
-      result = projectSDKStatusPage(page, args.status);
+      result = db.transaction(() => {
+        if ('query' in args) {
+          const semantic = args.semantic
+            ? { model: args.semantic.model, vector: Float32Array.from(args.semantic.vector) }
+            : undefined;
+          return repository!.searchWorkChats(args.query, args.limit, semantic, args.kinds);
+        }
+        if ('page' in args) return readSDKMessagePage(repository!, args);
+        return projectSDKStatusPage(
+          repository!.getUserMessagesByStatus(
+            args.sessionId,
+            args.status,
+            args.limit,
+            'asc',
+            projectSDKStatusMessage
+          ),
+          args.status
+        );
+      })();
     }
     worker.postMessage({
       id,

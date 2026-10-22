@@ -1,0 +1,14 @@
+[
+  {
+    "name": "more — Read synthetic.txt",
+    "expanded": "false",
+    "controls": "P0-2",
+    "targetExists": false
+  },
+  {
+    "name": "more — Explore Synthetic exploration",
+    "expanded": "false",
+    "controls": "P0-4",
+    "targetExists": false
+  }
+]

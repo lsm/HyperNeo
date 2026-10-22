@@ -1,0 +1,32 @@
+{
+  "width": 390,
+  "phase": "before",
+  "cases": [
+    {
+      "name": "Bash synthetic-long-output",
+      "before": 549.1875,
+      "after": -2989.8125,
+      "delta": -3539,
+      "footer": {
+        "x": 328.984375,
+        "y": 454.1875,
+        "width": 32.015625,
+        "height": 16
+      },
+      "focused": true
+    },
+    {
+      "name": "Explore Synthetic exploration",
+      "before": 617.1875,
+      "after": -4672.8125,
+      "delta": -5290,
+      "footer": {
+        "x": 315.984375,
+        "y": 454.125,
+        "width": 32.015625,
+        "height": 16
+      },
+      "focused": true
+    }
+  ]
+}

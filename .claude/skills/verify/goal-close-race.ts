@@ -59,7 +59,7 @@ try {
   await Bun.sleep(100);
   const goal = await rpc('goal.session.get', { ownerSessionId, goalId });
   const schedules = await rpc('schedule.session.list', { target: { adapter: 'hyperneo', id: ownerSessionId } });
-  const wakes = app.db.getDatabase().prepare('SELECT trigger_id FROM neo_input_origins WHERE session_id = ?').all(ownerSessionId).filter((row: { trigger_id: string | null }) => row.trigger_id?.includes(goalId));
+  const wakes = app.db.getDatabase().prepare('SELECT metadata_json FROM session_schedule_wakes WHERE session_id = ?').all(ownerSessionId).filter((row: { metadata_json: string | null }) => row.metadata_json?.includes(goalId));
   writeFileSync(join(run, 'evidence/goal-close-race.json'), JSON.stringify({ goalId, observed, goal, schedules, wakes }, null, 2));
   assert(observed, 'The real cadence did not reach message rendering');
   assert.equal(observed.error, undefined);

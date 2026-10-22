@@ -17,7 +17,9 @@ export function NativeContentDisclosure({ label, summary, children, ...attribute
   useLayoutEffect(() => {
     if (!restoreFocus.current) return;
     restoreFocus.current = false;
-    element.current?.querySelector<HTMLButtonElement>(`button[aria-controls="${id}"]`)?.focus();
+    element.current
+      ?.querySelector<HTMLButtonElement>(`button[aria-controls="${id}"]`)
+      ?.focus({ preventScroll: true });
   }, [open, id]);
   const control = (
     <ContentDisclosureControl

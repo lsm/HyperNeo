@@ -10,11 +10,7 @@ import { defineOperation, type OperationCaller } from '../operations/registry.ts
 import type { ArtifactRefReader } from '../artifacts/read-operations.ts';
 import { unregisteredArtifact } from '../artifacts/file-contracts.ts';
 import type { ArtifactRef } from '@hyperneo/shared/types/artifact-file';
-import {
-  NeoPublicationSchema,
-  NeoPublicationResultSchema,
-  withNeoPublicationAnswer,
-} from './publication.ts';
+import { NeoPublicationSchema, NeoPublicationResultSchema } from './publication.ts';
 import { isMainNeoBinding } from './binding-roles.ts';
 import { neoDerivedId } from './derived-id.ts';
 
@@ -23,6 +19,7 @@ const Draft = NeoPublicationSchema.omit({
   publicationId: true,
   askOrigin: true,
   producerInput: true,
+  triggerId: true,
   editedAt: true,
   editedBy: true,
   answerInput: true,
@@ -45,6 +42,7 @@ type LinkEvidence = {
 };
 
 interface NeoPublicationRuntime {
+  receivedHumanInput(sessionId: string, messageId: string): boolean;
   getBinding(id: string): NeoBinding | null;
   getRootBinding(): NeoBinding | null;
   hasProject(id: string): boolean;
@@ -181,6 +179,14 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     .pipe(() => runtime.getRootBinding(), 'caller', 'root')
     .pipe(requirePublicationProducer, ['caller', 'binding', 'root'], 'result:publication')
     .pipe(
+      (proof: Proof, draft: Draft) =>
+        (draft.replyTo ?? []).every((id) => runtime.receivedHumanInput(proof.binding.sessionId, id))
+          ? { value: proof }
+          : { reason: { accepted: false, reason: 'invalid_reply_to' } },
+      ['publication', 'draft'],
+      'result:publication'
+    )
+    .pipe(
       (draft: Draft) => draft.links.map((link) => readLinkEvidence(link, runtime)),
       'draft',
       'links'
@@ -221,22 +227,19 @@ export function createNeoPublisher(runtime: NeoPublicationRuntime) {
     .pipe(
       (receipt: Receipt) => {
         if (receipt.accepted) runtime.notify();
-        return withNeoPublicationAnswer(receipt, null);
+        return receipt;
       },
       'publication',
       'publication'
     )
-    .end('publication') as (
-    input: unknown,
-    caller: OperationCaller
-  ) => ReturnType<typeof withNeoPublicationAnswer>;
+    .end('publication') as (input: unknown, caller: OperationCaller) => Receipt;
 }
 
 export function createNeoPublicationOperation(publish: ReturnType<typeof createNeoPublisher>) {
   return defineOperation({
     name: 'neo.publication.publish',
     description:
-      'Deliver a message in this conversation. Use a new requestId per message and reuse it only when retrying that send. Publishing does not infer which human input was answered. Project links must exist. For a document or evidence file, pass the reference artifact.file.register returned in artifacts and say in one sentence what it is.',
+      'Deliver a message in this conversation. Use a new requestId per message and reuse it only when retrying that send. Optional replyTo lists the received human message ids this publication answers; omit it to leave inputs unanswered. Unknown, foreign, queued and non-human ids are refused. Project links must exist. For a document or evidence file, pass the reference artifact.file.register returned in artifacts and say in one sentence what it is.',
     policy: { safetyClass: 'mutate', roles: ['neo'] },
     inputSchema: Draft,
     resultSchema: NeoPublicationResultSchema,

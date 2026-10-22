@@ -6,7 +6,7 @@ import {
   CodingTodoPrRepository,
   createCodingTodoPack,
 } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
-import type { NeoPack } from '../../../../src/lib/neo/packs/types.ts';
+import type { NeoPack } from '../../../../src/lib/neo/pack-contract.ts';
 import {
   readNeoTodoCompletion,
   requireNeoTodoMayFinish,
@@ -439,6 +439,103 @@ describe('coding todo PR ownership through add and edit', () => {
       expect(store.getTodo(original.id)?.check?.params.urls).toEqual([url(1)]);
     } finally {
       db.close();
+    }
+  });
+});
+
+describe('coding todo facts and judgement boundary', () => {
+  const add = (h: ReturnType<typeof setup>, kind = 'pr_merged') =>
+    h.store.addTodo(
+      'facts-todo',
+      'ask',
+      {
+        title: 'Observe both PRs',
+        doneWhen: 'Both merged',
+        instruction: null,
+        named: null,
+        check: { pack: 'coding', kind, params: { urls: [url(1), url(2)] } },
+      },
+      1
+    );
+
+  test('a captured verdict needs no further I/O and ignores subsequent upstream changes', async () => {
+    const h = setup();
+    const todo = add(h);
+    h.states.set(2, 'MERGED');
+    const facts = await h.coding.todos.readFacts(todo);
+    h.states.set(2, 'OPEN');
+    h.db.close();
+    expect(h.coding.todos.judge(todo, facts)).toEqual({
+      state: 'done',
+      evidence: '#1 #2 merged',
+    });
+    expect(h.coding.todos.judge(todo, facts)).toEqual({
+      state: 'done',
+      evidence: '#1 #2 merged',
+    });
+  });
+
+  test('reading facts never finishes a todo before its caller applies a decision', async () => {
+    const h = setup();
+    try {
+      const todo = add(h);
+      h.states.set(2, 'MERGED');
+      const before = h.store.getTodo(todo.id);
+      const facts = await h.coding.todos.readFacts(todo);
+      expect(h.store.getTodo(todo.id)).toEqual(before);
+      expect(h.coding.todos.judge(todo, facts)).toMatchObject({ state: 'done' });
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('incomplete facts cannot certify a merge and the existing check remains unmet', async () => {
+    const h = setup();
+    try {
+      const todo = add(h);
+      const pack = createCodingTodoPack(h.repo, async () => [
+        { url: url(1), state: 'MERGED', checks: 'passing', review: 'none' },
+      ]);
+      expect(pack.judge(todo, await pack.readFacts(todo))).toEqual({ state: 'no_opinion' });
+      expect(await pack.check(todo)).toEqual({ done: false, evidence: null });
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('replacement grace uses the observation time rather than an implicit clock', () => {
+    const h = setup();
+    try {
+      const todo = add(h);
+      const prs: NeoWorkPr[] = [
+        { url: url(1), state: 'CLOSED', checks: 'none', review: 'none', closedAt: 1000 },
+      ];
+      expect(h.coding.todos.judge(todo, { prs, observedAt: 1001 })).toEqual({
+        state: 'no_opinion',
+      });
+      expect(h.coding.todos.judge(todo, { prs, observedAt: 1_000_000 })).toEqual({
+        state: 'failed',
+        reason: '#1 closed without merging and no pull request replaced it',
+      });
+    } finally {
+      h.db.close();
+    }
+  });
+
+  test('a foreign rule and an unsupported kind give no opinion without changing compatibility', async () => {
+    const h = setup();
+    try {
+      const todo = add(h, 'synthetic_unsupported');
+      expect(h.coding.todos.judge(todo, await h.coding.todos.readFacts(todo))).toEqual({
+        state: 'no_opinion',
+      });
+      expect(await h.coding.todos.check(todo)).toBeNull();
+      const foreign = { ...todo, check: { ...todo.check!, pack: 'other' } };
+      expect(await h.coding.todos.readFacts(foreign)).toBeNull();
+      expect(h.coding.todos.judge(foreign, null)).toEqual({ state: 'no_opinion' });
+      expect(await h.coding.todos.check(foreign)).toBeNull();
+    } finally {
+      h.db.close();
     }
   });
 });

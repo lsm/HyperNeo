@@ -65,6 +65,89 @@ async function propose(requestId = 'request', change = edit) {
   return (result as { value: { questionId: string } }).value.questionId;
 }
 describe('human-approved standing rules', () => {
+  test('a cited consumed human input authorizes only a complete text part from this conversation', async () => {
+    const messageId = crypto.randomUUID();
+    const content = 'Ask before publishing. Remove Old synthetic rule.';
+    expect(
+      await invoke(
+        'neo.message.send',
+        { sessionId: agent.sessionId, requestId: messageId, content },
+        human
+      )
+    ).toMatchObject({ value: { ok: true } });
+    const input = { ...edit, messageId, from: content };
+    expect(await invoke('neo.rule.save', input)).toMatchObject({ value: { ok: false } });
+    const repo = db.getSDKMessageRepo();
+    repo.updateMessageStatus([repo.findMessageIdByUuid(agent.sessionId!, messageId)!], 'consumed');
+    expect(
+      await invoke('neo.rule.save', { ...input, from: 'Words absent from the human message.' })
+    ).toMatchObject({ value: { ok: false } });
+    for (const from of ['e', 'Ask before publishing.']) {
+      expect(await invoke('neo.rule.save', { ...input, from })).toMatchObject({
+        value: { ok: false },
+      });
+      expect(saved()).toEqual(['Old synthetic rule.', 'Keep this rule.']);
+    }
+    expect(await invoke('neo.rule.save', input)).toMatchObject({
+      value: { ok: true, standingRules: ['Keep this rule.', ...edit.add] },
+    });
+    expect(saved()).toEqual(['Keep this rule.', ...edit.add]);
+  });
+
+  test.each(['add', 'remove'] as const)(
+    'an unrelated received greeting cannot authorize a rule %s',
+    async (kind) => {
+      const messageId = crypto.randomUUID();
+      await invoke(
+        'neo.message.send',
+        { sessionId: agent.sessionId, requestId: messageId, content: 'hi' },
+        human
+      );
+      const repo = db.getSDKMessageRepo();
+      repo.updateMessageStatus(
+        [repo.findMessageIdByUuid(agent.sessionId!, messageId)!],
+        'consumed'
+      );
+      const input = {
+        messageId,
+        from: 'hi',
+        [kind]: [kind === 'add' ? 'Invented rule.' : 'Old synthetic rule.'],
+      };
+      expect(await invoke('neo.rule.save', input)).toMatchObject({ value: { ok: false } });
+      expect(saved()).toEqual(['Old synthetic rule.', 'Keep this rule.']);
+    }
+  );
+
+  test.each(['unknown', 'foreign', 'system', 'task', 'not-in-conversation'])(
+    'refuses %s message ids without changing standing rules',
+    async (kind) => {
+      const messageId = crypto.randomUUID();
+      const sessionId = kind === 'foreign' ? 'ordinary-session' : agent.sessionId!;
+      if (kind === 'foreign') db.createSession(createTestSession(sessionId));
+      if (kind !== 'unknown') {
+        db.getSDKMessageRepo().saveUserMessage(sessionId, {
+          type: 'user',
+          uuid: messageId,
+          session_id: sessionId,
+          parent_tool_use_id: null,
+          inputKind: kind === 'system' || kind === 'task' ? kind : 'human',
+          message: { role: 'user', content: edit.add[0] },
+        } as import('@hyperneo/shared/sdk').SDKUserMessage);
+        if (kind !== 'not-in-conversation')
+          service.asks.append({
+            conversationId: service.repo.conversationId()!,
+            requestId: messageId,
+            askOrigin: { sessionId, messageId },
+            content: edit.add[0],
+          });
+      }
+      expect(
+        await invoke('neo.rule.save', { ...edit, messageId, from: edit.add[0] })
+      ).toMatchObject({ value: { ok: false } });
+      expect(saved()).toEqual(['Old synthetic rule.', 'Keep this rule.']);
+    }
+  );
+
   test('a system-turn proposal changes nothing until human yes, then applies the exact edit', async () => {
     expect(await invoke('neo.rule.save', { add: edit.add, from: edit.add[0] })).toMatchObject({
       value: { ok: false },

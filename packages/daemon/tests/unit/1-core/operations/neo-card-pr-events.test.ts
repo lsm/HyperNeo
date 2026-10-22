@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { z } from 'zod';
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
@@ -178,14 +178,18 @@ describe('Neo todo pull request events', () => {
   const jobs = () =>
     db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': 'root' });
   let seq = 0;
-  async function event(action: string, payload: Record<string, unknown> = {}) {
+  async function event(
+    action: string,
+    payload: Record<string, unknown> = {},
+    occurredAt = Date.now()
+  ) {
     const record: ExternalEvent = {
       id: `event-${++seq}`,
       spaceId: SESSION_EVENT_SCOPE,
       source: 'github',
       topic: `github/lsm/hyperneo/pull_request/7.${action}`,
       dedupeKey: `pr7:${action}:${seq}`,
-      occurredAt: Date.now(),
+      occurredAt,
       ingestedAt: Date.now(),
       summary: `PR #7 ${action}`,
       payload: { prUrl: PR, prNumber: 7, actor: 'hyperneo-ai-test[bot]', ...payload },
@@ -228,6 +232,21 @@ describe('Neo todo pull request events', () => {
       expect(sent).toHaveLength(1);
     }
   );
+  test.each(['review_submitted', 'review_comment_polled', 'comment_polled', 'reaction_added'])(
+    '%s reaches its owner without forced completion reads or a global worker sweep',
+    async (action) => {
+      todo();
+      await service.todoRunner.refresh(() => {});
+      const reads = mock(async () => prs);
+      service.readPrs = reads;
+      await event(action, { body: 'Synthetic feedback', state: 'APPROVED' });
+      expect(sent).toHaveLength(1);
+      expect(sent[0].ref).toEqual(ref);
+      expect(reads).not.toHaveBeenCalled();
+      expect(service.todos.getTodo('todo')?.state).toBe('doing');
+    }
+  );
+
   test('merge delivery refreshes evidence, checks the todo and wakes its owning Neo once', async () => {
     const row = todo();
     prs = [{ ...open, state: 'MERGED' }];
@@ -343,6 +362,35 @@ describe('Neo todo pull request events', () => {
     await event('check_failed', { checkName: 'Lint', headSha: 'new' });
     await event('comment_created', { body: 'No commit on this one' });
     expect(sent).toHaveLength(4);
+  });
+  test('head-specific feedback newer than the cached read refreshes before routing', async () => {
+    prs = [{ ...open, head: 'old' }];
+    todo();
+    await service.todoRunner.refresh(() => {});
+    prs = [{ ...open, head: 'new' }];
+    const reads = mock(async () => prs);
+    service.readPrs = reads;
+    const now = Date.now() + 1_000;
+    const clock = spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      await event('check_failed', { checkName: 'Lint', headSha: 'old' }, now - 1);
+    } finally {
+      clock.mockRestore();
+    }
+    expect(reads).toHaveBeenCalledTimes(1);
+    expect(sent).toEqual([]);
+  });
+  test('historical head-specific feedback reuses a newer completion read', async () => {
+    prs = [{ ...open, head: 'new' }];
+    todo();
+    await service.todoRunner.refresh(() => {});
+    const reads = mock(async () => prs);
+    service.readPrs = reads;
+    await event('review_comment_created', { body: 'Old thread', commitId: 'old' }, 1);
+    await event('review_comment_created', { body: 'Current thread', commitId: 'new' }, 1);
+    expect(reads).not.toHaveBeenCalled();
+    expect(sent).toHaveLength(1);
+    expect(sent[0].message).toContain('Current thread');
   });
   test('routine polls and pending checks do not send work to the todo session', async () => {
     todo();

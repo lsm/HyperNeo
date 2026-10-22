@@ -64,6 +64,10 @@ env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_USE_DEV_PROXY=1 \
   HYPERNEO_DATA_DIR="$RUN/data" LOG_LEVEL=warn bun "$PROOF" "$RUN"
 ```
 
+SDK proof helpers disable external registry MCP servers through `mcp.registry.list`
+and `mcp.registry.setEnabled` before opening sessions. Inline operation tools remain
+available; startup must not depend on downloading an external MCP executable.
+
 The helper creates its own GitHub stub, uses an ephemeral daemon port, seeds
 only its synthetic DB, and closes its resources in finally. Keep its evidence
 before removing the run directory. The journey names the checks and any
@@ -139,3 +143,12 @@ kill "$(cat "$RUN/asr-stub.pid")"   # only if journey 2 started it
 `stop.sh` stops only the daemon and mock it started, by their pid files, and
 waits for both to exit before the run directory can be reused. Close
 the browser tab you opened. Delete `$RUN` once the evidence is in the PR.
+
+## Metadata-only daemon proofs
+
+A journey that needs no model may start the source CLI directly under `env -i`
+with `NODE_ENV=test`, a fresh `HOME`, `HYPERNEO_DATA_DIR` and `--db-path` inside
+its run directory. It must preflight its own non-8399 port, retain the daemon log
+and RPC evidence, and own an EXIT trap that stops and waits for that exact child.
+No HTTP model mock or provider registration is needed. The worker-identity helper
+implements this setup; it never touches another process's occupied mock port.

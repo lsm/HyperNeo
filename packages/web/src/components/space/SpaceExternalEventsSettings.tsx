@@ -277,9 +277,9 @@ export function SpaceExternalEventsSettings({
     }
     if (
       tokenStatus?.configured === true &&
-      tokenStatus.source === 'env' &&
+      (tokenStatus.source === 'env' || tokenStatus.source === 'gh') &&
       !window.confirm(
-        'A GITHUB_TOKEN env var is currently in use. Saving a keychain token will shadow it across every space. Continue?'
+        `The ${tokenStatus.source === 'gh' ? 'authenticated gh CLI' : 'GH_TOKEN / GITHUB_TOKEN env'} is currently in use. Saving a keychain token will shadow it across every space. Continue?`
       )
     ) {
       return;

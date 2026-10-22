@@ -1,6 +1,6 @@
 import { CODING_PACK_BRIEF } from './coding/pack.ts';
 import { LIFE_ADMIN_PACK_BRIEF } from './life-admin/pack.ts';
-import type { NeoPack, NeoPackBrief } from './types.ts';
+import type { NeoPack, NeoPackBrief } from '../pack-contract.ts';
 
 export const NEO_DEFAULT_PACKS = ['coding'];
 

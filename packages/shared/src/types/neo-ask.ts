@@ -1,3 +1,4 @@
+import type { WorkerIdentity } from './worker-identity.ts';
 import type { ArtifactProjection } from './artifact-file.ts';
 
 export type NeoAskStatus = 'open' | 'done' | 'dropped';
@@ -30,6 +31,7 @@ export type NeoTodoState = 'todo' | 'doing' | 'blocked' | 'done' | 'failed' | 'r
 export type NeoTodoBlocker = 'check' | 'worker' | 'failure' | 'question';
 
 export interface NeoTodo extends ArtifactProjection {
+  worker?: WorkerIdentity | null;
   id: string;
   askId: string;
   position: number;
@@ -62,6 +64,7 @@ export type NeoQuestionAnswer = string | string[];
 
 export interface NeoQuestion {
   document?: string | null;
+  replyTo?: string[];
   id: string;
   askId: string;
   text: string;

@@ -78,6 +78,7 @@ import {
   isRpcExtension,
 } from './lib/external-events/extension-manager.ts';
 import { GitHubEventExtension } from './lib/external-events/github/index.ts';
+import { createNeoReadCheckoutSync } from './lib/neo/read-checkout-sync.ts';
 import { pullRequestNumbersOfTopics } from './lib/github/parse-pr-url.ts';
 import { composeLongHorizonSubscriptionPattern } from './lib/external-events/long-horizon-subscription-pattern.ts';
 import { SessionEventSubscriptionRepository } from './storage/repositories/session-event-subscription-repository.ts';
@@ -938,7 +939,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const githubPollingEnabled = getGitHubPollingIntervalSeconds() > 0;
     await syncGitHubPollingCapability(extensionConfigStore, githubPollingEnabled);
     extensionManager.register(
-      new GitHubEventExtension(db.getDatabase(), process.env.GITHUB_TOKEN, {
+      new GitHubEventExtension(db.getDatabase(), process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN, {
+        syncReadCheckout: createNeoReadCheckoutSync(),
         getPollIntervalMs: () => getGitHubPollingIntervalSeconds() * 1000,
         credentialStore: credentialManager.getCredentialStore(),
         reactiveDb,

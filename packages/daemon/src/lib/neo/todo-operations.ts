@@ -1,3 +1,4 @@
+import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -7,7 +8,7 @@ import type {
 } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { NeoTodoTargetSchema } from './driver-work.ts';
-import type { NeoPack } from './packs/types.ts';
+import type { NeoPack } from './pack-contract.ts';
 import { neoTodoHome, neoTodoRepo } from './todo-repo.ts';
 import {
   readNeoTodoCompletion,
@@ -147,6 +148,7 @@ const Remove = z.object({
 });
 
 export const NeoTodoSchema = z.object({
+  worker: WorkerIdentitySchema.nullable().optional(),
   id: z.string(),
   askId: z.string(),
   position: z.number(),
@@ -265,8 +267,14 @@ export function createNeoTodoOperations(
   sessions: NeoTodoSessionRepository,
   controls: NeoTodoControls,
   packs: () => readonly NeoPack[],
-  artifact: ArtifactRefReader
+  artifact: ArtifactRefReader,
+  project: <T extends NeoTodo>(todos: readonly T[]) => Promise<T[]> = async (todos) => [...todos]
 ) {
+  const present = async (result: TodoReceipt | Rejection) => {
+    if (!result.ok) return result;
+    const [todo, ...todos] = await project([result.todo, ...result.todos]);
+    return { ...result, todo, todos };
+  };
   const completion = (plan: { todo: NeoTodo; patch: NeoTodoPatch }) =>
     plan.patch.state === 'done' ? readNeoTodoCompletion(packs(), plan.todo) : null;
   const withUrls = (
@@ -431,7 +439,7 @@ export function createNeoTodoOperations(
       inputSchema: Add,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => add(input, caller),
+      execute: async (input, caller) => present(await add(input, caller)),
     }),
     defineOperation({
       name: 'neo.todo.edit',
@@ -440,7 +448,7 @@ export function createNeoTodoOperations(
       inputSchema: Edit,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => edit(input, caller),
+      execute: async (input, caller) => present(await edit(input, caller)),
     }),
     defineOperation({
       name: 'neo.todo.remove',
@@ -449,7 +457,7 @@ export function createNeoTodoOperations(
       inputSchema: Remove,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => remove(input, caller),
+      execute: async (input, caller) => present(await remove(input, caller)),
     }),
     defineOperation({
       name: 'neo.todo.continue',
@@ -458,7 +466,7 @@ export function createNeoTodoOperations(
       inputSchema: Continue,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => proceed(input, caller),
+      execute: async (input, caller) => present(await proceed(input, caller)),
     }),
     defineOperation({
       name: 'neo.todo.retry',
@@ -467,7 +475,7 @@ export function createNeoTodoOperations(
       inputSchema: Retry,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => retry(input, caller),
+      execute: async (input, caller) => present(await retry(input, caller)),
     }),
     defineOperation({
       name: 'neo.todo.close',
@@ -476,7 +484,7 @@ export function createNeoTodoOperations(
       inputSchema: Close,
       resultSchema: TodoResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
-      execute: async (input, caller) => close(input, caller),
+      execute: async (input, caller) => present(await close(input, caller)),
     }),
   ];
 }

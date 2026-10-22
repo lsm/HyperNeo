@@ -22,3 +22,8 @@ handles new and existing providers through RPC, with a synthetic DB credential;
 GitHub is stubbed. Daemon/SDK, socket and model server close in finally. No GUI or
 real-provider behavior is verified. All receipt assertions run in CI; no known-red
 case is skipped. Keep the old #8093 and #8068 branches as historical evidence.
+
+The model request also checks intake-id scope: human messages sent through Neo's
+conversation carry their stored `[message id: ...]`; the ordinary session's
+human input retains its existing text with no such header. This metadata is
+added by Neo's conversation intake, never the shared delivery path.

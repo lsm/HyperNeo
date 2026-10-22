@@ -1,3 +1,5 @@
+import { WorkerIdentitySchema } from './worker-identity-schema.ts';
+import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { runLagPhase } from '../event-loop-activity.ts';
 import { basename, isAbsolute, join, normalize } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -34,7 +36,15 @@ export const FindWorkResultSchema = z.object({
     .object({
       name: z.string(),
       match: z.enum(['exact', 'ambiguous', 'none']),
-      near: z.array(z.object({ ref: WorkRefSchema, title: z.string() })).optional(),
+      near: z
+        .array(
+          z.object({
+            ref: WorkRefSchema,
+            title: z.string(),
+            worker: WorkerIdentitySchema.optional(),
+          })
+        )
+        .optional(),
     })
     .optional(),
 });
@@ -172,7 +182,13 @@ export function findSessionVerdict(
   const count = matched.reduce((total, group) => total + group.work.length, 0);
   if (count) return { name: session, match: count === 1 ? 'exact' : 'ambiguous' };
   const near = searched
-    .flatMap((group) => group.work.map(({ ref, title }) => ({ ref, title })))
+    .flatMap((group) =>
+      group.work.map(({ ref, title, worker }) => ({
+        ref,
+        title,
+        worker: worker ?? workerIdentity(ref, title),
+      }))
+    )
     .slice(0, NEAR_SESSIONS);
   return { name: session, match: 'none', near };
 }
@@ -191,7 +207,25 @@ export async function findLocally(
 ): Promise<SourceOutcome> {
   const settled = await Promise.allSettled(
     adapters.map(async (adapter) =>
-      runLagPhase(`work:find:${adapter.id}`, () => adapter.find(query))
+      runLagPhase(`work:find:${adapter.id}`, async () => {
+        const groups = await adapter.find(query);
+        if (adapter.id !== 'claude-code') return groups;
+        return Promise.all(
+          groups.map(async (group) => ({
+            ...group,
+            work: await Promise.all(
+              group.work.map(async (work) => {
+                const current = await adapter.status?.(work.ref);
+                return {
+                  ...work,
+                  title: current?.ok ? current.value.title : work.title,
+                  worker: workerIdentity(work.ref, current?.ok ? current.value.title : null),
+                };
+              })
+            ),
+          }))
+        );
+      })
     )
   );
   return settled.reduce<SourceOutcome>(
@@ -261,9 +295,11 @@ export function askRemotely(
 }
 
 function clampTitle(work: PlaceGroup['work'][number]): PlaceGroup['work'][number] {
-  return work.title.length > TITLE_BUDGET_CHARS
-    ? { ...work, title: `${work.title.slice(0, TITLE_BUDGET_CHARS)}…` }
-    : work;
+  const title =
+    work.title.length > TITLE_BUDGET_CHARS
+      ? `${work.title.slice(0, TITLE_BUDGET_CHARS)}…`
+      : work.title;
+  return { ...work, title, worker: work.worker ?? workerIdentity(work.ref, title) };
 }
 
 export function fitFindBudget(

@@ -1,3 +1,4 @@
+import { fetchGitHubViaCli } from '../../github/gh-api-fetch.ts';
 import { GitHubPollSlice } from './github-poll-slice.ts';
 import { runLagPhase } from '../../event-loop-activity.ts';
 import { createHash } from 'node:crypto';
@@ -84,12 +85,16 @@ const COMMENT_ENDPOINT_INITIAL_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 
 export interface GitHubRateLimitInfo {
   remaining: number;
+  limit?: number;
+  resource?: string;
   resetAt: number;
   limited: boolean;
   retryAfter: boolean;
 }
 
 export function parseRateLimitHeaders(res: Response): GitHubRateLimitInfo {
+  const limit = Number.parseInt(res.headers.get('X-RateLimit-Limit') ?? '', 10);
+  const resource = res.headers.get('X-RateLimit-Resource');
   const remainingRaw = res.headers.get('X-RateLimit-Remaining');
   const resetRaw = res.headers.get('X-RateLimit-Reset');
   const retryAfterRaw = res.headers.get('Retry-After');
@@ -107,6 +112,16 @@ export function parseRateLimitHeaders(res: Response): GitHubRateLimitInfo {
       : resetSeconds * 1000;
   return {
     remaining: remainingValue,
+    ...(Number.isFinite(limit) ? { limit } : {}),
+    ...(resource
+      ? {
+          resource: ['core', 'graphql', 'search', 'code_search', 'integration_manifest'].includes(
+            resource
+          )
+            ? resource
+            : 'unknown',
+        }
+      : {}),
     resetAt,
     limited,
     retryAfter: hasRetryAfter,
@@ -144,11 +159,12 @@ interface GitHubEventExtensionOptions {
   autoReconcileWebhooks?: boolean;
   sessionRepoReferenced?: (owner: string, repo: string) => boolean;
   subscribedPullRequests?: (watched: { spaceId: string; owner: string; repo: string }) => number[];
+  syncReadCheckout?: (watched: GitHubPollingRepo, request: typeof fetch) => Promise<unknown>;
 }
 
 interface GitHubTokenStatus {
   configured: boolean;
-  source: 'keychain' | 'env' | 'none';
+  source: 'keychain' | 'env' | 'gh' | 'none';
   login?: string;
   error?: string;
   authRejected?: boolean;
@@ -321,7 +337,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
   constructor(
     db: BunDatabase,
-    private readonly githubToken = process.env.GITHUB_TOKEN,
+    private readonly githubToken = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN,
     private readonly options: GitHubEventExtensionOptions = {}
   ) {
     this.repo = new GitHubEventExtensionRepository(db);
@@ -1228,16 +1244,24 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     return (await this.resolveTokenOrFail()).token;
   }
 
-  private async resolveTokenOrFail(): Promise<{ token: string | undefined; readFailed: boolean }> {
+  private async resolveTokenOrFail(): Promise<{
+    token: string | undefined;
+    readFailed: boolean;
+    source: 'credential-store' | 'GH_TOKEN' | 'GITHUB_TOKEN' | 'none';
+  }> {
     let token: string | undefined;
     let readFailed = false;
+    let source: 'credential-store' | 'GH_TOKEN' | 'GITHUB_TOKEN' | 'none' = 'none';
     if (this.credentialStore) {
       try {
         const stored = await this.credentialStore.get(
           GITHUB_CREDENTIAL_SERVICE,
           GITHUB_CREDENTIAL_ACCOUNT
         );
-        if (stored) token = stored;
+        if (stored) {
+          token = stored;
+          source = 'credential-store';
+        }
       } catch (error) {
         readFailed = true;
         log.warn('Failed to read GitHub token from credential store', {
@@ -1245,9 +1269,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         });
       }
     }
-    if (!token) token = this.githubToken;
+    if (!token && this.githubToken) {
+      token = this.githubToken;
+      source = token === process.env.GH_TOKEN ? 'GH_TOKEN' : 'GITHUB_TOKEN';
+    }
     this.lastResolvedToken = token;
-    return { token, readFailed };
+    return { token, readFailed, source };
   }
 
   private async getTokenStatus(): Promise<GitHubTokenStatus> {
@@ -1283,7 +1310,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       source = 'env';
     }
     this.lastResolvedToken = token;
-    if (!token)
+    const useCli = !token && keychainError === undefined && !this.options.fetchImpl;
+    if (!token && !useCli)
       return {
         configured: false,
         source: 'none',
@@ -1292,11 +1320,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         validatedFingerprint: 'none',
       };
 
+    if (useCli) source = 'gh';
     try {
-      const fetchImpl = this.options.fetchImpl ?? fetch;
+      const fetchImpl = useCli ? fetchGitHubViaCli : (this.options.fetchImpl ?? fetch);
       const response = await fetchImpl(`${GITHUB_API_BASE}/user`, {
         headers: {
-          Authorization: `Bearer ${token}`,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
           Accept: 'application/vnd.github+json',
           'User-Agent': 'HyperNeo-Space-GitHub/1.0',
           'X-GitHub-Api-Version': '2022-11-28',
@@ -1875,6 +1904,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
     log.warn('GitHub rate limit detected — deferring next poll', {
       remaining: rateLimit.remaining === Infinity ? 'unknown' : rateLimit.remaining,
+      limit: rateLimit.limit ?? null,
+      resource: rateLimit.resource ?? 'unknown',
+      retryAfter: rateLimit.retryAfter,
       resetAt: rateLimit.resetAt ? new Date(rateLimit.resetAt).toISOString() : 'unknown',
       nextPollInMs: delay,
     });
@@ -2484,8 +2516,28 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     let reactionsFullyPolled = true;
     let pullsFetchedResumedPage = false;
 
+    const credentials = await this.resolveTokenOrFail();
+    const token = credentials.token;
+    const useCli =
+      !token && !credentials.readFailed && !this.options.fetchImpl && fetchImpl === fetch;
+    const request = useCli ? fetchGitHubViaCli : fetchImpl;
+    let bucketRecorded = false;
     const fetchPage: typeof fetch = (async (input, init) => {
-      const response = await fetchImpl(input, init);
+      if (!token && credentials.readFailed)
+        throw new Error('Configured GitHub credentials unavailable; restore access before polling');
+      const response = await request(input, init);
+      if (!bucketRecorded) {
+        const bucket = parseRateLimitHeaders(response);
+        log.info('GitHub polling credential bucket', {
+          repo: gitHubRepoPath(watched.owner, watched.repo),
+          credentialSource: useCli ? 'gh' : credentials.source,
+          limit: bucket.limit ?? null,
+          resource: bucket.resource ?? 'unknown',
+          remaining: Number.isFinite(bucket.remaining) ? bucket.remaining : null,
+          status: response.status,
+        });
+        bucketRecorded = true;
+      }
       slice.observe(response);
       if (response.ok || response.status === 304) {
         accessible = true;
@@ -2493,7 +2545,6 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       }
       return response;
     }) as typeof fetch;
-    const token = await this.resolveToken();
     this.seedKnownLogin(cursor.selfLogin, token);
     this.pollCycleCredentialFingerprint = credentialFingerprint(token);
     for (const [stage, endpoint] of endpoints.entries()) {
@@ -3377,6 +3428,32 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         reactionsFullyPolled = false;
         partialScan = true;
         break;
+      }
+    }
+
+    if (
+      this.options.syncReadCheckout &&
+      Date.now() >= this.rateLimitedUntil &&
+      (latestRateLimit?.remaining ?? Infinity) >= RATE_LIMIT_LOW_REMAINING_THRESHOLD + 2
+    ) {
+      try {
+        await this.options.syncReadCheckout(watched, (async (input, init) => {
+          if (
+            Date.now() < this.rateLimitedUntil ||
+            (latestRateLimit?.remaining ?? Infinity) <= RATE_LIMIT_LOW_REMAINING_THRESHOLD
+          )
+            throw new Error('GitHub quota reserve reached');
+          const response = await fetchPage(input, {
+            ...init,
+            headers: gitHubPollingHeaders(token),
+            signal: AbortSignal.timeout(GITHUB_POLL_REQUEST_TIMEOUT_MS),
+          });
+          latestRateLimit = parseRateLimitHeaders(response);
+          if (latestRateLimit.limited) this.applyRateLimit(latestRateLimit);
+          return response;
+        }) as typeof fetch);
+      } catch (error) {
+        pollErrorMessage ??= `Neo read checkout: ${error instanceof Error ? error.message : String(error)}`;
       }
     }
 

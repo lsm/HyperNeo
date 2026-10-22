@@ -1,4 +1,6 @@
 import { strict as assert } from 'node:assert';
+import { createHash } from 'node:crypto';
+import { subscribeToStructuredLogs } from '../../../packages/daemon/src/lib/logger.ts';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
@@ -24,6 +26,19 @@ const root = 'neo:10000000-0000-4000-8000-000000008115';
 const old = Date.now() - 100 * 60_000;
 const blockedAt = Date.now() - 5 * 60_000;
 const ids = ['activity', 'sibling', 'still-stopped'];
+const pinRemoval = process.env.VERIFY_PIN_REMOVAL === '1';
+const removedId = 'removed-history';
+const completeReport = 'Complete synthetic worker result 🦊\n'.repeat(4000);
+const reportHash = (report: string) => createHash('sha256').update(report).digest('hex');
+const rpcTimes: { name: string; ms: number }[] = [];
+let sqlExecutions = 0, maxSqlMs = 0, maxLagMs = 0, peakRssBytes = process.memoryUsage().rss, lastTick = performance.now();
+const unsubscribe = subscribeToStructuredLogs(log => {
+  if (!pinRemoval || log.module !== 'hyperneo:daemon:sqlite.query' || log.metadata.workerKind) return;
+  if (log.metadata.event === 'summary') sqlExecutions += Number(log.metadata.executionCount ?? 0);
+  if (typeof log.metadata.durationMs === 'number') maxSqlMs = Math.max(maxSqlMs, log.metadata.durationMs);
+  for (const q of (log.metadata.queries ?? []) as { maxDurationMs: number }[]) maxSqlMs = Math.max(maxSqlMs, q.maxDurationMs);
+});
+const lagTimer = pinRemoval ? setInterval(() => { const now = performance.now(); maxLagMs = Math.max(maxLagMs, now-lastTick-10); lastTick=now; peakRssBytes=Math.max(peakRssBytes,process.memoryUsage().rss); },10) : undefined;
 const statePath = join(run, 'home/.codex/state_5.sqlite');
 const state = new Database(statePath);
 state.exec('CREATE TABLE projects (id TEXT PRIMARY KEY,name TEXT,updated_at_ms INTEGER); CREATE TABLE project_roots (project_id TEXT,position INTEGER,path TEXT); CREATE TABLE threads (id TEXT PRIMARY KEY,name TEXT,title TEXT,first_user_message TEXT,cwd TEXT,source TEXT,archived INTEGER,updated_at_ms INTEGER,rollout_path TEXT,git_branch TEXT)');
@@ -50,7 +65,7 @@ const evidence: Record<string, unknown> = { peerCalls };
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
 let ws: WebSocket | undefined;
 try {
-  app = await createDaemonApp({ config: getConfig({ port, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
+  app = await createDaemonApp({ config: { ...getConfig({ port, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), ...(pinRemoval ? { sqlQueryObservability: { slowThresholdMs:250, summaryIntervalMs:0, maxQueryGroups:1000, summaryQueryLimit:1000 } } : {}) }, verbose: false });
   await app.spaceRuntimeService.ready();
   const db = app.db.getDatabase();
   db.prepare("INSERT INTO sessions(id,title,workspace_path,created_at,last_active_at,status,config,metadata) VALUES (?, 'Synthetic stop proof', ?, ?, ?, 'active', '{\"queryMode\":\"manual\"}', '{}')").run(root, join(run, 'workspace'), new Date(old).toISOString(), new Date(old).toISOString());
@@ -65,12 +80,18 @@ try {
     sessions.recordFollowAnchor(id, old + 1);
     store.updateTodo(todo, { state: 'blocked', startedAt: old, report: 'Synthetic prior report.', blockedBy: 'worker', blockedReason: 'Its session stopped 90 min ago and nobody ticked it after 2 reminders.', nextAction: 'Continue the session, or close it.' }, blockedAt);
   }
+  if (pinRemoval) {
+    const todo = store.addTodo(removedId, 'synthetic-stop-ask', { title:'Removed worker history',doneWhen:'Synthetic removal',check:null,instruction:'Synthetic work',named:null },old);
+    sessions.create(removedId,{verb:'send',ref:{adapter:'codex-desktop',id:'sibling'}});
+    sessions.recordRef(removedId,{adapter:'codex-desktop',id:'sibling'},old);
+    store.updateTodo(todo,{state:'doing',startedAt:old,report:completeReport},blockedAt);
+  }
   ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('isolated RPC connect failed')); });
   const rpc = (name: string, input: unknown) => new Promise<Record<string, unknown>>((done, fail) => {
-    const id = crypto.randomUUID();
+    const id = crypto.randomUUID(), requestAt = performance.now();
     const timer = setTimeout(() => fail(new Error(`${name} timed out`)), 15000);
-    ws!.onmessage = event => { const reply = JSON.parse(String(event.data)); if (reply.id !== id && reply.requestId !== id) return; clearTimeout(timer); if (reply.error) fail(new Error(JSON.stringify(reply.error))); else done(reply.data); };
+    ws!.onmessage = event => { const reply = JSON.parse(String(event.data)); if (reply.id !== id && reply.requestId !== id) return; clearTimeout(timer); if (pinRemoval) rpcTimes.push({name,ms:performance.now()-requestAt}); if (reply.error) fail(new Error(JSON.stringify(reply.error))); else done(reply.data); };
     ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name, input }, timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
   const refresh = async () => {
@@ -84,6 +105,18 @@ try {
     }
     throw new Error('synthetic driver refresh did not complete');
   };
+  if (pinRemoval) {
+    const removeHandler = createOperationMcpHandler(() => app!.sessionManager.getOperationRegistry(), () => ({sessionId:root,role:'neo'}));
+    const removalAt=performance.now();
+    const reply = await removeHandler({name:'neo.todo.remove',input:{todoId:removedId,reason:'Synthetic explicit removal'}});
+    assert.equal(reply.content[0].type,'text');
+    const receipt=JSON.parse(reply.content[0].text);
+    evidence.removalReceipt=receipt; evidence.removalMcpMs=performance.now()-removalAt;
+    assert.equal(receipt.ok,true,JSON.stringify(receipt));
+    assert.equal(receipt.todo.state,'removed');
+    assert.equal(store.getTodo(removedId)?.report,completeReport);
+    evidence.inputReport={bytes:Buffer.byteLength(completeReport),sha256:reportHash(completeReport)};
+  }
   evidence.beforeSnapshot = await rpc('neo.snapshot', {});
   evidence.baselineJob = await refresh();
   evidence.baseline = ids.map(id => store.getTodo(id));
@@ -113,5 +146,28 @@ try {
     if (id !== 'still-stopped') { assert.equal(shown?.blockedBy, null); assert.equal(shown?.blockedReason, null); }
   }
   for (const id of ['activity', 'sibling']) { const todo = store.getTodo(id)!; assert.equal(todo.blockedBy, null); assert.equal(todo.report, 'Synthetic prior report.'); }
+  if (pinRemoval) {
+    const removed=store.getTodo(removedId)!;
+    assert.equal(removed.state,'removed'); assert.equal(removed.report,completeReport);
+    evidence.removedAfterResume={state:removed.state,bytes:Buffer.byteLength(removed.report!),sha256:reportHash(removed.report!)};
+    const starts=peerCalls.filter(call => (call as {method:string}).method==='turn/start').length;
+    ws.close(); await app.cleanup(); app=undefined;
+    app=await createDaemonApp({config:{...getConfig({port,host:'127.0.0.1',dbPath:join(run,'data/daemon.db')}),sqlQueryObservability:{slowThresholdMs:250,summaryIntervalMs:0,maxQueryGroups:1000,summaryQueryLimit:1000}},verbose:false});
+    await app.spaceRuntimeService.ready();
+    ws=new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    await new Promise<void>((done,fail)=>{ws!.onopen=()=>done();ws!.onerror=()=>fail(new Error('restart RPC connect failed'));});
+    evidence.restartRefresh=await refresh();
+    evidence.restartSnapshot=await rpc('neo.snapshot',{});
+    const recovered=new NeoAskTodoRepository(app.db.getDatabase()).getTodo(removedId)!;
+    assert.equal(recovered.state,'removed');assert.equal(recovered.report,completeReport);
+    assert.equal(peerCalls.filter(call=>(call as {method:string}).method==='turn/start').length,starts,'restart must not redispatch removed work');
+    evidence.removedAfterRestart={state:recovered.state,bytes:Buffer.byteLength(recovered.report!),sha256:reportHash(recovered.report!)};
+    evidence.restartDidNotRedispatch=true;
+  }
   console.log('PASS: real isolated refresh + Neo snapshot: activity/sibling -> doing; unchanged stop -> blocked; prior reports retained.');
-} finally { ws?.close(); await app?.cleanup(); peer.stop(true); }
+} finally {
+  ws?.close(); await app?.cleanup(); peer.stop(true);
+  if(lagTimer)clearInterval(lagTimer);
+  unsubscribe();
+  if(pinRemoval){evidence.metrics={maxLagMs,maxObservedSqlMs:maxSqlMs,sqlExecutions,peakSampledRssBytes:peakRssBytes,rpcTimes};writeFileSync(join(run,'evidence/observed.json'),JSON.stringify(evidence,null,2));assert(sqlExecutions>0,'SQL timing unavailable: no executions observed');}
+}

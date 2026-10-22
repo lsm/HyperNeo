@@ -139,6 +139,7 @@ describe('durable Neo intake operation', () => {
       inputKind: 'human',
       message: {
         content: [
+          { type: 'text', text: `[message id: ${input.requestId}]` },
           { type: 'text', text: expect.stringMatching(/^\(local time: /) },
           { type: 'text', text: input.content },
         ],
@@ -223,7 +224,7 @@ describe('durable Neo intake operation', () => {
     };
     const content = [photo, { type: 'text', text: '```txt\nnotes from a file\n```' }];
     expect(await invoke({ ...input, content })).toMatchObject({ value: { ok: true } });
-    expect(JSON.parse(mailbox.sdkRows()[0].sdk_message).message.content.slice(1)).toEqual(content);
+    expect(JSON.parse(mailbox.sdkRows()[0].sdk_message).message.content.slice(2)).toEqual(content);
     expect(
       await invoke({ ...input, requestId: crypto.randomUUID(), content: [photo] })
     ).toMatchObject({ value: { ok: true } });

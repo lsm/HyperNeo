@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { subscribeToStructuredLogs } from '../../../packages/daemon/src/lib/logger.ts';
 import { SDKBunWorkerBridge } from '../../../packages/daemon/tests/helpers/sdk-bun-worker-bridge.ts';
 
 const [mode,run]=process.argv.slice(2);
@@ -12,9 +13,12 @@ assert(['baseline','verify','bridge'].includes(mode));assert(run.startsWith('/pr
 assert.equal(process.env.NODE_ENV,'test');assert.equal(process.env.HOME,join(run,'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR,join(run,'data'));
 await mkdir(join(run,'evidence'),{recursive:true});
+const summaryMode=process.env.VERIFY_SQL_SUMMARY;
+const sqlLogs:Record<string,unknown>[]=[];
+const unsubscribe=subscribeToStructuredLogs(event=>{if(event.module==='hyperneo:daemon:sqlite.query'&&event.metadata.workerKind==='sdk-status')sqlLogs.push(event.metadata);});
 const NativeWorker=globalThis.Worker;
 if(mode==='bridge') globalThis.Worker=function(url:string|URL,options?:WorkerOptions) { return String(url).endsWith('/sdk-status-worker.ts')?new SDKBunWorkerBridge(String(url)):new NativeWorker(url,options); } as unknown as typeof Worker;
-const app=await createDaemonApp({config:{...getConfig({host:'127.0.0.1',dbPath:mode==='bridge'?join(run,'data/daemon.db'):':memory:',workspaceRoot:run}),port:0,disableWorktrees:true,disableGoalProcessing:true},standalone:false,verbose:false});
+const app=await createDaemonApp({config:{...getConfig({host:'127.0.0.1',dbPath:mode==='bridge'?join(run,'data/daemon.db'):':memory:',workspaceRoot:run}),sqlQueryObservability:summaryMode?{slowThresholdMs:0,summaryIntervalMs:1000,maxQueryGroups:128,summaryQueryLimit:128}:undefined,port:0,disableWorktrees:true,disableGoalProcessing:true},standalone:false,verbose:false});
 assert.notEqual(app.server.port,8399);
 let ws:WebSocket|undefined;const evidence:Record<string,unknown>={mode,dbPath:app.db.getDbPath()};
 try {
@@ -32,6 +36,27 @@ try {
  evidence.rpcMs=performance.now()-at;
  if(mode==='baseline'){assert('error' in result);assert(result.error.includes('file-backed'));evidence.error=result.error;}
  else {assert('value' in result);const page=result.value as {total:number;messages:{text:string}[]};assert.equal(page.total,1);assert.equal(page.messages[0].text,text+'\nSecond');evidence.total=page.total;}
+ if(mode!=='baseline') {
+  const pageAt=performance.now();
+  const page=await rpc('message.sdkMessages',{sessionId,limit:20}) as {sdkMessages:{uuid:string;message:{content:unknown}}[];hasMore:boolean;backgroundTaskMessages:unknown[]};
+  evidence.pageMs=performance.now()-pageAt;
+  assert.equal(page.sdkMessages.length,1);assert.equal(page.sdkMessages[0].uuid,'memory-user');
+  assert.deepEqual(page.sdkMessages[0].message.content,[{type:'text',text},{type:'image'},{type:'text',text:'Second'}]);
+  assert.equal(page.hasMore,false);assert.deepEqual(page.backgroundTaskMessages,[]);
+  const repeated=await rpc('message.sdkMessages',{sessionId,limit:20});assert.deepEqual(repeated,page);
+  evidence.repeatedPageMatched=true;
+  if(summaryMode){
+   await new Promise(resolve=>setTimeout(resolve,1200));
+   const summaries=sqlLogs.filter(m=>m.event==='summary'&&m.reason==='interval');
+   assert(summaries.length>0,'No interval summary observed');
+   evidence.intervalSummaries=summaries;
+   evidence.slowOperationLabels=[...new Set(sqlLogs.filter(m=>m.event==='slow').map(m=>m.workerOperation))];
+   assert((evidence.slowOperationLabels as unknown[]).includes('sdk-page'));
+   assert((evidence.slowOperationLabels as unknown[]).includes('sdk-status'));
+   if(summaryMode==='baseline') assert(summaries.some(m=>m.workerOperation==='sdk-page'),'Baseline failed to reproduce last-request summary attribution');
+   else assert(summaries.every(m=>!('workerOperation' in m)),'Mixed summary attributed to one request');
+  }
+ }
  assert.equal(hash(),before);evidence.bodySha256=before;
  assert.equal((await rpc('system.health') as {status:string}).status,'ok');evidence.health='ok';
-} finally {ws?.close();await app.cleanup();globalThis.Worker=NativeWorker;await writeFile(join(run,'evidence/memory.json'),JSON.stringify(evidence,null,2));}
+} finally {ws?.close();await app.cleanup();unsubscribe();globalThis.Worker=NativeWorker;await writeFile(join(run,'evidence/memory.json'),JSON.stringify(evidence,null,2));}

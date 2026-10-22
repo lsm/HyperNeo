@@ -7,7 +7,7 @@ import type { Logger } from '../logger.ts';
 import { invokeOperation } from '../operations/invoke.ts';
 import type { OperationRegistry } from '../operations/registry.ts';
 import { readDriverLastInputAt, readDriverLive, readDriverSessionFacts } from './driver-work.ts';
-import type { NeoSessionFacts } from './packs/types.ts';
+import type { NeoSessionFacts } from './pack-contract.ts';
 import { keepNeoSessionPrs, planNeoSessionPrReads } from './session-ask-links.ts';
 import {
   keepNeoSessionNoticeGroups,

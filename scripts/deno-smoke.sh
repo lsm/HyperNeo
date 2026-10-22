@@ -156,16 +156,20 @@ fi
 if ! SMOKE_WS_URL="ws://localhost:$PORT/ws" SMOKE_WORKSPACE_PATH="$WORK_DIR" deno eval '
 	const ws = new WebSocket(Deno.env.get("SMOKE_WS_URL"));
 	const timer = setTimeout(() => { console.error("SDK status reader RPC timed out"); Deno.exit(1); }, 15000);
+	let sessionId;
 	const send = (id, method, data) => ws.send(JSON.stringify({ id, method, data, type:"REQ", sessionId:"global", version:"1.0.0", timestamp:new Date().toISOString() }));
 	ws.onopen = () => send("create", "session.create", {workspacePath:Deno.env.get("SMOKE_WORKSPACE_PATH"), config:{queryMode:"manual"}});
 	ws.onmessage = ({data}) => {
 		const reply = JSON.parse(data), id = reply.requestId ?? reply.id;
-		if (id !== "create" && id !== "status") return;
+		if (id !== "create" && id !== "status" && id !== "page") return;
 		if (reply.error) { console.error(JSON.stringify(reply.error)); Deno.exit(1); }
-		if (id === "create") send("status", "session.messages.byStatus", {sessionId:reply.data.sessionId, status:"consumed", limit:20});
-		else {
+		if (id === "create") { sessionId=reply.data.sessionId; send("status", "session.messages.byStatus", {sessionId, status:"consumed", limit:20}); }
+		else if (id === "status") {
 			if (reply.data.total !== 0 || reply.data.messages.length !== 0) Deno.exit(1);
-			clearTimeout(timer); console.log("[deno-smoke] SDK status reader RPC ok"); ws.close(); Deno.exit(0);
+			send("page", "message.sdkMessages", {sessionId:reply.data.sessionId ?? sessionId,limit:20});
+		} else {
+			if (reply.data.sdkMessages.length !== 0 || reply.data.backgroundTaskMessages.length !== 0) Deno.exit(1);
+			clearTimeout(timer); console.log("[deno-smoke] SDK status/page reader RPC ok"); ws.close(); Deno.exit(0);
 		}
 	};
 '; then

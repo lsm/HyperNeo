@@ -14,8 +14,9 @@ env -i HOME="$RUN/home" PATH="$RUN/bin:$PATH" NODE_ENV=test \
   bun .claude/skills/verify/github-poll-fairness.ts verify 9361 "$RUN"
 ```
 
-The helper refuses a pre-existing data directory, installs a refusing gh stub,
-and rejects any fetch outside the synthetic GitHub API. It seeds only its own
+The helper refuses a pre-existing data directory, installs a gh stub that sends
+only structured API reads to its own loopback fixture, and rejects any fetch
+outside the synthetic GitHub API. It extracts no credential. It seeds only its own
 DB: one repo with 201 subscribed PRs and remembered heads, plus three one-PR
 repos. All four initially have `last_poll_at = NULL`, including the large repo,
 so putting the previously polled repo last cannot masquerade as request sharing.

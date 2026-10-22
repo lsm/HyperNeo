@@ -26,7 +26,7 @@ describe('projectNeoWorking', () => {
   test('keeps queued, processing and retrying sessions, titled, in a stable order', () => {
     expect(
       projectNeoWorking([
-        row('neo:b', 'processing', { projectId: 'p1', title: 'neo-ios' }),
+        row('neo:b', 'processing', { projectId: 'p1', title: 'neo-ios', name: 'Current worker' }),
         row('neo:a', 'queued'),
         row('neo:c', 'idle'),
         row('neo:d', 'interrupted'),
@@ -35,9 +35,32 @@ describe('projectNeoWorking', () => {
         row('neo:g', null),
       ])
     ).toEqual([
-      { sessionId: 'neo:a', projectId: null, title: 'Neo', status: 'queued' },
-      { sessionId: 'neo:b', projectId: 'p1', title: 'neo-ios', status: 'processing' },
-      { sessionId: 'neo:f', projectId: 'p2', title: 'money', status: 'rate_limit_cooldown' },
+      {
+        sessionId: 'neo:a',
+        projectId: null,
+        title: 'Neo',
+        status: 'queued',
+        worker: { id: 'neo:a', adapter: 'hyperneo', name: null, label: 'HyperNeo · neo:a' },
+      },
+      {
+        sessionId: 'neo:b',
+        projectId: 'p1',
+        title: 'neo-ios',
+        status: 'processing',
+        worker: {
+          id: 'neo:b',
+          adapter: 'hyperneo',
+          name: 'Current worker',
+          label: 'HyperNeo · Current worker',
+        },
+      },
+      {
+        sessionId: 'neo:f',
+        projectId: 'p2',
+        title: 'money',
+        status: 'rate_limit_cooldown',
+        worker: { id: 'neo:f', adapter: 'hyperneo', name: null, label: 'HyperNeo · neo:f' },
+      },
     ]);
   });
 });
@@ -57,6 +80,12 @@ describe('neoWorkingKey', () => {
 describe('Neo working sessions', () => {
   const main = 'neo:10000000-0000-4000-8000-000000000001';
   const holder = 'neo:holder';
+  const mainWorker = {
+    id: main,
+    adapter: 'hyperneo',
+    name: 'Synthetic main',
+    label: 'HyperNeo · Synthetic main',
+  };
   const worker = 'worker-1';
   let db: Awaited<ReturnType<typeof createTestDb>>;
   let events: InternalEventBus<DaemonInternalEventMap>;
@@ -85,7 +114,11 @@ describe('Neo working sessions', () => {
       { event } as unknown as MessageHub,
       events
     );
-    for (const id of [main, holder, worker]) db.createSession(createTestSession(id));
+    for (const id of [main, holder, worker])
+      db.createSession({
+        ...createTestSession(id),
+        title: id === main ? 'Synthetic main' : 'Synthetic worker',
+      });
     service.repo.saveProject({ id: 'p1', title: 'neo-ios', summary: '', context: '' }, 0);
     service.repo.reserveBinding({ sessionId: main, kind: 'neo', projectId: null });
     service.repo.reserveBinding({ sessionId: worker, kind: 'worker', projectId: null });
@@ -96,8 +129,30 @@ describe('Neo working sessions', () => {
     await state(main, { status: 'processing', messageId: 'm1', phase: 'thinking' });
     await state(worker, { status: 'processing', messageId: 'w1', phase: 'thinking' });
     expect(readNeoWorking(db.getDatabase())).toEqual([
-      { sessionId: main, projectId: null, title: 'Neo', status: 'processing' },
+      { sessionId: main, projectId: null, title: 'Neo', status: 'processing', worker: mainWorker },
     ]);
+  });
+
+  test('a renamed working session is reread without changing its identity or project title', async () => {
+    await state(main, { status: 'processing', messageId: 'm1', phase: 'thinking' });
+    db.getDatabase()
+      .prepare('UPDATE sessions SET title = ? WHERE id = ?')
+      .run('Renamed main', main);
+    await state(main, { status: 'processing', messageId: 'm1', phase: 'thinking' });
+    expect(readNeoWorking(db.getDatabase())[0]).toEqual({
+      sessionId: main,
+      projectId: null,
+      title: 'Neo',
+      status: 'processing',
+      worker: {
+        id: main,
+        adapter: 'hyperneo',
+        name: 'Renamed main',
+        label: 'HyperNeo · Renamed main',
+      },
+    });
+    expect(sent()).toHaveLength(2);
+    expect(sent()[1].working[0].worker.label).toBe('HyperNeo · Renamed main');
   });
 
   test('neo.working is sent only when the set changes', async () => {
@@ -107,8 +162,22 @@ describe('Neo working sessions', () => {
     await state(main, { status: 'queued', messageId: 'm2' });
     await state(main, { status: 'idle' });
     expect(sent()).toEqual([
-      { working: [{ sessionId: main, projectId: null, title: 'Neo', status: 'processing' }] },
-      { working: [{ sessionId: main, projectId: null, title: 'Neo', status: 'queued' }] },
+      {
+        working: [
+          {
+            sessionId: main,
+            projectId: null,
+            title: 'Neo',
+            status: 'processing',
+            worker: mainWorker,
+          },
+        ],
+      },
+      {
+        working: [
+          { sessionId: main, projectId: null, title: 'Neo', status: 'queued', worker: mainWorker },
+        ],
+      },
       { working: [] },
     ]);
     expect(readNeoWorking(db.getDatabase())).toEqual([]);

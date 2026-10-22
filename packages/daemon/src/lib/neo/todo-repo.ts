@@ -1,7 +1,7 @@
 import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
 import type { NeoDriverTarget } from './driver-work.ts';
-import type { NeoPack } from './packs/types.ts';
+import type { NeoPack } from './pack-contract.ts';
 import { neoRepositoryIdentity } from './project-mirror.ts';
 
 type Draft = Pick<NeoTodo, 'check' | 'named'> & { id?: string; target?: NeoDriverTarget | null };

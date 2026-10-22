@@ -1,0 +1,40 @@
+{
+  "width": 1280,
+  "phase": "after",
+  "surface": "Component fixture only; no active runtime initialization caller",
+  "cases": [
+    {
+      "section": "Direct component",
+      "titleOpens": false,
+      "viewport": {
+        "width": 1280,
+        "scrollWidth": 1280
+      },
+      "placement": {
+        "right": 1251,
+        "parentRight": 1263
+      }
+    },
+    {
+      "section": "Gated component",
+      "titleOpens": false,
+      "viewport": {
+        "width": 1280,
+        "scrollWidth": 1280
+      },
+      "placement": {
+        "right": 1244,
+        "parentRight": 1256
+      }
+    }
+  ],
+  "runtime": {
+    "surface": "Actual isolated session",
+    "storedInitUuid": "010e3d57-3088-4f1e-9a84-e89f8f2599b9",
+    "initVisible": false
+  },
+  "viewport": {
+    "width": 1280,
+    "scrollWidth": 1280
+  }
+}

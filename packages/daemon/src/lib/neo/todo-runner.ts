@@ -23,7 +23,7 @@ import {
   readDriverSent,
   withWorkGoal,
 } from './driver-work.ts';
-import type { NeoPack, NeoTodoCheckResult } from './packs/types.ts';
+import type { NeoPack, NeoTodoCheckResult } from './pack-contract.ts';
 import { type NeoDriverSettleDeps, settleNeoDriverWork } from './settle-driver-work.ts';
 import { readNeoTodoCompletion, sameNeoTodoCheck } from './todo-completion.ts';
 import { dispatchNeoInput } from './dispatch-input.ts';
@@ -707,10 +707,11 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     },
     async checkNow(
       todoIds: readonly string[],
-      warn: (message: string, error: unknown) => void
+      warn: (message: string, error: unknown) => void,
+      force = true
     ): Promise<void> {
       for (const todo of store.listCheckable().filter((item) => todoIds.includes(item.id))) {
-        checked.delete(todo.id);
+        if (force) checked.delete(todo.id);
         await check(todo, Date.now()).catch((error) => warn('Todo check pending', error));
       }
     },

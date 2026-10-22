@@ -1,3 +1,4 @@
+import type { WorkerIdentity } from './types/worker-identity.ts';
 import type { AuthStatus, SessionInfo, HealthStatus, HyperNeoActionMessage } from './types.ts';
 import type { SDKMessage } from './sdk/sdk.d.ts';
 import type { GlobalSettings } from './types/settings.ts';
@@ -128,6 +129,7 @@ export interface SessionError {
 }
 
 export interface SessionState {
+  worker?: WorkerIdentity | null;
   sessionInfo: SessionInfo | null;
 
   agentState: AgentProcessingState;

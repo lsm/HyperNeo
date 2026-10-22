@@ -119,6 +119,7 @@ try {
   neoPrompt = strings(entry.message.message.content);
   assert(neoPrompt.includes(reference.sha256 as string) && neoPrompt.includes(reference.path as string));
   assert(!neoPrompt.includes(text));
+  assert(!neoPrompt.includes('[message id:'), 'session messages retain their ordinary envelope');
   core.getDb().exec('DELETE FROM job_queue');
   core.close();
   core = new DatabaseCore(join(run,'data/daemon.db'));

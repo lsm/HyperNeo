@@ -1,3 +1,5 @@
+import { runMigration443 } from './m443-session-schedule-wakes.ts';
+import { runMigration442 } from './m442-neo-question-reply-to.ts';
 import { runMigration441 } from './m441-neo-outbound-history-index.ts';
 import { runMigration431 } from './m431-work-delivery-inputs.ts';
 import { runMigration438 } from './m438-voice-recordings.ts';
@@ -937,6 +939,8 @@ export function runMigrations(
   run(migrationMarkerKey(439), () => runMigration439(db));
   run(migrationMarkerKey(440), () => runMigration440(db));
   run(migrationMarkerKey(441), () => runMigration441(db));
+  run(migrationMarkerKey(442), () => runMigration442(db));
+  run(migrationMarkerKey(443), () => runMigration443(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

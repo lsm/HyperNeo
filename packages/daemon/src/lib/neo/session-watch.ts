@@ -1,3 +1,5 @@
+import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
+import { workerEngine } from '@hyperneo/shared/types/worker-identity';
 import type { NeoSessionNotice, NeoSessionNoticeGroup } from '@hyperneo/shared/types/neo-snapshot';
 import { z } from 'zod';
 import { NeoStatusCodesSchema, neoStatusLine } from './status-codes.ts';
@@ -10,6 +12,7 @@ export const NEO_SESSION_NOTICES_MAX = 20;
 export const NEO_SESSION_WATCH_LIMIT = 30;
 export const NEO_SESSION_GROUP_NOTICES_MAX = 30;
 export const NeoSessionNoticeSchema = z.object({
+  worker: WorkerIdentitySchema.optional(),
   key: z.string(),
   ref: WorkRefSchema,
   title: z.string(),
@@ -28,13 +31,6 @@ export const NeoSessionNoticeGroupSchema = z.object({
 export const NEO_SESSION_GROUP_MS = 60_000;
 export const NEO_SESSION_GROUPS_MAX = 10;
 const NEO_SESSION_GROUP_LINE_MAX = 5;
-const ADAPTER_LABELS: Record<string, string> = {
-  hyperneo: 'HyperNeo',
-  space: 'Space',
-  'codex-desktop': 'Codex',
-  'claude-desktop': 'Claude',
-  'claude-code': 'Claude Code',
-};
 const NOTICE_CODES = {
   needs_you: 'notice.session.needsYou',
   failed: 'notice.session.failed',
@@ -163,7 +159,7 @@ export function keepNeoSessionNotices(
 export function neoSessionNoticeLine(notices: readonly NeoSessionNotice[]) {
   const shown = notices.slice(0, NEO_SESSION_GROUP_LINE_MAX).map((notice) => ({
     code: `${NOTICE_CODES[notice.kind]}${notice.link ? '.open' : ''}`,
-    params: { app: ADAPTER_LABELS[notice.ref.adapter] ?? notice.ref.adapter, title: notice.title },
+    params: { app: workerEngine(notice.ref.adapter), title: notice.title },
   }));
   const more = notices.length - shown.length;
   const line = neoStatusLine(NOTICE_LINE_EN, [

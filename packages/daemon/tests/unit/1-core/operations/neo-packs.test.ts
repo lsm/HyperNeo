@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { NEO_PACK_CODING_INSTRUCTIONS } from '@hyperneo/prompts';
 import { NEO_DEFAULT_PACKS, neoPackBriefs, neoPacks } from '../../../../src/lib/neo/packs/index.ts';
-import type { NeoPack } from '../../../../src/lib/neo/packs/types.ts';
+import type { NeoPack } from '../../../../src/lib/neo/pack-contract.ts';
 
 const pack = (id: string, describe = id): NeoPack => ({ id, describe, instructions: () => null });
 

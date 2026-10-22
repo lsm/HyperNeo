@@ -1,4 +1,4 @@
-import type { NeoCardEventSubscription } from '../../lib/neo/packs/types.ts';
+import type { NeoCardEventSubscription } from '../../lib/neo/pack-contract.ts';
 import type { Database } from '../sqlite-compat.ts';
 
 export class NeoCardEventSubscriptionRepository {

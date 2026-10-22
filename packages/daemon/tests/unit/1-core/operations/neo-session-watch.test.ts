@@ -704,7 +704,12 @@ describe('refreshDriverWork', () => {
       expect(db.getSDKMessagesByType('neo:root', 'system', 'session_notices')).toHaveLength(1);
       const restarted = new NeoService(
         db,
-        { getOperationRegistry: () => createOperationRegistry([]) } as unknown as SessionManager,
+        {
+          getOperationRegistry: () => createOperationRegistry([]),
+          updateSession: async (id: string, updates: Parameters<typeof db.updateSession>[1]) => {
+            db.updateSession(id, updates);
+          },
+        } as unknown as SessionManager,
         { event: mock(() => {}) } as unknown as MessageHub,
         new InternalEventBus<DaemonInternalEventMap>()
       );
@@ -802,13 +807,27 @@ describe('refreshDriverWork', () => {
         }
       );
       expect('value' in snapshot && snapshot.value).toMatchObject({
-        sessionNoticeGroups: service.sessionNoticeGroups,
+        sessionNoticeGroups: [
+          expect.objectContaining({
+            notices: [
+              expect.objectContaining({
+                worker: { id: 't1', adapter: 'codex-desktop', name: null, label: 'Codex · t1' },
+                title: 't1',
+              }),
+            ],
+          }),
+        ],
       });
       expect('value' in snapshot && snapshot.value).not.toHaveProperty('sessionNotices');
 
       const restarted = new NeoService(
         db,
-        { getOperationRegistry: () => createOperationRegistry([]) } as unknown as SessionManager,
+        {
+          getOperationRegistry: () => createOperationRegistry([]),
+          updateSession: async (id: string, updates: Parameters<typeof db.updateSession>[1]) => {
+            db.updateSession(id, updates);
+          },
+        } as unknown as SessionManager,
         { event: mock(() => {}) } as unknown as MessageHub,
         new InternalEventBus<DaemonInternalEventMap>()
       );

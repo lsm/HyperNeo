@@ -132,7 +132,11 @@ function publication(value: unknown, page: Cursor): NeoPublication | null {
     answerOrigin === null ||
     (row.revisionId !== undefined &&
       (typeof row.revisionId !== 'string' || !uuid.test(row.revisionId))) ||
-    (row.revisions !== undefined && !Array.isArray(row.revisions))
+    (row.revisions !== undefined && !Array.isArray(row.revisions)) ||
+    (row.replyTo !== undefined &&
+      (!Array.isArray(row.replyTo) ||
+        row.replyTo.length > 100 ||
+        !row.replyTo.every((id) => typeof id === 'string' && uuid.test(id))))
   )
     return null;
   const artifacts = row.artifacts === undefined ? undefined : artifactRefs(row.artifacts);
@@ -172,6 +176,7 @@ function publication(value: unknown, page: Cursor): NeoPublication | null {
     ...(ask ? { askOrigin: ask } : {}),
     ...(producer ? { producerInput: producer } : {}),
     links,
+    ...(row.replyTo !== undefined ? { replyTo: row.replyTo as string[] } : {}),
     ...(typeof row.editedAt === 'string' ? { editedAt: row.editedAt } : {}),
     ...(typeof row.editedBy === 'string' ? { editedBy: row.editedBy } : {}),
     ...(answer ? { answerInput: answer } : {}),

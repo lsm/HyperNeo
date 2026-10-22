@@ -32,7 +32,13 @@ describe('Neo as one session', () => {
     db = await createTestDb();
     service = new NeoService(
       db,
-      { createSession, getSessionAsync: vi.fn() } as unknown as SessionManager,
+      {
+        createSession,
+        getSessionAsync: vi.fn(),
+        updateSession: async (id: string, updates: Parameters<typeof db.updateSession>[1]) => {
+          db.updateSession(id, updates);
+        },
+      } as unknown as SessionManager,
       { event: vi.fn() } as unknown as MessageHub,
       new InternalEventBus<DaemonInternalEventMap>()
     );

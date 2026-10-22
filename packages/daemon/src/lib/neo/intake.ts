@@ -95,7 +95,8 @@ export function neoIntakeMessage(
   input: IntakeInput,
   sessionId: string = input.sessionId,
   reply: NeoReply | null = null,
-  localTime: string | null = null
+  localTime: string | null = null,
+  stored?: SDKMessage
 ): SDKUserMessage & {
   uuid: UUID;
   inputKind: 'human';
@@ -109,7 +110,14 @@ export function neoIntakeMessage(
   const fact =
     (reply?.ask?.sessionId === sessionId ? neoReplyFact(reply, neoAskText(input.content)) : null) ??
     neoQuoteFact(input.replyTo);
-  const facts = [localTime, fact].flatMap((text) =>
+  const messageId = `[message id: ${input.requestId}]`;
+  const first =
+    stored?.type === 'user' && Array.isArray(stored.message.content)
+      ? stored.message.content[0]
+      : null;
+  const identifier =
+    !stored || (first?.type === 'text' && first.text === messageId) ? messageId : null;
+  const facts = [identifier, localTime, fact].flatMap((text) =>
     text ? [{ type: 'text' as const, text }] : []
   );
   return {
@@ -131,7 +139,13 @@ export function neoRetryLocalTime(stored: SDKMessage | undefined, fresh: string)
   if (!stored) return fresh;
   const content = stored.type === 'user' ? stored.message.content : null;
   const first = Array.isArray(content) ? content[0] : null;
-  return first?.type === 'text' && first.text.startsWith('(local time: ') ? first.text : null;
+  const time =
+    first?.type === 'text' && first.text.startsWith('[message id: ')
+      ? Array.isArray(content)
+        ? content[1]
+        : null
+      : first;
+  return time?.type === 'text' && time.text.startsWith('(local time: ') ? time.text : null;
 }
 
 export type NeoReply = {
@@ -192,25 +206,6 @@ export function neoReplySnapshot(
     ...(publication ? { author: 'neo' as const } : quoted ? { author: 'user' as const } : {}),
     ...(excerpt ? { excerpt } : {}),
   };
-}
-
-export function neoReplyAuthor(
-  reply: NeoReply | null,
-  publication: { producerInput: { sessionId: string } } | null,
-  asked: { askOrigin: { sessionId: string } } | null,
-  forwards: readonly { hop: number; toSessionId: string }[]
-): string | null {
-  const answering = forwards.reduce<{ hop: number; toSessionId: string } | null>(
-    (latest, forward) => (!latest || forward.hop > latest.hop ? forward : latest),
-    null
-  );
-  return (
-    reply?.ask?.sessionId ??
-    publication?.producerInput.sessionId ??
-    answering?.toSessionId ??
-    asked?.askOrigin.sessionId ??
-    null
-  );
 }
 
 export function recordNeoReplyAnswer(
@@ -431,16 +426,21 @@ const runIntake = (superpipe({})('neo-message-intake') as PipelineAPI)
   )
   .pipe((root: IntakeTarget) => root, 'receipt', 'root')
   .pipe(
-    (input: IntakeInput, root: IntakeTarget, reply: NeoReply | null, db: Database) =>
-      neoIntakeMessage(
+    (input: IntakeInput, root: IntakeTarget, reply: NeoReply | null, db: Database) => {
+      const stored = db
+        .getSDKMessageRepo()
+        .getStoredPromptsByUuid(root.target.id, input.requestId)[0];
+      return neoIntakeMessage(
         input,
         root.target.id,
         reply,
         neoRetryLocalTime(
-          db.getSDKMessageRepo().getStoredPromptsByUuid(root.target.id, input.requestId)[0],
+          stored,
           neoLocalTimeLine(new Date(), Intl.DateTimeFormat().resolvedOptions().timeZone)
-        )
-      ),
+        ),
+        stored
+      );
+    },
     ['input', 'root', 'reply', 'db'],
     'message'
   )

@@ -8,7 +8,11 @@ import {
   type DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
-import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
+import { z } from 'zod';
+import {
+  createOperationRegistry,
+  defineOperation,
+} from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 import {
@@ -165,7 +169,7 @@ test('batched reads retain scope, row order and missing-link behavior', async ()
   expect(service.todos.listTodosForAsks([])).toEqual([]);
   expect(service.todos.listQuestionsForAsks(['missing'])).toEqual([]);
   expect([...service.todoSessions.readLinksForTodos(['todo-0', 'missing'])]).toEqual([
-    ['todo-0', { link: '/session/synthetic-0', remoteLink: null }],
+    ['todo-0', { link: '/session/synthetic-0', remoteLink: null, worker: null }],
   ]);
   service.todos.addTodo(
     'without-session',
@@ -246,3 +250,49 @@ test.each([3, 4, 20, 21])(
     ).toBe(true);
   }
 );
+
+test('worker identity follows the adapter and current record, including notices after rename', async () => {
+  const ref = { adapter: 'codex-desktop', id: 'thread-1' };
+  let title = 'Claude something';
+  let found = true;
+  const status = defineOperation({
+    name: 'work.status',
+    inputSchema: z.object({ ref: z.unknown() }),
+    resultSchema: z.unknown(),
+    policy: { safetyClass: 'read' },
+    execute: async () =>
+      found ? { ok: true, value: { ref, title } } : { ok: false, reason: 'not_found' },
+  });
+  registry = createOperationRegistry([...createNeoOperations(service), status]);
+  service.todoSessions.create('todo-230', { verb: 'send', ref });
+  service.todoSessions.recordRef('todo-230', ref);
+  service.sessionWatcher.sessionNotices = [
+    { key: 'notice', ref, title: 'Creation-time cache', kind: 'needs_you', at: 1 },
+  ];
+  service.sessionWatcher.sessionNoticeGroups = [
+    { id: 'group', at: 1, line: 'Historical line', notices: service.sessionNotices },
+  ];
+  const first = read(await snapshot());
+  const worker = { ...ref, name: title, label: 'Codex · Claude something' };
+  expect(
+    first.todoAsks.flatMap((entry) => entry.todos).find((todo) => todo.id === 'todo-230')
+  ).toMatchObject({ worker });
+  expect(first.sessionNotices?.[0]).toMatchObject({ worker, title });
+  expect(first.sessionNoticeGroups?.[0].line).toContain('Codex · Claude something');
+  title = 'fullstack-renamed';
+  const next = read(await snapshot({ sinceRev: first.rev }));
+  expect(next).not.toHaveProperty('unchanged');
+  expect(
+    next.todoAsks.flatMap((entry) => entry.todos).find((todo) => todo.id === 'todo-230')
+  ).toMatchObject({ worker: { ...ref, name: title, label: 'Codex · fullstack-renamed' } });
+  expect(next.sessionNotices?.[0]).toMatchObject({ title });
+  found = false;
+  const removed = read(await snapshot());
+  expect(removed.sessionNotices?.[0]).toMatchObject({
+    title: ref.id,
+    worker: { ...ref, name: null, label: 'Codex · thread-1' },
+  });
+  expect(
+    removed.todoAsks.flatMap((entry) => entry.todos).find((todo) => todo.id === 'todo-230')
+  ).toMatchObject({ worker: { ...ref, name: null, label: 'Codex · thread-1' } });
+});

@@ -8,7 +8,7 @@ import {
   parsePrUrl,
   pullRequestUrlOfTopic,
 } from '../../../github/parse-pr-url.ts';
-import type { NeoTodoCheckResult, NeoTodoPack } from '../types.ts';
+import type { NeoTodoCheckResult, NeoTodoFactJudge, NeoTodoPack } from '../../pack-contract.ts';
 import type { CodingPrState } from './pr-ledger.ts';
 import { neoStatusLine, type NeoStatusLine } from '../../status-codes.ts';
 import { createCodingPackTables } from './schema/coding-tables.ts';
@@ -391,11 +391,17 @@ export function codingTodoCheckRefusal(
     : null;
 }
 
+type CodingTodoFacts = {
+  prs: readonly NeoWorkPr[];
+  observedAt: number;
+  incomplete?: true;
+};
+
 export function createCodingTodoPack(
   repo: CodingTodoPrRepository,
   readPrs: NeoWorkPrReader,
   ledger?: CodingLedgerState
-): NeoTodoPack {
+): NeoTodoPack & NeoTodoFactJudge<CodingTodoFacts | null> {
   const claimsOf = (todo: NeoTodo) => {
     const recorded = new Set(repo.prs(todo.id).flatMap((pr) => codingPrKey(pr.url) ?? []));
     return [
@@ -403,7 +409,30 @@ export function createCodingTodoPack(
       ...repo.claimsOn([...recorded]).filter((row) => row.todoId === todo.id),
     ];
   };
+  const readFacts = async (todo: NeoTodo): Promise<CodingTodoFacts | null> => {
+    if (todo.check && todo.check.pack !== 'coding') return null;
+    repo.claim(todo.id, claimsOf(todo), Date.now());
+    const urls = repo.urls(todo.id);
+    if (!urls.length) return todo.check ? { prs: [], observedAt: Date.now() } : null;
+    const read = await readPrs(urls);
+    if (!read || urls.some((url) => !read.some((pr) => codingPrKey(pr.url) === url)))
+      return { prs: [], observedAt: Date.now(), incomplete: true };
+    const claims = repo.claimsOn(urls);
+    const window = repo.window(todo.id);
+    const prs = codingTodoOwnPrs(todo, claims, read, window);
+    const open = todo.check ? [] : codingTodoOpenBranchPrs(todo, claims, read, window, prs);
+    repo.record(todo.id, [...prs, ...open], Date.now());
+    return { prs, observedAt: Date.now() };
+  };
   return {
+    readFacts,
+    judge: (todo, facts) => {
+      if (!facts || facts.incomplete || todo.check?.pack !== 'coding')
+        return { state: 'no_opinion' };
+      const result = codingTodoCheck(todo.check.kind, facts.prs, facts.observedAt);
+      if (result?.failed) return { state: 'failed', reason: result.failed };
+      return result?.done ? { state: 'done', evidence: result.evidence } : { state: 'no_opinion' };
+    },
     schema: createCodingPackTables,
     repository: (todo) => codingTodoRepository(todo, todo.id ? repo.urls(todo.id) : []),
     openedPrs: (todo, urls) =>
@@ -413,19 +442,10 @@ export function createCodingTodoPack(
         Date.now()
       ),
     check: async (todo) => {
-      if (todo.check && todo.check.pack !== 'coding') return null;
-      repo.claim(todo.id, claimsOf(todo), Date.now());
-      const urls = repo.urls(todo.id);
-      if (!urls.length) return todo.check ? codingTodoCheck(todo.check.kind, []) : null;
-      const read = await readPrs(urls);
-      if (!read || urls.some((url) => !read.some((pr) => codingPrKey(pr.url) === url)))
-        return todo.check ? { done: false, evidence: null } : null;
-      const claims = repo.claimsOn(urls);
-      const window = repo.window(todo.id);
-      const prs = codingTodoOwnPrs(todo, claims, read, window);
-      const open = todo.check ? [] : codingTodoOpenBranchPrs(todo, claims, read, window, prs);
-      repo.record(todo.id, [...prs, ...open], Date.now());
-      return todo.check ? codingTodoCheck(todo.check.kind, prs) : null;
+      const facts = await readFacts(todo);
+      if (!facts) return null;
+      if (facts.incomplete) return todo.check ? { done: false, evidence: null } : null;
+      return todo.check ? codingTodoCheck(todo.check.kind, facts.prs, facts.observedAt) : null;
     },
     statusLine: (todo) => codingTodoStatusLine(todo, repo.prs(todo.id), ledger),
     waiting: (todo) => repo.prs(todo.id).some((pr) => pr.state === 'OPEN'),

@@ -6,7 +6,7 @@ import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { Logger } from '../../../logger.ts';
 import { spawnProcess } from '../../../runtime-spawn/index.ts';
 import { isRateLimitError } from '../../../session/rate-limit-detector.ts';
-import type { NeoSessionFacts } from '../types.ts';
+import type { NeoSessionFacts } from '../../pack-contract.ts';
 import { codingPrKey } from './todo-prs.ts';
 
 export type CodingPrState =
@@ -113,7 +113,7 @@ const FIELDS = `${DONE_FIELDS}
   commits(last: 1) { nodes { commit { statusCheckRollup { state } checkSuites(first: 1) { totalCount } } } }`;
 
 export const CODING_LEDGER_QUERY = `query($o: String!, $n: String!) {
-  rateLimit { remaining }
+  rateLimit { cost remaining resetAt }
   repository(owner: $o, name: $n) {
     nameWithOwner
     open: pullRequests(states: OPEN, first: 100) { pageInfo { hasNextPage } nodes { ${FIELDS} } }
@@ -597,8 +597,30 @@ export function codingLedgerArgs(repo: string): string[] {
 }
 
 export const readCodingLedgerRepo: CodingLedgerRead = async (repo) => {
+  const started = Date.now();
   const outcome = await runGhJson(codingLedgerArgs(repo), homedir(), spawnProcess, {
     resourceHint: 'graphql',
+  });
+  const budget = z
+    .object({
+      data: z.object({
+        rateLimit: z.object({
+          cost: z.number(),
+          remaining: z.number(),
+          resetAt: z.string(),
+        }),
+      }),
+    })
+    .safeParse(outcome.ok ? outcome.data : null);
+  log.info('PR ledger GitHub read', {
+    repo,
+    resource: 'graphql',
+    elapsedMs: Date.now() - started,
+    ok: outcome.ok,
+    cost: budget.success ? budget.data.data.rateLimit.cost : null,
+    remaining: budget.success ? budget.data.data.rateLimit.remaining : null,
+    resetAt: budget.success ? budget.data.data.rateLimit.resetAt : null,
+    retryAfterMs: outcome.ok ? null : (outcome.retryAfterMs ?? null),
   });
   return outcome.ok ? outcome.data : { error: outcome.error };
 };

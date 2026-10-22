@@ -43,7 +43,7 @@ export interface GitHubSpaceConfig {
 
 export interface GitHubTokenStatus {
   configured: boolean;
-  source: 'keychain' | 'env' | 'none';
+  source: 'keychain' | 'env' | 'gh' | 'none';
   login?: string;
   error?: string;
   autoRegisteredHookCount?: number;
