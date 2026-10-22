@@ -13,6 +13,9 @@ import { readNeoPublications } from '../../../../web/src/neo/publication-client.
 test('recovered root refreshes prompt and tools, resumes SDK history across cwd changes and publishes the reply', async () => {
   const isolated = mkdtempSync(join(tmpdir(), 'neo-sdk-publication-'));
   const requestId = randomUUID();
+  const approvalProbeFile = join(isolated, 'approval-probe.txt');
+  let approvalProbeIssued = false;
+  let approvalProbeDenied = false;
   const root = `neo:${randomUUID()}`;
   const historyMarker = `synthetic-history-${randomUUID()}`;
   const oldCwd = join(isolated, 'data', 'Neo', '.coordinators', 'old-root');
@@ -52,7 +55,15 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
       stream?: boolean;
       messages?: {
         role?: string;
-        content?: string | { type: string; text?: string; content?: { text?: string }[] }[];
+        content?:
+          | string
+          | {
+              type: string;
+              text?: string;
+              content?: { text?: string }[];
+              tool_use_id?: string;
+              is_error?: boolean;
+            }[];
       }[];
       tools?: { name: string }[];
       system?: string | { text: string }[];
@@ -83,22 +94,36 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
       nativeToolsSeen.push((body.tools ?? []).map((tool) => tool.name));
       const content = body.messages?.at(-1)?.content;
       if (Array.isArray(content))
-        for (const result of content.filter((item) => item.type === 'tool_result'))
+        for (const result of content.filter((item) => item.type === 'tool_result')) {
+          if (result.tool_use_id === 'tool-approval-probe') {
+            approvalProbeDenied = result.is_error === true;
+            continue;
+          }
           for (const item of result.content ?? [])
             if (item.text) receipts.push(JSON.parse(item.text));
+        }
     }
-    const publishing = active && round < 2;
-    const block = publishing
+    const approvalProbe = active && !approvalProbeIssued;
+    if (approvalProbe) approvalProbeIssued = true;
+    const publishing = active && !approvalProbe && round < 2;
+    const block = approvalProbe
       ? {
           type: 'tool_use',
-          id: `tool-fictional-${++round}`,
-          name: invoke!.name,
-          input: {
-            name: 'neo.publication.publish',
-            input: { requestId: 'fictional-send', shortText, fullText, links: [] },
-          },
+          id: 'tool-approval-probe',
+          name: 'Bash',
+          input: { command: `printf SYNTHETIC_UNAPPROVED > '${approvalProbeFile}'` },
         }
-      : { type: 'text', text: 'Done.' };
+      : publishing
+        ? {
+            type: 'tool_use',
+            id: `tool-fictional-${++round}`,
+            name: invoke!.name,
+            input: {
+              name: 'neo.publication.publish',
+              input: { requestId: 'fictional-send', shortText, fullText, links: [] },
+            },
+          }
+        : { type: 'text', text: 'Done.' };
     if (active) calls.push(block.type);
     const message = {
       id: `msg-fictional-${randomUUID()}`,
@@ -106,7 +131,7 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
       role: 'assistant',
       model: 'claude-haiku-4-5-20251001',
       content: [block],
-      stop_reason: publishing ? 'tool_use' : 'end_turn',
+      stop_reason: approvalProbe || publishing ? 'tool_use' : 'end_turn',
       stop_sequence: null,
       usage: { input_tokens: 100, output_tokens: 30 },
     };
@@ -233,7 +258,7 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
           maxTokens: 8192,
           temperature: 1,
           provider: 'anthropic',
-          permissionMode: 'bypassPermissions',
+          permissionMode: 'dontAsk',
           settingSources: [],
           systemPrompt: 'You are Neo, the user’s personal context coordinator.',
           sdkToolsPreset: [],
@@ -330,7 +355,7 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
     const end = Date.now() + 15000;
     while (calls.length < 3 && Date.now() < end)
       await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(calls).toEqual(['tool_use', 'tool_use', 'text']);
+    expect(calls).toEqual(['tool_use', 'tool_use', 'tool_use', 'text']);
     expect(receipts).toMatchObject([
       {
         accepted: true,
@@ -359,6 +384,8 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
         join(process.env.VERIFY_EVIDENCE_DIR, 'neo-goal-cycle-sdk.json'),
         JSON.stringify(
           {
+            approvalProbeDenied,
+            approvalProbeCreatedFile: existsSync(approvalProbeFile),
             sdkSessionId,
             historyMarker,
             oldCwd,
@@ -387,6 +414,9 @@ test('recovered root refreshes prompt and tools, resumes SDK history across cwd 
         )
       );
     }
+    expect(approvalProbeIssued).toBe(true);
+    expect(approvalProbeDenied).toBe(true);
+    expect(existsSync(approvalProbeFile)).toBe(false);
     expect(storedAtStartup.config.systemPrompt).toBe(neoPrompt());
     expect(storedAtStartup.config.sdkToolsPreset).toContain('Read');
     expect(storedAtStartup.config.sdkToolsPreset).toContain('Bash');
