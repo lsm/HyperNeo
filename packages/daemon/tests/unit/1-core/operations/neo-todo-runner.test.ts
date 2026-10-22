@@ -1237,10 +1237,10 @@ describe('stopped worker ladder', () => {
         nextAction: null,
         report,
       });
-      h.setStatus({ ok: true, value: { status: 'stopped', lastActivityAt: 2_000 } });
+      h.setStatus({ ok: true, value: { status: 'done', lastActivityAt: 2_000 } });
       await h.at(92);
       expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
-      for (const minutes of [121, 151, 181]) await h.at(minutes);
+      for (const minutes of [122, 152, 182]) await h.at(minutes);
       expect(h.store.getTodo(h.todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'worker' });
     } finally {
       h.clock.mockRestore();
@@ -1275,6 +1275,57 @@ describe('stopped worker ladder', () => {
         blockedReason: null,
       });
       expect(h.store.getTodo(sibling.id)?.state).toBe('doing');
+    } finally {
+      h.clock.mockRestore();
+      h.db.close();
+    }
+  });
+
+  test('a running session clears the stop block even without a stored report', async () => {
+    const h = await stopped(null);
+    try {
+      for (const minutes of [30, 60, 90]) await h.at(minutes);
+      h.store.updateTodo(h.store.getTodo(h.todo.id)!, { report: null }, Date.now());
+      h.setStatus({ ok: true, value: { status: 'running', lastActivityAt: 2_000 } });
+      await h.at(91);
+      expect(h.store.getTodo(h.todo.id)).toMatchObject({
+        state: 'doing',
+        blockedBy: null,
+        report: null,
+      });
+    } finally {
+      h.clock.mockRestore();
+      h.db.close();
+    }
+  });
+
+  test('a queue update alone is not evidence that a turn started', async () => {
+    const h = await stopped(null);
+    try {
+      for (const minutes of [30, 60, 90]) await h.at(minutes);
+      h.setStatus({ ok: true, value: { status: 'queued', lastActivityAt: Date.now() + MIN } });
+      await h.at(92);
+      expect(h.store.getTodo(h.todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'worker' });
+    } finally {
+      h.clock.mockRestore();
+      h.db.close();
+    }
+  });
+
+  test('an older doing sibling and a newer sibling on another daemon do not clear the block', async () => {
+    const h = await stopped(null);
+    try {
+      const older = h.add(null, null);
+      h.sessions.recordRef(older.id, ref, 1_000);
+      h.store.updateTodo(older, { state: 'doing', startedAt: 1_000 }, 1_000);
+      for (const minutes of [30, 60, 90]) await h.at(minutes);
+      h.clock.mockReturnValue(Date.now() + MIN);
+      const remote = h.add();
+      h.sessions.recordRef(remote.id, { ...ref, daemon: 'other-machine' }, Date.now());
+      h.store.updateTodo(remote, { state: 'doing', startedAt: Date.now() }, Date.now());
+      await h.at(92);
+      expect(h.store.getTodo(h.todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'worker' });
+      expect(h.store.getTodo(older.id)?.state).toBe('doing');
     } finally {
       h.clock.mockRestore();
       h.db.close();

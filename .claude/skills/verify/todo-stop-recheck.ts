@@ -106,6 +106,12 @@ try {
   assert.equal(store.getTodo('activity')?.state, 'doing', 'a new Codex turn must clear the stop block');
   assert.equal(store.getTodo('sibling')?.state, 'doing', 'a sibling start must clear the stop block');
   assert.equal(store.getTodo('still-stopped')?.state, 'blocked');
+  const snapshotTodos = (evidence.afterSnapshot as { todoAsks: { todos: { id: string; state: string; blockedBy: unknown; blockedReason: unknown }[] }[] }).todoAsks.flatMap(entry => entry.todos);
+  for (const id of ids) {
+    const shown = snapshotTodos.find(todo => todo.id === id);
+    assert.equal(shown?.state, id === 'still-stopped' ? 'blocked' : 'doing');
+    if (id !== 'still-stopped') { assert.equal(shown?.blockedBy, null); assert.equal(shown?.blockedReason, null); }
+  }
   for (const id of ['activity', 'sibling']) { const todo = store.getTodo(id)!; assert.equal(todo.blockedBy, null); assert.equal(todo.report, 'Synthetic prior report.'); }
   console.log('PASS: real isolated refresh + Neo snapshot: activity/sibling -> doing; unchanged stop -> blocked; prior reports retained.');
 } finally { ws?.close(); await app?.cleanup(); peer.stop(true); }
