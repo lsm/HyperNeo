@@ -19,6 +19,7 @@ const pressPair = (view: ReturnType<typeof render>) =>
 describe('PairPage', () => {
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
@@ -85,6 +86,47 @@ describe('PairPage', () => {
     const calls = fetchMock.mock.calls.length;
     await new Promise((resolve) => setTimeout(resolve, 2100));
     expect(fetchMock).toHaveBeenCalledTimes(calls);
+    expect(view.getByRole('button', { name: 'Pair this browser' })).toHaveProperty(
+      'disabled',
+      false
+    );
+  });
+
+  it('stops a hung request at the wait deadline', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(
+      (_url, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init.signal.addEventListener('abort', () =>
+            reject(new DOMException('Aborted', 'AbortError'))
+          );
+        })
+    );
+    const view = openPairPage('#ABCDE23456', fetchMock);
+    pressPair(view);
+    await vi.advanceTimersByTimeAsync(10 * 60_000 + 1);
+    expect(view.getByText(/Pairing timed out/)).toBeTruthy();
+    expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(true);
+  });
+
+  it('explains recovery if cancellation races a redeemed code', async () => {
+    let redeemed = false;
+    const fetchMock = vi.fn(
+      (_url, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          redeemed = true;
+          init.signal.addEventListener('abort', () =>
+            reject(new DOMException('Aborted', 'AbortError'))
+          );
+        })
+    );
+    const view = openPairPage('#ABCDE23456', fetchMock);
+    pressPair(view);
+    expect(redeemed).toBe(true);
+    fireEvent.click(view.getByRole('button', { name: 'Stop waiting' }));
+    expect(
+      view.getByText(/check Devices on a paired device before making a new code/)
+    ).toBeTruthy();
     expect(view.getByRole('button', { name: 'Pair this browser' })).toHaveProperty(
       'disabled',
       false
