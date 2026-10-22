@@ -2491,6 +2491,15 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       committed: cursor.lastSeenAt ?? watched.lastPollAt ?? 0,
       pending: cursor.pendingLastSeenAt ?? cursor.lastSeenAt ?? watched.lastPollAt ?? 0,
     };
+    const sessionReviewFloor =
+      watched.spaceId === SESSION_EVENT_SCOPE
+        ? Math.max(
+            endpointLastSeenAt.reviews ??
+              (watermarks.committed || Date.now() - COMMENT_ENDPOINT_INITIAL_LOOKBACK_MS),
+            watermarks.committed
+          )
+        : 0;
+    if (watched.spaceId === SESSION_EVENT_SCOPE) endpointLastSeenAt.reviews = sessionReviewFloor;
     const base = `https://api.github.com/repos/${gitHubRepoPath(watched.owner, watched.repo)}`;
     const endpoints = [
       { key: 'issue_comments', path: '/issues/comments', extra: 'sort=updated&direction=desc' },
@@ -3190,9 +3199,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         break;
       }
       const reviewQuery = new URLSearchParams({ per_page: '100' });
-      if (!(prNumber in reviewLastSeenAt)) {
-        reviewLastSeenAt[prNumber] = watermarks.committed;
-      }
+      reviewLastSeenAt[prNumber] = Math.max(
+        reviewLastSeenAt[prNumber] ?? watermarks.committed,
+        sessionReviewFloor
+      );
       let reviewPage = slice.page(5, String(prNumber));
       let reviewScanComplete = false;
       let reviewScanSinglePage = false;

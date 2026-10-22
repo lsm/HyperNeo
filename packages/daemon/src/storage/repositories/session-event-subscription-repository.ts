@@ -61,8 +61,9 @@ export class SessionEventSubscriptionRepository {
   listAll(): SessionEventSubscription[] {
     const rows = this.db
       .prepare(
-        `SELECT session_id, topic, label, created_at FROM session_event_subscriptions
-          ORDER BY created_at, rowid`
+        `SELECT sub.session_id, sub.topic, sub.label, sub.created_at
+           FROM session_event_subscriptions sub JOIN sessions s ON s.id = sub.session_id
+          WHERE s.status != 'archived' ORDER BY sub.created_at, sub.rowid`
       )
       .all() as SubscriptionRow[];
     return rows.map(toSubscription);

@@ -818,6 +818,8 @@ export class NeoService {
     const work = this.followedTodo(workId);
     const send = planNeoCardSend({ work, ref: this.todoSessions.readRef(workId) });
     if (!work || send.via === 'none') return false;
+    const sessionId = neoCardWorkerSession(send);
+    if (sessionId && this.db.getSession(sessionId)?.status === 'archived') return false;
     if (send.via === 'session') {
       await this.deliver(send.sessionId, key, text, work.originSessionId);
       return true;

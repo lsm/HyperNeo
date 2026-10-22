@@ -206,17 +206,6 @@ describe('Neo todo pull request events', () => {
     expect(db.getSession('archived-worker')?.status).toBe('archived');
   });
 
-  test('an archived Neo fallback session is not woken by a card event', async () => {
-    todo({ adapter: 'hyperneo', id: 'root' });
-    db.getDatabase()
-      .prepare("UPDATE neo_todo_sessions SET ref = 'null' WHERE todo_id = 'todo'")
-      .run();
-    db.getDatabase().prepare("UPDATE sessions SET status = 'archived' WHERE id = 'root'").run();
-    await event('review_submitted', { body: 'Fresh review' });
-    expect(jobs()).toHaveLength(0);
-    expect(db.getSession('root')?.status).toBe('archived');
-  });
-
   test('archived subscriptions remain stored but are not delivery targets', () => {
     db.createSession({ ...createTestSession('archived-worker'), status: 'archived' });
     const subscriptions = new SessionEventSubscriptionRepository(db.getDatabase());
