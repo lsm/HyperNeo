@@ -99,6 +99,7 @@ export type VoiceMode = 'batch' | 'streaming' | 'auto';
 export type VoiceStreamProtocol = 'deepgram' | 'openai-realtime';
 
 export interface NeoModelPreference {
+  autoCompactPercent?: number;
   model: string;
   provider: string;
   thinkingLevel: ThinkingLevel;

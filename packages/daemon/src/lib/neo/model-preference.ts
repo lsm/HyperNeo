@@ -2,6 +2,7 @@ import type { ModelInfo } from '@hyperneo/shared';
 import type { NeoModelPreference } from '@hyperneo/shared/types/settings';
 import {
   getThinkingLevelsForModel,
+  resolveAutoCompactPercent,
   normalizeThinkingLevel,
   THINKING_LEVELS,
   type ThinkingLevel,
@@ -23,6 +24,7 @@ const ModelPreference = z.object({
   thinkingLevel: z.string().trim().min(1).max(40),
 });
 const PreferenceInput = ModelPreference.extend({
+  autoCompactPercent: z.number().int().transform(resolveAutoCompactPercent).optional(),
   fallbacks: z.array(ModelPreference).max(10).optional(),
 });
 const PreferenceResult = z.union([
@@ -72,6 +74,9 @@ export function requireNeoPreferenceModel(
   return {
     value: {
       ...entries[0],
+      ...(input.autoCompactPercent === undefined
+        ? {}
+        : { autoCompactPercent: input.autoCompactPercent }),
       ...(input.fallbacks === undefined ? {} : { fallbacks: entries.slice(1) }),
     },
   };
@@ -126,7 +131,7 @@ export function createNeoPreferenceOperation(service: NeoService) {
   return defineOperation({
     name: 'neo.preferences.set',
     description:
-      'Set the primary model, provider and thinking level for Neo and its projects, for the user only. Optional fallbacks is an ordered list of model/provider/thinkingLevel entries, each clamped to supported thinking. An empty list disables Neo fallbacks; omitting it preserves the saved chain or today’s general session chain. Recovery continues the same turn on the next available fallback; Neo prefers the primary again after recovery. User model changes wait for idle.',
+      'Set the primary model, provider and thinking level for Neo and its projects, for the user only. Optional fallbacks is an ordered list of model/provider/thinkingLevel entries, each clamped to supported thinking. An empty list disables Neo fallbacks; omitting it preserves the saved chain or today’s general session chain. Recovery continues the same turn on the next available fallback; Neo prefers the primary again after recovery. Optional autoCompactPercent is an integer clamped to 10–100 for Neo context budgets; omitting it restores model metadata/default. Preference changes apply at idle.',
     inputSchema: PreferenceInput,
     resultSchema: PreferenceResult,
     policy: { safetyClass: 'human_only' },
