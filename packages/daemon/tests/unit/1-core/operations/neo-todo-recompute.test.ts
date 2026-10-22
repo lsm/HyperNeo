@@ -183,6 +183,7 @@ describe('ordered ask progression from facts', () => {
     '%s does not advance to a later todo',
     async (state) => {
       const f = fixture();
+      f.add('previous', 'done');
       f.add('first', state);
       f.add('next');
       f.facts.set(

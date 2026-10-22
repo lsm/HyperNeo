@@ -1,3 +1,9 @@
+import {
+  recomputeTodoState,
+  recomputeTodoStateAsync,
+  type TodoStateFacts,
+} from '../../lib/neo/todo-state.ts';
+import type { NeoTodoJudgement } from '../../lib/neo/pack-contract.ts';
 import { applyNeoRuleAnswer } from './neo-rule-answer.ts';
 import { applyPackPreferenceAnswer } from './pack-preference-answer.ts';
 import type {
@@ -202,13 +208,13 @@ export class NeoAskTodoRepository {
         "UPDATE neo_asks SET status = ?, outcome = ?, settled_at = ?, updated_at = ? WHERE id = ? AND status = 'open'"
       )
       .run(status, outcome, now, now, ask.id);
-    this.db
-      .prepare(
-        `UPDATE neo_todos SET state = 'removed', reason = ?, finished_at = ?, updated_at = ?,
-           blocked_reason = NULL, next_action = NULL, blocked_by = NULL
-         WHERE ask_id = ? AND state IN ('todo', 'doing', 'blocked')`
-      )
-      .run(`The ask was settled ${status}.`, now, now, ask.id);
+    for (const todo of this.listTodos(ask.id))
+      if (['todo', 'doing', 'blocked'].includes(todo.state))
+        this.updateTodo(
+          todo,
+          { state: 'removed', reason: `The ask was settled ${status}.`, finishedAt: now },
+          now
+        );
     this.retireQuestions(ask.id, now);
     return this.getAsk(ask.id)!;
   }
@@ -333,18 +339,80 @@ export class NeoAskTodoRepository {
     return this.getTodo(todo.id)!;
   }
 
+  private stateFacts(
+    todo: NeoTodo,
+    change: NeoTodoPatch,
+    judgement: NeoTodoJudgement
+  ): TodoStateFacts {
+    const live = this.db
+      .prepare('SELECT ref, live_status AS status FROM neo_todo_sessions WHERE todo_id = ?')
+      .get(todo.id) as { ref: string | null; status: string | null } | null;
+    return {
+      todo,
+      change,
+      judgement,
+      askOpen: this.getAsk(todo.askId)?.status === 'open',
+      order: this.db
+        .prepare(
+          'SELECT id, state, started_at AS startedAt FROM neo_todos WHERE ask_id = ? ORDER BY position, created_at'
+        )
+        .all(todo.askId) as TodoStateFacts['order'],
+      questionOpen: !!this.db
+        .prepare(`SELECT 1 FROM neo_questions WHERE ask_id = ? AND state = 'open'
+        AND (kind != 'start' OR EXISTS (SELECT 1 FROM json_each(start_todos) WHERE value = ?)) LIMIT 1`)
+        .get(todo.askId, todo.id),
+      dispatched: !!live?.ref || todo.startedAt !== null,
+      live: live?.status ?? null,
+    };
+  }
+
   updateTodo(todo: NeoTodo, change: NeoTodoPatch, now: number): NeoTodo {
+    const current = this.getTodo(todo.id)!;
+    return recomputeTodoState(
+      () => this.stateFacts(current, change, { state: 'no_opinion' }),
+      (decision) => this.writeTodo(current, decision.patch, now)!,
+      now
+    );
+  }
+
+  async recompute(
+    todo: NeoTodo,
+    change: NeoTodoPatch,
+    now: number,
+    judgement: NeoTodoJudgement,
+    advance: (id: string) => Promise<unknown>
+  ): Promise<NeoTodo> {
+    const current = this.getTodo(todo.id)!;
+    if (current.state === 'removed' || current.updatedAt !== todo.updatedAt) return current;
+    return recomputeTodoStateAsync(
+      () => this.stateFacts(current, change, judgement),
+      async (plan) => {
+        const written = this.writeTodo(current, plan.patch, now)!;
+        if (plan.startNext) await advance(plan.startNext);
+        return written;
+      },
+      now
+    );
+  }
+
+  private writeTodo(
+    todo: NeoTodo,
+    change: NeoTodoPatch,
+    now: number,
+    claim = false
+  ): NeoTodo | null {
+    if (!Object.keys(change).length) return this.getTodo(todo.id);
     const patch: NeoTodoPatch =
       change.state && change.state !== 'blocked'
         ? { ...change, blockedReason: null, nextAction: null, blockedBy: null }
         : change;
     const keys = Object.keys(patch) as (keyof NeoTodoPatch)[];
-    this.db.transaction(() => {
-      this.db
+    const changed = this.db.transaction(() => {
+      const result = this.db
         .prepare(
           `UPDATE neo_todos SET ${keys.map((key) => `${TODO_COLUMNS[key]} = ?`).join(', ')}${
             keys.length ? ', ' : ''
-          }updated_at = ? WHERE id = ?`
+          }updated_at = ? WHERE id = ?${claim ? " AND (state = 'todo' OR (state = 'blocked' AND blocked_by = 'question'))" : ''}`
         )
         .run(
           ...keys.map((key) =>
@@ -355,27 +423,24 @@ export class NeoAskTodoRepository {
           now,
           todo.id
         );
-      if (patch.state) this.pruneStartQuestions(todo.askId);
+      if (result.changes && patch.state) this.pruneStartQuestions(todo.askId);
+      return result.changes;
     })();
+    if (!changed) return null;
     this.touchAsk(todo.askId, now);
     return this.getTodo(todo.id)!;
   }
 
   claimStart(todo: NeoTodo, now: number): NeoTodo | null {
-    const changed = this.db.transaction(() => {
-      const claimed = this.db
-        .prepare(
-          `UPDATE neo_todos SET state = 'doing', started_at = ?, updated_at = ?,
-             blocked_reason = NULL, next_action = NULL, blocked_by = NULL
-           WHERE id = ? AND (state = 'todo' OR (state = 'blocked' AND blocked_by = 'question'))`
-        )
-        .run(now, now, todo.id).changes;
-      if (claimed) this.pruneStartQuestions(todo.askId);
-      return claimed;
-    })();
-    if (!changed) return null;
-    this.touchAsk(todo.askId, now);
-    return this.getTodo(todo.id);
+    const current = this.getTodo(todo.id)!;
+    return recomputeTodoState(
+      () => this.stateFacts(current, { state: 'doing', startedAt: now }, { state: 'no_opinion' }),
+      (decision) =>
+        decision.patch.state === 'doing'
+          ? this.writeTodo(current, decision.patch, now, true)
+          : null,
+      now
+    );
   }
 
   listCheckable(): NeoTodo[] {
@@ -591,17 +656,11 @@ export class NeoAskTodoRepository {
   }
 
   private releaseStartTodos(questionId: string, now: number): void {
-    this.db
-      .prepare(
-        `UPDATE neo_todos SET state = 'todo', updated_at = ?,
-           blocked_reason = NULL, next_action = NULL, blocked_by = NULL
-         WHERE state = 'blocked' AND blocked_by = 'question' AND id IN (
-           SELECT value FROM json_each(
-             (SELECT start_todos FROM neo_questions WHERE id = ? AND start_todos IS NOT NULL)
-           )
-         )`
-      )
-      .run(now, questionId);
+    for (const id of this.getQuestion(questionId)?.startTodos ?? []) {
+      const todo = this.getTodo(id);
+      if (todo?.state === 'blocked' && todo.blockedBy === 'question')
+        this.updateTodo(todo, { state: 'todo' }, now);
+    }
   }
 
   private touchAsk(askId: string, now: number): void {

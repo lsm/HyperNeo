@@ -4,8 +4,8 @@ This step-2 slice adds `pack.readFacts(todo)` and `pack.judge(todo, facts)`.
 `readFacts` owns the existing pack I/O and captures its observation time. `judge`
 replays only the provided data: done, failed, blocked(reason) or no opinion. The
 coding implementation uses done/failed/no opinion. Existing packs without a todo
-judgement remain supported. Current completion consumers still call the existing
-`todos.check` facade; recompute cut-over and the final import guard are later work.
+judgement remain supported. Runner recompute consumes these facts and judgements; explicit completion guards
+still use the existing `todos.check` facade. The final import guard is later work.
 No new ledger acquisition or ledger API is introduced.
 
 Use shared SKILL.md isolation setup, with a fresh directory and free non-8399

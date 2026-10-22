@@ -683,6 +683,7 @@ export function createNeoOperations(service: NeoService) {
       : { ok: true as const, pack: { id: pack.id, describe: pack.describe }, instructions };
   });
   const todoControls: NeoTodoControls = {
+    recompute: (todo, patch) => service.todoRunner.recompute(todo, patch),
     start: (todoId) => service.todoRunner.start(todoId),
     proceed: (todoId, message) => service.todoRunner.proceed(todoId, message),
     retry: (todoId) => service.todoRunner.retry(todoId),

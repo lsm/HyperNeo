@@ -102,6 +102,7 @@ describe('neo.todo.add repo', () => {
       store,
       new NeoTodoSessionRepository(db),
       {
+        recompute: async (todo, patch) => store.updateTodo(todo, patch, Date.now()),
         start: async () => ({ ok: false as const, reason: 'no' }),
         proceed: async () => ({ ok: false as const, reason: 'no' }),
         retry: async () => ({ ok: false as const, reason: 'no' }),
@@ -139,6 +140,7 @@ describe('neo.ask.open repo', () => {
       store,
       new NeoTodoSessionRepository(db),
       {
+        recompute: async (todo, patch) => store.updateTodo(todo, patch, Date.now()),
         start: async () => ({ ok: false as const, reason: 'no' }),
         proceed: async () => ({ ok: false as const, reason: 'no' }),
         retry: async () => ({ ok: false as const, reason: 'no' }),
@@ -201,7 +203,10 @@ describe('repo child cards', () => {
       createNeoAskRecordOperations(
         store,
         sessions,
-        controls,
+        {
+          ...controls,
+          recompute: async (todo, patch) => store.updateTodo(todo, patch, Date.now()),
+        },
         () => null,
         () => true,
         () => [],
@@ -213,7 +218,10 @@ describe('repo child cards', () => {
       createNeoTodoOperations(
         store,
         sessions,
-        controls,
+        {
+          ...controls,
+          recompute: async (todo, patch) => store.updateTodo(todo, patch, Date.now()),
+        },
         () => [coding],
         () => null
       ),

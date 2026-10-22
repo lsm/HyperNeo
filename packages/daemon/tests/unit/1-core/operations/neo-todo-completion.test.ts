@@ -72,6 +72,7 @@ function setup(stop: () => Promise<string | null> = async () => null) {
       store,
       sessions,
       {
+        recompute: runner.recompute,
         start: async () => ({ ok: false as const, reason: 'not started' }),
         proceed: async () => ({ ok: false as const, reason: 'no session' }),
         retry: async () => ({ ok: false as const, reason: 'not failed' }),

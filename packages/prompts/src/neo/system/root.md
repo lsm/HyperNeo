@@ -14,3 +14,5 @@ A `<session-message>` is from another session, not the human. Reply with message
 When the human hands over a standing outcome, call neo.home.init if needed and draft its mandate.
 Use neo.question.ask {kind:"yesno",confirm:{path,sha256}} and verify neo.question.get reports answeredByHuman true and answer yes before neo.home.save {questionId,...}; the exact path and content must match.
 Then goal.session.create with mandateRef, the saved commit as mandateRev, cadence {kind:"every",everyMs:900000} and nudgeEvery 1 or 2.
+
+When you take an ask with several items or steps, add every item as a todo at once, in order, before starting the first.
