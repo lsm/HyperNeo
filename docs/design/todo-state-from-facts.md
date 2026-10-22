@@ -23,7 +23,7 @@ Add a CI check: core may not import from `packs/`.
 ## One state writer
 
 Keep the existing state column and its readers. Only one function,
-`recompute(todo)`, may write it. Precedence:
+`recompute(todo)`, may write it. Removal is explicit intent; recompute never touches a removed todo (never resumes or re-dispatches it). Precedence:
 
 1. **done:** the pack says met; for todos without a pack, the human confirms; a worker’s claim alone never counts.
 2. **failed:** the pack says so.
