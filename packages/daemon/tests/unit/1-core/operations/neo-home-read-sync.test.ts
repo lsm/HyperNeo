@@ -87,7 +87,7 @@ beforeEach(async () => {
   await git(peer, 'init', '--initial-branch=main', '--quiet');
   await writeFile(join(peer, 'direction.md'), 'Initial');
   await writeFile(join(peer, 'mandate.md'), 'Initial mandate');
-  await writeFile(join(peer, '.gitignore'), '.coordinators/\n');
+  await writeFile(join(peer, '.gitignore'), '.coordinators/\n.claude/\nworktrees/\n');
   await git(peer, 'add', '.');
   await git(peer, 'commit', '-m', 'Initial');
   await git(fixture, 'clone', '--bare', peer, remote);

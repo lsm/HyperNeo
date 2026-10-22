@@ -1,4 +1,4 @@
-import { NEO_GOAL_CYCLE } from '@hyperneo/prompts';
+import { NEO_GOAL_CYCLE } from '../../../packages/prompts/src/mod.ts';
 import { Database } from 'bun:sqlite';
 import { mkdir, writeFile } from 'node:fs/promises';
 

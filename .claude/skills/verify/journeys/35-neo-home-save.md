@@ -31,3 +31,12 @@ The helper removes its fixture ignore in a local commit, then calls save with
 untracked coordinator transcripts present. Save must repair the ignore and commit
 the curated document while preserving and never tracking the transcripts.
 Staged transcripts and unrelated human changes still cause dirty refusal.
+
+Repeat with final argument `runtime` to seed `.claude/` and `worktrees/` before
+the first save, alongside `.coordinators/`. There is no explicit init RPC. Save
+must bootstrap, commit only curated bytes and ignore all three runtime folders;
+the helper checks their unchanged bytes and empty tracked-file lists. The same
+run retains credential/confirmation refusals and dirty-human-file/rollback
+checks. Before the first-use fix this mode records a dirty refusal before HEAD
+exists. Unit contracts also exercise repair from a committed coordinator-only
+ignore and retain refusal for staged runtime files.

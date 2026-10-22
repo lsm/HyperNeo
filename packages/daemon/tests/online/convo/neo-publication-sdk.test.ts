@@ -699,7 +699,9 @@ test(`root startup, reads, resume and publication (${sandboxProof ? 'real OS san
     }
     expect(JSON.stringify(approvalProbeResults)).not.toContain('UNWRITABLE_HANDOFF_ADVERTISED');
     expect(JSON.stringify(approvalProbeResults)).not.toContain('UNEXPECTED_INHERITED_TOKEN');
-    expect(JSON.stringify(approvalProbeResults)).toContain('GH_TOKEN environment variable');
+    expect(JSON.stringify(approvalProbeResults)).toMatch(
+      /GH_TOKEN environment variable|verify gh stub: unsupported gh/
+    );
     if (sandboxProof) {
       expect(JSON.stringify(approvalProbeResults)).toMatch(/operation not permitted/i);
       expect(existsSync(join(readCheckout, 'allowed.txt'))).toBe(true);

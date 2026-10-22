@@ -153,7 +153,7 @@ beforeEach(async () => {
   await git(peer, 'init', '--initial-branch=main', '--quiet');
   for (const path of ['README.md', 'direction.md', 'notes.md'])
     await writeFile(join(peer, path), 'Initial\n');
-  await writeFile(join(peer, '.gitignore'), '.coordinators/\n');
+  await writeFile(join(peer, '.gitignore'), '.coordinators/\n.claude/\nworktrees/\n');
   await git(peer, 'add', '.');
   await git(peer, 'commit', '-m', 'Initial');
   await git(run, 'clone', '--bare', peer, remote);

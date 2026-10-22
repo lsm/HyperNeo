@@ -23,7 +23,7 @@ async function git(cwd: string, ...args: string[]) {
 }
 const peer = join(run, 'peer'), remote = join(run, 'shared.git'), root = join(run, 'data', 'Neo');
 await mkdir(peer); await git(peer, 'init', '--initial-branch=main', '--quiet');
-await writeFile(join(peer, '.gitignore'), '.coordinators/\nignored/\n');
+await writeFile(join(peer, '.gitignore'), '.coordinators/\n.claude/\nworktrees/\nignored/\n');
 await writeFile(join(peer, 'direction.md'), 'Initial\n');
 await git(peer, 'add', '.'); await git(peer, 'commit', '-m', 'Initial');
 await git(run, 'clone', '--bare', peer, remote); await git(peer, 'remote', 'add', 'origin', remote);
