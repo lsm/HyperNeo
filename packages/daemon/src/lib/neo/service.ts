@@ -32,12 +32,14 @@ import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
 import type { ExternalEventPublishedPayload } from '../external-events/external-event-service.ts';
+import { requireClosedPrEvent } from '../external-events/session-subscription-close.ts';
 import { sessionEventText } from '../external-events/session-event-delivery.ts';
 import {
   SESSION_EVENT_SCOPE,
   SessionExternalEventStore,
 } from '../external-events/session-external-event-store.ts';
 import type { ExternalEvent } from '../external-events/types.ts';
+import { pullRequestUrlOfTopic } from '../github/parse-pr-url.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
 import { renderAddress } from '../mailbox/address.ts';
@@ -776,11 +778,19 @@ export class NeoService {
       'result:event'
     )
     .pipe(
-      (event: ExternalEvent) =>
-        this.todoRunner.checkNow(
+      (event: ExternalEvent) => {
+        const read = this.todoPrs.latest(pullRequestUrlOfTopic(event.topic) ?? '');
+        const head = event.payload.headSha ?? event.payload.commitId;
+        return this.todoRunner.checkNow(
           this.packs().flatMap((pack) => pack.todos?.event(event) ?? []),
-          (message, error) => this.log.warn(message, error)
-        ),
+          (message, error) => this.log.warn(message, error),
+          'value' in
+            requireClosedPrEvent({
+              record: { event, state: 'published', createdAt: 0, updatedAt: 0 },
+            }) ||
+            (typeof head === 'string' && (!read || read.readAt < event.occurredAt))
+        );
+      },
       'event',
       'checked'
     )
@@ -816,9 +826,6 @@ export class NeoService {
       ['event', 'route'],
       'delivered'
     )
-    .pipe(async () => {
-      await this.todoRunner.refresh((message, error) => this.log.warn(message, error));
-    }, 'delivered')
     .pipe((route: NeoPackEventRoute) => {
       for (const row of route.ending) this.cardEvents.end(row.workId, row.topic, Date.now());
     }, 'route')
