@@ -34,3 +34,18 @@ also pin initial readiness, invalidation during a read, stale/disposed replies,
 same-ID replacement, pending capacity reservation and explicit error cleanup.
 Post-deploy checks are read-only, grouped by RPC build/PID; no restart or live
 write is permitted for measurement.
+
+
+Each entry has one read in flight. An invalidation during that read schedules a
+follow-up snapshot; the first complete snapshot can be delivered at its captured
+version, so a continuously changing session cannot starve initial readiness.
+Disposed/replaced entries never apply late replies. Background metadata is sent
+only when it changes. The full proof also changes delivery status through the
+production writer and checks complete returned text and monotone delta versions.
+
+Use the same shared isolated setup with `VERIFY_LIVE_FEED=1` and
+`sdk-status-reader-memory.ts verify "$RUN"` or `bridge "$RUN"` to observe initial
+snapshot and status delta on the explicit no-disk path or the real Bun IPC host.
+The worker hash rows are portable tuples on the wire, then local Maps on main;
+the JSON IPC bridge must retain them. Deno Boot Smoke covers an empty live
+subscription on its actual runtime; Deno is CI-only when unavailable locally.

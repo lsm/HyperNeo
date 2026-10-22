@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { sendStatusToDeliveryStatus } from '../../../packages/shared/src/types/message-delivery.ts';
 import { MESSAGES_BY_SESSION_SQL, BACKGROUND_TASK_METADATA_SQL, mapMessageRow, mapThinMessageRow } from '../../../packages/daemon/src/lib/live-query/queries/messages.ts';
 import { expandSessionMessages } from '../../../packages/daemon/src/lib/live-query/queries/message-children.ts';
 import { subscribeToStructuredLogs } from '../../../packages/daemon/src/lib/logger.ts';
@@ -63,8 +64,22 @@ try {
     const snapshot = events.find((event) => event.method === 'liveQuery.snapshot' && event.data.subscriptionId === id);
     assert(snapshot, 'No initial snapshot before subscribe acknowledgement'); assert.deepEqual(snapshot.data.rows, expectedReply.rows); assert.deepEqual(snapshot.data.metadata, expectedReply.metadata);
     calls.push({ queryName, ms: performance.now() - at, replyBytes: Buffer.byteLength(JSON.stringify(snapshot.data)), sha256: createHash('sha256').update(JSON.stringify(snapshot.data.rows)).digest('hex') });
-    await rpc('liveQuery.unsubscribe', { subscriptionId: id }); await wait(30);
+    if (id === 'compact') await rpc('liveQuery.unsubscribe', { subscriptionId: id }); await wait(30);
   }
+  const id = 'full', snapshot = events.find(event => event.method === 'liveQuery.snapshot' && event.data.subscriptionId === id)!;
+      for (const status of ['deferred', 'consumed'] as const) {
+        const since = events.length, at = performance.now(); app.reactiveDb.db.updateMessageStatus([ids[0]], status);
+        let delta: typeof events[number] | undefined;
+        for (let n = 0; n < 1000; n++) { delta = events.slice(since).find(event => event.method === 'liveQuery.delta' && event.data.subscriptionId === id); if (delta) break; await wait(10); }
+        assert(delta, 'No delta after production status write');
+        const row = (delta.data.updated as Record<string, unknown>[]).find(row => row.id === ids[0]);
+        assert(row); assert.equal(row.deliveryStatus, sendStatusToDeliveryStatus(status));
+        assert.deepEqual(row.message, expected.rows.find((row: { id: string }) => row.id === ids[0]).message);
+        assert.equal(delta.data.metadata, undefined, 'Unchanged background metadata was resent');
+        assert(Number(delta.data.version) >= Number(snapshot.data.version));
+        calls.push({ phase: 'delta', status, ms: performance.now() - at });
+      }
+  await rpc('liveQuery.unsubscribe', { subscriptionId: id });
   clearInterval(timer); timer = undefined; measuring = false;
   probe.stdin!.end('stop'); assert.equal(await probeExit, 0, probeErrors); const { samples } = JSON.parse(probeOutput.trim().split('\n').at(-1)!);
   assert(samples.length > 0); evidence.calls = calls; evidence.maxLagMs = maxLagMs; evidence.maxHealthMs = Math.max(...samples); evidence.healthReplies = samples.length;

@@ -24,7 +24,8 @@ let ws:WebSocket|undefined;const evidence:Record<string,unknown>={mode,dbPath:ap
 try {
  ws=new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
  const pending=new Map<string,{resolve(value:unknown):void;reject(error:Error):void}>();
- ws.onmessage=({data})=>{const r=JSON.parse(String(data)),id=r.requestId??r.id,p=pending.get(id);if(p){pending.delete(id);r.error?p.reject(new Error(JSON.stringify(r.error))):p.resolve(r.data);}};
+ const events:{method:string;data:Record<string,unknown>}[]=[];
+ ws.onmessage=({data})=>{const r=JSON.parse(String(data));if(r.type==='EVENT')events.push(r);const id=r.requestId??r.id,p=pending.get(id);if(p){pending.delete(id);r.error?p.reject(new Error(JSON.stringify(r.error))):p.resolve(r.data);}};
  await new Promise<void>((resolve,reject)=>{ws!.onopen=()=>resolve();ws!.onerror=()=>reject(new Error('RPC socket failed'));});
  const rpc=(method:string,data:unknown={})=>new Promise<unknown>((resolve,reject)=>{const id=crypto.randomUUID(),timer=setTimeout(()=>reject(new Error('RPC timeout')),10000);pending.set(id,{resolve:v=>{clearTimeout(timer);resolve(v);},reject:e=>{clearTimeout(timer);reject(e);}});ws!.send(JSON.stringify({id,method,data,type:'REQ',sessionId:'global',version:'1.0.0',timestamp:new Date().toISOString()}));});
  const {sessionId}=await rpc('session.create',{workspacePath:join(run,'workspace'),config:{queryMode:'manual'}}) as {sessionId:string};
@@ -44,6 +45,18 @@ try {
   assert.deepEqual(page.sdkMessages[0].message.content,[{type:'text',text},{type:'image'},{type:'text',text:'Second'}]);
   assert.equal(page.hasMore,false);assert.deepEqual(page.backgroundTaskMessages,[]);
   const repeated=await rpc('message.sdkMessages',{sessionId,limit:20});assert.deepEqual(repeated,page);
+  if(process.env.VERIFY_LIVE_FEED==='1'){
+   await rpc('liveQuery.subscribe',{queryName:'messages.bySession',subscriptionId:'memory-live',params:[sessionId,20]});
+   const snapshot=events.find(e=>e.method==='liveQuery.snapshot'&&e.data.subscriptionId==='memory-live');assert(snapshot);
+   const rows=snapshot.data.rows as {uuid:string;id:string;message:{content:unknown}}[];
+   assert.equal(rows.length,1);assert.equal(rows[0].uuid,'memory-user');assert.deepEqual(rows[0].message.content,page.sdkMessages[0].message.content);
+   app.reactiveDb.db.updateMessageStatus([rows[0].id],'deferred');
+   for(let n=0;n<200&&!events.some(e=>e.method==='liveQuery.delta');n++)await new Promise(resolve=>setTimeout(resolve,10));
+   const delta=events.find(e=>e.method==='liveQuery.delta');assert(delta);
+   assert.equal((delta.data.updated as {id:string}[])[0].id,rows[0].id);
+   await rpc('liveQuery.unsubscribe',{subscriptionId:'memory-live'});evidence.liveSnapshotAndDelta=true;
+  }
+
   evidence.repeatedPageMatched=true;
   if(summaryMode){
    await new Promise(resolve=>setTimeout(resolve,1200));
