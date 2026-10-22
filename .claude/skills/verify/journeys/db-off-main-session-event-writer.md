@@ -41,8 +41,8 @@ For native failure boundaries, use a second fresh directory and the same isolate
 environment to run `bun .claude/skills/verify/session-event-writer-fault.ts "$RUN"`.
 It wraps the production native worker only in synthetic fixture modules: failure
 before the INSERT, rollback after the INSERT, failure after commit before reply,
-and a swallowed committed reply reaching its deadline. The fixture waits for its
-own ready handshake before dispatch. It verifies complete 2.43 MB result bytes,
+and a swallowed committed reply reaching its deadline. Only the production ready acknowledgement gates dispatch; the fixture does not
+buffer commands. It verifies complete 2.43 MB result bytes,
 no publication without a commit acknowledgement, no client replay, canonical
 terminal duplicates on explicit re-observation, fresh-worker recovery and closure.
 A committed event with a lost reply remains stored but is not automatically

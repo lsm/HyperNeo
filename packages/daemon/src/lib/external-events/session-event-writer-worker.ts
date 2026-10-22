@@ -57,3 +57,5 @@ worker.onmessage = ({ data }) => {
     });
   }
 };
+
+worker.postMessage({ ready: true });

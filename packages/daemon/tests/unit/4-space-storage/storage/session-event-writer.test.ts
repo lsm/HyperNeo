@@ -159,7 +159,8 @@ test('no write is dispatched before native worker startup completes', async () =
 test('startup deadline fails before dispatch instead of reporting an uncertain write', async () => {
   const worker = new TestWorker(false);
   const writer = new SessionEventWriter('/synthetic.db', () => worker as unknown as Worker, 5);
-  await expect(writer.ingest(event)).rejects.toThrow('Session event writer timeout');
+  const error = await writer.ingest(event).catch((error) => String(error));
+  expect(error).toBe('Error: Session event writer timeout');
   expect(worker.requests).toHaveLength(0);
   expect(worker.stopped).toBe(true);
   await writer.close();

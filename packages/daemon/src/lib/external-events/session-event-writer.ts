@@ -13,6 +13,7 @@ export type SessionEventWriteRequest = {
   queryObservability?: SQLiteQueryObservabilityOptions;
 };
 export type SessionEventWriteReply =
+  | { ready: true }
   | { log: StructuredLogEvent }
   | {
       id: number;
@@ -26,6 +27,7 @@ export type SessionEventWriteReply =
 
 export class SessionEventWriter {
   private worker: Worker | null = null;
+  private readonly ready = new WeakSet<Worker>();
   private queue: Promise<unknown> = Promise.resolve();
   private waiting = 0;
   private epoch = 0;
@@ -85,7 +87,7 @@ export class SessionEventWriter {
         sent = false;
       const finish = (
         error?: Error,
-        reply?: Exclude<SessionEventWriteReply, { log: StructuredLogEvent }>,
+        reply?: Exclude<SessionEventWriteReply, { log: StructuredLogEvent } | { ready: true }>,
         unknown = false
       ) => {
         if (settled) return;
@@ -136,6 +138,11 @@ export class SessionEventWriter {
       };
       worker.onmessage = ({ data }: MessageEvent<SessionEventWriteReply>) => {
         if (this.worker !== worker) return;
+        if ('ready' in data) {
+          this.ready.add(worker);
+          send();
+          return;
+        }
         if ('log' in data) {
           emitStructuredLogEvent({
             ...data.log,
@@ -147,19 +154,23 @@ export class SessionEventWriter {
         if (data.id !== id || data.epoch !== epoch) return;
         finish(data.error ? new Error(data.error) : undefined, data);
       };
-      try {
-        worker.postMessage({
-          id,
-          epoch,
-          dbPath: this.dbPath,
-          sentAt: Date.now(),
-          event,
-          queryObservability: this.queryObservability,
-        } satisfies SessionEventWriteRequest);
-        sent = true;
-      } catch (error) {
-        finish(error instanceof Error ? error : new Error(String(error)));
-      }
+      const send = () => {
+        if (sent || settled) return;
+        try {
+          worker.postMessage({
+            id,
+            epoch,
+            dbPath: this.dbPath,
+            sentAt: Date.now(),
+            event,
+            queryObservability: this.queryObservability,
+          } satisfies SessionEventWriteRequest);
+          sent = true;
+        } catch (error) {
+          finish(error instanceof Error ? error : new Error(String(error)));
+        }
+      };
+      if (this.ready.has(worker)) send();
     });
   }
 }
