@@ -16,6 +16,9 @@ assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert(!existsSync(join(run, 'data')));
 mkdirSync(join(run, 'evidence'), { recursive: true });
+mkdirSync(join(run, 'bin'));
+writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
+assert.equal(process.env.PATH?.split(':')[0], join(run, 'bin'));
 const repos = ['a-heavy', 'b-phone', 'c-ops', 'd-research'];
 let cycle = 0, remaining = 40;
 const calls: string[] = [];
@@ -51,10 +54,10 @@ try {
   for (const repo of repos) {
     github.repo.upsertWatchedRepo({ spaceId: 'sessions', owner: 'verify-test', repo, pollingEnabled: true });
     const numbers = repo === 'a-heavy' ? Array.from({ length: 201 }, (_, i) => i + 1) : [162];
-    for (const pr of numbers) subscriptions.upsert({ sessionId, topic: `github/verify-test/${repo}/pull_request/${pr}/**` });
+    for (const pr of numbers) subscriptions.upsert({ sessionId, topic: `github/verify-test/${repo}/pull_request/${pr}.*` });
   }
   const heavy = github.repo.getWatchedRepo('sessions', 'verify-test', 'a-heavy')!;
-  github.repo.updatePollCursor(heavy.id, { lastSeenAt: 0, recentPullRequestHeadShas: Object.fromEntries(Array.from({ length: 201 }, (_, i) => [i + 1, `head-${i + 1}`])) });
+  github.repo.updatePollCursorJson(heavy.id, { lastSeenAt: 0, recentPullRequestHeadShas: Object.fromEntries(Array.from({ length: 201 }, (_, i) => [i + 1, `head-${i + 1}`])) });
   ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC connection failed')); });
   const poll = () => new Promise<unknown>((done, fail) => {
@@ -71,10 +74,11 @@ try {
   for (cycle = 1; cycle <= (mode === 'reproduce' ? 1 : 3); cycle++) {
     calls.length = 0; remaining = 40;
     const reply = await poll();
+    if (cycle === 1) assert(calls[0].includes('/a-heavy/'));
     const polled = github.repo.listPollingRepos().map((repo) => ({ repo: repo.repo, lastPollAt: repo.lastPollAt, resume: repo.pollCursor }));
     const events = db.prepare('SELECT topic, payload_json FROM session_external_events').all() as { topic: string; payload_json: string }[];
     const approvals = repos.slice(1).filter(repo => events.some(event => event.topic.includes(`/${repo}/`) && JSON.parse(event.payload_json).reviewId === String(cycle * 1000 + repos.indexOf(repo))));
-    const queued = db.prepare("SELECT COUNT(*) AS count FROM job_queue WHERE queue = 'message_delivery'").get();
+    const queued = db.prepare("SELECT COUNT(*) AS count FROM job_queue WHERE queue = 'mailbox'").get();
     evidence.push({ cycle, reply, remaining, calls: [...calls], polled, approvals, queued });
     if (mode === 'reproduce') {
       assert.deepEqual(approvals, []);
@@ -83,6 +87,7 @@ try {
       assert.deepEqual(approvals, repos.slice(1));
       assert(polled.every(repo => repo.lastPollAt !== null));
       assert(remaining >= 10);
+      assert((queued as { count: number }).count >= cycle * 3);
     }
   }
   console.log(`${mode === 'reproduce' ? 'REPRODUCED starvation' : 'PASS: every small repo approval is published each cycle'}; ${run}/evidence/polling.json`);
