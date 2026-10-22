@@ -146,6 +146,7 @@ try {
     const writerBefore = calls.length;
     const writerDelivered = await send();
     assert.equal(writerDelivered.ok, true, JSON.stringify(writerDelivered));
+    assert(description.description.includes('already has an active writer'));
     assert.equal(writerDelivered.value.delivered, true);
     assert.equal(writerDelivered.value.queuedSubmissionId, 'synthetic-queue');
     assert.deepEqual(writerDelivered.value.receipt, { executionId: 'synthetic', inputId: 'writer-input' });

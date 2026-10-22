@@ -948,7 +948,13 @@ async function tryServerCodexSend(
         if (mode === 'steer' || !/NoActiveTurn|no active turn/.test(String(error))) throw error;
       }
     } else if (mode === 'steer') return turn.reason;
-    await server.call('thread/resume', { threadId: detail.thread.id, excludeTurns: true });
+    try {
+      await server.call('thread/resume', { threadId: detail.thread.id, excludeTurns: true });
+    } catch (error) {
+      if (String(error).includes(`thread ${detail.thread.id} already has an active writer`))
+        return queueCodexMessage(detail, message, deps);
+      throw error;
+    }
     const started = z.object({ turn: z.object({ id: z.string().min(1) }) }).parse(
       await server.call('turn/start', {
         threadId: detail.thread.id,
