@@ -16,6 +16,7 @@ export async function verifySdkTools(page, { port, run, width, phase }) {
   else { await read.locator('pre').waitFor(); await read.getByRole('button').first().click(); }
   observations.toolTitleOpens = !after;
   const readControl = () => read.getByRole('button', after ? { name: /^(more|less) — Read synthetic.txt$/ } : { name: /^Read/ });
+  if (after) assert.equal(await readControl().getAttribute('aria-controls'), null);
   await shot(page, readControl(), `${dir}/tool-closed-${width}.png`);
   await readControl().press('Enter');
   await read.locator('pre').filter({ hasText: 'Synthetic tool detail.' }).waitFor();
@@ -24,6 +25,8 @@ export async function verifySdkTools(page, { port, run, width, phase }) {
     await read.locator('pre').click();
     assert.equal(await readControl().getAttribute('aria-expanded'), 'true');
     observations.controls.push(await metric(readControl()));
+    observations.toolPanelRelationship = await readControl().evaluate(b => !!document.getElementById(b.getAttribute('aria-controls')));
+    assert(observations.toolPanelRelationship);
     const start = await read.locator('pre').evaluate(el => {
       const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT); let node;
       while ((node = walker.nextNode())) {
@@ -50,6 +53,7 @@ export async function verifySdkTools(page, { port, run, width, phase }) {
   else { await subagent.getByText('Find synthetic evidence', { exact: true }).waitFor(); await subagent.getByRole('button', { name: /Explore.*Synthetic exploration/ }).click(); }
   observations.subagentTitleOpens = !after;
   const agentControl = () => subagent.getByRole('button', { name: after ? /^(more|less) — Explore Synthetic exploration$/ : /Explore.*Synthetic exploration/ });
+  if (after) assert.equal(await agentControl().getAttribute('aria-controls'), null);
   await shot(page, agentControl(), `${dir}/subagent-closed-${width}.png`);
   await agentControl().press('Enter');
   await subagent.getByText('Find synthetic evidence', { exact: true }).waitFor();
@@ -58,6 +62,8 @@ export async function verifySdkTools(page, { port, run, width, phase }) {
     assert.equal(await agentControl().evaluate(b => b === document.activeElement), true);
     await subagent.getByText('Find synthetic evidence', { exact: true }).click();
     assert.equal(await agentControl().getAttribute('aria-expanded'), 'true');
+    observations.subagentPanelRelationship = await agentControl().evaluate(b => !!document.getElementById(b.getAttribute('aria-controls')));
+    assert(observations.subagentPanelRelationship);
     const m = await metric(agentControl());
     m.lastLine = await subagent.locator('p').filter({ hasText: 'Short final paragraph.' }).evaluate(el => { const r = el.getBoundingClientRect(); return { bottom: r.bottom, right: r.right }; });
     assert(Math.abs(m.bottom - m.lastLine.bottom) <= 7);

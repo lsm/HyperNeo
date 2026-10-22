@@ -160,7 +160,7 @@ function ToolResultCardBody({
     if (!restoreFocus.current) return;
     restoreFocus.current = false;
     cardRef.current
-      ?.querySelector<HTMLButtonElement>(`button[aria-controls="${id}"]`)
+      ?.querySelector<HTMLButtonElement>(`button[id="${id}-control"]`)
       ?.focus({ preventScroll: true });
   }, [isExpanded, id]);
   useEffect(() => setIsExpanded(shouldExpand), [shouldExpand]);
@@ -202,7 +202,8 @@ function ToolResultCardBody({
   const control = disableExpand ? null : (
     <ContentDisclosureControl
       expanded={isExpanded}
-      aria-controls={id}
+      id={`${id}-control`}
+      aria-controls={isExpanded ? id : undefined}
       aria-label={[displayName, getToolHeader(toolName, input).detail].filter(Boolean).join(' ')}
       onToggle={() => {
         restoreFocus.current = true;

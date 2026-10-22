@@ -36,8 +36,10 @@
     }
   ],
   "toolTitleOpens": false,
+  "toolPanelRelationship": true,
   "selectedText": "Synthe",
   "subagentTitleOpens": false,
+  "subagentPanelRelationship": true,
   "viewport": {
     "width": 390,
     "scrollWidth": 390

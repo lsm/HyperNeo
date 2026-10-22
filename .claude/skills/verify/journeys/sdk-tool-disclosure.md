@@ -26,6 +26,7 @@ only disable animation while capturing, after normal interactions.
 | Claim / control | Actual browser check |
 | --- | --- |
 | Tool title is inert | Clicking Read leaves its result closed; only more opens it |
+| Valid exposed panel relationships | Closed controls omit aria-controls; each expanded control points to its mounted panel |
 | Tool keyboard focus survives | Enter opens, focus moves to less, Space collapses and focus returns to more |
 | Selection does not toggle | Drag actual Synthetic tool text; selected bytes start Syn and details stay open |
 | Subagent title is inert | Description click leaves prompt hidden; explicit Enter loads prompt and output |

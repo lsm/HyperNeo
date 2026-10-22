@@ -289,7 +289,7 @@ export function SubagentBlock({
     if (!restoreFocus.current) return;
     restoreFocus.current = false;
     cardRef.current
-      ?.querySelector<HTMLButtonElement>(`button[aria-controls="${id}"]`)
+      ?.querySelector<HTMLButtonElement>(`button[id="${id}-control"]`)
       ?.focus({ preventScroll: true });
   }, [isExpanded, id]);
   const hydrate = useHydrateMessages();
@@ -368,7 +368,8 @@ export function SubagentBlock({
   const control = (
     <ContentDisclosureControl
       expanded={isExpanded}
-      aria-controls={id}
+      id={`${id}-control`}
+      aria-controls={isExpanded ? id : undefined}
       aria-label={`${input.subagent_type ?? 'general-purpose'} ${input.description}`}
       onToggle={() => {
         restoreFocus.current = true;
