@@ -161,6 +161,17 @@ describe('prepareCodingExecution', () => {
     expect(readFileSync(join(f.directory, 'file'), 'utf8')).toBe('uncommitted user work');
   });
 
+  test('a prepared clone from a linked checkout keeps the main project attribution', async () => {
+    const f = fixture();
+    const linked = join(f.directory, '..', 'linked-source');
+    git(f.directory, 'worktree', 'add', '--detach', linked, 'HEAD');
+    const prepared = await prepareCodingExecution({ ...f.request, directory: linked }, f.effects);
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) throw new Error(prepared.reason);
+    expect(await gitWorktreeProject(prepared.value.directory)).toBe(f.directory);
+    await prepared.value.release();
+  });
+
   test('prepares the fetched target and preserves dirty user checkout', async () => {
     const f = fixture();
     const result = await prepareCodingExecution(f.request, f.effects);
