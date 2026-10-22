@@ -1,9 +1,9 @@
-import { ChevronDownGlyph, ChevronUpGlyph } from '../icons/common-glyphs.tsx';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
 import { SpaceTaskThreadMessageActions } from '../space/thread/SpaceTaskThreadMessageActions.tsx';
-import { DeliveryStateBadge, type DeliveryBadgeState } from '../ui/DeliveryStateBadge.tsx';
+import { ContentDisclosureControl } from '../ui/ContentDisclosureControl.tsx';
+import { type DeliveryBadgeState, DeliveryStateBadge } from '../ui/DeliveryStateBadge.tsx';
 
 import { getInvokedOperationName } from './tools/tool-utils.ts';
 
@@ -69,6 +69,8 @@ export function SyntheticMessageBlock({
   const [isExpanded, setIsExpanded] = useState(false);
   const [needsCollapse, setNeedsCollapse] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const restoreFocus = useRef(false);
   const previewMaxHeight = PREVIEW_LINE_COUNT * LINE_HEIGHT_PX;
 
   useLayoutEffect(() => {
@@ -91,14 +93,36 @@ export function SyntheticMessageBlock({
     return () => observer.disconnect();
   }, [previewMaxHeight]);
 
+  useLayoutEffect(() => {
+    if (!restoreFocus.current) return;
+    restoreFocus.current = false;
+    cardRef.current?.querySelector<HTMLButtonElement>('[data-testid="synthetic-toggle"]')?.focus();
+  }, [isExpanded]);
+
   const showRouteBadge = Boolean(fromAgent && toAgent);
   const empty = isEmpty(content);
   const copyText = extractCopyText(content);
+
+  const control = needsCollapse ? (
+    <ContentDisclosureControl
+      expanded={isExpanded}
+      onToggle={() => {
+        restoreFocus.current = true;
+        setIsExpanded(!isExpanded);
+      }}
+      aria-label="Synthetic"
+      data-testid="synthetic-toggle"
+    />
+  ) : null;
+  const trailingText =
+    isExpanded &&
+    ((renderAsPlainText && typeof content === 'string') || contentBlocks.at(-1)?.type === 'text');
 
   const card = (
     <div
       class="border border-warning/50 rounded-lg overflow-hidden bg-surface-raised/60"
       data-testid="synthetic-card"
+      ref={cardRef}
     >
       <div class="flex items-center gap-2 px-3 py-2 border-b border-warning/50 flex-wrap">
         <svg
@@ -151,8 +175,9 @@ export function SyntheticMessageBlock({
             {empty ? (
               <p class="text-xs text-fg-faint italic">{emptyMessageLabel}</p>
             ) : renderAsPlainText && typeof content === 'string' ? (
-              <p class="text-sm text-fg-soft leading-relaxed whitespace-pre-wrap break-words">
+              <p class="flow-root text-sm text-fg-soft leading-relaxed whitespace-pre-wrap break-words">
                 {content}
+                {isExpanded && control}
               </p>
             ) : (
               contentBlocks.map((block, idx) => (
@@ -160,6 +185,7 @@ export function SyntheticMessageBlock({
                   {block.type === 'text' && (
                     <MarkdownRenderer
                       content={block.text as string}
+                      trailing={isExpanded && idx === contentBlocks.length - 1 ? control : null}
                       class="text-sm leading-relaxed text-fg-soft [&_h1]:!text-warning-soft [&_h2]:!text-warning-soft [&_h3]:!text-warning-soft [&_h4]:!text-warning-soft [&_h5]:!text-warning-soft [&_h6]:!text-warning-soft"
                     />
                   )}
@@ -219,40 +245,9 @@ export function SyntheticMessageBlock({
           />
         )}
 
-        {needsCollapse && (
-          <div class="flex justify-center py-2 border-t border-warning/50 bg-surface-raised/60">
-            <button
-              type="button"
-              onClick={() => setIsExpanded(!isExpanded)}
-              class="flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors hover:bg-warning/30 text-warning"
-              data-testid="synthetic-toggle"
-            >
-              {isExpanded ? (
-                <>
-                  <ChevronUpGlyph
-                    class="w-3.5 h-3.5"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    aria-hidden="true"
-                    pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
-                  />
-                  Show less
-                </>
-              ) : (
-                <>
-                  <ChevronDownGlyph
-                    class="w-3.5 h-3.5"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    aria-hidden="true"
-                    pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
-                  />
-                  Show more
-                </>
-              )}
-            </button>
+        {needsCollapse && !trailingText && (
+          <div class="flow-root px-3 py-2 border-t border-warning/50 bg-surface-raised/60">
+            {control}
           </div>
         )}
       </div>

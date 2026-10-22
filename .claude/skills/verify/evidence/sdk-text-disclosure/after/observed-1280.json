@@ -1,0 +1,54 @@
+{
+  "width": 1280,
+  "phase": "after",
+  "bodyClickOpens": false,
+  "controls": [
+    {
+      "name": "less — Thinking",
+      "right": 1251,
+      "bottom": 453.1875,
+      "parentRight": 1263,
+      "parentBottom": 469.1875,
+      "ending": {
+        "x": 309,
+        "y": 442.1875,
+        "bottom": 458.1875,
+        "right": 418.578125,
+        "height": 16
+      }
+    },
+    {
+      "name": "less — Thinking",
+      "right": 1251,
+      "bottom": 573.1875,
+      "parentRight": 1263,
+      "parentBottom": 581.1875,
+      "ending": {
+        "x": 991.71875,
+        "y": 538.1875,
+        "bottom": 554.1875,
+        "right": 1210.875,
+        "height": 16
+      }
+    },
+    {
+      "name": "less — Synthetic",
+      "right": 1251,
+      "bottom": 803.53125,
+      "parentRight": 1251,
+      "parentBottom": 811.328125,
+      "ending": {
+        "x": 1053.515625,
+        "y": 790.53125,
+        "bottom": 807.53125,
+        "right": 1203.59375,
+        "height": 17
+      }
+    }
+  ],
+  "selectedText": "Shor",
+  "viewport": {
+    "width": 1280,
+    "scrollWidth": 1280
+  }
+}
