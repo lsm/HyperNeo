@@ -9,6 +9,7 @@ import {
   type SDKReadResult,
   type SDKStatusRequest,
 } from '../../../../src/storage/sdk-status-reader';
+import type { WorkChatMatch } from '../../../../src/storage/work-chat-search';
 
 class TestWorker {
   onmessage: ((event: MessageEvent<SDKStatusReply>) => void) | null = null;
@@ -326,4 +327,77 @@ test('mixed SQL summaries cannot be attributed to the last page or status reques
     workerOperation: 'sdk-page',
   });
   expect(summary).not.toHaveProperty('workerOperation');
+});
+
+test('status and work search return their own complete output on the same reader', async () => {
+  const { reader, workers } = fixture();
+  const chats: WorkChatMatch[] = [
+    {
+      kind: 'message',
+      sessionId: 'session',
+      taskId: null,
+      hits: 1,
+      lastHitAt: 42,
+      score: 1,
+      snippets: [
+        {
+          match: 'semantic',
+          messageId: 'message',
+          sessionId: 'session',
+          role: 'assistant',
+          at: 42,
+          text: 'Retained semantic text 🦊',
+        },
+      ],
+    },
+  ];
+  const status = reader.read(args);
+  const search = reader.readWorkChats({
+    query: 'meaning',
+    limit: 20,
+    semantic: { model: 'fixture', vector: new Float32Array([1, 0]) },
+    kinds: ['message'],
+  });
+  await tick();
+  workers[0].reply(workers[0].requests[0], page);
+  expect(await status).toEqual(page);
+  await tick();
+  workers[0].reply(workers[0].requests[1], chats);
+  expect(await search).toEqual(chats);
+  await reader.close();
+});
+
+test('memory work search retains semantic output and every stored body', async () => {
+  const db = await createTestDb();
+  try {
+    db.createSession(createTestSession('memory-search'));
+    const text = 'Complete retained memory history 🦊 '.repeat(200);
+    db.saveUserMessage(
+      'memory-search',
+      {
+        type: 'user',
+        uuid: 'memory-search-message',
+        parent_tool_use_id: null,
+        message: { role: 'user', content: text },
+      } as SDKMessage,
+      'consumed'
+    );
+    db.getSDKMessageRepo().flushMessageSearchIndex();
+    const raw = db.getDatabase();
+    raw
+      .prepare(`INSERT INTO message_search_vectors(content_id,model,dimensions,embedding,embedded_at)
+      SELECT id,'fixture',2,?,1 FROM message_search_content WHERE session_id='memory-search'`)
+      .run(new Uint8Array(new Float32Array([1, 0]).buffer));
+    const stored = raw.prepare('SELECT body FROM message_search_content').all();
+    const semantic = { model: 'fixture', vector: new Float32Array([1, 0]) };
+    const expected = db.getSDKMessageRepo().searchWorkChats('salmon', 20, semantic, ['message']);
+    const found = await db.searchWorkChatsAsync('salmon', 20, semantic, ['message']);
+    expect(found).toEqual(expected);
+    expect(found[0].sessionId).toBe('memory-search');
+    expect(found[0].snippets[0].match).toBe('semantic');
+    expect(found[0].snippets[0].text).toBe(text.slice(0, 240) + '…');
+    expect(raw.prepare('SELECT body FROM message_search_content').all()).toEqual(stored);
+  } finally {
+    await db.close();
+  }
 });

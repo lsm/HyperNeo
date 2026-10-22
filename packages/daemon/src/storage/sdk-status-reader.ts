@@ -3,6 +3,7 @@ import { emitStructuredLogEvent } from '../lib/logger.ts';
 import type { StructuredLogEvent } from '@hyperneo/shared';
 import type { SDKMessageRepository, SendStatus } from './repositories/sdk-message-repository.ts';
 import type { SQLiteQueryObservabilityOptions } from './sqlite-query-observability.ts';
+import type { WorkChatKind, WorkChatMatch } from './work-chat-search.ts';
 
 export type SDKStatusArgs = { sessionId: string; status: SendStatus; limit: number };
 export type SDKStatusPage = {
@@ -22,8 +23,14 @@ export type SDKMessagePage = {
   hasMore: boolean;
   backgroundTaskMessages: ReturnType<SDKMessageRepository['getBackgroundTaskMessages']>;
 };
-type SDKReadArgs = SDKStatusArgs | SDKPageArgs;
-export type SDKReadResult = SDKStatusPage | SDKMessagePage;
+export type WorkSearchArgs = {
+  query: string;
+  limit: number;
+  semantic?: { vector: Float32Array; model: string };
+  kinds?: readonly WorkChatKind[];
+};
+type SDKReadArgs = SDKStatusArgs | SDKPageArgs | WorkSearchArgs;
+export type SDKReadResult = SDKStatusPage | SDKMessagePage | WorkChatMatch[];
 export type SDKStatusRequest = {
   id: number;
   epoch: number;
@@ -134,6 +141,10 @@ export class SDKStatusReader {
     return this.enqueue(args) as Promise<SDKMessagePage>;
   }
 
+  readWorkChats(args: WorkSearchArgs): Promise<WorkChatMatch[]> {
+    return this.enqueue(args) as Promise<WorkChatMatch[]>;
+  }
+
   private enqueue(args: SDKReadArgs): Promise<SDKReadResult> {
     if (this.closing) return Promise.reject(new Error('SDK reader closed'));
     if (this.waiting >= 16) return Promise.reject(new Error('SDK reader queue full'));
@@ -186,7 +197,13 @@ export class SDKStatusReader {
           module: 'hyperneo:daemon:sqlite.worker',
           args: ['sqlite.worker.request'],
           metadata: {
-            operation: args ? ('page' in args ? 'sdk-page' : 'sdk-status') : 'close',
+            operation: args
+              ? 'query' in args
+                ? 'work-search'
+                : 'page' in args
+                  ? 'sdk-page'
+                  : 'sdk-status'
+              : 'close',
             id,
             epoch,
             outcome: error ? 'error' : 'ok',

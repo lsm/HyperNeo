@@ -9,6 +9,7 @@ import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { WorkerAgentMemoryEmbedder } from '../../../packages/daemon/src/storage/repositories/agent-memory-worker-embedder.ts';
 import { installWorkSearchWait } from './work-search-wait.ts';
+import type { PlaceGroup } from '../../../packages/daemon/src/lib/drivers/types.ts';
 
 const run = resolve(process.argv[2]);
 const waitMs = Number(process.argv[3] ?? 1200);
@@ -78,7 +79,7 @@ try {
   timer = setInterval(() => { const now = performance.now(); lagMs = Math.max(lagMs, now - previous - 10); previous = now; }, 10);
   await Bun.sleep(20);
   const started = performance.now();
-  const found = await hub.request<{ places: { work: { ref: { id: string }; snippets?: unknown }[] }[] }>('operation.invoke', { name: 'work.find', input: { text: 'unmatched quokka', localOnly: true, adapters: ['hyperneo'], limit: 20 } });
+  const found = await hub.request<{ places: PlaceGroup[] }>('operation.invoke', { name: 'work.find', input: { text: 'unmatched quokka', localOnly: true, adapters: ['hyperneo'], limit: 20 } });
   const rpcMs = performance.now() - started;
   await Bun.sleep(20);
   clearInterval(timer);
@@ -87,6 +88,11 @@ try {
   const health = waitMs ? JSON.parse(output.trim().split('\n').at(-1)!) : null;
   const ids = found.places.flatMap(place => place.work.map(work => work.ref.id));
   assert(ids.includes(sessionId), JSON.stringify(found));
+  const observed = found.places.flatMap(place => place.work).find(work => work.ref.id === sessionId)!;
+  assert.equal(observed.hits, expected[0].hits);
+  assert.equal(observed.score, expected[0].score);
+  assert.equal(observed.lastHitAt, expected[0].lastHitAt);
+  assert.deepEqual(observed.snippets?.map(({ match, at, role, text, handle }) => ({ match, at, role, text, messageId: handle.messageId, sessionId: handle.sessionId })), expected[0].snippets);
   const after = hash();
   const reads = readFileSync(join(run, 'evidence/vector-reads.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
   Object.assign(evidence, { sessionId, retainedRows: 10020, before, after, rpcMs, lagMs, health, reads, result: found, runtime: Bun.version });

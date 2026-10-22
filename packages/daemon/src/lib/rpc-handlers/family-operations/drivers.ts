@@ -491,10 +491,7 @@ export function registerDriverOperations(context: FamilyOperationContext): Opera
       `${kinds.join(',')}:${text}`,
       () => ({
         chats: recent(recentVectors, text, () => ({ semantic: embedQuery(text) })).semantic.then(
-          (vectors) =>
-            context.deps.db
-              .getSDKMessageRepo()
-              .searchWorkChats(text, WORK_CHAT_LIMIT, vectors, kinds)
+          (vectors) => context.deps.db.searchWorkChatsAsync(text, WORK_CHAT_LIMIT, vectors, kinds)
         ),
       })
     ).chats;
