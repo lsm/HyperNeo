@@ -395,7 +395,6 @@ export interface RPCHandlerSetupResult {
   spaceAgentInactivityWatchdog: SpaceAgentInactivityWatchdogService;
   cancelInactivityWatchdog: () => void;
   sessionScheduler: SessionScheduler;
-  stampNeoContinuation: NeoService['stampContinuation'];
 }
 
 export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupResult {
@@ -1805,6 +1804,5 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       inactivityRunNowCancelled = true;
     },
     sessionScheduler,
-    stampNeoContinuation: (input, parent) => neoService.stampContinuation(input, parent),
   };
 }

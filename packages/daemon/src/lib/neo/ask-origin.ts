@@ -16,13 +16,6 @@ export interface NeoAskOriginReads {
   getStamp(sessionId: string, messageId: string): NeoAskOrigin | null;
 }
 const unknown: Stop = { kind: 'unknown' };
-const NUDGE_PREFIX = 'neo-nudge:';
-
-export const NEO_ASK_ANSWER_PREFIX = 'neo-ask-answer:';
-
-export function nudgedMessageId(messageId: string): string | null {
-  return messageId.startsWith(NUDGE_PREFIX) ? messageId.slice(NUDGE_PREFIX.length) || null : null;
-}
 
 export function requireNeoAskReference(input: Input): Gate {
   return input.sessionId && input.messageId

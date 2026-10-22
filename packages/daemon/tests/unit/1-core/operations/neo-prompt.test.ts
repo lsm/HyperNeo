@@ -1,5 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import {
   NEO_PACK_CODING_INSTRUCTIONS,
   NEO_GOAL_CYCLE,
@@ -7,74 +6,15 @@ import {
   NEO_ROOT_TURN_END,
 } from '@hyperneo/prompts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
-import {
-  neoCoordinatorAllowedTools,
-  neoCoordinatorDeniedReads,
-  neoCoordinatorNativeTools,
-  restrictNeoQuery,
-} from '../../../../src/lib/neo/session-policy.ts';
-
-const NEO_TOOLS = [
-  'Read',
-  'Write',
-  'Edit',
-  'NotebookEdit',
-  'Grep',
-  'Glob',
-  'WebSearch',
-  'WebFetch',
-  'Bash',
-];
-
-describe('Neo native tools without command parsing', () => {
-  test('adds no PreToolUse hook to an unrestricted native tool request', () => {
-    const options: Options = {};
-    restrictNeoQuery(options, undefined, []);
-    expect(options.hooks).toBeUndefined();
-    expect(options.allowedTools).toContain('Bash');
-    expect(options.disallowedTools).toEqual(neoCoordinatorDeniedReads());
-  });
-
-  test('preserves existing hooks without injecting a command gate', () => {
-    const hooks: NonNullable<Options['hooks']> = {
-      PreToolUse: [{ matcher: 'Bash', hooks: [async () => ({})] }],
-      PostToolUse: [{ hooks: [async () => ({})] }],
-    };
-    const options: Options = { hooks };
-    restrictNeoQuery(options, undefined, []);
-    expect(options.hooks).toBe(hooks);
-    expect(options.hooks?.PreToolUse).toHaveLength(1);
-    expect(options.hooks?.PostToolUse).toBe(hooks.PostToolUse);
-  });
-});
-
-describe('restrictNeoQuery attribution', () => {
-  test('gives Neo empty commit and PR attribution, so the CLI adds no attribution reminder', () => {
-    const options: Options = { settings: { cleanupPeriodDays: 30 } };
-    restrictNeoQuery(options);
-    expect(options.settings).toEqual({
-      cleanupPeriodDays: 30,
-      attribution: { commit: '', pr: '' },
-    });
-  });
-});
-
 describe('root Neo system prompt', () => {
   test('assembles core guidance with the short root, replacing the Claude Code preset', () => {
-    const options: Options = {};
-    restrictNeoQuery(options, undefined, []);
-    expect(options.systemPrompt).toEqual({
-      type: 'custom',
-      prompt: `${NEO_ROOT_PROMPT}\n\n${NEO_GOAL_CYCLE}\n\n${NEO_ROOT_TURN_END}`,
-      snapshot: false,
-    });
     expect(neoPrompt([])).toBe(`${NEO_ROOT_PROMPT}\n\n${NEO_GOAL_CYCLE}\n\n${NEO_ROOT_TURN_END}`);
     expect(NEO_ROOT_TURN_END).toContain('On a scheduled goal wake');
     expect(NEO_ROOT_TURN_END).toContain('On other turns');
     expect(NEO_ROOT_TURN_END).toContain('end the turn without text');
     expect(NEO_ROOT_PROMPT.split(/\s+/).length).toBeLessThan(160);
-    expect(NEO_ROOT_PROMPT).toContain('<human-input>');
-    expect(NEO_ROOT_PROMPT).toContain('triggerId');
+    expect(NEO_ROOT_PROMPT).toContain('neo.publication.publish');
+    expect(NEO_ROOT_PROMPT).not.toContain('triggerId');
     for (const fact of ['work.find', 'work.send', 'neo.rule.save'])
       expect(NEO_ROOT_PROMPT).toContain(fact);
     expect(NEO_ROOT_PROMPT).not.toContain('Everything for the human goes through');
@@ -102,42 +42,5 @@ describe('root Neo system prompt', () => {
   test('teaches no holder, consultation, forwarding or dispatch', () => {
     expect(NEO_ROOT_PROMPT).not.toMatch(/holder|consult|forward|dispatch/i);
     expect(NEO_ROOT_PROMPT).not.toMatch(/neo\.project\.(consult|respond)|neo\.projects\.dispatch/);
-  });
-});
-
-describe('neoCoordinatorNativeTools', () => {
-  test('gives every Neo session the same tools and no SDK question tool', () => {
-    expect(neoCoordinatorNativeTools()).toEqual(NEO_TOOLS);
-    expect(neoCoordinatorNativeTools()).not.toContain('AskUserQuestion');
-  });
-});
-
-describe('neoCoordinatorAllowedTools', () => {
-  test('approves native tools without shell-command permission rules', () => {
-    expect(neoCoordinatorAllowedTools()).toEqual([
-      ...NEO_TOOLS,
-      'mcp__hyperneo-operations__invoke',
-    ]);
-    expect(neoCoordinatorAllowedTools().some((tool) => tool.startsWith('Bash('))).toBe(false);
-  });
-});
-
-describe('neoCoordinatorDeniedReads', () => {
-  test('keeps direct SDK Read rules for sensitive paths', () => {
-    expect(neoCoordinatorDeniedReads()).toEqual(
-      expect.arrayContaining([
-        'Read(~/.ssh/**)',
-        'Read(~/.claude/.credentials.json)',
-        'Read(~/.zshrc)',
-        'Read(~/**/.env)',
-      ])
-    );
-  });
-
-  test('restricted Neo queries carry SDK read denials without adding a hook', () => {
-    const options: Options = { disallowedTools: ['Task'] };
-    restrictNeoQuery(options);
-    expect(options.disallowedTools).toEqual(['Task', ...neoCoordinatorDeniedReads()]);
-    expect(options.hooks).toBeUndefined();
   });
 });

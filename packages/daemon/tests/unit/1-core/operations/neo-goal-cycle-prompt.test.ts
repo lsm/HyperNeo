@@ -1,18 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import { NEO_ROOT_PROMPT } from '@hyperneo/prompts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
-import { restrictNeoQuery } from '../../../../src/lib/neo/session-policy.ts';
 
 describe('Neo scheduled goal-cycle guidance', () => {
   test.each([false, true])('reaches Neo with domain packs enabled: %s', (packsEnabled) => {
-    const options: Options = {};
-    if (packsEnabled) restrictNeoQuery(options);
-    else restrictNeoQuery(options, undefined, []);
-    const text =
-      typeof options.systemPrompt === 'object' && 'prompt' in options.systemPrompt
-        ? options.systemPrompt.prompt
-        : '';
+    const text = packsEnabled ? neoPrompt() : neoPrompt([]);
     expect(text).toContain('On a scheduled goal wake');
     for (const operation of [
       'goal.session.get',

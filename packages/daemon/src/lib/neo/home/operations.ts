@@ -55,12 +55,7 @@ export function createNeoHomeOperations(
       'outcome',
       'result:outcome'
     )
-    .pipe(
-      (input, caller: OperationCaller) =>
-        home.save(input, caller.source === 'mcp' ? caller.neoTurn?.isLive : undefined),
-      ['outcome', 'caller'],
-      'outcome'
-    )
+    .pipe((input) => home.save(input), 'outcome', 'outcome')
     .pipe(
       (result) => reportHomeConflict(result, service.todos, service.defaultSessionId()),
       'outcome',
@@ -74,12 +69,7 @@ export function createNeoHomeOperations(
     .input(['input', 'caller'])
     .pipe(owner, 'caller', 'result:outcome')
     .pipe(requireHomePath, 'input', 'result:outcome')
-    .pipe(
-      (input: HomeReadInput, caller: OperationCaller) =>
-        home.read(input, caller.source === 'mcp' ? caller.neoTurn?.isLive : undefined),
-      ['outcome', 'caller'],
-      'outcome'
-    )
+    .pipe((input: HomeReadInput) => home.read(input), 'outcome', 'outcome')
     .pipe(
       (result) => reportHomeConflict(result, service.todos, service.defaultSessionId()),
       'outcome',
@@ -93,7 +83,7 @@ export function createNeoHomeOperations(
     defineOperation({
       name: 'neo.home.read',
       description:
-        'Read a complete curated home document and its SHA-256. With origin/upstream, synchronizes using bounded noninteractive fetch and isolated rebase at most once per runtime Neo wake, sharing failures too; human RPC reads attempt fresh sync. Publishes only a fast-forward that preserves ignored and untracked files. Local-only reads include human edits; remote-backed dirty changes refuse synchronization unchanged. A sync conflict returns questionId for one human choice with a full-version document; answering alone does not apply it; neo.home.save can apply a current recorded version choice. includeRemote optionally adds the browser origin URL without fetching. Never initializes or authors a commit. Refuses internal, ignored or symlink paths and non-UTF-8 content. Root Neo or the local user only.',
+        'Read a complete curated home document and its SHA-256. With origin/upstream, synchronizes using bounded noninteractive fetch and isolated rebase for each read through the same path as a human RPC read. Publishes only a fast-forward that preserves ignored and untracked files. Local-only reads include human edits; remote-backed dirty changes refuse synchronization unchanged. A sync conflict returns questionId for one human choice with a full-version document; answering alone does not apply it; neo.home.save can apply a current recorded version choice. includeRemote optionally adds the browser origin URL without fetching. Never initializes or authors a commit. Refuses internal, ignored or symlink paths and non-UTF-8 content. Root Neo or the local user only.',
       inputSchema: HomeReadInput,
       resultSchema: HomeReadResult,
       policy: { safetyClass: 'read', roles: ['neo'] },

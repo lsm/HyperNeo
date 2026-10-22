@@ -1,11 +1,8 @@
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { z } from 'zod';
 
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoAsk } from '@hyperneo/shared/types/neo-snapshot';
-import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import type { Database as SQLite } from '../../../../src/storage/sqlite-compat.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 import type { Database } from '../../../../src/storage/database.ts';
@@ -16,14 +13,8 @@ import {
   type DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus.ts';
 import { NeoService } from '../../../../src/lib/neo/service.ts';
-import { createNeoOperations, NEO_HUMAN_TURN_REFUSAL } from '../../../../src/lib/neo/operations.ts';
-import {
-  neoCoordinatorAllowedTools,
-  neoCoordinatorBinding,
-  neoCoordinatorNativeTools,
-  neoCoordinatorRuntimePath,
-  restrictNeoQuery,
-} from '../../../../src/lib/neo/session-policy.ts';
+import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
+import { neoCoordinatorBinding } from '../../../../src/lib/neo/session-policy.ts';
 import { neoFolderPath } from '../../../../src/lib/neo/folder.ts';
 import {
   createOperationRegistry,
@@ -153,17 +144,14 @@ describe('Neo MVP', () => {
       source: 'mcp',
       role: 'neo',
       sessionId,
-      neoTurn: { messageId: 'human-message', human: true, isLive: () => true },
     };
   }
-  test('opening is idempotent, independent of project creation and uses constrained coordinator sessions', async () => {
+  test('opening is idempotent, independent of project creation and creates ordinary sessions with a Neo prompt', async () => {
     const ids = await Promise.all([service.open(), service.open(), service.open()]);
     expect(new Set(ids).size).toBe(1);
     expect(created).toHaveLength(1);
     expect(created[0].config).toMatchObject({
-      permissionMode: 'dontAsk',
-      sdkToolsPreset: neoCoordinatorNativeTools(),
-      allowedTools: neoCoordinatorAllowedTools(),
+      systemPrompt: expect.stringContaining('You are Neo'),
     });
     expect(created[0]).toMatchObject({ workspacePath: neoFolderPath(), detectGit: false });
     expect(service.repo.listProjects()).toEqual([]);
@@ -187,8 +175,7 @@ describe('Neo MVP', () => {
     const id = await service.open();
     expect(await service.open()).toBe(id);
     expect(created[0].config).toMatchObject({
-      sdkToolsPreset: neoCoordinatorNativeTools(),
-      allowedTools: neoCoordinatorAllowedTools(),
+      systemPrompt: expect.stringContaining('You are Neo'),
     });
     expect(await invoke('neo.snapshot')).toMatchObject({
       value: { projects: [{ context: project.context }] },
@@ -243,7 +230,7 @@ describe('Neo MVP', () => {
         { remove: rules },
         { source: 'mcp', role: 'neo', sessionId: holder }
       )
-    ).toMatchObject({ value: { ok: false, reason: NEO_HUMAN_TURN_REFUSAL } });
+    ).toMatchObject({ value: { ok: false, reason: 'This action needs the user.' } });
     expect(settings.neo?.standingRules).toEqual(rules);
   });
 
@@ -378,37 +365,12 @@ describe('Neo MVP', () => {
     expect(service.repo.getProject('private')).toBeNull();
   });
 
-  test('query restriction retains tools without injecting a guard and drops plugins, settings and extra MCP servers', async () => {
-    const operationServer = { type: 'stdio' as const, command: 'operations' };
-    const options: Options = {
-      tools: ['Bash', 'Read', 'Edit', 'Write'],
-      plugins: [{ type: 'local', path: '/plugin' }],
-      settingSources: ['user', 'project'],
-      mcpServers: { 'hyperneo-operations': operationServer, unsafe: { command: 'other' } },
-      agent: 'coder',
-      agents: { coder: { description: 'work', prompt: 'work' } },
-    };
-    restrictNeoQuery(options, 'neo:runtime-test');
-    expect(options.tools).toEqual(neoCoordinatorNativeTools());
-    expect(options.additionalDirectories).toEqual([homedir()]);
-    expect(options.mcpServers).toEqual({ 'hyperneo-operations': operationServer });
-    expect(options.allowedTools).toEqual(neoCoordinatorAllowedTools());
-    expect(options.plugins).toEqual([]);
-    expect(options.settingSources).toEqual([]);
-    expect(options.agent).toBeUndefined();
-    expect(options.agents).toEqual({});
-    expect(options.cwd).toBe(neoCoordinatorRuntimePath('neo:runtime-test'));
-    expect(options.cwd).not.toBe(process.cwd());
-    expect(options.hooks).toBeUndefined();
-  });
-
   test('every Neo session may create a project and revise one at its current revision', async () => {
     const root = await service.open();
     const caller: OperationCaller = {
       source: 'mcp',
       role: 'neo',
       sessionId: root,
-      neoTurn: { messageId: 'ask-A', human: true, isLive: () => true },
     };
     expect(await invoke('neo.project.save', project, caller)).toMatchObject({
       value: { ok: false, reason: expect.stringContaining('Omit id') },
@@ -418,8 +380,10 @@ describe('Neo MVP', () => {
     expect(created).toMatchObject({ value: { ok: true, project: { revision: 1 } } });
     const id = (created as { value: { project: { id: string } } }).value.project.id;
     expect(id).not.toBe(project.id);
-    expect(await invoke('neo.project.save', fresh, caller)).toEqual(created);
-    expect(service.repo.listProjects()).toHaveLength(1);
+    const another = await invoke('neo.project.save', fresh, caller);
+    expect(another).toMatchObject({ value: { ok: true } });
+    expect((another as { value: { project: { id: string } } }).value.project.id).not.toBe(id);
+    expect(service.repo.listProjects()).toHaveLength(2);
     const correction = { ...project, id, expectedRevision: 1, context: 'Host at my home' };
     expect(await invoke('neo.project.save', correction, caller)).toMatchObject({
       value: { ok: true, project: { context: correction.context, revision: 2 } },

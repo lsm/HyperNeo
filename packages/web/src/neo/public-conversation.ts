@@ -127,7 +127,9 @@ export function presentNeoPublicConversation({
         kind: 'publication',
         key: JSON.stringify([publication.conversationId, 'publication', publication.publicationId]),
         publication,
-        replyTo: origins.get(originKey(publication.askOrigin)) ?? null,
+        replyTo: publication.askOrigin
+          ? (origins.get(originKey(publication.askOrigin)) ?? null)
+          : null,
       })
     ),
   ];

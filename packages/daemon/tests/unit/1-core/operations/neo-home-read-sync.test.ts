@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { NeoCoordinatorTurn } from '../../../../src/lib/neo/coordinator-turn.ts';
 import { createNeoHomeOperations } from '../../../../src/lib/neo/home/operations.ts';
 import { NeoHomeRepository } from '../../../../src/lib/neo/home/repository.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
@@ -19,7 +18,6 @@ let fixture: string, root: string, peer: string, remote: string;
 let db: Awaited<ReturnType<typeof createTestDb>>;
 let home: NeoHomeRepository;
 let previous: Map<string, string | undefined>;
-let turn: NeoCoordinatorTurn;
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
 async function git(cwd: string, ...args: string[]) {
   const child = spawnProcess(['git', '-c', 'core.hooksPath=/dev/null', ...args], {
@@ -42,18 +40,12 @@ async function version(text: string) {
   await git(peer, 'commit', '-m', text);
   await git(peer, 'push', 'origin', 'main');
 }
-function wake() {
-  turn?.dispose();
-  turn = new NeoCoordinatorTurn(db, 'neo:root', { isLive: () => true });
-  turn.bind(crypto.randomUUID());
-}
 async function read(
   path = 'direction.md',
   caller: OperationCaller = {
     source: 'mcp',
     sessionId: 'neo:root',
     role: 'neo',
-    neoTurn: { ...turn.identity()! },
   }
 ) {
   const repo = new NeoRepository(db.getDatabase());
@@ -111,10 +103,8 @@ beforeEach(async () => {
   );
   await chmod(shim, 0o755);
   process.env.PATH = `${join(fixture, 'bin')}:${process.env.PATH}`;
-  wake();
 });
 afterEach(async () => {
-  turn?.dispose();
   db?.close();
   for (const [key, value] of previous) {
     if (value === undefined) delete process.env[key];
@@ -124,33 +114,21 @@ afterEach(async () => {
 });
 
 describe('Curated home reads within a Neo wake', () => {
-  test('pulls once across documents and concurrent reads, then refreshes on a new runtime turn', async () => {
+  test('Neo tool reads refresh the same way as human reads without a runtime wake', async () => {
     await version('Peer one');
     expect(await read()).toMatchObject({ ok: true, content: 'Peer one' });
     await version('Peer two');
-    const repeated = await Promise.all([read(), read('mandate.md')]);
-    expect(repeated).toEqual([
-      expect.objectContaining({ content: 'Peer one' }),
-      expect.objectContaining({ content: 'Mandate Peer one' }),
-    ]);
-    expect(await pulls()).toBe(1);
-    await writeFile(join(root, 'direction.md'), 'Human local edit');
-    expect(await read()).toMatchObject({ ok: true, content: 'Human local edit' });
-    expect(await pulls()).toBe(1);
-    await writeFile(join(root, 'direction.md'), 'Peer one');
-    wake();
     expect(await read()).toMatchObject({ ok: true, content: 'Peer two' });
     expect(await pulls()).toBe(2);
   });
-  test('shares a failed sync attempt and retries only in the next wake', async () => {
+  test('a failed sync retries on the next read', async () => {
     await git(root, 'remote', 'set-url', 'origin', join(fixture, 'missing.git'));
-    const failed = await read();
-    expect(failed).toMatchObject({ ok: false, reason: expect.stringContaining('sync_failed') });
+    expect(await read()).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('sync_failed'),
+    });
     await git(root, 'remote', 'set-url', 'origin', remote);
     await version('Available again');
-    expect(await read('mandate.md')).toEqual(failed);
-    expect(await pulls()).toBe(1);
-    wake();
     expect(await read()).toMatchObject({ ok: true, content: 'Available again' });
     expect(await pulls()).toBe(2);
   });
@@ -171,8 +149,6 @@ describe('Curated home reads within a Neo wake', () => {
     expect(await git(root, 'rev-parse', 'HEAD')).toBe(head);
     expect(await pulls()).toBe(0);
     await writeFile(join(root, 'direction.md'), 'Initial');
-    expect(await read()).toEqual(failed);
-    wake();
     expect(await read()).toMatchObject({ content: 'Remote edit' });
   });
   test('revalidates a document replaced by a symlink during sync', async () => {
@@ -213,7 +189,7 @@ describe('Curated home reads within a Neo wake', () => {
     expect(await readFile(join(root, 'direction.md'), 'utf8')).toBe('Local committed choice');
     expect(await git(root, 'rev-parse', 'HEAD')).toBe(head);
     expect(await read('mandate.md')).toEqual(failed);
-    expect(await pulls()).toBe(1);
+    expect(await pulls()).toBe(2);
   });
 });
 
@@ -249,10 +225,8 @@ describe('Home sync conflict questions', () => {
     expect(await git(peer, 'rev-parse', 'HEAD')).toBe(remoteHead);
     await read('mandate.md');
     home = new NeoHomeRepository(root, new NeoRepository(db.getDatabase()));
-    wake();
     await read();
     store.answerQuestion(question, ['Keep local'], 'button', Date.now());
-    wake();
     await read();
     expect(
       store.listAsks(undefined, 100).flatMap((ask) => store.listQuestions(ask.id))

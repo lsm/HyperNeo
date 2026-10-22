@@ -1,771 +1,127 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
-import type { SDKUserMessage } from '@hyperneo/shared/sdk';
-import {
-  createNeoAskOriginResolver,
-  type NeoAskOrigin,
-} from '../../../../src/lib/neo/ask-origin.ts';
-import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
-import {
-  admitPublicationDraft,
-  createNeoPublicationOperation,
-  createNeoPublisher,
-  requirePublicationProducer,
-  requirePublicationLinks,
-  requirePublicationLifetime,
-} from '../../../../src/lib/neo/publication-operation.ts';
-import type { NeoService } from '../../../../src/lib/neo/service.ts';
-import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
-import {
-  createOperationRegistry,
-  type OperationCaller,
-} from '../../../../src/lib/operations/registry.ts';
-import {
-  type NeoDeliveryTrigger,
-  neoDeliveryTrigger,
-  neoHumanTrigger,
-  requirePublicationTrigger,
-} from '../../../../src/lib/neo/notification-triggers.ts';
+import { createNeoPublisher } from '../../../../src/lib/neo/publication-operation.ts';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import { NeoPublicationRepository } from '../../../../src/storage/repositories/neo-publication-repository.ts';
 import { createNeoTables } from '../../../../src/storage/schema/neo.ts';
 import { runMigration283 } from '../../../../src/storage/schema/m283-neo-work-origins.ts';
 import { runMigration288 } from '../../../../src/storage/schema/m288-neo-publications.ts';
-import { runMigration387 } from '../../../../src/storage/schema/m387-neo-ask-todo-tables.ts';
-import { replyAtNeoTurnEnd } from '../../../../src/lib/neo/turn-end-reply.ts';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db.ts';
 
 const conversationId = '10000000-0000-4000-8000-000000000001';
 const root = { sessionId: `neo:${conversationId}`, kind: 'neo' as const, projectId: null };
-const holder = { sessionId: 'holder:a', kind: 'worker' as const, projectId: 'a' };
-const ask = { sessionId: root.sessionId, messageId: 'ask-original' };
-const draft = {
-  publicationId: '20000000-0000-4000-8000-000000000001',
-  shortText: 'Ready. View comparison.',
-  fullText: '**Two differences** need a closer look. Nothing was published.',
-  links: [],
-};
+const draft = { requestId: 'send-one', shortText: 'Ready', fullText: 'The comparison is ready.' };
 const report = {
   daemonId: '30000000-0000-4000-8000-000000000001',
-  artifactId: 'layout-report',
-  title: 'Layout report',
+  artifactId: 'comparison',
+  title: 'Comparison',
   kind: 'html' as const,
-  byteLength: 86016,
+  byteLength: 100,
 };
-const caller = (sessionId = root.sessionId, messageId = ask.messageId, human = true) => ({
-  source: 'mcp' as const,
-  sessionId,
-  role: 'neo' as const,
-  neoTurn: { messageId, human, isLive: () => true, hasInput: (id: string) => id === 'steered' },
-});
-describe('runtime-bound publication operation', () => {
+const caller = { source: 'mcp' as const, sessionId: root.sessionId, role: 'neo' as const };
+
+describe('Neo publication without runtime input attribution', () => {
   let mailbox: MailboxTestDb;
-  let repo: NeoRepository;
   let ledger: NeoPublicationRepository;
-  let runtime: Parameters<typeof createNeoPublisher>[0];
   let publish: ReturnType<typeof createNeoPublisher>;
-  let notify: ReturnType<typeof vi.fn>;
-  function prompt(sessionId: string, messageId: string, inputKind = 'human') {
-    expect(
-      mailbox.sdkMessageRepo.saveSDKMessage(sessionId, {
-        type: 'user',
-        uuid: messageId,
-        session_id: sessionId,
-        parent_tool_use_id: null,
-        inputKind,
-        message: { role: 'user', content: [{ type: 'text', text: 'Fictional immutable input' }] },
-      } as SDKUserMessage)
-    ).toBe(true);
-  }
-  const stamps = new Map<string, NeoAskOrigin>();
-  const triggers = new Map<string, string | null>();
-  const key = (input: NeoAskOrigin) => `${input.sessionId}\0${input.messageId}`;
-  const isHuman = (input: NeoAskOrigin) =>
-    mailbox.sdkMessageRepo
-      .getStoredPromptsByUuid(input.sessionId, input.messageId)
-      .some((message) => 'inputKind' in message && message.inputKind === 'human');
-  const inputTrigger = (input: NeoAskOrigin): string | null =>
-    triggers.get(key(input)) ?? (isHuman(input) ? neoHumanTrigger(input.messageId) : null);
-  function stamp(input: NeoAskOrigin, parent: NeoAskOrigin, trigger: NeoDeliveryTrigger) {
-    stamps.set(key(input), parent);
-    triggers.set(
-      key(input),
-      neoDeliveryTrigger(trigger, () => inputTrigger(parent))
-    );
-  }
-  function invoke(input: unknown = draft, who: OperationCaller = caller()) {
-    const { publicationId, ...authored } = input as { publicationId?: string };
-    return invokeOperation(
-      createOperationRegistry([createNeoPublicationOperation(publish)]),
-      'neo.publication.publish',
-      { ...authored, requestId: publicationId ?? 'send' },
-      who
-    );
-  }
+  const notify = vi.fn();
   beforeEach(() => {
-    stamps.clear();
-    triggers.clear();
     mailbox = createMailboxTestDb();
     createNeoTables(mailbox.db);
     runMigration283(mailbox.db);
     runMigration288(mailbox.db);
-    repo = new NeoRepository(mailbox.db);
+    const repo = new NeoRepository(mailbox.db);
+    mailbox.db.prepare('INSERT INTO sessions(id) VALUES (?)').run(root.sessionId);
+    repo.reserveBinding(root);
+    repo.saveProject({ id: 'garden', title: 'Garden', summary: '', context: '' }, 0);
     ledger = new NeoPublicationRepository(mailbox.db);
-    for (const id of ['a', 'b']) repo.saveProject({ id, title: id, summary: '', context: '' }, 0);
-    for (const binding of [
-      root,
-      holder,
-      { sessionId: 'worker', kind: 'worker' as const, projectId: 'a' },
-    ]) {
-      mailbox.db.prepare('INSERT INTO sessions(id) VALUES (?)').run(binding.sessionId);
-      repo.reserveBinding(binding);
-    }
-    prompt(ask.sessionId, ask.messageId);
-    const resolve = createNeoAskOriginResolver({
-      getBinding: (id) => repo.getBindingBySession(id),
-      getPrompts: (sessionId, messageId) =>
-        mailbox.sdkMessageRepo.getStoredPromptsByUuid(sessionId, messageId),
-      getStamp: (sessionId, messageId) => stamps.get(`${sessionId}\0${messageId}`) ?? null,
-    });
-    notify = vi.fn();
-    runtime = {
+    notify.mockClear();
+    publish = createNeoPublisher({
       getBinding: (id) => repo.getBindingBySession(id),
       getRootBinding: () => repo.defaultBinding(),
       hasProject: (id) => !!repo.getProject(id),
-      resolveAskOrigin: resolve,
-      resolveHumanAskOrigin: (input) => {
-        const origin = resolve(input);
-        return origin && isHuman(origin) ? origin : null;
-      },
       append: (input) => ledger.append(input),
-      inputTrigger,
-      isDeliveredHumanInput: (input) =>
-        isHuman(input) &&
-        mailbox.sdkMessageRepo.getUserSendStatus(input.sessionId, input.messageId) === 'consumed',
       notify,
-      artifact: (artifactId, who) =>
-        artifactId === report.artifactId && who.sessionId === root.sessionId ? report : null,
-    };
-    const publishRaw = createNeoPublisher(runtime);
-    publish = ((input: unknown, who: OperationCaller) => {
-      const { publicationId, ...authored } = input as { publicationId?: string };
-      return publishRaw({ ...authored, requestId: publicationId ?? 'send' }, who);
-    }) as typeof publishRaw;
+      artifact: (id, who) =>
+        id === report.artifactId && who.sessionId === root.sessionId ? report : null,
+    });
   });
   afterEach(() => mailbox.close());
 
-  test('a delivered message carries the registered artifact references it was published with', async () => {
-    const result = await invoke({ ...draft, artifacts: [report] });
-    expect(result).toMatchObject({
-      kind: 'completed',
-      value: { accepted: true, publication: { artifacts: [report] } },
-    });
-    expect(ledger.list(conversationId)![0].artifacts).toEqual([report]);
+  test('publishes without a holder and leaves answered input unspecified', () => {
+    const receipt = publish(draft, caller);
+    expect(receipt).toMatchObject({ accepted: true, created: true, answered: null });
+    expect(ledger.list(conversationId)).toEqual([expect.objectContaining({ shortText: 'Ready' })]);
+    const stored = ledger.list(conversationId)![0];
+    expect(stored.askOrigin).toBeUndefined();
+    expect(stored.producerInput).toBeUndefined();
+    expect(notify).toHaveBeenCalledOnce();
   });
 
-  test('a reference the daemon does not show this producer is refused before delivery', async () => {
-    for (const artifacts of [
-      [{ ...report, artifactId: 'missing' }],
-      [{ ...report, byteLength: 1 }],
-    ])
-      expect(await invoke({ ...draft, artifacts })).toMatchObject({
-        kind: 'completed',
-        value: { accepted: false, reason: 'invalid_artifact_reference' },
-      });
-    expect(ledger.list(conversationId)).toEqual([]);
-    expect(notify).not.toHaveBeenCalled();
-  });
-
-  test('returns the answered human message and the delivered publication, without yielding', async () => {
-    const yieldTurn = vi.fn();
-    const who = caller();
-    const result = await invoke(draft, { ...who, neoTurn: { ...who.neoTurn, yield: yieldTurn } });
-    expect(result).toMatchObject({
-      kind: 'completed',
-      value: {
-        accepted: true,
-        answered: {
-          message: ask,
-          publicationId: expect.any(String),
-          revisionId: expect.any(String),
-        },
-      },
-    });
-    const publication = ledger.list(conversationId)![0];
-    expect(result).toHaveProperty('value.answered.publicationId', publication.publicationId);
-    expect(result).toHaveProperty('value.answered.revisionId', publication.publicationId);
-    expect(yieldTurn).not.toHaveBeenCalled();
-    expect(who.neoTurn.isLive()).toBe(true);
-  });
-
-  test('a root turn may thread a publish to another delivered human message, more than once', async () => {
-    prompt(root.sessionId, 'event', 'system');
-    prompt(root.sessionId, 'steered');
-    const turn = caller(root.sessionId, 'event', false);
-    const answer = async (requestId: string) => ({
-      value: await publish(
-        { ...draft, publicationId: requestId, triggerId: 'human:steered' },
-        turn
-      ),
-    });
-    expect(await answer('first')).toMatchObject({
-      value: {
-        accepted: true,
-        publication: { triggerId: 'human:steered' },
-        answered: { message: { sessionId: root.sessionId, messageId: 'steered' } },
-      },
-    });
-    expect(await answer('first')).toMatchObject({ value: { accepted: true, created: false } });
-    expect(await answer('second')).toMatchObject({
-      value: { accepted: true, created: true, publication: { triggerId: 'human:steered' } },
-    });
-  });
-
-  test('a human message not yet delivered to the root cannot be answered by reference', async () => {
-    prompt(root.sessionId, 'event', 'system');
-    prompt(root.sessionId, 'waiting');
-    mailbox.sdkMessageRepo.updateMessageStatus(
-      [mailbox.sdkMessageRepo.findMessageIdByUuid(root.sessionId, 'waiting')!],
-      'enqueued'
-    );
-    expect(
-      await invoke({ ...draft, triggerId: 'human:waiting' }, caller(root.sessionId, 'event', false))
-    ).toMatchObject({ value: { accepted: false, reason: 'wrong_trigger' } });
-  });
-
-  test('a consumed human input from an older turn cannot be answered by guessing its id', async () => {
-    prompt(root.sessionId, 'event', 'system');
-    prompt(root.sessionId, 'old-human');
-    expect(
-      await invoke(
-        { ...draft, triggerId: 'human:old-human' },
-        caller(root.sessionId, 'event', false)
-      )
-    ).toMatchObject({ value: { accepted: false, reason: 'wrong_trigger' } });
-    expect(ledger.list(conversationId)).toEqual([]);
-  });
-
-  test.each(['unconsumed', 'foreign', 'nonhuman'])(
-    'active-turn membership alone cannot answer a %s input',
-    async (kind) => {
-      prompt(root.sessionId, 'event', 'system');
-      prompt(
-        kind === 'foreign' ? 'worker' : root.sessionId,
-        'selected',
-        kind === 'nonhuman' ? 'system' : 'human'
-      );
-      if (kind === 'unconsumed')
-        mailbox.sdkMessageRepo.updateMessageStatus(
-          [mailbox.sdkMessageRepo.findMessageIdByUuid(root.sessionId, 'selected')!],
-          'enqueued'
-        );
-      const who = caller(root.sessionId, 'event', false);
-      who.neoTurn.hasInput = () => true;
-      expect(await invoke({ ...draft, triggerId: 'human:selected' }, who)).toMatchObject({
-        value: { accepted: false, reason: 'wrong_trigger' },
-      });
-      expect(ledger.list(conversationId)).toEqual([]);
-    }
-  );
-
-  test('an unbound event delivery does not invent an answered human question', async () => {
-    prompt(root.sessionId, 'event', 'system');
-    stamp(
-      { sessionId: root.sessionId, messageId: 'event' },
-      { sessionId: root.sessionId, messageId: 'event' },
-      null
-    );
-    expect(await invoke(draft, caller(root.sessionId, 'event', false))).toMatchObject({
-      kind: 'completed',
-      value: { accepted: true, answered: null },
-    });
-  });
-
-  test('takes no publication id from the model: the daemon mints it', async () => {
-    const registry = createOperationRegistry([createNeoPublicationOperation(publish)]);
-    expect(
-      await invokeOperation(registry, 'neo.publication.publish', draft, caller())
-    ).toMatchObject({ kind: 'failed', code: 'invalid_input' });
-    const { publicationId: _chosen, ...authored } = draft;
-    const result = await invokeOperation(
-      registry,
-      'neo.publication.publish',
-      { ...authored, requestId: 'send' },
-      caller()
-    );
-    expect(result).toMatchObject({ kind: 'completed', value: { accepted: true, created: true } });
-    const minted =
-      result.kind === 'completed'
-        ? (result.value as { publication: { publicationId: string } }).publication.publicationId
-        : '';
-    expect(minted).toMatch(/^[0-9a-f-]{36}$/);
-    expect(ledger.list(conversationId)!.map((item) => item.publicationId)).toEqual([minted]);
-  });
-
-  test('registers in the real family and persists authored content with runtime-derived identity', async () => {
-    const service = {
-      repo,
-      publish,
-      db: { getDatabase: () => mailbox.db },
-    } as unknown as NeoService;
-    const registry = createOperationRegistry(createNeoOperations(service));
-    const before = mailbox.sdkRows();
-    const { publicationId, ...authored } = draft;
-    const result = await invokeOperation(
-      registry,
-      'neo.publication.publish',
-      { ...authored, requestId: 'send' },
-      caller()
-    );
-    expect(result).toMatchObject({
-      kind: 'completed',
-      value: {
-        accepted: true,
-        created: true,
-        publication: {
-          shortText: draft.shortText,
-          fullText: draft.fullText,
-          links: [],
-          conversationId,
-          askOrigin: ask,
-          producerInput: ask,
-          triggerId: `human:${ask.messageId}`,
-          sequence: 1,
-        },
-      },
-    });
-    expect(ledger.list(conversationId)).toHaveLength(1);
-    expect(mailbox.sdkRows()).toEqual(before);
-    expect(mailbox.rowCount()).toBe(0);
-    expect(notify).toHaveBeenCalledTimes(1);
-  });
-
-  test('a publication with no links array publishes with none', async () => {
-    const { links: _links, ...unlinked } = draft;
-    expect(await invoke(unlinked)).toMatchObject({
-      value: { accepted: true, publication: { links: [] } },
-    });
-  });
-
-  test('a live turn can deliver an acknowledgement without a trigger', async () => {
-    prompt(root.sessionId, 'note-1', 'system');
-    expect(
-      await invoke(
-        { ...draft, shortText: '收到。', fullText: '收到。' },
-        caller(root.sessionId, 'note-1', false)
-      )
-    ).toMatchObject({ value: { accepted: true, publication: { shortText: '收到。' } } });
-  });
-
-  test('separate operations with identical text both publish under the same trigger', () => {
-    const first = publish(draft, caller());
-    expect(first).toMatchObject({ accepted: true, created: true });
-    const second = publish(
-      { ...draft, publicationId: '20000000-0000-4000-8000-000000000002' },
-      caller()
-    );
-    expect(second).toMatchObject({ accepted: true, created: true });
-    expect(ledger.list(conversationId)).toHaveLength(2);
-    expect(publish(draft, caller())).toEqual({ ...first, created: false });
-  });
-
-  test('a stamped return answers the human message that asked it; a note’s new fact posts without one', () => {
-    const reply = 'neo-return:1';
-    prompt(root.sessionId, reply, 'system');
-    stamp({ sessionId: root.sessionId, messageId: reply }, ask, 'continues');
-    expect(publish(draft, caller(root.sessionId, reply, false))).toMatchObject({
-      accepted: true,
-      publication: { triggerId: `human:${ask.messageId}` },
-    });
-    const noted = 'neo-return:2';
-    prompt(root.sessionId, 'note-1', 'system');
-    prompt(root.sessionId, noted, 'system');
-    stamp(
-      { sessionId: root.sessionId, messageId: noted },
-      { sessionId: root.sessionId, messageId: 'note-1' },
-      'continues'
-    );
-    const fact = publish(
-      {
-        ...draft,
-        publicationId: '20000000-0000-4000-8000-000000000004',
-        shortText: 'A note fact.',
-        fullText: 'A note fact.',
-      },
-      caller(root.sessionId, noted, false)
-    );
-    expect(fact).toMatchObject({ accepted: true, created: true });
-    expect(fact.accepted && fact.publication.triggerId).toBeUndefined();
-  });
-
-  test('refuses a triggerId that is not this turn’s trigger', () => {
-    expect(publish({ ...draft, triggerId: 'outcome:other:1' }, caller())).toMatchObject({
-      accepted: false,
-      reason: 'wrong_trigger',
-    });
-    expect(ledger.list(conversationId)).toEqual([]);
-  });
-
-  test('the removed interim field is not part of the message contract', () => {
-    expect(publish({ ...draft, interim: true }, caller())).toMatchObject({
-      accepted: false,
-      reason: 'invalid_publication',
-    });
-    expect(publish(draft, caller())).toMatchObject({ accepted: true });
-  });
-
-  test('a publish nudge answers the human message it nudges, under that message’s trigger', () => {
-    const nudge = `neo-nudge:${ask.messageId}`;
-    prompt(root.sessionId, nudge, 'system');
-    stamp({ sessionId: root.sessionId, messageId: nudge }, ask, 'continues');
-    expect(publish(draft, caller(root.sessionId, nudge, false))).toMatchObject({
-      accepted: true,
-      publication: { triggerId: `human:${ask.messageId}` },
-    });
-    expect(ledger.list(conversationId)).toHaveLength(1);
-  });
-
-  test('a later input on an answered human trigger posts its new fact, never replacing the first', () => {
-    expect(publish(draft, caller())).toMatchObject({ accepted: true, created: true });
-    const reply = 'neo-return:9';
-    prompt(root.sessionId, reply, 'system');
-    stamp({ sessionId: root.sessionId, messageId: reply }, ask, 'continues');
-    expect(
-      publish(
-        {
-          ...draft,
-          publicationId: '20000000-0000-4000-8000-000000000002',
-          shortText: 'Overwrite.',
-        },
-        caller(root.sessionId, reply, false)
-      )
-    ).toMatchObject({ accepted: true, created: true });
-    expect(ledger.list(conversationId)!.map((item) => item.shortText)).toEqual([
-      draft.shortText,
-      'Overwrite.',
-    ]);
-  });
-
-  test.each([
-    { source: 'rpc', principal: 'local' },
-    { source: 'internal' },
-    { source: 'mcp', role: 'neo', sessionId: 'worker' },
-    { source: 'mcp', role: 'neo', sessionId: 'ordinary' },
-    { source: 'mcp', role: 'neo', sessionId: root.sessionId },
-  ] satisfies OperationCaller[])('refuses a nonlive/nonavatar publisher: %j', async (who) => {
-    expect(await invoke(draft, who)).toMatchObject({
-      value: { accepted: false, reason: 'live_avatar_required' },
-    });
-    expect(ledger.list(conversationId)).toEqual([]);
-    expect(notify).not.toHaveBeenCalled();
-  });
-
-  test('refuses a dead turn before any append', async () => {
-    const who = caller(root.sessionId, 'unrecorded');
-    who.neoTurn!.isLive = () => false;
-    expect(await invoke(draft, who)).toMatchObject({ kind: 'failed', code: 'forbidden' });
-    expect(ledger.list(conversationId)).toEqual([]);
-  });
-
-  test.each(['missing', 'system', 'wrong-session'])(
-    'a live turn with %s input evidence may still tell a new fact, once',
-    async (kind) => {
-      const who = caller(root.sessionId, 'unrecorded');
-      if (kind === 'system') prompt(root.sessionId, 'unrecorded', 'system');
-      if (kind === 'wrong-session') prompt(holder.sessionId, 'unrecorded');
-      expect(await invoke(draft, who)).toMatchObject({ value: { accepted: true, created: true } });
-      expect(await invoke(draft, who)).toMatchObject({ value: { accepted: true, created: false } });
-      expect(ledger.list(conversationId)).toHaveLength(1);
-    }
-  );
-
-  test.each(['lifetime', 'input', 'binding', 'root'])(
-    'rechecks %s at the synchronous append boundary',
-    (change) => {
-      const who = caller();
-      const resolve = runtime.resolveAskOrigin;
-      const read = runtime.getRootBinding;
-      runtime.resolveAskOrigin = (input) => {
-        const origin = resolve(input);
-        if (change === 'lifetime') who.neoTurn!.isLive = () => false;
-        if (change === 'input') who.neoTurn = { ...who.neoTurn!, messageId: 'new-input' };
-        if (change === 'binding')
-          mailbox.db
-            .prepare('DELETE FROM neo_session_bindings WHERE session_id = ?')
-            .run(root.sessionId);
-        if (change === 'root')
-          runtime.getRootBinding = () => ({ ...read()!, sessionId: 'neo:other' });
-        return origin;
-      };
-      expect(publish(draft, who)).toEqual({ accepted: false, reason: 'publication_superseded' });
-      expect(ledger.list(conversationId)).toEqual([]);
-      expect(notify).not.toHaveBeenCalled();
-    }
-  );
-
-  test.each(['conversationId', 'askOrigin', 'producerInput', 'authority'])(
-    'rejects injected %s rather than trusting payload provenance',
-    async (field) => {
-      expect(await invoke({ ...draft, [field]: ask })).toMatchObject({
-        kind: 'failed',
-        code: 'invalid_input',
-      });
-      expect(publish({ ...draft, [field]: ask }, caller())).toEqual({
-        accepted: false,
-        reason: 'invalid_publication',
-      });
-      expect(ledger.list(conversationId)).toEqual([]);
-    }
-  );
-
-  test('identical retry returns the original durable receipt, conflict cannot rewrite it', () => {
-    const first = publish(draft, caller());
-    expect(first).not.toBeInstanceOf(Promise);
-    expect(publish(draft, caller())).toEqual({ ...first, created: false });
-    expect(publish({ ...draft, shortText: 'Other' }, caller())).toEqual({
+  test('retries the same request without duplicating or rewriting the publication', () => {
+    expect(publish(draft, caller)).toMatchObject({ accepted: true, created: true });
+    expect(publish(draft, caller)).toMatchObject({ accepted: true, created: false });
+    expect(publish({ ...draft, shortText: 'Changed' }, caller)).toMatchObject({
       accepted: false,
       reason: 'publication_conflict',
     });
     expect(ledger.list(conversationId)).toHaveLength(1);
-    expect(notify).toHaveBeenCalledTimes(2);
-  });
-
-  test('acknowledgements and progress text are delivery decisions, not refusals', () => {
-    for (const [index, text] of ['收到。', 'Still waiting.', 'Still waiting.'].entries()) {
-      expect(
-        publish(
-          { ...draft, publicationId: `send-${index}`, shortText: text, fullText: text },
-          caller()
-        )
-      ).toMatchObject({ accepted: true, created: true });
-    }
-    expect(ledger.list(conversationId)).toHaveLength(3);
-  });
-
-  test('operation identities are scoped to the input that authored them', () => {
-    expect(publish(draft, caller())).toMatchObject({ accepted: true, created: true });
-    expect(publish(draft, caller(root.sessionId, 'other-ask'))).toMatchObject({
+    expect(publish({ ...draft, requestId: 'send-two' }, caller)).toMatchObject({
       accepted: true,
       created: true,
     });
-    expect(ledger.list(conversationId)).toHaveLength(2);
   });
 
-  test('a trigger note turn records its trigger, and a new fact for it also posts', () => {
-    const triggerId = 'outcome:ask-1:abc';
-    const note = `neo-trigger:${triggerId}`;
-    prompt(root.sessionId, note, 'system');
-    stamp({ sessionId: root.sessionId, messageId: note }, ask, { id: triggerId });
-    const who = {
-      ...caller(root.sessionId, note),
-      neoTurn: { ...caller().neoTurn, messageId: note },
-    };
-    expect(publish({ ...draft, triggerId }, who)).toMatchObject({
+  test.each(['worker', 'ordinary', 'neo:foreign'])(
+    'refuses a foreign publisher %s',
+    (sessionId) => {
+      expect(publish(draft, { ...caller, sessionId })).toMatchObject({
+        accepted: false,
+        reason: 'avatar_required',
+      });
+      expect(ledger.list(conversationId)).toHaveLength(0);
+    }
+  );
+
+  test('refuses a human transport even with the Neo session id', () => {
+    expect(publish(draft, { ...caller, source: 'rpc' })).toMatchObject({ accepted: false });
+  });
+
+  test('preserves registered artifact references and refuses invented references', () => {
+    expect(publish({ ...draft, artifacts: [report] }, caller)).toMatchObject({
       accepted: true,
-      publication: { triggerId },
+      publication: { artifacts: [report] },
     });
     expect(
       publish(
-        { ...draft, publicationId: '20000000-0000-4000-8000-000000000002', shortText: 'Again.' },
-        who
+        { ...draft, requestId: 'bad', artifacts: [{ ...report, artifactId: 'missing' }] },
+        caller
       )
-    ).toMatchObject({ accepted: true, created: true, publication: { triggerId } });
-    expect(ledger.list(conversationId)).toHaveLength(2);
+    ).toMatchObject({ accepted: false, reason: 'invalid_artifact_reference' });
   });
 
-  test('a human reply records its human trigger, and a triggerId it names is refused', () => {
-    expect(publish(draft, caller())).toMatchObject({ accepted: true });
-    expect(ledger.list(conversationId)![0].triggerId).toBe('human:ask-original');
+  test('validates project references and keeps unrelated topics separate', () => {
+    expect(
+      publish({ ...draft, links: [{ kind: 'project', id: 'missing', label: 'Missing' }] }, caller)
+    ).toMatchObject({ accepted: false, reason: 'invalid_scene_reference' });
+    expect(
+      publish({ ...draft, links: [{ kind: 'project', id: 'garden', label: 'Garden' }] }, caller)
+    ).toMatchObject({ accepted: true });
     expect(
       publish(
-        {
-          ...draft,
-          publicationId: '20000000-0000-4000-8000-000000000003',
-          triggerId: 'outcome:x:1',
-        },
-        caller()
+        { ...draft, requestId: 'topics', fullText: '# Garden\nDone.\n# Travel\nWaiting.' },
+        caller
       )
-    ).toMatchObject({ accepted: false, reason: 'wrong_trigger' });
+    ).toMatchObject({ accepted: false, reason: 'multiple_topics' });
   });
 
-  test('preserves arbitrary authored labels', async () => {
-    const links = [
-      { label: '看看对比', kind: 'project', id: 'a' },
-      { label: 'More about A', kind: 'project', id: 'a' },
-    ];
-    expect(await invoke({ ...draft, links })).toMatchObject({
-      value: { accepted: true, publication: { links } },
-    });
-    expect(ledger.list(conversationId)![0].links).toEqual(links);
-  });
-
-  test.each([
-    [
-      'a missing project',
-      'project',
-      'project link "missing" does not exist; link only Neo project ids, never work.find refs or session ids',
-    ],
-    ['a work', 'work', 'work links are no longer supported; link only Neo project ids'],
-    ['an unsafe-kind', 'url', null],
-  ])('rejects %s scene ref, without partial publication', async (_label, kind, detail) => {
-    const input = 'neo-note:1';
-    prompt(root.sessionId, input, 'system');
-    stamp({ sessionId: root.sessionId, messageId: input }, ask, 'continues');
-    prompt(root.sessionId, 'other-ask');
-    const result = await invoke(
-      { ...draft, links: [{ label: 'Open', kind, id: 'missing' }] },
-      caller(root.sessionId, input, false)
-    );
-    expect(result).toMatchObject(
-      detail === null
-        ? { kind: 'failed', code: 'invalid_input' }
-        : { value: { accepted: false, reason: 'invalid_scene_reference', detail } }
-    );
-    expect(ledger.list(conversationId)).toEqual([]);
-    expect(notify).not.toHaveBeenCalled();
-  });
-
-  test('pure link/lifetime gates refuse missing links and superseded turns', () => {
-    const who = caller();
-    const producer = requirePublicationProducer(who, root, root);
-    if (!('value' in producer)) throw new Error('Expected producer');
-    const proof = { ...producer.value, ask };
-    const link = { label: 'Open', kind: 'project' as const, id: 'project:web' };
-    expect(requirePublicationLinks(proof, [{ link, exists: true }])).toEqual({ value: proof });
-    expect(requirePublicationLinks(proof, [{ link, exists: false }])).toHaveProperty(
-      'reason.reason',
-      'invalid_scene_reference'
-    );
-    expect(requirePublicationLifetime(proof, who, root, root)).toEqual({ value: proof });
-    expect(
-      requirePublicationLifetime(proof, { ...who, neoTurn: undefined }, root, root)
-    ).toHaveProperty('reason.reason', 'publication_superseded');
-  });
-
-  test('pure producer and draft gates reject invalid evidence without consulting a database', () => {
-    expect(requirePublicationProducer(caller(), root, root)).toHaveProperty('value.input', ask);
-    expect(requirePublicationProducer(caller(), { ...root, kind: 'worker' }, root)).toHaveProperty(
-      'reason.accepted',
-      false
-    );
-    const { publicationId: _publicationId, ...authored } = draft;
-    expect(admitPublicationDraft({ ...authored, requestId: 'send' })).toHaveProperty('value');
-    expect(
-      admitPublicationDraft({
-        ...authored,
-        links: Array.from({ length: 17 }, () => ({ label: 'Open', kind: 'project', id: 'a' })),
-      })
-    ).toHaveProperty('reason.reason', 'invalid_publication');
-  });
-
-  describe('replyAtNeoTurnEnd', () => {
-    const since = Date.now() - 1000;
-    const deps = (who: OperationCaller) => ({
-      db: mailbox.db,
-      since,
-      publish: (reply: unknown) => invoke(reply, who),
-    });
-    beforeEach(() => runMigration387(mailbox.db));
-
-    test('publishes the final text of a human turn that ended without a reply', async () => {
-      await replyAtNeoTurnEnd(
-        caller().neoTurn,
-        ask.messageId,
-        '  I saved your rule.  ',
-        deps(caller())
-      );
-      expect(ledger.list(conversationId)).toEqual([
-        expect.objectContaining({
-          shortText: 'I saved your rule.',
-          fullText: 'I saved your rule.',
-          producerInput: ask,
-        }),
-      ]);
-    });
-
-    test('adds nothing when the turn already published or has an open question for the human', async () => {
-      await invoke(draft);
-      await replyAtNeoTurnEnd(caller().neoTurn, ask.messageId, 'Also this.', deps(caller()));
-      expect(ledger.list(conversationId)!.map((item) => item.fullText)).toEqual([draft.fullText]);
-      mailbox.db.exec('DELETE FROM neo_publications');
-      mailbox.db
-        .prepare(
-          `INSERT INTO neo_asks (id, session_id, title, request, created_at, updated_at)
-           VALUES ('ask-q', ?, 'Pick', 'Pick', ?, ?)`
-        )
-        .run(root.sessionId, Date.now(), Date.now());
-      mailbox.db
-        .prepare(
-          `INSERT INTO neo_questions (id, ask_id, text, kind, created_at)
-           VALUES ('q1', 'ask-q', 'Which one?', 'reply', ?)`
-        )
-        .run(Date.now());
-      await replyAtNeoTurnEnd(caller().neoTurn, ask.messageId, 'Which one?', deps(caller()));
-      expect(ledger.list(conversationId)).toEqual([]);
-      mailbox.db.exec("UPDATE neo_questions SET state = 'answered'");
-      await replyAtNeoTurnEnd(caller().neoTurn, ask.messageId, 'Got it.', deps(caller()));
-      expect(ledger.list(conversationId)!.map((item) => item.fullText)).toEqual(['Got it.']);
-    });
-
-    test('answers the latest human message steered into the turn', async () => {
-      prompt(root.sessionId, 'steered');
-      await replyAtNeoTurnEnd(caller().neoTurn, 'steered', 'Both done.', deps(caller()));
-      expect(ledger.list(conversationId)).toEqual([
-        expect.objectContaining({
-          fullText: 'Both done.',
-          triggerId: 'human:steered',
-          askOrigin: { sessionId: root.sessionId, messageId: 'steered' },
-        }),
-      ]);
-    });
-
-    test('adds nothing when a publication already answers that message in any field', async () => {
-      prompt(root.sessionId, 'steered');
-      await invoke({ ...draft, triggerId: 'human:steered' });
-      await replyAtNeoTurnEnd(caller().neoTurn, 'steered', 'Again.', deps(caller()));
-      expect(ledger.list(conversationId)!.map((item) => item.fullText)).toEqual([draft.fullText]);
-    });
-
-    test('a note, schedule or session-message turn answers only a human message it carried', async () => {
-      prompt(root.sessionId, 'event', 'system');
-      const note = caller(root.sessionId, 'event', false);
-      await replyAtNeoTurnEnd(note.neoTurn, undefined, 'Noted.', deps(note));
-      expect(ledger.list(conversationId)).toEqual([]);
-      prompt(root.sessionId, 'steered');
-      await replyAtNeoTurnEnd(note.neoTurn, 'steered', 'Seen.', deps(note));
-      expect(ledger.list(conversationId)).toEqual([
-        expect.objectContaining({
-          fullText: 'Seen.',
-          askOrigin: { sessionId: root.sessionId, messageId: 'steered' },
-        }),
-      ]);
-    });
-  });
-});
-
-describe('neoDeliveryTrigger', () => {
-  test.each([
-    ['continues', 'human:m1', 'human:m1'],
-    ['continues', 'outcome:a:1', 'outcome:a:1'],
-    ['continues', null, null],
-    [{ id: 'action:a:1' }, 'human:m1', 'action:a:1'],
-    [null, 'human:m1', null],
-  ] as const)('a %j delivery under parent trigger %s carries %s', (trigger, parent, expected) => {
-    expect(neoDeliveryTrigger(trigger, () => parent)).toBe(expected);
-  });
-});
-
-describe('requirePublicationTrigger', () => {
-  test('stamps the turn trigger when there is one, and refuses only a wrong trigger', () => {
-    expect(requirePublicationTrigger({ a: 1 }, {}, 'human:m1')).toEqual({
-      value: { a: 1, triggerId: 'human:m1' },
-    });
-    expect(requirePublicationTrigger({ a: 1 }, {}, null)).toEqual({
-      value: { a: 1, triggerId: undefined },
-    });
-    expect(requirePublicationTrigger({ a: 1 }, { triggerId: 'x' }, 'human:m1')).toHaveProperty(
-      'reason.reason',
-      'wrong_trigger'
-    );
-  });
+  test.each(['askOrigin', 'producerInput', 'conversationId', 'publicationId'])(
+    'does not accept model authored runtime field %s',
+    (field) => {
+      expect(publish({ ...draft, [field]: 'forged' }, caller)).toMatchObject({
+        accepted: false,
+        reason: 'invalid_publication',
+      });
+    }
+  );
 });

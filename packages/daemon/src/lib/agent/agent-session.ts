@@ -1,4 +1,4 @@
-import { runLagPhase } from '../event-loop-activity.ts';
+import type { ChildProcess } from 'node:child_process';
 import { AGENT_COMPACTION_RESUME } from '@hyperneo/prompts';
 import type {
   AgentProcessingState,
@@ -12,6 +12,7 @@ import type {
   MessageHub,
   MessageOrigin,
   ModelInfo,
+  PendingModelSwitch,
   Provider,
   QuestionDraftResponse,
   RewindMode,
@@ -23,14 +24,12 @@ import type {
   SessionContext,
   SessionFeatures,
   SessionMetadata,
-  PendingModelSwitch,
   SessionType,
   SkillEnablementOverride,
   SystemPromptConfig,
 } from '@hyperneo/shared';
 import { generateUUID, DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
 import type { McpSetServersResult } from '@hyperneo/shared/sdk';
-import type { ChildProcess } from 'node:child_process';
 import type { Database } from '../../storage/database.ts';
 import { AgentChildProcessRepository } from '../../storage/repositories/agent-child-process-repository.ts';
 import { OperationRefusalRepository } from '../../storage/repositories/operation-refusal-repository.ts';
@@ -38,32 +37,27 @@ import { assembleSessionBriefing } from '../briefings/assemble-session-briefing.
 import type { AuthoredCapabilityContribution } from '../briefings/contribution.ts';
 import { NO_SESSION_SCOPE, type SessionScopeResolver } from '../briefings/scope-resolver.ts';
 import { ErrorCategory, ErrorManager, type StructuredError } from '../error-manager.ts';
-import {
-  NETWORK_OUTAGE_NOTICE,
-  NetworkOutagePause,
-  probeNetworkHost,
-  providerProbeHost,
-} from './network-outage-pause.ts';
+import { runLagPhase } from '../event-loop-activity.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
 import { reservedMcpRenameSource } from '../mcp/built-in-servers.ts';
-import { neoCoordinatorBinding } from '../neo/session-policy.ts';
-import { decideCoordinatorHandoff } from './coordinator-handoff.ts';
 import {
   type CallerScopeResolver,
   NO_CALLER_SCOPE,
   resolveCallerIdentity,
 } from '../operations/caller.ts';
 import { createDatabaseOperationCatalog } from '../operations/database-catalog.ts';
-import { describeOperationSignatures } from '../operations/discovery.ts';
 import { operationsCapabilityContribution } from '../operations/door-briefing.ts';
 import { createOperationMcpServer } from '../operations/mcp-server.ts';
-import { invokeOperation } from '../operations/invoke.ts';
-import type { NeoCoordinatorTurn } from '../neo/coordinator-turn.ts';
-import { replyAtNeoTurnEnd } from '../neo/turn-end-reply.ts';
 import type { OperationRegistry, OperationRegistryProvider } from '../operations/registry.ts';
 import { SettingsManager } from '../settings-manager.ts';
 import { createDirectQueryStartGuard } from '../tasks/direct-query-start-guard.ts';
+import {
+  NETWORK_OUTAGE_NOTICE,
+  NetworkOutagePause,
+  probeNetworkHost,
+  providerProbeHost,
+} from './network-outage-pause.ts';
 import { runRateLimitManualCancel } from './rate-limit-manual-cancel.ts';
 import { runRateLimitManualRetry } from './rate-limit-manual-retry.ts';
 
@@ -74,25 +68,6 @@ const SESSION_RECONCILE_INTERVAL_MS = 60_000;
 const CLEAR_CONFIRM_TIMEOUT_MS = 45_000;
 
 const MID_TURN_USAGE_REFRESH_INTERVAL_MS = 10_000;
-
-const NEO_CORE_OPERATIONS = [
-  'neo.snapshot',
-  'neo.ask.open',
-  'neo.ask.settle',
-  'neo.todo.add',
-  'neo.todo.edit',
-  'neo.todo.remove',
-  'neo.todo.continue',
-  'neo.todo.retry',
-  'neo.todo.close',
-  'neo.question.ask',
-  'neo.question.retire',
-  'neo.github.read',
-  'neo.publication.publish',
-  'neo.publication.edit',
-  'work.find',
-  'work.read',
-] as const;
 
 export class ClearConversationCancelledError extends Error {
   constructor() {
@@ -178,10 +153,10 @@ import {
 } from '@hyperneo/shared/sdk/type-guards';
 import { AcpQueryRunner } from '../acp/acp-query-runner.ts';
 import {
-  resolveSessionContextModelInfo,
   getSessionContextModelInfo,
   initializeModels,
   resolveModelAlias,
+  resolveSessionContextModelInfo,
 } from '../model-service.ts';
 import { getProviderService } from '../provider-service.ts';
 import {
@@ -189,11 +164,11 @@ import {
   initializeProviders,
   waitForOptionalProviderRegistration,
 } from '../providers/factory.js';
-import { resolveAvailableQueryProvider } from '../providers/registry.ts';
 import {
   claimProviderFailureNotice,
   recordClassifiedProviderFailure,
 } from '../providers/provider-failure-store.ts';
+import { resolveAvailableQueryProvider } from '../providers/registry.ts';
 import {
   AskUserQuestionHandler,
   type AskUserQuestionHandlerContext,
@@ -209,7 +184,6 @@ import {
   type EventSubscriptionSetupContext,
 } from './event-subscription-setup.ts';
 import { resolveFallbackChain } from './fallback-recovery.ts';
-import { neoModelFallbacks } from '../neo/model-fallback.ts';
 import type { IdleOwnerScope } from './idle-waiter-admission-pipeline.ts';
 import { InterruptHandler, type InterruptHandlerContext } from './interrupt-handler.ts';
 import type { LimitRetryHint } from './limit-error-classifier.ts';
@@ -241,9 +215,9 @@ import { MessageQueue } from './message-queue.ts';
 import { runMidTurnBudgetPipeline } from './mid-turn-budget-pipeline.ts';
 import {
   ModelSwitchHandler,
-  modelSwitchTiming,
   type ModelSwitchHandlerContext,
   type ModelSwitchResult,
+  modelSwitchTiming,
   type RuntimeSettingsCommit,
 } from './model-switch-handler.ts';
 import { ProcessingStateManager } from './processing-state-manager.ts';
@@ -276,7 +250,6 @@ import {
   type SessionConfigHandlerContext,
 } from './session-config-handler.ts';
 import { SlashCommandManager, type SlashCommandManagerContext } from './slash-command-manager.ts';
-import { redeliverPrompt } from './message-delivery-outbox.ts';
 import {
   buildTaskNotificationRequeryEscalationEvent,
   resolveTaskNotificationRequery,
@@ -284,8 +257,6 @@ import {
   TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS,
   taskNotificationRequeryDelayMs,
 } from './task-notification-requery.ts';
-
-const STEERED_INPUTS = new Set(['human', 'task']);
 
 export class AgentSession
   implements
@@ -367,34 +338,6 @@ export class AgentSession
     refusal: Parameters<OperationRefusalRepository['record']>[0]
   ) => new OperationRefusalRepository(this.db.getDatabase()).record(refusal, this.session.id);
 
-  async replyAtNeoTurnEnd(turn: NeoCoordinatorTurn, text: string | undefined): Promise<unknown> {
-    const caller = {
-      ...resolveCallerIdentity(this.callerScopeResolver, this.session.id),
-      source: 'mcp' as const,
-      neoTurn: turn.identity(),
-    };
-    return replyAtNeoTurnEnd(caller.neoTurn, turn.latestHumanInput(), text, {
-      db: this.db.getDatabase(),
-      since: turn.openedAt,
-      publish: (reply) =>
-        invokeOperation(this.resolveOperationRegistry(), 'neo.publication.publish', reply, caller),
-    });
-  }
-
-  createNeoTurnMcpServer(
-    getTurn: () => import('../operations/registry.ts').OperationCaller['neoTurn']
-  ): ReturnType<typeof createOperationMcpServer> {
-    return createOperationMcpServer(
-      () => this.resolveOperationRegistry(),
-      () => ({
-        ...resolveCallerIdentity(this.callerScopeResolver, this.session.id),
-        neoTurn: getTurn(),
-      }),
-      describeOperationSignatures(this.resolveOperationRegistry(), NEO_CORE_OPERATIONS),
-      this.recordOperationRefusal
-    );
-  }
-
   getOperationsCapabilityContribution(): AuthoredCapabilityContribution {
     return operationsCapabilityContribution(
       this.getOperationMcpServer(),
@@ -434,16 +377,9 @@ export class AgentSession
       return;
     }
     let live = true;
-    const generation = this.getQueryGeneration();
-    const coordinator = this.session.id.startsWith('neo:');
-    const interruptEpoch = coordinator ? this.messageQueue.getUserInterruptEpoch() : 0;
     next.then(
       () => {
         live = false;
-        if (coordinator)
-          void this.handoffCoordinatorInput(generation, interruptEpoch).catch((error) =>
-            this.logger.warn('Coordinator input handoff failed:', error)
-          );
       },
       () => {
         live = false;
@@ -586,9 +522,7 @@ export class AgentSession
     );
     this.settingsManager = new SettingsManager(
       this.db,
-      neoCoordinatorBinding(this.db, this.session.id)
-        ? undefined
-        : (this.session.worktree?.worktreePath ?? this.session.workspacePath ?? undefined)
+      this.session.worktree?.worktreePath ?? this.session.workspacePath ?? undefined
     );
 
     this.messageQueue = new MessageQueue();
@@ -629,8 +563,6 @@ export class AgentSession
         model: this.session.config.model ?? 'sonnet',
       }),
       resolveChain: async () => {
-        const neoFallbacks = neoModelFallbacks(this.db, this.session.id);
-        if (neoFallbacks !== undefined) return neoFallbacks;
         const gs = this.settingsManager.getGlobalSettings();
         const provider = (this.session.config.provider as string | undefined) ?? 'anthropic';
         const rawModel = this.session.config.model ?? 'sonnet';
@@ -748,11 +680,12 @@ export class AgentSession
     this.eventSubscriptionSetup = new EventSubscriptionSetup(this);
 
     this.stateManager.setOnIdleCallback(async (owner) => {
+      const appliedConfig = await this.sessionConfigHandler.applyPendingAutoCompactPercent();
       const restartedForSettings = await this.lifecycleManager.executeDeferredRestartIfPending();
       const switched =
         !this.modelSwitchBusy &&
         (await this.queueModelSwitch(() => this.applyPendingModelSwitch()));
-      const restarted = restartedForSettings || switched;
+      const restarted = appliedConfig || restartedForSettings || switched;
       this.flushPendingTaskNotificationRequery();
       const reconcileOwner = restarted ? this.stateManager.getCurrentIdleOwner() : owner;
       void this.reconcileStrandedDeliveries(reconcileOwner).catch((error) => {
@@ -1122,35 +1055,6 @@ export class AgentSession
 
   async ensureQueryStarted(): Promise<void> {
     await this.lifecycleManager.ensureQueryStarted();
-  }
-
-  private async handoffCoordinatorInput(generation: number, interruptEpoch: number): Promise<void> {
-    const eligible = () =>
-      typeof decideCoordinatorHandoff(
-        neoCoordinatorBinding(this.db, this.session.id),
-        {
-          generation,
-          currentGeneration: this.getQueryGeneration(),
-          interruptEpoch,
-          currentInterruptEpoch: this.messageQueue.getUserInterruptEpoch(),
-          queryActive: this.messageQueue.isRunning() || this.queryPromise !== null,
-        },
-        {
-          sessionStatus: this.db.getSession(this.session.id)?.status,
-          queryMode: this.session.config.queryMode,
-          provider: this.session.config.provider,
-          processingStatus: this.stateManager.getState().status,
-          cleaningUp: this.isCleaningUp(),
-          waiting: this.isWaitingForInput(),
-          recovering: this.isLimitRecoveryPending(),
-        },
-        this.messageQueue.hasQueuedMessages()
-      ) !== 'string';
-    await admitAcrossContextClearBoundary(this.session.id, undefined, () =>
-      withSessionLock(this.session.id, async () => {
-        if (eligible()) await this.lifecycleManager.ensureQueryStarted(undefined, eligible);
-      })
-    );
   }
 
   async startQueryAndEnqueue(
@@ -1790,7 +1694,6 @@ export class AgentSession
   ): void {
     const queryObject = this.queryObject;
     if (!queryObject) return;
-    if (neoCoordinatorBinding(this.db, this.session.id)) return;
 
     const setMcpServers = queryObject.setMcpServers?.bind(queryObject);
     if (!setMcpServers) return;
@@ -2183,10 +2086,7 @@ export class AgentSession
           if (providerId === 'acp') return false;
           if (
             NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId) &&
-            !(
-              this.session.id.startsWith('neo:') &&
-              this.session.metadata.neoAutoCompactPercent !== undefined
-            )
+            this.session.config.autoCompactPercent === undefined
           )
             return false;
           return true;
@@ -3073,28 +2973,17 @@ export class AgentSession
     const aborted = waitForDeliveryAbort(signal);
     const consumption = waitForDeliveryConsumption(this.session.id, messageUuid);
     let failedPoll: ReturnType<typeof setInterval> | undefined;
-    const spentTurn =
-      this.queryRunner instanceof QueryRunner &&
-      !this.queryRunner.acceptsPrompt(this.getQueryGeneration())
-        ? this.queryPromise
-        : null;
-    let waitSettled = false;
     const admissionTimeout = (): Promise<never> =>
       new Promise<never>((_, reject) => {
-        const arm = () => {
-          if (waitSettled) return;
-          timeoutId = setTimeout(() => {
-            ackTimedOut = true;
-            reject(
-              new MessageDeliveryRecoverableTurnError(
-                'Delivery not consumed within timeout',
-                'admission_timeout'
-              )
-            );
-          }, timeoutMs);
-        };
-        if (spentTurn) void spentTurn.catch(() => undefined).then(arm);
-        else arm();
+        timeoutId = setTimeout(() => {
+          ackTimedOut = true;
+          reject(
+            new MessageDeliveryRecoverableTurnError(
+              'Delivery not consumed within timeout',
+              'admission_timeout'
+            )
+          );
+        }, timeoutMs);
       });
     const failedBeforeAcceptance = (): Promise<never> =>
       new Promise<never>((_, reject) => {
@@ -3142,7 +3031,6 @@ export class AgentSession
       }
       if (ackTimedOut || !this.isDeliveryConsumed(messageUuid)) throw error;
     } finally {
-      waitSettled = true;
       clearTimeout(timeoutId);
       if (failedPoll !== undefined) clearInterval(failedPoll);
       consumption.cancel();
@@ -3257,45 +3145,6 @@ export class AgentSession
         this.logger.warn('Queued-state publication failed after durable insertion:', error);
       }
     });
-  }
-
-  steerNeoInput(messageUuid: string): boolean {
-    if (
-      !this.messageQueue.isRunning() ||
-      !(this.queryRunner instanceof QueryRunner) ||
-      !this.queryRunner.acceptsSteer(this.getQueryGeneration())
-    )
-      return false;
-    if (this.messageQueue.steer(messageUuid)) return true;
-    const loaded = this.db.getSDKMessageRepo().getDeliveryContent(this.session.id, messageUuid);
-    if (loaded?.sendStatus !== 'enqueued' || !STEERED_INPUTS.has(loaded.inputKind ?? ''))
-      return false;
-    void this.messageQueue
-      .admitWithId(messageUuid, loaded.content, false, { durable: true, steer: true })
-      .catch(() => undefined);
-    return true;
-  }
-
-  requeueNeoInput(messageUuid: string): void {
-    const dbId = redeliverPrompt({
-      db: this.db.getDatabase(),
-      jobQueue: this.db.getJobQueueRepo(),
-      sdkMessageRepo: this.db.getSDKMessageRepo(),
-      sessionId: this.session.id,
-      messageUuid,
-    });
-    if (dbId)
-      void this.internalEventBus
-        .publish('messages.statusChanged', {
-          sessionId: this.session.id,
-          messageIds: [dbId],
-          status: 'enqueued',
-        })
-        .catch(() => {});
-  }
-
-  markHolderInputConsumed(messageUuid: string): void {
-    this.markDeliveryConsumed([messageUuid]);
   }
 
   private isDeliveryConsumed(messageUuid: string): boolean {

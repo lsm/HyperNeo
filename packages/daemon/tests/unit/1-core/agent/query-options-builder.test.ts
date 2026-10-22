@@ -21,10 +21,8 @@ import {
   setModelsCache,
 } from '../../../../src/lib/model-service';
 import { neoPrompt } from '../../../../src/lib/neo/prompt';
-import {
-  neoCoordinatorAllowedTools,
-  neoCoordinatorNativeTools,
-} from '../../../../src/lib/neo/session-policy';
+import { neoSecretReadRules } from '../../../../src/lib/neo/secret-read-rules';
+
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import { SkillsManager } from '../../../../src/lib/skills-manager';
@@ -933,7 +931,7 @@ describe('QueryOptionsBuilder', () => {
       }
     );
 
-    it('passes explicit Neo native percentage into the built SDK settings only for Neo', async () => {
+    it('uses the same explicit native percentage for an ordinary session and Neo', async () => {
       setModelsCache(
         new Map([
           [
@@ -954,14 +952,14 @@ describe('QueryOptionsBuilder', () => {
         builder = new QueryOptionsBuilder({ ...mockContext, db: undefined });
         mockSession.id = 'neo:fixture';
         mockSession.config.model = 'fixture-native';
-        mockSession.metadata.neoAutoCompactPercent = 70;
+        mockSession.config.autoCompactPercent = 70;
         const overridden = await builder.build();
         expect(overridden.settings?.autoCompactWindow).toBe(733_000);
         expect(overridden.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('733000');
         mockSession.id = 'ordinary';
-        expect((await builder.build()).settings?.autoCompactWindow).toBeUndefined();
+        expect((await builder.build()).settings?.autoCompactWindow).toBe(733_000);
         mockSession.id = 'neo:fixture';
-        delete mockSession.metadata.neoAutoCompactPercent;
+        delete mockSession.config.autoCompactPercent;
         expect((await builder.build()).settings?.autoCompactWindow).toBeUndefined();
       } finally {
         setModelsCache(new Map());
@@ -1477,7 +1475,7 @@ describe('QueryOptionsBuilder', () => {
       expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 24000 });
     });
 
-    it('applies configured Neo effort across a provider without an effort catalog', () => {
+    it('keeps ordinary effort behavior for Neo when the provider has no effort catalog', () => {
       const sqlite = new BunDatabase(':memory:');
       try {
         createNeoTables(sqlite);
@@ -1508,7 +1506,7 @@ describe('QueryOptionsBuilder', () => {
             }),
           },
         });
-        expect(configured.addSessionStateOptions({}).effort).toBe('low');
+        expect(configured.addSessionStateOptions({}).effort).toBeUndefined();
         mockSession.id = generateUUID();
         expect(builder.addSessionStateOptions({}).effort).toBeUndefined();
       } finally {
@@ -2078,10 +2076,10 @@ describe('QueryOptionsBuilder', () => {
 
   describe('tools configuration', () => {
     it.each([
-      ['neo', null, neoCoordinatorNativeTools()],
+      ['neo', null, ['AskUserQuestion']],
       ['worker', 'saas', ['AskUserQuestion']],
     ] as const)(
-      'uses the persisted %s binding for resumed prompts and native questions',
+      'uses ordinary configured options for a %s binding too',
       async (kind, projectId, tools) => {
         const sqlite = new BunDatabase(':memory:');
         try {
@@ -2112,20 +2110,17 @@ describe('QueryOptionsBuilder', () => {
           const options = resumedBuilder.addSessionStateOptions(await resumedBuilder.build());
           expect(options.resume).toBe(mockSession.sdkSessionId);
           expect(options.model).toBe('default');
-          expect(options.maxTurns).toBe(kind === 'worker' ? Infinity : undefined);
+          expect(options.maxTurns).toBe(Infinity);
           expect(options.tools).toEqual([...tools]);
-          expect(options.allowedTools?.includes('AskUserQuestion')).toBe(kind === 'worker');
-          if (kind !== 'worker') {
-            expect(options.allowedTools).toEqual(neoCoordinatorAllowedTools());
-            expect(options.permissionMode).toBe('dontAsk');
-            expect(options.systemPrompt).toEqual({
-              type: 'custom',
-              prompt: neoPrompt(),
-              snapshot: false,
-            });
+          expect(options.allowedTools?.includes('AskUserQuestion')).toBe(true);
+          expect(options.permissionMode).toBe('acceptEdits');
+          expect(options.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code' });
+          if (kind === 'neo') {
+            expect(options.disallowedTools).toEqual(neoSecretReadRules());
+            expect(options.disallowedTools).toContain('Read(~/.ssh/**)');
+            expect(options.disallowedTools?.every((rule) => rule.startsWith('Read('))).toBe(true);
           } else {
-            expect(options.permissionMode).toBe('acceptEdits');
-            expect(options.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code' });
+            expect(options.disallowedTools).toBeUndefined();
           }
         } finally {
           sqlite.close();

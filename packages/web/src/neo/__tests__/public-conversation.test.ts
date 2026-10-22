@@ -64,7 +64,7 @@ describe('durable public conversation projection', () => {
     const reply = result.entries[1];
     if (reply.kind !== 'publication') throw new Error('Expected publication');
     expect(reply.publication).toBe(p);
-    expect(reply.publication.producerInput.sessionId).toBe('holder:fictional');
+    expect(reply.publication.producerInput?.sessionId).toBe('holder:fictional');
     expect(reply.publication.shortText).toBe('The draft is ready.');
     expect(reply.publication.fullText).toBe('**Full detail**. Nothing was sent.');
     expect(reply.publication.links).toEqual([

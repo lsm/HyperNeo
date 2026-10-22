@@ -306,7 +306,7 @@ describe('QueryRunner', () => {
     });
   });
 
-  describe('Neo coordinator input isolation', () => {
+  describe('ordinary prompt iterator for every session', () => {
     let sqlite: SQLite;
     let evidenceDb: Database;
     let queue: MessageQueue;
@@ -339,12 +339,11 @@ describe('QueryRunner', () => {
     });
 
     it.each(['neo', 'worker', 'ordinary', 'unknown-system'] as const)(
-      'keeps %s inputs and human attribution on their intended boundary',
+      'delivers successive %s inputs through the same continuous prompt iterator',
       async (variant) => {
         const delayed = variant === 'unknown-system';
         const kind = variant === 'worker' ? 'worker' : variant === 'ordinary' ? 'ordinary' : 'neo';
         const sessionId = kind === 'ordinary' ? 'ordinary' : `neo:${kind}`;
-        const isolated = kind === 'neo';
         const rootId = sessionId;
         const firstId = delayed ? 'ask-B' : 'ask-A';
         const nextId = variant === 'unknown-system' ? 'unknown-system' : 'ask-B';
@@ -368,12 +367,6 @@ describe('QueryRunner', () => {
         if (firstId !== askA.messageId || sessionId !== rootId)
           evidenceDb.saveUserMessage(sessionId, storedPrompt(sessionId, firstId));
         evidenceDb.saveUserMessage(sessionId, storedPrompt(sessionId, nextId));
-        const identities: Array<{ messageId: string; human: boolean; live: boolean }> = [];
-        const getTurns: Array<() => OperationCaller['neoTurn']> = [];
-        const createServer = mock((getTurn: () => OperationCaller['neoTurn']) => {
-          getTurns.push(getTurn);
-          return { type: 'stdio' as const, command: 'isolated-unit-server' };
-        });
         const reconcile = mock(async () => {});
         const endings: boolean[] = [];
         const received: string[] = [];
@@ -391,13 +384,6 @@ describe('QueryRunner', () => {
               const feed = (args.prompt as AsyncIterable<{ uuid: string }>)[Symbol.asyncIterator]();
               const first = await feed.next();
               received.push(first.value!.uuid);
-              const identity = getTurns.at(-1)?.();
-              if (identity)
-                identities.push({
-                  messageId: identity.messageId,
-                  human: identity.human,
-                  live: identity.isLive(),
-                });
               const pending = feed.next().then((next) => {
                 endings.push(!!next.done);
                 return next;
@@ -436,7 +422,6 @@ describe('QueryRunner', () => {
             getSDKMessageRepo: () => evidenceDb.getSDKMessageRepo(),
           } as unknown as Database,
           messageQueue: queue,
-          createNeoTurnMcpServer: createServer,
         });
         runner = new QueryRunner(ctx);
         const firstSent = queue.enqueueWithId(firstId, 'Current ask', false, { durable: true });
@@ -449,53 +434,12 @@ describe('QueryRunner', () => {
         await ctx.queryPromise;
         await firstSent;
         expect(handleErrorSpy).not.toHaveBeenCalled();
-        if (isolated) {
-          expect(received).toEqual([firstId]);
-          await expect.poll(() => endings).toEqual([true]);
-          expect(queue.size()).toBe(1);
-          expect(identities).toEqual([{ messageId: firstId, human: true, live: true }]);
-          expect(getTurns[0]()?.isLive()).toBe(false);
-          expect(reconcile).not.toHaveBeenCalled();
-          expect(onSDKMessageSpy.mock.calls.map(([message]) => message.neoInputOrigin)).toEqual([
-            { sessionId, messageId: firstId },
-            { sessionId, messageId: firstId },
-          ]);
-          expect(onSDKMessageSpy.mock.calls.map(([message]) => message.neoAskOrigin)).toEqual([
-            { sessionId, messageId: firstId },
-            { sessionId, messageId: firstId },
-          ]);
-          await runner.start();
-          await ctx.queryPromise;
-          await nextSent;
-          expect(received).toEqual([firstId, nextId]);
-          await expect.poll(() => endings).toEqual([true, true]);
-          expect(identities[1]).toEqual({ messageId: nextId, human: !delayed, live: true });
-          expect(createServer).toHaveBeenCalledTimes(2);
-          expect(getTurns[1]()?.isLive()).toBe(false);
-          expect(queue.size()).toBe(0);
-          expect(onSDKMessageSpy.mock.calls.map(([message]) => message.neoInputOrigin)).toEqual([
-            { sessionId, messageId: firstId },
-            { sessionId, messageId: firstId },
-            { sessionId, messageId: nextId },
-            { sessionId, messageId: nextId },
-          ]);
-          const secondAsk =
-            variant === 'unknown-system' ? null : delayed ? askA : { sessionId, messageId: nextId };
-          expect(onSDKMessageSpy.mock.calls.map(([message]) => message.neoAskOrigin)).toEqual([
-            { sessionId, messageId: firstId },
-            { sessionId, messageId: firstId },
-            secondAsk,
-            secondAsk,
-          ]);
-        } else {
-          expect(received).toEqual(['ask-A', 'ask-B']);
-          expect(endings).toEqual([false]);
-          expect(createServer).not.toHaveBeenCalled();
-          expect(reconcile).toHaveBeenCalled();
-          expect(onSDKMessageSpy.mock.calls).toHaveLength(emitted.length);
-          for (const [index, [message]] of onSDKMessageSpy.mock.calls.entries())
-            expect(message).toBe(emitted[index]);
-        }
+        expect(received).toEqual([firstId, nextId]);
+        expect(endings).toEqual([false]);
+        expect(reconcile).toHaveBeenCalled();
+        expect(onSDKMessageSpy.mock.calls).toHaveLength(emitted.length);
+        for (const [index, [message]] of onSDKMessageSpy.mock.calls.entries())
+          expect(message).toBe(emitted[index]);
       }
     );
   });

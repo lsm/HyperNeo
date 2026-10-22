@@ -53,14 +53,16 @@ export class ArtifactReferenceSourceRepository {
       );
       const contexts = links.length
         ? links
-        : (this.db
-            .prepare(
-              `SELECT 'ask' AS kind, id FROM neo_asks WHERE session_id = ? AND origin_message_id = ? LIMIT 101`
-            )
-            .all(
-              publication.askOrigin.sessionId,
-              publication.askOrigin.messageId
-            ) as ArtifactContext[]);
+        : publication.askOrigin
+          ? (this.db
+              .prepare(
+                `SELECT 'ask' AS kind, id FROM neo_asks WHERE session_id = ? AND origin_message_id = ? LIMIT 101`
+              )
+              .all(
+                publication.askOrigin.sessionId,
+                publication.askOrigin.messageId
+              ) as ArtifactContext[])
+          : [];
       return version
         ? {
             text: [version.shortText, version.fullText],

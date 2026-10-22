@@ -1,6 +1,4 @@
-import { sleep } from '../utils/sleep.ts';
 import { type ChildProcess, spawn as nodeSpawn } from 'node:child_process';
-import { TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE } from './task-notification-requery.ts';
 import type {
   CanUseTool,
   HookCallback,
@@ -28,24 +26,16 @@ import {
   FAIL_CLOSED_LONG_HORIZON_AGENT_REPO,
   resolveSpaceMcpSessionPolicy,
 } from '../space/runtime/space-mcp-session-policy.ts';
+import { sleep } from '../utils/sleep.ts';
 import type { AgentSession } from './agent-session.ts';
 import type { AskUserQuestionHandler } from './ask-user-question-handler.ts';
 import { createFlagSettingsFileWriter } from './flag-settings-file.ts';
 import { assessLimitError, type LimitRetryHint } from './limit-error-classifier.ts';
 import { drainDeliveryWaitersOnTerminalSDKMessage } from './message-delivery.ts';
 import type { MessageQueue } from './message-queue.ts';
+import { isNetworkUnreachableError } from './network-outage-pause.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
 import { QueryAttemptRegistry, type QueryAttemptToken } from './query-attempt-token.ts';
-import { NeoCoordinatorTurn } from '../neo/coordinator-turn.ts';
-import { neoCoordinatorBinding } from '../neo/session-policy.ts';
-import { neoModelFallbacks } from '../neo/model-fallback.ts';
-import { RetryPromptIdentity } from './retry-prompt-identity.ts';
-import { stampNeoResponseInput } from '../neo/response-input.ts';
-import { createNeoAskOriginResolver } from '../neo/ask-origin.ts';
-import { QuestionInputScope, type QuestionInputOriginSource } from './question-input-origin.ts';
-import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
-import { NeoInputOriginRepository } from '../../storage/repositories/neo-input-origin-repository.ts';
-import type { OperationCaller } from '../operations/registry.ts';
 import type { QueryLike } from './query-like.ts';
 import type { QueryOptionsBuilder } from './query-options-builder.ts';
 import {
@@ -55,9 +45,10 @@ import {
   type QueryRetryErrorSignal,
   type QueryRetryRoute,
 } from './query-retry-routing.ts';
+import { type QuestionInputOriginSource, QuestionInputScope } from './question-input-origin.ts';
+import { RetryPromptIdentity } from './retry-prompt-identity.ts';
 import type { SDKMessageHandler } from './sdk-message-handler.ts';
 import { getSdkStartupGate, type SdkStartupPermit } from './sdk-startup-gate.ts';
-import { isNetworkUnreachableError } from './network-outage-pause.ts';
 import {
   DEFAULT_SDK_STARTUP_NUDGE_THRESHOLD_MS,
   getSdkStartInactivityBackstopMs,
@@ -72,6 +63,7 @@ import {
   STREAM_STALL_ERROR,
   type StreamSilenceState,
 } from './stream-silence-watch.ts';
+import { TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE } from './task-notification-requery.ts';
 import {
   isRetryableProviderError,
   TRANSIENT_CONNECTION_ERROR_SUBSTRINGS,
@@ -340,10 +332,6 @@ interface RetryTeardownOptions {
 }
 
 export interface QueryRunnerContext {
-  createNeoTurnMcpServer?: (
-    getTurn: () => OperationCaller['neoTurn']
-  ) => NonNullable<Options['mcpServers']>[string];
-  replyAtNeoTurnEnd?: (turn: NeoCoordinatorTurn, text: string | undefined) => Promise<unknown>;
   readonly session: Session;
   readonly db: Database;
   readonly messageHub: MessageHub;
@@ -403,22 +391,11 @@ export interface QueryRunnerContext {
     prompt: { uuid: string; content: string | MessageContent[] } | null,
     queryGeneration?: number
   ): Promise<boolean>;
-  markHolderInputConsumed?(messageUuid: string): void;
-  requeueNeoInput?(messageUuid: string): void;
 }
 
 export class QueryRunner {
   readonly retryPromptIdentity = new RetryPromptIdentity();
-  private promptSpentGeneration: number | null = null;
   private turnEndedGeneration: number | null = null;
-
-  acceptsPrompt(queryGeneration: number): boolean {
-    return this.promptSpentGeneration !== queryGeneration;
-  }
-
-  acceptsSteer(queryGeneration: number): boolean {
-    return this.turnEndedGeneration !== queryGeneration;
-  }
 
   private streamSilence: StreamSilenceState = { lastActivityAt: 0, openTools: [] };
 
@@ -737,8 +714,6 @@ export class QueryRunner {
     };
 
     let runAbortController: AbortController | null = null;
-    let holderTurn: NeoCoordinatorTurn | undefined;
-    let resolveAskOrigin: ReturnType<typeof createNeoAskOriginResolver> | undefined;
     let isAbortError = false;
     this.turnEndedGeneration = null;
     this.fedAfterTurnEnd = [];
@@ -878,31 +853,6 @@ export class QueryRunner {
       );
 
       queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
-      const coordinator = neoCoordinatorBinding(this.ctx.db, session.id);
-      if (coordinator) {
-        if (!this.ctx.createNeoTurnMcpServer) throw new Error('Neo turn isolation unavailable.');
-        holderTurn = new NeoCoordinatorTurn(this.ctx.db, session.id, {
-          yield: () => runAbortController?.abort(),
-          isLive: () =>
-            attemptToken.isLive() &&
-            this.ctx.getQueryGeneration() === queryGeneration &&
-            !runAbortController?.signal.aborted &&
-            !this.ctx.isCleaningUp(),
-        });
-        const isolated = holderTurn;
-        const neo = new NeoRepository(this.ctx.db.getDatabase());
-        const inputOrigins = new NeoInputOriginRepository(this.ctx.db.getDatabase());
-        resolveAskOrigin = createNeoAskOriginResolver({
-          getBinding: (id) => neo.getBindingBySession(id),
-          getPrompts: (id, messageId) =>
-            this.ctx.db.getSDKMessageRepo().getStoredPromptsByUuid(id, messageId),
-          getStamp: (sessionId, messageId) => inputOrigins.get(sessionId, messageId),
-        });
-        queryOptions.mcpServers = {
-          'hyperneo-operations': this.ctx.createNeoTurnMcpServer(() => isolated.identity()),
-        };
-      }
-
       const mcpServerNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
       const spacePolicy = resolveSpaceMcpSessionPolicy(session, {
         nodeExecutionRepo: this.ctx.db.getNodeExecutionRepo(),
@@ -1049,7 +999,6 @@ export class QueryRunner {
           prompt: this.createMessageGeneratorWrapper(
             queryGeneration,
             recoveryState.startGuard,
-            holderTurn,
             questionInputs
           ),
           options: queryOptions,
@@ -1071,7 +1020,7 @@ export class QueryRunner {
         );
       });
 
-      if (session.config.provider !== 'acp' && !holderTurn) {
+      if (session.config.provider !== 'acp') {
         const effectiveMcpServers = optionsBuilder.getEffectiveMcpServers() ?? {};
         void queryObject.setMcpServers?.(effectiveMcpServers).catch((err) => {
           logger.warn(
@@ -1346,7 +1295,7 @@ export class QueryRunner {
             break;
           }
 
-          let message = this.retryPromptIdentity.incoming(result.value as SDKMessage);
+          const message = this.retryPromptIdentity.incoming(result.value as SDKMessage);
           this.streamSilence = noteStreamMessage(this.streamSilence, message, Date.now());
           if (!firstMessageArrived) {
             startupWatchMessages.push(message);
@@ -1395,15 +1344,6 @@ export class QueryRunner {
             }
           }
 
-          holderTurn?.noteCarried(message);
-          if (holderTurn && (message.type === 'assistant' || message.type === 'result'))
-            message = stampNeoResponseInput(
-              message,
-              session.id,
-              holderTurn.identity()?.messageId,
-              resolveAskOrigin
-            );
-
           const turnEndedGeneration = planTurnEndedGeneration(
             this.turnEndedGeneration,
             message as SDKMessage & { subtype?: string; state?: string },
@@ -1418,23 +1358,6 @@ export class QueryRunner {
           } catch (error) {
             await this.handleStreamMessageError(message, error, queryGeneration, attemptToken);
           }
-          if (
-            holderTurn &&
-            message.type === 'result' &&
-            (!message.origin || message.origin.kind === 'human')
-          ) {
-            await this.ctx
-              .replyAtNeoTurnEnd?.(
-                holderTurn,
-                message.subtype === 'success' ? message.result : undefined
-              )
-              .catch((error) => logger.warn('Neo turn-end reply failed:', error));
-            holderTurn.dispose();
-            queryObject.close();
-            await sdkIterator.return(undefined);
-            break;
-          }
-
           nextPromise = sdkIterator.next();
         }
 
@@ -1515,7 +1438,6 @@ export class QueryRunner {
         isCleaningUp: this.ctx.isCleaningUp(),
         isSuperseded: this.ctx.getQueryGeneration() !== queryGeneration,
         hasRateLimitHandoff: !!this.ctx.onRateLimitExhausted,
-        useProviderFallback: !!neoModelFallbacks(this.ctx.db, session.id)?.length,
         recoveryState,
       };
       const routeDecision = decideQueryRetry({ errorSignal: retrySignal, env: retryEnv });
@@ -1820,7 +1742,6 @@ export class QueryRunner {
       }
     } finally {
       this.ctx.attemptTokens.invalidate(attemptToken);
-      holderTurn?.dispose();
       removeFlagSettingsFile?.();
 
       releaseStartupPermit('attempt_finished');
@@ -2187,7 +2108,6 @@ export class QueryRunner {
   async *createMessageGeneratorWrapper(
     queryGeneration: number,
     startGuard?: () => void,
-    holderTurn?: NeoCoordinatorTurn,
     questionInputs?: QuestionInputScope
   ) {
     const { session, messageQueue, stateManager, logger } = this.ctx;
@@ -2203,16 +2123,6 @@ export class QueryRunner {
           logger.warn(`Prompt feed: could not requeue yielded prompt ${yieldedUuid}.`);
         }
         break;
-      }
-      if (holderTurn) {
-        startGuard?.();
-        if (!holderTurn.bind(message.uuid ?? '')) {
-          this.promptSpentGeneration = queryGeneration;
-          if (message.uuid) this.ctx.markHolderInputConsumed?.(message.uuid);
-          onSent();
-          return;
-        }
-        if (message.uuid) this.ctx.markHolderInputConsumed?.(message.uuid);
       }
       messageQueue.onMessageYielded?.(message.uuid ?? '', Date.now());
       const queuedMessage = message as typeof message & { internal?: boolean };
@@ -2267,44 +2177,16 @@ export class QueryRunner {
 
       startGuard?.();
       questionInputs?.recordInput(queuedMessage);
-      if (holderTurn) this.promptSpentGeneration = queryGeneration;
       if (this.turnEndedGeneration === queryGeneration)
         this.fedAfterTurnEnd.push({
           uuid: message.uuid ?? '',
           content: (message.message?.content ?? '') as unknown as string | MessageContent[],
           internal: isInternal,
         });
-      yield this.retryPromptIdentity.outgoing(holderTurn?.inputEnvelope(message) ?? message);
-      this.streamSilence = noteStreamFed(this.streamSilence, Date.now());
-      onSent();
-      if (holderTurn) {
-        if (holderTurn.steers()) yield* this.feedNeoSteers(queryGeneration, holderTurn);
-        return await holderTurn.ended;
-      }
-    }
-  }
-
-  private async *feedNeoSteers(queryGeneration: number, turn: NeoCoordinatorTurn) {
-    const { session, messageQueue } = this.ctx;
-    const fed: string[] = [];
-    for await (const { message, onSent } of messageQueue.messageGenerator(session.id, {
-      suppressPreYieldCallback: true,
-      queryGeneration,
-      steersUntil: turn.ended,
-    })) {
-      if (!message.uuid || !turn.identity()?.isLive()) {
-        if (message.uuid) messageQueue.requeueYielded(message.uuid, { durable: true });
-        break;
-      }
-      this.ctx.markHolderInputConsumed?.(message.uuid);
-      turn.noteSteered(message.uuid);
-      fed.push(message.uuid);
-      yield turn.inputEnvelope(message);
+      yield this.retryPromptIdentity.outgoing(message);
       this.streamSilence = noteStreamFed(this.streamSilence, Date.now());
       onSent();
     }
-    await turn.ended;
-    for (const uuid of fed) if (!turn.carried(uuid)) this.ctx.requeueNeoInput?.(uuid);
   }
 
   async handleSDKMessage(message: SDKMessage, queryGeneration?: number): Promise<void> {

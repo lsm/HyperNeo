@@ -1,3 +1,12 @@
+> Execution update (human, 2026-10-21 20:51 and 20:55): the P0–P20 ladder below
+> is superseded. #8114 deletes the Neo runtime and automatic turn-end reply in
+> one deletion-first PR; the consecutive follow-up adds optional replyTo to
+> publication/question tools. Only human Neo conversation writes prefix their
+> message id; shared delivery headers and session-message text stay unchanged.
+> replyTo accepts only human messages in that Neo conversation. No receipts,
+> versioned references, migration framework or client compatibility phases are
+> part of this replacement plan. The historical inventory below remains evidence.
+
 # Neo is an ordinary session
 
 Status: proposed; implementation requires human approval. This PR changes documentation only.

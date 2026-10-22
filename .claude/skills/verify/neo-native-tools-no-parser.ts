@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { query, type Options } from '../../../packages/daemon/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs';
 import { resolveSDKCliPath } from '../../../packages/daemon/src/lib/agent/sdk-cli-resolver.ts';
-import { restrictNeoQuery } from '../../../packages/daemon/src/lib/neo/session-policy.ts';
+import { neoSecretReadRules } from '../../../packages/daemon/src/lib/neo/secret-read-rules.ts';
 
 const run = resolve(process.argv[2] ?? '');
 const port = Number(process.argv[3] ?? 9387);
@@ -62,11 +62,12 @@ try {
     cwd: join(run, 'workspace'),
     executable: 'bun', pathToClaudeCodeExecutable: resolveSDKCliPath(),
     model: 'claude-sonnet-4-20250514',
+    tools: ['Bash', 'Read'], allowedTools: ['Bash', 'Read'],
+    disallowedTools: neoSecretReadRules(), settingSources: [],
     permissionMode: 'bypassPermissions', allowDangerouslySkipPermissions: true,
     env: { ...process.env, ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`, ANTHROPIC_API_KEY: 'sk-devproxy-test-key', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' },
     stderr: data => writeFileSync(join(run, 'sdk-stderr.log'), data, { flag: 'a' }),
   };
-  restrictNeoQuery(options, 'neo:verify-no-parser', []);
   writeFileSync(join(options.cwd!, 'Makefile'), `publish:\n\t${syntheticGh}\n`);
   writeFileSync(join(options.cwd!, 'package.json'), JSON.stringify({ name: 'synthetic-only', scripts: { publish: syntheticGh } }));
   stream = query({ prompt: 'Run the scripted synthetic native-tool verification.', options });

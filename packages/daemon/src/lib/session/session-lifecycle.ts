@@ -8,7 +8,7 @@ import type {
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { Database } from '../../storage/database.ts';
-import { sessionSdkPath } from '../neo/session-policy.ts';
+import { sessionSdkPath } from '../session/sdk-path.ts';
 import type { SessionInputDraftSnapshot } from '../../storage/repositories/session-input-draft-write.ts';
 import { runOneShotModel } from '../agent/one-shot-model.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
@@ -502,11 +502,19 @@ export class SessionLifecycle {
   }
 
   async update(sessionId: string, updates: Partial<Session>): Promise<void> {
-    this.db.updateSession(sessionId, updates);
-
     const agentSession = this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
-    if (agentSession) {
-      agentSession.updateMetadata(updates);
+    if (agentSession && updates.config && 'autoCompactPercent' in updates.config) {
+      const { config, ...metadata } = updates;
+      agentSession.updateMetadata(metadata);
+      await agentSession.updateConfig(config);
+      updates = {
+        ...updates,
+        config: agentSession.getSessionData().config,
+        metadata: agentSession.getSessionData().metadata,
+      };
+    } else {
+      this.db.updateSession(sessionId, updates);
+      if (agentSession) agentSession.updateMetadata(updates);
     }
 
     await this.internalEventBus
@@ -619,7 +627,7 @@ export class SessionLifecycle {
         }
       | undefined;
     try {
-      const sdkWorkspacePath = sessionSdkPath(this.db, session);
+      const sdkWorkspacePath = sessionSdkPath(session);
       if (sdkWorkspacePath) {
         const result = archiveSDKSessionFiles(
           sdkWorkspacePath,
@@ -755,7 +763,7 @@ export class SessionLifecycle {
 
       if (session) {
         try {
-          const sdkWorkspacePath = sessionSdkPath(this.db, session);
+          const sdkWorkspacePath = sessionSdkPath(session);
           if (!sdkWorkspacePath) {
             completedPhases.push('sdk-files-delete-skipped');
           } else {

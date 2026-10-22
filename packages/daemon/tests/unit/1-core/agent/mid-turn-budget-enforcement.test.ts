@@ -124,15 +124,15 @@ describe('AgentSession mid-turn context budget enforcement', () => {
   it.each([
     ['neo:explicit', 70, 1],
     ['neo:default', undefined, 0],
-    ['ordinary', 70, 0],
+    ['ordinary', 70, 1],
   ] as const)(
-    'interrupts native %s at the explicit Neo budget only',
+    'uses the same explicit setting for native %s',
     async (id, percent, expectedInterrupts) => {
       const session = createAgentSession();
       const data = session.getSessionData();
       data.id = id;
       data.config.provider = 'anthropic';
-      data.metadata.neoAutoCompactPercent = percent;
+      data.config.autoCompactPercent = percent;
       setModelsCache(
         new Map([
           [

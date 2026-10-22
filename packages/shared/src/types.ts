@@ -281,6 +281,8 @@ export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
 
   thinkingLevel?: ThinkingLevel;
 
+  autoCompactPercent?: number;
+
   queryMode?: 'immediate' | 'manual';
 
   tools?: ToolsConfig;
@@ -369,7 +371,7 @@ export interface PendingModelSwitch {
 }
 
 export interface SessionMetadata {
-  neoAutoCompactPercent?: number;
+  pendingAutoCompactPercent?: number | null;
   messageCount: number;
   progress?: SessionProgress;
   totalTokens: number;

@@ -298,78 +298,37 @@ describe('QueryRunner startup gate', () => {
     });
   });
 
-  it('runs isolated coordinator inputs sequentially with fresh MCP identity and no post-start overwrite', async () => {
-    const sql = new SQLite(':memory:');
-    createNeoTables(sql);
-    sql.exec(`INSERT INTO neo_concerns (id, title, summary, context, revision, created_at, updated_at) VALUES ('club','Club','','Six',1,1,1);
-      INSERT INTO neo_session_bindings VALUES ('neo:holder',NULL,'neo')`);
+  it('runs consecutive Neo inputs through one ordinary query without spending the prompt feed', async () => {
     const queue = new MessageQueue();
-    const base = createRunner('base');
-    const identities: Array<() => OperationCaller['neoTurn']> = [];
     const inputs: Array<AsyncIterator<SDKMessage>> = [];
-    const reconciled = mock(async () => {});
-    queryFactory = ({ prompt, options }) => {
-      expect(options.mcpServers?.['hyperneo-operations']).toMatchObject({
-        name: 'isolated-holder',
-      });
+    queryFactory = ({ prompt }) => {
       inputs.push(prompt[Symbol.asyncIterator]());
       const controlled = createControlledQuery();
-      controlled.queryObject.setMcpServers = reconciled;
       spawned.push(controlled);
       return controlled.queryObject;
     };
-    const { runner, ctx } = createRunner('neo:holder', {
-      messageQueue: queue,
-      db: {
-        ...base.ctx.db,
-        getDatabase: () => sql,
-        getSDKMessageRepo: () => ({
-          getStoredPromptsByUuid: () => [{ type: 'user', inputKind: 'human' }],
-        }),
-      } as unknown as Database,
-      createNeoTurnMcpServer: (getTurn) => {
-        identities.push(getTurn);
-        return { type: 'sdk', name: 'isolated-holder', instance: {} } as NonNullable<
-          Options['mcpServers']
-        >[string];
-      },
-    });
-    const first = queue.enqueueWithId('neo-project-event:club:event-1', 'First', false, {
-      durable: true,
-    });
+    const { runner, ctx } = createRunner('neo:root', { messageQueue: queue });
+    const first = queue.enqueueWithId('system-event', 'First', false, { durable: true });
     const second = queue.enqueueWithId('human-input', 'Second', false, { durable: true });
     try {
       await runner.start();
       await waitFor(() => spawned.length === 1);
-      expect((await inputs[0].next()).value?.uuid).toBe('neo-project-event:club:event-1');
-      const firstEnd = inputs[0].next();
-      await first;
-      expect(identities[0]()?.messageId).toBe('neo-project-event:club:event-1');
-      expect(queue.size()).toBe(1);
+      expect((await inputs[0].next()).value?.uuid).toBe('system-event');
+      expect((await inputs[0].next()).value?.uuid).toBe('human-input');
+      const end = inputs[0].next();
+      await Promise.all([first, second]);
       deliverFirstMessage(spawned[0]);
       await completeQuery(spawned[0], waitFor);
       await ctx.queryPromise;
-      expect((await firstEnd).done).toBe(true);
-      expect(identities[0]()?.isLive()).toBe(false);
-      await runner.start();
-      await waitFor(() => spawned.length === 2);
-      expect((await inputs[1].next()).value?.uuid).toBe('human-input');
-      const secondEnd = inputs[1].next();
-      await second;
-      expect(identities[1]()?.human).toBe(true);
-      expect(identities[1]()?.isLive()).toBe(true);
-      expect(reconciled).not.toHaveBeenCalled();
-      ctx.queryAbortController?.abort();
-      await ctx.queryPromise;
-      expect((await secondEnd).done).toBe(true);
-      expect(identities[1]()?.isLive()).toBe(false);
-      expect(spawned.every((query) => query.closeCount > 0)).toBe(true);
+      expect((await end).done).toBe(true);
+      expect(spawned).toHaveLength(1);
+      expect(queue.size()).toBe(0);
       expect(getSdkStartupGate().getStats().active).toBe(0);
     } finally {
       ctx.queryAbortController?.abort();
       queue.clear();
+      queue.stop();
       await Promise.allSettled([first, second, ctx.queryPromise]);
-      sql.close();
     }
   });
 

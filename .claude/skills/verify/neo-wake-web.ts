@@ -15,7 +15,9 @@ const response = JSON.parse(await new Response(child.stdout).text());
 assert.equal(await child.exited, 0);
 const root = response.reply.sessionId;
 const db = new Database(`${run}/data/daemon.db`);
+db.exec('PRAGMA busy_timeout = 5000');
 try {
+  db.transaction(() => {
   const complete = seedNeoWake(db, root.slice(4));
   complete.finish('Guide check complete.');
   const store = new NeoAskTodoRepository(db);
@@ -28,4 +30,5 @@ try {
     root, complete: complete.scheduleId, empty: empty.scheduleId, active: active.scheduleId,
     additions: complete.expected,
   }, null, 2));
+  })();
 } finally { db.close(); }

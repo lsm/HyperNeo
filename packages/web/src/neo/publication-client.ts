@@ -77,7 +77,7 @@ function optionalOrigin(value: unknown): NeoPublication['askOrigin'] | null | un
 
 function revision(value: unknown): NonNullable<NeoPublication['revisions']>[number] | null {
   const row = object(value);
-  const producer = object(row?.producerInput);
+  const producer = optionalOrigin(row?.producerInput);
   const ask = optionalOrigin(row?.askOrigin);
   if (
     !row ||
@@ -88,9 +88,7 @@ function revision(value: unknown): NonNullable<NeoPublication['revisions']>[numb
     !text(row.fullText, 16000) ||
     !text(row.createdAt, 40) ||
     !Number.isFinite(Date.parse(row.createdAt)) ||
-    !producer ||
-    !text(producer.sessionId, 160) ||
-    !text(producer.messageId, 160) ||
+    producer === null ||
     (row.awaiting !== undefined && !text(row.awaiting, 500))
   )
     return null;
@@ -99,7 +97,7 @@ function revision(value: unknown): NonNullable<NeoPublication['revisions']>[numb
     shortText: row.shortText,
     fullText: row.fullText,
     createdAt: row.createdAt,
-    producerInput: { sessionId: producer.sessionId, messageId: producer.messageId },
+    ...(producer ? { producerInput: producer } : {}),
     ...(ask ? { askOrigin: ask } : {}),
     ...(typeof row.awaiting === 'string' ? { awaiting: row.awaiting } : {}),
   };
@@ -108,8 +106,8 @@ function revision(value: unknown): NonNullable<NeoPublication['revisions']>[numb
 function publication(value: unknown, page: Cursor): NeoPublication | null {
   const row = object(value);
   if (!row) return null;
-  const ask = object(row.askOrigin);
-  const producer = object(row.producerInput);
+  const ask = optionalOrigin(row.askOrigin);
+  const producer = optionalOrigin(row.producerInput);
   const answer = optionalOrigin(row.answerInput);
   const answerOrigin = optionalOrigin(row.answerOrigin);
   if (
@@ -123,12 +121,8 @@ function publication(value: unknown, page: Cursor): NeoPublication | null {
     !Number.isFinite(Date.parse(row.createdAt)) ||
     !text(row.shortText, 2000) ||
     !text(row.fullText, 16000) ||
-    !ask ||
-    !text(ask.sessionId, 160) ||
-    !text(ask.messageId, 160) ||
-    !producer ||
-    !text(producer.sessionId, 160) ||
-    !text(producer.messageId, 160) ||
+    ask === null ||
+    producer === null ||
     !Array.isArray(row.links) ||
     row.links.length > 16 ||
     (row.editedAt !== undefined &&
@@ -175,8 +169,8 @@ function publication(value: unknown, page: Cursor): NeoPublication | null {
     createdAt: row.createdAt,
     shortText: row.shortText,
     fullText: row.fullText,
-    askOrigin: { sessionId: ask.sessionId, messageId: ask.messageId },
-    producerInput: { sessionId: producer.sessionId, messageId: producer.messageId },
+    ...(ask ? { askOrigin: ask } : {}),
+    ...(producer ? { producerInput: producer } : {}),
     links,
     ...(typeof row.editedAt === 'string' ? { editedAt: row.editedAt } : {}),
     ...(typeof row.editedBy === 'string' ? { editedBy: row.editedBy } : {}),
