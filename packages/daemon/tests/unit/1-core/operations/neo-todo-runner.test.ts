@@ -261,7 +261,7 @@ describe('neo todo runner', () => {
     }
   });
 
-  test('unconfirmed peer acceptance survives database close and reopen without inventing a start', async () => {
+  test('accepted inbox input retains its baseline anchor without claiming consumption after reopen', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'todo-dispatch-'));
     const dbPath = join(dir, 'synthetic.db');
     const delivery = {
@@ -291,7 +291,7 @@ describe('neo todo runner', () => {
       try {
         const sessions = new NeoTodoSessionRepository(db);
         expect(sessions.readSent(id)).toMatchObject({ delivery, receipt: delivery.receipt });
-        expect(sessions.readStartedAt(id)).toBeNull();
+        expect(sessions.readStartedAt(id)).toBe(1000);
         db.prepare('UPDATE neo_todo_sessions SET sent_receipt = ? WHERE todo_id = ?').run(
           JSON.stringify({ ref: JSON.stringify(ref), receipt: delivery.receipt }),
           id
@@ -338,9 +338,13 @@ describe('neo todo runner', () => {
       h.setSend({ ok: true, value: delivery });
       await h.runner.start(todo.id);
       expect(new NeoTodoSessionRepository(h.db).readSent(todo.id)).toMatchObject({ delivery });
+      expect(h.sessions.readStartedAt(todo.id)).toBe(
+        'queuedSubmissionId' in delivery ? null : 1000
+      );
       const next = { delivered: false, queuedSubmissionId: 'queue-2' };
       h.setSend({ ok: true, value: next });
       await h.runner.proceed(todo.id, 'Next synthetic instruction');
+      expect(h.sessions.readStartedAt(todo.id)).toBeNull();
       expect(new NeoTodoSessionRepository(h.db).readSent(todo.id)).toMatchObject({
         delivery: next,
       });

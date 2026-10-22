@@ -171,11 +171,13 @@ export function readDriverOutcome(
     };
   }
   if (target.verb !== 'send') return { failure: 'work.start returned no reference.' };
-  const { delivered, receipt, confirmedAt } = reply.data.value;
+  const { delivered, receipt, confirmedAt, unconfirmed, queuedSubmissionId } = reply.data.value;
+  const queued =
+    delivered === false && (queuedSubmissionId !== undefined || !unconfirmed || !receipt);
   return {
     ref: target.ref,
     delivery: reply.data.value,
-    ...(delivered === false ? { queued: true as const } : {}),
+    ...(queued ? { queued: true as const } : {}),
     ...(delivered && confirmedAt !== undefined ? { startedAt: confirmedAt } : {}),
     ...(receipt ? { receipt } : {}),
   };

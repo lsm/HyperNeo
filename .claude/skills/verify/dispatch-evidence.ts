@@ -126,7 +126,8 @@ try {
       assert(pending?.delivery?.receipt?.inputId);
       if (phase === 'initial') unconfirmedInput = pending.delivery.receipt.inputId;
       else assert.equal(pending.delivery.receipt.inputId, unconfirmedInput);
-      assert.equal(sessions.readStartedAt(unconfirmedId), null);
+      evidence.push({ phase, unconfirmedAnchor: sessions.readStartedAt(unconfirmedId) });
+      assert.equal(sessions.readStartedAt(unconfirmedId), 0, 'written inbox input keeps its pre-send baseline anchor without claiming consumption');
       const opening = sessions.readSent(todoId);
       evidence.push({ phase, opening });
       assert.deepEqual(opening?.delivery, { delivered: true, startedTurnId: 'synthetic-started' });
