@@ -495,12 +495,11 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       (todo: NeoTodo, now: number) => {
         const ref = sessions.readRef(todo.id);
         const ask = store.getAsk(todo.askId);
-        return (todo.state === 'doing' ||
+        return ((todo.state === 'doing' && todo.report) ||
           (todo.state === 'blocked' && todo.blockedBy === 'worker')) &&
-          todo.report &&
           ref &&
           ask?.status === 'open' &&
-          now - (checked.get(todo.id) ?? 0) >= NEO_TODO_CHECK_MS
+          (todo.state === 'blocked' || now - (checked.get(todo.id) ?? 0) >= NEO_TODO_CHECK_MS)
           ? { value: { ref, ask } }
           : { reason: null };
       },
@@ -521,6 +520,18 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         if (live) sessions.recordLive(todo.id, live.status, live.link, live.remoteLink);
         await noteNeedsYou(todo.id, target.ask, live);
         sessions.recordCardCheck(todo.id, { checkedAt: now, unchecked: !live });
+        if (
+          todo.state === 'blocked' &&
+          (live?.status === 'running' ||
+            (live && live.status !== 'queued' && live.lastActivityAt > todo.updatedAt) ||
+            sessions.doingTodoOn(target.ref, todo.updatedAt))
+        ) {
+          const current = store.getTodo(todo.id);
+          if (current?.state !== todo.state || current.updatedAt !== todo.updatedAt) return;
+          todo = store.updateTodo(todo, { state: 'doing' }, now);
+          idle.delete(todo.id);
+          checked.delete(todo.id);
+        }
         deps.changed();
         const report = readDriverFollowUp(outcome, since, sent);
         if (report && report !== todo.report) {
@@ -529,7 +540,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           store.updateTodo(
             todo,
             {
-              report: `${report}\n\n${todo.report}`,
+              report: [report, todo.report].filter(Boolean).join('\n\n'),
               ...(todo.state === 'blocked' ? { state: 'doing' } : {}),
             },
             now
