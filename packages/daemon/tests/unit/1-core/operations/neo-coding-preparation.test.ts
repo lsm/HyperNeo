@@ -194,6 +194,29 @@ describe('prepareCodingExecution', () => {
     expect(readFileSync(join(f.directory, 'file'), 'utf8')).toBe('uncommitted user work');
   });
 
+  test('LFS content refuses preparation instead of starting a worker with pointer text', async () => {
+    const f = fixture();
+    writeFileSync(join(f.remote, '.gitattributes'), 'asset.bin filter=lfs\n');
+    writeFileSync(
+      join(f.remote, 'asset.bin'),
+      `version https://git-lfs.github.com/spec/v1\noid sha256:${'a'.repeat(64)}\nsize 19\n`
+    );
+    git(f.remote, 'add', '.');
+    git(f.remote, 'commit', '-m', 'synthetic LFS pointer');
+    const cache = join(f.directory, '..', 'cached-object');
+    writeFileSync(cache, 'synthetic LFS bytes');
+    git(f.directory, 'config', 'filter.lfs.smudge', `cat '${cache}'`);
+    git(f.directory, 'config', 'filter.lfs.required', 'true');
+    git(f.directory, 'fetch', 'origin');
+    const linked = join(f.directory, '..', 'lfs-linked');
+    git(f.directory, 'worktree', 'add', '--detach', linked, 'origin/dev');
+    expect(readFileSync(join(linked, 'asset.bin'), 'utf8')).toBe('synthetic LFS bytes');
+    const result = await prepareCodingExecution(f.request, f.effects);
+    expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('LFS') });
+    expect(existsSync(f.destination)).toBe(false);
+    expect(readFileSync(join(f.directory, 'file'), 'utf8')).toBe('uncommitted user work');
+  });
+
   test('a source with borrowed objects still produces an independent clone', async () => {
     const f = fixture();
     const borrowed = join(f.directory, '..', 'borrowed-source');
