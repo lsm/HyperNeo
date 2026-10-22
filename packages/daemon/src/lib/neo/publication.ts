@@ -33,6 +33,7 @@ export const NeoPublicationSchema = z
       .default([]),
     artifacts: z.array(ArtifactRefSchema).max(16).optional(),
     triggerId: text(200).optional(),
+    replyTo: z.array(z.uuid()).max(100).optional(),
     askSummary: text(300).optional(),
     awaiting: text(500).optional(),
     editedAt: z.string().datetime().optional(),

@@ -99,7 +99,11 @@ test('questions retain explicit human references without marking them answered',
   expect(await invoke('neo.question.ask', { ...question, replyTo: [id] })).toMatchObject({
     value: { ok: true, question: { replyTo: [id] } },
   });
-  expect(service.todos.listQuestions('work')[0]).toMatchObject({ replyTo: [id] });
+  const stored = service.todos.listQuestions('work')[0];
+  expect(await invoke('neo.question.get', { questionId: stored.id })).toMatchObject({
+    value: { ok: true, question: { replyTo: [id] } },
+  });
+  expect(service.todos.getQuestion(stored.id)).toMatchObject({ replyTo: [id] });
   expect(
     service.publications.toldSince(conversationId, { sessionId, messageId: id }, '1970-01-01')
   ).toBe(false);
@@ -145,4 +149,40 @@ test('new publishes reject triggerId while legacy publications keep it readable'
   expect(service.publications.get(conversationId, publicationId)).toMatchObject({
     triggerId: 'human:old',
   });
+});
+
+test('invalid mixed references refuse the entire publication and question', async () => {
+  const replyTo = [await received(), crypto.randomUUID()];
+  expect(await invoke('neo.publication.publish', { ...publication, replyTo })).toMatchObject({
+    value: { accepted: false },
+  });
+  expect(await invoke('neo.question.ask', { ...question, replyTo })).toMatchObject({
+    value: { ok: false },
+  });
+  expect(service.publications.list(conversationId)).toHaveLength(0);
+  expect(service.todos.listQuestions('work')).toHaveLength(0);
+});
+
+test('rewording a start question retains its explicit human references', async () => {
+  const id = await received();
+  service.todos.askQuestion(
+    'start',
+    'work',
+    {
+      text: 'Start the comparison?',
+      kind: 'start',
+      options: null,
+      multiple: false,
+      noLabel: null,
+      yesLabel: null,
+      startTodos: [],
+    },
+    1
+  );
+  expect(
+    await invoke('neo.question.ask', { ...question, kind: 'start', replyTo: [id] })
+  ).toMatchObject({ value: { ok: true, question: { id: 'start', replyTo: [id] } } });
+  expect(
+    await invoke('neo.question.ask', { ...question, kind: 'start', text: 'Start now?' })
+  ).toMatchObject({ value: { ok: true, question: { id: 'start', replyTo: [id] } } });
 });

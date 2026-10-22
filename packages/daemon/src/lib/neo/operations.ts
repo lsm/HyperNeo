@@ -786,7 +786,8 @@ export function createNeoOperations(service: NeoService) {
           ask.originMessageId ? { sessionId: ask.sessionId, messageId: ask.originMessageId } : null,
           'continues'
         ),
-      (todoId) => service.todoRunner.start(todoId)
+      (todoId) => service.todoRunner.start(todoId),
+      (caller, id) => !!caller.sessionId && !!receivedNeoHumanInput(service, caller.sessionId, id)
     ),
     defineOperation({
       name: 'neo.open',
