@@ -4,10 +4,7 @@ import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createSpaceAdapter } from '../../../../src/lib/drivers/space-adapter.ts';
 import type { WorkDelivery } from '../../../../src/lib/drivers/types.ts';
 import { fillSdkMessageFixtureColumns } from '../../helpers/sdk-message-fixture-columns.ts';
-import {
-  NEO_WORK_UNVERIFIED_REPLY_NOTE,
-  readDriverSettlement,
-} from '../../../../src/lib/neo/driver-work.ts';
+import { readDriverSettlement } from '../../../../src/lib/neo/driver-work.ts';
 
 type Receipt = NonNullable<WorkDelivery['receipt']>;
 
@@ -142,9 +139,7 @@ describe('readDriverSettlement', () => {
     ).toEndWith('(Later replies were not read; this is not the whole exchange.)');
   });
 
-  test('a card without a receipt (adoption) gets only an unverified latest reply', async () => {
-    const report = (await readDriverSettlement(work, await status(undefined), 10_000, 5))?.report;
-    expect(report?.startsWith(NEO_WORK_UNVERIFIED_REPLY_NOTE)).toBe(true);
-    expect(report).toContain('Aggregate from every node');
+  test('an adopted card without a receipt cannot borrow the latest reply', async () => {
+    expect(readDriverSettlement(work, await status(undefined), 10_000, 5)).toBeNull();
   });
 });

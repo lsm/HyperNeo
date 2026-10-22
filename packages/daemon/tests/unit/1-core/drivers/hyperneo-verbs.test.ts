@@ -366,7 +366,7 @@ describe('hyperneo adapter send and status', () => {
           ],
         },
       });
-      expect(settle(detail)).toEqual({ status: 'reported', report: 'Agent: Parser fixed' });
+      expect(settle(detail)).toBeNull();
       expect(settle(await adapter().status!(ref('idle'), base + 1))).toBeNull();
     });
 
@@ -392,7 +392,7 @@ describe('hyperneo adapter send and status', () => {
           ],
         },
       });
-      expect(settle(detail)?.report).toBe('Agent: Parser fixed');
+      expect(settle(detail)).toBeNull();
     });
 
     test('bounds history and text, reporting truncation instead of inventing an anchor', async () => {
