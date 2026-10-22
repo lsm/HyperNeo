@@ -20,8 +20,9 @@ import {
 } from '../../../../src/lib/neo/packs/coding/prepare-execution';
 
 const roots: string[] = [];
+const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
 function git(directory: string, ...args: string[]) {
-  const result = spawnSync('git', args, { cwd: directory, encoding: 'utf8' });
+  const result = spawnSync('git', args, { cwd: directory, encoding: 'utf8', env: gitEnv });
   if (result.status !== 0) throw new Error(result.stderr);
   return result.stdout.trim();
 }
@@ -40,6 +41,8 @@ function fixture() {
   git(remote, 'add', '.');
   git(remote, 'commit', '-m', 'initial');
   git(root, 'clone', remote, directory);
+  git(directory, 'config', 'user.name', 'Repo Worker');
+  git(directory, 'config', 'user.email', 'repo-worker@example.invalid');
   const before = git(directory, 'rev-parse', 'HEAD');
   writeFileSync(join(remote, 'file'), 'new');
   git(remote, 'commit', '-am', 'remote advance');
@@ -49,7 +52,11 @@ function fixture() {
   const effects = {
     run: async (command: readonly string[], cwd: string) => {
       calls.push([...command]);
-      const result = spawnSync(command[0], command.slice(1), { cwd, encoding: 'utf8' });
+      const result = spawnSync(command[0], command.slice(1), {
+        cwd,
+        encoding: 'utf8',
+        env: gitEnv,
+      });
       return { code: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
     },
   };
@@ -130,6 +137,34 @@ describe('createCodexDesktopAdapter with coding preparation', () => {
 });
 
 describe('prepareCodingExecution', () => {
+  test('private clones preserve repo-local commit identity and signing configuration only', async () => {
+    const f = fixture();
+    const settings = {
+      'user.signingkey': 'SYNTHETIC-PUBLIC-KEY-ID',
+      'commit.gpgsign': 'true',
+      'gpg.format': 'ssh',
+      'gpg.ssh.program': '/synthetic/signer',
+    };
+    for (const [key, value] of Object.entries(settings)) git(f.directory, 'config', key, value);
+    git(f.directory, 'config', 'credential.helper', 'synthetic-owner-helper');
+    git(f.directory, 'config', 'http.extraHeader', 'synthetic-owner-header');
+    const prepared = await prepareCodingExecution(f.request, f.effects);
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) throw new Error(prepared.reason);
+    expect(git(f.destination, 'config', '--local', 'user.name')).toBe('Repo Worker');
+    expect(git(f.destination, 'config', '--local', 'user.email')).toBe(
+      'repo-worker@example.invalid'
+    );
+    for (const [key, value] of Object.entries(settings))
+      expect(git(f.destination, 'config', '--local', key)).toBe(value);
+    for (const key of ['credential.helper', 'http.extraHeader'])
+      expect(
+        spawnSync('git', ['config', '--local', '--get', key], { cwd: f.destination, env: gitEnv })
+          .status
+      ).toBe(1);
+    await prepared.value.release();
+  });
+
   test('prepared coding work owns its Git objects and refs without hardlinks to main', async () => {
     const f = fixture();
     const prepared = await prepareCodingExecution(f.request, f.effects);
@@ -144,8 +179,6 @@ describe('prepareCodingExecution', () => {
     const source = statSync(join(f.directory, objectPath));
     const copy = statSync(join(f.destination, objectPath));
     expect([copy.dev, copy.ino]).not.toEqual([source.dev, source.ino]);
-    git(f.destination, 'config', 'user.name', 'Synthetic worker');
-    git(f.destination, 'config', 'user.email', 'worker@example.invalid');
     git(f.destination, 'checkout', '-b', 'worker-change');
     writeFileSync(join(f.destination, 'worker-file'), 'independent worker content');
     git(f.destination, 'add', 'worker-file');

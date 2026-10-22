@@ -307,6 +307,31 @@ describe('claude-desktop start', () => {
     expect(spawned[1]).not.toContain('--worktree');
   });
 
+  test.each([{ exit: 1 }, { silent: true }])(
+    'an unconfirmed Claude start releases its prepared clone: %j',
+    async (failure) => {
+      let released = 0;
+      const driver = adapter({
+        ...failure,
+        prepareExecution: async () => ({
+          ok: true,
+          value: {
+            directory: '/fresh/remote-base',
+            release: async () => {
+              released++;
+            },
+          },
+        }),
+      });
+      const result = await driver.start!(
+        { ...request, preparation: { pack: 'coding', parameters: { target: 'dev' } } },
+        user
+      );
+      expect(result.ok).toBe(false);
+      expect(released).toBe(1);
+    }
+  );
+
   test('failed preparation launches no Claude process', async () => {
     const driver = adapter({
       prepareExecution: async () => ({
