@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
-import { getThinkingOptionsForProvider, normalizeThinkingLevel } from '@hyperneo/shared';
+import { normalizeThinkingLevel } from '@hyperneo/shared';
 import type {
   CreateSessionRequest,
   GitBranchesResponse,
@@ -312,11 +312,7 @@ export function SessionsPage() {
         };
       }
       if (selectedThinking) {
-        const supported = getThinkingOptionsForProvider(
-          activeModelInfo?.provider,
-          activeModelInfo?.thinkingModes
-        ).some((option) => option.value === selectedThinking);
-        req.config = { ...req.config, thinkingLevel: supported ? selectedThinking : 'off' };
+        req.config = { ...req.config, thinkingLevel: selectedThinking };
       }
       if (sandboxChoice !== null) {
         req.config = { ...req.config, sandbox: { enabled: sandboxChoice } };

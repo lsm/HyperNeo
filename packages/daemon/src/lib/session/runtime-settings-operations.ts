@@ -1,9 +1,5 @@
 import type { Provider, ThinkingLevel } from '@hyperneo/shared';
-import {
-  getThinkingOptionsForProvider,
-  normalizeThinkingLevel,
-  PROVIDER_THINKING_MODES,
-} from '@hyperneo/shared';
+import { normalizeThinkingLevel, PROVIDER_THINKING_MODES } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type {
@@ -190,7 +186,7 @@ function projectUpdate(target: Target, input: Input, deps: RuntimeSettingsDepend
   ];
   if (
     input.thinkingLevel !== undefined &&
-    getThinkingOptionsForProvider(after.settings.provider ?? '').length === 0
+    PROVIDER_THINKING_MODES[after.settings.provider as Provider] === 'off'
   )
     notes.push('thinking level recorded as a no-op: provider has no thinking controls');
   return {

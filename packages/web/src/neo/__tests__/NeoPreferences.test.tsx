@@ -232,7 +232,7 @@ describe('Neo preferences', () => {
       'Haiku'
     );
   });
-  it('shows unsupported thinking honestly and keeps failed updates out of the label', async () => {
+  it('keeps every thinking level and keeps failed updates out of the label', async () => {
     const onError = vi.fn();
     const view = render(
       <NeoPreferences sessionId="s1" store={makeStore()} onError={onError} forSession />
@@ -246,8 +246,8 @@ describe('Neo preferences', () => {
     view.rerender(
       <NeoPreferences sessionId="s1" store={makeStore()} onError={onError} forSession />
     );
-    expect(screen.queryByRole('slider', { name: 'Thinking' })).toBeNull();
-    expect(screen.getByText('Not available for this model')).toBeTruthy();
+    expect(screen.getByRole('slider', { name: 'Thinking' })).toBeTruthy();
+    expect(screen.queryByText('Not available for this model')).toBeNull();
   });
   it('filters models, shows no matches, supports arrow keys and restores focus on Escape', () => {
     render(<NeoPreferences sessionId="s1" store={makeStore()} onError={vi.fn()} forSession />);

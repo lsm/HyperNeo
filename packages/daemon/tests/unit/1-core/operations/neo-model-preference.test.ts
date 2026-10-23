@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageHub, ModelInfo, Session } from '@hyperneo/shared';
 import { getSessionContextModelInfo, setModelsCache } from '../../../../src/lib/model-service.ts';
 import {
-  clampNeoThinking,
   effectiveNeoPreference,
   planNeoAlignment,
   requireNeoPreferenceModel,
@@ -41,30 +40,8 @@ const opus = {
   available: true,
 } as ModelInfo;
 
-describe('clampNeoThinking', () => {
-  test.each<
-    [
-      string,
-      Parameters<typeof clampNeoThinking>[0],
-      Parameters<typeof clampNeoThinking>[1],
-      ReturnType<typeof clampNeoThinking>,
-    ]
-  >([
-    ['a supported level', ['off', 'think8k', 'think16k'], 'think16k', 'think16k'],
-    [
-      'the highest level below an unsupported one',
-      ['off', 'think8k', 'think32k'],
-      'think16k',
-      'think8k',
-    ],
-    ['off for a model without thinking', [], 'think32k', 'off'],
-  ])('keeps %s', (_case, levels, requested, clamped) => {
-    expect(clampNeoThinking(levels, requested)).toBe(clamped);
-  });
-});
-
 describe('requireNeoPreferenceModel', () => {
-  test('refuses a model the catalog does not offer and clamps thinking to the model', () => {
+  test('refuses a model the catalog does not offer and keeps the chosen thinking', () => {
     expect(
       requireNeoPreferenceModel(
         { model: 'gone', provider: 'deepseek', thinkingLevel: 'off' },
@@ -77,7 +54,7 @@ describe('requireNeoPreferenceModel', () => {
         { models: [flash] }
       )
     ).toEqual({
-      value: { model: 'deepseek-v4-flash', provider: 'deepseek', thinkingLevel: 'off' },
+      value: { model: 'deepseek-v4-flash', provider: 'deepseek', thinkingLevel: 'think16k' },
     });
   });
 
@@ -385,7 +362,7 @@ describe('neo.preferences.set', () => {
     ).toMatchObject({ value: { ok: false, reason: expect.stringContaining('invalid_model') } });
   });
 
-  test('persists ordered fallbacks with their supported thinking and preserves them on primary-only edits', async () => {
+  test('persists ordered fallbacks with their chosen thinking and preserves them on primary-only edits', async () => {
     const fallbacks = [
       { model: 'claude-opus', provider: 'anthropic', thinkingLevel: 'think16k' },
       { model: 'deepseek-v4-flash', provider: 'deepseek', thinkingLevel: 'think16k' },
@@ -396,7 +373,7 @@ describe('neo.preferences.set', () => {
       thinkingLevel: 'off',
       fallbacks,
     });
-    const expected = [fallbacks[0], { ...fallbacks[1], thinkingLevel: 'off' }];
+    const expected = fallbacks;
     expect(first).toMatchObject({ value: { ok: true, preferences: { fallbacks: expected } } });
     expect(await invoke('neo.snapshot', {})).toMatchObject({
       value: { preferences: { fallbacks: expected } },
