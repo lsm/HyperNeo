@@ -141,9 +141,6 @@ export function useNeo() {
       });
       if (!result.ok) throw new Error(result.reason);
       await refresh();
-    } catch (cause) {
-      if (alive.current)
-        setError(cause instanceof Error ? cause.message : 'That ask could not be closed.');
     } finally {
       if (alive.current) setBusyWork(null);
     }

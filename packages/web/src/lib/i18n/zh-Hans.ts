@@ -62,6 +62,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'ask.drop': '放弃这件事',
   'ask.moreDone': '{count} 项已完成 — 展开',
   'ask.moreDoneFailed': '已完成的待办没读出来。',
+  'ask.settleFailed': '请求没能关闭，请重试。',
   'ask.moreDoneRefused': '已完成的待办没读出来：{reason}',
   'ask.todos': '待办',
   'ask.removed': '已移除',
