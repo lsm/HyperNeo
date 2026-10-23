@@ -344,6 +344,24 @@ describe('ReactiveDatabase', () => {
       await write;
       expect(events.map((event) => event.tables.sort())).toEqual([['sessions', 'space_tasks']]);
     });
+
+    test('an aborted batch drops the change of a session write that lands later', async () => {
+      await db.createSession(makeSession('aborted'));
+      const settle = deferUpdates();
+      const events: Array<{ tables: string[] }> = [];
+      reactiveDb.on('change', (data) => events.push(data));
+
+      reactiveDb.beginTransaction();
+      const write = reactiveDb.db.updateSession('aborted', { title: 'Dropped' });
+      reactiveDb.notifyChange('space_tasks');
+      reactiveDb.abortTransaction();
+      settle[0]();
+      await write;
+      await reactiveDb.db.createSession(makeSession('after-abort'));
+
+      expect(events.map((event) => event.tables)).toEqual([['sessions']]);
+      expect(reactiveDb.getTableVersion('sessions')).toBe(2);
+    });
   });
 
   describe('beginTransaction / commitTransaction', () => {
