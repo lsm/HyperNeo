@@ -1,6 +1,7 @@
 import type { ModelInfo } from '@hyperneo/shared';
 import type { NeoModelPreference } from '@hyperneo/shared/types/settings';
 import {
+  findSameModel,
   getThinkingLevelsForModel,
   resolveAutoCompactPercent,
   normalizeThinkingLevel,
@@ -50,9 +51,7 @@ export function requireNeoPreferenceModel(
 ): Gate<NeoModelPreference> {
   const entries = [];
   for (const entry of [input, ...(input.fallbacks ?? [])]) {
-    const model = catalog.models.find(
-      (item) => item.id === entry.model && item.provider === entry.provider
-    );
+    const model = findSameModel(catalog.models, entry);
     if (!model)
       return {
         reason: {
@@ -66,7 +65,7 @@ export function requireNeoPreferenceModel(
       model.effortLevels
     );
     entries.push({
-      model: model.id,
+      model: entry.model,
       provider: model.provider,
       thinkingLevel: clampNeoThinking(levels, normalizeThinkingLevel(entry.thinkingLevel)),
     });

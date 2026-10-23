@@ -28,6 +28,24 @@ export function resolveAutoCompactPercent(raw?: number | null): number {
   return Math.min(AUTO_COMPACT_PERCENT_MAX, Math.max(AUTO_COMPACT_PERCENT_MIN, Math.floor(raw)));
 }
 
+function baseModelId(id: string): string {
+  return id.replace(/(\[1m\])+$/i, '');
+}
+
+export function findSameModel<T extends Pick<ModelInfo, 'id' | 'alias' | 'provider'>>(
+  models: readonly T[],
+  entry: { model: string; provider: string }
+): T | undefined {
+  const candidates = models.filter((model) => model.provider === entry.provider);
+  const wanted = baseModelId(entry.model);
+  return (
+    candidates.find((model) => model.id === entry.model) ??
+    candidates.find((model) =>
+      [model.id, model.alias].some((name) => name && baseModelId(name) === wanted)
+    )
+  );
+}
+
 export interface CurrentModelInfo {
   id: string;
   info: ModelInfo | null;

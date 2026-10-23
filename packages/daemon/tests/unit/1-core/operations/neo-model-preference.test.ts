@@ -80,6 +80,22 @@ describe('requireNeoPreferenceModel', () => {
       value: { model: 'deepseek-v4-flash', provider: 'deepseek', thinkingLevel: 'off' },
     });
   });
+
+  test('accepts the same model under its 1M id but not a different model sharing its prefix', () => {
+    const flashGlm = { id: 'glm-5.3-flash', alias: 'glm-5.3-flash', provider: 'glm' } as ModelInfo;
+    expect(
+      requireNeoPreferenceModel(
+        { model: 'glm-5.3[1m]', provider: 'glm', thinkingLevel: 'off' },
+        { models: [flashGlm, { ...flashGlm, id: 'glm-5.3', alias: 'glm-5.3' }] }
+      )
+    ).toEqual({ value: { model: 'glm-5.3[1m]', provider: 'glm', thinkingLevel: 'off' } });
+    expect(
+      requireNeoPreferenceModel(
+        { model: 'glm-5.3[1m]', provider: 'glm', thinkingLevel: 'off' },
+        { models: [flashGlm] }
+      )
+    ).toMatchObject({ reason: { ok: false, reason: expect.stringContaining('invalid_model') } });
+  });
 });
 
 describe('effectiveNeoPreference', () => {
@@ -484,5 +500,27 @@ describe('neo.preferences.set', () => {
     recovering = false;
     await invoke('neo.preferences.set', preference);
     expect(switched).toEqual([['neo:root', 'deepseek-v4-flash', 'deepseek']]);
+  });
+
+  test('saves a fallback again unchanged after a forced refresh lists it under its remote id', async () => {
+    const glm = { provider: 'glm', alias: 'glm-5.3', thinkingModes: 'on', available: true };
+    setModelsCache(
+      new Map([['global', [flash, opus, { ...glm, id: 'glm-5.3[1m]' } as ModelInfo]]])
+    );
+    const preference = {
+      model: 'claude-opus',
+      provider: 'anthropic',
+      thinkingLevel: 'off',
+      fallbacks: [{ model: 'glm-5.3[1m]', provider: 'glm', thinkingLevel: 'off' as const }],
+    };
+    expect(await invoke('neo.preferences.set', preference)).toMatchObject({
+      value: { ok: true },
+    });
+    setModelsCache(new Map([['global', [flash, opus, { ...glm, id: 'glm-5.3' } as ModelInfo]]]));
+    const saved = db.getGlobalSettings().neo?.preferences;
+    expect(
+      await invoke('neo.preferences.set', { ...saved, thinkingLevel: 'think8k' })
+    ).toMatchObject({ value: { ok: true } });
+    expect(db.getGlobalSettings().neo?.preferences?.fallbacks).toEqual(preference.fallbacks);
   });
 });
