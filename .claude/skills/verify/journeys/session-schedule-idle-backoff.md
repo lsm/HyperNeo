@@ -39,3 +39,8 @@ stretch. Rename the session before that stretch: its third quiet wake must publi
 one new card using the current name and no model input. Card retry identity uses
 the third wake's scheduled due time, so reverting facts cannot reuse an old card.
 Progress-reset labels are localized in both English and simplified Chinese.
+
+Give the session a 20,000-character title through session.update before a third
+quiet wake. The idle card must still publish once, fit the publication text limits
+and retain “waiting for work”; the pending schedule continues backing off and the
+stored session title stays byte-for-byte unchanged.

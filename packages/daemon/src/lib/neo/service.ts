@@ -278,7 +278,8 @@ export class NeoService {
       schedule.cadence.kind === 'every'
         ? ` for ${Math.round((schedule.cadence.everyMs * 3) / 60_000)} minutes`
         : '';
-    const text = `${name} has been idle${elapsed}, waiting for work.`;
+    const suffix = ` has been idle${elapsed}, waiting for work.`;
+    const text = `${name.slice(0, 2000 - suffix.length)}${suffix}`;
     const receipt = this.appendPublication({
       conversationId,
       publicationId,
