@@ -517,7 +517,9 @@ export class AgentSession
     this.stateManager = new ProcessingStateManager(session.id, internalEventBus, db);
     this.contextTracker = new ContextTracker(session.id, (contextInfo: ContextInfo) => {
       this.session.metadata.lastContextInfo = contextInfo;
-      this.db.updateSession(this.session.id, { metadata: this.session.metadata });
+      this.db
+        .updateSession(this.session.id, { metadata: this.session.metadata })
+        .catch((error) => this.logger.error('Failed to persist context info:', error));
     });
 
     this.messageHandler = new SDKMessageHandler(this);
@@ -715,7 +717,7 @@ export class AgentSession
     }
   }
 
-  static fromInit(
+  static async fromInit(
     init: AgentSessionInit,
     db: Database,
     messageHub: MessageHub,
@@ -724,12 +726,12 @@ export class AgentSession
     defaultModel: string,
     skillsManager?: import('../skills-manager.ts').SkillsManager,
     appMcpServerRepo?: import('../../storage/repositories/app-mcp-server-repository.ts').AppMcpServerRepository
-  ): AgentSession {
+  ): Promise<AgentSession> {
     let session = db.getSession(init.sessionId);
 
     if (!session) {
       session = AgentSession.createSessionFromInit(init, defaultModel);
-      db.createSession(session);
+      await db.createSession(session);
     } else {
       const updates: Partial<Session> = {};
       let hasUpdates = false;
@@ -799,7 +801,7 @@ export class AgentSession
       }
 
       if (hasUpdates) {
-        db.updateSession(init.sessionId, updates);
+        await db.updateSession(init.sessionId, updates);
       }
     }
 
@@ -916,7 +918,7 @@ export class AgentSession
     if (rawProviderId !== normalizedProviderId) {
       this.session.config.provider = normalizedProviderId as Session['config']['provider'];
       try {
-        this.db.updateSession(this.session.id, { config: { ...this.session.config } });
+        await this.db.updateSession(this.session.id, { config: { ...this.session.config } });
       } catch {}
     }
     const wantsAcp = this.session.config.provider === 'acp';
@@ -1198,13 +1200,16 @@ export class AgentSession
   async startFreshContext(): Promise<void> {
     const reset = await this.resetQuery({ restartQuery: false });
     if (!reset.success) await this.lifecycleManager.stop({ catchQueryErrors: true });
-    this.retirePastSdkContext();
+    await this.retirePastSdkContext();
     this.session.sdkSessionId = undefined;
     this.session.sdkOriginPath = undefined;
-    this.db.updateSession(this.session.id, { sdkSessionId: undefined, sdkOriginPath: undefined });
+    await this.db.updateSession(this.session.id, {
+      sdkSessionId: undefined,
+      sdkOriginPath: undefined,
+    });
   }
 
-  private retirePastSdkContext(): void {
+  private async retirePastSdkContext(): Promise<void> {
     const pastSdkSessionIds = this.nextPastSdkSessionIds();
     const lastSdkCost = this.session.metadata?.lastSdkCost || 0;
     if (lastSdkCost > 0 || pastSdkSessionIds) {
@@ -1215,12 +1220,12 @@ export class AgentSession
         lastSdkCost: lastSdkCost > 0 ? 0 : this.session.metadata?.lastSdkCost,
         ...(pastSdkSessionIds ? { pastSdkSessionIds } : {}),
       };
-      this.db.updateSession(this.session.id, { metadata: this.session.metadata });
+      await this.db.updateSession(this.session.id, { metadata: this.session.metadata });
     }
   }
 
   private async runClearConversationFlow(): Promise<void> {
-    this.retirePastSdkContext();
+    await this.retirePastSdkContext();
 
     await this.lifecycleManager.ensureQueryStarted();
     this.messageHandler.suppressIdleForNextTurnEnd();
@@ -1319,7 +1324,7 @@ export class AgentSession
 
       if (!this.session.config.provider) {
         this.session.config.provider = 'anthropic';
-        this.db.updateSession(this.session.id, {
+        await this.db.updateSession(this.session.id, {
           config: { model: this.session.config.model, provider: 'anthropic' } as SessionConfig,
         });
       }
@@ -1591,7 +1596,7 @@ export class AgentSession
       ...this.session.metadata,
       pendingModelSwitch: pending ?? null,
     } as SessionMetadata;
-    this.db.updateSession(this.session.id, { metadata: this.session.metadata });
+    await this.db.updateSession(this.session.id, { metadata: this.session.metadata });
     await this.internalEventBus.publish('session.updated', {
       sessionId: this.session.id,
       source: 'model-switch',
@@ -1763,8 +1768,8 @@ export class AgentSession
     this.sessionConfigHandler.applyCommittedInputDraft(text);
   }
 
-  updateMetadata(updates: Partial<Session>): void {
-    this.sessionConfigHandler.updateMetadata(updates);
+  updateMetadata(updates: Partial<Session>): Promise<void> {
+    return this.sessionConfigHandler.updateMetadata(updates);
   }
 
   getProcessingState(): AgentProcessingState {

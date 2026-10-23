@@ -61,7 +61,7 @@ describe('SDKRuntimeConfig', () => {
       },
     };
 
-    updateSessionSpy = mock(() => {});
+    updateSessionSpy = mock(async () => {});
     mockDb = {
       updateSession: updateSessionSpy,
     } as unknown as Database;
@@ -289,6 +289,8 @@ describe('SDKRuntimeConfig', () => {
       expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
         config: mockSession.config,
       });
+      expect(setPermissionModeSpy).not.toHaveBeenCalled();
+      await new Promise((resolve) => setTimeout(resolve, 0));
       expect(setPermissionModeSpy).toHaveBeenCalledWith('acceptEdits');
 
       resolveCli();

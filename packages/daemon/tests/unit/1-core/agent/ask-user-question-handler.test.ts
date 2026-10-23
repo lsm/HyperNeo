@@ -73,7 +73,7 @@ describe('AskUserQuestionHandler', () => {
       updateQuestionDraft: updateQuestionDraftSpy,
     } as unknown as ProcessingStateManager;
 
-    updateSessionSpy = mock(() => {});
+    updateSessionSpy = mock(async () => {});
     mockDb = {
       updateSession: updateSessionSpy,
     } as unknown as Database;

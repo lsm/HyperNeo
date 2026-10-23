@@ -80,7 +80,7 @@ export class QueryLifecycleManager {
     this.logger = new Logger(`QueryLifecycleManager ${ctx.session.id}`);
   }
 
-  private clearAcpSessionStateForReset(): void {
+  private async clearAcpSessionStateForReset(): Promise<void> {
     const { session, db } = this.ctx;
     if (session.config.provider !== 'acp') return;
 
@@ -102,7 +102,7 @@ export class QueryLifecycleManager {
     }
 
     if (Object.keys(updates).length > 0) {
-      db.updateSession(session.id, updates);
+      await db.updateSession(session.id, updates);
     }
   }
 
@@ -111,7 +111,7 @@ export class QueryLifecycleManager {
     return sessionSdkPath(session) ?? process.cwd();
   }
 
-  private ensureSDKSessionFileMigrated(): boolean {
+  private async ensureSDKSessionFileMigrated(): Promise<boolean> {
     const { session, db } = this.ctx;
     if (!session.sdkSessionId) return false;
 
@@ -121,7 +121,7 @@ export class QueryLifecycleManager {
     if (existsSync(currentFilePath)) {
       if (!session.sdkOriginPath) {
         session.sdkOriginPath = currentWorkspacePath;
-        db.updateSession(session.id, { sdkOriginPath: currentWorkspacePath });
+        await db.updateSession(session.id, { sdkOriginPath: currentWorkspacePath });
       }
       return true;
     }
@@ -138,7 +138,7 @@ export class QueryLifecycleManager {
             `(sdkSessionId: ${session.sdkSessionId})`
         );
         session.sdkOriginPath = currentWorkspacePath;
-        db.updateSession(session.id, { sdkOriginPath: currentWorkspacePath });
+        await db.updateSession(session.id, { sdkOriginPath: currentWorkspacePath });
         return true;
       }
     }
@@ -154,7 +154,7 @@ export class QueryLifecycleManager {
             `(sdkSessionId: ${session.sdkSessionId})`
         );
         session.sdkOriginPath = currentWorkspacePath;
-        db.updateSession(session.id, { sdkOriginPath: currentWorkspacePath });
+        await db.updateSession(session.id, { sdkOriginPath: currentWorkspacePath });
         return true;
       } catch (err) {
         this.logger.warn(`Failed to copy SDK session file from global scan result: ${err}`);
@@ -168,7 +168,7 @@ export class QueryLifecycleManager {
     const { session, db } = this.ctx;
     if (!session.sdkSessionId) return false;
 
-    const fileFound = this.ensureSDKSessionFileMigrated();
+    const fileFound = await this.ensureSDKSessionFileMigrated();
 
     if (!fileFound) {
       this.logger.warn(
@@ -339,7 +339,7 @@ export class QueryLifecycleManager {
       messageQueue.clear();
       this.ctx.pendingRestartReason = null;
       messageHandler.resetCircuitBreaker();
-      this.clearAcpSessionStateForReset();
+      await this.clearAcpSessionStateForReset();
       await stateManager.setIdle();
       await this.ctx.clearModelsCache();
       return { success: true };
@@ -356,13 +356,13 @@ export class QueryLifecycleManager {
           costBaseline: costBaseline + lastSdkCost,
           lastSdkCost: 0,
         };
-        db.updateSession(session.id, { metadata: session.metadata });
+        await db.updateSession(session.id, { metadata: session.metadata });
       }
 
       messageQueue.clear();
       this.ctx.pendingRestartReason = null;
       messageHandler.resetCircuitBreaker();
-      this.clearAcpSessionStateForReset();
+      await this.clearAcpSessionStateForReset();
       await internalEventBus.publish('session.errorClear', { sessionId: session.id });
 
       await this.stop({

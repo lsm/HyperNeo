@@ -4419,7 +4419,7 @@ describe('AgentSession', () => {
   });
 
   describe('fromInit', () => {
-    it('should merge mcpServers into session config at runtime for query options builder', () => {
+    it('should merge mcpServers into session config at runtime for query options builder', async () => {
       const mockMcpServer = {
         type: 'sdk' as const,
         name: 'test-tools',
@@ -4452,7 +4452,7 @@ describe('AgentSession', () => {
       } as unknown as InternalEventBus<any>;
       const mockGetApiKey = mock(async () => 'test-key');
 
-      const agentSession = AgentSession.fromInit(
+      const agentSession = await AgentSession.fromInit(
         init,
         mockDb,
         mockMessageHub,
@@ -4471,7 +4471,7 @@ describe('AgentSession', () => {
       expect(persistedSession.config.mcpServers).toBeUndefined();
     });
 
-    it('should apply updated child-agent policy to an existing worker session', () => {
+    it('should apply updated child-agent policy to an existing worker session', async () => {
       const existingSession = {
         id: 'space:worker:test',
         title: 'Worker',
@@ -4509,7 +4509,7 @@ describe('AgentSession', () => {
         subscribe: mock((_: string, __: Function, ___: object) => () => {}),
       } as unknown as InternalEventBus<any>;
 
-      const agentSession = AgentSession.fromInit(
+      const agentSession = await AgentSession.fromInit(
         {
           sessionId: existingSession.id,
           workspacePath: existingSession.workspacePath,
@@ -4534,7 +4534,7 @@ describe('AgentSession', () => {
       ]);
     });
 
-    it('should update workspacePath for existing init sessions', () => {
+    it('should update workspacePath for existing init sessions', async () => {
       const existingSession = {
         id: 'room:test',
         title: 'Room Agent',
@@ -4581,7 +4581,7 @@ describe('AgentSession', () => {
       } as unknown as InternalEventBus<any>;
       const mockGetApiKey = mock(async () => 'test-key');
 
-      const agentSession = AgentSession.fromInit(
+      const agentSession = await AgentSession.fromInit(
         init,
         mockDb,
         mockMessageHub,
@@ -4597,7 +4597,7 @@ describe('AgentSession', () => {
       expect(agentSession.getSessionData().workspacePath).toBe('/new/workspace');
     });
 
-    it('should clear stale thinking level when init omits override', () => {
+    it('should clear stale thinking level when init omits override', async () => {
       const existingSession = {
         id: 'space:agent:test',
         title: 'Space Agent',
@@ -4644,7 +4644,7 @@ describe('AgentSession', () => {
       } as unknown as InternalEventBus<any>;
       const mockGetApiKey = mock(async () => 'test-key');
 
-      const agentSession = AgentSession.fromInit(
+      const agentSession = await AgentSession.fromInit(
         init,
         mockDb,
         mockMessageHub,
@@ -4665,7 +4665,7 @@ describe('AgentSession', () => {
       ]);
     });
 
-    it('should clear stale worktree when loading existing room session', () => {
+    it('should clear stale worktree when loading existing room session', async () => {
       const existingSession = {
         id: 'room:test',
         title: 'Room Agent',
@@ -4718,7 +4718,7 @@ describe('AgentSession', () => {
       } as unknown as InternalEventBus<any>;
       const mockGetApiKey = mock(async () => 'test-key');
 
-      const agentSession = AgentSession.fromInit(
+      const agentSession = await AgentSession.fromInit(
         init,
         mockDb,
         mockMessageHub,

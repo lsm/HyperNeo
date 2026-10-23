@@ -769,7 +769,7 @@ export class QueryRunner {
       }
       if (persistPin) {
         try {
-          this.ctx.db.updateSession(session.id, {
+          await this.ctx.db.updateSession(session.id, {
             config: { ...session.config },
           });
         } catch (err) {

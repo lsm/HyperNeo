@@ -42,7 +42,7 @@ export class SDKRuntimeConfig {
     try {
       if (!queryObject || !firstMessageReceived) {
         session.config.maxThinkingTokens = tokens;
-        db.updateSession(session.id, { config: session.config });
+        await db.updateSession(session.id, { config: session.config });
         return { success: true };
       }
 
@@ -51,7 +51,7 @@ export class SDKRuntimeConfig {
       }
 
       session.config.maxThinkingTokens = tokens;
-      db.updateSession(session.id, { config: session.config });
+      await db.updateSession(session.id, { config: session.config });
 
       await internalEventBus.publish('session.updated', {
         sessionId: session.id,
@@ -73,12 +73,12 @@ export class SDKRuntimeConfig {
     try {
       if (!queryObject || !firstMessageReceived) {
         session.config.permissionMode = mode as Session['config']['permissionMode'];
-        db.updateSession(session.id, { config: session.config });
+        await db.updateSession(session.id, { config: session.config });
         return { success: true };
       }
 
       session.config.permissionMode = mode as Session['config']['permissionMode'];
-      db.updateSession(session.id, { config: session.config });
+      await db.updateSession(session.id, { config: session.config });
 
       if (queryObject.setPermissionMode) {
         await queryObject.setPermissionMode(mode);
@@ -123,7 +123,7 @@ export class SDKRuntimeConfig {
     try {
       const newConfig = { ...session.config, tools };
       session.config = newConfig;
-      db.updateSession(session.id, { config: newConfig });
+      await db.updateSession(session.id, { config: newConfig });
 
       await this.refreshContextUsage();
 
