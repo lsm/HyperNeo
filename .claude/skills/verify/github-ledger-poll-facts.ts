@@ -51,7 +51,7 @@ try {
       assert.equal(facts.record(subject, { ...value, value: [] }, 140, 1), false);
       assert.deepEqual(facts.read(subject, 125, 10), recovered);
       const before = count(); for (let i = 0; i < 10; i++) facts.read(subject, 125, 10);
-      assert.equal(count(), before); evidence.reopened = recovered; evidence.localReadRequests = count() - before;
+      assert.equal(count(), before); evidence.persistedPage = recovered; evidence.localReadRequests = count() - before;
       const row = db.prepare('SELECT value_json FROM pack_coding_poll_facts').get() as { value_json: string };
       assert.deepEqual(JSON.parse(row.value_json), value.value);
     }
