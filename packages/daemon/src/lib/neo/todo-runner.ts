@@ -1,5 +1,6 @@
+import type { NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
 import { planNudge } from './nudge.ts';
-import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
+import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type {
@@ -41,8 +42,6 @@ type Startable = {
 
 const fail = (reason: string): { reason: Rejection } => ({ reason: { ok: false, reason } });
 
-export const NEO_TODO_CHECK_MS = 2 * 60_000;
-
 export interface NeoTodoRunnerDeps {
   store: NeoAskTodoRepository;
   sessions: NeoTodoSessionRepository;
@@ -53,7 +52,6 @@ export interface NeoTodoRunnerDeps {
   ): Promise<OperationOutcome>;
   packs(): readonly NeoPack[];
   tell(ask: NeoAsk, todo: NeoTodo, note: string, key?: string): Promise<void>;
-  tellAsk(ask: NeoAsk, messageId: string, note: string): Promise<void>;
   changed(): void;
 }
 
@@ -224,22 +222,10 @@ export function neoTodoNote(todo: NeoTodo): string {
   }\nIts last report:\n${todo.report ?? '(none)'}`;
 }
 
-export function neoAskIdleNote(
-  ask: NeoAsk,
-  todos: readonly NeoTodo[],
-  questions: readonly NeoQuestion[]
-): string | null {
-  if (todos.some((todo) => todo.state === 'doing' || todo.state === 'blocked')) return null;
-  if (questions.some((question) => question.state === 'open')) return null;
-  const listed = todos.filter((todo) => todo.state !== 'removed');
-  return `Ask "${ask.title}" is open, but no todo is running and no question is open. Todos: ${
-    listed.map((todo) => `"${todo.title}" ${todo.state}`).join(', ') || 'none'
-  }.`;
-}
-
 export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
+  const formatGoal = (instruction: string, goal: NeoWorkGoal | null) =>
+    (deps.packs().find((pack) => pack.workGoal)?.workGoal ?? withWorkGoal)(instruction, goal);
   const { store, sessions } = deps;
-  const checked = new Map<string, number>();
   const starting = new Set<string>();
   const caller = (ask: NeoAsk) => driverWorkCaller({ originSessionId: ask.sessionId });
   const recompute = async (
@@ -266,11 +252,16 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   const dispatch = async ({ todo, ask, target }: Startable) => {
     const prepare = deps.packs().find((pack) => pack.id === todo.check?.pack);
     const card = neoTodoCard(todo, ask, prepare?.workerRules);
-    const call = driverWorkCall(target, card, {
-      workId: todo.id,
-      goal: null,
-      doneWhen: todo.doneWhen,
-    });
+    const call = driverWorkCall(
+      target,
+      card,
+      {
+        workId: todo.id,
+        goal: null,
+        doneWhen: todo.doneWhen,
+      },
+      formatGoal
+    );
     if (target.verb === 'start' && prepare?.prepareExecution)
       call.input.preparation = {
         pack: prepare.id,
@@ -451,8 +442,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       .filter((candidate) => !todo.check || candidate.id === todo.check.pack)
       .flatMap((candidate) => candidate.todos ?? []);
     const ask = store.getAsk(todo.askId);
-    if (!packs.length || !ask || now - (checked.get(todo.id) ?? 0) < NEO_TODO_CHECK_MS) return;
-    checked.set(todo.id, now);
+    if (!packs.length || !ask) return;
     for (const rule of packs) {
       const pack =
         todo.check && deps.packs().find((candidate) => candidate.id === todo.check?.pack);
@@ -525,18 +515,17 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   const follow = (superpipe({})('neo-todo-follow') as PipelineAPI)
     .input(['todo', 'now'])
     .pipe(
-      (todo: NeoTodo, now: number) => {
+      (todo: NeoTodo) => {
         const ref = sessions.readRef(todo.id);
         const ask = store.getAsk(todo.askId);
         return ((todo.state === 'doing' && todo.report) ||
           (todo.state === 'blocked' && todo.blockedBy === 'worker')) &&
           ref &&
-          ask?.status === 'open' &&
-          (todo.state === 'blocked' || now - (checked.get(todo.id) ?? 0) >= NEO_TODO_CHECK_MS)
+          ask?.status === 'open'
           ? { value: { ref, ask } }
           : { reason: null };
       },
-      ['todo', 'now'],
+      'todo',
       'result:target'
     )
     .pipe(
@@ -562,7 +551,6 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
           const current = store.getTodo(todo.id);
           if (current?.state !== todo.state || current.updatedAt !== todo.updatedAt) return;
           todo = store.updateTodo(todo, { state: 'doing' }, now);
-          checked.delete(todo.id);
         }
         deps.changed();
         const report = readDriverFollowUp(outcome, since, sent);
@@ -643,7 +631,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     const gate = requireNeoTodoContinuable(read(todoId));
     if ('reason' in gate) return gate.reason;
     const { todo, ask, ref } = gate.value;
-    const text = withWorkGoal(message, { workId: todo.id, goal: null, doneWhen: todo.doneWhen });
+    const text = formatGoal(message, { workId: todo.id, goal: null, doneWhen: todo.doneWhen });
     const status = await deps.invoke(caller(ask), 'work.status', { ref });
     if (readDriverLive(status)?.status === 'needs_you')
       return fail(
@@ -674,7 +662,6 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       { state: 'doing', report: null, evidence: null, finishedAt: null },
       Date.now()
     );
-    checked.delete(todo.id);
     return { ok: true as const, todo: next };
   };
 
@@ -717,16 +704,11 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       );
       return start(todoId);
     },
-    recheck(todoIds: readonly string[]) {
-      for (const id of todoIds) checked.delete(id);
-    },
     async checkNow(
       todoIds: readonly string[],
-      warn: (message: string, error: unknown) => void,
-      force = true
+      warn: (message: string, error: unknown) => void
     ): Promise<void> {
       for (const todo of store.listCheckable().filter((item) => todoIds.includes(item.id))) {
-        if (force) checked.delete(todo.id);
         await check(todo, Date.now()).catch((error) => warn('Todo check pending', error));
       }
     },
@@ -762,11 +744,6 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
         const completed = store.listTodos(ask.id).find((todo) => todo.state === 'done');
         if (completed)
           await recompute(completed).catch((error) => warn('Todo plan advancement pending', error));
-        const note = neoAskIdleNote(ask, store.listTodos(ask.id), store.listQuestions(ask.id));
-        if (note)
-          await deps
-            .tellAsk(ask, `neo-ask-idle:${ask.id}:${ask.updatedAt}`, note)
-            .catch((error) => warn('Idle ask note pending', error));
       }
     },
   };

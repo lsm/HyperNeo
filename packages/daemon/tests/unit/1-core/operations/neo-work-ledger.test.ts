@@ -245,6 +245,7 @@ test('public work-detail reads coalesce and retain head, failure and reopen sema
     const result = JSON.parse(readFileSync(join(run, 'evidence/work-ledger.json'), 'utf8'));
     expect(result.verified).toBe(true);
     expect(result.workLookups).toBe(1);
+    expect(result.referenceLookups).toBe(0);
     expect(result.fanout).toHaveLength(5);
     expect(result.changed).toMatchObject({
       review: 'none',

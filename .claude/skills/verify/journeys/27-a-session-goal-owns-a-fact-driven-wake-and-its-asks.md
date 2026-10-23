@@ -5,7 +5,7 @@
     model calls `neo.ask.open` through the real MCP door with that `goalId`.
     End state: `evidence/goal-schedule.json` contains the linked ask, a delivered
     `<daemon-note kind="scheduled_wake">` in root Neo's transcript with mandate
-    and journal run identity, the full goal-cycle instructions prefixed inside that wake, the exact same digest from `goal.facts`, and an
+    and journal run identity, the full goal-cycle instructions prefixed inside that wake, the schedule digest covering goal facts and received work, and an
     empty summary after delivery. Reading facts twice before delivery preserves
     the delta. Updating progress to 40 produces only `- Progress: 0` and
     `+ Progress: 40`. Pausing removes the job, resuming restores it, and completing
@@ -15,7 +15,7 @@
     `evidence/goal-schedule-transcript.png`. Keep the `neo:` colon unescaped in
     the session route; the router does not decode a percent-encoded session id.
     CI covers foreign-goal rejection, failed/unconfirmed delivery, unchanged
-    nudges, linked question/PR changes, repository splits and migration reruns.
+    skips/backoff, linked question/PR changes, repository splits and migration reruns.
     Missing and closed Neo targets finish `target_gone`; open interrupted Neo
     targets remain active with `skipped_busy` and can fire when idle. Delivery
     rechecks closure after facts load, so a closing target receives no wake.

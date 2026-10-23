@@ -33,6 +33,11 @@ CI-failure event through the daemon’s event bus. It must cause no extra worker
 frame; the ledger remains the PR-message source. Focused ledger event contracts
 still prove ledger notifications are delivered.
 
+The final cleanup proof also drives the real `neo.pack.sweep` job against its
+local ledger fixture: a claimed PR's failing CI reaches the synthetic worker
+once, and repeating unchanged facts sends no further turn. The claim remains
+stored. See `ledgerClaimDelivery` alongside `rawPrEvent` in observed evidence.
+
 Copy this helper unchanged into a detached pre-fix worktree and run `before`
 there to record the failing COMPLETED/no-advance result.
 Keep `evidence/observed.json` and `evidence/gh.log` outside the worktree. The helper

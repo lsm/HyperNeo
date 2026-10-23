@@ -32,3 +32,7 @@ it does not claim a browser rendering check. Rerun the separate
 session lifecycle behavior: both Neo and an ordinary session must preserve an
 interrupted mid-turn human input and deliver four queued markers to the model
 after one restart with no extra send or restart.
+
+For mid-turn behavior, run the [SDK auto-compaction journey](sdk-auto-compaction.md).
+The SDK compacts without the retired daemon interrupt/requeue budget check; this
+percentage journey checks settings and idle deferral only.

@@ -4,9 +4,6 @@ import {
   NEO_WORK_GOAL,
   NEO_WORK_GOAL_ASKED,
   NEO_WORK_GOAL_DONE_WHEN,
-  NEO_WORK_GOAL_MERGE,
-  NEO_WORK_GOAL_PR_EVENTS,
-  NEO_WORK_GOAL_PR_SUBSCRIBE,
   NEO_WORK_GOAL_REMAINING,
 } from '@hyperneo/prompts';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
@@ -73,7 +70,7 @@ const DriverReplySchema = z.discriminatedUnion('ok', [
 export function withWorkGoal(
   instruction: string,
   goal: NeoWorkGoal | null,
-  eventsDelivered = true
+  guidance: readonly string[] = []
 ): string {
   if (!goal?.goal && !goal?.doneWhen) return withTail(instruction, ['', NEO_WORK_BLOCKER]);
   return withTail(instruction, [
@@ -81,12 +78,7 @@ export function withWorkGoal(
     NEO_WORK_GOAL,
     ...(goal.goal ? [fillPrompt(NEO_WORK_GOAL_ASKED, { goal: goal.goal })] : []),
     ...(goal.doneWhen ? [fillPrompt(NEO_WORK_GOAL_DONE_WHEN, { done_when: goal.doneWhen })] : []),
-    ...(/merg/i.test(goal.doneWhen ?? '')
-      ? [
-          NEO_WORK_GOAL_MERGE,
-          eventsDelivered ? NEO_WORK_GOAL_PR_EVENTS : NEO_WORK_GOAL_PR_SUBSCRIBE,
-        ]
-      : []),
+    ...guidance,
     NEO_WORK_GOAL_REMAINING,
     NEO_WORK_BLOCKER,
   ]);
@@ -101,9 +93,9 @@ export function driverWorkCall(
   target: Exclude<NeoDriverTarget, { verb: 'read' }>,
   work: Pick<NeoWork, 'title' | 'instruction'>,
   goal: NeoWorkGoal | null = null,
-  eventsDelivered = true
+  formatGoal: (instruction: string, goal: NeoWorkGoal | null) => string = withWorkGoal
 ): { name: 'work.start' | 'work.send'; input: Record<string, unknown> } {
-  const message = withWorkGoal(work.instruction, goal, eventsDelivered);
+  const message = formatGoal(work.instruction, goal);
   return target.verb === 'start'
     ? {
         name: 'work.start',

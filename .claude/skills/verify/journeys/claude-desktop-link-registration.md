@@ -1,42 +1,15 @@
 ## Claude Desktop link registration
 
-```bash
-RUN=$(mktemp -d /private/tmp/hn-claude-link-XXXXXX)
-mkdir -p "$RUN/home"
-env -i HOME="$RUN/home" PATH="$RUN/bin:$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin" \
-  NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
-  bun .claude/skills/verify/claude-desktop-link.ts 9383 "$RUN"
-```
+Starts now follow the human-approved B1 option B: a short CLI preparation turn,
+exit, native Desktop import, then a native message through the Haiku forwarding
+helper. Desktop's actual `acceptEdits` mode is reported. The real task is never
+run in the creating CLI turn or resumed headlessly after handoff.
 
-Use fresh synthetic HOME/data and a free non-8399 port. The real isolated daemon
-calls a synthetic `claude` that behaves like `claude -p`: it writes each turn to
-the transcript with `entrypoint: sdk-cli` and its permission mode, records it in
-`evidence/cli-inputs`, and exits. `claude agents` lists nothing, as real Desktop
-runs no process for an imported, unused session. The Desktop-launch `script` stub
-fails, so Desktop never imports the session.
+Run the shared setup and checks in [Claude B1 handoff](claude-desktop-b1.md).
+The former `claude-desktop-link.ts <port> <run>` entry point delegates to that
+helper so existing commands still exercise the current startup behavior.
 
-Public `work.start` must run the task itself as the first CLI turn, in the
-worker's mode (`bypassPermissions Synthetic task only`), and return `running`
-with no link and a `work.status` watch hint. `work.status` and `work.find` show
-no link either. The helper then writes a synthetic Desktop-store record that, like
-real Desktop, relabels the session `acceptEdits`, and repeats find/status. The link
-must appear without restarting the daemon.
-
-Next, `work.send` to that idle session must be delivered as a `claude -p --resume`
-turn in the mode Neo started it in (`bypassPermissions Synthetic follow-up`).
-Finally, a human-created session (its first turn came from `claude-desktop`, and
-it is in `acceptEdits`) must return `unreachable` with its Desktop link, and must
-never run headless.
-
-`evidence/observed.json` retains every operation reply. The helper closes the
-socket and cleans up the daemon in `finally`. Both `claude` and the Desktop-launch
-`script` are stubbed, as is `gh`. No real CLI, provider, auth/token files, human
-sessions, GitHub or GUI is used. This proves that starts and idle sends run with
-no click, the permission-mode rule, and the record-discovery transition. The real
-Desktop import and Remote Control are proven only by the human's hand test with
-a throwaway session. Do not automate the GUI or restart the human's Desktop app
-as part of this journey.
-
-Send/status now also expose desktopUI.state ui-unconfirmed: the two end_turn
-transcript turns and unchanged synthetic import record are separate from any
-Desktop render/read acknowledgment. See claude-desktop-transcript-ui-facts.md.
+The synthetic proof validates RPC delivery, full message bytes, target receipt,
+registered links, unchanged app/settings files and explicit permission waits.
+Native Desktop execution and phone visibility remain distinct evidence; do not
+claim either from a mock record or a queued RC request.

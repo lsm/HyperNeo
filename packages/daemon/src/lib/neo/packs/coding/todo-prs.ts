@@ -3,13 +3,7 @@ import type { NeoRefState, NeoRefStateReader } from './ask-prs.ts';
 import type { NeoTodo, NeoTodoCheck } from '@hyperneo/shared/types/neo-ask';
 import { neoWorkPrVerdict, type NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
-import type { ExternalEvent } from '../../../external-events/types.ts';
-import {
-  buildPrEventTopicPattern,
-  githubUrlKey,
-  parsePrUrl,
-  pullRequestUrlOfTopic,
-} from '../../../github/parse-pr-url.ts';
+import { githubUrlKey, parsePrUrl } from '../../../github/parse-pr-url.ts';
 import type { NeoTodoCheckResult, NeoTodoFactJudge, NeoTodoPack } from '../../pack-contract.ts';
 import type { CodingPrState } from './pr-ledger.ts';
 import { neoStatusLine, type NeoStatusLine } from '../../status-codes.ts';
@@ -560,15 +554,6 @@ export function createCodingTodoPack(
           return `pr_already_tracked: ${duplicate} is already tracked by todo ${peer.id} "${peer.title}"; use neo.todo.edit addUrls on that todo.`;
       }
       return null;
-    },
-    topics: (todo) =>
-      (todo.check?.kind === 'issue_closed' ? [] : repo.urls(todo.id)).flatMap((url) => {
-        const parsed = (repo.latest(url)?.pr.state ?? 'OPEN') === 'OPEN' ? parsePrUrl(url) : null;
-        return parsed ? [buildPrEventTopicPattern(parsed)] : [];
-      }),
-    event: (event: ExternalEvent) => {
-      const url = pullRequestUrlOfTopic(event.topic);
-      return url ? repo.todosFor([url]) : [];
     },
   };
 }

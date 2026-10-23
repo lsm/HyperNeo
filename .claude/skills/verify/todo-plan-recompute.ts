@@ -126,6 +126,8 @@ const open = async () => {
     verbose: false,
   });
   assert.notEqual(app.server.port, 8399);
+  if (process.argv.includes('--without-coding'))
+    app.db.updateGlobalSettings({ neo: { packs: ['inbox-triage'] } });
   store = new NeoAskTodoRepository(app.db.getDatabase());
   sessions = new NeoTodoSessionRepository(app.db.getDatabase());
   ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);

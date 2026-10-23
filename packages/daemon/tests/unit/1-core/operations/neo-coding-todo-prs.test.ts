@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test';
 import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import { codexTurnState } from '../../../../src/lib/drivers/codex-desktop-adapter.ts';
-import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts';
 import {
   type CodingPrClaim,
   CodingTodoPrRepository,
@@ -101,13 +100,6 @@ describe('coding todo pack', () => {
       ['https://github.com/lsm/neo-ios/pull/102', 'https://github.com/lsm/neo-ios/pull/103'],
     ]);
     expect(pack.statusLine(row)?.status).toBe('#102 merged; #103 open, waiting on CI');
-    expect(pack.topics(row)).toEqual(['github/lsm/neo-ios/pull_request/103.*']);
-    expect(
-      pack.event({ topic: 'github/lsm/neo-ios/pull_request/103.closed' } as ExternalEvent)
-    ).toEqual([row.id]);
-    expect(pack.event({ topic: 'github/lsm/neo-ios/issues/103.closed' } as ExternalEvent)).toEqual(
-      []
-    );
     expect(repo.urls(row.id)).toHaveLength(2);
   });
 
@@ -242,9 +234,6 @@ describe('coding todo claims', () => {
       'https://github.com/lsm/neo-ios/pull/102',
       'https://github.com/lsm/neo-ios/pull/103',
     ]);
-    expect(
-      pack.event({ topic: 'github/lsm/neo-ios/pull_request/102.closed' } as ExternalEvent)
-    ).toEqual([row.id]);
     read = [pr(102, 'MERGED')];
     expect(await pack.check({ ...row, report: 'Superseded; only #102 now' })).toEqual({
       done: true,

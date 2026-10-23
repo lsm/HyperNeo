@@ -26,8 +26,11 @@ Repeat with new RUN directories and final arguments `wake` and `nudge`. These
 exercise the actual scheduler fire and mailbox delivery. `wake` creates ten new
 entries; `nudge` seeds only the synthetic schedule's previous facts digest with
 its current real RPC digest and nudgeEvery 1. Both make that one synthetic job due
-now instead of waiting an hour. The mailbox's actual model-facing daemon note
-must ask Neo to read journal pages and rewrite worksNote. These fixtures do not
+now instead of waiting an hour. The changed `wake` mailbox note must ask Neo to
+read journal pages and rewrite worksNote. The unchanged `nudge` must report
+`skipped_unchanged` with no model-facing input, even with nudgeEvery 1; use the
+[idle-backoff journey](session-schedule-idle-backoff.md) for the cap and one notice.
+These fixtures do not
 replace the source, fire handler or delivery handler. A later no-provider turn
 failure is expected and is not autonomous-model proof.
 

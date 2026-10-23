@@ -16,7 +16,7 @@ import {
   requireNeoAskProject,
 } from '../../../../src/lib/neo/reorganize-operation.ts';
 import type { NeoRouted } from '../../../../src/lib/neo/reorganize-operation.ts';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
@@ -196,12 +196,12 @@ describe('neo.projects.reorganize', () => {
   });
 });
 
-describe('NeoService.moveAsk', () => {
+describe('ReturnType<typeof createNeoService>.moveAsk', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
-  let service: NeoService;
+  let service: ReturnType<typeof createNeoService>;
   beforeEach(async () => {
     db = await createTestDb();
-    service = new NeoService(
+    service = createNeoService(
       db,
       { createSession: vi.fn(), getSessionAsync: vi.fn() } as unknown as SessionManager,
       { event: vi.fn() } as unknown as MessageHub,

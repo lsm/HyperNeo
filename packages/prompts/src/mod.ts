@@ -125,7 +125,6 @@ import mdspaceTaskMessageVerificationLabel from './space/task-message/verificati
   type: 'text',
 };
 import mdagentBashLoopRecovery from './agent/bash-loop-recovery.md' with { type: 'text' };
-import mdagentCompactionResume from './agent/compaction-resume.md' with { type: 'text' };
 import mdagentLoopRecovery from './agent/loop-recovery.md' with { type: 'text' };
 import mdagentQuestionCancelled from './agent/question-cancelled.md' with { type: 'text' };
 import mdagentRepeatedToolError from './agent/repeated-tool-error.md' with { type: 'text' };
@@ -135,7 +134,14 @@ import mdagentTaskNotificationContinue from './agent/task-notification-continue.
 import mdagentsInactivityNag from './agents/inactivity-nag.md' with { type: 'text' };
 import mdgoalsOutcomeReady from './goals/outcome-ready.md' with { type: 'text' };
 import mddriversClaudeDesktopRelay from './drivers/claude-desktop-relay.md' with { type: 'text' };
-import mddriversClaudeRcToggleBrief from './drivers/claude-rc-toggle-brief.md' with {
+import mddriversCodexWorker from './drivers/codex-worker.md' with { type: 'text' };
+import mddriversClaudeDesktopPrepare from './drivers/claude-desktop-prepare.md' with {
+  type: 'text',
+};
+import mddriversClaudeDesktopWakeBrief from './drivers/claude-desktop-wake-brief.md' with {
+  type: 'text',
+};
+import mddriversClaudeDesktopWakeRequest from './drivers/claude-desktop-wake-request.md' with {
   type: 'text',
 };
 import mddriversClaudeRcToggleRequest from './drivers/claude-rc-toggle-request.md' with {
@@ -313,7 +319,6 @@ const registry: Record<string, string> = {
   'space/task-message/goal-outcome.md': mdspaceTaskMessageGoalOutcome,
   'space/task-message/verification-label.md': mdspaceTaskMessageVerificationLabel,
   'agent/bash-loop-recovery.md': mdagentBashLoopRecovery,
-  'agent/compaction-resume.md': mdagentCompactionResume,
   'agent/loop-recovery.md': mdagentLoopRecovery,
   'agent/question-cancelled.md': mdagentQuestionCancelled,
   'agent/repeated-tool-error.md': mdagentRepeatedToolError,
@@ -321,7 +326,10 @@ const registry: Record<string, string> = {
   'agents/inactivity-nag.md': mdagentsInactivityNag,
   'goals/outcome-ready.md': mdgoalsOutcomeReady,
   'drivers/claude-desktop-relay.md': mddriversClaudeDesktopRelay,
-  'drivers/claude-rc-toggle-brief.md': mddriversClaudeRcToggleBrief,
+  'drivers/codex-worker.md': mddriversCodexWorker,
+  'drivers/claude-desktop-prepare.md': mddriversClaudeDesktopPrepare,
+  'drivers/claude-desktop-wake-brief.md': mddriversClaudeDesktopWakeBrief,
+  'drivers/claude-desktop-wake-request.md': mddriversClaudeDesktopWakeRequest,
   'drivers/claude-rc-toggle-request.md': mddriversClaudeRcToggleRequest,
   'mailbox/delivery-failed.md': mdmailboxDeliveryFailed,
   'messaging/reply-protocol.md': mdmessagingReplyProtocol,
@@ -444,7 +452,6 @@ export const {
   TASK_MESSAGE_GOAL_OUTCOME,
   TASK_MESSAGE_VERIFICATION_LABEL,
   AGENT_BASH_LOOP_RECOVERY,
-  AGENT_COMPACTION_RESUME,
   AGENT_LOOP_RECOVERY,
   AGENT_QUESTION_CANCELLED,
   AGENT_REPEATED_TOOL_ERROR,
@@ -452,7 +459,10 @@ export const {
   AGENT_INACTIVITY_NAG,
   GOAL_OUTCOME_READY,
   CLAUDE_DESKTOP_RELAY,
-  CLAUDE_RC_TOGGLE_BRIEF,
+  CODEX_WORKER_INSTRUCTIONS,
+  CLAUDE_DESKTOP_PREPARE,
+  CLAUDE_DESKTOP_WAKE_BRIEF,
+  CLAUDE_DESKTOP_WAKE_REQUEST,
   CLAUDE_RC_TOGGLE_REQUEST,
   MAILBOX_DELIVERY_FAILED,
   MESSAGING_REPLY_PROTOCOL,

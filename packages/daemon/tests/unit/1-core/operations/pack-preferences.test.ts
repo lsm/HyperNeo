@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
@@ -15,14 +15,14 @@ import {
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
 let db: Awaited<ReturnType<typeof createTestDb>>;
-let service: NeoService;
+let service: ReturnType<typeof createNeoService>;
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
 const scope = { kind: 'repo', key: 'synthetic/repo' };
 const setting = { pack: 'coding', scope, key: 'mergePolicy', value: 'review_bot' };
 beforeEach(async () => {
   db = await createTestDb();
   db.createSession(createTestSession('neo:root'));
-  service = new NeoService(
+  service = createNeoService(
     db,
     {} as SessionManager,
     { event: mock(() => {}) } as unknown as MessageHub,

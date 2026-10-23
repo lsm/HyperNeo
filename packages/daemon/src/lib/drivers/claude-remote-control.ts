@@ -1,4 +1,4 @@
-import { CLAUDE_RC_TOGGLE_BRIEF, CLAUDE_RC_TOGGLE_REQUEST, fillPrompt } from '@hyperneo/prompts';
+import { CLAUDE_DESKTOP_WAKE_BRIEF, CLAUDE_RC_TOGGLE_REQUEST, fillPrompt } from '@hyperneo/prompts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { Logger } from '../logger.ts';
 import {
@@ -7,15 +7,20 @@ import {
   type ClaudeLiveSession,
   type ClaudeRecordCache,
   claudeRemoteLink,
-  launchInClaudeDesktop,
+  importClaudeDesktopSession,
   loadClaudeDesktopRecords,
   probeLiveClaudeSessions,
   runToExit,
+  requireClaudeRecord,
+  requireOpenClaudeRecord,
+  relayNativeDesktopMessage,
   sendClaudeMessage,
   waitUntilLive,
+  withRemoteControl,
 } from './claude-desktop-adapter.ts';
-import type { Result, WorkAdapter, WorkCallContext } from './types.ts';
+import type { Result, WorkAdapter, WorkCallContext, WorkDelivery } from './types.ts';
 import { reject } from './work-operations.ts';
+import { requireClaudePeerOwner } from './claude-session-owner.ts';
 
 export const RC_TOGGLE_TITLE = 'rc-toggle';
 
@@ -33,6 +38,40 @@ const alreadySet: { reason: RemoteControlOutcome } = {
 };
 type RcToggle = { record: ClaudeDesktopRecord & { cliSessionId: string }; live: boolean };
 
+function requireDesktopWakeOwner(record: RcToggle['record'], live: readonly ClaudeLiveSession[]) {
+  if (
+    record.desktopRegistered &&
+    !live.some((session) => session.sessionId === record.cliSessionId)
+  )
+    return { value: record };
+  const owner = requireClaudePeerOwner(record.cliSessionId, live);
+  if ('reason' in owner) return owner;
+  return owner.value.owner === 'desktop'
+    ? { value: record }
+    : {
+        reason: reject(
+          'unreachable',
+          'A live CLI process owns this session; native Desktop delivery was refused before requesting a helper.'
+        ),
+      };
+}
+
+function readyHelper(record: RcToggle['record'], liveSessions: readonly ClaudeLiveSession[]) {
+  const live = liveSessions.find((candidate) => candidate.sessionId === record.cliSessionId);
+  if (live?.owner !== 'desktop')
+    return {
+      reason: reject('unsupported', `${record.title} has no confirmed native Desktop owner.`),
+    };
+  return live.status === 'waiting'
+    ? {
+        reason: reject(
+          'not_delivered',
+          `${record.title} is waiting for ${live.waitingFor ?? 'a native permission prompt'}. Nothing was approved.`
+        ),
+      }
+    : { value: { record, liveSessions } };
+}
+
 export function requireDisconnectedTarget(
   target: RemoteControlTarget,
   records: readonly ClaudeDesktopRecord[]
@@ -46,13 +85,12 @@ export function requireDisconnectedTarget(
 
 export function findRcToggle(
   records: readonly ClaudeDesktopRecord[],
-  liveSessions: readonly ClaudeLiveSession[]
+  liveSessions: readonly ClaudeLiveSession[],
+  title = RC_TOGGLE_TITLE
 ): RcToggle | null {
   const live = new Set(liveSessions.map((session) => session.sessionId));
   const candidates = records
-    .filter(
-      (record) => record.title === RC_TOGGLE_TITLE && !record.isArchived && record.cliSessionId
-    )
+    .filter((record) => record.title === title && !record.isArchived && record.cliSessionId)
     .map((record) => ({
       record: record as RcToggle['record'],
       live: live.has(record.cliSessionId as string),
@@ -63,7 +101,7 @@ export function findRcToggle(
   return candidates[0] ?? null;
 }
 
-async function createRcToggle(deps: ClaudeDesktopAdapterDeps): Promise<Gate<RcToggle['record']>> {
+async function createWakeHelper(deps: ClaudeDesktopAdapterDeps): Promise<Gate<RcToggle['record']>> {
   const cliSessionId = deps.newId();
   const opened = await runToExit(
     deps,
@@ -73,47 +111,91 @@ async function createRcToggle(deps: ClaudeDesktopAdapterDeps): Promise<Gate<RcTo
       '--session-id',
       cliSessionId,
       '-n',
-      RC_TOGGLE_TITLE,
+      'desktop-wake',
       '--permission-mode',
-      'bypassPermissions',
+      'acceptEdits',
       '--model',
       'haiku',
+      '--max-turns',
+      '1',
+      '--tools',
+      '',
+      '--strict-mcp-config',
+      '--mcp-config',
+      '{"mcpServers":{}}',
       '--',
-      CLAUDE_RC_TOGGLE_BRIEF,
+      CLAUDE_DESKTOP_WAKE_BRIEF,
     ],
     deps.homeDir
   ).catch((error: unknown) => ({ code: -1, stdout: '', stderr: String(error) }));
   if (opened.code !== 0) {
-    return { reason: reject('not_delivered', `Could not create rc-toggle: ${opened.stderr}`) };
+    return { reason: reject('not_delivered', `Could not create desktop-wake: ${opened.stderr}`) };
   }
   return {
     value: {
       sessionId: `local_${cliSessionId}`,
       cliSessionId,
       cwd: deps.homeDir,
-      title: RC_TOGGLE_TITLE,
+      title: 'desktop-wake',
       isArchived: false,
       lastActivityAt: deps.now(),
     },
   };
 }
 
+type OpenHelper = Gate<{ record: RcToggle['record']; liveSessions: readonly ClaudeLiveSession[] }>;
+const openingWakeHelpers = new WeakMap<ClaudeDesktopAdapterDeps, Promise<OpenHelper>>();
+
 export async function openRcToggle(
   records: readonly ClaudeDesktopRecord[],
   liveSessions: readonly ClaudeLiveSession[],
-  deps: ClaudeDesktopAdapterDeps
+  deps: ClaudeDesktopAdapterDeps,
+  title = RC_TOGGLE_TITLE
+): Promise<OpenHelper> {
+  if (title !== 'desktop-wake') return openHelper(records, liveSessions, deps, title);
+  const pending = openingWakeHelpers.get(deps);
+  if (pending) return pending;
+  const opening = (async () => {
+    const current = await loadClaudeDesktopRecords(deps, new Map());
+    const live = await probeLiveClaudeSessions(deps);
+    if ('reason' in live) return live;
+    return openHelper(current, live.value, deps, title);
+  })();
+  openingWakeHelpers.set(deps, opening);
+  try {
+    return await opening;
+  } finally {
+    openingWakeHelpers.delete(deps);
+  }
+}
+
+async function openHelper(
+  records: readonly ClaudeDesktopRecord[],
+  liveSessions: readonly ClaudeLiveSession[],
+  deps: ClaudeDesktopAdapterDeps,
+  title = RC_TOGGLE_TITLE
 ): Promise<Gate<{ record: RcToggle['record']; liveSessions: readonly ClaudeLiveSession[] }>> {
-  const found = findRcToggle(records, liveSessions);
-  if (found?.live) return { value: { record: found.record, liveSessions } };
-  const created = found ? { value: found.record } : await createRcToggle(deps);
+  const found = findRcToggle(records, liveSessions, title);
+  if (found?.live) return readyHelper(found.record, liveSessions);
+  if (!found && title === RC_TOGGLE_TITLE)
+    return {
+      reason: reject(
+        'not_delivered',
+        'The existing authorized rc-toggle helper is unavailable; native approval may be required. No replacement was created.'
+      ),
+    };
+  const created =
+    found && title === RC_TOGGLE_TITLE ? { value: found.record } : await createWakeHelper(deps);
   if ('reason' in created) return created;
   const record = created.value;
   try {
-    launchInClaudeDesktop(
+    const imported = await importClaudeDesktopSession(
       record.cliSessionId,
       record.cwd ?? record.originCwd ?? deps.homeDir,
       deps
     );
+    if (!imported.ok) return { reason: imported };
+    Object.assign(record, imported.value);
   } catch (error) {
     return {
       reason: reject('not_delivered', error instanceof Error ? error.message : String(error)),
@@ -121,10 +203,54 @@ export async function openRcToggle(
   }
   const live = await waitUntilLive(record.cliSessionId, deps);
   if (!live) {
-    return { reason: reject('not_delivered', 'Claude Code Desktop did not open rc-toggle.') };
+    return { reason: reject('not_delivered', `Claude Code Desktop did not open ${title}.`) };
   }
-  return { value: { record, liveSessions: live } };
+  return readyHelper(record, live);
 }
+
+export const runClaudeDesktopWake = (superpipe({})('claude-desktop-native-wake') as PipelineAPI)
+  .input(['target', 'message', 'deps'])
+  .pipe(
+    (target: RemoteControlTarget) => ({ adapter: 'claude-desktop', id: target.sessionId }),
+    'target',
+    'ref'
+  )
+  .pipe(
+    (deps: ClaudeDesktopAdapterDeps) => loadClaudeDesktopRecords(deps, new Map()),
+    'deps',
+    'records'
+  )
+  .pipe(requireClaudeRecord, ['ref', 'records'], 'result:outcome')
+  .pipe(requireOpenClaudeRecord, 'outcome', 'result:outcome')
+  .pipe((record: RcToggle['record']) => record, 'outcome', 'record')
+  .pipe(probeLiveClaudeSessions, 'deps', 'result:outcome')
+  .pipe((live: readonly ClaudeLiveSession[]) => live, 'outcome', 'liveSessions')
+  .pipe(requireDesktopWakeOwner, ['record', 'liveSessions'], 'result:outcome')
+  .pipe(
+    (
+      records: readonly ClaudeDesktopRecord[],
+      live: readonly ClaudeLiveSession[],
+      deps: ClaudeDesktopAdapterDeps
+    ) => openRcToggle(records, live, deps, 'desktop-wake'),
+    ['records', 'liveSessions', 'deps'],
+    'result:outcome'
+  )
+  .pipe(
+    (
+      helper: { record: RcToggle['record']; liveSessions: readonly ClaudeLiveSession[] },
+      record: RcToggle['record'],
+      message: string,
+      deps: ClaudeDesktopAdapterDeps
+    ) => relayNativeDesktopMessage(record, helper.record, helper.liveSessions, message, deps),
+    ['outcome', 'record', 'message', 'deps'],
+    'outcome'
+  )
+  .pipe(withRemoteControl, ['outcome', 'record', 'deps'], 'outcome')
+  .endAsync('outcome') as (
+  target: RemoteControlTarget,
+  message: string,
+  deps: ClaudeDesktopAdapterDeps
+) => Promise<Result<WorkDelivery>>;
 
 export function sendRcToggleRequest(
   rcToggle: { record: RcToggle['record']; liveSessions: readonly ClaudeLiveSession[] },
@@ -159,7 +285,8 @@ export const runClaudeRemoteControlRequest = (
 export function withClaudeRemoteControl(
   adapter: WorkAdapter,
   deps: ClaudeDesktopAdapterDeps,
-  request: typeof runClaudeRemoteControlRequest = runClaudeRemoteControlRequest
+  request: typeof runClaudeRemoteControlRequest = runClaudeRemoteControlRequest,
+  wake: typeof runClaudeDesktopWake = runClaudeDesktopWake
 ): WorkAdapter {
   const start = adapter.start;
   if (!start) return adapter;
@@ -170,6 +297,32 @@ export function withClaudeRemoteControl(
       const started = await start(startRequest, context);
       if (started.ok) {
         const target = { sessionId: started.value.ref.id, title: started.value.title };
+        const delivery = await wake(target, startRequest.message, deps);
+        if (!delivery.ok)
+          return {
+            ...delivery,
+            detail: `${delivery.detail} Retained imported session ${JSON.stringify(started.value.ref)}. Open ${started.value.link ?? started.value.ref.id} and inspect work.status before sending again; native delivery may still arrive.`,
+          };
+        const status = await adapter.status?.(started.value.ref);
+        if (status?.ok) {
+          const {
+            status: state,
+            waitingFor,
+            permissionMode,
+            lastActivityAt,
+            watchHint,
+          } = status.value;
+          Object.assign(started.value, {
+            status: state,
+            waitingFor,
+            permissionMode,
+            lastActivityAt,
+            watchHint,
+          });
+        }
+        started.value.receipt = delivery.value.receipt;
+        started.value.watchHint =
+          `${started.value.watchHint ?? ''} Remote Control is requested separately through the existing rc-toggle; native approval may be required. A request is not a confirmed connection.`.trim();
         queue = queue
           .then(() => request(target, deps, new Map(), context))
           .then(
@@ -187,5 +340,7 @@ export function withClaudeRemoteControl(
       }
       return started;
     },
+    send: (ref, message) => wake({ sessionId: ref.id, title: ref.id }, message, deps),
+    steer: (ref, message) => wake({ sessionId: ref.id, title: ref.id }, message, deps),
   };
 }

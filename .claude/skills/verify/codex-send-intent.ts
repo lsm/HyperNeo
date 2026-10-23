@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { mkdirSync, existsSync, writeFileSync, appendFileSync } from 'node:fs';
+import { mkdirSync, existsSync, writeFileSync, appendFileSync, readFileSync, renameSync, unlinkSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { createServer as createHttpServer } from 'node:http';
 import { join, resolve } from 'node:path';
@@ -8,6 +8,8 @@ import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts'
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { subscribeToStructuredLogs } from '../../../packages/daemon/src/lib/logger.ts';
+import { startCodexDesktopTurn } from '../../../packages/daemon/src/lib/drivers/codex-desktop-handoff.ts';
+import { spawnProcess } from '../../../packages/daemon/src/lib/runtime-spawn/index.ts';
 
 const [action, portText, runText] = process.argv.slice(2);
 const port = Number(portText);
@@ -18,6 +20,12 @@ assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert(!existsSync(join(run, 'data/daemon.db')));
+const bin = join(run, 'bin');
+assert.equal(process.env.PATH?.split(':')[0], bin, 'Put the synthetic launcher on PATH before starting Bun');
+mkdirSync(bin, { recursive: true });
+const openLog = join(run, 'evidence/desktop-open.jsonl');
+writeFileSync(join(bin, 'open'), `#!/usr/bin/env bun\nimport { appendFileSync } from 'node:fs';\nappendFileSync(${JSON.stringify(openLog)}, JSON.stringify({ args: process.argv.slice(2), pid: process.pid })+String.fromCharCode(10));\nprocess.exit(process.argv.at(-1) === 'codex://threads/new-handoff-control' ? 0 : 1);\n`, { mode: 0o700 });
+assert.equal(Bun.which('open'), join(bin, 'open'), 'Never run the host Desktop launcher in this journey');
 const home = join(run, 'home/.codex');
 mkdirSync(join(home, 'ipc'), { recursive: true });
 mkdirSync(join(home, 'app-server-control'), { recursive: true });
@@ -43,6 +51,7 @@ let serverStartError = false;
 const calls: unknown[] = [];
 const logs: unknown[] = [];
 const replies: unknown[] = [];
+const timings: unknown[] = [];
 const unsubscribe = subscribeToStructuredLogs((event) => { if (event.module?.includes('codex-send')) logs.push(event); });
 const desktop = createServer((socket) => {
   let buffer = Buffer.alloc(0);
@@ -54,7 +63,7 @@ const desktop = createServer((socket) => {
       buffer = buffer.subarray(size + 4);
       calls.push({ desktop: request.method, version: request.version, params: request.params });
       const response = request.method === 'initialize' ? { resultType: 'success', result: { clientId: 'synthetic-client' } }
-        : request.method === 'thread-owner-discovery' ? owner === 'owned' ? { resultType: 'success', handledByClientId: 'fixture-owner' } : { resultType: 'error', error: owner === 'missing' ? 'no-client-found' : 'request-version-mismatch' }
+        : request.method === 'thread-owner-discovery' ? (owner === 'owned' || request.params?.conversationId === 'new-handoff-control') ? { resultType: 'success', handledByClientId: 'fixture-owner' } : { resultType: 'error', error: owner === 'missing' ? 'no-client-found' : 'request-version-mismatch' }
         : request.method === 'thread-follower-start-turn' ? startError ? { resultType: 'error', error: 'start unavailable' } : { resultType: 'success', result: { result: { turn: { id: 'desktop-started' } } } }
         : refuse ? { resultType: 'error', error: 'NoActiveTurn' } : { resultType: 'success', result: { result: { turnId: 'desktop-active' } } };
       const body = Buffer.from(JSON.stringify({ type: 'response', requestId: request.requestId, ...response }));
@@ -103,6 +112,27 @@ try {
     };
     ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: receipt ? { name: 'work.status', input: { ref: { adapter: 'codex-desktop', id: 'synthetic' }, receipt } } : adapters ? { name: 'work.adapters', input: {} } : describe ? { name: 'operations.describe', input: { name: 'work.send' } } : { name: 'work.send', input: { ref: { adapter: 'codex-desktop', id: 'synthetic' }, message: 'synthetic marker', ...(mode ? { mode } : {}) } }, timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
+  await startCodexDesktopTurn(join(home, 'ipc/ipc.sock'), spawnProcess, 'new-handoff-control', { threadId: 'new-handoff-control', input: [{ type: 'text', text: 'synthetic opening turn', text_elements: [] }] });
+  assert(calls.some(call => {
+    const request = call as { desktop?: string; params?: { conversationId?: string } };
+    return request.desktop === 'thread-follower-start-turn' && request.params?.conversationId === 'new-handoff-control';
+  }), 'New-thread control must open and hand off its first turn');
+  const desktopPath = join(home, 'ipc/ipc.sock');
+  const stalePath = join(home, 'ipc/stale.sock');
+  renameSync(desktopPath, stalePath);
+  await new Promise<void>(done => desktop.close(() => done()));
+  for (const socketState of ['missing', 'stale']) {
+    if (socketState === 'stale') renameSync(stalePath, desktopPath);
+    const began = performance.now();
+    const delivered = await send();
+    const elapsedMs = performance.now() - began;
+    assert(elapsedMs < 2000, `Existing ${socketState} socket delivery waited for Desktop: ${elapsedMs}ms`);
+    assert.equal(delivered.value.delivered, true);
+    assert.equal(delivered.value.steeredIntoTurnId, 'server-active');
+    timings.push({ socketState, existingDeliveryMs: elapsedMs });
+  }
+  unlinkSync(desktopPath);
+  await new Promise<void>(done => desktop.listen(desktopPath, done));
   const first = await send();
   if (action === 'reproduce') {
     assert.equal(first.value.queuedSubmissionId, 'synthetic-queue');
@@ -144,7 +174,11 @@ try {
     assert(!calls.slice(resumeBefore).some((call) => ['turn/start', 'thread/queue/add'].includes((call as { server: string }).server)));
     resumeError = 'thread synthetic already has an active writer'; owner = 'missing'; consumeQueue = true;
     const writerBefore = calls.length;
+    const writerBegan = performance.now();
     const writerDelivered = await send();
+    const writerElapsedMs = performance.now() - writerBegan;
+    timings.push({ existingOwnerlessDeliveryMs: writerElapsedMs });
+    assert(writerElapsedMs < 2000, `Existing delivery waited for ownership: ${writerElapsedMs}ms`);
     assert.equal(writerDelivered.ok, true, JSON.stringify(writerDelivered));
     assert(description.description.includes('already has an active writer'));
     assert.equal(writerDelivered.value.delivered, true);
@@ -187,11 +221,21 @@ try {
     assert.equal(impossible.reason, 'not_delivered');
     assert.match(impossible.detail, /start unavailable/);
     assert(!calls.slice(ownedBefore).some((call) => (call as { server?: string }).server === 'thread/queue/add'));
+    for (let n = 0; n < 50; n++) {
+      if (existsSync(openLog) && readFileSync(openLog, 'utf8').trim().split('\n').length >= 5) break;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert(existsSync(openLog), 'Ownerless existing delivery must request a best-effort Desktop open');
+    const opens = readFileSync(openLog, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    assert.deepEqual(opens[0].args, ['-g', 'codex://threads/new-handoff-control']);
+    assert.equal(opens.length, 5, 'Record missing-socket, stale-socket and both ownerless opens separately from the new-thread control');
+    assert(opens.slice(1).every(open => JSON.stringify(open.args) === JSON.stringify(['-g', 'codex://threads/synthetic'])));
+    timings.push({ bestEffortDesktopOpen: opens, nativeOwnerRemainedAbsent: true, launcherExit: 1 });
     assert(logs.length > 0, 'retained routing diagnostics required');
   }
   console.log(`${action} PASS: ${run}/evidence/observed.json`);
 } finally {
-  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ action, replies, calls, logs }, null, 2));
+  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ action, replies, calls, logs, timings }, null, 2));
   ws?.close(); await app.cleanup(); unsubscribe();
   for (const socket of server.clients) socket.terminate();
   await new Promise<void>((done) => server.close(() => done()));

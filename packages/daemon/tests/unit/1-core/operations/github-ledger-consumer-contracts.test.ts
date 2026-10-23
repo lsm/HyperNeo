@@ -54,7 +54,7 @@ describe('GitHub reader acquisition contracts', () => {
     expect(result.first.ledger[0]).toMatchObject({ pr: 'synthetic/ledger#7', state: 'merged' });
     expect(
       Object.values(result.initialRequests).reduce((sum: number, count) => sum + Number(count), 0)
-    ).toBe(7);
+    ).toBe(6);
     expect(result.repeatRequests).toEqual({
       'ledger-reconcile': 1,
       'work-detail': 1,

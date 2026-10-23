@@ -12,7 +12,7 @@ import {
   InternalEventBus,
   type DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus.ts';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { neoCoordinatorBinding } from '../../../../src/lib/neo/session-policy.ts';
 import { neoFolderPath } from '../../../../src/lib/neo/folder.ts';
@@ -37,7 +37,7 @@ const project = {
 
 describe('Neo MVP', () => {
   let sqlite: SQLite;
-  let service: NeoService;
+  let service: ReturnType<typeof createNeoService>;
   let db: Database;
   let sessions: SessionManager;
   let events: InternalEventBus<DaemonInternalEventMap>;
@@ -118,7 +118,7 @@ describe('Neo MVP', () => {
       getSessionAsync: async () => ({ handleInterrupt: interrupt }),
     } as unknown as SessionManager;
     events = new InternalEventBus<DaemonInternalEventMap>();
-    service = new NeoService(
+    service = createNeoService(
       db,
       sessions,
       { event: mock(() => {}) } as unknown as MessageHub,

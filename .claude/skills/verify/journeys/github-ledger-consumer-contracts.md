@@ -25,11 +25,12 @@ Nothing contacts real GitHub, auth files or Keychain. Only this test DB is writt
 Observe `evidence/consumers.json` and `evidence/requests.jsonl`:
 
 - `merged`: one PR agrees across public detail/list, branch, deploy and ledger.
-  The first request set produces seven upstream calls, one each for reconcile,
-  ask reference, work detail, query window, branch membership, merge commit and
+  The first request set now produces six logical gh calls, one each for reconcile,
+  work detail, query window, branch membership, merge commit and
   ancestry. The identical repeat still produces three calls: reconcile, work
-  detail and query window. These are the current duplication baseline, not a
-  reduction. Cached terminal/branch facts explain the other four zero repeats.
+  detail and query window. The public PR-reader slice removes the redundant ask
+  reference call from the historical seven-call baseline. Cached branch and
+  deployment facts explain the other zero repeats. These are not HTTP counts.
 - `head`: the old-head approval disappears after the head changes; an unresolved
   thread remains a blocker. This pins exact-head verdict and blocker behavior
   through the public operation, not only the summary parser.
@@ -55,5 +56,6 @@ this synthetic characterization. Do not synthesize a live GitHub event.
 
 The acquisition extraction (#8192) keeps `pr-ledger.ts` exports compatible while
 `pr-ledger-source.ts` owns the unchanged query and gh call. Repeat all three
-scenarios before/after; the baseline remains seven initial and three repeated
-requests. This move alone does not reduce reads or expand covered facts.
+scenarios before/after; that historical baseline was seven initial and three
+repeated requests. The current reader expectation is six and three. The source
+extraction alone did not reduce reads or expand covered facts.

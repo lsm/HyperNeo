@@ -2,7 +2,7 @@ import { receivedNeoHumanInput } from './human-input.ts';
 import { readNeoMessageStatuses, type NeoMessageStatusPresenter } from './message-status.ts';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 import { createNeoRuleQuestions } from './rule-questions.ts';
-import { createPackPreferenceQuestions } from './packs/preference-questions.ts';
+import { createPackPreferenceQuestions } from './preference-questions.ts';
 import { NeoSessionMessageRepository } from '../../storage/repositories/neo-session-message-repository.ts';
 import {
   NeoConversationWakeRepository,
@@ -17,7 +17,6 @@ import {
 } from './project-mirror.ts';
 import { neoFolderPath } from './folder.ts';
 import { isTempCwd } from '../drivers/claude-feed.ts';
-import { createNeoProjectTreeOperations } from './project-tree-operations.ts';
 import { createNeoProjectForgetOperation } from './project-forget-operation.ts';
 import { neoMirroredAliases } from './project-cleanup.ts';
 import { createNeoProjectCleanupApply } from './project-cleanup-apply.ts';
@@ -89,7 +88,7 @@ import {
   createPackPreferenceOperations,
   listPackPreferences,
   PackSettingSchema,
-} from './packs/preference-operations.ts';
+} from './preference-operations.ts';
 import { createNeoPreferenceOperation } from './model-preference.ts';
 import { planNeoRuleEdit } from './saved-rules.ts';
 
@@ -690,7 +689,7 @@ export function createNeoOperations(service: NeoService) {
     stop: (todo) => service.todoRunner.stop(todo),
   };
   return [
-    ...createNeoProjectTreeOperations(service.repo, (refs) => service.readRefStates(refs)),
+    ...service.packOperations,
     createNeoProjectForgetOperation(service.repo),
     createNeoIntakeOperation(
       service.db,

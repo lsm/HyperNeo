@@ -6,7 +6,7 @@ import { resolveSDKCliPath } from '../../../packages/daemon/src/lib/agent/sdk-cl
 import { Database } from '../../../packages/daemon/src/storage/database.ts';
 import { createReactiveDatabase } from '../../../packages/daemon/src/storage/reactive-database.ts';
 import { InternalEventBus } from '../../../packages/daemon/src/lib/internal-event-bus.ts';
-import { NeoService } from '../../../packages/daemon/src/lib/neo/service.ts';
+import { createNeoService } from '../../../packages/daemon/src/lib/neo/packs/runtime.ts';
 import { MessageQueue } from '../../../packages/daemon/src/lib/agent/message-queue.ts';
 import { QueryRunner } from '../../../packages/daemon/src/lib/agent/query-runner.ts';
 import { createNeoPublicationOperation } from '../../../packages/daemon/src/lib/neo/publication-operation.ts';
@@ -40,7 +40,7 @@ db.createSession({
   config: { model: 'claude-sonnet-4-20250514', maxTokens: 8192, temperature: 1 },
   metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 },
 });
-const neo = new NeoService(db, { getSessionAsync: async () => undefined } as never, { event: () => {} } as never, new InternalEventBus());
+const neo = createNeoService(db, { getSessionAsync: async () => undefined } as never, { event: () => {} } as never, new InternalEventBus());
 neo.repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
 const queue = new MessageQueue();
 queue.start();

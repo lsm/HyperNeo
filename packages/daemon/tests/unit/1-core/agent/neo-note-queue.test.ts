@@ -9,7 +9,7 @@ import {
   type DaemonInternalEventMap,
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus';
-import { NeoService } from '../../../../src/lib/neo/service';
+import { createNeoService } from '../../../../src/lib/neo/packs/runtime';
 import type { SessionManager } from '../../../../src/lib/session/session-manager';
 import type { Database } from '../../../../src/storage/database';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository';
@@ -21,7 +21,7 @@ import {
 
 type Harness = {
   db: Database;
-  service: NeoService;
+  service: ReturnType<typeof createNeoService>;
   agentSession: AgentSession;
   sessionId: string;
   failed: string[][];
@@ -51,7 +51,7 @@ async function makeHarness(sessionId: string): Promise<Harness> {
     },
     { subscriberName: 'test-failed-notes' }
   );
-  const service = new NeoService(
+  const service = createNeoService(
     db,
     { createSession: vi.fn(), getSessionAsync: vi.fn() } as unknown as SessionManager,
     { event: vi.fn() } as unknown as MessageHubType,

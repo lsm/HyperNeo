@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import type { SDKMessage, SDKResultSuccess, SDKUserMessage } from '@hyperneo/shared/sdk';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import {
   InternalEventBus,
@@ -11,12 +11,12 @@ import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
 describe('Neo terminal error results', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
-  let service: NeoService;
+  let service: ReturnType<typeof createNeoService>;
 
   beforeEach(async () => {
     db = await createTestDb();
     for (const id of ['root', 'worker', 'other']) db.createSession(createTestSession(id));
-    service = new NeoService(
+    service = createNeoService(
       db,
       {
         createSession: mock(async () => {}),

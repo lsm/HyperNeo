@@ -1,3 +1,4 @@
+import { neoSettingsPackBriefs } from '../../../../src/lib/neo/packs/index.ts';
 import { describe, expect, test } from 'bun:test';
 import { fillPrompt } from '@hyperneo/prompts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
@@ -24,7 +25,7 @@ describe('fillPrompt', () => {
   });
 
   test('leaves no placeholder in the Neo system prompt', () => {
-    expect(neoPrompt()).not.toContain('{{');
+    expect(neoPrompt(neoSettingsPackBriefs())).not.toContain('{{');
     expect(neoPrompt([])).not.toContain('{{');
   });
 });
