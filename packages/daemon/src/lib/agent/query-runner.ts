@@ -970,10 +970,7 @@ export class QueryRunner {
           session.id,
           optionsBuilder.getEffectiveThinkingLevel()
         );
-        setKeyBridgeThinkingOff(
-          session.id,
-          optionsBuilder.resolveThinkingOptions().thinking?.type === 'disabled'
-        );
+        setKeyBridgeThinkingOff(session.id, queryOptions.thinking?.type === 'disabled');
         const extraProviderManagedEnvVars = NON_ANTHROPIC_PREFIX_PROVIDER_VARS.filter(
           (key) => providerEnvVars[key] !== undefined
         );
