@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import {
   canSwitchModelLive,
   ModelSwitchHandler,
+  wireModelForLiveSwitch,
   modelSwitchTiming,
   type ModelSwitchHandlerContext,
 } from '../../../../src/lib/agent/model-switch-handler';
@@ -1074,11 +1075,24 @@ describe('model switch timing', () => {
     effortLevels,
   });
 
-  it('allows a live switch only within the native anthropic provider', () => {
+  it('allows a live switch within one provider that runs through the SDK directly', () => {
     expect(canSwitchModelLive(side('anthropic'), side('anthropic'))).toBe(true);
+    expect(canSwitchModelLive(side('glm'), side('glm'))).toBe(true);
+    expect(canSwitchModelLive(side('deepseek'), side('deepseek'))).toBe(true);
+    expect(canSwitchModelLive(side('kimi'), side('kimi'))).toBe(true);
     expect(canSwitchModelLive(side('anthropic'), side('glm'))).toBe(false);
-    expect(canSwitchModelLive(side('glm'), side('glm'))).toBe(false);
+    expect(canSwitchModelLive(side('opencode'), side('opencode'))).toBe(false);
     expect(canSwitchModelLive(side('acp'), side('acp'))).toBe(false);
+  });
+
+  it('gives the CLI the id the provider actually routes to', () => {
+    expect(wireModelForLiveSwitch('glm-5.3-flash[1m]', 'default', 'glm-5.3-flash')).toBe(
+      'glm-5.3-flash'
+    );
+    expect(wireModelForLiveSwitch('deepseek-v4-flash', 'claude-sonnet-4-6[1m]', 'x')).toBe(
+      'claude-sonnet-4-6[1m]'
+    );
+    expect(wireModelForLiveSwitch('kimi-k3', 'kimi-k3', undefined)).toBe('kimi-k3');
   });
 
   it('keeps the restart when the context window changes, so the compact window is rebuilt', () => {
