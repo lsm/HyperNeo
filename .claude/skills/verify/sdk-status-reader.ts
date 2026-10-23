@@ -60,7 +60,7 @@ try {
     app.db.saveUserMessage(sessionId, { type: 'user', uuid: `synthetic-${i}`, parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'text', text }, ...Array.from({ length: 3 }, () => ({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: large } }))] } } as SDKMessage, 'consumed');
     await wait(0);
   }
-  app.db.saveSDKMessage(sessionId, { type: 'user', uuid: 'complete-tool', parent_tool_use_id: null, isReplay: true, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'synthetic-tool', content: 'tool-result-kept-forever\n'.repeat(50_000) }] } } as SDKMessage);
+  await app.db.saveSDKMessage(sessionId, { type: 'user', uuid: 'complete-tool', parent_tool_use_id: null, isReplay: true, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'synthetic-tool', content: 'tool-result-kept-forever\n'.repeat(50_000) }] } } as SDKMessage);
   const largeSession = await rpc('session.create', { workspacePath: join(run, 'workspace'), title: 'Complete large text', config: { queryMode: 'manual' } }) as { sessionId: string };
   const largeText = 'large-text-kept-forever\n'.repeat(500_000);
   app.db.saveUserMessage(largeSession.sessionId, { type: 'user', uuid: 'complete-large-text', parent_tool_use_id: null, message: { role: 'user', content: largeText } } as SDKMessage, 'consumed');

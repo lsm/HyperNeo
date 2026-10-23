@@ -91,7 +91,7 @@ try {
   assert.equal((evidence.processes as unknown[]).length, 2);
   if (process.argv.includes('--historical-result')) {
     const text = 'Synthetic GLM key rejected (401)';
-    assert(app.db.saveSDKMessage(sessionId, { type: 'result', subtype: 'success',
+    assert(await app.db.saveSDKMessage(sessionId, { type: 'result', subtype: 'success',
       session_id: sessionId, uuid: crypto.randomUUID(), is_error: true, result: text,
       duration_ms: 1, duration_api_ms: 1, num_turns: 1, total_cost_usd: 0,
       usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },

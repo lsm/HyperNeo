@@ -79,7 +79,7 @@ try {
     await pause();
   }
   const resultId = 'proof-recovery';
-  assert(app!.db.saveSDKMessage('synthetic-live', { type: 'result', uuid: resultId, subtype: 'success', result: 'complete' } as SDKMessage));
+  assert(await app!.db.saveSDKMessage('synthetic-live', { type: 'result', uuid: resultId, subtype: 'success', result: 'complete' } as SDKMessage));
   repo.markResultRecoveryIntercepted('synthetic-live', resultId, true);
   repo.markResultInternalCompactionTurn('synthetic-live', resultId);
   const recovery = first.prepare('SELECT m.sdk_message AS original,b.sdk_message AS body FROM sdk_messages m JOIN sdk_message_bodies b USING(seq) WHERE m.sdk_uuid=?').get(resultId) as { original: string; body: string };
