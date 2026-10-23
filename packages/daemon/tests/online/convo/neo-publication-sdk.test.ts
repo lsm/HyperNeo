@@ -690,6 +690,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
     await new Promise((resolve) => setTimeout(resolve, 3000));
     expect(nudged, 'ending with Done. keeps the CLI from nudging for visible output').toEqual([]);
     const { neoPrompt } = await import('../../../src/lib/neo/prompt.ts');
+    const { neoSettingsPackBriefs } = await import('../../../src/lib/neo/packs/index.ts');
     if (process.env.VERIFY_EVIDENCE_DIR) {
       await mkdir(process.env.VERIFY_EVIDENCE_DIR, { recursive: true });
       await writeFile(
@@ -779,7 +780,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
     expect(nativeToolsSeen[0]).not.toEqual(expect.arrayContaining(['Edit']));
     expect(approvalProbeDenied).toBe(sandboxProof);
     expect(existsSync(approvalProbeFile)).toBe(false);
-    expect(storedAtStartup.config.systemPrompt).toBe(neoPrompt());
+    expect(storedAtStartup.config.systemPrompt).toBe(neoPrompt(neoSettingsPackBriefs()));
     expect(storedAtStartup.config.sdkToolsPreset).toContain('Read');
     expect(storedAtStartup.config.sdkToolsPreset).toContain('Bash');
     expect(storedAtStartup.config.sandbox).toMatchObject({
@@ -792,7 +793,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
     expect(daemon.db.getSession(root)?.sdkSessionId).toBe(sdkSessionId);
     expect(daemon.db.getSession(root)?.sdkOriginPath).toBe(newCwd);
     expect(existsSync(getSDKSessionFilePath(newCwd, sdkSessionId))).toBe(true);
-    expect(sent[0].system).toContain(neoPrompt());
+    expect(sent[0].system).toContain(neoPrompt(neoSettingsPackBriefs()));
     expect(sent[0].system).not.toContain('On a scheduled goal wake, use its goalId');
     for (const instruction of [
       'neo.home.init',

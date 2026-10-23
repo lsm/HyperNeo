@@ -1,11 +1,10 @@
 import { generateUUID } from '@hyperneo/shared';
-import type { Database as BunDatabase } from '../sqlite-compat.ts';
-import type { WorkRef } from '../../lib/drivers/types.ts';
-
 import type {
   SessionSchedule,
   SessionScheduleStatus,
 } from '@hyperneo/shared/types/session-schedule';
+import type { WorkRef } from '../../lib/drivers/types.ts';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 
 export type {
   SessionSchedule,
@@ -146,12 +145,31 @@ export class SessionScheduleRepository {
 
   countDue(id: string, jobId: string, dueAt: number, now: number): SessionSchedule | null {
     this.db
-      .prepare(`UPDATE session_schedules SET due_count = due_count + 1,
-      last_run_at = ?, updated_at = ? WHERE id = ? AND status = 'active'
+      .prepare(`UPDATE session_schedules SET last_run_at = ?, updated_at = ? WHERE id = ? AND status = 'active'
       AND pending_job_id = ? AND (last_run_at IS NULL OR last_run_at < ?)`)
       .run(now, now, id, jobId, dueAt);
     const row = this.get(id);
     return row?.status === 'active' && row.pendingJobId === jobId ? row : null;
+  }
+
+  progressKey(schedule: SessionSchedule): string | null {
+    const target = schedule.target;
+    if (target.adapter !== 'hyperneo' || target.daemon) return null;
+    const input = this.db
+      .prepare(`SELECT MAX(seq) AS seq FROM sdk_messages
+      WHERE session_id = ? AND message_type = 'user' AND input_kind IN ('human', 'task')`)
+      .get(target.id) as { seq: number | null };
+    const asks = this.db
+      .prepare(`SELECT id, title, request, status, outcome FROM neo_asks
+      WHERE session_id = ? ORDER BY id`)
+      .all(target.id);
+    const todos = this.db
+      .prepare(`SELECT t.id, t.title, t.state, t.done_when, t.check_json
+      FROM neo_todos t JOIN neo_asks a ON a.id = t.ask_id WHERE a.session_id = ? ORDER BY t.id`)
+      .all(target.id);
+    return input.seq || asks.length || todos.length
+      ? JSON.stringify([input.seq, asks, todos])
+      : null;
   }
 
   recordOutcome(
@@ -170,7 +188,7 @@ export class SessionScheduleRepository {
           outcome.startsWith('skipped_') ? outcome.slice(8) : null,
           digest,
           messageId,
-          outcome === 'fired' ? 0 : schedule.dueCount,
+          outcome === 'fired' || outcome === 'progress' ? 0 : schedule.dueCount,
           Date.now(),
           schedule.id,
           schedule.pendingJobId

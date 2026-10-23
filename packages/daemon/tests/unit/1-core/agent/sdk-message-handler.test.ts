@@ -106,7 +106,6 @@ describe('SDKMessageHandler', () => {
   let hasQueuedMessagesSpy: ReturnType<typeof mock>;
   let hasOutstandingInternalCompactionSpy: ReturnType<typeof mock>;
   let hasCompactionsAwaitingBoundarySpy: ReturnType<typeof mock>;
-  let pruneSentPromptsSpy: ReturnType<typeof mock>;
   let acknowledgeCompactionsAwaitingBoundarySpy: ReturnType<typeof mock>;
   let armInternalCompactionResultAttributionSpy: ReturnType<typeof mock>;
   let consumeInternalCompactionResultAttributionSpy: ReturnType<typeof mock>;
@@ -119,7 +118,6 @@ describe('SDKMessageHandler', () => {
   let resetCompactOutcomeSpy: ReturnType<typeof mock>;
   let noteResultForCompactionRecoverySpy: ReturnType<typeof mock>;
   let removePendingInternalCompactionsSpy: ReturnType<typeof mock>;
-  let clearNonCompactionSentSinceBoundarySpy: ReturnType<typeof mock>;
   let getStateSpy: ReturnType<typeof mock>;
 
   beforeEach(() => {
@@ -224,7 +222,6 @@ describe('SDKMessageHandler', () => {
     hasQueuedMessagesSpy = mock(() => false);
     hasOutstandingInternalCompactionSpy = mock(() => false);
     hasCompactionsAwaitingBoundarySpy = mock(() => false);
-    pruneSentPromptsSpy = mock(() => {});
     acknowledgeCompactionsAwaitingBoundarySpy = mock(() => {});
     armInternalCompactionResultAttributionSpy = mock(() => {});
     consumeInternalCompactionResultAttributionSpy = mock(() => false);
@@ -237,7 +234,6 @@ describe('SDKMessageHandler', () => {
     resetCompactOutcomeSpy = mock(() => {});
     noteResultForCompactionRecoverySpy = mock(() => {});
     removePendingInternalCompactionsSpy = mock(() => 0);
-    clearNonCompactionSentSinceBoundarySpy = mock(() => {});
     mockMessageQueue = {
       enqueue: enqueueMessageSpy,
       enqueueWithId: mock(async () => {}),
@@ -255,7 +251,6 @@ describe('SDKMessageHandler', () => {
       hasCompactionsAwaitingBoundary: hasCompactionsAwaitingBoundarySpy,
       hasOutstandingNonCompactionMessages: mock(() => false),
       isRunning: mock(() => true),
-      pruneSentPrompts: pruneSentPromptsSpy,
       acknowledgeCompactionsAwaitingBoundary: acknowledgeCompactionsAwaitingBoundarySpy,
       armInternalCompactionResultAttribution: armInternalCompactionResultAttributionSpy,
       consumeInternalCompactionResultAttribution: consumeInternalCompactionResultAttributionSpy,
@@ -268,8 +263,6 @@ describe('SDKMessageHandler', () => {
       resetCompactOutcome: resetCompactOutcomeSpy,
       noteResultForCompactionRecovery: noteResultForCompactionRecoverySpy,
       removePendingInternalCompactions: removePendingInternalCompactionsSpy,
-      clearNonCompactionSentSinceBoundary: clearNonCompactionSentSinceBoundarySpy,
-      noteBoundaryCompleted: mock(() => {}),
       forgetSentPrompt: mock(() => {}),
       getSentPromptContent: mock(() => undefined),
     } as unknown as MessageQueue;
@@ -4107,26 +4100,6 @@ describe('SDKMessageHandler', () => {
       expect(setCompactingSpy).not.toHaveBeenCalled();
     });
 
-    it('asks the session to resume pending work after a compaction boundary', async () => {
-      mockContext.queryObject = null;
-      const resumeSpy = mock(() => {});
-      (
-        mockContext as { resumePendingWorkAfterCompaction?: () => void }
-      ).resumePendingWorkAfterCompaction = resumeSpy;
-      const message: SDKMessage = {
-        type: 'system',
-        subtype: 'compact_boundary',
-        uuid: 'test-uuid',
-        compact_metadata: { trigger: 'auto', pre_tokens: 50000 },
-      } as unknown as SDKMessage;
-
-      await handler.handleMessage(message);
-
-      expect(resumeSpy).toHaveBeenCalledTimes(1);
-      expect(acknowledgeCompactionsAwaitingBoundarySpy).not.toHaveBeenCalled();
-      expect(clearNonCompactionSentSinceBoundarySpy).toHaveBeenCalledTimes(1);
-    });
-
     it('cancels queued daemon compactions superseded by an SDK compact boundary', async () => {
       mockContext.queryObject = null;
       removePendingInternalCompactionsSpy.mockImplementation(() => 1);
@@ -4141,7 +4114,6 @@ describe('SDKMessageHandler', () => {
 
       expect(removePendingInternalCompactionsSpy).toHaveBeenCalledTimes(1);
       expect(acknowledgeCompactionsAwaitingBoundarySpy).not.toHaveBeenCalled();
-      expect(clearNonCompactionSentSinceBoundarySpy).toHaveBeenCalledTimes(1);
     });
 
     it('acknowledges the compact boundary before the compacting-state publication settles', async () => {
@@ -6262,60 +6234,6 @@ describe('SDKMessageHandler', () => {
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
         expect(enqueueMessageSpy).not.toHaveBeenCalled();
-      });
-
-      it('clears the pending post-compaction resume when the turn-end decision is not a compaction', async () => {
-        const clearSpy = mock(() => {});
-        (
-          mockContext as { clearPendingResumeAfterCompaction?: () => void }
-        ).clearPendingResumeAfterCompaction = clearSpy;
-        const { h } = budgetCase({ totalUsed: 50_000 });
-
-        await h.handleMessage(turnEndResult());
-        await new Promise((resolve) => setTimeout(resolve, 0));
-
-        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true, {
-          durable: true,
-          prepend: true,
-        });
-        expect(clearSpy).toHaveBeenCalledTimes(1);
-      });
-
-      it('keeps the pending post-compaction resume while a daemon compaction is queued or running', async () => {
-        const clearSpy = mock(() => {});
-        (
-          mockContext as { clearPendingResumeAfterCompaction?: () => void }
-        ).clearPendingResumeAfterCompaction = clearSpy;
-        hasOutstandingInternalCompactionSpy.mockImplementation(() => true);
-        const { h } = budgetCase();
-
-        await h.handleMessage(turnEndResult());
-        await new Promise((resolve) => setTimeout(resolve, 0));
-
-        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true, {
-          durable: true,
-          prepend: true,
-        });
-        expect(clearSpy).not.toHaveBeenCalled();
-      });
-
-      it('asks the session to resume pending work when a turn-end refresh finds no context info', async () => {
-        const resumeSpy = mock(() => {});
-        (
-          mockContext as { resumePendingWorkAfterCompaction?: () => void }
-        ).resumePendingWorkAfterCompaction = resumeSpy;
-        (
-          mockContext as { clearPendingResumeAfterCompaction?: () => void }
-        ).clearPendingResumeAfterCompaction = mock(() => {});
-        const getContextUsageSpy = mock(async () => null);
-        const { h } = budgetCase();
-        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
-
-        await h.handleMessage(turnEndResult());
-        await new Promise((resolve) => setTimeout(resolve, 0));
-
-        expect(getContextUsageSpy).toHaveBeenCalled();
-        expect(resumeSpy).toHaveBeenCalledTimes(1);
       });
     });
 

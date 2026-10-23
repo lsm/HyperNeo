@@ -18,6 +18,8 @@ env -i HOME="$RUN/home" PATH="$RUN/bin:$PATH" NODE_ENV=test \
   bun .claude/skills/verify/github-ledger-polling.ts normal "$RUN"
 ```
 
+The 18/18 counts below describe the historical Extract baseline. Current commands
+run the Wire contract; expected counts are in `github-ledger-poll-wire.md`.
 Repeat with `conditional` and `failure`. The helper owns an isolated daemon,
 database, fake gh and local Git origin; it refuses direct HTTP and port 8399.
 No model, GUI, real GitHub or credentials are used. Resources close in finally.

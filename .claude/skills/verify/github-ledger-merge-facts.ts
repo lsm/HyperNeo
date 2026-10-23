@@ -23,7 +23,7 @@ const value = { state: 'MERGED', mergeCommit: 'c'.repeat(40) } as const;
 const network = globalThis.fetch;
 globalThis.fetch = (() => { throw new Error('No real HTTP in this proof'); }) as typeof fetch;
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined, ws: WebSocket | undefined;
-const evidence: Record<string, unknown> = { consumerWired: false, quotaReduction: 0 };
+const evidence: Record<string, unknown> = { deployConsumerExercised: false, quotaReduction: 0 };
 const count = () => existsSync(join(run, 'evidence/requests.jsonl')) ? readFileSync(join(run, 'evidence/requests.jsonl'), 'utf8').trim().split('\n').filter(Boolean).length : 0;
 try {
   for (const phase of ['initial', 'reopened']) {
@@ -66,7 +66,7 @@ try {
     ws.close(); ws = undefined; await app.cleanup(); app = undefined;
   }
   evidence.verified = true;
-  console.log('PASS: isolated daemon local merge facts survive restart, refuse stale writers and expose unknown coverage; existing public detail stays compatible. Consumer wiring remains pending.');
+  console.log('PASS: isolated daemon local merge facts survive reopen, refuse stale writers and expose unknown coverage; existing public detail stays compatible. Deploy reader wiring has a separate journey.');
 } finally {
   writeFileSync(join(run, 'evidence/merge-facts.json'), JSON.stringify(evidence, null, 2));
   ws?.close(); await app?.cleanup(); globalThis.fetch = network;

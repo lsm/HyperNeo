@@ -8,7 +8,7 @@ import {
   requireNeoPreferenceModel,
 } from '../../../../src/lib/neo/model-preference.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
@@ -157,7 +157,7 @@ describe('planNeoAlignment', () => {
 
 describe('neo.preferences.set', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
-  let service: NeoService;
+  let service: ReturnType<typeof createNeoService>;
   let switched: unknown[];
   let updated: unknown[];
   let restarted: unknown[];
@@ -223,7 +223,7 @@ describe('neo.preferences.set', () => {
       },
     };
     events = new InternalEventBus<DaemonInternalEventMap>();
-    service = new NeoService(
+    service = createNeoService(
       db,
       sessions as unknown as SessionManager,
       { event: mock(() => {}) } as unknown as MessageHub,
@@ -424,6 +424,89 @@ describe('neo.preferences.set', () => {
       fallbacks: [],
     });
     expect(db.getGlobalSettings().neo?.preferences).toMatchObject({ fallbacks: [] });
+  });
+
+  test('stores a percentage per model and gives the Neo session the one for the model it runs', async () => {
+    const result = await invoke('neo.preferences.set', {
+      model: 'claude-opus',
+      provider: 'anthropic',
+      thinkingLevel: 'off',
+      autoCompactPercent: 70,
+      fallbacks: [
+        {
+          model: 'deepseek-v4-flash',
+          provider: 'deepseek',
+          thinkingLevel: 'off',
+          autoCompactPercent: 101,
+        },
+      ],
+    });
+    expect(result).toMatchObject({ value: { ok: true } });
+    expect(db.getGlobalSettings().neo?.preferences).toMatchObject({
+      autoCompactPercent: 70,
+      fallbacks: [{ model: 'deepseek-v4-flash', autoCompactPercent: 100 }],
+    });
+    expect(db.getSession('neo:root')?.config.autoCompactPercent).toBe(70);
+    db.updateSession('neo:root', {
+      config: {
+        ...db.getSession('neo:root')!.config,
+        model: 'deepseek-v4-flash',
+        provider: 'deepseek',
+      },
+    });
+    switchFailure = 'refused';
+    await service.saveModelPreference(db.getGlobalSettings().neo!.preferences!);
+    expect(db.getSession('neo:root')?.config.autoCompactPercent).toBe(100);
+    switchFailure = 'pending';
+    await service.saveModelPreference(db.getGlobalSettings().neo!.preferences!);
+    expect(db.getSession('neo:root')?.config).toMatchObject({
+      model: 'deepseek-v4-flash',
+      autoCompactPercent: 70,
+    });
+  });
+
+  test('a mid-run switch to a fallback gives the Neo session that model percentage', async () => {
+    await invoke('neo.preferences.set', {
+      model: 'claude-opus',
+      provider: 'anthropic',
+      thinkingLevel: 'off',
+      autoCompactPercent: 70,
+      fallbacks: [
+        {
+          model: 'deepseek-v4-flash',
+          provider: 'deepseek',
+          thinkingLevel: 'off',
+          autoCompactPercent: 80,
+        },
+      ],
+    });
+    expect(db.getSession('neo:root')?.config.autoCompactPercent).toBe(70);
+    const config = {
+      ...db.getSession('neo:root')!.config,
+      model: 'deepseek-v4-flash',
+      provider: 'deepseek' as const,
+    };
+    db.updateSession('neo:root', { config });
+    await events.publish('session.updated', {
+      sessionId: 'neo:root',
+      source: 'status',
+      session: { config },
+    });
+    expect(db.getSession('neo:root')?.config.autoCompactPercent).toBe(70);
+    await events.publish('session.updated', {
+      sessionId: 'neo:root',
+      source: 'model-switch',
+      session: { config },
+    });
+    expect(db.getSession('neo:root')?.config.autoCompactPercent).toBe(80);
+    const back = { ...config, model: 'claude-opus', provider: 'anthropic' as const };
+    db.updateSession('neo:root', { config: back });
+    await events.publish('session.updated', {
+      sessionId: 'neo:root',
+      source: 'model-refusal-fallback',
+      session: { config: back },
+    });
+    expect(db.getSession('neo:root')?.config.autoCompactPercent).toBe(70);
   });
 
   test('a new Neo session starts on the preference, thinking included', async () => {

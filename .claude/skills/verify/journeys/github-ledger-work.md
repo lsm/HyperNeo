@@ -14,11 +14,11 @@ The helper owns an ephemeral loopback daemon, a synthetic DB and refusing fake g
 No model, GUI, real GitHub, keys or credential files are used; direct HTTP throws.
 Five concurrent public `neo.github.read` requests receive the same current-head
 approval and unresolved-thread blocker. Before wiring, they cause five work-detail
-acquisitions. After, one ledger acquisition serves all five. Other acquisition
-families, including ask-reference reads, are not migrated by this slice. The
-complete work family drops from fifteen lookups to three (detail, rules and
-blocker detail each once); the same five ask-reference lookups remain. These
-are logical gh invocations, not exact HTTP requests or GraphQL points.
+acquisitions. After, one ledger acquisition serves all five. The later public
+PR-reader slice removes its redundant reference lookup: the current initial
+fanout uses three logical gh invocations (detail, rules and blocker detail),
+versus four immediately before that slice. See `github-ledger-pr-read.md`.
+These are logical gh invocations, not exact HTTP requests or GraphQL points.
 
 A later human read makes a fresh attempt. Changing the head removes the old
 approval immediately; failure returns typed unreadable rather than the prior
@@ -36,7 +36,7 @@ five-versus-one assertion; a timeout or mismatched RPC reply is inconclusive.
 Run `neo-work-ledger`, `neo-work-prs`, `neo-coding-pr-ledger`,
 `github-ledger-consumer-contracts`, `neo-ledger-merge-facts` and `neo-branch-ledger`
 from `packages/daemon`. Keep all three original consumer RPC scenarios and their
-seven initial / three repeated lookup baseline: fresh sequential human reads are
+current six initial / three repeated lookup counts: fresh sequential human reads are
 preserved. This slice reduces concurrent duplicate work acquisition; it does not
 claim aggregate live request or GraphQL-cost savings. The envelope covers the
 existing work-view projection, not raw review eligibility or a new merge gate.

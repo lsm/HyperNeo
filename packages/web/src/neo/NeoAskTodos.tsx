@@ -396,7 +396,7 @@ export function NeoAskTodos({
   onAnswer: (questionId: string, answer: NeoQuestionAnswer) => void;
   onReply?: (question: NeoQuestionEntry) => void;
   onOpen?: (link: string, title: string) => void;
-  onSettle?: (status: 'done' | 'dropped') => void;
+  onSettle?: (status: 'done' | 'dropped') => void | Promise<void>;
   onLoadDone?: (askId: string, offset: number) => Promise<NeoDoneTodosPage>;
 }) {
   const [open, setOpen] = useState(false);
@@ -405,6 +405,15 @@ export function NeoAskTodos({
   const [stalled, setStalled] = useState(false);
   const [paging, setPaging] = useState(false);
   const [doneError, setDoneError] = useState<string | null>(null);
+  const [settleError, setSettleError] = useState<string | null>(null);
+  const settle = async (status: 'done' | 'dropped') => {
+    setSettleError(null);
+    try {
+      await onSettle?.(status);
+    } catch (cause) {
+      setSettleError(cause instanceof Error ? cause.message : t('ask.settleFailed'));
+    }
+  };
   const { ask, todos } = entry;
   const { expanded, setExpanded } = useExpandedTodos(ask.sessionId, ask.id);
   const asked = entry.questions.filter((question) => question.state === 'open');
@@ -460,10 +469,10 @@ export function NeoAskTodos({
           <Dropdown
             position="right"
             items={[
-              { label: t('ask.markDone'), onClick: () => onSettle('done'), disabled },
+              { label: t('ask.markDone'), onClick: () => void settle('done'), disabled },
               {
                 label: t('ask.drop'),
-                onClick: () => onSettle('dropped'),
+                onClick: () => void settle('dropped'),
                 danger: true,
                 disabled,
               },
@@ -479,6 +488,11 @@ export function NeoAskTodos({
       <h3 class="mt-2 line-clamp-3 break-words text-base font-semibold leading-snug">
         {ask.title}
       </h3>
+      {settleError && (
+        <p role="alert" class="mt-2 break-words text-sm text-danger">
+          {settleError}
+        </p>
+      )}
       {asked.map((question) => (
         <QuestionBox
           key={question.id}

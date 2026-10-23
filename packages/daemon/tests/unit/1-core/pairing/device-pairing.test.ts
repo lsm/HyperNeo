@@ -8,7 +8,12 @@ import {
   NO_HUMAN_DEVICE,
 } from '../../../../src/lib/pairing/pairing-operations.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
-import { DevicePairingRepository } from '../../../../src/storage/repositories/device-pairing-repository.ts';
+import {
+  DevicePairingRepository,
+  recordUnpaired,
+  recordWouldRefuse,
+  touchDevice,
+} from '../../../../src/storage/repositories/device-pairing-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
@@ -266,7 +271,7 @@ describe('device pairing', () => {
   });
 
   test('a browser gets its credential only as an HttpOnly cookie, Secure when its page is HTTPS', async () => {
-    const { repo } = setup();
+    const { db, repo } = setup();
     const route = createPairRoute({ repo, limiter: createPairingLimiter(), now: () => 1_000_000 });
     const redeem = async (origin: string) => {
       const made = repo.createCode('human', null, true, 1_000_000);
@@ -288,7 +293,11 @@ describe('device pairing', () => {
       ['HttpOnly', 'Max-Age=34560000', 'Path=/', 'SameSite=Strict', 'Secure'].sort()
     );
     expect(
-      repo.touchDevice(cookie.slice('hyperneo_device='.length, cookie.indexOf(';')), 'h', 1)
+      touchDevice.run(db, {
+        credential: cookie.slice('hyperneo_device='.length, cookie.indexOf(';')),
+        host: 'h',
+        now: 1,
+      })
     ).toMatchObject({ kind: 'human' });
     const plain = await redeem('http://127.0.0.1:9283');
     expect(plain.response.headers.get('set-cookie')).not.toContain('Secure');
@@ -296,26 +305,26 @@ describe('device pairing', () => {
 
   test('a paired human or the CLI reads the unpaired connections seen, newest first', async () => {
     const { db, call, pair, repo } = setup();
-    repo.recordUnpaired(
-      {
+    recordUnpaired.run(db, {
+      seen: {
         client: 'native',
         origin: null,
         host: 'mac:9283',
         remoteAddress: '10.0.0.2',
         credentialRejected: false,
       },
-      1_000
-    );
-    repo.recordUnpaired(
-      {
+      now: 1_000,
+    });
+    recordUnpaired.run(db, {
+      seen: {
         client: 'browser',
         origin: 'https://evil.example',
         host: 'mac:9283',
         remoteAddress: '10.0.0.3',
         credentialRejected: true,
       },
-      2_000
-    );
+      now: 2_000,
+    });
     expect(await call('device.unpaired.list', {}, human)).toEqual({
       ok: false,
       reason: NEEDS_PAIRED_HUMAN,
@@ -353,10 +362,10 @@ describe('device pairing', () => {
 
   test('a paired human or the CLI reads the requests Origin/Host checks would refuse', async () => {
     const { db, call, pair, repo } = setup();
-    repo.recordWouldRefuse(
-      { reason: 'host_not_allowed', kind: 'ws', host: 'mac.ts.net', origin: null },
-      5
-    );
+    recordWouldRefuse.run(db, {
+      seen: { reason: 'host_not_allowed', kind: 'ws', host: 'mac.ts.net', origin: null },
+      now: 5,
+    });
     expect(await call('device.would_refuse.list', {}, human)).toEqual({
       ok: false,
       reason: NEEDS_PAIRED_HUMAN,

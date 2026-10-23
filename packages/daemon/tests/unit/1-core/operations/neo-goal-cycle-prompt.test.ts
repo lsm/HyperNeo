@@ -1,10 +1,13 @@
+import { neoSettingsPackBriefs } from '../../../../src/lib/neo/packs/index.ts';
 import { describe, expect, test } from 'bun:test';
 import { NEO_GOAL_CYCLE, NEO_ROOT_PROMPT } from '@hyperneo/prompts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 
 describe('Neo scheduled goal-cycle guidance', () => {
   test.each([false, true])('reaches Neo with domain packs enabled: %s', (packsEnabled) => {
-    expect(packsEnabled ? neoPrompt() : neoPrompt([])).not.toContain(NEO_GOAL_CYCLE);
+    expect(packsEnabled ? neoPrompt(neoSettingsPackBriefs()) : neoPrompt([])).not.toContain(
+      NEO_GOAL_CYCLE
+    );
     const text = NEO_GOAL_CYCLE;
     expect(text).toContain('On a scheduled goal wake');
     for (const operation of [

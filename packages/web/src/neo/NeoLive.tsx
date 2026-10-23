@@ -624,7 +624,7 @@ export function NeoLive() {
                           }
                         : undefined
                     }
-                    onSettle={(status) => void neo.settleAsk(entry.ask.id, status)}
+                    onSettle={(status) => neo.settleAsk(entry.ask.id, status)}
                     onLoadDone={(askId, offset) =>
                       connectionManager.getHub().then((hub) =>
                         invokeOperation<NeoDoneTodosPage>(hub, 'neo.ask.doneTodos', {

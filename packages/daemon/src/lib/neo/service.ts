@@ -1,6 +1,7 @@
+import type { SessionSchedule } from '../../storage/repositories/session-schedule-repository.ts';
+import { neoDerivedId } from './derived-id.ts';
 import { receivedNeoHumanInput } from './human-input.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
-import { hostname } from 'node:os';
 import { fillPrompt, NEO_SESSION_TRACK } from '@hyperneo/prompts';
 import type {
   GlobalSettings,
@@ -9,36 +10,23 @@ import type {
   Session,
   SessionConfig,
 } from '@hyperneo/shared';
-import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
-import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
-import type { NeoWorkingEvent, NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
+import type { NeoWorkingEvent } from '@hyperneo/shared/types/neo-snapshot';
 import { type NeoModelPreference } from '@hyperneo/shared/types/settings';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
-import { NeoCardEventSubscriptionRepository } from '../../storage/repositories/neo-card-event-subscription-repository.ts';
 import { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
 import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session-seen-repository.ts';
 import { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
-import { SessionEventSubscriptionRepository } from '../../storage/repositories/session-event-subscription-repository.ts';
 import { createArtifactRefReader } from '../artifacts/read-operations.ts';
-import { BUILD_METADATA } from '../build-metadata.ts';
 import { readWorkerIdentity, sessionWorkerRef } from './worker-identity.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
 import type { WorkRef } from '../drivers/types.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
-import type { ExternalEventPublishedPayload } from '../external-events/external-event-service.ts';
-import { requireClosedPrEvent } from '../external-events/session-subscription-close.ts';
-import { sessionEventText } from '../external-events/session-event-delivery.ts';
-import {
-  SESSION_EVENT_SCOPE,
-  SessionExternalEventStore,
-} from '../external-events/session-external-event-store.ts';
-import type { ExternalEvent } from '../external-events/types.ts';
-import { pullRequestUrlOfTopic } from '../github/parse-pr-url.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
 import { renderAddress } from '../mailbox/address.ts';
@@ -46,59 +34,30 @@ import type { MailboxMessageContent } from '../mailbox/entry.ts';
 import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
 import { invokeOperation } from '../operations/invoke.ts';
 import { onHumanDevicesReset } from '../pairing/human-device-reset.ts';
-import { remoteDaemons } from '../remote-daemons/registry.ts';
 import type { SessionManager } from '../session/session-manager.ts';
-import {
-  neoCardWorkerSession,
-  planNeoCardEventRoute,
-  planNeoCardEventSends,
-  planNeoCardSend,
-  planNeoCardTopicsEnded,
-} from './card-events.ts';
-import { readNeoDaemonCommits } from './daemon-commits.ts';
 import { driverWorkCaller } from './driver-work.ts';
 import { neoFolderPath } from './folder.ts';
 import { openNeoDefaultSession } from './inbox.ts';
-import { effectiveNeoPreference, planNeoAlignment } from './model-preference.ts';
-import type { NeoRefStateReader } from './packs/coding/ask-prs.ts';
-import { createCodingRefReader } from './packs/coding/ref-reader.ts';
 import {
-  localCodingSessionId,
-  type NeoBranchPrReader,
-  neoWorkBranch,
-} from './packs/coding/branch-prs.ts';
-import { createCodingBranchPrReader } from './packs/coding/branch-reader.ts';
-import { type NeoDeployReader, readGithubDeploys } from './packs/coding/deploy-checks.ts';
-import type { NeoGithubLister } from './packs/coding/github-query.ts';
-import { createCodingQueryReader } from './packs/coding/query-reader.ts';
-import { createCodingPack } from './packs/coding/pack.ts';
-import { CodingPrEventRepository } from './packs/coding/pr-events.ts';
-import { CodingPrLedgerRepository } from './packs/coding/pr-ledger.ts';
-import { CodingPrSweepRepository } from './packs/coding/pr-sweep.ts';
-import { CodingTodoPrRepository } from './packs/coding/todo-prs.ts';
-import { type NeoWorkPrReader } from './packs/coding/work-prs.ts';
-import { createCodingWorkPrReader } from './packs/coding/work-reader.ts';
-import { neoEnabledPacks, neoPackBriefs, neoPacks } from './packs/index.ts';
-import { createLifeAdminPack } from './packs/life-admin/pack.ts';
-import type {
-  NeoCardEventSubscription,
-  NeoPack,
-  NeoPackBrief,
-  NeoPackEventRoute,
-} from './pack-contract.ts';
+  effectiveNeoPreference,
+  neoCompactPercentFor,
+  planNeoAlignment,
+} from './model-preference.ts';
+import { neoEnabledPacks, neoPackBriefs, neoPacks } from './pack-selection.ts';
+import type { NeoPack, NeoPackBrief, NeoPackRuntime } from './pack-contract.ts';
 import { neoPromptTools, planNeoSessionConfig } from './session-config.ts';
-import { neoSessionStatus } from './session-status.ts';
 import { createNeoPublisher } from './publication-operation.ts';
 import type { NeoSessionNotice, NeoSessionNoticeGroup } from './session-watch.ts';
 import { NeoSessionWatcher } from './session-watcher.ts';
-import { createNeoTodoRunner, type NeoTodoRunner, neoTodoCard } from './todo-runner.ts';
+import { createNeoTodoRunner, type NeoTodoRunner } from './todo-runner.ts';
 import { neoWorkingKey, readNeoWorking } from './working.ts';
 
-type NeoFollowedTodoSnapshot = {
-  todos: Map<string, NeoTodo>;
-  asks: Map<string, NeoAsk>;
-  prs: Map<string, NeoWorkPr[]>;
-};
+const MODEL_CHANGE_SOURCES = new Set([
+  'model-switch',
+  'model-switch-rollback',
+  'model-refusal-fallback',
+  'runtime-settings',
+]);
 
 export class NeoService {
   readonly repo: NeoRepository;
@@ -108,11 +67,6 @@ export class NeoService {
   readonly todos: NeoAskTodoRepository;
   readonly todoSessions: NeoTodoSessionRepository;
   readonly todoRunner: NeoTodoRunner;
-  readonly todoPrs: CodingTodoPrRepository;
-  readonly cardEvents: NeoCardEventSubscriptionRepository;
-  private readonly sessionSubscriptions: SessionEventSubscriptionRepository;
-  private readonly sessionEvents: SessionExternalEventStore;
-  watchExternalTopic: ((topic: string) => Promise<void>) | null = null;
   get sessionNotices(): NeoSessionNotice[] {
     return this.sessionWatcher.sessionNotices;
   }
@@ -133,16 +87,8 @@ export class NeoService {
   private disposed = false;
   filePacks: readonly NeoPack[] = [];
   private readonly builtinPacks: NeoPack[];
-  readPrs: NeoWorkPrReader = createCodingWorkPrReader(() => this.db.getDatabase());
-  readBranchPrs: NeoBranchPrReader = createCodingBranchPrReader(() => this.db.getDatabase());
-  readRefStates: NeoRefStateReader = createCodingRefReader(
-    () => new CodingPrLedgerRepository(this.db.getDatabase()).refFacts
-  );
-  listGithub: NeoGithubLister = createCodingQueryReader(() => this.db.getDatabase());
-  readDeploys: NeoDeployReader = (urls) =>
-    readGithubDeploys(urls, () =>
-      readNeoDaemonCommits({ name: hostname(), commit: BUILD_METADATA.commit }, remoteDaemons)
-    );
+  private readonly defaultPacks: readonly string[];
+  readonly packOperations: NeoPackRuntime['operations'];
   readonly notifyChanged: () => void;
   private readonly noteWorking: () => void;
   private workingKey = '';
@@ -155,6 +101,7 @@ export class NeoService {
   private readonly unsubscribe: () => void;
 
   constructor(
+    composePacks: (service: NeoService) => NeoPackRuntime,
     readonly db: Database,
     readonly sessions: SessionManager,
     hub: MessageHub,
@@ -163,6 +110,7 @@ export class NeoService {
   ) {
     this.notifyChanged = () => {
       hub.event('neo.changed', {});
+      void events.publish('neo.changed', {});
     };
     this.notifyPublicationsChanged = (conversationId) => {
       hub.event('neo.publications.changed', { conversationId });
@@ -177,7 +125,10 @@ export class NeoService {
       registry: () => this.sessions.getOperationRegistry(),
       followedCardRefs: (now) => this.followedCardRefs(now),
       mutedSessions: () => this.db.getGlobalSettings?.().neo?.mutedSessions,
-      sessionBranchPrs: (ref) => this.sessionBranchPrs(ref),
+      sessionBranchPrs: async (ref) =>
+        (
+          await Promise.all(this.installedPacks().map((pack) => pack.sessionLinks?.(ref) ?? []))
+        ).flat(),
       readRemotes: async (folder) => (await readWorkspaceIdentity(folder)).remotes ?? [],
       observeSessions: (sessions) => {
         for (const pack of this.packs()) pack.observeSessions?.(sessions, Date.now());
@@ -191,7 +142,6 @@ export class NeoService {
       this.publishSettings?.(db.getGlobalSettings())
     );
     this.todoSessions = new NeoTodoSessionRepository(db.getDatabase());
-    this.todoPrs = new CodingTodoPrRepository(db.getDatabase());
     this.todoRunner = createNeoTodoRunner({
       store: this.todos,
       sessions: this.todoSessions,
@@ -206,33 +156,12 @@ export class NeoService {
           ask.sessionId
         );
       },
-      tellAsk: async (ask, messageId, note) => {
-        const status = neoSessionStatus(this.db.getSession(ask.sessionId)?.processingState);
-        if (status !== 'idle' || this.hasDelivery(ask.sessionId, messageId)) return;
-        await this.deliverForward(ask.sessionId, messageId, note, ask.sessionId);
-      },
       changed: this.notifyChanged,
     });
-    this.cardEvents = new NeoCardEventSubscriptionRepository(db.getDatabase());
-    this.sessionSubscriptions = new SessionEventSubscriptionRepository(db.getDatabase());
-    this.sessionEvents = new SessionExternalEventStore(db.getDatabase());
-    this.builtinPacks = [
-      createCodingPack({
-        readPrs: (urls) => this.readPrs(urls),
-        readRefStates: (refs) => this.readRefStates(refs),
-        listGithub: (args, coverage) => this.listGithub(args, coverage),
-        todoPrs: this.todoPrs,
-        prLedger: new CodingPrLedgerRepository(db.getDatabase()),
-        prSweep: new CodingPrSweepRepository(db.getDatabase()),
-        prEvents: new CodingPrEventRepository(db.getDatabase()),
-        prSweepDeps: {
-          tell: (ref, key, text) => this.sendToRef(ref, key, text),
-          wake: (key, text) => this.wakeNeo(key, text),
-        },
-        projectRepos: () => this.repo.allRepositories(),
-      }),
-      createLifeAdminPack(),
-    ];
+    const runtime = composePacks(this);
+    this.builtinPacks = runtime.packs;
+    this.defaultPacks = runtime.defaults;
+    this.packOperations = runtime.operations;
     for (const pack of this.builtinPacks) pack.todos?.schema(db.getDatabase());
     const notifyPublication = () => {
       try {
@@ -271,6 +200,19 @@ export class NeoService {
       },
       { subscriberName: 'neo-work-return' }
     );
+    const offModelSwitch = events.subscribe(
+      'session.updated',
+      async ({ sessionId, source }) => {
+        if (!source || !MODEL_CHANGE_SOURCES.has(source)) return;
+        if (sessionId !== this.defaultSessionId()) return;
+        const preferences = this.db.getGlobalSettings().neo?.preferences;
+        if (!preferences) return;
+        await this.applyCompactPercent(sessionId, preferences).catch((error) =>
+          this.log.warn('Neo auto-compact percentage not applied', error)
+        );
+      },
+      { subscriberName: 'neo-model-compact' }
+    );
     const offStatus = events.subscribe(
       'messages.statusChanged',
       ({ sessionId }) => {
@@ -285,24 +227,41 @@ export class NeoService {
       },
       { subscriberName: 'neo-session-forget' }
     );
-    const offExternal = events.subscribe(
-      'externalEvent.published',
-      async (payload: ExternalEventPublishedPayload) => {
-        await this.routeCardEvent(payload).catch((error) =>
-          this.log.warn('Card event delivery pending', error)
-        );
-      },
-      { subscriberName: 'neo-card-events', namespaceId: SESSION_EVENT_SCOPE }
-    );
     const offHumanReset = onHumanDevicesReset(this.notifyPublicationsChanged);
     this.unsubscribe = () => {
       offHumanReset();
       offUpdated();
+      offModelSwitch();
       offStatus();
       offDeleted();
-      offExternal();
     };
   }
+
+  readonly notifyScheduleIdle = (schedule: SessionSchedule): void => {
+    const conversationId = this.repo.conversationId();
+    if (!conversationId) return;
+    const publicationId = neoDerivedId(`schedule-idle:${schedule.id}:${schedule.nextRunAt}`);
+    if (this.publications.get(conversationId, publicationId)) return;
+    const name = this.db.getSession(schedule.target.id)?.title ?? schedule.target.id;
+    const elapsed =
+      schedule.cadence.kind === 'every'
+        ? ` for ${Math.round((schedule.cadence.everyMs * 3) / 60_000)} minutes`
+        : '';
+    const suffix = ` has been idle${elapsed}, waiting for work.`;
+    const text = `${name.slice(0, 2000 - suffix.length)}${suffix}`;
+    const receipt = this.appendPublication({
+      conversationId,
+      publicationId,
+      shortText: text,
+      fullText: text,
+      links: [],
+    });
+    if (!receipt.accepted) throw new Error(`Idle notice: ${receipt.reason}`);
+    if (receipt.created) {
+      this.notifyPublicationsChanged(conversationId);
+      this.notifyChanged();
+    }
+  };
 
   private appendPublication(input: NeoPublicationInput) {
     return this.publications.append(input);
@@ -324,47 +283,59 @@ export class NeoService {
     this.publishSettings?.(updated);
     const root = this.repo.defaultBinding();
     if (!root) return;
-    await this.alignModelPreference(root.sessionId).catch((error) =>
-      this.log.warn('Neo model preference not applied', error)
-    );
-    const session = this.db.getSession(root.sessionId);
+    const target = await this.alignModelPreference(root.sessionId).catch((error) => {
+      this.log.warn('Neo model preference not applied', error);
+      return null;
+    });
+    await this.applyCompactPercent(root.sessionId, preferences, target);
+  }
+
+  private async applyCompactPercent(
+    sessionId: string,
+    preferences: NeoModelPreference,
+    target?: { model: string; provider: string } | null
+  ): Promise<void> {
+    const session = this.db.getSession(sessionId);
+    if (!session) return;
+    const percent = neoCompactPercentFor(preferences, target ?? session.config);
     if (
-      session &&
-      (session.config.autoCompactPercent !== preferences.autoCompactPercent ||
-        session.metadata.pendingAutoCompactPercent !== undefined)
+      session.config.autoCompactPercent !== percent ||
+      session.metadata.pendingAutoCompactPercent !== undefined
     )
-      await this.sessions.updateSession(root.sessionId, {
-        config: { ...session.config, autoCompactPercent: preferences.autoCompactPercent },
+      await this.sessions.updateSession(sessionId, {
+        config: { ...session.config, autoCompactPercent: percent },
       });
   }
 
-  private async alignModelPreference(sessionId: string): Promise<void> {
+  private async alignModelPreference(
+    sessionId: string
+  ): Promise<{ model: string; provider: string } | null> {
     const preference = this.modelPreference();
     const config = this.db.getSession(sessionId)?.config;
     const plan = preference && config ? planNeoAlignment(config, preference) : null;
-    if (!preference || !plan) return;
+    if (!preference || !plan) return null;
     const live = await this.sessions.getSessionForControl(sessionId);
-    if (!live) return;
+    if (!live) return null;
     if (live.isLimitRecoveryPending?.() || live.getRateLimitWatchdogState?.().lastUserMessage)
-      return;
+      return null;
     const previousThinking = live.getSessionData().config.thinkingLevel;
     if (plan.thinking)
       await this.sessions.updateSession(sessionId, {
         config: { ...live.getSessionData().config, thinkingLevel: preference.thinkingLevel },
       });
-    if (plan.model) {
-      let restored = false;
-      try {
-        const switched = await live.requestModelSwitch(preference.model, preference.provider);
-        restored = switched.success && !switched.pending;
-        if (!switched.success)
-          this.log.warn(`Neo session ${sessionId} keeps its model: ${switched.error ?? ''}`);
-      } finally {
-        if (!restored && plan.thinking)
-          await this.sessions.updateSession(sessionId, {
-            config: { ...live.getSessionData().config, thinkingLevel: previousThinking },
-          });
-      }
+    if (!plan.model) return null;
+    let restored = false;
+    try {
+      const switched = await live.requestModelSwitch(preference.model, preference.provider);
+      restored = switched.success && !switched.pending;
+      if (switched.success) return { model: preference.model, provider: preference.provider };
+      this.log.warn(`Neo session ${sessionId} keeps its model: ${switched.error ?? ''}`);
+      return null;
+    } finally {
+      if (!restored && plan.thinking)
+        await this.sessions.updateSession(sessionId, {
+          config: { ...live.getSessionData().config, thinkingLevel: previousThinking },
+        });
     }
   }
 
@@ -519,19 +490,9 @@ export class NeoService {
   }
 
   async refreshDriverWork(): Promise<void> {
-    try {
-      runLagPhase('neo:driver:card_topic_sweep', () => this.endUnfollowedCardTopics(Date.now()));
-    } catch (error) {
-      this.log.warn('Card event subscription sweep pending', error);
-    }
     await runLagPhase('neo:driver:todo_refresh', () =>
       this.todoRunner.refresh((message, error) => this.log.warn(message, error))
     );
-    runLagPhase('neo:driver:follow_topics', () => {
-      let packs: NeoPack[] | undefined;
-      const readPacks = () => (packs ??= this.packs());
-      for (const workId of this.packEvidenceWorkIds()) this.followCardTopics(workId, readPacks);
-    });
     if (this.watching || this.disposed) return;
     this.watching = runLagPhase('neo:driver:session_watch', () =>
       this.sessionWatcher.watchSessions(Date.now())
@@ -545,25 +506,6 @@ export class NeoService {
 
   private packEvidenceWorkIds(): string[] {
     return this.todos.listCheckable().map((todo) => todo.id);
-  }
-
-  private followedTodo(workId: string, snapshot?: NeoFollowedTodoSnapshot): NeoWork | null {
-    const todo = snapshot ? snapshot.todos.get(workId) : this.todos.getTodo(workId);
-    const ask = todo
-      ? snapshot
-        ? snapshot.asks.get(todo.askId)
-        : this.todos.getAsk(todo.askId)
-      : null;
-    return todo &&
-      ask &&
-      ask.status !== 'dropped' &&
-      ((ask.status === 'open' && ['todo', 'doing', 'blocked'].includes(todo.state)) ||
-        (todo.state === 'done' &&
-          (snapshot ? (snapshot.prs.get(workId) ?? []) : this.todoPrs.prs(workId)).some(
-            (pr) => pr.state === 'MERGED'
-          )))
-      ? neoTodoCard(todo, ask)
-      : null;
   }
 
   async trackSession(root: string, notice: NeoSessionNotice, now: number): Promise<{ ok: true }> {
@@ -608,7 +550,8 @@ export class NeoService {
       builtins: this.builtinPacks,
       filePacks: this.filePacks,
       enabled: neoEnabledPacks(
-        runLagPhase('neo:packs:eligibility_read', () => this.db.getGlobalSettings?.().neo)
+        runLagPhase('neo:packs:eligibility_read', () => this.db.getGlobalSettings?.().neo),
+        this.defaultPacks
       ),
     });
   }
@@ -627,174 +570,11 @@ export class NeoService {
   }
 
   packBriefs(): NeoPackBrief[] {
-    return neoPackBriefs(neoEnabledPacks(this.db.getGlobalSettings?.().neo), this.installedPacks());
+    return neoPackBriefs(
+      neoEnabledPacks(this.db.getGlobalSettings?.().neo, this.defaultPacks),
+      this.installedPacks()
+    );
   }
-
-  followCardTopics(workId: string, readPacks: () => NeoPack[] = () => this.packs()): void {
-    const todo = this.todos.getTodo(workId);
-    if (!todo || !this.followedTodo(workId)) return;
-    const topics = readPacks().flatMap((pack) => pack.todos?.topics(todo) ?? []);
-    for (const topic of topics) {
-      if (!this.cardEvents.subscribe(workId, topic, Date.now())) continue;
-      void this.watchExternalTopic?.(topic).catch((error) =>
-        this.log.warn('Card event source watch pending', error)
-      );
-    }
-  }
-
-  readonly endUnfollowedCardTopics = (superpipe({})('neo-card-topics-end') as PipelineAPI)
-    .input(['now'])
-    .pipe(
-      () => runLagPhase('neo:card_topics:list_active', () => this.cardEvents.listActive()),
-      'now',
-      'rows'
-    )
-    .pipe(
-      (rows: NeoCardEventSubscription[]) =>
-        runLagPhase('neo:card_topics:followed_snapshot', () => {
-          const ids = [...new Set(rows.map((row) => row.workId))];
-          const todos = ids.length ? this.todos.getTodos(ids) : [];
-          const asks = new Map(
-            (todos.length
-              ? this.todos.getAsks([...new Set(todos.map((todo) => todo.askId))])
-              : []
-            ).map((ask) => [ask.id, ask])
-          );
-          const doneIds = todos
-            .filter(
-              (todo) =>
-                todo.state === 'done' &&
-                asks.has(todo.askId) &&
-                asks.get(todo.askId)?.status !== 'dropped'
-            )
-            .map((todo) => todo.id);
-          return {
-            todos: new Map(todos.map((todo) => [todo.id, todo])),
-            asks,
-            prs: doneIds.length
-              ? this.todoPrs.prsForTodos(doneIds)
-              : new Map<string, NeoWorkPr[]>(),
-          };
-        }),
-      'rows',
-      'snapshot'
-    )
-    .pipe(
-      (rows: NeoCardEventSubscription[], snapshot: NeoFollowedTodoSnapshot) =>
-        runLagPhase('neo:card_topics:eligibility', () => {
-          let delivered: boolean | undefined;
-          return new Map(
-            [...new Set(rows.map((row) => row.workId))].map(
-              (workId) =>
-                [
-                  workId,
-                  !!runLagPhase(`neo:card_topics:followed_todo:${workId}`, () =>
-                    this.followedTodo(workId, snapshot)
-                  ) &&
-                    runLagPhase(
-                      `neo:card_topics:card_events_delivered:${workId}`,
-                      () => (delivered ??= this.cardEventsDelivered())
-                    ),
-                ] as const
-            )
-          );
-        }),
-      ['rows', 'snapshot'],
-      'followed'
-    )
-    .pipe(planNeoCardTopicsEnded, ['rows', 'followed'], 'ended')
-    .pipe(
-      (ended: NeoCardEventSubscription[], now: number) => {
-        for (const row of ended)
-          runLagPhase(`neo:card_topics:end:${row.workId}`, () =>
-            this.cardEvents.end(row.workId, row.topic, now)
-          );
-        return ended;
-      },
-      ['ended', 'now'],
-      'done'
-    )
-    .end('done') as (now: number) => NeoCardEventSubscription[];
-
-  cardEventsDelivered(): boolean {
-    return this.packs().some((pack) => !!pack.todos);
-  }
-
-  followedTopics(): { topic: string; session: string | null }[] {
-    return this.cardEvents.listActive().map((row) => ({
-      topic: row.topic,
-      session: neoCardWorkerSession(
-        planNeoCardSend({
-          work: this.followedTodo(row.workId),
-          ref: this.todoSessions.readRef(row.workId),
-        })
-      ),
-    }));
-  }
-
-  private readonly routeCardEvent = (superpipe({})('neo-card-event') as PipelineAPI)
-    .input(['payload'])
-    .pipe(
-      (payload: ExternalEventPublishedPayload) => {
-        const event = this.sessionEvents.getById(payload.eventId)?.event;
-        return event ? { value: event } : { reason: 'event_missing' };
-      },
-      'payload',
-      'result:event'
-    )
-    .pipe(
-      (event: ExternalEvent) => {
-        const read = this.todoPrs.latest(pullRequestUrlOfTopic(event.topic) ?? '');
-        const head = event.payload.headSha ?? event.payload.commitId;
-        return this.todoRunner.checkNow(
-          this.packs().flatMap((pack) => pack.todos?.event(event) ?? []),
-          (message, error) => this.log.warn(message, error),
-          'value' in
-            requireClosedPrEvent({
-              record: { event, state: 'published', createdAt: 0, updatedAt: 0 },
-            }) ||
-            (typeof head === 'string' && (!read || read.readAt < event.occurredAt))
-        );
-      },
-      'event',
-      'checked'
-    )
-    .pipe(
-      (event: ExternalEvent) =>
-        planNeoCardEventRoute(this.packs(), event, this.cardEvents.listActive()),
-      'event',
-      'result:route'
-    )
-    .pipe(
-      async (event: ExternalEvent, route: NeoPackEventRoute) => {
-        const delivered: string[] = [];
-        const sends = planNeoCardEventSends(route.workIds, (workId) =>
-          planNeoCardSend({
-            work: this.followedTodo(workId),
-            ref: this.todoSessions.readRef(workId),
-          })
-        );
-        for (const send of sends)
-          if (
-            await this.sendToCard(
-              send.workIds[0],
-              `neo-card-event:${send.target}:${event.id}`,
-              sessionEventText(event)
-            ).catch((error) => {
-              this.log.warn('Card event not delivered', error);
-              return false;
-            })
-          )
-            delivered.push(...send.workIds);
-        return delivered;
-      },
-      ['event', 'route'],
-      'delivered'
-    )
-    .pipe((route: NeoPackEventRoute) => {
-      for (const row of route.ending) this.cardEvents.end(row.workId, row.topic, Date.now());
-    }, 'route')
-    .endAsync('route') as (payload: ExternalEventPublishedPayload) => Promise<unknown>;
 
   async sendToRef(ref: WorkRef, key: string, text: string): Promise<boolean> {
     const root = this.defaultSessionId();
@@ -819,26 +599,6 @@ export class NeoService {
     return true;
   }
 
-  async sendToCard(workId: string, key: string, text: string): Promise<boolean> {
-    const work = this.followedTodo(workId);
-    const send = planNeoCardSend({ work, ref: this.todoSessions.readRef(workId) });
-    if (!work || send.via === 'none') return false;
-    const sessionId = neoCardWorkerSession(send);
-    if (sessionId && this.db.getSession(sessionId)?.status === 'archived') return false;
-    if (send.via === 'session') {
-      await this.deliver(send.sessionId, key, text, work.originSessionId);
-      return true;
-    }
-    const sent = await this.invokeAsCard(work, 'work.send', { ref: send.ref, message: text });
-    return sent.kind === 'completed' && (sent.value as { ok?: unknown } | null)?.ok === true;
-  }
-
-  private async sessionBranchPrs(ref: WorkRef | null): Promise<string[]> {
-    const localId = localCodingSessionId(ref);
-    const branch = neoWorkBranch(localId ? this.db.getSession(localId) : null);
-    return branch ? this.readBranchPrs(branch) : [];
-  }
-
   hasDelivery(sessionId: string, messageId: string): boolean {
     return (
       this.deliveries.has(`${sessionId}:${messageId}`) ||
@@ -848,16 +608,6 @@ export class NeoService {
         .listActiveByPayload('mailbox', { 'to.sessionId': sessionId, messageUuid: messageId })
         .length > 0
     );
-  }
-
-  private async invokeAsCard(work: NeoWork, name: string, input: Record<string, unknown>) {
-    const outcome = await invokeOperation(
-      this.sessions.getOperationRegistry(),
-      name,
-      input,
-      driverWorkCaller(work)
-    );
-    return outcome;
   }
 
   deliverForward(

@@ -93,7 +93,7 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
   });
 
   describe('initial snapshot', () => {
-    test('snapshot is empty when no sessions exist', () => {
+    test('snapshot is empty when no sessions exist', async () => {
       const diffs: QueryDiff<SessionRow>[] = [];
       engine.subscribe(SESSIONS_SQL, [], (diff) => diffs.push(diff));
 
@@ -102,9 +102,9 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
       expect(diffs[0].rows).toEqual([]);
     });
 
-    test('snapshot contains pre-existing sessions', () => {
-      db.createSession(makeSession('pre1'));
-      db.createSession(makeSession('pre2'));
+    test('snapshot contains pre-existing sessions', async () => {
+      await db.createSession(makeSession('pre1'));
+      await db.createSession(makeSession('pre2'));
 
       const diffs: QueryDiff<SessionRow>[] = [];
       engine.subscribe(SESSIONS_SQL, [], (diff) => diffs.push(diff));
@@ -120,7 +120,7 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
       const diffs: QueryDiff<SessionRow>[] = [];
       engine.subscribe(SESSIONS_SQL, [], (diff) => diffs.push(diff));
 
-      reactiveDb.db.createSession(makeSession('ins1'));
+      await reactiveDb.db.createSession(makeSession('ins1'));
       await Promise.resolve();
 
       expect(diffs.length).toBe(2);
@@ -134,7 +134,7 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
       const diffs: QueryDiff<SessionRow>[] = [];
       engine.subscribe(SESSIONS_SQL, [], (diff) => diffs.push(diff));
 
-      reactiveDb.db.createSession(makeSession('ins2', { title: 'My New Session' }));
+      await reactiveDb.db.createSession(makeSession('ins2', { title: 'My New Session' }));
       await Promise.resolve();
 
       const delta = diffs[1];
@@ -145,10 +145,10 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
     test('multiple inserts accumulate in handle.get()', async () => {
       const handle = engine.subscribe(SESSIONS_SQL, [], () => {});
 
-      reactiveDb.db.createSession(makeSession('ins3'));
+      await reactiveDb.db.createSession(makeSession('ins3'));
       await Promise.resolve();
 
-      reactiveDb.db.createSession(makeSession('ins4'));
+      await reactiveDb.db.createSession(makeSession('ins4'));
       await Promise.resolve();
 
       expect(handle.get().length).toBe(2);
@@ -157,13 +157,13 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
 
   describe('session update', () => {
     test('updateSession via proxied db triggers updated delta', async () => {
-      reactiveDb.db.createSession(makeSession('upd1'));
+      await reactiveDb.db.createSession(makeSession('upd1'));
       await Promise.resolve();
 
       const diffs: QueryDiff<SessionRow>[] = [];
       engine.subscribe(SESSIONS_SQL, [], (diff) => diffs.push(diff));
 
-      reactiveDb.db.updateSession('upd1', { title: 'Updated Title' });
+      await reactiveDb.db.updateSession('upd1', { title: 'Updated Title' });
       await Promise.resolve();
 
       const delta = diffs[1];
@@ -173,26 +173,26 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
     });
 
     test('updated row reflects new title', async () => {
-      reactiveDb.db.createSession(makeSession('upd2', { title: 'Original' }));
+      await reactiveDb.db.createSession(makeSession('upd2', { title: 'Original' }));
       await Promise.resolve();
 
       const diffs: QueryDiff<SessionRow>[] = [];
       engine.subscribe(SESSIONS_SQL, [], (diff) => diffs.push(diff));
 
-      reactiveDb.db.updateSession('upd2', { title: 'Renamed' });
+      await reactiveDb.db.updateSession('upd2', { title: 'Renamed' });
       await Promise.resolve();
 
       expect(diffs[1].updated?.[0].title).toBe('Renamed');
     });
 
     test('archiving a session removes it from the non-archived query', async () => {
-      reactiveDb.db.createSession(makeSession('upd3'));
+      await reactiveDb.db.createSession(makeSession('upd3'));
       await Promise.resolve();
 
       const diffs: QueryDiff<SessionRow>[] = [];
       engine.subscribe(SESSIONS_SQL, [], (diff) => diffs.push(diff));
 
-      reactiveDb.db.updateSession('upd3', { status: 'archived' });
+      await reactiveDb.db.updateSession('upd3', { status: 'archived' });
       await Promise.resolve();
 
       const delta = diffs[1];
@@ -204,13 +204,13 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
 
   describe('session delete', () => {
     test('deleteSession via proxied db triggers removed delta', async () => {
-      reactiveDb.db.createSession(makeSession('del1'));
+      await reactiveDb.db.createSession(makeSession('del1'));
       await Promise.resolve();
 
       const diffs: QueryDiff<SessionRow>[] = [];
       engine.subscribe(SESSIONS_SQL, [], (diff) => diffs.push(diff));
 
-      reactiveDb.db.deleteSession('del1');
+      await reactiveDb.db.deleteSession('del1');
       await Promise.resolve();
 
       const delta = diffs[1];
@@ -220,13 +220,13 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
     });
 
     test('rows is empty after the only session is deleted', async () => {
-      reactiveDb.db.createSession(makeSession('del2'));
+      await reactiveDb.db.createSession(makeSession('del2'));
       await Promise.resolve();
 
       const diffs: QueryDiff<SessionRow>[] = [];
       engine.subscribe(SESSIONS_SQL, [], (diff) => diffs.push(diff));
 
-      reactiveDb.db.deleteSession('del2');
+      await reactiveDb.db.deleteSession('del2');
       await Promise.resolve();
 
       expect(diffs[1].rows).toEqual([]);
@@ -239,9 +239,9 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
       engine.subscribe(SESSIONS_SQL, [], (diff) => diffs.push(diff));
 
       reactiveDb.beginTransaction();
-      reactiveDb.db.createSession(makeSession('batch1'));
-      reactiveDb.db.createSession(makeSession('batch2'));
-      reactiveDb.db.createSession(makeSession('batch3'));
+      await reactiveDb.db.createSession(makeSession('batch1'));
+      await reactiveDb.db.createSession(makeSession('batch2'));
+      await reactiveDb.db.createSession(makeSession('batch3'));
       reactiveDb.commitTransaction();
 
       await Promise.resolve();
@@ -256,7 +256,7 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
       engine.subscribe(SESSIONS_SQL, [], (diff) => diffs.push(diff));
 
       reactiveDb.beginTransaction();
-      reactiveDb.db.createSession(makeSession('abort1'));
+      await reactiveDb.db.createSession(makeSession('abort1'));
       reactiveDb.abortTransaction();
 
       await Promise.resolve();
@@ -269,7 +269,7 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
     const MESSAGES_SQL =
       'SELECT id, session_id, message_type FROM sdk_messages WHERE session_id = ? ORDER BY timestamp';
 
-    test('initial snapshot for sdk_messages is empty', () => {
+    test('initial snapshot for sdk_messages is empty', async () => {
       const diffs: QueryDiff<{ id: string; session_id: string; message_type: string }>[] = [];
       engine.subscribe(MESSAGES_SQL, ['session-x'], (diff) => diffs.push(diff));
 
@@ -278,7 +278,7 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
     });
 
     test('saveSDKMessage via proxied db triggers added delta', async () => {
-      reactiveDb.db.createSession(makeSession('msg-session'));
+      await reactiveDb.db.createSession(makeSession('msg-session'));
       await Promise.resolve();
 
       const diffs: QueryDiff<{ id: string; session_id: string; message_type: string }>[] = [];
@@ -299,8 +299,8 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
     });
 
     test('message for different session_id does not appear in parameterised query', async () => {
-      reactiveDb.db.createSession(makeSession('sess-a'));
-      reactiveDb.db.createSession(makeSession('sess-b'));
+      await reactiveDb.db.createSession(makeSession('sess-a'));
+      await reactiveDb.db.createSession(makeSession('sess-b'));
       await Promise.resolve();
 
       const diffs: QueryDiff<{ id: string; session_id: string; message_type: string }>[] = [];
@@ -316,7 +316,7 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
     });
 
     test('multiple messages for same session accumulate', async () => {
-      reactiveDb.db.createSession(makeSession('multi-msg'));
+      await reactiveDb.db.createSession(makeSession('multi-msg'));
       await Promise.resolve();
 
       const handle = engine.subscribe(MESSAGES_SQL, ['multi-msg'], () => {});
@@ -345,7 +345,7 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
       const msgDiffs: QueryDiff<{ id: string }>[] = [];
       engine.subscribe(MESSAGES_SQL_ISO, ['iso-session'], (diff) => msgDiffs.push(diff));
 
-      reactiveDb.db.createSession(makeSession('iso-session'));
+      await reactiveDb.db.createSession(makeSession('iso-session'));
       await Promise.resolve();
 
       expect(msgDiffs.length).toBe(1);
@@ -361,7 +361,7 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
       engine.subscribe(SESSIONS_SQL, [], (diff) => sessionDiffs.push(diff));
       engine.subscribe(MESSAGES_SQL_CROSS, ['cross-session'], (diff) => msgDiffs.push(diff));
 
-      reactiveDb.db.createSession(makeSession('cross-session'));
+      await reactiveDb.db.createSession(makeSession('cross-session'));
       await Promise.resolve();
 
       expect(sessionDiffs.length).toBe(2);
@@ -370,7 +370,7 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
   });
 
   describe('version tracking', () => {
-    test('snapshot version is 0 before any writes', () => {
+    test('snapshot version is 0 before any writes', async () => {
       const diffs: QueryDiff<SessionRow>[] = [];
       engine.subscribe(SESSIONS_SQL, [], (diff) => diffs.push(diff));
 
@@ -381,7 +381,7 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
       const diffs: QueryDiff<SessionRow>[] = [];
       engine.subscribe(SESSIONS_SQL, [], (diff) => diffs.push(diff));
 
-      reactiveDb.db.createSession(makeSession('ver1'));
+      await reactiveDb.db.createSession(makeSession('ver1'));
       await Promise.resolve();
 
       const expectedVersion = reactiveDb.getTableVersion('sessions');
@@ -392,10 +392,10 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
       const diffs: QueryDiff<SessionRow>[] = [];
       engine.subscribe(SESSIONS_SQL, [], (diff) => diffs.push(diff));
 
-      reactiveDb.db.createSession(makeSession('ver2'));
+      await reactiveDb.db.createSession(makeSession('ver2'));
       await Promise.resolve();
 
-      reactiveDb.db.createSession(makeSession('ver3'));
+      await reactiveDb.db.createSession(makeSession('ver3'));
       await Promise.resolve();
 
       expect(diffs[2].version).toBeGreaterThan(diffs[1].version);
@@ -404,7 +404,7 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
 
   describe('processing state and context info', () => {
     test('processing state update triggers live query', async () => {
-      reactiveDb.db.createSession(makeSession('ps1'));
+      await reactiveDb.db.createSession(makeSession('ps1'));
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       const diffs: QueryDiff<{ id: string; processing_state: string | null }>[] = [];
@@ -412,7 +412,7 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
         diffs.push(diff)
       );
 
-      reactiveDb.db.updateSession('ps1', {
+      await reactiveDb.db.updateSession('ps1', {
         processingState: JSON.stringify({ status: 'processing', phase: 'streaming' }),
       });
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -436,7 +436,7 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
         totalCost: 0,
         toolCallCount: 0,
       };
-      reactiveDb.db.createSession(makeSession('ci1', { metadata: initialMetadata }));
+      await reactiveDb.db.createSession(makeSession('ci1', { metadata: initialMetadata }));
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       const diffs: QueryDiff<{ id: string; metadata: string }>[] = [];
@@ -444,7 +444,7 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
         diffs.push(diff)
       );
 
-      reactiveDb.db.updateSession('ci1', {
+      await reactiveDb.db.updateSession('ci1', {
         metadata: {
           ...initialMetadata,
           lastContextInfo: {
@@ -468,7 +468,7 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
     });
 
     test('multiple rapid processing state updates coalesce into one callback', async () => {
-      reactiveDb.db.createSession(makeSession('ps2'));
+      await reactiveDb.db.createSession(makeSession('ps2'));
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       const diffs: QueryDiff<{ id: string; processing_state: string | null }>[] = [];
@@ -476,15 +476,17 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
         diffs.push(diff)
       );
 
-      reactiveDb.db.updateSession('ps2', {
-        processingState: JSON.stringify({ status: 'processing', phase: 'streaming' }),
-      });
-      reactiveDb.db.updateSession('ps2', {
-        processingState: JSON.stringify({ status: 'processing', phase: 'tool_use' }),
-      });
-      reactiveDb.db.updateSession('ps2', {
-        processingState: JSON.stringify({ status: 'idle' }),
-      });
+      await Promise.all([
+        reactiveDb.db.updateSession('ps2', {
+          processingState: JSON.stringify({ status: 'processing', phase: 'streaming' }),
+        }),
+        reactiveDb.db.updateSession('ps2', {
+          processingState: JSON.stringify({ status: 'processing', phase: 'tool_use' }),
+        }),
+        reactiveDb.db.updateSession('ps2', {
+          processingState: JSON.stringify({ status: 'idle' }),
+        }),
+      ]);
 
       await new Promise((resolve) => setTimeout(resolve, 10));
 

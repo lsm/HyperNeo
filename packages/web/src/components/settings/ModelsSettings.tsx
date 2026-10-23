@@ -11,6 +11,7 @@ import {
   AUTO_COMPACT_PERCENT_MIN,
   AUTO_COMPACT_PERCENT_MAX,
   resolveAutoCompactPercent,
+  findSameModel,
   getThinkingOptionsForProvider,
   THINKING_LEVEL_LABELS,
   type FallbackModelEntry,
@@ -154,7 +155,7 @@ interface FallbackChainEditorProps {
   isUpdating: boolean;
   onMove: (index: number, direction: 'up' | 'down') => void;
   onRemove: (index: number) => void;
-  thinking?: (entry: FallbackModelEntry, index: number) => ComponentChildren;
+  controls?: (entry: FallbackModelEntry, index: number) => ComponentChildren;
 }
 
 function FallbackChainEditor({
@@ -163,7 +164,7 @@ function FallbackChainEditor({
   isUpdating,
   onMove,
   onRemove,
-  thinking,
+  controls,
 }: FallbackChainEditorProps) {
   const getDisplayInfo = (entry: FallbackModelEntry) => {
     const model = availableModels.find(
@@ -179,43 +180,45 @@ function FallbackChainEditor({
         return (
           <div
             key={`${entry.provider}:${entry.model}`}
-            class="flex items-center gap-2 bg-surface-raised border border-line rounded-lg px-3 py-2"
+            class="flex flex-wrap items-center gap-2 bg-surface-raised border border-line rounded-lg px-3 py-2"
           >
             <span class="text-xs text-fg-faint font-medium w-4">{index + 1}.</span>
             <ProviderLogo provider={entry.provider} class="h-4 w-4" />
-            <div class="flex-1 min-w-0">
+            <div class="flex-1 min-w-[7rem]">
               <div class="text-sm text-fg-soft truncate">{displayInfo.name}</div>
               <div class="text-xs text-fg-faint">
                 {PROVIDER_LABELS[entry.provider] || getProviderLabel(entry.provider)}
               </div>
             </div>
-            {thinking?.(entry, index)}
-            <div class="flex items-center gap-1">
+            <div class="ml-auto flex flex-wrap items-center justify-end gap-2">
+              {controls?.(entry, index)}
+              <div class="flex items-center gap-1">
+                <button
+                  class="p-1 rounded hover:bg-fill-strong disabled:opacity-30 disabled:cursor-not-allowed"
+                  onClick={() => onMove(index, 'up')}
+                  disabled={index === 0 || isUpdating}
+                  title="Move up"
+                >
+                  <ChevronUpIcon />
+                </button>
+                <button
+                  class="p-1 rounded hover:bg-fill-strong disabled:opacity-30 disabled:cursor-not-allowed"
+                  onClick={() => onMove(index, 'down')}
+                  disabled={index === models.length - 1 || isUpdating}
+                  title="Move down"
+                >
+                  <ChevronDownIcon />
+                </button>
+              </div>
               <button
-                class="p-1 rounded hover:bg-fill-strong disabled:opacity-30 disabled:cursor-not-allowed"
-                onClick={() => onMove(index, 'up')}
-                disabled={index === 0 || isUpdating}
-                title="Move up"
+                class="p-1 rounded hover:bg-danger/30 disabled:opacity-30 disabled:cursor-not-allowed"
+                onClick={() => onRemove(index)}
+                disabled={isUpdating}
+                title="Remove"
               >
-                <ChevronUpIcon />
-              </button>
-              <button
-                class="p-1 rounded hover:bg-fill-strong disabled:opacity-30 disabled:cursor-not-allowed"
-                onClick={() => onMove(index, 'down')}
-                disabled={index === models.length - 1 || isUpdating}
-                title="Move down"
-              >
-                <ChevronDownIcon />
+                <XIcon class="w-4 h-4 text-danger" />
               </button>
             </div>
-            <button
-              class="p-1 rounded hover:bg-danger/30 disabled:opacity-30 disabled:cursor-not-allowed"
-              onClick={() => onRemove(index)}
-              disabled={isUpdating}
-              title="Remove"
-            >
-              <XIcon class="w-4 h-4 text-danger" />
-            </button>
           </div>
         );
       })}
@@ -410,6 +413,21 @@ function OverrideEditorModal({
 }
 
 type SettingsModel = ModelInfo & { thinkingLevels?: ThinkingLevel[] };
+type NeoModelEntry = NonNullable<NeoModelPreference['fallbacks']>[number];
+const entryKey = (entry: { provider: string; model: string }) => `${entry.provider}/${entry.model}`;
+function percentTexts(preference?: NeoModelPreference | null): Record<string, string> {
+  if (!preference) return {};
+  return Object.fromEntries(
+    [preference, ...(preference.fallbacks ?? [])].map((entry) => [
+      entryKey(entry),
+      String(entry.autoCompactPercent ?? AUTO_COMPACT_PERCENT_DEFAULT),
+    ])
+  );
+}
+function tokens(count: number): string {
+  if (count >= 1_000_000) return `${Number((count / 1_000_000).toFixed(1))}M`;
+  return count >= 1000 ? `${Math.round(count / 1000)}K` : String(count);
+}
 
 function NeoModelSettings({
   availableModels,
@@ -422,28 +440,50 @@ function NeoModelSettings({
 }) {
   const preference = globalSettings.value?.neo?.preferences;
   const [draft, setDraft] = useState<NeoModelPreference | null>(preference ?? null);
-  const [percent, setPercent] = useState(
-    String(preference?.autoCompactPercent ?? AUTO_COMPACT_PERCENT_DEFAULT)
-  );
-  const [picker, setPicker] = useState<'primary' | 'fallback' | null>(null);
+  const [percents, setPercents] = useState(() => percentTexts(preference));
+  const [picker, setPicker] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => {
     setDraft(preference ?? null);
-    setPercent(String(preference?.autoCompactPercent ?? AUTO_COMPACT_PERCENT_DEFAULT));
+    setPercents(percentTexts(preference));
   }, [preference]);
-  const primary = availableModels.find(
-    (model) => model.id === draft?.model && model.provider === draft?.provider
-  );
-  const unchanged = Number(percent) === AUTO_COMPACT_PERCENT_DEFAULT;
-  const effectivePercent = resolveAutoCompactPercent(
-    unchanged ? primary?.autoCompactPercent : Number(percent)
-  );
-  const threshold = primary?.contextWindow
-    ? Math.floor((primary.contextWindow * effectivePercent) / 100)
-    : null;
+  const percentText = (entry: { provider: string; model: string }) =>
+    percents[entryKey(entry)] ?? String(AUTO_COMPACT_PERCENT_DEFAULT);
+  function compactSize(entry: { provider: string; model: string }): string {
+    const info = findSameModel(availableModels, entry);
+    const typed = Number(percentText(entry));
+    const percent = resolveAutoCompactPercent(
+      typed === AUTO_COMPACT_PERCENT_DEFAULT ? info?.autoCompactPercent : typed
+    );
+    return info?.contextWindow
+      ? `${percent}% ≈ ${tokens(Math.floor((info.contextWindow * percent) / 100))} of ${tokens(info.contextWindow)} tokens`
+      : `${percent}% · context window unknown`;
+  }
   const busy = loading || saving || connectionState.value !== 'connected';
-  const chain = draft?.fallbacks ?? [];
+  const list: NeoModelEntry[] = draft
+    ? [
+        {
+          model: draft.model,
+          provider: draft.provider,
+          thinkingLevel: draft.thinkingLevel,
+          ...(draft.autoCompactPercent === undefined
+            ? {}
+            : { autoCompactPercent: draft.autoCompactPercent }),
+        },
+        ...(draft.fallbacks ?? []),
+      ]
+    : [];
+  function setList(next: NeoModelEntry[]) {
+    const [first, ...rest] = next;
+    if (!first) return setDraft(null);
+    setDraft({
+      ...first,
+      ...(preference?.fallbacks === undefined && draft?.fallbacks === undefined && !rest.length
+        ? {}
+        : { fallbacks: rest }),
+    });
+  }
   const providers = [...groupedModels.entries()]
     .filter(([, models]) => models.some((model) => model.available !== false))
     .map(([id]) => PROVIDER_LABELS[id] || getProviderLabel(id));
@@ -452,9 +492,7 @@ function NeoModelSettings({
     label: string,
     change: (thinkingLevel: ThinkingLevel) => void
   ) {
-    const info = availableModels.find(
-      (model) => model.id === entry.model && model.provider === entry.provider
-    );
+    const info = findSameModel(availableModels, entry);
     const options = info?.thinkingLevels
       ? info.thinkingLevels.map((value) => ({ value, label: THINKING_LEVEL_LABELS[value] }))
       : getThinkingOptionsForProvider(entry.provider, info?.thinkingModes);
@@ -474,14 +512,24 @@ function NeoModelSettings({
   }
   async function save() {
     if (!draft || busy) return;
-    if (!percent.trim() || !Number.isInteger(Number(percent))) {
+    if (
+      list.some(
+        (entry) => !percentText(entry).trim() || !Number.isInteger(Number(percentText(entry)))
+      )
+    ) {
       setError('Enter a whole number from 10 to 100.');
       return;
     }
-    const { autoCompactPercent: _previousPercent, ...base } = draft;
-    const next = unchanged
-      ? base
-      : { ...base, autoCompactPercent: resolveAutoCompactPercent(Number(percent)) };
+    const [first, ...rest] = list.map(({ autoCompactPercent: _previous, ...entry }) => {
+      const typed = Number(percentText(entry));
+      return typed === AUTO_COMPACT_PERCENT_DEFAULT
+        ? entry
+        : { ...entry, autoCompactPercent: resolveAutoCompactPercent(typed) };
+    });
+    const next = {
+      ...first,
+      ...(draft.fallbacks === undefined && rest.length === 0 ? {} : { fallbacks: rest }),
+    };
     setSaving(true);
     setError('');
     try {
@@ -492,7 +540,7 @@ function NeoModelSettings({
       >(hub, 'neo.preferences.set', next);
       if (!result.ok) throw new Error(result.reason);
       setDraft(result.preferences);
-      setPercent(String(result.preferences.autoCompactPercent ?? AUTO_COMPACT_PERCENT_DEFAULT));
+      setPercents(percentTexts(result.preferences));
       toast.success('Neo models saved');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not save Neo models.');
@@ -505,95 +553,81 @@ function NeoModelSettings({
       <div>
         <h4 class="text-[13px] font-semibold text-fg">Neo models</h4>
         <p class="text-xs text-fg-faint mt-0.5">
-          Primary model and ordered fallbacks for Neo and its projects. Neo returns to the primary
-          after recovery.
-        </p>
-      </div>
-      <div class="flex flex-wrap items-center gap-2">
-        <span class="flex-1 text-sm text-fg-soft">
-          {draft ? `${draft.provider} / ${draft.model}` : 'Choose a primary model'}
-        </span>
-        {draft &&
-          thinking(draft, 'Neo primary thinking', (thinkingLevel) =>
-            setDraft({ ...draft, thinkingLevel })
-          )}
-        <Button variant="secondary" size="xs" disabled={busy} onClick={() => setPicker('primary')}>
-          Change Neo primary
-        </Button>
-      </div>
-      <div class="space-y-2">
-        <label class="block text-sm text-fg-soft" for="neo-auto-compact">
-          Auto-compact percentage
-        </label>
-        <input
-          id="neo-auto-compact"
-          type="number"
-          min={AUTO_COMPACT_PERCENT_MIN}
-          max={AUTO_COMPACT_PERCENT_MAX}
-          step={1}
-          value={percent}
-          disabled={busy || !draft}
-          onInput={(event) => setPercent(event.currentTarget.value)}
-          aria-describedby="neo-auto-compact-help"
-          class="w-24 rounded border border-line bg-surface px-2 py-1 text-sm text-fg"
-        />
-        <p id="neo-auto-compact-help" class="text-xs text-fg-faint">
-          {unchanged
-            ? 'Default (90%): provider behavior unchanged.'
-            : 'Custom threshold for Neo only. Applied after the current reply.'}
-          {threshold !== null
-            ? ` ${threshold.toLocaleString('en-US')} of ${primary?.contextWindow.toLocaleString('en-US')} tokens (${effectivePercent}%).`
-            : ' Context window unavailable for this model.'}{' '}
-          At 100%, compaction follows the provider’s limits.
+          Models Neo and its projects use, in order: the primary first, then the fallbacks. Neo
+          returns to the primary after recovery.
         </p>
       </div>
       <p class="text-xs text-fg-faint">
+        Auto-compact is set per model and shown against that model’s context window. 90% keeps the
+        provider default; at 100%, compaction follows the provider’s limits. Changes apply after the
+        current reply.
+      </p>
+      <p class="text-xs text-fg-faint">
         Usable fallback providers: {providers.join(', ') || 'None available'}
       </p>
-      {draft?.fallbacks === undefined ? (
+      {!draft ? (
+        <p class="text-xs text-fg-faint">Add a model. The first one in the list is the primary.</p>
+      ) : draft.fallbacks === undefined ? (
         <p class="text-xs text-fg-faint">
           Uses the general session fallback chain until you save a Neo chain.
         </p>
-      ) : chain.length === 0 ? (
+      ) : draft.fallbacks.length === 0 ? (
         <p class="text-xs text-fg-faint">Neo fallbacks disabled.</p>
       ) : null}
       <FallbackChainEditor
-        models={chain}
+        models={list}
         availableModels={availableModels}
         isUpdating={busy}
-        onRemove={(index) =>
-          draft && setDraft({ ...draft, fallbacks: chain.filter((_, i) => i !== index) })
-        }
+        onRemove={(index) => setList(list.filter((_, i) => i !== index))}
         onMove={(index, direction) => {
-          if (!draft) return;
-          const next = [...chain];
+          const next = [...list];
           const other = index + (direction === 'up' ? -1 : 1);
           [next[index], next[other]] = [next[other], next[index]];
-          setDraft({ ...draft, fallbacks: next });
+          setList(next);
         }}
-        thinking={(entry, index) =>
-          thinking(
-            entry,
-            `Neo fallback ${index + 1} thinking`,
-            (thinkingLevel) =>
-              draft &&
-              setDraft({
-                ...draft,
-                fallbacks: chain.map((item, i) =>
-                  i === index ? { ...item, thinkingLevel } : item
-                ),
-              })
-          )
-        }
+        controls={(entry, index) => (
+          <div class="flex flex-wrap items-center justify-end gap-2">
+            {index === 0 ? (
+              <span class="text-xs font-medium text-accent">Primary</span>
+            ) : (
+              <Button
+                variant="secondary"
+                size="xs"
+                disabled={busy}
+                aria-label={`Make Neo model ${index + 1} primary`}
+                onClick={() => setList([list[index], ...list.filter((_, i) => i !== index)])}
+              >
+                <span class="whitespace-nowrap">Make primary</span>
+              </Button>
+            )}
+            {thinking(entry, `Neo model ${index + 1} thinking`, (thinkingLevel) =>
+              setList(list.map((item, i) => (i === index ? { ...item, thinkingLevel } : item)))
+            )}
+            <input
+              type="number"
+              aria-label={`Neo model ${index + 1} auto-compact percentage`}
+              min={AUTO_COMPACT_PERCENT_MIN}
+              max={AUTO_COMPACT_PERCENT_MAX}
+              step={1}
+              value={percentText(entry)}
+              disabled={busy}
+              onInput={(event) =>
+                setPercents({ ...percents, [entryKey(entry)]: event.currentTarget.value })
+              }
+              class="w-14 rounded border border-line bg-surface px-1.5 py-1 text-xs text-fg"
+            />
+            <span class="text-xs text-fg-faint whitespace-nowrap">{compactSize(entry)}</span>
+          </div>
+        )}
       />
       <div class="flex flex-wrap gap-2">
         <Button
           variant="secondary"
           size="xs"
-          disabled={busy || !draft || chain.length >= 10}
-          onClick={() => setPicker('fallback')}
+          disabled={busy || list.length > 10}
+          onClick={() => setPicker(true)}
         >
-          Add Neo fallback
+          Add Neo model
         </Button>
         <Button
           variant="secondary"
@@ -614,35 +648,14 @@ function NeoModelSettings({
       )}
       {picker && (
         <ModelPickerModal
-          title={picker === 'primary' ? 'Neo primary model' : 'Add Neo fallback'}
+          title="Add Neo model"
           groupedModels={groupedModels}
           providerAuthStatuses={providerAuthStatuses}
-          excludeModels={picker === 'primary' ? [] : [...(draft ? [draft] : []), ...chain]}
-          onClose={() => setPicker(null)}
+          excludeModels={list}
+          onClose={() => setPicker(false)}
           onSelect={(model) => {
-            if (picker === 'primary')
-              setDraft({
-                ...draft,
-                model: model.id,
-                provider: model.provider,
-                thinkingLevel: 'off',
-                ...(draft?.fallbacks === undefined
-                  ? {}
-                  : {
-                      fallbacks: chain.filter(
-                        (entry) => entry.model !== model.id || entry.provider !== model.provider
-                      ),
-                    }),
-              });
-            else if (draft)
-              setDraft({
-                ...draft,
-                fallbacks: [
-                  ...chain,
-                  { model: model.id, provider: model.provider, thinkingLevel: 'off' },
-                ],
-              });
-            setPicker(null);
+            setList([...list, { model: model.id, provider: model.provider, thinkingLevel: 'off' }]);
+            setPicker(false);
           }}
         />
       )}

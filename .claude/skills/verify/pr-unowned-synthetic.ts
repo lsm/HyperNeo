@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
-import { NeoService } from '../../../packages/daemon/src/lib/neo/service.ts';
+import { createNeoService } from '../../../packages/daemon/src/lib/neo/packs/runtime.ts';
 import { createCodingPack } from '../../../packages/daemon/src/lib/neo/packs/coding/pack.ts';
 import { CodingPrLedgerRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
 import { CodingPrEventRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-events.ts';
@@ -27,7 +27,7 @@ export async function verifySyntheticUnownedPrs(port: number, runText: string) {
     config: getConfig({ port, host: '127.0.0.1', dbPath: path }),
     verbose: false,
   });
-  const neo = new NeoService(app.db, app.sessionManager, app.messageHub, app.internalEventBus);
+  const neo = createNeoService(app.db, app.sessionManager, app.messageHub, app.internalEventBus);
   const db = app.db.getDatabase();
   const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   const pause = (ms: number) => new Promise((done) => setTimeout(done, ms));
@@ -158,7 +158,7 @@ export async function verifySyntheticUnownedPrs(port: number, runText: string) {
       JSON.stringify(
         {
           surface:
-            'isolated daemon RPC -> real coding-pack reconcile -> NeoService.wakeNeo -> real mailbox',
+            'isolated daemon RPC -> real coding-pack reconcile -> ReturnType<typeof createNeoService>.wakeNeo -> real mailbox',
           syntheticGitHub: true,
           notices,
           calls,

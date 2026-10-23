@@ -36,6 +36,6 @@ await mkdir(`${run}/evidence`, { recursive: true });
 await writeFile(`${run}/evidence/session-schedule-interrupt.json`, JSON.stringify(evidence, null, 2));
 console.log(JSON.stringify(evidence, null, 2));
 await rpc('schedule.session.delete', { scheduleId: schedule.id });
-if (row?.status !== 'active' || row.last_outcome !== 'skipped_busy' || row.due_count !== 1 || Number(row.next_run_at) <= Date.now() || messages.length) throw new Error('Interrupt must skip to the next cadence without completing the schedule');
+if (row?.status !== 'active' || row.last_outcome !== 'skipped_busy' || row.due_count !== 0 || Number(row.next_run_at) <= Date.now() || messages.length) throw new Error('Interrupt must skip to the next cadence without completing the schedule');
 console.log('PASS: open interrupted session keeps its active schedule and advances the cadence.');
 db.close();

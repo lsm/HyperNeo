@@ -1,4 +1,4 @@
-## Claude Desktop import between CLI turns: transcript and UI facts
+## Claude Desktop native delivery: transcript and UI facts
 
 Run from the worktree root, using a fresh synthetic HOME/data directory:
 
@@ -14,12 +14,16 @@ The helper owns a real isolated daemon and calls its public work operations.
 All Claude/agents/Desktop-launch processes are synthetic stubs. No GUI or real
 provider runs, credentials are not read, and no human session is touched.
 
-The synthetic CLI completes turn 1 with end_turn. The fixture then imports that
-session into a synthetic Desktop record before work.send resumes it headlessly.
-Turn 2 also ends with end_turn; the imported record remains byte-identical.
-The receipt-bound status must include the second reply and transcriptState
-completed, while both send and status explicitly report desktopUI.state
-ui-unconfirmed. A pending-turn component case reports accepted separately.
+The synthetic CLI performs only preparation and exits. The fixture imports the
+session before a Haiku helper forwards the actual task through native Desktop
+messages. `work.send` also uses native messages, with no headless task fallback.
+The follow-up ends with end_turn; the imported record remains byte-identical.
+Receipt-bound status includes the full follow-up reply and transcriptState
+completed, while send and status explicitly report desktopUI.state
+ui-unconfirmed. A native permission wait is separately visible as needs_you.
+Live CLI/unknown target owners refuse before any helper request. See
+[the B1 journey](claude-desktop-b1.md) for the complete receipt, mode, refusal
+and native hand-check contract.
 
 Evidence is saved to evidence/observed.json even when an assertion fails. The
 helper cleans up its daemon and worker in finally. Preserve that file outside

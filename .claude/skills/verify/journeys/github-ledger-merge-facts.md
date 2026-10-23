@@ -1,10 +1,11 @@
 # Ledger merge-fact persistence (Build)
 
 Read shared setup in `../SKILL.md`. This slice builds only the latest PR state
-and merge commit required by the first deploy reader. No consumer is wired yet;
-it makes no API-quota reduction or new public-feature claim. The previous
-consumer-contract journey still supplies the seven initial / three repeated
-upstream-request baseline.
+and merge commit required by the first deploy reader. It tests local persistence
+only; the default reader is now wired in `github-ledger-deploy-merge.md`.
+This journey makes no API-quota reduction or new public-feature claim. The current
+consumer-contract journey supplies six initial / three repeated logical lookups
+(the historical pre-reader baseline was seven / three).
 
 From the worktree root, use a fresh absolute run directory:
 
@@ -26,7 +27,7 @@ stored after failure. A successful identical refresh retains the fact revision.
 
 The public `/ws` `neo.github.read` operation is also exercised before/after
 restart against the fake gh response. Its behavior remains unchanged, because
-reader wiring and collector acquisition are separate future slices. This is
+this helper does not exercise the deploy reader wiring. This is
 local persistence/API proof in the running daemon, not proof that public readers
 use the ledger or that GitHub quota has fallen. No GUI, model, real GitHub,
 credential/auth files, live DB/config or port 8399 is used. Direct HTTP throws.
@@ -34,6 +35,6 @@ credential/auth files, live DB/config or port 8399 is used. Direct HTTP throws.
 Retain `evidence/merge-facts.json` and `evidence/requests.jsonl`. Run the focused
 `neo-ledger-merge-facts` and existing `neo-coding-pr-ledger` tests, plus all three
 `github-ledger-consumers.ts` scenarios to confirm summary compatibility and the
-unchanged request baseline. The helper closes its WebSocket and daemon in
+current request baseline. The helper closes its WebSocket and daemon in
 finally. There is no transition-history table, collector, subscription or new
 public operation in this slice; those are not verified here.

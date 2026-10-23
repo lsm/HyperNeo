@@ -4,7 +4,7 @@ import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { githubUrlKey, parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 
-export type NeoDaemonCommit = { daemon: string; commit: string | null };
+import type { NeoDaemonCommit } from '../../daemon-commits.ts';
 export type NeoDeployRead = {
   prs: { url: string; mergeCommit: string | null }[];
   daemons: (NeoDaemonCommit & { contains: string[] })[];
@@ -61,10 +61,16 @@ async function readContains(
 export async function readGithubDeploys(
   urls: readonly string[],
   daemonCommits: () => Promise<NeoDaemonCommit[]>,
-  spawnImpl: SpawnFn = spawnProcess
+  spawnImpl: SpawnFn = spawnProcess,
+  readMerge: (url: string) => Promise<string | null> = (url) => readMergeCommit(url, spawnImpl),
+  containsMerge: (url: string, merge: string, commit: string) => Promise<boolean> = (
+    url,
+    merge,
+    commit
+  ) => readContains(url, merge, commit, spawnImpl)
 ): Promise<NeoDeployRead> {
   const prs = [];
-  for (const url of urls) prs.push({ url, mergeCommit: await readMergeCommit(url, spawnImpl) });
+  for (const url of urls) prs.push({ url, mergeCommit: await readMerge(url) });
   const daemons = [];
   for (const daemon of await daemonCommits()) {
     const contains: string[] = [];
@@ -72,7 +78,7 @@ export async function readGithubDeploys(
       if (
         daemon.commit &&
         pr.mergeCommit &&
-        (await readContains(pr.url, pr.mergeCommit, daemon.commit, spawnImpl))
+        (await containsMerge(pr.url, pr.mergeCommit, daemon.commit))
       )
         contains.push(pr.mergeCommit);
     daemons.push({ ...daemon, contains });

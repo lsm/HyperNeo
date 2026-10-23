@@ -5,7 +5,7 @@ import {
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
@@ -15,7 +15,7 @@ describe('neo.snapshot project repository', () => {
   test('names each project’s repository from its stored identity, so its history is read there', async () => {
     const db = await createTestDb();
     try {
-      const service = new NeoService(
+      const service = createNeoService(
         db,
         { getOperationRegistry: () => createOperationRegistry([]) } as unknown as SessionManager,
         { event: mock(() => {}) } as unknown as MessageHub,

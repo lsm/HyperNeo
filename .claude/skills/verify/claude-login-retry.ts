@@ -104,7 +104,7 @@ try {
       const path = new URL(req.url).pathname;
       app.observeRequest(req);
       if (path.startsWith('/ws')) {
-        if (server.upgrade(req, { data: { connectionSessionId: 'global', device: app.authenticateUpgrade(req, server.requestIP(req)?.address ?? null) } })) return;
+        if (server.upgrade(req, { data: { connectionSessionId: 'global', device: await app.authenticateUpgrade(req, server.requestIP(req)?.address ?? null) } })) return;
         return new Response('Upgrade failed', { status: 500 });
       }
       const file = resolve(root, '.' + path);

@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { Database } from '../sqlite-compat.ts';
+import { defineDbOp } from '../db-gateway/db-op.ts';
 
 export type DeviceKind = 'human' | 'relay' | 'daemon';
 
@@ -22,31 +23,41 @@ export function normalizePairingCode(code: string): string {
   return code.replace(/[\s-]/g, '').toUpperCase();
 }
 
-export class DevicePairingRepository {
-  constructor(private readonly db: Database) {}
+export const touchDevice = defineDbOp({
+  name: 'pairing.touchDevice',
+  mode: 'write',
+  run: (
+    db: Database,
+    { credential, host, now }: { credential: string; host: string | null; now: number }
+  ): PairedDevice | null =>
+    (db
+      .prepare(
+        `UPDATE paired_devices SET last_seen_at = ?, last_seen_host = ?
+         WHERE secret_hash = ? AND revoked_at IS NULL
+         RETURNING id, name, kind, created_at AS createdAt`
+      )
+      .get(now, host, hash(credential)) as PairedDevice | null) ?? null,
+});
 
-  touchDevice(credential: string, host: string | null, now: number): PairedDevice | null {
-    return (
-      (this.db
-        .prepare(
-          `UPDATE paired_devices SET last_seen_at = ?, last_seen_host = ?
-           WHERE secret_hash = ? AND revoked_at IS NULL
-           RETURNING id, name, kind, created_at AS createdAt`
-        )
-        .get(now, host, hash(credential)) as PairedDevice | null) ?? null
-    );
-  }
-
-  recordUnpaired(
-    seen: {
-      client: 'browser' | 'native';
-      origin: string | null;
-      host: string | null;
-      remoteAddress: string | null;
-      credentialRejected: boolean;
-    },
-    now: number
-  ): void {
+export const recordUnpaired = defineDbOp({
+  name: 'pairing.recordUnpaired',
+  mode: 'write',
+  run: (
+    db: Database,
+    {
+      seen,
+      now,
+    }: {
+      seen: {
+        client: 'browser' | 'native';
+        origin: string | null;
+        host: string | null;
+        remoteAddress: string | null;
+        credentialRejected: boolean;
+      };
+      now: number;
+    }
+  ): void => {
     const key = [
       seen.client,
       seen.origin?.slice(0, UNPAIRED_FIELD_MAX) ?? null,
@@ -54,7 +65,7 @@ export class DevicePairingRepository {
       seen.remoteAddress?.slice(0, UNPAIRED_FIELD_MAX) ?? null,
       seen.credentialRejected ? 1 : 0,
     ];
-    const seenAgain = this.db
+    const seenAgain = db
       .prepare(
         `UPDATE unpaired_connections SET count = count + 1, last_seen_at = ?
          WHERE client = ? AND IFNULL(origin, '') = IFNULL(?, '') AND IFNULL(host, '') = IFNULL(?, '')
@@ -62,27 +73,35 @@ export class DevicePairingRepository {
       )
       .run(now, ...key);
     if (seenAgain.changes > 0) return;
-    this.db
-      .prepare(
-        `INSERT INTO unpaired_connections
-           (client, origin, host, remote_address, credential_rejected, first_seen_at, last_seen_at)
-         SELECT ?, ?, ?, ?, ?, ?, ?
-         WHERE (SELECT COUNT(*) FROM unpaired_connections) < ?`
-      )
-      .run(...key, now, now, UNPAIRED_ROW_CAP);
-  }
+    db.prepare(
+      `INSERT INTO unpaired_connections
+         (client, origin, host, remote_address, credential_rejected, first_seen_at, last_seen_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?
+       WHERE (SELECT COUNT(*) FROM unpaired_connections) < ?`
+    ).run(...key, now, now, UNPAIRED_ROW_CAP);
+  },
+});
 
-  recordWouldRefuse(
-    seen: { reason: string; kind: string; host: string | null; origin: string | null },
-    now: number
-  ): void {
+export const recordWouldRefuse = defineDbOp({
+  name: 'pairing.recordWouldRefuse',
+  mode: 'write',
+  run: (
+    db: Database,
+    {
+      seen,
+      now,
+    }: {
+      seen: { reason: string; kind: string; host: string | null; origin: string | null };
+      now: number;
+    }
+  ): void => {
     const key = [
       seen.reason,
       seen.kind,
       seen.host?.slice(0, UNPAIRED_FIELD_MAX) ?? null,
       seen.origin?.slice(0, UNPAIRED_FIELD_MAX) ?? null,
     ];
-    const seenAgain = this.db
+    const seenAgain = db
       .prepare(
         `UPDATE would_refuse_requests SET count = count + 1, last_seen_at = ?
          WHERE reason = ? AND kind = ? AND IFNULL(host, '') = IFNULL(?, '')
@@ -90,14 +109,16 @@ export class DevicePairingRepository {
       )
       .run(now, ...key);
     if (seenAgain.changes > 0) return;
-    this.db
-      .prepare(
-        `INSERT INTO would_refuse_requests (reason, kind, host, origin, first_seen_at, last_seen_at)
-         SELECT ?, ?, ?, ?, ?, ?
-         WHERE (SELECT COUNT(*) FROM would_refuse_requests) < ?`
-      )
-      .run(...key, now, now, UNPAIRED_ROW_CAP);
-  }
+    db.prepare(
+      `INSERT INTO would_refuse_requests (reason, kind, host, origin, first_seen_at, last_seen_at)
+       SELECT ?, ?, ?, ?, ?, ?
+       WHERE (SELECT COUNT(*) FROM would_refuse_requests) < ?`
+    ).run(...key, now, now, UNPAIRED_ROW_CAP);
+  },
+});
+
+export class DevicePairingRepository {
+  constructor(private readonly db: Database) {}
 
   listWouldRefuse(): {
     reason: 'host_not_allowed' | 'origin_not_allowed';

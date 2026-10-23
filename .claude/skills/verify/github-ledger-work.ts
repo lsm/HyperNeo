@@ -33,10 +33,10 @@ async function open(){
   await new Promise<void>((done,fail)=>{ws!.onopen=()=>done();ws!.onerror=()=>fail(new Error('connect'));});
   ws.onmessage=event=>{const msg=JSON.parse(String(event.data)),id=waiting.has(msg.requestId)?msg.requestId:msg.id,held=waiting.get(id);if(!held)return;waiting.delete(id);clearTimeout(held.timer);if(msg.error)held.fail(new Error(JSON.stringify(msg.error)));else held.done(msg.data);};
 }
-const read=()=>new Promise<any>((done,fail)=>{
+const read=(readUrl=url)=>new Promise<any>((done,fail)=>{
   const id=crypto.randomUUID(),timer=setTimeout(()=>{waiting.delete(id);fail(new Error('RPC timeout'));},15000);
   waiting.set(id,{done,fail,timer});
-  ws!.send(JSON.stringify({id,type:'REQ',sessionId:'global',method:'operation.invoke',data:{name:'neo.github.read',input:{url}},timestamp:new Date().toISOString(),version:'1.0.0'}));
+  ws!.send(JSON.stringify({id,type:'REQ',sessionId:'global',method:'operation.invoke',data:{name:'neo.github.read',input:{url:readUrl}},timestamp:new Date().toISOString(),version:'1.0.0'}));
 });
 const requests=()=>readFileSync(join(run,'evidence/requests.jsonl'),'utf8').trim().split('\n').map(line=>JSON.parse(line));
 const stored=()=>app!.db.getDatabase().prepare('SELECT * FROM pack_coding_work_facts').get();
@@ -45,6 +45,8 @@ try{
   for(const result of evidence.fanout)assert.deepEqual(result,{ok:true,kind:'pr',url,state:'OPEN',checks:'passing',review:'approved',blockers:['1 unresolved review thread'],title:'Synthetic shared fact'});
   evidence.initialRequests=requests();evidence.workLookups=evidence.initialRequests.filter((r:any)=>r.family==='work-detail').length;
   assert.equal(evidence.workLookups,1,'Concurrent public reads must share one ledger acquisition');
+  evidence.referenceLookups=evidence.initialRequests.filter((r:any)=>r.family==='ask-reference').length;
+  assert.equal(evidence.referenceLookups,0,'PR URLs must not acquire a separate reference view');
   evidence.firstStored=stored();
   control('changed');evidence.changed=await read();assert.equal(evidence.changed.review,'none');assert.deepEqual(evidence.changed.blockers,['1 unresolved review thread']);
   evidence.changedStored=stored();
@@ -52,7 +54,13 @@ try{
   evidence.failedStored=stored();assert.equal(evidence.failedStored.value_json,evidence.changedStored.value_json);assert.equal(evidence.failedStored.reason,'failed');
   ws!.close();await app!.cleanup();app=undefined;control('reopen');await open();evidence.retained=stored();assert.equal(evidence.retained.value_json,evidence.failedStored.value_json);
   evidence.reopened=await read();assert.equal(evidence.reopened.review,'none');assert.deepEqual(evidence.reopened.blockers,['1 unresolved review thread']);evidence.reopenedStored=stored();assert.equal(evidence.reopenedStored.reason,null);
+  control('host-alias');evidence.hostAlias=await read('https://www.github.com/synthetic/ledger/pull/7#discussion');assert.equal(evidence.hostAlias.url,url);assert.equal(evidence.hostAlias.review,'approved');assert.deepEqual(evidence.hostAlias.blockers,['1 unresolved review thread']);
+  control('issue');evidence.issue=await read('https://github.com/synthetic/ledger/issues/3');assert.deepEqual(evidence.issue,{ok:true,kind:'issue',url:'https://github.com/synthetic/ledger/issues/3',state:'CLOSED',closedAs:'completed',closedBy:url,parent:'https://github.com/synthetic/ledger/issues/1'});
+  control('redirect');evidence.redirect=await read('https://github.com/synthetic/ledger/issues/7');assert.equal(evidence.redirect.kind,'pr');assert.equal(evidence.redirect.url,url);
   evidence.requests=requests();evidence.counts=Object.fromEntries(['initial','changed','detail-failed','reopen'].map(phase=>[phase,evidence.requests.filter((r:any)=>r.phase===phase&&r.family==='work-detail').length]));
+  assert.equal(evidence.requests.filter((r:any)=>r.family==='ask-reference'&&r.phase!=='redirect').length,0);
+  assert.equal(evidence.requests.filter((r:any)=>r.family==='issue-reference'&&r.phase==='issue').length,1);
+  assert.equal(evidence.requests.filter((r:any)=>r.family==='ask-reference'&&r.phase==='redirect').length,1);
   assert.deepEqual(evidence.counts,{initial:1,changed:1,'detail-failed':1,reopen:1});evidence.verified=true;
   console.log(JSON.stringify({verified:true,counts:evidence.counts,path:join(run,'evidence/work-ledger.json')}));
 }finally{

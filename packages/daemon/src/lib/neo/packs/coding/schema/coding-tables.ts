@@ -29,6 +29,19 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
     read_at INTEGER NOT NULL,
     PRIMARY KEY (repo, number)
   );
+  CREATE TABLE IF NOT EXISTS pack_coding_poll_facts (
+    http_json TEXT CHECK (http_json IS NULL OR json_valid(http_json)),
+    subject TEXT PRIMARY KEY CHECK (json_valid(subject)),
+    fact_revision INTEGER NOT NULL,
+    observation_revision INTEGER NOT NULL,
+    value_json TEXT CHECK (value_json IS NULL OR json_valid(value_json)),
+    etag TEXT,
+    next_url TEXT,
+    observed_at INTEGER,
+    attempted_at INTEGER NOT NULL,
+    reason TEXT CHECK (reason IS NULL OR reason IN ('failed','partial','rate_limited','not_authorized'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_pack_coding_poll_facts_attempted ON pack_coding_poll_facts(attempted_at);
   CREATE TABLE IF NOT EXISTS pack_coding_query_facts (
     subject TEXT PRIMARY KEY CHECK (json_valid(subject)),
     coverage_json TEXT NOT NULL CHECK (json_valid(coverage_json)),
@@ -82,6 +95,18 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
     reason TEXT CHECK (reason IS NULL OR reason IN ('failed', 'partial', 'rate_limited', 'not_authorized')),
     PRIMARY KEY (repo, number)
   );
+  CREATE TABLE IF NOT EXISTS pack_coding_ancestry_facts (
+    repo TEXT NOT NULL,
+    base_oid TEXT NOT NULL,
+    head_oid TEXT NOT NULL,
+    status TEXT CHECK (status IS NULL OR status IN ('ahead','identical','behind','diverged')),
+    fact_revision INTEGER NOT NULL,
+    observation_revision INTEGER NOT NULL,
+    observed_at INTEGER,
+    attempted_at INTEGER NOT NULL,
+    reason TEXT CHECK (reason IS NULL OR reason IN ('failed','partial')),
+    PRIMARY KEY (repo, base_oid, head_oid)
+  );
   CREATE TABLE IF NOT EXISTS pack_coding_repo_aliases (
     alias TEXT PRIMARY KEY,
     canonical TEXT NOT NULL
@@ -109,6 +134,11 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
     active_at INTEGER NOT NULL,
     seen_at INTEGER NOT NULL
   )`);
+  const pages = db.prepare('PRAGMA table_info(pack_coding_poll_facts)').all() as { name: string }[];
+  if (!pages.some((column) => column.name === 'http_json'))
+    db.exec(
+      'ALTER TABLE pack_coding_poll_facts ADD COLUMN http_json TEXT CHECK (http_json IS NULL OR json_valid(http_json))'
+    );
   const ledger = db.prepare('PRAGMA table_info(pack_coding_pr_ledger)').all() as { name: string }[];
   if (!ledger.some((column) => column.name === 'reply_at'))
     db.exec('ALTER TABLE pack_coding_pr_ledger ADD COLUMN reply_at INTEGER');

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoConversationAsk } from '@hyperneo/shared/types/neo-conversation-ask';
 import type { MessageSendStatus } from '@hyperneo/shared/types/message-delivery';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
@@ -21,7 +21,7 @@ const sessionId = `neo:${conversationId}`;
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
 const neo: OperationCaller = { source: 'mcp', sessionId, role: 'neo' };
 let db: Awaited<ReturnType<typeof createTestDb>>;
-let service: NeoService;
+let service: ReturnType<typeof createNeoService>;
 let bus: InternalEventBus<DaemonInternalEventMap>;
 let notifications: string[];
 
@@ -71,7 +71,7 @@ beforeEach(async () => {
   db.createSession(createTestSession(sessionId));
   bus = new InternalEventBus<DaemonInternalEventMap>();
   notifications = [];
-  service = new NeoService(
+  service = createNeoService(
     db,
     {} as SessionManager,
     {

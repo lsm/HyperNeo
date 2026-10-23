@@ -9,7 +9,7 @@ import type { NeoBinding } from '@hyperneo/shared/types/neo-context';
 import { ensurePrompt } from '../../../../src/lib/agent/message-delivery-outbox.ts';
 import { createNeoIntakeOperation, neoIntakeMessage } from '../../../../src/lib/neo/intake.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
@@ -245,7 +245,7 @@ describe('accepted public ask notification', () => {
 
   test('the real service callback emits neo.changed for an accepted ask', async () => {
     const events: string[] = [];
-    const service = new NeoService(
+    const service = createNeoService(
       db,
       {} as never,
       {

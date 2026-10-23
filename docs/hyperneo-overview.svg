@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 330" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#475569"/>
+    </marker>
+    <marker id="a-start" markerWidth="8" markerHeight="8" refX="1" refY="4" orient="auto">
+      <path d="M8,0 L0,4 L8,8 z" fill="#475569"/>
+    </marker>
+  </defs>
+
+  <rect x="300" y="106" width="250" height="118" rx="10" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.5"/>
+  <text x="425" y="150" text-anchor="middle" font-size="16" font-weight="600" fill="#1e1b4b">hyperneo daemon</text>
+  <text x="425" y="174" text-anchor="middle" font-size="12" fill="#475569">sessions · tasks · skills · MCP</text>
+  <text x="425" y="192" text-anchor="middle" font-size="12" fill="#475569">SQLite on your machine</text>
+
+  <rect x="22" y="120" width="192" height="90" rx="10" fill="#f8fafc" stroke="#94a3b8"/>
+  <text x="118" y="158" text-anchor="middle" font-size="15" font-weight="600" fill="#0f172a">Web UI</text>
+  <text x="118" y="180" text-anchor="middle" font-size="12" fill="#475569">desktop and mobile browsers</text>
+
+  <rect x="648" y="22" width="212" height="84" rx="10" fill="#f8fafc" stroke="#94a3b8"/>
+  <text x="754" y="56" text-anchor="middle" font-size="15" font-weight="600" fill="#0f172a">Model providers</text>
+  <text x="754" y="78" text-anchor="middle" font-size="12" fill="#475569">Anthropic · OpenRouter · Ollama</text>
+
+  <rect x="648" y="224" width="212" height="84" rx="10" fill="#f8fafc" stroke="#94a3b8"/>
+  <text x="754" y="258" text-anchor="middle" font-size="15" font-weight="600" fill="#0f172a">Your workspace</text>
+  <text x="754" y="280" text-anchor="middle" font-size="12" fill="#475569">files · git · shell</text>
+
+  <line x1="224" y1="165" x2="292" y2="165" stroke="#475569" stroke-width="1.5" marker-end="url(#a)" marker-start="url(#a-start)"/>
+  <text x="258" y="148" text-anchor="middle" font-size="11" fill="#475569">HTTP + WebSocket</text>
+  <text x="258" y="188" text-anchor="middle" font-size="11" fill="#475569">localhost:9283</text>
+
+  <line x1="562" y1="140" x2="640" y2="80" stroke="#475569" stroke-width="1.5" marker-end="url(#a)"/>
+  <text x="586" y="98" text-anchor="middle" font-size="11" fill="#475569">API</text>
+
+  <line x1="562" y1="192" x2="640" y2="252" stroke="#475569" stroke-width="1.5" marker-end="url(#a)" marker-start="url(#a-start)"/>
+  <text x="586" y="240" text-anchor="middle" font-size="11" fill="#475569">agent tools</text>
+</svg>

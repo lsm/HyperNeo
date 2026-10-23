@@ -63,52 +63,52 @@ describe('ReactiveDatabase', () => {
   });
 
   describe('change event', () => {
-    test('emits change event after createSession', () => {
+    test('emits change event after createSession', async () => {
       const events: Array<{ tables: string[]; versions: Record<string, number> }> = [];
       reactiveDb.on('change', (data) => events.push(data));
 
-      reactiveDb.db.createSession(makeSession('s1'));
+      await reactiveDb.db.createSession(makeSession('s1'));
 
       expect(events.length).toBe(1);
       expect(events[0].tables).toContain('sessions');
     });
 
-    test('emits change event after updateSession', () => {
-      db.createSession(makeSession('s2'));
+    test('emits change event after updateSession', async () => {
+      await db.createSession(makeSession('s2'));
 
       const events: Array<{ tables: string[] }> = [];
       reactiveDb.on('change', (data) => events.push(data));
 
-      reactiveDb.db.updateSession('s2', { title: 'Updated' });
+      await reactiveDb.db.updateSession('s2', { title: 'Updated' });
 
       expect(events.length).toBe(1);
       expect(events[0].tables).toContain('sessions');
     });
 
-    test('emits change event after deleteSession', () => {
-      db.createSession(makeSession('s3'));
+    test('emits change event after deleteSession', async () => {
+      await db.createSession(makeSession('s3'));
 
       const events: Array<{ tables: string[] }> = [];
       reactiveDb.on('change', (data) => events.push(data));
 
-      reactiveDb.db.deleteSession('s3');
+      await reactiveDb.db.deleteSession('s3');
 
       expect(events.length).toBe(1);
       expect(events[0].tables).toContain('sessions');
     });
 
-    test('includes correct table name in event payload', () => {
+    test('includes correct table name in event payload', async () => {
       const events: Array<{ tables: string[]; versions: Record<string, number> }> = [];
       reactiveDb.on('change', (data) => events.push(data));
 
-      reactiveDb.db.createSession(makeSession('s4'));
+      await reactiveDb.db.createSession(makeSession('s4'));
 
       expect(events[0].tables).toEqual(['sessions']);
       expect(events[0].versions).toHaveProperty('sessions');
     });
 
-    test('does NOT emit change event for read-only getSession', () => {
-      db.createSession(makeSession('s5'));
+    test('does NOT emit change event for read-only getSession', async () => {
+      await db.createSession(makeSession('s5'));
 
       const events: unknown[] = [];
       reactiveDb.on('change', (data) => events.push(data));
@@ -118,8 +118,8 @@ describe('ReactiveDatabase', () => {
       expect(events.length).toBe(0);
     });
 
-    test('does NOT emit change event for read-only listSessions', () => {
-      db.createSession(makeSession('s6'));
+    test('does NOT emit change event for read-only listSessions', async () => {
+      await db.createSession(makeSession('s6'));
 
       const events: unknown[] = [];
       reactiveDb.on('change', (data) => events.push(data));
@@ -131,8 +131,8 @@ describe('ReactiveDatabase', () => {
   });
 
   describe('change event scope from persisted session context', () => {
-    test('updateSession emits roomId/spaceId/taskId read from the sessions row', () => {
-      db.createSession(
+    test('updateSession emits roomId/spaceId/taskId read from the sessions row', async () => {
+      await db.createSession(
         makeSession('scoped-1', {
           context: { roomId: 'room-1', spaceId: 'space-1', taskId: 'task-1' },
         })
@@ -141,7 +141,7 @@ describe('ReactiveDatabase', () => {
       const events: Array<{ scope?: { roomId?: string; spaceId?: string; taskId?: string } }> = [];
       reactiveDb.on('change', (data) => events.push(data));
 
-      reactiveDb.db.updateSession('scoped-1', { title: 'Updated' });
+      await reactiveDb.db.updateSession('scoped-1', { title: 'Updated' });
 
       expect(events.length).toBe(1);
       expect(events[0].scope).toEqual({
@@ -153,20 +153,20 @@ describe('ReactiveDatabase', () => {
       });
     });
 
-    test('updateSession on a contextless session emits a bare session scope', () => {
-      db.createSession(makeSession('plain-1'));
+    test('updateSession on a contextless session emits a bare session scope', async () => {
+      await db.createSession(makeSession('plain-1'));
 
       const events: Array<{ scope?: { roomId?: string; spaceId?: string; taskId?: string } }> = [];
       reactiveDb.on('change', (data) => events.push(data));
 
-      reactiveDb.db.updateSession('plain-1', { title: 'Updated' });
+      await reactiveDb.db.updateSession('plain-1', { title: 'Updated' });
 
       expect(events.length).toBe(1);
       expect(events[0].scope).toEqual({ sessionId: 'plain-1', sessionType: 'worker' });
     });
 
-    test('deleteSession emits a bare session scope once the row is removed', () => {
-      db.createSession(
+    test('deleteSession emits a bare session scope once the row is removed', async () => {
+      await db.createSession(
         makeSession('scoped-2', {
           type: 'worker',
           context: { spaceId: 'space-2', taskId: 'task-2' },
@@ -176,7 +176,7 @@ describe('ReactiveDatabase', () => {
       const events: Array<{ scope?: { spaceId?: string; taskId?: string } }> = [];
       reactiveDb.on('change', (data) => events.push(data));
 
-      reactiveDb.db.deleteSession('scoped-2');
+      await reactiveDb.db.deleteSession('scoped-2');
 
       expect(events.length).toBe(1);
       expect(events[0].scope).toEqual({ sessionId: 'scoped-2' });
@@ -184,32 +184,32 @@ describe('ReactiveDatabase', () => {
   });
 
   describe('change:<table> event', () => {
-    test('emits change:sessions after createSession', () => {
+    test('emits change:sessions after createSession', async () => {
       const events: Array<{ table: string; version: number }> = [];
       reactiveDb.on('change:sessions', (data) => events.push(data));
 
-      reactiveDb.db.createSession(makeSession('pt1'));
+      await reactiveDb.db.createSession(makeSession('pt1'));
 
       expect(events.length).toBe(1);
       expect(events[0].table).toBe('sessions');
     });
 
-    test('per-table event includes version', () => {
+    test('per-table event includes version', async () => {
       const events: Array<{ table: string; version: number }> = [];
       reactiveDb.on('change:sessions', (data) => events.push(data));
 
-      reactiveDb.db.createSession(makeSession('pt2'));
+      await reactiveDb.db.createSession(makeSession('pt2'));
 
       expect(events[0].version).toBeGreaterThan(0);
     });
 
-    test('change:sessions fires independently of change:sdk_messages', () => {
+    test('change:sessions fires independently of change:sdk_messages', async () => {
       const sessionEvents: unknown[] = [];
       const msgEvents: unknown[] = [];
       reactiveDb.on('change:sessions', () => sessionEvents.push(1));
       reactiveDb.on('change:sdk_messages', () => msgEvents.push(1));
 
-      reactiveDb.db.createSession(makeSession('pt3'));
+      await reactiveDb.db.createSession(makeSession('pt3'));
 
       expect(sessionEvents.length).toBe(1);
       expect(msgEvents.length).toBe(0);
@@ -234,41 +234,41 @@ describe('ReactiveDatabase', () => {
   });
 
   describe('getTableVersion', () => {
-    test('returns 0 before any writes', () => {
+    test('returns 0 before any writes', async () => {
       expect(reactiveDb.getTableVersion('sessions')).toBe(0);
     });
 
-    test('returns 1 after first write', () => {
-      reactiveDb.db.createSession(makeSession('v1'));
+    test('returns 1 after first write', async () => {
+      await reactiveDb.db.createSession(makeSession('v1'));
       expect(reactiveDb.getTableVersion('sessions')).toBe(1);
     });
 
-    test('increments monotonically on successive writes', () => {
-      reactiveDb.db.createSession(makeSession('v2'));
+    test('increments monotonically on successive writes', async () => {
+      await reactiveDb.db.createSession(makeSession('v2'));
       const v1 = reactiveDb.getTableVersion('sessions');
 
-      reactiveDb.db.createSession(makeSession('v3'));
+      await reactiveDb.db.createSession(makeSession('v3'));
       const v2 = reactiveDb.getTableVersion('sessions');
 
-      reactiveDb.db.createSession(makeSession('v4'));
+      await reactiveDb.db.createSession(makeSession('v4'));
       const v3 = reactiveDb.getTableVersion('sessions');
 
       expect(v2).toBe(v1 + 1);
       expect(v3).toBe(v2 + 1);
     });
 
-    test('version in change event matches getTableVersion', () => {
+    test('version in change event matches getTableVersion', async () => {
       const events: Array<{ versions: Record<string, number> }> = [];
       reactiveDb.on('change', (data) => events.push(data));
 
-      reactiveDb.db.createSession(makeSession('v5'));
+      await reactiveDb.db.createSession(makeSession('v5'));
 
       expect(events[0].versions['sessions']).toBe(reactiveDb.getTableVersion('sessions'));
     });
 
-    test('tracks versions per table independently', () => {
-      reactiveDb.db.createSession(makeSession('v6'));
-      reactiveDb.db.createSession(makeSession('v7'));
+    test('tracks versions per table independently', async () => {
+      await reactiveDb.db.createSession(makeSession('v6'));
+      await reactiveDb.db.createSession(makeSession('v7'));
 
       const sessionsVersion = reactiveDb.getTableVersion('sessions');
       const messagesVersion = reactiveDb.getTableVersion('sdk_messages');
@@ -279,9 +279,9 @@ describe('ReactiveDatabase', () => {
   });
 
   describe('proxied db returns correct values', () => {
-    test('createSession via proxied db persists data readable by getSession', () => {
+    test('createSession via proxied db persists data readable by getSession', async () => {
       const session = makeSession('proxy1');
-      reactiveDb.db.createSession(session);
+      await reactiveDb.db.createSession(session);
 
       const retrieved = reactiveDb.db.getSession('proxy1');
       expect(retrieved).not.toBeNull();
@@ -289,46 +289,158 @@ describe('ReactiveDatabase', () => {
       expect(retrieved?.title).toBe('Session proxy1');
     });
 
-    test('updateSession via proxied db applies changes', () => {
-      reactiveDb.db.createSession(makeSession('proxy2'));
-      reactiveDb.db.updateSession('proxy2', { title: 'Modified' });
+    test('updateSession via proxied db applies changes', async () => {
+      await reactiveDb.db.createSession(makeSession('proxy2'));
+      await reactiveDb.db.updateSession('proxy2', { title: 'Modified' });
 
       const retrieved = reactiveDb.db.getSession('proxy2');
       expect(retrieved?.title).toBe('Modified');
     });
 
-    test('deleteSession via proxied db removes session', () => {
-      reactiveDb.db.createSession(makeSession('proxy3'));
-      reactiveDb.db.deleteSession('proxy3');
+    test('deleteSession via proxied db removes session', async () => {
+      await reactiveDb.db.createSession(makeSession('proxy3'));
+      await reactiveDb.db.deleteSession('proxy3');
 
       expect(reactiveDb.db.getSession('proxy3')).toBeNull();
     });
   });
 
   describe('error handling', () => {
-    test('does NOT emit event when write operation throws (duplicate id)', () => {
+    test('does NOT emit event when write operation throws (duplicate id)', async () => {
       const session = makeSession('dup1');
-      reactiveDb.db.createSession(session);
+      await reactiveDb.db.createSession(session);
 
       const events: unknown[] = [];
       reactiveDb.on('change', (data) => events.push(data));
 
       try {
-        reactiveDb.db.createSession(session);
+        await reactiveDb.db.createSession(session);
       } catch {}
 
       expect(reactiveDb.getTableVersion('sessions')).toBe(1);
     });
   });
 
+  describe('session writes that settle later', () => {
+    function deferUpdates(): Array<() => void> {
+      const settle: Array<() => void> = [];
+      const write = db.updateSession.bind(db);
+      db.updateSession = (id, updates) =>
+        new Promise<void>((resolve) => settle.push(() => resolve(write(id, updates))));
+      return settle;
+    }
+
+    test('emits the change only once the write has landed', async () => {
+      await db.createSession(makeSession('late'));
+      const settle = deferUpdates();
+      const titles: string[] = [];
+      reactiveDb.on('change:sessions', () => titles.push(db.getSession('late')!.title));
+
+      const write = reactiveDb.db.updateSession('late', { title: 'Landed' });
+      await Promise.resolve();
+      expect(titles).toEqual([]);
+
+      settle[0]();
+      await write;
+      expect(titles).toEqual(['Landed']);
+    });
+
+    test('scopes the change by the session as it was when the write was issued', async () => {
+      await db.createSession(
+        makeSession('moved', { context: { spaceId: 'space-1', taskId: 'task-1' } })
+      );
+      const settle = deferUpdates();
+      const scopes: unknown[] = [];
+      reactiveDb.on('change:sessions', (event) => scopes.push(event.scope?.taskId));
+
+      const write = reactiveDb.db.updateSession('moved', { title: 'Renamed' });
+      db.getDatabase()
+        .prepare('UPDATE sessions SET session_context = ? WHERE id = ?')
+        .run(JSON.stringify({ spaceId: 'space-1', taskId: 'task-2' }), 'moved');
+      settle[0]();
+      await write;
+
+      expect(scopes).toEqual(['task-1']);
+    });
+
+    test('a committed batch emits now and its pending session write emits once it lands', async () => {
+      await db.createSession(makeSession('batched'));
+      const settle = deferUpdates();
+      const events: Array<{ tables: string[] }> = [];
+      reactiveDb.on('change', (data) => events.push(data));
+
+      reactiveDb.beginTransaction();
+      const write = reactiveDb.db.updateSession('batched', { title: 'Later' });
+      reactiveDb.notifyChange('space_tasks');
+      reactiveDb.commitTransaction();
+      expect(events.map((event) => event.tables)).toEqual([['space_tasks']]);
+
+      settle[0]();
+      await write;
+      expect(events.map((event) => event.tables)).toEqual([['space_tasks'], ['sessions']]);
+    });
+
+    test('a later aborted batch keeps the change of a committed batch write', async () => {
+      await db.createSession(makeSession('committed'));
+      const settle = deferUpdates();
+      const tables: string[][] = [];
+      reactiveDb.on('change', (data) => tables.push(data.tables));
+
+      reactiveDb.beginTransaction();
+      const write = reactiveDb.db.updateSession('committed', { title: 'Kept' });
+      reactiveDb.commitTransaction();
+      reactiveDb.beginTransaction();
+      reactiveDb.notifyChange('space_tasks');
+      reactiveDb.abortTransaction();
+      settle[0]();
+      await write;
+
+      expect(tables).toEqual([['sessions']]);
+    });
+
+    test('a write landing inside an unrelated batch survives that batch aborting', async () => {
+      await db.createSession(makeSession('outside'));
+      const settle = deferUpdates();
+      const tables: string[][] = [];
+      reactiveDb.on('change', (data) => tables.push(data.tables));
+
+      const write = reactiveDb.db.updateSession('outside', { title: 'Landed' });
+      reactiveDb.beginTransaction();
+      settle[0]();
+      await write;
+      reactiveDb.notifyChange('space_tasks');
+      reactiveDb.abortTransaction();
+
+      expect(tables).toEqual([['sessions']]);
+    });
+
+    test('an aborted batch drops the change of a session write that lands later', async () => {
+      await db.createSession(makeSession('aborted'));
+      const settle = deferUpdates();
+      const events: Array<{ tables: string[] }> = [];
+      reactiveDb.on('change', (data) => events.push(data));
+
+      reactiveDb.beginTransaction();
+      const write = reactiveDb.db.updateSession('aborted', { title: 'Dropped' });
+      reactiveDb.notifyChange('space_tasks');
+      reactiveDb.abortTransaction();
+      settle[0]();
+      await write;
+      await reactiveDb.db.createSession(makeSession('after-abort'));
+
+      expect(events.map((event) => event.tables)).toEqual([['sessions']]);
+      expect(reactiveDb.getTableVersion('sessions')).toBe(2);
+    });
+  });
+
   describe('beginTransaction / commitTransaction', () => {
-    test('suppresses individual events during transaction', () => {
+    test('suppresses individual events during transaction', async () => {
       const events: unknown[] = [];
       reactiveDb.on('change', (data) => events.push(data));
 
       reactiveDb.beginTransaction();
-      reactiveDb.db.createSession(makeSession('tx1'));
-      reactiveDb.db.createSession(makeSession('tx2'));
+      await reactiveDb.db.createSession(makeSession('tx1'));
+      await reactiveDb.db.createSession(makeSession('tx2'));
 
       expect(events.length).toBe(0);
 
@@ -337,60 +449,60 @@ describe('ReactiveDatabase', () => {
       expect(events.length).toBe(1);
     });
 
-    test('batched change event contains all affected tables deduplicated', () => {
+    test('batched change event contains all affected tables deduplicated', async () => {
       const events: Array<{ tables: string[]; versions: Record<string, number> }> = [];
       reactiveDb.on('change', (data) => events.push(data));
 
       reactiveDb.beginTransaction();
-      reactiveDb.db.createSession(makeSession('tx3'));
-      reactiveDb.db.createSession(makeSession('tx4'));
-      reactiveDb.db.createSession(makeSession('tx5'));
+      await reactiveDb.db.createSession(makeSession('tx3'));
+      await reactiveDb.db.createSession(makeSession('tx4'));
+      await reactiveDb.db.createSession(makeSession('tx5'));
       reactiveDb.commitTransaction();
 
       expect(events.length).toBe(1);
       expect(events[0].tables.filter((t) => t === 'sessions').length).toBe(1);
     });
 
-    test('per-table change:sessions fires once on commit even with multiple writes', () => {
+    test('per-table change:sessions fires once on commit even with multiple writes', async () => {
       const perTableEvents: unknown[] = [];
       reactiveDb.on('change:sessions', () => perTableEvents.push(1));
 
       reactiveDb.beginTransaction();
-      reactiveDb.db.createSession(makeSession('tx6'));
-      reactiveDb.db.createSession(makeSession('tx7'));
+      await reactiveDb.db.createSession(makeSession('tx6'));
+      await reactiveDb.db.createSession(makeSession('tx7'));
       reactiveDb.commitTransaction();
 
       expect(perTableEvents.length).toBe(1);
     });
 
-    test('version increments during transaction even though events are suppressed', () => {
+    test('version increments during transaction even though events are suppressed', async () => {
       reactiveDb.beginTransaction();
-      reactiveDb.db.createSession(makeSession('tx8'));
-      reactiveDb.db.createSession(makeSession('tx9'));
+      await reactiveDb.db.createSession(makeSession('tx8'));
+      await reactiveDb.db.createSession(makeSession('tx9'));
       expect(reactiveDb.getTableVersion('sessions')).toBe(2);
       reactiveDb.commitTransaction();
     });
 
-    test('nested transactions: only outermost commit flushes events', () => {
+    test('nested transactions: only outermost commit flushes events', async () => {
       const events: unknown[] = [];
       reactiveDb.on('change', () => events.push(1));
 
       reactiveDb.beginTransaction();
       reactiveDb.beginTransaction();
-      reactiveDb.db.createSession(makeSession('nested1'));
+      await reactiveDb.db.createSession(makeSession('nested1'));
       reactiveDb.commitTransaction();
       expect(events.length).toBe(0);
       reactiveDb.commitTransaction();
       expect(events.length).toBe(1);
     });
 
-    test('transaction methods are available on the proxied db facade', () => {
+    test('transaction methods are available on the proxied db facade', async () => {
       const events: unknown[] = [];
       reactiveDb.on('change', () => events.push(1));
 
       reactiveDb.db.beginTransaction?.();
-      reactiveDb.db.createSession(makeSession('proxied-tx1'));
-      reactiveDb.db.createSession(makeSession('proxied-tx2'));
+      await reactiveDb.db.createSession(makeSession('proxied-tx1'));
+      await reactiveDb.db.createSession(makeSession('proxied-tx2'));
       expect(events.length).toBe(0);
 
       reactiveDb.db.commitTransaction?.();
@@ -399,44 +511,44 @@ describe('ReactiveDatabase', () => {
   });
 
   describe('abortTransaction', () => {
-    test('abortTransaction discards pending events — no change event emitted', () => {
+    test('abortTransaction discards pending events — no change event emitted', async () => {
       const events: unknown[] = [];
       reactiveDb.on('change', () => events.push(1));
 
       reactiveDb.beginTransaction();
-      reactiveDb.db.createSession(makeSession('abort1'));
+      await reactiveDb.db.createSession(makeSession('abort1'));
       reactiveDb.abortTransaction();
 
       expect(events.length).toBe(0);
     });
 
-    test('abortTransaction does not emit per-table events', () => {
+    test('abortTransaction does not emit per-table events', async () => {
       const perTableEvents: unknown[] = [];
       reactiveDb.on('change:sessions', () => perTableEvents.push(1));
 
       reactiveDb.beginTransaction();
-      reactiveDb.db.createSession(makeSession('abort2'));
+      await reactiveDb.db.createSession(makeSession('abort2'));
       reactiveDb.abortTransaction();
 
       expect(perTableEvents.length).toBe(0);
     });
 
-    test('nested abort: only outermost abort clears pending state', () => {
+    test('nested abort: only outermost abort clears pending state', async () => {
       const events: unknown[] = [];
       reactiveDb.on('change', () => events.push(1));
 
       reactiveDb.beginTransaction();
       reactiveDb.beginTransaction();
-      reactiveDb.db.createSession(makeSession('abort3'));
+      await reactiveDb.db.createSession(makeSession('abort3'));
       reactiveDb.abortTransaction();
       expect(events.length).toBe(0);
       reactiveDb.abortTransaction();
       expect(events.length).toBe(0);
     });
 
-    test('versions are still incremented even on aborted transaction', () => {
+    test('versions are still incremented even on aborted transaction', async () => {
       reactiveDb.beginTransaction();
-      reactiveDb.db.createSession(makeSession('abort4'));
+      await reactiveDb.db.createSession(makeSession('abort4'));
       const versionDuringTx = reactiveDb.getTableVersion('sessions');
       reactiveDb.abortTransaction();
 
@@ -445,22 +557,22 @@ describe('ReactiveDatabase', () => {
   });
 
   describe('off()', () => {
-    test('off() stops listener from receiving future events', () => {
+    test('off() stops listener from receiving future events', async () => {
       const events: unknown[] = [];
       const listener = () => events.push(1);
 
       reactiveDb.on('change', listener);
-      reactiveDb.db.createSession(makeSession('off1'));
+      await reactiveDb.db.createSession(makeSession('off1'));
       expect(events.length).toBe(1);
 
       reactiveDb.off('change', listener as (...args: unknown[]) => void);
-      reactiveDb.db.createSession(makeSession('off2'));
+      await reactiveDb.db.createSession(makeSession('off2'));
       expect(events.length).toBe(1);
     });
   });
 
   describe('notifyChange', () => {
-    test('emits change event for arbitrary table', () => {
+    test('emits change event for arbitrary table', async () => {
       const events: Array<{ tables: string[]; versions: Record<string, number> }> = [];
       reactiveDb.on('change', (data) => events.push(data));
 
@@ -470,7 +582,7 @@ describe('ReactiveDatabase', () => {
       expect(events[0].tables).toContain('tasks');
     });
 
-    test('increments version for notified table', () => {
+    test('increments version for notified table', async () => {
       expect(reactiveDb.getTableVersion('tasks')).toBe(0);
 
       reactiveDb.notifyChange('tasks');
@@ -480,7 +592,7 @@ describe('ReactiveDatabase', () => {
       expect(reactiveDb.getTableVersion('tasks')).toBe(2);
     });
 
-    test('emits change:<table> event with correct version', () => {
+    test('emits change:<table> event with correct version', async () => {
       const events: Array<{ table: string; version: number }> = [];
       reactiveDb.on('change:tasks', (data) => events.push(data));
 
@@ -491,7 +603,7 @@ describe('ReactiveDatabase', () => {
       expect(events[0].version).toBe(1);
     });
 
-    test('respects transaction batching — suppressed until commit', () => {
+    test('respects transaction batching — suppressed until commit', async () => {
       const events: unknown[] = [];
       reactiveDb.on('change', () => events.push(1));
 
@@ -505,7 +617,7 @@ describe('ReactiveDatabase', () => {
       expect(events.length).toBe(1);
     });
 
-    test('respects abortTransaction — events are discarded', () => {
+    test('respects abortTransaction — events are discarded', async () => {
       const events: unknown[] = [];
       reactiveDb.on('change', () => events.push(1));
 
@@ -516,14 +628,14 @@ describe('ReactiveDatabase', () => {
       expect(events.length).toBe(0);
     });
 
-    test('deduplicates with facade writes in transaction', () => {
-      db.createSession(makeSession('dedup1'));
+    test('deduplicates with facade writes in transaction', async () => {
+      await db.createSession(makeSession('dedup1'));
 
       const events: Array<{ tables: string[] }> = [];
       reactiveDb.on('change', (data) => events.push(data));
 
       reactiveDb.beginTransaction();
-      reactiveDb.db.updateSession('dedup1', { title: 'Updated via facade' });
+      await reactiveDb.db.updateSession('dedup1', { title: 'Updated via facade' });
       reactiveDb.notifyChange('sessions');
       reactiveDb.commitTransaction();
 
@@ -531,12 +643,12 @@ describe('ReactiveDatabase', () => {
       expect(events[0].tables.filter((t) => t === 'sessions').length).toBe(1);
     });
 
-    test('works alongside facade events — each emits its own change event independently', () => {
+    test('works alongside facade events — each emits its own change event independently', async () => {
       const events: Array<{ tables: string[] }> = [];
       reactiveDb.on('change', (data) => events.push(data));
 
       reactiveDb.notifyChange('tasks');
-      reactiveDb.db.createSession(makeSession('alongside1'));
+      await reactiveDb.db.createSession(makeSession('alongside1'));
 
       expect(events.length).toBe(2);
       expect(events[0].tables).toContain('tasks');
@@ -545,7 +657,7 @@ describe('ReactiveDatabase', () => {
   });
 
   describe('transaction edge cases', () => {
-    test('commitTransaction without beginTransaction is a no-op — no error, no events', () => {
+    test('commitTransaction without beginTransaction is a no-op — no error, no events', async () => {
       const events: unknown[] = [];
       reactiveDb.on('change', () => events.push(1));
 
@@ -554,17 +666,17 @@ describe('ReactiveDatabase', () => {
       expect(events.length).toBe(0);
     });
 
-    test('abortTransaction without beginTransaction is a no-op — no error', () => {
+    test('abortTransaction without beginTransaction is a no-op — no error', async () => {
       expect(() => reactiveDb.abortTransaction()).not.toThrow();
     });
 
-    test('begin → begin → abort inner → commit outer: events ARE emitted (inner abort did not reach depth=0)', () => {
+    test('begin → begin → abort inner → commit outer: events ARE emitted (inner abort did not reach depth=0)', async () => {
       const events: unknown[] = [];
       reactiveDb.on('change', () => events.push(1));
 
       reactiveDb.beginTransaction();
       reactiveDb.beginTransaction();
-      reactiveDb.db.createSession(makeSession('mixed1'));
+      await reactiveDb.db.createSession(makeSession('mixed1'));
       reactiveDb.abortTransaction();
       expect(events.length).toBe(0);
 
@@ -573,13 +685,13 @@ describe('ReactiveDatabase', () => {
       expect(events.length).toBe(1);
     });
 
-    test('begin → begin → commit inner → abort outer: events are NOT emitted (outer abort clears at depth=0)', () => {
+    test('begin → begin → commit inner → abort outer: events are NOT emitted (outer abort clears at depth=0)', async () => {
       const events: unknown[] = [];
       reactiveDb.on('change', () => events.push(1));
 
       reactiveDb.beginTransaction();
       reactiveDb.beginTransaction();
-      reactiveDb.db.createSession(makeSession('mixed2'));
+      await reactiveDb.db.createSession(makeSession('mixed2'));
       reactiveDb.commitTransaction();
       expect(events.length).toBe(0);
 
@@ -588,12 +700,12 @@ describe('ReactiveDatabase', () => {
       expect(events.length).toBe(0);
     });
 
-    test('multiple tables in single transaction — commit emits one event containing both tables', () => {
+    test('multiple tables in single transaction — commit emits one event containing both tables', async () => {
       const events: Array<{ tables: string[]; versions: Record<string, number> }> = [];
       reactiveDb.on('change', (data) => events.push(data));
 
       reactiveDb.beginTransaction();
-      reactiveDb.db.createSession(makeSession('multi-tx1'));
+      await reactiveDb.db.createSession(makeSession('multi-tx1'));
       reactiveDb.notifyChange('sdk_messages');
       reactiveDb.commitTransaction();
 

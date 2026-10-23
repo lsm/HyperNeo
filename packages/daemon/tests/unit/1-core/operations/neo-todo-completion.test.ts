@@ -64,7 +64,6 @@ function setup(stop: () => Promise<string | null> = async () => null) {
     tell: async (_ask, _todo, note) => {
       told.push(note);
     },
-    tellAsk: async () => {},
     changed: () => {},
   });
   const ops = Object.fromEntries(

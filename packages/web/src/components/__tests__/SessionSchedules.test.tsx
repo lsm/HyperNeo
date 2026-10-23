@@ -72,7 +72,7 @@ async function open() {
 }
 
 describe('SessionSchedules', () => {
-  it('reads only this session and folds cadence, next/last run, reason and nudge facts', async () => {
+  it('reads only this session and folds cadence, next/last run, reason and quiet facts', async () => {
     const { container } = render(<SessionSchedules sessionId="root" />);
     await open();
     expect(request).toHaveBeenCalledWith('operation.invoke', {
@@ -81,7 +81,7 @@ describe('SessionSchedules', () => {
     });
     expect(container.querySelector('details')?.open).toBe(true);
     expect(screen.getByText('Every 60 min')).toBeTruthy();
-    expect(screen.getByText(/Nudge in 2/)).toBeTruthy();
+    expect(screen.queryByText(/Nudge/)).toBeNull();
     expect(screen.getByText(/Skipped · Session busy/)).toBeTruthy();
     expect([...container.querySelectorAll('time')].map((time) => time.dateTime)).toEqual([
       new Date(row.nextRunAt!).toISOString(),
@@ -204,7 +204,7 @@ describe('SessionSchedules', () => {
       expect(request).toHaveBeenCalledTimes(2);
       vi.useRealTimers();
       await screen.findByText(/Delivered/);
-      expect(screen.getByText(/Nudge in 4/)).toBeTruthy();
+      expect(screen.queryByText(/Nudge/)).toBeNull();
       expect(container.querySelector('details')).toBe(details);
       expect(details.open).toBe(true);
     } finally {
@@ -220,17 +220,13 @@ describe('SessionSchedules', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('Goal no longer exists');
     expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
   });
-  it.each([4, 6])(
-    'shows nudge due after %s busy ticks without changing stored facts',
-    async (dueCount) => {
-      rows = [{ ...row, dueCount }];
-      render(<SessionSchedules sessionId="root" />);
-      await open();
-      expect(screen.getByText(/Nudge due/)).toBeTruthy();
-      expect(screen.queryByText(/Nudge in -/)).toBeNull();
-      expect(rows[0].dueCount).toBe(dueCount);
-    }
-  );
+  it.each([4, 6])('never promises a forced turn after %s quiet wakes', async (dueCount) => {
+    rows = [{ ...row, dueCount }];
+    render(<SessionSchedules sessionId="root" />);
+    await open();
+    expect(screen.queryByText(/Nudge/)).toBeNull();
+    expect(rows[0].dueCount).toBe(dueCount);
+  });
   it('keeps the count unknown while loading or failed, then shows an actual empty result', async () => {
     let reject!: (error: Error) => void;
     request.mockImplementationOnce(
@@ -252,12 +248,22 @@ describe('SessionSchedules', () => {
     await screen.findByText('No schedules');
     expect(summary.querySelector('span')?.textContent?.trim()).toBe('Schedules · 0');
   });
+  it.each([
+    ['en', 'Reset — new progress'],
+    ['zh-Hans', '有新进展，检查间隔已重置'],
+  ] as const)('localizes a progress reset in %s', async (language, label) => {
+    locale.value = language;
+    rows = [{ ...row, lastOutcome: 'progress', lastSkipReason: null }];
+    render(<SessionSchedules sessionId="root" />);
+    expect(await screen.findByText(new RegExp(label))).toBeTruthy();
+    expect(screen.queryByText('progress')).toBeNull();
+  });
   it('localizes the visible strip and controls', async () => {
     locale.value = 'zh-Hans';
     render(<SessionSchedules sessionId="root" />);
     await screen.findByText('Ship guide');
     expect(screen.getByText('定时检查')).toBeTruthy();
-    expect(screen.getByText(/还有 2 次提醒/)).toBeTruthy();
+    expect(screen.queryByText(/次提醒/)).toBeNull();
     expect(screen.getByRole('button', { name: '暂停', hidden: true })).toBeTruthy();
   });
 });

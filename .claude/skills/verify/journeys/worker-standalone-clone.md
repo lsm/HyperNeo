@@ -25,7 +25,15 @@ borrows objects: `--dissociate` must leave no alternates dependency in the clone
 use the source repo-local identity/signing policy and produce a commit absent
 from the source object store, preserving source HEAD and
 dirty bytes. A synthetic CLI refusal after preparation must release only its new
-clone, keeping the confirmed worker clone. A tracked Git LFS file must explicitly refuse preparation before CLI launch: this slice
+clone, keeping the confirmed worker clone.
+
+The B1 handoff case separately confirms a preparation transcript, injects native
+import failure and writes synthetic human bytes into that new execution clone.
+Those bytes and its HEAD remain; the refusal reports the retained session ID and
+directory for recovery. This differs from a CLI preparation that never confirms
+any session: only the latter releases its unused private clone.
+
+The tracked Git LFS case explicitly refuses preparation before CLI launch; it
 does not materialize LFS objects, download them or copy their cache/credentials.
 A subsequent start with an unavailable remote must visibly refuse before
 launching work, without falling back to stale HEAD. `evidence/observed.json` retains

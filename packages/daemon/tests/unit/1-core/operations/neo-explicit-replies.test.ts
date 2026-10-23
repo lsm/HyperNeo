@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
@@ -19,7 +19,7 @@ const sessionId = `neo:${conversationId}`;
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
 const neo: OperationCaller = { source: 'mcp', sessionId, role: 'neo' };
 let db: Awaited<ReturnType<typeof createTestDb>>;
-let service: NeoService;
+let service: ReturnType<typeof createNeoService>;
 const invoke = (name: string, input: unknown, caller = neo) =>
   invokeOperation(createOperationRegistry(createNeoOperations(service)), name, input, caller);
 const publication = { requestId: 'one', shortText: 'Ready', fullText: 'The comparison is ready.' };
@@ -56,7 +56,7 @@ async function received(kind = 'human', target = sessionId, consumed = true) {
 beforeEach(async () => {
   db = await createTestDb();
   db.createSession(createTestSession(sessionId));
-  service = new NeoService(
+  service = createNeoService(
     db,
     {} as SessionManager,
     { event: mock(() => {}) } as unknown as MessageHub,

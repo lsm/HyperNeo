@@ -84,6 +84,7 @@ import {
   GITHUB_CREDENTIAL_ACCOUNT,
 } from './lib/external-events/github/index.ts';
 import { createNeoReadCheckoutSync } from './lib/neo/read-checkout-sync.ts';
+import { CodingPollFactsRepository } from './lib/neo/packs/coding/poll-facts.ts';
 import { pullRequestNumbersOfTopics } from './lib/github/parse-pr-url.ts';
 import { readDaemonGithubToken } from './lib/github/runtime-token.ts';
 import { composeLongHorizonSubscriptionPattern } from './lib/external-events/long-horizon-subscription-pattern.ts';
@@ -346,7 +347,10 @@ export interface CreateDaemonAppOptions {
 export interface DaemonAppContext {
   server: ServerHandle;
   handlePair: (req: Request) => Promise<Response>;
-  authenticateUpgrade: (req: Request, remoteAddress: string | null) => UpgradeIdentity | null;
+  authenticateUpgrade: (
+    req: Request,
+    remoteAddress: string | null
+  ) => Promise<UpgradeIdentity | null>;
   observeRequest: (req: Request) => void;
   db: Database;
   messageHub: MessageHub;
@@ -970,6 +974,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     await syncGitHubPollingCapability(extensionConfigStore, githubPollingEnabled);
     extensionManager.register(
       new GitHubEventExtension(db.getDatabase(), process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN, {
+        collectPollPage: (...args) =>
+          new CodingPollFactsRepository(
+            db.getDatabase(),
+            getGitHubPollingIntervalSeconds() * 1000
+          ).collectExternalEventPage(...args),
         syncReadCheckout: createNeoReadCheckoutSync(),
         getPollIntervalMs: () => getGitHubPollingIntervalSeconds() * 1000,
         credentialStore: credentialManager.getCredentialStore(),
@@ -1144,11 +1153,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       now: Date.now,
     });
     const authenticateUpgrade = createUpgradeAuthenticator({
-      devices: () => pairing,
+      db: () => db.gateway,
       now: Date.now,
     });
     const observeRequest = createRequestObserver({
-      devices: () => pairing,
+      db: () => db.gateway,
       allowedHosts: () => settingsManager.getGlobalSettings().allowedHosts ?? [],
       exempt: (req) =>
         extensionManager
@@ -1178,7 +1187,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         if (url.pathname === '/ws') {
           const upgradeResponse = upgrade(req, {
             connectionSessionId: 'global',
-            device: authenticateUpgrade(req, client?.remoteAddress ?? null),
+            device: await authenticateUpgrade(req, client?.remoteAddress ?? null),
           });
 
           if (upgradeResponse) {
@@ -1368,6 +1377,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       SESSION_SCHEDULE_FIRE,
       createSessionScheduleFire({
         scheduler: rpcHandlers.sessionScheduler,
+        notifyIdle: rpcHandlers.notifyScheduleIdle,
         ...createScheduleDelivery(db, () => sessionManager.getOperationRegistry()),
       })
     );

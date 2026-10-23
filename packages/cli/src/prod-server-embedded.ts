@@ -144,7 +144,7 @@ export async function startProdServer(config: Config) {
       if (isWebSocketPath(url.pathname)) {
         const upgradeResponse = upgrade(req, {
           connectionSessionId: 'global',
-          device: daemonContext.authenticateUpgrade(req, client?.remoteAddress ?? null),
+          device: await daemonContext.authenticateUpgrade(req, client?.remoteAddress ?? null),
         });
 
         if (upgradeResponse) {

@@ -191,6 +191,20 @@ describe('Message Persistence', () => {
         expect(results[0].messageId).not.toBe(results[1].messageId);
         expect(results[1].messageId).not.toBe(results[2].messageId);
 
+        const deadline = Date.now() + IDLE_TIMEOUT * 2;
+        let consumed = 0;
+        while (consumed < results.length && Date.now() < deadline) {
+          const page = (await daemon.messageHub.request('session.messages.byStatus', {
+            sessionId,
+            status: 'consumed',
+          })) as { total: number };
+          consumed = page.total;
+          if (consumed < results.length) {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          }
+        }
+        expect(consumed).toBe(results.length);
+
         await waitForIdle(daemon, sessionId, IDLE_TIMEOUT * 2);
 
         const state = await getProcessingState(daemon, sessionId);

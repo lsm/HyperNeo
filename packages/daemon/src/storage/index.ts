@@ -1,3 +1,4 @@
+import { DbGateway } from './db-gateway/db-gateway.ts';
 import { countPendingTurns, readPendingTurns } from './turn-vectors.ts';
 import { readMessageFacts, type NeoMessageStatusRef } from '../lib/neo/message-status.ts';
 import { readMessageFeed, type MessageFeedArgs } from './sdk-message-feed-read.ts';
@@ -123,6 +124,7 @@ export class Database {
   private agentMemoryRepo!: AgentMemoryRepository;
   private readonly embedder = new WorkerAgentMemoryEmbedder();
   private sdkStatusReader: SDKStatusReader | null = null;
+  private dbGateway: DbGateway | null = null;
   private evolutionRepo!: EvolutionRepository;
   private goalAutomationCursorRepo!: GoalAutomationCursorRepository;
   private providerRepo!: ProviderRepository;
@@ -193,8 +195,9 @@ export class Database {
   createSession(
     session: Session,
     options?: { enforceWorkspaceOwnership?: boolean; ownershipPath?: string }
-  ): void {
+  ): Promise<void> {
     this.sessionRepo.createSession(session, options);
+    return Promise.resolve();
   }
 
   isWorkspaceRegisteredToSpace(spaceId: string, workspacePath: string): boolean {
@@ -225,8 +228,9 @@ export class Database {
     return this.sessionRepo.listSessionsBySpaceAgent(spaceId, agentId);
   }
 
-  clearAcpSessionIds(): void {
+  clearAcpSessionIds(): Promise<void> {
     this.sessionRepo.clearAcpSessionIds();
+    return Promise.resolve();
   }
 
   listProcessingSessionIds(): string[] {
@@ -249,8 +253,9 @@ export class Database {
     return this.sessionRepo.listAcpSessionIds();
   }
 
-  updateSession(id: string, updates: Partial<Session>): void {
+  updateSession(id: string, updates: Partial<Session>): Promise<void> {
     this.sessionRepo.updateSession(id, updates);
+    return Promise.resolve();
   }
 
   captureSessionInputDraft(id: string): SessionInputDraftSnapshot | null {
@@ -273,20 +278,23 @@ export class Database {
     return this.sessionRepo.casSessionRuntimeSettings(snapshot, patch);
   }
 
-  deleteSession(id: string): void {
+  deleteSession(id: string): Promise<void> {
     this.sessionRepo.deleteSession(id);
+    return Promise.resolve();
   }
 
   listChildSessions(parentId: string): Session[] {
     return this.sessionRepo.listChildren(parentId);
   }
 
-  detachSessionFromParent(id: string): void {
+  detachSessionFromParent(id: string): Promise<void> {
     this.sessionRepo.detachFromParent(id);
+    return Promise.resolve();
   }
 
-  setSessionParent(id: string, parentId: string | null): void {
+  setSessionParent(id: string, parentId: string | null): Promise<void> {
     this.sessionRepo.setParent(id, parentId);
+    return Promise.resolve();
   }
 
   saveSDKMessage(
@@ -422,6 +430,14 @@ export class Database {
 
   readCodexSnapshotAsync(statePath: string, includeClosed: boolean) {
     return this.getSDKReader().readCodexSnapshot(statePath, includeClosed);
+  }
+
+  get gateway(): DbGateway {
+    return (this.dbGateway ??= new DbGateway(
+      this.getDbPath(),
+      this.getDbPath() === ':memory:' ? this.getDatabase() : null,
+      this.options?.queryObservability
+    ));
   }
 
   private getSDKReader() {
@@ -632,7 +648,11 @@ export class Database {
       clearInterval(this.messageSearchIndexTimer);
       this.messageSearchIndexTimer = null;
     }
-    if (this.sdkStatusReader) return this.sdkStatusReader.close().finally(() => this.core.close());
+    const gateway = this.dbGateway?.close();
+    if (this.sdkStatusReader || gateway)
+      return Promise.all([this.sdkStatusReader?.close(), gateway])
+        .then(() => {})
+        .finally(() => this.core.close());
     this.core.close();
   }
 }
