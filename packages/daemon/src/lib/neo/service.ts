@@ -1,3 +1,5 @@
+import type { SessionSchedule } from '../../storage/repositories/session-schedule-repository.ts';
+import { neoDerivedId } from './derived-id.ts';
 import { receivedNeoHumanInput } from './human-input.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
 import { hostname } from 'node:os';
@@ -308,6 +310,33 @@ export class NeoService {
       offExternal();
     };
   }
+
+  readonly notifyScheduleIdle = (schedule: SessionSchedule): void => {
+    const conversationId = this.repo.conversationId();
+    if (!conversationId) return;
+    const publicationId = neoDerivedId(
+      `schedule-idle:${schedule.id}:${schedule.factsDigest}:${schedule.lastMessageId}`
+    );
+    if (this.publications.get(conversationId, publicationId)) return;
+    const name = this.db.getSession(schedule.target.id)?.title ?? schedule.target.id;
+    const elapsed =
+      schedule.cadence.kind === 'every'
+        ? ` for ${Math.round((schedule.cadence.everyMs * 3) / 60_000)} minutes`
+        : '';
+    const text = `${name} has been idle${elapsed}, waiting for work.`;
+    const receipt = this.appendPublication({
+      conversationId,
+      publicationId,
+      shortText: text,
+      fullText: text,
+      links: [],
+    });
+    if (!receipt.accepted) throw new Error(`Idle notice: ${receipt.reason}`);
+    if (receipt.created) {
+      this.notifyPublicationsChanged(conversationId);
+      this.notifyChanged();
+    }
+  };
 
   private appendPublication(input: NeoPublicationInput) {
     return this.publications.append(input);

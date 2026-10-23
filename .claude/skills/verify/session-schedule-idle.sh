@@ -13,5 +13,6 @@ cd packages/daemon
 env -i HOME="$RUN/home" TMPDIR="$RUN/tmp" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/unit-data" \
   node_modules/.bin/vitest run tests/unit/1-core/operations/session-schedule-fire.test.ts \
   tests/unit/1-core/operations/session-schedules.test.ts \
-  tests/unit/1-core/operations/session-schedule-delivery.test.ts > "$RUN/evidence/unit.log" 2>&1
+  tests/unit/1-core/operations/session-schedule-delivery.test.ts \
+  tests/unit/1-core/operations/neo-publication-path.test.ts > "$RUN/evidence/unit.log" 2>&1
 printf 'PASS schedule idle backoff and human notice: %s\n' "$RUN/evidence"

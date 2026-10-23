@@ -396,6 +396,7 @@ export interface RPCHandlerSetupResult {
   spaceAgentInactivityWatchdog: SpaceAgentInactivityWatchdogService;
   cancelInactivityWatchdog: () => void;
   sessionScheduler: SessionScheduler;
+  notifyScheduleIdle: NeoService['notifyScheduleIdle'];
 }
 
 export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupResult {
@@ -1837,5 +1838,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       inactivityRunNowCancelled = true;
     },
     sessionScheduler,
+    notifyScheduleIdle: neoService.notifyScheduleIdle,
   };
 }
