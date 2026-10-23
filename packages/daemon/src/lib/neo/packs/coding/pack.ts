@@ -1,3 +1,4 @@
+import { withCodingWorkGoal } from './work-goal.ts';
 import { createCodingGithubReadOperation } from './github-read-operation.ts';
 import type { NeoRefStateReader } from './ask-prs.ts';
 import { createCodingRefReader } from './ref-reader.ts';
@@ -121,6 +122,7 @@ export function createCodingPack(deps: {
       ),
     instructions: () => NEO_PACK_CODING_INSTRUCTIONS,
     workerRules: NEO_PACK_CODING_WORKER_RULES,
+    workGoal: withCodingWorkGoal,
     routeExternalEvent: (event, subscriptions) => {
       const route = routeNeoCardPrEvent(event, subscriptions, (url) => deps.todoPrs.latest(url));
       return route ? { ...route, workIds: [] } : null;

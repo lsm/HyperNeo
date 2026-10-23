@@ -1,4 +1,4 @@
-import type { Database } from '../../../storage/sqlite-compat.ts';
+import type { Database } from '../../storage/sqlite-compat.ts';
 
 export interface NeoPackPreferenceScope {
   kind: 'global' | 'repo' | 'project';

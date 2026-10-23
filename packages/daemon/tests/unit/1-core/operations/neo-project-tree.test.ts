@@ -1,3 +1,4 @@
+import { requireNeoTreeAuthor } from '../../../../src/lib/neo/project-author.ts';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { neoProjectMoveReason, neoProjectPath } from '@hyperneo/shared/types/neo-project-tree';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
@@ -7,9 +8,8 @@ import { runMigration368 } from '../../../../src/storage/schema/m368-neo-project
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository.ts';
 import {
   createNeoProjectTreeOperations,
-  requireNeoTreeAuthor,
   requireNeoEpic,
-} from '../../../../src/lib/neo/project-tree-operations.ts';
+} from '../../../../src/lib/neo/packs/coding/project-tree-operations.ts';
 import type { NeoRefState } from '../../../../src/lib/neo/packs/coding/ask-prs.ts';
 
 const local = { source: 'rpc' as const, principal: 'local' as const };

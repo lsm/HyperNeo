@@ -1,3 +1,4 @@
+import type { NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
 import type { NeoTodo, NeoTodoCheck } from '@hyperneo/shared/types/neo-ask';
 import type { WorkExecutionPreparation } from '../drivers/start-preparation.ts';
 import type { WorkRef, WorkStatus } from '../drivers/types.ts';
@@ -101,6 +102,7 @@ export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
     openTodoIds: readonly string[]
   ): Record<string, string | number | null>[];
   workerRules?: string;
+  workGoal?(instruction: string, goal: NeoWorkGoal | null): string;
   prepareExecution?: NeoExecutionPreparation;
   instructions(): string | null;
   routeExternalEvent?(

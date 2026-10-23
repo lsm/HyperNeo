@@ -3,7 +3,7 @@ import { CodingQueryFactsRepository } from './query-facts.ts';
 import { CodingWorkFactsRepository } from './work-facts.ts';
 import { CodingBranchFactsRepository } from './branch-facts.ts';
 import { CodingMergeFactsRepository } from './merge-facts.ts';
-import { getNeoPackPreference } from '../preferences.ts';
+import { getNeoPackPreference } from '../../preferences.ts';
 import { z } from 'zod';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { Logger } from '../../../logger.ts';

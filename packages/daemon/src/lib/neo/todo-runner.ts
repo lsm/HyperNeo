@@ -1,3 +1,4 @@
+import type { NeoWorkGoal } from '@hyperneo/shared/types/neo-snapshot';
 import { planNudge } from './nudge.ts';
 import type { NeoAsk, NeoQuestion, NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
@@ -238,6 +239,8 @@ export function neoAskIdleNote(
 }
 
 export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
+  const formatGoal = (instruction: string, goal: NeoWorkGoal | null) =>
+    (deps.packs().find((pack) => pack.workGoal)?.workGoal ?? withWorkGoal)(instruction, goal);
   const { store, sessions } = deps;
   const checked = new Map<string, number>();
   const starting = new Set<string>();
@@ -266,11 +269,16 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   const dispatch = async ({ todo, ask, target }: Startable) => {
     const prepare = deps.packs().find((pack) => pack.id === todo.check?.pack);
     const card = neoTodoCard(todo, ask, prepare?.workerRules);
-    const call = driverWorkCall(target, card, {
-      workId: todo.id,
-      goal: null,
-      doneWhen: todo.doneWhen,
-    });
+    const call = driverWorkCall(
+      target,
+      card,
+      {
+        workId: todo.id,
+        goal: null,
+        doneWhen: todo.doneWhen,
+      },
+      formatGoal
+    );
     if (target.verb === 'start' && prepare?.prepareExecution)
       call.input.preparation = {
         pack: prepare.id,
@@ -643,7 +651,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     const gate = requireNeoTodoContinuable(read(todoId));
     if ('reason' in gate) return gate.reason;
     const { todo, ask, ref } = gate.value;
-    const text = withWorkGoal(message, { workId: todo.id, goal: null, doneWhen: todo.doneWhen });
+    const text = formatGoal(message, { workId: todo.id, goal: null, doneWhen: todo.doneWhen });
     const status = await deps.invoke(caller(ask), 'work.status', { ref });
     if (readDriverLive(status)?.status === 'needs_you')
       return fail(

@@ -1,11 +1,12 @@
+import { requireNeoTreeAuthor } from '../../project-author.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import type { NeoBinding, NeoProject } from '@hyperneo/shared/types/neo-context';
+import type { NeoProject } from '@hyperneo/shared/types/neo-context';
 import { neoProjectMoveReason } from '@hyperneo/shared/types/neo-project-tree';
-import { parseGitHubRefUrl } from '../github/parse-pr-url.ts';
-import { defineOperation, type OperationCaller } from '../operations/registry.ts';
-import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
-import { type NeoRefState, type NeoRefStateReader } from './packs/coding/ask-prs.ts';
+import { parseGitHubRefUrl } from '../../../github/parse-pr-url.ts';
+import { defineOperation, type OperationCaller } from '../../../operations/registry.ts';
+import type { NeoRepository } from '../../../../storage/repositories/neo-repository.ts';
+import { type NeoRefState, type NeoRefStateReader } from './ask-prs.ts';
 
 const Failure = z.object({ ok: z.literal(false), reason: z.string() });
 const Move = z.object({
@@ -28,16 +29,6 @@ function requireNeoSectionParent(parent: NeoProject | null): Gate<true> {
   return parent && parent.id !== 'inbox'
     ? { value: true }
     : { reason: { ok: false, reason: 'unknown_parent' } };
-}
-
-export function requireNeoTreeAuthor(
-  caller: OperationCaller,
-  binding: NeoBinding | null
-): Gate<true> {
-  return (caller.source === 'rpc' && caller.principal === 'local') ||
-    (caller.source === 'mcp' && binding?.kind === 'neo')
-    ? { value: true }
-    : { reason: { ok: false, reason: 'root_or_human_only' } };
 }
 
 export function requireNeoEpic(

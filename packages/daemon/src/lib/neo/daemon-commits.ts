@@ -1,5 +1,5 @@
 import type { RemoteDaemonRegistry } from '../remote-daemons/registry.ts';
-import type { NeoDaemonCommit } from './packs/coding/deploy-checks.ts';
+export type NeoDaemonCommit = { daemon: string; commit: string | null };
 
 const GIT_SHA = /^[0-9a-f]{40}$/;
 const NEO_DAEMON_READ_MS = 5000;
