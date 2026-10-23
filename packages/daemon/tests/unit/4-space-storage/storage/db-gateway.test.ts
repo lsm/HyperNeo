@@ -4,7 +4,7 @@ import {
   type DbGatewayReply,
   type DbGatewayRequest,
 } from '../../../../src/storage/db-gateway/db-gateway';
-import { defineDbOp } from '../../../../src/storage/db-gateway/db-op';
+import { defineDbOp, defineRepositoryOp } from '../../../../src/storage/db-gateway/db-op';
 import { DB_OPS } from '../../../../src/storage/db-gateway/db-ops';
 import { recordWouldRefuse } from '../../../../src/storage/repositories/device-pairing-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
@@ -155,6 +155,31 @@ describe('DbGateway', () => {
     await gateway.run(recordWouldRefuse, { seen, now: 5 });
     await gateway.run(recordWouldRefuse, { seen, now: 6 });
     expect(await gateway.run(countRows, undefined)).toBe(1);
+    db.close();
+  });
+
+  test('a repository op runs only the methods it lists, on a repository over the connection', async () => {
+    class Counter {
+      constructor(private readonly db: Database) {}
+      count() {
+        return (
+          this.db.prepare('SELECT COUNT(*) AS n FROM would_refuse_requests').get() as { n: number }
+        ).n;
+      }
+      wipe() {
+        this.db.prepare('DELETE FROM would_refuse_requests').run();
+      }
+    }
+    const db = new Database(':memory:');
+    db.exec('CREATE TABLE would_refuse_requests (reason TEXT)');
+    db.exec("INSERT INTO would_refuse_requests VALUES ('a'), ('b')");
+    const counts = defineRepositoryOp('test.counter', 'read', Counter, ['count']);
+    const gateway = new DbGateway(':memory:', db);
+    expect(await gateway.call(counts, 'count')).toBe(2);
+    await expect(gateway.run(counts, { method: 'wipe', args: [] })).rejects.toThrow(
+      'test.counter does not run wipe'
+    );
+    expect(await gateway.call(counts, 'count')).toBe(2);
     db.close();
   });
 

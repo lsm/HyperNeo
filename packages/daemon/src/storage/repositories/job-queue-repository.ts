@@ -1,3 +1,4 @@
+import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { generateUUID } from '@hyperneo/shared';
 import { withBusyRetry } from '../busy-retry.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
@@ -204,7 +205,7 @@ export function buildJobQueueSessionFifoSelection(
 }
 
 export class JobQueueRepository {
-  constructor(private db: BunDatabase) {}
+  constructor(readonly db: BunDatabase) {}
 
   submissionReceipt<T>(key: string, fingerprint: string): T | null {
     const row = this.db
@@ -1172,3 +1173,17 @@ function sqliteJsonScalar(value: unknown): string | number | null {
   if (value === null) return null;
   throw new Error('enqueueUniquePending matchPayload values must be JSON scalar values');
 }
+
+export const jobQueueWrites = defineRepositoryOp('jobs.write', 'write', JobQueueRepository, [
+  'dequeue',
+  'dequeueSessionFifo',
+  'dequeueExempt',
+  'heartbeat',
+  'complete',
+  'fail',
+  'markDead',
+]);
+
+export const jobQueueReads = defineRepositoryOp('jobs.read', 'read', JobQueueRepository, [
+  'isClaimOwnedByAnother',
+]);

@@ -526,18 +526,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
             undefined,
             config.sqlQueryObservability
           );
-    const claimJobs = sessionEventWriter
-      ? (request: Parameters<SessionEventWriter['claimJobs']>[0]) =>
-          sessionEventWriter!.claimJobs(request)
-      : undefined;
     const jobProcessor = new JobQueueProcessor(jobQueue, {
-      claimJobs,
+      db: db.gateway,
       pollIntervalMs: 1000,
       maxConcurrent,
       staleThresholdMs: 5 * 60 * 1000,
     });
     const mailboxExpireProcessor = new JobQueueProcessor(jobQueue, {
-      claimJobs,
+      db: db.gateway,
       pollIntervalMs: 1000,
       maxConcurrent: 1,
       staleThresholdMs: 5 * 60 * 1000,
@@ -547,7 +543,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       64
     );
     const messageDeliveryProcessor = new JobQueueProcessor(jobQueue, {
-      claimJobs,
+      db: db.gateway,
       pollIntervalMs: 1000,
       maxConcurrent: messageDeliveryMaxConcurrent,
       staleThresholdMs: 5 * 60 * 1000,

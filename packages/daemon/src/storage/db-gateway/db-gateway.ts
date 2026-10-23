@@ -2,7 +2,7 @@ import type { StructuredLogEvent } from '@hyperneo/shared';
 import { emitStructuredLogEvent } from '../../lib/logger.ts';
 import type { Database } from '../sqlite-compat.ts';
 import type { SQLiteQueryObservabilityOptions } from '../sqlite-query-observability.ts';
-import type { DbOp } from './db-op.ts';
+import type { DbOp, Method, RepositoryOp } from './db-op.ts';
 
 type Lane = DbOp<unknown, unknown>['mode'];
 
@@ -130,6 +130,14 @@ export class DbGateway {
         db.transaction(() => op.run(db, args), op.mode === 'write' ? 'immediate' : 'deferred')()
       );
     return this.lanes[op.mode].send(op.name, args) as Promise<R>;
+  }
+
+  call<R, M extends Method<R>, K extends M>(
+    op: RepositoryOp<R, M>,
+    method: K,
+    ...args: R[K] extends (...args: infer P) => unknown ? P : never
+  ): Promise<R[K] extends (...args: never[]) => infer T ? Awaited<T> : never> {
+    return this.run(op, { method, args }) as never;
   }
 
   close(): Promise<void> {
