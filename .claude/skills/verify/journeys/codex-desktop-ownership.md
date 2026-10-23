@@ -22,14 +22,17 @@ The same real RPC door then invokes `work.start` with an owned synthetic stdio
 CLI and registered synthetic project. The opener checks that the bootstrap PID
 no longer exists before granting Desktop ownership. The opening input goes only
 to `thread-follower-start-turn`. A second bootstrap exits with status 7; that
-request must fail without handing off or submitting an opening turn. The delayed
+request must return `not_delivered` with the saved thread ID in its detail,
+without handing off or submitting an opening turn. It must not become an
+`execution_failed` RPC error during cleanup. The delayed
 exit and abnormal-exit unit contracts separately pin the process lifecycle.
 Keep `evidence/observed.json` and `evidence/open.jsonl`. The daemon and peers close
 in `finally`. This proves routing and lifecycle through the production operation
 door, not real Desktop rendering or Computer Use authentication.
 
-Legacy shared-server release is intentionally not implemented in this slice
-while the human decides whether the native idle grace is acceptable. Do not
+Legacy shared-server release is intentionally not implemented in this slice.
+The human accepted the documented idle grace; the separate release slice must
+unsubscribe and show 「释放中」 while awaiting native unload. Do not
 archive/unarchive human threads or restart Codex as a release workaround.
 
 The installed-app acceptance remains separate: start one disposable Codex task

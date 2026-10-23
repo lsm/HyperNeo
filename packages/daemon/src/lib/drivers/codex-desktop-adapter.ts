@@ -1098,10 +1098,20 @@ export async function withCodexAppServer<Value>(
       `The Codex app-server is not running: ${error instanceof Error ? error.message : String(error)}`
     );
   }
+  let closed = false;
   try {
-    return await use(server);
+    return await use({
+      ...server,
+      close: async () => {
+        try {
+          await server.close();
+        } finally {
+          closed = true;
+        }
+      },
+    });
   } finally {
-    await server.close();
+    if (!closed) await server.close();
   }
 }
 

@@ -76,7 +76,7 @@ export async function startCodexBootstrapServer(
     transport.sendNotification('initialized', {});
     return server;
   } catch (error) {
-    await server.close();
+    await Promise.resolve(server.close()).catch(() => {});
     throw error;
   }
 }
