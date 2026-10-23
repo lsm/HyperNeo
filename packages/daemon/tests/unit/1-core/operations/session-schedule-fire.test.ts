@@ -73,6 +73,24 @@ describe('session schedule firing', () => {
     await createSessionScheduleFire(deps())(jobs.getJob(row.pendingJobId!)!);
     return scheduler.repo.get(id)!;
   };
+  test('upgrade starts quiet counting fresh and preserves it on later restarts', async () => {
+    const row = create();
+    await fire(row.id);
+    db.prepare(
+      "UPDATE session_schedules SET due_count = 9, last_outcome = 'skipped_busy' WHERE id = ?"
+    ).run(row.id);
+    db.exec("DELETE FROM migration_markers WHERE key = 'migration_448'");
+    runMigrations(db, () => {});
+    const first = await fire(row.id);
+    expect(first.dueCount).toBe(1);
+    expect(first.nextRunAt).toBe(now + 60000);
+    runMigrations(db, () => {});
+    expect((await fire(row.id)).dueCount).toBe(2);
+    expect(notices).toEqual([]);
+    expect((await fire(row.id)).dueCount).toBe(3);
+    expect(notices).toEqual([row.id]);
+    expect(deliveries).toHaveLength(1);
+  });
   test('changed facts fire once, quiet wakes back off without turns, and progress resets', async () => {
     const initial = create();
     const first = await fire(initial.id);

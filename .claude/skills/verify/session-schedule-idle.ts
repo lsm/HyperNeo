@@ -77,6 +77,15 @@ try {
     assert.equal(pendingInputs().length, 0);
     assert.equal(live.queryPromise, null);
   }
+  const source = scheduler.source('goal')!;
+  const readFacts = source.facts.bind(source);
+  let factReads = 0;
+  source.facts = async (id) => { factReads++; return readFacts(id); };
+  for (const table of ['sessions', 'global_settings', 'inbox']) app.reactiveDb.notifyChange(table);
+  app.reactiveDb.notifyChange('sdk_messages', { sessionId: 'unrelated-session' });
+  await Bun.sleep(50);
+  evidence.unrelatedFactReads = factReads;
+  assert.equal(factReads, 0, 'Unrelated writes recomputed quiet schedule facts');
   const idle = scheduler.repo.get(id)!;
   now += 1000;
   const changedAt = now;
