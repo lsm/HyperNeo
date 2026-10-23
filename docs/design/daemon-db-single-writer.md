@@ -61,6 +61,13 @@ or a last-writer-wins column. So:
   value inside the transaction (`count = count + 1`, `RETURNING`, fenced
   `WHERE status = ?`, insert-or-ignore) are safe next to main-thread writers.
 - **A cross-table op moves with the latest of its tables.** It never splits.
+- **A table with blind writers switches in one PR.** `sdk_messages` has them
+  (`updateMessageStatus`, `updateMessageTimestamp`), so all of its writers move
+  together. Until a cross-table sequence becomes one op at its owner's switch
+  (session teardown, for example), it stays split across connections, as it is
+  today.
+- **Ops record the same change scope the proxy computed,** including
+  `messageSubtype`, which notice subscriptions filter on.
 
 ## Ownership and cross-table ops
 
@@ -72,6 +79,15 @@ or a last-writer-wins column. So:
 
 `visible_message_count` is written only by message code, so it is a
 `sdk_messages` column in practice and moves with the `sdk_messages` switch.
+
+The delivery outbox inserts the `sdk_messages` row and enqueues its job in one
+transaction. That is one `sdk_messages` op and is never split across the job
+queue's move.
+
+`delivery_turn_end` belongs to the `sdk_messages` owner (`recordDeliveryTurnEnd`).
+`deleteSession` deletes its rows inside the `sessions` op. So that a record
+landing after a delete leaves no orphan, the record op inserts only while its
+session exists, checked in the same transaction.
 
 ## Order
 
