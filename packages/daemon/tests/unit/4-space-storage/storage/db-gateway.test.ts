@@ -117,6 +117,30 @@ describe('DbGateway', () => {
     expect(workers[0].requests.at(-1)?.args).toEqual({ seen, now: 3000 });
   });
 
+  test('a busy worker that keeps replying is never recycled, however long the queue', async () => {
+    const workers: TestWorker[] = [];
+    const gateway = new DbGateway(
+      '/synthetic.db',
+      null,
+      undefined,
+      () => {
+        const worker = new TestWorker();
+        workers.push(worker);
+        return worker as unknown as Worker;
+      },
+      40
+    );
+    const calls = [1, 2, 3, 4].map((now) => gateway.run(recordWouldRefuse, { seen, now }));
+    await tick();
+    for (const request of workers[0].requests) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      workers[0].emit({ id: request.id, result: null });
+    }
+    expect(await Promise.all(calls)).toEqual([null, null, null, null]);
+    expect(workers[0].stopped).toBe(false);
+    expect(workers).toHaveLength(1);
+  });
+
   test('a call with no reply in time fails as unknown and recycles the worker', async () => {
     const workers: TestWorker[] = [];
     const gateway = new DbGateway(
@@ -131,7 +155,7 @@ describe('DbGateway', () => {
       20
     );
     const lost = gateway.run(recordWouldRefuse, { seen, now: 5 });
-    await expect(lost).rejects.toThrow('gave no reply in 20 ms; outcome unknown');
+    await expect(lost).rejects.toThrow('gave no reply for 20 ms; outcome unknown');
     expect(workers[0].stopped).toBe(true);
     const next = gateway.run(recordWouldRefuse, { seen, now: 6 });
     await tick();

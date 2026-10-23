@@ -26,6 +26,7 @@ class WorkerLane {
   private worker: Worker | null = null;
   private ready: Promise<Worker> | null = null;
   private closed = false;
+  private watchdog: ReturnType<typeof setTimeout> | null = null;
   private id = 0;
   private readonly pending = new Map<
     number,
@@ -47,25 +48,8 @@ class WorkerLane {
       return Promise.reject(new Error(`DB gateway ${this.lane} queue full`));
     const id = ++this.id;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(
-        () =>
-          this.stop(
-            new Error(
-              `DB gateway ${this.lane} gave no reply in ${this.replyTimeoutMs} ms; outcome unknown`
-            )
-          ),
-        this.replyTimeoutMs
-      );
-      this.pending.set(id, {
-        resolve: (result) => {
-          clearTimeout(timer);
-          resolve(result);
-        },
-        reject: (error) => {
-          clearTimeout(timer);
-          reject(error);
-        },
-      });
+      this.pending.set(id, { resolve, reject });
+      this.watchdog ??= this.armWatchdog();
       void this.open().then((worker) => {
         try {
           worker.postMessage({
@@ -79,6 +63,7 @@ class WorkerLane {
         } catch (error) {
           const waiter = this.pending.get(id);
           this.pending.delete(id);
+          this.rearmWatchdog();
           waiter?.reject(error instanceof Error ? error : new Error(String(error)));
         }
       });
@@ -113,6 +98,7 @@ class WorkerLane {
         else {
           const waiter = this.pending.get(data.id);
           this.pending.delete(data.id);
+          this.rearmWatchdog();
           if (data.error === undefined) waiter?.resolve(data.result);
           else waiter?.reject(new Error(data.error));
         }
@@ -124,10 +110,29 @@ class WorkerLane {
     }));
   }
 
+  private armWatchdog(): ReturnType<typeof setTimeout> {
+    return setTimeout(
+      () =>
+        this.stop(
+          new Error(
+            `DB gateway ${this.lane} worker gave no reply for ${this.replyTimeoutMs} ms; outcome unknown`
+          )
+        ),
+      this.replyTimeoutMs
+    );
+  }
+
+  private rearmWatchdog(): void {
+    if (this.watchdog) clearTimeout(this.watchdog);
+    this.watchdog = this.pending.size > 0 ? this.armWatchdog() : null;
+  }
+
   private stop(error = new Error(`DB gateway ${this.lane} worker closed`)): void {
     this.worker?.terminate();
     this.worker = null;
     this.ready = null;
+    if (this.watchdog) clearTimeout(this.watchdog);
+    this.watchdog = null;
     for (const waiter of this.pending.values()) waiter.reject(error);
     this.pending.clear();
   }
