@@ -103,7 +103,10 @@ export interface NeoModelPreference {
   model: string;
   provider: string;
   thinkingLevel: ThinkingLevel;
-  fallbacks?: (FallbackModelEntry & { thinkingLevel: ThinkingLevel })[];
+  fallbacks?: (FallbackModelEntry & {
+    thinkingLevel: ThinkingLevel;
+    autoCompactPercent?: number;
+  })[];
 }
 
 export const NEO_WORKER_PERMISSION_MODES = [

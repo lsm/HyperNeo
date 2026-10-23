@@ -24,9 +24,11 @@ const ModelPreference = z.object({
   provider: z.string().trim().min(1).max(80),
   thinkingLevel: z.string().trim().min(1).max(40),
 });
-const PreferenceInput = ModelPreference.extend({
+const ModelEntry = ModelPreference.extend({
   autoCompactPercent: z.number().int().transform(resolveAutoCompactPercent).optional(),
-  fallbacks: z.array(ModelPreference).max(10).optional(),
+});
+const PreferenceInput = ModelEntry.extend({
+  fallbacks: z.array(ModelEntry).max(10).optional(),
 });
 const PreferenceResult = z.union([
   z.object({ ok: z.literal(false), reason: z.string() }),
@@ -68,17 +70,27 @@ export function requireNeoPreferenceModel(
       model: entry.model,
       provider: model.provider,
       thinkingLevel: clampNeoThinking(levels, normalizeThinkingLevel(entry.thinkingLevel)),
+      ...(entry.autoCompactPercent === undefined
+        ? {}
+        : { autoCompactPercent: entry.autoCompactPercent }),
     });
   }
   return {
     value: {
       ...entries[0],
-      ...(input.autoCompactPercent === undefined
-        ? {}
-        : { autoCompactPercent: input.autoCompactPercent }),
       ...(input.fallbacks === undefined ? {} : { fallbacks: entries.slice(1) }),
     },
   };
+}
+
+export function neoCompactPercentFor(
+  preference: NeoModelPreference,
+  config: RuntimeConfig
+): number | undefined {
+  const entry = [preference, ...(preference.fallbacks ?? [])].find(
+    (item) => item.model === config.model && item.provider === config.provider
+  );
+  return (entry ?? preference).autoCompactPercent;
 }
 
 export function effectiveNeoPreference(
@@ -130,7 +142,7 @@ export function createNeoPreferenceOperation(service: NeoService) {
   return defineOperation({
     name: 'neo.preferences.set',
     description:
-      'Set the primary model, provider and thinking level for Neo and its projects, for the user only. Optional fallbacks stores an ordered preference list; runtime recovery uses the ordinary session policy. An empty list clears saved fallbacks; omitting it preserves the saved chain. Optional autoCompactPercent is an integer clamped to 10–100 and writes the ordinary per-session context-budget setting; omitting it restores model metadata/default. Percentage changes apply at idle.',
+      'Set the primary model, provider and thinking level for Neo and its projects, for the user only. Optional fallbacks stores an ordered preference list; runtime recovery uses the ordinary session policy. An empty list clears saved fallbacks; omitting it preserves the saved chain. Optional autoCompactPercent, on the primary and on each fallback, is an integer clamped to 10–100; the entry for the model the Neo session runs writes the ordinary per-session context-budget setting, and omitting it restores model metadata/default. Percentage changes apply at idle.',
     inputSchema: PreferenceInput,
     resultSchema: PreferenceResult,
     policy: { safetyClass: 'human_only' },
