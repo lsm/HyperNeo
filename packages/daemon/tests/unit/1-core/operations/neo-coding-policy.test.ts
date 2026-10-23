@@ -136,13 +136,21 @@ describe('policy-aware merge readiness', () => {
     ).toBe('waiting_review');
     expect(await cycle(3)).toBe('approved_green');
   });
-  test('waiting_ci reminds at 60 minutes without merge wording, including escalation', async () => {
+  test('waiting_ci uses the 20/40/60 ladder without merge wording, including escalation', async () => {
     const { save, cycle, messages } = fixture();
     save('mergePolicy', 'ci_only');
     await cycle(0, 'PENDING');
-    await cycle(59, 'PENDING');
+    await cycle(19, 'PENDING');
     expect(messages).toEqual([]);
-    for (const minute of [60, 120, 180]) await cycle(minute, 'PENDING');
+    for (const [minute, count] of [
+      [20, 1],
+      [40, 2],
+      [60, 3],
+      [120, 3],
+    ]) {
+      await cycle(minute, 'PENDING');
+      expect(messages.length).toBe(count);
+    }
     expect(messages.length).toBe(3);
     expect(messages.every((text) => !/merge/i.test(text))).toBe(true);
   });
