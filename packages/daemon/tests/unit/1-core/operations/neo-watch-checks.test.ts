@@ -87,6 +87,19 @@ describe('readNeoGithubRef', () => {
     expect(readPrs).toHaveBeenCalledExactlyOnceWith([pull(5)]);
   });
 
+  test('host variants use the canonical PR identity for blocker coverage', async () => {
+    const readRefStates = vi.fn(async () => []);
+    const readPrs = vi.fn(async () => [detail]);
+    expect(
+      await readNeoGithubRef(
+        { readRefStates, readPrs },
+        'https://www.github.com/lsm/HyperNeo/pull/5#discussion'
+      )
+    ).toEqual({ ok: true, kind: 'pr', ...detail });
+    expect(readRefStates).not.toHaveBeenCalled();
+    expect(readPrs).toHaveBeenCalledExactlyOnceWith([pull(5)]);
+  });
+
   test('returns a PR with its checks, review verdict and blockers', async () => {
     const readPrs = vi.fn(async () => [detail]);
     const result = await readNeoGithubRef(
