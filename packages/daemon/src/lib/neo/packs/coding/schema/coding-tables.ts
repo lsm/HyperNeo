@@ -30,6 +30,7 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
     PRIMARY KEY (repo, number)
   );
   CREATE TABLE IF NOT EXISTS pack_coding_poll_facts (
+    http_json TEXT CHECK (http_json IS NULL OR json_valid(http_json)),
     subject TEXT PRIMARY KEY CHECK (json_valid(subject)),
     fact_revision INTEGER NOT NULL,
     observation_revision INTEGER NOT NULL,
@@ -120,6 +121,11 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
     active_at INTEGER NOT NULL,
     seen_at INTEGER NOT NULL
   )`);
+  const pages = db.prepare('PRAGMA table_info(pack_coding_poll_facts)').all() as { name: string }[];
+  if (!pages.some((column) => column.name === 'http_json'))
+    db.exec(
+      'ALTER TABLE pack_coding_poll_facts ADD COLUMN http_json TEXT CHECK (http_json IS NULL OR json_valid(http_json))'
+    );
   const ledger = db.prepare('PRAGMA table_info(pack_coding_pr_ledger)').all() as { name: string }[];
   if (!ledger.some((column) => column.name === 'reply_at'))
     db.exec('ALTER TABLE pack_coding_pr_ledger ADD COLUMN reply_at INTEGER');

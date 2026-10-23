@@ -261,4 +261,48 @@ describe('ledger HTTP polling pages', () => {
       db.close();
     }
   });
+  test('concurrent collection accepts one durable observation and gives both callers coherent pages', async () => {
+    const { db, facts } = setup();
+    let calls = 0;
+    const request = async () => {
+      calls++;
+      return response();
+    };
+    try {
+      const pages = await Promise.all([
+        facts.collect(subject, 'shared-cycle', null, request, () => 100),
+        facts.collect(subject, 'shared-cycle', null, request, () => 100),
+      ]);
+      for (const page of pages) expect(await page.json()).toEqual([{ id: 7 }]);
+      expect(calls).toBe(1);
+      expect(facts.read(subject, 100, 10)).toMatchObject({
+        factRevision: 1,
+        observationRevision: 1,
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  test('oversized valid JSON stays partial instead of certifying page coverage', async () => {
+    const { db, facts } = setup();
+    try {
+      await expect(
+        facts.collect(
+          subject,
+          'oversized',
+          null,
+          async () => Response.json({ data: 'x'.repeat(17 * 1048576) }),
+          () => 100
+        )
+      ).rejects.toThrow();
+      expect(facts.read(subject, 100, 10).page).toMatchObject({
+        status: 'unknown',
+        reason: 'partial',
+        observedAt: null,
+      });
+    } finally {
+      db.close();
+    }
+  });
 });

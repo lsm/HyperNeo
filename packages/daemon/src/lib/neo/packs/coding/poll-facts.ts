@@ -1,3 +1,5 @@
+import { collectPollHttp } from './poll-http.ts';
+import { pollHttpMetadata, type CodingPollHttpMetadata } from './poll-http-metadata.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import { canonicalJson } from '../../../agent/prompt-comparison.ts';
@@ -13,10 +15,11 @@ type Subject = {
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 type Reason = 'failed' | 'partial' | 'rate_limited' | 'not_authorized';
 type Observation =
-  | { value: Json; etag: string | null; next: string | null }
-  | { notModified: string }
+  | { value: Json; etag: string | null; next: string | null; http?: CodingPollHttpMetadata }
+  | { notModified: string; http?: CodingPollHttpMetadata }
   | { reason: Reason };
 type Row = {
+  http_json: string | null;
   fact_revision: number;
   observation_revision: number;
   value_json: string | null;
@@ -62,6 +65,7 @@ function projectPage(subject: Subject, row: Row | undefined, now: number, maxAge
         }
       : {
           status: 'known' as const,
+          http: row!.http_json ? (JSON.parse(row!.http_json) as CodingPollHttpMetadata) : null,
           value: JSON.parse(row!.value_json!) as Json,
           etag: row!.etag,
           next: row!.next_url,
@@ -86,6 +90,16 @@ export class CodingPollFactsRepository {
 
   read(subject: Subject, now: number, maxAgeMs: number) {
     return readPage(this.db, subject, now, maxAgeMs);
+  }
+
+  collect(
+    subject: Subject,
+    cycle: string,
+    validator: string | null,
+    request: () => Promise<Response>,
+    now = Date.now
+  ) {
+    return collectPollHttp(this, subject, cycle, validator, request, now);
   }
 
   async acquire(
@@ -123,26 +137,45 @@ export class CodingPollFactsRepository {
         before?.value_json != null &&
         before.etag === observation.notModified;
       const success = fresh || validated;
+      const beforeHttp = before?.http_json
+        ? (JSON.parse(before.http_json) as CodingPollHttpMetadata)
+        : null;
+      const inputHttp = 'http' in observation ? observation.http : undefined;
+      const http = fresh
+        ? (inputHttp ?? null)
+        : validated && inputHttp
+          ? {
+              ...inputHttp,
+              status: beforeHttp?.status ?? 200,
+              headers: { ...beforeHttp?.headers, ...inputHttp.headers },
+            }
+          : beforeHttp;
+      const cleanedHttp = http ? pollHttpMetadata(http.cycle, http.status, http.headers) : null;
       const value = fresh ? canonicalJson(observation.value) : (before?.value_json ?? null);
       const next = fresh ? observation.next : (before?.next_url ?? null);
       const changed = fresh && (value !== before?.value_json || next !== before?.next_url);
       this.db
         .prepare(`INSERT INTO pack_coding_poll_facts
-        (subject,fact_revision,observation_revision,value_json,etag,next_url,observed_at,attempted_at,reason)
-        VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(subject) DO UPDATE SET
+        (subject,fact_revision,observation_revision,value_json,etag,next_url,observed_at,attempted_at,reason,http_json)
+        VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(subject) DO UPDATE SET
         fact_revision=excluded.fact_revision, observation_revision=excluded.observation_revision,
         value_json=excluded.value_json, etag=excluded.etag, next_url=excluded.next_url,
-        observed_at=excluded.observed_at, attempted_at=excluded.attempted_at, reason=excluded.reason`)
+        observed_at=excluded.observed_at, attempted_at=excluded.attempted_at, reason=excluded.reason, http_json=excluded.http_json`)
         .run(
           key,
           (before?.fact_revision ?? 0) + (changed ? 1 : 0),
           expectedRevision + 1,
           value,
-          fresh ? observation.etag : (before?.etag ?? null),
+          fresh
+            ? observation.etag
+            : validated
+              ? (cleanedHttp?.headers.etag ?? before?.etag ?? null)
+              : (before?.etag ?? null),
           next,
           success ? at : (before?.observed_at ?? null),
           at,
-          success ? null : 'reason' in observation ? observation.reason : 'partial'
+          success ? null : 'reason' in observation ? observation.reason : 'partial',
+          cleanedHttp ? JSON.stringify(cleanedHttp) : null
         );
       return true;
     }, 'immediate')();
