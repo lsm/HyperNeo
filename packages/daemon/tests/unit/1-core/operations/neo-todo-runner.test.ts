@@ -752,7 +752,7 @@ describe('neo todo runner follow-ups', () => {
     expect(String(calls.at(-1)?.input.message)).toContain('Now add tests.');
     expect(await runner.retry(todo.id)).toEqual({
       ok: false,
-      reason: 'not_retryable: only a todo that failed before its session started goes again.',
+      reason: 'not_retryable: only a failed todo with a worker target can be retried.',
     });
   });
 });
@@ -1621,6 +1621,38 @@ describe('current explicit removal behavior before recompute', () => {
     } finally {
       if (!closed) h.db.close();
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('failed todo retry in place', () => {
+  test('reuses the todo and worker with a fresh durable input attempt', async () => {
+    const h = setup();
+    try {
+      const todo = h.add();
+      await h.runner.start(todo.id);
+      const original = h.sessions.inputs.list(todo.id)[0];
+      h.store.updateTodo(
+        h.store.getTodo(todo.id)!,
+        { state: 'failed', reason: 'Synthetic failure', report: 'Prior failure report' },
+        3
+      );
+      h.setStatus({ ok: true, value: { status: 'failed', lastActivityAt: 2000 } });
+      const result = await h.runner.retry(todo.id);
+      expect(result).toMatchObject({
+        ok: true,
+        todo: { id: todo.id, state: 'doing' },
+      });
+      expect(h.store.listTodos('ask')).toHaveLength(1);
+      expect(h.calls.filter((call) => call.name === 'work.start')).toHaveLength(1);
+      expect(h.calls.at(-1)).toMatchObject({ name: 'work.send', input: { ref } });
+      const inputs = h.sessions.inputs.list(todo.id);
+      expect(inputs).toHaveLength(2);
+      expect(inputs[0]).toEqual(original);
+      expect(inputs[1].id).not.toBe(original.id);
+      expect(h.sessions.readRetries(todo.id)).toBe(1);
+    } finally {
+      h.db.close();
     }
   });
 });

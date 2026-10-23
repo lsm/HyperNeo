@@ -16,3 +16,5 @@ Use neo.question.ask {kind:"yesno",confirm:{path,sha256}} and verify neo.questio
 Then goal.session.create with mandateRef, the saved commit as mandateRev, cadence {kind:"every",everyMs:900000} and nudgeEvery 1 or 2.
 
 When you take an ask with several items or steps, add every item as a todo at once, in order, before starting the first.
+
+For a question about a todo, pass its todoId to neo.question.ask. Retry a failed todo with neo.todo.retry; keep the same todo rather than removing and replacing it.

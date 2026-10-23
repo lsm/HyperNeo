@@ -1,0 +1,2 @@
+PASS: todo question retired, general question open, same todo retried with a new durable input, ownership and attempts survive restart.
+PASS: stored plan advances via actual Codex turn/start once, final step does not dispatch, restart recovers once, blocked/removed and report bytes preserved.

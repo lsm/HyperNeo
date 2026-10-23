@@ -131,7 +131,7 @@ export function requireNeoTodoRetryable(read: {
   target: NeoDriverTarget | null;
   interrupted: boolean;
 }): Gate<NeoTodo> {
-  const { todo, ref, target } = read;
+  const { todo, target } = read;
   if (!todo) return fail('not_found: no such todo.');
   if (read.interrupted)
     return fail(
@@ -139,8 +139,8 @@ export function requireNeoTodoRetryable(read: {
     );
   const failed =
     todo.state === 'failed' || (todo.state === 'blocked' && todo.blockedBy === 'failure');
-  if (!failed || ref || !target)
-    return fail('not_retryable: only a todo that failed before its session started goes again.');
+  if (!failed || !target || !['start', 'send'].includes(target.verb))
+    return fail('not_retryable: only a failed todo with a worker target can be retried.');
   return { value: todo };
 }
 
@@ -747,6 +747,11 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
     async retry(todoId: string) {
       const gate = requireNeoTodoRetryable(read(todoId));
       if ('reason' in gate) return gate.reason;
+      if (sessions.readRef(todoId)) {
+        const result = await proceed(todoId, gate.value.instruction ?? 'Retry this todo.');
+        if (result.ok) sessions.recordRetry(todoId);
+        return result;
+      }
       sessions.recordRetry(todoId);
       store.updateTodo(
         gate.value,
