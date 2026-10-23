@@ -173,4 +173,18 @@ describe('prefetchAgentMemoryEmbeddingModel', () => {
       cleanup(cacheDir);
     }
   });
+
+  test('rejects checksum-invalid model responses before a consumer can read their bytes', async () => {
+    const cacheDir = createCacheDir();
+    const fake = createFakeTransformers();
+    fake.env.fetch = (async () => new Response('tampered model')) as typeof fetch;
+    try {
+      await prefetchAgentMemoryEmbeddingModel({ cacheDir, loadTransformers: fake.load });
+      await expect(
+        fake.env.fetch('https://huggingface.co/' + MODEL_ID + '/resolve/main/config.json')
+      ).rejects.toThrow('Checksum mismatch');
+    } finally {
+      cleanup(cacheDir);
+    }
+  });
 });
