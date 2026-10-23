@@ -148,7 +148,10 @@ function makeManager(): {
     title: 'Rehydrate MCP task',
   };
   const tam = new TaskAgentManager({
-    db: { getDatabase: () => new BunDatabase(':memory:') },
+    db: {
+      getDatabase: () => new BunDatabase(':memory:'),
+      waitForSdkMessageColumns: async () => {},
+    },
     internalEventBus: new InternalEventBus<DaemonInternalEventMap>(),
     sessionManager: {
       registerSession: (session: AgentSessionType) => {
@@ -235,6 +238,9 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
           message: { role: 'user', content: 'retained task input' },
         })
       );
+    outbox.db.exec(
+      'ALTER TABLE sdk_messages ADD COLUMN seq INTEGER; UPDATE sdk_messages SET seq=rowid'
+    );
     Object.assign(config.db, {
       getDatabase: () => outbox.db,
       waitForSdkMessageColumns: () => ready,

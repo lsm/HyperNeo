@@ -30,3 +30,9 @@ when an assertion fails. Keep `evidence/startup.json`, seed digest and child log
 On the old startup path, the first HTTP probe fails while chunk logs and the
 persisted cursor demonstrate that the backfill is running before listener bind.
 This checks the existing HTTP/RPC surfaces; no new UI is introduced.
+
+Space worker recovery also waits for projection readiness before deciding whether
+to replay persisted input. Run the synthetic legacy-row regression with
+`cd packages/daemon && bunx vitest run tests/unit/5-space/runtime/task-agent-manager-rehydration-mcp.test.ts`.
+It proves an unprojected enqueued input is retained and replayed after the real
+backfill completes, rather than restoring a worker with replay disabled.
