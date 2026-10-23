@@ -111,6 +111,26 @@ describe('AcpTransport.sendRequest onSubmitted', () => {
     }
   });
 
+  it('times out when an async onSubmitted never settles after the response arrived', async () => {
+    const transport = new AcpTransport({
+      command: 'sh',
+      args: [
+        '-c',
+        'read l; id=$(echo "$l" | sed -n \'s/.*"id":\\([0-9]*\\).*/\\1/p\'); echo "{\\"jsonrpc\\":\\"2.0\\",\\"id\\":$id,\\"result\\":{}}"; sleep 30',
+      ],
+      requestTimeoutMs: 300,
+    } as never);
+    try {
+      await expect(
+        transport.sendRequest('session/prompt', { sessionId: 's' } as never, {
+          onSubmitted: () => new Promise<void>(() => {}),
+        })
+      ).rejects.toThrow('Submission check timed out');
+    } finally {
+      await transport.close();
+    }
+  });
+
   it('rejects when an async onSubmitted fails after the response arrived', async () => {
     const transport = answeringAgent();
     try {

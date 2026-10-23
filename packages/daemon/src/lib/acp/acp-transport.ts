@@ -266,12 +266,18 @@ export class AcpTransport {
       }, timeoutMs);
 
       let submitted: Promise<Error | undefined> = Promise.resolve(undefined);
-      this.pendingRequests.set(id, {
-        resolve: (response) =>
-          void submitted.then((failure) => (failure ? reject(failure) : resolve(response))),
-        reject,
-        timer,
-      });
+      const settleAfterSubmit = (response: AcpJsonRpcResponse) => {
+        const hold = setTimeout(
+          () => reject(new Error(`Submission check timed out after ${timeoutMs}ms: ${method}`)),
+          timeoutMs
+        );
+        void submitted.then((failure) => {
+          clearTimeout(hold);
+          if (failure) reject(failure);
+          else resolve(response);
+        });
+      };
+      this.pendingRequests.set(id, { resolve: settleAfterSubmit, reject, timer });
 
       try {
         this.process!.stdin!.write(JSON.stringify(request) + '\n', (error) => {
