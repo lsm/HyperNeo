@@ -84,6 +84,7 @@ import {
   GITHUB_CREDENTIAL_ACCOUNT,
 } from './lib/external-events/github/index.ts';
 import { createNeoReadCheckoutSync } from './lib/neo/read-checkout-sync.ts';
+import { CodingPollFactsRepository } from './lib/neo/packs/coding/poll-facts.ts';
 import { pullRequestNumbersOfTopics } from './lib/github/parse-pr-url.ts';
 import { readDaemonGithubToken } from './lib/github/runtime-token.ts';
 import { composeLongHorizonSubscriptionPattern } from './lib/external-events/long-horizon-subscription-pattern.ts';
@@ -970,6 +971,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     await syncGitHubPollingCapability(extensionConfigStore, githubPollingEnabled);
     extensionManager.register(
       new GitHubEventExtension(db.getDatabase(), process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN, {
+        collectPollPage: (...args) =>
+          new CodingPollFactsRepository(
+            db.getDatabase(),
+            getGitHubPollingIntervalSeconds() * 1000
+          ).collectExternalEventPage(...args),
         syncReadCheckout: createNeoReadCheckoutSync(),
         getPollIntervalMs: () => getGitHubPollingIntervalSeconds() * 1000,
         credentialStore: credentialManager.getCredentialStore(),

@@ -26,9 +26,10 @@ live DB or port 8399 is used; direct external HTTP is refused.
 
 Run `neo-ledger-poll-coalescing`, `neo-ledger-poll-facts`, existing ledger summary
 and polling compatibility contracts, plus the full repository check. The existing
-`github-ledger-polling.ts` normal/conditional/failure public-RPC scenarios must
-retain their 18 initial / 18 repeated repository GET baseline (eight on failure,
-18 on recovery). Save actual request counts and both destination histories.
+`github-ledger-polling.ts` normal/conditional/failure public-RPC scenarios compare
+against the historical 18 initial / 18 repeated repository GET baseline (eight
+on failure, 18 on recovery). Save actual request counts and both destination histories.
 The local three-to-one proof is not an aggregate quota-saving claim; active
-external-event acquisition is not wired yet. After merge, verify automatic
+external-event acquisition was not wired at this Build rung. Current public-RPC
+expectations are in `github-ledger-poll-wire.md`. After merge, verify automatic
 owner-RPC build ancestry, remove the worktree and unlink the merged PR.

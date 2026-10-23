@@ -26,8 +26,11 @@ is not proof it reads the new page store. Retain `evidence/poll-facts.json` and
 
 Run the `neo-ledger-poll-facts`, `neo-ledger-merge-facts`,
 `neo-coding-pr-ledger` and `github-ledger-polling-contracts` unit suites. The
-unchanged polling journey runs normal, conditional and failure public-RPC
-scenarios: initial/repeated scans still make 18 repository GETs, failed scans
+historical polling baseline used normal, conditional and failure public-RPC
+scenarios: initial/repeated scans made 18 repository GETs, failed scans
 eight, recovery 18. Coverage/cutoffs and both destination histories survive.
 Local persistence does not reduce those upstream calls. Run full repository
 checks; after merge read owner RPC build ancestry without deploying/restarting.
+
+Current public-RPC expectations are in `github-ledger-poll-wire.md`; the Wire
+rung compares against this historical 18/18 baseline.

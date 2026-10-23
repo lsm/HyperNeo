@@ -357,3 +357,53 @@ describe('ledger HTTP polling pages', () => {
     }
   });
 });
+
+test('external-event raw pages expire as window, page and credential identities advance; legacy bytes survive', async () => {
+  const { db, facts } = setup();
+  try {
+    db.prepare(
+      'INSERT INTO pack_coding_poll_facts (subject,fact_revision,observation_revision,value_json,observed_at,attempted_at) VALUES (?,?,?,?,?,?)'
+    ).run('["existing-unscoped"]', 3, 7, ' { "protected" : true } ', 0, 0);
+    const legacy = db
+      .prepare('SELECT * FROM pack_coding_poll_facts WHERE subject=?')
+      .get('["existing-unscoped"]');
+    for (let minute = 0; minute < 30; minute++) {
+      await (
+        await facts.collectExternalEventPage(
+          {
+            ...subject,
+            credentialId: `opaque-generation-${minute}`,
+            url: `${subject.url}&since=${minute}&page=${minute}`,
+          },
+          `cycle-${minute}`,
+          null,
+          async () => response(),
+          () => minute * 60_000
+        )
+      ).text();
+    }
+    expect(db.prepare('SELECT subject FROM pack_coding_poll_facts').all()).toHaveLength(17);
+    expect(
+      db
+        .prepare('SELECT * FROM pack_coding_poll_facts WHERE subject=?')
+        .get('["existing-unscoped"]')
+    ).toEqual(legacy);
+    await (
+      await facts.collectExternalEventPage(
+        subject,
+        'after-idle',
+        null,
+        async () => response(),
+        () => 45 * 60_000
+      )
+    ).text();
+    expect(db.prepare('SELECT subject FROM pack_coding_poll_facts').all()).toHaveLength(2);
+    expect(
+      db
+        .prepare('SELECT * FROM pack_coding_poll_facts WHERE subject=?')
+        .get('["existing-unscoped"]')
+    ).toEqual(legacy);
+  } finally {
+    db.close();
+  }
+});

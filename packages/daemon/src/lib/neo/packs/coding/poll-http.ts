@@ -26,14 +26,17 @@ async function requestPage(
   facts: CodingPollFactsRepository,
   subject: Subject,
   validator: string | null,
-  request: () => Promise<Response>,
+  request: (validator: string | null) => Promise<Response>,
   saved: Snapshot,
   cached: Response | null,
   now: () => number
 ) {
-  if (cached) return cached;
+  if (cached) return { response: cached, validator: null };
+  const boundValidator =
+    saved.page.status === 'known' && saved.page.etag === validator ? validator : null;
   try {
-    return await facts.acquire(subject, validator, request);
+    const response = await facts.acquire(subject, validator, () => request(boundValidator));
+    return { response, validator: boundValidator };
   } catch (error) {
     facts.record(subject, { reason: 'failed' }, now(), saved.observationRevision);
     throw error;
@@ -43,12 +46,12 @@ async function observePage(
   facts: CodingPollFactsRepository,
   subject: Subject,
   cycle: string,
-  validator: string | null,
   saved: Snapshot,
   cached: Response | null,
-  response: Response,
+  requested: Awaited<ReturnType<typeof requestPage>>,
   now: () => number
 ) {
+  const { response, validator } = requested;
   if (cached) return response;
   const http = pollHttpMetadata(cycle, response.status, response.headers);
   let observation: Observation;
@@ -88,11 +91,11 @@ export const collectPollHttp = (superpipe({})('coding-ledger-collect-http-page')
   .pipe(
     requestPage,
     ['facts', 'subject', 'validator', 'request', 'saved', 'cached', 'now'],
-    'response'
+    'requested'
   )
   .pipe(
     observePage,
-    ['facts', 'subject', 'cycle', 'validator', 'saved', 'cached', 'response', 'now'],
+    ['facts', 'subject', 'cycle', 'saved', 'cached', 'requested', 'now'],
     'response'
   )
   .endAsync('response') as (
@@ -100,6 +103,6 @@ export const collectPollHttp = (superpipe({})('coding-ledger-collect-http-page')
   subject: Subject,
   cycle: string,
   validator: string | null,
-  request: () => Promise<Response>,
+  request: (validator: string | null) => Promise<Response>,
   now: () => number
 ) => Promise<Response>;

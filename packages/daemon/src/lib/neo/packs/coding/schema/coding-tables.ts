@@ -41,6 +41,7 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
     attempted_at INTEGER NOT NULL,
     reason TEXT CHECK (reason IS NULL OR reason IN ('failed','partial','rate_limited','not_authorized'))
   );
+  CREATE INDEX IF NOT EXISTS idx_pack_coding_poll_facts_attempted ON pack_coding_poll_facts(attempted_at);
   CREATE TABLE IF NOT EXISTS pack_coding_query_facts (
     subject TEXT PRIMARY KEY CHECK (json_valid(subject)),
     coverage_json TEXT NOT NULL CHECK (json_valid(coverage_json)),
