@@ -24,9 +24,9 @@ app.server.stop();
 const files = new Map([...new Bun.Glob('**/*').scanSync({ cwd: 'packages/web/dist', onlyFiles: true })].map((path) => [`/${path}`, Bun.file(resolve('packages/web/dist', path))]));
 const server = Bun.serve({
   hostname: '127.0.0.1', port,
-  fetch(request, server) {
+  async fetch(request, server) {
     if (new URL(request.url).pathname === '/ws') {
-      if (server.upgrade(request, { data: { connectionSessionId: 'global', device: app.authenticateUpgrade(request, server.requestIP(request)?.address ?? null) } })) return;
+      if (server.upgrade(request, { data: { connectionSessionId: 'global', device: await app.authenticateUpgrade(request, server.requestIP(request)?.address ?? null) } })) return;
       return new Response('Upgrade failed', { status: 500 });
     }
     return new Response(files.get(new URL(request.url).pathname) ?? Bun.file(resolve('packages/web/dist/neo/index.html')));

@@ -347,7 +347,10 @@ export interface CreateDaemonAppOptions {
 export interface DaemonAppContext {
   server: ServerHandle;
   handlePair: (req: Request) => Promise<Response>;
-  authenticateUpgrade: (req: Request, remoteAddress: string | null) => UpgradeIdentity | null;
+  authenticateUpgrade: (
+    req: Request,
+    remoteAddress: string | null
+  ) => Promise<UpgradeIdentity | null>;
   observeRequest: (req: Request) => void;
   db: Database;
   messageHub: MessageHub;
@@ -1150,7 +1153,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       now: Date.now,
     });
     const authenticateUpgrade = createUpgradeAuthenticator({
-      devices: () => pairing,
+      db: () => db.gateway,
       now: Date.now,
     });
     const observeRequest = createRequestObserver({
@@ -1184,7 +1187,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         if (url.pathname === '/ws') {
           const upgradeResponse = upgrade(req, {
             connectionSessionId: 'global',
-            device: authenticateUpgrade(req, client?.remoteAddress ?? null),
+            device: await authenticateUpgrade(req, client?.remoteAddress ?? null),
           });
 
           if (upgradeResponse) {

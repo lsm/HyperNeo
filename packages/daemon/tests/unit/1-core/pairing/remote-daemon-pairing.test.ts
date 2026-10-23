@@ -1,3 +1,4 @@
+import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { MessageHub, MessageHubRouter } from '@hyperneo/shared';
 import { z } from 'zod';
@@ -54,14 +55,15 @@ async function startPairableDaemon() {
   hub.registerTransport(transport);
   setupOperationHandlers(hub, registry, (clientId) => transport.deviceOf(clientId));
   const pair = createPairRoute({ repo: devices, limiter: createPairingLimiter(), now: Date.now });
-  const authenticate = createUpgradeAuthenticator({ devices: () => devices, now: Date.now });
+  const gateway = new DbGateway(':memory:', db);
+  const authenticate = createUpgradeAuthenticator({ db: () => gateway, now: Date.now });
   const server: ServerHandle = await createHttpWsServer({
     hostname: '127.0.0.1',
     port: 0,
-    fetch: (request, upgrade, client) => {
+    fetch: async (request, upgrade, client) => {
       const path = new URL(request.url).pathname;
       if (path === '/pair') return pair(request);
-      const device = authenticate(request, client?.remoteAddress ?? null);
+      const device = await authenticate(request, client?.remoteAddress ?? null);
       return (
         upgrade(request, { connectionSessionId: 'global', device }) ??
         new Response('upgrade failed', { status: 500 })

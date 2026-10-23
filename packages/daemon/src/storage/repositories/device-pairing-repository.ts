@@ -23,6 +23,65 @@ export function normalizePairingCode(code: string): string {
   return code.replace(/[\s-]/g, '').toUpperCase();
 }
 
+export const touchDevice = defineDbOp({
+  name: 'pairing.touchDevice',
+  mode: 'write',
+  run: (
+    db: Database,
+    { credential, host, now }: { credential: string; host: string | null; now: number }
+  ): PairedDevice | null =>
+    (db
+      .prepare(
+        `UPDATE paired_devices SET last_seen_at = ?, last_seen_host = ?
+         WHERE secret_hash = ? AND revoked_at IS NULL
+         RETURNING id, name, kind, created_at AS createdAt`
+      )
+      .get(now, host, hash(credential)) as PairedDevice | null) ?? null,
+});
+
+export const recordUnpaired = defineDbOp({
+  name: 'pairing.recordUnpaired',
+  mode: 'write',
+  run: (
+    db: Database,
+    {
+      seen,
+      now,
+    }: {
+      seen: {
+        client: 'browser' | 'native';
+        origin: string | null;
+        host: string | null;
+        remoteAddress: string | null;
+        credentialRejected: boolean;
+      };
+      now: number;
+    }
+  ): void => {
+    const key = [
+      seen.client,
+      seen.origin?.slice(0, UNPAIRED_FIELD_MAX) ?? null,
+      seen.host?.slice(0, UNPAIRED_FIELD_MAX) ?? null,
+      seen.remoteAddress?.slice(0, UNPAIRED_FIELD_MAX) ?? null,
+      seen.credentialRejected ? 1 : 0,
+    ];
+    const seenAgain = db
+      .prepare(
+        `UPDATE unpaired_connections SET count = count + 1, last_seen_at = ?
+         WHERE client = ? AND IFNULL(origin, '') = IFNULL(?, '') AND IFNULL(host, '') = IFNULL(?, '')
+           AND IFNULL(remote_address, '') = IFNULL(?, '') AND credential_rejected = ?`
+      )
+      .run(now, ...key);
+    if (seenAgain.changes > 0) return;
+    db.prepare(
+      `INSERT INTO unpaired_connections
+         (client, origin, host, remote_address, credential_rejected, first_seen_at, last_seen_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?
+       WHERE (SELECT COUNT(*) FROM unpaired_connections) < ?`
+    ).run(...key, now, now, UNPAIRED_ROW_CAP);
+  },
+});
+
 export const recordWouldRefuse = defineDbOp({
   name: 'pairing.recordWouldRefuse',
   mode: 'write',
@@ -60,53 +119,6 @@ export const recordWouldRefuse = defineDbOp({
 
 export class DevicePairingRepository {
   constructor(private readonly db: Database) {}
-
-  touchDevice(credential: string, host: string | null, now: number): PairedDevice | null {
-    return (
-      (this.db
-        .prepare(
-          `UPDATE paired_devices SET last_seen_at = ?, last_seen_host = ?
-           WHERE secret_hash = ? AND revoked_at IS NULL
-           RETURNING id, name, kind, created_at AS createdAt`
-        )
-        .get(now, host, hash(credential)) as PairedDevice | null) ?? null
-    );
-  }
-
-  recordUnpaired(
-    seen: {
-      client: 'browser' | 'native';
-      origin: string | null;
-      host: string | null;
-      remoteAddress: string | null;
-      credentialRejected: boolean;
-    },
-    now: number
-  ): void {
-    const key = [
-      seen.client,
-      seen.origin?.slice(0, UNPAIRED_FIELD_MAX) ?? null,
-      seen.host?.slice(0, UNPAIRED_FIELD_MAX) ?? null,
-      seen.remoteAddress?.slice(0, UNPAIRED_FIELD_MAX) ?? null,
-      seen.credentialRejected ? 1 : 0,
-    ];
-    const seenAgain = this.db
-      .prepare(
-        `UPDATE unpaired_connections SET count = count + 1, last_seen_at = ?
-         WHERE client = ? AND IFNULL(origin, '') = IFNULL(?, '') AND IFNULL(host, '') = IFNULL(?, '')
-           AND IFNULL(remote_address, '') = IFNULL(?, '') AND credential_rejected = ?`
-      )
-      .run(now, ...key);
-    if (seenAgain.changes > 0) return;
-    this.db
-      .prepare(
-        `INSERT INTO unpaired_connections
-           (client, origin, host, remote_address, credential_rejected, first_seen_at, last_seen_at)
-         SELECT ?, ?, ?, ?, ?, ?, ?
-         WHERE (SELECT COUNT(*) FROM unpaired_connections) < ?`
-      )
-      .run(...key, now, now, UNPAIRED_ROW_CAP);
-  }
 
   listWouldRefuse(): {
     reason: 'host_not_allowed' | 'origin_not_allowed';
