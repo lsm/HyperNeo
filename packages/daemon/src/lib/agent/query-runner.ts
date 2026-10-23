@@ -11,6 +11,11 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { MessageContent, MessageHub, Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import {
+  isSDKAPIRetryMessage,
+  isSDKResultMessage,
+  isSDKResultSuccess,
+} from '@hyperneo/shared/sdk/type-guards';
 import type { UUID } from 'crypto';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
@@ -40,6 +45,7 @@ import type { QueryLike } from './query-like.ts';
 import type { QueryOptionsBuilder } from './query-options-builder.ts';
 import {
   decideQueryRetry,
+  isClaudeAuthenticationError,
   planTurnEndedGeneration,
   type QueryRetryEnvironment,
   type QueryRetryErrorSignal,
@@ -1296,6 +1302,21 @@ export class QueryRunner {
           }
 
           const message = this.retryPromptIdentity.incoming(result.value as SDKMessage);
+          if ((session.config.provider ?? 'anthropic') === 'anthropic') {
+            const authRetry = isSDKAPIRetryMessage(message) && message.error_status === 401;
+            const authResult =
+              isSDKResultMessage(message) &&
+              message.is_error === true &&
+              ((isSDKResultSuccess(message) && message.api_error_status === 401) ||
+                isClaudeAuthenticationError(
+                  isSDKResultSuccess(message) ? message.result : message.errors.join('\n')
+                ));
+            if (authRetry || authResult) {
+              if (authResult) this.ctx.db.saveSDKMessage(session.id, message);
+              throw new Error('401 Claude authentication failed');
+            }
+          }
+          if (isSDKResultMessage(message) && message.is_error !== true) retryAttempt = 0;
           this.streamSilence = noteStreamMessage(this.streamSilence, message, Date.now());
           if (!firstMessageArrived) {
             startupWatchMessages.push(message);
@@ -1401,7 +1422,7 @@ export class QueryRunner {
       const isStreamStall = errorMessage.includes(STREAM_STALL_ERROR);
 
       const providerId = session.config.provider as string | undefined;
-      const isProviderSession = providerId && providerId !== 'anthropic' && providerId !== 'glm';
+      const isProviderSession = providerId && providerId !== 'anthropic';
       const limitAssessment = assessLimitError({ rawText: errorMessage });
       const retrySignal: QueryRetryErrorSignal = {
         rawText: errorMessage,
@@ -1560,6 +1581,19 @@ export class QueryRunner {
           guardAfterExit: true,
           restartQueue: true,
           requeueFedPrompts: true,
+        });
+      }
+      if (routeDecision.route.action === 'claude_auth_retry') {
+        return await this.runRetryTeardown(queryGeneration, attemptToken, {
+          nextAttempt: 1,
+          recoveryState,
+          resetStartupState: true,
+          idleFirst: true,
+          snapshotLastConsumed: true,
+          snapshotRequeueLabel: 'Claude login retry',
+          terminateProcesses: true,
+          guardAfterExit: true,
+          restartQueue: true,
         });
       }
       if (routeDecision.route.action === 'stream_stall_retry') {
@@ -2337,6 +2371,7 @@ export class QueryRunner {
     deadReason: 'process_exit' | 'stream_closed' | 'backstop' | null = null
   ): string | undefined {
     const { session } = this.ctx;
+    if (messageHint === 'claude_login_failed') return 'Claude login failed — sign in again';
     if (messageHint === 'startup_timeout') {
       if (deadReason === 'process_exit') {
         return (

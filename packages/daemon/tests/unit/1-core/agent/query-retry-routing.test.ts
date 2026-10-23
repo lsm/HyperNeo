@@ -231,12 +231,12 @@ describe('query-retry-routing', () => {
       expected: { action: 'api_validation', text: '**API Error (400)**: prompt is too long' },
     },
     {
-      name: 'parseable 401 routes to api_validation before auth category',
+      name: 'Claude 401 refreshes login before showing an API validation error',
       signal: {
         rawText: '401 Unauthorized',
         apiValidationText: '**API Error (401)**: Unauthorized',
       },
-      expected: { action: 'api_validation', text: '**API Error (401)**: Unauthorized' },
+      expected: { action: 'claude_auth_retry' },
     },
     {
       name: 'structured rate-limit signal drives terminal category',
@@ -1096,5 +1096,43 @@ describe('classifyQueryRetryRoute for a silent model stream', () => {
     expect(decideQueryRetry({ errorSignal: stall, env: env() }).finalizer.skipErrorManager).toBe(
       true
     );
+  });
+});
+
+describe('Claude login recovery', () => {
+  it('restarts a Claude query once after authentication rejection', () => {
+    const decision = decideQueryRetry({
+      errorSignal: signal({ rawText: '401 OAuth token revoked' }),
+      env: env({ hasConsumedPrompt: true }),
+    });
+    expect(decision.route.action).toBe('claude_auth_retry');
+  });
+  it('surfaces a persistent login failure after that retry', () => {
+    const decision = decideQueryRetry({
+      errorSignal: signal({ rawText: '401 OAuth token revoked' }),
+      env: env({ attempt: 1, hasConsumedPrompt: true }),
+    });
+    expect(decision.route).toEqual({
+      action: 'terminal',
+      category: ErrorCategory.AUTHENTICATION,
+      messageHint: 'claude_login_failed',
+    });
+  });
+  it('does not restart an interrupted Claude query or another provider', () => {
+    for (const input of [
+      env({
+        lifecycle: {
+          processingStatus: 'interrupted',
+          abortSignalAborted: true,
+          isLimitRecoveryPending: false,
+        },
+      }),
+      env({ providerFamily: 'provider' }),
+    ]) {
+      expect(
+        decideQueryRetry({ errorSignal: signal({ rawText: '401 unauthorized' }), env: input }).route
+          .action
+      ).not.toBe('claude_auth_retry');
+    }
   });
 });

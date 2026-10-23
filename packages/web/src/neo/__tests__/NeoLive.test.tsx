@@ -52,6 +52,25 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Neo MVP controls', () => {
+  it('shows needs you for an idle session with a login error', () => {
+    const store = {
+      ...makeStore(),
+      error: signal({ message: 'Claude login failed — sign in again', occurredAt: 1 }),
+    } as unknown as SessionStore;
+    render(
+      <NeoComposer
+        store={store}
+        sessionId="neo"
+        draft=""
+        onDraft={vi.fn()}
+        onError={vi.fn()}
+        onTranscript={vi.fn()}
+        onSend={sendMessage}
+      />
+    );
+    expect(screen.getByRole('status').textContent).toBe('needs you');
+  });
+
   it('exposes pending questions and runtime failures instead of hiding them in tool detail', () => {
     const agentState = signal<{ status: string; pendingQuestion?: { toolUseId: string } }>({
       status: 'idle',

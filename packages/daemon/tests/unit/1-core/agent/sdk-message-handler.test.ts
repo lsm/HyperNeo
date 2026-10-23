@@ -3613,6 +3613,22 @@ describe('SDKMessageHandler', () => {
       });
     });
 
+    it('does not clear a failure when the SDK success subtype carries is_error', async () => {
+      await handler.handleMessage({
+        type: 'result',
+        subtype: 'success',
+        is_error: true,
+        result: '401 OAuth token revoked',
+        uuid: 'auth-result',
+        usage: { input_tokens: 0, output_tokens: 0 },
+        total_cost_usd: 0,
+        modelUsage: {},
+      } as unknown as SDKMessage);
+      expect(emitSpy).not.toHaveBeenCalledWith('session.errorClear', {
+        sessionId: 'test-session-id',
+      });
+    });
+
     it('should emit session.errorClear event', async () => {
       const message: SDKMessage = {
         type: 'result',
@@ -6708,7 +6724,7 @@ describe('SDKMessageHandler', () => {
       );
 
       expect(onResultLimitError).not.toHaveBeenCalled();
-      expect(publishedTopics()).toContain('query.trigger');
+      expect(publishedTopics()).not.toContain('query.trigger');
     });
 
     it('feeds a captured structured rate_limit_event into the assessment', async () => {
@@ -6835,7 +6851,7 @@ describe('SDKMessageHandler', () => {
       );
 
       expect(onResultLimitError).not.toHaveBeenCalled();
-      expect(publishedTopics()).toContain('query.trigger');
+      expect(publishedTopics()).not.toContain('query.trigger');
     });
 
     it('ignores allowed rate-limit telemetry when assessing a later api error', async () => {
@@ -6860,7 +6876,7 @@ describe('SDKMessageHandler', () => {
       );
 
       expect(onResultLimitError).not.toHaveBeenCalled();
-      expect(publishedTopics()).toContain('query.trigger');
+      expect(publishedTopics()).not.toContain('query.trigger');
     });
 
     it('clears the captured rate-limit event after recovery engages', async () => {
@@ -7003,7 +7019,7 @@ describe('SDKMessageHandler', () => {
       );
 
       expect(onResultLimitError).toHaveBeenCalledTimes(1);
-      expect(publishedTopics()).toContain('query.trigger');
+      expect(publishedTopics()).not.toContain('query.trigger');
     });
   });
 

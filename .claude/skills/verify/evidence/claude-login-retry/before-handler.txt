@@ -1,0 +1,98 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:7:14). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 /Users/lsm/focus/worktrees/claude-login-retry/packages/daemon
+
+ ❯ tests/unit/1-core/agent/sdk-message-handler.test.ts (277 tests | 1 failed | 276 skipped) 10ms
+   ❯ SDKMessageHandler (277)
+     ❯ handleResultMessage (56)
+       × does not clear a failure when the SDK success subtype carries is_error 9ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/1-core/agent/sdk-message-handler.test.ts > SDKMessageHandler > handleResultMessage > does not clear a failure when the SDK success subtype carries is_error
+AssertionError: expected "vi.fn()" to not be called with arguments: [ 'session.errorClear', …(1) ]
+
+Received:
+
+  1st vi.fn() call:
+
+  [
+-   "session.errorClear",
++   "sdk.message",
+    {
++     "message": {
++       "is_error": true,
++       "modelUsage": {},
++       "result": "401 OAuth token revoked",
++       "subtype": "success",
++       "total_cost_usd": 0,
++       "type": "result",
++       "usage": {
++         "input_tokens": 0,
++         "output_tokens": 0,
++       },
++       "uuid": "auth-result",
++     },
+      "sessionId": "test-session-id",
+    },
+  ]
+
+  2nd vi.fn() call:
+
+  [
+-   "session.errorClear",
++   "session.updated",
+    {
++     "session": {
++       "lastActiveAt": "2026-10-22T22:59:05.845Z",
++       "metadata": {
++         "costBaseline": 0,
++         "inputTokens": 0,
++         "lastSdkCost": 0,
++         "messageCount": 1,
++         "outputTokens": 0,
++         "toolCallCount": 0,
++         "totalCost": 0,
++         "totalTokens": 0,
++       },
++     },
+      "sessionId": "test-session-id",
++     "source": "metadata",
+    },
+  ]
+
+  3rd vi.fn() call:
+
+Compared values have no visual difference.
+
+  4th vi.fn() call:
+
+  [
+-   "session.errorClear",
++   "query.trigger",
+    {
+      "sessionId": "test-session-id",
+    },
+  ]
+
+
+Number of calls: 4
+
+ ❯ tests/unit/1-core/agent/sdk-message-handler.test.ts:3627:27
+    3625|         modelUsage: {},
+    3626|       } as unknown as SDKMessage);
+    3627|       expect(emitSpy).not.toHaveBeenCalledWith('session.errorClear', {
+       |                           ^
+    3628|         sessionId: 'test-session-id',
+    3629|       });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 276 skipped (277)
+   Start at  18:59:05
+   Duration  759ms (transform 77%, import 19%, setup 2%, tests 1%)
+

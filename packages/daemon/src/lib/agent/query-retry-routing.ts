@@ -55,6 +55,7 @@ export type QueryRetryRoute =
   | { action: 'startup_timeout_retry'; redeliver: 'consumed' | 'queue' }
   | { action: 'message_not_found_retry' }
   | { action: 'transient_retry' }
+  | { action: 'claude_auth_retry' }
   | { action: 'stream_stall_retry' }
   | { action: 'network_pause' }
   | { action: 'provider_backoff'; nextAttempt: number }
@@ -155,10 +156,18 @@ export function decideProviderTerminalCategory(
   return ErrorCategory.SYSTEM;
 }
 
+export function isClaudeAuthenticationError(rawText: string): boolean {
+  return /\b401\b|authentication_failed|authentication_error|OAuth token.*(?:revoked|expired)/i.test(
+    rawText
+  );
+}
+
 export function resolveTerminalMessageHint(
   signal: QueryRetryErrorSignal,
   env: QueryRetryEnvironment
 ): string | undefined {
+  if (env.providerFamily === 'anthropic' && isClaudeAuthenticationError(signal.rawText))
+    return 'claude_login_failed';
   if (signal.isStartupTimeout) return 'startup_timeout';
   if (signal.isStreamStall) return 'stream_stall';
   if (signal.isConversationNotFound) return 'conversation_not_found';
@@ -181,6 +190,18 @@ export function classifyQueryRetryRoute(input: QueryRetryRouteInput): QueryRetry
     if (env.hasConsumedPrompt) return { action: 'startup_timeout_retry', redeliver: 'consumed' };
     if (env.hasQueuedPrompt) return { action: 'startup_timeout_retry', redeliver: 'queue' };
   }
+  if (
+    env.providerFamily === 'anthropic' &&
+    isClaudeAuthenticationError(errorSignal.rawText) &&
+    !isQueryInterrupted(errorSignal, env.lifecycle)
+  )
+    return env.attempt === 0
+      ? { action: 'claude_auth_retry' }
+      : {
+          action: 'terminal',
+          category: ErrorCategory.AUTHENTICATION,
+          messageHint: 'claude_login_failed',
+        };
   if (errorSignal.isMessageNotFound && env.attempt === 0)
     return { action: 'message_not_found_retry' };
   if (
@@ -421,6 +442,7 @@ function resolveDecision(
     case 'turn_ended_redeliver':
     case 'message_not_found_retry':
     case 'transient_retry':
+    case 'claude_auth_retry':
     case 'stream_stall_retry':
     case 'provider_backoff':
       return {

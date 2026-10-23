@@ -13,8 +13,12 @@ interface Props {
 
 export function SDKResultMessage({ message }: Props) {
   const [showDetails, setShowDetails] = useState(false);
-  const isSuccess = isSDKResultSuccess(message);
-  const isError = isSDKResultError(message);
+  const isSuccess = isSDKResultSuccess(message) && message.is_error !== true;
+  const errors = isSDKResultError(message)
+    ? message.errors
+    : message.is_error === true
+      ? [message.result]
+      : [];
 
   const usage = (message as unknown as { usage?: Record<string, number | undefined> }).usage ?? {};
   const inputTokens = (usage.input_tokens as number | undefined) ?? 0;
@@ -240,11 +244,11 @@ export function SDKResultMessage({ message }: Props) {
             </div>
           )}
 
-          {isError && 'errors' in message && message.errors && (
+          {errors.length > 0 && (
             <div>
               <h4 class="text-sm font-semibold text-danger-soft mb-2">Errors</h4>
               <div class="space-y-2">
-                {message.errors.map((error: string, idx: number) => (
+                {errors.map((error: string, idx: number) => (
                   <div
                     key={idx}
                     class="bg-danger/10 p-3 rounded border border-danger/40 text-sm text-danger-soft"

@@ -1,0 +1,31 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:7:14). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 /Users/lsm/focus/worktrees/claude-login-retry/packages/daemon
+
+ ❯ tests/unit/1-core/agent/query-runner.test.ts (431 tests | 1 failed | 430 skipped) 40ms
+   ❯ QueryRunner (371)
+     ❯ bounded provider error retry (5xx / overloaded / unavailable) (29)
+       × does not restart a GLM key failure or suggest signing in to Claude 39ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/1-core/agent/query-runner.test.ts > QueryRunner > bounded provider error retry (5xx / overloaded / unavailable) > does not restart a GLM key failure or suggest signing in to Claude
+AssertionError: expected "vi.fn()" to be called 1 times, but got 2 times
+ ❯ tests/unit/1-core/agent/query-runner.test.ts:5020:26
+    5018|         runner.start();
+    5019|         await ctx.queryPromise?.catch(() => {});
+    5020|         expect(buildSpy).toHaveBeenCalledTimes(1);
+       |                          ^
+    5021|         expect(handleErrorSpy).toHaveBeenCalled();
+    5022|         for (const call of handleErrorSpy.mock.calls) {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 430 skipped (431)
+   Start at  19:24:11
+   Duration  968ms (transform 76%, import 17%, tests 4%, setup 2%)
+

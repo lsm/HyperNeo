@@ -4999,15 +4999,43 @@ describe('QueryRunner', () => {
       expect(buildSpy).toHaveBeenCalledTimes(4);
     });
 
-    it('should NOT retry 401 authentication errors (terminal)', async () => {
+    it('does not restart a GLM key failure or suggest signing in to Claude', async () => {
+      const registry = initializeProviders();
+      const previous = registry.get('glm');
+      if (previous) registry.unregister('glm');
+      registry.register({
+        id: 'glm',
+        displayName: 'GLM',
+        isAvailable: async () => true,
+        getAuthStatus: async () => ({ isAuthenticated: true, method: 'api_key' }),
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as unknown as Provider);
+      try {
+        buildSpy.mockRejectedValue(new Error('401 Unauthorized'));
+        const ctx = createContext();
+        ctx.session.config.provider = 'glm';
+        runner = new QueryRunner(ctx);
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+        expect(buildSpy).toHaveBeenCalledTimes(1);
+        expect(JSON.stringify(saveSDKMessageSpy.mock.calls)).toContain('401');
+        expect(JSON.stringify(saveSDKMessageSpy.mock.calls)).not.toContain('Claude login failed');
+      } finally {
+        registry.unregister('glm');
+        if (previous) registry.register(previous);
+      }
+    });
+
+    it('restarts once for Claude 401 then reports a terminal authentication error', async () => {
       buildSpy.mockRejectedValue(new Error('401 Unauthorized'));
 
       const ctx = createContext();
+      ctx.session.config.provider = 'anthropic';
       runner = new QueryRunner(ctx);
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
-      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(buildSpy).toHaveBeenCalledTimes(2);
     });
 
     it('should NOT retry 402 quota/billing errors (terminal)', async () => {
@@ -6735,7 +6763,7 @@ describe('QueryRunner', () => {
     });
 
     it('invalidates the attempt token when the run exits without a retry', async () => {
-      buildSpy.mockRejectedValue(new Error('401 Unauthorized'));
+      buildSpy.mockRejectedValue(new Error('403 Forbidden'));
 
       const ctx = createContext();
       runner = new QueryRunner(ctx);

@@ -343,16 +343,18 @@ export function NeoComposer({
               ? voiceStatus
                 ? 'order-last flex w-full'
                 : 'hidden'
-              : store.agentState.value.status === 'waiting_for_input'
+              : store.error.value || store.agentState.value.status === 'waiting_for_input'
                 ? 'order-last flex w-full sm:order-none sm:w-auto sm:flex-1'
                 : 'hidden'
           }`}
         >
           {voiceBusy
             ? voiceStatus
-            : store.agentState.value.status === 'waiting_for_input'
-              ? t('composer.question')
-              : null}
+            : store.error.value
+              ? t('chat.notice.needs_you')
+              : store.agentState.value.status === 'waiting_for_input'
+                ? t('composer.question')
+                : null}
         </span>
         <div class={`flex gap-2 ${voiceBusy ? 'min-w-0 flex-1' : 'ml-auto shrink-0'}`}>
           <NeoVoice
