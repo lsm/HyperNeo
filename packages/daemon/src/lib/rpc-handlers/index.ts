@@ -1191,21 +1191,23 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.internalEventBus,
     (id) => deps.db.getSession(id)
   );
-  const stampProvenance = (
+  const stampProvenance = async (
     sessionId: string,
     promptProvenance: NonNullable<SessionMetadata['promptProvenance']>
   ) => {
     const current = deps.db.getSession(sessionId);
     if (current) {
-      deps.db.updateSession(sessionId, { metadata: { ...current.metadata, promptProvenance } });
+      await deps.db.updateSession(sessionId, {
+        metadata: { ...current.metadata, promptProvenance },
+      });
       deps.db.notifyChange('sessions', { sessionId });
     }
   };
   spaceAgentV2Deps.stampProvenance = stampProvenance;
   const resolveClones = createResolveClones({
     listChildren: (parentId) => deps.db.listChildSessions(parentId),
-    detach: (sessionId) => {
-      deps.db.detachSessionFromParent(sessionId);
+    detach: async (sessionId) => {
+      await deps.db.detachSessionFromParent(sessionId);
       deps.db.notifyChange('sessions', { sessionId });
     },
     agentOwning: (sessionId) => {
@@ -1763,9 +1765,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   if (process.env.NODE_ENV !== 'test') {
     const neoFolder = ensureNeoProject(deps.db.workspaceHistory);
-    fileNeoSessions(deps.db, neoService.repo, neoFolder);
-    void neoService
-      .openDefault()
+    void fileNeoSessions(deps.db, neoService.repo, neoFolder)
+      .catch((error) => log.warn('Neo sessions not filed', error))
+      .then(() => neoService.openDefault())
       .catch((error) => log.warn('Neo default session not opened', error));
   }
   void neoService.recover();

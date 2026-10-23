@@ -32,17 +32,19 @@ describe('planNeoSessionFiling', () => {
 });
 
 describe('fileNeoSessions', () => {
-  test('files the root Neo session when it has no project', () => {
+  test('files the root Neo session when it has no project', async () => {
     const sessions = new Map<string, { id: string; workspacePath: string | null }>([
       ['neo:root', { id: 'neo:root', workspacePath: null }],
       ['neo:inbox', { id: 'neo:inbox', workspacePath: null }],
       ['neo:plans', { id: 'neo:plans', workspacePath: '/elsewhere' }],
     ]);
     const updates: Array<[string, unknown]> = [];
-    fileNeoSessions(
+    await fileNeoSessions(
       {
         getSession: (id) => sessions.get(id) ?? null,
-        updateSession: (id, update) => updates.push([id, update]),
+        updateSession: async (id, update) => {
+          updates.push([id, update]);
+        },
       },
       {
         defaultBinding: () => ({ sessionId: 'neo:root', kind: 'neo', projectId: null }),
