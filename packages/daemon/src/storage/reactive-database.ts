@@ -310,11 +310,15 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
     pendingTableScopes.set(table, mergeScopes([current, scope]) ?? null);
   }
 
-  function incrementAndEmit(table: string, scope?: TableChangeScope): void {
+  function incrementAndEmit(
+    table: string,
+    scope?: TableChangeScope,
+    batched = transactionDepth > 0
+  ): void {
     tableVersions[table] = getVersion(table) + 1;
     const version = tableVersions[table];
 
-    if (transactionDepth > 0) {
+    if (batched) {
       pendingTables.add(table);
       addPendingScope(table, scope);
       return;
@@ -383,15 +387,14 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
         try {
           const result = (value as (...a: unknown[]) => unknown).apply(target, args);
           const scope = mapping.extractScope?.(args, target);
-          const emit = () => incrementAndEmit(mapping.table, scope);
           if (!(result instanceof Promise)) {
-            emit();
+            incrementAndEmit(mapping.table, scope);
             return result;
           }
           const issuedIn = batch;
           return result.then((settled) => {
             if (issuedIn?.aborted) tableVersions[mapping.table] = getVersion(mapping.table) + 1;
-            else emit();
+            else incrementAndEmit(mapping.table, scope, issuedIn !== null && issuedIn === batch);
             return settled;
           });
         } finally {
