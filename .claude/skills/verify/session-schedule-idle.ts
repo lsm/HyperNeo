@@ -1,0 +1,101 @@
+import assert from 'node:assert/strict';
+import { copyFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { getConfig } from '../../../packages/daemon/src/config.ts';
+import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
+import { SessionScheduler } from '../../../packages/daemon/src/lib/scheduler/session-schedules.ts';
+import { JobQueueProcessor, type JobHandler } from '../../../packages/daemon/src/storage/job-queue-processor.ts';
+import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
+import { NeoPublicationRepository } from '../../../packages/daemon/src/storage/repositories/neo-publication-repository.ts';
+
+const run = resolve(process.argv[2]);
+assert.equal(process.env.NODE_ENV, 'test');
+assert.equal(process.env.HOME, join(run, 'home'));
+assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
+assert(!existsSync(join(run, 'data/daemon.db')));
+for (const name of ['data', 'bin', 'evidence']) mkdirSync(join(run, name), { recursive: true });
+copyFileSync(new URL('./gh-stub.sh', import.meta.url), join(run, 'bin/gh'));
+process.env.PATH = `${join(run, 'bin')}:${process.env.PATH}`;
+let scheduler: SessionScheduler | undefined;
+let fire: JobHandler | undefined;
+const register = JobQueueProcessor.prototype.register;
+const registerSource = SessionScheduler.prototype.registerSource;
+JobQueueProcessor.prototype.register = function (queue, handler, options) {
+  if (queue === 'sessionSchedule.fire') fire = handler;
+  return register.call(this, queue, handler, options);
+};
+SessionScheduler.prototype.registerSource = function (source) {
+  if (source.kind === 'goal') scheduler = this;
+  return registerSource.call(this, source);
+};
+const clock = Date.now;
+let now = clock();
+let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;
+const hub = new MessageHub({ defaultSessionId: 'global' });
+let transport: WebSocketClientTransport | undefined;
+const evidence: Record<string, unknown> = { wakes: [] };
+try {
+  app = await createDaemonApp({ config: { ...getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db'), workspaceRoot: run }), disableGoalProcessing: true, disableWorktrees: true }, verbose: false });
+  assert.notEqual(app.server.port, 8399);
+  await app.jobProcessor.stop();
+  assert(scheduler && fire, 'The real daemon did not register its schedule handler');
+  transport = new WebSocketClientTransport({ url: `ws://127.0.0.1:${app.server.port}/ws`, autoReconnect: false });
+  hub.registerTransport(transport); await transport.initialize();
+  const call = (name: string, input: unknown = {}) => hub.request<any>('operation.invoke', { name, input });
+  await call('neo.open');
+  const target = await app.sessionManager.createSession({ workspacePath: run, title: 'Review lead' });
+  const live = await app.sessionManager.getSessionForControl(target); assert(live);
+  await live.stateManager.setIdle();
+  const result = await call('goal.session.create', { ownerSessionId: target, title: 'Wait for review work', doneTest: 'New work completed', cadence: { kind: 'every', everyMs: 1_200_000 }, nudgeEvery: 2 });
+  assert(result.accepted, JSON.stringify(result));
+  const id = scheduler.repo.getBySource('goal', result.goal.id)!.id;
+  const baseline = await scheduler.source('goal')!.facts(result.goal.id); assert(baseline);
+  scheduler.repo.recordOutcome(scheduler.repo.get(id)!, 'fired', baseline.digest, 'prior-delivery');
+  const inputRows = () => app!.db.getDatabase().prepare("SELECT sdk_uuid FROM sdk_messages WHERE session_id = ? AND message_type = 'user'").all(target);
+  const conversationId = new NeoRepository(app.db.getDatabase()).conversationId()!;
+  const publications = () => new NeoPublicationRepository(app!.db.getDatabase()).list(conversationId, 0, 100) ?? [];
+  const before = publications().length;
+  Date.now = () => now;
+  const wake = async () => {
+    const row = scheduler!.repo.get(id)!; now = row.nextRunAt!;
+    const job = app!.jobQueue.getJob(row.pendingJobId!)!;
+    await fire!(job);
+    app!.jobQueue.deleteJob(job.id);
+    const after = scheduler!.repo.get(id)!;
+    (evidence.wakes as unknown[]).push({ now, dueCount: after.dueCount, nextRunAt: after.nextRunAt, outcome: after.lastOutcome, cards: publications().length - before, inputs: inputRows() });
+    return after;
+  };
+  for (let count = 1; count <= 10; count++) {
+    const row = await wake();
+    assert.equal(row.lastOutcome, 'skipped_unchanged', `Quiet wake ${count} started a model delivery`);
+    assert.equal(row.dueCount, count);
+    assert.equal(row.nextRunAt! - now, Math.min(1_200_000 * 2 ** Math.max(0, count - 2), 28_800_000));
+    assert.equal(publications().length - before, count < 3 ? 0 : 1);
+    assert.deepEqual(inputRows(), []);
+  }
+  const idle = scheduler.repo.get(id)!;
+  now += 1000;
+  const changedAt = now;
+  assert((await call('goal.session.update', { ownerSessionId: target, goalId: result.goal.id, progress: 1 })).accepted);
+  const deadline = performance.now() + 10_000;
+  while (scheduler.repo.get(id)!.dueCount !== 0 && performance.now() < deadline) await Bun.sleep(10);
+  const reset = scheduler.repo.get(id)!;
+  evidence.reset = { changedAt, before: idle, after: reset };
+  assert.equal(reset.dueCount, 0, 'Progress did not reset a backed-off wake immediately');
+  assert.equal(reset.nextRunAt, changedAt + 1_200_000);
+  assert.equal((await wake()).lastOutcome, 'fired');
+  assert.equal(scheduler.repo.get(id)!.dueCount, 0);
+  for (let count = 1; count <= 4; count++) await wake();
+  assert.equal(publications().length - before, 2, 'A new idle stretch must notify once again');
+  evidence.cards = publications().slice(before);
+  evidence.conversation = await call('neo.conversation.read', { conversationId });
+  assert((evidence.cards as { shortText: string }[]).every(card => card.shortText.includes('Review lead')));
+  console.log(`PASS quiet wakes back off to 8h, progress resets immediately, one human card per stretch, no unchanged-wake input. ${run}/evidence/schedule-idle.json`);
+} finally {
+  Date.now = clock;
+  writeFileSync(join(run, 'evidence/schedule-idle.json'), JSON.stringify(evidence, null, 2));
+  await transport?.close(); await app?.cleanup();
+  JobQueueProcessor.prototype.register = register;
+  SessionScheduler.prototype.registerSource = registerSource;
+}
