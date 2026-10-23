@@ -363,6 +363,24 @@ describe('ReactiveDatabase', () => {
       expect(events.map((event) => event.tables.sort())).toEqual([['sessions', 'space_tasks']]);
     });
 
+    test('a later aborted batch keeps the change of a committed batch write', async () => {
+      await db.createSession(makeSession('committed'));
+      const settle = deferUpdates();
+      const tables: string[][] = [];
+      reactiveDb.on('change', (data) => tables.push(data.tables));
+
+      reactiveDb.beginTransaction();
+      const write = reactiveDb.db.updateSession('committed', { title: 'Kept' });
+      reactiveDb.commitTransaction();
+      reactiveDb.beginTransaction();
+      reactiveDb.notifyChange('space_tasks');
+      reactiveDb.abortTransaction();
+      settle[0]();
+      await write;
+
+      expect(tables).toEqual([['sessions']]);
+    });
+
     test('an aborted batch drops the change of a session write that lands later', async () => {
       await db.createSession(makeSession('aborted'));
       const settle = deferUpdates();
