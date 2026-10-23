@@ -1594,7 +1594,7 @@ describe('QueryOptionsBuilder', () => {
       expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 8000 });
     });
 
-    it('omits thinking config for kimi K3 when level is off', async () => {
+    it('turns thinking off for kimi K3 when level is off', async () => {
       mockSession.config.provider = 'kimi';
       mockSession.config.model = 'kimi-k3';
       mockSession.config.thinkingLevel = 'off';
@@ -1602,7 +1602,8 @@ describe('QueryOptionsBuilder', () => {
         {} as import('@anthropic-ai/claude-agent-sdk').Options
       );
 
-      expect(result.thinking).toBeUndefined();
+      expect(result.thinking).toEqual({ type: 'disabled' });
+      expect(result.env?.CLAUDE_CODE_DISABLE_THINKING).toBe('1');
     });
 
     it('forces thinking enabled for kimi-k2.7-code-highspeed when level is off', async () => {
@@ -1768,7 +1769,7 @@ describe('QueryOptionsBuilder', () => {
         const result = builder.addSessionStateOptions(
           {} as import('@anthropic-ai/claude-agent-sdk').Options
         );
-        expect(result.thinking).toBeUndefined();
+        expect(result.thinking).toEqual({ type: 'disabled' });
       } finally {
         getProviderRegistry().setCuratedModels('kimi', undefined);
       }
@@ -1789,7 +1790,7 @@ describe('QueryOptionsBuilder', () => {
           {} as import('@anthropic-ai/claude-agent-sdk').Options
         );
 
-        expect(result.thinking).toBeUndefined();
+        expect(result.thinking).toEqual({ type: 'disabled' });
       } finally {
         process.env.KIMI_API_KEY = '';
         process.env.KIMI_BASE_URL = '';
@@ -1833,7 +1834,7 @@ describe('QueryOptionsBuilder', () => {
           {} as import('@anthropic-ai/claude-agent-sdk').Options
         );
 
-        expect(result.thinking).toBeUndefined();
+        expect(result.thinking).toEqual({ type: 'disabled' });
       } finally {
         process.env.KIMI_API_KEY = '';
         process.env.KIMI_BASE_URL = '';

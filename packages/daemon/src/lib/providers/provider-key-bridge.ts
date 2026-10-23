@@ -22,6 +22,15 @@ const KEYED_PROVIDER_IDS = new Set([
   'opencode',
 ]);
 
+export const KEY_BRIDGE_SESSION_HEADER = 'x-hyperneo-session';
+
+const thinkingOffSessions = new Set<string>();
+
+export function setKeyBridgeThinkingOff(sessionId: string, off: boolean): void {
+  if (off) thinkingOffSessions.add(sessionId);
+  else thinkingOffSessions.delete(sessionId);
+}
+
 const readyBridges = new Map<string, KeyBridge>();
 const startingBridges = new Map<string, Promise<KeyBridge>>();
 const scopeBridgeKeys = new Map<string, string>();
@@ -67,6 +76,7 @@ function retireScopeBridge(scope: string, nextKey: string): void {
 }
 
 export function releaseSessionKeyBridges(sessionId: string): void {
+  thinkingOffSessions.delete(sessionId);
   for (const [scope, key] of [...scopeBridgeKeys]) {
     if (!scope.endsWith(`:${sessionId}`)) continue;
     scopeBridgeKeys.delete(scope);
@@ -91,6 +101,8 @@ export async function startProviderKeyBridge(
       headers: upstream.headers,
       forwardHeaders: upstream.forwardHeaders,
       accessToken,
+      sessionHeader: KEY_BRIDGE_SESSION_HEADER,
+      disableThinkingFor: (sessionId) => thinkingOffSessions.has(sessionId),
     })
       .then((server) => {
         const bridge = { server, accessToken };
@@ -103,15 +115,27 @@ export async function startProviderKeyBridge(
   await starting;
 }
 
-export function shieldProviderKey<T extends KeyedEnv>(providerId: string, env: T): T {
+export function shieldProviderKey<T extends KeyedEnv>(
+  providerId: string,
+  env: T,
+  sessionId?: string
+): T {
   const upstream = keyedUpstream(providerId, env);
   if (!upstream) return env;
   const bridge = readyBridges.get(upstream.key);
   if (!bridge) throw new Error(`Provider '${providerId}' key bridge is not started`);
+  const sessionHeader = sessionId ? `${KEY_BRIDGE_SESSION_HEADER}: ${sessionId}` : undefined;
   return {
     ...env,
     ANTHROPIC_BASE_URL: `http://127.0.0.1:${bridge.server.port}`,
     ANTHROPIC_AUTH_TOKEN: bridge.accessToken,
     ANTHROPIC_API_KEY: '',
+    ...(sessionHeader
+      ? {
+          ANTHROPIC_CUSTOM_HEADERS: [env.ANTHROPIC_CUSTOM_HEADERS, sessionHeader]
+            .filter(Boolean)
+            .join('\n'),
+        }
+      : {}),
   };
 }

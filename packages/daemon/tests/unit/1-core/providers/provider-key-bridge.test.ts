@@ -1,7 +1,10 @@
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { describe, expect, it, mock } from 'bun:test';
 import { createAnthropicMessagesBridgeServer } from '../../../../src/lib/providers/anthropic-messages-bridge/server';
 import {
   releaseSessionKeyBridges,
+  setKeyBridgeThinkingOff,
   shieldProviderKey,
   startProviderKeyBridge,
 } from '../../../../src/lib/providers/provider-key-bridge';
@@ -111,6 +114,65 @@ describe('createAnthropicMessagesBridgeServer access token', () => {
       expect(captured['x-other']).toBeUndefined();
     } finally {
       server.stop();
+    }
+  });
+});
+
+describe('key bridge thinking off', () => {
+  it('sends an explicit disabled thinking block only for sessions set to Off', async () => {
+    const seen: Array<{ body: Record<string, unknown>; session: string | null }> = [];
+    const upstream = createServer((req, res) => {
+      let raw = '';
+      req.on('data', (chunk) => {
+        raw += chunk;
+      });
+      req.on('end', () => {
+        seen.push({
+          body: JSON.parse(raw) as Record<string, unknown>,
+          session: (req.headers['x-hyperneo-session'] as string | undefined) ?? null,
+        });
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ id: 'm', type: 'message', role: 'assistant', content: [] }));
+      });
+    });
+    await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+    const port = (upstream.address() as AddressInfo).port;
+    try {
+      const env = {
+        ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`,
+        ANTHROPIC_AUTH_TOKEN: 'k',
+      };
+      await startProviderKeyBridge('deepseek', env, 'deepseek:s-off');
+      const shielded = shieldProviderKey('deepseek', env, 's-off');
+      expect(shielded.ANTHROPIC_CUSTOM_HEADERS).toBe('x-hyperneo-session: s-off');
+      const send = () =>
+        fetch(`${shielded.ANTHROPIC_BASE_URL}/v1/messages`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${shielded.ANTHROPIC_AUTH_TOKEN}`,
+            'content-type': 'application/json',
+            'x-hyperneo-session': 's-off',
+          },
+          body: JSON.stringify({
+            model: 'deepseek-v4-pro',
+            max_tokens: 100,
+            thinking: { type: 'adaptive' },
+            output_config: { effort: 'low' },
+          }),
+        });
+
+      setKeyBridgeThinkingOff('s-off', true);
+      await send();
+      setKeyBridgeThinkingOff('s-off', false);
+      await send();
+
+      expect(seen[0].body.thinking).toEqual({ type: 'disabled' });
+      expect(seen[0].body.output_config).toEqual({ effort: 'low' });
+      expect(seen[0].session).toBeNull();
+      expect(seen[1].body.thinking).toEqual({ type: 'adaptive' });
+    } finally {
+      releaseSessionKeyBridges('s-off');
+      upstream.close();
     }
   });
 });
