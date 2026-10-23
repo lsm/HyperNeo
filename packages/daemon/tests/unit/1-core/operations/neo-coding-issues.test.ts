@@ -186,6 +186,25 @@ function fixture() {
   };
 }
 
+test.each(['Could not start: needs_you', 'Failed twice: unavailable'])(
+  'an inconclusive coding check preserves failure block %s across restart',
+  async (blockedReason) => {
+    const f = fixture();
+    const todo = f.add('first');
+    f.store.updateTodo(todo, { state: 'blocked', blockedBy: 'failure', blockedReason }, 100_000);
+    f.issue('OPEN');
+    await f.at(2);
+    f.restart();
+    await f.at(4);
+    expect(f.store.getTodo('first')).toMatchObject({
+      state: 'blocked',
+      blockedBy: 'failure',
+      blockedReason,
+    });
+    expect(f.calls).toEqual([]);
+  }
+);
+
 test('a COMPLETED issue advances its next todo before a stopped worker can be nudged', async () => {
   const f = fixture();
   f.add('first', true);

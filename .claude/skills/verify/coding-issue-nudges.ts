@@ -274,6 +274,21 @@ try {
     await open();
     await refresh();
     assert.equal(starts(), 1);
+    ask('start-failure');
+    add('start-failure', 'start-failure', 2);
+    store.updateTodo(
+      store.getTodo('start-failure')!,
+      {
+        state: 'blocked',
+        blockedBy: 'failure',
+        blockedReason: 'Could not start: needs_you',
+      },
+      clock
+    );
+    await refresh();
+    evidence.failureBlock = store.getTodo('start-failure');
+    assert.equal(store.getTodo('start-failure')?.state, 'blocked');
+    assert.equal(store.getTodo('start-failure')?.blockedBy, 'failure');
     ask('nudges');
     const baseline = clock;
     add('nudge', 'nudges', 5, 'nudge', true);
