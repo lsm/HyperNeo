@@ -129,6 +129,50 @@ describe('connectCodexAppServer', () => {
     }
   );
 
+  test.each([false, true])(
+    'bounds deferred close retention when completion is missing or mismatched: %s',
+    async (mismatched) => {
+      const { path, seen } = await listen();
+      sockets.removeAllListeners('connection');
+      sockets.on('connection', (socket) => {
+        socket.on('message', (data) => {
+          const message = JSON.parse(String(data));
+          seen.push({ method: message.method, params: message.params });
+          if (message.id === undefined) return;
+          socket.send(
+            JSON.stringify({
+              id: message.id,
+              result: message.method === 'turn/start' ? { turn: { id: 'owned-turn' } } : {},
+            })
+          );
+          if (message.method === 'turn/start' && mismatched)
+            socket.send(
+              JSON.stringify({
+                method: 'turn/completed',
+                params: { threadId: 'owned-thread', turn: { id: 'different-turn' } },
+              })
+            );
+        });
+      });
+      const client = await connectCodexAppServer(path, 25);
+      try {
+        await client.call('turn/start', { threadId: 'owned-thread', input: [] });
+        client.close();
+        const deadline = Date.now() + 500;
+        while (sockets.clients.size && Date.now() < deadline)
+          await new Promise((done) => setTimeout(done, 5));
+        expect(seen.filter((m) => m.method === 'thread/unsubscribe')).toEqual([
+          { method: 'thread/unsubscribe', params: { threadId: 'owned-thread' } },
+        ]);
+        expect(sockets.clients.size).toBe(0);
+        expect(seen.some((m) => m.method === 'turn/interrupt')).toBe(false);
+      } finally {
+        for (const peer of sockets.clients) peer.terminate();
+        client.close();
+      }
+    }
+  );
+
   test('fails to connect when nothing listens on the socket', async () => {
     dir = mkdtempSync(join(tmpdir(), 'codex-app-server-'));
     server = createServer();
