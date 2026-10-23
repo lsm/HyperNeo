@@ -5,21 +5,32 @@ Run from the worktree root with a fresh synthetic HOME and DB:
 ```bash
 RUN=$(mktemp -d /private/tmp/hn-codex-ownership-XXXXXX)
 mkdir -p "$RUN/home"
-env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+env -i HOME="$RUN/home" PATH="$RUN/bin:$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
   LOG_LEVEL=warn bun .claude/skills/verify/codex-send-intent.ts ownership 9387 "$RUN"
 ```
 
 The helper owns an isolated daemon and fake Desktop/shared-server Unix sockets.
-The real `work.send` RPC first reaches Desktop, which returns `no-client-found`.
-The RPC must refuse delivery without making any shared app-server request. On
-the regression-first commit, it instead succeeds with `server-active` and the
-helper fails. This is the same routing decision observed in the affected worker's
-production logs; it does not claim to render the real Desktop lock.
+Its owned bin directory must be first on PATH; it refuses to run if Bun does not
+resolve `open` to the synthetic opener. No real GUI opens. The real `work.send`
+RPC first reaches Desktop, which returns `no-client-found`. HyperNeo must open
+that saved worker, discover its owner, and steer through it without a shared
+app-server request. On the regression-first source the RPC refuses delivery
+instead, and the helper fails. A confirmed idle owner starts the next turn there;
+a protocol refusal remains `not_delivered` without consulting the shared server.
 
-After Desktop confirms ownership, the same RPC steers through that owner. An
-idle owner starts the next turn there. A Desktop protocol refusal must fail
-without consulting the shared server. Keep `evidence/observed.json`, including
-all peer calls and RPC replies. The daemon and peers close in `finally`.
+The same real RPC door then invokes `work.start` with an owned synthetic stdio
+CLI and registered synthetic project. The opener checks that the bootstrap PID
+no longer exists before granting Desktop ownership. The opening input goes only
+to `thread-follower-start-turn`. A second bootstrap exits with status 7; that
+request must fail without handing off or submitting an opening turn. The delayed
+exit and abnormal-exit unit contracts separately pin the process lifecycle.
+Keep `evidence/observed.json` and `evidence/open.jsonl`. The daemon and peers close
+in `finally`. This proves routing and lifecycle through the production operation
+door, not real Desktop rendering or Computer Use authentication.
+
+Legacy shared-server release is intentionally not implemented in this slice
+while the human decides whether the native idle grace is acceptable. Do not
+archive/unarchive human threads or restart Codex as a release workaround.
 
 The installed-app acceptance remains separate: start one disposable Codex task
 through Neo, open its returned Desktop link, and confirm the composer is editable

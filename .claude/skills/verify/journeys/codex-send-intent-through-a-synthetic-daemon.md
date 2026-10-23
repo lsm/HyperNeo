@@ -2,7 +2,7 @@
 
 ```bash
 RUN=$(mktemp -d /private/tmp/hn-send-proof-XXXXXX)
-env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+env -i HOME="$RUN/home" PATH="$RUN/bin:$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
   LOG_LEVEL=warn bun .claude/skills/verify/codex-send-intent.ts verify 9377 "$RUN"
 ```
 
@@ -11,7 +11,7 @@ Unix sockets under its fresh HOME. It uses real WebSocket `operation.invoke`
 with the production Codex adapter. `work.adapters` must advertise steer for
 Codex and omit it for HyperNeo; the subsequent explicit steer must return the
 active turn receipt. The real `operations.describe` door must scope
-strict steer guidance to Codex and direct HyperNeo/Space targets to auto. Desktop is unavailable while app-server has a steerable turn: default auto and explicit
+strict steer guidance to Codex and direct HyperNeo/Space targets to auto. Desktop’s socket is absent while app-server has a steerable turn: default auto and explicit
 steer must return `steeredIntoTurnId` without queueing. Explicit queue must return
 `queuedSubmissionId`. Idle explicit steer must return `not_delivered` without
 queueing; idle auto starts a turn with `startedTurnId` and `delivered: true`.

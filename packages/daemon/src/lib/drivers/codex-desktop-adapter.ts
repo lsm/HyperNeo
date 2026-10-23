@@ -886,6 +886,7 @@ async function tryDesktopCodexSend(
 ): Promise<CodexSendGate<'app-server'>> {
   return steerCodexDesktopTurn(
     deps.desktopSocketPath,
+    deps.spawn,
     detail.thread.id,
     message,
     deps.newId(),

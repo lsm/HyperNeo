@@ -9,7 +9,16 @@ import { createCodexDesktopAdapter } from '../../../../src/lib/drivers/codex-des
 import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
+import type { SpawnFn } from '../../../../src/lib/runtime-spawn';
 import { Database } from '../../../../src/storage/sqlite-compat';
+
+const refuseOpen: SpawnFn = () => ({
+  stdout: null,
+  stderr: new Response('open failed').body,
+  exited: Promise.resolve(1),
+  exitCode: 1,
+  kill: () => {},
+});
 
 interface Message {
   type: string;
@@ -86,7 +95,9 @@ describe('withCodexDesktopIpc', () => {
           error: 'request-version-mismatch',
         })
       );
-      expect(await steerCodexDesktopTurn(f.path, 'thread-1', 'now', 'input-1')).toMatchObject({
+      expect(
+        await steerCodexDesktopTurn(f.path, refuseOpen, 'thread-1', 'now', 'input-1')
+      ).toMatchObject({
         reason: {
           ok: false,
           reason: 'not_delivered',
@@ -303,6 +314,22 @@ describe('withCodexDesktopIpc', () => {
     }
   );
 
+  test.each([
+    { resultType: 'error', error: 'client rejected' },
+    { resultType: 'success', result: {} },
+  ])('never starts a shared writer after Desktop handshake refusal: %j', async (reply) => {
+    const f = await fixture(() => {}, reply);
+    const w = await driverFor(f.path, () => 0);
+    expect(
+      await w.driver.send!({ adapter: 'codex-desktop', id: 'thread-1' }, 'next task', {
+        from: 'user',
+        caller: { source: 'rpc' },
+      })
+    ).toMatchObject({ ok: false, reason: 'not_delivered' });
+    expect(w.shared).toEqual([]);
+    expect(w.launched).toEqual([]);
+  });
+
   test('never resumes through shared server when reachable Desktop disconnects before discovery', async () => {
     const f = await fixture((_message, socket) => socket.destroy());
     const w = await driverFor(f.path, () => 0);
@@ -328,7 +355,7 @@ describe('withCodexDesktopIpc', () => {
         })
       );
       const text = 'use the parser\n[HyperNeo agent input]';
-      expect(await steerCodexDesktopTurn(f.path, 'thread-1', text, 'input-1')).toEqual({
+      expect(await steerCodexDesktopTurn(f.path, refuseOpen, 'thread-1', text, 'input-1')).toEqual({
         reason: { ok: true, value: { delivered: true, steeredIntoTurnId: 'desktop-turn' } },
       });
       expect(f.seen.at(-1)).toMatchObject({
@@ -437,7 +464,13 @@ describe('withCodexDesktopIpc', () => {
                   }),
           })
         );
-        const result = await steerCodexDesktopTurn(f.path, 'thread-1', 'later', 'input-1');
+        const result = await steerCodexDesktopTurn(
+          f.path,
+          refuseOpen,
+          'thread-1',
+          'later',
+          'input-1'
+        );
         expect(result).toMatchObject({
           reason: refused
             ? {
@@ -474,11 +507,13 @@ describe('withCodexDesktopIpc', () => {
           error: 'no-client-found',
         })
       );
-      expect(await steerCodexDesktopTurn(f.path, 'thread-1', 'hi', 'input-1')).toMatchObject({
+      expect(
+        await steerCodexDesktopTurn(f.path, refuseOpen, 'thread-1', 'hi', 'input-1')
+      ).toMatchObject({
         reason: {
           ok: false,
           reason: 'not_delivered',
-          detail: expect.stringContaining('no-client-found'),
+          detail: expect.stringContaining('open failed'),
         },
       });
       expect(f.seen.map((message) => message.method)).toEqual([
@@ -508,7 +543,9 @@ describe('withCodexDesktopIpc', () => {
               result: {},
             });
         });
-        expect(await steerCodexDesktopTurn(f.path, 'thread-1', 'hi', 'input-1')).toMatchObject({
+        expect(
+          await steerCodexDesktopTurn(f.path, refuseOpen, 'thread-1', 'hi', 'input-1')
+        ).toMatchObject({
           reason: { ok: false, reason: 'not_delivered' },
         });
       }

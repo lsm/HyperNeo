@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { mkdirSync, existsSync, writeFileSync, appendFileSync, readFileSync, renameSync, rmSync } from 'node:fs';
+import { mkdirSync, existsSync, writeFileSync, appendFileSync, readFileSync, renameSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { createServer as createHttpServer } from 'node:http';
 import { hostname } from 'node:os';
@@ -25,7 +25,7 @@ mkdirSync(join(home, 'app-server-control'), { recursive: true });
 mkdirSync(join(run, 'evidence'), { recursive: true });
 const bin = join(run, 'bin');
 mkdirSync(bin, { recursive: true });
-process.env.PATH = `${bin}:${process.env.PATH}`;
+assert(process.env.PATH?.startsWith(`${bin}:`), 'Launch with the owned bin directory first on PATH');
 const openedMarker = join(run, 'opened');
 const bootstrapPid = join(run, 'bootstrap.pid');
 const openLog = join(run, 'evidence/open.jsonl');
@@ -38,9 +38,10 @@ if (args.some(a => a.includes('synthetic-new'))) {
   try { process.kill(pid, 0); } catch (e) { if (e.code === 'ESRCH') alive = false; else throw e; }
   if (alive) throw new Error('Bootstrap process still owns the thread');
 }
-fs.appendFileSync(${JSON.stringify(openLog)}, JSON.stringify(args) + '\n');
+fs.appendFileSync(${JSON.stringify(openLog)}, JSON.stringify(args) + '\\n');
 fs.writeFileSync(${JSON.stringify(openedMarker)}, 'owned');
 `, { mode: 0o700 });
+assert.equal(Bun.which('open'), join(bin, 'open'), 'Only the owned opener may run');
 if (action === 'ownership') {
   const workspace = join(run, 'workspace');
   mkdirSync(workspace);
@@ -54,7 +55,7 @@ rl.on('line', line => {
   const m = JSON.parse(line);
   if (m.id === undefined) return;
   const result = m.method === 'thread/start' ? { thread: { id: 'synthetic-new', model: 'gpt-6.1-sol' } } : {};
-  process.stdout.write(JSON.stringify({ id: m.id, result }) + '\n');
+  process.stdout.write(JSON.stringify({ id: m.id, result }) + '\\n');
 });
 rl.on('close', () => setTimeout(() => process.exit(fs.existsSync(${JSON.stringify(join(run, 'fail-bootstrap-exit'))}) ? 7 : 0), 40));
 `, { mode: 0o700 });
@@ -116,7 +117,7 @@ server.on('connection', (socket) => socket.on('message', (bytes) => {
       { type: 'response_item', timestamp, payload: { type: 'message', role: 'user', id: 'writer-input', content: [{ type: 'input_text', text }] } },
       { type: 'response_item', timestamp, payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Writer received queued work.' }] } },
       { type: 'event_msg', timestamp, payload: { type: 'task_complete', last_agent_message: 'Writer received queued work.' } },
-    ].map((entry) => JSON.stringify(entry)).join('\n') + '\n');
+    ].map((entry) => JSON.stringify(entry)).join('\n') + '\\n');
   }
   const result = request.method === 'thread/resume' ? { thread: { id: 'synthetic', status: { type: 'idle' }, turns: [] } }
     : request.method === 'thread/turns/list' ? { data: active ? [{ id: 'server-active', status: 'inProgress' }] : [{ id: 'completed-turn', status: 'completed' }] }

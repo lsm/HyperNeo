@@ -27,6 +27,7 @@ export async function startCodexBootstrapServer(
 ): Promise<CodexAppServer> {
   let endInput = () => {};
   let resolveExit = () => {};
+  let exit: { code: number | null; signal: string | null } | undefined;
   let closing: Promise<void> | undefined;
   const exited = new Promise<void>((resolve) => {
     resolveExit = resolve;
@@ -38,7 +39,10 @@ export async function startCodexBootstrapServer(
     onProcessSpawn: (child) => {
       endInput = () => child.stdin?.end();
     },
-    onExit: () => resolveExit(),
+    onExit: (code, signal) => {
+      exit = { code, signal };
+      resolveExit();
+    },
   });
   const server: CodexAppServer = {
     call: async (method, params) => {
@@ -55,6 +59,10 @@ export async function startCodexBootstrapServer(
           endInput();
           await exited;
           await transport.close();
+          if (exit?.code !== 0)
+            throw new Error(
+              `Codex bootstrap exited with ${exit?.signal ?? exit?.code ?? 'unknown status'}.`
+            );
         } finally {
           clearTimeout(timer);
         }
