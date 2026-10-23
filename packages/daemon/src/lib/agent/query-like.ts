@@ -20,6 +20,7 @@ export type QueryLike = AsyncIterable<SDKMessage> & {
   supportedModels?(): Promise<SDKModelInfo[]>;
   getContextUsage?(): Promise<SDKControlGetContextUsageResponse>;
   setMaxThinkingTokens?(tokens: number | null): Promise<void>;
+  setModel?(model?: string): Promise<void>;
   applyFlagSettings?(settings: Parameters<Query['applyFlagSettings']>[0]): Promise<void>;
   setPermissionMode?(mode: string): Promise<void>;
   mcpServerStatus?(): Promise<unknown[]>;

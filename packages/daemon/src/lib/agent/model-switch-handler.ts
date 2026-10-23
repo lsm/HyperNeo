@@ -13,7 +13,12 @@ import type { Database } from '../../storage/database.ts';
 import type { ErrorManager } from '../error-manager.ts';
 import { ErrorCategory } from '../error-manager.ts';
 import type { Logger } from '../logger.ts';
-import { isValidModel, resolveModelAlias, getModelInfo } from '../model-service.ts';
+import {
+  isValidModel,
+  resolveModelAlias,
+  getModelInfo,
+  resolveSessionContextModelInfo,
+} from '../model-service.ts';
 import { getProviderRegistry } from '../providers/factory.js';
 import { inferProviderForModel } from '../providers/registry.ts';
 import { KimiProvider } from '../providers/kimi-provider.js';
@@ -33,8 +38,26 @@ const ONE_M_SUFFIX = /\[1m\]$/i;
 const ACP_SWITCH_DISPOSE_TIMEOUT_MS = 8_000;
 type ModelPair = Pick<SessionConfig, 'model' | 'provider'>;
 
-export function modelSwitchTiming(status: AgentProcessingState['status']): 'now' | 'next_turn' {
-  return status === 'idle' ? 'now' : 'next_turn';
+export function modelSwitchTiming(
+  status: AgentProcessingState['status'],
+  live = false
+): 'now' | 'next_turn' {
+  return live || status === 'idle' ? 'now' : 'next_turn';
+}
+
+type LiveSwitchSide = {
+  provider: string | undefined;
+  contextWindow?: number;
+  effortLevels?: readonly string[];
+};
+
+export function canSwitchModelLive(previous: LiveSwitchSide, next: LiveSwitchSide) {
+  return (
+    previous.provider === 'anthropic' &&
+    next.provider === 'anthropic' &&
+    previous.contextWindow === next.contextWindow &&
+    (previous.effortLevels ?? []).join() === (next.effortLevels ?? []).join()
+  );
 }
 
 export function gateSwitchIdle(guarded: boolean, busy: boolean) {
@@ -299,6 +322,33 @@ export class ModelSwitchHandler {
     }
   }
 
+  async canSwitchLive(newModel: string, newProvider: string): Promise<boolean> {
+    const { session, queryObject } = this.ctx;
+    const provider = session.config.provider;
+    if (!queryObject?.setModel || !canSwitchModelLive({ provider }, { provider: newProvider }))
+      return false;
+    const [current, next] = await Promise.all([
+      resolveSessionContextModelInfo(session),
+      resolveSessionContextModelInfo({
+        ...session,
+        config: { ...session.config, model: newModel, provider: newProvider as Provider },
+      }),
+    ]);
+    const efforts = getProviderRegistry().get(newProvider);
+    return canSwitchModelLive(
+      {
+        provider,
+        contextWindow: current.modelInfo?.contextWindow,
+        effortLevels: efforts?.getModelEffortLevels?.(session.config.model),
+      },
+      {
+        provider: newProvider,
+        contextWindow: next.modelInfo?.contextWindow,
+        effortLevels: efforts?.getModelEffortLevels?.(newModel),
+      }
+    );
+  }
+
   async invalidModel(newModel: string, newProvider: string): Promise<string | null> {
     const { session } = this.ctx;
     const sessionApiKey =
@@ -366,6 +416,7 @@ export class ModelSwitchHandler {
       }
 
       const modelInfo = await getModelInfo(newModel, 'global', newProvider);
+      const live = !deferQueryStart && (await this.canSwitchLive(newModel, newProvider));
       const resolvedModel = preserveK3OneMSuffix(newModel, modelInfo?.id ?? newModel);
 
       const currentResolvedModel = preserveK3OneMSuffix(
@@ -531,6 +582,9 @@ export class ModelSwitchHandler {
         this.stripThinkingBlocksIfNeeded(previousProvider, newProviderInstance.id);
 
         if (this.ctx.queryObject instanceof AcpQueryAdapter && nextProvider === 'acp') {
+          await this.ctx.queryObject.setModel(resolvedModel);
+          await this.ctx.reevaluateContextBudgetAfterModelSwitch?.();
+        } else if (live && this.ctx.queryObject?.setModel) {
           await this.ctx.queryObject.setModel(resolvedModel);
           await this.ctx.reevaluateContextBudgetAfterModelSwitch?.();
         } else {

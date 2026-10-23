@@ -1553,7 +1553,8 @@ export class AgentSession
       await this.applyPendingModelSwitch();
       return { success: false, model: this.session.config.model, error: invalid };
     }
-    if (modelSwitchTiming(this.stateManager.getState().status) === 'now') {
+    const live = await this.modelSwitchHandler.canSwitchLive(model, provider);
+    if (modelSwitchTiming(this.stateManager.getState().status, live) === 'now') {
       await this.setPendingModelSwitch(undefined);
       return this.handleModelSwitch(model, provider);
     }

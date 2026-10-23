@@ -2234,6 +2234,7 @@ describe('AgentSession', () => {
         // biome-ignore lint: test mock access
         (agentSession as unknown as Record<string, unknown>).modelSwitchHandler = {
           switchModel,
+          canSwitchLive: async () => false,
           invalidModel: async (model: string) =>
             model === 'typo' ? 'Invalid model: typo. Use a valid model ID or alias.' : null,
         };
