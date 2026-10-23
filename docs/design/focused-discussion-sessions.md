@@ -3,6 +3,19 @@
 Proposal; design only. Merge is on hold until the human approves through Neo,
 then exact-head hyperneo-ai-test approval and green required CI are also needed.
 
+## First implementation PR: source session on Neo question cards
+
+After design approval, the first small PR changes **only Neo question cards**.
+For every question derived from a worker's output, Neo stores that worker's
+source session ref when it creates the card. In the card's **top-right corner**,
+show the source session's **name and provider** and an **Open session** button.
+Use the existing adapter opener to take the human straight into that exact
+session for back-and-forth discussion, without Neo relaying it. Do not substitute
+Neo's inbox or infer the author from the question text. A card with no single
+source session shows no button. Opening is navigation, not an answer or approval;
+the existing yes/no and Reply in chat controls keep their current semantics.
+No other card, routing behavior or session lifecycle changes in this first PR.
+
 ## Route the ask
 
 Proposed short rule for Neo's root prompt:
@@ -68,8 +81,10 @@ discussion does not itself certify its PR merged or its deployment complete.
 
 ## Small implementation and acceptance
 
-Implement only the routing/seed prompt, the missing readiness-card session link,
-and outcome binding using existing sessions, start flows and reports. No new
+First verify source-ref persistence across reload, top-right name/provider and
+opening the exact source, absent buttons without one source, and unchanged answers.
+After that card-only PR, separate small slices cover routing/seed, readiness and
+outcome binding using existing sessions, start flows and reports. No new
 lead agents, ledger, scheduler, transcript mirror or automatic execution policy.
 Verify with synthetic asks: a bounded bug delegates normally; a design ask
 creates one fresh session, prepares options, opens from one replay-safe card and
