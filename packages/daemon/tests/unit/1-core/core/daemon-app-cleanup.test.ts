@@ -134,8 +134,12 @@ describe('Daemon App Cleanup', () => {
     });
 
     try {
-      const seeded = daemonContext.jobQueue.listJobs({ queue: MAILBOX_EXPIRE_FIRE, limit: 10 });
-      expect(seeded.length).toBeGreaterThan(0);
+      const live = daemonContext.jobQueue.listJobs({
+        queue: MAILBOX_EXPIRE_FIRE,
+        status: ['pending', 'processing'],
+        limit: 10,
+      });
+      expect(live).toHaveLength(1);
     } finally {
       await daemonContext.cleanup();
     }
