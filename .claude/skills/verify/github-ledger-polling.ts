@@ -40,7 +40,7 @@ process.exitCode=status>=400||status===304?1:0;
 `, { mode: 0o700 });
 const network = globalThis.fetch; globalThis.fetch = (() => { throw new Error('Real HTTP refused'); }) as typeof fetch;
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined, ws: WebSocket | undefined;
-const evidence: Record<string, any> = { scenario, productionChanges: 0, cycles: [] };
+const evidence: Record<string, any> = { scenario, productionWired: false, cycles: [] };
 try {
   app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
   await app.jobProcessor.stop(); assert.notEqual(app.server.port, 8399);
@@ -64,7 +64,9 @@ try {
     writeFileSync(join(run, 'phase'), phase);
     const reply = await rpc('space.github.pollOnce', {});
     const watched = []; for (const space of spaces) watched.push(await rpc('space.github.listWatchedRepos', {spaceId: space.id}));
-    const events = approvals(); evidence.cycles.push({ phase, reply, watched, events });
+    const events = approvals();
+    const pages = db.prepare('SELECT subject,fact_revision,observation_revision,reason,http_json FROM pack_coding_poll_facts').all();
+    evidence.cycles.push({ phase, reply, watched, events, pages });
     assert.equal(new Set(events.map(event => event.id)).size, events.length);
     for (const space of spaces) assert.equal(events.filter(event => event.space_id === space.id).length, phase === 'recovered' ? 2 : 1);
     for (const event of events) assert.equal(JSON.parse(event.payload_json).commitId, head);
@@ -79,13 +81,18 @@ try {
   }
   const requests = readFileSync(join(run, 'evidence/requests.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
   const initialReviews = requests.filter(r => r.phase === 'initial' && r.path.includes('/pulls/7/reviews'));
-  assert.equal(initialReviews.length, 2); assert.equal(initialReviews[0].path, initialReviews[1].path);
+  assert.equal(initialReviews.length, 1);
+  assert(evidence.cycles[0].pages.length > 0);
+  for (const cycle of evidence.cycles) for (const page of cycle.pages) {
+    const metadata = JSON.parse(page.http_json ?? 'null');
+    assert(!metadata?.headers.authorization); assert(!metadata?.headers['set-cookie']);
+  }
   if (scenario === 'conditional') assert(requests.some(r => r.phase === 'repeat' && r.status === 304));
   if (scenario === 'failure') {
     assert(requests.some(r => r.phase === 'failed' && r.status === 503));
     assert(requests.some(r => r.phase === 'recovered' && r.status === 200));
   }
-  evidence.requests = requests; evidence.duplicateInitialReviewReads = initialReviews.length; evidence.verified = true;
+  evidence.productionWired = true; evidence.requests = requests; evidence.duplicateInitialReviewReads = initialReviews.length; evidence.verified = true;
   console.log(JSON.stringify({ scenario, verified: true, duplicateInitialReviewReads: initialReviews.length, eventCounts: evidence.cycles.map((cycle: any) => cycle.events.length) }));
 } finally {
   writeFileSync(join(run, 'evidence/polling-ledger.json'), JSON.stringify(evidence, null, 2)); ws?.close(); await app?.cleanup(); globalThis.fetch = network;

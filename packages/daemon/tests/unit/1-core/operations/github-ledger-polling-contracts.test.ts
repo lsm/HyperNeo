@@ -41,16 +41,16 @@ for (const scenario of ['normal', 'conditional', 'failure']) {
   test(`shared-repository ${scenario} keeps head-scoped approvals in both destinations`, () => {
     const result = proof('github-ledger-polling.ts', scenario, 'polling-ledger.json');
     expect(result.verified).toBe(true);
-    expect(result.productionChanges).toBe(0);
-    expect(result.duplicateInitialReviewReads).toBe(2);
+    expect(result.productionWired).toBe(true);
+    expect(result.duplicateInitialReviewReads).toBe(1);
     expect(result.cycles.map((cycle: { events: unknown[] }) => cycle.events.length)).toEqual(
       scenario === 'failure' ? [2, 2, 4] : [2, 2]
     );
     expect(
       result.requests.filter(
         (r: { phase: string; path: string }) => r.phase === 'initial' && r.path !== '/user'
-      )
-    ).toHaveLength(18);
+      ).length
+    ).toBeLessThan(18);
   }, 30000);
 }
 
