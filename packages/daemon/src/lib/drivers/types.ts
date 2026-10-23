@@ -53,6 +53,8 @@ export const WorkSummarySchema = z.object({
   status: WorkStatusSchema,
   lastActivityAt: z.number(),
   desktopUI: DesktopUIEvidenceSchema.optional(),
+  permissionMode: z.string().optional(),
+  waitingFor: z.string().max(200).optional(),
   link: z.string().optional(),
   watchHint: z
     .string()

@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
 import type { ClaudeDesktopAdapterDeps } from '../../../../src/lib/drivers/claude-desktop-adapter';
 import {
   findRcToggle,
+  openRcToggle,
   requireDisconnectedTarget,
+  runClaudeDesktopWake,
   runClaudeRemoteControlRequest,
   withClaudeRemoteControl,
 } from '../../../../src/lib/drivers/claude-remote-control';
@@ -58,7 +60,7 @@ describe('requireDisconnectedTarget', () => {
   });
 });
 
-describe('runClaudeRemoteControlRequest', () => {
+describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake', () => {
   let dir: string;
   let spawned: Array<{ args: string[]; cwd?: string }>;
   let live: Array<{
@@ -100,6 +102,15 @@ describe('runClaudeRemoteControlRequest', () => {
       spawn: (args, options) => {
         spawned.push({ args, cwd: options?.cwd });
         if (args.includes('--desktop')) {
+          const id = args.at(-1) as string;
+          if (id === 'new-rc')
+            write({
+              ...record(id),
+              cliSessionId: id,
+              title: 'desktop-wake',
+              cwd: '/Users/test',
+              permissionMode: 'acceptEdits',
+            });
           live.push({
             sessionId: args.at(-1) as string,
             status: 'idle',
@@ -121,33 +132,43 @@ describe('runClaudeRemoteControlRequest', () => {
 
   const relayed = () => spawned.find((call) => call.args.includes('HyperNeo relay'))?.args.at(-1);
 
-  test('uses the injected inbox with its reply context for a confirmed CLI helper', async () => {
+  test.each(['cli', 'unknown', 'ambiguous'] as const)(
+    'native wake refuses a %s target owner before opening or requesting any helper',
+    async (owner) => {
+      write(record('t1'));
+      live =
+        owner === 'ambiguous'
+          ? [
+              { sessionId: 'cli-t1', status: 'idle', pid: 1, owner: 'desktop' },
+              { sessionId: 'cli-t1', status: 'idle', pid: 2, owner: 'desktop' },
+            ]
+          : [{ sessionId: 'cli-t1', status: 'idle', pid: 1, owner }];
+      expect(await runClaudeDesktopWake(target, 'Do not deliver', deps())).toMatchObject({
+        ok: false,
+        reason: 'unreachable',
+      });
+      expect(spawned).toEqual([]);
+    }
+  );
+
+  test('refuses a CLI-owned RC helper without sending or changing its permissions', async () => {
     write(record('rc', { title: 'rc-toggle', cwd: '/Users/test' }));
     live = [{ sessionId: 'cli-rc', status: 'idle', pid: 1, owner: 'cli' }];
-    const calls: unknown[] = [];
-    const context = { from: 'session:origin', caller: { source: 'internal' as const } };
-    const transcripts = join(dir, 'projects', '-Users-test');
-    mkdirSync(transcripts, { recursive: true });
-    const receipt = { executionId: 'cli-rc', inputId: 'rc-in' };
-    const configured = {
-      ...deps(),
-      sendInbox: async (...args: unknown[]) => {
-        calls.push(args);
-        appendFileSync(
-          join(transcripts, 'cli-rc.jsonl'),
-          `${JSON.stringify({ type: 'user', uuid: 'rc-in' })}\n`
-        );
-        return {
-          ok: true as const,
-          value: { delivered: false, unconfirmed: true as const, receipt },
-        };
-      },
-    };
+    let sends = 0;
     expect(
-      await runClaudeRemoteControlRequest(target, configured, new Map(), context)
-    ).toMatchObject({ ok: true, value: { delivered: true, receipt } });
-    expect(calls).toHaveLength(1);
-    expect(calls[0]).toEqual(['cli-rc', expect.stringContaining('local_t1'), context]);
+      await runClaudeRemoteControlRequest(
+        target,
+        {
+          ...deps(),
+          sendInbox: async () => {
+            sends++;
+            return { ok: true, value: { delivered: true } };
+          },
+        },
+        new Map()
+      )
+    ).toMatchObject({ ok: false, reason: 'unsupported' });
+    expect(sends).toBe(0);
     expect(spawned).toEqual([]);
   });
 
@@ -159,27 +180,62 @@ describe('runClaudeRemoteControlRequest', () => {
     expect(relayed()).toBeUndefined();
   });
 
-  test('creates rc-toggle with its brief when there is none', async () => {
-    const outcome = await runClaudeRemoteControlRequest(target, deps(), new Map());
-    expect(outcome).toMatchObject({ ok: false, reason: 'unsupported' });
-    const created = spawned[0];
-    expect(created.cwd).toBe('/Users/test');
-    expect(created.args.slice(0, 11)).toEqual([
-      'claude',
-      '-p',
-      '--session-id',
-      'new-rc',
-      '-n',
-      'rc-toggle',
-      '--permission-mode',
-      'bypassPermissions',
-      '--model',
-      'haiku',
-      '--',
-    ]);
-    expect(created.args.at(-1)).toContain('You are rc-toggle.');
-    expect(spawned[1].args.slice(-3)).toEqual(['--desktop', '--resume', 'new-rc']);
-    expect(relayed()).toBeUndefined();
+  test('requires the existing authorized rc-toggle instead of creating a replacement', async () => {
+    expect(await runClaudeRemoteControlRequest(target, deps(), new Map())).toMatchObject({
+      ok: false,
+      reason: 'not_delivered',
+      detail: expect.stringContaining('existing authorized rc-toggle'),
+    });
+    expect(spawned).toEqual([]);
+  });
+
+  test('concurrent native wakes share one helper preparation and import', async () => {
+    let finish!: (code: number) => void;
+    const prepared = new Promise<number>((resolve) => {
+      finish = resolve;
+    });
+    const base = deps();
+    const shared = {
+      ...base,
+      spawn: ((args, options) => {
+        const child = base.spawn(args, options);
+        return args.includes('--session-id') ? { ...child, exited: prepared } : child;
+      }) as ClaudeDesktopAdapterDeps['spawn'],
+    };
+    const first = openRcToggle([], [], shared, 'desktop-wake');
+    const second = openRcToggle([], [], shared, 'desktop-wake');
+    await vi.waitFor(() =>
+      expect(spawned.some((call) => call.args.includes('--session-id'))).toBe(true)
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    finish(0);
+    const results = await Promise.all([first, second]);
+    expect(results.every((result) => 'value' in result)).toBe(true);
+    expect(spawned.filter((call) => call.args.includes('--session-id'))).toHaveLength(1);
+    expect(spawned.filter((call) => call.args.includes('--desktop'))).toHaveLength(1);
+    expect(await openRcToggle([], [], shared, 'desktop-wake')).toMatchObject({
+      value: { record: { sessionId: 'local_new-rc' } },
+    });
+    expect(spawned.filter((call) => call.args.includes('--session-id'))).toHaveLength(1);
+  });
+
+  test('a stopped forwarding helper retains its history while a fresh acceptEdits helper is prepared', async () => {
+    const old = record('old', {
+      title: 'desktop-wake',
+      cwd: '/Users/test',
+      permissionMode: 'acceptEdits',
+    });
+    write(old);
+    const oldPath = join(dir, 'acct/scope/local_old.json');
+    const bytes = readFileSync(oldPath, 'utf8');
+    const result = await openRcToggle([old], [], deps(), 'desktop-wake');
+    expect(result).toMatchObject({
+      value: { record: { sessionId: 'local_new-rc', permissionMode: 'acceptEdits' } },
+    });
+    expect(spawned[0].args).toContain('--session-id');
+    expect(spawned[0].args).toContain('acceptEdits');
+    expect(spawned[0].args).not.toContain('bypassPermissions');
+    expect(readFileSync(oldPath, 'utf8')).toBe(bytes);
   });
 
   test('leaves a session that already has its Remote Control set alone', async () => {
@@ -196,6 +252,58 @@ describe('withClaudeRemoteControl', () => {
     title: 'Fix the parser',
   } as WorkSummary;
 
+  test.each([false, true])(
+    'keeps the requested place and receipt with status capability %s',
+    async (hasStatus) => {
+      const place = { machine: 'laptop', folder: '/project', name: 'Human project name' };
+      const initial = { ...summary, place, status: 'queued', lastActivityAt: 1 };
+      const adapter = {
+        id: 'claude-desktop',
+        capabilities: ['start'],
+        find: async () => [],
+        start: async () => ({ ok: true, value: initial }),
+        ...(hasStatus
+          ? {
+              status: async () => ({
+                ok: true,
+                value: {
+                  ...initial,
+                  place: { ...place, folder: '/project/worktree', name: 'worktree' },
+                  status: 'needs_you',
+                  waitingFor: 'permission prompt',
+                  permissionMode: 'acceptEdits',
+                  lastActivityAt: 2,
+                },
+              }),
+            }
+          : {}),
+      } as unknown as WorkAdapter;
+      const wrapped = withClaudeRemoteControl(
+        adapter,
+        {} as ClaudeDesktopAdapterDeps,
+        async () => ({ ok: true, value: { delivered: false } }),
+        async () => ({
+          ok: true,
+          value: { delivered: true, receipt: { executionId: 'target', inputId: 'native-task' } },
+        })
+      );
+      expect(await wrapped.start!({ message: 'Task' } as never, {} as never)).toMatchObject({
+        ok: true,
+        value: {
+          place,
+          receipt: { inputId: 'native-task' },
+          ...(hasStatus
+            ? {
+                status: 'needs_you',
+                waitingFor: 'permission prompt',
+                permissionMode: 'acceptEdits',
+              }
+            : {}),
+        },
+      });
+    }
+  );
+
   test('asks for Remote Control after a start succeeds, and not after one fails', async () => {
     const asked: string[] = [];
     const context = { from: 'session:origin', caller: { source: 'internal' as const } };
@@ -205,6 +313,7 @@ describe('withClaudeRemoteControl', () => {
       id: 'claude-desktop',
       capabilities: ['start'],
       find: async () => [],
+      status: async () => ({ ok: true as const, value: summary }),
       start: async () =>
         ok
           ? { ok: true as const, value: summary }
@@ -217,9 +326,10 @@ describe('withClaudeRemoteControl', () => {
         contexts.push(replyContext);
         asked.push(`${t.sessionId} ${t.title}`);
         return { ok: true, value: { delivered: true } };
-      }
+      },
+      async () => ({ ok: true, value: { delivered: true } })
     );
-    expect(await wrapped.start?.({} as never, context)).toEqual({ ok: true, value: summary });
+    expect(await wrapped.start?.({} as never, context)).toMatchObject({ ok: true, value: summary });
     ok = false;
     await wrapped.start?.({} as never, {} as never);
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -233,14 +343,20 @@ describe('withClaudeRemoteControl', () => {
       id: 'claude-desktop',
       capabilities: ['start'],
       find: async () => [],
+      status: async () => ({ ok: true as const, value: summary }),
       start: async () => ({ ok: true as const, value: summary }),
     } as unknown as WorkAdapter;
     let call = 0;
-    const wrapped = withClaudeRemoteControl(adapter, {} as ClaudeDesktopAdapterDeps, async () => {
-      call += 1;
-      if (call === 2) throw new Error('desktop gone');
-      return { ok: false, reason: 'not_delivered', detail: 'rc-toggle missing' };
-    });
+    const wrapped = withClaudeRemoteControl(
+      adapter,
+      {} as ClaudeDesktopAdapterDeps,
+      async () => {
+        call += 1;
+        if (call === 2) throw new Error('desktop gone');
+        return { ok: false, reason: 'not_delivered', detail: 'rc-toggle missing' };
+      },
+      async () => ({ ok: true, value: { delivered: true } })
+    );
     await wrapped.start?.({} as never, {} as never);
     await wrapped.start?.({} as never, {} as never);
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -249,5 +365,97 @@ describe('withClaudeRemoteControl', () => {
       'Remote Control for local_t1 threw: desktop gone',
     ]);
     warn.mockRestore();
+  });
+});
+
+describe('B1 native task delivery', () => {
+  test('returns the real task receipt and actual permission wait after native delivery', async () => {
+    const order: string[] = [];
+    const summary = {
+      ref: { adapter: 'claude-desktop', id: 'local_target' },
+      title: 'Synthetic task',
+      permissionMode: 'acceptEdits',
+      status: 'queued',
+    } as unknown as WorkSummary;
+    const actual = { ...summary, status: 'needs_you', waitingFor: 'permission prompt' };
+    const context = { from: 'session:origin', caller: { source: 'rpc' as const } };
+    const adapter = {
+      id: 'claude-desktop',
+      capabilities: ['start'],
+      find: async () => [],
+      start: async () => {
+        order.push('prepared-imported');
+        return { ok: true, value: summary };
+      },
+      status: async () => ({ ok: true, value: actual }),
+    } as unknown as WorkAdapter;
+    const wrapped = withClaudeRemoteControl(
+      adapter,
+      {} as ClaudeDesktopAdapterDeps,
+      async () => {
+        order.push('rc-requested');
+        return { ok: true, value: { delivered: true } };
+      },
+      async (target, message) => {
+        expect(target.sessionId).toBe('local_target');
+        expect(message).toBe('Exact actual task');
+        order.push('native-message');
+        return {
+          ok: true,
+          value: { delivered: true, receipt: { executionId: 'target', inputId: 'task-input' } },
+        };
+      }
+    );
+    expect(await wrapped.start!({ message: 'Exact actual task' } as never, context)).toMatchObject({
+      ok: true,
+      value: {
+        permissionMode: 'acceptEdits',
+        status: 'needs_you',
+        waitingFor: 'permission prompt',
+        receipt: { inputId: 'task-input' },
+      },
+    });
+    expect(order.slice(0, 2)).toEqual(['prepared-imported', 'native-message']);
+  });
+
+  test('a native wake refusal is not reported as a running task or retried headlessly', async () => {
+    let rcRequests = 0;
+    const adapter = {
+      id: 'claude-desktop',
+      capabilities: ['start'],
+      find: async () => [],
+      start: async () => ({
+        ok: true,
+        value: {
+          ref: { adapter: 'claude-desktop', id: 'local_target' },
+          link: 'claude://claude.ai/epitaxy/local_target',
+          title: 'Synthetic task',
+        },
+      }),
+    } as unknown as WorkAdapter;
+    const wrapped = withClaudeRemoteControl(
+      adapter,
+      {} as ClaudeDesktopAdapterDeps,
+      async () => {
+        rcRequests++;
+        return { ok: true, value: { delivered: true } };
+      },
+      async () => ({
+        ok: false,
+        reason: 'not_delivered',
+        detail: 'desktop-wake is waiting for permission prompt',
+      })
+    );
+    const result = await wrapped.start!({ message: 'Synthetic task' } as never, {} as never);
+    expect(result).toMatchObject({
+      ok: false,
+      detail: expect.stringContaining('desktop-wake is waiting for permission prompt'),
+    });
+    expect(!result.ok && result.detail).toContain('claude://claude.ai/epitaxy/local_target');
+    expect(!result.ok && result.detail).toContain(
+      JSON.stringify({ adapter: 'claude-desktop', id: 'local_target' })
+    );
+    expect(!result.ok && result.detail).toContain('delivery may still arrive');
+    expect(rcRequests).toBe(0);
   });
 });
