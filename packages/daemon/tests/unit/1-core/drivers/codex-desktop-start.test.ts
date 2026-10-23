@@ -166,6 +166,16 @@ describe('codex-desktop start receipt', () => {
 });
 
 describe('codex-desktop start', () => {
+  test('tells a new Codex worker how to trim only its own merged or closed PR links', async () => {
+    const { instance, calls } = adapter({
+      call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}),
+    });
+    expect(await instance.start!(request, user)).toMatchObject({ ok: true });
+    expect(calls.find(([method]) => method === 'thread/start')?.[1].developerInstructions).toBe(
+      'To trim this thread\'s PR links, call mcp__codex_app__list_artifacts, check each PR\'s GitHub state, then call mcp__codex_app__remove_artifact({artifact_type:"pull_request", url}) for merged/closed PRs; own thread only; never edit ~/.codex state files directly.'
+    );
+  });
+
   test('surfaces a refused Full Access request without retrying with weaker permissions', async () => {
     const { instance, calls, closed } = adapter({
       call: async () => {
