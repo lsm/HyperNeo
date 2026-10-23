@@ -1,7 +1,8 @@
 import { strict as assert } from 'node:assert';
-import { mkdirSync, existsSync, writeFileSync, appendFileSync } from 'node:fs';
+import { mkdirSync, existsSync, writeFileSync, appendFileSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { createServer as createHttpServer } from 'node:http';
+import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import { WebSocketServer } from 'ws';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
@@ -22,6 +23,43 @@ const home = join(run, 'home/.codex');
 mkdirSync(join(home, 'ipc'), { recursive: true });
 mkdirSync(join(home, 'app-server-control'), { recursive: true });
 mkdirSync(join(run, 'evidence'), { recursive: true });
+const bin = join(run, 'bin');
+mkdirSync(bin, { recursive: true });
+process.env.PATH = `${bin}:${process.env.PATH}`;
+const openedMarker = join(run, 'opened');
+const bootstrapPid = join(run, 'bootstrap.pid');
+const openLog = join(run, 'evidence/open.jsonl');
+writeFileSync(join(bin, 'open'), `#!${process.execPath}
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+if (args.some(a => a.includes('synthetic-new'))) {
+  const pid = Number(fs.readFileSync(${JSON.stringify(bootstrapPid)}, 'utf8'));
+  let alive = true;
+  try { process.kill(pid, 0); } catch (e) { if (e.code === 'ESRCH') alive = false; else throw e; }
+  if (alive) throw new Error('Bootstrap process still owns the thread');
+}
+fs.appendFileSync(${JSON.stringify(openLog)}, JSON.stringify(args) + '\n');
+fs.writeFileSync(${JSON.stringify(openedMarker)}, 'owned');
+`, { mode: 0o700 });
+if (action === 'ownership') {
+  const workspace = join(run, 'workspace');
+  mkdirSync(workspace);
+  writeFileSync(join(home, '.codex-global-state.json'), JSON.stringify({ 'local-projects': { p: { rootPaths: [workspace] } }, 'app-server-project-id-by-legacy-project-id-by-host': { [`local:${home}`]: { p: 'project-1' } } }));
+  const command = join(bin, 'codex');
+  writeFileSync(command, `#!${process.execPath}
+const fs = require('node:fs');
+const rl = require('node:readline').createInterface({ input: process.stdin });
+fs.writeFileSync(${JSON.stringify(bootstrapPid)}, String(process.pid));
+rl.on('line', line => {
+  const m = JSON.parse(line);
+  if (m.id === undefined) return;
+  const result = m.method === 'thread/start' ? { thread: { id: 'synthetic-new', model: 'gpt-6.1-sol' } } : {};
+  process.stdout.write(JSON.stringify({ id: m.id, result }) + '\n');
+});
+rl.on('close', () => setTimeout(() => process.exit(fs.existsSync(${JSON.stringify(join(run, 'fail-bootstrap-exit'))}) ? 7 : 0), 40));
+`, { mode: 0o700 });
+  process.env.CODEX_CLI_PATH = command;
+}
 const rollout = join(run, 'synthetic-rollout.jsonl');
 writeFileSync(rollout, '');
 const db = new Database(join(home, 'state_5.sqlite'));
@@ -55,7 +93,7 @@ const desktop = createServer((socket) => {
       calls.push({ desktop: request.method, version: request.version, params: request.params });
       if (owner === 'offline' && request.method === 'initialize') { socket.destroy(); continue; }
       const response = request.method === 'initialize' ? { resultType: 'success', result: { clientId: 'synthetic-client' } }
-        : request.method === 'thread-owner-discovery' ? owner === 'owned' ? { resultType: 'success', handledByClientId: 'fixture-owner' } : { resultType: 'error', error: owner === 'missing' ? 'no-client-found' : 'request-version-mismatch' }
+        : request.method === 'thread-owner-discovery' ? owner === 'owned' || (owner === 'missing' && existsSync(openedMarker)) ? { resultType: 'success', handledByClientId: 'fixture-owner' } : { resultType: 'error', error: owner === 'missing' ? 'no-client-found' : 'request-version-mismatch' }
         : request.method === 'thread-follower-start-turn' ? startError ? { resultType: 'error', error: 'start unavailable' } : { resultType: 'success', result: { result: { turn: { id: 'desktop-started' } } } }
         : refuse ? { resultType: 'error', error: 'NoActiveTurn' } : { resultType: 'success', result: { result: { turnId: 'desktop-active' } } };
       const body = Buffer.from(JSON.stringify({ type: 'response', requestId: request.requestId, ...response }));
@@ -93,7 +131,10 @@ try {
   await app.spaceRuntimeService.ready();
   ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('connection failed')); });
-  const send = (mode?: string, describe = false, adapters = false, receipt?: { executionId: string; inputId: string }) => new Promise<any>((done, fail) => {
+  const send = (mode?: string, describe = false, adapters = false, receipt?: { executionId: string; inputId: string }, start = false) => new Promise<any>((done, fail) => {
+    const ipcPath = join(home, 'ipc/ipc.sock');
+    if (owner === 'offline' && existsSync(ipcPath)) renameSync(ipcPath, `${ipcPath}.offline`);
+    else if (owner !== 'offline' && existsSync(`${ipcPath}.offline`)) renameSync(`${ipcPath}.offline`, ipcPath);
     const id = crypto.randomUUID();
     const timer = setTimeout(() => fail(new Error('RPC timeout')), 10000);
     ws!.onmessage = (event) => {
@@ -102,13 +143,13 @@ try {
       clearTimeout(timer); replies.push(reply);
       if (reply.error) fail(new Error(JSON.stringify(reply.error))); else done(reply.data);
     };
-    ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: receipt ? { name: 'work.status', input: { ref: { adapter: 'codex-desktop', id: 'synthetic' }, receipt } } : adapters ? { name: 'work.adapters', input: {} } : describe ? { name: 'operations.describe', input: { name: 'work.send' } } : { name: 'work.send', input: { ref: { adapter: 'codex-desktop', id: 'synthetic' }, message: 'synthetic marker', ...(mode ? { mode } : {}) } }, timestamp: new Date().toISOString(), version: '1.0.0' }));
+    ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: start ? { name: 'work.start', input: { adapter: 'codex-desktop', place: { machine: hostname(), folder: join(run, 'workspace'), name: 'Synthetic' }, title: 'Synthetic opening', message: 'Synthetic opening message' } } : receipt ? { name: 'work.status', input: { ref: { adapter: 'codex-desktop', id: 'synthetic' }, receipt } } : adapters ? { name: 'work.adapters', input: {} } : describe ? { name: 'operations.describe', input: { name: 'work.send' } } : { name: 'work.send', input: { ref: { adapter: 'codex-desktop', id: 'synthetic' }, message: 'synthetic marker', ...(mode ? { mode } : {}) } }, timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
   const first = await send();
   if (action === 'ownership') {
-    assert.equal(first.ok, false, 'reachable Desktop with no owner must not deliver through a second writer');
-    assert.equal(first.reason, 'not_delivered');
-    assert.match(first.detail, /no-client-found/);
+    assert.equal(first.ok, true, 'a saved worker must open and deliver through Desktop');
+    assert.equal(first.value.steeredIntoTurnId, 'desktop-active');
+    assert.deepEqual(JSON.parse(readFileSync(openLog, 'utf8').trim().split('\n')[0]), ['-g', 'codex://threads/synthetic']);
     assert(!calls.some((call) => (call as { server?: string }).server), 'Desktop ownership failure must not touch the shared app-server');
     owner = 'owned';
     assert.equal((await send()).value.steeredIntoTurnId, 'desktop-active');
@@ -119,6 +160,16 @@ try {
     assert.equal(refused.reason, 'not_delivered');
     assert.match(refused.detail, /request-version-mismatch/);
     assert(!calls.some((call) => (call as { server?: string }).server), 'Desktop owner must remain the sole writer');
+    owner = 'owned';
+    const started = await send(undefined, false, false, undefined, true);
+    assert.equal(started.ok, true, JSON.stringify(started));
+    assert.equal(started.value.ref.id, 'synthetic-new');
+    assert(calls.some((call) => (call as { desktop?: string; params?: { conversationId?: string } }).desktop === 'thread-follower-start-turn' && (call as { params?: { conversationId?: string } }).params?.conversationId === 'synthetic-new'));
+    assert(!calls.some((call) => (call as { server?: string }).server), 'new work must not use shared server');
+    writeFileSync(join(run, 'fail-bootstrap-exit'), '7');
+    const beforeFailedBootstrap = calls.length;
+    await assert.rejects(() => send(undefined, false, false, undefined, true), /bootstrap exited with 7/);
+    assert(!calls.slice(beforeFailedBootstrap).some((call) => (call as { desktop?: string }).desktop === 'thread-follower-start-turn'), 'failed bootstrap cannot hand off');
   } else if (action === 'reproduce') {
     assert.equal(first.value.queuedSubmissionId, 'synthetic-queue');
     assert(!calls.some((call) => (call as { server?: string }).server === 'turn/steer'));
