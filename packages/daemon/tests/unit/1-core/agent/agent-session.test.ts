@@ -2500,7 +2500,9 @@ describe('AgentSession', () => {
         status: 'deferred' as const,
       }));
       const cancelDeliverySpy = mock(() => false);
-      mockDb.getSDKMessageRepo = mock(() => ({ deletePendingUserMessage: deletePendingSpy }));
+      mockDb.getSDKMessageRepo = mock(
+        () => ({ deletePendingUserMessage: deletePendingSpy }) as never
+      );
       mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery: cancelDeliverySpy }));
 
       const result = await agentSession.revokePendingDelivery('db-1', 'remove');
@@ -2513,7 +2515,9 @@ describe('AgentSession', () => {
     it('revokePendingDelivery can require a still-deferred input before cancelling delivery', async () => {
       const deletePendingSpy = mock(() => null);
       const cancelDeliverySpy = mock(() => false);
-      mockDb.getSDKMessageRepo = mock(() => ({ deletePendingUserMessage: deletePendingSpy }));
+      mockDb.getSDKMessageRepo = mock(
+        () => ({ deletePendingUserMessage: deletePendingSpy }) as never
+      );
       mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery: cancelDeliverySpy }));
 
       expect(await agentSession.revokePendingDelivery('db-1', 'remove', 'deferred')).toEqual({
@@ -2539,13 +2543,16 @@ describe('AgentSession', () => {
             },
           }) as never
       );
-      mockDb.getSDKMessageRepo = mock(() => ({
-        deletePendingUserMessage: mock(() => ({
-          dbId: 'db-1',
-          uuid: 'uuid-1',
-          status: 'deferred' as const,
-        })),
-      }));
+      mockDb.getSDKMessageRepo = mock(
+        () =>
+          ({
+            deletePendingUserMessage: mock(() => ({
+              dbId: 'db-1',
+              uuid: 'uuid-1',
+              status: 'deferred' as const,
+            })),
+          }) as never
+      );
       mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery: mock(() => false) }));
       agentSession.stateManager.clearQueuedIfOwnedBy = mock(async () => {
         expect(committed).toBe(true);
@@ -2565,7 +2572,7 @@ describe('AgentSession', () => {
       const deferSpy = mock(() => ({ dbId: 'db-1', uuid: 'uuid-1' }));
       const cancelDeliverySpy = mock(() => true);
       const notifySpy = mock(() => {});
-      mockDb.getSDKMessageRepo = mock(() => ({ deferEnqueuedUserMessage: deferSpy }));
+      mockDb.getSDKMessageRepo = mock(() => ({ deferEnqueuedUserMessage: deferSpy }) as never);
       mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery: cancelDeliverySpy }));
       mockDb.notifyChange = notifySpy;
 
