@@ -293,10 +293,12 @@ export function getBuiltFallbackIdentity(session: object): BuiltFallbackIdentity
   return builtFallbackBySession.get(session);
 }
 
+export const DISABLE_THINKING_ENV = 'CLAUDE_CODE_DISABLE_THINKING';
+
 export function liveThinkingUpdate(
   resolved: { thinking?: ThinkingConfig; effort?: ThinkingEffort },
   level: ThinkingLevel
-): { maxThinkingTokens?: number; effortLevel?: ThinkingEffort } {
+): { maxThinkingTokens?: number; effortLevel?: ThinkingEffort; disableThinking?: boolean } {
   const { thinking, effort } = resolved;
   const maxThinkingTokens = !thinking
     ? undefined
@@ -305,7 +307,11 @@ export function liveThinkingUpdate(
       : thinking.type === 'enabled'
         ? thinking.budgetTokens
         : (THINKING_LEVEL_TOKENS[level] ?? THINKING_LEVEL_TOKENS.think8k);
-  return { maxThinkingTokens, effortLevel: effort };
+  return {
+    maxThinkingTokens,
+    effortLevel: effort,
+    disableThinking: thinking ? thinking.type === 'disabled' : undefined,
+  };
 }
 
 export class QueryOptionsBuilder {
@@ -725,6 +731,10 @@ export class QueryOptionsBuilder {
     }
 
     const { thinking: thinkingConfig, effort } = this.resolveThinkingOptions();
+    const env = { ...(result.env ?? {}) };
+    delete env[DISABLE_THINKING_ENV];
+    if (thinkingConfig?.type === 'disabled') env[DISABLE_THINKING_ENV] = '1';
+    result.env = env;
 
     if (thinkingConfig) {
       result.thinking = thinkingConfig;

@@ -1,4 +1,4 @@
-import type { Session } from '@hyperneo/shared';
+import type { Session, ThinkingEffort } from '@hyperneo/shared';
 import type { QueryLike } from './query-like.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Database } from '../../storage/database.ts';
@@ -6,6 +6,7 @@ import type { Logger } from '../logger.ts';
 import type { SettingsManager } from '../settings-manager.ts';
 import type { ContextTracker } from './context-tracker.ts';
 import { ContextFetcher } from './context-fetcher.ts';
+import { DISABLE_THINKING_ENV } from './query-options-builder.ts';
 import { resolveSessionContextModelInfo } from '../model-service.ts';
 
 export interface SDKRuntimeConfigContext {
@@ -67,13 +68,22 @@ export class SDKRuntimeConfig {
     }
   }
 
-  async applyThinking(update: { maxThinkingTokens?: number; effortLevel?: string }): Promise<void> {
+  async applyThinking(update: {
+    maxThinkingTokens?: number;
+    effortLevel?: ThinkingEffort;
+    disableThinking?: boolean;
+  }): Promise<void> {
     const { queryObject } = this.ctx;
     if (!queryObject) return;
     if (update.maxThinkingTokens !== undefined)
       await queryObject.setMaxThinkingTokens?.(update.maxThinkingTokens);
-    if (update.effortLevel)
-      await queryObject.applyFlagSettings?.({ effortLevel: update.effortLevel });
+    const flags = {
+      ...(update.effortLevel ? { effortLevel: update.effortLevel } : {}),
+      ...(update.disableThinking === undefined
+        ? {}
+        : { env: { [DISABLE_THINKING_ENV]: update.disableThinking ? '1' : '0' } }),
+    };
+    if (Object.keys(flags).length) await queryObject.applyFlagSettings?.(flags);
   }
 
   async setPermissionMode(mode: string): Promise<ConfigUpdateResult> {

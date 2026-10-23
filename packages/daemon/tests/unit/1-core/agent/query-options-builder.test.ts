@@ -1541,6 +1541,18 @@ describe('QueryOptionsBuilder', () => {
       const result = builder.addSessionStateOptions(options);
 
       expect(result.thinking).toEqual({ type: 'disabled' });
+      expect(result.env?.CLAUDE_CODE_DISABLE_THINKING).toBe('1');
+    });
+
+    it('drops the thinking-off env once a level is chosen', async () => {
+      mockSession.config.thinkingLevel = 'think16k';
+      const options = await builder.build();
+      const result = builder.addSessionStateOptions({
+        ...options,
+        env: { ...options.env, CLAUDE_CODE_DISABLE_THINKING: '1' },
+      });
+
+      expect(result.env?.CLAUDE_CODE_DISABLE_THINKING).toBeUndefined();
     });
 
     it('prefers the persisted thinkingLevel over a stale in-memory config', async () => {
@@ -4915,6 +4927,7 @@ describe('liveThinkingUpdate', () => {
     expect(liveThinkingUpdate({ thinking: { type: 'disabled' } }, 'off')).toEqual({
       maxThinkingTokens: 0,
       effortLevel: undefined,
+      disableThinking: true,
     });
   });
 
@@ -4928,13 +4941,14 @@ describe('liveThinkingUpdate', () => {
   it('re-enables adaptive thinking with the level budget and passes effort through', () => {
     expect(
       liveThinkingUpdate({ thinking: { type: 'adaptive' }, effort: 'high' }, 'think24k')
-    ).toEqual({ maxThinkingTokens: 24000, effortLevel: 'high' });
+    ).toEqual({ maxThinkingTokens: 24000, effortLevel: 'high', disableThinking: false });
   });
 
   it('sends nothing when the provider omits thinking', () => {
     expect(liveThinkingUpdate({}, 'think8k')).toEqual({
       maxThinkingTokens: undefined,
       effortLevel: undefined,
+      disableThinking: undefined,
     });
   });
 });
