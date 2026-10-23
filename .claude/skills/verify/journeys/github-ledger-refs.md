@@ -14,7 +14,7 @@ The helper owns its loopback daemon, synthetic DB/HOME and refusing fake gh.
 No model, GUI, real keys, auth files, GitHub or port 8399. Direct HTTP throws.
 It seeds a synthetic code project and workspace mapping in its own DB only.
 
-Five concurrent public `neo.github.read` PR requests must produce the same
+Five concurrent public `neo.github.read` requests using an issue-form PR URL must produce the same
 current approval/blockers and one ask-reference lookup (before: five). A public
 issue-detail read and `neo.project.section` for the same epic share one lookup.
 The section succeeds with the epic title, and issue completion retains its

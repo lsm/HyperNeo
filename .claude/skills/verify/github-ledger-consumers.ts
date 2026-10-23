@@ -80,7 +80,7 @@ try {
   evidence.ledgerGraphqlCost = requests.filter(row => row.family === 'ledger-reconcile').reduce((sum, row) => sum + row.graphqlCost, 0);
   evidence.otherGraphqlCost = 'unknown: gh pr view/list do not return cost; do not equate request count with points';
   if (scenario === 'merged') {
-    assert.deepEqual(evidence.initialRequests, { 'ledger-reconcile': 1, 'ask-reference': 1, 'work-detail': 1, 'query-window': 1, 'branch-membership': 1, 'deploy-merge': 1, 'deploy-ancestry': 1 });
+    assert.deepEqual(evidence.initialRequests, { 'ledger-reconcile': 1, 'work-detail': 1, 'query-window': 1, 'branch-membership': 1, 'deploy-merge': 1, 'deploy-ancestry': 1 });
     assert.deepEqual(evidence.repeatRequests, { 'ledger-reconcile': 1, 'work-detail': 1, 'query-window': 1 });
   }
   evidence.verified = true;
