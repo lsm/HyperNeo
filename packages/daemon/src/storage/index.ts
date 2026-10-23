@@ -274,7 +274,7 @@ export class Database {
   captureSessionInputDraft(id: string): SessionInputDraftSnapshot | null {
     return this.sessionRepo.captureSessionInputDraft(id);
   }
-  casSessionInputDraft(
+  async casSessionInputDraft(
     snapshot: SessionInputDraftSnapshot,
     text: string | null
   ): Promise<'won' | 'superseded' | 'invalid'> {
@@ -284,7 +284,7 @@ export class Database {
   captureSessionRuntimeSettings(id: string): SessionRuntimeSettingsSnapshot | null {
     return this.sessionRepo.captureSessionRuntimeSettings(id);
   }
-  casSessionRuntimeSettings(
+  async casSessionRuntimeSettings(
     snapshot: SessionRuntimeSettingsSnapshot,
     patch: RuntimeSettingsPatch
   ): Promise<'won' | 'superseded'> {
