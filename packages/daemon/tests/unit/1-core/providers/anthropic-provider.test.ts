@@ -687,7 +687,7 @@ describe('AnthropicProvider', () => {
       expect(converted.find((m) => m.id === 'fable')?.family).toBe('fable');
     });
 
-    it('keeps every row the CLI lists with its own id and label', () => {
+    it('lists each row under its exact model id, keeping the alias and the floating default', () => {
       const sdkModels = [
         {
           value: 'default',
@@ -713,15 +713,21 @@ describe('AnthropicProvider', () => {
           displayName: 'Sonnet 5',
           description: 'Efficient for routine tasks',
         },
+        {
+          value: 'claude-sonnet-5-5',
+          resolvedModel: 'claude-sonnet-5-5',
+          displayName: 'Sonnet 5.5 (pinned)',
+          description: 'Same model as the sonnet alias',
+        },
       ];
 
       const converted = provider.convertSdkModels(sdkModels);
 
-      expect(converted.map((m) => [m.id, m.name, m.family])).toEqual([
-        ['default', 'Default (recommended)', 'haiku'],
-        ['opus[1m]', 'Opus (1M context)', 'opus'],
-        ['sonnet', 'Sonnet 5.5', 'sonnet'],
-        ['claude-sonnet-5', 'Sonnet 5', 'sonnet'],
+      expect(converted.map((m) => [m.id, m.alias, m.name, m.family])).toEqual([
+        ['default', 'default', 'Default (recommended)', 'haiku'],
+        ['claude-opus-5[1m]', 'opus[1m]', 'Opus (1M context)', 'opus'],
+        ['claude-sonnet-5-5', 'sonnet', 'Sonnet 5.5', 'sonnet'],
+        ['claude-sonnet-5', 'claude-sonnet-5', 'Sonnet 5', 'sonnet'],
       ]);
       expect(converted.map((m) => m.contextWindow)).toEqual([200000, 1_000_000, 200000, 200000]);
     });

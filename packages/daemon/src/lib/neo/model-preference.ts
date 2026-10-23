@@ -67,7 +67,7 @@ export function requireNeoPreferenceModel(
       model.effortLevels
     );
     entries.push({
-      model: entry.model,
+      model: model.alias === entry.model ? model.id : entry.model,
       provider: model.provider,
       thinkingLevel: clampNeoThinking(levels, normalizeThinkingLevel(entry.thinkingLevel)),
       ...(entry.autoCompactPercent === undefined

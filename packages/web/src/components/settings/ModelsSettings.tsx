@@ -167,9 +167,7 @@ function FallbackChainEditor({
   controls,
 }: FallbackChainEditorProps) {
   const getDisplayInfo = (entry: FallbackModelEntry) => {
-    const model = availableModels.find(
-      (m) => m.id === entry.model && m.provider === entry.provider
-    );
+    const model = findSameModel(availableModels, entry);
     return { name: model?.name ?? entry.model, family: model?.family ?? 'sonnet' };
   };
 

@@ -303,3 +303,14 @@ test('an omitted override keeps model metadata and stays omitted when saving thi
     })
   );
 });
+
+test('a model saved under its alias shows the listed model name', async () => {
+  const pinned = { ...models[0], id: 'claude-opus-5-5', alias: 'opus', display_name: 'Opus 5.5' };
+  request.mockImplementation(async (method) => {
+    if (method === 'models.list') return { models: [pinned, ...models.slice(1)] };
+    throw new Error(`Unexpected ${method}`);
+  });
+  const ui = await editor();
+  const first = ui.getAllByTitle('Remove')[0].closest('.bg-surface-raised')?.textContent ?? '';
+  expect(first).toContain('Opus 5.5');
+});

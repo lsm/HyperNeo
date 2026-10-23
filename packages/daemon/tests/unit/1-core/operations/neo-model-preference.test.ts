@@ -96,6 +96,18 @@ describe('requireNeoPreferenceModel', () => {
       )
     ).toMatchObject({ reason: { ok: false, reason: expect.stringContaining('invalid_model') } });
   });
+
+  test('saves the exact model id when given the alias of a listed model', () => {
+    const opusAlias = { ...opus, id: 'claude-opus-5-5', alias: 'opus' } as ModelInfo;
+    expect(
+      requireNeoPreferenceModel(
+        { model: 'opus', provider: 'anthropic', thinkingLevel: 'off' },
+        { models: [opusAlias] }
+      )
+    ).toEqual({
+      value: { model: 'claude-opus-5-5', provider: 'anthropic', thinkingLevel: 'off' },
+    });
+  });
 });
 
 describe('effectiveNeoPreference', () => {
