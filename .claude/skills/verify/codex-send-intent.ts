@@ -130,6 +130,11 @@ try {
   const ownerless=await send();
   assert.equal(ownerless.value.steeredIntoTurnId,'desktop-active');
   assert(!calls.slice(ownerlessBefore).some(call=>(call as {server?:string}).server==='thread/resume'));
+  const desktopQueueBefore=calls.length;
+  const desktopQueued=await send('queue');
+  assert.equal(desktopQueued.value.queuedSubmissionId,'synthetic-queue');
+  assert(calls.slice(desktopQueueBefore).some(call=>(call as {server?:string}).server==='thread/queue/add'));
+  assert(!calls.slice(desktopQueueBefore).some(call=>['thread/resume','turn/start'].includes((call as {server?:string}).server??'')));
   owner='refused';
   const versionBefore=calls.length;
   assert.equal((await send()).reason,'not_delivered');

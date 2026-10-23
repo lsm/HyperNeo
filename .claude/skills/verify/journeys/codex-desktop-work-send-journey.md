@@ -1,9 +1,10 @@
 ## Codex Desktop work.send journey
 
 First run `codex-send-intent-through-a-synthetic-daemon.md`. It proves that a
-running Desktop acquires ownership of an unloaded thread before any delivery,
+running Desktop acquires ownership of an unloaded thread before auto/steer delivery,
 and refuses visibly if it cannot. App-server fallback is allowed only when the
-Desktop process is absent. A fallback turn's matching completion requests
+Desktop process is absent for these modes. Explicit queue retains the shared
+app-server queue API even while Desktop is running. A fallback turn's matching completion requests
 `thread/unsubscribe`; its official idle grace can retain the thread for up to
 30 minutes. No archive/unarchive or app restart transfers ownership.
 

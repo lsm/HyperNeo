@@ -11,7 +11,7 @@ Its `open` and `ps` shims record launch arguments and report a controlled Deskto
 process state; they never open a GUI or inspect the host's processes. The real
 new-thread control opens `new-handoff-control` and starts through its owner.
 
-For an unloaded existing thread with running Desktop, the open shim registers
+For auto/steer delivery to an unloaded existing thread with running Desktop, the open shim registers
 ownership only after the supported deep link is requested. `work.send` must return
 the Desktop steer receipt and must never call app-server resume/start. A refused
 open, a protocol refusal, and missing/stale IPC while Desktop is running must
@@ -20,7 +20,11 @@ absent and the socket missing/stale, app-server delivery remains prompt. Only
 three opens are expected: new-thread control, successful existing handoff and
 refused existing handoff. Evidence is in `evidence/desktop-open.jsonl`.
 
-The no-Desktop idle path resumes before starting a turn. The fixture emits its
+Explicit queue is a separate path: while Desktop is running, the journey observes
+`thread/queue/add` and its queue ID without a resume/start request. It is not
+covered by the auto/steer ownership gate.
+
+The no-Desktop idle auto path resumes before starting a turn. The fixture emits its
 matching `turn/completed`; retain the subsequent `thread/unsubscribe` request and
 routing log. Unit contracts also check completion before the start reply and an
 unrelated thread's completion. An unsubscribe receipt starts the official idle
