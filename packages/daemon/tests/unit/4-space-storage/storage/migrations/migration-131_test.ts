@@ -142,6 +142,13 @@ describe('Migration 131: remove global Neo schema surface', () => {
     expect(row.origin).toBeNull();
     expect(row.task_id).toBe('task-1');
     expect(tableSql('sdk_messages')).not.toContain("'neo'");
+    expect(
+      db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE name IN ('idx_sdk_messages_uuid_status','idx_sdk_messages_session')"
+        )
+        .all()
+    ).toEqual([]);
     expect(() => {
       db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, origin)
