@@ -44,6 +44,7 @@ export interface SessionOperationDependencies {
   readonly getDatabase: () => BunDatabase;
   readonly getLiveSession: (sessionId: string) => AgentSession | null;
   readonly getSession: (sessionId: string) => Session | null;
+  readonly updateSession: (sessionId: string, updates: Partial<Session>) => Promise<void>;
   readonly sessionSpaceId: (session: Session) => string | undefined;
   readonly audit?: (entry: SessionAuditEntry) => void;
 }
@@ -311,12 +312,12 @@ export function readSessionMessages(
   }
 }
 
-export function applySessionState(
+export async function applySessionState(
   row: SpaceSessionRow,
   input: UpdateSessionStateInput,
   caller: OperationCaller,
   deps: SessionOperationDependencies
-): SessionStateResult {
+): Promise<SessionStateResult> {
   if (deps.getLiveSession(input.sessionId)) {
     return reject(
       'live_session_present',
@@ -336,10 +337,10 @@ export function applySessionState(
     );
   }
   try {
-    deps
-      .getDatabase()
-      .prepare(`UPDATE sessions SET processing_state = ?, last_active_at = ? WHERE id = ?`)
-      .run(JSON.stringify(newState), new Date().toISOString(), input.sessionId);
+    await deps.updateSession(input.sessionId, {
+      processingState: JSON.stringify(newState),
+      lastActiveAt: new Date().toISOString(),
+    });
   } catch (err) {
     return reject('rejected', failureMessage(err));
   }

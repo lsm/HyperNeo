@@ -22,7 +22,7 @@ export interface RuntimeSettingsDependencies extends RuntimeSettingsReadDependen
   readonly commit: (
     snapshot: SessionRuntimeSettingsSnapshot,
     patch: RuntimeSettingsPatch
-  ) => 'won' | 'superseded';
+  ) => Promise<'won' | 'superseded'>;
   readonly isPreparing: (id: string) => boolean;
   readonly hasPendingWork: (id: string) => boolean;
   readonly notify: (id: string) => Promise<void>;
@@ -165,12 +165,12 @@ async function applySettings(
         ? providerIdentityClears(current.provider ?? inferProviderForModel(current.model), provider)
         : {};
     if (
-      deps.commit(snapshot, {
+      (await deps.commit(snapshot, {
         model: input.model !== undefined || input.provider !== undefined ? model : undefined,
         provider: input.model !== undefined || input.provider !== undefined ? provider : undefined,
         thinkingLevel,
         ...clears,
-      }) !== 'won'
+      })) !== 'won'
     )
       return { reason: { ok: false, reason: 'session_settings_changed' } as Failure };
     if (live && thinkingLevel !== undefined) {

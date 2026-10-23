@@ -252,7 +252,7 @@ export class SessionLifecycle {
     };
 
     try {
-      this.db.createSession(session, {
+      await this.db.createSession(session, {
         enforceWorkspaceOwnership: true,
         ownershipPath: baseWorkspacePath ?? undefined,
       });
@@ -385,7 +385,7 @@ export class SessionLifecycle {
       },
     };
 
-    this.db.updateSession(sessionId, updatedSession);
+    await this.db.updateSession(sessionId, updatedSession);
 
     await agentSession.updateMetadata(updatedSession);
 
@@ -489,7 +489,7 @@ export class SessionLifecycle {
       },
     };
 
-    this.db.updateSession(sessionId, updatedSession);
+    await this.db.updateSession(sessionId, updatedSession);
 
     await agentSession.updateMetadata(updatedSession);
 
@@ -513,7 +513,7 @@ export class SessionLifecycle {
         metadata: agentSession.getSessionData().metadata,
       };
     } else {
-      this.db.updateSession(sessionId, updates);
+      await this.db.updateSession(sessionId, updates);
       if (agentSession) await agentSession.updateMetadata(updates);
     }
 
@@ -795,7 +795,7 @@ export class SessionLifecycle {
       }
 
       try {
-        this.db.deleteSession(sessionId);
+        await this.db.deleteSession(sessionId);
         completedPhases.push('db-delete');
       } catch (error) {
         this.logger.error(`[SessionLifecycle] deleteResources: Database deletion failed:`, error);
@@ -934,7 +934,7 @@ export class SessionLifecycle {
         },
       };
 
-      this.db.updateSession(sessionId, updatedSession);
+      await this.db.updateSession(sessionId, updatedSession);
 
       await agentSession.updateMetadata(updatedSession);
 
@@ -963,7 +963,7 @@ export class SessionLifecycle {
         },
       };
 
-      this.db.updateSession(sessionId, fallbackSession);
+      await this.db.updateSession(sessionId, fallbackSession);
       await agentSession.updateMetadata(fallbackSession);
 
       await this.internalEventBus.publish('session.updated', {

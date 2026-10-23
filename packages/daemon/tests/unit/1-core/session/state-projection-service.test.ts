@@ -15,6 +15,7 @@ import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { AuthManager } from '../../../../src/lib/auth-manager';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import type { Config } from '../../../../src/config';
+import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 
 describe('StateProjectionService', () => {
   let service: StateProjectionService;
@@ -643,7 +644,11 @@ describe('StateProjectionService — session error persistence', () => {
       publishAsync: mock(() => {}),
     } as unknown as InternalEventBus<DaemonInternalEventMap>;
 
-    const dbFacade = { getDatabase: () => memDb } as unknown as Database;
+    const dbFacade = {
+      getDatabase: () => memDb,
+      setSessionLastError: async (id: string, value: string | null) =>
+        new SessionRepository(memDb).setLastError(id, value),
+    } as unknown as Database;
     const reactiveDb = { notifyChange } as unknown as ReactiveDatabase;
 
     service = new StateProjectionService(
