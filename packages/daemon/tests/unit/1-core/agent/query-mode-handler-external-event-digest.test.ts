@@ -90,7 +90,7 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
         toolCallCount: 0,
       },
     } as unknown as Session;
-    db.createSession(session);
+    await db.createSession(session);
 
     const messageQueue = {
       enqueueWithId: mock(async () => {}),

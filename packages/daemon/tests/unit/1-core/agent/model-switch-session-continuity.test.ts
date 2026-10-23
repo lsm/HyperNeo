@@ -535,7 +535,7 @@ describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)'
       const db = await createTestDb();
       try {
         const session = createTestSession(mockContext.session.id);
-        db.createSession(session);
+        await db.createSession(session);
         const sdkRepo = db.getSDKMessageRepo();
         const uuid = 'uuid-consumed-resubmit';
         sdkRepo.saveUserMessage(

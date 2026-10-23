@@ -51,7 +51,7 @@ describe('Database Facade', () => {
   });
 
   describe('constructor and initialize', () => {
-    it('creates a Database instance', () => {
+    it('creates a Database instance', async () => {
       expect(db).toBeDefined();
     });
 
@@ -61,7 +61,7 @@ describe('Database Facade', () => {
   });
 
   describe('getDatabase', () => {
-    it('returns the underlying BunDatabase instance', () => {
+    it('returns the underlying BunDatabase instance', async () => {
       const rawDb = db.getDatabase();
       expect(rawDb).toBeDefined();
       expect(typeof rawDb.query).toBe('function');
@@ -107,7 +107,7 @@ describe('Database Facade', () => {
 
     it('creates and retrieves a session', async () => {
       const session = createTestSession();
-      db.createSession(session);
+      await db.createSession(session);
 
       const retrieved = db.getSession(session.id);
       expect(retrieved).toBeDefined();
@@ -116,9 +116,9 @@ describe('Database Facade', () => {
 
     it('updates a session', async () => {
       const session = createTestSession();
-      db.createSession(session);
+      await db.createSession(session);
 
-      db.updateSession(session.id, { title: 'Updated Title' });
+      await db.updateSession(session.id, { title: 'Updated Title' });
 
       const retrieved = db.getSession(session.id);
       expect(retrieved!.title).toBe('Updated Title');
@@ -126,9 +126,9 @@ describe('Database Facade', () => {
 
     it('deletes a session', async () => {
       const session = createTestSession();
-      db.createSession(session);
+      await db.createSession(session);
 
-      db.deleteSession(session.id);
+      await db.deleteSession(session.id);
 
       const retrieved = db.getSession(session.id);
       expect(retrieved).toBeNull();
@@ -137,8 +137,8 @@ describe('Database Facade', () => {
     it('lists all sessions', async () => {
       const session1 = createTestSession({ id: 'session-1' });
       const session2 = createTestSession({ id: 'session-2' });
-      db.createSession(session1);
-      db.createSession(session2);
+      await db.createSession(session1);
+      await db.createSession(session2);
 
       const sessions = db.listSessions();
       expect(sessions).toHaveLength(2);
@@ -188,7 +188,7 @@ describe('Database Facade', () => {
       const first = new Database(dbPath, { messageSearchIndexFlushIntervalMs: 0 });
       const reactiveDb1 = createReactiveDatabase(first);
       await first.initialize(reactiveDb1);
-      first.createSession(createTestSession());
+      await first.createSession(createTestSession());
       const message = {
         type: 'user',
         uuid: 'restart-uuid',
@@ -211,7 +211,7 @@ describe('Database Facade', () => {
       db = new Database(dbPath, { messageSearchIndexFlushIntervalMs: 20 });
       const reactiveDbTimer = createReactiveDatabase(db);
       await db.initialize(reactiveDbTimer);
-      db.createSession(createTestSession());
+      await db.createSession(createTestSession());
       const message = {
         type: 'user',
         uuid: 'timer-uuid',

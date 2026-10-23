@@ -5,6 +5,7 @@ import {
   touchDevice,
 } from '../repositories/device-pairing-repository.ts';
 import { jobQueueReads, jobQueueWrites } from '../repositories/job-queue-repository.ts';
+import { sessionWrites } from '../repositories/session-repository.ts';
 import type { DbOp } from './db-op.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
@@ -15,5 +16,6 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     jobQueueWrites,
     jobQueueReads,
     externalEventSweeps,
+    sessionWrites,
   ].map((op) => [op.name, op])
 );

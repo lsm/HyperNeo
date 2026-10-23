@@ -74,7 +74,7 @@ describe('session operation MCP attachment', () => {
         }),
       ]);
     try {
-      db.createSession(createTestSession('existing'));
+      await db.createSession(createTestSession('existing'));
       const existing = await restore('existing');
       const cachedServer = existing.getOperationMcpServer();
       manager.registerSession(existing);
@@ -103,7 +103,7 @@ describe('session operation MCP attachment', () => {
       expect((await operationInvoke(cachedServer)({ name: 'configured' }, {})).isError).not.toBe(
         true
       );
-      db.createSession(createTestSession('initial-load'));
+      await db.createSession(createTestSession('initial-load'));
       const initialLoad = manager.getSessionAsync('initial-load');
       expect(manager.getCachedSession('initial-load')).toBeNull();
       manager.setOperationRegistryProvider(() => catalog('first'));
@@ -116,11 +116,11 @@ describe('session operation MCP attachment', () => {
       expect(await operationInvoke(cachedServer)({ name: 'first' }, {})).toMatchObject({
         content: [{ text: JSON.stringify({ sessionId: 'existing', source: 'mcp' }) }],
       });
-      db.createSession(createTestSession('resumed'));
+      await db.createSession(createTestSession('resumed'));
       const resumed = manager.getSession('resumed')!;
       const createdId = await manager.createSession({ title: 'New provider session' });
       const created = manager.getSession(createdId)!;
-      db.createSession({ ...createTestSession('workflow'), type: 'worker' });
+      await db.createSession({ ...createTestSession('workflow'), type: 'worker' });
       const workflow = await restore('workflow');
       const workflowServer = workflow.getOperationMcpServer();
       manager.registerSession(workflow);
@@ -129,7 +129,7 @@ describe('session operation MCP attachment', () => {
           (await operationInvoke(session.getOperationMcpServer())({ name: 'first' }, {})).isError
         ).not.toBe(true);
       }
-      db.createSession(createTestSession('replacement-load'));
+      await db.createSession(createTestSession('replacement-load'));
       const replacementLoad = manager.getSessionAsync('replacement-load');
       expect(manager.getCachedSession('replacement-load')).toBeNull();
       manager.setOperationRegistryProvider(() => catalog('second'));
@@ -154,7 +154,7 @@ describe('session operation MCP attachment', () => {
   });
 
   test('ordinary chat sessions create independent tasks through the shared MCP operation', async () => {
-    db.createSession(createTestSession('creator'));
+    await db.createSession(createTestSession('creator'));
     const session = await restore('creator');
     const result = await operationInvoke(session.getOperationMcpServer())(
       { name: 'task.create', input: { title: 'Work' } },
@@ -250,7 +250,7 @@ describe('session operation MCP attachment', () => {
   });
 
   test('ordinary fallback sessions discover task reads without exposing Space-owned rows', async () => {
-    db.createSession(createTestSession('reader'));
+    await db.createSession(createTestSession('reader'));
     const session = await restore('reader');
     const space = new SpaceRepository(db.getDatabase()).createSpace({
       workspacePath: '/workspace/test',
@@ -276,8 +276,8 @@ describe('session operation MCP attachment', () => {
     'exposes canonical send for restored session type %s',
     async (type) => {
       const source: Session = { ...createTestSession('sender'), type };
-      db.createSession(source);
-      db.createSession(createTestSession('destination'));
+      await db.createSession(source);
+      await db.createSession(createTestSession('destination'));
       const session = await restore(source.id);
       const operationServer = session.getOperationMcpServer();
       expect(session.optionsBuilder.getEffectiveMcpServers()).toHaveProperty(
@@ -313,7 +313,7 @@ describe('session operation MCP attachment', () => {
       'hyperneo-operations': { command: 'user-server' },
       'hyperneo-operations-2': { command: 'another-user-server' },
     };
-    db.createSession(source);
+    await db.createSession(source);
     const session = await restore(source.id);
     session.mergeRuntimeMcpServers(source.config.mcpServers);
     const effective = session.optionsBuilder.getEffectiveMcpServers();
@@ -332,7 +332,7 @@ describe('session operation MCP attachment', () => {
   });
 
   test('rejects MCP attempts to claim human input provenance before persistence', async () => {
-    db.createSession(createTestSession('sender'));
+    await db.createSession(createTestSession('sender'));
     const session = await restore('sender');
     const result = await operationInvoke(session.getOperationMcpServer())(
       {
@@ -354,7 +354,7 @@ describe('session operation MCP attachment', () => {
   });
 
   test('retains the operation server across runtime MCP changes without persisting it', async () => {
-    db.createSession(createTestSession('sender'));
+    await db.createSession(createTestSession('sender'));
     const session = await restore('sender');
     const operationServer = session.getOperationMcpServer();
     const peer = { command: 'peer-server' };

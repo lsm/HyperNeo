@@ -50,8 +50,8 @@ describe('standalone task creation', () => {
     expect(notify).toHaveBeenCalledTimes(1);
   });
 
-  test('preserves caller fields and provenance without binding lifetime to the creator', () => {
-    db.createSession(createTestSession('creator'));
+  test('preserves caller fields and provenance without binding lifetime to the creator', async () => {
+    await db.createSession(createTestSession('creator'));
     const task = createStandaloneTask(
       db.getDatabase(),
       {
@@ -75,7 +75,7 @@ describe('standalone task creation', () => {
         .prepare('SELECT created_by_session FROM space_tasks WHERE id = ?')
         .get(task.id)
     ).toEqual({ created_by_session: 'creator' });
-    db.deleteSession('creator');
+    await db.deleteSession('creator');
     expect(readTaskCore(db.getDatabase(), task.id)).toEqual(task);
   });
 

@@ -20,7 +20,7 @@ type BoundarySession = {
 async function makeBoundarySession(sessionId: string): Promise<BoundarySession> {
   const db = await createTestDb();
   const session = createTestSession(sessionId);
-  db.createSession(session);
+  await db.createSession(session);
   const bus = await createTestInternalEventBus();
   const agentSession = new AgentSession(
     db.getSession(sessionId) ?? session,

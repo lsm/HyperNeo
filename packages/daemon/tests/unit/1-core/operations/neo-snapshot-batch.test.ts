@@ -131,7 +131,7 @@ test('a failed shared build reports failure and a later request can recover', as
 
 test('RPC sharing does not mix the MCP view or bypass caller admission', async () => {
   const root = 'neo:synthetic';
-  db.createSession(createTestSession(root));
+  await db.createSession(createTestSession(root));
   service.repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
   service.repo.saveProject(
     { id: 'private', title: 'Synthetic', summary: '', context: 'RPC context' },
@@ -194,7 +194,7 @@ test.each([3, 4, 20, 21])(
   'RPC keeps up to twenty done todos while MCP keeps three without losing asks (%i done)',
   async (doneCount) => {
     const root = 'neo:done-threshold';
-    db.createSession(createTestSession(root));
+    await db.createSession(createTestSession(root));
     service.repo.reserveBinding({ sessionId: root, kind: 'neo', projectId: null });
     service.repo.saveProject({ id: 'threshold', title: 'Synthetic', summary: '', context: '' }, 0);
     for (let i = 0; i < 10; i++) {

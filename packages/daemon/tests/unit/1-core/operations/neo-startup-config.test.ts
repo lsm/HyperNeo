@@ -23,14 +23,17 @@ describe('Neo startup configuration', () => {
     db = await createTestDb();
     updateSession.mockReset();
     updateSession.mockImplementation(async (id: string, updates: Partial<Session>) => {
-      db.updateSession(id, updates);
+      await db.updateSession(id, updates);
     });
     service = createNeoService(
       db,
       {
         updateSession,
         createSession: async (params: CreateSessionParams) => {
-          db.createSession({ ...createTestSession(params.sessionId!), config: params.config! });
+          await db.createSession({
+            ...createTestSession(params.sessionId!),
+            config: params.config!,
+          });
         },
       } as unknown as SessionManager,
       { event: vi.fn() } as unknown as MessageHub,
@@ -60,7 +63,7 @@ describe('Neo startup configuration', () => {
         permissionMode: 'acceptEdits',
         autoCompactPercent: 70,
       };
-      db.createSession(session);
+      await db.createSession(session);
       service.repo.reserveBinding({ sessionId: root, projectId: null, kind: 'neo' });
       await service[method]();
       const restored = db.getSession(root)!;
@@ -90,7 +93,7 @@ describe('Neo startup configuration', () => {
   test('refreshing tools approves reading and sandboxed Bash without native mutation', async () => {
     const session = createTestSession(root);
     session.config = { ...session.config, permissionMode: 'acceptEdits', allowedTools: ['Read'] };
-    db.createSession(session);
+    await db.createSession(session);
     service.repo.reserveBinding({ sessionId: root, projectId: null, kind: 'neo' });
     await service.open();
     const config = db.getSession(root)!.config;
@@ -130,7 +133,7 @@ describe('Neo startup configuration', () => {
     const session = createTestSession(root);
     session.config.allowedTools = ['Write', 'Edit', 'NotebookEdit'];
     session.config.coordinatorMode = true;
-    db.createSession(session);
+    await db.createSession(session);
     service.repo.reserveBinding({ sessionId: root, projectId: null, kind: 'neo' });
     await service.recover();
     const config = db.getSession(root)!.config;

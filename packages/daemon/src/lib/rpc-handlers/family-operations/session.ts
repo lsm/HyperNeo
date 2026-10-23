@@ -67,7 +67,6 @@ export function registerSessionOperations(context: FamilyOperationContext): Oper
           metadata: { ...current.metadata, movedUnderParent: parentId !== null },
         });
       await context.deps.db.setSessionParent(sessionId, parentId);
-      context.deps.db.notifyChange('sessions', { sessionId });
     },
   });
   return [

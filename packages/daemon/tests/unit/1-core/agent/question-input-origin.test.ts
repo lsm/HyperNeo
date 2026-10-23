@@ -147,7 +147,7 @@ describe('runtime-owned native question provenance', () => {
     const session = createTestSession(origin.sessionId);
     session.workspacePath = null;
     session.config = { model: 'unit', provider: providerId };
-    db.createSession(session);
+    await db.createSession(session);
     initializeProviders().register({
       id: providerId,
       displayName: 'Question origin unit',

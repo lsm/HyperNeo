@@ -104,7 +104,7 @@ describe('createMessageDeliveryHandler', () => {
   it('keeps interrupted unconsumed input retryable without spending an attempt', async () => {
     const db = await createTestDb();
     try {
-      db.createSession(createTestSession('sess-1'));
+      await db.createSession(createTestSession('sess-1'));
       const repo = db.getSDKMessageRepo();
       repo.saveUserMessage(
         'sess-1',

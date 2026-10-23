@@ -67,7 +67,7 @@ try{
  raw.transaction(()=>{for(let i=0;i<(memory?64:100000);i++)store.store({id:'history-'+i,spaceId:'sessions',source:'synthetic-history',topic:'fixture/history',dedupeKey:String(i),occurredAt:when,ingestedAt:when,summary:'Retained',payload:{body:seedBody}});})();
  const historyHash=()=>{const hash=createHash('sha256');let count=0;for(const row of raw.prepare("SELECT * FROM session_external_events WHERE source='synthetic-history' ORDER BY id").iterate()){hash.update(JSON.stringify(row));count++;}return{count,sha256:hash.digest('hex')};};
  evidence.historyBefore=historyHash();
- app.db.createSession({id:'owner',title:'Synthetic owner',workspacePath:join(run,'home'),createdAt:new Date().toISOString(),lastActiveAt:new Date().toISOString(),status:'active',config:{queryMode:'manual'},metadata:{messageCount:0,totalTokens:0,inputTokens:0,outputTokens:0,totalCost:0,toolCallCount:0}});
+ await app.db.createSession({id:'owner',title:'Synthetic owner',workspacePath:join(run,'home'),createdAt:new Date().toISOString(),lastActiveAt:new Date().toISOString(),status:'active',config:{queryMode:'manual'},metadata:{messageCount:0,totalTokens:0,inputTokens:0,outputTokens:0,totalCost:0,toolCallCount:0}});
  const github=app.extensionManager.getExtension('github') as GitHubEventExtension;
  github.repo.upsertWatchedRepo({spaceId:'sessions',owner:'synthetic',repo:'writer',pollingEnabled:true});
  new SessionEventSubscriptionRepository(raw).upsert({sessionId:'owner',topic:'github/synthetic/writer/pull_request/7.*'});

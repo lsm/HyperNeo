@@ -34,6 +34,7 @@ export interface ReactiveDatabase {
   notifyChange(table: string, scope?: TableChangeScope): void;
   willEmitTableChange(table: string): boolean;
   resolveTaskIdForSession(sessionId: string): string | null;
+  forgetSessionTask(sessionId: string): void;
 }
 
 interface MethodMapping {
@@ -42,8 +43,6 @@ interface MethodMapping {
 }
 
 const TASK_SESSION_TYPES = ['worker'];
-const SESSION_TABLE_WRITE_METHODS = new Set(['createSession', 'updateSession', 'deleteSession']);
-
 const taskIdCacheByDb = new WeakMap<Database, Map<string, string | null>>();
 
 function taskIdCacheFor(db: Database): Map<string, string | null> {
@@ -71,97 +70,6 @@ function resolveTaskIdForSession(db: Database, sessionId: string): string | null
   } catch {
     return null;
   }
-}
-
-function invalidateTaskIdForSession(db: Database, sessionId: string | undefined): void {
-  if (sessionId) taskIdCacheFor(db).delete(sessionId);
-}
-
-function sessionWriteInvalidatesTaskId(method: string, args: unknown[]): string | undefined {
-  const first = args[0];
-  if (typeof first === 'string') {
-    if (method === 'updateSession') {
-      const updates = args[1];
-      if (updates && typeof updates === 'object') {
-        const record = updates as { context?: unknown; type?: unknown };
-        if (!('context' in record) && record.type === undefined) return undefined;
-      }
-    }
-    return first;
-  }
-  if (first && typeof first === 'object') {
-    const id = (first as { id?: unknown }).id;
-    return typeof id === 'string' ? id : undefined;
-  }
-  return undefined;
-}
-
-function sessionScopeFromRow(row: {
-  id: string;
-  type: string | null;
-  room_id: string | null;
-  space_id: string | null;
-  task_id: string | null;
-}): TableChangeScope {
-  return {
-    sessionId: row.id,
-    sessionType: row.type ?? undefined,
-    roomId: row.room_id ?? undefined,
-    spaceId: row.space_id ?? undefined,
-    taskId: row.task_id ?? undefined,
-  };
-}
-
-function sessionScope(db: Database, sessionId: unknown): TableChangeScope {
-  if (typeof sessionId !== 'string') return {};
-  try {
-    const row = db
-      .getDatabase()
-      .prepare('SELECT id, type, room_id, space_id, task_id FROM sessions WHERE id = ?')
-      .get(sessionId) as
-      | {
-          id: string;
-          type: string | null;
-          room_id: string | null;
-          space_id: string | null;
-          task_id: string | null;
-        }
-      | undefined;
-    return row ? sessionScopeFromRow(row) : { sessionId };
-  } catch {
-    return { sessionId };
-  }
-}
-
-function updateSessionScope(
-  db: Database,
-  sessionId: unknown,
-  updates: unknown
-): TableChangeScope | undefined {
-  if (typeof updates === 'object' && updates !== null) {
-    const record = updates as Record<string, unknown>;
-    if (record.type !== undefined || 'context' in record) {
-      return undefined;
-    }
-  }
-  return sessionScope(db, sessionId);
-}
-
-function createSessionScope(_db: Database, session: unknown): TableChangeScope {
-  if (!session || typeof session !== 'object') return {};
-  const value = session as {
-    id?: unknown;
-    type?: unknown;
-    context?: { roomId?: unknown; spaceId?: unknown; taskId?: unknown };
-  };
-  if (typeof value.id !== 'string') return {};
-  return {
-    sessionId: value.id,
-    sessionType: typeof value.type === 'string' ? value.type : undefined,
-    roomId: typeof value.context?.roomId === 'string' ? value.context.roomId : undefined,
-    spaceId: typeof value.context?.spaceId === 'string' ? value.context.spaceId : undefined,
-    taskId: typeof value.context?.taskId === 'string' ? value.context.taskId : undefined,
-  };
 }
 
 function sdkMessageScope(db: Database, sessionId: unknown): TableChangeScope {
@@ -236,12 +144,6 @@ function mergeScopes(scopes: TableChangeScope[]): TableChangeScope | undefined {
 }
 
 const METHOD_TABLE_MAP: Record<string, MethodMapping> = {
-  createSession: { table: 'sessions', extractScope: (args, db) => createSessionScope(db, args[0]) },
-  updateSession: {
-    table: 'sessions',
-    extractScope: (args, db) => updateSessionScope(db, args[0], args[1]),
-  },
-  deleteSession: { table: 'sessions', extractScope: (args, db) => sessionScope(db, args[0]) },
   saveSDKMessage: {
     table: 'sdk_messages',
     extractScope: (args, db) => ({
@@ -380,9 +282,6 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
       }
 
       return function (this: Database, ...args: unknown[]) {
-        if (SESSION_TABLE_WRITE_METHODS.has(prop)) {
-          invalidateTaskIdForSession(target, sessionWriteInvalidatesTaskId(prop, args));
-        }
         proxiedTableWrites.push(mapping.table);
         try {
           const result = (value as (...a: unknown[]) => unknown).apply(target, args);
@@ -446,6 +345,9 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
     },
     resolveTaskIdForSession(sessionId: string): string | null {
       return resolveTaskIdForSession(db, sessionId);
+    },
+    forgetSessionTask(sessionId: string): void {
+      taskIdCacheFor(db).delete(sessionId);
     },
   };
   return reactiveDb as ReactiveDatabase;

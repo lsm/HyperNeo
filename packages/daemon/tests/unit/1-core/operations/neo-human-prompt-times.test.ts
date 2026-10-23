@@ -22,8 +22,8 @@ const prompt = (sessionId: string, uuid: string, at: number, inputKind?: string)
 
 beforeEach(async () => {
   db = await createTestDb();
-  db.createSession(createTestSession(root));
-  db.createSession(createTestSession(other));
+  await db.createSession(createTestSession(root));
+  await db.createSession(createTestSession(other));
 });
 afterEach(() => db.close());
 

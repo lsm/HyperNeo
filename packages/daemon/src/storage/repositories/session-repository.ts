@@ -3,6 +3,8 @@ import { toSqlStringList } from '../sql-string-list.ts';
 import type { Session, SessionContext, SessionType } from '@hyperneo/shared';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SQLiteValue } from '../types.ts';
+import { defineRepositoryOp } from '../db-gateway/db-op.ts';
+import type { ReactiveDatabase, TableChangeScope } from '../reactive-database.ts';
 import {
   MESSAGE_SEARCH_TERMINAL_SESSION_TTL_MS,
   ROOM_SESSION_PREFIXES,
@@ -31,7 +33,32 @@ export function sessionConfigReplacer(key: string, value: unknown): unknown {
 }
 
 export class SessionRepository {
-  constructor(private db: BunDatabase) {}
+  constructor(
+    private db: BunDatabase,
+    private changes?: Pick<ReactiveDatabase, 'notifyChange'>
+  ) {}
+
+  private rowScope(id: string): TableChangeScope {
+    const row = this.db
+      .prepare('SELECT id, type, room_id, space_id, task_id FROM sessions WHERE id = ?')
+      .get(id) as
+      | {
+          id: string;
+          type: string | null;
+          room_id: string | null;
+          space_id: string | null;
+          task_id: string | null;
+        }
+      | undefined;
+    if (!row) return { sessionId: id };
+    return {
+      sessionId: row.id,
+      sessionType: row.type ?? undefined,
+      roomId: row.room_id ?? undefined,
+      spaceId: row.space_id ?? undefined,
+      taskId: row.task_id ?? undefined,
+    };
+  }
 
   private tableExists(tableName: string): boolean {
     try {
@@ -126,6 +153,13 @@ export class SessionRepository {
     } else {
       stmt.run(...values);
     }
+    this.changes?.notifyChange('sessions', {
+      sessionId: session.id,
+      sessionType: session.type,
+      roomId: session.context?.roomId,
+      spaceId: session.context?.spaceId,
+      taskId: session.context?.taskId,
+    });
   }
 
   listProcessingSessionIds(): string[] {
@@ -409,6 +443,10 @@ export class SessionRepository {
         this.updateMessageSearchSessionTitle(id, updates.title);
       }
     }
+    this.changes?.notifyChange(
+      'sessions',
+      updates.type !== undefined || 'context' in updates ? undefined : this.rowScope(id)
+    );
   }
 
   captureSessionInputDraft(id: string): SessionInputDraftSnapshot | null {
@@ -601,6 +639,7 @@ export class SessionRepository {
       deleteSession.run(sessionId);
     });
     tx(id);
+    this.changes?.notifyChange('sessions', { sessionId: id });
   }
 
   listChildren(parentId: string): Session[] {
@@ -612,14 +651,17 @@ export class SessionRepository {
 
   detachFromParent(id: string): void {
     this.db.prepare(`UPDATE sessions SET parent_id = NULL WHERE id = ?`).run(id);
+    this.changes?.notifyChange('sessions', { sessionId: id });
   }
 
   setParent(id: string, parentId: string | null): void {
     this.db.prepare(`UPDATE sessions SET parent_id = ? WHERE id = ?`).run(parentId, id);
+    this.changes?.notifyChange('sessions', { sessionId: id });
   }
 
   setLastError(id: string, lastError: string | null): void {
     this.db.prepare(`UPDATE sessions SET last_error = ? WHERE id = ?`).run(lastError, id);
+    this.changes?.notifyChange('sessions');
   }
 
   archiveSession(id: string): void {
@@ -731,3 +773,17 @@ export class SessionRepository {
     return row?.c ?? 0;
   }
 }
+
+export const sessionWrites = defineRepositoryOp('sessions.write', 'write', SessionRepository, [
+  'createSession',
+  'updateSession',
+  'deleteSession',
+  'detachFromParent',
+  'setParent',
+  'setLastError',
+  'clearAcpSessionIds',
+  'markRestartInterruptedTurns',
+  'takeRestartCooldownResume',
+  'casSessionInputDraft',
+  'casSessionRuntimeSettings',
+]);

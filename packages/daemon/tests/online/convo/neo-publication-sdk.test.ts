@@ -366,7 +366,7 @@ printf '%s' '{"number":8148,"authenticatedByDaemon":true}'
     const seed = new Database(join(isolated, 'daemon.db'));
     try {
       await seed.initialize(createReactiveDatabase(seed));
-      seed.createSession({
+      await seed.createSession({
         ...createTestSession(root),
         workspacePath: newCwd,
         sdkSessionId,

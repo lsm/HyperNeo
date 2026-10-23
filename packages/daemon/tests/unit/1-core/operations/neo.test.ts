@@ -55,7 +55,7 @@ describe('Neo MVP', () => {
   beforeEach(async () => {
     const real = await createTestDb();
     sqlite = real.getDatabase();
-    real.createSession(createTestSession('ordinary'));
+    await real.createSession(createTestSession('ordinary'));
     created = [];
     active = new Set();
     jobs = [];

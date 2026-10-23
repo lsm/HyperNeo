@@ -50,7 +50,7 @@ describe('neo.session.archive', () => {
   beforeEach(async () => {
     db = await createTestDb();
     repo = new NeoRepository(db.getDatabase());
-    for (const id of ['root', 'worker']) db.createSession(createTestSession(id));
+    for (const id of ['root', 'worker']) await db.createSession(createTestSession(id));
     repo.reserveBinding({ sessionId: 'root', kind: 'neo', projectId: null });
     db.getSDKMessageRepo().saveSDKMessage('root', {
       type: 'user',
