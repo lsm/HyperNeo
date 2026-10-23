@@ -387,7 +387,7 @@ export class SessionLifecycle {
 
     this.db.updateSession(sessionId, updatedSession);
 
-    agentSession.updateMetadata(updatedSession);
+    await agentSession.updateMetadata(updatedSession);
 
     await this.internalEventBus.publish('session.updated', {
       sessionId,
@@ -491,7 +491,7 @@ export class SessionLifecycle {
 
     this.db.updateSession(sessionId, updatedSession);
 
-    agentSession.updateMetadata(updatedSession);
+    await agentSession.updateMetadata(updatedSession);
 
     await this.internalEventBus.publish('session.updated', {
       sessionId,
@@ -505,7 +505,7 @@ export class SessionLifecycle {
     const agentSession = this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
     if (agentSession && updates.config && 'autoCompactPercent' in updates.config) {
       const { config, ...metadata } = updates;
-      agentSession.updateMetadata(metadata);
+      await agentSession.updateMetadata(metadata);
       await agentSession.updateConfig(config);
       updates = {
         ...updates,
@@ -514,7 +514,7 @@ export class SessionLifecycle {
       };
     } else {
       this.db.updateSession(sessionId, updates);
-      if (agentSession) agentSession.updateMetadata(updates);
+      if (agentSession) await agentSession.updateMetadata(updates);
     }
 
     await this.internalEventBus
@@ -936,7 +936,7 @@ export class SessionLifecycle {
 
       this.db.updateSession(sessionId, updatedSession);
 
-      agentSession.updateMetadata(updatedSession);
+      await agentSession.updateMetadata(updatedSession);
 
       await this.internalEventBus.publish('session.updated', {
         sessionId,
@@ -964,7 +964,7 @@ export class SessionLifecycle {
       };
 
       this.db.updateSession(sessionId, fallbackSession);
-      agentSession.updateMetadata(fallbackSession);
+      await agentSession.updateMetadata(fallbackSession);
 
       await this.internalEventBus.publish('session.updated', {
         sessionId,

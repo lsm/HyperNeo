@@ -188,17 +188,17 @@ export class ProcessingStateManager {
   }
 
   private persistToDatabase(): void {
+    const failed = (error: unknown) =>
+      this.logger.error('Failed to persist processing state to database:', error);
     try {
       const serialized = JSON.stringify(
         this.heldPrompt && this.processingState.status === 'rate_limit_cooldown'
           ? { ...this.processingState, heldPrompt: this.heldPrompt }
           : this.processingState
       );
-      this.db.updateSession(this.sessionId, {
-        processingState: serialized,
-      });
+      this.db.updateSession(this.sessionId, { processingState: serialized }).catch(failed);
     } catch (error) {
-      this.logger.error('Failed to persist processing state to database:', error);
+      failed(error);
     }
   }
 

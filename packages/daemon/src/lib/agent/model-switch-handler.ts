@@ -509,7 +509,7 @@ export class ModelSwitchHandler {
         if (commit?.thinkingLevel !== undefined)
           session.config.thinkingLevel = commit.thinkingLevel;
         if (!commit) {
-          db.updateSession(session.id, {
+          await db.updateSession(session.id, {
             config: {
               model: resolvedModel,
               provider: nextProvider,
@@ -562,7 +562,7 @@ export class ModelSwitchHandler {
           session.sdkSessionId = undefined;
           session.sdkOriginPath = undefined;
         }
-        db.updateSession(session.id, {
+        await db.updateSession(session.id, {
           config: {
             model: resolvedModel,
             provider: nextProvider,
@@ -640,7 +640,7 @@ export class ModelSwitchHandler {
       session.sdkSessionId = previousSdkSessionId;
       session.sdkOriginPath = previousSdkOriginPath;
       session.metadata = previousMetadata;
-      db.updateSession(session.id, {
+      await db.updateSession(session.id, {
         config: {
           model: previousModel,
           provider: originalProvider,

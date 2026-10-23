@@ -64,7 +64,7 @@ export class SlashCommandManager {
     this.commandsChangedSinceInit = false;
 
     session.availableCommands = this.slashCommands;
-    db.updateSession(session.id, { availableCommands: this.slashCommands });
+    await db.updateSession(session.id, { availableCommands: this.slashCommands });
 
     await internalEventBus.publish('commands.updated', {
       sessionId: session.id,
@@ -84,7 +84,7 @@ export class SlashCommandManager {
     this.commandsChangedSinceInit = true;
 
     session.availableCommands = this.slashCommands;
-    db.updateSession(session.id, { availableCommands: this.slashCommands });
+    await db.updateSession(session.id, { availableCommands: this.slashCommands });
 
     await internalEventBus.publish('commands.updated', {
       sessionId: session.id,
@@ -117,7 +117,7 @@ export class SlashCommandManager {
       this.commandsFetchedFromSDK = true;
 
       session.availableCommands = this.slashCommands;
-      db.updateSession(session.id, { availableCommands: this.slashCommands });
+      await db.updateSession(session.id, { availableCommands: this.slashCommands });
 
       await internalEventBus.publish('commands.updated', {
         sessionId: session.id,

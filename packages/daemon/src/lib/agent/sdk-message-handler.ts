@@ -911,7 +911,7 @@ export class SDKMessageHandler {
       if (session.metadata.titleSetBy !== 'user') {
         const metadata = { ...session.metadata, titleGenerated: false };
         session.metadata = metadata;
-        db.updateSession(session.id, { metadata, title: 'New Session' });
+        await db.updateSession(session.id, { metadata, title: 'New Session' });
       }
       this.logFilteredSDKMessage('conversation_reset', message);
       return;
@@ -1333,7 +1333,7 @@ export class SDKMessageHandler {
       const sdkCapabilities = [...(message.capabilities ?? [])];
       this.sdkCapabilities = new Set(sdkCapabilities);
       session.metadata = { ...session.metadata, sdkCapabilities };
-      db.updateSession(session.id, { metadata: session.metadata });
+      await db.updateSession(session.id, { metadata: session.metadata });
       await internalEventBus.publish('session.updated', {
         sessionId: session.id,
         source: 'metadata',
@@ -1352,7 +1352,7 @@ export class SDKMessageHandler {
       const sdkOriginPath = sessionSdkPath(session) ?? undefined;
       session.sdkOriginPath = sdkOriginPath;
 
-      db.updateSession(session.id, {
+      await db.updateSession(session.id, {
         sdkSessionId: message.session_id,
         sdkOriginPath,
       });
@@ -1387,7 +1387,7 @@ export class SDKMessageHandler {
       ...session.metadata,
       refusalRewindTargetUuid: refusedUserMessageUuid,
     };
-    db.updateSession(session.id, { metadata: session.metadata });
+    await db.updateSession(session.id, { metadata: session.metadata });
     await internalEventBus.publish('session.updated', {
       sessionId: session.id,
       source: 'metadata',
@@ -1421,7 +1421,7 @@ export class SDKMessageHandler {
       ...usage,
     };
 
-    db.updateSession(session.id, {
+    await db.updateSession(session.id, {
       lastActiveAt: session.lastActiveAt,
       metadata: hadRefusalRewindTarget
         ? { ...session.metadata, refusalRewindTargetUuid: null }
@@ -1818,7 +1818,7 @@ export class SDKMessageHandler {
       ...session.config,
       model: fallbackModel,
     };
-    db.updateSession(session.id, { config: session.config });
+    await db.updateSession(session.id, { config: session.config });
     const reevaluation = this.ctx.reevaluateContextBudgetAfterModelSwitch?.();
     await internalEventBus.publish('session.updated', {
       sessionId: session.id,
@@ -1891,7 +1891,7 @@ export class SDKMessageHandler {
     const progress = applyProgressToolResults(session.metadata?.progress, results);
     if (progress) {
       session.metadata = { ...session.metadata, progress };
-      db.updateSession(session.id, { metadata: session.metadata });
+      await db.updateSession(session.id, { metadata: session.metadata });
     }
   }
 
@@ -1917,7 +1917,7 @@ export class SDKMessageHandler {
         toolCallCount: (session.metadata?.toolCallCount || 0) + toolCalls.length,
         ...(progress ? { progress } : {}),
       };
-      db.updateSession(session.id, {
+      await db.updateSession(session.id, {
         metadata: session.metadata,
       });
 

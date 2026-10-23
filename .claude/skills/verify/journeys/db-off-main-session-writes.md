@@ -21,3 +21,16 @@ every delta are kept in `evidence/session-write-live-query.json`.
 Run it on every step of the sessions-table move: the async-facade PR, the caller
 PRs and the gateway switch. A missing or stale delta means a change notification
 fired before its write landed.
+
+Before the gateway switch, every session write must be awaited or explicitly
+handed off with a `.catch`, since a write that fails after the switch can only
+reject. List the ones that are not:
+
+```bash
+bun .claude/skills/verify/session-write-awaits.ts
+```
+
+It type-checks `packages/daemon/src` and prints each un-settled call of the
+`Database` session writers, and of wrappers listed in the script, with its
+enclosing function. Exit 0 means none are left. Add a wrapper to its list when
+it starts returning the write's promise.
