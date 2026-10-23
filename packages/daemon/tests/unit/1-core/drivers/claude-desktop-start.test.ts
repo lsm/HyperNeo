@@ -11,8 +11,11 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
+import { createNodeSpawn } from '../../../../src/lib/runtime-spawn/node-backend';
+import { listProcesses } from '../../../../src/lib/process-watchdog';
 import {
   createClaudeDesktopAdapter,
+  launchInClaudeDesktop,
   selectClaudeStartFolder,
 } from '../../../../src/lib/drivers/claude-desktop-adapter';
 
@@ -256,6 +259,59 @@ describe('claude-desktop start', () => {
       expect(vi.getTimerCount()).toBe(0);
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  test('a real script handoff timeout terminates its separate-PTY child too', async () => {
+    const pidFile = join(dir, 'owned-child.pid');
+    let wrapperPid: number | undefined;
+    let childPid: number | undefined;
+    const nativeSpawn = createNodeSpawn();
+    vi.useFakeTimers();
+    try {
+      const result = launchInClaudeDesktop('synthetic-hung', dir, {
+        spawn: (_args, options) => {
+          const child = nativeSpawn(
+            [
+              'script',
+              '-q',
+              '/dev/null',
+              '/bin/sh',
+              '-c',
+              `trap '' HUP; echo $$ > "${pidFile}"; exec sleep 300`,
+            ],
+            options
+          );
+          wrapperPid = child.pid;
+          return child;
+        },
+      });
+      await vi.waitFor(() => {
+        childPid = Number(readFileSync(pidFile, 'utf8'));
+      });
+      const before = await listProcesses();
+      expect(before.find((p) => p.pid === childPid)?.ppid).toBe(wrapperPid);
+      await vi.advanceTimersByTimeAsync(120_000);
+      vi.useRealTimers();
+      expect(await result).not.toBe(0);
+      await vi.waitFor(
+        async () => {
+          const remaining = await listProcesses();
+          expect(
+            remaining.some((p) => p.pid === childPid && !p.command.includes('<defunct>'))
+          ).toBe(false);
+        },
+        { timeout: 2000 }
+      );
+    } finally {
+      vi.useRealTimers();
+      for (const pid of [childPid, wrapperPid]) {
+        if (pid) {
+          try {
+            process.kill(pid, 'SIGKILL');
+          } catch {}
+        }
+      }
     }
   });
 

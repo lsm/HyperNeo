@@ -189,6 +189,36 @@ describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake',
     expect(spawned).toEqual([]);
   });
 
+  test('concurrent native wakes share one helper preparation and import', async () => {
+    let finish!: (code: number) => void;
+    const prepared = new Promise<number>((resolve) => {
+      finish = resolve;
+    });
+    const base = deps();
+    const shared = {
+      ...base,
+      spawn: ((args, options) => {
+        const child = base.spawn(args, options);
+        return args.includes('--session-id') ? { ...child, exited: prepared } : child;
+      }) as ClaudeDesktopAdapterDeps['spawn'],
+    };
+    const first = openRcToggle([], [], shared, 'desktop-wake');
+    const second = openRcToggle([], [], shared, 'desktop-wake');
+    await vi.waitFor(() =>
+      expect(spawned.some((call) => call.args.includes('--session-id'))).toBe(true)
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    finish(0);
+    const results = await Promise.all([first, second]);
+    expect(results.every((result) => 'value' in result)).toBe(true);
+    expect(spawned.filter((call) => call.args.includes('--session-id'))).toHaveLength(1);
+    expect(spawned.filter((call) => call.args.includes('--desktop'))).toHaveLength(1);
+    expect(await openRcToggle([], [], shared, 'desktop-wake')).toMatchObject({
+      value: { record: { sessionId: 'local_new-rc' } },
+    });
+    expect(spawned.filter((call) => call.args.includes('--session-id'))).toHaveLength(1);
+  });
+
   test('a stopped forwarding helper retains its history while a fresh acceptEdits helper is prepared', async () => {
     const old = record('old', {
       title: 'desktop-wake',
