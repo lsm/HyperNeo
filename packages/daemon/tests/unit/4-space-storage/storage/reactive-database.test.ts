@@ -381,6 +381,22 @@ describe('ReactiveDatabase', () => {
       expect(tables).toEqual([['sessions']]);
     });
 
+    test('a write landing inside an unrelated batch survives that batch aborting', async () => {
+      await db.createSession(makeSession('outside'));
+      const settle = deferUpdates();
+      const tables: string[][] = [];
+      reactiveDb.on('change', (data) => tables.push(data.tables));
+
+      const write = reactiveDb.db.updateSession('outside', { title: 'Landed' });
+      reactiveDb.beginTransaction();
+      settle[0]();
+      await write;
+      reactiveDb.notifyChange('space_tasks');
+      reactiveDb.abortTransaction();
+
+      expect(tables).toEqual([['sessions']]);
+    });
+
     test('an aborted batch drops the change of a session write that lands later', async () => {
       await db.createSession(makeSession('aborted'));
       const settle = deferUpdates();
