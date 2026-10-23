@@ -61,3 +61,136 @@ test('invalid and foreign PR identities fail before DB or GitHub access', async 
     expect(result.ok).toBe(false);
   }
 });
+
+import { createCodingConnectorPrReader } from '../../../../../src/lib/neo/packs/coding/connector-pr-reader.ts';
+import { CodingPollFactsRepository } from '../../../../../src/lib/neo/packs/coding/poll-facts.ts';
+import { createCodingPackTables } from '../../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
+import { Database } from '../../../../../src/storage/sqlite-compat.ts';
+import type { SpawnFn } from '../../../../../src/lib/runtime-spawn/index.ts';
+
+const url = 'https://github.com/synthetic/ledger/pull/7';
+const view = { url, state: 'OPEN', mergeable: 'UNKNOWN', mergeStateStatus: 'UNKNOWN' };
+const subject = {
+  credentialId: 'github-connector',
+  url,
+  accept: 'application/vnd.hyperneo.pr-basic+json',
+  apiVersion: 'v1',
+};
+function fixture() {
+  const db = new Database(':memory:');
+  createCodingPackTables(db);
+  return { db, facts: new CodingPollFactsRepository(db) };
+}
+function response(data: unknown, exitCode = 0, stderr = ''): ReturnType<SpawnFn> {
+  return {
+    stdout: new Response(JSON.stringify(data)).body!,
+    stderr: new Response(stderr).body!,
+    exited: Promise.resolve(exitCode),
+    pid: 12345,
+    kill() {},
+  } as ReturnType<SpawnFn>;
+}
+
+test('mismatched PR identity cannot certify the requested subject', async () => {
+  const { db, facts } = fixture();
+  try {
+    const read = createCodingConnectorPrReader(
+      () => db,
+      () => response({ ...view, url: 'https://github.com/synthetic/ledger/pull/8' }),
+      () => 100
+    );
+    expect(await read(url, '/tmp')).toEqual({
+      ok: false,
+      error: 'GitHub connector PR facts unavailable: partial',
+    });
+    expect(facts.read(subject, 100, Infinity).page.status).toBe('unknown');
+  } finally {
+    db.close();
+  }
+});
+
+test('unchanged UNKNOWN mergeability is data and survives reader reconstruction', async () => {
+  const { db, facts } = fixture();
+  try {
+    const spawn: SpawnFn = () => response(view);
+    expect(
+      await createCodingConnectorPrReader(
+        () => db,
+        spawn,
+        () => 100
+      )(url, '/tmp')
+    ).toEqual({ ok: true, data: view });
+    const before = facts.read(subject, 100, Infinity);
+    expect(
+      await createCodingConnectorPrReader(
+        () => db,
+        spawn,
+        () => 200
+      )(url, '/tmp')
+    ).toEqual({ ok: true, data: view });
+    const after = facts.read(subject, 200, Infinity);
+    expect(after.factRevision).toBe(before.factRevision);
+    expect(after.observationRevision).toBe(before.observationRevision + 1);
+    expect(after.page.status).toBe('known');
+    expect(after.page.observedAt).toBe(200);
+  } finally {
+    db.close();
+  }
+});
+
+test('rate-limited acquisition keeps the existing retryable connector outcome', async () => {
+  const { db, facts } = fixture();
+  let calls = 0;
+  try {
+    const spawn: SpawnFn = () =>
+      ++calls === 1
+        ? response(null, 1, 'HTTP 403: rate limit exceeded')
+        : response({ resources: { graphql: { reset: 0 } } });
+    const result = await createCodingConnectorPrReader(
+      () => db,
+      spawn,
+      () => 100
+    )(url, '/tmp');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.retryable).toBe(true);
+    expect(facts.read(subject, 100, Infinity).page.status).toBe('unknown');
+  } finally {
+    db.close();
+  }
+});
+
+test('a delayed acquisition cannot replace a newer persisted observation', async () => {
+  const { db, facts } = fixture();
+  let release!: () => void, started!: () => void;
+  const held = new Promise<void>((resolve) => {
+      release = resolve;
+    }),
+    called = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+  const spawn: SpawnFn = () => {
+    started();
+    return { ...response(view), exited: held.then(() => 0) };
+  };
+  try {
+    const pending = createCodingConnectorPrReader(
+      () => db,
+      spawn,
+      () => 100
+    )(url, '/tmp');
+    await called;
+    const newer = { ...view, state: 'MERGED' };
+    expect(facts.record(subject, { value: newer, etag: null, next: null }, 200, 0)).toBe(true);
+    release();
+    expect(await pending).toEqual({
+      ok: false,
+      error: 'GitHub connector PR observation superseded',
+    });
+    const saved = facts.read(subject, 200, Infinity);
+    expect(saved.page.status).toBe('known');
+    if (saved.page.status === 'known') expect(saved.page.value).toEqual(newer);
+  } finally {
+    release();
+    db.close();
+  }
+});
