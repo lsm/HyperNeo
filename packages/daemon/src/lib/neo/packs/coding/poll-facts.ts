@@ -147,7 +147,14 @@ export class CodingPollFactsRepository {
           ? {
               ...inputHttp,
               status: beforeHttp?.status ?? 200,
-              headers: { ...beforeHttp?.headers, ...inputHttp.headers },
+              headers: {
+                ...Object.fromEntries(
+                  Object.entries(beforeHttp?.headers ?? {}).filter(
+                    ([name]) => name === 'etag' || name === 'last-modified'
+                  )
+                ),
+                ...inputHttp.headers,
+              },
             }
           : beforeHttp;
       const cleanedHttp = http ? pollHttpMetadata(http.cycle, http.status, http.headers) : null;
