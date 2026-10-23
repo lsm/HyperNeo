@@ -163,3 +163,29 @@ test('unknown hosts and malformed references refuse before reading the DB', asyn
   });
   expect(await read('not-a-pr')).toEqual({ reason: 'Unable to parse GitHub PR URL' });
 });
+
+test('fresh MERGED with a nullable commit settles, but each retry observes upstream again', async () => {
+  const { db } = fixture();
+  try {
+    let lookups = 0;
+    const spawn: SpawnFn = () => {
+      lookups++;
+      return {
+        exited: Promise.resolve(0),
+        stdout: new Response(JSON.stringify({ state: 'MERGED', mergeCommit: null })).body!,
+        stderr: new Response('').body!,
+        kill: () => {},
+      };
+    };
+    const read = createCodingPrStateReader(
+      () => db,
+      spawn,
+      () => 100
+    );
+    expect(await read('https://github.com/synthetic/ledger/pull/7')).toEqual({ value: 'MERGED' });
+    expect(await read('https://github.com/synthetic/ledger/pull/7')).toEqual({ value: 'MERGED' });
+    expect(lookups).toBe(2);
+  } finally {
+    db.close();
+  }
+});

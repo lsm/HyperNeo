@@ -28,7 +28,7 @@ if(args[0]!=='pr'||args[1]!=='view')process.exit(2);
 await Bun.sleep(200);
 if(['known','failed'].includes(phase)){process.stderr.write('Synthetic unavailable');process.exit(1);}
 const state=phase==='open'?'OPEN':phase==='closed'?'CLOSED':'MERGED';
-process.stdout.write(JSON.stringify({url:args[2],state,mergeable:'MERGEABLE',mergeStateStatus:'CLEAN',mergeCommit:phase==='partial'?null:state==='MERGED'?{oid:'a'.repeat(40)}:null}));
+process.stdout.write(JSON.stringify({url:args[2],state,mergeable:'MERGEABLE',mergeStateStatus:'CLEAN',mergeCommit:['partial','merged-no-commit'].includes(phase)?null:state==='MERGED'?{oid:'a'.repeat(40)}:null}));
 `,{mode:0o700});
 const network=globalThis.fetch;globalThis.fetch=(()=>{throw new Error('Real HTTP refused');}) as typeof fetch;
 let app:Awaited<ReturnType<typeof createDaemonApp>>|undefined;
@@ -75,6 +75,8 @@ try{
   const priorRow=db.prepare('SELECT value_json,observed_at FROM pack_coding_merge_facts WHERE repo=? AND number=?').get('synthetic/ledger',10);
   phase('failed');const failed=fixture(10);evidence.failed=await failed.complete();assert.equal(tasks.getTask(failed.id)?.status,'approved');assert.match(evidence.failed.detail,/could not verify/);
   const row=ledger.mergeFacts.read('synthetic/ledger',10,Date.now(),Infinity);assert.equal(row.merge.status,'unknown');assert.equal(row.merge.observedAt,prior.merge.observedAt);assert.deepEqual(db.prepare('SELECT value_json,observed_at FROM pack_coding_merge_facts WHERE repo=? AND number=?').get('synthetic/ledger',10),priorRow);
+  phase('merged-no-commit');const noCommit=fixture(12);evidence.mergedNoCommit=[await noCommit.complete()];evidence.mergedNoCommitStatuses=[tasks.getTask(noCommit.id)?.status];assert.equal(evidence.mergedNoCommitStatuses[0],'done','Fresh MERGED state with nullable mergeCommit must settle the worker');
+  const noCommitRepeat=fixture(12);evidence.mergedNoCommit.push(await noCommitRepeat.complete());evidence.mergedNoCommitStatuses.push(tasks.getTask(noCommitRepeat.id)?.status);assert.equal(evidence.mergedNoCommitStatuses[1],'done');assert.equal(requests().filter(r=>r.phase==='merged-no-commit').length,2,'Without a commit each completion needs a fresh state observation');
   phase('partial');const partial=fixture(11);evidence.partial=await partial.complete();assert.equal(tasks.getTask(partial.id)?.status,'approved');assert.match(evidence.partial.detail,/could not verify/);
   phase('recovered');const partialRecovered=fixture(11);evidence.partialRecovered=await partialRecovered.complete();assert.equal(tasks.getTask(partialRecovered.id)?.status,'done');
   evidence.verified=true;
