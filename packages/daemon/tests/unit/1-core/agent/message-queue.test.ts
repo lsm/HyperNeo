@@ -82,7 +82,9 @@ describe('MessageQueue', () => {
 
   it('suppresses the pre-yield callback only when requested by ACP', async () => {
     const yielded: string[] = [];
-    queue.onMessageYielded = (id) => yielded.push(id);
+    queue.onMessageYielded = (id) => {
+      yielded.push(id);
+    };
     queue.start();
 
     const delivery = queue.enqueue('ACP prompt');
@@ -96,7 +98,9 @@ describe('MessageQueue', () => {
 
   it('keeps the SDK pre-yield callback behavior by default', async () => {
     const yielded: string[] = [];
-    queue.onMessageYielded = (id) => yielded.push(id);
+    queue.onMessageYielded = (id) => {
+      yielded.push(id);
+    };
     queue.start();
 
     const delivery = queue.enqueue('SDK prompt');
