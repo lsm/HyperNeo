@@ -20,7 +20,7 @@ or timeout blocks. Raw PR events add no worker frame.
 
 Keep each helper's `evidence/observed.json` and `gh.log`. Compare the before/after
 plan outcomes and GitHub request multiset without claiming live quota savings.
-Run the affected service, prompt, pack selection, card-topic and legacy/issue
+Run the affected service, prompt, pack selection, legacy/issue
 contracts. The service/prompt import contract must fail on the base and pass
 on the final head; fixture callers now use the pack composition factory.
 Both helpers close owned listeners in finally; no real HOME/DB, credential,
