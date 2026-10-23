@@ -1497,6 +1497,30 @@ describe('QueryLifecycleManager', () => {
     });
   });
 
+  describe('restartWhenIdle', () => {
+    test('defers the restart while a question waits for input', async () => {
+      messageQueue.start(async function* () {
+        yield 'test';
+      });
+      mockContext = createMockContext({
+        queryObject: {
+          interrupt: mock(async () => {}),
+        } as unknown as QueryLifecycleManagerContext['queryObject'],
+      });
+      mockContext.stateManager = {
+        setIdle: setIdleSpy,
+        setQueued: setQueuedSpy,
+        getState: mock(() => ({ status: 'waiting_for_input' })),
+      } as unknown as ProcessingStateManager;
+      manager = new QueryLifecycleManager(mockContext);
+
+      await manager.restartWhenIdle();
+
+      expect(mockContext.pendingRestartReason).toBe('settings.local.json');
+      expect(startStreamingCalled).toBe(false);
+    });
+  });
+
   describe('restartQuery', () => {
     test('returns early if message queue is not running', async () => {
       await manager.restartQuery();

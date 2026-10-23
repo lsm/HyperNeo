@@ -611,7 +611,7 @@ export class ModelSwitchHandler {
         } else if (live && this.ctx.queryObject?.setModel) {
           await this.ctx.queryObject.setModel(this.liveWireModel(resolvedModel, nextProvider));
           await this.ctx.reevaluateContextBudgetAfterModelSwitch?.();
-          if (nextProvider !== 'anthropic') await lifecycleManager.restartQuery();
+          if (nextProvider !== 'anthropic') await lifecycleManager.restartWhenIdle();
         } else {
           if (deferQueryStart) await lifecycleManager.stop();
           else

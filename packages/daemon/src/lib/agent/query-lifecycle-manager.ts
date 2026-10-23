@@ -742,6 +742,14 @@ export class QueryLifecycleManager {
     await this.restart();
   }
 
+  async restartWhenIdle(): Promise<void> {
+    if (this.ctx.stateManager.getState().status !== 'idle') {
+      this.ctx.pendingRestartReason = 'settings.local.json';
+      return;
+    }
+    await this.restartQuery();
+  }
+
   async executeDeferredRestartIfPending(): Promise<boolean> {
     if (!this.ctx.pendingRestartReason) {
       return false;

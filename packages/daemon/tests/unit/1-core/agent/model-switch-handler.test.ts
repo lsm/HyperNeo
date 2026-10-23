@@ -719,7 +719,7 @@ describe('ModelSwitchHandler', () => {
           queryObject: { setModel: setModelSpy } as unknown as Query,
           lifecycleManager: {
             restart: restartSpy,
-            restartQuery: restartQuerySpy,
+            restartWhenIdle: restartQuerySpy,
           } as unknown as QueryLifecycleManager,
         });
 
