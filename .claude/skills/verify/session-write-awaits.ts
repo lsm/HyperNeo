@@ -28,17 +28,27 @@ const checker = program.getTypeChecker();
 
 function settledByCaller(call: ts.Node): boolean {
   let node = call;
-  let parent = node.parent;
-  while (ts.isParenthesizedExpression(parent) || ts.isAsExpression(parent)) {
-    node = parent;
-    parent = node.parent;
+  let caught = false;
+  for (;;) {
+    const parent = node.parent;
+    if (ts.isParenthesizedExpression(parent) || ts.isAsExpression(parent)) {
+      node = parent;
+      continue;
+    }
+    if (
+      ts.isPropertyAccessExpression(parent) &&
+      ['then', 'catch', 'finally'].includes(parent.name.text) &&
+      ts.isCallExpression(parent.parent)
+    ) {
+      caught ||= parent.name.text === 'catch';
+      node = parent.parent;
+      continue;
+    }
+    if (ts.isAwaitExpression(parent) || ts.isReturnStatement(parent)) return true;
+    if (ts.isArrowFunction(parent) && parent.body === node) return true;
+    if (ts.isArrayLiteralExpression(parent)) return true;
+    return caught;
   }
-  if (ts.isAwaitExpression(parent) || ts.isReturnStatement(parent)) return true;
-  if (ts.isArrowFunction(parent) && parent.body === node) return true;
-  if (ts.isArrayLiteralExpression(parent)) return true;
-  if (ts.isPropertyAccessExpression(parent) && ['then', 'catch', 'finally'].includes(parent.name.text))
-    return true;
-  return false;
 }
 
 const floating: string[] = [];
