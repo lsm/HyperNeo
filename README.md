@@ -63,7 +63,7 @@ Set one of these environment variables before starting:
 
 OpenRouter models use `provider/model` IDs such as `anthropic/claude-sonnet-4.6` and `openrouter/auto`. See [OpenRouter setup](docs/providers/openrouter-setup.md) for provider details and compatibility notes.
 
-Ollama local and Ollama Cloud models use the native `/api/chat` and `/api/tags` APIs through HyperNeo's provider bridge. See [Ollama setup](docs/providers/ollama-setup.md) for local and cloud configuration. The same bridge also supports GLM, Kimi, MiniMax, DeepSeek, and OpenCode endpoints.
+Ollama local and Ollama Cloud models use the native `/api/chat` and `/api/tags` APIs through HyperNeo's provider bridge. See [Ollama setup](docs/providers/ollama-setup.md) for local and cloud configuration. HyperNeo's bridging also supports GLM, Kimi, MiniMax, DeepSeek, and OpenCode endpoints.
 
 ## Features
 
@@ -71,7 +71,7 @@ Ollama local and Ollama Cloud models use the native `/api/chat` and `/api/tags` 
 - **Spaces, tasks, and goals** — organize work, with approvals before agents act on it
 - **Model switching** — swap models mid-conversation, with extended-thinking budgets from 8k to 64k tokens
 - **MCP server support** — connect external tools via the Model Context Protocol
-- **Skills** — plugin and MCP skills extend sessions; Web Search, Chrome DevTools, and Playwright ship built in
+- **Skills** — plugin and MCP skills extend sessions; Fetch, Chrome DevTools, and Playwright ship built in
 - **Rewind** — roll back file changes, the conversation, or both, to any earlier point
 - **Runs on your machine** — npm binaries for macOS, Linux, and Windows; desktop installers; and a standalone daemon
 
