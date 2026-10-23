@@ -66,21 +66,31 @@ describe('PR sweep ladder', () => {
       'lsm/hyperneo#7 "Fix login" has been approved and green for 20 min on head abc1234. Merge it now with a manual squash on this head.'
     );
     expect(woken).toHaveLength(1);
-    expect(woken[0].text).toContain('was reminded 2 times without progress');
+    expect(woken[0].text).toContain('has made no progress');
+    db.close();
+  });
+
+  test('a first observation after 60 minutes does not claim reminders were sent', async () => {
+    const { insert, told, woken, at, db } = setup();
+    insert(7, 'approved_green');
+    await at(60);
+    expect(told).toEqual([]);
+    expect(woken).toHaveLength(1);
+    expect(woken[0].text).not.toContain('was reminded');
     db.close();
   });
 
   test('progress resets the clock and the count', async () => {
     const { insert, told, at, db } = setup();
     insert(7, 'failing');
-    await at(30);
+    await at(20);
     expect(told).toHaveLength(1);
     db.prepare(
       "UPDATE pack_coding_pr_ledger SET state = 'waiting_review', state_since = ?, nudges = 0"
     ).run(35 * MIN);
-    await at(60);
+    await at(54);
     expect(told).toHaveLength(1);
-    await at(65);
+    await at(55);
     expect(told.map((item) => item.key.split(':').slice(-2).join(':'))).toEqual([
       'failing:1',
       'waiting_review:1',
@@ -175,7 +185,7 @@ describe('codingPrNudgeText', () => {
 });
 
 describe('planCodingPrNudge', () => {
-  test('uses each state deadline', () => {
+  test('uses the same 20 minute interval for every actionable state', () => {
     const row = (state: string, minutes: number) =>
       planCodingPrNudge(
         {
@@ -191,10 +201,10 @@ describe('planCodingPrNudge', () => {
         },
         minutes * MIN
       );
-    expect(row('approved_pending', 59)).toBeNull();
-    expect(row('approved_pending', 60)).toEqual({ kind: 'remind', nudges: 1 });
-    expect(row('waiting_review', 29)).toBeNull();
-    expect(row('waiting_review', 30)).toEqual({ kind: 'remind', nudges: 1 });
+    expect(row('approved_pending', 19)).toBeNull();
+    expect(row('approved_pending', 20)).toEqual({ kind: 'remind', nudges: 1 });
+    expect(row('waiting_review', 19)).toBeNull();
+    expect(row('waiting_review', 20)).toEqual({ kind: 'remind', nudges: 1 });
     expect(row('merged', 600)).toBeNull();
     expect(row('unreviewed', 600)).toBeNull();
   });

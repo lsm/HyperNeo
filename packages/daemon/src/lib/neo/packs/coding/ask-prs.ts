@@ -22,6 +22,8 @@ export type NeoRefState = {
   merges?: { url: string; base: string | null; at?: number | null }[];
   defaultBase?: string | null;
   duplicate?: true;
+  stateReason?: string | null;
+  closingPrs?: string[];
   createdAt?: number | null;
   parent?: { url: string; at: number | null } | null;
 };
@@ -183,6 +185,8 @@ async function readGithubRefState(
           state: found.state,
           at: closed ? Date.parse(found.closedAt ?? '') || null : null,
           done: closed && found.stateReason === 'COMPLETED',
+          stateReason: found.stateReason,
+          closingPrs: found.closedByPullRequestsReferences?.nodes.map((pr) => pr.url) ?? [],
           ...(closed && found.stateReason === 'DUPLICATE' ? { duplicate: true as const } : {}),
           closedBy: closing?.url ?? null,
           base: closing?.baseRefName ?? null,

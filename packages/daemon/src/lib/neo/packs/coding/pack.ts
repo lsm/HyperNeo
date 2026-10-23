@@ -40,8 +40,11 @@ export function createCodingPack(deps: {
 }): NeoPack {
   const readClaudeOwners = deps.readClaudeOwners ?? createCodingClaudeOwnerReader();
   const ledgerSkips = new Map<string, number>();
-  const todos = createCodingTodoPack(deps.todoPrs, deps.readPrs, (url) =>
-    deps.prLedger.stateOf(url)
+  const todos = createCodingTodoPack(
+    deps.todoPrs,
+    deps.readPrs,
+    (url) => deps.prLedger.stateOf(url),
+    deps.readRefStates ?? createCodingRefReader(() => deps.prLedger.refFacts)
   );
   return {
     ...CODING_PACK_BRIEF,
@@ -118,7 +121,9 @@ export function createCodingPack(deps: {
       ),
     instructions: () => NEO_PACK_CODING_INSTRUCTIONS,
     workerRules: NEO_PACK_CODING_WORKER_RULES,
-    routeExternalEvent: (event, subscriptions) =>
-      routeNeoCardPrEvent(event, subscriptions, (url) => deps.todoPrs.latest(url)),
+    routeExternalEvent: (event, subscriptions) => {
+      const route = routeNeoCardPrEvent(event, subscriptions, (url) => deps.todoPrs.latest(url));
+      return route ? { ...route, workIds: [] } : null;
+    },
   };
 }

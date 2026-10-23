@@ -1,3 +1,4 @@
+import { planNudge } from '../../../../src/lib/neo/nudge.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,7 +11,6 @@ import {
   neoAskIdleNote,
   neoTodoNote,
   planNeoTodoCheck,
-  planNeoTodoIdle,
   planNeoTodoSettled,
   requireNeoTodoStartable,
 } from '../../../../src/lib/neo/todo-runner.ts';
@@ -1286,219 +1286,72 @@ describe('stopped worker ladder', () => {
     return { ...harness, todo, at, sends, clock };
   }
 
-  test('a worker that stops before done is reminded at 30 and 60 minutes, then blocked once for Neo', async () => {
+  test('a stopped worker is reminded at 20 and 40, escalated at 60, and never blocked', async () => {
     const h = await stopped();
-    expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
-    expect(h.told).toEqual([]);
-    for (const minutes of [29, 30, 45, 60, 75]) await h.at(minutes);
-    expect(h.sends()).toEqual([
-      expect.stringContaining('your session has been stopped for 30 min'),
-      expect.stringContaining('your session has been stopped for 60 min'),
-    ]);
-    expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
-    await h.at(90);
-    await h.at(120);
-    expect(h.store.getTodo(h.todo.id)).toMatchObject({
-      state: 'blocked',
-      blockedBy: 'worker',
-      blockedReason: 'Its session stopped 90 min ago and did not continue after 2 reminders.',
-    });
-    expect(h.told).toEqual([expect.stringContaining('did not continue after 2 reminders')]);
-    h.clock.mockRestore();
-    h.db.close();
-  });
-
-  test('a todo nothing checks reminds Neo, not the worker, at 30 and 60 minutes, then blocks', async () => {
-    const h = await stopped(null);
-    expect(h.told).toEqual([expect.stringContaining('nothing checks it')]);
-    for (const minutes of [29, 30, 45, 60, 75]) await h.at(minutes);
-    expect(h.sends()).toEqual([]);
-    expect(h.told.slice(1)).toEqual([
-      'Todo "Rows" stopped 30 min ago and nobody ticked it (done when: PR merged). Tick it done with evidence, continue it with neo.todo.continue, or close it.',
-      'Todo "Rows" stopped 60 min ago and nobody ticked it (done when: PR merged). Tick it done with evidence, continue it with neo.todo.continue, or close it.',
-    ]);
-    expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
-    await h.at(90);
-    await h.at(120);
-    expect(h.store.getTodo(h.todo.id)).toMatchObject({
-      state: 'blocked',
-      blockedBy: 'worker',
-      blockedReason: 'Its session stopped 90 min ago and nobody ticked it after 2 reminders.',
-    });
-    expect(h.told).toHaveLength(4);
-    const reminders = h.toldKeys.slice(1, 3);
-    expect(reminders.every(Boolean)).toBe(true);
-    expect(new Set(h.toldKeys.slice(1)).size).toBe(3);
-    h.clock.mockRestore();
-    h.db.close();
-  });
-
-  test('a stopped-session block clears on running activity without a new reply and starts a fresh stop ladder', async () => {
-    const h = await stopped(null);
     try {
-      for (const minutes of [30, 60, 90]) await h.at(minutes);
-      const report = h.store.getTodo(h.todo.id)!.report;
-      h.setStatus({ ok: true, value: { status: 'running', lastActivityAt: 2_000 } });
-      await h.at(91);
-      expect(h.store.getTodo(h.todo.id)).toMatchObject({
-        state: 'doing',
-        blockedBy: null,
-        blockedReason: null,
-        nextAction: null,
-        report,
-      });
-      h.setStatus({ ok: true, value: { status: 'done', lastActivityAt: 2_000 } });
-      await h.at(92);
+      for (const minutes of [19, 20, 39, 40, 59, 60, 90]) await h.at(minutes);
+      expect(h.sends()).toEqual([
+        expect.stringContaining('stopped for 20 min'),
+        expect.stringContaining('stopped for 40 min'),
+      ]);
       expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
-      for (const minutes of [122, 152, 182]) await h.at(minutes);
-      expect(h.store.getTodo(h.todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'worker' });
+      expect(h.told).toEqual([expect.stringContaining('reminder window elapsed without progress')]);
     } finally {
       h.clock.mockRestore();
       h.db.close();
     }
   });
 
-  test('new session activity clears the block even if that turn finished between refreshes', async () => {
+  test('a todo without a check uses the same worker reminders and never blocks', async () => {
     const h = await stopped(null);
     try {
-      for (const minutes of [30, 60, 90]) await h.at(minutes);
-      h.setStatus({ ok: true, value: { status: 'done', lastActivityAt: Date.now() + MIN } });
-      await h.at(92);
-      expect(h.store.getTodo(h.todo.id)).toMatchObject({ state: 'doing', blockedBy: null });
+      for (const minutes of [20, 40, 60, 120]) await h.at(minutes);
+      expect(h.sends()).toHaveLength(2);
+      expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
+      expect(h.told.filter((note) => note.includes('without progress'))).toHaveLength(1);
     } finally {
       h.clock.mockRestore();
       h.db.close();
     }
   });
 
-  test('starting a sibling on the same session clears the stopped block without waiting for a new reply', async () => {
+  test('open PRs use ledger reminders only', async () => {
     const h = await stopped(null);
     try {
-      for (const minutes of [30, 60, 90]) await h.at(minutes);
-      h.clock.mockReturnValue(Date.now() + MIN);
-      const sibling = h.add();
-      await h.runner.start(sibling.id);
-      await h.at(92);
-      expect(h.store.getTodo(h.todo.id)).toMatchObject({
-        state: 'doing',
-        blockedBy: null,
-        blockedReason: null,
-      });
-      expect(h.store.getTodo(sibling.id)?.state).toBe('doing');
+      h.setPrOpen(true);
+      const count = h.told.length;
+      for (const minutes of [20, 40, 60, 120]) await h.at(minutes);
+      expect(h.sends()).toHaveLength(0);
+      expect(h.told).toHaveLength(count);
+      expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
     } finally {
       h.clock.mockRestore();
       h.db.close();
     }
   });
 
-  test('a running session clears the stop block even without a stored report', async () => {
-    const h = await stopped(null);
-    try {
-      for (const minutes of [30, 60, 90]) await h.at(minutes);
-      h.store.updateTodo(h.store.getTodo(h.todo.id)!, { report: null }, Date.now());
-      h.setStatus({ ok: true, value: { status: 'running', lastActivityAt: 2_000 } });
-      await h.at(91);
-      expect(h.store.getTodo(h.todo.id)).toMatchObject({
-        state: 'doing',
-        blockedBy: null,
-        report: null,
-      });
-    } finally {
-      h.clock.mockRestore();
-      h.db.close();
-    }
-  });
-
-  test('a queue update alone is not evidence that a turn started', async () => {
-    const h = await stopped(null);
-    try {
-      for (const minutes of [30, 60, 90]) await h.at(minutes);
-      h.setStatus({ ok: true, value: { status: 'queued', lastActivityAt: Date.now() + MIN } });
-      await h.at(92);
-      expect(h.store.getTodo(h.todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'worker' });
-    } finally {
-      h.clock.mockRestore();
-      h.db.close();
-    }
-  });
-
-  test('an older doing sibling and a newer sibling on another daemon do not clear the block', async () => {
-    const h = await stopped(null);
-    try {
-      const older = h.add(null, null);
-      h.sessions.recordRef(older.id, ref, 1_000);
-      h.store.updateTodo(older, { state: 'doing', startedAt: 1_000 }, 1_000);
-      for (const minutes of [30, 60, 90]) await h.at(minutes);
-      h.clock.mockReturnValue(Date.now() + MIN);
-      const remote = h.add();
-      h.sessions.recordRef(remote.id, { ...ref, daemon: 'other-machine' }, Date.now());
-      h.store.updateTodo(remote, { state: 'doing', startedAt: Date.now() }, Date.now());
-      await h.at(92);
-      expect(h.store.getTodo(h.todo.id)).toMatchObject({ state: 'blocked', blockedBy: 'worker' });
-      expect(h.store.getTodo(older.id)?.state).toBe('doing');
-    } finally {
-      h.clock.mockRestore();
-      h.db.close();
-    }
-  });
-
-  test('an unchanged stopped session stays blocked across refreshes', async () => {
-    const h = await stopped(null);
-    try {
-      for (const minutes of [30, 60, 90, 120, 180]) await h.at(minutes);
-      const held = h.store.getTodo(h.todo.id)!;
-      await h.runner.refresh(() => {});
-      expect(h.store.getTodo(h.todo.id)).toEqual(held);
-      expect(h.told.filter((note) => note.includes('is blocked'))).toHaveLength(1);
-    } finally {
-      h.clock.mockRestore();
-      h.db.close();
-    }
-  });
-
-  test('a todo nothing checks waits quietly while its pull request is open', async () => {
-    const h = await stopped(null);
-    h.setPrOpen(true);
-    const told = h.told.length;
-    for (const minutes of [30, 60, 90]) await h.at(minutes);
-    expect(h.told).toHaveLength(told);
-    expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
-    h.clock.mockRestore();
-    h.db.close();
-  });
-
-  test("a tracked human session is the human's own work: no reminder and no block", async () => {
+  test('a human-owned session gets no worker reminder', async () => {
     const h = await stopped(null, null);
-    const told = h.told.length;
-    for (const minutes of [30, 60, 90, 120]) await h.at(minutes);
-    expect(h.sends()).toEqual([]);
-    expect(h.told).toHaveLength(told);
-    expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
-    h.clock.mockRestore();
-    h.db.close();
-  });
-
-  test('a worker that cannot be reached is blocked at the first reminder', async () => {
-    const h = await stopped();
-    h.setSend({ ok: false, reason: 'unreachable', detail: 'gone' });
-    await h.at(30);
-    expect(h.store.getTodo(h.todo.id)?.blockedReason).toBe(
-      'Its session stopped 30 min ago and could not be reached.'
-    );
-    h.clock.mockRestore();
-    h.db.close();
+    try {
+      for (const minutes of [20, 40, 60, 120]) await h.at(minutes);
+      expect(h.sends()).toEqual([]);
+      expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
+    } finally {
+      h.clock.mockRestore();
+      h.db.close();
+    }
   });
 });
 
-describe('planNeoTodoIdle', () => {
-  test('reminds at D and 2D, blocks at 3D, then stays quiet', () => {
+describe('planNudge', () => {
+  test('the single ladder reminds at 20/40, escalates at 60 and remains quiet', () => {
     const at = (minutes: number, nudges: number) =>
-      planNeoTodoIdle({ since: 0, nudges }, minutes * 60_000);
-    expect(at(29, 0)).toBeNull();
-    expect(at(30, 0)).toEqual({ kind: 'remind', nudges: 1 });
-    expect(at(59, 1)).toBeNull();
-    expect(at(60, 1)).toEqual({ kind: 'remind', nudges: 2 });
-    expect(at(90, 2)).toEqual({ kind: 'block' });
+      planNudge({ since: 0, nudges }, minutes * 60_000);
+    expect(at(19, 0)).toBeNull();
+    expect(at(20, 0)).toEqual({ kind: 'remind', nudges: 1 });
+    expect(at(39, 1)).toBeNull();
+    expect(at(40, 1)).toEqual({ kind: 'remind', nudges: 2 });
+    expect(at(60, 2)).toEqual({ kind: 'escalate', nudges: 3 });
     expect(at(300, 3)).toBeNull();
   });
 });

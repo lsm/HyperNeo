@@ -48,7 +48,11 @@ export function decideTodoState(facts: TodoStateFacts, now: number): TodoStateDe
         blockedReason: judgement.reason,
         nextAction: judgement.reason,
       };
-    else if (!Object.keys(change).length && !['done', 'failed'].includes(todo.state)) {
+    else if (
+      !Object.keys(change).length &&
+      !['done', 'failed'].includes(todo.state) &&
+      !(todo.state === 'blocked' && todo.blockedBy === 'failure')
+    ) {
       if (
         facts.questionOpen &&
         !facts.dispatched &&
@@ -69,12 +73,7 @@ export function decideTodoState(facts: TodoStateFacts, now: number): TodoStateDe
           blockedReason: `Its session is ${facts.live}.`,
           nextAction: 'Resolve the session blocker.',
         };
-      else if (
-        todo.state !== 'blocked' ||
-        todo.blockedBy === 'question' ||
-        todo.blockedBy === 'check'
-      )
-        patch.state = facts.dispatched ? 'doing' : 'todo';
+      else patch.state = facts.dispatched ? 'doing' : 'todo';
     }
   }
   const state = patch.state ?? todo.state;

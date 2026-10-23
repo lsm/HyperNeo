@@ -19,7 +19,7 @@ import {
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
-test('NeoService delivers a real-shaped CI failure to a todo target without a legacy work row', async () => {
+test('NeoService rechecks raw CI facts without sending a second PR message', async () => {
   const db = await createTestDb();
   const delivered: { ref: unknown; message: string }[] = [];
   const registry = createOperationRegistry([
@@ -73,7 +73,11 @@ test('NeoService delivers a real-shaped CI failure to a todo target without a le
     const evidence = new CodingTodoPrRepository(db.getDatabase());
     evidence.claim(todo.id, [{ url, claim: 'named' }], 2);
     evidence.record(todo.id, [{ url, state: 'OPEN', checks: 'failing', review: 'none' }], 2);
-    service.readPrs = async () => evidence.prs(todo.id);
+    let reads = 0;
+    service.readPrs = async () => {
+      reads++;
+      return evidence.prs(todo.id);
+    };
     service.followCardTopics(todo.id);
     const events = new ExternalEventService(new SessionExternalEventStore(db.getDatabase()), bus);
     await events.publish({
@@ -87,10 +91,8 @@ test('NeoService delivers a real-shaped CI failure to a todo target without a le
       summary: 'Web Tests failed',
       payload: { prUrl: url, prNumber: 7374, checkName: 'Web Tests', conclusion: 'failure' },
     });
-    expect(delivered).toHaveLength(1);
-    expect(delivered[0].ref).toEqual(ref);
-    expect(delivered[0].message).toContain('Web Tests');
-    expect(delivered[0].message).toContain('failure');
+    expect(reads).toBeGreaterThan(0);
+    expect(delivered).toEqual([]);
   } finally {
     service.dispose();
     db.close();

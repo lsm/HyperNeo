@@ -1,17 +1,9 @@
+import { planNudge } from '../../nudge.ts';
 import type { WorkRef } from '../../../drivers/types.ts';
 import { Logger } from '../../../logger.ts';
 import type { Database } from '../../../../storage/sqlite-compat.ts';
 import type { CodingPrState } from './pr-ledger.ts';
 
-export const CODING_PR_DEADLINE_MIN: Partial<Record<CodingPrState, number>> = {
-  approved_green: 20,
-  dirty: 20,
-  failing: 30,
-  changes_requested: 30,
-  waiting_review: 30,
-  approved_pending: 60,
-  waiting_ci: 60,
-};
 export const CODING_PR_FRESH_MS = 15 * 60_000;
 export const CODING_PR_REMINDERS = 2;
 
@@ -58,13 +50,8 @@ export function planCodingPrNudge(
   row: CodingSweepRow,
   now: number
 ): { kind: 'remind' | 'escalate'; nudges: number } | null {
-  const minutes = CODING_PR_DEADLINE_MIN[row.state];
-  if (!minutes || !row.owner || now - row.readAt > CODING_PR_FRESH_MS) return null;
-  const due = Math.floor((now - row.stateSince) / (minutes * 60_000));
-  if (row.nudges > CODING_PR_REMINDERS || due <= row.nudges) return null;
-  return row.nudges < CODING_PR_REMINDERS
-    ? { kind: 'remind', nudges: row.nudges + 1 }
-    : { kind: 'escalate', nudges: CODING_PR_REMINDERS + 1 };
+  if (!STATE_TEXT[row.state] || !row.owner || now - row.readAt > CODING_PR_FRESH_MS) return null;
+  return planNudge({ since: row.stateSince, nudges: row.nudges }, now);
 }
 
 const minutesSince = (row: CodingSweepRow, now: number) =>
@@ -83,7 +70,7 @@ export function codingPrEscalationText(
 ): string {
   const why = unreachable
     ? `its owner ${owned(row.owner!)} could not be reached`
-    : `its owner ${owned(row.owner!)} was reminded ${CODING_PR_REMINDERS} times without progress`;
+    : `its owner ${owned(row.owner!)} has made no progress`;
   return `PR sweep: ${row.repo}#${row.number} "${row.title}" has been ${STATE_TEXT[row.state] ?? row.state} for ${minutesSince(row, now)} min on head ${row.head.slice(0, 7)}, and ${why}. Reassign it to a free session.${row.state === 'approved_green' ? ' Or merge it yourself if the owner is gone.' : ''}`;
 }
 
