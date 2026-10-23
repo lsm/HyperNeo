@@ -67,6 +67,7 @@ if (process.argv.includes('agents')) {
   );
 } else if (process.argv.includes('--synthetic-desktop-import')) {
   if (fault() === 'hanging-import') {
+    process.on('SIGHUP', () => {});
     writeFileSync(join(evidence, 'hanging-import.pid'), String(process.pid));
     log({ kind: 'hanging-import' });
     await new Promise((resolve) => setTimeout(resolve, 300000));
@@ -106,6 +107,8 @@ if (process.argv.includes('agents')) {
   save();
   log({ kind: 'import', id: s.id, mode: s.permissionMode });
 } else if (process.argv.includes('--session-id')) {
+  if (fault() === 'slow-helper' && flag('-n') === 'desktop-wake')
+    await new Promise((resolve) => setTimeout(resolve, 250));
   const s: Session = {
     id: flag('--session-id'),
     title: flag('-n'),
@@ -135,7 +138,7 @@ if (process.argv.includes('agents')) {
   const prompt = process.argv.at(-1)!;
   const named = /to the session named ("(?:[^"\\]|\\.)*")/.exec(prompt)!;
   const name: string = JSON.parse(named[1]);
-  const helper = sessions.find((s) => s.title === name)!;
+  const helper = sessions.find((s) => s.title === name && s.pid)!;
   const text = prompt.split('<message>\n')[1].split('\n\n(Relayed from HyperNeo')[0];
   log({ kind: 'relay', helper: helper.id, mode: flag('--permission-mode'), text });
   append(helper, {

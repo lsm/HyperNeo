@@ -30,7 +30,13 @@ Check `evidence/observed.json` and `native-events.jsonl`:
   native messages; there is no task `--resume -p` fallback.
 - A live CLI or unknown target owner refuses before any helper request. A
   dormant imported Desktop record remains eligible for native cold-start;
-  focused contracts also reject ambiguous live ownership.
+  focused contracts also reject ambiguous live ownership. An explicit native
+  send to a synthetic dormant human-origin Desktop session is delivered without
+  changing its acceptEdits mode or native record. The former headless-mode
+  refusal is not an origin-admission rule.
+- Concurrent send/steer requests after a stopped forwarding helper share one
+  new helper preparation/import, then return distinct target input receipts.
+  The fixture selects only live forwarding helpers, retaining stopped history.
 - The existing authorized synthetic `rc-toggle` receives the RC request. No
   replacement RC helper is created or granted permissions. A request is not
   proof of a connected RC session or phone rendering.
@@ -42,8 +48,11 @@ Check `evidence/observed.json` and `native-events.jsonl`:
   `VERIFY_HANDOFF_TIMEOUT=1` in a fresh run with another free port. That profile
   requests the ordinary basename as its project name; the normal profile above
   checks a distinct human-selected name. A hung synthetic handoff is killed
-  and refused, with no task dispatched. The helper stops its owned hanging PID
-  in `finally`, including on an unfixed baseline timeout.
+  and refused, with no task dispatched. This profile uses the real system
+  `/usr/bin/script` PTY wrapper around the synthetic Claude child. That child
+  ignores SIGHUP, so killing the wrapper alone cannot satisfy the check.
+  The proof checks the child is absent or terminated before fixture cleanup;
+  its `finally` retains emergency cleanup on an unfixed baseline.
 - If the preparation transcript exists but import fails, the refusal names
   the retained session ID and execution directory for recovery. Do not delete
   that directory: import may have partially succeeded. Native handoff may be

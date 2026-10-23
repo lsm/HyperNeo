@@ -21,8 +21,10 @@ assert(!existsSync(join(run, 'data')));
 for (const dir of ['bin', 'evidence', 'workspace', 'home/.claude']) mkdirSync(join(run, dir), { recursive: true });
 const fixture = fileURLToPath(new URL('../../../packages/daemon/tests/fixtures/claude-b1-cli.ts', import.meta.url));
 const wrapper = (name: string, setup = '') => writeFileSync(join(run, 'bin', name), `#!/usr/bin/env bun\n${setup}\nawait import(${JSON.stringify(fixture)});\n`, { mode: 0o700 });
-wrapper('claude');
-wrapper('script', "process.argv.push('--synthetic-desktop-import');");
+wrapper('claude', "if (process.argv.includes('--desktop')) process.argv.push('--synthetic-desktop-import');");
+if (process.env.VERIFY_HANDOFF_TIMEOUT === '1')
+  writeFileSync(join(run, 'bin/script'), '#!/bin/sh\nexec /usr/bin/script "$@"\n', { mode: 0o700 });
+else wrapper('script', "process.argv.push('--synthetic-desktop-import');");
 writeFileSync(join(run, 'bin/gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
 const settings = join(run, 'home/.claude/settings.json');
 writeFileSync(settings, '{"permissions":{"defaultMode":"bypassPermissions"}}');
@@ -46,13 +48,18 @@ try {
   await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('connection failed')); });
   const rpc = <T>(name: string, input: unknown) => new Promise<T>((done, fail) => {
     const id = crypto.randomUUID();
-    const timer = setTimeout(() => fail(new Error(`${name} timeout`)), 150000);
-    ws!.onmessage = event => {
+    const timer = setTimeout(() => {
+      ws!.removeEventListener('message', receive);
+      fail(new Error(`${name} timeout`));
+    }, 150000);
+    const receive = (event: MessageEvent) => {
       const reply = JSON.parse(String(event.data));
       if (reply.id !== id && reply.requestId !== id) return;
+      ws!.removeEventListener('message', receive);
       clearTimeout(timer); evidence.push({ name, input, reply });
       if (reply.error) fail(new Error(JSON.stringify(reply.error))); else done(reply.data);
     };
+    ws!.addEventListener('message', receive);
     ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: { name, input }, timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
   const task = 'Exact synthetic task: "quotes" 😀\nKeep the complete second line: END';
@@ -98,6 +105,42 @@ try {
     assert.equal(events().length, before);
     writeFileSync(registration, registrationBytes);
   }
+  const stopped = JSON.parse(readFileSync(join(run, 'evidence/native-sessions.json'), 'utf8')) as Array<{ id: string; title: string; pid: number }>;
+  for (const helper of stopped.filter(s => s.title === 'desktop-wake')) helper.pid = 0;
+  writeFileSync(join(run, 'evidence/native-sessions.json'), JSON.stringify(stopped));
+  const helperPreparationsBefore = events().filter(e => e.kind === 'prepare' && (e.args as string[]).includes('desktop-wake')).length;
+  writeFileSync(join(run, 'evidence/fault'), 'slow-helper');
+  const concurrent = await Promise.all([
+    rpc<Result<WorkDelivery>>('work.send', { ref, message: 'Concurrent native send ONE' }),
+    rpc<Result<WorkDelivery>>('work.send', { ref, mode: 'steer', message: 'Concurrent native steer TWO' }),
+  ]);
+  assert(concurrent.every(result => result.ok), JSON.stringify(concurrent));
+  const helperPreparationsAfter = events().filter(e => e.kind === 'prepare' && (e.args as string[]).includes('desktop-wake')).length;
+  assert.equal(helperPreparationsAfter - helperPreparationsBefore, 1);
+  assert(concurrent[0].ok && concurrent[1].ok && concurrent[0].value.receipt!.inputId !== concurrent[1].value.receipt!.inputId);
+  evidence.push({ concurrentNativeMessages: concurrent, newHelpers: helperPreparationsAfter - helperPreparationsBefore });
+  writeFileSync(join(run, 'evidence/fault'), '');
+  const humanId = crypto.randomUUID();
+  for (const args of [
+    ['claude', '-p', '--session-id', humanId, '-n', 'Synthetic human-created session', '--permission-mode', 'acceptEdits', '--', 'Synthetic human opening message'],
+    ['script', '-q', '/dev/null', 'claude', '--desktop', '--resume', humanId],
+  ]) {
+    const result = spawnSync(args[0], args.slice(1), { cwd: join(run, 'workspace'), encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  }
+  const humanTranscript = join(run, 'home/.claude/projects', join(run, 'workspace').replace(/[/.]/g, '-'), `${humanId}.jsonl`);
+  writeFileSync(humanTranscript, readFileSync(humanTranscript, 'utf8').replace('"entrypoint":"sdk-cli"', '"entrypoint":"claude-desktop"'));
+  const humanRecord = join(scope, `local_${humanId}.json`);
+  const humanRecordHash = digest(humanRecord);
+  const humanSessions = JSON.parse(readFileSync(join(run, 'evidence/native-sessions.json'), 'utf8')) as Array<{ id: string; pid: number }>;
+  humanSessions.find(s => s.id === humanId)!.pid = 0;
+  writeFileSync(join(run, 'evidence/native-sessions.json'), JSON.stringify(humanSessions));
+  const nativeHuman = await rpc<Result<WorkDelivery>>('work.send', { ref: { adapter: 'claude-desktop', id: `local_${humanId}` }, message: 'Explicit native message to synthetic human-created session' });
+  assert(nativeHuman.ok, JSON.stringify(nativeHuman));
+  assert(nativeHuman.value.receipt?.inputId);
+  assert.equal(digest(humanRecord), humanRecordHash);
+  assert.equal(JSON.parse(readFileSync(humanRecord, 'utf8')).permissionMode, 'acceptEdits');
+  evidence.push({ explicitNativeSendToSyntheticHumanOrigin: nativeHuman, permissionAndRecordUnchanged: true });
   writeFileSync(join(run, 'evidence/fault'), 'waiting');
   assert((await rpc<Result<WorkDelivery>>('work.send', { ref, message: 'Synthetic permission-bound task' })).ok);
   const waiting = await rpc<Result<WorkDetail>>('work.status', { ref });
@@ -123,6 +166,15 @@ try {
     assert.match(hung.detail, /Desktop handoff failed/);
     const elapsed = Date.now() - began;
     assert(elapsed >= 120000 && elapsed < 130000, `handoff deadline ${elapsed} ms`);
+    const hangingPid = Number(readFileSync(join(run, 'evidence/hanging-import.pid'), 'utf8'));
+    let childState = '';
+    for (let poll = 0; poll < 20; poll++) {
+      childState = spawnSync('ps', ['-o', 'stat=', '-p', String(hangingPid)], { encoding: 'utf8' }).stdout.trim();
+      if (!childState || childState.startsWith('Z')) break;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    assert(!childState || childState.startsWith('Z'), `owned PTY child ${hangingPid} survived in ${childState}`);
+    evidence.push({ actualPtyChild: hangingPid, childState: childState || 'absent', checkedBeforeFixtureCleanup: true });
     evidence.push({ hangingHandoff: hung, elapsed, noTaskDispatched: !events().some(e => e.kind === 'native-send' && e.message === 'Never dispatch during hung handoff') });
   }
   assert(events().filter(e => e.kind === 'relay' && e.helper !== rcId).every(e => e.mode === 'acceptEdits'));
