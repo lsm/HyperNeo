@@ -1,3 +1,10 @@
+import { ExternalEventService } from '../../../packages/daemon/src/lib/external-events/external-event-service.ts';
+import {
+  SESSION_EVENT_SCOPE,
+  SessionExternalEventStore,
+} from '../../../packages/daemon/src/lib/external-events/session-external-event-store.ts';
+import { NeoCardEventSubscriptionRepository } from '../../../packages/daemon/src/storage/repositories/neo-card-event-subscription-repository.ts';
+import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -304,6 +311,57 @@ try {
     );
     assert(ladder.every((row) => row.todo?.state === 'doing'));
     assert.equal(ladder.at(-1)!.incident.nudges, 3);
+    ask('legacy');
+    const legacyUrl = 'https://github.com/synthetic/plan/pull/9';
+    const legacy = store.addTodo(
+      'legacy',
+      'legacy',
+      {
+        title: 'Legacy PR',
+        doneWhen: 'PR merged',
+        check: { pack: 'coding', kind: 'pr_merged', params: { urls: [legacyUrl] } },
+        instruction: 'Synthetic legacy stage',
+        named: null,
+      },
+      clock
+    );
+    sessions.create(legacy.id, { verb: 'send', ref: { adapter: 'codex-desktop', id: 'flow' } });
+    sessions.recordRef(legacy.id, { adapter: 'codex-desktop', id: 'flow' }, clock);
+    store.updateTodo(legacy, { state: 'doing', report: 'Waiting for CI', startedAt: clock }, clock);
+    const prs = new CodingTodoPrRepository(app!.db.getDatabase());
+    prs.claim(legacy.id, [{ url: legacyUrl, claim: 'named' }], clock);
+    prs.record(
+      legacy.id,
+      [{ url: legacyUrl, state: 'OPEN', checks: 'failing', review: 'none' }],
+      clock
+    );
+    new NeoCardEventSubscriptionRepository(app!.db.getDatabase()).subscribe(
+      legacy.id,
+      'github/synthetic/plan/pull_request/9.*',
+      clock
+    );
+    const beforeFrames = starts();
+    await new ExternalEventService(
+      new SessionExternalEventStore(app!.db.getDatabase()),
+      app!.internalEventBus
+    ).publish({
+      id: 'raw-ci',
+      spaceId: SESSION_EVENT_SCOPE,
+      source: 'github',
+      topic: 'github/synthetic/plan/pull_request/9.check_failed',
+      dedupeKey: 'raw-ci',
+      occurredAt: clock,
+      ingestedAt: clock,
+      summary: 'Synthetic raw CI failure',
+      payload: {
+        prUrl: legacyUrl,
+        prNumber: 9,
+        checkName: 'Synthetic raw CI',
+        conclusion: 'failure',
+      },
+    });
+    evidence.rawPrEvent = { beforeFrames, afterFrames: starts() };
+    assert.equal(starts(), beforeFrames, 'raw PR events must not duplicate ledger worker messages');
     evidence.verified = true;
     console.log(
       'VERIFIED: issue completion advances once; NOT_PLANNED fails; open/unreadable wait; 20/40/60 nudges persist without blocking.'
