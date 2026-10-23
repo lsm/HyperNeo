@@ -220,7 +220,8 @@ function configureTransformersEnv(env: TransformersModule['env'], cacheDir: stri
         ...withoutAuthorization(options),
         signal: prefetchAbortController?.signal,
       });
-      if (response.ok) await new TransformersFileCache(cacheDir).put(urlString, response.clone());
+      if (response.status === 200 && options?.method !== 'HEAD')
+        await new TransformersFileCache(cacheDir).put(urlString, response.clone());
       return response;
     }
     return defaultFetch(url, options);
