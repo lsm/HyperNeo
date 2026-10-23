@@ -1580,9 +1580,13 @@ export class SpaceRuntime {
       }
       return;
     }
-    void this.expirePublishedExternalEventsPastTtl().then(() =>
-      this.redispatchPublishedEventsWithoutDeliveries()
-    );
+    void this.expirePublishedExternalEventsPastTtl()
+      .then(() => this.redispatchPublishedEventsWithoutDeliveries())
+      .catch((err) =>
+        log.warn(
+          `SpaceRuntime: retained event redispatch failed: ${err instanceof Error ? err.message : String(err)}`
+        )
+      );
   }
 
   private async handleExternalEvent(payload: ExternalEventPublishedPayload): Promise<void> {
