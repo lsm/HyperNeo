@@ -6435,7 +6435,7 @@ describe('SDKMessageHandler', () => {
   });
 
   describe('markMessageSubmitted (ACP delivery kickoff)', () => {
-    it('is idempotent: transitions enqueued then accepts an already-submitted row', () => {
+    it('is idempotent: transitions enqueued then accepts an already-submitted row', async () => {
       let persisted = false;
       getMessageByStatusAndUuidSpy.mockImplementation(
         (_sessionId: string, status: string, uuid: string) => {
@@ -6451,13 +6451,13 @@ describe('SDKMessageHandler', () => {
           };
         }
       );
-      expect(handler.markMessageSubmitted('msg-submitted')).toBe(true);
+      expect(await handler.markMessageSubmitted('msg-submitted')).toBe(true);
       expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-submitted'], 'submitted');
 
       persisted = true;
       updateMessageStatusSpy.mockClear();
 
-      expect(handler.markMessageSubmitted('msg-submitted')).toBe(true);
+      expect(await handler.markMessageSubmitted('msg-submitted')).toBe(true);
       expect(updateMessageStatusSpy).not.toHaveBeenCalled();
     });
   });
@@ -7118,7 +7118,7 @@ describe('SDKMessageHandler', () => {
       it('consumes an enqueued message at pre-yield and suppresses turn-end fallback', async () => {
         hasPendingOrClaimedSpy.mockImplementation((id) => id === ackUuid);
         statusSpy('enqueued');
-        mockMessageQueue.onMessageYielded?.(ackUuid, yieldAt);
+        await mockMessageQueue.onMessageYielded?.(ackUuid, yieldAt);
         expect(updateMessageStatusSpy).toHaveBeenCalledWith([ackDbId], 'consumed');
         expect(mockDb.updateMessageTimestamp).toHaveBeenCalledWith(ackDbId, yieldAt);
         expect(emitSpy).toHaveBeenCalledWith('messages.statusChanged', {
@@ -7147,7 +7147,7 @@ describe('SDKMessageHandler', () => {
       it('consumes a submitted message at pre-yield and suppresses turn-end fallback', async () => {
         hasPendingOrClaimedSpy.mockImplementation((id) => id === ackUuid);
         statusSpy('submitted');
-        mockMessageQueue.onMessageYielded?.(ackUuid, yieldAt);
+        await mockMessageQueue.onMessageYielded?.(ackUuid, yieldAt);
         expect(updateMessageStatusSpy).toHaveBeenCalledWith([ackDbId], 'consumed');
         expect(mockDb.updateMessageTimestamp).toHaveBeenCalledWith(ackDbId, yieldAt);
         expect(publishSpy).toHaveBeenCalledWith(
@@ -7171,7 +7171,7 @@ describe('SDKMessageHandler', () => {
       it('consumes a deferred message at pre-yield and suppresses turn-end fallback', async () => {
         hasPendingOrClaimedSpy.mockImplementation((id) => id === ackUuid);
         statusSpy('deferred');
-        mockMessageQueue.onMessageYielded?.(ackUuid, yieldAt);
+        await mockMessageQueue.onMessageYielded?.(ackUuid, yieldAt);
         expect(updateMessageStatusSpy).toHaveBeenCalledWith([ackDbId], 'consumed');
         expect(mockDb.updateMessageTimestamp).toHaveBeenCalledWith(ackDbId, yieldAt);
         expect(emitSpy).toHaveBeenCalledWith('messages.statusChanged', {
@@ -7199,7 +7199,7 @@ describe('SDKMessageHandler', () => {
 
       it('does nothing for a consumed message at pre-yield and leaves the fallback', async () => {
         statusSpy('consumed');
-        mockMessageQueue.onMessageYielded?.(ackUuid, yieldAt);
+        await mockMessageQueue.onMessageYielded?.(ackUuid, yieldAt);
         expect(updateMessageStatusSpy).not.toHaveBeenCalledWith([ackDbId], 'consumed');
 
         getUserMessagesByStatusSpy.mockClear();
@@ -7209,7 +7209,7 @@ describe('SDKMessageHandler', () => {
 
       it('does nothing for a failed message at pre-yield and leaves the fallback', async () => {
         statusSpy('failed');
-        mockMessageQueue.onMessageYielded?.(ackUuid, yieldAt);
+        await mockMessageQueue.onMessageYielded?.(ackUuid, yieldAt);
         expect(updateMessageStatusSpy).not.toHaveBeenCalledWith([ackDbId], 'consumed');
 
         getUserMessagesByStatusSpy.mockClear();
@@ -7219,7 +7219,7 @@ describe('SDKMessageHandler', () => {
 
       it('does nothing when no persisted message matches the yielded uuid and leaves the fallback', async () => {
         statusSpy('none');
-        mockMessageQueue.onMessageYielded?.(ackUuid, yieldAt);
+        await mockMessageQueue.onMessageYielded?.(ackUuid, yieldAt);
         expect(updateMessageStatusSpy).not.toHaveBeenCalledWith([ackDbId], 'consumed');
 
         getUserMessagesByStatusSpy.mockClear();
@@ -7232,7 +7232,7 @@ describe('SDKMessageHandler', () => {
         mockDb.getJobQueueRepo = mock(() => ({
           hasActiveDeliveryJob: () => true,
         })) as never;
-        mockMessageQueue.onMessageYielded?.(ackUuid, yieldAt);
+        await mockMessageQueue.onMessageYielded?.(ackUuid, yieldAt);
         expect(updateMessageStatusSpy).not.toHaveBeenCalledWith([ackDbId], 'consumed');
         expect(publishSpy).toHaveBeenCalledWith(
           'state.sdkMessages.delta',

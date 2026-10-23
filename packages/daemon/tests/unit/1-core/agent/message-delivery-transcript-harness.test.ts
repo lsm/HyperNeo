@@ -173,8 +173,8 @@ function instrumentDeliveryTranscript(
     .getDatabase()
     .prepare('SELECT session_id, sdk_uuid FROM sdk_messages WHERE id = ?');
 
-  db.updateMessageStatus = (...args: Parameters<Database['updateMessageStatus']>) => {
-    dbOriginals.updateMessageStatus(...args);
+  db.updateMessageStatus = async (...args: Parameters<Database['updateMessageStatus']>) => {
+    await dbOriginals.updateMessageStatus(...args);
     const [messageIds, newStatus] = args;
     if (newStatus !== 'consumed') return;
     for (const dbId of [...new Set(messageIds)]) {
@@ -191,8 +191,8 @@ function instrumentDeliveryTranscript(
     }
   };
 
-  db.updateMessageTimestamp = (...args: Parameters<Database['updateMessageTimestamp']>) => {
-    dbOriginals.updateMessageTimestamp(...args);
+  db.updateMessageTimestamp = async (...args: Parameters<Database['updateMessageTimestamp']>) => {
+    await dbOriginals.updateMessageTimestamp(...args);
     const [dbId, timestampMs] = args;
     const row = messageRowLookup.get(dbId) as
       | { session_id: string; sdk_uuid: string | null }

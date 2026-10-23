@@ -54,7 +54,7 @@ function createMockClient() {
       _prompt: unknown,
       callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
     ) {
-      callbacks?.onSubmitted?.();
+      await callbacks?.onSubmitted?.();
       callbacks?.onAccepted?.();
       yield {
         sessionId: 'acp-session-1',
@@ -865,7 +865,7 @@ describe('AcpQueryRunner', () => {
       _prompt: unknown,
       callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
     ) {
-      callbacks?.onSubmitted?.();
+      await callbacks?.onSubmitted?.();
       promptBodyRan = true;
       yield {
         sessionId: 'acp-session-1',
@@ -890,7 +890,7 @@ describe('AcpQueryRunner', () => {
       _prompt: unknown,
       callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
     ) {
-      callbacks?.onSubmitted?.();
+      await callbacks?.onSubmitted?.();
       return;
     });
     const { runner, ctx } = createRunnerFixture({ client });

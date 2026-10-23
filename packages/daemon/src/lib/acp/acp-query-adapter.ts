@@ -25,8 +25,8 @@ export class AcpQueryAdapter implements QueryLike {
       initialUsageEstimate?: number;
       onContextUsageUpdate?: (used: number) => void;
       onConfigOptionsUpdate?: (configOptions: AcpConfigOption[]) => void;
-      onSubmitted?: () => void;
-      onAccepted?: () => void;
+      onSubmitted?: () => void | Promise<void>;
+      onAccepted?: () => void | Promise<void>;
     } = {}
   ) {
     this.client = client;

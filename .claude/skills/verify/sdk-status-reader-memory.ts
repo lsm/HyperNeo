@@ -50,7 +50,7 @@ try {
    const snapshot=events.find(e=>e.method==='liveQuery.snapshot'&&e.data.subscriptionId==='memory-live');assert(snapshot);
    const rows=snapshot.data.rows as {uuid:string;id:string;message:{content:unknown}}[];
    assert.equal(rows.length,1);assert.equal(rows[0].uuid,'memory-user');assert.deepEqual(rows[0].message.content,page.sdkMessages[0].message.content);
-   app.reactiveDb.db.updateMessageStatus([rows[0].id],'deferred');
+   await app.reactiveDb.db.updateMessageStatus([rows[0].id],'deferred');
    for(let n=0;n<200&&!events.some(e=>e.method==='liveQuery.delta');n++)await new Promise(resolve=>setTimeout(resolve,10));
    const delta=events.find(e=>e.method==='liveQuery.delta');assert(delta);
    assert.equal((delta.data.updated as {id:string}[])[0].id,rows[0].id);

@@ -193,7 +193,7 @@ describe('ReactiveDatabase — scope extraction', () => {
     );
     events.length = 0;
 
-    reactiveDb.db.updateMessageStatus([messageId], 'consumed');
+    await reactiveDb.db.updateMessageStatus([messageId], 'consumed');
 
     const sdkEvent = events.find((e) => e.tables.includes('sdk_messages'));
     expect(sdkEvent).toBeDefined();
