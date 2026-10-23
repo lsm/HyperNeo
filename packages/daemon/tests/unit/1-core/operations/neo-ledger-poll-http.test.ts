@@ -305,4 +305,39 @@ describe('ledger HTTP polling pages', () => {
       db.close();
     }
   });
+  test('304 retains prior validators but never promotes omitted old rate headers to a new observation', async () => {
+    const { db, facts } = setup();
+    try {
+      await (
+        await facts.collect(
+          subject,
+          'cycle-a',
+          null,
+          async () => response(),
+          () => 100
+        )
+      ).text();
+      await facts.collect(
+        subject,
+        'cycle-b',
+        '\"page\"',
+        async () => new Response(null, { status: 304 }),
+        () => 110
+      );
+      const cached = await facts.collect(
+        subject,
+        'cycle-b',
+        null,
+        async () => {
+          throw new Error('Must reuse known body');
+        },
+        () => 111
+      );
+      expect(cached.headers.get('etag')).toBe('\"page\"');
+      expect(cached.headers.get('x-ratelimit-remaining')).toBeNull();
+      expect(await cached.json()).toEqual([{ id: 7 }]);
+    } finally {
+      db.close();
+    }
+  });
 });
