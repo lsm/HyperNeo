@@ -75,7 +75,7 @@ describe('redeliverPrompt', () => {
         messageUuid: 'steered',
       })
     ).not.toBeNull();
-    expect(plans.join('\n')).toContain('USING INDEX idx_message_delivery_message ');
+    expect(plans.join('\n')).toMatch(/SEARCH job_queue USING INDEX \S+ \([^)]*<expr>=\?/);
     expect(
       db
         .prepare(
