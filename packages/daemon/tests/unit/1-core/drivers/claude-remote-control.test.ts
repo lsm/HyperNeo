@@ -426,7 +426,11 @@ describe('B1 native task delivery', () => {
       find: async () => [],
       start: async () => ({
         ok: true,
-        value: { ref: { id: 'local_target' }, title: 'Synthetic task' },
+        value: {
+          ref: { adapter: 'claude-desktop', id: 'local_target' },
+          link: 'claude://claude.ai/epitaxy/local_target',
+          title: 'Synthetic task',
+        },
       }),
     } as unknown as WorkAdapter;
     const wrapped = withClaudeRemoteControl(
@@ -442,12 +446,16 @@ describe('B1 native task delivery', () => {
         detail: 'desktop-wake is waiting for permission prompt',
       })
     );
-    expect(await wrapped.start!({ message: 'Synthetic task' } as never, {} as never)).toMatchObject(
-      {
-        ok: false,
-        detail: 'desktop-wake is waiting for permission prompt',
-      }
+    const result = await wrapped.start!({ message: 'Synthetic task' } as never, {} as never);
+    expect(result).toMatchObject({
+      ok: false,
+      detail: expect.stringContaining('desktop-wake is waiting for permission prompt'),
+    });
+    expect(!result.ok && result.detail).toContain('claude://claude.ai/epitaxy/local_target');
+    expect(!result.ok && result.detail).toContain(
+      JSON.stringify({ adapter: 'claude-desktop', id: 'local_target' })
     );
+    expect(!result.ok && result.detail).toContain('delivery may still arrive');
     expect(rcRequests).toBe(0);
   });
 });

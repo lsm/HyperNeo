@@ -153,6 +153,18 @@ try {
   assert(!refused.ok);
   assert.equal(refused.reason, 'not_delivered');
   assert(!events().some(e => e.kind === 'native-send' && e.message === 'Synthetic refused task'));
+  const recoveryTitle = 'Wake refusal recovery';
+  const wakeRefused = await rpc<Result<WorkStarted>>('work.start', { ...startInput, title: recoveryTitle, message: 'Refused initial task must retain its imported identity' });
+  assert(!wakeRefused.ok, JSON.stringify(wakeRefused));
+  const importedRecovery = events().findLast(e => e.kind === 'prepare' && (e.args as string[]).includes(recoveryTitle))!;
+  const recoveryRef = { adapter: 'claude-desktop', id: `local_${importedRecovery.id}` };
+  assert(wakeRefused.detail.includes(JSON.stringify(recoveryRef)), wakeRefused.detail);
+  assert(wakeRefused.detail.includes(`claude://claude.ai/epitaxy/${recoveryRef.id}`), wakeRefused.detail);
+  assert.match(wakeRefused.detail, /delivery may still arrive/);
+  const recovery = await rpc<Result<WorkDetail>>('work.status', { ref: recoveryRef });
+  assert(recovery.ok, JSON.stringify(recovery));
+  assert(!events().some(e => e.kind === 'native-send' && e.message === 'Refused initial task must retain its imported identity'));
+  evidence.push({ importedWakeRefusal: wakeRefused, recoveryStatus: recovery });
   writeFileSync(join(run, 'evidence/fault'), 'missing-import');
   const missing = await rpc<Result<WorkStarted>>('work.start', { ...startInput, title: 'Import refusal', message: 'Never run this task headless' });
   assert(!missing.ok);
