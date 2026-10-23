@@ -154,7 +154,7 @@ interface FallbackChainEditorProps {
   isUpdating: boolean;
   onMove: (index: number, direction: 'up' | 'down') => void;
   onRemove: (index: number) => void;
-  thinking?: (entry: FallbackModelEntry, index: number) => ComponentChildren;
+  controls?: (entry: FallbackModelEntry, index: number) => ComponentChildren;
 }
 
 function FallbackChainEditor({
@@ -163,7 +163,7 @@ function FallbackChainEditor({
   isUpdating,
   onMove,
   onRemove,
-  thinking,
+  controls,
 }: FallbackChainEditorProps) {
   const getDisplayInfo = (entry: FallbackModelEntry) => {
     const model = availableModels.find(
@@ -179,43 +179,45 @@ function FallbackChainEditor({
         return (
           <div
             key={`${entry.provider}:${entry.model}`}
-            class="flex items-center gap-2 bg-surface-raised border border-line rounded-lg px-3 py-2"
+            class="flex flex-wrap items-center gap-2 bg-surface-raised border border-line rounded-lg px-3 py-2"
           >
             <span class="text-xs text-fg-faint font-medium w-4">{index + 1}.</span>
             <ProviderLogo provider={entry.provider} class="h-4 w-4" />
-            <div class="flex-1 min-w-0">
+            <div class="flex-1 min-w-[7rem]">
               <div class="text-sm text-fg-soft truncate">{displayInfo.name}</div>
               <div class="text-xs text-fg-faint">
                 {PROVIDER_LABELS[entry.provider] || getProviderLabel(entry.provider)}
               </div>
             </div>
-            {thinking?.(entry, index)}
-            <div class="flex items-center gap-1">
+            <div class="ml-auto flex items-center gap-2">
+              {controls?.(entry, index)}
+              <div class="flex items-center gap-1">
+                <button
+                  class="p-1 rounded hover:bg-fill-strong disabled:opacity-30 disabled:cursor-not-allowed"
+                  onClick={() => onMove(index, 'up')}
+                  disabled={index === 0 || isUpdating}
+                  title="Move up"
+                >
+                  <ChevronUpIcon />
+                </button>
+                <button
+                  class="p-1 rounded hover:bg-fill-strong disabled:opacity-30 disabled:cursor-not-allowed"
+                  onClick={() => onMove(index, 'down')}
+                  disabled={index === models.length - 1 || isUpdating}
+                  title="Move down"
+                >
+                  <ChevronDownIcon />
+                </button>
+              </div>
               <button
-                class="p-1 rounded hover:bg-fill-strong disabled:opacity-30 disabled:cursor-not-allowed"
-                onClick={() => onMove(index, 'up')}
-                disabled={index === 0 || isUpdating}
-                title="Move up"
+                class="p-1 rounded hover:bg-danger/30 disabled:opacity-30 disabled:cursor-not-allowed"
+                onClick={() => onRemove(index)}
+                disabled={isUpdating}
+                title="Remove"
               >
-                <ChevronUpIcon />
-              </button>
-              <button
-                class="p-1 rounded hover:bg-fill-strong disabled:opacity-30 disabled:cursor-not-allowed"
-                onClick={() => onMove(index, 'down')}
-                disabled={index === models.length - 1 || isUpdating}
-                title="Move down"
-              >
-                <ChevronDownIcon />
+                <XIcon class="w-4 h-4 text-danger" />
               </button>
             </div>
-            <button
-              class="p-1 rounded hover:bg-danger/30 disabled:opacity-30 disabled:cursor-not-allowed"
-              onClick={() => onRemove(index)}
-              disabled={isUpdating}
-              title="Remove"
-            >
-              <XIcon class="w-4 h-4 text-danger" />
-            </button>
           </div>
         );
       })}
@@ -410,6 +412,7 @@ function OverrideEditorModal({
 }
 
 type SettingsModel = ModelInfo & { thinkingLevels?: ThinkingLevel[] };
+type NeoModelEntry = NonNullable<NeoModelPreference['fallbacks']>[number];
 
 function NeoModelSettings({
   availableModels,
@@ -425,7 +428,7 @@ function NeoModelSettings({
   const [percent, setPercent] = useState(
     String(preference?.autoCompactPercent ?? AUTO_COMPACT_PERCENT_DEFAULT)
   );
-  const [picker, setPicker] = useState<'primary' | 'fallback' | null>(null);
+  const [picker, setPicker] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => {
@@ -443,7 +446,25 @@ function NeoModelSettings({
     ? Math.floor((primary.contextWindow * effectivePercent) / 100)
     : null;
   const busy = loading || saving || connectionState.value !== 'connected';
-  const chain = draft?.fallbacks ?? [];
+  const list: NeoModelEntry[] = draft
+    ? [
+        { model: draft.model, provider: draft.provider, thinkingLevel: draft.thinkingLevel },
+        ...(draft.fallbacks ?? []),
+      ]
+    : [];
+  function setList(next: NeoModelEntry[]) {
+    const [first, ...rest] = next;
+    if (!first) return setDraft(null);
+    setDraft({
+      ...(draft?.autoCompactPercent === undefined
+        ? {}
+        : { autoCompactPercent: draft.autoCompactPercent }),
+      model: first.model,
+      provider: first.provider,
+      thinkingLevel: first.thinkingLevel,
+      ...(draft?.fallbacks === undefined && rest.length === 0 ? {} : { fallbacks: rest }),
+    });
+  }
   const providers = [...groupedModels.entries()]
     .filter(([, models]) => models.some((model) => model.available !== false))
     .map(([id]) => PROVIDER_LABELS[id] || getProviderLabel(id));
@@ -505,21 +526,9 @@ function NeoModelSettings({
       <div>
         <h4 class="text-[13px] font-semibold text-fg">Neo models</h4>
         <p class="text-xs text-fg-faint mt-0.5">
-          Primary model and ordered fallbacks for Neo and its projects. Neo returns to the primary
-          after recovery.
+          Models Neo and its projects use, in order: the primary first, then the fallbacks. Neo
+          returns to the primary after recovery.
         </p>
-      </div>
-      <div class="flex flex-wrap items-center gap-2">
-        <span class="flex-1 text-sm text-fg-soft">
-          {draft ? `${draft.provider} / ${draft.model}` : 'Choose a primary model'}
-        </span>
-        {draft &&
-          thinking(draft, 'Neo primary thinking', (thinkingLevel) =>
-            setDraft({ ...draft, thinkingLevel })
-          )}
-        <Button variant="secondary" size="xs" disabled={busy} onClick={() => setPicker('primary')}>
-          Change Neo primary
-        </Button>
       </div>
       <div class="space-y-2">
         <label class="block text-sm text-fg-soft" for="neo-auto-compact">
@@ -550,50 +559,55 @@ function NeoModelSettings({
       <p class="text-xs text-fg-faint">
         Usable fallback providers: {providers.join(', ') || 'None available'}
       </p>
-      {draft?.fallbacks === undefined ? (
+      {!draft ? (
+        <p class="text-xs text-fg-faint">Add a model. The first one in the list is the primary.</p>
+      ) : draft.fallbacks === undefined ? (
         <p class="text-xs text-fg-faint">
           Uses the general session fallback chain until you save a Neo chain.
         </p>
-      ) : chain.length === 0 ? (
+      ) : draft.fallbacks.length === 0 ? (
         <p class="text-xs text-fg-faint">Neo fallbacks disabled.</p>
       ) : null}
       <FallbackChainEditor
-        models={chain}
+        models={list}
         availableModels={availableModels}
         isUpdating={busy}
-        onRemove={(index) =>
-          draft && setDraft({ ...draft, fallbacks: chain.filter((_, i) => i !== index) })
-        }
+        onRemove={(index) => setList(list.filter((_, i) => i !== index))}
         onMove={(index, direction) => {
-          if (!draft) return;
-          const next = [...chain];
+          const next = [...list];
           const other = index + (direction === 'up' ? -1 : 1);
           [next[index], next[other]] = [next[other], next[index]];
-          setDraft({ ...draft, fallbacks: next });
+          setList(next);
         }}
-        thinking={(entry, index) =>
-          thinking(
-            entry,
-            `Neo fallback ${index + 1} thinking`,
-            (thinkingLevel) =>
-              draft &&
-              setDraft({
-                ...draft,
-                fallbacks: chain.map((item, i) =>
-                  i === index ? { ...item, thinkingLevel } : item
-                ),
-              })
-          )
-        }
+        controls={(entry, index) => (
+          <div class="flex items-center gap-2">
+            {index === 0 ? (
+              <span class="text-xs font-medium text-accent">Primary</span>
+            ) : (
+              <Button
+                variant="secondary"
+                size="xs"
+                disabled={busy}
+                aria-label={`Make Neo model ${index + 1} primary`}
+                onClick={() => setList([list[index], ...list.filter((_, i) => i !== index)])}
+              >
+                <span class="whitespace-nowrap">Make primary</span>
+              </Button>
+            )}
+            {thinking(entry, `Neo model ${index + 1} thinking`, (thinkingLevel) =>
+              setList(list.map((item, i) => (i === index ? { ...item, thinkingLevel } : item)))
+            )}
+          </div>
+        )}
       />
       <div class="flex flex-wrap gap-2">
         <Button
           variant="secondary"
           size="xs"
-          disabled={busy || !draft || chain.length >= 10}
-          onClick={() => setPicker('fallback')}
+          disabled={busy || list.length > 10}
+          onClick={() => setPicker(true)}
         >
-          Add Neo fallback
+          Add Neo model
         </Button>
         <Button
           variant="secondary"
@@ -614,35 +628,14 @@ function NeoModelSettings({
       )}
       {picker && (
         <ModelPickerModal
-          title={picker === 'primary' ? 'Neo primary model' : 'Add Neo fallback'}
+          title="Add Neo model"
           groupedModels={groupedModels}
           providerAuthStatuses={providerAuthStatuses}
-          excludeModels={picker === 'primary' ? [] : [...(draft ? [draft] : []), ...chain]}
-          onClose={() => setPicker(null)}
+          excludeModels={list}
+          onClose={() => setPicker(false)}
           onSelect={(model) => {
-            if (picker === 'primary')
-              setDraft({
-                ...draft,
-                model: model.id,
-                provider: model.provider,
-                thinkingLevel: 'off',
-                ...(draft?.fallbacks === undefined
-                  ? {}
-                  : {
-                      fallbacks: chain.filter(
-                        (entry) => entry.model !== model.id || entry.provider !== model.provider
-                      ),
-                    }),
-              });
-            else if (draft)
-              setDraft({
-                ...draft,
-                fallbacks: [
-                  ...chain,
-                  { model: model.id, provider: model.provider, thinkingLevel: 'off' },
-                ],
-              });
-            setPicker(null);
+            setList([...list, { model: model.id, provider: model.provider, thinkingLevel: 'off' }]);
+            setPicker(false);
           }}
         />
       )}
