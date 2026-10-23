@@ -336,15 +336,14 @@ export class ModelSwitchHandler {
   private liveWireModel(model: string, providerId: string): string {
     if (providerId === 'anthropic') return model;
     const provider = getProviderRegistry().get(providerId);
-    const translated = provider?.translateModelIdForSdk?.(model) ?? model;
-    let routed: string | undefined;
-    if (translated === 'default') {
-      try {
-        routed = provider?.buildSdkConfig(model, providerSessionConfigForSession(this.ctx.session))
-          .envVars.ANTHROPIC_DEFAULT_SONNET_MODEL;
-      } catch {}
-    }
-    return wireModelForLiveSwitch(model, translated, routed);
+    let envVars: Record<string, string | undefined> = {};
+    try {
+      envVars =
+        provider?.buildSdkConfig(model, providerSessionConfigForSession(this.ctx.session))
+          .envVars ?? {};
+    } catch {}
+    const sdkModel = envVars.ANTHROPIC_MODEL ?? provider?.translateModelIdForSdk?.(model) ?? model;
+    return wireModelForLiveSwitch(model, sdkModel, envVars.ANTHROPIC_DEFAULT_SONNET_MODEL);
   }
 
   async canSwitchLive(newModel: string, newProvider: string): Promise<boolean> {
@@ -612,6 +611,7 @@ export class ModelSwitchHandler {
         } else if (live && this.ctx.queryObject?.setModel) {
           await this.ctx.queryObject.setModel(this.liveWireModel(resolvedModel, nextProvider));
           await this.ctx.reevaluateContextBudgetAfterModelSwitch?.();
+          if (nextProvider !== 'anthropic') await lifecycleManager.restartQuery();
         } else {
           if (deferQueryStart) await lifecycleManager.stop();
           else

@@ -706,6 +706,32 @@ describe('ModelSwitchHandler', () => {
       });
     });
 
+    describe('when a third-party query switches models in place', () => {
+      it('switches live and refreshes the pinned model env once the session is idle', async () => {
+        const restartQuerySpy = mock(async () => {});
+        const glmModels = [
+          { id: 'glm-5.3', name: 'GLM 5.3', provider: 'glm', contextWindow: 200_000 },
+          { id: 'glm-5.3-flash', name: 'GLM 5.3 Flash', provider: 'glm', contextWindow: 200_000 },
+        ] as ModelInfo[];
+        setModelsCache(new Map([['global', [...TEST_MODELS, ...glmModels]]]));
+        mockSession.config = { ...mockSession.config, model: 'glm-5.3', provider: 'glm' };
+        handler = createHandler({
+          queryObject: { setModel: setModelSpy } as unknown as Query,
+          lifecycleManager: {
+            restart: restartSpy,
+            restartQuery: restartQuerySpy,
+          } as unknown as QueryLifecycleManager,
+        });
+
+        const result = await handler.switchModel('glm-5.3-flash', 'glm');
+
+        expect(result.success).toBe(true);
+        expect(setModelSpy).toHaveBeenCalledTimes(1);
+        expect(restartSpy).not.toHaveBeenCalled();
+        expect(restartQuerySpy).toHaveBeenCalledTimes(1);
+      });
+    });
+
     describe('when query is running', () => {
       it('should restart query when running', async () => {
         handler = createHandler();
