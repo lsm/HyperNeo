@@ -305,7 +305,11 @@ test.each(['ordinary', 'neo'] as const)(
           await hub.request<{ sdkMessages: SDKMessage[] }>('message.sdkMessages', { sessionId })
         ).sdkMessages;
         return (
-          JSON.stringify(messages).includes('COMPACT_CONTINUED_SUCCESS') &&
+          messages.some(
+            (message) =>
+              message.type === 'assistant' &&
+              JSON.stringify(message.message).includes('COMPACT_CONTINUED_SUCCESS')
+          ) &&
           markers.every((marker) => requests.some((r) => JSON.stringify(r.body).includes(marker)))
         );
       }, 'continued answer and queued model receipts');

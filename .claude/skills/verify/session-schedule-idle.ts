@@ -116,6 +116,7 @@ try {
   for (let count = 1; count <= 4; count++) assert.equal((await wake()).lastOutcome, 'skipped_unchanged');
   evidence.revertedProgressCards = publications().slice(before);
   assert.equal(publications().length - before, 2, 'Reverted facts must still notify once in the new idle stretch');
+  assert(publications().slice(before)[1].shortText.includes('Review lead renamed'));
   assert.deepEqual(inputRows(), initialInputs);
   assert.equal(pendingInputs().length, 0);
   assert((await call('goal.session.update', { ownerSessionId: target, goalId: result.goal.id, progress: 1 })).accepted);

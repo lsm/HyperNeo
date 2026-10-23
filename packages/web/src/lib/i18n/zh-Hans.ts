@@ -42,6 +42,7 @@ export const zhHans: Record<keyof typeof en, string> = {
   'schedules.status.paused': '已暂停',
   'schedules.status.done': '已结束',
   'schedules.skipped': '已跳过',
+  'schedules.outcome.progress': '有新进展，检查间隔已重置',
   'schedules.outcome.fired': '已送达',
   'schedules.outcome.target_gone': '会话已结束',
   'schedules.outcome.source_gone': '来源已结束',

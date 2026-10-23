@@ -33,3 +33,9 @@ Upgrade contracts cover no history, human input, an ask, and a todo. The first
 post-upgrade unchanged wake must skip without a model turn; the third emits the
 idle card. Later startup migrations must preserve both the converted baseline
 and the new quiet count. Actual source changes still fire and reset as before.
+
+A progress reset followed by a reversion to the previous facts is still a new idle
+stretch. Rename the session before that stretch: its third quiet wake must publish
+one new card using the current name and no model input. Card retry identity uses
+the third wake's scheduled due time, so reverting facts cannot reuse an old card.
+Progress-reset labels are localized in both English and simplified Chinese.

@@ -271,9 +271,7 @@ export class NeoService {
   readonly notifyScheduleIdle = (schedule: SessionSchedule): void => {
     const conversationId = this.repo.conversationId();
     if (!conversationId) return;
-    const publicationId = neoDerivedId(
-      `schedule-idle:${schedule.id}:${schedule.factsDigest}:${schedule.lastMessageId}`
-    );
+    const publicationId = neoDerivedId(`schedule-idle:${schedule.id}:${schedule.nextRunAt}`);
     if (this.publications.get(conversationId, publicationId)) return;
     const name = this.db.getSession(schedule.target.id)?.title ?? schedule.target.id;
     const elapsed =

@@ -40,6 +40,7 @@ export const en = {
   'schedules.status.paused': 'Paused',
   'schedules.status.done': 'Finished',
   'schedules.skipped': 'Skipped',
+  'schedules.outcome.progress': 'Reset — new progress',
   'schedules.outcome.fired': 'Delivered',
   'schedules.outcome.target_gone': 'Session closed',
   'schedules.outcome.source_gone': 'Source closed',
