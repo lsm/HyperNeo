@@ -19,7 +19,7 @@ const events: StructuredLogEvent[] = [];
 const off = subscribeToStructuredLogs((event) => {
   if (event.module === 'hyperneo:daemon:sqlite.query') events.push(event);
 });
-const observed = { slowThresholdMs: 0, summaryIntervalMs: 0, maxQueryGroups: 50, summaryQueryLimit: 10 };
+const observed = { slowThresholdMs: 0, summaryIntervalMs: 25, maxQueryGroups: 50, summaryQueryLimit: 10 };
 const db = new Database(path, { queryObservability: observed });
 db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
 CREATE TABLE contention(value TEXT);
@@ -64,13 +64,17 @@ try {
   assert(waiting, 'Contending main transaction names its BEGIN acquisition wait');
   assert.equal(waiting.phases[0].outcome, 'acquired');
   const assertContentionIntervals = (holder: Transaction, waiter: Transaction) => {
-    assert(holder.phases[0].finishedAt <= waiter.phases[0].finishedAt);
-    assert(holder.phases[2].finishedAt <= waiter.phases[1].finishedAt + 20);
+    const heldBody = holder.phases[1], waitingBegin = waiter.phases[0];
+    assert(heldBody.startedAt <= waitingBegin.finishedAt && waitingBegin.startedAt <= heldBody.finishedAt, 'Known holder body overlaps the waiter BEGIN interval');
+    assert(heldBody.finishedAt <= waiter.phases[1].startedAt, 'Holder body completes before waiter body entry');
   };
   assertContentionIntervals(holding, waiting);
   const lateCommitStamp = structuredClone(holding);
   lateCommitStamp.phases[2].finishedAt = waiting.phases[1].finishedAt + 1000;
   assertContentionIntervals(lateCommitStamp, waiting);
+  const unrelated = structuredClone(holding);
+  for (const phase of unrelated.phases) { phase.startedAt += 10_000; phase.finishedAt += 10_000; }
+  assert.throws(() => assertContentionIntervals(unrelated, waiting), /holder body overlaps/);
   db.exec('PRAGMA busy_timeout=10');
   const second = await hold(650);
   assert.throws(() => withBusyRetry(() => db.transaction(() => {
@@ -95,10 +99,12 @@ try {
     assert.equal(typeof log.metadata.workerRequestId, 'string');
   }
   const workerSummaries = events.filter((event) => event.metadata.workerKind && event.metadata.event === 'summary');
-  assert(workerSummaries.length >= 2, 'Real merge and mirror workers publish close summaries');
+  assert(workerSummaries.length >= 2, 'Real workers publish window summaries');
+  assert(workerSummaries.some((event) => event.metadata.reason === 'interval'));
+  assert(workerSummaries.some((event) => event.metadata.reason === 'close'));
   assert(workerSummaries.every((event) => !('workerOperation' in event.metadata) && !('workerRequestId' in event.metadata)), 'Window summaries must not claim a single request identity');
   assert.equal((db.prepare('SELECT COUNT(*) AS n FROM contention').get() as { n: number }).n, 5);
-  const summary = { sourceCommit: Bun.spawnSync(['git', 'rev-parse', 'HEAD']).stdout.toString().trim(), runtime: Bun.version, synthetic: true, holding, waiting, holderRequestId: held.metadata.workerRequestId, workerTimestamp: held.metadata.workerTimestamp, receivedAt: held.timestamp, retry: retry.map((e) => e.metadata), forwardedWorkers: ['db-gateway-write', 'message-search-merge', 'project-mirror'], rows: 5 };
+  const summary = { sourceCommit: Bun.spawnSync(['git', 'rev-parse', 'HEAD']).stdout.toString().trim(), runtime: Bun.version, synthetic: true, holding, waiting, holderRequestId: held.metadata.workerRequestId, workerTimestamp: held.metadata.workerTimestamp, receivedAt: held.timestamp, retry: retry.map((e) => e.metadata), forwardedWorkers: ['db-gateway-write', 'message-search-merge', 'project-mirror'], rows: 5, orderingControls: { lateCommitStampAccepted: true, disjointHolderRejected: true }, workerSummaries: workerSummaries.map((event) => event.metadata) };
   writeFileSync(join(root, 'observed.json'), JSON.stringify(summary, null, 2));
   console.log(JSON.stringify(summary, null, 2));
 } finally {

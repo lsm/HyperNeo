@@ -9,7 +9,13 @@ export function publishSQLiteWorkerLogs(
 ): void {
   subscribeToStructuredLogs((log) => {
     if (log.module === 'hyperneo:daemon:sqlite.query')
-      post({ log: { ...log, metadata: { ...log.metadata, ...identity() } } });
+      post({
+        log: {
+          ...log,
+          metadata:
+            log.metadata.event === 'summary' ? log.metadata : { ...log.metadata, ...identity() },
+        },
+      });
   });
 }
 

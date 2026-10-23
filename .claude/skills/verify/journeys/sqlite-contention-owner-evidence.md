@@ -44,3 +44,11 @@ writer until it reports. A successful long BEGIN or COMMIT is elapsed wait/work,
 not proof of lock versus fsync. Historical stalls remain unattributed unless
 positive owner evidence correlates on the same database and wall interval.
 No DB path, bound values or SQL error message is added to diagnostic metadata.
+
+The proof correlates the known holder's body interval with the waiter's BEGIN
+interval, and requires that body to finish before the waiter enters its body.
+It imposes no ordering tolerance on the worker's post-COMMIT stamp: a replay
+control delays only that observed stamp by one second and still correlates,
+while a disjoint holder interval is rejected. These are replay controls, not a
+claim that the real worker was descheduled. Interval and close summaries must
+retain worker provenance but carry no single operation or request identity.
