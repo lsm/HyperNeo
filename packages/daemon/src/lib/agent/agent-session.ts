@@ -209,7 +209,6 @@ import {
   ModelSwitchHandler,
   type ModelSwitchHandlerContext,
   type ModelSwitchResult,
-  canSwitchModelLive,
   modelSwitchTiming,
   type RuntimeSettingsCommit,
 } from './model-switch-handler.ts';
@@ -1549,8 +1548,7 @@ export class AgentSession
       await this.applyPendingModelSwitch();
       return { success: false, model: this.session.config.model, error: invalid };
     }
-    const live =
-      canSwitchModelLive(this.session.config.provider, provider) && !!this.queryObject?.setModel;
+    const live = await this.modelSwitchHandler.canSwitchLive(model, provider);
     if (modelSwitchTiming(this.stateManager.getState().status, live) === 'now') {
       await this.setPendingModelSwitch(undefined);
       return this.handleModelSwitch(model, provider);

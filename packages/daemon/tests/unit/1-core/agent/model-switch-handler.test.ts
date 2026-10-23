@@ -1069,9 +1069,13 @@ describe('model switch timing', () => {
   });
 
   it('allows a live switch only within the native anthropic provider', () => {
-    expect(canSwitchModelLive('anthropic', 'anthropic')).toBe(true);
-    expect(canSwitchModelLive('anthropic', 'glm')).toBe(false);
-    expect(canSwitchModelLive('glm', 'glm')).toBe(false);
-    expect(canSwitchModelLive('acp', 'acp')).toBe(false);
+    expect(canSwitchModelLive('anthropic', 'anthropic', 200_000, 200_000)).toBe(true);
+    expect(canSwitchModelLive('anthropic', 'glm', 200_000, 200_000)).toBe(false);
+    expect(canSwitchModelLive('glm', 'glm', 200_000, 200_000)).toBe(false);
+    expect(canSwitchModelLive('acp', 'acp', 200_000, 200_000)).toBe(false);
+  });
+
+  it('keeps the restart when the context window changes, so the compact window is rebuilt', () => {
+    expect(canSwitchModelLive('anthropic', 'anthropic', 200_000, 1_000_000)).toBe(false);
   });
 });

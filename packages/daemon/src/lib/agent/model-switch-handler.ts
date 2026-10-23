@@ -40,8 +40,13 @@ export function modelSwitchTiming(
   return live || status === 'idle' ? 'now' : 'next_turn';
 }
 
-export function canSwitchModelLive(previous: string | undefined, next: string | undefined) {
-  return previous === 'anthropic' && next === 'anthropic';
+export function canSwitchModelLive(
+  previous: string | undefined,
+  next: string | undefined,
+  previousWindow: number | undefined,
+  nextWindow: number | undefined
+) {
+  return previous === 'anthropic' && next === 'anthropic' && previousWindow === nextWindow;
 }
 
 export function gateSwitchIdle(guarded: boolean, busy: boolean) {
@@ -306,6 +311,17 @@ export class ModelSwitchHandler {
     }
   }
 
+  async canSwitchLive(newModel: string, newProvider: string): Promise<boolean> {
+    const { session, queryObject } = this.ctx;
+    const provider = session.config.provider;
+    if (!queryObject?.setModel || !canSwitchModelLive(provider, newProvider, 0, 0)) return false;
+    const [current, next] = await Promise.all([
+      getModelInfo(session.config.model, 'global', newProvider),
+      getModelInfo(newModel, 'global', newProvider),
+    ]);
+    return canSwitchModelLive(provider, newProvider, current?.contextWindow, next?.contextWindow);
+  }
+
   async invalidModel(newModel: string, newProvider: string): Promise<string | null> {
     const { session } = this.ctx;
     const sessionApiKey =
@@ -373,6 +389,7 @@ export class ModelSwitchHandler {
       }
 
       const modelInfo = await getModelInfo(newModel, 'global', newProvider);
+      const live = !deferQueryStart && (await this.canSwitchLive(newModel, newProvider));
       const resolvedModel = preserveK3OneMSuffix(newModel, modelInfo?.id ?? newModel);
 
       const currentResolvedModel = preserveK3OneMSuffix(
@@ -540,11 +557,7 @@ export class ModelSwitchHandler {
         if (this.ctx.queryObject instanceof AcpQueryAdapter && nextProvider === 'acp') {
           await this.ctx.queryObject.setModel(resolvedModel);
           await this.ctx.reevaluateContextBudgetAfterModelSwitch?.();
-        } else if (
-          !deferQueryStart &&
-          canSwitchModelLive(previousProvider, nextProvider) &&
-          this.ctx.queryObject?.setModel
-        ) {
+        } else if (live && this.ctx.queryObject?.setModel) {
           await this.ctx.queryObject.setModel(resolvedModel);
           await this.ctx.reevaluateContextBudgetAfterModelSwitch?.();
         } else {
