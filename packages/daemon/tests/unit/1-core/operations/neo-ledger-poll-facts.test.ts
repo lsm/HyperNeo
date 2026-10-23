@@ -10,6 +10,7 @@ const subject = {
   credentialId: 'synthetic-credential-a',
   url: 'https://api.github.com/repos/synthetic/ledger/pulls/7/reviews?page=1',
   accept: 'application/vnd.github+json',
+  apiVersion: '2022-11-28',
   headOid: 'a'.repeat(40),
 };
 const first = { value: [{ id: 1, state: 'APPROVED' }], etag: '"page-a"', next: null };
@@ -36,6 +37,7 @@ describe('ledger polling page facts', () => {
         { credentialId: 'synthetic-credential-b' },
         { url: subject.url.replace('page=1', 'page=2') },
         { accept: 'application/vnd.github.raw+json' },
+        { apiVersion: 'another-representation-version' },
         { headOid: 'b'.repeat(40) },
         { baseOid: 'c'.repeat(40) },
       ]) {
@@ -76,7 +78,12 @@ describe('ledger polling page facts', () => {
     try {
       facts.record(subject, first, 100, 0);
       const a = facts.read(subject, 100, 10);
-      facts.record(subject, { ...first, etag: '"new-validator"' }, 110, 1);
+      facts.record(
+        subject,
+        { ...first, value: [{ state: 'APPROVED', id: 1 }], etag: '"new-validator"' },
+        110,
+        1
+      );
       expect(facts.read(subject, 110, 10)).toMatchObject({
         factRevision: a.factRevision,
         observationRevision: 2,

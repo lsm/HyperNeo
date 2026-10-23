@@ -1,3 +1,4 @@
+import { CodingPollFactsRepository } from './poll-facts.ts';
 import { CodingRefFactsRepository } from './ref-facts.ts';
 import { CodingQueryFactsRepository } from './query-facts.ts';
 import { CodingWorkFactsRepository } from './work-facts.ts';
@@ -281,6 +282,7 @@ function codingLedgerSnapshotRow(row: CodingLedgerSnapshotRow) {
 }
 
 export class CodingPrLedgerRepository {
+  readonly pollFacts: CodingPollFactsRepository;
   readonly mergeFacts: CodingMergeFactsRepository;
   readonly branchFacts: CodingBranchFactsRepository;
   readonly refFacts: CodingRefFactsRepository;
@@ -288,6 +290,7 @@ export class CodingPrLedgerRepository {
   readonly queryFacts: CodingQueryFactsRepository;
 
   constructor(private readonly db: Database) {
+    this.pollFacts = new CodingPollFactsRepository(db);
     this.mergeFacts = new CodingMergeFactsRepository(db);
     this.branchFacts = new CodingBranchFactsRepository(db);
     this.refFacts = new CodingRefFactsRepository(db);
