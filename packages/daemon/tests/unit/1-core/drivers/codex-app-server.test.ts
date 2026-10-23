@@ -172,8 +172,13 @@ lines.on('close', () => {
     await expect(client.close()).rejects.toThrow('7');
   });
 
+  test('preserves a spawn error instead of replacing it with an unknown exit status', async () => {
+    directory = mkdtempSync(join(tmpdir(), 'codex-bootstrap-'));
+    await expect(startCodexBootstrapServer(join(directory, 'missing'))).rejects.toThrow('ENOENT');
+  });
+
   test('closes its owned process after failed initialization', async () => {
-    const f = executable(true);
+    const f = executable(true, 7);
     await expect(startCodexBootstrapServer(f.command)).rejects.toThrow('initialization failed');
     expect(
       JSON.parse(readFileSync(f.persisted, 'utf8')).map(

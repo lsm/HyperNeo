@@ -169,7 +169,10 @@ try {
     assert(!calls.some((call) => (call as { server?: string }).server), 'new work must not use shared server');
     writeFileSync(join(run, 'fail-bootstrap-exit'), '7');
     const beforeFailedBootstrap = calls.length;
-    await assert.rejects(() => send(undefined, false, false, undefined, true), /bootstrap exited with 7/);
+    const failedBootstrap = await send(undefined, false, false, undefined, true);
+    assert.equal(failedBootstrap.ok, false);
+    assert.equal(failedBootstrap.reason, 'not_delivered');
+    assert.match(failedBootstrap.detail, /bootstrap exited with 7.*Thread synthetic-new was created/);
     assert(!calls.slice(beforeFailedBootstrap).some((call) => (call as { desktop?: string }).desktop === 'thread-follower-start-turn'), 'failed bootstrap cannot hand off');
   } else if (action === 'reproduce') {
     assert.equal(first.value.queuedSubmissionId, 'synthetic-queue');
