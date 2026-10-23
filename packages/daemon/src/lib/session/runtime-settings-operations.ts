@@ -70,8 +70,10 @@ function captureTarget(input: Input, caller: OperationCaller, deps: RuntimeSetti
     : { reason: { ok: false, reason: 'session_not_found' } as Failure };
 }
 
-function gateReady(target: Target, deps: RuntimeSettingsDependencies) {
+function gateReady(target: Target, input: Input, deps: RuntimeSettingsDependencies) {
   const { snapshot, live } = target;
+  const liveThinkingOnly =
+    input.model === undefined && input.provider === undefined && !!live?.queryObject;
   if (snapshot.status !== 'active' || snapshot.archivedAt !== null)
     return { reason: { ok: false, reason: 'session_settings_changed' } as Failure };
   const status = snapshotProcessingStatus(snapshot);
@@ -86,7 +88,9 @@ function gateReady(target: Target, deps: RuntimeSettingsDependencies) {
   return (status !== null && status !== 'idle') ||
     deps.isPreparing(snapshot.id) ||
     deps.hasPendingWork(snapshot.id) ||
-    (live && (live.isQueryActiveOrStarting() || live.getProcessingState().status !== 'idle'))
+    (live &&
+      ((live.isQueryActiveOrStarting() && !liveThinkingOnly) ||
+        live.getProcessingState().status !== 'idle'))
     ? { reason: { ok: false, reason: 'session_busy' } as Failure }
     : { value: target };
 }
@@ -143,7 +147,7 @@ async function applySettings(
     !deps.isPreparing(snapshot.id) &&
     !deps.hasPendingWork(snapshot.id) &&
     callerOwnsTarget(snapshot.id, caller, deps);
-  const ready = gateReady(target, deps);
+  const ready = gateReady(target, input, deps);
   if ('reason' in ready) return { reason: ready.reason };
   if (!currentOwner())
     return { reason: { ok: false, reason: 'session_settings_changed' } as Failure };
@@ -169,8 +173,10 @@ async function applySettings(
       }) !== 'won'
     )
       return { reason: { ok: false, reason: 'session_settings_changed' } as Failure };
-    if (live && thinkingLevel !== undefined)
+    if (live && thinkingLevel !== undefined) {
       live.getSessionData().config.thinkingLevel = thinkingLevel;
+      await live.applyThinkingLevel();
+    }
     await deps.notify(snapshot.id).catch(() => {});
   }
   return { value: target };
@@ -205,7 +211,7 @@ function projectUpdate(target: Target, input: Input, deps: RuntimeSettingsDepend
 const updateSettings = (superpipe({})('update-session-runtime-settings') as PipelineAPI)
   .input(['input', 'caller', 'deps'])
   .pipe(captureTarget, ['input', 'caller', 'deps'], 'result:update')
-  .pipe(gateReady, ['update', 'deps'], 'result:update')
+  .pipe(gateReady, ['update', 'input', 'deps'], 'result:update')
   .pipe(validatePair, ['update', 'input'], 'result:update')
   .pipe(applySettings, ['update', 'input', 'caller', 'deps'], 'result:update')
   .pipe(projectUpdate, ['update', 'input', 'deps'], 'update')
@@ -223,7 +229,7 @@ export function createSessionRuntimeSettingsOperations(deps: RuntimeSettingsDepe
       name: 'session.runtimeSettings.update',
       policy: { safetyClass: 'mutate', roles: ['long_term_agent', 'neo'] },
       description:
-        'Change model, provider or thinking level only while the target is idle. Active, starting, queued and waiting work is refused without interruption. An original-snapshot atomic write protects concurrent changes. The next turn uses the accepted settings; cold sessions start under them next time.',
+        'Change model, provider or thinking level only while the target is idle; a thinking-only change also reaches an idle session whose query is still running. Active, starting, queued and waiting work is refused without interruption. An original-snapshot atomic write protects concurrent changes. The next turn uses the accepted settings; cold sessions start under them next time.',
       inputSchema: InputSchema,
       resultSchema: z.union([
         z.object({
