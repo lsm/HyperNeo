@@ -1,3 +1,8 @@
+import {
+  createGitHubPollSource,
+  parseRateLimitHeaders,
+  type GitHubRateLimitInfo,
+} from '../../github/poll-source.ts';
 import { fetchGitHubViaCli } from '../../github/gh-api-fetch.ts';
 import { GitHubPollSlice } from './github-poll-slice.ts';
 import { runLagPhase } from '../../event-loop-activity.ts';
@@ -83,50 +88,8 @@ const REACTION_STALE_INTERVALS = 3;
 const REACTION_STALE_MIN_MS = 5 * 60 * 1000;
 const COMMENT_ENDPOINT_INITIAL_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 
-export interface GitHubRateLimitInfo {
-  remaining: number;
-  limit?: number;
-  resource?: string;
-  resetAt: number;
-  limited: boolean;
-  retryAfter: boolean;
-}
-
-export function parseRateLimitHeaders(res: Response): GitHubRateLimitInfo {
-  const limit = Number.parseInt(res.headers.get('X-RateLimit-Limit') ?? '', 10);
-  const resource = res.headers.get('X-RateLimit-Resource');
-  const remainingRaw = res.headers.get('X-RateLimit-Remaining');
-  const resetRaw = res.headers.get('X-RateLimit-Reset');
-  const retryAfterRaw = res.headers.get('Retry-After');
-  const remaining = remainingRaw ? parseInt(remainingRaw, 10) : Number.NaN;
-  const resetSeconds = resetRaw ? parseInt(resetRaw, 10) : Number.NaN;
-  const retryAfterSeconds = retryAfterRaw ? parseInt(retryAfterRaw, 10) : Number.NaN;
-  const remainingValue = Number.isNaN(remaining) ? Infinity : remaining;
-  const hasRetryAfter = !Number.isNaN(retryAfterSeconds);
-  const limited =
-    res.status === 429 || (res.status === 403 && (remainingValue === 0 || hasRetryAfter));
-  const resetAt = !Number.isNaN(retryAfterSeconds)
-    ? Date.now() + retryAfterSeconds * 1000
-    : Number.isNaN(resetSeconds)
-      ? 0
-      : resetSeconds * 1000;
-  return {
-    remaining: remainingValue,
-    ...(Number.isFinite(limit) ? { limit } : {}),
-    ...(resource
-      ? {
-          resource: ['core', 'graphql', 'search', 'code_search', 'integration_manifest'].includes(
-            resource
-          )
-            ? resource
-            : 'unknown',
-        }
-      : {}),
-    resetAt,
-    limited,
-    retryAfter: hasRetryAfter,
-  };
-}
+export { parseRateLimitHeaders };
+export type { GitHubRateLimitInfo };
 export const GITHUB_CREDENTIAL_SERVICE = 'neokai.external-events.github';
 export const GITHUB_CREDENTIAL_ACCOUNT = 'default';
 const WEBHOOK_EVENTS = [
@@ -2527,33 +2490,19 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
     const credentials = await this.resolveTokenOrFail();
     const token = credentials.token;
-    const useCli =
-      !token && !credentials.readFailed && !this.options.fetchImpl && fetchImpl === fetch;
-    const request = useCli ? fetchGitHubViaCli : fetchImpl;
-    let bucketRecorded = false;
-    const fetchPage: typeof fetch = (async (input, init) => {
-      if (!token && credentials.readFailed)
-        throw new Error('Configured GitHub credentials unavailable; restore access before polling');
-      const response = await request(input, init);
-      if (!bucketRecorded) {
-        const bucket = parseRateLimitHeaders(response);
-        log.info('GitHub polling credential bucket', {
-          repo: gitHubRepoPath(watched.owner, watched.repo),
-          credentialSource: useCli ? 'gh' : credentials.source,
-          limit: bucket.limit ?? null,
-          resource: bucket.resource ?? 'unknown',
-          remaining: Number.isFinite(bucket.remaining) ? bucket.remaining : null,
-          status: response.status,
-        });
-        bucketRecorded = true;
-      }
-      slice.observe(response);
-      if (response.ok || response.status === 304) {
+    const fetchPage = createGitHubPollSource({
+      fetchImpl,
+      hasInjectedFetch: Boolean(this.options.fetchImpl),
+      hasToken: Boolean(token),
+      readFailed: credentials.readFailed,
+      credentialSource: credentials.source,
+      repo: gitHubRepoPath(watched.owner, watched.repo),
+      observe: (response) => slice.observe(response),
+      onAccessible: () => {
         accessible = true;
         this.pollCycleAccessible = true;
-      }
-      return response;
-    }) as typeof fetch;
+      },
+    });
     this.seedKnownLogin(cursor.selfLogin, token);
     this.pollCycleCredentialFingerprint = credentialFingerprint(token);
     for (const [stage, endpoint] of endpoints.entries()) {
