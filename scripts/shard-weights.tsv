@@ -39,7 +39,7 @@
 42	packages/daemon/tests/unit/1-core/agent/builtin-skill-plugin-wrapper.test.ts
 12	packages/daemon/tests/unit/1-core/agent/claim-fenced-batch-update.test.ts
 10	packages/daemon/tests/unit/1-core/agent/context-budget-decision.test.ts
-17	packages/daemon/tests/unit/1-core/agent/context-budget-enforcement.test.ts
+6	packages/daemon/tests/unit/1-core/agent/context-budget-enforcement.test.ts
 6058	packages/daemon/tests/unit/1-core/agent/context-fetcher.test.ts
 7	packages/daemon/tests/unit/1-core/agent/context-reset-planner.test.ts
 12	packages/daemon/tests/unit/1-core/agent/context-tracker.test.ts
@@ -63,8 +63,7 @@
 3528	packages/daemon/tests/unit/1-core/agent/message-delivery-transcript-harness.test.ts
 9	packages/daemon/tests/unit/1-core/agent/message-ownership-gates.test.ts
 7	packages/daemon/tests/unit/1-core/agent/message-queue-timeout-policy.test.ts
-96909	packages/daemon/tests/unit/1-core/agent/message-queue.test.ts
-19617	packages/daemon/tests/unit/1-core/agent/mid-turn-budget-enforcement.test.ts
+754	packages/daemon/tests/unit/1-core/agent/message-queue.test.ts
 20	packages/daemon/tests/unit/1-core/agent/model-switch-budget-reevaluation.test.ts
 125	packages/daemon/tests/unit/1-core/agent/model-switch-handler.test.ts
 619	packages/daemon/tests/unit/1-core/agent/model-switch-session-continuity.test.ts
@@ -82,7 +81,7 @@
 12410	packages/daemon/tests/unit/1-core/agent/query-lifecycle-manager.test.ts
 2689	packages/daemon/tests/unit/1-core/agent/query-mode-handler-external-event-digest.test.ts
 6165	packages/daemon/tests/unit/1-core/agent/query-mode-handler.test.ts
-255	packages/daemon/tests/unit/1-core/agent/query-options-builder.test.ts
+310	packages/daemon/tests/unit/1-core/agent/query-options-builder.test.ts
 21	packages/daemon/tests/unit/1-core/agent/query-retry-routing.test.ts
 11	packages/daemon/tests/unit/1-core/agent/query-retry-terminal-classifier.test.ts
 5	packages/daemon/tests/unit/1-core/agent/query-retry-terminal-hint.test.ts
@@ -101,7 +100,7 @@
 553	packages/daemon/tests/unit/1-core/agent/runtime-settings-commit.test.ts
 47	packages/daemon/tests/unit/1-core/agent/sdk-cli-resolver.test.ts
 127	packages/daemon/tests/unit/1-core/agent/sdk-message-handler-flag-machine.test.ts
-1758	packages/daemon/tests/unit/1-core/agent/sdk-message-handler.test.ts
+1454	packages/daemon/tests/unit/1-core/agent/sdk-message-handler.test.ts
 34	packages/daemon/tests/unit/1-core/agent/sdk-runtime-config.test.ts
 7	packages/daemon/tests/unit/1-core/agent/sdk-start-terminal.test.ts
 52	packages/daemon/tests/unit/1-core/agent/sdk-startup-gate.test.ts

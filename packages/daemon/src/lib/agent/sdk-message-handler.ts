@@ -128,10 +128,6 @@ export interface SDKMessageHandlerContext {
 
   onCommandsChanged: (commands: string[]) => Promise<void>;
 
-  resumePendingWorkAfterCompaction?(): void;
-
-  clearPendingResumeAfterCompaction?(): void;
-
   reevaluateContextBudgetAfterModelSwitch?(): Promise<void>;
 
   onResultLimitError?(
@@ -240,7 +236,6 @@ export class SDKMessageHandler {
 
     ctx.messageQueue.onInternalCompactionsAborted = () => {
       this.ctx.contextTracker.clearCompactionCooldown();
-      this.ctx.clearPendingResumeAfterCompaction?.();
       this.compactionEnqueuedMidTurnGeneration = undefined;
     };
 
@@ -1982,7 +1977,6 @@ export class SDKMessageHandler {
           `compaction(s) for session ${session.id}`
       );
     }
-    this.ctx.messageQueue.noteBoundaryCompleted();
     const boundaryInfo = contextTracker.getContextInfo();
     const boundaryCapacity =
       boundaryInfo && boundaryInfo.totalCapacity > 0 ? boundaryInfo.totalCapacity : undefined;
@@ -1993,8 +1987,6 @@ export class SDKMessageHandler {
     );
     await stateManager.setCompacting(false);
     this.ctx.internalEventBus.publishAsync('session.compacted', { sessionId: session.id });
-    this.ctx.resumePendingWorkAfterCompaction?.();
-    this.ctx.messageQueue.clearNonCompactionSentSinceBoundary();
 
     void this.refreshContextUsage('compact-boundary', undefined, invocationGeneration);
   }
@@ -2081,7 +2073,6 @@ export class SDKMessageHandler {
 
     const promise = (async () => {
       let clearedDeadCompaction = false;
-      let sampled = false;
       try {
         const deadDeliveredCompaction =
           reason === 'turn-end' &&
@@ -2142,7 +2133,6 @@ export class SDKMessageHandler {
         )
           return;
         if (!contextInfo) return;
-        sampled = true;
         contextTracker.updateWithDetailedBreakdown(contextInfo);
         const publishProjection = internalEventBus
           .publish('context.updated', {
@@ -2178,7 +2168,6 @@ export class SDKMessageHandler {
             logger: this.logger,
             onCompactionAbandoned: () => {
               this.compactionEnqueuedMidTurnGeneration = undefined;
-              this.ctx.clearPendingResumeAfterCompaction?.();
             },
           });
           if (
@@ -2197,14 +2186,6 @@ export class SDKMessageHandler {
         this.logger.warn(`context refresh (${reason}) failed:`, error);
       } finally {
         this.pendingContextRefresh = null;
-        if (reason === 'turn-end' && !this.isDaemonCompactionPending()) {
-          if (!sampled) {
-            this.ctx.resumePendingWorkAfterCompaction?.();
-          } else {
-            this.ctx.clearPendingResumeAfterCompaction?.();
-          }
-          this.ctx.messageQueue.pruneSentPrompts();
-        }
       }
     })();
     this.pendingContextRefresh = promise;

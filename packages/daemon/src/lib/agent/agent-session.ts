@@ -1,5 +1,4 @@
 import type { ChildProcess } from 'node:child_process';
-import { AGENT_COMPACTION_RESUME } from '@hyperneo/prompts';
 import type {
   AgentProcessingState,
   ChatMessage,
@@ -66,8 +65,6 @@ export const RECENTLY_EXITED_ROOT_PID_RETENTION_MS = 15 * 60 * 1000;
 const SESSION_RECONCILE_INTERVAL_MS = 60_000;
 
 const CLEAR_CONFIRM_TIMEOUT_MS = 45_000;
-
-const MID_TURN_USAGE_REFRESH_INTERVAL_MS = 10_000;
 
 export class ClearConversationCancelledError extends Error {
   constructor() {
@@ -174,10 +171,6 @@ import {
   AskUserQuestionHandler,
   type AskUserQuestionHandlerContext,
 } from './ask-user-question-handler.ts';
-import {
-  contextBudgetThreshold,
-  decideContextBudgetCompaction,
-} from './context-budget-decision.ts';
 import { runContextBudgetReevaluation } from './context-budget-enforcement.ts';
 import { ContextTracker } from './context-tracker.ts';
 import {
@@ -211,9 +204,7 @@ import {
 } from './message-delivery.ts';
 import { deliveryMetrics } from './message-delivery-metrics.ts';
 import { decideReconcileAdmission, selectStrandedDeliveries } from './message-delivery-pipeline.ts';
-import type { MidTurnBudgetInterruptOptions } from './message-queue.ts';
 import { MessageQueue } from './message-queue.ts';
-import { runMidTurnBudgetPipeline } from './mid-turn-budget-pipeline.ts';
 import {
   ModelSwitchHandler,
   type ModelSwitchHandlerContext,
@@ -229,11 +220,7 @@ import {
 } from './query-lifecycle-manager.ts';
 import type { QueryLike } from './query-like.ts';
 import { QueryModeHandler, type QueryModeHandlerContext } from './query-mode-handler.ts';
-import {
-  NATIVE_CONTEXT_WINDOW_PROVIDER_IDS,
-  QueryOptionsBuilder,
-  type QueryOptionsBuilderContext,
-} from './query-options-builder.ts';
+import { QueryOptionsBuilder, type QueryOptionsBuilderContext } from './query-options-builder.ts';
 import { QueryRunner, type QueryRunnerContext, type TrackedAgentProcess } from './query-runner.ts';
 import { RateLimitWatchdog } from './rate-limit-watchdog.ts';
 import { selectStaleSubmittedDeliveries } from './reconciler-sweep.ts';
@@ -430,12 +417,8 @@ export class AgentSession
 
   private _isCleaningUp = false;
   private pendingResumeSessionAt: string | undefined;
-  private pendingResumeAfterCompaction = false;
-  private midTurnBudgetCheckInFlight = false;
 
   private contextBudgetReevaluationQueue: Promise<void> = Promise.resolve();
-  private lastMidTurnUsageRefreshAt = 0;
-  private lastMidTurnUsageRefreshKey = '';
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
   private reconcilerProvisioned = false;
   pendingRestartReason: 'settings.local.json' | null = null;
@@ -1141,7 +1124,6 @@ export class AgentSession
     try {
       this.rateLimitWatchdog.cancel();
       this.networkPause.stop();
-      this.clearPendingResumeAfterCompaction();
       this.messageHandler.cancelSuppressedResultWait();
       const yieldedContinuationId = this.taskNotificationRequeryContinueMessageId;
       if (
@@ -1895,26 +1877,6 @@ export class AgentSession
     return value;
   }
 
-  resumePendingWorkAfterCompaction(): void {
-    if (!this.pendingResumeAfterCompaction) return;
-    this.pendingResumeAfterCompaction = false;
-    if (this.messageQueue.hasOutstandingNonCompactionMessages()) return;
-    void this.messageQueue
-      .enqueue(AGENT_COMPACTION_RESUME, false, { durable: true })
-      .catch((error) => {
-        this.logger.warn(`post-compaction resume enqueue failed for ${this.session.id}:`, error);
-      });
-  }
-
-  clearPendingResumeAfterCompaction(): void {
-    if (!this.pendingResumeAfterCompaction) return;
-    this.pendingResumeAfterCompaction = false;
-    this.logger.info(
-      `dropping pending post-compaction resume for session ${this.session.id} ` +
-        `(no daemon compaction was enqueued)`
-    );
-  }
-
   async reevaluateContextBudgetAfterModelSwitch(opts?: {
     queueClearEpochAtStart?: number;
     userInterruptEpochAtStart?: number;
@@ -1937,8 +1899,6 @@ export class AgentSession
         messageQueue: this.messageQueue,
         stateManager: this.stateManager,
         logger: this.logger,
-        resumePendingWork: () => this.resumePendingWorkAfterCompaction(),
-        clearPendingResume: () => this.clearPendingResumeAfterCompaction(),
         queueClearEpochAtStart,
         userInterruptEpochAtStart,
       });
@@ -2014,163 +1974,6 @@ export class AgentSession
     if (cached) return cached;
     await initializeModels().catch(() => {});
     return getSessionContextModelInfo(this.session);
-  }
-
-  async midTurnContextBudgetCheck(): Promise<void> {
-    if (this.midTurnBudgetCheckInFlight) return;
-    this.midTurnBudgetCheckInFlight = true;
-    try {
-      await this.runMidTurnContextBudgetCheck();
-    } finally {
-      this.midTurnBudgetCheckInFlight = false;
-    }
-  }
-
-  private async runMidTurnContextBudgetCheck(): Promise<void> {
-    const queryObject = this.queryObject;
-    if (!queryObject?.interrupt) return;
-    const providerId = this.session.config.provider;
-    if (!providerId) return;
-    const cancelAsyncMessage = queryObject.cancelAsyncMessage;
-    const opts: MidTurnBudgetInterruptOptions = {
-      sessionId: this.session.id,
-      providerId,
-      budgetKey: 0,
-      logger: this.logger,
-      interrupt: () => queryObject.interrupt(),
-      cancelAsyncMessage:
-        typeof cancelAsyncMessage === 'function' ? cancelAsyncMessage.bind(queryObject) : undefined,
-      restart: (options) => this.lifecycleManager.restart(options),
-      contextTracker: this.contextTracker,
-      onResumeArm: () => {
-        this.pendingResumeAfterCompaction = true;
-      },
-      onResumeClear: () => {
-        this.pendingResumeAfterCompaction = false;
-      },
-      onSurvivorRequeued: (uuid) => {
-        try {
-          const reopenedId = this.db
-            .getSDKMessageRepo()
-            .markDeliveryRetryableByUuid(this.session.id, uuid);
-          if (reopenedId) {
-            void this.internalEventBus
-              .publish('messages.statusChanged', {
-                sessionId: this.session.id,
-                messageIds: [reopenedId],
-                status: 'enqueued',
-              })
-              .catch(() => {});
-          }
-          deliverMessage(this.db.getJobQueueRepo()!, this.session.id, uuid, { origin: 'recovery' });
-        } catch (error) {
-          this.logger.warn(
-            `mid-turn survivor requeue for ${uuid} in session ${this.session.id} failed:`,
-            error
-          );
-        }
-      },
-      getDurableMessageContent: (uuid) => {
-        const repo = this.db.getSDKMessageRepo();
-        const kickoff = repo.getUserMessageContentByUuid(this.session.id, uuid);
-        if (kickoff === null || kickoff === undefined) return undefined;
-        return kickoff;
-      },
-      ownsTurn: () => this.queryObject === queryObject,
-    };
-    try {
-      await runMidTurnBudgetPipeline({
-        opts,
-        queue: this.messageQueue,
-        checkEligibility: () => {
-          if (this.pendingResumeAfterCompaction) return false;
-          const status = this.stateManager.getState().status;
-          if (status === 'waiting_for_input' || status === 'rate_limit_cooldown') return false;
-          if (this.isLimitRecoveryPending()) return false;
-          if (!this.messageQueue.isRunning()) return false;
-          if (providerId === 'acp') return false;
-          if (
-            NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId) &&
-            this.session.config.autoCompactPercent === undefined
-          )
-            return false;
-          return true;
-        },
-        refreshUsage: () => this.refreshMidTurnContextInfo(queryObject),
-        decideCompaction: (info) => {
-          if (info.totalUsed <= 0) return false;
-          if (this.stateManager.getState().status !== 'processing') return false;
-          const configuredWindow = info.totalCapacity > 0 ? info.totalCapacity : undefined;
-          const budgetKey = contextBudgetThreshold(configuredWindow ?? 0, info.autoCompactPercent);
-          opts.budgetKey = budgetKey;
-          const decision = decideContextBudgetCompaction({
-            totalUsed: info.totalUsed,
-            configuredWindow,
-            autoCompactPercent: info.autoCompactPercent,
-            sdkAutoCompactEnabled: info.isAutoCompactEnabled,
-            sdkAutoCompactThreshold: info.sdkAutoCompactThreshold,
-            cooldownActive:
-              this.contextTracker.isCoolingDown(budgetKey) &&
-              !this.messageQueue.hasOutstandingInternalCompaction(),
-            compactingActive: this.stateManager.getIsCompacting(),
-          });
-          return decision.action === 'compact';
-        },
-      });
-    } finally {
-      this.messageQueue.releaseEarlyDeliveryGate(opts);
-    }
-  }
-
-  private async refreshMidTurnContextInfo(queryObject: QueryLike): Promise<ContextInfo | null> {
-    const fenceModel = this.session.config.model;
-    const fenceProvider = this.session.config.provider;
-    const stale = this.contextTracker.getContextInfo();
-    const refreshKey = `${fenceModel}|${fenceProvider}`;
-    if (
-      stale &&
-      refreshKey === this.lastMidTurnUsageRefreshKey &&
-      Date.now() - this.lastMidTurnUsageRefreshAt < MID_TURN_USAGE_REFRESH_INTERVAL_MS
-    ) {
-      return stale;
-    }
-    try {
-      const { cacheKey, modelInfo } = await resolveSessionContextModelInfo(this.session);
-      if (
-        this.session.config.model !== fenceModel ||
-        this.session.config.provider !== fenceProvider
-      ) {
-        return null;
-      }
-      const info = await this.messageHandler
-        .getContextFetcher()
-        .fetch(queryObject, modelInfo ?? undefined, cacheKey);
-      if (
-        this.queryObject !== queryObject ||
-        this.session.config.model !== fenceModel ||
-        this.session.config.provider !== fenceProvider
-      ) {
-        return null;
-      }
-      if (!info) return stale;
-      this.lastMidTurnUsageRefreshAt = Date.now();
-      this.lastMidTurnUsageRefreshKey = refreshKey;
-      this.contextTracker.updateWithDetailedBreakdown(info);
-      return info;
-    } catch (error) {
-      this.logger.warn(
-        `mid-turn context usage refresh failed for session ${this.session.id}:`,
-        error
-      );
-      if (
-        this.queryObject !== queryObject ||
-        this.session.config.model !== fenceModel ||
-        this.session.config.provider !== fenceProvider
-      ) {
-        return null;
-      }
-      return stale;
-    }
   }
 
   incrementQueryGeneration(): number {
