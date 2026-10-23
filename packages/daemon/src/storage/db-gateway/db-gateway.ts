@@ -61,7 +61,13 @@ class WorkerLane {
 
   private open(): Promise<Worker> {
     return (this.ready ??= new Promise((resolve) => {
-      const worker = (this.worker = this.createWorker());
+      let worker: Worker;
+      try {
+        worker = this.worker = this.createWorker();
+      } catch (error) {
+        queueMicrotask(() => this.stop(error instanceof Error ? error : new Error(String(error))));
+        return;
+      }
       worker.onmessage = ({ data }: MessageEvent<DbGatewayReply>) => {
         if ('ready' in data) resolve(worker);
         else if ('log' in data)

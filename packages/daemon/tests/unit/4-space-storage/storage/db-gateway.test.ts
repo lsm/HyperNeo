@@ -84,6 +84,22 @@ describe('DbGateway', () => {
     expect(await next).toBeNull();
   });
 
+  test('a worker that cannot start rejects the call, and the next call tries again', async () => {
+    let starts = 0;
+    const gateway = new DbGateway('/synthetic.db', null, undefined, () => {
+      starts += 1;
+      if (starts === 1) throw new Error('no worker support');
+      const worker = new TestWorker();
+      queueMicrotask(() => queueMicrotask(() => worker.emit({ id: 2, result: null })));
+      return worker as unknown as Worker;
+    });
+    await expect(gateway.run(recordWouldRefuse, { seen, now: 5 })).rejects.toThrow(
+      'no worker support'
+    );
+    expect(await gateway.run(recordWouldRefuse, { seen, now: 6 })).toBeNull();
+    expect(starts).toBe(2);
+  });
+
   test('waits for the worker to be ready before sending', async () => {
     const worker = new TestWorker(false);
     const gateway = new DbGateway('/synthetic.db', null, undefined, () => worker as never);

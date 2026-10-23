@@ -65,3 +65,24 @@ vi.mock('../src/lib/external-events/session-event-writer.ts', async (importOrigi
     },
   };
 });
+
+vi.mock('../src/storage/db-gateway/db-gateway.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/storage/db-gateway/db-gateway.ts')>();
+  return {
+    ...actual,
+    DbGateway: class extends actual.DbGateway {
+      constructor(...args: ConstructorParameters<typeof actual.DbGateway>) {
+        super(
+          args[0],
+          args[1],
+          args[2],
+          args[3] ??
+            (() =>
+              new SDKBunWorkerBridge(
+                new URL('../src/storage/db-gateway/db-gateway-worker.ts', import.meta.url).href
+              ) as unknown as Worker)
+        );
+      }
+    },
+  };
+});

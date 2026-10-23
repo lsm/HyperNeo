@@ -214,6 +214,28 @@ if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_READER_PATH="$REPO_ROOT/packages/daemon/src/
   } finally { await reader.close(); }
 '; then dump_log; exit 1; fi
 
+if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_SRC="$REPO_ROOT/packages/daemon/src" deno eval --config "$REPO_ROOT/packages/daemon/deno.json" '
+  const src = "file://" + Deno.env.get("SMOKE_SRC");
+  const { DbGateway } = await import(src + "/storage/db-gateway/db-gateway.ts");
+  const { recordWouldRefuse } = await import(src + "/storage/repositories/device-pairing-repository.ts");
+  const gateway = new DbGateway(Deno.env.get("SMOKE_DB_PATH"), null);
+  try {
+    const seen = { reason: "host_not_allowed", kind: "ws", host: "deno-gateway.test", origin: null };
+    await Promise.all([1, 2].map((now) => gateway.run(recordWouldRefuse, { seen, now })));
+    const unknown = await gateway.run({ name: "deno.unknown", mode: "read", run: () => 1 }, undefined).then(() => false, () => true);
+    const { DatabaseSync } = await import("node:sqlite");
+    const db = new DatabaseSync(Deno.env.get("SMOKE_DB_PATH"));
+    try {
+      const row = db.prepare("SELECT count FROM would_refuse_requests WHERE host = ?").get("deno-gateway.test");
+      if (row?.count !== 2 || !unknown) Deno.exit(1);
+    } finally { db.close(); }
+    console.log("[deno-smoke] DB gateway writer serializes ops and rejects unknown ones");
+  } finally { await gateway.close(); }
+'; then
+  dump_log
+  exit 1
+fi
+
 if ! SMOKE_DB_PATH="$DB_PATH" SMOKE_WRITER_PATH="$REPO_ROOT/packages/daemon/src/lib/external-events/session-event-writer.ts" deno eval --config "$REPO_ROOT/packages/daemon/deno.json" '
   const { SessionEventWriter } = await import("file://" + Deno.env.get("SMOKE_WRITER_PATH"));
   const writer = new SessionEventWriter(Deno.env.get("SMOKE_DB_PATH"));
