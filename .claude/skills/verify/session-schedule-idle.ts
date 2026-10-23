@@ -125,9 +125,16 @@ try {
   assert.equal((await wake()).lastOutcome, 'fired');
   assert.equal(scheduler.repo.get(id)!.dueCount, 0);
   const pendingAfterProgress = pendingInputs().length;
+  const longTitle = `Review lead ${'x'.repeat(20_000)}`;
+  await hub.request('session.update', { sessionId: target, title: longTitle });
   for (let count = 1; count <= 4; count++) await wake();
   assert.equal(pendingInputs().length, pendingAfterProgress);
   assert.equal(publications().length - before, 3, 'A new idle stretch must notify once again');
+  const longTitleCard = publications().slice(before)[2];
+  assert(longTitleCard.shortText.length <= 2000);
+  assert(longTitleCard.fullText.length <= 16000);
+  assert(longTitleCard.shortText.endsWith('waiting for work.'));
+  assert.equal(app.db.getSession(target)!.title, longTitle, 'Stored title must remain intact');
   evidence.cards = publications().slice(before);
   evidence.conversation = await call('neo.conversation.read', { conversationId });
   assert((evidence.cards as { shortText: string }[]).every(card => card.shortText.includes('Review lead')));
