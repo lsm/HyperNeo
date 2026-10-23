@@ -140,7 +140,10 @@ import { SpaceManager } from './lib/space/managers/space-manager.ts';
 import type { SpaceRuntimeService } from './lib/space/runtime/space-runtime-service.ts';
 import type { TaskAgentManager } from './lib/space/runtime/task-agent-manager.ts';
 import type { SpaceWorktreeManager } from './lib/workspaces/worktree-manager.ts';
-import { cleanupJobs, JobQueueRepository } from './storage/repositories/job-queue-repository.ts';
+import {
+  cleanupJobsInBatches,
+  JobQueueRepository,
+} from './storage/repositories/job-queue-repository.ts';
 import { purgeWorkFeedSessions } from './storage/work-feed.ts';
 import { JobQueueProcessor, applyStaleReclaimJitter } from './storage/job-queue-processor.ts';
 import { createCleanupHandler } from './lib/job-handlers/cleanup.handler.ts';
@@ -1264,7 +1267,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     );
     jobProcessor.register(
       JOB_QUEUE_CLEANUP,
-      createCleanupHandler(jobQueue, (params) => db.gateway.run(cleanupJobs, params))
+      createCleanupHandler(jobQueue, (params) => cleanupJobsInBatches(db.gateway, params))
     );
     jobProcessor.register(
       MEMORY_CONSOLIDATION,

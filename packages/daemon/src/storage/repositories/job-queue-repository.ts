@@ -1,3 +1,4 @@
+import type { DbGateway } from '../db-gateway/db-gateway.ts';
 import { defineDbOp, defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { generateUUID } from '@hyperneo/shared';
 import { withBusyRetry } from '../busy-retry.ts';
@@ -1193,13 +1194,39 @@ export const jobQueueReads = defineRepositoryOp('jobs.read', 'read', JobQueueRep
   'isClaimOwnedByAnother',
 ]);
 
+const CLEANUP_BATCH_ROWS = 500;
+
 export const cleanupJobs = defineDbOp({
   name: 'jobs.cleanup',
   mode: 'write',
   run: (db: BunDatabase, { beforeMs, completed }: JobCleanup): number => {
-    const queue = new JobQueueRepository(db);
-    let deleted = queue.cleanup(beforeMs);
-    for (const lane of completed) deleted += queue.cleanupCompleted(lane.queue, lane.beforeMs);
+    let deleted = db
+      .prepare(
+        `DELETE FROM job_queue WHERE rowid IN (
+           SELECT rowid FROM job_queue
+            WHERE status IN ('completed', 'dead', 'failed') AND completed_at < ? LIMIT ?)`
+      )
+      .run(beforeMs, CLEANUP_BATCH_ROWS).changes;
+    for (const lane of completed) {
+      if (deleted >= CLEANUP_BATCH_ROWS) break;
+      deleted += db
+        .prepare(
+          `DELETE FROM job_queue WHERE rowid IN (
+             SELECT rowid FROM job_queue
+              WHERE queue = ? AND status = 'completed' AND completed_at < ? LIMIT ?)`
+        )
+        .run(lane.queue, lane.beforeMs, CLEANUP_BATCH_ROWS - deleted).changes;
+    }
     return deleted;
   },
 });
+
+export async function cleanupJobsInBatches(db: DbGateway, cleanup: JobCleanup): Promise<number> {
+  let total = 0;
+  for (;;) {
+    const deleted = await db.run(cleanupJobs, cleanup);
+    total += deleted;
+    if (deleted < CLEANUP_BATCH_ROWS) return total;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
