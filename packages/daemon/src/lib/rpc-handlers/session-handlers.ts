@@ -1190,7 +1190,7 @@ export function setupSessionHandlers(
         resolved: false,
         error: errorText,
       };
-      db.updateHyperNeoActionMessageByUuid(targetSessionId, messageUuid, failedMessage);
+      await db.updateHyperNeoActionMessageByUuid(targetSessionId, messageUuid, failedMessage);
       messageHub.event(
         'state.sdkMessages.delta',
         { added: [failedMessage], timestamp: Date.now() },
@@ -1199,7 +1199,7 @@ export function setupSessionHandlers(
       throw new Error(errorText);
     }
 
-    db.updateHyperNeoActionMessageByUuid(targetSessionId, messageUuid, resolvedMessage);
+    await db.updateHyperNeoActionMessageByUuid(targetSessionId, messageUuid, resolvedMessage);
 
     messageHub.event(
       'state.sdkMessages.delta',
