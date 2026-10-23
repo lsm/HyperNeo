@@ -505,3 +505,58 @@ describe('neo.question.retire and replaces', () => {
     expect(store.listQuestions('ask').map((q) => q.text)).toEqual(['Here?']);
   });
 });
+
+describe('todo-owned question cards', () => {
+  test('retains explicit todo ownership and retires only settled todo cards', async () => {
+    const h = setup();
+    try {
+      const bound = await h.asked({ kind: 'reply', text: 'Which rows?', todoId: h.fix.id });
+      const other = await h.asked({ kind: 'reply', text: 'Which style?', todoId: h.rows.id });
+      const general = await h.asked({ kind: 'reply', text: 'Anything else?' });
+      expect(bound).toMatchObject({ todoId: h.fix.id });
+      h.store.updateTodo(h.fix, { state: 'done' }, 4);
+      expect(h.store.getQuestion(bound.id)?.state).toBe('retired');
+      expect(h.store.getQuestion(other.id)?.state).toBe('open');
+      expect(h.store.getQuestion(general.id)?.state).toBe('open');
+    } finally {
+      h.db.close();
+    }
+  });
+  test('recompute retires cards for missing or already settled todos without a new state write', async () => {
+    const h = setup();
+    try {
+      const gone = await h.asked({ kind: 'reply', text: 'Gone?', todoId: h.fix.id });
+      const done = await h.asked({ kind: 'reply', text: 'Done?', todoId: h.rows.id });
+      h.db.prepare('DELETE FROM neo_todos WHERE id = ?').run(h.fix.id);
+      h.db.prepare("UPDATE neo_todos SET state = 'done' WHERE id = ?").run(h.rows.id);
+      await h.store.recompute(
+        h.store.getTodo(h.rows.id)!,
+        {},
+        5,
+        { state: 'no_opinion' },
+        async () => {}
+      );
+      expect(h.store.getQuestion(gone.id)?.state).toBe('retired');
+      expect(h.store.getQuestion(done.id)?.state).toBe('retired');
+    } finally {
+      h.db.close();
+    }
+  });
+  test('refuses a foreign or settled todo instead of making an unowned question', async () => {
+    const h = setup();
+    try {
+      for (const todoId of ['unknown', h.fix.id]) {
+        h.store.updateTodo(h.fix, { state: 'removed' }, 3);
+        const result = await h.call('neo.question.ask', {
+          askId: 'ask',
+          kind: 'reply',
+          text: 'Which?',
+          todoId,
+        });
+        expect(result.ok).toBe(false);
+      }
+    } finally {
+      h.db.close();
+    }
+  });
+});
