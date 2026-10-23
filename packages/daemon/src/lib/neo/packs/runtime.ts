@@ -9,6 +9,7 @@ import { BUILD_METADATA } from '../../build-metadata.ts';
 import { remoteDaemons } from '../../remote-daemons/registry.ts';
 import { readNeoDaemonCommits } from '../daemon-commits.ts';
 import { createCodingBranchPrReader } from './coding/branch-reader.ts';
+import { createCodingMergeReader } from './coding/merge-reader.ts';
 import { type NeoDeployReader, readGithubDeploys } from './coding/deploy-checks.ts';
 import { createCodingPack } from './coding/pack.ts';
 import { CodingPrEventRepository } from './coding/pr-events.ts';
@@ -20,9 +21,14 @@ import { createCodingWorkPrReader } from './coding/work-reader.ts';
 import { createLifeAdminPack } from './life-admin/pack.ts';
 
 export function createNeoCodingReaders(db: () => Database) {
+  const readMerge = createCodingMergeReader(db);
   const readDeploys: NeoDeployReader = (urls) =>
-    readGithubDeploys(urls, () =>
-      readNeoDaemonCommits({ name: hostname(), commit: BUILD_METADATA.commit }, remoteDaemons)
+    readGithubDeploys(
+      urls,
+      () =>
+        readNeoDaemonCommits({ name: hostname(), commit: BUILD_METADATA.commit }, remoteDaemons),
+      undefined,
+      readMerge
     );
   return {
     readPrs: createCodingWorkPrReader(db),
