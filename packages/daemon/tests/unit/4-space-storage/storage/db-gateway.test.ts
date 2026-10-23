@@ -117,6 +117,42 @@ describe('DbGateway', () => {
     expect(workers[0].requests.at(-1)?.args).toEqual({ seen, now: 3000 });
   });
 
+  test('a call with no reply in time fails as unknown and recycles the worker', async () => {
+    const workers: TestWorker[] = [];
+    const gateway = new DbGateway(
+      '/synthetic.db',
+      null,
+      undefined,
+      () => {
+        const worker = new TestWorker();
+        workers.push(worker);
+        return worker as unknown as Worker;
+      },
+      20
+    );
+    const lost = gateway.run(recordWouldRefuse, { seen, now: 5 });
+    await expect(lost).rejects.toThrow('gave no reply in 20 ms; outcome unknown');
+    expect(workers[0].stopped).toBe(true);
+    const next = gateway.run(recordWouldRefuse, { seen, now: 6 });
+    await tick();
+    workers[1].emit({ id: workers[1].requests[0].id, result: null });
+    expect(await next).toBeNull();
+  });
+
+  test('a request the worker cannot receive fails without stalling the lane', async () => {
+    const { gateway, workers } = fixture();
+    const first = gateway.run(recordWouldRefuse, { seen, now: 5 });
+    await tick();
+    workers[0].postMessage = () => {
+      throw new Error('could not be cloned');
+    };
+    await expect(gateway.run(recordWouldRefuse, { seen, now: () => 6 } as never)).rejects.toThrow(
+      'could not be cloned'
+    );
+    workers[0].emit({ id: workers[0].requests[0].id, result: null });
+    expect(await first).toBeNull();
+  });
+
   test('waits for the worker to be ready before sending', async () => {
     const worker = new TestWorker(false);
     const gateway = new DbGateway('/synthetic.db', null, undefined, () => worker as never);

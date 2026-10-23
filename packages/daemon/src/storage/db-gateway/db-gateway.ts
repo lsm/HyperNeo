@@ -20,6 +20,7 @@ export type DbGatewayReply =
   | { id: number; result?: unknown; error?: string };
 
 const MAX_PENDING = 1024;
+const REPLY_TIMEOUT_MS = 30_000;
 
 class WorkerLane {
   private worker: Worker | null = null;
@@ -35,6 +36,7 @@ class WorkerLane {
     private readonly lane: Lane,
     private readonly dbPath: string,
     private readonly createWorker: () => Worker,
+    private readonly replyTimeoutMs: number,
     private readonly queryObservability?: SQLiteQueryObservabilityOptions
   ) {}
 
@@ -45,17 +47,41 @@ class WorkerLane {
       return Promise.reject(new Error(`DB gateway ${this.lane} queue full`));
     const id = ++this.id;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      void this.open().then((worker) =>
-        worker.postMessage({
-          id,
-          dbPath: this.dbPath,
-          lane: this.lane,
-          op,
-          args,
-          queryObservability: this.queryObservability,
-        } satisfies DbGatewayRequest)
+      const timer = setTimeout(
+        () =>
+          this.stop(
+            new Error(
+              `DB gateway ${this.lane} gave no reply in ${this.replyTimeoutMs} ms; outcome unknown`
+            )
+          ),
+        this.replyTimeoutMs
       );
+      this.pending.set(id, {
+        resolve: (result) => {
+          clearTimeout(timer);
+          resolve(result);
+        },
+        reject: (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      });
+      void this.open().then((worker) => {
+        try {
+          worker.postMessage({
+            id,
+            dbPath: this.dbPath,
+            lane: this.lane,
+            op,
+            args,
+            queryObservability: this.queryObservability,
+          } satisfies DbGatewayRequest);
+        } catch (error) {
+          const waiter = this.pending.get(id);
+          this.pending.delete(id);
+          waiter?.reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      });
     });
   }
 
@@ -115,11 +141,12 @@ export class DbGateway {
     private readonly inline: Database | null,
     queryObservability?: SQLiteQueryObservabilityOptions,
     createWorker = () =>
-      new Worker(new URL('./db-gateway-worker.ts', import.meta.url).href, { type: 'module' })
+      new Worker(new URL('./db-gateway-worker.ts', import.meta.url).href, { type: 'module' }),
+    replyTimeoutMs = REPLY_TIMEOUT_MS
   ) {
     this.lanes = {
-      read: new WorkerLane('read', dbPath, createWorker, queryObservability),
-      write: new WorkerLane('write', dbPath, createWorker, queryObservability),
+      read: new WorkerLane('read', dbPath, createWorker, replyTimeoutMs, queryObservability),
+      write: new WorkerLane('write', dbPath, createWorker, replyTimeoutMs, queryObservability),
     };
   }
 
