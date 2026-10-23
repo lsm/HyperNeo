@@ -163,6 +163,7 @@ export class NeoService {
   ) {
     this.notifyChanged = () => {
       hub.event('neo.changed', {});
+      void events.publish('neo.changed', {});
     };
     this.notifyPublicationsChanged = (conversationId) => {
       hub.event('neo.publications.changed', { conversationId });

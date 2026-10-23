@@ -1,18 +1,25 @@
-import { sessionUnavailable } from '../session-resolution/session-lookup.ts';
 import type { Database } from '../../storage/database.ts';
+import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
+import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 import {
-  SessionScheduleRepository,
   type SessionSchedule,
+  SessionScheduleRepository,
 } from '../../storage/repositories/session-schedule-repository.ts';
+import { hyperneoWorkStatus } from '../drivers/hyperneo-adapter.ts';
 import type { WorkStatus } from '../drivers/types.ts';
-import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
 import { renderAddress } from '../mailbox/address.ts';
+import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
+import { neoDerivedId } from '../neo/derived-id.ts';
+import { neoSessionStatus } from '../neo/session-status.ts';
 import { invokeOperation } from '../operations/invoke.ts';
 import type { OperationRegistry } from '../operations/registry.ts';
-import { hyperneoWorkStatus } from '../drivers/hyperneo-adapter.ts';
-import { neoSessionStatus } from '../neo/session-status.ts';
+import { sessionUnavailable } from '../session-resolution/session-lookup.ts';
 
-export function createScheduleDelivery(db: Database, registry: () => OperationRegistry) {
+export function createScheduleDelivery(
+  db: Database,
+  registry: () => OperationRegistry,
+  notify: () => void = () => {}
+) {
   const caller = { source: 'internal' as const, role: 'neo' as const };
   const invoke = async (name: string, input: unknown) => {
     const outcome = await invokeOperation(registry(), name, input, caller);
@@ -25,6 +32,30 @@ export function createScheduleDelivery(db: Database, registry: () => OperationRe
     return value;
   };
   return {
+    notifyIdle: (schedule: SessionSchedule): void => {
+      const conversationId = new NeoRepository(db.getDatabase()).conversationId();
+      if (!conversationId) return;
+      const publications = new NeoPublicationRepository(db.getDatabase());
+      const publicationId = neoDerivedId(
+        `schedule-idle:${schedule.id}:${schedule.factsDigest}:${schedule.lastMessageId}`
+      );
+      if (publications.get(conversationId, publicationId)) return;
+      const name = db.getSession(schedule.target.id)?.title ?? schedule.target.id;
+      const elapsed =
+        schedule.cadence.kind === 'every'
+          ? ` for ${Math.round((schedule.cadence.everyMs * 3) / 60_000)} minutes`
+          : '';
+      const text = `${name} has been idle${elapsed}, waiting for work.`;
+      const receipt = publications.append({
+        conversationId,
+        publicationId,
+        shortText: text,
+        fullText: text,
+        links: [],
+      });
+      if (!receipt.accepted) throw new Error(`Idle notice: ${receipt.reason}`);
+      if (receipt.created) notify();
+    },
     status: async (
       ref: SessionSchedule['target']
     ): Promise<WorkStatus | 'not_found' | 'not_open'> => {

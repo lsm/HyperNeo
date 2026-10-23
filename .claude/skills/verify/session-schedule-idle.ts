@@ -52,6 +52,7 @@ try {
   const id = scheduler.repo.getBySource('goal', result.goal.id)!.id;
   const baseline = await scheduler.source('goal')!.facts(result.goal.id); assert(baseline);
   scheduler.repo.recordOutcome(scheduler.repo.get(id)!, 'fired', baseline.digest, 'prior-delivery');
+  const pendingInputs = () => app!.jobQueue.listActiveByPayload('mailbox', { 'to.sessionId': target });
   const inputRows = () => app!.db.getDatabase().prepare("SELECT sdk_uuid FROM sdk_messages WHERE session_id = ? AND message_type = 'user'").all(target);
   const conversationId = new NeoRepository(app.db.getDatabase()).conversationId()!;
   const publications = () => new NeoPublicationRepository(app!.db.getDatabase()).list(conversationId, 0, 100) ?? [];
@@ -63,7 +64,7 @@ try {
     await fire!(job);
     app!.jobQueue.deleteJob(job.id);
     const after = scheduler!.repo.get(id)!;
-    (evidence.wakes as unknown[]).push({ now, dueCount: after.dueCount, nextRunAt: after.nextRunAt, outcome: after.lastOutcome, cards: publications().length - before, inputs: inputRows() });
+    (evidence.wakes as unknown[]).push({ now, dueCount: after.dueCount, nextRunAt: after.nextRunAt, outcome: after.lastOutcome, cards: publications().length - before, inputs: inputRows(), mailboxInputs: pendingInputs().length });
     return after;
   };
   for (let count = 1; count <= 10; count++) {
@@ -73,6 +74,8 @@ try {
     assert.equal(row.nextRunAt! - now, Math.min(1_200_000 * 2 ** Math.max(0, count - 2), 28_800_000));
     assert.equal(publications().length - before, count < 3 ? 0 : 1);
     assert.deepEqual(inputRows(), []);
+    assert.equal(pendingInputs().length, 0);
+    assert.equal(live.queryPromise, null);
   }
   const idle = scheduler.repo.get(id)!;
   now += 1000;
@@ -86,7 +89,9 @@ try {
   assert.equal(reset.nextRunAt, changedAt + 1_200_000);
   assert.equal((await wake()).lastOutcome, 'fired');
   assert.equal(scheduler.repo.get(id)!.dueCount, 0);
+  const pendingAfterProgress = pendingInputs().length;
   for (let count = 1; count <= 4; count++) await wake();
+  assert.equal(pendingInputs().length, pendingAfterProgress);
   assert.equal(publications().length - before, 2, 'A new idle stretch must notify once again');
   evidence.cards = publications().slice(before);
   evidence.conversation = await call('neo.conversation.read', { conversationId });

@@ -1522,6 +1522,36 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     ...createSessionScheduleOperations(sessionScheduler),
   ];
   sessionScheduler.recover();
+  let progressRefresh: Promise<void> | undefined;
+  let progressRequested = false;
+  let progressClosed = false;
+  const refreshScheduleProgress = () => {
+    progressRequested = true;
+    if (progressRefresh || progressClosed) return;
+    progressRefresh = (async () => {
+      while (progressRequested && !progressClosed) {
+        progressRequested = false;
+        await sessionScheduler.refreshProgress();
+      }
+    })()
+      .catch((error) => log.warn('Schedule progress refresh failed', error))
+      .finally(() => {
+        progressRefresh = undefined;
+        if (progressRequested && !progressClosed) refreshScheduleProgress();
+      });
+  };
+  deps.reactiveDb.on('change', refreshScheduleProgress);
+  const offScheduleProgress = deps.internalEventBus.subscribe(
+    'neo.changed',
+    refreshScheduleProgress,
+    { subscriberName: 'session-schedule-progress' }
+  );
+  driverCleanup.push(async () => {
+    progressClosed = true;
+    offScheduleProgress();
+    deps.reactiveDb.off('change', refreshScheduleProgress);
+    await progressRefresh;
+  });
 
   const spaceOperationRegistryProvider = createSpaceOperationRegistryProvider(
     deps.db,

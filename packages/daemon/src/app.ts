@@ -1368,7 +1368,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       SESSION_SCHEDULE_FIRE,
       createSessionScheduleFire({
         scheduler: rpcHandlers.sessionScheduler,
-        ...createScheduleDelivery(db, () => sessionManager.getOperationRegistry()),
+        ...createScheduleDelivery(
+          db,
+          () => sessionManager.getOperationRegistry(),
+          () => messageHub.event('neo.changed', {})
+        ),
       })
     );
 

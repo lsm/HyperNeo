@@ -1,3 +1,7 @@
+import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
+import { NeoAskTodoRepository } from '../../../../src/storage/repositories/neo-ask-todo-repository';
+import { createTestSession } from '../../../helpers/database';
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { SessionScheduler } from '../../../../src/lib/scheduler/session-schedules';
 import { createSessionScheduleFire } from '../../../../src/lib/scheduler/session-schedule-fire';
@@ -15,12 +19,15 @@ describe('session schedule firing', () => {
   let digest: string;
   let gone: boolean;
   let deliveries: { id: string; text: string }[];
+  let notices: string[];
   let clock: ReturnType<typeof spyOn>;
   let now: number;
   beforeEach(() => {
     db = new Database(':memory:');
     runMigrations(db, () => {});
     createTables(db);
+    new SessionRepository(db).createSession(createTestSession('recipient'));
+    new SessionRepository(db).createSession(createTestSession('foreign'));
     jobs = new JobQueueRepository(db);
     scheduler = new SessionScheduler(db, jobs);
     now = Date.now();
@@ -29,6 +36,7 @@ describe('session schedule firing', () => {
     digest = 'a';
     gone = false;
     deliveries = [];
+    notices = [];
     scheduler.registerSource({
       kind: 'goal',
       facts: async () => (gone ? null : { digest, summary: 'Goal changed' }),
@@ -51,6 +59,9 @@ describe('session schedule firing', () => {
     });
   const deps = () => ({
     scheduler,
+    notifyIdle: (schedule: SessionSchedule) => {
+      notices.push(schedule.id);
+    },
     status: async () => status,
     deliver: async (_schedule: SessionSchedule, id: string, text: string) => {
       deliveries.push({ id, text });
@@ -62,7 +73,7 @@ describe('session schedule firing', () => {
     await createSessionScheduleFire(deps())(jobs.getJob(row.pendingJobId!)!);
     return scheduler.repo.get(id)!;
   };
-  test('changed facts fire once, unchanged facts wait until the nudge, and changes fire immediately', async () => {
+  test('changed facts fire once, quiet wakes back off without turns, and progress resets', async () => {
     const initial = create();
     const first = await fire(initial.id);
     expect(first).toMatchObject({
@@ -75,14 +86,27 @@ describe('session schedule firing', () => {
       { id: `schedule:${initial.id}:${initial.nextRunAt}`, text: 'Goal changed' },
     ]);
     expect(await fire(initial.id)).toMatchObject({ lastOutcome: 'skipped_unchanged', dueCount: 1 });
-    await fire(initial.id);
-    expect(await fire(initial.id)).toMatchObject({ lastOutcome: 'fired', dueCount: 0 });
-    expect(deliveries[1].text).toBe('Nothing moved: check in');
+    for (let count = 2; count <= 15; count++) {
+      const quiet = await fire(initial.id);
+      expect(quiet).toMatchObject({ lastOutcome: 'skipped_unchanged', dueCount: count });
+      expect(quiet.nextRunAt).toBe(now + Math.min(60000 * 2 ** Math.max(0, count - 2), 28_800_000));
+    }
+    expect(deliveries).toHaveLength(1);
+    expect(notices).toEqual([initial.id]);
     digest = 'b';
+    now += 1;
+    await scheduler.refreshProgress();
+    expect(scheduler.repo.get(initial.id)).toMatchObject({
+      lastOutcome: 'progress',
+      dueCount: 0,
+      nextRunAt: now + 60000,
+    });
     expect(await fire(initial.id)).toMatchObject({ lastOutcome: 'fired', factsDigest: 'b' });
+    for (let count = 1; count <= 4; count++) await fire(initial.id);
+    expect(notices).toEqual([initial.id, initial.id]);
   });
   test.each(['running', 'queued', 'stopped', 'needs_you'] as const)(
-    '%s skips to a future cadence, counts each due, then nudges when idle',
+    '%s skips without counting quiet wakes or forcing a turn when idle',
     async (busy) => {
       const row = create();
       await fire(row.id);
@@ -91,21 +115,112 @@ describe('session schedule firing', () => {
         const skipped = await fire(row.id);
         expect(skipped).toMatchObject({
           lastOutcome: busy === 'needs_you' ? 'skipped_needs_you' : 'skipped_busy',
-          dueCount: i,
+          dueCount: 0,
         });
         expect(skipped.nextRunAt).toBe(now + 60000);
       }
       expect(deliveries).toHaveLength(1);
       status = 'done';
-      expect(await fire(row.id)).toMatchObject({ lastOutcome: 'fired', dueCount: 0 });
-      expect(deliveries).toHaveLength(2);
+      expect(await fire(row.id)).toMatchObject({ lastOutcome: 'skipped_unchanged', dueCount: 1 });
+      expect(deliveries).toHaveLength(1);
     }
   );
-  test('a reminder delivers its note every due run', async () => {
+  test('a reminder follows the same no-forced-turn rule', async () => {
     const row = create('reminder', 1);
     await fire(row.id);
     await fire(row.id);
-    expect(deliveries.map((d) => d.text)).toEqual(['Read the checklist', 'Read the checklist']);
+    expect(deliveries.map((d) => d.text)).toEqual(['Read the checklist']);
+  });
+  test('human and task inputs, new asks and todos reset backoff; foreign and system inputs do not', async () => {
+    const row = create();
+    const messages = new SDKMessageRepository(db);
+    const asks = new NeoAskTodoRepository(db);
+    await fire(row.id);
+    const quiet = async () => {
+      for (let i = 0; i < 3; i++) await fire(row.id);
+    };
+    const reset = async () => {
+      now += 1;
+      await scheduler.refreshProgress();
+      expect(scheduler.repo.get(row.id)).toMatchObject({ dueCount: 0, nextRunAt: now + 60000 });
+      await fire(row.id);
+    };
+    for (const inputKind of ['human', 'task'] as const) {
+      await quiet();
+      messages.saveUserMessage(
+        'recipient',
+        {
+          type: 'user',
+          uuid: `new-${inputKind}`,
+          inputKind,
+          message: { role: 'user', content: 'New work' },
+          parent_tool_use_id: null,
+          session_id: 'sdk-fixture',
+        },
+        'enqueued'
+      );
+      await reset();
+    }
+    await quiet();
+    const ask = asks.openAsk({
+      id: 'new-ask',
+      sessionId: 'recipient',
+      originMessageId: null,
+      projectId: null,
+      title: 'New ask',
+      request: 'Review this',
+      createdAt: now,
+      goalId: null,
+    });
+    await reset();
+    await quiet();
+    asks.addTodo(
+      'new-todo',
+      ask.id,
+      { title: 'New todo', doneWhen: 'Reviewed', check: null, instruction: null, named: null },
+      now
+    );
+    await reset();
+    await quiet();
+    const before = scheduler.repo.get(row.id)!;
+    for (const [sessionId, inputKind] of [
+      ['foreign', 'human'],
+      ['recipient', 'system'],
+    ] as const)
+      messages.saveUserMessage(
+        sessionId,
+        {
+          type: 'user',
+          uuid: `ignored-${inputKind}`,
+          inputKind,
+          message: { role: 'user', content: 'Unrelated note' },
+          parent_tool_use_id: null,
+          session_id: 'sdk-fixture',
+        },
+        'enqueued'
+      );
+    await scheduler.refreshProgress();
+    expect(scheduler.repo.get(row.id)).toMatchObject({
+      dueCount: before.dueCount,
+      nextRunAt: before.nextRunAt,
+    });
+  });
+  test('a paused unchanged schedule cannot publish an idle notice', async () => {
+    const row = create();
+    await fire(row.id);
+    await fire(row.id);
+    await fire(row.id);
+    scheduler.registerSource({
+      kind: 'goal',
+      facts: async () => {
+        scheduler.pause(scheduler.repo.get(row.id)!);
+        return { digest, summary: '' };
+      },
+      message: () => '',
+    });
+    await fire(row.id);
+    expect(notices).toEqual([]);
+    expect(scheduler.repo.get(row.id)?.status).toBe('paused');
   });
   test('a deleted source completes the schedule without another job', async () => {
     const row = create();
@@ -144,7 +259,7 @@ describe('session schedule firing', () => {
     await expect(handler(job)).rejects.toThrow('offline');
     now += 1000;
     await expect(handler(job)).rejects.toThrow('offline');
-    expect(scheduler.repo.get(row.id)?.dueCount).toBe(1);
+    expect(scheduler.repo.get(row.id)?.dueCount).toBe(0);
     await createSessionScheduleFire(deps())(job);
     expect(deliveries[0].id).toBe(`schedule:${row.id}:${row.nextRunAt}`);
     await createSessionScheduleFire(deps())(job);
