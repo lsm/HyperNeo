@@ -496,6 +496,25 @@ describe('codex-desktop start', () => {
     expect(closed()).toBe(true);
   });
 
+  test('returns the saved thread in a typed rejection when bootstrap exit fails', async () => {
+    let closes = 0;
+    const { instance, calls } = adapter({
+      call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}),
+      close: async () => {
+        closes++;
+        throw new Error('Codex bootstrap exited with 7.');
+      },
+    });
+    expect(await instance.start?.(request, user)).toEqual({
+      ok: false,
+      reason: 'not_delivered',
+      detail:
+        'Codex bootstrap exited with 7. Thread th1 was created, but its opening turn was not confirmed.',
+    });
+    expect(closes).toBe(1);
+    expect(calls.map(([method]) => method)).toEqual(['thread/start', 'thread/name/set']);
+  });
+
   test('the opening text includes the spans Desktop needs to render its live turn', async () => {
     const { instance, calls } = adapter({
       call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}),

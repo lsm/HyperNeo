@@ -12,6 +12,7 @@ export type CodexSendGate<Value> = { value: Value } | { reason: Result<WorkDeliv
 
 export async function steerCodexDesktopTurn(
   socketPath: string | undefined,
+  spawn: SpawnFn,
   threadId: string,
   text: string,
   messageId: string,
@@ -27,9 +28,11 @@ export async function steerCodexDesktopTurn(
     return { value: 'app-server' };
   }
   let dispatched = false;
+  let desktopConnected = false;
   try {
     return await withCodexDesktopIpc(socketPath, async ({ call }) => {
-      const owner = await call(
+      desktopConnected = true;
+      const discovered = await call(
         'thread-owner-discovery',
         { hostId: 'local', conversationId: threadId },
         1
@@ -37,12 +40,23 @@ export async function steerCodexDesktopTurn(
       log.warn('work.send owner discovery', {
         threadId,
         messageId,
-        result: owner.resultType,
-        ownerClientId: owner.handledByClientId,
-        reason: owner.error,
+        result: discovered.resultType,
+        ownerClientId: discovered.handledByClientId,
+        reason: discovered.error,
       });
-      if (owner.resultType !== 'success' || !owner.handledByClientId)
-        return { value: 'app-server' };
+      const owner =
+        discovered.resultType === 'success' && discovered.handledByClientId
+          ? discovered.handledByClientId
+          : discovered.error === 'no-client-found'
+            ? await openCodexDesktopThread({ call }, spawn, threadId)
+            : undefined;
+      if (!owner)
+        return {
+          reason: reject(
+            'not_delivered',
+            `${discovered.error ?? 'Codex Desktop did not confirm thread ownership.'} Open the thread in Codex Desktop before sending input.`
+          ),
+        };
       log.warn('work.send route', { threadId, messageId, path: 'desktop-steer' });
       dispatched = true;
       const response = await call(
@@ -59,7 +73,7 @@ export async function steerCodexDesktopTurn(
           },
         },
         1,
-        owner.handledByClientId
+        owner
       );
       if (
         response.resultType === 'error' &&
@@ -79,7 +93,7 @@ export async function steerCodexDesktopTurn(
             },
           },
           2,
-          owner.handledByClientId
+          owner
         );
         const startedTurnId = started.result?.result?.turn?.id;
         return started.resultType === 'success' && startedTurnId
@@ -116,11 +130,17 @@ export async function steerCodexDesktopTurn(
       dispatched,
       reason: String(error),
     });
-    if (!dispatched) return { value: 'app-server' };
+    if (
+      !desktopConnected &&
+      ['ENOENT', 'ECONNREFUSED'].includes((error as NodeJS.ErrnoException).code ?? '')
+    )
+      return { value: 'app-server' };
     return {
       reason: reject(
         'not_delivered',
-        `${String(error)} The steer may have been accepted; check work.status before retrying.`
+        dispatched
+          ? `${String(error)} The steer may have been accepted; check work.status before retrying.`
+          : String(error)
       ),
     };
   }
@@ -132,15 +152,27 @@ export async function startCodexDesktopTurn(
   threadId: string,
   request: Record<string, unknown>
 ): Promise<void> {
-  return withCodexDesktopIpc(socketPath, (client) => handoff(client, spawn, threadId, request));
+  return withCodexDesktopIpc(socketPath, async (client) => {
+    const owner = await openCodexDesktopThread(client, spawn, threadId);
+    const started = await client.call(
+      'thread-follower-start-turn',
+      {
+        conversationId: threadId,
+        turnStart: { request, context: { inheritThreadSettings: false } },
+      },
+      2,
+      owner
+    );
+    if (started.resultType !== 'success' || !started.result?.result?.turn?.id)
+      throw new Error(started.error ?? 'Codex Desktop did not confirm the opening turn.');
+  });
 }
 
-async function handoff(
+async function openCodexDesktopThread(
   { call }: CodexDesktopIpc,
   spawn: SpawnFn,
-  threadId: string,
-  request: Record<string, unknown>
-): Promise<void> {
+  threadId: string
+): Promise<string> {
   let launcher: ReturnType<SpawnFn> | undefined;
   let launchTimer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -169,17 +201,7 @@ async function handoff(
       if (!owner) await new Promise((resolve) => setTimeout(resolve, 200));
     } while (!owner && Date.now() < deadline);
     if (!owner) throw new Error('Codex Desktop did not take ownership of the new thread.');
-    const started = await call(
-      'thread-follower-start-turn',
-      {
-        conversationId: threadId,
-        turnStart: { request, context: { inheritThreadSettings: false } },
-      },
-      2,
-      owner
-    );
-    if (started.resultType !== 'success' || !started.result?.result?.turn?.id)
-      throw new Error(started.error ?? 'Codex Desktop did not confirm the opening turn.');
+    return owner;
   } finally {
     clearTimeout(launchTimer);
   }

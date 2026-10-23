@@ -9,7 +9,16 @@ import { createCodexDesktopAdapter } from '../../../../src/lib/drivers/codex-des
 import { createWorkVerbOperations } from '../../../../src/lib/drivers/work-operations';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
+import type { SpawnFn } from '../../../../src/lib/runtime-spawn';
 import { Database } from '../../../../src/storage/sqlite-compat';
+
+const refuseOpen: SpawnFn = () => ({
+  stdout: null,
+  stderr: new Response('open failed').body,
+  exited: Promise.resolve(1),
+  exitCode: 1,
+  kill: () => {},
+});
 
 interface Message {
   type: string;
@@ -77,7 +86,7 @@ describe('withCodexDesktopIpc', () => {
   }
 
   describe('steerCodexDesktopTurn discovery fallback', () => {
-    test('tries app-server when Desktop discovery refuses before dispatch', async () => {
+    test('refuses input when reachable Desktop cannot confirm ownership', async () => {
       const f = await fixture((message, _socket, send) =>
         send({
           type: 'response',
@@ -86,8 +95,14 @@ describe('withCodexDesktopIpc', () => {
           error: 'request-version-mismatch',
         })
       );
-      expect(await steerCodexDesktopTurn(f.path, 'thread-1', 'now', 'input-1')).toEqual({
-        value: 'app-server',
+      expect(
+        await steerCodexDesktopTurn(f.path, refuseOpen, 'thread-1', 'now', 'input-1')
+      ).toMatchObject({
+        reason: {
+          ok: false,
+          reason: 'not_delivered',
+          detail: expect.stringContaining('request-version-mismatch'),
+        },
       });
       expect(f.seen.some((message) => message.method === 'thread-follower-steer-turn')).toBe(false);
     });
@@ -204,6 +219,157 @@ describe('withCodexDesktopIpc', () => {
     expect(invoked).toBe(false);
   });
 
+  async function driverFor(path: string, open: () => number) {
+    const statePath = join(directory, 'worker.sqlite');
+    const db = new Database(statePath);
+    db.exec(`CREATE TABLE threads (id TEXT, name TEXT, title TEXT, first_user_message TEXT, cwd TEXT, source TEXT, archived INTEGER, updated_at_ms INTEGER, rollout_path TEXT);
+      CREATE TABLE projects (id TEXT, name TEXT);
+      CREATE TABLE project_roots (project_id TEXT, path TEXT);
+      INSERT INTO threads VALUES ('thread-1', 'Worker', '', '', '/tmp/verify', 'desktop', 0, 1, '/missing.jsonl')`);
+    db.close();
+    const shared: string[] = [];
+    const launched: string[][] = [];
+    const driver = createCodexDesktopAdapter({
+      statePath,
+      desktopSocketPath: path,
+      worktreesDir: directory,
+      machine: 'test',
+      now: Date.now,
+      spawn: (args) => {
+        launched.push(args);
+        const code = open();
+        return {
+          stdout: null,
+          stderr: new Response(code ? 'open failed' : '').body,
+          exited: Promise.resolve(code),
+          exitCode: code,
+          kill: () => {},
+        };
+      },
+      appServer: async () => {
+        shared.push('connect');
+        throw new Error('second writer forbidden');
+      },
+      bootstrapServer: async () => {
+        throw new Error('must not create another thread');
+      },
+      prepareDesktopProject: async () => {
+        throw new Error('must not register a project');
+      },
+      startDesktopTurn: async () => {
+        throw new Error('must use the existing owner');
+      },
+      folderExists: () => true,
+      makeFolder: () => {},
+      homeDir: directory,
+      gitCheckout: async () => null,
+      newId: () => 'input-1',
+    });
+    return { driver, shared, launched };
+  }
+
+  describe('Desktop worker ownership', () => {
+    test('rejects a successful discovery without an owner ID without opening or starting another writer', async () => {
+      const f = await fixture((message, _socket, send) =>
+        send({
+          type: 'response',
+          requestId: message.requestId,
+          resultType: 'success',
+        })
+      );
+      const w = await driverFor(f.path, () => 0);
+      expect(
+        await w.driver.send!({ adapter: 'codex-desktop', id: 'thread-1' }, 'next task', {
+          from: 'user',
+          caller: { source: 'rpc' },
+        })
+      ).toMatchObject({
+        ok: false,
+        reason: 'not_delivered',
+        detail: expect.stringContaining('did not confirm thread ownership'),
+      });
+      expect(w.launched).toEqual([]);
+      expect(w.shared).toEqual([]);
+      expect(
+        f.seen.filter((message) => message.type === 'request').map((message) => message.method)
+      ).toEqual(['initialize', 'thread-owner-discovery']);
+    });
+
+    test.each([false, true])(
+      'opens an unowned saved worker in Desktop before its next turn, idle=%s',
+      async (idle) => {
+        let opened = false;
+        const f = await fixture((message, _socket, send) => {
+          const discovery = message.method === 'thread-owner-discovery';
+          send({
+            type: 'response',
+            requestId: message.requestId,
+            ...(discovery
+              ? opened
+                ? { resultType: 'success', handledByClientId: 'desktop-owner' }
+                : { resultType: 'error', error: 'no-client-found' }
+              : message.method === 'thread-follower-steer-turn' && idle
+                ? { resultType: 'error', error: 'NoActiveTurn' }
+                : {
+                    resultType: 'success',
+                    result: {
+                      result: idle
+                        ? { turn: { id: 'new-desktop-turn' } }
+                        : { turnId: 'desktop-active' },
+                    },
+                  }),
+          });
+        });
+        const w = await driverFor(f.path, () => {
+          opened = true;
+          return 0;
+        });
+        expect(
+          await w.driver.send!({ adapter: 'codex-desktop', id: 'thread-1' }, 'next task', {
+            from: 'user',
+            caller: { source: 'rpc' },
+          })
+        ).toMatchObject({
+          ok: true,
+          value: idle
+            ? { startedTurnId: 'new-desktop-turn' }
+            : { steeredIntoTurnId: 'desktop-active' },
+        });
+        expect(w.shared).toEqual([]);
+        expect(w.launched).toEqual([['open', '-g', 'codex://threads/thread-1']]);
+        expect(f.seen.at(-1)?.targetClientId).toBe('desktop-owner');
+      }
+    );
+
+    test.each([
+      { resultType: 'error', error: 'client rejected' },
+      { resultType: 'success', result: {} },
+    ])('never starts a shared writer after Desktop handshake refusal: %j', async (reply) => {
+      const f = await fixture(() => {}, reply);
+      const w = await driverFor(f.path, () => 0);
+      expect(
+        await w.driver.send!({ adapter: 'codex-desktop', id: 'thread-1' }, 'next task', {
+          from: 'user',
+          caller: { source: 'rpc' },
+        })
+      ).toMatchObject({ ok: false, reason: 'not_delivered' });
+      expect(w.shared).toEqual([]);
+      expect(w.launched).toEqual([]);
+    });
+
+    test('never resumes through shared server when reachable Desktop disconnects before discovery', async () => {
+      const f = await fixture((_message, socket) => socket.destroy());
+      const w = await driverFor(f.path, () => 0);
+      expect(
+        await w.driver.send!({ adapter: 'codex-desktop', id: 'thread-1' }, 'next task', {
+          from: 'user',
+          caller: { source: 'rpc' },
+        })
+      ).toMatchObject({ ok: false, reason: 'not_delivered' });
+      expect(w.shared).toEqual([]);
+    });
+  });
+
   describe('Desktop-owned message delivery', () => {
     test('steers through the Desktop owner with restorable agent input', async () => {
       const f = await fixture((message, _socket, send) =>
@@ -217,7 +383,7 @@ describe('withCodexDesktopIpc', () => {
         })
       );
       const text = 'use the parser\n[HyperNeo agent input]';
-      expect(await steerCodexDesktopTurn(f.path, 'thread-1', text, 'input-1')).toEqual({
+      expect(await steerCodexDesktopTurn(f.path, refuseOpen, 'thread-1', text, 'input-1')).toEqual({
         reason: { ok: true, value: { delivered: true, steeredIntoTurnId: 'desktop-turn' } },
       });
       expect(f.seen.at(-1)).toMatchObject({
@@ -326,7 +492,13 @@ describe('withCodexDesktopIpc', () => {
                   }),
           })
         );
-        const result = await steerCodexDesktopTurn(f.path, 'thread-1', 'later', 'input-1');
+        const result = await steerCodexDesktopTurn(
+          f.path,
+          refuseOpen,
+          'thread-1',
+          'later',
+          'input-1'
+        );
         expect(result).toMatchObject({
           reason: refused
             ? {
@@ -354,7 +526,7 @@ describe('withCodexDesktopIpc', () => {
       }
     );
 
-    test('uses app-server only when Desktop has no owner', async () => {
+    test('does not start a second writer when Desktop has no owner', async () => {
       const f = await fixture((message, _socket, send) =>
         send({
           type: 'response',
@@ -363,8 +535,14 @@ describe('withCodexDesktopIpc', () => {
           error: 'no-client-found',
         })
       );
-      expect(await steerCodexDesktopTurn(f.path, 'thread-1', 'hi', 'input-1')).toEqual({
-        value: 'app-server',
+      expect(
+        await steerCodexDesktopTurn(f.path, refuseOpen, 'thread-1', 'hi', 'input-1')
+      ).toMatchObject({
+        reason: {
+          ok: false,
+          reason: 'not_delivered',
+          detail: expect.stringContaining('open failed'),
+        },
       });
       expect(f.seen.map((message) => message.method)).toEqual([
         'initialize',
@@ -393,7 +571,9 @@ describe('withCodexDesktopIpc', () => {
               result: {},
             });
         });
-        expect(await steerCodexDesktopTurn(f.path, 'thread-1', 'hi', 'input-1')).toMatchObject({
+        expect(
+          await steerCodexDesktopTurn(f.path, refuseOpen, 'thread-1', 'hi', 'input-1')
+        ).toMatchObject({
           reason: { ok: false, reason: 'not_delivered' },
         });
       }
