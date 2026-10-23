@@ -1,5 +1,5 @@
 import type { StructuredLogEvent } from '@hyperneo/shared';
-import { emitStructuredLogEvent } from '../../lib/logger.ts';
+import { emitStructuredLogEvent, Logger } from '../../lib/logger.ts';
 import type { Database } from '../sqlite-compat.ts';
 import type { SQLiteQueryObservabilityOptions } from '../sqlite-query-observability.ts';
 import {
@@ -25,6 +25,7 @@ export type DbGatewayReply =
   | { log: StructuredLogEvent }
   | { id: number; result?: unknown; changes?: TableChange[]; error?: string };
 
+const log = new Logger('db-gateway');
 const MAX_PENDING = 1024;
 const REPLY_TIMEOUT_MS = 30_000;
 
@@ -207,7 +208,13 @@ export class DbGateway {
     return Promise.all([this.lanes.read.close(), this.lanes.write.close()]).then(() => {});
   }
 
-  private readonly replay = (changes: TableChange[]) => this.onChanges(changes);
+  private readonly replay = (changes: TableChange[]) => {
+    try {
+      this.onChanges(changes);
+    } catch (error) {
+      log.error('could not announce committed table changes:', error);
+    }
+  };
 }
 
 const gateways = new WeakMap<Database, DbGateway>();
@@ -218,6 +225,16 @@ export function bindGateway(db: Database, gateway: DbGateway): void {
 
 export function gatewayFor(db: Database): DbGateway {
   let gateway = gateways.get(db);
-  if (!gateway) gateways.set(db, (gateway = new DbGateway(':memory:', db)));
-  return gateway;
+  if (gateway) return gateway;
+  const unbound = new DbGateway(':memory:', db);
+  let warned = false;
+  unbound.onChanges = (changes) => {
+    if (warned) return;
+    warned = true;
+    log.warn(
+      `changes to ${[...new Set(changes.map((change) => change.table))].join(', ')} ran on a connection with no bound gateway, so nothing announced them`
+    );
+  };
+  gateways.set(db, unbound);
+  return unbound;
 }
