@@ -61,10 +61,11 @@ async function readContains(
 export async function readGithubDeploys(
   urls: readonly string[],
   daemonCommits: () => Promise<NeoDaemonCommit[]>,
-  spawnImpl: SpawnFn = spawnProcess
+  spawnImpl: SpawnFn = spawnProcess,
+  readMerge: (url: string) => Promise<string | null> = (url) => readMergeCommit(url, spawnImpl)
 ): Promise<NeoDeployRead> {
   const prs = [];
-  for (const url of urls) prs.push({ url, mergeCommit: await readMergeCommit(url, spawnImpl) });
+  for (const url of urls) prs.push({ url, mergeCommit: await readMerge(url) });
   const daemons = [];
   for (const daemon of await daemonCommits()) {
     const contains: string[] = [];

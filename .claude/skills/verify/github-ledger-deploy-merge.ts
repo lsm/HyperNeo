@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { CodingPrLedgerRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
+import { readGithubDeploys } from '../../../packages/daemon/src/lib/neo/packs/coding/deploy-checks.ts';
 import { createNeoCodingReaders } from '../../../packages/daemon/src/lib/neo/packs/runtime.ts';
 
 const run = resolve(process.argv[2]);
@@ -61,8 +62,14 @@ try {
   evidence.known = known;
   assert.equal(known.prs[0].mergeCommit, merge, 'Default deploy reader must use covered ledger merge facts even when GitHub refuses');
   assert.equal(requests().filter(r => r.family === 'merge').length, 0);
+  const demand = Array.from({ length: 5 }, (_, i) => url(8, i % 2 ? 'old/repo' : 'SYNTHETIC/LEDGER'));
+  control('baseline');
+  await Promise.all(demand.map(pr => readGithubDeploys([pr], async () => [])));
+  evidence.legacyMissingLookups = requests().filter(r => r.phase === 'baseline' && r.family === 'merge').length;
+  assert.equal(evidence.legacyMissingLookups, 5);
+  assert.equal(facts().read(repo, 8, Date.now(), 120_000).merge.status, 'unknown');
   control('missing');
-  const concurrent = await Promise.all(Array.from({ length: 5 }, (_, i) => read([url(8, i % 2 ? 'old/repo' : 'SYNTHETIC/LEDGER')])));
+  const concurrent = await Promise.all(demand.map(pr => read([pr])));
   for (const result of concurrent) assert.equal(result.prs[0].mergeCommit, merge);
   assert.equal(requests().filter(r => r.phase === 'missing' && r.family === 'merge').length, 1);
   evidence.concurrent = concurrent;
