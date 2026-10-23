@@ -381,8 +381,9 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
         proxiedTableWrites.push(mapping.table);
         try {
           const result = (value as (...a: unknown[]) => unknown).apply(target, args);
-          const scope = mapping.extractScope?.(args, target);
-          incrementAndEmit(mapping.table, scope);
+          const emit = () => incrementAndEmit(mapping.table, mapping.extractScope?.(args, target));
+          if (result instanceof Promise) return result.then((settled) => (emit(), settled));
+          emit();
           return result;
         } finally {
           proxiedTableWrites.pop();

@@ -284,7 +284,10 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
       const diffs: QueryDiff<{ id: string; session_id: string; message_type: string }>[] = [];
       engine.subscribe(MESSAGES_SQL, ['msg-session'], (diff) => diffs.push(diff));
 
-      reactiveDb.db.saveSDKMessage('msg-session', makeUserMessage(crypto.randomUUID(), 'Hello!'));
+      await reactiveDb.db.saveSDKMessage(
+        'msg-session',
+        makeUserMessage(crypto.randomUUID(), 'Hello!')
+      );
       await Promise.resolve();
 
       expect(diffs.length).toBe(2);
@@ -303,7 +306,10 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
       const diffs: QueryDiff<{ id: string; session_id: string; message_type: string }>[] = [];
       engine.subscribe(MESSAGES_SQL, ['sess-a'], (diff) => diffs.push(diff));
 
-      reactiveDb.db.saveSDKMessage('sess-b', makeUserMessage(crypto.randomUUID(), 'Other session'));
+      await reactiveDb.db.saveSDKMessage(
+        'sess-b',
+        makeUserMessage(crypto.randomUUID(), 'Other session')
+      );
       await Promise.resolve();
 
       expect(diffs.length).toBe(1);
@@ -315,10 +321,16 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
 
       const handle = engine.subscribe(MESSAGES_SQL, ['multi-msg'], () => {});
 
-      reactiveDb.db.saveSDKMessage('multi-msg', makeUserMessage(crypto.randomUUID(), 'First'));
+      await reactiveDb.db.saveSDKMessage(
+        'multi-msg',
+        makeUserMessage(crypto.randomUUID(), 'First')
+      );
       await Promise.resolve();
 
-      reactiveDb.db.saveSDKMessage('multi-msg', makeUserMessage(crypto.randomUUID(), 'Second'));
+      await reactiveDb.db.saveSDKMessage(
+        'multi-msg',
+        makeUserMessage(crypto.randomUUID(), 'Second')
+      );
       await Promise.resolve();
 
       expect(handle.get().length).toBe(2);

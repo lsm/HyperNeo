@@ -158,7 +158,7 @@ describe('Database Facade', () => {
         uuid: 'restart-uuid',
         message: { role: 'user', content: [{ type: 'text', text: 'restart recovery marker' }] },
       } as SDKMessage;
-      expect(first.saveSDKMessage('test-session-id', message)).toBe(true);
+      expect(await first.saveSDKMessage('test-session-id', message)).toBe(true);
       first.close();
 
       db = new Database(dbPath, { messageSearchIndexFlushIntervalMs: 0 });
@@ -181,7 +181,7 @@ describe('Database Facade', () => {
         uuid: 'timer-uuid',
         message: { role: 'user', content: [{ type: 'text', text: 'timer flush marker' }] },
       } as SDKMessage;
-      expect(db.saveSDKMessage('test-session-id', message)).toBe(true);
+      expect(await db.saveSDKMessage('test-session-id', message)).toBe(true);
 
       const deadline = Date.now() + 3_000;
       let searchable = false;

@@ -110,14 +110,14 @@ describe('resolveTaskIdForSession memoization (per-save query dedup)', () => {
       .all(sessionId) as Array<{ task_id: string | null }>;
   }
 
-  test('saveSDKMessage resolves the session taskId once, then reuses the cache', () => {
+  test('saveSDKMessage resolves the session taskId once, then reuses the cache', async () => {
     reactiveDb.db.createSession(makeSession('s-task', 'worker', { taskId: 'task-1' }));
 
-    reactiveDb.db.saveSDKMessage('s-task', assistantMessage('one'));
+    await reactiveDb.db.saveSDKMessage('s-task', assistantMessage('one'));
     expect(taskResolutions).toBe(1);
 
-    reactiveDb.db.saveSDKMessage('s-task', assistantMessage('two'));
-    reactiveDb.db.saveSDKMessage('s-task', assistantMessage('three'));
+    await reactiveDb.db.saveSDKMessage('s-task', assistantMessage('two'));
+    await reactiveDb.db.saveSDKMessage('s-task', assistantMessage('three'));
     expect(taskResolutions).toBe(1);
   });
 
@@ -131,16 +131,16 @@ describe('resolveTaskIdForSession memoization (per-save query dedup)', () => {
     expect(taskResolutions).toBe(1);
   });
 
-  test('task_id attribution is unchanged for task and non-task sessions', () => {
+  test('task_id attribution is unchanged for task and non-task sessions', async () => {
     reactiveDb.db.createSession(makeSession('s-worker', 'worker', { taskId: 'task-1' }));
     reactiveDb.db.createSession(makeSession('s-agent', 'worker', { taskId: 'task-2' }));
     reactiveDb.db.createSession(makeSession('s-plain', 'worker'));
     reactiveDb.db.createSession(makeSession('s-lobby', 'lobby', { taskId: 'task-ghost' }));
 
-    reactiveDb.db.saveSDKMessage('s-worker', assistantMessage('w'));
-    reactiveDb.db.saveSDKMessage('s-agent', assistantMessage('a'));
-    reactiveDb.db.saveSDKMessage('s-plain', assistantMessage('p'));
-    reactiveDb.db.saveSDKMessage('s-lobby', assistantMessage('l'));
+    await reactiveDb.db.saveSDKMessage('s-worker', assistantMessage('w'));
+    await reactiveDb.db.saveSDKMessage('s-agent', assistantMessage('a'));
+    await reactiveDb.db.saveSDKMessage('s-plain', assistantMessage('p'));
+    await reactiveDb.db.saveSDKMessage('s-lobby', assistantMessage('l'));
 
     const rows = bunDb
       .prepare('SELECT session_id, task_id FROM sdk_messages ORDER BY session_id')
@@ -153,12 +153,12 @@ describe('resolveTaskIdForSession memoization (per-save query dedup)', () => {
     ]);
   });
 
-  test('sdk_messages change scope carries taskId for task sessions', () => {
+  test('sdk_messages change scope carries taskId for task sessions', async () => {
     const events: TableChangeEvent[] = [];
     reactiveDb.on('change', (data) => events.push(data));
 
     reactiveDb.db.createSession(makeSession('s-task', 'worker', { taskId: 'task-1' }));
-    reactiveDb.db.saveSDKMessage('s-task', assistantMessage('one'));
+    await reactiveDb.db.saveSDKMessage('s-task', assistantMessage('one'));
 
     const sdkEvent = events.find((e) => e.tables.includes('sdk_messages'));
     expect(sdkEvent!.scope).toEqual({
@@ -168,30 +168,30 @@ describe('resolveTaskIdForSession memoization (per-save query dedup)', () => {
     });
   });
 
-  test('sdk_messages change scope omits taskId for non-task sessions', () => {
+  test('sdk_messages change scope omits taskId for non-task sessions', async () => {
     const events: TableChangeEvent[] = [];
     reactiveDb.on('change', (data) => events.push(data));
 
     reactiveDb.db.createSession(makeSession('s-plain', 'worker'));
-    reactiveDb.db.saveSDKMessage('s-plain', assistantMessage('one'));
+    await reactiveDb.db.saveSDKMessage('s-plain', assistantMessage('one'));
 
     const sdkEvent = events.find((e) => e.tables.includes('sdk_messages'));
     expect(sdkEvent!.scope).toEqual({ sessionId: 's-plain', messageSubtype: null });
   });
 
-  test('session update touching context invalidates the cached taskId', () => {
+  test('session update touching context invalidates the cached taskId', async () => {
     reactiveDb.db.createSession(makeSession('s-task', 'worker', { taskId: 'task-1' }));
-    reactiveDb.db.saveSDKMessage('s-task', assistantMessage('one'));
+    await reactiveDb.db.saveSDKMessage('s-task', assistantMessage('one'));
     expect(taskResolutions).toBe(1);
 
     reactiveDb.db.updateSession('s-task', { title: 'renamed' });
-    reactiveDb.db.saveSDKMessage('s-task', assistantMessage('two'));
+    await reactiveDb.db.saveSDKMessage('s-task', assistantMessage('two'));
     expect(taskResolutions).toBe(1);
 
     reactiveDb.db.updateSession('s-task', {
       context: { spaceId: 'space-1', taskId: 'task-2' },
     });
-    reactiveDb.db.saveSDKMessage('s-task', assistantMessage('three'));
+    await reactiveDb.db.saveSDKMessage('s-task', assistantMessage('three'));
     expect(taskResolutions).toBe(2);
     expect(taskIdsOf('s-task')).toEqual([
       { task_id: 'task-1' },
@@ -200,47 +200,47 @@ describe('resolveTaskIdForSession memoization (per-save query dedup)', () => {
     ]);
   });
 
-  test('session type change invalidates the cached taskId', () => {
+  test('session type change invalidates the cached taskId', async () => {
     reactiveDb.db.createSession(makeSession('s-task', 'worker', { taskId: 'task-1' }));
-    reactiveDb.db.saveSDKMessage('s-task', assistantMessage('one'));
+    await reactiveDb.db.saveSDKMessage('s-task', assistantMessage('one'));
     expect(taskResolutions).toBe(1);
 
     reactiveDb.db.updateSession('s-task', { type: 'lobby' });
-    reactiveDb.db.saveSDKMessage('s-task', assistantMessage('two'));
+    await reactiveDb.db.saveSDKMessage('s-task', assistantMessage('two'));
     expect(taskResolutions).toBe(2);
     expect(taskIdsOf('s-task')).toEqual([{ task_id: 'task-1' }, { task_id: null }]);
   });
 
-  test('deleteSession invalidates the cached taskId', () => {
+  test('deleteSession invalidates the cached taskId', async () => {
     reactiveDb.db.createSession(makeSession('s-task', 'worker', { taskId: 'task-1' }));
-    reactiveDb.db.saveSDKMessage('s-task', assistantMessage('one'));
+    await reactiveDb.db.saveSDKMessage('s-task', assistantMessage('one'));
     expect(taskResolutions).toBe(1);
 
     reactiveDb.db.deleteSession('s-task');
     reactiveDb.db.createSession(makeSession('s-task', 'worker', { taskId: 'task-2' }));
-    reactiveDb.db.saveSDKMessage('s-task', assistantMessage('two'));
+    await reactiveDb.db.saveSDKMessage('s-task', assistantMessage('two'));
     expect(taskResolutions).toBe(2);
     expect(taskIdsOf('s-task')).toEqual([{ task_id: 'task-2' }]);
   });
 
-  test('abortTransaction clears the cached taskId', () => {
+  test('abortTransaction clears the cached taskId', async () => {
     reactiveDb.db.createSession(makeSession('s-task', 'worker', { taskId: 'task-1' }));
-    reactiveDb.db.saveSDKMessage('s-task', assistantMessage('one'));
+    await reactiveDb.db.saveSDKMessage('s-task', assistantMessage('one'));
     expect(taskResolutions).toBe(1);
 
     reactiveDb.beginTransaction();
     reactiveDb.db.updateSession('s-task', { context: { taskId: 'task-2' } });
-    reactiveDb.db.saveSDKMessage('s-task', assistantMessage('two'));
+    await reactiveDb.db.saveSDKMessage('s-task', assistantMessage('two'));
     expect(taskResolutions).toBe(2);
     reactiveDb.abortTransaction();
 
-    reactiveDb.db.saveSDKMessage('s-task', assistantMessage('three'));
+    await reactiveDb.db.saveSDKMessage('s-task', assistantMessage('three'));
     expect(taskResolutions).toBe(3);
   });
 
-  test('a transient resolution failure is not memoized', () => {
+  test('a transient resolution failure is not memoized', async () => {
     reactiveDb.db.createSession(makeSession('s-task', 'worker', { taskId: 'task-1' }));
-    reactiveDb.db.saveSDKMessage('s-task', assistantMessage('one'));
+    await reactiveDb.db.saveSDKMessage('s-task', assistantMessage('one'));
     expect(taskResolutions).toBe(1);
 
     reactiveDb.db.updateSession('s-task', { context: { spaceId: 'space-1', taskId: 'task-1' } });
@@ -255,11 +255,11 @@ describe('resolveTaskIdForSession memoization (per-save query dedup)', () => {
       return countingPrepare(sql, ...rest);
     }) as typeof bunDb.prepare;
 
-    reactiveDb.db.saveSDKMessage('s-task', assistantMessage('two'));
+    await reactiveDb.db.saveSDKMessage('s-task', assistantMessage('two'));
     expect(taskIdsOf('s-task')).toEqual([{ task_id: 'task-1' }, { task_id: null }]);
 
     bunDb.prepare = countingPrepare;
-    reactiveDb.db.saveSDKMessage('s-task', assistantMessage('three'));
+    await reactiveDb.db.saveSDKMessage('s-task', assistantMessage('three'));
     expect(taskIdsOf('s-task')).toEqual([
       { task_id: 'task-1' },
       { task_id: null },
@@ -267,9 +267,9 @@ describe('resolveTaskIdForSession memoization (per-save query dedup)', () => {
     ]);
   });
 
-  test('a failing session write still invalidates the cached taskId', () => {
+  test('a failing session write still invalidates the cached taskId', async () => {
     reactiveDb.db.createSession(makeSession('s-task', 'worker', { taskId: 'task-1' }));
-    reactiveDb.db.saveSDKMessage('s-task', assistantMessage('one'));
+    await reactiveDb.db.saveSDKMessage('s-task', assistantMessage('one'));
     expect(taskResolutions).toBe(1);
 
     const countingPrepare = bunDb.prepare.bind(bunDb);
@@ -287,7 +287,7 @@ describe('resolveTaskIdForSession memoization (per-save query dedup)', () => {
     ).toThrow();
 
     bunDb.prepare = countingPrepare;
-    reactiveDb.db.saveSDKMessage('s-task', assistantMessage('two'));
+    await reactiveDb.db.saveSDKMessage('s-task', assistantMessage('two'));
     expect(taskResolutions).toBe(2);
     expect(taskIdsOf('s-task')).toEqual([{ task_id: 'task-1' }, { task_id: 'task-1' }]);
   });

@@ -563,7 +563,7 @@ export class SDKMessageHandler {
       },
     } as unknown as SDKMessage;
 
-    if (!db.saveSDKMessage(session.id, assistantMessage)) {
+    if (!(await db.saveSDKMessage(session.id, assistantMessage))) {
       internalEventBus.publishAsync('session.error', {
         sessionId: session.id,
         error: text,
@@ -589,6 +589,18 @@ export class SDKMessageHandler {
     db.beginTransaction();
     try {
       const result = operation();
+      if (result instanceof Promise) {
+        return result.then(
+          (value) => {
+            db.commitTransaction?.();
+            return value;
+          },
+          (error) => {
+            db.abortTransaction?.();
+            throw error;
+          }
+        ) as T;
+      }
       db.commitTransaction();
       return result;
     } catch (error) {
@@ -1079,7 +1091,7 @@ export class SDKMessageHandler {
         this.resolveInternalCompactionResultStamp(message) !== null;
       let deferredSuccessfully: boolean;
       try {
-        deferredSuccessfully = this.withDbChangeBatch(() =>
+        deferredSuccessfully = await this.withDbChangeBatch(() =>
           stampsInternalCompactionTurn
             ? db.saveSDKMessage(session.id, message, undefined, {
                 stampInternalCompactionTurn: true,
