@@ -28,6 +28,9 @@ Check `evidence/observed.json` and `native-events.jsonl`:
   all lines. Its target user-input ID is the returned task receipt. A helper's
   reply or relay acceptance alone is insufficient. Follow-up work also uses
   native messages; there is no task `--resume -p` fallback.
+- A live CLI or unknown target owner refuses before any helper request. A
+  dormant imported Desktop record remains eligible for native cold-start;
+  focused contracts also reject ambiguous live ownership.
 - The existing authorized synthetic `rc-toggle` receives the RC request. No
   replacement RC helper is created or granted permissions. A request is not
   proof of a connected RC session or phone rendering.

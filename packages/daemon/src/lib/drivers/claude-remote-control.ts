@@ -20,6 +20,7 @@ import {
 } from './claude-desktop-adapter.ts';
 import type { Result, WorkAdapter, WorkCallContext, WorkDelivery } from './types.ts';
 import { reject } from './work-operations.ts';
+import { requireClaudePeerOwner } from './claude-session-owner.ts';
 
 export const RC_TOGGLE_TITLE = 'rc-toggle';
 
@@ -36,6 +37,24 @@ const alreadySet: { reason: RemoteControlOutcome } = {
   reason: { ok: true, value: { delivered: false } },
 };
 type RcToggle = { record: ClaudeDesktopRecord & { cliSessionId: string }; live: boolean };
+
+function requireDesktopWakeOwner(record: RcToggle['record'], live: readonly ClaudeLiveSession[]) {
+  if (
+    record.desktopRegistered &&
+    !live.some((session) => session.sessionId === record.cliSessionId)
+  )
+    return { value: record };
+  const owner = requireClaudePeerOwner(record.cliSessionId, live);
+  if ('reason' in owner) return owner;
+  return owner.value.owner === 'desktop'
+    ? { value: record }
+    : {
+        reason: reject(
+          'unreachable',
+          'A live CLI process owns this session; native Desktop delivery was refused before requesting a helper.'
+        ),
+      };
+}
 
 function readyHelper(record: RcToggle['record'], liveSessions: readonly ClaudeLiveSession[]) {
   const live = liveSessions.find((candidate) => candidate.sessionId === record.cliSessionId);
@@ -180,6 +199,7 @@ export const runClaudeDesktopWake = (superpipe({})('claude-desktop-native-wake')
   .pipe((record: RcToggle['record']) => record, 'outcome', 'record')
   .pipe(probeLiveClaudeSessions, 'deps', 'result:outcome')
   .pipe((live: readonly ClaudeLiveSession[]) => live, 'outcome', 'liveSessions')
+  .pipe(requireDesktopWakeOwner, ['record', 'liveSessions'], 'result:outcome')
   .pipe(
     (
       records: readonly ClaudeDesktopRecord[],
