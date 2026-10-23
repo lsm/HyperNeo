@@ -33,7 +33,7 @@ const front = Bun.serve({
         server.upgrade(request, {
           data: {
             connectionSessionId: 'global',
-            device: app.authenticateUpgrade(request, '127.0.0.1'),
+            device: await app.authenticateUpgrade(request, '127.0.0.1'),
           },
         })
       )
