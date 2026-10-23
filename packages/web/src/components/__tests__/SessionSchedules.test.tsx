@@ -204,7 +204,7 @@ describe('SessionSchedules', () => {
       expect(request).toHaveBeenCalledTimes(2);
       vi.useRealTimers();
       await screen.findByText(/Delivered/);
-      expect(screen.getByText(/Nudge in 4/)).toBeTruthy();
+      expect(screen.queryByText(/Nudge/)).toBeNull();
       expect(container.querySelector('details')).toBe(details);
       expect(details.open).toBe(true);
     } finally {
@@ -253,7 +253,7 @@ describe('SessionSchedules', () => {
     render(<SessionSchedules sessionId="root" />);
     await screen.findByText('Ship guide');
     expect(screen.getByText('定时检查')).toBeTruthy();
-    expect(screen.getByText(/还有 2 次提醒/)).toBeTruthy();
+    expect(screen.queryByText(/次提醒/)).toBeNull();
     expect(screen.getByRole('button', { name: '暂停', hidden: true })).toBeTruthy();
   });
 });

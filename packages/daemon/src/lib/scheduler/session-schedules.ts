@@ -47,6 +47,7 @@ export function requireValidCadence(cadence: SessionScheduleCadence): Gate<Sessi
 export class SessionScheduler {
   readonly repo: SessionScheduleRepository;
   private readonly sources = new Map<string, ScheduleSource>();
+  private readonly messageProgress = new Map<string, string | null>();
 
   constructor(
     private readonly db: BunDatabase,
@@ -131,8 +132,17 @@ export class SessionScheduler {
     )
     .endAsync('progress') as (schedule: SessionSchedule) => Promise<boolean>;
 
-  async refreshProgress(): Promise<void> {
-    for (const row of this.repo.list()) await this.refreshSchedule(row);
+  async refreshProgress(sessionId?: string): Promise<void> {
+    for (const row of this.repo.list(
+      sessionId ? { adapter: 'hyperneo', id: sessionId } : undefined
+    )) {
+      if (row.status !== 'active' || !row.dueCount) continue;
+      const key = this.repo.progressKey(row);
+      if (sessionId && this.messageProgress.has(row.id) && this.messageProgress.get(row.id) === key)
+        continue;
+      this.messageProgress.set(row.id, key);
+      await this.refreshSchedule(row);
+    }
   }
 
   private enqueue(scheduleId: string, runAt: number): string {

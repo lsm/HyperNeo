@@ -37,8 +37,6 @@ export const zhHans: Record<keyof typeof en, string> = {
   'schedules.next': '下次检查',
   'schedules.last': '上次检查',
   'schedules.none': '—',
-  'schedules.nudgeDue': '该提醒了',
-  'schedules.nudge': '还有 {count} 次提醒',
   'schedules.doneTest': '完成标准',
   'schedules.status.active': '已启用',
   'schedules.status.paused': '已暂停',

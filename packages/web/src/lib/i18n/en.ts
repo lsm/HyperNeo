@@ -35,8 +35,6 @@ export const en = {
   'schedules.next': 'Next run',
   'schedules.last': 'Last run',
   'schedules.none': '—',
-  'schedules.nudgeDue': 'Nudge due',
-  'schedules.nudge': 'Nudge in {count}',
   'schedules.doneTest': 'Done when',
   'schedules.status.active': 'Active',
   'schedules.status.paused': 'Paused',

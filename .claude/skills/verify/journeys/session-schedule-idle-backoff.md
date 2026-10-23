@@ -21,3 +21,9 @@ Read evidence/schedule-idle.json for each due time, count, outcome, human card,
 input rows and the public conversation response. The wrapper also runs the
 focused scheduler contracts. This proves the daemon and human RPC surface;
 it does not claim browser rendering or real-provider execution.
+
+The review regression checks that unrelated session/settings/inbox writes and an
+unrelated session's message event trigger zero source-facts reads. Focused
+contracts also upgrade legacy mixed due-run counts, observe a fresh first/third
+quiet wake, and confirm a later restart preserves the quiet count. The web
+component check asserts the schedule strip promises no forced nudge.

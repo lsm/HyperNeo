@@ -86,6 +86,13 @@ try {
   await Bun.sleep(50);
   evidence.unrelatedFactReads = factReads;
   assert.equal(factReads, 0, 'Unrelated writes recomputed quiet schedule facts');
+  app.reactiveDb.notifyChange('sdk_messages', { sessionId: target });
+  await Bun.sleep(50);
+  const primed = factReads;
+  for (let i = 0; i < 20; i++) app.reactiveDb.notifyChange('sdk_messages', { sessionId: target });
+  await Bun.sleep(50);
+  evidence.streamingFactReads = { primed, after: factReads };
+  assert.equal(factReads, primed, 'Unchanged input key re-read source facts during streaming');
   const idle = scheduler.repo.get(id)!;
   now += 1000;
   const changedAt = now;

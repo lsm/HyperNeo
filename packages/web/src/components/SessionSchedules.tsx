@@ -241,12 +241,7 @@ function ScheduleStrip({ sessionId, readonly }: { sessionId: string; readonly?: 
                 ? t('schedules.every', { minutes: row.cadence.everyMs / 60000 })
                 : `${row.cadence.cron} · ${row.cadence.timezone}`}
             </p>
-            <p>
-              {factLabel('status', row.status)} ·{' '}
-              {row.dueCount >= row.nudgeEvery
-                ? t('schedules.nudgeDue')
-                : t('schedules.nudge', { count: row.nudgeEvery - row.dueCount })}
-            </p>
+            <p>{factLabel('status', row.status)}</p>
             <p>
               {t('schedules.next')}: <RunTime at={row.nextRunAt} />
             </p>
