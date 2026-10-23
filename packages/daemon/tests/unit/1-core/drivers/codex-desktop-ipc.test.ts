@@ -1,3 +1,9 @@
+import {
+  subscribeToStructuredLogs,
+  configureLogger,
+  getLoggerConfig,
+  LogLevel,
+} from '../../../../src/lib/logger.ts';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { appendFileSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server, type Socket } from 'node:net';
@@ -741,4 +747,50 @@ describe('withCodexDesktopIpc', () => {
       }
     );
   });
+});
+
+describe('Desktop admission refusal diagnostics', () => {
+  test.each(['socket-missing', 'process-probe-failed'])(
+    'refuses with a route reason and no spawn: %s',
+    async (failure) => {
+      const events: Record<string, unknown>[] = [];
+      const config = getLoggerConfig();
+      configureLogger({ level: LogLevel.WARN, filter: [], excludeFilter: [] });
+      const off = subscribeToStructuredLogs((event) => {
+        if (event.message.startsWith('work.send route'))
+          events.push(JSON.parse(event.message.slice('work.send route '.length)));
+      });
+      try {
+        const result = await steerCodexDesktopTurn(
+          undefined,
+          () => {
+            throw new Error('Must not spawn');
+          },
+          'synthetic-thread',
+          'synthetic message',
+          'synthetic-message',
+          'auto',
+          async () => {
+            if (failure === 'process-probe-failed') throw new Error('Synthetic probe failed');
+            return true;
+          }
+        );
+        expect(result).toMatchObject({ reason: { ok: false, reason: 'not_delivered' } });
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            threadId: 'synthetic-thread',
+            messageId: 'synthetic-message',
+            path: 'refused',
+            reason:
+              failure === 'socket-missing'
+                ? 'desktop_socket_missing'
+                : 'desktop_running_probe_failed',
+          })
+        );
+      } finally {
+        off();
+        configureLogger(config);
+      }
+    }
+  );
 });
