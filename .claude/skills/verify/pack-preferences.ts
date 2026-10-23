@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
-import { getNeoPackPreference } from '../../../packages/daemon/src/lib/neo/packs/preferences.ts';
+import { getNeoPackPreference } from '../../../packages/daemon/src/lib/neo/preferences.ts';
 
 const [portText, runText] = process.argv.slice(2);
 assert(runText);

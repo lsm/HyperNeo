@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { runMigration426 } from '../../../../src/storage/schema/m426-neo-pack-preferences.ts';
-import { getNeoPackPreference } from '../../../../src/lib/neo/packs/preferences.ts';
+import { getNeoPackPreference } from '../../../../src/lib/neo/preferences.ts';
 
 const dbs: Database[] = [];
 function fixture() {

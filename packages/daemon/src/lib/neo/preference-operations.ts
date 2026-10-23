@@ -1,10 +1,10 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { NeoPackSetting } from '@hyperneo/shared/types/neo-snapshot';
-import type { Database } from '../../../storage/sqlite-compat.ts';
-import { defineOperation, type OperationCaller } from '../../operations/registry.ts';
+import type { Database } from '../../storage/sqlite-compat.ts';
+import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { getNeoPackPreference } from './preferences.ts';
-import type { NeoPack, NeoPackPreferenceDeclaration } from '../pack-contract.ts';
+import type { NeoPack, NeoPackPreferenceDeclaration } from './pack-contract.ts';
 
 const Scope = z
   .object({ kind: z.enum(['global', 'repo', 'project']), key: z.string() })

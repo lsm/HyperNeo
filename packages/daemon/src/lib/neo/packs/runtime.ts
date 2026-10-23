@@ -1,5 +1,5 @@
 import { NEO_DEFAULT_PACKS } from './index.ts';
-import { createNeoProjectTreeOperations } from '../project-tree-operations.ts';
+import { createNeoProjectTreeOperations } from './coding/project-tree-operations.ts';
 import { NeoService } from '../service.ts';
 import { localCodingSessionId, neoWorkBranch } from './coding/branch-prs.ts';
 import { CodingTodoPrRepository } from './coding/todo-prs.ts';

@@ -2,7 +2,7 @@ import { receivedNeoHumanInput } from './human-input.ts';
 import { readNeoMessageStatuses, type NeoMessageStatusPresenter } from './message-status.ts';
 import { WorkerIdentitySchema } from '../drivers/worker-identity-schema.ts';
 import { createNeoRuleQuestions } from './rule-questions.ts';
-import { createPackPreferenceQuestions } from './packs/preference-questions.ts';
+import { createPackPreferenceQuestions } from './preference-questions.ts';
 import { NeoSessionMessageRepository } from '../../storage/repositories/neo-session-message-repository.ts';
 import {
   NeoConversationWakeRepository,
@@ -88,7 +88,7 @@ import {
   createPackPreferenceOperations,
   listPackPreferences,
   PackSettingSchema,
-} from './packs/preference-operations.ts';
+} from './preference-operations.ts';
 import { createNeoPreferenceOperation } from './model-preference.ts';
 import { planNeoRuleEdit } from './saved-rules.ts';
 

@@ -1,3 +1,4 @@
+import { withCodingWorkGoal as withWorkGoal } from '../../../../src/lib/neo/packs/coding/work-goal.ts';
 import { describe, expect, mock, spyOn, test } from 'bun:test';
 import { hostname } from 'node:os';
 import { NEO_WORK_BLOCKER, NEO_WORK_GOAL, NEO_WORK_GOAL_REMAINING } from '@hyperneo/prompts';
@@ -15,7 +16,7 @@ import {
   type DriverSent,
   decideCardLiveStatus,
   driverExchangeReport,
-  driverWorkCall,
+  driverWorkCall as buildDriverWorkCall,
   driverWorkCaller,
   NEO_CARD_CONFIRM_MS,
   type NeoDriverTarget,
@@ -26,7 +27,6 @@ import {
   readDriverSendBaseline,
   readDriverSent,
   readDriverSettlement,
-  withWorkGoal,
 } from '../../../../src/lib/neo/driver-work.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import type { NeoRef } from '../../../../src/lib/neo/packs/coding/ask-prs.ts';
@@ -65,6 +65,12 @@ describe('NeoDriverTargetSchema', () => {
     expect(NeoDriverTargetSchema.safeParse({ ...startTarget, effort }).success).toBe(false);
   });
 });
+
+const driverWorkCall = (
+  target: Parameters<typeof buildDriverWorkCall>[0],
+  work: Parameters<typeof buildDriverWorkCall>[1],
+  goal: Parameters<typeof buildDriverWorkCall>[2] = null
+) => buildDriverWorkCall(target, work, goal, withWorkGoal);
 
 describe('driverWorkCall', () => {
   test('sends the goal with a started or continued driver session', () => {
