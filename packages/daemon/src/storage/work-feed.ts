@@ -1,5 +1,5 @@
 import type { DbGateway } from './db-gateway/db-gateway.ts';
-import { defineDbOp } from './db-gateway/db-op.ts';
+import { ChangeRecorder, defineDbOp } from './db-gateway/db-op.ts';
 import type { Database as BunDatabase } from './sqlite-compat.ts';
 
 const BODY_CHARS = 16_000;
@@ -102,7 +102,7 @@ export async function deleteWorkFeedSessions(
   const sessions = JSON.stringify(sessionIds);
   let total = 0;
   for (;;) {
-    const changed = deleteWorkFeedBatch.run(db, { kind, sessions });
+    const changed = deleteWorkFeedBatch.run(db, { kind, sessions }, new ChangeRecorder());
     if (changed === 0) return total;
     total += changed;
     await new Promise((resolve) => setTimeout(resolve, 0));

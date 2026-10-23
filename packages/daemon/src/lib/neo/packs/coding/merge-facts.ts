@@ -104,10 +104,16 @@ export class CodingMergeFactsRepository {
     return readMergeFacts(this.db, repo, number, now, maxAgeMs);
   }
 
-  refresh(repo: string, number: number, spawn: SpawnFn = spawnProcess, now = Date.now) {
+  refresh(
+    repo: string,
+    number: number,
+    spawn: SpawnFn = spawnProcess,
+    now = Date.now,
+    force = false
+  ) {
     const canonical = canonicalRepo(this.db, repo),
       current = this.read(canonical, number, now(), NEO_WORK_PR_READ_MS);
-    if (current.merge.status === 'known') return Promise.resolve(current);
+    if (current.merge.status === 'known' && !force) return Promise.resolve(current);
     let active = pending.get(this.db);
     if (!active) {
       active = new Map();

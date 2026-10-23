@@ -122,7 +122,7 @@ export async function prepareDormantSession(
   if (existing && !matchesDirectPreparedSession(existing, candidate))
     return { reason: 'direct_session_conflict' };
   if (!existing)
-    db.createSession(
+    await db.createSession(
       AgentSession.createSessionFromInit(
         {
           sessionId: id,

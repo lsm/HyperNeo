@@ -25,7 +25,7 @@ import { neoSessionKind } from './work-driver.ts';
 import { NEO_DONE_SHOWN, type NeoDoneTodosPage, neoDonePageMerge } from './neo-asks.ts';
 import { messageTime } from './NeoMessage.tsx';
 import { t } from '../lib/i18n/index.ts';
-import { neoQuestionText, neoTodoDetail, neoTodoStatus } from './todo-status.ts';
+import { neoQuestionText, neoTodoDetail, neoTodoHasMore, neoTodoStatus } from './todo-status.ts';
 
 const states = {
   waiting: ['ask.state.waiting', 'text-warning bg-warning/10'],
@@ -463,13 +463,14 @@ export function NeoAskTodos({
       .finally(() => setPaging(false));
   };
   const listed = live.filter((todo) => !inQuestion.has(todo.id));
-  const allExpanded = listed.every((todo) => expanded.includes(todo.id));
+  const expandable = listed.filter(neoTodoHasMore);
+  const allExpanded = expandable.every((todo) => expanded.includes(todo.id));
   const removed = todos.filter((todo) => todo.state === 'removed' && !inQuestion.has(todo.id));
   const hasDetails =
     answered.length > 0 || retired.length > 0 || !!ask.outcome || removed.length > 0;
   const everything = allExpanded && (open || !hasDetails);
   const toggleEverything = () => {
-    setExpanded(everything ? [] : listed.map((todo) => todo.id));
+    setExpanded(everything ? [] : expandable.map((todo) => todo.id));
     setOpen(!everything);
     if (everything)
       requestAnimationFrame(() => {
@@ -536,12 +537,15 @@ export function NeoAskTodos({
               todo={todo}
               onOpen={onOpen}
               expanded={expanded.includes(todo.id)}
-              onToggle={() =>
-                setExpanded(
-                  expanded.includes(todo.id)
-                    ? expanded.filter((id) => id !== todo.id)
-                    : [...expanded, todo.id]
-                )
+              onToggle={
+                neoTodoHasMore(todo)
+                  ? () =>
+                      setExpanded(
+                        expanded.includes(todo.id)
+                          ? expanded.filter((id) => id !== todo.id)
+                          : [...expanded, todo.id]
+                      )
+                  : undefined
               }
             />
           ))}
@@ -633,7 +637,7 @@ export function NeoAskTodos({
           )}
         </div>
       )}
-      {(hasDetails || listed.length > 1) && (
+      {(hasDetails || expandable.length > 1) && (
         <div class={neoFooterClass}>
           <span class="flex-1" />
           <ContentDisclosureControl

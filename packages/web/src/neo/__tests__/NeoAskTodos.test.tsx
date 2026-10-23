@@ -192,10 +192,16 @@ describe('NeoAskTodos', () => {
     expect(app.queryByText(data.todos[1].report!.trim())).toBeNull();
     app.unmount();
     const again = render(
-      <NeoAskTodos entry={{ ...data, todos: [...data.todos, todo('new')] }} onAnswer={vi.fn()} />
+      <NeoAskTodos
+        entry={{ ...data, todos: [...data.todos, todo('new', { report: 'Fresh report' })] }}
+        onAnswer={vi.fn()}
+      />
     );
     expect(again.getByText(data.todos[0].report!.trim())).toBeTruthy();
-    expect(again.getByRole('button', { name: 'Show details: Todo new' }).tagName).toBe('BUTTON');
+    expect(
+      again.getByRole('button', { name: 'Show details: Todo new' }).getAttribute('aria-expanded')
+    ).toBe('false');
+    expect(again.queryByText('Fresh report')).toBeNull();
   });
 
   it('omits report and evidence duplicates of each other or the displayed status', () => {
@@ -211,9 +217,24 @@ describe('NeoAskTodos', () => {
         onAnswer={vi.fn()}
       />
     );
-    fireEvent.click(app.container.querySelector('[data-ask-details-toggle]')!);
+    fireEvent.click(app.getByRole('button', { name: 'Show details: Todo a' }));
     expect(app.getAllByText('Same details')).toHaveLength(1);
     expect(app.getAllByText('Done')).toHaveLength(1);
+  });
+
+  it('gives a todo with nothing more to show no hint and no toggle', () => {
+    locale.value = 'en';
+    const app = render(
+      <NeoAskTodos
+        entry={entry({ todos: [todo('a', { report: 'More here' }), todo('b'), todo('c')] })}
+        onAnswer={vi.fn()}
+      />
+    );
+    const plain = app.container.querySelector('[data-ask-todo="b"]')!;
+    expect(plain.querySelector('[data-todo-hint]')).toBeNull();
+    expect(app.queryByRole('button', { name: 'Show details: Todo b' })).toBeNull();
+    expect(app.getByRole('button', { name: 'Show details: Todo a' })).toBeTruthy();
+    expect(app.container.querySelector('[data-ask-details-toggle]')).toBeNull();
   });
 
   it('keeps Open separate from the disclosure in Chinese', () => {

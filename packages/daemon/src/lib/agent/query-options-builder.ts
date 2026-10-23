@@ -295,6 +295,13 @@ export function getBuiltFallbackIdentity(session: object): BuiltFallbackIdentity
 
 export const DISABLE_THINKING_ENV = 'CLAUDE_CODE_DISABLE_THINKING';
 
+export function offEffort(
+  providerId: string | undefined,
+  effortLevels: readonly ThinkingEffort[]
+): ThinkingEffort | undefined {
+  return providerId === 'anthropic' ? undefined : effortLevels[0];
+}
+
 export function liveThinkingUpdate(
   resolved: { thinking?: ThinkingConfig; effort?: ThinkingEffort },
   level: ThinkingLevel
@@ -673,14 +680,14 @@ export class QueryOptionsBuilder {
     const thinkingLevel = this.getEffectiveThinkingLevel();
     const effort =
       thinkingModes === 'granular' && effortLevels?.length
-        ? effortForThinkingLevel(
-            thinkingLevel,
-            effortLevels?.length ? effortLevels : ['low', 'medium', 'high']
-          )
+        ? thinkingLevel === 'off'
+          ? offEffort(providerId, effortLevels)
+          : effortForThinkingLevel(thinkingLevel, effortLevels)
         : undefined;
-    let thinkingConfig: ThinkingConfig | undefined = effort
-      ? { type: 'adaptive' }
-      : this.thinkingLevelToThinkingConfig(thinkingLevel, thinkingModes);
+    let thinkingConfig: ThinkingConfig | undefined =
+      effort && thinkingLevel !== 'off'
+        ? { type: 'adaptive' }
+        : this.thinkingLevelToThinkingConfig(thinkingLevel, thinkingModes);
 
     const selectedModel = this.ctx.session.config.model;
     if (providerId === 'kimi' && selectedModel) {

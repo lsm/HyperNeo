@@ -46,7 +46,7 @@ export function requireNeoPreferenceModel(
         },
       };
     entries.push({
-      model: entry.model,
+      model: model.alias === entry.model ? model.id : entry.model,
       provider: model.provider,
       thinkingLevel: normalizeThinkingLevel(entry.thinkingLevel),
       ...(entry.autoCompactPercent === undefined

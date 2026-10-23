@@ -1,3 +1,4 @@
+import { externalEventSweeps } from '../../lib/external-events/external-event-store.ts';
 import { ingestSessionEvent } from '../../lib/external-events/session-external-event-store.ts';
 import {
   recordUnpaired,
@@ -19,6 +20,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     recordUnpaired,
     jobQueueWrites,
     jobQueueReads,
+    externalEventSweeps,
     cleanupJobs,
     ingestSessionEvent,
     deleteWorkFeedBatch,

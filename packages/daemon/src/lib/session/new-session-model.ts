@@ -106,11 +106,16 @@ function decideFromCatalog(
   const byDefault = pickCatalogModel(usable, defaultModel, defaultProvider);
   if (byDefault) return { kind: 'model', ...byDefault };
   const chainProvider = defaultProvider ?? inferProviderForModel(defaultModel);
+  const listed = findInModels(
+    models.filter((model) => model.provider === chainProvider),
+    defaultModel
+  );
   const chain = resolveFallbackChain(
     chainProvider,
-    canonicalModelId(chainProvider, defaultModel),
+    listed?.id ?? canonicalModelId(chainProvider, defaultModel),
     settings.modelFallbackMap,
-    settings.fallbackModels
+    settings.fallbackModels,
+    listed?.alias
   );
   for (const entry of chain) {
     const fallback = pickCatalogModel(usable, entry.model, entry.provider);

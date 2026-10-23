@@ -44,7 +44,7 @@ export interface ReturnSessionCloneDependencies {
   readonly getSpace: (spaceId: string) => Promise<Space | null>;
   readonly sessionSpaceId: (session: Session) => string | undefined;
   readonly getSessionStatus: (sessionId: string) => string;
-  readonly markReturned: (sessionId: string, returnedAt: string) => void;
+  readonly markReturned: (sessionId: string, returnedAt: string) => Promise<void>;
   readonly getDatabase: () => BunDatabase;
   readonly getSdkMessageRepo: () => SDKMessageRepository;
   readonly jobQueue: JobQueueRepository;
@@ -108,11 +108,11 @@ export function buildReturnMessage(parent: Session, text: string, uuid: string):
   } as SDKUserMessage;
 }
 
-export function deliverReport(
+export async function deliverReport(
   { clone, parent }: CloneAndParent,
   input: ReturnInput,
   deps: ReturnSessionCloneDependencies
-): ReturnResult {
+): Promise<ReturnResult> {
   const text = buildReturnText(clone, input.summary);
   const uuid = buildReturnMessageUuid(clone.id, text);
   const mechanics = deps.getSessionStatus(parent.id) === 'processing' ? 'steer' : 'turn';
@@ -128,7 +128,7 @@ export function deliverReport(
       ...(mechanics === 'steer' ? { injectedMidTurn: true } : {}),
     },
   });
-  deps.markReturned(clone.id, new Date().toISOString());
+  await deps.markReturned(clone.id, new Date().toISOString());
   return { accepted: true, parentSessionId: parent.id, messageId: uuid, mechanics };
 }
 

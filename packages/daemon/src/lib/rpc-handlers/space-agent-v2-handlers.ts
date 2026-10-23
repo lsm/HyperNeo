@@ -65,7 +65,7 @@ export interface SpaceAgentV2Deps {
   stampProvenance?: (
     sessionId: string,
     provenance: NonNullable<SessionMetadata['promptProvenance']>
-  ) => void;
+  ) => Promise<void>;
 }
 
 function resolveSessionOwner(deps: SpaceAgentV2Deps, sessionId: string): string | null {

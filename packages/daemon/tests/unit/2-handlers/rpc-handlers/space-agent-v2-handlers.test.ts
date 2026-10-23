@@ -394,7 +394,7 @@ describe('setupSpaceAgentV2Handlers', () => {
 
     test('stamps the bound session with the new agent', async () => {
       const stamped: unknown[] = [];
-      deps.stampProvenance = (sessionId, provenance) => {
+      deps.stampProvenance = async (sessionId, provenance) => {
         stamped.push([sessionId, provenance]);
       };
 

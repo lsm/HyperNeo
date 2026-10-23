@@ -47,6 +47,21 @@ describe('resolveFallbackChain', () => {
     expect(chain).toEqual([]);
   });
 
+  test('an override saved under the alias still applies to the exact model, exact key first', () => {
+    expect(
+      resolveFallbackChain('anthropic', 'claude-opus-5-5', { 'anthropic/opus': [B] }, [C], 'opus')
+    ).toEqual([B]);
+    expect(
+      resolveFallbackChain(
+        'anthropic',
+        'claude-opus-5-5',
+        { 'anthropic/opus': [B], 'anthropic/claude-opus-5-5': [A] },
+        [C],
+        'opus'
+      )
+    ).toEqual([A]);
+  });
+
   test('both undefined → empty', () => {
     expect(resolveFallbackChain('anthropic', 'x', undefined, undefined)).toEqual([]);
   });
