@@ -214,6 +214,23 @@ describe('ReactiveDatabase', () => {
       expect(sessionEvents.length).toBe(1);
       expect(msgEvents.length).toBe(0);
     });
+
+    test('change:sdk_messages waits until an async save settles', async () => {
+      let settle: (saved: boolean) => void = () => {};
+      db.saveSDKMessage = () => new Promise<boolean>((resolve) => (settle = resolve));
+      const msgEvents: unknown[] = [];
+      reactiveDb.on('change:sdk_messages', () => msgEvents.push(1));
+
+      const saved = reactiveDb.db.saveSDKMessage('pt4', {
+        type: 'assistant',
+      } as unknown as Parameters<Database['saveSDKMessage']>[1]);
+      await Promise.resolve();
+      expect(msgEvents.length).toBe(0);
+
+      settle(true);
+      expect(await saved).toBe(true);
+      expect(msgEvents.length).toBe(1);
+    });
   });
 
   describe('getTableVersion', () => {
