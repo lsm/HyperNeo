@@ -26,6 +26,11 @@ minutes sends nothing further; stored state remains doing. No timeout writes
 blocked. The synthetic Neo session has no provider, so this proves queued delivery
 and stored incident state, not Neo consuming an escalation model turn.
 
+The helper also seeds a legacy PR subscription and publishes a real-shaped raw
+CI-failure event through the daemon’s event bus. It must cause no extra worker
+frame; the ledger remains the PR-message source. Focused ledger event contracts
+still prove ledger notifications are delivered.
+
 Copy this helper unchanged into a detached pre-fix worktree and run `before`
 there to record the failing COMPLETED/no-advance result.
 Keep `evidence/observed.json` and `evidence/gh.log` outside the worktree. The helper
