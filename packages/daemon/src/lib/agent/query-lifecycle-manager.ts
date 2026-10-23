@@ -714,7 +714,7 @@ export class QueryLifecycleManager {
       return;
     }
 
-    db.updateMessageStatus([enqueuedMessage.dbId], 'failed');
+    await db.updateMessageStatus([enqueuedMessage.dbId], 'failed');
     try {
       await internalEventBus.publish('messages.statusChanged', {
         sessionId: session.id,

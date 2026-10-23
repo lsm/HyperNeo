@@ -982,23 +982,25 @@ export class AcpQueryRunner {
             if (!ownsSessionWrite()) return;
             this.updateAcpModelCache(configOptions);
           },
-          onSubmitted: () => {
+          onSubmitted: async () => {
             if (submitted) return;
             if (!attemptOwnsRun()) {
               requeueYieldedPrompt(message);
               return;
             }
-            const persisted = this.ctx.messageHandler.markMessageSubmitted(message.uuid ?? '');
+            const persisted = await this.ctx.messageHandler.markMessageSubmitted(
+              message.uuid ?? ''
+            );
             if (!persisted) {
               throw new Error('ACP prompt was revoked before submission');
             }
             submitted = true;
             onSent();
           },
-          onAccepted: () => {
+          onAccepted: async () => {
             if (!attemptOwnsRun()) return;
-            this.ctx.messageHandler.markMessageAccepted(message.uuid ?? '');
             accepted = true;
+            await this.ctx.messageHandler.markMessageAccepted(message.uuid ?? '');
           },
         });
         this.ctx.queryObject = adapter;

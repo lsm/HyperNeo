@@ -52,9 +52,12 @@ function createMockClient() {
     canLoadSession: mock(() => false),
     sendPrompt: mock(async function* (
       _prompt: unknown,
-      callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      callbacks?: {
+        onSubmitted?: () => void | Promise<void>;
+        onAccepted?: () => void | Promise<void>;
+      }
     ) {
-      callbacks?.onSubmitted?.();
+      await callbacks?.onSubmitted?.();
       callbacks?.onAccepted?.();
       yield {
         sessionId: 'acp-session-1',
@@ -100,7 +103,10 @@ function createHeldPromptClient() {
   const client = createMockClient();
   client.sendPrompt = mock(async function* (
     _prompt: unknown,
-    callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+    callbacks?: {
+      onSubmitted?: () => void | Promise<void>;
+      onAccepted?: () => void | Promise<void>;
+    }
   ) {
     callbacks?.onSubmitted?.();
     callbacks?.onAccepted?.();
@@ -863,9 +869,12 @@ describe('AcpQueryRunner', () => {
     let promptBodyRan = false;
     client.sendPrompt = mock(async function* (
       _prompt: unknown,
-      callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      callbacks?: {
+        onSubmitted?: () => void | Promise<void>;
+        onAccepted?: () => void | Promise<void>;
+      }
     ) {
-      callbacks?.onSubmitted?.();
+      await callbacks?.onSubmitted?.();
       promptBodyRan = true;
       yield {
         sessionId: 'acp-session-1',
@@ -888,9 +897,12 @@ describe('AcpQueryRunner', () => {
     const client = createMockClient();
     client.sendPrompt = mock(async function* (
       _prompt: unknown,
-      callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      callbacks?: {
+        onSubmitted?: () => void | Promise<void>;
+        onAccepted?: () => void | Promise<void>;
+      }
     ) {
-      callbacks?.onSubmitted?.();
+      await callbacks?.onSubmitted?.();
       return;
     });
     const { runner, ctx } = createRunnerFixture({ client });
@@ -987,7 +999,10 @@ describe('AcpQueryRunner', () => {
       let releasePrompt: (() => void) | undefined;
       client.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         await new Promise<void>((resolve) => {
@@ -1040,7 +1055,10 @@ describe('AcpQueryRunner', () => {
       let capturedCallbacks: { onSubmitted?: () => void; onAccepted?: () => void } | undefined;
       client.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         capturedCallbacks = callbacks;
@@ -1141,7 +1159,10 @@ describe('AcpQueryRunner', () => {
       let capturedCallbacks: { onSubmitted?: () => void; onAccepted?: () => void } | undefined;
       client.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         capturedCallbacks = callbacks;
         await new Promise<void>((resolve) => {
@@ -1825,7 +1846,10 @@ describe('AcpQueryRunner', () => {
     const promptEntered = new Promise<void>((resolve) => {
       client.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         callbacks?.onAccepted?.();
@@ -2404,7 +2428,10 @@ describe('AcpQueryRunner', () => {
       let releasePrompt: (() => void) | undefined;
       client.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         callbacks?.onAccepted?.();
@@ -2668,7 +2695,10 @@ describe('AcpQueryRunner', () => {
       const client = createMockClient();
       client.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         throw new Error('getaddrinfo ENOTFOUND chatgpt.com');
@@ -2750,7 +2780,10 @@ describe('AcpQueryRunner', () => {
     test('retries transient connection errors once with prompt re-delivery', async () => {
       const transientSendPrompt = async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         callbacks?.onAccepted?.();
@@ -2801,7 +2834,10 @@ describe('AcpQueryRunner', () => {
       const client = createMockClient();
       client.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         callbacks?.onAccepted?.();
@@ -2837,7 +2873,10 @@ describe('AcpQueryRunner', () => {
       const client = createMockClient();
       client.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         callbacks?.onAccepted?.();
@@ -2902,7 +2941,10 @@ describe('AcpQueryRunner', () => {
       const client = createMockClient();
       client.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         callbacks?.onAccepted?.();
@@ -2940,7 +2982,10 @@ describe('AcpQueryRunner', () => {
       const client = createMockClient();
       client.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         callbacks?.onAccepted?.();
@@ -2964,7 +3009,10 @@ describe('AcpQueryRunner', () => {
       const firstClient = createMockClient();
       firstClient.sendPrompt = mock(async function* (
         prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         callbacks?.onAccepted?.();
@@ -3015,7 +3063,10 @@ describe('AcpQueryRunner', () => {
       const client = createMockClient();
       client.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         callbacks?.onAccepted?.();
@@ -3049,7 +3100,10 @@ describe('AcpQueryRunner', () => {
       firstClient.canLoadSession.mockImplementation(() => true);
       firstClient.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         callbacks?.onAccepted?.();
@@ -3087,7 +3141,10 @@ describe('AcpQueryRunner', () => {
       firstClient.canLoadSession.mockImplementation(() => true);
       firstClient.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         callbacks?.onAccepted?.();
@@ -3133,7 +3190,10 @@ describe('AcpQueryRunner', () => {
       const runner = new AcpQueryRunner(ctx, createClient);
       firstClient.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         constructorOptions[0]?.onExit?.(1, null);
@@ -3166,7 +3226,10 @@ describe('AcpQueryRunner', () => {
       const runner = new AcpQueryRunner(ctx, createClient);
       firstClient.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         constructorOptions[0]?.onExit?.(1, null);
@@ -3202,7 +3265,10 @@ describe('AcpQueryRunner', () => {
       const runner = new AcpQueryRunner(ctx, createClient);
       firstClient.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         constructorOptions[0]?.onExit?.(1, null);
@@ -3224,7 +3290,10 @@ describe('AcpQueryRunner', () => {
       const firstClient = createMockClient();
       firstClient.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         callbacks?.onAccepted?.();
@@ -3260,7 +3329,10 @@ describe('AcpQueryRunner', () => {
       ctx.onRateLimitExhausted = mock(async () => true);
       firstClient.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         constructorOptions[0]?.onExit?.(1, null);
@@ -3280,7 +3352,10 @@ describe('AcpQueryRunner', () => {
       const firstClient = createMockClient();
       firstClient.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         callbacks?.onAccepted?.();
@@ -3363,7 +3438,10 @@ describe('AcpQueryRunner', () => {
       let releasePrompt: (() => void) | undefined;
       firstClient.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         await new Promise<void>((resolve) => {
@@ -3402,7 +3480,10 @@ describe('AcpQueryRunner', () => {
       const { runner, ctx, constructorOptions } = createRunnerFixture({ client });
       client.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         constructorOptions[0].onExit?.(0, null);
@@ -3428,7 +3509,10 @@ describe('AcpQueryRunner', () => {
       const firstClient = createMockClient();
       firstClient.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         throw new Error('session/prompt failed');
@@ -3454,7 +3538,10 @@ describe('AcpQueryRunner', () => {
       const firstClient = createMockClient();
       firstClient.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         callbacks?.onAccepted?.();
@@ -3543,7 +3630,10 @@ describe('AcpQueryRunner', () => {
       firstClient.canLoadSession.mockImplementation(() => true);
       firstClient.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         callbacks?.onAccepted?.();
@@ -3596,7 +3686,10 @@ describe('AcpQueryRunner', () => {
       const firstClient = createMockClient();
       firstClient.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         callbacks?.onAccepted?.();
@@ -3645,7 +3738,10 @@ describe('AcpQueryRunner', () => {
       let releaseAmbient: (() => void) | undefined;
       firstClient.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         callbacks?.onAccepted?.();
@@ -3690,7 +3786,10 @@ describe('AcpQueryRunner', () => {
       const firstClient = createMockClient();
       firstClient.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         callbacks?.onAccepted?.();
@@ -3718,7 +3817,10 @@ describe('AcpQueryRunner', () => {
       const client = createMockClient();
       client.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         callbacks?.onAccepted?.();
@@ -3740,7 +3842,10 @@ describe('AcpQueryRunner', () => {
       const client = createMockClient();
       client.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         callbacks?.onAccepted?.();
@@ -3762,7 +3867,10 @@ describe('AcpQueryRunner', () => {
       const firstClient = createMockClient();
       firstClient.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         callbacks?.onAccepted?.();
@@ -3826,7 +3934,10 @@ describe('AcpQueryRunner', () => {
       const client = createMockClient();
       client.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         callbacks?.onAccepted?.();
@@ -3854,7 +3965,10 @@ describe('AcpQueryRunner', () => {
       let releasePrompt: (() => void) | undefined;
       client.sendPrompt = mock(async function* (
         _prompt: unknown,
-        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+        callbacks?: {
+          onSubmitted?: () => void | Promise<void>;
+          onAccepted?: () => void | Promise<void>;
+        }
       ) {
         callbacks?.onSubmitted?.();
         callbacks?.onAccepted?.();

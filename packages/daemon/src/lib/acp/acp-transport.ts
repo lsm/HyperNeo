@@ -240,7 +240,7 @@ export class AcpTransport {
   sendRequest(
     method: string,
     params?: unknown,
-    options?: { onSubmitted?: () => void }
+    options?: { onSubmitted?: () => void | Promise<void> }
   ): Promise<AcpJsonRpcResponse> {
     if (this.closed) {
       return Promise.reject(new Error('Transport is closed'));
@@ -265,7 +265,13 @@ export class AcpTransport {
         reject(new Error(`Request timed out after ${timeoutMs}ms: ${method}`));
       }, timeoutMs);
 
-      this.pendingRequests.set(id, { resolve, reject, timer });
+      let submitted: Promise<Error | undefined> = Promise.resolve(undefined);
+      this.pendingRequests.set(id, {
+        resolve: (response) =>
+          void submitted.then((failure) => (failure ? reject(failure) : resolve(response))),
+        reject,
+        timer,
+      });
 
       try {
         this.process!.stdin!.write(JSON.stringify(request) + '\n', (error) => {
@@ -276,14 +282,17 @@ export class AcpTransport {
             }
             return;
           }
-          try {
-            options?.onSubmitted?.();
-          } catch (err) {
-            clearTimeout(timer);
-            if (this.pendingRequests.delete(id)) {
-              reject(err instanceof Error ? err : new Error(String(err)));
-            }
-          }
+          submitted = Promise.resolve()
+            .then(() => options?.onSubmitted?.())
+            .then(
+              () => undefined,
+              (err: unknown) => {
+                const failure = err instanceof Error ? err : new Error(String(err));
+                clearTimeout(timer);
+                if (this.pendingRequests.delete(id)) reject(failure);
+                return failure;
+              }
+            );
         });
       } catch (err) {
         clearTimeout(timer);

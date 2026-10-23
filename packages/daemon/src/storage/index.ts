@@ -472,11 +472,11 @@ export class Database {
     return this.sdkMessageRepo.getUserMessageIdsByStatus(sessionId, status);
   }
 
-  updateMessageStatus(messageIds: string[], newStatus: SendStatus): void {
+  async updateMessageStatus(messageIds: string[], newStatus: SendStatus): Promise<void> {
     this.sdkMessageRepo.updateMessageStatus(messageIds, newStatus);
   }
 
-  updateMessageTimestamp(messageId: string, timestampMs?: number): void {
+  async updateMessageTimestamp(messageId: string, timestampMs?: number): Promise<void> {
     this.sdkMessageRepo.updateMessageTimestamp(messageId, timestampMs);
   }
 

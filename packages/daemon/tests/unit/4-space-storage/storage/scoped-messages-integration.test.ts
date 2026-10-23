@@ -166,7 +166,7 @@ describe('Scoped invalidation — sdk_messages integration', () => {
 
     expect(diffsA.length).toBe(1);
 
-    reactiveDb.db.updateMessageStatus([msgId], 'consumed');
+    await reactiveDb.db.updateMessageStatus([msgId], 'consumed');
 
     await Promise.resolve();
 
