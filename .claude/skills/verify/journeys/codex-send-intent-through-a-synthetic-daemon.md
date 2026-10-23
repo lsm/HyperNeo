@@ -2,9 +2,19 @@
 
 ```bash
 RUN=$(mktemp -d /private/tmp/hn-send-proof-XXXXXX)
-env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
+env -i HOME="$RUN/home" PATH="$RUN/bin:$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
   LOG_LEVEL=warn bun .claude/skills/verify/codex-send-intent.ts verify 9377 "$RUN"
 ```
+
+The helper requires its synthetic `bin` at the front of PATH **before Bun starts**.
+Changing PATH inside the process does not change Bun’s executable lookup in the
+verified runtime. It asserts the resolved launcher path before any dispatch. Its
+`open` shim records arguments and never opens the GUI. As a control, the real
+new-thread handoff must open `new-handoff-control` and start through its Desktop
+owner. Existing ownerless input must separately record an open while the shim
+exits 1; the queued delivery and receipt still succeed within two seconds,
+without waiting for ownership. The launcher trace is retained in
+`evidence/desktop-open.jsonl`.
 
 The helper starts an isolated daemon and synthetic Codex Desktop IPC/app-server
 Unix sockets under its fresh HOME. It uses real WebSocket `operation.invoke`

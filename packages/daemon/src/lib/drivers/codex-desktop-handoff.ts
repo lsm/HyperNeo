@@ -10,8 +10,36 @@ const TIMEOUT_MS = 30_000;
 
 export type CodexSendGate<Value> = { value: Value } | { reason: Result<WorkDelivery> };
 
+function requestCodexDesktopOpen(spawn: SpawnFn, threadId: string): void {
+  try {
+    const launcher = spawn(['open', '-g', `codex://threads/${threadId}`], {
+      stdout: 'ignore',
+      stderr: 'ignore',
+    });
+    const timer = setTimeout(() => {
+      try {
+        launcher.kill();
+      } catch {}
+    }, TIMEOUT_MS);
+    timer.unref?.();
+    void launcher.exited.then(
+      (code) => {
+        clearTimeout(timer);
+        if (code !== 0) log.warn('Best-effort Desktop open failed', { threadId, code });
+      },
+      (error) => {
+        clearTimeout(timer);
+        log.warn('Best-effort Desktop open failed', { threadId, reason: String(error) });
+      }
+    );
+  } catch (error) {
+    log.warn('Best-effort Desktop open failed', { threadId, reason: String(error) });
+  }
+}
+
 export async function steerCodexDesktopTurn(
   socketPath: string | undefined,
+  spawn: SpawnFn,
   threadId: string,
   text: string,
   messageId: string,
@@ -41,8 +69,10 @@ export async function steerCodexDesktopTurn(
         ownerClientId: owner.handledByClientId,
         reason: owner.error,
       });
-      if (owner.resultType !== 'success' || !owner.handledByClientId)
+      if (owner.resultType !== 'success' || !owner.handledByClientId) {
+        if (owner.error === 'no-client-found') requestCodexDesktopOpen(spawn, threadId);
         return { value: 'app-server' };
+      }
       log.warn('work.send route', { threadId, messageId, path: 'desktop-steer' });
       dispatched = true;
       const response = await call(

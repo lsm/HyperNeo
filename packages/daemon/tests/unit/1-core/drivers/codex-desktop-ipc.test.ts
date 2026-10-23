@@ -23,6 +23,9 @@ interface Message {
 }
 
 describe('withCodexDesktopIpc', () => {
+  const noDesktopOpen = () => {
+    throw new Error('Synthetic Desktop open refused');
+  };
   let directory = '';
   let server: Server | undefined;
   const sockets = new Set<Socket>();
@@ -86,7 +89,9 @@ describe('withCodexDesktopIpc', () => {
           error: 'request-version-mismatch',
         })
       );
-      expect(await steerCodexDesktopTurn(f.path, 'thread-1', 'now', 'input-1')).toEqual({
+      expect(
+        await steerCodexDesktopTurn(f.path, noDesktopOpen, 'thread-1', 'now', 'input-1')
+      ).toEqual({
         value: 'app-server',
       });
       expect(f.seen.some((message) => message.method === 'thread-follower-steer-turn')).toBe(false);
@@ -372,7 +377,9 @@ describe('withCodexDesktopIpc', () => {
         })
       );
       const text = 'use the parser\n[HyperNeo agent input]';
-      expect(await steerCodexDesktopTurn(f.path, 'thread-1', text, 'input-1')).toEqual({
+      expect(
+        await steerCodexDesktopTurn(f.path, noDesktopOpen, 'thread-1', text, 'input-1')
+      ).toEqual({
         reason: { ok: true, value: { delivered: true, steeredIntoTurnId: 'desktop-turn' } },
       });
       expect(f.seen.at(-1)).toMatchObject({
@@ -481,7 +488,13 @@ describe('withCodexDesktopIpc', () => {
                   }),
           })
         );
-        const result = await steerCodexDesktopTurn(f.path, 'thread-1', 'later', 'input-1');
+        const result = await steerCodexDesktopTurn(
+          f.path,
+          noDesktopOpen,
+          'thread-1',
+          'later',
+          'input-1'
+        );
         expect(result).toMatchObject({
           reason: refused
             ? {
@@ -518,7 +531,9 @@ describe('withCodexDesktopIpc', () => {
           error: 'no-client-found',
         })
       );
-      expect(await steerCodexDesktopTurn(f.path, 'thread-1', 'hi', 'input-1')).toEqual({
+      expect(
+        await steerCodexDesktopTurn(f.path, noDesktopOpen, 'thread-1', 'hi', 'input-1')
+      ).toEqual({
         value: 'app-server',
       });
       expect(f.seen.map((message) => message.method)).toEqual([
@@ -548,7 +563,9 @@ describe('withCodexDesktopIpc', () => {
               result: {},
             });
         });
-        expect(await steerCodexDesktopTurn(f.path, 'thread-1', 'hi', 'input-1')).toMatchObject({
+        expect(
+          await steerCodexDesktopTurn(f.path, noDesktopOpen, 'thread-1', 'hi', 'input-1')
+        ).toMatchObject({
           reason: { ok: false, reason: 'not_delivered' },
         });
       }

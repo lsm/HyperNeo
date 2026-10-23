@@ -8,6 +8,8 @@ import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts'
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { subscribeToStructuredLogs } from '../../../packages/daemon/src/lib/logger.ts';
+import { startCodexDesktopTurn } from '../../../packages/daemon/src/lib/drivers/codex-desktop-handoff.ts';
+import { spawnProcess } from '../../../packages/daemon/src/lib/runtime-spawn/index.ts';
 
 const [action, portText, runText] = process.argv.slice(2);
 const port = Number(portText);
@@ -19,10 +21,11 @@ assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert(!existsSync(join(run, 'data/daemon.db')));
 const bin = join(run, 'bin');
+assert.equal(process.env.PATH?.split(':')[0], bin, 'Put the synthetic launcher on PATH before starting Bun');
 mkdirSync(bin, { recursive: true });
 const openLog = join(run, 'evidence/desktop-open.jsonl');
-writeFileSync(join(bin, 'open'), `#!/usr/bin/env bun\nimport { appendFileSync } from 'node:fs';\nappendFileSync(${JSON.stringify(openLog)}, JSON.stringify({ args: process.argv.slice(2), pid: process.pid })+String.fromCharCode(10));\nprocess.exit(1);\n`, { mode: 0o700 });
-process.env.PATH = `${bin}:${process.env.PATH}`;
+writeFileSync(join(bin, 'open'), `#!/usr/bin/env bun\nimport { appendFileSync } from 'node:fs';\nappendFileSync(${JSON.stringify(openLog)}, JSON.stringify({ args: process.argv.slice(2), pid: process.pid })+String.fromCharCode(10));\nprocess.exit(process.argv.at(-1) === 'codex://threads/new-handoff-control' ? 0 : 1);\n`, { mode: 0o700 });
+assert.equal(Bun.which('open'), join(bin, 'open'), 'Never run the host Desktop launcher in this journey');
 const home = join(run, 'home/.codex');
 mkdirSync(join(home, 'ipc'), { recursive: true });
 mkdirSync(join(home, 'app-server-control'), { recursive: true });
@@ -60,7 +63,7 @@ const desktop = createServer((socket) => {
       buffer = buffer.subarray(size + 4);
       calls.push({ desktop: request.method, version: request.version, params: request.params });
       const response = request.method === 'initialize' ? { resultType: 'success', result: { clientId: 'synthetic-client' } }
-        : request.method === 'thread-owner-discovery' ? owner === 'owned' ? { resultType: 'success', handledByClientId: 'fixture-owner' } : { resultType: 'error', error: owner === 'missing' ? 'no-client-found' : 'request-version-mismatch' }
+        : request.method === 'thread-owner-discovery' ? (owner === 'owned' || request.params?.conversationId === 'new-handoff-control') ? { resultType: 'success', handledByClientId: 'fixture-owner' } : { resultType: 'error', error: owner === 'missing' ? 'no-client-found' : 'request-version-mismatch' }
         : request.method === 'thread-follower-start-turn' ? startError ? { resultType: 'error', error: 'start unavailable' } : { resultType: 'success', result: { result: { turn: { id: 'desktop-started' } } } }
         : refuse ? { resultType: 'error', error: 'NoActiveTurn' } : { resultType: 'success', result: { result: { turnId: 'desktop-active' } } };
       const body = Buffer.from(JSON.stringify({ type: 'response', requestId: request.requestId, ...response }));
@@ -109,6 +112,11 @@ try {
     };
     ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: receipt ? { name: 'work.status', input: { ref: { adapter: 'codex-desktop', id: 'synthetic' }, receipt } } : adapters ? { name: 'work.adapters', input: {} } : describe ? { name: 'operations.describe', input: { name: 'work.send' } } : { name: 'work.send', input: { ref: { adapter: 'codex-desktop', id: 'synthetic' }, message: 'synthetic marker', ...(mode ? { mode } : {}) } }, timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
+  await startCodexDesktopTurn(join(home, 'ipc/ipc.sock'), spawnProcess, 'new-handoff-control', { threadId: 'new-handoff-control', input: [{ type: 'text', text: 'synthetic opening turn', text_elements: [] }] });
+  assert(calls.some(call => {
+    const request = call as { desktop?: string; params?: { conversationId?: string } };
+    return request.desktop === 'thread-follower-start-turn' && request.params?.conversationId === 'new-handoff-control';
+  }), 'New-thread control must open and hand off its first turn');
   const first = await send();
   if (action === 'reproduce') {
     assert.equal(first.value.queuedSubmissionId, 'synthetic-queue');
@@ -200,7 +208,9 @@ try {
     for (let n = 0; n < 50 && !existsSync(openLog); n++) await new Promise(resolve => setTimeout(resolve, 20));
     assert(existsSync(openLog), 'Ownerless existing delivery must request a best-effort Desktop open');
     const opens = readFileSync(openLog, 'utf8').trim().split('\n').map(line => JSON.parse(line));
-    assert(opens.every(open => JSON.stringify(open.args) === JSON.stringify(['-g', 'codex://threads/synthetic'])));
+    assert.deepEqual(opens[0].args, ['-g', 'codex://threads/new-handoff-control']);
+    assert(opens.slice(1).length > 0, 'Existing-thread open must be recorded separately from the control');
+    assert(opens.slice(1).every(open => JSON.stringify(open.args) === JSON.stringify(['-g', 'codex://threads/synthetic'])));
     timings.push({ bestEffortDesktopOpen: opens, nativeOwnerRemainedAbsent: true, launcherExit: 1 });
     assert(logs.length > 0, 'retained routing diagnostics required');
   }
