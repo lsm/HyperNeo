@@ -23,7 +23,15 @@ interface Message {
 }
 
 describe('withCodexDesktopIpc', () => {
-  const noDesktopOpen = () => {
+  const noDesktopOpen: import('../../../../src/lib/runtime-spawn').SpawnFn = (args) => {
+    if (args[0] === 'ps')
+      return {
+        stdout: new Response('/Applications/Codex.app/Contents/MacOS/Codex\n').body,
+        stderr: null,
+        exited: Promise.resolve(0),
+        exitCode: 0,
+        kill: () => {},
+      };
     throw new Error('Synthetic Desktop open refused');
   };
   let directory = '';
@@ -80,6 +88,72 @@ describe('withCodexDesktopIpc', () => {
   }
 
   describe('steerCodexDesktopTurn Desktop admission', () => {
+    test.each([
+      ['/Applications/ChatGPT.app/Contents/MacOS/ChatGPT', true],
+      ['/Users/test/Applications/Codex.app/Contents/MacOS/Codex', true],
+      ['/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex', false],
+      ['/usr/bin/sleep', false],
+    ])(
+      'detects the Desktop executable rather than its background CLI: %s',
+      async (path, running) => {
+        const probes: string[][] = [];
+        const result = await steerCodexDesktopTurn(
+          undefined,
+          (args) => {
+            probes.push(args);
+            return {
+              stdout: new Response(`${path}\n`).body,
+              stderr: null,
+              exited: Promise.resolve(0),
+              exitCode: 0,
+              kill: () => {},
+            };
+          },
+          'thread-1',
+          'marker',
+          'input-1'
+        );
+        expect(probes).toEqual([['ps', '-axo', 'comm=']]);
+        expect(result).toMatchObject(
+          running ? { reason: { ok: false, reason: 'not_delivered' } } : { value: 'app-server' }
+        );
+      }
+    );
+
+    test('refuses when an opened Desktop never acquires the thread', async () => {
+      const f = await fixture((message, _socket, send) =>
+        send({
+          type: 'response',
+          requestId: message.requestId,
+          resultType: 'error',
+          error: 'no-client-found',
+        })
+      );
+      const result = await steerCodexDesktopTurn(
+        f.path,
+        () => ({
+          stdout: null,
+          stderr: null,
+          exited: Promise.resolve(0),
+          exitCode: 0,
+          kill: () => {},
+        }),
+        'thread-1',
+        'marker',
+        'input-1',
+        'auto',
+        async () => true
+      );
+      expect(result).toMatchObject({
+        reason: {
+          ok: false,
+          reason: 'not_delivered',
+          detail: expect.stringContaining('did not take ownership'),
+        },
+      });
+      expect(f.seen.some((message) => message.method === 'thread-follower-steer-turn')).toBe(false);
+    }, 35_000);
+
     test('opens an unloaded thread and waits for its Desktop owner before delivering', async () => {
       let opened = false;
       const f = await fixture((message, _socket, send) =>
@@ -97,6 +171,14 @@ describe('withCodexDesktopIpc', () => {
       const result = await steerCodexDesktopTurn(
         f.path,
         (args) => {
+          if (args[0] === 'ps')
+            return {
+              stdout: new Response('/Applications/Codex.app/Contents/MacOS/Codex\n').body,
+              stderr: null,
+              exited: Promise.resolve(0),
+              exitCode: 0,
+              kill: () => {},
+            };
           launched.push(args);
           return {
             stdout: null,
@@ -142,7 +224,7 @@ describe('withCodexDesktopIpc', () => {
   });
 
   describe('steerCodexDesktopTurn discovery fallback', () => {
-    test('tries app-server when Desktop discovery refuses before dispatch', async () => {
+    test('refuses when running Desktop discovery rejects the protocol before dispatch', async () => {
       const f = await fixture((message, _socket, send) =>
         send({
           type: 'response',
@@ -153,8 +235,12 @@ describe('withCodexDesktopIpc', () => {
       );
       expect(
         await steerCodexDesktopTurn(f.path, noDesktopOpen, 'thread-1', 'now', 'input-1')
-      ).toEqual({
-        value: 'app-server',
+      ).toMatchObject({
+        reason: {
+          ok: false,
+          reason: 'not_delivered',
+          detail: expect.stringContaining('request-version-mismatch'),
+        },
       });
       expect(f.seen.some((message) => message.method === 'thread-follower-steer-turn')).toBe(false);
     });
@@ -164,13 +250,13 @@ describe('withCodexDesktopIpc', () => {
     test.each(
       (['steer', 'resume', 'queue'] as const).flatMap((route) =>
         (['refused', 'hung'] as const).flatMap((launcher) =>
-          (['ownerless', 'missing', 'stale'] as const).map(
+          (['missing', 'stale'] as const).map(
             (connection) => [route, launcher, connection] as const
           )
         )
       )
     )(
-      'delivers through %s if Desktop open is %s and socket is %s',
+      'delivers through %s without Desktop, even if open would be %s and socket is %s',
       async (route, launcher, connection) => {
         const f = await fixture((message, _socket, send) =>
           send({
@@ -208,6 +294,7 @@ describe('withCodexDesktopIpc', () => {
         const driver = createCodexDesktopAdapter({
           statePath,
           desktopSocketPath,
+          desktopRunning: async () => false,
           worktreesDir: directory,
           machine: 'test',
           now: Date.now,
@@ -322,7 +409,7 @@ describe('withCodexDesktopIpc', () => {
                 : 'thread/queue/add'
           );
           if (route !== 'resume') expect(calls).not.toContain('turn/start');
-          expect(launches).toEqual([['open', '-g', 'codex://threads/thread-1']]);
+          expect(launches).toEqual([]);
         } finally {
           clearTimeout(timer);
           releaseOpen(1);
@@ -499,6 +586,7 @@ describe('withCodexDesktopIpc', () => {
       const driver = createCodexDesktopAdapter({
         statePath,
         desktopSocketPath: f.path,
+        desktopRunning: async () => true,
         worktreesDir: directory,
         machine: 'test',
         now: Date.now,
@@ -600,7 +688,7 @@ describe('withCodexDesktopIpc', () => {
       }
     );
 
-    test('uses app-server only when Desktop has no owner', async () => {
+    test('refuses if running Desktop has no owner and its open fails', async () => {
       const f = await fixture((message, _socket, send) =>
         send({
           type: 'response',
@@ -611,8 +699,12 @@ describe('withCodexDesktopIpc', () => {
       );
       expect(
         await steerCodexDesktopTurn(f.path, noDesktopOpen, 'thread-1', 'hi', 'input-1')
-      ).toEqual({
-        value: 'app-server',
+      ).toMatchObject({
+        reason: {
+          ok: false,
+          reason: 'not_delivered',
+          detail: expect.stringContaining('Synthetic Desktop open refused'),
+        },
       });
       expect(f.seen.map((message) => message.method)).toEqual([
         'initialize',

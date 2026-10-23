@@ -104,6 +104,7 @@ export interface CodexDesktopAdapterDeps {
   statePath: string;
   readSnapshot?: (statePath: string, includeClosed: boolean) => Promise<CodexSnapshot>;
   desktopSocketPath?: string;
+  desktopRunning?: () => Promise<boolean>;
   worktreesDir: string;
   machine: string;
   now: () => number;
@@ -891,7 +892,8 @@ async function tryDesktopCodexSend(
     detail.thread.id,
     message,
     deps.newId(),
-    mode
+    mode,
+    deps.desktopRunning
   );
 }
 

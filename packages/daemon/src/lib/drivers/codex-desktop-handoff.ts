@@ -10,30 +10,68 @@ const TIMEOUT_MS = 30_000;
 
 export type CodexSendGate<Value> = { value: Value } | { reason: Result<WorkDelivery> };
 
-function requestCodexDesktopOpen(spawn: SpawnFn, threadId: string): void {
+async function codexDesktopRunning(spawn: SpawnFn): Promise<boolean> {
+  const probe = spawn(['ps', '-axo', 'comm='], { stdout: 'pipe', stderr: 'ignore' });
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const launcher = spawn(['open', '-g', `codex://threads/${threadId}`], {
-      stdout: 'ignore',
-      stderr: 'ignore',
-    });
-    const timer = setTimeout(() => {
-      try {
-        launcher.kill();
-      } catch {}
-    }, TIMEOUT_MS);
-    timer.unref?.();
-    void launcher.exited.then(
-      (code) => {
-        clearTimeout(timer);
-        if (code !== 0) log.warn('Best-effort Desktop open failed', { threadId, code });
-      },
-      (error) => {
-        clearTimeout(timer);
-        log.warn('Best-effort Desktop open failed', { threadId, reason: String(error) });
-      }
-    );
-  } catch (error) {
-    log.warn('Best-effort Desktop open failed', { threadId, reason: String(error) });
+    const [code, processes] = await Promise.race([
+      Promise.all([probe.exited, new Response(probe.stdout).text()]),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          probe.kill();
+          reject(new Error('Could not determine whether Codex Desktop is running.'));
+        }, 5_000);
+      }),
+    ]);
+    if (code !== 0) throw new Error('Could not determine whether Codex Desktop is running.');
+    return processes
+      .split('\n')
+      .some((path) =>
+        /\/(Codex|ChatGPT)\.app\/Contents\/MacOS\/(Codex|ChatGPT)$/.test(path.trim())
+      );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function openCodexDesktopOwner(
+  { call }: CodexDesktopIpc,
+  spawn: SpawnFn,
+  threadId: string
+): Promise<string> {
+  const launcher = spawn(['open', '-g', `codex://threads/${threadId}`], {
+    stdout: 'ignore',
+    stderr: 'pipe',
+  });
+  const deadline = Date.now() + TIMEOUT_MS;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const [code, stderr] = await Promise.race([
+      Promise.all([launcher.exited, new Response(launcher.stderr).text()]),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          launcher.kill();
+          reject(new Error('Codex Desktop open timed out.'));
+        }, TIMEOUT_MS);
+      }),
+    ]);
+    clearTimeout(timer);
+    if (code !== 0) throw new Error(stderr.trim() || 'Could not open the thread in Codex Desktop.');
+    do {
+      const discovered = await call(
+        'thread-owner-discovery',
+        { hostId: 'local', conversationId: threadId },
+        1
+      );
+      if (discovered.resultType === 'success' && discovered.handledByClientId)
+        return discovered.handledByClientId;
+      if (discovered.resultType !== 'success' && discovered.error !== 'no-client-found')
+        throw new Error(discovered.error ?? 'Codex Desktop ownership discovery failed.');
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    } while (Date.now() < deadline);
+    throw new Error('Codex Desktop did not take ownership of the thread in time.');
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -43,21 +81,33 @@ export async function steerCodexDesktopTurn(
   threadId: string,
   text: string,
   messageId: string,
-  mode: 'auto' | 'steer' = 'auto'
+  mode: 'auto' | 'steer' = 'auto',
+  desktopRunning = () => codexDesktopRunning(spawn)
 ): Promise<CodexSendGate<'app-server'>> {
-  if (!socketPath) {
-    log.warn('work.send route', {
-      threadId,
-      messageId,
-      path: 'app-server',
-      reason: 'no_desktop_socket',
-    });
-    return { value: 'app-server' };
+  try {
+    if (!(await desktopRunning())) {
+      log.warn('work.send route', {
+        threadId,
+        messageId,
+        path: 'app-server',
+        reason: 'desktop_not_running',
+      });
+      return { value: 'app-server' };
+    }
+  } catch (error) {
+    return { reason: reject('not_delivered', String(error)) };
   }
+  if (!socketPath)
+    return {
+      reason: reject(
+        'not_delivered',
+        'Codex Desktop is running but its ownership endpoint is unavailable; no background writer was started.'
+      ),
+    };
   let dispatched = false;
   try {
     return await withCodexDesktopIpc(socketPath, async ({ call }) => {
-      const owner = await call(
+      let owner = await call(
         'thread-owner-discovery',
         { hostId: 'local', conversationId: threadId },
         1
@@ -70,8 +120,12 @@ export async function steerCodexDesktopTurn(
         reason: owner.error,
       });
       if (owner.resultType !== 'success' || !owner.handledByClientId) {
-        if (owner.error === 'no-client-found') requestCodexDesktopOpen(spawn, threadId);
-        return { value: 'app-server' };
+        if (owner.error !== 'no-client-found')
+          throw new Error(owner.error ?? 'Codex Desktop did not confirm an owner.');
+        owner = {
+          resultType: 'success',
+          handledByClientId: await openCodexDesktopOwner({ call }, spawn, threadId),
+        };
       }
       log.warn('work.send route', { threadId, messageId, path: 'desktop-steer' });
       dispatched = true;
@@ -146,14 +200,12 @@ export async function steerCodexDesktopTurn(
       dispatched,
       reason: String(error),
     });
-    if (!dispatched) {
-      requestCodexDesktopOpen(spawn, threadId);
-      return { value: 'app-server' };
-    }
     return {
       reason: reject(
         'not_delivered',
-        `${String(error)} The steer may have been accepted; check work.status before retrying.`
+        dispatched
+          ? `${String(error)} The steer may have been accepted; check work.status before retrying.`
+          : `${String(error)} No background writer was started; open the thread in Codex Desktop and retry.`
       ),
     };
   }
@@ -174,46 +226,16 @@ async function handoff(
   threadId: string,
   request: Record<string, unknown>
 ): Promise<void> {
-  let launcher: ReturnType<SpawnFn> | undefined;
-  let launchTimer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    launcher = spawn(['open', '-g', `codex://threads/${threadId}`], {
-      stdout: 'ignore',
-      stderr: 'pipe',
-    });
-    launchTimer = setTimeout(() => launcher?.kill(), TIMEOUT_MS);
-    const [code, stderr] = await Promise.all([
-      launcher.exited,
-      new Response(launcher.stderr).text(),
-    ]);
-    clearTimeout(launchTimer);
-    if (code !== 0) throw new Error(stderr.trim() || 'Could not open the thread in Codex Desktop.');
-    const deadline = Date.now() + TIMEOUT_MS;
-    let owner: string | undefined;
-    do {
-      const discovered = await call(
-        'thread-owner-discovery',
-        { hostId: 'local', conversationId: threadId },
-        1
-      );
-      if (discovered.resultType === 'success') owner = discovered.handledByClientId;
-      else if (discovered.error !== 'no-client-found')
-        throw new Error(discovered.error ?? 'Codex Desktop ownership discovery failed.');
-      if (!owner) await new Promise((resolve) => setTimeout(resolve, 200));
-    } while (!owner && Date.now() < deadline);
-    if (!owner) throw new Error('Codex Desktop did not take ownership of the new thread.');
-    const started = await call(
-      'thread-follower-start-turn',
-      {
-        conversationId: threadId,
-        turnStart: { request, context: { inheritThreadSettings: false } },
-      },
-      2,
-      owner
-    );
-    if (started.resultType !== 'success' || !started.result?.result?.turn?.id)
-      throw new Error(started.error ?? 'Codex Desktop did not confirm the opening turn.');
-  } finally {
-    clearTimeout(launchTimer);
-  }
+  const owner = await openCodexDesktopOwner({ call }, spawn, threadId);
+  const started = await call(
+    'thread-follower-start-turn',
+    {
+      conversationId: threadId,
+      turnStart: { request, context: { inheritThreadSettings: false } },
+    },
+    2,
+    owner
+  );
+  if (started.resultType !== 'success' || !started.result?.result?.turn?.id)
+    throw new Error(started.error ?? 'Codex Desktop did not confirm the opening turn.');
 }

@@ -1,18 +1,24 @@
 ## Codex Desktop work.send journey
 
-First run `codex-send-intent-through-a-synthetic-daemon.md`. It proves the two
-admissions separately without a GUI: new-thread handoff opens Desktop and starts
-through its confirmed owner, while existing-thread delivery survives an absent
-owner and a refused launcher. The unit contracts also cover a hung launcher for
-existing steer, resume/start and active-writer queue paths. Neither an open
-request nor a queue receipt proves that Desktop rendered or consumed the input.
+First run `codex-send-intent-through-a-synthetic-daemon.md`. It proves that a
+running Desktop acquires ownership of an unloaded thread before any delivery,
+and refuses visibly if it cannot. App-server fallback is allowed only when the
+Desktop process is absent. A fallback turn's matching completion requests
+`thread/unsubscribe`; its official idle grace can retain the thread for up to
+30 minutes. No archive/unarchive or app restart transfers ownership.
 
 After an approved deployment, save the RPC build readback and confirm it contains
-the merge commit. Use one authorized existing Codex verification thread for one
-`work.send`; retain its input ID, delivery result and receipt-bound `work.status`
-readback showing the matching input was consumed. Do not send test messages to
-an arbitrary human working thread. A queued but unconsumed input is not a pass.
-Do not restart either daemon or Codex to make delivery work.
+the merge commit. Prepare a clearly named disposable thread with one completed, tool-free turn in
+an owned bootstrap process, then confirm that process exited and owner discovery
+reports `no-client-found`. A never-started thread without its source rollout is
+not a valid history fixture. Record that the shared app-server loaded list omits
+the thread. Neo sends one harmless marker through normal `work.send`. Audit that
+same thread: Desktop owns it, its receipt-bound input/reply matches, and the
+shared loaded list still omits it. The human opens it and checks the message and
+absence of “open in another app”, without a restart. Keep visual acceptance
+unverified until the human replies. No GUI automation or human/OAP working
+threads. The controlled pre-fix reproduction remains local at
+`/Users/lsm/focus/verification/codex-unloaded-owner/repro-history/`.
 
 For new-thread acceptance, ask the human to dispatch one normal Neo task for a
 repo and open that thread in the already-running Codex Desktop. Record the exact
