@@ -26,6 +26,7 @@ describe('one Neo publication path', () => {
       [
         'lib/neo/service.ts:appendPublication(',
         'lib/neo/service.ts:appendPublication(',
+        'lib/neo/service.ts:appendPublication(',
         'lib/neo/service.ts:publications.append(',
       ].sort()
     );

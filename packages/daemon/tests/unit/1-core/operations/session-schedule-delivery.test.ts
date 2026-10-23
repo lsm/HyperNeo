@@ -146,7 +146,7 @@ describe('Neo schedule target lifecycle', () => {
     expect(next).toMatchObject({
       status: 'active',
       lastOutcome: 'skipped_busy',
-      dueCount: 1,
+      dueCount: 0,
       pendingJobId: expect.any(String),
     });
     expect(mail()).toEqual([]);
@@ -268,7 +268,7 @@ describe('schedule target lifecycle and external delivery', () => {
     });
     await handler(job);
     const next = scheduler.repo.get(row.id)!;
-    expect(next).toMatchObject({ status: 'active', lastOutcome: 'skipped_busy', dueCount: 1 });
+    expect(next).toMatchObject({ status: 'active', lastOutcome: 'skipped_busy', dueCount: 0 });
     expect(next.nextRunAt).toBeGreaterThan(Date.now());
     expect(
       db.getJobQueueRepo().listActiveByPayload('mailbox', { 'to.sessionId': row.target.id })
@@ -340,7 +340,7 @@ describe('schedule target lifecycle and external delivery', () => {
     expect(scheduler.repo.get(row.id)).toMatchObject({
       lastOutcome: 'skipped_delivery_unconfirmed',
       lastMessageId: messageId,
-      dueCount: 1,
+      dueCount: 0,
       factsDigest: null,
     });
   });

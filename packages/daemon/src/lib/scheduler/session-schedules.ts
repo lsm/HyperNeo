@@ -1,13 +1,15 @@
-import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
+import superpipe, { type PipelineAPI } from 'superpipe';
+import { createHash } from 'node:crypto';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import {
-  SessionScheduleRepository,
   type NewSessionSchedule,
   type SessionSchedule,
   type SessionScheduleCadence,
+  SessionScheduleRepository,
 } from '../../storage/repositories/session-schedule-repository.ts';
-import { getNextRunAt, isValidCronExpression } from '../schedule/cron-utils.ts';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import { SESSION_SCHEDULE_FIRE } from '../job-queue-constants.ts';
+import { getNextRunAt, isValidCronExpression } from '../schedule/cron-utils.ts';
 
 export interface ScheduleSource {
   kind: string;
@@ -45,6 +47,7 @@ export function requireValidCadence(cadence: SessionScheduleCadence): Gate<Sessi
 export class SessionScheduler {
   readonly repo: SessionScheduleRepository;
   private readonly sources = new Map<string, ScheduleSource>();
+  private readonly messageProgress = new Map<string, string | null>();
 
   constructor(
     private readonly db: BunDatabase,
@@ -68,6 +71,78 @@ export class SessionScheduler {
 
   source(kind: string): ScheduleSource | null {
     return this.sources.get(kind) ?? null;
+  }
+
+  async facts(schedule: SessionSchedule) {
+    const source = this.source(schedule.sourceKind);
+    if (!source) throw new Error(`Unregistered schedule source: ${schedule.sourceKind}`);
+    const facts = await source.facts(schedule.sourceId);
+    if (!facts) return null;
+    const progress = this.repo.progressKey(schedule);
+    return progress
+      ? {
+          ...facts,
+          digest: createHash('sha256')
+            .update(JSON.stringify([facts.digest, progress]))
+            .digest('hex'),
+        }
+      : facts;
+  }
+
+  private readonly refreshSchedule = (superpipe({})('sessionSchedule.progress') as PipelineAPI)
+    .input(['schedule'])
+    .pipe(
+      (row: SessionSchedule): { value: SessionSchedule } | { reason: false } =>
+        row.status === 'active' && row.dueCount > 0 && row.pendingJobId
+          ? { value: row }
+          : { reason: false },
+      'schedule',
+      'result:progress'
+    )
+    .pipe(
+      async (row: SessionSchedule) => ({ row, facts: await this.facts(row) }),
+      'progress',
+      'snapshot'
+    )
+    .pipe(
+      ({
+        row,
+        facts,
+      }: {
+        row: SessionSchedule;
+        facts: Awaited<ReturnType<SessionScheduler['facts']>>;
+      }) => {
+        if (!facts || facts.digest === row.factsDigest) return false;
+        return this.db.transaction(() => {
+          const current = this.repo.get(row.id);
+          if (
+            current?.status !== 'active' ||
+            !current.dueCount ||
+            current.pendingJobId !== row.pendingJobId ||
+            this.jobQueue.getJob(row.pendingJobId!)?.status !== 'pending'
+          )
+            return false;
+          if (!this.finishRun(current, 'progress')) return false;
+          this.jobQueue.deleteJob(row.pendingJobId!);
+          return true;
+        })();
+      },
+      'snapshot',
+      'progress'
+    )
+    .endAsync('progress') as (schedule: SessionSchedule) => Promise<boolean>;
+
+  async refreshProgress(sessionId?: string): Promise<void> {
+    for (const row of this.repo.list(
+      sessionId ? { adapter: 'hyperneo', id: sessionId } : undefined
+    )) {
+      if (row.status !== 'active' || !row.dueCount) continue;
+      const key = this.repo.progressKey(row);
+      if (sessionId && this.messageProgress.has(row.id) && this.messageProgress.get(row.id) === key)
+        continue;
+      this.messageProgress.set(row.id, key);
+      await this.refreshSchedule(row);
+    }
   }
 
   private enqueue(scheduleId: string, runAt: number): string {
@@ -117,15 +192,26 @@ export class SessionScheduler {
   ): boolean {
     return this.db.transaction(() => {
       if (!this.repo.recordOutcome(schedule, outcome, digest, messageId)) return false;
-      if (outcome === 'fired') commit?.();
+      if (outcome === 'fired' || outcome === 'skipped_unchanged') commit?.();
       const next =
         outcome === 'source_gone' || outcome === 'target_gone'
           ? null
           : nextScheduleRun(schedule.cadence, now);
-      if (next === null)
+      const backedOff =
+        next !== null && outcome === 'skipped_unchanged'
+          ? now +
+            Math.max(
+              next - now,
+              Math.min(
+                (next - now) * 2 ** Math.min(Math.max(0, schedule.dueCount - 2), 30),
+                28_800_000
+              )
+            )
+          : next;
+      if (backedOff === null)
         return this.repo.setStatus(schedule.id, 'active', 'done', schedule.pendingJobId, null);
-      const jobId = this.enqueue(schedule.id, next);
-      if (this.repo.setPending(schedule.id, schedule.pendingJobId, jobId, next)) return true;
+      const jobId = this.enqueue(schedule.id, backedOff);
+      if (this.repo.setPending(schedule.id, schedule.pendingJobId, jobId, backedOff)) return true;
       this.jobQueue.deleteJob(jobId);
       return false;
     })();

@@ -86,7 +86,7 @@ import type { AuthManager } from '../auth-manager.ts';
 import type { SettingsManager } from '../settings-manager.ts';
 import type { Config } from '../../config.ts';
 import type { Database } from '../../storage/database.ts';
-import type { ReactiveDatabase } from '../../storage/reactive-database.ts';
+import type { ReactiveDatabase, TableChangeEvent } from '../../storage/reactive-database.ts';
 
 import { setupSessionHandlers } from './session-handlers.ts';
 import { setupMessageHandlers } from './message-handlers.ts';
@@ -395,6 +395,7 @@ export interface RPCHandlerSetupResult {
   spaceAgentInactivityWatchdog: SpaceAgentInactivityWatchdogService;
   cancelInactivityWatchdog: () => void;
   sessionScheduler: SessionScheduler;
+  notifyScheduleIdle: ReturnType<typeof createNeoService>['notifyScheduleIdle'];
 }
 
 export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupResult {
@@ -1516,6 +1517,45 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     ...createSessionScheduleOperations(sessionScheduler),
   ];
   sessionScheduler.recover();
+  let progressRefresh: Promise<void> | undefined;
+  const progressRequested = new Set<string | undefined>();
+  let progressClosed = false;
+  const refreshScheduleProgress = (sessionId?: string) => {
+    progressRequested.add(sessionId);
+    if (progressRefresh || progressClosed) return;
+    progressRefresh = (async () => {
+      while (progressRequested.size && !progressClosed) {
+        const targets = progressRequested.has(undefined) ? [undefined] : [...progressRequested];
+        progressRequested.clear();
+        for (const target of targets) await sessionScheduler.refreshProgress(target);
+      }
+    })()
+      .catch((error) => log.warn('Schedule progress refresh failed', error))
+      .finally(() => {
+        progressRefresh = undefined;
+        if (progressRequested.size && !progressClosed) refreshScheduleProgress();
+      });
+  };
+  const onScheduleProgress = (...args: unknown[]) => {
+    const { tables, scope } = args[0] as TableChangeEvent;
+    if (
+      tables.some((table) => ['neo_goals', 'goal_journal', 'neo_asks', 'neo_todos'].includes(table))
+    )
+      refreshScheduleProgress();
+    else if (tables.includes('sdk_messages')) refreshScheduleProgress(scope?.sessionId);
+  };
+  deps.reactiveDb.on('change', onScheduleProgress);
+  const offScheduleProgress = deps.internalEventBus.subscribe(
+    'neo.changed',
+    () => refreshScheduleProgress(),
+    { subscriberName: 'session-schedule-progress' }
+  );
+  driverCleanup.push(async () => {
+    progressClosed = true;
+    offScheduleProgress();
+    deps.reactiveDb.off('change', onScheduleProgress);
+    await progressRefresh;
+  });
 
   const spaceOperationRegistryProvider = createSpaceOperationRegistryProvider(
     deps.db,
@@ -1801,5 +1841,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       inactivityRunNowCancelled = true;
     },
     sessionScheduler,
+    notifyScheduleIdle: neoService.notifyScheduleIdle,
   };
 }

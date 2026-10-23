@@ -9,5 +9,9 @@
     The schedule reports `fired`, a message id, zero due
     count, a facts digest and its next cadence; the helper pauses it after capturing
     `evidence/session-schedule-fire.json`. Open that session's transcript and capture
-    a screenshot. Busy/needs-you/unchanged skips, nudge counting, source removal and
+    a screenshot. Busy/needs-you/unchanged skips, quiet-wake backoff, source removal and
     pause races are covered by the focused session-schedule-fire unit suite.
+
+    For repeated quiet wakes and the one human idle notice, run the
+    [idle-backoff journey](session-schedule-idle-backoff.md). Reminders use this
+    same policy: nudgeEvery no longer forces unchanged model turns.

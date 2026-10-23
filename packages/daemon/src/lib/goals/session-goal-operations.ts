@@ -60,7 +60,12 @@ const Create = z
     ...Fields,
     title: z.string().min(1),
     cadence: SessionScheduleCadenceSchema.default({ kind: 'every', everyMs: 3_600_000 }),
-    nudgeEvery: z.number().int().positive().default(4),
+    nudgeEvery: z
+      .number()
+      .int()
+      .positive()
+      .default(4)
+      .describe('Legacy compatibility only; never forces a turn when facts are unchanged.'),
   })
   .strict();
 const Get = z.object({ ...Owner, goalId: z.string().min(1) }).strict();
@@ -364,7 +369,7 @@ export function createSessionGoalOperations({
     defineOperation({
       name: 'goal.session.create',
       description:
-        'Create a goal owned by a session (root Neo), with one fact-driven wake schedule. Give metrics or a written doneTest. cadence defaults to hourly; nudgeEvery defaults to 4. Returns { accepted, goal } or { accepted: false, reason }.',
+        'Create a goal owned by a session (root Neo), with one fact-driven wake schedule. Give metrics or a written doneTest. cadence defaults to hourly. Unchanged facts stay quiet and back off; nudgeEvery is accepted for legacy compatibility only and never forces a turn. Returns { accepted, goal } or { accepted: false, reason }.',
       policy: GOAL_WRITE_POLICY,
       inputSchema: Create,
       resultSchema: GoalResult,

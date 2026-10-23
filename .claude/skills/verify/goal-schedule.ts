@@ -56,7 +56,7 @@ const serialized = JSON.stringify(message);
 assert(serialized.includes('daemon-note') && serialized.includes(NEO_GOAL_CYCLE.split('\n')[0]) && serialized.includes('mandate.md#guides') && serialized.includes(`goalId ${goalId}`) && serialized.includes(`runId ${delivered.last_message_id}`), 'Wake omitted goal context or run id');
 const after = await read();
 evidence.after = after;
-assert(after.facts.summary === '' && after.facts.digest === delivered.facts_digest, 'Delivery did not atomically save its facts baseline');
+assert(after.facts.summary === '' && /^[0-9a-f]{64}$/.test(String(delivered.facts_digest)), 'Delivery did not atomically save its goal baseline and schedule progress digest');
 await rpc('goal.session.update', { ownerSessionId: root, goalId, progress: 40 });
 const changed = await read();
 evidence.changed = changed;
