@@ -37,9 +37,9 @@ try {
   await rpc('message.sdkMessages', { sessionId, limit: 20 });
   const large = 'complete tool output 🦊\n'.repeat(500000);
   const ids: string[] = [];
-  for (let i = 0; i < 24; i++) { const saved = app.db.saveUserMessage(sessionId, { type: 'user', uuid: `live-${i}`, parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `tool-${i}`, content: large }] } } as SDKMessage, 'consumed'); ids.push(saved); await wait(0); }
+  for (let i = 0; i < 24; i++) { const saved = await app.db.saveUserMessage(sessionId, { type: 'user', uuid: `live-${i}`, parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `tool-${i}`, content: large }] } } as SDKMessage, 'consumed'); ids.push(saved); await wait(0); }
   await app.db.saveSDKMessage(sessionId, { type: 'assistant', uuid: 'parent', parent_tool_use_id: null, message: { role: 'assistant', content: [{ type: 'tool_use', id: 'live-child', name: 'Bash', input: {} }] } } as SDKMessage);
-  for (let i = 0; i < 5; i++) app.db.saveUserMessage(sessionId, { type: 'user', uuid: `child-${i}`, parent_tool_use_id: 'live-child', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `child-tool-${i}`, content: large }] } } as SDKMessage, 'consumed');
+  for (let i = 0; i < 5; i++) await app.db.saveUserMessage(sessionId, { type: 'user', uuid: `child-${i}`, parent_tool_use_id: 'live-child', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `child-tool-${i}`, content: large }] } } as SDKMessage, 'consumed');
   await app.db.saveSDKMessage(sessionId, { type: 'system', subtype: 'task_started', uuid: 'background', task_id: 'live-task' } as SDKMessage);
   const raw = app.db.getDatabase();
   const hash = () => { const h = createHash('sha256'); let count = 0, bytes = 0; for (const row of raw.prepare('SELECT COALESCE(b.sdk_message,m.sdk_message) AS body FROM sdk_messages m LEFT JOIN sdk_message_bodies b ON b.seq=m.seq ORDER BY m.seq').iterate() as Iterable<{ body: string }>) { h.update(row.body); count++; bytes += Buffer.byteLength(row.body); } return { sha256: h.digest('hex'), count, bytes }; };
