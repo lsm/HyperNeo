@@ -1,3 +1,4 @@
+import { defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { toSqlStringList } from '../sql-string-list.ts';
 import type {
   ChatMessage,
@@ -2861,3 +2862,10 @@ function parseSearchTimestamp(value: string | null): number {
   const parsed = new Date(value).getTime();
   return Number.isFinite(parsed) ? parsed : 0;
 }
+
+export const messageSearchIndexWrites = defineRepositoryOp(
+  'search.indexWrites',
+  'write',
+  SDKMessageRepository,
+  ['flushMessageSearchIndex']
+);
