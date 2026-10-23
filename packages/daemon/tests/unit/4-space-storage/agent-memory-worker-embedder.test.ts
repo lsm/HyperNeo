@@ -68,7 +68,10 @@ describe.skipIf(!isBun)('WorkerAgentMemoryEmbedder', () => {
     }
   });
 
-  test('a model that fails to load fails the request and is tried again next time', async () => {
+  test('a model that fails to load is retried after its backoff and can recover', async () => {
+    const originalNow = Date.now;
+    let now = originalNow();
+    Date.now = () => now;
     let spawned = 0;
     const embedder = new WorkerAgentMemoryEmbedder(() => {
       spawned += 1;
@@ -78,9 +81,11 @@ describe.skipIf(!isBun)('WorkerAgentMemoryEmbedder', () => {
       await expect(embedder.embedQuery('x')).rejects.toThrow(
         'embedding model failed to load: model files missing'
       );
+      now += 30_000;
       expect(Array.from(await embedder.embedQuery('second'))[0]).toBe(6);
       expect(spawned).toBe(2);
     } finally {
+      Date.now = originalNow;
       embedder.stop();
     }
   });

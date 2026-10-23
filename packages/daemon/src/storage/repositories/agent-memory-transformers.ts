@@ -7,6 +7,11 @@ import { pipeline } from 'node:stream/promises';
 import { dirname, join } from 'node:path';
 import { withoutAuthorization } from './agent-memory-fetch-options.ts';
 import type { AgentMemoryEmbedder } from './agent-memory-repository.ts';
+import {
+  loadRecoveredEmbedding,
+  MODEL_CHECKSUMS,
+  verifyEmbeddingAsset,
+} from './embedding-assets.ts';
 
 const log = new Logger('AgentMemory');
 export const MODEL_ID = 'onnx-community/granite-embedding-small-english-r2-ONNX';
@@ -26,10 +31,12 @@ const REMOTE_PATH_TEMPLATE = '{model}/resolve/{revision}/';
 const DEFAULT_TRANSFORMERS_CACHE_DIR = join(getDataDir(), 'cache', 'transformers');
 
 type TransformersModule = typeof import('@huggingface/transformers');
-type InitializedEmbedder = {
-  model: Awaited<ReturnType<TransformersModule['AutoModel']['from_pretrained']>>;
-  tokenizer: Awaited<ReturnType<TransformersModule['AutoTokenizer']['from_pretrained']>>;
-};
+type InitializedEmbedder =
+  | { embed: (text: string) => Promise<Float32Array> }
+  | {
+      model: Awaited<ReturnType<TransformersModule['AutoModel']['from_pretrained']>>;
+      tokenizer: Awaited<ReturnType<TransformersModule['AutoTokenizer']['from_pretrained']>>;
+    };
 
 let modulePromise: Promise<TransformersModule> | null = null;
 let fetchConfigured = false;
@@ -44,7 +51,9 @@ export class TransformersAgentMemoryEmbedder implements AgentMemoryEmbedder {
   private initPromise: Promise<InitializedEmbedder> | null = null;
 
   embedQuery(text: string): Promise<Float32Array> {
-    return this.getInit().then(async ({ model, tokenizer }) => {
+    return this.getInit().then(async (initialized) => {
+      if ('embed' in initialized) return initialized.embed(text);
+      const { model, tokenizer } = initialized;
       const inputs = await tokenizer(text, { padding: true, truncation: true });
       const { sentence_embedding: sentenceEmbedding } = await model(inputs);
       return Float32Array.from(sentenceEmbedding.normalize().data);
@@ -69,7 +78,13 @@ export class TransformersAgentMemoryEmbedder implements AgentMemoryEmbedder {
           throw new Error('Agent memory embedding model load aborted');
         }
 
-        const { AutoModel, AutoTokenizer } = await loadTransformers();
+        const transformers = await loadTransformers().catch((error) => {
+          if (error instanceof Error && /onnxruntime/i.test(error.message)) return null;
+          throw error;
+        });
+        if (!transformers)
+          return { embed: await loadRecoveredEmbedding(DEFAULT_TRANSFORMERS_CACHE_DIR, MODEL_ID) };
+        const { AutoModel, AutoTokenizer } = transformers;
         const [model, tokenizer] = await Promise.all([
           AutoModel.from_pretrained(MODEL_ID, { dtype: 'q4', device: 'cpu' }),
           AutoTokenizer.from_pretrained(MODEL_ID),
@@ -77,7 +92,6 @@ export class TransformersAgentMemoryEmbedder implements AgentMemoryEmbedder {
         return { model, tokenizer };
       })().catch((err) => {
         this.initPromise = null;
-        log.error('Embedding model failed to load; embeddings are unavailable:', err);
         throw err;
       });
     }
@@ -201,6 +215,7 @@ function configureTransformersEnv(env: TransformersModule['env'], cacheDir: stri
     const urlString = url.toString();
     if (urlString.includes('huggingface.co') && urlString.includes('granite-embedding-small')) {
       const filename = urlString.split('/').pop();
+      log.info('Fetching embedding model asset', filename);
       return defaultFetch(`${GITHUB_RELEASE_BASE}/${filename}`, {
         ...withoutAuthorization(options),
         signal: prefetchAbortController?.signal,
@@ -258,6 +273,7 @@ class TransformersFileCache {
     try {
       const filePath = this.filePath(request);
       await access(filePath, constants.F_OK);
+      await this.verify(request, filePath);
 
       const filename = new URL(request).pathname.split('/').pop() ?? '';
       if (filename.endsWith('.json')) {
@@ -318,8 +334,12 @@ class TransformersFileCache {
       });
 
       await pipeline(progressStream, stream);
-
+      await this.verify(request, tmpPath);
       await rename(tmpPath, filePath);
+      log.info(
+        'Embedding model asset checksum verified',
+        new URL(request).pathname.split('/').pop()
+      );
     } catch (error) {
       if (!stream.destroyed) {
         stream.destroy();
@@ -339,5 +359,12 @@ class TransformersFileCache {
     } catch {
       return false;
     }
+  }
+
+  private async verify(request: string, file: string): Promise<void> {
+    const name = new URL(request).pathname.split('/').pop() ?? '';
+    const checksum = MODEL_CHECKSUMS[name];
+    if (!checksum) throw new Error('Unverified embedding model asset: ' + name);
+    await verifyEmbeddingAsset(file, checksum);
   }
 }
