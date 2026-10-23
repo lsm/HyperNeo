@@ -6,7 +6,7 @@ import {
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
@@ -22,7 +22,7 @@ const holder = 'neo:holder:web';
 
 describe('Neo as one session', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
-  let service: NeoService;
+  let service: ReturnType<typeof createNeoService>;
   const told: { sessionId: string; messageId: string }[] = [];
   const createSession = vi.fn();
 
@@ -30,7 +30,7 @@ describe('Neo as one session', () => {
     told.length = 0;
     createSession.mockReset();
     db = await createTestDb();
-    service = new NeoService(
+    service = createNeoService(
       db,
       {
         createSession,

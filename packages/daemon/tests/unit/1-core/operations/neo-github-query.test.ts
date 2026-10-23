@@ -10,7 +10,7 @@ import {
   planNeoGithubQuery,
   presentNeoGithubQuery,
 } from '../../../../src/lib/neo/packs/coding/github-query.ts';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import { operationSignature } from '../../../../src/lib/operations/discovery.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
@@ -141,7 +141,7 @@ describe('neo.github.read list form', () => {
   test("shows both forms' fields in Neo's operation signature", async () => {
     const db = await createTestDb();
     try {
-      const service = new NeoService(
+      const service = createNeoService(
         db,
         { getOperationRegistry: () => createOperationRegistry([]) } as unknown as SessionManager,
         { event: mock(() => {}) } as unknown as MessageHub,
@@ -159,7 +159,7 @@ describe('neo.github.read list form', () => {
   test('returns every pull request gh finds in the window, with merge times', async () => {
     const db = await createTestDb();
     try {
-      const service = new NeoService(
+      const service = createNeoService(
         db,
         { getOperationRegistry: () => createOperationRegistry([]) } as unknown as SessionManager,
         { event: mock(() => {}) } as unknown as MessageHub,
@@ -215,7 +215,7 @@ describe('neo.github.read list form', () => {
 describe('pack-owned Neo operation registration', () => {
   test('installed pack operations retain Neo admission before their implementation runs', async () => {
     const db = await createTestDb();
-    const service = new NeoService(
+    const service = createNeoService(
       db,
       { getOperationRegistry: () => createOperationRegistry([]) } as unknown as SessionManager,
       { event: mock(() => {}) } as unknown as MessageHub,
@@ -281,7 +281,7 @@ describe('pack-owned Neo operation registration', () => {
 
   test('disabling coding work guidance keeps the existing GitHub read operation available', async () => {
     const db = await createTestDb();
-    const service = new NeoService(
+    const service = createNeoService(
       db,
       { getOperationRegistry: () => createOperationRegistry([]) } as unknown as SessionManager,
       { event: mock(() => {}) } as unknown as MessageHub,

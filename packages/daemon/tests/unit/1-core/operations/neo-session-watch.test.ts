@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:
 import { z } from 'zod';
 import type { MessageHub } from '@hyperneo/shared';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   keepNeoSessionNoticeGroups,
@@ -423,7 +423,7 @@ describe('getLatestSDKMessagesByType', () => {
 
 describe('refreshDriverWork', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
-  let service: NeoService;
+  let service: ReturnType<typeof createNeoService>;
   let listed: PlaceGroup['work'];
   let unreachable: { source: string; reason: string }[];
   let more: boolean;
@@ -460,7 +460,7 @@ describe('refreshDriverWork', () => {
         },
       }),
     ]);
-    service = new NeoService(
+    service = createNeoService(
       db,
       { getOperationRegistry: () => registry } as unknown as SessionManager,
       {
@@ -643,7 +643,7 @@ describe('refreshDriverWork', () => {
       listed = [work({ status: 'failed', lastActivityAt: clock - 1_000 })];
       status = { status: 'failed', lastActivityAt: clock - 1_000 };
       const announced: string[] = [];
-      const restarted = new NeoService(
+      const restarted = createNeoService(
         db,
         service.sessions,
         {
@@ -702,7 +702,7 @@ describe('refreshDriverWork', () => {
 
       service.dispose();
       expect(db.getSDKMessagesByType('neo:root', 'system', 'session_notices')).toHaveLength(1);
-      const restarted = new NeoService(
+      const restarted = createNeoService(
         db,
         {
           getOperationRegistry: () => createOperationRegistry([]),
@@ -820,7 +820,7 @@ describe('refreshDriverWork', () => {
       });
       expect('value' in snapshot && snapshot.value).not.toHaveProperty('sessionNotices');
 
-      const restarted = new NeoService(
+      const restarted = createNeoService(
         db,
         {
           getOperationRegistry: () => createOperationRegistry([]),

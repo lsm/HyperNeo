@@ -4,15 +4,15 @@ import {
   InternalEventBus,
   type DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus.ts';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createTestDb } from '../../../helpers/database.ts';
 
-let db: Awaited<ReturnType<typeof createTestDb>>, service: NeoService;
+let db: Awaited<ReturnType<typeof createTestDb>>, service: ReturnType<typeof createNeoService>;
 const url = 'https://github.com/synthetic/plan/pull/8';
 beforeEach(async () => {
   db = await createTestDb();
-  service = new NeoService(
+  service = createNeoService(
     db,
     {} as SessionManager,
     { event: mock(() => {}) } as unknown as MessageHub,
