@@ -9,7 +9,7 @@ import { GitHubEventExtension } from '../../../packages/daemon/src/lib/external-
 import { SpaceRepository } from '../../../packages/daemon/src/storage/repositories/space-repository.ts';
 
 const [scenario, path] = process.argv.slice(2), run = resolve(path);
-assert(['normal', 'conditional', 'failure', 'retention'].includes(scenario));
+assert(['normal', 'conditional', 'failure', 'retention', 'conditional-reseed'].includes(scenario));
 assert.equal(process.env.NODE_ENV, 'test'); assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data')); assert(!existsSync(join(run, 'data')));
 assert.equal(process.env.GH_TOKEN, undefined); assert.equal(process.env.GITHUB_TOKEN, undefined);
@@ -23,7 +23,7 @@ const root=${JSON.stringify(run)},args=process.argv.slice(2),phase=readFileSync(
 if(args[0]!=='api'||!args.includes('--include'))process.exit(2);
 const path=args.find(a=>a.startsWith('/repos/')||a==='/user');if(!path)process.exit(2);
 const url=new URL(path,'https://api.github.com'),conditional=args.some(a=>a.startsWith('If-None-Match:'));
-const status=phase==='failed'&&path!=='/user'?503:${JSON.stringify(scenario)}==='conditional'&&conditional?304:200;
+const status=phase==='failed'&&path!=='/user'?503:['conditional','conditional-reseed'].includes(${JSON.stringify(scenario)})&&conditional?304:200;
 let body=[];
 const at=new Date(${when}+(phase==='recovered'?1000:0)).toISOString(),head=${JSON.stringify(head)};
 if(path==='/user')body={login:'synthetic-human'};
@@ -50,7 +50,7 @@ try {
   const spaces = ['a', 'b'].map(name => new SpaceRepository(db).createSpace({ name: `Synthetic ${name}`, slug: `synthetic-${name}`, workspacePath: join(run, 'home', name) }));
   for (const space of spaces) {
     const row = github.repo.upsertWatchedRepo({ spaceId: space.id, owner: 'synthetic', repo: 'shared', pollingEnabled: true });
-    db.prepare('UPDATE space_github_watched_repos SET poll_cursor=? WHERE id=?').run(JSON.stringify({ lastSeenAt: when - 3600_000, recentPullRequestNumbers: [7], recentPullRequestHeadShas: { 7: head }, selfLogin: 'synthetic-human' }), row.id);
+    db.prepare('UPDATE space_github_watched_repos SET poll_cursor=? WHERE id=?').run(JSON.stringify({ lastSeenAt: when - 3600_000, recentPullRequestNumbers: [7], recentPullRequestHeadShas: { 7: head }, ...(scenario === 'conditional-reseed' ? { etags: { issue_comments: '"pin"', review_comments: '"pin"', pulls: '"pin"' } } : {}), selfLogin: 'synthetic-human' }), row.id);
   }
   await new ExternalEventExtensionConfigStore(db).setGlobalConfig('github', { source: 'github', globallyEnabled: true, capabilities: { polling: true, rpcConfig: true } });
   ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
@@ -68,9 +68,10 @@ try {
   }
   const legacyRows = db.prepare('SELECT * FROM pack_coding_poll_facts WHERE subject=?').all(legacyKey);
   const normalizedRows = db.prepare('SELECT * FROM pack_coding_ref_facts WHERE subject=?').all(legacyKey);
-  const phases = scenario === 'failure' ? ['initial', 'failed', 'recovered'] : scenario === 'retention' ? ['initial', 'advance-one', 'advance-two'] : ['initial', 'repeat'];
+  const phases = scenario === 'failure' ? ['initial', 'failed', 'recovered'] : scenario === 'retention' ? ['initial', 'advance-one', 'advance-two'] : scenario === 'conditional-reseed' ? ['initial', 'expired', 'repeat'] : ['initial', 'repeat'];
   for (const phase of phases) {
     writeFileSync(join(run, 'phase'), phase);
+    if (scenario === 'conditional-reseed' && phase === 'expired') db.prepare("UPDATE pack_coding_poll_facts SET attempted_at=? WHERE json_extract(subject,'$[0]') GLOB 'external-event-page:v1:*'").run(Date.now() - 16 * 60_000);
     if (scenario === 'retention') {
       db.prepare('UPDATE pack_coding_poll_facts SET attempted_at=? WHERE subject<>?').run(Date.now() - 16 * 60_000, legacyKey);
       for (const watched of github.repo.listPollingRepos()) {
@@ -112,11 +113,18 @@ try {
   }
   if (scenario === 'conditional') {
     assert(requests.some(r => r.phase === 'repeat' && r.status === 304));
-    assert(evidence.cycles.at(-1).pages.some(page => page.reason === 'partial'));
+    assert(evidence.cycles.at(-1).pages.every(page => page.reason === null));
   }
   if (scenario === 'failure') {
     assert(requests.some(r => r.phase === 'failed' && r.status === 503));
     assert(requests.some(r => r.phase === 'recovered' && r.status === 200));
+  }
+  if (scenario === 'conditional-reseed') {
+    const counts = phases.map(phase => requests.filter(r => r.phase === phase && r.path !== '/user').length);
+    assert.deepEqual(counts, [9, 9, 9], 'Cold/expired validators never seed shared pages');
+    assert(evidence.cycles.every(cycle => cycle.pages.every(page => page.reason === null)));
+    assert(requests.some(r => r.phase === 'repeat' && r.status === 304));
+    assert(!requests.some(r => ['initial', 'expired'].includes(r.phase) && r.conditional));
   }
   evidence.productionWired = true; evidence.requests = requests; evidence.duplicateInitialReviewReads = initialReviews.length; evidence.verified = true;
   console.log(JSON.stringify({ scenario, verified: true, duplicateInitialReviewReads: initialReviews.length, eventCounts: evidence.cycles.map((cycle: any) => cycle.events.length) }));

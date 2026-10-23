@@ -61,7 +61,7 @@ for (const scenario of ['normal', 'conditional', 'failure']) {
             (r: { phase: string; path: string }) => r.phase === phase && r.path !== '/user'
           ).length
       )
-    ).toEqual(scenario === 'failure' ? [9, 8, 9] : [9, scenario === 'conditional' ? 10 : 9]);
+    ).toEqual(scenario === 'failure' ? [9, 8, 9] : [9, 9]);
   }, 30000);
 }
 
@@ -82,4 +82,17 @@ test('expired raw pages do not accumulate as polling windows advance; legacy row
   expect(result.cycles.map((cycle: { pages: unknown[] }) => cycle.pages.length)).toEqual([
     10, 10, 10,
   ]);
+}, 30000);
+
+test('cold and expired destination validators seed shared bodies once and then reuse valid 304 coverage', () => {
+  const result = proof('github-ledger-polling.ts', 'conditional-reseed', 'polling-ledger.json');
+  expect(result.verified).toBe(true);
+  expect(result.cycles.map((cycle: { events: unknown[] }) => cycle.events.length)).toEqual([
+    2, 2, 2,
+  ]);
+  expect(
+    result.cycles.map((cycle: { pages: { reason: string | null }[] }) =>
+      cycle.pages.every((page) => page.reason === null)
+    )
+  ).toEqual([true, true, true]);
 }, 30000);
