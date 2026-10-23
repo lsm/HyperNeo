@@ -15,7 +15,7 @@ export async function verifyClaudeLogin(page, run) {
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), width);
       await page.screenshot({ path: `${run}/evidence/${surface}-${width}.png`, animations: 'disabled' });
       if (surface === 'session' && historicalResult) {
-        await page.getByRole('button', { name: 'more — Result details', exact: true }).click();
+        await page.getByRole('button', { name: /tokens/ }).last().click();
         const failure = page.getByText(historicalResult, { exact: true });
         await failure.waitFor();
         await failure.scrollIntoViewIfNeeded();
