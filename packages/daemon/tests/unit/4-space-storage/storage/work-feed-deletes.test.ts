@@ -4,6 +4,7 @@ import {
   createWorkFeedOffsetsTable,
 } from '../../../../src/storage/schema/m302-work-index-kinds';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import { dropWorkFeedSession, purgeWorkFeedSessions } from '../../../../src/storage/work-feed';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index';
 import {
@@ -48,7 +49,7 @@ function setup() {
 }
 
 describe('purgeWorkFeedSessions', () => {
-  test('large derived transcript cleanup leaves the daemon responsive and stored tool results intact', async () => {
+  test('large derived transcript cleanup runs as separate writer batches and keeps stored tool results intact', async () => {
     const db = new Database(':memory:');
     runMigrations(db, () => {});
     createTables(db);
@@ -61,14 +62,19 @@ describe('purgeWorkFeedSessions', () => {
           .get() as { n: number }
       ).n;
     const samples: number[] = [];
-    const timer = setInterval(() => samples.push(count()), 0);
+    const inline = new DbGateway(':memory:', db);
+    const gateway = {
+      run: (...args: Parameters<DbGateway['run']>) => {
+        samples.push(count());
+        return inline.run(...args);
+      },
+    } as unknown as DbGateway;
     try {
       await purgeWorkFeedSessions(
-        db,
+        gateway,
         'claude',
         Array.from({ length: 100 }, (_, i) => `sdk-${i}`)
       );
-      await new Promise((resolve) => setTimeout(resolve, 0));
       expect(samples.some((left) => left > 0 && left < 2000)).toBe(true);
       expect(count()).toBe(0);
       expect(storedWorkFeedDigest(db)).toBe(original);
@@ -93,13 +99,12 @@ describe('purgeWorkFeedSessions', () => {
         db.prepare("SELECT COUNT(*) AS n FROM message_search_content WHERE kind = 'codex'").get()
       ).toEqual({ n: 200 });
     } finally {
-      clearInterval(timer);
       db.close();
     }
   }, 30000);
   test('deletes only that kind for those sessions through the session index', async () => {
     const { db, plans, left } = setup();
-    await purgeWorkFeedSessions(db, 'codex', ['s1']);
+    await purgeWorkFeedSessions(new DbGateway(':memory:', db), 'codex', ['s1']);
     expect(left()).toEqual(['c2', 'k1', 'm1']);
     expect(plans.some((plan) => plan.includes('idx_message_search_content_feed_turns'))).toBe(true);
     db.close();

@@ -1,4 +1,9 @@
+import { defineDbOp } from '../../storage/db-gateway/db-op.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
+import {
+  ingestExternalEvent,
+  type IngestExternalEventOutcome,
+} from './ingest-external-event-pipeline.ts';
 import type {
   ExternalEvent,
   ExternalEventRecord,
@@ -96,3 +101,14 @@ export class SessionExternalEventStore {
     return row ? toRecord(row) : null;
   }
 }
+
+export const ingestSessionEvent = defineDbOp({
+  name: 'externalEvents.ingestSession',
+  mode: 'write',
+  run: (db: BunDatabase, event: ExternalEvent): IngestExternalEventOutcome => {
+    const store = new SessionExternalEventStore(db);
+    const outcome = ingestExternalEvent({ store: (candidate) => store.store(candidate) }, event);
+    if (outcome.action === 'failed') throw outcome.error;
+    return outcome;
+  },
+});

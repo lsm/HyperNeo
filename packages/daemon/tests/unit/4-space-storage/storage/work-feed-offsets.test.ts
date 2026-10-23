@@ -1,3 +1,4 @@
+import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import { describe, expect, test } from 'bun:test';
 import {
   createFeedTurnIndex,
@@ -75,7 +76,7 @@ describe('readWorkFeedOffsets', () => {
     expect(readWorkFeedOffsets(db)).toEqual(table());
     await dropWorkFeedSession(db, 'claude', 's1', '/a.jsonl');
     expect(readWorkFeedOffsets(db)).toEqual(table());
-    await purgeWorkFeedSessions(db, 'claude', ['s2']);
+    await purgeWorkFeedSessions(new DbGateway(':memory:', db), 'claude', ['s2']);
     expect(readWorkFeedOffsets(db)).toEqual(table());
     expect([...table().keys()]).toEqual(['/b.jsonl']);
   });

@@ -1,4 +1,4 @@
-import { defineRepositoryOp } from '../db-gateway/db-op.ts';
+import { defineDbOp, defineRepositoryOp } from '../db-gateway/db-op.ts';
 import { generateUUID } from '@hyperneo/shared';
 import { withBusyRetry } from '../busy-retry.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
@@ -9,6 +9,11 @@ export type JobClaim =
   | { method: 'dequeue'; args: Parameters<JobQueueRepository['dequeue']> }
   | { method: 'dequeueSessionFifo'; args: Parameters<JobQueueRepository['dequeueSessionFifo']> }
   | { method: 'dequeueExempt'; args: Parameters<JobQueueRepository['dequeueExempt']> };
+
+export type JobCleanup = {
+  beforeMs: number;
+  completed: { queue: string; beforeMs: number }[];
+};
 
 export interface Job {
   id: string;
@@ -1187,3 +1192,14 @@ export const jobQueueWrites = defineRepositoryOp('jobs.write', 'write', JobQueue
 export const jobQueueReads = defineRepositoryOp('jobs.read', 'read', JobQueueRepository, [
   'isClaimOwnedByAnother',
 ]);
+
+export const cleanupJobs = defineDbOp({
+  name: 'jobs.cleanup',
+  mode: 'write',
+  run: (db: BunDatabase, { beforeMs, completed }: JobCleanup): number => {
+    const queue = new JobQueueRepository(db);
+    let deleted = queue.cleanup(beforeMs);
+    for (const lane of completed) deleted += queue.cleanupCompleted(lane.queue, lane.beforeMs);
+    return deleted;
+  },
+});
