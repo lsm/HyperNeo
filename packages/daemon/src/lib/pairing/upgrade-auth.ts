@@ -1,6 +1,8 @@
-import type {
-  DeviceKind,
-  DevicePairingRepository,
+import type { DbGateway } from '../../storage/db-gateway/db-gateway.ts';
+import {
+  recordUnpaired,
+  touchDevice,
+  type DeviceKind,
 } from '../../storage/repositories/device-pairing-repository.ts';
 
 export const DEVICE_COOKIE = 'hyperneo_device';
@@ -22,7 +24,7 @@ export interface UpgradeIdentity {
 }
 
 export interface UpgradeAuthDeps {
-  readonly devices: () => DevicePairingRepository;
+  readonly db: () => DbGateway;
   readonly now: () => number;
 }
 
@@ -36,25 +38,27 @@ export function readDeviceCredential(req: Request): string | null {
   return null;
 }
 
-export function createUpgradeAuthenticator({ devices, now }: UpgradeAuthDeps) {
-  return (req: Request, remoteAddress: string | null): UpgradeIdentity | null => {
+export function createUpgradeAuthenticator({ db, now }: UpgradeAuthDeps) {
+  return async (req: Request, remoteAddress: string | null): Promise<UpgradeIdentity | null> => {
     try {
       const credential = readDeviceCredential(req);
       const host = req.headers.get('host');
       const at = now();
-      const device = credential ? devices().touchDevice(credential, host, at) : null;
+      const device = credential ? await db().run(touchDevice, { credential, host, now: at }) : null;
       if (device) return { deviceId: device.id, kind: device.kind };
       const origin = req.headers.get('origin');
-      devices().recordUnpaired(
-        {
-          client: origin ? 'browser' : 'native',
-          origin,
-          host,
-          remoteAddress,
-          credentialRejected: credential !== null,
-        },
-        at
-      );
+      void db()
+        .run(recordUnpaired, {
+          seen: {
+            client: origin ? 'browser' : 'native',
+            origin,
+            host,
+            remoteAddress,
+            credentialRejected: credential !== null,
+          },
+          now: at,
+        })
+        .catch(() => {});
       return null;
     } catch {
       return null;

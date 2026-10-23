@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { createUpgradeAuthenticator } from '../../../../src/lib/pairing/upgrade-auth.ts';
+import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import {
   DevicePairingRepository,
   UNPAIRED_FIELD_MAX,
@@ -14,7 +15,13 @@ function setup() {
   createTables(db);
   const repo = new DevicePairingRepository(db);
   let now = 1_000;
-  const authenticate = createUpgradeAuthenticator({ devices: () => repo, now: () => now });
+  const gateway = new DbGateway(':memory:', db);
+  const auth = createUpgradeAuthenticator({ db: () => gateway, now: () => now });
+  const authenticate = async (req: Request, remoteAddress: string | null) => {
+    const identity = await auth(req, remoteAddress);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    return identity;
+  };
   const pairDevice = (kind: 'human' | 'relay' | 'daemon', name: string) => {
     const made = repo.createCode(kind, null, true, now);
     return repo.redeem(made.code, name, now)!;
@@ -32,15 +39,15 @@ function setup() {
 }
 
 describe('upgrade authentication (report only)', () => {
-  test('a paired device is recognised by its Bearer header or cookie and its last sighting is kept', () => {
+  test('a paired device is recognised by its Bearer header or cookie and its last sighting is kept', async () => {
     const { db, authenticate, pairDevice, upgrade, unpaired } = setup();
     const phone = pairDevice('human', 'Phone');
     const relay = pairDevice('relay', 'Relay');
     expect(
-      authenticate(upgrade({ authorization: `Bearer ${phone.credential}` }), '100.64.0.7')
+      await authenticate(upgrade({ authorization: `Bearer ${phone.credential}` }), '100.64.0.7')
     ).toEqual({ deviceId: phone.device.id, kind: 'human' });
     expect(
-      authenticate(
+      await authenticate(
         upgrade({
           cookie: `theme=dark; hyperneo_device=${relay.credential}`,
           origin: 'http://127.0.0.1:9283',
@@ -62,13 +69,13 @@ describe('upgrade authentication (report only)', () => {
     db.close();
   });
 
-  test('an unpaired connection is accepted as unknown and recorded once per client, without any secret', () => {
+  test('an unpaired connection is accepted as unknown and recorded once per client, without any secret', async () => {
     const { db, authenticate, upgrade, unpaired, tick } = setup();
-    expect(authenticate(upgrade({}), '192.168.1.20')).toBeNull();
+    expect(await authenticate(upgrade({}), '192.168.1.20')).toBeNull();
     tick();
-    expect(authenticate(upgrade({}), '192.168.1.20')).toBeNull();
+    expect(await authenticate(upgrade({}), '192.168.1.20')).toBeNull();
     expect(
-      authenticate(
+      await authenticate(
         upgrade({ origin: 'https://evil.example', authorization: 'Bearer not-a-real-credential' }),
         '10.0.0.9'
       )
@@ -101,40 +108,46 @@ describe('upgrade authentication (report only)', () => {
     db.close();
   });
 
-  test('unpaired rows stay bounded however many distinct headers a peer sends', () => {
+  test('unpaired rows stay bounded however many distinct headers a peer sends', async () => {
     const { db, authenticate, upgrade, unpaired, tick } = setup();
     const huge = `https://${'a'.repeat(10_000)}.example`;
-    authenticate(upgrade({ origin: huge }), '10.0.0.1');
+    await authenticate(upgrade({ origin: huge }), '10.0.0.1');
     const [first] = unpaired() as { origin: string }[];
     expect(first.origin.length).toBe(UNPAIRED_FIELD_MAX);
     for (let i = 0; i < UNPAIRED_ROW_CAP + 50; i += 1)
-      authenticate(upgrade({ origin: `https://flood-${i}.example` }), '10.0.0.2');
+      await authenticate(upgrade({ origin: `https://flood-${i}.example` }), '10.0.0.2');
     const total = () =>
       (db.prepare('SELECT COUNT(*) AS n FROM unpaired_connections').get() as { n: number }).n;
     expect(total()).toBe(UNPAIRED_ROW_CAP);
     tick();
-    authenticate(upgrade({ origin: huge }), '10.0.0.1');
+    await authenticate(upgrade({ origin: huge }), '10.0.0.1');
     expect(unpaired()[0]).toMatchObject({ count: 2, last: 2_000 });
     expect(total()).toBe(UNPAIRED_ROW_CAP);
     db.close();
   });
 
-  test('a revoked device is treated as unpaired', () => {
+  test('a revoked device is treated as unpaired', async () => {
     const { db, authenticate, pairDevice, upgrade, unpaired } = setup();
     const old = pairDevice('human', 'Old phone');
     db.prepare('UPDATE paired_devices SET revoked_at = 1').run();
-    expect(authenticate(upgrade({ authorization: `Bearer ${old.credential}` }), null)).toBeNull();
+    expect(
+      await authenticate(upgrade({ authorization: `Bearer ${old.credential}` }), null)
+    ).toBeNull();
     expect(unpaired()).toMatchObject([{ rejected: 1, remote: null }]);
     db.close();
   });
 
-  test('a storage failure never refuses the connection', () => {
-    const authenticate = createUpgradeAuthenticator({
-      devices: () => {
+  test('a storage failure never refuses the connection', async () => {
+    const failing = (run: () => Promise<never>) =>
+      createUpgradeAuthenticator({ db: () => ({ run }) as unknown as DbGateway, now: () => 1 });
+    const locked = () => Promise.reject(new Error('database is locked'));
+    const bearer = new Request('http://127.0.0.1/ws', { headers: { authorization: 'Bearer x' } });
+    expect(await failing(locked)(bearer, null)).toBeNull();
+    expect(await failing(locked)(new Request('http://127.0.0.1/ws'), null)).toBeNull();
+    expect(
+      await failing(() => {
         throw new Error('database is locked');
-      },
-      now: () => 1,
-    });
-    expect(authenticate(new Request('http://127.0.0.1/ws'), null)).toBeNull();
+      })(bearer, null)
+    ).toBeNull();
   });
 });

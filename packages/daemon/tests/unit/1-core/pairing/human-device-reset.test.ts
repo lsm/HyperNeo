@@ -4,7 +4,10 @@ import { createDatabaseOperationCatalog } from '../../../../src/lib/operations/d
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
 import { onDeviceRevoked } from '../../../../src/lib/pairing/upgrade-auth.ts';
-import { DevicePairingRepository } from '../../../../src/storage/repositories/device-pairing-repository.ts';
+import {
+  DevicePairingRepository,
+  touchDevice,
+} from '../../../../src/storage/repositories/device-pairing-repository.ts';
 
 const door: OperationCaller = { source: 'mcp', principal: 'session-door', sessionId: 'cli' };
 let db: Awaited<ReturnType<typeof createTestDb>>;
@@ -42,9 +45,27 @@ test('reset revokes only human credentials, closes their sockets and retains a n
   try {
     expect(await call('device.reset_human')).toMatchObject({ ok: true });
     expect(closed).toEqual([phone.device.id]);
-    expect(repo.touchDevice(phone.credential, null, Date.now())).toBeNull();
-    expect(repo.touchDevice(relay.credential, null, Date.now())?.id).toBe(relay.device.id);
-    expect(repo.touchDevice(peer.credential, null, Date.now())?.id).toBe(peer.device.id);
+    expect(
+      touchDevice.run(db.getDatabase(), {
+        credential: phone.credential,
+        host: null,
+        now: Date.now(),
+      })
+    ).toBeNull();
+    expect(
+      touchDevice.run(db.getDatabase(), {
+        credential: relay.credential,
+        host: null,
+        now: Date.now(),
+      })?.id
+    ).toBe(relay.device.id);
+    expect(
+      touchDevice.run(db.getDatabase(), {
+        credential: peer.credential,
+        host: null,
+        now: Date.now(),
+      })?.id
+    ).toBe(peer.device.id);
     expect(repo.listDevices()).toHaveLength(3);
     expect(repo.listDevices().find((d) => d.id === phone.device.id)?.revokedAt).toEqual(
       expect.any(Number)

@@ -163,7 +163,10 @@ export async function startProdServer(config: Config) {
         const upgraded = server.upgrade(req, {
           data: {
             connectionSessionId: 'global',
-            device: daemonContext.authenticateUpgrade(req, server.requestIP(req)?.address ?? null),
+            device: await daemonContext.authenticateUpgrade(
+              req,
+              server.requestIP(req)?.address ?? null
+            ),
           },
         });
 
