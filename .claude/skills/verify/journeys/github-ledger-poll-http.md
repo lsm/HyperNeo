@@ -29,9 +29,9 @@ public polling compatibility suites, then full checks. Contracts also cover a
 file-backed old-schema migration twice plus reopen, header exclusion, concurrent
 CAS, superseded responses and oversized valid JSON remaining partial.
 
-Repeat the unchanged normal/conditional/failure public-RPC polling journey and
-retain actual counts against 18 initial / 18 repeat GETs (eight failure, 18
-recovery). No production caller uses the adapter yet; the local three-to-one
-proof is not an aggregate quota-saving claim. Wire follows in a separate PR,
-preserving destination cursors, cutoffs, fairness and existing error visibility.
+Repeat the normal/conditional/failure public-RPC polling journey and compare
+actual counts against the historical 18 initial / 18 repeat GETs (eight failure,
+18 recovery). At this Build rung, no production caller used the adapter. The local
+three-to-one proof is not an aggregate quota-saving claim. The later Wire journey
+is `github-ledger-poll-wire.md`, preserving destination cursors, cutoffs, fairness and existing error visibility.
 After merge, verify automatic rollout via owner RPC; never deploy/restart.

@@ -2,6 +2,7 @@ import {
   createGitHubPollSource,
   parseRateLimitHeaders,
   type GitHubRateLimitInfo,
+  type GitHubPollCollector,
 } from '../../github/poll-source.ts';
 import { fetchGitHubViaCli } from '../../github/gh-api-fetch.ts';
 import { GitHubPollSlice } from './github-poll-slice.ts';
@@ -114,6 +115,7 @@ const REPO_HOOK_WEBHOOK_EVENTS = WEBHOOK_EVENTS.filter((event) => event !== 'mer
 const WEBHOOK_PATH = '/webhook/github/space';
 
 interface GitHubEventExtensionOptions {
+  collectPollPage?: GitHubPollCollector;
   pollIntervalMs?: number;
   getPollIntervalMs?: () => number | undefined;
   fetchImpl?: typeof fetch;
@@ -1010,12 +1012,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const repos = this.repo
       .listPollingRepos()
       .sort((a, b) => (a.lastPollAt ?? 0) - (b.lastPollAt ?? 0));
+    const cycle = crypto.randomUUID();
     for (const [index, repo] of repos.entries()) {
       if (Date.now() < this.rateLimitedUntil) break;
       if (this.reapUnreferencedSessionRepo(repo)) continue;
       const spaceConfig = await this.context.config.getSpaceConfig(repo.spaceId, this.sourceId);
       if (spaceConfig && !spaceConfig.enabled) continue;
-      count += await this.pollWatchedRepo(repo, fetchImpl, repos.length - index);
+      count += await this.pollWatchedRepo(repo, fetchImpl, repos.length - index, cycle);
     }
     return count;
   }
@@ -1039,8 +1042,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const repos = this.repo
       .listPollingRepos(spaceId)
       .sort((a, b) => (a.lastPollAt ?? 0) - (b.lastPollAt ?? 0));
+    const cycle = crypto.randomUUID();
     for (const [index, repo] of repos.entries()) {
-      count += await this.pollWatchedRepo(repo, fetchImpl, repos.length - index);
+      count += await this.pollWatchedRepo(repo, fetchImpl, repos.length - index, cycle);
       if (Date.now() < this.rateLimitedUntil) break;
     }
     return count;
@@ -2398,11 +2402,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   async pollWatchedRepo(
     watched: GitHubWatchedRepo,
     fetchImpl: typeof fetch = fetch,
-    reposRemaining = 1
+    reposRemaining = 1,
+    cycle = crypto.randomUUID()
   ): Promise<number> {
     this.pollCycleCredentialGeneration = this.credentialGeneration;
     try {
-      return await this.pollWatchedRepoCore(watched, fetchImpl, reposRemaining);
+      return await this.pollWatchedRepoCore(watched, fetchImpl, reposRemaining, cycle);
     } catch (err) {
       if (this.pollCycleCredentialGeneration === this.credentialGeneration) {
         this.repo.recordPollFailure(
@@ -2421,8 +2426,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
   private async pollWatchedRepoCore(
     watched: GitHubWatchedRepo,
-    fetchImpl: typeof fetch = fetch,
-    reposRemaining?: number
+    fetchImpl: typeof fetch,
+    reposRemaining: number,
+    cycle: string
   ): Promise<number> {
     if (!this.context) return 0;
     let count = 0;
@@ -2491,6 +2497,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const credentials = await this.resolveTokenOrFail();
     const token = credentials.token;
     const fetchPage = createGitHubPollSource({
+      collection: this.options.collectPollPage
+        ? {
+            collect: this.options.collectPollPage,
+            cycle,
+            credentialId: `${credentials.source}:${credentialFingerprint(token)}:${this.credentialGeneration}`,
+          }
+        : undefined,
       fetchImpl,
       hasInjectedFetch: Boolean(this.options.fetchImpl),
       hasToken: Boolean(token),

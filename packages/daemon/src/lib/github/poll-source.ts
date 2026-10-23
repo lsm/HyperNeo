@@ -3,6 +3,13 @@ import { Logger } from '../logger.ts';
 
 const log = new Logger('github-event-extension');
 
+export type GitHubPollCollector = (
+  subject: { credentialId: string; url: string; accept: string; apiVersion: string },
+  cycle: string,
+  validator: string | null,
+  request: () => Promise<Response>
+) => Promise<Response>;
+
 export interface GitHubRateLimitInfo {
   remaining: number;
   limit?: number;
@@ -48,6 +55,7 @@ export function parseRateLimitHeaders(res: Response): GitHubRateLimitInfo {
   };
 }
 interface GitHubPollSourceOptions {
+  collection?: { collect: GitHubPollCollector; cycle: string; credentialId: string };
   fetchImpl: typeof fetch;
   hasInjectedFetch: boolean;
   hasToken: boolean;
@@ -69,7 +77,22 @@ export function createGitHubPollSource(options: GitHubPollSourceOptions): typeof
   return (async (input, init) => {
     if (!options.hasToken && options.readFailed)
       throw new Error('Configured GitHub credentials unavailable; restore access before polling');
-    const response = await request(input, init);
+    const headers = new Headers(
+      init?.headers ?? (input instanceof Request ? input.headers : undefined)
+    );
+    const response = options.collection
+      ? await options.collection.collect(
+          {
+            credentialId: options.collection.credentialId,
+            url: input instanceof Request ? input.url : String(input),
+            accept: headers.get('accept') ?? '',
+            apiVersion: headers.get('x-github-api-version') ?? '',
+          },
+          options.collection.cycle,
+          headers.get('if-none-match'),
+          () => request(input, init)
+        )
+      : await request(input, init);
     if (!bucketRecorded) {
       const bucket = parseRateLimitHeaders(response);
       log.info('GitHub polling credential bucket', {

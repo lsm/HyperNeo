@@ -42,6 +42,7 @@ for (const scenario of ['normal', 'conditional', 'failure']) {
     const result = proof('github-ledger-polling.ts', scenario, 'polling-ledger.json');
     expect(result.verified).toBe(true);
     expect(result.productionWired).toBe(true);
+    expect(result.codingPackDisabled).toBe(true);
     expect(result.duplicateInitialReviewReads).toBe(1);
     expect(result.cycles.map((cycle: { events: unknown[] }) => cycle.events.length)).toEqual(
       scenario === 'failure' ? [2, 2, 4] : [2, 2]
@@ -50,7 +51,17 @@ for (const scenario of ['normal', 'conditional', 'failure']) {
       result.requests.filter(
         (r: { phase: string; path: string }) => r.phase === 'initial' && r.path !== '/user'
       ).length
-    ).toBeLessThan(18);
+    ).toBe(9);
+    const phases =
+      scenario === 'failure' ? ['initial', 'failed', 'recovered'] : ['initial', 'repeat'];
+    expect(
+      phases.map(
+        (phase) =>
+          result.requests.filter(
+            (r: { phase: string; path: string }) => r.phase === phase && r.path !== '/user'
+          ).length
+      )
+    ).toEqual(scenario === 'failure' ? [9, 8, 9] : [9, scenario === 'conditional' ? 10 : 9]);
   }, 30000);
 }
 

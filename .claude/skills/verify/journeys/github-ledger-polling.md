@@ -1,8 +1,8 @@
 # Shared-repository polling contracts
 
-Read shared setup in `../SKILL.md`. This Pin rung changes no production code.
-It establishes the external-event producer baseline before moving acquisition
-into the ledger. It does not implement shared acquisition or reduce API reads.
+Read shared setup in `../SKILL.md`. This journey originally pinned the producer
+baseline before ledger acquisition. Current commands exercise the Wire contract;
+see `github-ledger-poll-wire.md` for expected counts and retained before evidence.
 
 Run each scenario from the worktree root with a fresh absolute RUN:
 
@@ -44,7 +44,9 @@ The regression suite runs all three RPC scenarios plus the existing conditional
 and large-response journey with read-checkout sync active. That older fixture
 must supply repository/default-ref metadata as well as its response pages.
 
-Later collector changes must retain independent destination histories, exact-head
+The Wire journey compares against that saved baseline and requires nine initial/
+normal-repeat/recovery GETs, ten conditional-repeat and eight failed GETs.
+Collector changes must retain independent destination histories, exact-head
 payloads, repeat deduplication and failure cutoffs while reducing the duplicated
 source requests. This proof observes persisted source history, not worker wakes,
 delivery acknowledgements or terminal unsubscribe. Live deployment readback and

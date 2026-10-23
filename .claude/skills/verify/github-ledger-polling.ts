@@ -44,6 +44,8 @@ const evidence: Record<string, any> = { scenario, productionWired: false, cycles
 try {
   app = await createDaemonApp({ config: getConfig({ port: 0, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }), verbose: false });
   await app.jobProcessor.stop(); assert.notEqual(app.server.port, 8399);
+  app.db.updateGlobalSettings({ neo: { packs: [] } });
+  evidence.codingPackDisabled = true;
   const db = app.db.getDatabase(), github = app.extensionManager.getExtension('github') as GitHubEventExtension;
   const spaces = ['a', 'b'].map(name => new SpaceRepository(db).createSpace({ name: `Synthetic ${name}`, slug: `synthetic-${name}`, workspacePath: join(run, 'home', name) }));
   for (const space of spaces) {
@@ -72,6 +74,7 @@ try {
     for (const event of events) assert.equal(JSON.parse(event.payload_json).commitId, head);
     if (phase === 'failed') {
       assert.equal(reply.errors, 2);
+      assert(pages.some(page => page.reason === 'failed'));
       for(let i=0;i<watched.length;i++) {
         const current=watched[i].repositories[0], prior=evidence.cycles[0].watched[i].repositories[0];
         assert.equal(current.lastPollAt,prior.lastPollAt);assert.equal(current.pollCursor.lastSeenAt,prior.pollCursor.lastSeenAt);
