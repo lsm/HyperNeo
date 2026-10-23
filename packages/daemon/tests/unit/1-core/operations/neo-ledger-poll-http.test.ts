@@ -208,6 +208,22 @@ describe('ledger HTTP polling pages', () => {
       await expect(
         facts.collect(
           subject,
+          'transport-failed',
+          null,
+          async () => {
+            throw new Error('Synthetic transport failure');
+          },
+          () => 115
+        )
+      ).rejects.toThrow('Synthetic transport failure');
+      expect(facts.read(subject, 115, 100).page).toMatchObject({
+        status: 'unknown',
+        reason: 'failed',
+        observedAt: 100,
+      });
+      await expect(
+        facts.collect(
+          subject,
           'bad-json',
           null,
           async () => new Response('not-json'),
