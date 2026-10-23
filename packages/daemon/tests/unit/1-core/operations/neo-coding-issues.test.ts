@@ -205,6 +205,18 @@ test.each(['Could not start: needs_you', 'Failed twice: unavailable'])(
   }
 );
 
+test.each(['worker', 'check'] as const)(
+  'a stale %s block clears without a current blocker',
+  async (blockedBy) => {
+    const f = fixture();
+    const todo = f.add('first', true);
+    f.store.updateTodo(todo, { state: 'blocked', blockedBy }, 100_000);
+    f.issue('OPEN');
+    await f.at(2);
+    expect(f.store.getTodo('first')).toMatchObject({ state: 'doing', blockedBy: null });
+  }
+);
+
 test('a COMPLETED issue advances its next todo before a stopped worker can be nudged', async () => {
   const f = fixture();
   f.add('first', true);

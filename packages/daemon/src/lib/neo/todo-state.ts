@@ -48,7 +48,11 @@ export function decideTodoState(facts: TodoStateFacts, now: number): TodoStateDe
         blockedReason: judgement.reason,
         nextAction: judgement.reason,
       };
-    else if (!Object.keys(change).length && !['done', 'failed'].includes(todo.state)) {
+    else if (
+      !Object.keys(change).length &&
+      !['done', 'failed'].includes(todo.state) &&
+      !(todo.state === 'blocked' && todo.blockedBy === 'failure')
+    ) {
       if (
         facts.questionOpen &&
         !facts.dispatched &&

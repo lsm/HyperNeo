@@ -18,6 +18,8 @@ the actual driver socket exactly once, including after daemon restart. No merged
 closing PR is required. NOT_PLANNED fails without starting its successor; open
 and unreadable issues do not complete. Contracts additionally pin GitHub closing
 links as PR membership, independent of worker claims, and malformed issue refusal.
+An inconclusive coding check preserves a saved start-failure block and its reason;
+focused contracts also cover repeated failure and restart.
 
 The helper advances only its synthetic clock: at 20 and 40 minutes its real
 worker transport receives reminders; at 60 it escalates to Neo. Reopening the
