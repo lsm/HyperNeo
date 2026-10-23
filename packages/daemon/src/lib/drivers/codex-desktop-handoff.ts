@@ -42,7 +42,12 @@ export async function steerCodexDesktopTurn(
         reason: owner.error,
       });
       if (owner.resultType !== 'success' || !owner.handledByClientId)
-        return { value: 'app-server' };
+        return {
+          reason: reject(
+            'not_delivered',
+            `${owner.error ?? 'Codex Desktop did not confirm thread ownership.'} Open the thread in Codex Desktop before sending input.`
+          ),
+        };
       log.warn('work.send route', { threadId, messageId, path: 'desktop-steer' });
       dispatched = true;
       const response = await call(

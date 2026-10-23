@@ -11,8 +11,7 @@ Unix sockets under its fresh HOME. It uses real WebSocket `operation.invoke`
 with the production Codex adapter. `work.adapters` must advertise steer for
 Codex and omit it for HyperNeo; the subsequent explicit steer must return the
 active turn receipt. The real `operations.describe` door must scope
-strict steer guidance to Codex and direct HyperNeo/Space targets to auto. Owner discovery rejects with a synthetic
-version mismatch while app-server has a steerable turn: default auto and explicit
+strict steer guidance to Codex and direct HyperNeo/Space targets to auto. Desktop is unavailable while app-server has a steerable turn: default auto and explicit
 steer must return `steeredIntoTurnId` without queueing. Explicit queue must return
 `queuedSubmissionId`. Idle explicit steer must return `not_delivered` without
 queueing; idle auto starts a turn with `startedTurnId` and `delivered: true`.
@@ -22,7 +21,7 @@ history but no loaded app-server runtime. It rejects `turn/start` with -32600
 The production path must resume with `excludeTurns: true` before starting;
 the send still returns the confirmed turn ID. Other resume failures return
 `not_delivered` with their cause and make no start or queue request. When owner
-discovery reports no client and resume returns exactly `thread synthetic already
+is unavailable and resume returns exactly `thread synthetic already
 has an active writer`, auto reuses the existing queue path without starting
 another writer. The synthetic owner consumes the queued input and writes its reply;
 receipt-bound `work.status` must observe that exact input/reply. A subsequent
@@ -45,3 +44,7 @@ and all RPC responses are retained in `evidence/observed.json`. On regression co
 The older `reproduce` action concerns the separate running-turn steering regression.
 No model, provider, credentials, real Codex state or GUI is involved. All owned
 servers and the daemon close in finally. Pick a free port other than 8399.
+
+For reachable Desktop ownership refusal, use the separate
+`codex-desktop-ownership.md` journey. A reachable Desktop refusing ownership is
+not an unavailable Desktop and must never trigger a second writer.
