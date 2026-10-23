@@ -5,6 +5,7 @@ import {
 } from './icons/panel-icons.tsx';
 import { useEffect, useState } from 'preact/hooks';
 import { Modal } from './ui/Modal.tsx';
+import { t } from '../lib/i18n/index.ts';
 
 export interface QueuePreviewMessage {
   dbId: string;
@@ -33,6 +34,7 @@ interface QueuePreviewTrayProps {
   nextTurnMessages: QueuePreviewMessage[];
   currentTurnTotal?: number;
   nextTurnTotal?: number;
+  pendingModel?: string | null;
   className?: string;
   onDeferMessage?: (message: QueuePreviewMessage) => void;
   onPromoteMessage?: (message: QueuePreviewMessage) => void;
@@ -153,6 +155,7 @@ export function QueuePreviewTray({
   nextTurnMessages,
   currentTurnTotal,
   nextTurnTotal,
+  pendingModel,
   className = '',
   onDeferMessage,
   onPromoteMessage,
@@ -168,7 +171,7 @@ export function QueuePreviewTray({
     if (empty) setModalGroup(null);
   }, [modalGroup, currentTurnMessages.length, nextTurnMessages.length]);
 
-  if (currentTurnMessages.length === 0 && nextTurnMessages.length === 0) {
+  if (currentTurnMessages.length === 0 && nextTurnMessages.length === 0 && !pendingModel) {
     return null;
   }
 
@@ -215,6 +218,22 @@ export function QueuePreviewTray({
             onRemoveMessage={onRemoveMessage}
             onShowAll={() => openModal('next')}
           />
+          {pendingModel && (
+            <div class="px-2 py-2" data-testid="queued-pending-model">
+              <div class="flex min-h-8 min-w-0 items-center gap-2 px-1.5 py-1">
+                <div class="inline-flex h-8 min-w-[5.1rem] shrink-0 items-center justify-center gap-1.5 rounded-full border border-accent/30 bg-accent/10 px-2 text-[10px] font-medium uppercase tracking-wide text-accent-soft">
+                  <span class="h-1.5 w-1.5 rounded-full bg-accent" />
+                  <span>Model</span>
+                </div>
+                <p
+                  class="min-w-0 flex-1 truncate text-xs leading-5 text-fg-soft"
+                  title={pendingModel}
+                >
+                  {pendingModel} · {t('composer.switchesNextTurn')}
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
