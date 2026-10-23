@@ -11,6 +11,7 @@ import {
   AUTO_COMPACT_PERCENT_MIN,
   AUTO_COMPACT_PERCENT_MAX,
   resolveAutoCompactPercent,
+  findSameModel,
   getThinkingOptionsForProvider,
   THINKING_LEVEL_LABELS,
   type FallbackModelEntry,
@@ -189,7 +190,7 @@ function FallbackChainEditor({
                 {PROVIDER_LABELS[entry.provider] || getProviderLabel(entry.provider)}
               </div>
             </div>
-            <div class="ml-auto flex items-center gap-2">
+            <div class="ml-auto flex flex-wrap items-center justify-end gap-2">
               {controls?.(entry, index)}
               <div class="flex items-center gap-1">
                 <button
@@ -413,6 +414,20 @@ function OverrideEditorModal({
 
 type SettingsModel = ModelInfo & { thinkingLevels?: ThinkingLevel[] };
 type NeoModelEntry = NonNullable<NeoModelPreference['fallbacks']>[number];
+const entryKey = (entry: { provider: string; model: string }) => `${entry.provider}/${entry.model}`;
+function percentTexts(preference?: NeoModelPreference | null): Record<string, string> {
+  if (!preference) return {};
+  return Object.fromEntries(
+    [preference, ...(preference.fallbacks ?? [])].map((entry) => [
+      entryKey(entry),
+      String(entry.autoCompactPercent ?? AUTO_COMPACT_PERCENT_DEFAULT),
+    ])
+  );
+}
+function tokens(count: number): string {
+  if (count >= 1_000_000) return `${Number((count / 1_000_000).toFixed(1))}M`;
+  return count >= 1000 ? `${Math.round(count / 1000)}K` : String(count);
+}
 
 function NeoModelSettings({
   availableModels,
@@ -425,30 +440,37 @@ function NeoModelSettings({
 }) {
   const preference = globalSettings.value?.neo?.preferences;
   const [draft, setDraft] = useState<NeoModelPreference | null>(preference ?? null);
-  const [percent, setPercent] = useState(
-    String(preference?.autoCompactPercent ?? AUTO_COMPACT_PERCENT_DEFAULT)
-  );
+  const [percents, setPercents] = useState(() => percentTexts(preference));
   const [picker, setPicker] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => {
     setDraft(preference ?? null);
-    setPercent(String(preference?.autoCompactPercent ?? AUTO_COMPACT_PERCENT_DEFAULT));
+    setPercents(percentTexts(preference));
   }, [preference]);
-  const primary = availableModels.find(
-    (model) => model.id === draft?.model && model.provider === draft?.provider
-  );
-  const unchanged = Number(percent) === AUTO_COMPACT_PERCENT_DEFAULT;
-  const effectivePercent = resolveAutoCompactPercent(
-    unchanged ? primary?.autoCompactPercent : Number(percent)
-  );
-  const threshold = primary?.contextWindow
-    ? Math.floor((primary.contextWindow * effectivePercent) / 100)
-    : null;
+  const percentText = (entry: { provider: string; model: string }) =>
+    percents[entryKey(entry)] ?? String(AUTO_COMPACT_PERCENT_DEFAULT);
+  function compactSize(entry: { provider: string; model: string }): string {
+    const info = findSameModel(availableModels, entry);
+    const typed = Number(percentText(entry));
+    const percent = resolveAutoCompactPercent(
+      typed === AUTO_COMPACT_PERCENT_DEFAULT ? info?.autoCompactPercent : typed
+    );
+    return info?.contextWindow
+      ? `${percent}% ≈ ${tokens(Math.floor((info.contextWindow * percent) / 100))} of ${tokens(info.contextWindow)} tokens`
+      : `${percent}% · context window unknown`;
+  }
   const busy = loading || saving || connectionState.value !== 'connected';
   const list: NeoModelEntry[] = draft
     ? [
-        { model: draft.model, provider: draft.provider, thinkingLevel: draft.thinkingLevel },
+        {
+          model: draft.model,
+          provider: draft.provider,
+          thinkingLevel: draft.thinkingLevel,
+          ...(draft.autoCompactPercent === undefined
+            ? {}
+            : { autoCompactPercent: draft.autoCompactPercent }),
+        },
         ...(draft.fallbacks ?? []),
       ]
     : [];
@@ -456,12 +478,7 @@ function NeoModelSettings({
     const [first, ...rest] = next;
     if (!first) return setDraft(null);
     setDraft({
-      ...(draft?.autoCompactPercent === undefined
-        ? {}
-        : { autoCompactPercent: draft.autoCompactPercent }),
-      model: first.model,
-      provider: first.provider,
-      thinkingLevel: first.thinkingLevel,
+      ...first,
       ...(preference?.fallbacks === undefined && draft?.fallbacks === undefined && !rest.length
         ? {}
         : { fallbacks: rest }),
@@ -475,9 +492,7 @@ function NeoModelSettings({
     label: string,
     change: (thinkingLevel: ThinkingLevel) => void
   ) {
-    const info = availableModels.find(
-      (model) => model.id === entry.model && model.provider === entry.provider
-    );
+    const info = findSameModel(availableModels, entry);
     const options = info?.thinkingLevels
       ? info.thinkingLevels.map((value) => ({ value, label: THINKING_LEVEL_LABELS[value] }))
       : getThinkingOptionsForProvider(entry.provider, info?.thinkingModes);
@@ -497,14 +512,24 @@ function NeoModelSettings({
   }
   async function save() {
     if (!draft || busy) return;
-    if (!percent.trim() || !Number.isInteger(Number(percent))) {
+    if (
+      list.some(
+        (entry) => !percentText(entry).trim() || !Number.isInteger(Number(percentText(entry)))
+      )
+    ) {
       setError('Enter a whole number from 10 to 100.');
       return;
     }
-    const { autoCompactPercent: _previousPercent, ...base } = draft;
-    const next = unchanged
-      ? base
-      : { ...base, autoCompactPercent: resolveAutoCompactPercent(Number(percent)) };
+    const [first, ...rest] = list.map(({ autoCompactPercent: _previous, ...entry }) => {
+      const typed = Number(percentText(entry));
+      return typed === AUTO_COMPACT_PERCENT_DEFAULT
+        ? entry
+        : { ...entry, autoCompactPercent: resolveAutoCompactPercent(typed) };
+    });
+    const next = {
+      ...first,
+      ...(draft.fallbacks === undefined && rest.length === 0 ? {} : { fallbacks: rest }),
+    };
     setSaving(true);
     setError('');
     try {
@@ -515,7 +540,7 @@ function NeoModelSettings({
       >(hub, 'neo.preferences.set', next);
       if (!result.ok) throw new Error(result.reason);
       setDraft(result.preferences);
-      setPercent(String(result.preferences.autoCompactPercent ?? AUTO_COMPACT_PERCENT_DEFAULT));
+      setPercents(percentTexts(result.preferences));
       toast.success('Neo models saved');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not save Neo models.');
@@ -532,32 +557,11 @@ function NeoModelSettings({
           returns to the primary after recovery.
         </p>
       </div>
-      <div class="space-y-2">
-        <label class="block text-sm text-fg-soft" for="neo-auto-compact">
-          Auto-compact percentage
-        </label>
-        <input
-          id="neo-auto-compact"
-          type="number"
-          min={AUTO_COMPACT_PERCENT_MIN}
-          max={AUTO_COMPACT_PERCENT_MAX}
-          step={1}
-          value={percent}
-          disabled={busy || !draft}
-          onInput={(event) => setPercent(event.currentTarget.value)}
-          aria-describedby="neo-auto-compact-help"
-          class="w-24 rounded border border-line bg-surface px-2 py-1 text-sm text-fg"
-        />
-        <p id="neo-auto-compact-help" class="text-xs text-fg-faint">
-          {unchanged
-            ? 'Default (90%): provider behavior unchanged.'
-            : 'Custom threshold for Neo only. Applied after the current reply.'}
-          {threshold !== null
-            ? ` ${threshold.toLocaleString('en-US')} of ${primary?.contextWindow.toLocaleString('en-US')} tokens (${effectivePercent}%).`
-            : ' Context window unavailable for this model.'}{' '}
-          At 100%, compaction follows the provider’s limits.
-        </p>
-      </div>
+      <p class="text-xs text-fg-faint">
+        Auto-compact is set per model and shown against that model’s context window. 90% keeps the
+        provider default; at 100%, compaction follows the provider’s limits. Changes apply after the
+        current reply.
+      </p>
       <p class="text-xs text-fg-faint">
         Usable fallback providers: {providers.join(', ') || 'None available'}
       </p>
@@ -582,7 +586,7 @@ function NeoModelSettings({
           setList(next);
         }}
         controls={(entry, index) => (
-          <div class="flex items-center gap-2">
+          <div class="flex flex-wrap items-center justify-end gap-2">
             {index === 0 ? (
               <span class="text-xs font-medium text-accent">Primary</span>
             ) : (
@@ -599,6 +603,20 @@ function NeoModelSettings({
             {thinking(entry, `Neo model ${index + 1} thinking`, (thinkingLevel) =>
               setList(list.map((item, i) => (i === index ? { ...item, thinkingLevel } : item)))
             )}
+            <input
+              type="number"
+              aria-label={`Neo model ${index + 1} auto-compact percentage`}
+              min={AUTO_COMPACT_PERCENT_MIN}
+              max={AUTO_COMPACT_PERCENT_MAX}
+              step={1}
+              value={percentText(entry)}
+              disabled={busy}
+              onInput={(event) =>
+                setPercents({ ...percents, [entryKey(entry)]: event.currentTarget.value })
+              }
+              class="w-14 rounded border border-line bg-surface px-1.5 py-1 text-xs text-fg"
+            />
+            <span class="text-xs text-fg-faint whitespace-nowrap">{compactSize(entry)}</span>
           </div>
         )}
       />
