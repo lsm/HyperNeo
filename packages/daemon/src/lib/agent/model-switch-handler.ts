@@ -33,8 +33,15 @@ const ONE_M_SUFFIX = /\[1m\]$/i;
 const ACP_SWITCH_DISPOSE_TIMEOUT_MS = 8_000;
 type ModelPair = Pick<SessionConfig, 'model' | 'provider'>;
 
-export function modelSwitchTiming(status: AgentProcessingState['status']): 'now' | 'next_turn' {
-  return status === 'idle' ? 'now' : 'next_turn';
+export function modelSwitchTiming(
+  status: AgentProcessingState['status'],
+  live = false
+): 'now' | 'next_turn' {
+  return live || status === 'idle' ? 'now' : 'next_turn';
+}
+
+export function canSwitchModelLive(previous: string | undefined, next: string | undefined) {
+  return previous === 'anthropic' && next === 'anthropic';
 }
 
 export function gateSwitchIdle(guarded: boolean, busy: boolean) {
@@ -531,6 +538,13 @@ export class ModelSwitchHandler {
         this.stripThinkingBlocksIfNeeded(previousProvider, newProviderInstance.id);
 
         if (this.ctx.queryObject instanceof AcpQueryAdapter && nextProvider === 'acp') {
+          await this.ctx.queryObject.setModel(resolvedModel);
+          await this.ctx.reevaluateContextBudgetAfterModelSwitch?.();
+        } else if (
+          !deferQueryStart &&
+          canSwitchModelLive(previousProvider, nextProvider) &&
+          this.ctx.queryObject?.setModel
+        ) {
           await this.ctx.queryObject.setModel(resolvedModel);
           await this.ctx.reevaluateContextBudgetAfterModelSwitch?.();
         } else {

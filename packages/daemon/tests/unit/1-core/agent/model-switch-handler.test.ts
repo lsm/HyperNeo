@@ -1,6 +1,8 @@
 import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import {
+  canSwitchModelLive,
   ModelSwitchHandler,
+  modelSwitchTiming,
   type ModelSwitchHandlerContext,
 } from '../../../../src/lib/agent/model-switch-handler';
 import type { Session, ModelInfo } from '@hyperneo/shared';
@@ -262,7 +264,7 @@ describe('ModelSwitchHandler', () => {
       errorManager: mockErrorManager,
       logger: mockLogger,
       lifecycleManager: mockLifecycleManager,
-      queryObject: { setModel: setModelSpy } as unknown as Query,
+      queryObject: {} as unknown as Query,
       queryPromise: null,
       messageQueue: { isRunning: mock(() => false) } as unknown as MessageQueue,
       disposeAcpSessions: mock(async () => {}) as typeof disposeAcpSessions,
@@ -687,6 +689,22 @@ describe('ModelSwitchHandler', () => {
       });
     });
 
+    describe('when the live query can switch models itself', () => {
+      it('switches the running anthropic query in place instead of restarting', async () => {
+        const reevaluateSpy = mock(async () => {});
+        handler = createHandler({
+          queryObject: { setModel: setModelSpy } as unknown as Query,
+          reevaluateContextBudgetAfterModelSwitch: reevaluateSpy,
+        });
+        const result = await handler.switchModel(VALID_MODEL, 'anthropic');
+
+        expect(result.success).toBe(true);
+        expect(setModelSpy).toHaveBeenCalledWith(mockSession.config.model);
+        expect(restartSpy).not.toHaveBeenCalled();
+        expect(reevaluateSpy).toHaveBeenCalledTimes(1);
+      });
+    });
+
     describe('when query is running', () => {
       it('should restart query when running', async () => {
         handler = createHandler();
@@ -1040,5 +1058,20 @@ describe('ModelSwitchHandler', () => {
         expect(mockSession.config.model).toBe('k3-256k');
       });
     });
+  });
+});
+
+describe('model switch timing', () => {
+  it('switches now while busy only when the live query can take the model', () => {
+    expect(modelSwitchTiming('processing', false)).toBe('next_turn');
+    expect(modelSwitchTiming('processing', true)).toBe('now');
+    expect(modelSwitchTiming('idle')).toBe('now');
+  });
+
+  it('allows a live switch only within the native anthropic provider', () => {
+    expect(canSwitchModelLive('anthropic', 'anthropic')).toBe(true);
+    expect(canSwitchModelLive('anthropic', 'glm')).toBe(false);
+    expect(canSwitchModelLive('glm', 'glm')).toBe(false);
+    expect(canSwitchModelLive('acp', 'acp')).toBe(false);
   });
 });
