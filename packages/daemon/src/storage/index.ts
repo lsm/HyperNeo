@@ -429,7 +429,7 @@ export class Database {
   get gateway(): DbGateway {
     return (this.dbGateway ??= new DbGateway(
       this.getDbPath(),
-      this.getDbPath() === ':memory:' ? this.getDatabase() : null,
+      this.getDbPath() === ':memory:' || typeof Worker === 'undefined' ? this.getDatabase() : null,
       this.options?.queryObservability
     ));
   }
