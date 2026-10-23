@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
+import { NEO_WORK_GOAL_MERGE } from '@hyperneo/prompts';
 import {
   InternalEventBus,
   type DaemonInternalEventMap,
@@ -32,6 +33,13 @@ test('installed builtins keep identity and settings select without rebuilding th
   expect(service.packs()).toEqual([installed[1]]);
   expect(service.installedPacks()[0]).toBe(installed[0]);
   expect(service.installedPacks()[1]).toBe(installed[1]);
+  expect(
+    service.installedPacks()[0].workGoal?.('Ship', {
+      workId: 'todo',
+      goal: null,
+      doneWhen: 'PR merged',
+    })
+  ).toContain(NEO_WORK_GOAL_MERGE);
 });
 
 test('an installed legacy todo check observes reader replacements and retains its claims', async () => {

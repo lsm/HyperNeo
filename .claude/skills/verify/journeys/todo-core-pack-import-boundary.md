@@ -17,6 +17,10 @@ match, as must the complete `turn/start` input messages captured by the syntheti
 Codex peer. Compare the GitHub stub request multiset; unchanged counts demonstrate
 no acquisition change, not a live quota reduction.
 
+Repeat the plan helper with `--lifecycle --without-coding`: only inbox-triage is
+enabled. All worker input messages must still match the coding-enabled run;
+the runner uses installed packs, so merge guidance is independent of enablement.
+
 On the final head, observe COMPLETED advancing exactly once, NOT_PLANNED failing,
 open/unreadable issues waiting, restart preserving the 20/40/60 ladder without
 blocking, and no raw-PR-event worker message. The preference helper must retain
