@@ -70,6 +70,16 @@ describe('PR sweep ladder', () => {
     db.close();
   });
 
+  test('a first observation after 60 minutes does not claim reminders were sent', async () => {
+    const { insert, told, woken, at, db } = setup();
+    insert(7, 'approved_green');
+    await at(60);
+    expect(told).toEqual([]);
+    expect(woken).toHaveLength(1);
+    expect(woken[0].text).not.toContain('was reminded');
+    db.close();
+  });
+
   test('progress resets the clock and the count', async () => {
     const { insert, told, at, db } = setup();
     insert(7, 'failing');

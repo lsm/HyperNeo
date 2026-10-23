@@ -274,3 +274,14 @@ test('unreachable reminder delivery escalates without turning time into a block 
   expect(f.store.getTodo('first')?.state).toBe('doing');
   expect(f.notes.some((text) => text.includes('could not be reached'))).toBe(true);
 });
+
+test('a first refresh after 60 minutes escalates without inventing sent reminders', async () => {
+  const f = fixture();
+  f.add('first', true);
+  f.issue('OPEN', []);
+  await f.at(60);
+  expect(f.calls.filter((name) => name === 'work.send')).toHaveLength(0);
+  expect(f.notes.filter((text) => text.includes('without progress'))).toHaveLength(1);
+  expect(f.notes.some((text) => text.includes('two reminders'))).toBe(false);
+  expect(f.store.getTodo('first')?.state).toBe('doing');
+});
