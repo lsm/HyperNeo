@@ -106,7 +106,7 @@ describe('startCodexBootstrapServer', () => {
     directory = '';
   });
 
-  function executable(failInitialization = false, shutdownCode = 0) {
+  function executable(failInitialization = false, shutdownCode = 0, flushDelay = 40) {
     directory = mkdtempSync(join(tmpdir(), 'codex-bootstrap-'));
     const command = join(directory, 'codex');
     const persisted = join(directory, 'saved.json');
@@ -130,7 +130,7 @@ lines.on('close', () => {
   setTimeout(() => {
     fs.writeFileSync(${JSON.stringify(persisted)}, JSON.stringify(seen));
     process.exit(${shutdownCode});
-  }, 40);
+  }, ${flushDelay});
 });
 `,
       { mode: 0o700 }
@@ -171,6 +171,14 @@ lines.on('close', () => {
     await client.call('thread/start', { cwd: '/focus' });
     await expect(client.close()).rejects.toThrow('7');
   });
+
+  test('reports the shutdown deadline without accepting an unflushed bootstrap', async () => {
+    const f = executable(false, 0, 6_000);
+    const client = await startCodexBootstrapServer(f.command);
+    await client.call('thread/start', { cwd: '/focus' });
+    await expect(client.close()).rejects.toThrow('did not exit within 5 seconds');
+    expect(existsSync(f.persisted)).toBe(false);
+  }, 10_000);
 
   test('preserves a spawn error instead of replacing it with an unknown exit status', async () => {
     directory = mkdtempSync(join(tmpdir(), 'codex-bootstrap-'));

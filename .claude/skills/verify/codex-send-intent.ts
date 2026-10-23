@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { mkdirSync, existsSync, writeFileSync, appendFileSync, readFileSync, renameSync } from 'node:fs';
+import { mkdirSync, existsSync, writeFileSync, appendFileSync, readFileSync, renameSync, unlinkSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { createServer as createHttpServer } from 'node:http';
 import { hostname } from 'node:os';
@@ -58,7 +58,7 @@ rl.on('line', line => {
   const response = m.method === 'thread/name/set' && fs.existsSync(${JSON.stringify(join(run, 'fail-bootstrap-name'))}) ? { error: { code: -1, message: 'synthetic name refused' } } : { result };
   process.stdout.write(JSON.stringify({ id: m.id, ...response }) + '\\n');
 });
-rl.on('close', () => setTimeout(() => process.exit(fs.existsSync(${JSON.stringify(join(run, 'fail-bootstrap-exit'))}) ? 7 : 0), 40));
+rl.on('close', () => setTimeout(() => process.exit(fs.existsSync(${JSON.stringify(join(run, 'fail-bootstrap-exit'))}) ? 7 : 0), fs.existsSync(${JSON.stringify(join(run, 'slow-bootstrap-exit'))}) ? 6000 : 40));
 `, { mode: 0o700 });
   process.env.CODEX_CLI_PATH = command;
 }
@@ -180,6 +180,12 @@ try {
     assert.equal(nameRefused.reason, 'not_delivered');
     assert.match(nameRefused.detail, /synthetic name refused.*Thread synthetic-new was created/);
     assert(!nameRefused.detail.includes('exited with 7'), 'cleanup must not mask the first rejection');
+    unlinkSync(join(run, 'fail-bootstrap-name'));
+    writeFileSync(join(run, 'slow-bootstrap-exit'), 'delay');
+    const slowBootstrap = await send(undefined, false, false, undefined, true);
+    assert.equal(slowBootstrap.reason, 'not_delivered');
+    assert.match(slowBootstrap.detail, /did not exit within 5 seconds.*Thread synthetic-new was created/);
+    assert(!calls.slice(beforeFailedBootstrap).some((call) => (call as { desktop?: string }).desktop === 'thread-follower-start-turn'));
   } else if (action === 'reproduce') {
     assert.equal(first.value.queuedSubmissionId, 'synthetic-queue');
     assert(!calls.some((call) => (call as { server?: string }).server === 'turn/steer'));
