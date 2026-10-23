@@ -268,78 +268,80 @@ describe('withCodexDesktopIpc', () => {
     return { driver, shared, launched };
   }
 
-  test.each([false, true])(
-    'opens an unowned saved worker in Desktop before its next turn, idle=%s',
-    async (idle) => {
-      let opened = false;
-      const f = await fixture((message, _socket, send) => {
-        const discovery = message.method === 'thread-owner-discovery';
-        send({
-          type: 'response',
-          requestId: message.requestId,
-          ...(discovery
-            ? opened
-              ? { resultType: 'success', handledByClientId: 'desktop-owner' }
-              : { resultType: 'error', error: 'no-client-found' }
-            : message.method === 'thread-follower-steer-turn' && idle
-              ? { resultType: 'error', error: 'NoActiveTurn' }
-              : {
-                  resultType: 'success',
-                  result: {
-                    result: idle
-                      ? { turn: { id: 'new-desktop-turn' } }
-                      : { turnId: 'desktop-active' },
-                  },
-                }),
+  describe('Desktop worker ownership', () => {
+    test.each([false, true])(
+      'opens an unowned saved worker in Desktop before its next turn, idle=%s',
+      async (idle) => {
+        let opened = false;
+        const f = await fixture((message, _socket, send) => {
+          const discovery = message.method === 'thread-owner-discovery';
+          send({
+            type: 'response',
+            requestId: message.requestId,
+            ...(discovery
+              ? opened
+                ? { resultType: 'success', handledByClientId: 'desktop-owner' }
+                : { resultType: 'error', error: 'no-client-found' }
+              : message.method === 'thread-follower-steer-turn' && idle
+                ? { resultType: 'error', error: 'NoActiveTurn' }
+                : {
+                    resultType: 'success',
+                    result: {
+                      result: idle
+                        ? { turn: { id: 'new-desktop-turn' } }
+                        : { turnId: 'desktop-active' },
+                    },
+                  }),
+          });
         });
-      });
-      const w = await driverFor(f.path, () => {
-        opened = true;
-        return 0;
-      });
+        const w = await driverFor(f.path, () => {
+          opened = true;
+          return 0;
+        });
+        expect(
+          await w.driver.send!({ adapter: 'codex-desktop', id: 'thread-1' }, 'next task', {
+            from: 'user',
+            caller: { source: 'rpc' },
+          })
+        ).toMatchObject({
+          ok: true,
+          value: idle
+            ? { startedTurnId: 'new-desktop-turn' }
+            : { steeredIntoTurnId: 'desktop-active' },
+        });
+        expect(w.shared).toEqual([]);
+        expect(w.launched).toEqual([['open', '-g', 'codex://threads/thread-1']]);
+        expect(f.seen.at(-1)?.targetClientId).toBe('desktop-owner');
+      }
+    );
+
+    test.each([
+      { resultType: 'error', error: 'client rejected' },
+      { resultType: 'success', result: {} },
+    ])('never starts a shared writer after Desktop handshake refusal: %j', async (reply) => {
+      const f = await fixture(() => {}, reply);
+      const w = await driverFor(f.path, () => 0);
       expect(
         await w.driver.send!({ adapter: 'codex-desktop', id: 'thread-1' }, 'next task', {
           from: 'user',
           caller: { source: 'rpc' },
         })
-      ).toMatchObject({
-        ok: true,
-        value: idle
-          ? { startedTurnId: 'new-desktop-turn' }
-          : { steeredIntoTurnId: 'desktop-active' },
-      });
+      ).toMatchObject({ ok: false, reason: 'not_delivered' });
       expect(w.shared).toEqual([]);
-      expect(w.launched).toEqual([['open', '-g', 'codex://threads/thread-1']]);
-      expect(f.seen.at(-1)?.targetClientId).toBe('desktop-owner');
-    }
-  );
+      expect(w.launched).toEqual([]);
+    });
 
-  test.each([
-    { resultType: 'error', error: 'client rejected' },
-    { resultType: 'success', result: {} },
-  ])('never starts a shared writer after Desktop handshake refusal: %j', async (reply) => {
-    const f = await fixture(() => {}, reply);
-    const w = await driverFor(f.path, () => 0);
-    expect(
-      await w.driver.send!({ adapter: 'codex-desktop', id: 'thread-1' }, 'next task', {
-        from: 'user',
-        caller: { source: 'rpc' },
-      })
-    ).toMatchObject({ ok: false, reason: 'not_delivered' });
-    expect(w.shared).toEqual([]);
-    expect(w.launched).toEqual([]);
-  });
-
-  test('never resumes through shared server when reachable Desktop disconnects before discovery', async () => {
-    const f = await fixture((_message, socket) => socket.destroy());
-    const w = await driverFor(f.path, () => 0);
-    expect(
-      await w.driver.send!({ adapter: 'codex-desktop', id: 'thread-1' }, 'next task', {
-        from: 'user',
-        caller: { source: 'rpc' },
-      })
-    ).toMatchObject({ ok: false, reason: 'not_delivered' });
-    expect(w.shared).toEqual([]);
+    test('never resumes through shared server when reachable Desktop disconnects before discovery', async () => {
+      const f = await fixture((_message, socket) => socket.destroy());
+      const w = await driverFor(f.path, () => 0);
+      expect(
+        await w.driver.send!({ adapter: 'codex-desktop', id: 'thread-1' }, 'next task', {
+          from: 'user',
+          caller: { source: 'rpc' },
+        })
+      ).toMatchObject({ ok: false, reason: 'not_delivered' });
+      expect(w.shared).toEqual([]);
+    });
   });
 
   describe('Desktop-owned message delivery', () => {

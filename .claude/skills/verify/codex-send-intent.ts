@@ -117,7 +117,7 @@ server.on('connection', (socket) => socket.on('message', (bytes) => {
       { type: 'response_item', timestamp, payload: { type: 'message', role: 'user', id: 'writer-input', content: [{ type: 'input_text', text }] } },
       { type: 'response_item', timestamp, payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Writer received queued work.' }] } },
       { type: 'event_msg', timestamp, payload: { type: 'task_complete', last_agent_message: 'Writer received queued work.' } },
-    ].map((entry) => JSON.stringify(entry)).join('\n') + '\\n');
+    ].map((entry) => JSON.stringify(entry)).join('\n') + '\n');
   }
   const result = request.method === 'thread/resume' ? { thread: { id: 'synthetic', status: { type: 'idle' }, turns: [] } }
     : request.method === 'thread/turns/list' ? { data: active ? [{ id: 'server-active', status: 'inProgress' }] : [{ id: 'completed-turn', status: 'completed' }] }
