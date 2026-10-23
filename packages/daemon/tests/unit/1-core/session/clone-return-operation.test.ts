@@ -54,9 +54,11 @@ beforeEach(() => {
     getSpace: async () => space,
     sessionSpaceId: (session) => session.context?.spaceId,
     getSessionStatus: () => status,
-    markReturned: (id, returnedAt) => {
+    markReturned: async (id, returnedAt) => {
       const current = sessions.getSession(id)!;
-      sessions.updateSession(id, { metadata: { ...current.metadata, clone: { returnedAt } } });
+      await sessions.updateSession(id, {
+        metadata: { ...current.metadata, clone: { returnedAt } },
+      });
     },
     getDatabase: () => db,
     getSdkMessageRepo: () => new SDKMessageRepository(db),

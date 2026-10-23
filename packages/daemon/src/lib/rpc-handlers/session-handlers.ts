@@ -1162,9 +1162,9 @@ export function setupSessionHandlers(
         };
       }
       await current.restart({
-        beforeStart: () => {
+        beforeStart: async () => {
           if (!identityRollback) return;
-          db.updateSession(targetSessionId, {
+          await db.updateSession(targetSessionId, {
             sdkSessionId: undefined,
             sdkOriginPath: undefined,
           });
@@ -1179,7 +1179,7 @@ export function setupSessionHandlers(
     } catch (err) {
       if (identityRollback) {
         const { session, sdkSessionId, sdkOriginPath } = identityRollback;
-        db.updateSession(targetSessionId, { sdkSessionId, sdkOriginPath });
+        await db.updateSession(targetSessionId, { sdkSessionId, sdkOriginPath });
         session.sdkSessionId = sdkSessionId;
         session.sdkOriginPath = sdkOriginPath;
       }
