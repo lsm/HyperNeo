@@ -146,7 +146,10 @@ export async function steerCodexDesktopTurn(
       dispatched,
       reason: String(error),
     });
-    if (!dispatched) return { value: 'app-server' };
+    if (!dispatched) {
+      requestCodexDesktopOpen(spawn, threadId);
+      return { value: 'app-server' };
+    }
     return {
       reason: reject(
         'not_delivered',

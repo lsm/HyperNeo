@@ -12,7 +12,9 @@ verified runtime. It asserts the resolved launcher path before any dispatch. Its
 `open` shim records arguments and never opens the GUI. As a control, the real
 new-thread handoff must open `new-handoff-control` and start through its Desktop
 owner. Existing ownerless input must separately record an open while the shim
-exits 1; the queued delivery and receipt still succeed within two seconds,
+exits 1. With the native listener stopped, both a missing socket and a stale
+Unix socket must also request an open and deliver through app-server steer within
+two seconds. All five opens must be recorded separately; the queued delivery and receipt still succeed within two seconds,
 without waiting for ownership. The launcher trace is retained in
 `evidence/desktop-open.jsonl`.
 

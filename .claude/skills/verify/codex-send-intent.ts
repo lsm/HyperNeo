@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { mkdirSync, existsSync, writeFileSync, appendFileSync, readFileSync } from 'node:fs';
+import { mkdirSync, existsSync, writeFileSync, appendFileSync, readFileSync, renameSync, unlinkSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { createServer as createHttpServer } from 'node:http';
 import { join, resolve } from 'node:path';
@@ -117,6 +117,22 @@ try {
     const request = call as { desktop?: string; params?: { conversationId?: string } };
     return request.desktop === 'thread-follower-start-turn' && request.params?.conversationId === 'new-handoff-control';
   }), 'New-thread control must open and hand off its first turn');
+  const desktopPath = join(home, 'ipc/ipc.sock');
+  const stalePath = join(home, 'ipc/stale.sock');
+  renameSync(desktopPath, stalePath);
+  await new Promise<void>(done => desktop.close(() => done()));
+  for (const socketState of ['missing', 'stale']) {
+    if (socketState === 'stale') renameSync(stalePath, desktopPath);
+    const began = performance.now();
+    const delivered = await send();
+    const elapsedMs = performance.now() - began;
+    assert(elapsedMs < 2000, `Existing ${socketState} socket delivery waited for Desktop: ${elapsedMs}ms`);
+    assert.equal(delivered.value.delivered, true);
+    assert.equal(delivered.value.steeredIntoTurnId, 'server-active');
+    timings.push({ socketState, existingDeliveryMs: elapsedMs });
+  }
+  unlinkSync(desktopPath);
+  await new Promise<void>(done => desktop.listen(desktopPath, done));
   const first = await send();
   if (action === 'reproduce') {
     assert.equal(first.value.queuedSubmissionId, 'synthetic-queue');
@@ -205,11 +221,14 @@ try {
     assert.equal(impossible.reason, 'not_delivered');
     assert.match(impossible.detail, /start unavailable/);
     assert(!calls.slice(ownedBefore).some((call) => (call as { server?: string }).server === 'thread/queue/add'));
-    for (let n = 0; n < 50 && !existsSync(openLog); n++) await new Promise(resolve => setTimeout(resolve, 20));
+    for (let n = 0; n < 50; n++) {
+      if (existsSync(openLog) && readFileSync(openLog, 'utf8').trim().split('\n').length >= 5) break;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
     assert(existsSync(openLog), 'Ownerless existing delivery must request a best-effort Desktop open');
     const opens = readFileSync(openLog, 'utf8').trim().split('\n').map(line => JSON.parse(line));
     assert.deepEqual(opens[0].args, ['-g', 'codex://threads/new-handoff-control']);
-    assert(opens.slice(1).length > 0, 'Existing-thread open must be recorded separately from the control');
+    assert.equal(opens.length, 5, 'Record missing-socket, stale-socket and both ownerless opens separately from the new-thread control');
     assert(opens.slice(1).every(open => JSON.stringify(open.args) === JSON.stringify(['-g', 'codex://threads/synthetic'])));
     timings.push({ bestEffortDesktopOpen: opens, nativeOwnerRemainedAbsent: true, launcherExit: 1 });
     assert(logs.length > 0, 'retained routing diagnostics required');
