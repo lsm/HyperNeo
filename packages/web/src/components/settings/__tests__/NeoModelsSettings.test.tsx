@@ -65,9 +65,9 @@ async function editor() {
 
 test('edits each effort, reorders provider fallbacks and saves through the human operation', async () => {
   const ui = await editor();
-  expect((ui.getByLabelText('Neo primary thinking') as HTMLSelectElement).value).toBe('think24k');
-  fireEvent.change(ui.getByLabelText('Neo fallback 1 thinking'), { target: { value: 'off' } });
-  fireEvent.click(ui.getAllByTitle('Move up')[1]);
+  expect((ui.getByLabelText('Neo model 1 thinking') as HTMLSelectElement).value).toBe('think24k');
+  fireEvent.change(ui.getByLabelText('Neo model 2 thinking'), { target: { value: 'off' } });
+  fireEvent.click(ui.getAllByTitle('Move up')[2]);
   fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
   await waitFor(() =>
     expect(request).toHaveBeenCalledWith('operation.invoke', {
@@ -81,15 +81,44 @@ test('edits each effort, reorders provider fallbacks and saves through the human
 
 test('adds a different-provider model with supported thinking and can remove all fallbacks', async () => {
   const ui = await editor();
-  fireEvent.click(ui.getByRole('button', { name: 'Add Neo fallback' }));
+  fireEvent.click(ui.getByRole('button', { name: 'Add Neo model' }));
   fireEvent.click(await screen.findByRole('button', { name: 'router/test' }));
-  expect((ui.getByLabelText('Neo fallback 3 thinking') as HTMLSelectElement).value).toBe('off');
-  for (let n = 0; n < 3; n++) fireEvent.click(ui.getAllByTitle('Remove')[0]);
+  expect((ui.getByLabelText('Neo model 4 thinking') as HTMLSelectElement).value).toBe('off');
+  for (let n = 0; n < 3; n++) fireEvent.click(ui.getAllByTitle('Remove')[1]);
   fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
   await waitFor(() =>
     expect(request).toHaveBeenCalledWith('operation.invoke', {
       name: 'neo.preferences.set',
       input: { ...primary, fallbacks: [] },
+    })
+  );
+});
+
+test('one list shows the primary first and Make primary moves another model to the top', async () => {
+  const ui = await editor();
+  expect(ui.queryByRole('button', { name: 'Change Neo primary' })).toBeNull();
+  const rows = ui.getAllByTitle('Remove').map((button) => button.parentElement?.textContent ?? '');
+  expect(rows.map((row) => row.includes('Primary'))).toEqual([true, false, false]);
+  fireEvent.click(ui.getByRole('button', { name: 'Make Neo model 2 primary' }));
+  fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'neo.preferences.set',
+      input: { ...glm, fallbacks: [primary, copilot] },
+    })
+  );
+});
+
+test('removing every model and adding one back saves an explicit empty fallback chain', async () => {
+  const ui = await editor();
+  for (let n = 0; n < 3; n++) fireEvent.click(ui.getAllByTitle('Remove')[0]);
+  fireEvent.click(ui.getByRole('button', { name: 'Add Neo model' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'router/test' }));
+  fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'neo.preferences.set',
+      input: { model: 'router/test', provider: 'openrouter', thinkingLevel: 'off', fallbacks: [] },
     })
   );
 });
@@ -101,10 +130,10 @@ test('shows a refused save without discarding edits or changing the general sess
       ? { models }
       : { ok: false, reason: 'invalid_model: provider unavailable' }
   );
-  fireEvent.change(ui.getByLabelText('Neo primary thinking'), { target: { value: 'think8k' } });
+  fireEvent.change(ui.getByLabelText('Neo model 1 thinking'), { target: { value: 'think8k' } });
   fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
   expect((await ui.findByRole('alert')).textContent).toContain('provider unavailable');
-  expect((ui.getByLabelText('Neo primary thinking') as HTMLSelectElement).value).toBe('think8k');
+  expect((ui.getByLabelText('Neo model 1 thinking') as HTMLSelectElement).value).toBe('think8k');
 });
 
 test('preserves an inherited fallback chain when only primary thinking is edited', async () => {
@@ -113,7 +142,7 @@ test('preserves an inherited fallback chain when only primary thinking is edited
   } as GlobalSettings;
   const ui = await editor();
   expect(ui.getByText(/Uses the general session fallback chain/)).toBeTruthy();
-  fireEvent.change(ui.getByLabelText('Neo primary thinking'), { target: { value: 'think8k' } });
+  fireEvent.change(ui.getByLabelText('Neo model 1 thinking'), { target: { value: 'think8k' } });
   fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
   await waitFor(() =>
     expect(request).toHaveBeenCalledWith('operation.invoke', {
@@ -133,21 +162,21 @@ test('lists only runnable providers and limits thinking to the server catalog', 
   const ui = await editor();
   expect(ui.getByText(/Usable fallback providers:/).textContent).not.toContain('OpenRouter');
   expect(
-    [...ui.getByLabelText('Neo fallback 2 thinking').querySelectorAll('option')].map(
+    [...ui.getByLabelText('Neo model 3 thinking').querySelectorAll('option')].map(
       (option) => option.value
     )
   ).toEqual(['off', 'think32k']);
 });
 
-test('selects a primary when Neo preferences have never been saved', async () => {
+test('the first model added to an empty list becomes the primary', async () => {
   (globalSettings as { value: GlobalSettings | null }).value = { settingSources: [] };
   render(<NeoModelSettings />);
   const ui = within(await screen.findByRole('region', { name: 'Neo models' }));
-  const change = ui.getByRole('button', { name: 'Change Neo primary' });
+  const change = ui.getByRole('button', { name: 'Add Neo model' });
   await waitFor(() => expect(change.hasAttribute('disabled')).toBe(false));
   fireEvent.click(change);
   fireEvent.click(await screen.findByRole('button', { name: 'opus', exact: true }));
-  fireEvent.change(ui.getByLabelText('Neo primary thinking'), { target: { value: 'think24k' } });
+  fireEvent.change(ui.getByLabelText('Neo model 1 thinking'), { target: { value: 'think24k' } });
   fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
   await waitFor(() =>
     expect(request).toHaveBeenCalledWith('operation.invoke', {
@@ -225,7 +254,7 @@ test('an omitted override keeps model metadata and stays omitted when saving thi
   const ui = await editor();
   expect((ui.getByLabelText('Auto-compact percentage') as HTMLInputElement).value).toBe('90');
   expect(ui.getByText(/800,000.*1,000,000.*80%/)).toBeTruthy();
-  fireEvent.change(ui.getByLabelText('Neo primary thinking'), { target: { value: 'off' } });
+  fireEvent.change(ui.getByLabelText('Neo model 1 thinking'), { target: { value: 'off' } });
   fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
   await waitFor(() =>
     expect(request).toHaveBeenCalledWith('operation.invoke', {

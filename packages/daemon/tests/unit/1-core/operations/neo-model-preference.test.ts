@@ -426,6 +426,45 @@ describe('neo.preferences.set', () => {
     expect(db.getGlobalSettings().neo?.preferences).toMatchObject({ fallbacks: [] });
   });
 
+  test('stores a percentage per model and gives the Neo session the one for the model it runs', async () => {
+    const result = await invoke('neo.preferences.set', {
+      model: 'claude-opus',
+      provider: 'anthropic',
+      thinkingLevel: 'off',
+      autoCompactPercent: 70,
+      fallbacks: [
+        {
+          model: 'deepseek-v4-flash',
+          provider: 'deepseek',
+          thinkingLevel: 'off',
+          autoCompactPercent: 101,
+        },
+      ],
+    });
+    expect(result).toMatchObject({ value: { ok: true } });
+    expect(db.getGlobalSettings().neo?.preferences).toMatchObject({
+      autoCompactPercent: 70,
+      fallbacks: [{ model: 'deepseek-v4-flash', autoCompactPercent: 100 }],
+    });
+    expect(db.getSession('neo:root')?.config.autoCompactPercent).toBe(70);
+    db.updateSession('neo:root', {
+      config: {
+        ...db.getSession('neo:root')!.config,
+        model: 'deepseek-v4-flash',
+        provider: 'deepseek',
+      },
+    });
+    switchFailure = 'refused';
+    await service.saveModelPreference(db.getGlobalSettings().neo!.preferences!);
+    expect(db.getSession('neo:root')?.config.autoCompactPercent).toBe(100);
+    switchFailure = 'pending';
+    await service.saveModelPreference(db.getGlobalSettings().neo!.preferences!);
+    expect(db.getSession('neo:root')?.config).toMatchObject({
+      model: 'deepseek-v4-flash',
+      autoCompactPercent: 70,
+    });
+  });
+
   test('a new Neo session starts on the preference, thinking included', async () => {
     await invoke('neo.preferences.set', {
       model: 'claude-opus',

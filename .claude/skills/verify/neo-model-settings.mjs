@@ -33,16 +33,16 @@ try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 1000 }, locale: 'en-US' });
   await page.goto(`http://127.0.0.1:${port}/settings?tab=neo-model`);
   const section = page.getByRole('region', { name: 'Neo models', exact: true });
-  await section.getByRole('button', { name: 'Change Neo primary', exact: true }).click();
+  await section.getByRole('button', { name: 'Add Neo model', exact: true }).click();
   await page.getByRole('button', { name: primary.display_name, exact: true }).click();
-  await section.getByLabel('Neo primary thinking', { exact: true }).selectOption('think24k');
+  await section.getByLabel('Neo model 1 thinking', { exact: true }).selectOption('think24k');
   for (const model of [first, second]) {
-    await section.getByRole('button', { name: 'Add Neo fallback', exact: true }).click();
+    await section.getByRole('button', { name: 'Add Neo model', exact: true }).click();
     await page.getByRole('button', { name: model.display_name, exact: true }).click();
   }
-  await section.getByLabel('Neo fallback 1 thinking', { exact: true }).selectOption('think8k');
-  await section.getByLabel('Neo fallback 2 thinking', { exact: true }).selectOption('off');
-  await section.getByTitle('Move up', { exact: true }).nth(1).click();
+  await section.getByLabel('Neo model 2 thinking', { exact: true }).selectOption('think8k');
+  await section.getByLabel('Neo model 3 thinking', { exact: true }).selectOption('off');
+  await section.getByTitle('Move up', { exact: true }).nth(2).click();
   await section.getByLabel('Auto-compact percentage', { exact: true }).fill('70');
   await section.getByText(thresholdText, { exact: false }).waitFor();
   await section.getByRole('button', { name: 'Save Neo models', exact: true }).click();
@@ -56,14 +56,14 @@ try {
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 1000 });
     await page.reload();
-    await section.getByLabel('Neo primary thinking', { exact: true }).waitFor();
+    await section.getByLabel('Neo model 1 thinking', { exact: true }).waitFor();
     assert.equal(rpc('neo.snapshot').preferences.autoCompactPercent, 70);
     assert.equal(await section.getByLabel('Auto-compact percentage', { exact: true }).inputValue(), '70');
     await section.getByText(thresholdText, { exact: false }).waitFor();
-    assert.equal(await section.getByLabel('Neo primary thinking', { exact: true }).inputValue(), 'think24k');
-    assert.equal(await section.getByLabel('Neo fallback 1 thinking', { exact: true }).inputValue(), 'off');
-    assert.equal(await section.getByLabel('Neo fallback 2 thinking', { exact: true }).inputValue(), 'think8k');
-    assert((await section.getByTitle('Remove', { exact: true }).first().locator('..').innerText()).includes(second.display_name));
+    assert.equal(await section.getByLabel('Neo model 1 thinking', { exact: true }).inputValue(), 'think24k');
+    assert.equal(await section.getByLabel('Neo model 2 thinking', { exact: true }).inputValue(), 'off');
+    assert.equal(await section.getByLabel('Neo model 3 thinking', { exact: true }).inputValue(), 'think8k');
+    assert((await section.getByTitle('Remove', { exact: true }).nth(1).locator('xpath=ancestor::div[contains(@class,"rounded-lg")][1]').innerText()).includes(second.display_name));
     const providers = await section.getByText('Usable fallback providers:', { exact: false }).innerText();
     assert(providers.includes('Anthropic'));
     const overflow = await section.evaluate((element) => [...element.querySelectorAll('select,button')].filter((child) => { const box = child.getBoundingClientRect(); return box.x < 0 || box.right > innerWidth + 1; }).map((child) => child.outerHTML));
