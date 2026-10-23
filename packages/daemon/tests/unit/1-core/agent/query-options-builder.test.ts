@@ -1467,7 +1467,7 @@ describe('QueryOptionsBuilder', () => {
       expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 24000 });
     });
 
-    it('keeps ordinary effort behavior for Neo when the provider has no effort catalog', () => {
+    it('sends a GLM level as its effort for Neo and ordinary sessions alike', () => {
       const sqlite = new BunDatabase(':memory:');
       try {
         createNeoTables(sqlite);
@@ -1498,9 +1498,9 @@ describe('QueryOptionsBuilder', () => {
             }),
           },
         });
-        expect(configured.addSessionStateOptions({}).effort).toBeUndefined();
+        expect(configured.addSessionStateOptions({}).effort).toBe('low');
         mockSession.id = generateUUID();
-        expect(builder.addSessionStateOptions({}).effort).toBeUndefined();
+        expect(builder.addSessionStateOptions({}).effort).toBe('low');
       } finally {
         sqlite.close();
       }
@@ -1638,7 +1638,7 @@ describe('QueryOptionsBuilder', () => {
       expect(result.thinking).toBeUndefined();
     });
 
-    it('emits a granular thinking budget for kimi K3 when a level is selected', async () => {
+    it('emits adaptive thinking with the level effort for kimi K3 when a level is selected', async () => {
       mockSession.config.provider = 'kimi';
       mockSession.config.model = 'kimi-k3';
       mockSession.config.thinkingLevel = 'think8k';
@@ -1646,10 +1646,11 @@ describe('QueryOptionsBuilder', () => {
         {} as import('@anthropic-ai/claude-agent-sdk').Options
       );
 
-      expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 8000 });
+      expect(result.thinking).toEqual({ type: 'adaptive' });
+      expect(result.effort).toBe('low');
     });
 
-    it('emits a granular thinking budget for k3-256k when a level is selected', async () => {
+    it('emits adaptive thinking with the level effort for k3-256k when a level is selected', async () => {
       mockSession.config.provider = 'kimi';
       mockSession.config.model = 'k3-256k';
       mockSession.config.thinkingLevel = 'think32k';
@@ -1657,10 +1658,11 @@ describe('QueryOptionsBuilder', () => {
         {} as import('@anthropic-ai/claude-agent-sdk').Options
       );
 
-      expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 31999 });
+      expect(result.thinking).toEqual({ type: 'adaptive' });
+      expect(result.effort).toBe('xhigh');
     });
 
-    it('emits a granular thinking budget for moonshot-k3 prefix aliases when a level is selected', async () => {
+    it('emits adaptive thinking with the level effort for moonshot-k3 prefix aliases when a level is selected', async () => {
       mockSession.config.provider = 'kimi';
       mockSession.config.model = 'moonshot-k3-preview';
       mockSession.config.thinkingLevel = 'think8k';
@@ -1668,7 +1670,8 @@ describe('QueryOptionsBuilder', () => {
         {} as import('@anthropic-ai/claude-agent-sdk').Options
       );
 
-      expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 8000 });
+      expect(result.thinking).toEqual({ type: 'adaptive' });
+      expect(result.effort).toBe('low');
     });
 
     it('should omit thinking config for providers with thinkingModes=off even when level is off', async () => {
@@ -1862,7 +1865,27 @@ describe('QueryOptionsBuilder', () => {
       const result = builder.addSessionStateOptions(
         {} as import('@anthropic-ai/claude-agent-sdk').Options
       );
-      expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 8000 });
+      expect(result.thinking).toEqual({ type: 'adaptive' });
+      expect(result.effort).toBe('low');
+    });
+
+    it('sends Off to GLM as disabled thinking with its lowest effort', () => {
+      mockSession.config.provider = 'glm';
+      mockSession.config.model = 'glm-5';
+      mockSession.config.thinkingLevel = 'off';
+      const result = builder.addSessionStateOptions({});
+      expect(result.thinking).toEqual({ type: 'disabled' });
+      expect(result.effort).toBe('low');
+      expect(result.env?.CLAUDE_CODE_DISABLE_THINKING).toBe('1');
+    });
+
+    it('maps DeepSeek levels onto its effort scale', () => {
+      mockSession.config.provider = 'deepseek';
+      mockSession.config.model = 'deepseek-v4-pro';
+      mockSession.config.thinkingLevel = 'think48k';
+      expect(builder.addSessionStateOptions({}).effort).toBe('max');
+      mockSession.config.thinkingLevel = 'think16k';
+      expect(builder.addSessionStateOptions({}).effort).toBe('medium');
     });
 
     it('allows Kimi K2.7 primary and K2.7 fallback with enabled thinking', () => {

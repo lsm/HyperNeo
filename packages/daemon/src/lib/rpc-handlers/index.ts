@@ -64,7 +64,6 @@ import { adoptNeoFilePacks } from '../neo/packs/index.ts';
 import { getDataDir } from '../data-dir.ts';
 import { createCompletionGateBindings } from '../tasks/complete-task-gates.ts';
 import { isCoderOwnedMergeWorkflow } from '../workflows/post-approval-router.ts';
-import { createGithubConnector } from '../github/connectors/github-connector.ts';
 import { setupOperationHandlers } from './operation-handlers.ts';
 import type { UpgradeIdentity } from '../pairing/upgrade-auth.ts';
 import { createSpaceCallerScopeResolver } from '../space/runtime/space-caller-scope.ts';
@@ -1191,21 +1190,23 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.internalEventBus,
     (id) => deps.db.getSession(id)
   );
-  const stampProvenance = (
+  const stampProvenance = async (
     sessionId: string,
     promptProvenance: NonNullable<SessionMetadata['promptProvenance']>
   ) => {
     const current = deps.db.getSession(sessionId);
     if (current) {
-      deps.db.updateSession(sessionId, { metadata: { ...current.metadata, promptProvenance } });
+      await deps.db.updateSession(sessionId, {
+        metadata: { ...current.metadata, promptProvenance },
+      });
       deps.db.notifyChange('sessions', { sessionId });
     }
   };
   spaceAgentV2Deps.stampProvenance = stampProvenance;
   const resolveClones = createResolveClones({
     listChildren: (parentId) => deps.db.listChildSessions(parentId),
-    detach: (sessionId) => {
-      deps.db.detachSessionFromParent(sessionId);
+    detach: async (sessionId) => {
+      await deps.db.detachSessionFromParent(sessionId);
       deps.db.notifyChange('sessions', { sessionId });
     },
     agentOwning: (sessionId) => {
@@ -1631,13 +1632,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
             ? artifactProfile.resolveInitialPrimaryLinkUrl(task.workflowRunId)
             : '',
         getPrState: async (prUrl) => {
-          const outcome = await createGithubConnector().ops.getPr(
-            { prUrl },
-            { workspacePath: '', params: {}, rawParams: {}, hookLocalState: {} }
-          );
-          if (!outcome.ok) throw new Error(outcome.error);
-          const state = (outcome.data as { state?: unknown } | null)?.state;
-          return typeof state === 'string' ? state : 'UNKNOWN';
+          const outcome = await neoService.readPrState(prUrl);
+          if ('reason' in outcome) throw new Error(outcome.reason);
+          return outcome.value;
         },
         workflowDeclaresPostApprovalRoute: (taskId) =>
           spaceRuntimeService.workflowDeclaresPostApprovalRoute(taskId),
@@ -1763,9 +1760,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   if (process.env.NODE_ENV !== 'test') {
     const neoFolder = ensureNeoProject(deps.db.workspaceHistory);
-    fileNeoSessions(deps.db, neoService.repo, neoFolder);
-    void neoService
-      .openDefault()
+    void fileNeoSessions(deps.db, neoService.repo, neoFolder)
+      .catch((error) => log.warn('Neo sessions not filed', error))
+      .then(() => neoService.openDefault())
       .catch((error) => log.warn('Neo default session not opened', error));
   }
   void neoService.recover();

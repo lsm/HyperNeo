@@ -40,7 +40,7 @@ export interface SetSessionParentDependencies {
   readonly getSession: (sessionId: string) => Session | null;
   readonly listChildren: (sessionId: string) => Session[];
   readonly sessionSpaceId: (session: Session) => string | undefined;
-  readonly setParent: (sessionId: string, parentId: string | null) => void;
+  readonly setParent: (sessionId: string, parentId: string | null) => Promise<void>;
 }
 
 function reject(reason: Rejection['reason'], message: string): { reason: Rejection } {
@@ -83,9 +83,9 @@ export function requireOneLevel(move: Move, deps: SetSessionParentDependencies):
   return { value: move };
 }
 
-function applyMove(move: Move, deps: SetSessionParentDependencies): Result {
+async function applyMove(move: Move, deps: SetSessionParentDependencies): Promise<Result> {
   const parentSessionId = move.parent?.id ?? null;
-  deps.setParent(move.session.id, parentSessionId);
+  await deps.setParent(move.session.id, parentSessionId);
   return { accepted: true, sessionId: move.session.id, parentSessionId };
 }
 
@@ -96,11 +96,11 @@ const setParent = (superpipe({})('session-parent-set') as PipelineAPI)
   .pipe(requirePlainSessions, ['move', 'deps'], 'result:move')
   .pipe(requireOneLevel, ['move', 'deps'], 'result:move')
   .pipe(applyMove, ['move', 'deps'], 'move')
-  .end('move') as (
+  .endAsync('move') as (
   input: Input,
   caller: OperationCaller,
   deps: SetSessionParentDependencies
-) => Result;
+) => Promise<Result>;
 
 export function createSetSessionParentOperation(deps: SetSessionParentDependencies) {
   return defineOperation({

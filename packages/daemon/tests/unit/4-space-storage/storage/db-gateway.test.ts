@@ -1,6 +1,9 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
+import { Logger } from '../../../../src/lib/logger';
 import {
+  bindGateway,
   DbGateway,
+  gatewayFor,
   type DbGatewayReply,
   type DbGatewayRequest,
 } from '../../../../src/storage/db-gateway/db-gateway';
@@ -240,6 +243,97 @@ describe('DbGateway', () => {
       'test.counter does not run wipe'
     );
     expect(await gateway.call(counts, 'count')).toBe(2);
+    db.close();
+  });
+
+  test('table changes an op records replay on the main thread before its caller resumes', async () => {
+    const touch = defineDbOp({
+      name: 'test.touch',
+      mode: 'write',
+      run: (_db: Database, table: string, changes) => {
+        changes.notifyChange(table, { sessionId: 's1' });
+        return table;
+      },
+    });
+    const replayed: unknown[] = [];
+    const db = new Database(':memory:');
+    const inline = new DbGateway(':memory:', db);
+    inline.onChanges = (changes) => replayed.push(...changes);
+    expect(await inline.run(touch, 'sessions')).toBe('sessions');
+    expect(replayed).toEqual([{ table: 'sessions', scope: { sessionId: 's1' } }]);
+
+    const { gateway, workers } = fixture();
+    gateway.onChanges = (changes) => replayed.push(...changes);
+    const pending = gateway.run(touch, 'tasks').then(() => replayed.length);
+    await tick();
+    workers[0].emit({
+      id: workers[0].requests[0].id,
+      result: 'tasks',
+      changes: [{ table: 'tasks' }],
+    });
+    expect(await pending).toBe(2);
+    workers[0].emit({ id: 99, error: 'late', changes: [{ table: 'ignored' }] } as DbGatewayReply);
+    expect(replayed.at(-1)).toEqual({ table: 'tasks' });
+    db.close();
+  });
+
+  test('a listener that throws during replay never strands the committed write', async () => {
+    const error = spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+    const touch = defineDbOp({
+      name: 'test.touch',
+      mode: 'write',
+      run: (_db: Database, _args: undefined, changes) => {
+        changes.notifyChange('sessions');
+        return 'done';
+      },
+    });
+    const { gateway, workers } = fixture();
+    gateway.onChanges = () => {
+      throw new Error('listener failed');
+    };
+    const pending = gateway.run(touch, undefined);
+    await tick();
+    workers[0].emit({
+      id: workers[0].requests[0].id,
+      result: 'done',
+      changes: [{ table: 'sessions' }],
+    });
+    expect(await pending).toBe('done');
+    const db = new Database(':memory:');
+    const inline = new DbGateway(':memory:', db);
+    inline.onChanges = () => {
+      throw new Error('listener failed');
+    };
+    expect(await inline.run(touch, undefined)).toBe('done');
+    expect(error).toHaveBeenCalledTimes(2);
+    error.mockRestore();
+    db.close();
+  });
+
+  test('an unbound connection warns once that its recorded changes went unannounced', async () => {
+    const warn = spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    const touch = defineDbOp({
+      name: 'test.touch',
+      mode: 'write',
+      run: (_db: Database, table: string, changes) => changes.notifyChange(table),
+    });
+    const db = new Database(':memory:');
+    await gatewayFor(db).run(touch, 'sessions');
+    await gatewayFor(db).run(touch, 'tasks');
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain('sessions');
+    warn.mockRestore();
+    db.close();
+  });
+
+  test('gatewayFor returns the gateway bound to a connection, or an inline one', async () => {
+    const db = new Database(':memory:');
+    const unbound = gatewayFor(db);
+    expect(gatewayFor(db)).toBe(unbound);
+    const bound = new DbGateway(':memory:', db);
+    bindGateway(db, bound);
+    expect(gatewayFor(db)).toBe(bound);
+    expect(gatewayFor(new Database(':memory:'))).not.toBe(bound);
     db.close();
   });
 

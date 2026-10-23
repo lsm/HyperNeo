@@ -1,8 +1,14 @@
 import type { StructuredLogEvent } from '@hyperneo/shared';
-import { emitStructuredLogEvent } from '../../lib/logger.ts';
+import { emitStructuredLogEvent, Logger } from '../../lib/logger.ts';
 import type { Database } from '../sqlite-compat.ts';
 import type { SQLiteQueryObservabilityOptions } from '../sqlite-query-observability.ts';
-import type { DbOp, Method, RepositoryOp } from './db-op.ts';
+import {
+  ChangeRecorder,
+  type DbOp,
+  type Method,
+  type RepositoryOp,
+  type TableChange,
+} from './db-op.ts';
 
 type Lane = DbOp<unknown, unknown>['mode'];
 
@@ -17,8 +23,9 @@ export type DbGatewayRequest = {
 export type DbGatewayReply =
   | { ready: true }
   | { log: StructuredLogEvent }
-  | { id: number; result?: unknown; error?: string };
+  | { id: number; result?: unknown; changes?: TableChange[]; error?: string };
 
+const log = new Logger('db-gateway');
 const MAX_PENDING = 1024;
 const REPLY_TIMEOUT_MS = 30_000;
 
@@ -38,6 +45,7 @@ class WorkerLane {
     private readonly dbPath: string,
     private readonly createWorker: () => Worker,
     private readonly replyTimeoutMs: number,
+    private readonly replay: (changes: TableChange[]) => void,
     private readonly queryObservability?: SQLiteQueryObservabilityOptions
   ) {}
 
@@ -99,8 +107,11 @@ class WorkerLane {
           const waiter = this.pending.get(data.id);
           this.pending.delete(data.id);
           this.rearmWatchdog();
-          if (data.error === undefined) waiter?.resolve(data.result);
-          else waiter?.reject(new Error(data.error));
+          if (data.error !== undefined) waiter?.reject(new Error(data.error));
+          else {
+            if (data.changes?.length) this.replay(data.changes);
+            waiter?.resolve(data.result);
+          }
         }
       };
       worker.onerror = (event) => {
@@ -140,6 +151,7 @@ class WorkerLane {
 
 export class DbGateway {
   private readonly lanes: Record<Lane, WorkerLane>;
+  onChanges: (changes: TableChange[]) => void = () => {};
 
   constructor(
     dbPath: string,
@@ -150,17 +162,37 @@ export class DbGateway {
     replyTimeoutMs = REPLY_TIMEOUT_MS
   ) {
     this.lanes = {
-      read: new WorkerLane('read', dbPath, createWorker, replyTimeoutMs, queryObservability),
-      write: new WorkerLane('write', dbPath, createWorker, replyTimeoutMs, queryObservability),
+      read: new WorkerLane(
+        'read',
+        dbPath,
+        createWorker,
+        replyTimeoutMs,
+        this.replay,
+        queryObservability
+      ),
+      write: new WorkerLane(
+        'write',
+        dbPath,
+        createWorker,
+        replyTimeoutMs,
+        this.replay,
+        queryObservability
+      ),
     };
   }
 
   run<A, R>(op: DbOp<A, R>, args: A): Promise<R> {
     const db = this.inline;
     if (db)
-      return Promise.resolve().then(() =>
-        db.transaction(() => op.run(db, args), op.mode === 'write' ? 'immediate' : 'deferred')()
-      );
+      return Promise.resolve().then(() => {
+        const recorder = new ChangeRecorder();
+        const result = db.transaction(
+          () => op.run(db, args, recorder),
+          op.mode === 'write' ? 'immediate' : 'deferred'
+        )();
+        if (recorder.changes.length) this.replay(recorder.changes);
+        return result;
+      });
     return this.lanes[op.mode].send(op.name, args) as Promise<R>;
   }
 
@@ -175,4 +207,34 @@ export class DbGateway {
   close(): Promise<void> {
     return Promise.all([this.lanes.read.close(), this.lanes.write.close()]).then(() => {});
   }
+
+  private readonly replay = (changes: TableChange[]) => {
+    try {
+      this.onChanges(changes);
+    } catch (error) {
+      log.error('could not announce committed table changes:', error);
+    }
+  };
+}
+
+const gateways = new WeakMap<Database, DbGateway>();
+
+export function bindGateway(db: Database, gateway: DbGateway): void {
+  gateways.set(db, gateway);
+}
+
+export function gatewayFor(db: Database): DbGateway {
+  let gateway = gateways.get(db);
+  if (gateway) return gateway;
+  const unbound = new DbGateway(':memory:', db);
+  let warned = false;
+  unbound.onChanges = (changes) => {
+    if (warned) return;
+    warned = true;
+    log.warn(
+      `changes to ${[...new Set(changes.map((change) => change.table))].join(', ')} ran on a connection with no bound gateway, so nothing announced them`
+    );
+  };
+  gateways.set(db, unbound);
+  return unbound;
 }

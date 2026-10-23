@@ -211,6 +211,14 @@ export function normalizeThinkingLevel(level: string | undefined | null): Thinki
 
 export type ThinkingEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
+export const THINKING_EFFORTS: readonly ThinkingEffort[] = [
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+];
+
 const THINKING_LEVEL_EFFORT: Record<ThinkingLevel, ThinkingEffort | undefined> = {
   off: undefined,
   think8k: 'low',

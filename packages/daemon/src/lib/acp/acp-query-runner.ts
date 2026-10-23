@@ -866,7 +866,7 @@ export class AcpQueryRunner {
         try {
           const result = await acpClient.loadSession(existingAcpSessionId, cwd, acpMcpServers);
           if (ownsSessionWrite()) {
-            this.persistAcpSessionId(result.sessionId);
+            await this.persistAcpSessionId(result.sessionId);
             this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
           }
         } catch (loadError) {
@@ -874,7 +874,7 @@ export class AcpQueryRunner {
           try {
             const result = await acpClient.resumeSession(existingAcpSessionId, cwd, acpMcpServers);
             if (ownsSessionWrite()) {
-              this.persistAcpSessionId(result.sessionId);
+              await this.persistAcpSessionId(result.sessionId);
               this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
             }
           } catch (resumeError) {
@@ -895,7 +895,7 @@ export class AcpQueryRunner {
       } else {
         const result = await acpClient.createSession(cwd, acpMcpServers);
         if (ownsSessionWrite()) {
-          this.persistAcpSessionId(result.sessionId);
+          await this.persistAcpSessionId(result.sessionId);
           this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
         }
         createdAcpSessionDuringRun = true;
@@ -976,7 +976,10 @@ export class AcpQueryRunner {
           contextWindow: getAcpContextWindow(),
           initialUsageEstimate: getAcpContextUsageEstimate(session),
           onContextUsageUpdate: (used) => {
-            if (attemptOwnsRun()) this.persistAcpContextUsageEstimate(used);
+            if (attemptOwnsRun())
+              this.persistAcpContextUsageEstimate(used).catch((error) =>
+                this.ctx.logger.warn('Failed to persist ACP context usage:', error)
+              );
           },
           onConfigOptionsUpdate: (configOptions) => {
             if (!ownsSessionWrite()) return;
@@ -1027,7 +1030,7 @@ export class AcpQueryRunner {
                 startupWatchFirstMessageSeen = true;
                 receivedAcpMessageDuringRun = true;
                 if (shouldPersistInstructionsSent) {
-                  this.persistAcpInstructionsSent();
+                  await this.persistAcpInstructionsSent();
                 }
                 this.clearStartupTimer();
               } else if (isAcpErrorResultMessage(acpMessage as SDKMessage)) {
@@ -1296,7 +1299,7 @@ export class AcpQueryRunner {
         !receivedAcpMessageDuringRun &&
         !(client?.canLoadSession() ?? false)
       ) {
-        this.clearAcpSessionState();
+        await this.clearAcpSessionState();
       }
 
       const lastMsg = this._lastConsumedUserMessage;
@@ -1474,19 +1477,19 @@ export class AcpQueryRunner {
     await this.ctx.onMarkApiSuccess(message, queryGeneration);
   }
 
-  private persistAcpSessionId(acpSessionId: string): void {
+  private async persistAcpSessionId(acpSessionId: string): Promise<void> {
     const { session, db } = this.ctx;
     if (session.acpSessionId === acpSessionId && !this.pendingAcpIdentityMetadata) return;
     session.acpSessionId = acpSessionId;
     if (this.pendingAcpIdentityMetadata) {
       this.pendingAcpIdentityMetadata = false;
-      db.updateSession(session.id, { acpSessionId, metadata: session.metadata });
+      await db.updateSession(session.id, { acpSessionId, metadata: session.metadata });
       return;
     }
-    db.updateSession(session.id, { acpSessionId });
+    await db.updateSession(session.id, { acpSessionId });
   }
 
-  private clearAcpSessionState(): void {
+  private async clearAcpSessionState(): Promise<void> {
     const { session, db } = this.ctx;
     session.acpSessionId = undefined;
     session.metadata = {
@@ -1494,20 +1497,20 @@ export class AcpQueryRunner {
       acpInstructionsSent: undefined,
       acpContextUsageEstimate: undefined,
     };
-    db.updateSession(session.id, {
+    await db.updateSession(session.id, {
       acpSessionId: undefined,
       metadata: session.metadata,
     });
   }
 
-  private persistAcpInstructionsSent(): void {
+  private async persistAcpInstructionsSent(): Promise<void> {
     const { session, db } = this.ctx;
     if (session.metadata?.acpInstructionsSent) return;
     session.metadata = {
       ...session.metadata,
       acpInstructionsSent: true,
     };
-    db.updateSession(session.id, { metadata: session.metadata });
+    await db.updateSession(session.id, { metadata: session.metadata });
   }
 
   private async applyStoredAcpModel(
@@ -1543,7 +1546,7 @@ export class AcpQueryRunner {
     if (ownsRun()) this.updateAcpModelCache(configOptions);
   }
 
-  private persistAcpContextUsageEstimate(used: number): void {
+  private async persistAcpContextUsageEstimate(used: number): Promise<void> {
     const { session, db } = this.ctx;
     const metadata = session.metadata as { acpContextUsageEstimate?: number } | undefined;
     if (metadata?.acpContextUsageEstimate === used) return;
@@ -1552,16 +1555,16 @@ export class AcpQueryRunner {
       ...session.metadata,
       acpContextUsageEstimate: used,
     } as Session['metadata'];
-    db.updateSession(session.id, { metadata: session.metadata });
+    await db.updateSession(session.id, { metadata: session.metadata });
   }
 
-  private syncAcpSessionModel(configOptions: AcpConfigOption[]): void {
+  private async syncAcpSessionModel(configOptions: AcpConfigOption[]): Promise<void> {
     const modelOption = configOptions.find((option) => option.category === 'model');
     const currentValue = modelOption?.currentValue ?? 'acp-default';
     if (this.ctx.session.config.model === currentValue) return;
 
     this.ctx.session.config.model = currentValue;
-    this.ctx.db.updateSession(this.ctx.session.id, {
+    await this.ctx.db.updateSession(this.ctx.session.id, {
       config: {
         model: currentValue,
         provider: 'acp',
@@ -1579,7 +1582,9 @@ export class AcpQueryRunner {
     options: { syncSessionModel?: boolean } = {}
   ): void {
     if (options.syncSessionModel !== false) {
-      this.syncAcpSessionModel(configOptions);
+      this.syncAcpSessionModel(configOptions).catch((error) =>
+        this.ctx.logger.warn('Failed to persist the ACP session model:', error)
+      );
     }
 
     const provider = getProviderRegistry().get('acp');
