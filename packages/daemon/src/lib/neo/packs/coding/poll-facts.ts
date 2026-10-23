@@ -102,6 +102,21 @@ export class CodingPollFactsRepository {
     return collectPollHttp(this, subject, cycle, validator, request, now);
   }
 
+  collectExternalEventPage(...args: Parameters<CodingPollFactsRepository['collect']>) {
+    const [subject, cycle, validator, request, now = Date.now] = args;
+    this.db
+      .prepare(`DELETE FROM pack_coding_poll_facts WHERE attempted_at < ?
+        AND json_extract(subject,'$[0]') GLOB 'external-event-page:v1:*'`)
+      .run(now() - 15 * 60_000);
+    return this.collect(
+      { ...subject, credentialId: `external-event-page:v1:${subject.credentialId}` },
+      cycle,
+      validator,
+      request,
+      now
+    );
+  }
+
   async acquire(
     subject: Subject,
     validator: string | null,

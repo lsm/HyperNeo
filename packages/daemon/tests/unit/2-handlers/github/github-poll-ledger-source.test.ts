@@ -13,7 +13,11 @@ function setup() {
   let requests = 0;
   const source = (cycle: string, credentialId = 'opaque-one', readFailed = false) =>
     createGitHubPollSource({
-      collection: { collect: (...args) => facts.collect(...args), cycle, credentialId },
+      collection: {
+        collect: (...args) => facts.collectExternalEventPage(...args),
+        cycle,
+        credentialId,
+      },
       fetchImpl: (async () => {
         requests++;
         return Response.json(

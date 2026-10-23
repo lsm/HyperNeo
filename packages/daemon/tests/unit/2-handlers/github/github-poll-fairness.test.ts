@@ -10,7 +10,7 @@ import type { ExternalEvent } from '../../../../src/lib/external-events/types';
 function collector(db: Database) {
   createCodingPackTables(db);
   const facts = new CodingPollFactsRepository(db);
-  return facts.collect.bind(facts);
+  return facts.collectExternalEventPage.bind(facts);
 }
 
 describe('GitHub polling fairness', () => {

@@ -4,9 +4,9 @@ Use shared isolation in `../SKILL.md`. This Wire rung routes the existing GET
 source through the ledger HTTP collector. One acquisition cycle spans the
 watched destinations; a later cycle has a new ID. Credentials, representation,
 exact URL and validator retain their coverage boundaries. No new RPC, permission,
-scheduler or migration is introduced. Destination cursors/delivery stay separate.
+scheduler or row-rewriting migration is introduced. Destination cursors/delivery stay separate.
 
-Run normal, conditional and failure with a fresh absolute RUN for each:
+Run normal, conditional, failure and retention with a fresh absolute RUN for each:
 
 ```bash
 RUN=$(mktemp -d /private/tmp/hyperneo-poll-wire-XXXXXX)
@@ -37,6 +37,16 @@ fact/coalescing/HTTP contracts, plus full checks. Source contracts also prove ne
 cycle heads refresh, credential/representation separation and failed credential
 reads refusing before a covered page. Fairness contracts run with the collector
 enabled, including 201 PRs beside small repos and restart/page-resume coverage.
+`retention` advances the watched windows and ages only the synthetic raw pages
+created in that run. Each cycle retains nine current pages plus a protected
+pre-existing unscoped row; that row's raw JSON/revisions and a normalized-fact
+row remain byte-equal, and both destinations keep their original approvals.
+
+Only new `external-event-page:v1:` cache subjects expire after 15 minutes of
+inactivity, checked on acquisition with an additive timestamp index. This covers
+about seven default polling intervals without a new timer. Expiry never targets
+existing unscoped rows, normalized facts or source history. Unit contracts also
+advance window/page/credential identities through 30 minutes, then idle/recover.
 Retain comparable before/after evidence.
 After merge, confirm the automatic rollout with owner RPC; never deploy/restart
 or force live polling. Durable outbox and remaining reader moves are later slices.
