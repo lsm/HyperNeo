@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { DatabaseSync, StatementSync } from 'node:sqlite';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import { sendMessage, waitForIdle } from '../../helpers/daemon-actions';
@@ -235,40 +234,9 @@ type DaemonWithContext = DaemonServerContext & { daemonContext: DaemonAppContext
 
 describe('Task Agent Lifecycle — Online Tests', () => {
   let daemon: DaemonWithContext;
-  const statementRun = StatementSync.prototype.run;
-  const databaseExec = DatabaseSync.prototype.exec;
 
   beforeEach(async () => {
-    StatementSync.prototype.run = function (...args) {
-      try {
-        return statementRun.apply(this, args);
-      } catch (error) {
-        process.stderr.write(
-          `FAILED_SQL_RUN ${this.sourceSQL} ${String(error)} ${error instanceof Error ? error.stack : ''}\n`
-        );
-        throw error;
-      }
-    };
-    DatabaseSync.prototype.exec = function (sql) {
-      try {
-        return databaseExec.call(this, sql);
-      } catch (error) {
-        process.stderr.write(
-          `FAILED_SQL_EXEC ${sql} ${String(error)} ${error instanceof Error ? error.stack : ''}\n`
-        );
-        throw error;
-      }
-    };
     daemon = (await createDaemonServer()) as DaemonWithContext;
-    const request = daemon.messageHub.request.bind(daemon.messageHub);
-    daemon.messageHub.request = (async (...args: Parameters<typeof request>) => {
-      try {
-        return await request(...args);
-      } catch (error) {
-        process.stderr.write(`FAILED_RPC ${args[0]} ${String(error)}\n`);
-        throw error;
-      }
-    }) as typeof request;
     if (!daemon.daemonContext) {
       throw new Error(
         'Task agent lifecycle tests require in-process daemon mode. ' +
@@ -278,8 +246,6 @@ describe('Task Agent Lifecycle — Online Tests', () => {
   }, SETUP_TIMEOUT);
 
   afterEach(async () => {
-    StatementSync.prototype.run = statementRun;
-    DatabaseSync.prototype.exec = databaseExec;
     if (daemon) {
       try {
         const { sessions } = (await daemon.messageHub.request('session.list', {})) as {
