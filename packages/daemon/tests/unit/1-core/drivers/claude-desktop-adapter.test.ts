@@ -316,13 +316,15 @@ describe('claude-desktop adapter against the app session records', () => {
           remoteControl: false,
         },
       });
-      expect(spawned[0].args.slice(0, 11)).toEqual([
+      expect(spawned[0].args.slice(0, 13)).toEqual([
         'claude',
         '-p',
         '--model',
         'haiku',
         '--max-turns',
         '4',
+        '--permission-mode',
+        'default',
         '--tools',
         'SendMessage ListAgents',
         '--allowedTools',
