@@ -229,8 +229,8 @@ Uses Claude Desktop's local session records for discovery and its standard deep 
 
 | Verb | How |
 | --- | --- |
-| `start` | Run the task itself as the creating turn, `claude -p --session-id <uuid> -n <title> --permission-mode <neo.workerPermissionMode, default bypassPermissions> -- <task>`, and confirm its user entry in the transcript within the bootstrap budget. Launch `claude --desktop --resume <uuid>` under a pseudo-terminal once that confirmed turn exits; a launch during the turn does not register the session. Until Desktop's record appears, the adapter serves the started record from memory. |
-| `send`, `steer` | For a confirmed live CLI/SDK owner, use the registered inbox socket through the same daemon-owned sender. Exact message bytes and native receipt IDs replace the one-shot Haiku relay and text matching. Desktop-owned sessions return unsupported; unknown owners return `unreachable` without fallback. A session with no live pid in `bypassPermissions` or `auto` mode is resumed headless with `claude -p --resume`, after rechecking for a live pid just before the spawn; other modes return `unreachable` with the app link. Typing into the session in Desktop during that headless turn would put two processes on one transcript, an accepted risk. |
+| `start` | Run a short, tool-less CLI preparation turn in the configured initial mode, preserving the configured worker model. Wait for it to exit and for `claude --desktop --resume` to register the native session. B1 option B accepts Desktop's actual imported `acceptEdits`; it does not claim to preserve bypass Neo's mode. The Haiku `desktop-wake` helper then invokes native `send_message` with the exact task. Only the target's complete native input and receipt count as task delivery. |
+| `send`, `steer` | Use the same native forwarding helper, including for idle sessions. The one-shot sender explicitly uses the helper's actual mode, without changing global settings. A helper's response or a queued request does not prove target delivery. Failed native delivery never starts a headless task. A live forwarding helper is reused; stopped helper histories are retained while a fresh unprivileged Haiku helper is prepared. |
 | `find`, `status` | `claude agents --json` supplies live status, PID and session identity; join the exact registration to classify the owner. App records supply title, folder, archive state and activity; transcripts supply replies and exact input-receipt evidence. Observation does not grant control. |
 | `archive` | Existing record-based archive path: require exactly one matching app record, recheck its identity and live status, then call the archive admission gate. Atomically replace the record with `isArchived: true`, preserving its other fields; this does not stop a turn. |
 | `link` | `claude://claude.ai/epitaxy/local_<uuid>`. |
@@ -254,8 +254,8 @@ Standalone CLI sessions share the same owner gate and inbox sender as confirmed 
 New work started through HyperNeo requests Full Access through the supported permission parameters:
 
 - Codex: `thread/start` sends `approvalPolicy: "never"` and `sandbox: "danger-full-access"`. The opening turn request carries the public `turn/start` fields `approvalPolicy: "never"` and `sandboxPolicy: {type: "dangerFullAccess"}` so desktop handoff does not lose the requested permissions. The pre-existing undocumented desktop ownership/IPC handoff is unchanged; no private permission setter, session database edit or global configuration change is introduced. A server policy rejection is returned without a weaker-permission retry.
-- Claude Code CLI: the opening `claude -p --session-id …` invocation passes `--permission-mode` from the `neo.workerPermissionMode` setting (default `bypassPermissions`). Subsequent task delivery requires the confirmed live owner and direct inbox channel; there is no headless `--resume` fallback.
-- Claude Code Desktop: `claude --desktop --resume` accepts no permission flag; on claude 2.1.302 (checked 2026-10-19) adding `--permission-mode` or `--allow-dangerously-skip-permissions` exits 1 with "--desktop only opens the Claude Desktop app; it can't be combined with …" and Desktop does not open. The app starts its own process and uses its configured permission mode; the CLI bootstrap does not prove Desktop is in bypass mode. The standalone `claude-code` adapter has no creation API. To default new local Desktop sessions through supported settings, enable Bypass permissions where the app/account permits it and set `permissions.defaultMode` to `"bypassPermissions"` in the user's Claude settings. A mode previously selected for a folder takes precedence, so select Bypass permissions in that folder as needed. Organization restrictions still apply. HyperNeo does not edit private app records or silently rewrite the user's settings.
+- Claude Code CLI: the short creating turn passes `--permission-mode` from `neo.workerPermissionMode`, disables tools/MCP for preparation and waits for exit. The actual task arrives later through Desktop's native messaging tool; the creating turn never receives it.
+- Claude Code Desktop: the human chose B1 option B (message `4aa1e100-4e51-4d38-b9cd-5e44268a7343`): accept `acceptEdits` after handoff. CLI2.1.302 rejects a permission flag with `--desktop`; Desktop3.6556.1 explicitly downgrades imported bypass to acceptEdits. Report actual `permissionMode`, `needs_you` and native `waitingFor`; do not approve prompts, rewrite native records or change global `defaultMode`. The existing authorized `rc-toggle` handles RC; no replacement RC helper is created. A queued RC request is not a connected session or phone-view confirmation. The standalone `claude-code` adapter still has no creation API.
 
 Interface evidence (2026-10-16): both `codex-cli 0.160.1` and the desktop-bundled `codex-cli 0.162.0-alpha.17.2` public `codex app-server generate-json-schema` outputs include both permission fields and the above sandbox enum values; `claude 2.1.295 --help` exposes `--permission-mode`. See the official [Codex App Server protocol](https://learn.chatgpt.com/docs/app-server), [Codex Full Access definition](https://learn.chatgpt.com/docs/sandboxing), [Claude CLI reference](https://code.claude.com/docs/en/cli-reference), and [Desktop permission settings](https://code.claude.com/docs/en/desktop#choose-a-permission-mode). Unit tests exercise the real adapter creation functions with recorded transport/process arguments; they do not establish that a live Desktop application accepted or displayed the requested mode.
 
@@ -406,19 +406,19 @@ sequenceDiagram
   participant App as Claude Code Desktop
   H->>A: work.start in ~/focus/dolmen, local reply destination
   A->>A: validate reply destination before creation
-  A->>CLI: claude -p --session-id U -n title, short opening message
+  A->>CLI: tool-less preparation turn, then exit
   A->>CLI: claude --desktop --resume U, under a pseudo-terminal
   CLI->>App: open local_U in the sidebar
-  A->>CLI: inspect live owner and registered inbox protocol
-  alt Desktop-owned or unknown/unsupported owner
-    A-->>H: local_U was created, task was not delivered
-    Note over A,App: Continue in the app; no headless resume or relay fallback
-  else Confirmed CLI/SDK owner with supported inbox
-    A->>CLI: write task directly to inbox, priority next
-    A-->>H: unconfirmed write, exact input receipt
-    Note over A,CLI: Write alone does not prove acceptance or a running turn
-    CLI-->>A: reply to the daemon-owned inbox
-    A-->>H: persist peer reply to the original local session
+  A->>App: confirm native registration and actual permission mode
+  alt Import failed or native helper unavailable
+    A-->>H: task not confirmed; inspect native wait or refusal
+    Note over A,App: No headless task fallback or permission approval
+  else Registered Desktop session
+    A->>App: desktop-wake Haiku helper calls native send_message
+    App-->>A: target user-input receipt
+    A-->>H: receipt, actual acceptEdits mode and pending permission wait
+    A->>App: existing authorized rc-toggle requests Remote Control
+    Note over A,App: Request alone does not prove RC connected or phone visibility
   end
 ```
 

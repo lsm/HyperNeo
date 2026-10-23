@@ -135,6 +135,15 @@ import mdagentsInactivityNag from './agents/inactivity-nag.md' with { type: 'tex
 import mdgoalsOutcomeReady from './goals/outcome-ready.md' with { type: 'text' };
 import mddriversClaudeDesktopRelay from './drivers/claude-desktop-relay.md' with { type: 'text' };
 import mddriversCodexWorker from './drivers/codex-worker.md' with { type: 'text' };
+import mddriversClaudeDesktopPrepare from './drivers/claude-desktop-prepare.md' with {
+  type: 'text',
+};
+import mddriversClaudeDesktopWakeBrief from './drivers/claude-desktop-wake-brief.md' with {
+  type: 'text',
+};
+import mddriversClaudeDesktopWakeRequest from './drivers/claude-desktop-wake-request.md' with {
+  type: 'text',
+};
 import mddriversClaudeRcToggleBrief from './drivers/claude-rc-toggle-brief.md' with {
   type: 'text',
 };
@@ -321,6 +330,9 @@ const registry: Record<string, string> = {
   'goals/outcome-ready.md': mdgoalsOutcomeReady,
   'drivers/claude-desktop-relay.md': mddriversClaudeDesktopRelay,
   'drivers/codex-worker.md': mddriversCodexWorker,
+  'drivers/claude-desktop-prepare.md': mddriversClaudeDesktopPrepare,
+  'drivers/claude-desktop-wake-brief.md': mddriversClaudeDesktopWakeBrief,
+  'drivers/claude-desktop-wake-request.md': mddriversClaudeDesktopWakeRequest,
   'drivers/claude-rc-toggle-brief.md': mddriversClaudeRcToggleBrief,
   'drivers/claude-rc-toggle-request.md': mddriversClaudeRcToggleRequest,
   'mailbox/delivery-failed.md': mdmailboxDeliveryFailed,
@@ -452,6 +464,9 @@ export const {
   GOAL_OUTCOME_READY,
   CLAUDE_DESKTOP_RELAY,
   CODEX_WORKER_INSTRUCTIONS,
+  CLAUDE_DESKTOP_PREPARE,
+  CLAUDE_DESKTOP_WAKE_BRIEF,
+  CLAUDE_DESKTOP_WAKE_REQUEST,
   CLAUDE_RC_TOGGLE_BRIEF,
   CLAUDE_RC_TOGGLE_REQUEST,
   MAILBOX_DELIVERY_FAILED,

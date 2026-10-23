@@ -59,7 +59,7 @@ describe('requireDisconnectedTarget', () => {
   });
 });
 
-describe('runClaudeRemoteControlRequest', () => {
+describe('runClaudeRemoteControlRequest and openRcToggle', () => {
   let dir: string;
   let spawned: Array<{ args: string[]; cwd?: string }>;
   let live: Array<{
