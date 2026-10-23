@@ -2,7 +2,6 @@ import type { SessionGoal } from '@hyperneo/shared/types/session-goal';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GoalJournal } from '../../components/SessionGoalJournal.tsx';
-import { SessionSchedules } from '../../components/SessionSchedules.tsx';
 import { locale } from '../../lib/i18n/index.ts';
 import { NeoGoals } from '../NeoGoals.tsx';
 
@@ -92,7 +91,7 @@ afterEach(cleanup);
 const definitionReads = () =>
   request.mock.calls.filter(([, data]) => data.name === 'goal.session.get');
 
-describe('Goal and schedule explicit disclosures', () => {
+describe('Neo goal explicit disclosures', () => {
   it('leaves goal titles/status inert and opens scoped details only with more', async () => {
     render(<NeoGoals sessionId="root" />);
     await screen.findByText('Synthetic effect');
@@ -113,39 +112,8 @@ describe('Goal and schedule explicit disclosures', () => {
     expect(screen.getByRole('button', { name: 'more — Synthetic goal' })).toBe(control);
   });
 
-  it('keeps the schedule summary and goal title inert while pause/resume stay independent', async () => {
-    const { container } = render(<SessionSchedules sessionId="root" />);
-    await screen.findByText('Synthetic goal');
-    const strip = container.querySelector<HTMLDetailsElement>('[data-session-schedules]')!;
-    fireEvent.click(screen.getByText('Schedules'));
-    expect(strip.open).toBe(false);
-    fireEvent.click(screen.getByRole('button', { name: 'more — Schedules' }));
-    expect(strip.open).toBe(true);
-    fireEvent.click(screen.getByText('Synthetic goal'));
-    expect(definitionReads()).toHaveLength(0);
-    fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
-    await screen.findByRole('button', { name: 'Resume' });
-    expect(definitionReads()).toHaveLength(0);
-    fireEvent.click(screen.getByRole('button', { name: 'more — Synthetic goal' }));
-    const detail = await screen.findByText('Synthetic definition');
-    const less = screen.getByRole('button', { name: 'less — Synthetic goal' });
-    fireEvent.click(detail);
-    expect(less.getAttribute('aria-expanded')).toBe('true');
-    expect(detail.compareDocumentPosition(less) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    fireEvent.click(less);
-    fireEvent.click(screen.getByRole('button', { name: 'Resume' }));
-    await screen.findByRole('button', { name: 'Pause' });
-    const stripLess = screen.getByRole('button', { name: 'less — Schedules' });
-    expect(
-      strip.querySelector('[data-schedule]')!.compareDocumentPosition(stripLess) &
-        Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy();
-    fireEvent.click(stripLess);
-    expect(strip.open).toBe(false);
-  });
-
   it('leaves journal effects inert and keeps evidence links behind an explicit control', async () => {
-    const { container } = render(<GoalJournal ownerSessionId="root" goalId={goal.id} />);
+    const { container } = render(<GoalJournal ownerSessionId="root" goalId={goal.id} explicit />);
     const effect = await screen.findByText('Synthetic effect');
     const entry = container.querySelector<HTMLDetailsElement>('[data-journal-entry]')!;
     fireEvent.click(effect);

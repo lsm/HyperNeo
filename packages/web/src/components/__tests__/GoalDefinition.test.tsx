@@ -153,7 +153,7 @@ describe('GoalDefinition', () => {
   it('pages newest-first with the last entry id and retains prior pages', async () => {
     const { container } = render(<GoalDefinition ownerSessionId="root" goalId="guide" />);
     await screen.findByText('Effect 20');
-    fireEvent.click(screen.getByRole('button', { name: 'more — Effect 20' }));
+    fireEvent.click(screen.getAllByText('Effect 20')[0]);
     expect(
       within(container.querySelector('[data-journal-entry="entry-20"]')!)
         .getByRole('link', { name: 'Merged guide' })
