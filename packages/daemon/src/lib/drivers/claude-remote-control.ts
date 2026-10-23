@@ -273,8 +273,23 @@ export function withClaudeRemoteControl(
         const target = { sessionId: started.value.ref.id, title: started.value.title };
         const delivery = await wake(target, startRequest.message, deps);
         if (!delivery.ok) return delivery;
-        const status = await adapter.status!(started.value.ref);
-        if (status.ok) Object.assign(started.value, status.value);
+        const status = await adapter.status?.(started.value.ref);
+        if (status?.ok) {
+          const {
+            status: state,
+            waitingFor,
+            permissionMode,
+            lastActivityAt,
+            watchHint,
+          } = status.value;
+          Object.assign(started.value, {
+            status: state,
+            waitingFor,
+            permissionMode,
+            lastActivityAt,
+            watchHint,
+          });
+        }
         started.value.receipt = delivery.value.receipt;
         started.value.watchHint =
           `${started.value.watchHint ?? ''} Remote Control is requested separately through the existing rc-toggle; native approval may be required. A request is not a confirmed connection.`.trim();

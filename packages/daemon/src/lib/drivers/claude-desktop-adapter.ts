@@ -1293,19 +1293,36 @@ export async function runToExit(
   }
 }
 
-export function launchInClaudeDesktop(
+export async function launchInClaudeDesktop(
   cliSessionId: string,
   cwd: string,
   deps: Pick<ClaudeDesktopAdapterDeps, 'spawn'>
 ): Promise<number> {
-  return deps
-    .spawn(['script', '-q', '/dev/null', 'claude', '--desktop', '--resume', cliSessionId], {
-      cwd,
-      stdout: 'ignore',
-      stderr: 'ignore',
-      detached: true,
-    })
-    .exited.catch(() => -1);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const proc = deps.spawn(
+      ['script', '-q', '/dev/null', 'claude', '--desktop', '--resume', cliSessionId],
+      {
+        cwd,
+        stdout: 'ignore',
+        stderr: 'ignore',
+        detached: true,
+      }
+    );
+    return await Promise.race([
+      proc.exited.catch(() => -1),
+      new Promise<number>((resolve) => {
+        timer = setTimeout(() => {
+          try {
+            proc.kill('SIGKILL');
+          } catch {}
+          resolve(-1);
+        }, BOOTSTRAP_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function importClaudeDesktopSession(
@@ -1465,7 +1482,11 @@ export async function startClaudeSession(
   };
   cache.set(`${STARTED_KEY}${sessionId}`, { modifiedAt: 0, records: [record] });
   const imported = await importClaudeDesktopSession(cliSessionId, cwd, deps);
-  if (!imported.ok) return imported;
+  if (!imported.ok)
+    return {
+      ...imported,
+      detail: `${imported.detail} Prepared session ${sessionId} and its execution directory are retained at ${cwd} for handoff recovery.`,
+    };
   return {
     ok: true,
     value: {

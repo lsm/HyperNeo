@@ -37,6 +37,17 @@ Check `evidence/observed.json` and `native-events.jsonl`:
 - A native permission wait is immediately visible as `needs_you`, with
   `waitingFor: permission prompt` and `permissionMode: acceptEdits`. Native
   refusal and failed import reject without headless fallback or approval.
+- Start preserves the requested project folder/name when refreshing native
+  status. To include the real two-minute hanging-handoff deadline check, use
+  `VERIFY_HANDOFF_TIMEOUT=1` in a fresh run with another free port. That profile
+  requests the ordinary basename as its project name; the normal profile above
+  checks a distinct human-selected name. A hung synthetic handoff is killed
+  and refused, with no task dispatched. The helper stops its owned hanging PID
+  in `finally`, including on an unfixed baseline timeout.
+- If the preparation transcript exists but import fails, the refusal names
+  the retained session ID and execution directory for recovery. Do not delete
+  that directory: import may have partially succeeded. Native handoff may be
+  retried for that ID from its retained cwd without creating another task.
 - The native session record and global `defaultMode` sentinel are unchanged
   by task delivery. The helper closes its socket and daemon in `finally`.
 
