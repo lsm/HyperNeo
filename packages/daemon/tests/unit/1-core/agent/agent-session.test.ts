@@ -2265,6 +2265,17 @@ describe('AgentSession', () => {
         expect(mockSession.metadata.pendingModelSwitch).toBeFalsy();
       });
 
+      it('drops a held switch when it is cancelled before the turn ends', async () => {
+        await agentSession.stateManager.setProcessing('turn-1');
+        await agentSession.requestModelSwitch('opus', 'anthropic');
+
+        expect(await agentSession.cancelPendingModelSwitch()).toEqual({ cancelled: true });
+        expect(mockSession.metadata.pendingModelSwitch).toBeFalsy();
+        await agentSession.stateManager.setIdle();
+        expect(switchModel).not.toHaveBeenCalled();
+        expect(await agentSession.cancelPendingModelSwitch()).toEqual({ cancelled: false });
+      });
+
       it('applies a switch at once right after Stop ends the turn', async () => {
         await agentSession.stateManager.setProcessing('turn-1');
         // biome-ignore lint: test mock access

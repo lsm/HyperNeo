@@ -152,3 +152,47 @@ describe('QueuePreviewTray — review round 2 fixes', () => {
     expect(document.body.querySelector('[data-testid="queued-modal-page-label"]')).toBeNull();
   });
 });
+
+describe('QueuePreviewTray — pending model row', () => {
+  afterEach(cleanup);
+
+  it('shows the pending model with no queued messages', () => {
+    const { getByTestId } = render(
+      <QueuePreviewTray currentTurnMessages={[]} nextTurnMessages={[]} pendingModel="Sonnet 5.5" />
+    );
+    expect(getByTestId('queued-pending-model').textContent).toContain('Sonnet 5.5');
+  });
+
+  it('sits below the Next messages and is absent without a pending switch', () => {
+    const withModel = render(
+      <QueuePreviewTray
+        currentTurnMessages={[]}
+        nextTurnMessages={makeMessages(1, 'next')}
+        pendingModel="Opus 5.5"
+      />
+    );
+    const overlay = withModel.getByTestId('queue-overlay');
+    const next = overlay.querySelector('[data-testid="queued-next-turn-bubble"]')!;
+    const model = overlay.querySelector('[data-testid="queued-pending-model"]')!;
+    expect(next.compareDocumentPosition(model) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    cleanup();
+    const without = render(
+      <QueuePreviewTray currentTurnMessages={[]} nextTurnMessages={makeMessages(1, 'next')} />
+    );
+    expect(without.queryByTestId('queued-pending-model')).toBeNull();
+  });
+
+  it('cancels the pending switch from its row', () => {
+    const onCancel = vi.fn();
+    const { getByTestId } = render(
+      <QueuePreviewTray
+        currentTurnMessages={[]}
+        nextTurnMessages={[]}
+        pendingModel="Opus 5.5"
+        onCancelPendingModel={onCancel}
+      />
+    );
+    fireEvent.click(getByTestId('cancel-pending-model'));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+});

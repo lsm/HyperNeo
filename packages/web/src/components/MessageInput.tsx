@@ -245,6 +245,7 @@ export default function MessageInput({
   const { content, setContent, clear: clearDraft, holdDraftAdoption } = useInputDraft(sessionId);
   const contentRef = useRef(content);
   contentRef.current = content;
+  const pendingModelSwitch = store?.sessionInfo.value?.metadata?.pendingModelSwitch ?? null;
   const {
     currentModel,
     currentModelInfo,
@@ -252,7 +253,12 @@ export default function MessageInput({
     switching: modelSwitching,
     loading: modelLoading,
     switchModel,
-  } = useModelSwitcher(sessionId, store?.sessionInfo.value?.metadata?.pendingModelSwitch ?? null);
+  } = useModelSwitcher(sessionId, pendingModelSwitch);
+  const pendingModelName = pendingModelSwitch
+    ? (availableModels.find(
+        (m) => m.id === pendingModelSwitch.model && m.provider === pendingModelSwitch.provider
+      )?.name ?? pendingModelSwitch.model)
+    : null;
   const actionsMenu = useModal();
   const {
     attachments,
@@ -926,6 +932,16 @@ export default function MessageInput({
     [refreshQueuedMessages, sessionId]
   );
 
+  const handleCancelPendingModel = useCallback(async () => {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) return;
+    try {
+      await hub.request('session.model.cancelPending', { sessionId });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    }
+  }, [sessionId]);
+
   const handlePromoteQueuedMessage = useCallback(
     async (queued: QueuePreviewMessage) => {
       const hub = connectionManager.getHubIfConnected();
@@ -1234,24 +1250,29 @@ export default function MessageInput({
             </div>
           )}
 
-          {(queuedForCurrentTurn.length > 0 || queuedForNextTurn.length > 0) && !disabled && (
-            <QueuePreviewTray
-              currentTurnMessages={queuedForCurrentTurn}
-              nextTurnMessages={queuedForNextTurn}
-              currentTurnTotal={queuedCurrentTurnTotal}
-              nextTurnTotal={queuedNextTurnTotal}
-              className="mb-2 sm:ml-[58px]"
-              onDeferMessage={(queued) => {
-                void handleDeferQueuedMessage(queued);
-              }}
-              onPromoteMessage={(queued) => {
-                void handlePromoteQueuedMessage(queued);
-              }}
-              onRemoveMessage={(queued) => {
-                void handleRemoveQueuedMessage(queued);
-              }}
-            />
-          )}
+          {(queuedForCurrentTurn.length > 0 || queuedForNextTurn.length > 0 || pendingModelName) &&
+            !disabled && (
+              <QueuePreviewTray
+                pendingModel={pendingModelName}
+                onCancelPendingModel={() => {
+                  void handleCancelPendingModel();
+                }}
+                currentTurnMessages={queuedForCurrentTurn}
+                nextTurnMessages={queuedForNextTurn}
+                currentTurnTotal={queuedCurrentTurnTotal}
+                nextTurnTotal={queuedNextTurnTotal}
+                className="mb-2 sm:ml-[58px]"
+                onDeferMessage={(queued) => {
+                  void handleDeferQueuedMessage(queued);
+                }}
+                onPromoteMessage={(queued) => {
+                  void handlePromoteQueuedMessage(queued);
+                }}
+                onRemoveMessage={(queued) => {
+                  void handleRemoveQueuedMessage(queued);
+                }}
+              />
+            )}
 
           {pendingVoiceEntries.length > 0 && !disabled && (
             <PendingVoiceAudioTray

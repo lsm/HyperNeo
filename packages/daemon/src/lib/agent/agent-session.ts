@@ -1568,6 +1568,14 @@ export class AgentSession
       : { success: false, model: this.session.config.model, error: 'The model switch failed' };
   }
 
+  cancelPendingModelSwitch(): Promise<{ cancelled: boolean }> {
+    return this.queueModelSwitch(async () => {
+      const cancelled = !!this.session.metadata?.pendingModelSwitch;
+      await this.setPendingModelSwitch(undefined);
+      return { cancelled };
+    });
+  }
+
   private async applyPendingModelSwitch(): Promise<boolean> {
     const pending = this.session.metadata?.pendingModelSwitch;
     if (!pending || modelSwitchTiming(this.stateManager.getState().status) !== 'now') return false;
