@@ -203,7 +203,7 @@ export class Database {
     }
   }
 
-  createSession(
+  async createSession(
     session: Session,
     options?: { enforceWorkspaceOwnership?: boolean; ownershipPath?: string }
   ): Promise<void> {

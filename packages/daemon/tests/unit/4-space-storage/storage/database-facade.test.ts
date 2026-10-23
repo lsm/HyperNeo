@@ -69,6 +69,24 @@ describe('Database Facade', () => {
   });
 
   describe('Session operations', () => {
+    it('reports a failed session write as a rejection, not a synchronous throw', async () => {
+      const raw = db.getDatabase();
+      const prepare = raw.prepare.bind(raw);
+      raw.prepare = ((sql: string, ...rest: unknown[]) => {
+        if (/UPDATE sessions/.test(sql)) throw new Error('fictional write failure');
+        return prepare(sql, ...rest);
+      }) as typeof raw.prepare;
+      try {
+        let pending: Promise<void> | undefined;
+        expect(() => {
+          pending = db.setSessionLastError('fictional-session', null);
+        }).not.toThrow();
+        await expect(pending).rejects.toThrow('fictional write failure');
+      } finally {
+        raw.prepare = prepare;
+      }
+    });
+
     it('creates and retrieves a session', async () => {
       const session = createTestSession();
       await db.createSession(session);
