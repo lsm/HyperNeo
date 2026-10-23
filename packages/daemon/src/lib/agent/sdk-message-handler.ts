@@ -584,18 +584,7 @@ export class SDKMessageHandler {
     db.beginTransaction();
     try {
       const result = operation();
-      if (result instanceof Promise) {
-        return result.then(
-          (value) => {
-            db.commitTransaction?.();
-            return value;
-          },
-          (error) => {
-            db.abortTransaction?.();
-            throw error;
-          }
-        ) as T;
-      }
+      if (result instanceof Promise) return result.finally(() => db.commitTransaction?.()) as T;
       db.commitTransaction();
       return result;
     } catch (error) {
