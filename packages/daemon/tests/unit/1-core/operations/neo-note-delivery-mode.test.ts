@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import {
   InternalEventBus,
   type DaemonInternalEventMap,
@@ -12,14 +12,14 @@ const rootId = 'neo:10000000-0000-4000-8000-000000000002';
 
 describe('Neo daemon notes', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
-  let service: NeoService;
+  let service: ReturnType<typeof createNeoService>;
   let events: InternalEventBus<DaemonInternalEventMap>;
 
   beforeEach(async () => {
     db = await createTestDb();
     events = new InternalEventBus<DaemonInternalEventMap>();
     db.createSession({ ...createTestSession(rootId), workspacePath: null });
-    service = new NeoService(
+    service = createNeoService(
       db,
       {} as unknown as SessionManager,
       { event: mock(() => {}) } as unknown as MessageHub,

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { vi } from 'vitest';
 import type { MessageHub, Session } from '@hyperneo/shared';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
 import {
   type ReturnSessionCloneDependencies,
@@ -17,7 +17,7 @@ import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
 describe('Neo ordinary sessions', () => {
   let db: Database;
-  let service: NeoService;
+  let service: ReturnType<typeof createNeoService>;
   const createSession = vi.fn(async (params: { sessionId: string }) => {
     db.createSession(createTestSession(params.sessionId));
     return params.sessionId;
@@ -25,7 +25,7 @@ describe('Neo ordinary sessions', () => {
   beforeEach(async () => {
     db = await createTestDb();
     createSession.mockClear();
-    service = new NeoService(
+    service = createNeoService(
       db,
       {
         createSession,

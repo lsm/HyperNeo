@@ -2,7 +2,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import { defineOperation, type OperationCaller } from '../operations/registry.ts';
 import { NEO_INBOX_ID } from './inbox.ts';
-import { requireNeoTreeAuthor } from './project-tree-operations.ts';
+import { requireNeoTreeAuthor } from './project-author.ts';
 import type { NeoRepository } from '../../storage/repositories/neo-repository.ts';
 
 type ForgetRepo = Pick<NeoRepository, 'allRepositories' | 'forgetProject' | 'getBindingBySession'>;

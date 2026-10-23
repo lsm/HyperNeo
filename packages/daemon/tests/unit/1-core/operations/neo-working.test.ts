@@ -5,7 +5,7 @@ import {
   type DaemonInternalEventMap,
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import {
   neoWorkingKey,
   projectNeoWorking,
@@ -89,7 +89,7 @@ describe('Neo working sessions', () => {
   const worker = 'worker-1';
   let db: Awaited<ReturnType<typeof createTestDb>>;
   let events: InternalEventBus<DaemonInternalEventMap>;
-  let service: NeoService;
+  let service: ReturnType<typeof createNeoService>;
   const event = vi.fn();
   const state = (sessionId: string, processingState: Record<string, unknown>) => {
     db.getDatabase()
@@ -108,7 +108,7 @@ describe('Neo working sessions', () => {
     db = await createTestDb();
     events = new InternalEventBus<DaemonInternalEventMap>();
     event.mockClear();
-    service = new NeoService(
+    service = createNeoService(
       db,
       { createSession: vi.fn(), getSessionAsync: vi.fn() } as unknown as SessionManager,
       { event } as unknown as MessageHub,

@@ -38,8 +38,6 @@ function setup(result: NeoTodoCheckResult = merged) {
         return result;
       },
       statusLine: () => null,
-      topics: () => [],
-      event: () => [],
     },
   } satisfies NeoPack;
   const told: string[] = [];
@@ -51,7 +49,6 @@ function setup(result: NeoTodoCheckResult = merged) {
     tell: async (_ask, _todo, note) => {
       told.push(note);
     },
-    tellAsk: async () => {},
     changed: () => {},
   });
   const add = (url = 'https://github.com/o/r/pull/1') => {

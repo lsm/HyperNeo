@@ -275,10 +275,10 @@ it through their subsystem (for goals, through goals).
 | `target` | JSON `WorkRef` of the session to wake (any adapter; local HyperNeo first) |
 | `source_kind`, `source_id` | who owns it, e.g. `goal`/`<goalId>`; unique together |
 | `cadence_kind`, `every_ms`, `cron`, `timezone` | interval or cron |
-| `nudge_every` | fire at least every Nth due run even when nothing changed (default 4) |
+| `nudge_every` | retained for stored/API compatibility; never forces an unchanged turn |
 | `status` | `active`, `paused`, `done` |
 | `next_run_at`, `pending_job_id` | as in `task_schedules`; CAS on `pending_job_id` |
-| `due_count` | due runs since the last fire, for the nudge rule |
+| `due_count` | consecutive unchanged wakes; busy and unconfirmed attempts do not increment it |
 | `facts_digest` | the source's facts digest at the last fire |
 | `last_run_at`, `last_outcome`, `last_skip_reason`, `last_message_id` | shown on the session page |
 | `created_by_session`, `created_at`, `updated_at` | |
@@ -299,21 +299,20 @@ rows for the goal's repos, and answered questions.
 
 ### Fire rule (`sessionSchedule.fire` job)
 
-1. Load the row; stop if it is not `active` or the `pending_job_id` no longer matches.
-   Then `due_count += 1`: every due run counts, skipped or not.
-2. Read the target with `work.status`. If it is `running` or `queued`, record
-   `skipped_busy`, compute the next run from the cadence (as step 6 does), re-enqueue
-   for that time, and stop. Re-enqueueing the already-due `next_run_at` would hot-loop
-   while the target stays busy; a stuck-busy test covers this. `needs_you` also skips
-   the same way (`skipped_needs_you`): the human owes it an answer first. Because busy
-   runs count, the first idle run after a busy stretch past `nudge_every` fires.
-3. Ask the source for facts. If the source answers `null`, mark the schedule `done`.
-4. Fire when `digest != facts_digest`, or when `due_count >= nudge_every` (a "nothing
-   moved" nudge). Otherwise record `skipped_unchanged`.
-5. On fire: build the message (with the change summary, so the session need not
-   re-derive it), deliver it as a scheduled wake (section 5) with an idempotency key
-   `schedule:<id>:<due time>`, store `facts_digest`, reset `due_count`, record `fired`.
-6. Compute the next run and re-enqueue (handler self-re-enqueue, as ADR 0002 describes).
+1. Load the active row matching `pending_job_id` and record the due time.
+2. A busy, queued or needs-you recipient skips at the configured cadence without
+   incrementing the quiet counter.
+3. Read the source facts; a missing source completes the schedule.
+4. Fire only when the digest changes. Unchanged wakes increment `due_count` and
+   enqueue no model input. After two quiet wakes, double the next interval on each
+   wake, capped at eight hours (never shorten a longer configured cadence).
+5. On the third quiet wake, publish one human idle card. Remain quiet for the rest
+   of that idle stretch. Real progress resets the counter and next due time to the
+   configured interval immediately. Session input refreshes are scoped and ignore
+   unchanged human/task input keys; unrelated DB tables do not refresh facts.
+6. On confirmed fire, store the facts digest and reset the quiet count. Re-enqueue
+   using the configured cadence. Upgrade migration 448 resets the old due-run
+   counts once; later restarts preserve the new consecutive quiet count.
 
 Delivery reuses `NeoService.sendToRef`'s routing: direct for local HyperNeo sessions,
 `work.send` for other adapters, with the scheduler as the logged origin.
@@ -407,8 +406,8 @@ the digest is their hash:
 The goal stores its last lines (`facts_lines`), so the summary names only the lines that
 changed.
 
-`message(goalId, {summary, nudge})` builds the wake: `Goal "<title>": <summary, or
-"nothing moved since <time>" on a nudge>. Read <mandate_ref> and the note below, act,
+`message(goalId, {summary, nudge: false})` builds a changed-facts wake:
+`Goal "<title>": <summary>. Read <mandate_ref> and the note below, act,
 then append a journal entry for run <runId>.` The goal's "what works" note is inlined,
 so Neo needs no extra read.
 
@@ -420,13 +419,12 @@ so Neo needs no extra read.
    and `next_steps` with `goal.update`.
 4. Neo ends with its one-line summary, which labels the chat row (section 5).
 
-A nudge cycle that finds nothing to do still appends an entry ("nothing moved; waiting
-on X"). The run then shows on the goal, and a goal stuck for N nudges becomes a reason to
-propose a mandate change (section 4).
+Unchanged facts do not start a cycle. The third quiet wake sends the human one
+idle card; further unchanged wakes back off without additional cards or turns.
 
 ### What works
 
-When 10 entries are past `works_note_through`, or on a nudge, the wake message also asks
+When 10 entries are past `works_note_through`, a changed-facts wake message also asks
 Neo to rewrite the note:
 - Neo folds the new entries into it and calls `goal.update {worksNote}`.
 - That records `journal_compacted` and moves `works_note_through`.
@@ -532,7 +530,6 @@ The session view (`/session/<id>`) and Neo's page get a "Schedules" strip, from
 `schedule.session.list` filtered to that session as the target. Per schedule it shows:
 - the source label (for a goal, its title linking to the goal), cadence and next run;
 - the last run with its outcome and skip reason;
-- "nudge in k", from `nudge_every - due_count`;
 - pause and resume.
 
 The same list feeds iOS.
@@ -630,7 +627,7 @@ Scheduler and home repo (fs3):
   CAS pause/resume/delete, startup recovery, the source registry and
   `schedule.session.*`. No source registers yet; tests use a fake source.
 - **S2. Fire and delivery** (~150): the `sessionSchedule.fire` handler with the skip rule
-  and nudge counter, delivery through the `sendToRef` routing, and the `scheduled_wake`
+  and quiet backoff counter, delivery through the `sendToRef` routing, and the `scheduled_wake`
   origin.
 - **H1. Home repo**, in sequential PRs of 100–200 production lines from fresh dev:
   (a) local setup, `.gitignore`, identity/signing recovery and `neo_concerns.home_path`;
@@ -716,11 +713,11 @@ Session messages (fs3):
 
 Scheduler and home repo (fs3):
 
-- **Cost without a budget.** Each fire is a Neo turn. The busy skip, the unchanged skip
-  and `nudge_every` bound it, and pausing a goal pauses its schedule. A per-schedule cap
-  can come later.
+- **Cost without a budget.** Each changed-facts fire is a session turn. Busy and
+  unchanged wakes skip; quiet intervals back off to eight hours and pausing a goal
+  pauses its schedule. Unchanged facts never force a turn.
 - **Starvation.** If Neo is always busy in the human's chat, wakes keep skipping. The
-  session page shows `skipped_busy`, and the nudge fires on the first idle due run.
+  session page shows `skipped_busy`; the first idle due run fires only for changed facts.
 - **Noisy facts.** A fact line that changes on every read (a timestamp, an unordered
   list) fires every time. Facts must be sorted and stable; the fire tests cover it.
 - **Direct writes outside the operation.** A shell with filesystem write access can

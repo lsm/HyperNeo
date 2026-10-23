@@ -84,17 +84,15 @@ export class CodingPrEventRepository {
       .run(key);
   }
 
-  route(row: CodingPrTransition): { owner: WorkRef | null; claimed: boolean } {
+  route(row: CodingPrTransition): { owner: WorkRef | null } {
     const found = this.db
       .prepare(
-        `SELECT owner, EXISTS (SELECT 1 FROM pack_coding_pr_claims c
-                 WHERE c.url = 'https://github.com/' || l.repo || '/pull/' || l.number) AS claimed
+        `SELECT owner
            FROM pack_coding_pr_ledger l WHERE l.repo = ? AND l.number = ?`
       )
-      .get(row.repo, row.number) as { owner: string | null; claimed: number } | null;
+      .get(row.repo, row.number) as { owner: string | null } | null;
     return {
       owner: found?.owner ? (JSON.parse(found.owner) as WorkRef) : null,
-      claimed: !!found?.claimed,
     };
   }
 }
@@ -107,7 +105,7 @@ export async function deliverCodingPrEvents(
   for (const row of transitions) {
     const event = planCodingPrEvent(row);
     const route = event ? repo.route(row) : null;
-    if (!event || !route?.owner || route.claimed) continue;
+    if (!event || !route?.owner) continue;
     const told = await deps.tell(route.owner, event.key, event.text).catch(() => false);
     log.warn(
       `PR event ${event.key} to ${route.owner.adapter}:${route.owner.id}: ${told ? 'told' : 'not told'}`

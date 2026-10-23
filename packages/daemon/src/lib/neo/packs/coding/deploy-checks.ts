@@ -4,7 +4,7 @@ import { runGhJson } from '../../../github/gh-lookup-helpers.ts';
 import { githubUrlKey, parsePrUrl } from '../../../github/parse-pr-url.ts';
 import { spawnProcess, type SpawnFn } from '../../../runtime-spawn/index.ts';
 
-export type NeoDaemonCommit = { daemon: string; commit: string | null };
+import type { NeoDaemonCommit } from '../../daemon-commits.ts';
 export type NeoDeployRead = {
   prs: { url: string; mergeCommit: string | null }[];
   daemons: (NeoDaemonCommit & { contains: string[] })[];

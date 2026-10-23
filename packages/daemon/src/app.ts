@@ -1368,6 +1368,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       SESSION_SCHEDULE_FIRE,
       createSessionScheduleFire({
         scheduler: rpcHandlers.sessionScheduler,
+        notifyIdle: rpcHandlers.notifyScheduleIdle,
         ...createScheduleDelivery(db, () => sessionManager.getOperationRegistry()),
       })
     );

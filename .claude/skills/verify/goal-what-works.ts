@@ -50,15 +50,21 @@ try {
     let payload:string | undefined;
     for(let i=0;i<100&&!payload;i++) {
       payload=(db.prepare("SELECT payload FROM job_queue WHERE queue='mailbox' AND json_extract(payload,'$.messageUuid')=?").get(messageId) as {payload:string}|null)?.payload;
+      if(mode==='nudge' && (db.prepare('SELECT last_outcome FROM session_schedules WHERE id=?').get(schedule.id) as any)?.last_outcome==='skipped_unchanged') break;
       if(!payload) await Bun.sleep(200);
     }
     evidence.mode=mode; evidence.facts=facts; evidence.mailbox=payload?JSON.parse(payload):null;
     evidence.schedule=db.prepare('SELECT last_outcome,last_message_id FROM session_schedules WHERE id=?').get(schedule.id);
+    if(mode==='nudge') {
+      assert.equal(payload,undefined,'Unchanged facts forced a model turn');
+      assert.equal(evidence.schedule.last_outcome,'skipped_unchanged');
+      console.log('PASS: unchanged nudge creates no model-facing wake');
+    } else {
     assert(payload,'Scheduled wake was not delivered to the actual mailbox');
     assert(payload.includes('rewrite')&&payload.includes('worksNote'),'Model-facing wake omitted compaction instruction');
     assert.equal(evidence.schedule.last_outcome,'fired');
-    if(mode==='nudge') assert(payload.includes('Nothing moved'));
     console.log(`PASS: actual ${mode} schedule delivered a compaction request to Neo mailbox`);
+    }
   } else {
   new NeoAskTodoRepository(db).openAsk({ id: 'synthetic-confirmation', sessionId: ownerSessionId, projectId: null, originMessageId: null, title: 'Review mandate', request: 'Synthetic G8 verification', createdAt: Date.now() });
   assert((await rpc('neo.home.init')).ok);

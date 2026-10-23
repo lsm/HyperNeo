@@ -34,8 +34,6 @@ Observe `evidence/review-replay.json` and `evidence/requests.jsonl`:
 At failing reproduction commit `3facd727d1`, the identical helper's `before`
 mode observes historical delivery 1 and archived delivery 2, with four canonical
 events. Preserve that before artifact; `verify` must fail on that source.
-Focused card-event tests separately exercise rejection of a native worker that
-was archived, without deleting its session or subscription.
 
 The helper closes its WebSocket and daemon in finally. Keep the evidence outside
 the worktree. This proves daemon acquisition and mailbox routing with synthetic

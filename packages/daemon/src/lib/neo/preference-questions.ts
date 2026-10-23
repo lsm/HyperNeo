@@ -1,13 +1,13 @@
 import type { LanguageSetting } from '@hyperneo/shared/types/settings';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import type { Database } from '../../../storage/sqlite-compat.ts';
-import type { NeoAskTodoRepository } from '../../../storage/repositories/neo-ask-todo-repository.ts';
-import { applyPackPreferenceAnswer } from '../../../storage/repositories/pack-preference-answer.ts';
-import { defineOperation } from '../../operations/registry.ts';
+import type { Database } from '../../storage/sqlite-compat.ts';
+import type { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
+import { applyPackPreferenceAnswer } from '../../storage/repositories/pack-preference-answer.ts';
+import { defineOperation } from '../operations/registry.ts';
 import { PackPreferenceInput, validatePackPreference } from './preference-operations.ts';
 import { formatPreferenceProposal } from './preference-proposal.ts';
-import type { NeoPack } from '../pack-contract.ts';
+import type { NeoPack } from './pack-contract.ts';
 
 const Ask = z
   .object({

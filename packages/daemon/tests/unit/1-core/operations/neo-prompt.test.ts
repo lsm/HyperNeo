@@ -1,3 +1,4 @@
+import { neoSettingsPackBriefs } from '../../../../src/lib/neo/packs/index.ts';
 import { describe, expect, test } from 'bun:test';
 import {
   NEO_PACK_CODING_INSTRUCTIONS,
@@ -32,7 +33,7 @@ describe('root Neo system prompt', () => {
   });
 
   test('appends the pack briefing only when packs are enabled', () => {
-    const coding = neoPrompt();
+    const coding = neoPrompt(neoSettingsPackBriefs());
     expect(coding.startsWith(`${NEO_ROOT_PROMPT}\n\nDomain packs carry the field`)).toBe(true);
     expect(coding).toContain(NEO_PACK_CODING_INSTRUCTIONS);
     expect(coding.trim().split('\n').at(-1)).toBe(NEO_ROOT_TURN_END.trim());

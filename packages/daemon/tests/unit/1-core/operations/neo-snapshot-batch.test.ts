@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoSnapshot } from '@hyperneo/shared/types/neo-snapshot';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
 import {
   InternalEventBus,
@@ -21,7 +21,7 @@ import {
 } from '../../../helpers/neo-snapshot-fixture.ts';
 
 let db: Awaited<ReturnType<typeof createTestDb>>;
-let service: NeoService;
+let service: ReturnType<typeof createNeoService>;
 let registry: ReturnType<typeof createOperationRegistry>;
 let observer: ReturnType<typeof observeNeoSnapshotQueries>;
 const caller = { source: 'rpc' as const, principal: 'local' as const };
@@ -29,7 +29,7 @@ const caller = { source: 'rpc' as const, principal: 'local' as const };
 beforeEach(async () => {
   db = await createTestDb();
   seedNeoSnapshotFixture(db.getDatabase());
-  service = new NeoService(
+  service = createNeoService(
     db,
     { getOperationRegistry: () => registry } as unknown as SessionManager,
     { event: mock(() => {}) } as unknown as MessageHub,

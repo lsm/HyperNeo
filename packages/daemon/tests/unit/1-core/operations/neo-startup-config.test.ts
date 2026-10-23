@@ -6,7 +6,7 @@ import {
   type DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus.ts';
 import { neoPrompt } from '../../../../src/lib/neo/prompt.ts';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import type { CreateSessionParams } from '../../../../src/lib/session/session-lifecycle.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
@@ -16,7 +16,7 @@ const tools = ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Bash'];
 
 describe('Neo startup configuration', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
-  let service: NeoService;
+  let service: ReturnType<typeof createNeoService>;
   const updateSession = vi.fn();
 
   beforeEach(async () => {
@@ -25,7 +25,7 @@ describe('Neo startup configuration', () => {
     updateSession.mockImplementation(async (id: string, updates: Partial<Session>) => {
       db.updateSession(id, updates);
     });
-    service = new NeoService(
+    service = createNeoService(
       db,
       {
         updateSession,

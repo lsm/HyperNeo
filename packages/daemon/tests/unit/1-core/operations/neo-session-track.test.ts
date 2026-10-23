@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { z } from 'zod';
 import type { MessageHub } from '@hyperneo/shared';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import {
   findNeoSessionNotice,
   requireNeoTrackRoot,
@@ -84,7 +84,7 @@ describe('requireNeoTrackedAdoption', () => {
 describe('neo.session.track', () => {
   const RUN_MS = 3 * 60_000;
   let db: Awaited<ReturnType<typeof createTestDb>>;
-  let service: NeoService;
+  let service: ReturnType<typeof createNeoService>;
   let listed: PlaceGroup['work'];
   let status: { status: WorkStatus; lastActivityAt: number };
   const sent = mock(() => ({ ok: true, value: { delivered: true } }));
@@ -134,7 +134,7 @@ describe('neo.session.track', () => {
       operation('work.send', sent),
       operation('work.stop', stopped),
     ]);
-    service = new NeoService(
+    service = createNeoService(
       db,
       { getOperationRegistry: () => registry } as unknown as SessionManager,
       { event: mock(() => {}) } as unknown as MessageHub,

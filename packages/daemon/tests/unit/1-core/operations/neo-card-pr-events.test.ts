@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { z } from 'zod';
 import type { MessageHub } from '@hyperneo/shared';
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
@@ -13,10 +13,8 @@ import {
   InternalEventBus,
   type DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus.ts';
-import { neoCardWorkerSession, planNeoCardSend } from '../../../../src/lib/neo/card-events.ts';
 import { isSessionTopicCovered } from '../../../../src/lib/external-events/topic-trie.ts';
-import { isNeoCardPrActionable } from '../../../../src/lib/neo/packs/coding/card-pr-events.ts';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import {
   createOperationRegistry,
   defineOperation,
@@ -34,53 +32,6 @@ const open = {
   review: 'none' as const,
 };
 
-describe('isNeoCardPrActionable', () => {
-  test.each([
-    ['review_submitted', true],
-    ['review_comment_created', true],
-    ['comment_polled', true],
-    ['reaction_added', true],
-    ['check_failed', true],
-    ['suite_failed', true],
-    ['status_failure', true],
-    ['merge_conflict', true],
-    ['polled', false],
-    ['check_skipped', false],
-    ['check_cancelled', false],
-    ['status_pending', false],
-    ['status_success', false],
-    ['merge_conflict_resolved', false],
-    ['synchronize', false],
-  ])('%s forwards: %s', (action, forwards) => {
-    expect(isNeoCardPrActionable(action)).toBe(forwards);
-  });
-});
-
-describe('planNeoCardSend', () => {
-  const work = { id: 'w', status: 'queued' as const, report: null, sessionId: 'native' };
-  test('sends through the driver when the card runs in another tool, else to its session', () => {
-    expect(planNeoCardSend({ work, ref })).toEqual({ via: 'driver', ref });
-    expect(planNeoCardSend({ work, ref: null })).toEqual({ via: 'session', sessionId: 'native' });
-    expect(planNeoCardSend({ work: { ...work, status: 'cancelled' }, ref })).toEqual({
-      via: 'none',
-    });
-  });
-});
-
-describe('neoCardWorkerSession', () => {
-  test('names a local HyperNeo worker or the target session, never another tool', () => {
-    expect(neoCardWorkerSession({ via: 'driver', ref: { adapter: 'hyperneo', id: 's9' } })).toBe(
-      's9'
-    );
-    expect(
-      neoCardWorkerSession({ via: 'driver', ref: { adapter: 'hyperneo', daemon: 'tts', id: 's9' } })
-    ).toBeNull();
-    expect(neoCardWorkerSession({ via: 'driver', ref })).toBeNull();
-    expect(neoCardWorkerSession({ via: 'session', sessionId: 'native' })).toBe('native');
-    expect(neoCardWorkerSession({ via: 'none' })).toBeNull();
-  });
-});
-
 describe('isSessionTopicCovered', () => {
   const followed = [{ session: 's9', topic: 'github/lsm/HyperNeo/pull_request/7.*' }];
   test.each([
@@ -97,10 +48,9 @@ describe('isSessionTopicCovered', () => {
 
 describe('Neo todo pull request events', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
-  let service: NeoService;
+  let service: ReturnType<typeof createNeoService>;
   let publisher: ExternalEventService;
   let sent: { ref: unknown; message: string }[];
-  let watched: string[];
   let prs: NeoWorkPr[];
   let sendFails: boolean;
 
@@ -108,7 +58,6 @@ describe('Neo todo pull request events', () => {
     db = await createTestDb();
     db.createSession(createTestSession('root'));
     sent = [];
-    watched = [];
     prs = [open];
     sendFails = false;
     const registry = createOperationRegistry([
@@ -127,16 +76,13 @@ describe('Neo todo pull request events', () => {
       }),
     ]);
     const bus = new InternalEventBus<DaemonInternalEventMap>();
-    service = new NeoService(
+    service = createNeoService(
       db,
       { getOperationRegistry: () => registry } as unknown as SessionManager,
       { event: mock(() => {}) } as unknown as MessageHub,
       bus
     );
     service.readPrs = async () => prs;
-    service.watchExternalTopic = async (topic) => {
-      watched.push(topic);
-    };
     service.repo.reserveBinding({ sessionId: 'root', kind: 'neo', projectId: null });
     publisher = new ExternalEventService(new SessionExternalEventStore(db.getDatabase()), bus);
     service.todos.openAsk({
@@ -172,7 +118,6 @@ describe('Neo todo pull request events', () => {
     const doing = service.todos.updateTodo(row, { state: 'doing', report: `Opened ${PR}` }, 2);
     service.todoPrs.claim(row.id, [{ url: PR, claim: 'named' }], 1);
     service.todoPrs.record(row.id, prs, 2);
-    service.followCardTopics(row.id);
     return doing;
   }
   const jobs = () =>
@@ -217,15 +162,6 @@ describe('Neo todo pull request events', () => {
     expect(subscriptions.listBySession('archived-worker')).toHaveLength(1);
   });
 
-  test('a raw CI failure keeps subscriptions without delivering outside the ledger', async () => {
-    todo();
-    await event('check_failed', { checkName: 'Web Tests', conclusion: 'failure' });
-    expect(sent).toEqual([]);
-    expect(service.followedTopics()).toEqual([
-      { topic: 'github/lsm/hyperneo/pull_request/7.*', session: null },
-    ]);
-    expect(watched).toEqual(['github/lsm/hyperneo/pull_request/7.*']);
-  });
   test.each(['review_submitted', 'review_comment_created', 'comment_created', 'comment_polled'])(
     'raw %s leaves worker messaging to the ledger',
     async (action) => {
@@ -261,65 +197,6 @@ describe('Neo todo pull request events', () => {
     }
   );
 
-  test('a raw merge refreshes evidence and wakes Neo without a duplicate worker delivery', async () => {
-    const row = todo();
-    prs = [{ ...open, state: 'MERGED' }];
-    await event('closed', { state: 'closed', merged: true });
-    expect(sent).toEqual([]);
-    expect(service.todos.getTodo(row.id)).toMatchObject({
-      state: 'done',
-      evidence: expect.stringContaining('merged'),
-    });
-    expect(jobs()).toHaveLength(1);
-    expect(JSON.stringify(jobs()[0].payload)).toContain('is done');
-    expect(service.cardEvents.listActive()).toEqual([]);
-    await event('comment_created', { body: 'Late comment' });
-    await service.todoRunner.refresh(() => {});
-    expect(sent).toEqual([]);
-    expect(jobs()).toHaveLength(1);
-  });
-  test('a just-closed unmerged PR ends its subscription and leaves the todo in its replacement grace', async () => {
-    const row = todo();
-    prs = [{ ...open, state: 'CLOSED', closedAt: Date.now() }];
-    await event('closed', { state: 'closed', merged: false });
-    expect(service.todos.getTodo(row.id)?.state).toBe('doing');
-    expect(service.cardEvents.listActive()).toEqual([]);
-  });
-
-  test('a raw merge retires subscriptions after polling already completed the todo', async () => {
-    const row = todo();
-    prs = [{ ...open, state: 'MERGED' }];
-    await service.todoRunner.refresh(() => {});
-    expect(service.todos.getTodo(row.id)?.state).toBe('done');
-    service.todos.settleAsk(service.todos.getAsk('ask')!, 'done', 'Merged', Date.now());
-    expect(service.endUnfollowedCardTopics(Date.now())).toEqual([]);
-    await event('closed', { state: 'closed', merged: true });
-    expect(sent).toEqual([]);
-    expect(service.cardEvents.listActive()).toEqual([]);
-  });
-  test('removed todos and disabled packs retire subscriptions without falling back to old work', () => {
-    const row = todo();
-    service.todos.updateTodo(row, { state: 'removed' }, 3);
-    expect(service.endUnfollowedCardTopics(Date.now())).toHaveLength(1);
-    expect(service.followedTopics()).toEqual([]);
-    expect(service.todos.updateTodo(row, { state: 'doing' }, 4).state).toBe('removed');
-    const live = todo(ref, 'disabled-pack-todo');
-    service.followCardTopics(live.id);
-    db.updateGlobalSettings({ neo: { packs: ['life-admin'] } });
-    expect(service.endUnfollowedCardTopics(Date.now())).toHaveLength(1);
-  });
-  test('a local HyperNeo todo target covers subscriptions without raw PR delivery', async () => {
-    todo({ adapter: 'hyperneo', id: 'native' });
-    expect(
-      isSessionTopicCovered(
-        service.followedTopics(),
-        'native',
-        'github/lsm/hyperneo/pull_request/7.*'
-      )
-    ).toBe(true);
-    await event('review_submitted', { state: 'approved' });
-    expect(sent).toEqual([]);
-  });
   test('a raw event does not duplicate ledger delivery across subscribed todos', async () => {
     todo();
     todo(ref, 'todo-2');
@@ -350,17 +227,7 @@ describe('Neo todo pull request events', () => {
     expect(service.todos.getTodo(row.id)?.state).toBe('removed');
     expect(jobs()).toEqual([]);
   });
-  test('a PR merged without its closing event stays quiet after the next read', async () => {
-    const row = todo();
-    prs = [{ ...open, state: 'MERGED' }];
-    service.todoPrs.record(row.id, prs, 3);
-    service.cardEvents.end(row.id, 'github/lsm/hyperneo/pull_request/7.*', 3);
-    service.followCardTopics(row.id);
-    expect(service.cardEvents.listActive()).toEqual([]);
-    service.cardEvents.subscribe(row.id, 'github/lsm/hyperneo/pull_request/7.*', 4);
-    await event('comment_created', { body: 'Late comment' });
-    expect(sent).toEqual([]);
-  });
+
   test('raw feedback on old and new heads stays off the worker delivery path', async () => {
     prs = [{ ...open, head: 'old' }];
     todo();
@@ -373,23 +240,7 @@ describe('Neo todo pull request events', () => {
     await event('comment_created', { body: 'No commit on this one' });
     expect(sent).toEqual([]);
   });
-  test('head-specific feedback newer than the cached read refreshes before routing', async () => {
-    prs = [{ ...open, head: 'old' }];
-    todo();
-    await service.todoRunner.refresh(() => {});
-    prs = [{ ...open, head: 'new' }];
-    const reads = mock(async () => prs);
-    service.readPrs = reads;
-    const now = Date.now() + 1_000;
-    const clock = spyOn(Date, 'now').mockReturnValue(now);
-    try {
-      await event('check_failed', { checkName: 'Lint', headSha: 'old' }, now - 1);
-    } finally {
-      clock.mockRestore();
-    }
-    expect(reads).toHaveBeenCalledTimes(1);
-    expect(sent).toEqual([]);
-  });
+
   test('historical head-specific feedback reuses a newer read without raw delivery', async () => {
     prs = [{ ...open, head: 'new' }];
     todo();
@@ -407,6 +258,5 @@ describe('Neo todo pull request events', () => {
     await event('check_skipped');
     await event('status_pending');
     expect(sent).toEqual([]);
-    expect(service.cardEvents.listActive()).toHaveLength(1);
   });
 });

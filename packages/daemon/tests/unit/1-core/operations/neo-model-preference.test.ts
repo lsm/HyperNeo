@@ -8,7 +8,7 @@ import {
   requireNeoPreferenceModel,
 } from '../../../../src/lib/neo/model-preference.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
@@ -157,7 +157,7 @@ describe('planNeoAlignment', () => {
 
 describe('neo.preferences.set', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
-  let service: NeoService;
+  let service: ReturnType<typeof createNeoService>;
   let switched: unknown[];
   let updated: unknown[];
   let restarted: unknown[];
@@ -223,7 +223,7 @@ describe('neo.preferences.set', () => {
       },
     };
     events = new InternalEventBus<DaemonInternalEventMap>();
-    service = new NeoService(
+    service = createNeoService(
       db,
       sessions as unknown as SessionManager,
       { event: mock(() => {}) } as unknown as MessageHub,

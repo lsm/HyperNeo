@@ -1,7 +1,7 @@
 import type { LanguageSetting } from '@hyperneo/shared/types/settings';
 import type { z } from 'zod';
 import type { PackPreferenceInput } from './preference-operations.ts';
-import type { NeoPack } from '../pack-contract.ts';
+import type { NeoPack } from './pack-contract.ts';
 
 type Input = z.infer<typeof PackPreferenceInput>;
 

@@ -3,7 +3,6 @@ import {
   SESSION_EVENT_SCOPE,
   SessionExternalEventStore,
 } from '../../../packages/daemon/src/lib/external-events/session-external-event-store.ts';
-import { NeoCardEventSubscriptionRepository } from '../../../packages/daemon/src/storage/repositories/neo-card-event-subscription-repository.ts';
 import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -53,6 +52,7 @@ writeFileSync(
 const fs=require('node:fs'),root=${JSON.stringify(run)},args=process.argv.slice(2);
 fs.appendFileSync(root+'/evidence/gh.log',JSON.stringify(args)+String.fromCharCode(10));
 if(args[0]!=='api'||args[1]!=='graphql')process.exit(2);
+if(args.includes('n=plan')&&!args.some(s=>s.startsWith('p='))){process.stdout.write(fs.readFileSync(root+'/ledger.json','utf8'));process.exit(0);}
 const n=Number(args.find(s=>s.startsWith('p='))?.slice(2));
 if(n===4)process.exit(2);
 const issue=JSON.parse(fs.readFileSync(root+'/issues.json','utf8'))[n];
@@ -166,9 +166,9 @@ const rpc = (name: string, input: unknown) =>
       })
     );
   });
-const refresh = async () => {
+const refresh = async (queue = 'neo.work.driver.refresh') => {
   const job = app!.jobQueue.enqueue({
-      queue: 'neo.work.driver.refresh',
+      queue,
       payload: { scope: 'neo' },
       runAt: realNow(),
     }),
@@ -350,7 +350,7 @@ try {
       [{ url: legacyUrl, state: 'OPEN', checks: 'failing', review: 'none' }],
       clock
     );
-    new NeoCardEventSubscriptionRepository(app!.db.getDatabase()).subscribe(
+    app!.db.getDatabase().prepare('INSERT INTO neo_card_event_subscriptions(work_id,topic,created_at) VALUES (?,?,?)').run(
       legacy.id,
       'github/synthetic/plan/pull_request/9.*',
       clock
@@ -377,6 +377,33 @@ try {
     });
     evidence.rawPrEvent = { beforeFrames, afterFrames: starts() };
     assert.equal(starts(), beforeFrames, 'raw PR events must not duplicate ledger worker messages');
+    const db = app!.db.getDatabase();
+    db.prepare("INSERT INTO neo_concerns(id,title,summary,context,revision,created_at,updated_at) VALUES ('ledger-proof','Synthetic','','',1,?,?)").run(clock, clock);
+    db.prepare("INSERT INTO neo_project_workspaces(alias,project_id) VALUES ('repo:synthetic/plan','ledger-proof')").run();
+    const ledger = (ci: string) => ({ data: {
+      rateLimit: { remaining: 4000 },
+      repository: { nameWithOwner: 'synthetic/plan',
+        open: { pageInfo: { hasNextPage: false }, nodes: [{ number: 9,
+          title: 'Synthetic claimed PR', headRefName: 'synthetic', headRefOid: 'a'.repeat(40),
+          state: 'OPEN', isDraft: false, mergeable: 'MERGEABLE', reviewDecision: null,
+          reviews: { nodes: [] }, closedAt: null,
+          commits: { nodes: [{ commit: { statusCheckRollup: { state: ci } } }] },
+        }] }, done: { nodes: [] },
+      },
+    } });
+    const beforeLedger = starts();
+    writeFileSync(join(run, 'ledger.json'), JSON.stringify(ledger('SUCCESS')));
+    await refresh('neo.pack.sweep');
+    assert.equal(starts(), beforeLedger);
+    writeFileSync(join(run, 'ledger.json'), JSON.stringify(ledger('FAILURE')));
+    await refresh('neo.pack.sweep');
+    assert.equal(starts(), beforeLedger + 1, 'claimed PR must receive its ledger CI event');
+    await refresh('neo.pack.sweep');
+    assert.equal(starts(), beforeLedger + 1, 'unchanged ledger facts must not resend');
+    const delivered = calls.filter((call: any) => call.method === 'turn/start').slice(beforeLedger);
+    assert.match(JSON.stringify(delivered), /synthetic\/plan#9.*has failing CI/);
+    assert.equal(db.prepare("SELECT count(*) AS n FROM pack_coding_pr_claims WHERE todo_id='legacy'").get().n, 1);
+    evidence.ledgerClaimDelivery = { beforeFrames: beforeLedger, afterFrames: starts(), delivered };
     evidence.verified = true;
     console.log(
       'VERIFIED: issue completion advances once; NOT_PLANNED fails; open/unreadable wait; 20/40/60 nudges persist without blocking.'
