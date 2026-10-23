@@ -72,6 +72,63 @@ describe('connectCodexAppServer', () => {
     }
   });
 
+  test.each([false, true])(
+    'unsubscribes only its own turn at completion, including early notification: %s',
+    async (early) => {
+      const { path, seen } = await listen();
+      let complete = () => {};
+      sockets.removeAllListeners('connection');
+      sockets.on('connection', (socket) => {
+        complete = () =>
+          socket.send(
+            JSON.stringify({
+              method: 'turn/completed',
+              params: { threadId: 'owned-thread', turn: { id: 'owned-turn', status: 'completed' } },
+            })
+          );
+        socket.on('message', (data) => {
+          const message = JSON.parse(String(data));
+          seen.push({ method: message.method, params: message.params });
+          if (message.id === undefined) return;
+          if (message.method === 'turn/start' && early) complete();
+          socket.send(
+            JSON.stringify({
+              id: message.id,
+              result: message.method === 'turn/start' ? { turn: { id: 'owned-turn' } } : {},
+            })
+          );
+        });
+      });
+      const client = await connectCodexAppServer(path);
+      try {
+        await client.call('turn/start', { threadId: 'owned-thread', input: [] });
+        if (!early) {
+          await client.close();
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          expect(seen.some((m) => m.method === 'thread/unsubscribe')).toBe(false);
+          for (const peer of sockets.clients)
+            peer.send(
+              JSON.stringify({
+                method: 'turn/completed',
+                params: { threadId: 'other-thread', turn: { id: 'owned-turn' } },
+              })
+            );
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          expect(seen.some((m) => m.method === 'thread/unsubscribe')).toBe(false);
+          complete();
+        }
+        const deadline = Date.now() + 1000;
+        while (!seen.some((m) => m.method === 'thread/unsubscribe') && Date.now() < deadline)
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(seen.filter((m) => m.method === 'thread/unsubscribe')).toEqual([
+          { method: 'thread/unsubscribe', params: { threadId: 'owned-thread' } },
+        ]);
+      } finally {
+        await client.close();
+      }
+    }
+  );
+
   test('fails to connect when nothing listens on the socket', async () => {
     dir = mkdtempSync(join(tmpdir(), 'codex-app-server-'));
     server = createServer();

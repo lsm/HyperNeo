@@ -79,6 +79,68 @@ describe('withCodexDesktopIpc', () => {
     return { path, seen, closed };
   }
 
+  describe('steerCodexDesktopTurn Desktop admission', () => {
+    test('opens an unloaded thread and waits for its Desktop owner before delivering', async () => {
+      let opened = false;
+      const f = await fixture((message, _socket, send) =>
+        send({
+          type: 'response',
+          requestId: message.requestId,
+          ...(message.method === 'thread-owner-discovery'
+            ? opened
+              ? { resultType: 'success', handledByClientId: 'desktop-owner' }
+              : { resultType: 'error', error: 'no-client-found' }
+            : { resultType: 'success', result: { result: { turnId: 'desktop-turn' } } }),
+        })
+      );
+      const launched: string[][] = [];
+      const result = await steerCodexDesktopTurn(
+        f.path,
+        (args) => {
+          launched.push(args);
+          return {
+            stdout: null,
+            stderr: null,
+            exitCode: null,
+            exited: new Promise<number>((resolve) =>
+              setTimeout(() => {
+                opened = true;
+                resolve(0);
+              }, 20)
+            ),
+            kill: () => {},
+          };
+        },
+        'thread-1',
+        'ownership marker',
+        'input-1'
+      );
+      expect(result).toEqual({
+        reason: { ok: true, value: { delivered: true, steeredIntoTurnId: 'desktop-turn' } },
+      });
+      expect(launched).toEqual([['open', '-g', 'codex://threads/thread-1']]);
+      expect(f.seen.at(-1)).toMatchObject({
+        method: 'thread-follower-steer-turn',
+        targetClientId: 'desktop-owner',
+      });
+    });
+
+    test('refuses instead of creating a background writer if running Desktop cannot be reached', async () => {
+      directory = mkdtempSync(join(tmpdir(), 'codex-running-no-ipc-'));
+      expect(
+        await steerCodexDesktopTurn(
+          join(directory, 'missing.sock'),
+          noDesktopOpen,
+          'thread-1',
+          'ownership marker',
+          'input-1',
+          'auto',
+          async () => true
+        )
+      ).toMatchObject({ reason: { ok: false, reason: 'not_delivered' } });
+    });
+  });
+
   describe('steerCodexDesktopTurn discovery fallback', () => {
     test('tries app-server when Desktop discovery refuses before dispatch', async () => {
       const f = await fixture((message, _socket, send) =>
