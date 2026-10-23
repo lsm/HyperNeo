@@ -122,6 +122,7 @@ describe('withCodexDesktopIpc', () => {
       ).run(rollout);
       db.close();
       const calls: string[] = [];
+      const launches: string[][] = [];
       let releaseOpen!: (code: number) => void;
       const openExit = new Promise<number>((resolve) => {
         releaseOpen = resolve;
@@ -132,7 +133,8 @@ describe('withCodexDesktopIpc', () => {
         worktreesDir: directory,
         machine: 'test',
         now: Date.now,
-        spawn: () => {
+        spawn: (args) => {
+          launches.push(args);
           if (launcher === 'refused') throw new Error('Synthetic Desktop open refused');
           return {
             stdout: null,
@@ -238,6 +240,7 @@ describe('withCodexDesktopIpc', () => {
           route === 'steer' ? 'turn/steer' : route === 'resume' ? 'turn/start' : 'thread/queue/add'
         );
         if (route !== 'resume') expect(calls).not.toContain('turn/start');
+        expect(launches).toEqual([['open', '-g', 'codex://threads/thread-1']]);
       } finally {
         clearTimeout(timer);
         releaseOpen(1);

@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { mkdirSync, existsSync, writeFileSync, appendFileSync } from 'node:fs';
+import { mkdirSync, existsSync, writeFileSync, appendFileSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { createServer as createHttpServer } from 'node:http';
 import { join, resolve } from 'node:path';
@@ -18,6 +18,11 @@ assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data'));
 assert(!existsSync(join(run, 'data/daemon.db')));
+const bin = join(run, 'bin');
+mkdirSync(bin, { recursive: true });
+const openLog = join(run, 'evidence/desktop-open.jsonl');
+writeFileSync(join(bin, 'open'), `#!/usr/bin/env bun\nimport { appendFileSync } from 'node:fs';\nappendFileSync(${JSON.stringify(openLog)}, JSON.stringify({ args: process.argv.slice(2), pid: process.pid })+String.fromCharCode(10));\nprocess.exit(1);\n`, { mode: 0o700 });
+process.env.PATH = `${bin}:${process.env.PATH}`;
 const home = join(run, 'home/.codex');
 mkdirSync(join(home, 'ipc'), { recursive: true });
 mkdirSync(join(home, 'app-server-control'), { recursive: true });
@@ -43,6 +48,7 @@ let serverStartError = false;
 const calls: unknown[] = [];
 const logs: unknown[] = [];
 const replies: unknown[] = [];
+const timings: unknown[] = [];
 const unsubscribe = subscribeToStructuredLogs((event) => { if (event.module?.includes('codex-send')) logs.push(event); });
 const desktop = createServer((socket) => {
   let buffer = Buffer.alloc(0);
@@ -144,7 +150,11 @@ try {
     assert(!calls.slice(resumeBefore).some((call) => ['turn/start', 'thread/queue/add'].includes((call as { server: string }).server)));
     resumeError = 'thread synthetic already has an active writer'; owner = 'missing'; consumeQueue = true;
     const writerBefore = calls.length;
+    const writerBegan = performance.now();
     const writerDelivered = await send();
+    const writerElapsedMs = performance.now() - writerBegan;
+    timings.push({ existingOwnerlessDeliveryMs: writerElapsedMs });
+    assert(writerElapsedMs < 2000, `Existing delivery waited for ownership: ${writerElapsedMs}ms`);
     assert.equal(writerDelivered.ok, true, JSON.stringify(writerDelivered));
     assert(description.description.includes('already has an active writer'));
     assert.equal(writerDelivered.value.delivered, true);
@@ -187,11 +197,16 @@ try {
     assert.equal(impossible.reason, 'not_delivered');
     assert.match(impossible.detail, /start unavailable/);
     assert(!calls.slice(ownedBefore).some((call) => (call as { server?: string }).server === 'thread/queue/add'));
+    for (let n = 0; n < 50 && !existsSync(openLog); n++) await new Promise(resolve => setTimeout(resolve, 20));
+    assert(existsSync(openLog), 'Ownerless existing delivery must request a best-effort Desktop open');
+    const opens = readFileSync(openLog, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    assert(opens.every(open => JSON.stringify(open.args) === JSON.stringify(['-g', 'codex://threads/synthetic'])));
+    timings.push({ bestEffortDesktopOpen: opens, nativeOwnerRemainedAbsent: true, launcherExit: 1 });
     assert(logs.length > 0, 'retained routing diagnostics required');
   }
   console.log(`${action} PASS: ${run}/evidence/observed.json`);
 } finally {
-  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ action, replies, calls, logs }, null, 2));
+  writeFileSync(join(run, 'evidence/observed.json'), JSON.stringify({ action, replies, calls, logs, timings }, null, 2));
   ws?.close(); await app.cleanup(); unsubscribe();
   for (const socket of server.clients) socket.terminate();
   await new Promise<void>((done) => server.close(() => done()));
