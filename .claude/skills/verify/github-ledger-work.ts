@@ -45,6 +45,8 @@ try{
   for(const result of evidence.fanout)assert.deepEqual(result,{ok:true,kind:'pr',url,state:'OPEN',checks:'passing',review:'approved',blockers:['1 unresolved review thread'],title:'Synthetic shared fact'});
   evidence.initialRequests=requests();evidence.workLookups=evidence.initialRequests.filter((r:any)=>r.family==='work-detail').length;
   assert.equal(evidence.workLookups,1,'Concurrent public reads must share one ledger acquisition');
+  evidence.referenceLookups=evidence.initialRequests.filter((r:any)=>r.family==='ask-reference').length;
+  assert.equal(evidence.referenceLookups,0,'PR URLs must not acquire a separate reference view');
   evidence.firstStored=stored();
   control('changed');evidence.changed=await read();assert.equal(evidence.changed.review,'none');assert.deepEqual(evidence.changed.blockers,['1 unresolved review thread']);
   evidence.changedStored=stored();
