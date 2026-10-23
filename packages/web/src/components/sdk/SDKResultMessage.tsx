@@ -33,7 +33,7 @@ export function SDKResultMessage({ message }: Props) {
     >
       <button
         onClick={() => setShowDetails(!showDetails)}
-        class="w-full px-3 py-2 flex items-center justify-between hover:bg-green-100 dark:hover:bg-green-900/20 transition-colors"
+        class="w-full px-3 py-2 flex items-center justify-between hover:bg-success/20 transition-colors"
       >
         <div class="flex items-center gap-2 text-xs">
           {isSuccess ? (
