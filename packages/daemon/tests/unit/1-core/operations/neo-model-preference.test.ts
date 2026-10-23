@@ -485,4 +485,26 @@ describe('neo.preferences.set', () => {
     await invoke('neo.preferences.set', preference);
     expect(switched).toEqual([['neo:root', 'deepseek-v4-flash', 'deepseek']]);
   });
+
+  test('saves a fallback again unchanged after a forced refresh lists it under its remote id', async () => {
+    const glm = { provider: 'glm', alias: 'glm-5.3', thinkingModes: 'on', available: true };
+    setModelsCache(
+      new Map([['global', [flash, opus, { ...glm, id: 'glm-5.3[1m]' } as ModelInfo]]])
+    );
+    const preference = {
+      model: 'claude-opus',
+      provider: 'anthropic',
+      thinkingLevel: 'off',
+      fallbacks: [{ model: 'glm-5.3[1m]', provider: 'glm', thinkingLevel: 'off' }],
+    };
+    expect(await invoke('neo.preferences.set', preference)).toMatchObject({
+      value: { ok: true },
+    });
+    setModelsCache(new Map([['global', [flash, opus, { ...glm, id: 'glm-5.3' } as ModelInfo]]]));
+    const saved = db.getGlobalSettings().neo?.preferences;
+    expect(
+      await invoke('neo.preferences.set', { ...saved, thinkingLevel: 'think8k' })
+    ).toMatchObject({ value: { ok: true } });
+    expect(db.getGlobalSettings().neo?.preferences?.fallbacks).toEqual(preference.fallbacks);
+  });
 });
