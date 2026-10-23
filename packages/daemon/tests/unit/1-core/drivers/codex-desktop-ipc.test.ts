@@ -77,7 +77,7 @@ describe('withCodexDesktopIpc', () => {
   }
 
   describe('steerCodexDesktopTurn discovery fallback', () => {
-    test('tries app-server when Desktop discovery refuses before dispatch', async () => {
+    test('refuses input when reachable Desktop cannot confirm ownership', async () => {
       const f = await fixture((message, _socket, send) =>
         send({
           type: 'response',
@@ -86,8 +86,12 @@ describe('withCodexDesktopIpc', () => {
           error: 'request-version-mismatch',
         })
       );
-      expect(await steerCodexDesktopTurn(f.path, 'thread-1', 'now', 'input-1')).toEqual({
-        value: 'app-server',
+      expect(await steerCodexDesktopTurn(f.path, 'thread-1', 'now', 'input-1')).toMatchObject({
+        reason: {
+          ok: false,
+          reason: 'not_delivered',
+          detail: expect.stringContaining('request-version-mismatch'),
+        },
       });
       expect(f.seen.some((message) => message.method === 'thread-follower-steer-turn')).toBe(false);
     });
@@ -354,7 +358,7 @@ describe('withCodexDesktopIpc', () => {
       }
     );
 
-    test('uses app-server only when Desktop has no owner', async () => {
+    test('does not start a second writer when Desktop has no owner', async () => {
       const f = await fixture((message, _socket, send) =>
         send({
           type: 'response',
@@ -363,8 +367,12 @@ describe('withCodexDesktopIpc', () => {
           error: 'no-client-found',
         })
       );
-      expect(await steerCodexDesktopTurn(f.path, 'thread-1', 'hi', 'input-1')).toEqual({
-        value: 'app-server',
+      expect(await steerCodexDesktopTurn(f.path, 'thread-1', 'hi', 'input-1')).toMatchObject({
+        reason: {
+          ok: false,
+          reason: 'not_delivered',
+          detail: expect.stringContaining('no-client-found'),
+        },
       });
       expect(f.seen.map((message) => message.method)).toEqual([
         'initialize',

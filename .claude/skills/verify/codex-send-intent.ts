@@ -12,7 +12,7 @@ import { subscribeToStructuredLogs } from '../../../packages/daemon/src/lib/logg
 const [action, portText, runText] = process.argv.slice(2);
 const port = Number(portText);
 const run = resolve(runText);
-assert(['verify', 'reproduce'].includes(action));
+assert(['verify', 'reproduce', 'ownership'].includes(action));
 assert(port > 0 && port !== 8399);
 assert.equal(process.env.NODE_ENV, 'test');
 assert.equal(process.env.HOME, join(run, 'home'));
@@ -31,7 +31,7 @@ CREATE TABLE project_roots (project_id TEXT, path TEXT);
 INSERT INTO threads VALUES ('synthetic', 'Synthetic', '', '', '/tmp/synthetic', 'desktop', 0, 1, '/missing-synthetic.jsonl');`);
 db.prepare('UPDATE threads SET rollout_path = ?').run(rollout);
 db.close();
-let owner = 'refused';
+let owner = action === 'ownership' ? 'missing' : 'offline';
 let active = true;
 let loaded = true;
 let resumeError = '';
@@ -53,6 +53,7 @@ const desktop = createServer((socket) => {
       const request = JSON.parse(buffer.subarray(4, size + 4).toString());
       buffer = buffer.subarray(size + 4);
       calls.push({ desktop: request.method, version: request.version, params: request.params });
+      if (owner === 'offline' && request.method === 'initialize') { socket.destroy(); continue; }
       const response = request.method === 'initialize' ? { resultType: 'success', result: { clientId: 'synthetic-client' } }
         : request.method === 'thread-owner-discovery' ? owner === 'owned' ? { resultType: 'success', handledByClientId: 'fixture-owner' } : { resultType: 'error', error: owner === 'missing' ? 'no-client-found' : 'request-version-mismatch' }
         : request.method === 'thread-follower-start-turn' ? startError ? { resultType: 'error', error: 'start unavailable' } : { resultType: 'success', result: { result: { turn: { id: 'desktop-started' } } } }
@@ -104,7 +105,21 @@ try {
     ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method: 'operation.invoke', data: receipt ? { name: 'work.status', input: { ref: { adapter: 'codex-desktop', id: 'synthetic' }, receipt } } : adapters ? { name: 'work.adapters', input: {} } : describe ? { name: 'operations.describe', input: { name: 'work.send' } } : { name: 'work.send', input: { ref: { adapter: 'codex-desktop', id: 'synthetic' }, message: 'synthetic marker', ...(mode ? { mode } : {}) } }, timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
   const first = await send();
-  if (action === 'reproduce') {
+  if (action === 'ownership') {
+    assert.equal(first.ok, false, 'reachable Desktop with no owner must not deliver through a second writer');
+    assert.equal(first.reason, 'not_delivered');
+    assert.match(first.detail, /no-client-found/);
+    assert(!calls.some((call) => (call as { server?: string }).server), 'Desktop ownership failure must not touch the shared app-server');
+    owner = 'owned';
+    assert.equal((await send()).value.steeredIntoTurnId, 'desktop-active');
+    refuse = true;
+    assert.equal((await send()).value.startedTurnId, 'desktop-started');
+    owner = 'refused';
+    const refused = await send();
+    assert.equal(refused.reason, 'not_delivered');
+    assert.match(refused.detail, /request-version-mismatch/);
+    assert(!calls.some((call) => (call as { server?: string }).server), 'Desktop owner must remain the sole writer');
+  } else if (action === 'reproduce') {
     assert.equal(first.value.queuedSubmissionId, 'synthetic-queue');
     assert(!calls.some((call) => (call as { server?: string }).server === 'turn/steer'));
   } else {
@@ -142,7 +157,7 @@ try {
     assert.equal(resumeFailed.reason, 'not_delivered');
     assert.match(resumeFailed.detail, /rollout unavailable/);
     assert(!calls.slice(resumeBefore).some((call) => ['turn/start', 'thread/queue/add'].includes((call as { server: string }).server)));
-    resumeError = 'thread synthetic already has an active writer'; owner = 'missing'; consumeQueue = true;
+    resumeError = 'thread synthetic already has an active writer'; owner = 'offline'; consumeQueue = true;
     const writerBefore = calls.length;
     const writerDelivered = await send();
     assert.equal(writerDelivered.ok, true, JSON.stringify(writerDelivered));
@@ -160,7 +175,7 @@ try {
     assert.equal(writerPending.value.delivered, false);
     assert.equal(writerPending.value.receipt, undefined);
     assert.equal(writerPending.value.queuedSubmissionId, 'synthetic-queue');
-    resumeError = ''; owner = 'refused';
+    resumeError = ''; owner = 'offline';
     serverStartError = true;
     const serverRefused = await send();
     assert.equal(serverRefused.reason, 'not_delivered');
