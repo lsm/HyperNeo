@@ -7,7 +7,7 @@ import {
 import { spawnProcess, type SpawnFn } from '../runtime-spawn/index.ts';
 import { collectWithMaxBuffer, MAX_BUFFER_BYTES } from '../utils/script-utils.ts';
 
-const GITHUB_RESPONSE_MAX_BYTES = 16 * 1_048_576;
+export const GITHUB_RESPONSE_MAX_BYTES = 16 * 1_048_576;
 
 export async function fetchGitHubViaCli(
   input: string | URL | Request,
