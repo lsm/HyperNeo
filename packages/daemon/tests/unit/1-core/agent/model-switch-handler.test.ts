@@ -1068,14 +1068,26 @@ describe('model switch timing', () => {
     expect(modelSwitchTiming('idle')).toBe('now');
   });
 
+  const side = (provider: string, contextWindow = 200_000, effortLevels = ['low', 'high']) => ({
+    provider,
+    contextWindow,
+    effortLevels,
+  });
+
   it('allows a live switch only within the native anthropic provider', () => {
-    expect(canSwitchModelLive('anthropic', 'anthropic', 200_000, 200_000)).toBe(true);
-    expect(canSwitchModelLive('anthropic', 'glm', 200_000, 200_000)).toBe(false);
-    expect(canSwitchModelLive('glm', 'glm', 200_000, 200_000)).toBe(false);
-    expect(canSwitchModelLive('acp', 'acp', 200_000, 200_000)).toBe(false);
+    expect(canSwitchModelLive(side('anthropic'), side('anthropic'))).toBe(true);
+    expect(canSwitchModelLive(side('anthropic'), side('glm'))).toBe(false);
+    expect(canSwitchModelLive(side('glm'), side('glm'))).toBe(false);
+    expect(canSwitchModelLive(side('acp'), side('acp'))).toBe(false);
   });
 
   it('keeps the restart when the context window changes, so the compact window is rebuilt', () => {
-    expect(canSwitchModelLive('anthropic', 'anthropic', 200_000, 1_000_000)).toBe(false);
+    expect(canSwitchModelLive(side('anthropic'), side('anthropic', 1_000_000))).toBe(false);
+  });
+
+  it('keeps the restart when the models derive different thinking effort', () => {
+    expect(
+      canSwitchModelLive(side('anthropic'), side('anthropic', 200_000, ['low', 'medium', 'high']))
+    ).toBe(false);
   });
 });

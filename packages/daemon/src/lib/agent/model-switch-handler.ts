@@ -13,7 +13,12 @@ import type { Database } from '../../storage/database.ts';
 import type { ErrorManager } from '../error-manager.ts';
 import { ErrorCategory } from '../error-manager.ts';
 import type { Logger } from '../logger.ts';
-import { isValidModel, resolveModelAlias, getModelInfo } from '../model-service.ts';
+import {
+  isValidModel,
+  resolveModelAlias,
+  getModelInfo,
+  resolveSessionContextModelInfo,
+} from '../model-service.ts';
 import { getProviderRegistry } from '../providers/factory.js';
 import { inferProviderForModel } from '../providers/registry.ts';
 import { KimiProvider } from '../providers/kimi-provider.js';
@@ -40,13 +45,19 @@ export function modelSwitchTiming(
   return live || status === 'idle' ? 'now' : 'next_turn';
 }
 
-export function canSwitchModelLive(
-  previous: string | undefined,
-  next: string | undefined,
-  previousWindow: number | undefined,
-  nextWindow: number | undefined
-) {
-  return previous === 'anthropic' && next === 'anthropic' && previousWindow === nextWindow;
+type LiveSwitchSide = {
+  provider: string | undefined;
+  contextWindow?: number;
+  effortLevels?: readonly string[];
+};
+
+export function canSwitchModelLive(previous: LiveSwitchSide, next: LiveSwitchSide) {
+  return (
+    previous.provider === 'anthropic' &&
+    next.provider === 'anthropic' &&
+    previous.contextWindow === next.contextWindow &&
+    (previous.effortLevels ?? []).join() === (next.effortLevels ?? []).join()
+  );
 }
 
 export function gateSwitchIdle(guarded: boolean, busy: boolean) {
@@ -314,12 +325,28 @@ export class ModelSwitchHandler {
   async canSwitchLive(newModel: string, newProvider: string): Promise<boolean> {
     const { session, queryObject } = this.ctx;
     const provider = session.config.provider;
-    if (!queryObject?.setModel || !canSwitchModelLive(provider, newProvider, 0, 0)) return false;
+    if (!queryObject?.setModel || !canSwitchModelLive({ provider }, { provider: newProvider }))
+      return false;
     const [current, next] = await Promise.all([
-      getModelInfo(session.config.model, 'global', newProvider),
-      getModelInfo(newModel, 'global', newProvider),
+      resolveSessionContextModelInfo(session),
+      resolveSessionContextModelInfo({
+        ...session,
+        config: { ...session.config, model: newModel, provider: newProvider as Provider },
+      }),
     ]);
-    return canSwitchModelLive(provider, newProvider, current?.contextWindow, next?.contextWindow);
+    const efforts = getProviderRegistry().get(newProvider);
+    return canSwitchModelLive(
+      {
+        provider,
+        contextWindow: current.modelInfo?.contextWindow,
+        effortLevels: efforts?.getModelEffortLevels?.(session.config.model),
+      },
+      {
+        provider: newProvider,
+        contextWindow: next.modelInfo?.contextWindow,
+        effortLevels: efforts?.getModelEffortLevels?.(newModel),
+      }
+    );
   }
 
   async invalidModel(newModel: string, newProvider: string): Promise<string | null> {
