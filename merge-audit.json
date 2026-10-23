@@ -1,0 +1,58 @@
+{
+  "repo": "lsm/HyperNeo",
+  "pr": 8235,
+  "issue": 8233,
+  "issueClosed": true,
+  "approvedHead": "3b069fbd9489b9f0cb640a26b699301d733185fd",
+  "gatedBase": "e5cb75be6294fbfeb8134f935879b66e896aa8c6",
+  "mergeCommit": "643bb5c786466caccc1ca434dc60789d692d0b6b",
+  "mergeParent": "e5cb75be6294fbfeb8134f935879b66e896aa8c6",
+  "baseAdvanced": false,
+  "mergedTree": "f6187c5902bcd2ab7b57a81aee3a878a931c06c1",
+  "expectedMergedTree": "f6187c5902bcd2ab7b57a81aee3a878a931c06c1",
+  "treeAuditPass": true,
+  "changedFiles": [
+    ".claude/skills/verify/journeys/todo-row-alignment.md",
+    ".claude/skills/verify/todo-row-alignment-seed.ts",
+    ".claude/skills/verify/todo-row-alignment-web.mjs",
+    "packages/web/src/components/ui/ContentDisclosureControl.tsx",
+    "packages/web/src/components/ui/__tests__/ContentDisclosureControl.test.tsx",
+    "packages/web/src/neo/NeoAskTodos.tsx",
+    "packages/web/src/neo/__tests__/NeoAskTodos.test.tsx"
+  ],
+  "changedFileAuditPass": true,
+  "review": {
+    "id": 5617394672,
+    "run": 8542,
+    "engine": "devin (swe-2-high)",
+    "head": "3b069fbd9489b9f0cb640a26b699301d733185fd",
+    "state": "APPROVED"
+  },
+  "CI": "All Tests Pass and required checks green; optional binary build skipped",
+  "method": "manual SHA-pinned REST squash",
+  "proof": "https://github.com/lsm/HyperNeo/blob/b40dd85edca9b2cdab6b210788aa909cced49e2e/provenance.json",
+  "localTests": 51,
+  "auditedAt": "2026-10-22T16:24:43.512837+00:00",
+  "cleanup": {
+    "worktreeRemoved": "/Users/lsm/focus/worktrees/web-todo-disclosure",
+    "method": "git worktree remove",
+    "ownedDaemonAndMockStopped": true,
+    "ownedHeadlessBrowserClosed": true,
+    "syntheticFixturesAndEvidenceRetained": true,
+    "verifiedAt": "2026-10-22T16:24:56.126198+00:00"
+  },
+  "deployment": {
+    "readback": {
+      "commit": "ac22674f63a1ed9e120fbd3cb512588c1a56b88c",
+      "version": "0.45.2",
+      "pid": 43380,
+      "startedAt": 1792715976348,
+      "uptime": 369124.217042,
+      "health": "ok"
+    },
+    "containsMerge": true,
+    "readVia": "hyperneo build owner-socket RPC",
+    "manualDeploymentPerformed": false,
+    "observedAt": "2026-10-23T00:45:45.482164+00:00"
+  }
+}
