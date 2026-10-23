@@ -27,7 +27,7 @@ appendFileSync(root+'/evidence/requests.jsonl',JSON.stringify({phase,args})+'\\n
 if(args[0]!=='pr'||args[1]!=='view')process.exit(2);
 await Bun.sleep(200);
 if(['known','failed'].includes(phase)){process.stderr.write('Synthetic unavailable');process.exit(1);}
-const state=phase==='open'?'OPEN':phase==='closed'?'CLOSED':'MERGED';
+const state=phase==='partial'?undefined:phase==='open'?'OPEN':phase==='closed'?'CLOSED':'MERGED';
 process.stdout.write(JSON.stringify({url:args[2],state,mergeable:'MERGEABLE',mergeStateStatus:'CLEAN',mergeCommit:['partial','merged-no-commit'].includes(phase)?null:state==='MERGED'?{oid:'a'.repeat(40)}:null}));
 `,{mode:0o700});
 const network=globalThis.fetch;globalThis.fetch=(()=>{throw new Error('Real HTTP refused');}) as typeof fetch;

@@ -37,6 +37,7 @@ test('worker completion consumes ledger state and refuses unavailable evidence',
     expect(proof.knownStatus).toBe('done');
     expect(proof.coldReads).toBe(1);
     expect(proof.cold).toHaveLength(5);
+    expect(proof.mergedNoCommitStatuses).toEqual(['done', 'done']);
     expect(proof.counts).toEqual({
       cold: 1,
       open: 1,
@@ -45,6 +46,7 @@ test('worker completion consumes ledger state and refuses unavailable evidence',
       failed: 1,
       partial: 1,
       recovered: 1,
+      'merged-no-commit': 2,
     });
   } finally {
     rmSync(run, { recursive: true, force: true });

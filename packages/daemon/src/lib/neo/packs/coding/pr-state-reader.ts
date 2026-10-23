@@ -40,12 +40,6 @@ function readState(
 }
 
 function stateOutcome(facts: Facts): Outcome {
-  if (
-    facts.merge.status === 'known' &&
-    facts.merge.value.state === 'MERGED' &&
-    !facts.merge.value.mergeCommit
-  )
-    return { reason: 'GitHub PR state unavailable: partial' };
   return facts.merge.status === 'known'
     ? { value: facts.merge.value.state }
     : { reason: `GitHub PR state unavailable: ${facts.merge.reason}` };
