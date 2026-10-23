@@ -59,7 +59,11 @@ import { readNeoDaemonCommits } from './daemon-commits.ts';
 import { driverWorkCaller } from './driver-work.ts';
 import { neoFolderPath } from './folder.ts';
 import { openNeoDefaultSession } from './inbox.ts';
-import { effectiveNeoPreference, planNeoAlignment } from './model-preference.ts';
+import {
+  effectiveNeoPreference,
+  neoCompactPercentFor,
+  planNeoAlignment,
+} from './model-preference.ts';
 import type { NeoRefStateReader } from './packs/coding/ask-prs.ts';
 import { createCodingRefReader } from './packs/coding/ref-reader.ts';
 import {
@@ -328,13 +332,14 @@ export class NeoService {
       this.log.warn('Neo model preference not applied', error)
     );
     const session = this.db.getSession(root.sessionId);
+    const percent = session ? neoCompactPercentFor(preferences, session.config) : undefined;
     if (
       session &&
-      (session.config.autoCompactPercent !== preferences.autoCompactPercent ||
+      (session.config.autoCompactPercent !== percent ||
         session.metadata.pendingAutoCompactPercent !== undefined)
     )
       await this.sessions.updateSession(root.sessionId, {
-        config: { ...session.config, autoCompactPercent: preferences.autoCompactPercent },
+        config: { ...session.config, autoCompactPercent: percent },
       });
   }
 
