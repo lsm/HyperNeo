@@ -18,7 +18,8 @@ The actual built Settings > Neo model page shows one ordered list; the first
 model is the primary. The helper adds three models through the shared model
 picker ("Add Neo model"), sets each thinking level, reorders and saves. "Make
 primary" moves a model to the top of the list. The helper checks persisted preferences through real `neo.snapshot` RPC,
-sets auto-compact to 70% (target calculated from the selected catalog window),
+sets the primary's auto-compact to 70% (shown as "70% ≈ …K of …K tokens" from that
+model's catalog window; each model has its own field),
 then reloads desktop/mobile pages and checks values, order, usable provider text
 and control bounds. Disabling fallbacks must persist an explicit empty chain
 after reload. Evidence: `evidence/neo-model-settings.json` and desktop/mobile PNGs.
