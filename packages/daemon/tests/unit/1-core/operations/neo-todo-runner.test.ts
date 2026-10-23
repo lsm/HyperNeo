@@ -752,7 +752,7 @@ describe('neo todo runner follow-ups', () => {
     expect(String(calls.at(-1)?.input.message)).toContain('Now add tests.');
     expect(await runner.retry(todo.id)).toEqual({
       ok: false,
-      reason: 'not_retryable: only a todo that failed before its session started goes again.',
+      reason: 'not_retryable: only a failed todo with a worker target can be retried.',
     });
   });
 });
@@ -1641,7 +1641,7 @@ describe('failed todo retry in place', () => {
       const result = await h.runner.retry(todo.id);
       expect(result).toMatchObject({
         ok: true,
-        todo: { id: todo.id, state: 'doing', reason: null },
+        todo: { id: todo.id, state: 'doing' },
       });
       expect(h.store.listTodos('ask')).toHaveLength(1);
       expect(h.calls.filter((call) => call.name === 'work.start')).toHaveLength(1);

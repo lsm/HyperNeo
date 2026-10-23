@@ -514,6 +514,8 @@ describe('todo-owned question cards', () => {
       const other = await h.asked({ kind: 'reply', text: 'Which style?', todoId: h.rows.id });
       const general = await h.asked({ kind: 'reply', text: 'Anything else?' });
       expect(bound).toMatchObject({ todoId: h.fix.id });
+      h.store.updateTodo(h.fix, { state: 'failed' }, 3);
+      expect(h.store.getQuestion(bound.id)?.state).toBe('open');
       h.store.updateTodo(h.fix, { state: 'done' }, 4);
       expect(h.store.getQuestion(bound.id)?.state).toBe('retired');
       expect(h.store.getQuestion(other.id)?.state).toBe('open');
@@ -545,8 +547,18 @@ describe('todo-owned question cards', () => {
   test('refuses a foreign or settled todo instead of making an unowned question', async () => {
     const h = setup();
     try {
-      for (const todoId of ['unknown', h.fix.id]) {
-        h.store.updateTodo(h.fix, { state: 'removed' }, 3);
+      h.store.openAsk({
+        id: 'foreign',
+        projectId: null,
+        sessionId: 'neo-a',
+        originMessageId: 'foreign-message',
+        title: 'Foreign',
+        request: 'Other request',
+        createdAt: 1,
+      });
+      h.store.updateTodo(h.fix, { state: 'removed' }, 3);
+      h.store.moveTodo(h.rows, 'foreign', '/synthetic/repo', 3);
+      for (const todoId of ['unknown', h.fix.id, h.rows.id]) {
         const result = await h.call('neo.question.ask', {
           askId: 'ask',
           kind: 'reply',

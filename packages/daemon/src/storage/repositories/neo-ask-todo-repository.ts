@@ -77,9 +77,10 @@ export type NeoQuestionDraft = Pick<
   | 'confirm'
   | 'document'
   | 'replyTo'
+  | 'todoId'
 >;
 
-const QUESTION_SELECT = `SELECT id, ask_id AS askId, text, kind, options, multiple, no_label AS noLabel,
+const QUESTION_SELECT = `SELECT id, ask_id AS askId, todo_id AS todoId, text, kind, options, multiple, no_label AS noLabel,
   yes_label AS yesLabel, start_todos AS startTodos, state, answer, answered_by AS answeredBy,
   answered_at AS answeredAt, retired_reason AS retiredReason, replaced_by AS replacedBy,
   confirm_json AS confirmJson, reply_to_json AS replyToJson, document, created_at AS createdAt FROM neo_questions`;
@@ -98,8 +99,9 @@ type QuestionRow = Omit<
 
 const parsed = <T>(json: string | null): T | null => (json ? (JSON.parse(json) as T) : null);
 
-const toQuestion = ({ confirmJson, replyToJson, ...row }: QuestionRow): NeoQuestion => ({
+const toQuestion = ({ confirmJson, replyToJson, todoId, ...row }: QuestionRow): NeoQuestion => ({
   ...row,
+  ...(todoId ? { todoId } : {}),
   ...(replyToJson ? { replyTo: JSON.parse(replyToJson) as string[] } : {}),
   confirm: parsed<NonNullable<NeoQuestion['confirm']>>(confirmJson),
   options: parsed<string[]>(row.options),
@@ -328,7 +330,7 @@ export class NeoAskTodoRepository {
            WHERE id = ?3`
         )
         .run(askId, repo, todo.id);
-      this.pruneStartQuestions(todo.askId);
+      this.pruneQuestions(todo.askId, now);
       const moved = this.getTodo(todo.id)!;
       if (askId !== todo.askId && moved.instruction && isStartable(moved))
         this.joinStartQuestion(moved, now);
@@ -359,8 +361,9 @@ export class NeoAskTodoRepository {
         .all(todo.askId) as TodoStateFacts['order'],
       questionOpen: !!this.db
         .prepare(`SELECT 1 FROM neo_questions WHERE ask_id = ? AND state = 'open'
+        AND (todo_id IS NULL OR todo_id = ?)
         AND (kind != 'start' OR EXISTS (SELECT 1 FROM json_each(start_todos) WHERE value = ?)) LIMIT 1`)
-        .get(todo.askId, todo.id),
+        .get(todo.askId, todo.id, todo.id),
       dispatched: !!live?.ref || todo.startedAt !== null,
       live: live?.status ?? null,
     };
@@ -368,6 +371,7 @@ export class NeoAskTodoRepository {
 
   updateTodo(todo: NeoTodo, change: NeoTodoPatch, now: number): NeoTodo {
     const current = this.getTodo(todo.id)!;
+    this.pruneQuestions(current.askId, now);
     return recomputeTodoState(
       () => this.stateFacts(current, change, { state: 'no_opinion' }),
       (decision) => this.writeTodo(current, decision.patch, now)!,
@@ -383,6 +387,7 @@ export class NeoAskTodoRepository {
     advance: (id: string) => Promise<unknown>
   ): Promise<NeoTodo> {
     const current = this.getTodo(todo.id)!;
+    this.pruneQuestions(current.askId, now);
     if (current.state === 'removed') return current;
     return recomputeTodoStateAsync(
       () => this.stateFacts(current, change, judgement),
@@ -423,7 +428,7 @@ export class NeoAskTodoRepository {
           now,
           todo.id
         );
-      if (result.changes && patch.state) this.pruneStartQuestions(todo.askId);
+      if (result.changes && patch.state) this.pruneQuestions(todo.askId, now);
       return result.changes;
     })();
     if (!changed) return null;
@@ -433,6 +438,7 @@ export class NeoAskTodoRepository {
 
   claimStart(todo: NeoTodo, now: number): NeoTodo | null {
     const current = this.getTodo(todo.id)!;
+    this.pruneQuestions(current.askId, now);
     return recomputeTodoState(
       () => this.stateFacts(current, { state: 'doing', startedAt: now }, { state: 'no_opinion' }),
       (decision) =>
@@ -490,7 +496,7 @@ export class NeoAskTodoRepository {
     this.db
       .prepare(
         `INSERT INTO neo_questions (id, ask_id, text, kind, options, multiple, no_label, yes_label,
-           start_todos, confirm_json, document, reply_to_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           start_todos, confirm_json, document, reply_to_json, todo_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -505,6 +511,7 @@ export class NeoAskTodoRepository {
         draft.confirm ? JSON.stringify(draft.confirm) : null,
         draft.document ?? null,
         draft.replyTo ? JSON.stringify(draft.replyTo) : null,
+        draft.todoId ?? null,
         now
       );
     this.touchAsk(askId, now);
@@ -628,10 +635,20 @@ export class NeoAskTodoRepository {
     this.touchAsk(askId, now);
   }
 
-  private pruneStartQuestions(askId: string): void {
+  private pruneQuestions(askId: string, now: number): void {
     const todos = this.listTodos(askId);
     const startable = new Set(todos.filter(isStartable).map((todo) => todo.id));
     for (const question of this.listQuestions(askId)) {
+      if (question.state !== 'open') continue;
+      if (
+        question.todoId &&
+        !todos.some(
+          (todo) => todo.id === question.todoId && !['done', 'removed'].includes(todo.state)
+        )
+      ) {
+        this.retireQuestion(question, 'todo no longer active', null, now);
+        continue;
+      }
       if (question.kind !== 'start' || question.state !== 'open' || !question.startTodos) continue;
       const kept = question.startTodos.filter((id) => startable.has(id));
       if (kept.length === question.startTodos.length) continue;

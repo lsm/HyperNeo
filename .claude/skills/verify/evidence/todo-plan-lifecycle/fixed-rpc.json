@@ -1,0 +1,261 @@
+{
+  "todoQuestion": {
+    "ok": true,
+    "question": {
+      "todoId": "question-todo",
+      "document": null,
+      "id": "7538d666-78e0-4ba9-897a-56c6f19e7801",
+      "askId": "lifecycle",
+      "text": "Choose the synthetic implementation?",
+      "kind": "reply",
+      "options": null,
+      "multiple": false,
+      "noLabel": null,
+      "yesLabel": null,
+      "startTodos": null,
+      "confirm": null,
+      "state": "open",
+      "answer": null,
+      "answeredBy": null,
+      "answeredAt": null,
+      "retiredReason": null,
+      "replacedBy": null,
+      "createdAt": 1792717000272
+    }
+  },
+  "retiredQuestion": {
+    "ok": true,
+    "question": {
+      "id": "7538d666-78e0-4ba9-897a-56c6f19e7801",
+      "text": "Choose the synthetic implementation?",
+      "kind": "reply",
+      "state": "retired",
+      "answer": null,
+      "answeredAt": null,
+      "confirm": null,
+      "document": null,
+      "todoId": "question-todo"
+    },
+    "answeredByHuman": false
+  },
+  "generalQuestion": {
+    "ok": true,
+    "question": {
+      "id": "b93d078b-fca5-4812-b9e6-23a21c2ab96f",
+      "text": "General synthetic ask question?",
+      "kind": "reply",
+      "state": "open",
+      "answer": null,
+      "answeredAt": null,
+      "confirm": null,
+      "document": null
+    },
+    "answeredByHuman": false
+  },
+  "lifecycle": {
+    "sameTodo": "after-restart",
+    "inputs": [
+      "496d7e26-4920-43f9-ba3b-fc90a48f56ec",
+      "dbae31a2-74f8-4dee-808d-ed194204d326"
+    ],
+    "retries": 1,
+    "starts": 3
+  },
+  "retryReceipt": {
+    "ok": true,
+    "todo": {
+      "worker": {
+        "id": "restart",
+        "adapter": "codex-desktop",
+        "name": "restart",
+        "label": "Codex \u00b7 restart"
+      },
+      "id": "after-restart",
+      "askId": "restart",
+      "position": 1,
+      "title": "after-restart",
+      "doneWhen": "Synthetic PR merged",
+      "check": {
+        "pack": "coding",
+        "kind": "pr_merged",
+        "params": {
+          "urls": [
+            "https://github.com/synthetic/plan/pull/4"
+          ]
+        }
+      },
+      "instruction": "Perform after-restart",
+      "named": null,
+      "repo": "github.com/synthetic/plan",
+      "state": "doing",
+      "reason": "Synthetic worker failure",
+      "blockedReason": null,
+      "nextAction": null,
+      "blockedBy": null,
+      "replacedBy": null,
+      "addedAfterStart": false,
+      "report": null,
+      "evidence": null,
+      "createdAt": 1792716995719,
+      "updatedAt": 1792717001280,
+      "startedAt": 1792716999275,
+      "finishedAt": null
+    }
+  },
+  "snapshotAfterRestart": {
+    "ok": true,
+    "todoAsks": [
+      {
+        "ask": {
+          "id": "lifecycle",
+          "goalId": null,
+          "projectId": null,
+          "repo": null,
+          "parentId": null,
+          "sessionId": "neo:10000000-0000-4000-8000-000000008229",
+          "originMessageId": null,
+          "title": "lifecycle",
+          "request": "Synthetic ordered work",
+          "status": "open",
+          "outcome": null,
+          "createdAt": 1792716995719,
+          "updatedAt": 1792717000273,
+          "settledAt": null
+        },
+        "state": "waiting",
+        "todos": [
+          {
+            "worker": null,
+            "id": "question-todo",
+            "askId": "lifecycle",
+            "position": 0,
+            "title": "question-todo",
+            "doneWhen": "Synthetic PR merged",
+            "check": {
+              "pack": "coding",
+              "kind": "pr_merged",
+              "params": {
+                "urls": [
+                  "https://github.com/synthetic/plan/pull/6"
+                ]
+              }
+            },
+            "instruction": null,
+            "named": null,
+            "repo": null,
+            "state": "removed",
+            "reason": "Synthetic plan item no longer needed",
+            "blockedReason": null,
+            "nextAction": null,
+            "blockedBy": null,
+            "replacedBy": null,
+            "addedAfterStart": false,
+            "report": null,
+            "evidence": null,
+            "createdAt": 1792716995719,
+            "updatedAt": 1792717000273,
+            "startedAt": null,
+            "finishedAt": null,
+            "status": "Synthetic plan item no longer needed",
+            "statusCodes": [],
+            "link": null,
+            "remoteLink": null
+          }
+        ],
+        "doneCount": 0,
+        "questions": [
+          {
+            "todoId": "question-todo",
+            "document": null,
+            "id": "7538d666-78e0-4ba9-897a-56c6f19e7801",
+            "askId": "lifecycle",
+            "text": "Choose the synthetic implementation?",
+            "kind": "reply",
+            "options": null,
+            "multiple": false,
+            "noLabel": null,
+            "yesLabel": null,
+            "startTodos": null,
+            "confirm": null,
+            "state": "retired",
+            "answer": null,
+            "answeredBy": null,
+            "answeredAt": null,
+            "retiredReason": "todo no longer active",
+            "replacedBy": null,
+            "createdAt": 1792717000272
+          },
+          {
+            "document": null,
+            "id": "b93d078b-fca5-4812-b9e6-23a21c2ab96f",
+            "askId": "lifecycle",
+            "text": "General synthetic ask question?",
+            "kind": "reply",
+            "options": null,
+            "multiple": false,
+            "noLabel": null,
+            "yesLabel": null,
+            "startTodos": null,
+            "confirm": null,
+            "state": "open",
+            "answer": null,
+            "answeredBy": null,
+            "answeredAt": null,
+            "retiredReason": null,
+            "replacedBy": null,
+            "createdAt": 1792717000273
+          }
+        ]
+      }
+    ],
+    "retriedTodo": {
+      "worker": {
+        "id": "restart",
+        "adapter": "codex-desktop",
+        "name": "restart",
+        "label": "Codex \u00b7 restart"
+      },
+      "id": "after-restart",
+      "askId": "restart",
+      "position": 1,
+      "title": "after-restart",
+      "doneWhen": "Synthetic PR merged",
+      "check": {
+        "pack": "coding",
+        "kind": "pr_merged",
+        "params": {
+          "urls": [
+            "https://github.com/synthetic/plan/pull/4"
+          ]
+        }
+      },
+      "instruction": "Perform after-restart",
+      "named": null,
+      "repo": "github.com/synthetic/plan",
+      "state": "doing",
+      "reason": "Synthetic worker failure",
+      "blockedReason": null,
+      "nextAction": null,
+      "blockedBy": null,
+      "replacedBy": null,
+      "addedAfterStart": false,
+      "report": null,
+      "evidence": null,
+      "createdAt": 1792716995719,
+      "updatedAt": 1792717001280,
+      "startedAt": 1792716999275,
+      "finishedAt": null,
+      "status": "#4 open, waiting on review",
+      "statusCodes": [
+        {
+          "code": "todo.pr.waitingReview",
+          "params": {
+            "pr": "#4"
+          }
+        }
+      ],
+      "link": "codex://threads/restart",
+      "remoteLink": null
+    }
+  }
+}
