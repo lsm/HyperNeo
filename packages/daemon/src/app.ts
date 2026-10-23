@@ -198,6 +198,8 @@ import { AgentChildProcessRepository } from './storage/repositories/agent-child-
 import { remoteDaemons } from './lib/remote-daemons/registry.ts';
 import { RemoteDaemonSecretRepository } from './storage/repositories/remote-daemon-secret-repository.ts';
 
+const mailboxLog = new Logger('mailbox');
+
 interface ReconcilePersistedDiscoveryDeps {
   credentialManager: ProviderCredentialManager;
   db: Pick<Database, 'providers'>;
@@ -1296,7 +1298,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       getSession: (sessionId) => resolveMailboxSession(sessionId, sessionManager, taskAgentManager),
       isSessionArchived: (sessionId: string) =>
         reactiveDb?.db.getSession(sessionId)?.status === 'archived',
-      logError: (message) => new Logger('mailbox').error(message),
+      logError: (message) => mailboxLog.error(message),
     });
 
     messageDeliveryProcessor.register(
