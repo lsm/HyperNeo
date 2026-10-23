@@ -86,7 +86,10 @@ const readPage = (superpipe({})('coding-ledger-poll-page-read') as PipelineAPI)
 ) => ReturnType<typeof projectPage>;
 
 export class CodingPollFactsRepository {
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    private readonly externalEventPollIntervalMs = 0
+  ) {}
 
   read(subject: Subject, now: number, maxAgeMs: number) {
     return readPage(this.db, subject, now, maxAgeMs);
@@ -107,7 +110,7 @@ export class CodingPollFactsRepository {
     this.db
       .prepare(`DELETE FROM pack_coding_poll_facts WHERE attempted_at < ?
         AND json_extract(subject,'$[0]') GLOB 'external-event-page:v1:*'`)
-      .run(now() - 15 * 60_000);
+      .run(now() - Math.max(15 * 60_000, 2 * this.externalEventPollIntervalMs));
     return this.collect(
       { ...subject, credentialId: `external-event-page:v1:${subject.credentialId}` },
       cycle,

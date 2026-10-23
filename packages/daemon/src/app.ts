@@ -972,7 +972,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     extensionManager.register(
       new GitHubEventExtension(db.getDatabase(), process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN, {
         collectPollPage: (...args) =>
-          new CodingPollFactsRepository(db.getDatabase()).collectExternalEventPage(...args),
+          new CodingPollFactsRepository(
+            db.getDatabase(),
+            getGitHubPollingIntervalSeconds() * 1000
+          ).collectExternalEventPage(...args),
         syncReadCheckout: createNeoReadCheckoutSync(),
         getPollIntervalMs: () => getGitHubPollingIntervalSeconds() * 1000,
         credentialStore: credentialManager.getCredentialStore(),

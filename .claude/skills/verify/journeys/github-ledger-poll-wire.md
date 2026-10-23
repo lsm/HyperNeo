@@ -6,7 +6,7 @@ watched destinations; a later cycle has a new ID. Credentials, representation,
 exact URL and validator retain their coverage boundaries. No new RPC, permission,
 scheduler or row-rewriting migration is introduced. Destination cursors/delivery stay separate.
 
-Run normal, conditional, failure, retention and conditional-reseed with a fresh
+Run normal, conditional, failure, retention, conditional-reseed and slow-conditional with a fresh
 absolute RUN for each:
 
 ```bash
@@ -44,15 +44,18 @@ created in that run. Each cycle retains nine current pages plus a protected
 pre-existing unscoped row; that row's raw JSON/revisions and a normalized-fact
 row remain byte-equal, and both destinations keep their original approvals.
 
-Only new `external-event-page:v1:` cache subjects expire after 15 minutes of
-inactivity, checked on acquisition with an additive timestamp index. This covers
-about seven default polling intervals without a new timer. Expiry never targets
+Only new `external-event-page:v1:` cache subjects expire after the longer of
+15 minutes or two configured polling intervals of inactivity, checked on
+acquisition with the additive timestamp index. No new timer is introduced. Expiry never targets
 existing unscoped rows, normalized facts or source history. Unit contracts also
 advance window/page/credential identities through 30 minutes, then idle/recover.
 `conditional-reseed` starts with destination ETags but no ledger body, expires
 only new synthetic raw-cache pages, then repeats unchanged. Each cycle makes nine
 GETs, retains 2/2/2 source events and known bodies; only the warm repeat sends
 conditional headers. The failing pre-fix contract made 12/16/16 GETs.
+`slow-conditional` sets a 30-minute interval through settings RPC: the unchanged
+review payload is a zero-byte 304 after one interval, then re-seeds after 61
+minutes of synthetic inactivity. Keep payload-byte counters and history checks.
 Retain comparable before/after evidence.
 After merge, confirm the automatic rollout with owner RPC; never deploy/restart
 or force live polling. Durable outbox and remaining reader moves are later slices.
