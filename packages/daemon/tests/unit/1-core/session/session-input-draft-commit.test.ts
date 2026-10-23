@@ -312,7 +312,7 @@ describe('live conditional draft persistence', () => {
       await held;
     });
     const first = commitSessionInputDraft(capture(), 'first edit', db, cache, publisher);
-    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(publisher).toHaveBeenCalledTimes(1);
     expect(await commit(capture(), 'newer edit')).toEqual({ kind: 'won', notified: true });
     resolvePublication();

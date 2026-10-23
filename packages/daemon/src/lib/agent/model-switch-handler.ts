@@ -481,13 +481,13 @@ export class ModelSwitchHandler {
         if (admitted !== true)
           return { success: false, model: session.config.model, error: admitted };
         durableCommit =
-          this.ctx.db.casSessionRuntimeSettings(commit.snapshot, {
+          (await this.ctx.db.casSessionRuntimeSettings(commit.snapshot, {
             model: resolvedModel,
             provider: nextProvider,
             thinkingLevel: commit.thinkingLevel,
             clearAcpSession: clearAcpSessionId,
             clearSdkSession: clearSdkSessionState,
-          }) === 'won';
+          })) === 'won';
         if (!durableCommit)
           return { success: false, model: session.config.model, error: 'session_settings_changed' };
       }

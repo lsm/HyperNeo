@@ -237,16 +237,16 @@ export class Database {
     return this.sessionRepo.listProcessingSessionIds();
   }
 
-  markRestartInterruptedTurns(): number {
-    return this.sessionRepo.markRestartInterruptedTurns();
+  markRestartInterruptedTurns(): Promise<number> {
+    return Promise.resolve(this.sessionRepo.markRestartInterruptedTurns());
   }
 
   listRestartCooldownResumes(): Array<{ sessionId: string; resumeAt: number }> {
     return this.sessionRepo.listRestartCooldownResumes();
   }
 
-  takeRestartCooldownResume(sessionId: string): boolean {
-    return this.sessionRepo.takeRestartCooldownResume(sessionId);
+  takeRestartCooldownResume(sessionId: string): Promise<boolean> {
+    return Promise.resolve(this.sessionRepo.takeRestartCooldownResume(sessionId));
   }
 
   listAcpSessionIds(): Array<{ sessionId: string; acpSessionId: string }> {
@@ -264,8 +264,8 @@ export class Database {
   casSessionInputDraft(
     snapshot: SessionInputDraftSnapshot,
     text: string | null
-  ): 'won' | 'superseded' | 'invalid' {
-    return this.sessionRepo.casSessionInputDraft(snapshot, text);
+  ): Promise<'won' | 'superseded' | 'invalid'> {
+    return Promise.resolve(this.sessionRepo.casSessionInputDraft(snapshot, text));
   }
 
   captureSessionRuntimeSettings(id: string): SessionRuntimeSettingsSnapshot | null {
@@ -274,8 +274,8 @@ export class Database {
   casSessionRuntimeSettings(
     snapshot: SessionRuntimeSettingsSnapshot,
     patch: RuntimeSettingsPatch
-  ): 'won' | 'superseded' {
-    return this.sessionRepo.casSessionRuntimeSettings(snapshot, patch);
+  ): Promise<'won' | 'superseded'> {
+    return Promise.resolve(this.sessionRepo.casSessionRuntimeSettings(snapshot, patch));
   }
 
   deleteSession(id: string): Promise<void> {
