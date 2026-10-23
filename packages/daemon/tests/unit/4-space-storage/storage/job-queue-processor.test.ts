@@ -3,10 +3,24 @@ import {
   DeadLetterImmediatelyError,
   JobQueueProcessor,
 } from '../../../../src/storage/job-queue-processor';
+import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 50));
+
+const gatewayWith = (
+  db: Database,
+  intercept: (method: string, args: unknown[], run: () => Promise<unknown>) => Promise<unknown>
+) => {
+  const inline = new DbGateway(':memory:', db);
+  return {
+    call: (op: never, method: string, ...args: unknown[]) =>
+      intercept(method, args, () =>
+        (inline.call as (...a: unknown[]) => Promise<unknown>)(op, method, ...args)
+      ),
+  } as unknown as DbGateway;
+};
 
 describe('JobQueueProcessor', () => {
   let db: Database;
@@ -52,11 +66,11 @@ describe('JobQueueProcessor', () => {
     });
     processor = new JobQueueProcessor(repo, {
       maxConcurrent: 5,
-      claimJobs: async (request) => {
+      db: gatewayWith(db, async (method, _args, run) => {
+        if (method !== 'dequeue') return run();
         await gate;
-        if (request.method !== 'dequeue') throw new Error('unexpected fixture mode');
-        return repo.dequeue(...request.args);
-      },
+        return run();
+      }),
     });
     const seen: string[] = [];
     let maxActive = 0;
@@ -88,11 +102,11 @@ describe('JobQueueProcessor', () => {
     expect(jobs.every((job) => repo.getJob(job.id)?.status === 'completed')).toBe(true);
   });
 
-  it('does not fall back to a main claim when the async writer rejects', async () => {
+  it('does not fall back to a main claim when the gateway rejects the claim', async () => {
     processor = new JobQueueProcessor(repo, {
-      claimJobs: async () => {
+      db: gatewayWith(db, async () => {
         throw new Error('unknown claim');
-      },
+      }),
     });
     let called = false;
     processor.register('synthetic', async () => {

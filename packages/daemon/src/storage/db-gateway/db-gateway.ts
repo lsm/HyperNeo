@@ -2,7 +2,7 @@ import type { StructuredLogEvent } from '@hyperneo/shared';
 import { emitStructuredLogEvent } from '../../lib/logger.ts';
 import type { Database } from '../sqlite-compat.ts';
 import type { SQLiteQueryObservabilityOptions } from '../sqlite-query-observability.ts';
-import type { DbOp } from './db-op.ts';
+import type { DbOp, Method, RepositoryOp } from './db-op.ts';
 
 type Lane = DbOp<unknown, unknown>['mode'];
 
@@ -20,11 +20,13 @@ export type DbGatewayReply =
   | { id: number; result?: unknown; error?: string };
 
 const MAX_PENDING = 1024;
+const REPLY_TIMEOUT_MS = 30_000;
 
 class WorkerLane {
   private worker: Worker | null = null;
   private ready: Promise<Worker> | null = null;
   private closed = false;
+  private watchdog: ReturnType<typeof setTimeout> | null = null;
   private id = 0;
   private readonly pending = new Map<
     number,
@@ -35,6 +37,7 @@ class WorkerLane {
     private readonly lane: Lane,
     private readonly dbPath: string,
     private readonly createWorker: () => Worker,
+    private readonly replyTimeoutMs: number,
     private readonly queryObservability?: SQLiteQueryObservabilityOptions
   ) {}
 
@@ -46,16 +49,24 @@ class WorkerLane {
     const id = ++this.id;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      void this.open().then((worker) =>
-        worker.postMessage({
-          id,
-          dbPath: this.dbPath,
-          lane: this.lane,
-          op,
-          args,
-          queryObservability: this.queryObservability,
-        } satisfies DbGatewayRequest)
-      );
+      this.watchdog ??= this.armWatchdog();
+      void this.open().then((worker) => {
+        try {
+          worker.postMessage({
+            id,
+            dbPath: this.dbPath,
+            lane: this.lane,
+            op,
+            args,
+            queryObservability: this.queryObservability,
+          } satisfies DbGatewayRequest);
+        } catch (error) {
+          const waiter = this.pending.get(id);
+          this.pending.delete(id);
+          this.rearmWatchdog();
+          waiter?.reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      });
     });
   }
 
@@ -87,6 +98,7 @@ class WorkerLane {
         else {
           const waiter = this.pending.get(data.id);
           this.pending.delete(data.id);
+          this.rearmWatchdog();
           if (data.error === undefined) waiter?.resolve(data.result);
           else waiter?.reject(new Error(data.error));
         }
@@ -98,10 +110,29 @@ class WorkerLane {
     }));
   }
 
+  private armWatchdog(): ReturnType<typeof setTimeout> {
+    return setTimeout(
+      () =>
+        this.stop(
+          new Error(
+            `DB gateway ${this.lane} worker gave no reply for ${this.replyTimeoutMs} ms; outcome unknown`
+          )
+        ),
+      this.replyTimeoutMs
+    );
+  }
+
+  private rearmWatchdog(): void {
+    if (this.watchdog) clearTimeout(this.watchdog);
+    this.watchdog = this.pending.size > 0 ? this.armWatchdog() : null;
+  }
+
   private stop(error = new Error(`DB gateway ${this.lane} worker closed`)): void {
     this.worker?.terminate();
     this.worker = null;
     this.ready = null;
+    if (this.watchdog) clearTimeout(this.watchdog);
+    this.watchdog = null;
     for (const waiter of this.pending.values()) waiter.reject(error);
     this.pending.clear();
   }
@@ -115,11 +146,12 @@ export class DbGateway {
     private readonly inline: Database | null,
     queryObservability?: SQLiteQueryObservabilityOptions,
     createWorker = () =>
-      new Worker(new URL('./db-gateway-worker.ts', import.meta.url).href, { type: 'module' })
+      new Worker(new URL('./db-gateway-worker.ts', import.meta.url).href, { type: 'module' }),
+    replyTimeoutMs = REPLY_TIMEOUT_MS
   ) {
     this.lanes = {
-      read: new WorkerLane('read', dbPath, createWorker, queryObservability),
-      write: new WorkerLane('write', dbPath, createWorker, queryObservability),
+      read: new WorkerLane('read', dbPath, createWorker, replyTimeoutMs, queryObservability),
+      write: new WorkerLane('write', dbPath, createWorker, replyTimeoutMs, queryObservability),
     };
   }
 
@@ -130,6 +162,14 @@ export class DbGateway {
         db.transaction(() => op.run(db, args), op.mode === 'write' ? 'immediate' : 'deferred')()
       );
     return this.lanes[op.mode].send(op.name, args) as Promise<R>;
+  }
+
+  call<R, M extends Method<R>, K extends M>(
+    op: RepositoryOp<R, M>,
+    method: K,
+    ...args: R[K] extends (...args: infer P) => unknown ? P : never
+  ): Promise<R[K] extends (...args: never[]) => infer T ? Awaited<T> : never> {
+    return this.run(op, { method, args }) as never;
   }
 
   close(): Promise<void> {

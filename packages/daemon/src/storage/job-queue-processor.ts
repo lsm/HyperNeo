@@ -6,13 +6,16 @@ import {
 } from '../lib/agent/message-delivery-metrics.ts';
 import { Logger } from '../lib/logger.ts';
 import type { TableChangeScope } from './reactive-database.ts';
-import type {
-  Job,
-  JobClaim,
-  JobQueueRepository,
-  PayloadMatch,
-  ReclaimedJobClaim,
-  SessionFifoPredecessorLane,
+import { DbGateway } from './db-gateway/db-gateway.ts';
+import {
+  jobQueueReads,
+  jobQueueWrites,
+  type Job,
+  type JobClaim,
+  type JobQueueRepository,
+  type PayloadMatch,
+  type ReclaimedJobClaim,
+  type SessionFifoPredecessorLane,
 } from './repositories/job-queue-repository.ts';
 
 const log = new Logger('job-queue-processor');
@@ -103,7 +106,7 @@ export interface JobQueueProcessorOptions {
   staleThresholdMs?: number;
   jitterRandom?: () => number;
   settlementGraceMs?: number;
-  claimJobs?: (request: JobClaim) => Promise<Job[]>;
+  db?: DbGateway;
 }
 
 export interface SessionFifoDequeueMode {
@@ -184,7 +187,7 @@ export class JobQueueProcessor {
   >();
   private tickRequested = false;
   private ticking = false;
-  private readonly claimJobs?: (request: JobClaim) => Promise<Job[]>;
+  private readonly db: DbGateway;
   private changeNotifier: ((table: string, scope?: TableChangeScope) => void) | null = null;
   private readonly pollIntervalMs: number;
   private readonly maxConcurrent: number;
@@ -208,7 +211,7 @@ export class JobQueueProcessor {
     this.jitterRandom = options?.jitterRandom ?? Math.random;
     this.settlementGraceMs = options?.settlementGraceMs ?? SETTLEMENT_GRACE_MS;
     this.heartbeatIntervalMs = Math.max(10, Math.floor(this.staleThresholdMs / 3));
-    this.claimJobs = options?.claimJobs;
+    this.db = options?.db ?? new DbGateway(':memory:', repo.db);
   }
 
   register(queue: string, handler: JobHandler, options?: RegisterOptions): void {
@@ -337,11 +340,10 @@ export class JobQueueProcessor {
                     ],
                   }
                 : { method: 'dequeue', args: [queue, cappedSlots, reg.exemptJobs, excludeIds] };
-            jobs = this.claimJobs
-              ? await this.claimJobs(request)
-              : request.method === 'dequeue'
-                ? this.repo.dequeue(...request.args)
-                : this.repo.dequeueSessionFifo(...request.args);
+            jobs =
+              request.method === 'dequeue'
+                ? await this.db.call(jobQueueWrites, 'dequeue', ...request.args)
+                : await this.db.call(jobQueueWrites, 'dequeueSessionFifo', ...request.args);
           } catch (error) {
             errored = true;
             this.notePollError('dequeue', queue, error);
@@ -373,9 +375,7 @@ export class JobQueueProcessor {
                 excludeIds,
                 [...admittedSessions],
               ];
-              jobs = this.claimJobs
-                ? await this.claimJobs({ method: 'dequeueExempt', args })
-                : this.repo.dequeueExempt(...args);
+              jobs = await this.db.call(jobQueueWrites, 'dequeueExempt', ...args);
             } catch (error) {
               errored = true;
               this.notePollError('dequeue_exempt', queue, error);
@@ -415,37 +415,22 @@ export class JobQueueProcessor {
         clearInterval(heartbeat);
         return;
       }
-      let alive: boolean;
-      try {
-        alive = this.repo.heartbeat(job.id, job.claimToken);
-      } catch (error) {
-        this.notePollError('heartbeat', job.queue, error);
-        return;
-      }
-      if (!alive) {
-        this.emitLifecycle('old_handler_aborted', job, record.slotClass, {
-          stage: record.stage,
-          reason: 'heartbeat_rejected',
-        });
-        controller.abort();
-        clearInterval(heartbeat);
-        return;
-      }
-      const now = Date.now();
-      if (now - record.lastLeaseLogAt >= 60_000 || record.lastLeaseLogAt === 0) {
-        record.lastLeaseLogAt = now;
-        this.emitLifecycle('lease_renewed', job, record.slotClass, {
-          stage: record.stage,
-          elapsedMs: now - record.startedAt,
-        });
-      }
+      void this.db.call(jobQueueWrites, 'heartbeat', job.id, job.claimToken).then(
+        (alive) => this.renewLease(job, record, controller, heartbeat, alive),
+        (error) => this.notePollError('heartbeat', job.queue, error)
+      );
     }, this.heartbeatIntervalMs);
     if (typeof (heartbeat as { unref?: () => void }).unref === 'function') {
       (heartbeat as { unref: () => void }).unref();
     }
     try {
       if (!reg) {
-        this.repo.fail(job.id, `No handler registered for queue: ${job.queue}`);
+        await this.db.call(
+          jobQueueWrites,
+          'fail',
+          job.id,
+          `No handler registered for queue: ${job.queue}`
+        );
         record.settlement = 'failed';
         this.notifyChange(scope);
         return;
@@ -474,7 +459,13 @@ export class JobQueueProcessor {
       const result = await runLagPhase(`job:${job.queue.split(':', 1)[0]}`, () =>
         reg.handler(job, { signal: controller.signal, reportStage })
       );
-      const completed = this.repo.complete(job.id, result ?? undefined, job.claimToken);
+      const completed = await this.db.call(
+        jobQueueWrites,
+        'complete',
+        job.id,
+        result ?? undefined,
+        job.claimToken
+      );
       if (completed) {
         record.settlement = 'completed';
         this.emitLifecycle('settled', job, record.slotClass, {
@@ -483,7 +474,7 @@ export class JobQueueProcessor {
         });
       } else {
         record.settlement = classifyNonterminalSettlement(result);
-        if (this.repo.isClaimOwnedByAnother(job.id, job.claimToken)) {
+        if (await this.db.call(jobQueueReads, 'isClaimOwnedByAnother', job.id, job.claimToken)) {
           this.emitLifecycle('fenced_completion_rejected', job, record.slotClass, {
             stage: record.stage,
             reason: 'claim_replaced',
@@ -501,15 +492,17 @@ export class JobQueueProcessor {
       try {
         updated =
           err instanceof DeadLetterImmediatelyError
-            ? this.repo.markDead(job.id, message, job.claimToken)
-            : this.repo.fail(job.id, message, job.claimToken);
+            ? await this.db.call(jobQueueWrites, 'markDead', job.id, message, job.claimToken)
+            : await this.db.call(jobQueueWrites, 'fail', job.id, message, job.claimToken);
         record.settlement = updated?.status ?? 'fenced';
         if (updated) {
           this.emitLifecycle('settled', job, record.slotClass, {
             stage: record.stage,
             outcome: updated.status,
           });
-        } else if (this.repo.isClaimOwnedByAnother(job.id, job.claimToken)) {
+        } else if (
+          await this.db.call(jobQueueReads, 'isClaimOwnedByAnother', job.id, job.claimToken)
+        ) {
           this.emitLifecycle('fenced_completion_rejected', job, record.slotClass, {
             stage: record.stage,
             reason: 'claim_replaced',
@@ -610,6 +603,33 @@ export class JobQueueProcessor {
       }
     }
     return sessions;
+  }
+
+  private renewLease(
+    job: Job,
+    record: InFlightClaimRecord,
+    controller: AbortController,
+    heartbeat: ReturnType<typeof setInterval>,
+    alive: boolean
+  ): void {
+    if (controller.signal.aborted || this.getInFlightClaim(job) !== record) return;
+    if (!alive) {
+      this.emitLifecycle('old_handler_aborted', job, record.slotClass, {
+        stage: record.stage,
+        reason: 'heartbeat_rejected',
+      });
+      controller.abort();
+      clearInterval(heartbeat);
+      return;
+    }
+    const now = Date.now();
+    if (now - record.lastLeaseLogAt >= 60_000 || record.lastLeaseLogAt === 0) {
+      record.lastLeaseLogAt = now;
+      this.emitLifecycle('lease_renewed', job, record.slotClass, {
+        stage: record.stage,
+        elapsedMs: now - record.startedAt,
+      });
+    }
   }
 
   private reclaimStaleClaims(staleBefore: number): void {

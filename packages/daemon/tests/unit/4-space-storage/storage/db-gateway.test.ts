@@ -4,7 +4,7 @@ import {
   type DbGatewayReply,
   type DbGatewayRequest,
 } from '../../../../src/storage/db-gateway/db-gateway';
-import { defineDbOp } from '../../../../src/storage/db-gateway/db-op';
+import { defineDbOp, defineRepositoryOp } from '../../../../src/storage/db-gateway/db-op';
 import { DB_OPS } from '../../../../src/storage/db-gateway/db-ops';
 import { recordWouldRefuse } from '../../../../src/storage/repositories/device-pairing-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
@@ -117,6 +117,66 @@ describe('DbGateway', () => {
     expect(workers[0].requests.at(-1)?.args).toEqual({ seen, now: 3000 });
   });
 
+  test('a busy worker that keeps replying is never recycled, however long the queue', async () => {
+    const workers: TestWorker[] = [];
+    const gateway = new DbGateway(
+      '/synthetic.db',
+      null,
+      undefined,
+      () => {
+        const worker = new TestWorker();
+        workers.push(worker);
+        return worker as unknown as Worker;
+      },
+      40
+    );
+    const calls = [1, 2, 3, 4].map((now) => gateway.run(recordWouldRefuse, { seen, now }));
+    await tick();
+    for (const request of workers[0].requests) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      workers[0].emit({ id: request.id, result: null });
+    }
+    expect(await Promise.all(calls)).toEqual([null, null, null, null]);
+    expect(workers[0].stopped).toBe(false);
+    expect(workers).toHaveLength(1);
+  });
+
+  test('a call with no reply in time fails as unknown and recycles the worker', async () => {
+    const workers: TestWorker[] = [];
+    const gateway = new DbGateway(
+      '/synthetic.db',
+      null,
+      undefined,
+      () => {
+        const worker = new TestWorker();
+        workers.push(worker);
+        return worker as unknown as Worker;
+      },
+      20
+    );
+    const lost = gateway.run(recordWouldRefuse, { seen, now: 5 });
+    await expect(lost).rejects.toThrow('gave no reply for 20 ms; outcome unknown');
+    expect(workers[0].stopped).toBe(true);
+    const next = gateway.run(recordWouldRefuse, { seen, now: 6 });
+    await tick();
+    workers[1].emit({ id: workers[1].requests[0].id, result: null });
+    expect(await next).toBeNull();
+  });
+
+  test('a request the worker cannot receive fails without stalling the lane', async () => {
+    const { gateway, workers } = fixture();
+    const first = gateway.run(recordWouldRefuse, { seen, now: 5 });
+    await tick();
+    workers[0].postMessage = () => {
+      throw new Error('could not be cloned');
+    };
+    await expect(gateway.run(recordWouldRefuse, { seen, now: () => 6 } as never)).rejects.toThrow(
+      'could not be cloned'
+    );
+    workers[0].emit({ id: workers[0].requests[0].id, result: null });
+    expect(await first).toBeNull();
+  });
+
   test('waits for the worker to be ready before sending', async () => {
     const worker = new TestWorker(false);
     const gateway = new DbGateway('/synthetic.db', null, undefined, () => worker as never);
@@ -155,6 +215,31 @@ describe('DbGateway', () => {
     await gateway.run(recordWouldRefuse, { seen, now: 5 });
     await gateway.run(recordWouldRefuse, { seen, now: 6 });
     expect(await gateway.run(countRows, undefined)).toBe(1);
+    db.close();
+  });
+
+  test('a repository op runs only the methods it lists, on a repository over the connection', async () => {
+    class Counter {
+      constructor(private readonly db: Database) {}
+      count() {
+        return (
+          this.db.prepare('SELECT COUNT(*) AS n FROM would_refuse_requests').get() as { n: number }
+        ).n;
+      }
+      wipe() {
+        this.db.prepare('DELETE FROM would_refuse_requests').run();
+      }
+    }
+    const db = new Database(':memory:');
+    db.exec('CREATE TABLE would_refuse_requests (reason TEXT)');
+    db.exec("INSERT INTO would_refuse_requests VALUES ('a'), ('b')");
+    const counts = defineRepositoryOp('test.counter', 'read', Counter, ['count']);
+    const gateway = new DbGateway(':memory:', db);
+    expect(await gateway.call(counts, 'count')).toBe(2);
+    await expect(gateway.run(counts, { method: 'wipe', args: [] })).rejects.toThrow(
+      'test.counter does not run wipe'
+    );
+    expect(await gateway.call(counts, 'count')).toBe(2);
     db.close();
   });
 
