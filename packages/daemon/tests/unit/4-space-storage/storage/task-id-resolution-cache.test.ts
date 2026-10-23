@@ -284,9 +284,9 @@ describe('resolveTaskIdForSession memoization (per-save query dedup)', () => {
       return countingPrepare(sql, ...rest);
     }) as typeof bunDb.prepare;
 
-    expect(() =>
+    await expect(
       reactiveDb.db.updateSession('s-task', { context: { taskId: 'task-2' } })
-    ).toThrow();
+    ).rejects.toThrow('simulated session write failure');
 
     bunDb.prepare = countingPrepare;
     await reactiveDb.db.saveSDKMessage('s-task', assistantMessage('two'));

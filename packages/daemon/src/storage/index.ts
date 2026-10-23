@@ -192,12 +192,11 @@ export class Database {
     }
   }
 
-  createSession(
+  async createSession(
     session: Session,
     options?: { enforceWorkspaceOwnership?: boolean; ownershipPath?: string }
   ): Promise<void> {
     this.sessionRepo.createSession(session, options);
-    return Promise.resolve();
   }
 
   isWorkspaceRegisteredToSpace(spaceId: string, workspacePath: string): boolean {
@@ -228,9 +227,8 @@ export class Database {
     return this.sessionRepo.listSessionsBySpaceAgent(spaceId, agentId);
   }
 
-  clearAcpSessionIds(): Promise<void> {
+  async clearAcpSessionIds(): Promise<void> {
     this.sessionRepo.clearAcpSessionIds();
-    return Promise.resolve();
   }
 
   listProcessingSessionIds(): string[] {
@@ -253,9 +251,8 @@ export class Database {
     return this.sessionRepo.listAcpSessionIds();
   }
 
-  updateSession(id: string, updates: Partial<Session>): Promise<void> {
+  async updateSession(id: string, updates: Partial<Session>): Promise<void> {
     this.sessionRepo.updateSession(id, updates);
-    return Promise.resolve();
   }
 
   captureSessionInputDraft(id: string): SessionInputDraftSnapshot | null {
@@ -278,28 +275,24 @@ export class Database {
     return this.sessionRepo.casSessionRuntimeSettings(snapshot, patch);
   }
 
-  deleteSession(id: string): Promise<void> {
+  async deleteSession(id: string): Promise<void> {
     this.sessionRepo.deleteSession(id);
-    return Promise.resolve();
   }
 
   listChildSessions(parentId: string): Session[] {
     return this.sessionRepo.listChildren(parentId);
   }
 
-  detachSessionFromParent(id: string): Promise<void> {
+  async detachSessionFromParent(id: string): Promise<void> {
     this.sessionRepo.detachFromParent(id);
-    return Promise.resolve();
   }
 
-  setSessionParent(id: string, parentId: string | null): Promise<void> {
+  async setSessionParent(id: string, parentId: string | null): Promise<void> {
     this.sessionRepo.setParent(id, parentId);
-    return Promise.resolve();
   }
 
-  setSessionLastError(id: string, lastError: string | null): Promise<void> {
+  async setSessionLastError(id: string, lastError: string | null): Promise<void> {
     this.sessionRepo.setLastError(id, lastError);
-    return Promise.resolve();
   }
 
   saveSDKMessage(
