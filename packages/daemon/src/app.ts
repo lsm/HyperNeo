@@ -183,7 +183,7 @@ import {
   seedDefaultMcpEntries,
 } from './lib/mcp/index.ts';
 import { FileIndex } from './lib/file-index.ts';
-import { installConsoleLogCapture, subscribeToStructuredLogs } from './lib/logger.ts';
+import { Logger, installConsoleLogCapture, subscribeToStructuredLogs } from './lib/logger.ts';
 import { createStartupPhaseTimer } from './lib/startup-phase-timer.ts';
 import { StructuredLogFileSink } from './lib/structured-log-file-sink.ts';
 import { EvolutionLogEvidenceService } from './lib/evolution/log-evidence-service.ts';
@@ -1296,7 +1296,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       getSession: (sessionId) => resolveMailboxSession(sessionId, sessionManager, taskAgentManager),
       isSessionArchived: (sessionId: string) =>
         reactiveDb?.db.getSession(sessionId)?.status === 'archived',
-      logError,
+      logError: (message) => new Logger('mailbox').error(message),
     });
 
     messageDeliveryProcessor.register(
