@@ -80,6 +80,22 @@ describe('requireNeoPreferenceModel', () => {
       value: { model: 'deepseek-v4-flash', provider: 'deepseek', thinkingLevel: 'off' },
     });
   });
+
+  test('accepts the same model under its 1M id but not a different model sharing its prefix', () => {
+    const flashGlm = { id: 'glm-5.3-flash', alias: 'glm-5.3-flash', provider: 'glm' } as ModelInfo;
+    expect(
+      requireNeoPreferenceModel(
+        { model: 'glm-5.3[1m]', provider: 'glm', thinkingLevel: 'off' },
+        { models: [flashGlm, { ...flashGlm, id: 'glm-5.3', alias: 'glm-5.3' }] }
+      )
+    ).toEqual({ value: { model: 'glm-5.3[1m]', provider: 'glm', thinkingLevel: 'off' } });
+    expect(
+      requireNeoPreferenceModel(
+        { model: 'glm-5.3[1m]', provider: 'glm', thinkingLevel: 'off' },
+        { models: [flashGlm] }
+      )
+    ).toMatchObject({ reason: { ok: false, reason: expect.stringContaining('invalid_model') } });
+  });
 });
 
 describe('effectiveNeoPreference', () => {
@@ -495,7 +511,7 @@ describe('neo.preferences.set', () => {
       model: 'claude-opus',
       provider: 'anthropic',
       thinkingLevel: 'off',
-      fallbacks: [{ model: 'glm-5.3[1m]', provider: 'glm', thinkingLevel: 'off' }],
+      fallbacks: [{ model: 'glm-5.3[1m]', provider: 'glm', thinkingLevel: 'off' as const }],
     };
     expect(await invoke('neo.preferences.set', preference)).toMatchObject({
       value: { ok: true },
