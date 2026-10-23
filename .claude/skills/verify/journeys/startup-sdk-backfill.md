@@ -17,13 +17,16 @@ env -i HOME="$RUN/home" PATH="$PATH" NODE_ENV=test \
 
 Seed owns a synthetic current-schema database with 200,000 legacy-shaped message
 bodies and a missing v2 projection marker. It records their count and digest.
-Verify starts a real daemon child, probes its existing HTTP root for 200 within
+Verify starts a real standalone daemon child, probes its existing HTTP root for 200 within
 five seconds while the backfill is incomplete, and observes persisted progress.
+The existing system.health RPC and global-system snapshot must report running
+progress. An old-history request waits while a new session can be created and read.
 It SIGKILLs only that child, starts again on the same synthetic DB, observes
-resume at or beyond the saved cursor and waits for completion. All message bytes,
+resume at or beyond the saved cursor and waits for completion. The old history
+then returns messages and health reports complete. All logical message bytes,
 counts and eligible projections must match. Cleanup stops its exact child even
 when an assertion fails. Keep `evidence/startup.json`, seed digest and child logs.
 
 On the old startup path, the first HTTP probe fails while chunk logs and the
 persisted cursor demonstrate that the backfill is running before listener bind.
-This is a startup/RPC boundary proof; UI rendering needs its separate check.
+This checks the existing HTTP/RPC surfaces; no new UI is introduced.

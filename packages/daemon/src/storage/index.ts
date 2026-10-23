@@ -449,7 +449,11 @@ export class Database {
       this.getDbPath(),
       undefined,
       undefined,
-      this.options?.queryObservability
+      this.options?.queryObservability,
+      (args) =>
+        'codexSnapshot' in args
+          ? Promise.resolve()
+          : this.core.waitForSdkMessageColumns('sessionId' in args ? args.sessionId : undefined)
     ));
   }
 
@@ -595,6 +599,22 @@ export class Database {
 
   getDatabasePath(): string {
     return this.core.getDbPath();
+  }
+
+  getDataMigrationStatus() {
+    return this.core.getDataMigrationStatus();
+  }
+
+  waitForSdkMessageColumns(sessionId?: string) {
+    return this.core.waitForSdkMessageColumns(sessionId);
+  }
+
+  stopSdkMessageColumnsBackfill(): void {
+    this.core.stopSdkMessageColumnsBackfill();
+  }
+
+  startSdkMessageColumnsBackfill(changed?: () => void) {
+    return this.core.startSdkMessageColumnsBackfill(changed);
   }
 
   startMessageSearchMerges(): void {

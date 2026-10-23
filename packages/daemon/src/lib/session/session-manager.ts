@@ -668,6 +668,8 @@ export class SessionManager {
     sessionId: string,
     options: { startQuery?: boolean; replayPendingMessages?: boolean } = {}
   ): Promise<AgentSession | null> {
+    if (this.db.getDataMigrationStatus().state !== 'complete')
+      await this.db.waitForSdkMessageColumns(sessionId);
     let session = await this.sessionCache.getAsync(sessionId);
     while (session) {
       await this.provisionWorkflowMcpServers(session, options);
@@ -679,6 +681,8 @@ export class SessionManager {
   }
 
   async getSessionForControl(sessionId: string): Promise<AgentSession | null> {
+    if (this.db.getDataMigrationStatus().state !== 'complete')
+      await this.db.waitForSdkMessageColumns(sessionId);
     let session = await this.sessionCache.getAsync(sessionId);
     while (session) {
       const inFlight = this.workflowMcpProvisioning.get(sessionId);

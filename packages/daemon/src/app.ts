@@ -1204,6 +1204,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
               name: 'HyperNeo Daemon',
               version: BUILD_METADATA.version,
               status: 'running',
+              dataMigration: db.getDataMigrationStatus(),
               protocol: 'WebSocket-only (MessageHub RPC + Pub/Sub)',
               endpoints: {
                 webSocket: '/ws',
@@ -1259,11 +1260,16 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     });
 
     startupTimer.start('post-bind jobs + background services');
+    void db.startSdkMessageColumnsBackfill(() => {
+      void stateManager.broadcastSystemChange();
+    });
     const removeRuntimeDescriptorFile =
       process.env.NODE_ENV === 'test' ? () => {} : writeRuntimeDescriptor(config.host, server.port);
     const openMessageSearchMergeGate = (): void => {
       db.startMessageSearchMerges();
-      db.startSdkMessageBodyCopy();
+      void db.startSdkMessageColumnsBackfill().then((complete) => {
+        if (complete) db.startSdkMessageBodyCopy();
+      });
     };
     void spaceRuntimeReadyPromise.then(openMessageSearchMergeGate, openMessageSearchMergeGate);
     void spaceRuntimeReadyPromise.then(() => {
@@ -1609,6 +1615,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         return;
       }
       isCleanedUp = true;
+      db.stopSdkMessageColumnsBackfill();
       startupLogCaptureCleanup = null;
       for (const timer of cooldownResumeTimers) clearTimeout(timer);
 

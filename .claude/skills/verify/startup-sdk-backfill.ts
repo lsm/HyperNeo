@@ -87,25 +87,32 @@ if (mode === 'seed') {
     const system = await rpc('state.global.snapshot', { includeSessions: false });
     evidence.globalSystemDuringBackfill = system.system.health;
     assert(['pending', 'running'].includes(system.system.health.dataMigration.state));
-    let historyReturned = false;
-    const history = rpc('message.sdkMessages', { sessionId: 'synthetic-backfill', limit: 2 }).then(() => { historyReturned = true; }, () => {});
-    await pause(100); assert.equal(historyReturned, false, 'Pending history must wait rather than return an empty projection');
+    let historyReturned = false, historyError: string | null = null;
+    const history = rpc('message.sdkMessages', { sessionId: 'synthetic-backfill', limit: 2 }).then(() => { historyReturned = true; }, (error) => { historyError = String(error); });
+    await pause(100); assert.equal(historyReturned, false, 'Pending history must wait rather than return an empty projection'); assert.equal(historyError, null);
     const created = await rpc('session.create', { workspacePath: run, title: 'Synthetic new session' });
     const fresh = await rpc('message.sdkMessages', { sessionId: created.sessionId, limit: 2 });
     evidence.newSessionDuringBackfill = { sessionId: created.sessionId, page: fresh };
     assert.equal((await rpc('system.health')).status, 'ok');
+    assert.equal(historyError, null);
     evidence.historyReadWaited = !historyReturned;
     const until = Date.now() + 30000;
     while (progress().through === 0) { assert(Date.now() < until, 'No persisted progress'); await pause(); }
     await stop('SIGKILL'); await history; const interrupted = progress(); evidence.interrupted = interrupted;
     assert(interrupted.through > 0 && !interrupted.complete);
-    const second = await start('restart'); assert(second.progress.through >= interrupted.through);
+    const second = await start('restart'); assert(second.progress.through >= interrupted.through); await connect();
     const finishBy = Date.now() + 120000;
     while (!progress().complete) {
       assert(Date.now() < finishBy, 'Background backfill did not complete');
       assert.equal((await fetch(`http://127.0.0.1:${port}/`)).status, 200); await pause(100);
     }
     evidence.resumed = progress();
+    const completed = await rpc('system.health');
+    assert.equal(completed.dataMigration.state, 'complete');
+    const restored = await rpc('message.sdkMessages', { sessionId: 'synthetic-backfill', limit: 2 });
+    assert.equal(restored.sdkMessages.length, 2);
+    evidence.historyAfterBackfill = { count: restored.sdkMessages.length, hasMore: restored.hasMore };
+    evidence.healthAfterBackfill = completed;
     assert(progress().through === 0, 'Completed pass retires only its cursor');
     const hash = createHash('sha256'); let after = 0, count = 0;
     for (;;) {

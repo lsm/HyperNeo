@@ -548,7 +548,15 @@ export interface SubAgent {
   completedAt?: string;
 }
 
+export interface DataMigrationStatus {
+  name: 'sdk_message_columns_backfill_v2';
+  state: 'pending' | 'running' | 'complete' | 'failed';
+  through: number;
+  total: number;
+}
+
 export interface HealthStatus {
+  dataMigration?: DataMigrationStatus;
   status: 'ok' | 'error';
   version: string;
   uptime: number;

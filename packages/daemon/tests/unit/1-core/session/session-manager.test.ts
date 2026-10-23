@@ -34,6 +34,8 @@ describe('SessionManager', () => {
     eventHandlers = new Map();
 
     mockDb = {
+      getDataMigrationStatus: mock(() => ({ state: 'complete' })),
+      waitForSdkMessageColumns: mock(async () => {}),
       createSession: mock(() => {}),
       updateSession: mock(() => {}),
       deleteSession: mock(() => {}),

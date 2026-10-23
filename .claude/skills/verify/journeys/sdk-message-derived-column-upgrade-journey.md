@@ -17,8 +17,10 @@ startup lag and chunk logs. Numbered migration 413 adds the columns; the separat
 `sdk_message_columns_backfilled_v2` marker records completion of the async pass.
 Its cursor commits with each transaction; chunks yield after at most 512 rows
 or 4 MiB, with a larger single message kept whole. No body is moved or trimmed.
-Startup heartbeat covers the entire initialization, so distinguish existing
-startup costs from measured chunk times and report any budget violation.
+The standalone upgrade helper explicitly waits for the data pass before inspection;
+`schemaReadyMs` separates schema readiness from the full-pass runtime. The daemon
+binds before that pass: use `startup-sdk-backfill.md` for serving, readiness and
+restart proof. Report any chunk-time budget violation.
 
 Then launch an isolated daemon using [Launch](../SKILL.md#launch) and run
 `bash .claude/skills/verify/sdk-message-columns-door.sh <port> "$RUN"`.
