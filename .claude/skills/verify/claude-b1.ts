@@ -57,6 +57,7 @@ try {
   });
   const task = 'Exact synthetic task: "quotes" 😀\nKeep the complete second line: END';
   const startInput = { adapter: 'claude-desktop', place: { machine: hostname(), folder: join(run, 'workspace'), name: 'Synthetic project' }, title: 'B1 synthetic worker', message: task };
+  if (process.env.VERIFY_HANDOFF_TIMEOUT === '1') startInput.place.name = 'workspace';
   const started = await rpc<Result<WorkStarted>>('work.start', startInput);
   assert(started.ok, JSON.stringify(started));
   assert.deepEqual(started.value.place, startInput.place);
