@@ -8,7 +8,10 @@ import {
   NO_HUMAN_DEVICE,
 } from '../../../../src/lib/pairing/pairing-operations.ts';
 import type { OperationCaller } from '../../../../src/lib/operations/registry.ts';
-import { DevicePairingRepository } from '../../../../src/storage/repositories/device-pairing-repository.ts';
+import {
+  DevicePairingRepository,
+  recordWouldRefuse,
+} from '../../../../src/storage/repositories/device-pairing-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
@@ -353,10 +356,10 @@ describe('device pairing', () => {
 
   test('a paired human or the CLI reads the requests Origin/Host checks would refuse', async () => {
     const { db, call, pair, repo } = setup();
-    repo.recordWouldRefuse(
-      { reason: 'host_not_allowed', kind: 'ws', host: 'mac.ts.net', origin: null },
-      5
-    );
+    recordWouldRefuse.run(db, {
+      seen: { reason: 'host_not_allowed', kind: 'ws', host: 'mac.ts.net', origin: null },
+      now: 5,
+    });
     expect(await call('device.would_refuse.list', {}, human)).toEqual({
       ok: false,
       reason: NEEDS_PAIRED_HUMAN,

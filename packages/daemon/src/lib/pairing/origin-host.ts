@@ -1,4 +1,5 @@
-import type { DevicePairingRepository } from '../../storage/repositories/device-pairing-repository.ts';
+import type { DbGateway } from '../../storage/db-gateway/db-gateway.ts';
+import { recordWouldRefuse } from '../../storage/repositories/device-pairing-repository.ts';
 
 const LOOPBACK_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
 
@@ -32,12 +33,12 @@ export function judgeOriginHost(req: Request, allowedHosts: readonly string[]): 
 }
 
 export function createRequestObserver({
-  devices,
+  db,
   allowedHosts,
   exempt,
   now,
 }: {
-  devices: () => DevicePairingRepository;
+  db: () => DbGateway;
   allowedHosts: () => readonly string[];
   exempt: (req: Request) => boolean;
   now: () => number;
@@ -46,7 +47,10 @@ export function createRequestObserver({
     try {
       if (exempt(req)) return;
       const refusal = judgeOriginHost(req, []) && judgeOriginHost(req, allowedHosts());
-      if (refusal) devices().recordWouldRefuse(refusal, now());
+      if (refusal)
+        void db()
+          .run(recordWouldRefuse, { seen: refusal, now: now() })
+          .catch(() => {});
     } catch {
       return;
     }
