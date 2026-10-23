@@ -87,6 +87,9 @@ export interface NeoPackPreferenceDeclaration {
 }
 
 export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
+  retainedTodoIds?(ids: readonly string[]): Set<string>;
+  refreshOnEvent?(event: ExternalEvent): boolean;
+  sessionLinks?(ref: WorkRef | null): Promise<string[]>;
   operations?: readonly OperationDefinition[];
   preferences?: Record<string, NeoPackPreferenceDeclaration>;
   todos?: NeoTodoPack;
@@ -107,3 +110,9 @@ export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
 }
 
 export type NeoExecutionPreparation = WorkExecutionPreparation;
+
+export interface NeoPackRuntime {
+  packs: NeoPack[];
+  defaults: readonly string[];
+  operations: readonly OperationDefinition[];
+}

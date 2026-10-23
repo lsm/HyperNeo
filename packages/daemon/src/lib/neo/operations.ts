@@ -17,7 +17,6 @@ import {
 } from './project-mirror.ts';
 import { neoFolderPath } from './folder.ts';
 import { isTempCwd } from '../drivers/claude-feed.ts';
-import { createNeoProjectTreeOperations } from './project-tree-operations.ts';
 import { createNeoProjectForgetOperation } from './project-forget-operation.ts';
 import { neoMirroredAliases } from './project-cleanup.ts';
 import { createNeoProjectCleanupApply } from './project-cleanup-apply.ts';
@@ -690,7 +689,7 @@ export function createNeoOperations(service: NeoService) {
     stop: (todo) => service.todoRunner.stop(todo),
   };
   return [
-    ...createNeoProjectTreeOperations(service.repo, (refs) => service.readRefStates(refs)),
+    ...service.packOperations,
     createNeoProjectForgetOperation(service.repo),
     createNeoIntakeOperation(
       service.db,

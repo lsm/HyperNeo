@@ -6,7 +6,7 @@ import {
   InternalEventBus,
   type DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus.ts';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
@@ -16,13 +16,13 @@ const messageId = '20000000-0000-4000-8000-000000000001';
 
 describe('Neo turn end', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
-  let service: NeoService;
+  let service: ReturnType<typeof createNeoService>;
   let events: InternalEventBus<DaemonInternalEventMap>;
   beforeEach(async () => {
     db = await createTestDb();
     events = new InternalEventBus<DaemonInternalEventMap>();
     db.createSession(createTestSession(root));
-    service = new NeoService(
+    service = createNeoService(
       db,
       { getSessionAsync: vi.fn() } as unknown as SessionManager,
       { event: vi.fn() } as unknown as MessageHub,

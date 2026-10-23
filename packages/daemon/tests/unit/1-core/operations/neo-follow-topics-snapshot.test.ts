@@ -1,17 +1,17 @@
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus';
-import { NeoService } from '../../../../src/lib/neo/service';
+import { createNeoService } from '../../../../src/lib/neo/packs/runtime';
 import type { SessionManager } from '../../../../src/lib/session/session-manager';
 import { createTestDb, createTestSession } from '../../../helpers/database';
 
 let db: Awaited<ReturnType<typeof createTestDb>>;
-let service: NeoService;
+let service: ReturnType<typeof createNeoService>;
 let watched: string[];
 beforeEach(async () => {
   db = await createTestDb();
   db.createSession(createTestSession('root'));
-  service = new NeoService(
+  service = createNeoService(
     db,
     {} as SessionManager,
     { event: () => {} } as unknown as MessageHub,

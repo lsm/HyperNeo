@@ -123,6 +123,36 @@ test('removing every model and adding one back saves an explicit empty fallback 
   );
 });
 
+test('saves a percentage per model and shows each against its own context window', async () => {
+  request.mockImplementation(async (method, data) => {
+    if (method === 'models.list')
+      return {
+        models: models.map((model) =>
+          model.id === 'glm-5'
+            ? { ...model, contextWindow: 200_000 }
+            : model.id === 'gpt-5'
+              ? { ...model, contextWindow: 0 }
+              : model
+        ),
+      };
+    if (method === 'operation.invoke') return { ok: true, preferences: data.input };
+    throw new Error(`Unexpected ${method}`);
+  });
+  const ui = await editor();
+  fireEvent.input(ui.getByLabelText('Neo model 2 auto-compact percentage'), {
+    target: { value: '88' },
+  });
+  expect(ui.getByText('88% ≈ 176K of 200K tokens')).toBeTruthy();
+  expect(ui.getByText('90% · context window unknown')).toBeTruthy();
+  fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'neo.preferences.set',
+      input: { ...primary, fallbacks: [{ ...glm, autoCompactPercent: 88 }, copilot] },
+    })
+  );
+});
+
 test('shows a refused save without discarding edits or changing the general session chain', async () => {
   const ui = await editor();
   request.mockImplementation(async (method) =>
@@ -188,8 +218,10 @@ test('the first model added to an empty list becomes the primary', async () => {
 
 test('saves 70 percent with the model and previews the effective token threshold', async () => {
   const ui = await editor();
-  fireEvent.input(ui.getByLabelText('Auto-compact percentage'), { target: { value: '70' } });
-  expect(ui.getByText(/700,000.*1,000,000/)).toBeTruthy();
+  fireEvent.input(ui.getByLabelText('Neo model 1 auto-compact percentage'), {
+    target: { value: '70' },
+  });
+  expect(ui.getByText('70% ≈ 700K of 1M tokens')).toBeTruthy();
   fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
   await waitFor(() =>
     expect(request).toHaveBeenCalledWith('operation.invoke', {
@@ -204,7 +236,7 @@ test.each([
   [101, 100],
 ])('clamps percentage %s to %s on save', async (input, expected) => {
   const ui = await editor();
-  fireEvent.input(ui.getByLabelText('Auto-compact percentage'), {
+  fireEvent.input(ui.getByLabelText('Neo model 1 auto-compact percentage'), {
     target: { value: String(input) },
   });
   fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
@@ -221,9 +253,13 @@ test('90 resets an explicit override to the unchanged provider default', async (
     neo: { preferences: { ...primary, autoCompactPercent: 70 } },
   } as GlobalSettings;
   const ui = await editor();
-  expect((ui.getByLabelText('Auto-compact percentage') as HTMLInputElement).value).toBe('70');
-  fireEvent.input(ui.getByLabelText('Auto-compact percentage'), { target: { value: '90' } });
-  expect(ui.getByText(/Default.*unchanged/)).toBeTruthy();
+  expect((ui.getByLabelText('Neo model 1 auto-compact percentage') as HTMLInputElement).value).toBe(
+    '70'
+  );
+  fireEvent.input(ui.getByLabelText('Neo model 1 auto-compact percentage'), {
+    target: { value: '90' },
+  });
+  expect(ui.getByText('90% ≈ 900K of 1M tokens')).toBeTruthy();
   fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
   await waitFor(() =>
     expect(request).toHaveBeenCalledWith('operation.invoke', {
@@ -237,7 +273,9 @@ test.each(['', '70.5'])(
   'rejects invalid percentage %s without sending a preference',
   async (value) => {
     const ui = await editor();
-    fireEvent.input(ui.getByLabelText('Auto-compact percentage'), { target: { value } });
+    fireEvent.input(ui.getByLabelText('Neo model 1 auto-compact percentage'), {
+      target: { value },
+    });
     fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
     expect((await ui.findByRole('alert')).textContent).toContain('whole number');
     expect(request).not.toHaveBeenCalledWith('operation.invoke', expect.anything());
@@ -252,8 +290,10 @@ test('an omitted override keeps model metadata and stays omitted when saving thi
     throw new Error(`Unexpected ${method}`);
   });
   const ui = await editor();
-  expect((ui.getByLabelText('Auto-compact percentage') as HTMLInputElement).value).toBe('90');
-  expect(ui.getByText(/800,000.*1,000,000.*80%/)).toBeTruthy();
+  expect((ui.getByLabelText('Neo model 1 auto-compact percentage') as HTMLInputElement).value).toBe(
+    '90'
+  );
+  expect(ui.getAllByText('80% ≈ 800K of 1M tokens')).toHaveLength(3);
   fireEvent.change(ui.getByLabelText('Neo model 1 thinking'), { target: { value: 'off' } });
   fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
   await waitFor(() =>

@@ -8,7 +8,7 @@ import {
   runLagPhase,
 } from '../../../packages/daemon/src/lib/event-loop-activity.ts';
 import { startEventLoopLagLog } from '../../../packages/daemon/src/lib/event-loop-lag.ts';
-import { NeoService } from '../../../packages/daemon/src/lib/neo/service.ts';
+import { createNeoService } from '../../../packages/daemon/src/lib/neo/packs/runtime.ts';
 
 const [mode, portText, runText, delivery = 'enabled'] = process.argv.slice(2);
 assert(['enabled', 'disabled'].includes(delivery));
@@ -26,7 +26,7 @@ const app = await createDaemonApp({
   config: getConfig({ port, host: '127.0.0.1', dbPath: join(run, 'data/daemon.db') }),
   verbose: false,
 });
-const service = new NeoService(app.db, app.sessionManager, app.messageHub, app.internalEventBus);
+const service = createNeoService(app.db, app.sessionManager, app.messageHub, app.internalEventBus);
 if (!enabled) app.db.updateGlobalSettings({ neo: { packs: ['life-admin'] } });
 const now = Date.now(),
   count = 180;

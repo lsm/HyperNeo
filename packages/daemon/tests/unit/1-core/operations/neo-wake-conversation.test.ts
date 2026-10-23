@@ -7,7 +7,7 @@ import { NeoRepository } from '../../../../src/storage/repositories/neo-reposito
 import { createNeoConversationReadOperation } from '../../../../src/lib/neo/conversation-read-operation.ts';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import {
   InternalEventBus,
   type DaemonInternalEventMap,
@@ -27,7 +27,7 @@ describe('scheduled wakes in the public conversation', () => {
   test('root status updates notify snapshot readers while other sessions do not', async () => {
     const events = new InternalEventBus<DaemonInternalEventMap>();
     const changed: string[] = [];
-    const service = new NeoService(
+    const service = createNeoService(
       db,
       {} as never,
       {

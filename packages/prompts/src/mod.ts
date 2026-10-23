@@ -134,6 +134,7 @@ import mdagentTaskNotificationContinue from './agent/task-notification-continue.
 import mdagentsInactivityNag from './agents/inactivity-nag.md' with { type: 'text' };
 import mdgoalsOutcomeReady from './goals/outcome-ready.md' with { type: 'text' };
 import mddriversClaudeDesktopRelay from './drivers/claude-desktop-relay.md' with { type: 'text' };
+import mddriversCodexWorker from './drivers/codex-worker.md' with { type: 'text' };
 import mddriversClaudeRcToggleBrief from './drivers/claude-rc-toggle-brief.md' with {
   type: 'text',
 };
@@ -319,6 +320,7 @@ const registry: Record<string, string> = {
   'agents/inactivity-nag.md': mdagentsInactivityNag,
   'goals/outcome-ready.md': mdgoalsOutcomeReady,
   'drivers/claude-desktop-relay.md': mddriversClaudeDesktopRelay,
+  'drivers/codex-worker.md': mddriversCodexWorker,
   'drivers/claude-rc-toggle-brief.md': mddriversClaudeRcToggleBrief,
   'drivers/claude-rc-toggle-request.md': mddriversClaudeRcToggleRequest,
   'mailbox/delivery-failed.md': mdmailboxDeliveryFailed,
@@ -449,6 +451,7 @@ export const {
   AGENT_INACTIVITY_NAG,
   GOAL_OUTCOME_READY,
   CLAUDE_DESKTOP_RELAY,
+  CODEX_WORKER_INSTRUCTIONS,
   CLAUDE_RC_TOGGLE_BRIEF,
   CLAUDE_RC_TOGGLE_REQUEST,
   MAILBOX_DELIVERY_FAILED,

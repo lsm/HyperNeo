@@ -11,7 +11,7 @@ import {
   type DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus.ts';
 import { CodingTodoPrRepository } from '../../../../src/lib/neo/packs/coding/todo-prs.ts';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import {
   createOperationRegistry,
   defineOperation,
@@ -19,7 +19,7 @@ import {
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 
-test('NeoService rechecks raw CI facts without sending a second PR message', async () => {
+test('ReturnType<typeof createNeoService> rechecks raw CI facts without sending a second PR message', async () => {
   const db = await createTestDb();
   const delivered: { ref: unknown; message: string }[] = [];
   const registry = createOperationRegistry([
@@ -36,7 +36,7 @@ test('NeoService rechecks raw CI facts without sending a second PR message', asy
     }),
   ]);
   const bus = new InternalEventBus<DaemonInternalEventMap>();
-  const service = new NeoService(
+  const service = createNeoService(
     db,
     { getOperationRegistry: () => registry } as unknown as SessionManager,
     { event: () => {} } as unknown as MessageHub,

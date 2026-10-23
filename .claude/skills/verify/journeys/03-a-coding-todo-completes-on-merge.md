@@ -6,10 +6,10 @@
    2-minute check window): the todo is `done` with evidence `#8 merged`,
    `evidence/gh.log` shows the `gh pr view`, and root's transcript holds the note
    `Todo "Fix the loader" is done: #8 merged`.
-   Settling done waits for the todos: right after seeding,
-   `rpc.ts neo.ask.settle '{"askId":"ask-verify","status":"done","outcome":"Shipped."}'`
-   replies `todos_unfinished: … "Fix the loader" (todo-verify, doing).` and the ask
-   stays `open`; the same call after the todo is `done` settles the ask `done`.
+   Local human `neo.ask.settle` explicitly confirms done even with unfinished
+   todos (#8292). Do not call it before observing this automatic-merge proof:
+   settling removes unfinished todos. Agent completion still requires finished
+   todos and otherwise returns `todos_unfinished`; the ask stays open.
    To verify PR ownership and URL edits, run
    `bun .claude/skills/verify/todo-pr-claims.ts <port> "$RUN"` on a fresh isolated
    daemon. It seeds only this run's ask, URL-less session todo and coding ledger
