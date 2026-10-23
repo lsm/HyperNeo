@@ -328,6 +328,24 @@ describe('ReactiveDatabase', () => {
       expect(titles).toEqual(['Landed']);
     });
 
+    test('scopes the change by the session as it was when the write was issued', async () => {
+      await db.createSession(
+        makeSession('moved', { context: { spaceId: 'space-1', taskId: 'task-1' } })
+      );
+      const settle = deferUpdates();
+      const scopes: unknown[] = [];
+      reactiveDb.on('change:sessions', (event) => scopes.push(event.scope?.taskId));
+
+      const write = reactiveDb.db.updateSession('moved', { title: 'Renamed' });
+      db.getDatabase()
+        .prepare('UPDATE sessions SET session_context = ? WHERE id = ?')
+        .run(JSON.stringify({ spaceId: 'space-1', taskId: 'task-2' }), 'moved');
+      settle[0]();
+      await write;
+
+      expect(scopes).toEqual(['task-1']);
+    });
+
     test('keeps a batch open until its pending session write lands', async () => {
       await db.createSession(makeSession('batched'));
       const settle = deferUpdates();
