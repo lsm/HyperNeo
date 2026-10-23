@@ -328,11 +328,14 @@ export class NeoService {
     this.publishSettings?.(updated);
     const root = this.repo.defaultBinding();
     if (!root) return;
-    await this.alignModelPreference(root.sessionId).catch((error) =>
-      this.log.warn('Neo model preference not applied', error)
-    );
+    const target = await this.alignModelPreference(root.sessionId).catch((error) => {
+      this.log.warn('Neo model preference not applied', error);
+      return null;
+    });
     const session = this.db.getSession(root.sessionId);
-    const percent = session ? neoCompactPercentFor(preferences, session.config) : undefined;
+    const percent = session
+      ? neoCompactPercentFor(preferences, target ?? session.config)
+      : undefined;
     if (
       session &&
       (session.config.autoCompactPercent !== percent ||
@@ -343,33 +346,35 @@ export class NeoService {
       });
   }
 
-  private async alignModelPreference(sessionId: string): Promise<void> {
+  private async alignModelPreference(
+    sessionId: string
+  ): Promise<{ model: string; provider: string } | null> {
     const preference = this.modelPreference();
     const config = this.db.getSession(sessionId)?.config;
     const plan = preference && config ? planNeoAlignment(config, preference) : null;
-    if (!preference || !plan) return;
+    if (!preference || !plan) return null;
     const live = await this.sessions.getSessionForControl(sessionId);
-    if (!live) return;
+    if (!live) return null;
     if (live.isLimitRecoveryPending?.() || live.getRateLimitWatchdogState?.().lastUserMessage)
-      return;
+      return null;
     const previousThinking = live.getSessionData().config.thinkingLevel;
     if (plan.thinking)
       await this.sessions.updateSession(sessionId, {
         config: { ...live.getSessionData().config, thinkingLevel: preference.thinkingLevel },
       });
-    if (plan.model) {
-      let restored = false;
-      try {
-        const switched = await live.requestModelSwitch(preference.model, preference.provider);
-        restored = switched.success && !switched.pending;
-        if (!switched.success)
-          this.log.warn(`Neo session ${sessionId} keeps its model: ${switched.error ?? ''}`);
-      } finally {
-        if (!restored && plan.thinking)
-          await this.sessions.updateSession(sessionId, {
-            config: { ...live.getSessionData().config, thinkingLevel: previousThinking },
-          });
-      }
+    if (!plan.model) return null;
+    let restored = false;
+    try {
+      const switched = await live.requestModelSwitch(preference.model, preference.provider);
+      restored = switched.success && !switched.pending;
+      if (switched.success) return { model: preference.model, provider: preference.provider };
+      this.log.warn(`Neo session ${sessionId} keeps its model: ${switched.error ?? ''}`);
+      return null;
+    } finally {
+      if (!restored && plan.thinking)
+        await this.sessions.updateSession(sessionId, {
+          config: { ...live.getSessionData().config, thinkingLevel: previousThinking },
+        });
     }
   }
 

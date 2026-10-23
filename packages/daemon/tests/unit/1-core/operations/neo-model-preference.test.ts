@@ -441,6 +441,12 @@ describe('neo.preferences.set', () => {
     switchFailure = 'refused';
     await service.saveModelPreference(db.getGlobalSettings().neo!.preferences!);
     expect(db.getSession('neo:root')?.config.autoCompactPercent).toBe(100);
+    switchFailure = 'pending';
+    await service.saveModelPreference(db.getGlobalSettings().neo!.preferences!);
+    expect(db.getSession('neo:root')?.config).toMatchObject({
+      model: 'deepseek-v4-flash',
+      autoCompactPercent: 70,
+    });
   });
 
   test('a new Neo session starts on the preference, thinking included', async () => {
