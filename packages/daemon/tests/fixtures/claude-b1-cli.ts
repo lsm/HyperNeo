@@ -66,6 +66,12 @@ if (process.argv.includes('agents')) {
     )
   );
 } else if (process.argv.includes('--synthetic-desktop-import')) {
+  if (fault() === 'hanging-import') {
+    writeFileSync(join(evidence, 'hanging-import.pid'), String(process.pid));
+    log({ kind: 'hanging-import' });
+    await new Promise((resolve) => setTimeout(resolve, 300000));
+    process.exit(1);
+  }
   const s = sessions.find((s) => s.id === flag('--resume'))!;
   if (fault() === 'missing-import') process.exit(1);
   s.permissionMode = s.title === 'rc-toggle' ? 'bypassPermissions' : 'acceptEdits';

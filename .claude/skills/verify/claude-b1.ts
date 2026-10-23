@@ -59,6 +59,7 @@ try {
   const startInput = { adapter: 'claude-desktop', place: { machine: hostname(), folder: join(run, 'workspace'), name: 'Synthetic project' }, title: 'B1 synthetic worker', message: task };
   const started = await rpc<Result<WorkStarted>>('work.start', startInput);
   assert(started.ok, JSON.stringify(started));
+  assert.deepEqual(started.value.place, startInput.place);
   assert.equal(started.value.permissionMode, 'acceptEdits');
   assert.match(started.value.watchHint!, /acceptEdits/);
   assert.equal(started.value.desktopUI?.state, 'ui-unconfirmed');
@@ -113,11 +114,25 @@ try {
   assert(!missing.ok);
   assert(!events().some(e => e.kind === 'native-send' && e.message === 'Never run this task headless'));
   assert(!events().some(e => e.kind === 'forbidden-cli'));
+  if (process.env.VERIFY_HANDOFF_TIMEOUT === '1') {
+    writeFileSync(join(run, 'evidence/fault'), 'hanging-import');
+    const began = Date.now();
+    const hung = await rpc<Result<WorkStarted>>('work.start', { ...startInput, title: 'Hanging handoff', message: 'Never dispatch during hung handoff' });
+    assert(!hung.ok);
+    assert.match(hung.detail, /Desktop handoff failed/);
+    const elapsed = Date.now() - began;
+    assert(elapsed >= 120000 && elapsed < 130000, `handoff deadline ${elapsed} ms`);
+    evidence.push({ hangingHandoff: hung, elapsed, noTaskDispatched: !events().some(e => e.kind === 'native-send' && e.message === 'Never dispatch during hung handoff') });
+  }
   assert(events().filter(e => e.kind === 'relay' && e.helper !== rcId).every(e => e.mode === 'acceptEdits'));
   assert.equal(digest(settings), originalSettings);
   evidence.push({ actualTaskSha256: createHash('sha256').update(task).digest('hex'), nativeRecordUnchanged: true, globalSettingsUnchanged: true, nativePromptsApproved: 0, renderingAndPhone: 'not measured by synthetic fixture', events: events() });
   console.log(`PASS: B1 native-message RPC journey; actual acceptEdits, full task/receipt, follow-up, permission wait, refusal and import failure. ${run}/evidence/observed.json`);
 } finally {
+  const hangingPid = join(run, 'evidence/hanging-import.pid');
+  if (existsSync(hangingPid)) {
+    try { process.kill(Number(readFileSync(hangingPid, 'utf8')), 'SIGTERM'); } catch {}
+  }
   if (ws?.readyState === WebSocket.OPEN) {
     const closed = new Promise<void>(resolve => ws!.addEventListener('close', () => resolve(), { once: true }));
     ws.close();

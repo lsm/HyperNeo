@@ -10,6 +10,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { vi } from 'vitest';
 import {
   createClaudeDesktopAdapter,
   selectClaudeStartFolder,
@@ -71,7 +72,7 @@ describe('claude-desktop start', () => {
       checkout?: { repo: string; linked: boolean };
       permissionMode?: string;
       importedPermissionMode?: string;
-      desktop?: 'imported' | 'never';
+      desktop?: 'imported' | 'never' | 'hung';
     } = {}
   ) {
     let live: {
@@ -147,7 +148,10 @@ describe('claude-desktop start', () => {
         return {
           stdout: null,
           stderr: new Response(code ? 'no auth' : '').body,
-          exited: Promise.resolve(code),
+          exited:
+            args.includes('--desktop') && desktop === 'hung'
+              ? new Promise<number>(() => {})
+              : Promise.resolve(code),
           exitCode: code,
           kill: (signal?: string) => {
             killed.push(String(signal));
@@ -235,6 +239,53 @@ describe('claude-desktop start', () => {
     });
     expect(spawned.every((args) => !args.includes(request.message))).toBe(true);
     expect(handoffs).toBe(1);
+  });
+
+  test('a hung Desktop handoff has a bounded refusal and clears its timer', async () => {
+    vi.useFakeTimers();
+    try {
+      const result = adapter({ desktop: 'hung' }).start!(request, user);
+      await vi.waitFor(() => expect(handoffs).toBe(1));
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(await result).toMatchObject({
+        ok: false,
+        reason: 'not_delivered',
+        detail: expect.stringContaining('Desktop handoff failed'),
+      });
+      expect(killed).toEqual(['SIGKILL']);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('a confirmed prepared session survives an unconfirmed import with a recoverable location', async () => {
+    let released = 0;
+    const driver = adapter({
+      desktop: 'never',
+      prepareExecution: async () => ({
+        ok: true,
+        value: {
+          directory: '/fresh/remote-base',
+          release: async () => {
+            released++;
+          },
+        },
+      }),
+    });
+    const result = await driver.start!(
+      { ...request, preparation: { pack: 'coding', parameters: {} } },
+      user
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      detail: expect.stringContaining('/fresh/remote-base'),
+    });
+    expect(!result.ok && result.detail).toContain('local_u1');
+    expect(released).toBe(0);
+    expect(await driver.status!({ adapter: 'claude-desktop', id: 'local_u1' })).toMatchObject({
+      ok: true,
+    });
   });
 
   test('B1 accepts and reports the actual imported acceptEdits mode', async () => {

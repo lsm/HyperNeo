@@ -222,6 +222,58 @@ describe('withClaudeRemoteControl', () => {
     title: 'Fix the parser',
   } as WorkSummary;
 
+  test.each([false, true])(
+    'keeps the requested place and receipt with status capability %s',
+    async (hasStatus) => {
+      const place = { machine: 'laptop', folder: '/project', name: 'Human project name' };
+      const initial = { ...summary, place, status: 'queued', lastActivityAt: 1 };
+      const adapter = {
+        id: 'claude-desktop',
+        capabilities: ['start'],
+        find: async () => [],
+        start: async () => ({ ok: true, value: initial }),
+        ...(hasStatus
+          ? {
+              status: async () => ({
+                ok: true,
+                value: {
+                  ...initial,
+                  place: { ...place, folder: '/project/worktree', name: 'worktree' },
+                  status: 'needs_you',
+                  waitingFor: 'permission prompt',
+                  permissionMode: 'acceptEdits',
+                  lastActivityAt: 2,
+                },
+              }),
+            }
+          : {}),
+      } as unknown as WorkAdapter;
+      const wrapped = withClaudeRemoteControl(
+        adapter,
+        {} as ClaudeDesktopAdapterDeps,
+        async () => ({ ok: true, value: { delivered: false } }),
+        async () => ({
+          ok: true,
+          value: { delivered: true, receipt: { executionId: 'target', inputId: 'native-task' } },
+        })
+      );
+      expect(await wrapped.start!({ message: 'Task' } as never, {} as never)).toMatchObject({
+        ok: true,
+        value: {
+          place,
+          receipt: { inputId: 'native-task' },
+          ...(hasStatus
+            ? {
+                status: 'needs_you',
+                waitingFor: 'permission prompt',
+                permissionMode: 'acceptEdits',
+              }
+            : {}),
+        },
+      });
+    }
+  );
+
   test('asks for Remote Control after a start succeeds, and not after one fails', async () => {
     const asked: string[] = [];
     const context = { from: 'session:origin', caller: { source: 'internal' as const } };
