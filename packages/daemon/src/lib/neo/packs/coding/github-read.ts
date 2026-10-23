@@ -1,11 +1,14 @@
 import type { NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
-import { parseGitHubRefUrl } from '../../../github/parse-pr-url.ts';
+import { parseGitHubRefUrl, parsePrUrl } from '../../../github/parse-pr-url.ts';
 import type { NeoRef, NeoRefState, NeoRefStateReader } from './ask-prs.ts';
 import type { NeoWorkPrReader } from './work-prs.ts';
 
 type Failure = { ok: false; reason: string };
+type PrIdentity = { kind: 'pr'; url: string };
+type RefTarget = NeoRefState | PrIdentity;
+type PrTarget = { ok: true } & PrIdentity;
 export type NeoGithubReaders = { readRefStates: NeoRefStateReader; readPrs: NeoWorkPrReader };
 
 export const NeoGithubReadResult = z.union([
@@ -40,9 +43,9 @@ export function requireNeoGithubRef(url: string): { value: NeoRef } | { reason: 
 }
 
 export function requireNeoRefRead(
-  found: { states: NeoRefState[] },
+  found: { states: RefTarget[] },
   url: string
-): { value: NeoRefState } | { reason: Failure } {
+): { value: RefTarget } | { reason: Failure } {
   const [state] = found.states;
   return state
     ? { value: state }
@@ -54,18 +57,13 @@ export function requireNeoRefRead(
       };
 }
 
-export function presentNeoRefRead(state: NeoRefState): { value: NeoGithubReadResult } {
+export function presentNeoRefRead(state: RefTarget): { value: NeoGithubReadResult | PrTarget } {
   if (state.kind === 'pr')
     return {
       value: {
         ok: true,
         kind: 'pr',
         url: state.url,
-        state: state.state,
-        checks: null,
-        review: null,
-        blockers: [],
-        title: null,
       },
     };
   const closed = state.state === 'CLOSED';
@@ -89,7 +87,7 @@ export function presentNeoRefRead(state: NeoRefState): { value: NeoGithubReadRes
 }
 
 export function presentNeoPrRead(
-  read: NeoGithubReadResult,
+  read: NeoGithubReadResult | PrTarget,
   detail: { prs: NeoWorkPr[] | null }
 ): { value: NeoGithubReadResult } | { reason: Failure } {
   const pr = detail.prs?.[0];
@@ -104,6 +102,7 @@ export function presentNeoPrRead(
     ? {
         value: {
           ...read,
+          url: pr.url,
           state: pr.state,
           checks: pr.checks,
           review: pr.review,
@@ -118,19 +117,21 @@ export const readNeoGithubRef = (superpipe({})('neo-github-read') as PipelineAPI
   .input(['readers', 'url'])
   .pipe(requireNeoGithubRef, 'url', 'result:read')
   .pipe(
-    async (readers: NeoGithubReaders, read: NeoRef) => ({
-      states: await readers.readRefStates([read]),
+    async (readers: NeoGithubReaders, read: NeoRef, url: string) => ({
+      states: parsePrUrl(url)
+        ? [{ kind: 'pr' as const, url }]
+        : await readers.readRefStates([read]),
     }),
-    ['readers', 'read'],
+    ['readers', 'read', 'url'],
     'found'
   )
   .pipe(requireNeoRefRead, ['found', 'url'], 'result:read')
-  .pipe((read: NeoRefState) => ({ state: read }), 'read', 'held')
+  .pipe((read: RefTarget) => ({ state: read }), 'read', 'held')
   .pipe(presentNeoRefRead, 'read', 'result:read')
-  .pipe((held: { state: NeoRefState }) => held.state.kind === 'issue', 'held', 'issue')
+  .pipe((held: { state: RefTarget }) => held.state.kind === 'issue', 'held', 'issue')
   .pipe('!issue')
   .pipe(
-    async (readers: NeoGithubReaders, held: { state: NeoRefState }) => ({
+    async (readers: NeoGithubReaders, held: { state: RefTarget }) => ({
       prs: await readers.readPrs([held.state.url]),
     }),
     ['readers', 'held'],

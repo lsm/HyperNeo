@@ -34,7 +34,7 @@ async function open(){
   await new Promise<void>((done,fail)=>{ws!.onopen=()=>done();ws!.onerror=()=>fail(new Error('connect'));});
   ws.onmessage=event=>{const msg=JSON.parse(String(event.data)),id=waiting.has(msg.requestId)?msg.requestId:msg.id,held=waiting.get(id);if(!held)return;waiting.delete(id);clearTimeout(held.timer);if(msg.error)held.fail(new Error(JSON.stringify(msg.error)));else held.done(msg.data);};
 }
-const read=(input:unknown={url},name='neo.github.read')=>new Promise<any>((done,fail)=>{
+const read=(input:unknown={url:url.replace('/pull/','/issues/')},name='neo.github.read')=>new Promise<any>((done,fail)=>{
   const id=crypto.randomUUID(),timer=setTimeout(()=>{waiting.delete(id);fail(new Error('RPC timeout'));},15000);
   waiting.set(id,{done,fail,timer});
   ws!.send(JSON.stringify({id,type:'REQ',sessionId:'global',method:'operation.invoke',data:{name,input},timestamp:new Date().toISOString(),version:'1.0.0'}));
