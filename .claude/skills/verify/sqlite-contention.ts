@@ -63,8 +63,14 @@ try {
     .find((t) => t.phases[0].durationMs >= 200);
   assert(waiting, 'Contending main transaction names its BEGIN acquisition wait');
   assert.equal(waiting.phases[0].outcome, 'acquired');
-  assert(holding.phases[0].finishedAt <= waiting.phases[0].finishedAt);
-  assert(holding.phases[2].finishedAt <= waiting.phases[1].finishedAt + 20);
+  const assertContentionIntervals = (holder: Transaction, waiter: Transaction) => {
+    assert(holder.phases[0].finishedAt <= waiter.phases[0].finishedAt);
+    assert(holder.phases[2].finishedAt <= waiter.phases[1].finishedAt + 20);
+  };
+  assertContentionIntervals(holding, waiting);
+  const lateCommitStamp = structuredClone(holding);
+  lateCommitStamp.phases[2].finishedAt = waiting.phases[1].finishedAt + 1000;
+  assertContentionIntervals(lateCommitStamp, waiting);
   db.exec('PRAGMA busy_timeout=10');
   const second = await hold(650);
   assert.throws(() => withBusyRetry(() => db.transaction(() => {
@@ -88,6 +94,9 @@ try {
     assert.equal(typeof log.metadata.workerTimestamp, 'number');
     assert.equal(typeof log.metadata.workerRequestId, 'string');
   }
+  const workerSummaries = events.filter((event) => event.metadata.workerKind && event.metadata.event === 'summary');
+  assert(workerSummaries.length >= 2, 'Real merge and mirror workers publish close summaries');
+  assert(workerSummaries.every((event) => !('workerOperation' in event.metadata) && !('workerRequestId' in event.metadata)), 'Window summaries must not claim a single request identity');
   assert.equal((db.prepare('SELECT COUNT(*) AS n FROM contention').get() as { n: number }).n, 5);
   const summary = { sourceCommit: Bun.spawnSync(['git', 'rev-parse', 'HEAD']).stdout.toString().trim(), runtime: Bun.version, synthetic: true, holding, waiting, holderRequestId: held.metadata.workerRequestId, workerTimestamp: held.metadata.workerTimestamp, receivedAt: held.timestamp, retry: retry.map((e) => e.metadata), forwardedWorkers: ['db-gateway-write', 'message-search-merge', 'project-mirror'], rows: 5 };
   writeFileSync(join(root, 'observed.json'), JSON.stringify(summary, null, 2));
