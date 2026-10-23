@@ -1,0 +1,123 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - `__dirname` (vitest.config.ts:7:14). Use `import.meta.dirname` instead
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.0 /Users/lsm/focus/worktrees/todo-plan-question-retry/packages/daemon
+
+ ❯ tests/unit/1-core/operations/neo-todo-runner.test.ts (61 tests | 1 failed) 6190ms
+   ❯ failed todo retry in place (1)
+     × reuses the todo and worker with a fresh durable input attempt 111ms
+ ❯ tests/unit/1-core/operations/neo-questions.test.ts (23 tests | 3 failed) 2255ms
+   ❯ todo-owned question cards (3)
+     × retains explicit todo ownership and retires only settled todo cards 110ms
+     × recompute retires cards for missing or already settled todos without a new state write 104ms
+     × refuses a foreign or settled todo instead of making an unowned question 105ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/1-core/operations/neo-questions.test.ts > todo-owned question cards > retains explicit todo ownership and retires only settled todo cards
+AssertionError: expected { …(18) } to match object { todoId: 't1' }
+(18 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "todoId": "t1",
++   "answer": null,
++   "answeredAt": null,
++   "answeredBy": null,
++   "askId": "ask",
++   "confirm": null,
++   "createdAt": 1792716569019,
++   "document": null,
++   "id": "678e5431-5b94-407e-9e10-343addd85009",
++   "kind": "reply",
++   "multiple": false,
++   "noLabel": null,
++   "options": null,
++   "replacedBy": null,
++   "retiredReason": null,
++   "startTodos": null,
++   "state": "open",
++   "text": "Which rows?",
++   "yesLabel": null,
+  }
+
+ ❯ tests/unit/1-core/operations/neo-questions.test.ts:516:21
+    514|       const other = await h.asked({ kind: 'reply', text: 'Which style?…
+    515|       const general = await h.asked({ kind: 'reply', text: 'Anything e…
+    516|       expect(bound).toMatchObject({ todoId: h.fix.id });
+       |                     ^
+    517|       h.store.updateTodo(h.fix, { state: 'done' }, 4);
+    518|       expect(h.store.getQuestion(bound.id)?.state).toBe('retired');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  tests/unit/1-core/operations/neo-questions.test.ts > todo-owned question cards > recompute retires cards for missing or already settled todos without a new state write
+AssertionError: expected 'open' to be 'retired' // Object.is equality
+
+Expected: "retired"
+Received: "open"
+
+ ❯ tests/unit/1-core/operations/neo-questions.test.ts:539:51
+    537|         async () => {}
+    538|       );
+    539|       expect(h.store.getQuestion(gone.id)?.state).toBe('retired');
+       |                                                   ^
+    540|       expect(h.store.getQuestion(done.id)?.state).toBe('retired');
+    541|     } finally {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  tests/unit/1-core/operations/neo-questions.test.ts > todo-owned question cards > refuses a foreign or settled todo instead of making an unowned question
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ tests/unit/1-core/operations/neo-questions.test.ts:556:27
+    554|           todoId,
+    555|         });
+    556|         expect(result.ok).toBe(false);
+       |                           ^
+    557|       }
+    558|     } finally {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  tests/unit/1-core/operations/neo-todo-runner.test.ts > failed todo retry in place > reuses the todo and worker with a fresh durable input attempt
+AssertionError: expected { ok: false, …(1) } to match object { ok: true, todo: { …(3) } }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "ok": true,
+-   "todo": {
+-     "id": "dc86313c-a2fa-4b3c-bdae-c39b4c156ca4",
+-     "reason": null,
+-     "state": "doing",
+-   },
++   "ok": false,
+  }
+
+ ❯ tests/unit/1-core/operations/neo-todo-runner.test.ts:1642:22
+    1640|       h.setStatus({ ok: true, value: { status: 'failed', lastActivityA…
+    1641|       const result = await h.runner.retry(todo.id);
+    1642|       expect(result).toMatchObject({
+       |                      ^
+    1643|         ok: true,
+    1644|         todo: { id: todo.id, state: 'doing', reason: null },
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  4 failed | 80 passed (84)
+   Start at  20:49:19
+   Duration  9.50s (tests 90%, transform 6%, import 3%)

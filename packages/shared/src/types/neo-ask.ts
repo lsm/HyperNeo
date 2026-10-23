@@ -63,6 +63,7 @@ export type NeoQuestionState = 'open' | 'answered' | 'retired';
 export type NeoQuestionAnswer = string | string[];
 
 export interface NeoQuestion {
+  todoId?: string | null;
   document?: string | null;
   replyTo?: string[];
   id: string;

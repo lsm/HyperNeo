@@ -357,6 +357,46 @@ try {
     assert.equal(store.getTodo('removed')?.state, 'removed');
     assert.equal(store.getTodo('removed')?.report, report);
     assert.equal(store.getTodo('persisted-done')?.report, report);
+    if (process.argv.includes('--lifecycle')) {
+      ask('lifecycle');
+      add('question-todo', 'lifecycle', 6);
+      const question = await rpc('neo.question.ask', { askId: 'lifecycle', todoId: 'question-todo', kind: 'reply', text: 'Choose the synthetic implementation?' });
+      evidence.todoQuestion = question;
+      const general = await rpc('neo.question.ask', { askId: 'lifecycle', kind: 'reply', text: 'General synthetic ask question?' });
+      assert.equal(question.question.todoId, 'question-todo');
+      await rpc('neo.todo.remove', { todoId: 'question-todo', reason: 'Synthetic plan item no longer needed' });
+      await refresh();
+      evidence.retiredQuestion = await rpc('neo.question.get', { questionId: question.question.id });
+      assert.equal(evidence.retiredQuestion.question.state, 'retired');
+      evidence.generalQuestion = await rpc('neo.question.get', { questionId: general.question.id });
+      assert.equal(evidence.generalQuestion.question.state, 'open');
+      const failed = store.getTodo('after-restart')!;
+      store.updateTodo(failed, { state: 'failed', reason: 'Synthetic worker failure' }, Date.now());
+      const previousInputs = sessions.inputs.list(failed.id);
+      const beforeRetry = starts();
+      evidence.retryReceipt = await rpc('neo.todo.retry', { todoId: failed.id });
+      assert.equal(evidence.retryReceipt.ok, true);
+      assert.equal(evidence.retryReceipt.todo.id, failed.id);
+      assert.equal(evidence.retryReceipt.todo.state, 'doing');
+      assert.equal(starts(), beforeRetry + 1);
+      const retriedInputs = sessions.inputs.list(failed.id);
+      assert.equal(retriedInputs.length, previousInputs.length + 1);
+      assert.deepEqual(retriedInputs.slice(0, previousInputs.length), previousInputs);
+      assert.notEqual(retriedInputs.at(-1)?.id, previousInputs.at(-1)?.id);
+      assert.equal(sessions.readRetries(failed.id), 1);
+      ws!.close(); await app!.cleanup(); app = undefined; await open();
+      evidence.lifecycleSnapshot = await rpc('neo.snapshot', {});
+      const lifecycleAsk = evidence.lifecycleSnapshot.todoAsks.find((group: any) => group.ask.id === 'lifecycle');
+      assert.equal(lifecycleAsk.questions.find((card: any) => card.id === question.question.id)?.state, 'retired');
+      assert.equal(lifecycleAsk.questions.find((card: any) => card.id === general.question.id)?.state, 'open');
+      const retryAsk = evidence.lifecycleSnapshot.todoAsks.find((group: any) => group.ask.id === 'restart');
+      assert.equal(retryAsk.todos.find((todo: any) => todo.id === failed.id)?.state, 'doing');
+      assert.equal(store.getTodo(failed.id)?.state, 'doing');
+      assert.equal(store.getQuestion(question.question.id)?.state, 'retired');
+      assert.equal(sessions.inputs.list(failed.id).length, retriedInputs.length);
+      console.log('PASS: todo question retired, general question open, same todo retried with a new durable input, ownership and attempts survive restart.');
+      evidence.lifecycle = { sameTodo: failed.id, inputs: retriedInputs.map(input => input.id), retries: sessions.readRetries(failed.id), starts: starts() };
+    }
     evidence.observed = {
       states: store.listTodos('restart').map((t) => ({ id: t.id, state: t.state })),
       starts: starts(),

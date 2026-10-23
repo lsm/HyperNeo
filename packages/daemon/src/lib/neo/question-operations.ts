@@ -32,6 +32,7 @@ const Confirmation = z.object({
     .regex(/^[a-f0-9]+$/),
 });
 const Asked = {
+  todoId: Text.optional(),
   askId: Text,
   text: Text,
   replyTo: z.array(z.uuid()).max(100).optional(),
@@ -64,6 +65,7 @@ const Answer = z.object({ questionId: Text, answer: z.union([z.string(), z.array
 const Get = z.object({ questionId: Text });
 
 export const NeoQuestionSchema = z.object({
+  todoId: z.string().nullable().optional(),
   document: z.string().nullable().optional(),
   replyTo: z.array(z.uuid()).optional(),
   id: z.string(),
@@ -99,6 +101,7 @@ const QuestionReadResult = z.union([
       confirm: true,
       document: true,
       replyTo: true,
+      todoId: true,
     }),
     answeredByHuman: z.boolean(),
   }),
@@ -106,7 +109,8 @@ const QuestionReadResult = z.union([
 
 export function readNeoQuestion(question: NeoQuestion | null): z.infer<typeof QuestionReadResult> {
   if (!question) return { ok: false, reason: 'not_found: no such question.' };
-  const { id, text, kind, state, answer, answeredAt, confirm, document, replyTo } = question;
+  const { id, text, kind, state, answer, answeredAt, confirm, document, replyTo, todoId } =
+    question;
   return {
     ok: true,
     question: {
@@ -119,6 +123,7 @@ export function readNeoQuestion(question: NeoQuestion | null): z.infer<typeof Qu
       confirm,
       document,
       ...(replyTo ? { replyTo } : {}),
+      ...(todoId ? { todoId } : {}),
     },
     answeredByHuman: state === 'answered',
   };
@@ -137,8 +142,18 @@ type QuestionPlan = { ask: NeoAsk; draft: NeoQuestionDraft; reworded: NeoQuestio
 export function planNeoQuestion(
   ask: NeoAsk,
   questions: readonly NeoQuestion[],
-  input: z.infer<typeof Ask>
+  input: z.infer<typeof Ask>,
+  todo?: NeoTodo | null
 ): Gate<QuestionPlan> {
+  const todoId = 'todoId' in input ? input.todoId : undefined;
+  if (
+    todoId &&
+    (!todo ||
+      todo.id !== todoId ||
+      todo.askId !== ask.id ||
+      ['done', 'removed'].includes(todo.state))
+  )
+    return fail('todo_closed: choose a current todo on this ask.');
   const confirm = input.confirm ?? null;
   if (confirm) {
     if (input.kind !== 'yesno')
@@ -150,6 +165,7 @@ export function planNeoQuestion(
   }
   const draft: NeoQuestionDraft = {
     text: input.text,
+    ...(todoId ? { todoId } : {}),
     ...(input.replyTo ? { replyTo: input.replyTo } : {}),
     kind: input.kind,
     options: input.kind === 'choice' ? input.options : null,
@@ -269,7 +285,12 @@ export function createNeoQuestionOperations(
     )
     .pipe(
       (owned: NeoAsk, input: z.infer<typeof Ask>) =>
-        planNeoQuestion(owned, store.listQuestions(owned.id), input),
+        planNeoQuestion(
+          owned,
+          store.listQuestions(owned.id),
+          input,
+          'todoId' in input && input.todoId ? store.getTodo(input.todoId) : null
+        ),
       ['outcome', 'input'],
       'result:outcome'
     )
@@ -398,7 +419,7 @@ export function createNeoQuestionOperations(
     defineOperation({
       name: 'neo.question.ask',
       description:
-        'Ask the human one question on an open ask you own. Optional replyTo cites received human message ids this question asks back about; it does not mark those inputs answered. Unknown, foreign, queued and non-human ids are refused. Format text as Markdown: short title line, a few bullets or a small table, bold key choice; no walls of text. A home proposal uses kind yesno with confirm:{path,sha256}; the question text must show that exact path and 64-character lowercase content hash alongside the proposed change. This records the proposal, not permission to save. kind yesno: noLabel (left, keep things as they are) and yesLabel (right, the change it names). choice: 2-6 options, multiple for pick-any; the card labels them A, B, C… in order and the human may answer by letter, so never put letters in the option text. Every card also has Reply in chat, where the human can answer in their own words, so never add an "other" or "something else" option. reply: answered in chat. start: rewords the start question the daemon opens on this ask for todos waiting to start; the human unticks any they do not want, and answering starts the ticked ones. It never opens a second one. Ask only what you cannot read yourself; never a bookkeeping question. replaces names an open question on the same ask: it is retired as replaced by this one in the same step.',
+        'Ask the human one question on an open ask you own. For a question about one todo, pass its todoId; the card retires automatically when that todo is done, removed or gone. Optional replyTo cites received human message ids this question asks back about; it does not mark those inputs answered. Unknown, foreign, queued and non-human ids are refused. Format text as Markdown: short title line, a few bullets or a small table, bold key choice; no walls of text. A home proposal uses kind yesno with confirm:{path,sha256}; the question text must show that exact path and 64-character lowercase content hash alongside the proposed change. This records the proposal, not permission to save. kind yesno: noLabel (left, keep things as they are) and yesLabel (right, the change it names). choice: 2-6 options, multiple for pick-any; the card labels them A, B, C… in order and the human may answer by letter, so never put letters in the option text. Every card also has Reply in chat, where the human can answer in their own words, so never add an "other" or "something else" option. reply: answered in chat. start: rewords the start question the daemon opens on this ask for todos waiting to start; the human unticks any they do not want, and answering starts the ticked ones. It never opens a second one. Ask only what you cannot read yourself; never a bookkeeping question. replaces names an open question on the same ask: it is retired as replaced by this one in the same step.',
       inputSchema: Ask,
       resultSchema: QuestionResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },

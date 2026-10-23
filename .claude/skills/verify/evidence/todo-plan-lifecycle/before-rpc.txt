@@ -1,0 +1,23 @@
+360 |     if (process.argv.includes('--lifecycle')) {
+361 |       ask('lifecycle');
+362 |       add('question-todo', 'lifecycle', 6);
+363 |       const question = await rpc('neo.question.ask', { askId: 'lifecycle', todoId: 'question-todo', kind: 'reply', text: 'Choose the synthetic implementation?' });
+364 |       evidence.todoQuestion = question;
+365 |       assert.equal(question.question.todoId, 'question-todo');
+                   ^
+AssertionError: Expected values to be strictly equal:
++ actual - expected
+
++ undefined
+- 'question-todo'
+
+ generatedMessage: true,
+     actual: undefined,
+   expected: "question-todo",
+   operator: "strictEqual",
+       diff: "simple",
+       code: "ERR_ASSERTION"
+
+      at /Users/lsm/focus/worktrees/todo-plan-question-retry/.claude/skills/verify/todo-plan-recompute.ts:365:14
+
+Bun v1.4.3 (macOS arm64)

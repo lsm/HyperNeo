@@ -49,3 +49,16 @@ may fail closed; this journey proves stored plan state and worker dispatch,
 not model consumption of those notes. The helper closes its WebSocket, daemon
 and peer in finally. Keep evidence outside the worktree, remove the worktree
 after merge/close, and use `hyperneo build` for deploy readback.
+
+## Todo question ownership and retry attempts
+
+Add `--lifecycle` to the command above to exercise todo lifecycle RPCs on the
+same isolated daemon. `neo.question.ask` must return its explicit `todoId`;
+removing that todo through `neo.todo.remove` must retire the bound card after
+recompute, while a general ask question remains open. Marking a previously
+started synthetic todo failed and invoking `neo.todo.retry` must keep its ID,
+send one new turn to its existing worker, preserve the old durable input, and
+record a distinct new attempt. Restart the daemon and check that the retired
+card and retry history survive. Evidence is in the same `observed.json` under
+`lifecycle`. This checks the daemon RPC and snapshot surface without a model
+turn; it does not claim browser rendering or model adherence to the prompt.
