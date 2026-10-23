@@ -1099,8 +1099,9 @@ export async function withCodexAppServer<Value>(
     );
   }
   let closed = false;
+  let outcome: Result<Value> | undefined;
   try {
-    return await use({
+    outcome = await use({
       ...server,
       close: async () => {
         try {
@@ -1110,8 +1111,15 @@ export async function withCodexAppServer<Value>(
         }
       },
     });
+    return outcome;
   } finally {
-    if (!closed) await server.close();
+    if (!closed) {
+      try {
+        await server.close();
+      } catch (error) {
+        if (outcome?.ok) throw error;
+      }
+    }
   }
 }
 

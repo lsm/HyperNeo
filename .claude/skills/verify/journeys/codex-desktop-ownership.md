@@ -24,7 +24,9 @@ no longer exists before granting Desktop ownership. The opening input goes only
 to `thread-follower-start-turn`. A second bootstrap exits with status 7; that
 request must return `not_delivered` with the saved thread ID in its detail,
 without handing off or submitting an opening turn. It must not become an
-`execution_failed` RPC error during cleanup. The delayed
+`execution_failed` RPC error during cleanup. A subsequent name refusal combined
+with the same exit 7 must preserve the name error, typed rejection and saved
+thread ID; cleanup must not replace the first error. The delayed
 exit and abnormal-exit unit contracts separately pin the process lifecycle.
 Keep `evidence/observed.json` and `evidence/open.jsonl`. The daemon and peers close
 in `finally`. This proves routing and lifecycle through the production operation
