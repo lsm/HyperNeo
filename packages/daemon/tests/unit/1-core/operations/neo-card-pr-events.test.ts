@@ -217,30 +217,26 @@ describe('Neo todo pull request events', () => {
     expect(subscriptions.listBySession('archived-worker')).toHaveLength(1);
   });
 
-  test('a todo CI failure reaches its actual target without a neo_work row', async () => {
+  test('a raw CI failure keeps subscriptions without delivering outside the ledger', async () => {
     todo();
     await event('check_failed', { checkName: 'Web Tests', conclusion: 'failure' });
-    expect(sent).toHaveLength(1);
-    expect(sent[0].ref).toEqual(ref);
-    expect(sent[0].message).toContain('check failed');
-    expect(sent[0].message).toContain('Web Tests');
+    expect(sent).toEqual([]);
     expect(service.followedTopics()).toEqual([
       { topic: 'github/lsm/hyperneo/pull_request/7.*', session: null },
     ]);
     expect(watched).toEqual(['github/lsm/hyperneo/pull_request/7.*']);
   });
   test.each(['review_submitted', 'review_comment_created', 'comment_created', 'comment_polled'])(
-    '%s reaches the todo session with its review/comment body',
+    'raw %s leaves worker messaging to the ledger',
     async (action) => {
       todo();
       await event(action, { body: 'Please handle the empty result.', state: 'changes_requested' });
-      expect(sent).toHaveLength(1);
-      expect(sent[0].message).toContain('Please handle the empty result.');
+      expect(sent).toEqual([]);
       expect(jobs()).toEqual([]);
     }
   );
   test.each(['review_submitted', 'review_comment_created', 'comment_created', 'comment_polled'])(
-    '%s suppresses driver-signed replies, not human comments',
+    'raw %s forwards neither driver-signed nor human comments',
     async (action) => {
       todo();
       await event(action, {
@@ -248,30 +244,28 @@ describe('Neo todo pull request events', () => {
       });
       expect(sent).toEqual([]);
       await event(action, { body: 'Still needs a test.' });
-      expect(sent).toHaveLength(1);
+      expect(sent).toEqual([]);
     }
   );
   test.each(['review_submitted', 'review_comment_polled', 'comment_polled', 'reaction_added'])(
-    '%s reaches its owner without forced completion reads or a global worker sweep',
+    'raw %s neither delivers nor forces completion reads or a global worker sweep',
     async (action) => {
       todo();
       await service.todoRunner.refresh(() => {});
       const reads = mock(async () => prs);
       service.readPrs = reads;
       await event(action, { body: 'Synthetic feedback', state: 'APPROVED' });
-      expect(sent).toHaveLength(1);
-      expect(sent[0].ref).toEqual(ref);
+      expect(sent).toEqual([]);
       expect(reads).not.toHaveBeenCalled();
       expect(service.todos.getTodo('todo')?.state).toBe('doing');
     }
   );
 
-  test('merge delivery refreshes evidence, checks the todo and wakes its owning Neo once', async () => {
+  test('a raw merge refreshes evidence and wakes Neo without a duplicate worker delivery', async () => {
     const row = todo();
     prs = [{ ...open, state: 'MERGED' }];
     await event('closed', { state: 'closed', merged: true });
-    expect(sent).toHaveLength(1);
-    expect(sent[0].message).toContain('7.closed');
+    expect(sent).toEqual([]);
     expect(service.todos.getTodo(row.id)).toMatchObject({
       state: 'done',
       evidence: expect.stringContaining('merged'),
@@ -281,7 +275,7 @@ describe('Neo todo pull request events', () => {
     expect(service.cardEvents.listActive()).toEqual([]);
     await event('comment_created', { body: 'Late comment' });
     await service.todoRunner.refresh(() => {});
-    expect(sent).toHaveLength(1);
+    expect(sent).toEqual([]);
     expect(jobs()).toHaveLength(1);
   });
   test('a just-closed unmerged PR ends its subscription and leaves the todo in its replacement grace', async () => {
@@ -292,7 +286,7 @@ describe('Neo todo pull request events', () => {
     expect(service.cardEvents.listActive()).toEqual([]);
   });
 
-  test('a poll can check the todo before its merge event without dropping that delivery', async () => {
+  test('a raw merge retires subscriptions after polling already completed the todo', async () => {
     const row = todo();
     prs = [{ ...open, state: 'MERGED' }];
     await service.todoRunner.refresh(() => {});
@@ -300,8 +294,7 @@ describe('Neo todo pull request events', () => {
     service.todos.settleAsk(service.todos.getAsk('ask')!, 'done', 'Merged', Date.now());
     expect(service.endUnfollowedCardTopics(Date.now())).toEqual([]);
     await event('closed', { state: 'closed', merged: true });
-    expect(sent).toHaveLength(1);
-    expect(sent[0].message).toContain('7.closed');
+    expect(sent).toEqual([]);
     expect(service.cardEvents.listActive()).toEqual([]);
   });
   test('removed todos and disabled packs retire subscriptions without falling back to old work', () => {
@@ -315,7 +308,7 @@ describe('Neo todo pull request events', () => {
     db.updateGlobalSettings({ neo: { packs: ['life-admin'] } });
     expect(service.endUnfollowedCardTopics(Date.now())).toHaveLength(1);
   });
-  test('a local HyperNeo todo target covers the worker own subscription', async () => {
+  test('a local HyperNeo todo target covers subscriptions without raw PR delivery', async () => {
     todo({ adapter: 'hyperneo', id: 'native' });
     expect(
       isSessionTopicCovered(
@@ -325,17 +318,14 @@ describe('Neo todo pull request events', () => {
       )
     ).toBe(true);
     await event('review_submitted', { state: 'approved' });
-    expect(sent[0].ref).toEqual({ adapter: 'hyperneo', id: 'native' });
+    expect(sent).toEqual([]);
   });
-  test('an event reaches a session once however many of its todos follow the PR', async () => {
+  test('a raw event does not duplicate ledger delivery across subscribed todos', async () => {
     todo();
     todo(ref, 'todo-2');
     todo({ adapter: 'claude-desktop', daemon: 'laptop', id: 'local_other' }, 'todo-3');
     await event('check_failed', { checkName: 'Web Tests' });
-    expect(sent.map((item) => item.ref)).toEqual([
-      ref,
-      { adapter: 'claude-desktop', daemon: 'laptop', id: 'local_other' },
-    ]);
+    expect(sent).toEqual([]);
   });
   test.each([
     ['fails', async () => null],
@@ -345,12 +335,12 @@ describe('Neo todo pull request events', () => {
         throw new Error('gh down');
       },
     ],
-  ])('an event on a newer head still arrives when the PR re-read %s', async (_, read) => {
+  ])('a raw event never bypasses the ledger when the PR re-read %s', async (_, read) => {
     prs = [{ ...open, head: 'old' }];
     todo();
     service.readPrs = read;
     await event('check_failed', { checkName: 'Lint', headSha: 'new' });
-    expect(sent).toHaveLength(1);
+    expect(sent).toEqual([]);
   });
   test('a merge event leaves a removed todo removed', async () => {
     const row = todo();
@@ -371,7 +361,7 @@ describe('Neo todo pull request events', () => {
     await event('comment_created', { body: 'Late comment' });
     expect(sent).toEqual([]);
   });
-  test('an event on an old head is dropped once the PR is re-read at its new head', async () => {
+  test('raw feedback on old and new heads stays off the worker delivery path', async () => {
     prs = [{ ...open, head: 'old' }];
     todo();
     todo({ adapter: 'claude-desktop', daemon: 'laptop', id: 'local_other' }, 'todo-2');
@@ -381,7 +371,7 @@ describe('Neo todo pull request events', () => {
     expect(sent).toEqual([]);
     await event('check_failed', { checkName: 'Lint', headSha: 'new' });
     await event('comment_created', { body: 'No commit on this one' });
-    expect(sent).toHaveLength(4);
+    expect(sent).toEqual([]);
   });
   test('head-specific feedback newer than the cached read refreshes before routing', async () => {
     prs = [{ ...open, head: 'old' }];
@@ -400,7 +390,7 @@ describe('Neo todo pull request events', () => {
     expect(reads).toHaveBeenCalledTimes(1);
     expect(sent).toEqual([]);
   });
-  test('historical head-specific feedback reuses a newer completion read', async () => {
+  test('historical head-specific feedback reuses a newer read without raw delivery', async () => {
     prs = [{ ...open, head: 'new' }];
     todo();
     await service.todoRunner.refresh(() => {});
@@ -409,8 +399,7 @@ describe('Neo todo pull request events', () => {
     await event('review_comment_created', { body: 'Old thread', commitId: 'old' }, 1);
     await event('review_comment_created', { body: 'Current thread', commitId: 'new' }, 1);
     expect(reads).not.toHaveBeenCalled();
-    expect(sent).toHaveLength(1);
-    expect(sent[0].message).toContain('Current thread');
+    expect(sent).toEqual([]);
   });
   test('routine polls and pending checks do not send work to the todo session', async () => {
     todo();
