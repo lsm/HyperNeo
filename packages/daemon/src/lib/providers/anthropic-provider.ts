@@ -399,7 +399,10 @@ export class AnthropicProvider implements Provider {
           ? { effortLevels: sdkModel.supportedEffortLevels }
           : {}),
       }));
-    return models.filter((model, index) => models.findIndex(({ id }) => id === model.id) === index);
+    return models.filter((model) => {
+      const same = models.filter(({ id }) => id === model.id);
+      return (same.find(({ alias }) => alias !== model.id) ?? same[0]) === model;
+    });
   }
 
   getModelEffortLevels(modelId: string): ModelInfo['effortLevels'] {

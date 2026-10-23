@@ -153,6 +153,7 @@ import { AcpQueryRunner } from '../acp/acp-query-runner.ts';
 import {
   getSessionContextModelInfo,
   initializeModels,
+  getModelInfo,
   resolveModelAlias,
   resolveSessionContextModelInfo,
 } from '../model-service.ts';
@@ -554,12 +555,13 @@ export class AgentSession
         const gs = this.settingsManager.getGlobalSettings();
         const provider = (this.session.config.provider as string | undefined) ?? 'anthropic';
         const rawModel = this.session.config.model ?? 'sonnet';
-        const canonicalModel = await this.resolveModelIdOrDefault(provider, rawModel);
+        const info = await getModelInfo(rawModel, 'global', provider).catch(() => null);
         return resolveFallbackChain(
           provider,
-          canonicalModel,
+          info?.id ?? rawModel,
           gs.modelFallbackMap,
-          gs.fallbackModels
+          gs.fallbackModels,
+          info?.alias
         );
       },
       isEntryAvailable: async (entry) => {

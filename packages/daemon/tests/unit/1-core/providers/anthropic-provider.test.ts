@@ -732,6 +732,27 @@ describe('AnthropicProvider', () => {
       expect(converted.map((m) => m.contextWindow)).toEqual([200000, 1_000_000, 200000, 200000]);
     });
 
+    it('keeps the alias row when a pinned row for the same model is listed first', () => {
+      const converted = provider.convertSdkModels([
+        {
+          value: 'claude-opus-5-5',
+          resolvedModel: 'claude-opus-5-5',
+          displayName: 'Opus 5.5 (pinned)',
+          description: '',
+        },
+        {
+          value: 'opus',
+          resolvedModel: 'claude-opus-5-5',
+          displayName: 'Opus 5.5',
+          description: '',
+        },
+      ]);
+
+      expect(converted.map((m) => [m.id, m.alias, m.name])).toEqual([
+        ['claude-opus-5-5', 'opus', 'Opus 5.5'],
+      ]);
+    });
+
     it('claims the fable SDK alias as Anthropic', () => {
       expect(provider.ownsModel('fable')).toBe(true);
     });

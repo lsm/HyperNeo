@@ -253,7 +253,7 @@ function OverrideEditorModal({
   const getDisplayInfo = (key: string) => {
     const [provider, ...rest] = key.split('/');
     const modelId = rest.join('/');
-    const model = availableModels.find((m) => m.id === modelId && m.provider === provider);
+    const model = findSameModel(availableModels, { model: modelId, provider });
     return model
       ? { name: model.name, family: model.family, provider }
       : { name: modelId || key, family: 'sonnet', provider };
@@ -903,16 +903,14 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
   };
 
   const getModelDisplayInfo = (entry: FallbackModelEntry): { name: string; family: string } => {
-    const model = availableModels.find(
-      (m) => m.id === entry.model && m.provider === entry.provider
-    );
+    const model = findSameModel(availableModels, entry);
     return { name: model?.name ?? entry.model, family: model?.family ?? 'sonnet' };
   };
 
   const getKeyDisplayInfo = (key: string) => {
     const [provider, ...rest] = key.split('/');
     const modelId = rest.join('/');
-    const model = availableModels.find((m) => m.id === modelId && m.provider === provider);
+    const model = findSameModel(availableModels, { model: modelId, provider: provider ?? '' });
     return model
       ? { name: model.name, family: model.family, provider }
       : { name: modelId || key, family: 'sonnet', provider: provider ?? '' };
