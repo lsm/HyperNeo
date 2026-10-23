@@ -548,6 +548,25 @@ describe('NeoAskTodos', () => {
     expect(row.querySelector('.text-warning')).toBeNull();
   });
 
+  it.each([new Error('stop_failed: offline'), 'settle rejected'])(
+    'shows a failed Mark done on its own card and allows retry: %s',
+    async (failure) => {
+      const onSettle = vi.fn().mockRejectedValueOnce(failure).mockResolvedValueOnce(undefined);
+      const app = render(<NeoAskTodos entry={entry({})} onAnswer={() => {}} onSettle={onSettle} />);
+      fireEvent.click(app.getByRole('button', { name: '更多操作' }));
+      fireEvent.click(app.getByRole('menuitem', { name: '标记做完' }));
+      await waitFor(() =>
+        expect(app.getByRole('alert').textContent).toContain(
+          failure instanceof Error ? failure.message : '请求没能关闭，请重试。'
+        )
+      );
+      fireEvent.click(app.getByRole('button', { name: '更多操作' }));
+      fireEvent.click(app.getByRole('menuitem', { name: '标记做完' }));
+      await waitFor(() => expect(app.queryByRole('alert')).toBeNull());
+      expect(onSettle).toHaveBeenCalledTimes(2);
+    }
+  );
+
   it('marks an open ask done or drops it from its menu', () => {
     const onSettle = vi.fn();
     const app = render(<NeoAskTodos entry={entry({})} onAnswer={() => {}} onSettle={onSettle} />);

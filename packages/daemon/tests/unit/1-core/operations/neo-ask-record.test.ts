@@ -190,6 +190,21 @@ describe('neo.ask.open and neo.ask.settle', () => {
     expect(store.getAsk(opened.ask.id)?.status).toBe('open');
   });
 
+  test('the human can mark an ask done with unfinished coding todos', async () => {
+    const { call, store, stopped } = setup();
+    const opened = await call('neo.ask.open', opening, turn('human-mark-done'));
+    if (!opened.ok) throw new Error(opened.reason);
+    const settled = await call(
+      'neo.ask.settle',
+      { askId: opened.ask.id, status: 'done', outcome: 'Closed by the user.' },
+      { source: 'rpc', principal: 'local' }
+    );
+    expect(settled.ok && settled.ask.status).toBe('done');
+    expect(store.getAsk(opened.ask.id)?.status).toBe('done');
+    expect(stopped).toEqual(opened.todos.map((todo) => todo.id));
+    expect(store.listTodos(opened.ask.id).every((todo) => todo.state === 'removed')).toBe(true);
+  });
+
   test('done is refused while a todo is neither done nor removed with a reason', async () => {
     const { call, store, stopped } = setup();
     const opened = await call('neo.ask.open', opening, turn('m7'));
