@@ -9,7 +9,7 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { CodingTodoPrRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/todo-prs.ts';
 import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts';
 
-const [mode, directory] = process.argv.slice(2), run = resolve(directory);
+const [mode, directory, scale = 'stress', baseline] = process.argv.slice(2), run = resolve(directory);
 assert(['reproduce', 'verify'].includes(mode));
 assert(run.startsWith('/private/tmp/hn-claims-'));
 assert.equal(process.env.NODE_ENV, 'test');
@@ -25,7 +25,7 @@ chmodSync(join(run, 'bin/gh'), 0o700);
 const now = Date.now(), url = 'https://github.com/synthetic/ledger/pull/7';
 writeFileSync(join(run, 'fixture.json'), JSON.stringify({ scenario: 'merged', phase: 'initial', now }));
 const pause = (ms: number) => new Promise(done => setTimeout(done, ms));
-const report: Record<string, unknown> = { mode, runtime: Bun.version, syntheticOnly: true };
+const report: Record<string, unknown> = { mode, scale, baseline: baseline ?? null, runtime: Bun.version, syntheticOnly: true };
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined, socket: WebSocket | undefined;
 let probe: ReturnType<typeof spawn> | undefined, timer: ReturnType<typeof setInterval> | undefined;
 let measuring = false;
@@ -65,11 +65,12 @@ try {
   const openData = opened.data as { sessionId?: string; value?: { sessionId?: string } };
   const sessionId = openData.sessionId ?? openData.value?.sessionId;
   assert(sessionId, JSON.stringify(opened));
-  const db = app.db.getDatabase(), rows = 300000;
+  const db = app.db.getDatabase(), rows = scale === 'representative' ? 112 : 300000;
+  if (baseline === 'pre-index') db.exec('DROP INDEX IF EXISTS idx_neo_todos_removed');
   db.prepare("INSERT INTO neo_asks(id,session_id,title,request,status,created_at,updated_at) VALUES('history',?,'Synthetic history','History','done',?,?),('target-ask',?,'Merge synthetic PR','Merge','open',?,?)").run(sessionId,now,now,sessionId,now,now);
   const put = db.prepare('INSERT INTO neo_todos(id,ask_id,position,title,done_when,state,report,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)');
   const claim = db.prepare('INSERT INTO pack_coding_pr_claims(todo_id,url,claim,claimed_at) VALUES(?,?,?,?)');
-  const body = 'Complete synthetic todo report 🦊\n'.repeat(1000);
+  const body = 'Complete synthetic todo report 🦊\n'.repeat(scale === 'representative' ? 60000 : 1000);
   db.transaction(() => {
     for (let i=0; i<rows; i++) put.run(`history-${i}`,'history',i,'Historical todo','Done',i%10 ? 'done':'removed',body,now,now);
     for (let i=0; i<100; i++) {
@@ -109,11 +110,11 @@ try {
   report.target=db.prepare("SELECT state,evidence FROM neo_todos WHERE id='target'").get();
   report.storedAfter=digest(); assert.equal(report.storedBefore,report.storedAfter);
   assert.equal((report.target as {state:string}).state,'done',JSON.stringify(completion));
-  assert(calls.some(call=>call.stack?.includes('todo-prs.ts:420')), 'real coding pack readFacts was not reached');
+  assert(calls.some(call=>call.stack?.includes('readNeoTodoCompletion')), 'real coding pack readFacts was not reached');
   assert(calls.every(call=>call.rows===1), 'removed claim was not excluded');
   console.log(JSON.stringify({run,maxLagMs,maxHealthMs:report.maxHealthMs,rpcMs:completion.ms,queryMs:calls.map(c=>c.ms),plans:report.plans}));
   if(mode==='verify') { assert(maxLagMs<250,`loop lag ${maxLagMs}`);assert(Number(report.maxHealthMs)<250,'health');assert(calls.every(c=>c.ms<250),'query');assert(completion.ms<250,'RPC'); }
-  else assert(calls.some(c=>c.ms>250),'synthetic query did not reproduce');
+  else if (scale !== 'representative') assert(calls.some(c=>c.ms>250),'synthetic query did not reproduce');
 } finally {
   if(timer)clearInterval(timer);probe?.kill();socket?.close();await app?.cleanup();
   CodingTodoPrRepository.prototype.claimsOn=originalRead;Database.prototype.prepare=originalPrepare;
