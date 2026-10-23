@@ -70,3 +70,10 @@ and all RPC responses are retained in `evidence/observed.json`. On regression co
 The older `reproduce` action concerns the separate running-turn steering regression.
 No model, provider, credentials, real Codex state or GUI is involved. All owned
 servers and the daemon close in finally. Pick a free port other than 8399.
+
+Refusal evidence also covers admission diagnostics: missing and stale socket
+paths through the actual RPC retain the transport-failure record. Separate
+helper-level controls pass no endpoint or a failing process probe, require
+not_delivered without spawning, and observe work.send route with the explicit
+desktop_socket_missing / desktop_running_probe_failed reason. These controls
+are distinguished from the full RPC path, whose adapter supplies a socket path.

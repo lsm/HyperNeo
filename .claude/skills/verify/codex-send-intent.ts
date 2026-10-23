@@ -8,7 +8,7 @@ import { Database } from '../../../packages/daemon/src/storage/sqlite-compat.ts'
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { subscribeToStructuredLogs } from '../../../packages/daemon/src/lib/logger.ts';
-import { startCodexDesktopTurn } from '../../../packages/daemon/src/lib/drivers/codex-desktop-handoff.ts';
+import { startCodexDesktopTurn, steerCodexDesktopTurn } from '../../../packages/daemon/src/lib/drivers/codex-desktop-handoff.ts';
 import { spawnProcess } from '../../../packages/daemon/src/lib/runtime-spawn/index.ts';
 
 const [action, portText, runText] = process.argv.slice(2);
@@ -151,9 +151,21 @@ try {
   for(const socketState of ['missing','stale']){
     if(socketState==='stale')renameSync(stalePath,desktopPath);
     const before=calls.length;
+    const logsBefore=logs.length;
     assert.equal((await send()).reason,'not_delivered');
+    assert(logs.slice(logsBefore).some(event=>event.message.includes('work.send desktop transport failed')),'Missing/stale Desktop IPC must retain its refusal diagnostic');
     assert(!calls.slice(before).some(call=>(call as {server?:string}).server));
     if(socketState==='stale')renameSync(desktopPath,stalePath);
+  }
+  for (const probeFailure of [false, true]) {
+    const before = logs.length;
+    const refused = await steerCodexDesktopTurn(undefined, () => { throw new Error('Admission must not spawn'); }, 'direct-synthetic', 'synthetic marker', 'direct-message', 'auto', async () => {
+      if (probeFailure) throw new Error('Synthetic probe failure');
+      return true;
+    });
+    assert('reason' in refused && !refused.reason.ok && refused.reason.reason === 'not_delivered');
+    const reason = probeFailure ? 'desktop_running_probe_failed' : 'desktop_socket_missing';
+    assert(logs.slice(before).some(event => event.message.includes('work.send route') && event.message.includes(reason)), 'Direct admission refusal retains a reasoned route log');
   }
   unlinkSync(runningFlag);
   for (const socketState of ['missing', 'stale']) {

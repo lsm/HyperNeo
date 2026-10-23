@@ -95,15 +95,29 @@ export async function steerCodexDesktopTurn(
       return { value: 'app-server' };
     }
   } catch (error) {
+    log.warn('work.send route', {
+      threadId,
+      messageId,
+      path: 'refused',
+      reason: 'desktop_running_probe_failed',
+      detail: String(error),
+    });
     return { reason: reject('not_delivered', String(error)) };
   }
-  if (!socketPath)
+  if (!socketPath) {
+    log.warn('work.send route', {
+      threadId,
+      messageId,
+      path: 'refused',
+      reason: 'desktop_socket_missing',
+    });
     return {
       reason: reject(
         'not_delivered',
         'Codex Desktop is running but its ownership endpoint is unavailable; no background writer was started.'
       ),
     };
+  }
   let dispatched = false;
   try {
     return await withCodexDesktopIpc(socketPath, async ({ call }) => {

@@ -755,7 +755,7 @@ describe('Desktop admission refusal diagnostics', () => {
     async (failure) => {
       const events: Record<string, unknown>[] = [];
       const config = getLoggerConfig();
-      configureLogger({ level: LogLevel.WARN, filter: [], excludeFilter: [] });
+      configureLogger({ level: LogLevel.WARN, filter: ['*'], excludeFilter: [] });
       const off = subscribeToStructuredLogs((event) => {
         if (event.message.startsWith('work.send route'))
           events.push(JSON.parse(event.message.slice('work.send route '.length)));
