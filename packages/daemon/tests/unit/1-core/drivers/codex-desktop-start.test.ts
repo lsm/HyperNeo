@@ -1,4 +1,5 @@
 import type { WorkExecutionPreparer } from '../../../../src/lib/drivers/start-preparation';
+import { CODEX_WORKER_INSTRUCTIONS } from '@hyperneo/prompts';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -14,6 +15,7 @@ const NOW = Date.parse('2026-10-05T12:00:00.000Z');
 const user = { from: 'user', caller: { source: 'rpc' as const } };
 const place = { machine: 'laptop', folder: '/focus/dolmen', name: 'dolmen' };
 const request = { place, title: 'Bigger font', message: 'Raise the body font to 16px.' };
+const openingMessage = `${request.message}\n${CODEX_WORKER_INSTRUCTIONS}`;
 const model = {
   id: 'sol-catalog-entry',
   model: 'gpt-6.1-sol',
@@ -135,7 +137,7 @@ describe('codex-desktop start receipt', () => {
   test('a started thread returns the receipt of its brief read from the rollout it reports', async () => {
     dir = mkdtempSync(join(tmpdir(), 'codex-start-'));
     const path = join(dir, 'rollout.jsonl');
-    writeFileSync(path, brief('msg_7', request.message));
+    writeFileSync(path, brief('msg_7', openingMessage));
     const { instance } = adapter({
       call: async (method) =>
         method === 'model/list'
@@ -171,8 +173,12 @@ describe('codex-desktop start', () => {
       call: async (method) => (method === 'thread/start' ? { thread: { id: 'th1' } } : {}),
     });
     expect(await instance.start!(request, user)).toMatchObject({ ok: true });
-    expect(calls.find(([method]) => method === 'thread/start')?.[1].developerInstructions).toBe(
-      'To trim this thread\'s PR links, call mcp__codex_app__list_artifacts, check each PR\'s GitHub state, then call mcp__codex_app__remove_artifact({artifact_type:"pull_request", url}) for merged/closed PRs; own thread only; never edit ~/.codex state files directly.'
+    expect(
+      (
+        calls.find(([method]) => method === 'desktop/start-turn')?.[1].input as { text: string }[]
+      )[0].text
+    ).toBe(
+      `${request.message}\nTo trim this thread's PR links, call mcp__codex_app__list_artifacts, check each PR's GitHub state, then call mcp__codex_app__remove_artifact({artifact_type:"pull_request", url}) for merged/closed PRs; own thread only; never edit ~/.codex state files directly.`
     );
   });
 
@@ -286,7 +292,7 @@ describe('codex-desktop start', () => {
         {
           ...turnAccess,
           threadId: 'th1',
-          input: [{ type: 'text', text: request.message, text_elements: [] }],
+          input: [{ type: 'text', text: openingMessage, text_elements: [] }],
           model: model.model,
         },
       ],
@@ -326,7 +332,7 @@ describe('codex-desktop start', () => {
         {
           ...turnAccess,
           threadId: 'th1',
-          input: [{ type: 'text', text: request.message, text_elements: [] }],
+          input: [{ type: 'text', text: openingMessage, text_elements: [] }],
           model: model.model,
           effort: 'medium',
         },
@@ -483,7 +489,7 @@ describe('codex-desktop start', () => {
         {
           ...turnAccess,
           threadId: 'th1',
-          input: [{ type: 'text', text: 'Raise the body font to 16px.', text_elements: [] }],
+          input: [{ type: 'text', text: openingMessage, text_elements: [] }],
         },
       ],
     ]);
@@ -496,7 +502,7 @@ describe('codex-desktop start', () => {
     });
     expect(await instance.start?.(request, user)).toMatchObject({ ok: true });
     const opening = calls.find(([method]) => method === 'desktop/start-turn')?.[1];
-    expect(opening?.input).toEqual([{ type: 'text', text: request.message, text_elements: [] }]);
+    expect(opening?.input).toEqual([{ type: 'text', text: openingMessage, text_elements: [] }]);
   });
 
   test('creates the repo project and assigns the new worktree thread to it', async () => {

@@ -1,3 +1,4 @@
+import { CODEX_WORKER_INSTRUCTIONS } from '@hyperneo/prompts';
 import { Logger } from '../logger.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
 import { workStartPreparation, type WorkExecutionPreparer } from './start-preparation.ts';
@@ -1157,17 +1158,18 @@ export async function startCodexThread(
       }
       await server.call('thread/name/set', { threadId, name: request.title });
       await server.close();
+      const message = `${request.message}\n${CODEX_WORKER_INSTRUCTIONS}`;
       await deps.startDesktopTurn(threadId, {
         threadId,
         approvalPolicy: 'never',
         sandboxPolicy: { type: 'dangerFullAccess' },
-        input: [{ type: 'text', text: request.message, text_elements: [] }],
+        input: [{ type: 'text', text: message, text_elements: [] }],
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
       });
       const receipt = await readCodexStartReceipt(
         startedRolloutPath(started),
-        request.message,
+        message,
         threadId,
         deps.statePath
       );
