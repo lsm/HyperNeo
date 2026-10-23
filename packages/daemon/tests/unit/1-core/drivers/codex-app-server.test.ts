@@ -106,7 +106,7 @@ describe('startCodexBootstrapServer', () => {
     directory = '';
   });
 
-  function executable(failInitialization = false) {
+  function executable(failInitialization = false, shutdownCode = 0) {
     directory = mkdtempSync(join(tmpdir(), 'codex-bootstrap-'));
     const command = join(directory, 'codex');
     const persisted = join(directory, 'saved.json');
@@ -127,7 +127,10 @@ lines.on('line', (line) => {
   process.stdout.write(JSON.stringify({ id: message.id, ...response }) + '\\n');
 });
 lines.on('close', () => {
-  fs.writeFileSync(${JSON.stringify(persisted)}, JSON.stringify(seen));
+  setTimeout(() => {
+    fs.writeFileSync(${JSON.stringify(persisted)}, JSON.stringify(seen));
+    process.exit(${shutdownCode});
+  }, 40);
 });
 `,
       { mode: 0o700 }
@@ -160,6 +163,13 @@ lines.on('close', () => {
     } finally {
       await client.close();
     }
+  });
+
+  test('refuses a bootstrap handoff when its process exits unsuccessfully', async () => {
+    const f = executable(false, 7);
+    const client = await startCodexBootstrapServer(f.command);
+    await client.call('thread/start', { cwd: '/focus' });
+    await expect(client.close()).rejects.toThrow('7');
   });
 
   test('closes its owned process after failed initialization', async () => {
