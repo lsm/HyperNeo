@@ -350,11 +350,12 @@ describe('sqlite query observability through the bun compat layer', () => {
         db.run("INSERT INTO kv (k, v) VALUES ('alias-key', 'alias-value')");
         db.query('SELECT v FROM kv').all();
         const reads = metadataList(collected).filter(
-          (meta) => meta.normalizedSql === 'select v from kv'
+          (meta) => meta.event === 'slow' && meta.normalizedSql === 'select v from kv'
         );
         expect(reads).toHaveLength(1);
         const inserts = metadataList(collected).filter(
-          (meta) => meta.normalizedSql === 'insert into kv (k, v) values (?, ?)'
+          (meta) =>
+            meta.event === 'slow' && meta.normalizedSql === 'insert into kv (k, v) values (?, ?)'
         );
         expect(inserts).toHaveLength(1);
       } finally {

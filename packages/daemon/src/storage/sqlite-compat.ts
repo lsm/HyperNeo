@@ -2,6 +2,7 @@ import type { Database as NodeDatabase } from './sqlite-node.ts';
 import {
   createObservedStatementProxy,
   observeExecExecution,
+  observeSQLitePhase,
   SQLiteQueryObserver,
   type SQLiteQueryObservabilityOptions,
 } from './sqlite-query-observability.ts';
@@ -29,22 +30,38 @@ if (isBun) {
       const rest: Record<string, unknown> = {};
       if (options) Object.assign(rest, options);
       delete rest.queryObservability;
-      super(path, (Object.keys(rest).length > 0 ? rest : undefined) as never);
-      if (options?.queryObservability) {
-        this.queryObserver = new SQLiteQueryObserver(options.queryObservability);
+      const observer = options?.queryObservability
+        ? new SQLiteQueryObserver(options.queryObservability)
+        : null;
+      const started = observer ? performance.now() : 0;
+      try {
+        super(path, (Object.keys(rest).length > 0 ? rest : undefined) as never);
+      } catch (error) {
+        observer?.recordPhase('open', '', started, performance.now(), 'error');
+        observer?.close();
+        throw error;
       }
+      this.queryObserver = observer;
+      observer?.recordPhase('open', '', started, performance.now(), 'ok');
     }
 
     // @ts-expect-error — return type is the concrete bun statement, not the generic base's
     override prepare(sql: string, options?: unknown): BunStatement {
       if (options !== undefined) {
-        return this.observeStatement(super.prepare(sql, options as never), sql);
+        return this.observeStatement(this.prepareNative(sql, options), sql);
       }
       const cached = this.statementCache.get(sql);
       if (cached) return cached;
-      const statement = this.observeStatement(super.prepare(sql), sql);
+      const statement = this.observeStatement(this.prepareNative(sql), sql);
       this.statementCache.set(sql, statement);
       return statement;
+    }
+
+    private prepareNative(sql: string, options?: unknown): BunStatement {
+      const observer = this.queryObserver;
+      return observer
+        ? observeSQLitePhase(observer, 'prepare', sql, () => super.prepare(sql, options as never))
+        : super.prepare(sql, options as never);
     }
 
     private observeStatement(statement: BunStatement, sql: string): BunStatement {

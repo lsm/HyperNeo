@@ -5,6 +5,7 @@ import {
 } from './sqlite-query-normalization.ts';
 
 export type SQLiteQueryOperation = 'get' | 'all' | 'run' | 'iterate' | 'exec' | 'transaction';
+type SQLitePhase = 'prepare' | 'open';
 
 export interface SQLiteQueryObservabilityOptions {
   slowThresholdMs: number;
@@ -181,6 +182,29 @@ export class SQLiteQueryObserver {
     return !this.closed && !this.emitting;
   }
 
+  recordPhase(
+    operation: SQLitePhase,
+    sql: string,
+    phaseStartedAtMs: number,
+    phaseEndedAtMs: number,
+    outcome: 'ok' | 'error'
+  ): void {
+    const durationMs = Math.max(0, phaseEndedAtMs - phaseStartedAtMs);
+    if (!this.isRecordingEnabled() || durationMs < this.options.slowThresholdMs) return;
+    const descriptor = createSQLiteQueryDescriptor(operation === 'open' ? 'database open' : sql);
+    this.emitSlowQueryEvent(
+      { descriptor, operation, durationMs, outcome },
+      durationMs,
+      'sqlite.phase.slow',
+      { phaseStartedAtMs, phaseEndedAtMs }
+    );
+    if (durationMs > (slowestQuery?.durationMs ?? 0))
+      slowestQuery = {
+        durationMs: roundMs(durationMs),
+        sql: `${operation}: ${descriptor.normalizedSql}`,
+      };
+  }
+
   recordExecution(execution: SQLiteQueryExecution): void {
     if (!this.isRecordingEnabled()) return;
 
@@ -322,10 +346,17 @@ export class SQLiteQueryObserver {
     return smallest;
   }
 
-  private emitSlowQueryEvent(execution: SQLiteQueryExecution, durationMs: number): void {
+  private emitSlowQueryEvent(
+    execution: Omit<SQLiteQueryExecution, 'operation'> & {
+      operation: SQLiteQueryOperation | SQLitePhase;
+    },
+    durationMs: number,
+    event = SLOW_QUERY_EVENT,
+    timing?: { phaseStartedAtMs: number; phaseEndedAtMs: number }
+  ): void {
     const metadata: Record<string, unknown> = {
       schemaVersion: 1,
-      event: 'slow',
+      event: event === SLOW_QUERY_EVENT ? 'slow' : 'phase_slow',
       fingerprint: execution.descriptor.fingerprint,
       normalizedSql: execution.descriptor.normalizedSql,
       normalizedSqlTruncated: execution.descriptor.normalizedSqlTruncated,
@@ -333,6 +364,7 @@ export class SQLiteQueryObserver {
       durationMs: roundMs(durationMs),
       thresholdMs: this.options.slowThresholdMs,
       outcome: execution.outcome,
+      ...timing,
     };
     if (execution.rowsReturned !== undefined) metadata.rowsReturned = execution.rowsReturned;
     if (execution.rowsChanged !== undefined) metadata.rowsChanged = execution.rowsChanged;
@@ -342,7 +374,7 @@ export class SQLiteQueryObserver {
       try {
         this.emitEvent({
           level: 'warn',
-          event: SLOW_QUERY_EVENT,
+          event,
           metadata: { ...metadata, ...tick },
         });
       } catch {
@@ -352,6 +384,23 @@ export class SQLiteQueryObserver {
     };
     if (deferSlowQuery) deferSlowQuery(emit);
     else emit();
+  }
+}
+
+export function observeSQLitePhase<T>(
+  observer: SQLiteQueryObserver,
+  phase: SQLitePhase,
+  sql: string,
+  invoke: () => T
+): T {
+  const start = performance.now();
+  try {
+    const result = invoke();
+    observer.recordPhase(phase, sql, start, performance.now(), 'ok');
+    return result;
+  } catch (error) {
+    observer.recordPhase(phase, sql, start, performance.now(), 'error');
+    throw error;
   }
 }
 

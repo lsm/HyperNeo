@@ -7,6 +7,7 @@ import {
   observeExecExecution,
   observeIterateExecution,
   observeStatementExecution,
+  observeSQLitePhase,
   SQLiteQueryObserver,
   type SQLiteQueryObservabilityOptions,
 } from './sqlite-query-observability.ts';
@@ -117,14 +118,21 @@ export class Database extends DatabaseSync {
     }
   ) {
     const { readonly, queryObservability, ...rest } = options ?? {};
-    super(path, {
-      enableForeignKeyConstraints: false,
-      ...(readonly ? { readOnly: true } : {}),
-      ...rest,
-    });
-    if (queryObservability) {
-      this.queryObserver = new SQLiteQueryObserver(queryObservability);
+    const observer = queryObservability ? new SQLiteQueryObserver(queryObservability) : null;
+    const started = observer ? performance.now() : 0;
+    try {
+      super(path, {
+        enableForeignKeyConstraints: false,
+        ...(readonly ? { readOnly: true } : {}),
+        ...rest,
+      });
+    } catch (error) {
+      observer?.recordPhase('open', '', started, performance.now(), 'error');
+      observer?.close();
+      throw error;
     }
+    this.queryObserver = observer;
+    observer?.recordPhase('open', '', started, performance.now(), 'ok');
   }
 
   exec(sql: string): void {
@@ -193,13 +201,23 @@ export class Database extends DatabaseSync {
   ): CompatStatement<TRow, TParams> {
     const observation = this.statementObservation(sql);
     if (options !== undefined) {
-      return new CompatStatement<TRow, TParams>(super.prepare(sql, options), observation);
+      return new CompatStatement<TRow, TParams>(this.prepareNative(sql, options), observation);
     }
     const cached = this.statementCache.get(sql);
     if (cached) return cached as CompatStatement<TRow, TParams>;
-    const statement = new CompatStatement<TRow, TParams>(super.prepare(sql), observation);
+    const statement = new CompatStatement<TRow, TParams>(this.prepareNative(sql), observation);
     this.statementCache.set(sql, statement);
     return statement;
+  }
+
+  private prepareNative(
+    sql: string,
+    options?: Parameters<DatabaseSync['prepare']>[1]
+  ): StatementSync {
+    const observer = this.queryObserver;
+    return observer
+      ? observeSQLitePhase(observer, 'prepare', sql, () => super.prepare(sql, options))
+      : super.prepare(sql, options);
   }
 
   private statementObservation(sql: string): StatementObservation | null {

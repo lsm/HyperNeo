@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { subscribeToStructuredLogs } from '../../../../src/lib/logger.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import {
+  observeSQLitePhase,
+  SQLiteQueryObserver,
+  takeSlowestQuery,
+} from '../../../../src/storage/sqlite-query-observability.ts';
 
 const options = {
   slowThresholdMs: 0,
@@ -40,6 +45,11 @@ describe('SQLite prepare/open phase diagnostics', () => {
     expect(phases.every((event) => event.metadata.event === 'phase_slow')).toBe(true);
     expect(phases.every((event) => event.metadata.outcome === 'ok')).toBe(true);
     expect(phases.every((event) => Number(event.metadata.durationMs) >= 0)).toBe(true);
+    expect(
+      phases.every(
+        (event) => Number(event.metadata.phaseEndedAtMs) >= Number(event.metadata.phaseStartedAtMs)
+      )
+    ).toBe(true);
     expect(JSON.stringify(events)).not.toContain('private-phase-literal');
     const summary = events.find((event) => event.metadata.event === 'summary');
     expect(summary?.metadata.executionCount).toBe(1);
@@ -79,5 +89,37 @@ describe('SQLite prepare/open phase diagnostics', () => {
       }
     });
     expect(events).toEqual([]);
+  });
+
+  test('preserves the thrown value even when a diagnostic subscriber fails', () => {
+    const observer = new SQLiteQueryObserver(options, {
+      emitEvent: () => {
+        throw new Error('subscriber failure');
+      },
+    });
+    const nativeError = new Error('native error');
+    let caught: unknown;
+    try {
+      observeSQLitePhase(observer, 'prepare', 'SELECT 219', () => {
+        throw nativeError;
+      });
+    } catch (error) {
+      caught = error;
+    } finally {
+      observer.close();
+    }
+    expect(caught).toBe(nativeError);
+  });
+
+  test('labels the slowest phase without putting it in execution summaries', () => {
+    takeSlowestQuery();
+    const events: string[] = [];
+    const observer = new SQLiteQueryObserver(options, {
+      emitEvent: (event) => events.push(event.event),
+    });
+    observer.recordPhase('prepare', "SELECT 'private-phase-literal'", 10, 1210, 'ok');
+    observer.close();
+    expect(takeSlowestQuery()).toEqual({ durationMs: 1200, sql: 'prepare: select ?' });
+    expect(events).toEqual(['sqlite.phase.slow']);
   });
 });

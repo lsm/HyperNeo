@@ -29,3 +29,6 @@ credentials, external network, stored-data deletion or production mutation occur
 Bun/Deno contract tests cover phase success/error, cache identity, privacy,
 unobserved silence and unchanged SQL execution summaries. Existing native close
 journey remains separate; this journey does not enable its opt-in native sampler.
+
+With the same isolated environment, run `sqlite-phase-contract.ts` beside these
+helpers using both `bun` and `deno run -A`; it uses only an in-memory database.
