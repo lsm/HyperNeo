@@ -25,6 +25,10 @@ reads still refresh, a changed head loses its old approval, and failed detail
 returns typed unreadable while prior stored bytes remain. App reopen preserves
 the stored view and refreshes on the next demand. A completed issue keeps its
 closing PR and parent; an issue URL resolving to a PR still gets its work detail.
+The `www.github.com` spelling with a fragment must retain the canonical URL,
+current-head approval and unresolved-thread blocker. Before the host fix, its
+public RPC reply silently lost that blocker. The shortcut now constructs its
+identity from the parsed owner/repo/number, as the old reference path did.
 
 Inspect `evidence/work-ledger.json` and `requests.jsonl`. The new contract fails
 before the fix on one reference lookup instead of zero. Run the existing

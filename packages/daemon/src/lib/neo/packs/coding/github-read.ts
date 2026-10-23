@@ -119,7 +119,12 @@ export const readNeoGithubRef = (superpipe({})('neo-github-read') as PipelineAPI
   .pipe(
     async (readers: NeoGithubReaders, read: NeoRef, url: string) => ({
       states: parsePrUrl(url)
-        ? [{ kind: 'pr' as const, url }]
+        ? [
+            {
+              kind: 'pr' as const,
+              url: `https://github.com/${read.owner}/${read.repo}/pull/${read.number}`,
+            },
+          ]
         : await readers.readRefStates([read]),
     }),
     ['readers', 'read', 'url'],
