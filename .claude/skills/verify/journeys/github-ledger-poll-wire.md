@@ -35,6 +35,8 @@ not GraphQL cost, deployed quota measurements or proof of downstream acceptance.
 Run `github-ledger-polling-contracts`, the GitHub handler suites and page
 fact/coalescing/HTTP contracts, plus full checks. Source contracts also prove new
 cycle heads refresh, credential/representation separation and failed credential
-reads refusing before a covered page. Retain comparable before/after evidence.
+reads refusing before a covered page. Fairness contracts run with the collector
+enabled, including 201 PRs beside small repos and restart/page-resume coverage.
+Retain comparable before/after evidence.
 After merge, confirm the automatic rollout with owner RPC; never deploy/restart
 or force live polling. Durable outbox and remaining reader moves are later slices.

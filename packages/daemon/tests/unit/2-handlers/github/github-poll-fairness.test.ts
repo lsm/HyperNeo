@@ -1,9 +1,17 @@
 import { describe, expect, test } from 'bun:test';
+import { CodingPollFactsRepository } from '../../../../src/lib/neo/packs/coding/poll-facts.ts';
+import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { GitHubEventExtension } from '../../../../src/lib/external-events/github/github-event-extension';
 import { ExternalEventExtensionConfigStore } from '../../../../src/lib/external-events';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types';
+
+function collector(db: Database) {
+  createCodingPackTables(db);
+  const facts = new CodingPollFactsRepository(db);
+  return facts.collect.bind(facts);
+}
 
 describe('GitHub polling fairness', () => {
   for (const stage of [4, 5, 6]) {
@@ -59,6 +67,7 @@ describe('GitHub polling fairness', () => {
         return Response.json(body, { headers: { 'X-RateLimit-Remaining': '5000' } });
       }) as typeof fetch;
       const extension = new GitHubEventExtension(db, undefined, {
+        collectPollPage: collector(db),
         pollIntervalMs: 60_000,
         fetchImpl,
       });
@@ -140,6 +149,7 @@ describe('GitHub polling fairness', () => {
       });
     }) as typeof fetch;
     const extension = new GitHubEventExtension(db, undefined, {
+      collectPollPage: collector(db),
       pollIntervalMs: 60_000,
       fetchImpl,
       subscribedPullRequests: () => [7],
@@ -205,7 +215,12 @@ describe('GitHub polling fairness', () => {
         headers: { 'X-RateLimit-Remaining': '10', 'X-RateLimit-Reset': '1' },
       });
     }) as typeof fetch;
-    const options = { pollIntervalMs: 60_000, fetchImpl, subscribedPullRequests: () => [7] };
+    const options = {
+      collectPollPage: collector(db),
+      pollIntervalMs: 60_000,
+      fetchImpl,
+      subscribedPullRequests: () => [7],
+    };
     let extension = new GitHubEventExtension(db, undefined, options);
     extension.repo.upsertWatchedRepo({
       spaceId: 'test-space',
@@ -286,6 +301,7 @@ describe('GitHub polling fairness', () => {
       });
     }) as typeof fetch;
     const options = {
+      collectPollPage: collector(db),
       pollIntervalMs: 60_000,
       fetchImpl,
       subscribedPullRequests: ({ repo }: { repo: string }) =>

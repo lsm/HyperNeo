@@ -90,7 +90,10 @@ try {
     const metadata = JSON.parse(page.http_json ?? 'null');
     assert(!metadata?.headers.authorization); assert(!metadata?.headers['set-cookie']);
   }
-  if (scenario === 'conditional') assert(requests.some(r => r.phase === 'repeat' && r.status === 304));
+  if (scenario === 'conditional') {
+    assert(requests.some(r => r.phase === 'repeat' && r.status === 304));
+    assert(evidence.cycles.at(-1).pages.some(page => page.reason === 'partial'));
+  }
   if (scenario === 'failure') {
     assert(requests.some(r => r.phase === 'failed' && r.status === 503));
     assert(requests.some(r => r.phase === 'recovered' && r.status === 200));
