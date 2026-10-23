@@ -1,4 +1,5 @@
 import { ContentDisclosureControl } from '../components/ui/ContentDisclosureControl.tsx';
+import { ChevronRightGlyph } from '../components/icons/common-glyphs.tsx';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { ArtifactCards } from '../components/artifacts/ArtifactCards.tsx';
 import type {
@@ -119,14 +120,32 @@ function TodoRow({
   const [mark, color] = marks[todo.state];
   const detailId = `neo-todo-detail-${todo.id}`;
   const detail = neoTodoDetail(todo);
-  const control = onToggle && (
-    <ContentDisclosureControl
-      iconOnly
-      expanded={expanded}
-      onToggle={onToggle}
-      aria-label={t(expanded ? 'todo.hideDetails' : 'todo.showDetails', { title: todo.title })}
-      aria-controls={detailId}
-    />
+  const head = (
+    <>
+      <span
+        class={`break-words ${todo.state === 'removed' ? 'text-fg-faint line-through' : 'text-fg'}`}
+      >
+        {todo.title}
+      </span>
+      {todo.addedAfterStart && todo.state !== 'removed' && (
+        <span class="ml-1.5 rounded border border-accent px-1 text-xs font-semibold text-accent">
+          {t('todo.new')}
+        </span>
+      )}
+      {todo.worker && (
+        <span data-worker-label class="block break-words text-xs text-fg-muted">
+          {todo.worker.label}
+        </span>
+      )}
+      <span
+        data-todo-status
+        class={`block ${onToggle && !expanded ? 'truncate' : 'break-words'} text-xs ${number === undefined && todo.state === 'blocked' ? 'text-warning' : 'text-fg-muted'}`}
+      >
+        {number === undefined
+          ? neoTodoStatus(todo)
+          : t('todo.doneWhen', { doneWhen: todo.doneWhen })}
+      </span>
+    </>
   );
   return (
     <div
@@ -149,33 +168,30 @@ function TodoRow({
         </span>
       )}
       <div class="min-w-0 flex-1">
-        <div class="block w-full min-w-0 text-left">
-          <span
-            class={`break-words ${todo.state === 'removed' ? 'text-fg-faint line-through' : 'text-fg'}`}
+        {onToggle ? (
+          <button
+            type="button"
+            aria-expanded={expanded}
+            aria-controls={detailId}
+            aria-label={t(expanded ? 'todo.hideDetails' : 'todo.showDetails', {
+              title: todo.title,
+            })}
+            onClick={onToggle}
+            class="block w-full min-w-0 rounded text-left focus-visible:outline-accent"
           >
-            {todo.title}
-          </span>
-          {todo.addedAfterStart && todo.state !== 'removed' && (
-            <span class="ml-1.5 rounded border border-accent px-1 text-xs font-semibold text-accent">
-              {t('todo.new')}
-            </span>
-          )}
-          {todo.worker && (
-            <span data-worker-label class="block break-words text-xs text-fg-muted">
-              {todo.worker.label}
-            </span>
-          )}
-          <div class="flow-root">
-            <span
-              data-todo-status
-              class={`block ${onToggle && !expanded ? 'truncate' : 'break-words'} text-xs ${number === undefined && todo.state === 'blocked' ? 'text-warning' : 'text-fg-muted'}`}
-            >
-              {number === undefined
-                ? neoTodoStatus(todo)
-                : t('todo.doneWhen', { doneWhen: todo.doneWhen })}
-            </span>
-          </div>
-        </div>
+            <ChevronRightGlyph
+              aria-hidden="true"
+              data-todo-hint
+              class={`-ml-0.5 mr-1 inline-block h-3.5 w-3.5 align-[-2px] text-fg-muted transition-transform ${expanded ? 'rotate-90' : ''}`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            />
+            {head}
+          </button>
+        ) : (
+          <div class="block w-full min-w-0 text-left">{head}</div>
+        )}
         {(!onToggle || expanded) && (
           <div id={detailId} data-todo-details={onToggle ? '' : undefined} class="flow-root">
             <div class="contents [&>p:last-child]:inline [&>span:last-child]:inline">
@@ -195,20 +211,17 @@ function TodoRow({
           </div>
         )}
       </div>
-      {(control || (todo.link && todo.state !== 'removed' && onOpen)) && (
+      {todo.link && todo.state !== 'removed' && onOpen && (
         <div class="flex shrink-0 items-center justify-end gap-2 self-start">
-          {todo.link && todo.state !== 'removed' && onOpen && (
-            <button
-              type="button"
-              class={neoSecondaryClass}
-              aria-label={t('todo.openTitle', { title: todo.title })}
-              onClick={() => onOpen(todo.link!, todo.worker?.label ?? todo.title)}
-            >
-              <NeoSessionMark kind={neoSessionKind(todo.worker?.adapter, todo.link)} />
-              {t('todo.open')}
-            </button>
-          )}
-          {control}
+          <button
+            type="button"
+            class={neoSecondaryClass}
+            aria-label={t('todo.openTitle', { title: todo.title })}
+            onClick={() => onOpen(todo.link!, todo.worker?.label ?? todo.title)}
+          >
+            <NeoSessionMark kind={neoSessionKind(todo.worker?.adapter, todo.link)} />
+            {t('todo.open')}
+          </button>
         </div>
       )}
     </div>
@@ -399,6 +412,7 @@ export function NeoAskTodos({
   onSettle?: (status: 'done' | 'dropped') => void | Promise<void>;
   onLoadDone?: (askId: string, offset: number) => Promise<NeoDoneTodosPage>;
 }) {
+  const cardRef = useRef<HTMLElement>(null);
   const [open, setOpen] = useState(false);
   const [doneOpen, setDoneOpen] = useState(false);
   const [paged, setPaged] = useState<NeoTodoEntry[]>([]);
@@ -453,9 +467,20 @@ export function NeoAskTodos({
   const removed = todos.filter((todo) => todo.state === 'removed' && !inQuestion.has(todo.id));
   const hasDetails =
     answered.length > 0 || retired.length > 0 || !!ask.outcome || removed.length > 0;
+  const everything = allExpanded && (open || !hasDetails);
+  const toggleEverything = () => {
+    setExpanded(everything ? [] : listed.map((todo) => todo.id));
+    setOpen(!everything);
+    if (everything)
+      requestAnimationFrame(() => {
+        const card = cardRef.current;
+        if (card && card.getBoundingClientRect().top < 0) card.scrollIntoView({ block: 'start' });
+      });
+  };
   const [label, tone] = states[entry.state];
   return (
     <article
+      ref={cardRef}
       aria-label={ask.title}
       id={`neo-ref-ask-${ask.id}`}
       data-ask={ask.id}
@@ -505,15 +530,6 @@ export function NeoAskTodos({
       ))}
       {listed.length > 0 && (
         <div class="mt-3" aria-label={t('ask.todos')}>
-          <div class="mb-1 flex justify-end">
-            <button
-              type="button"
-              class={neoPlainClass}
-              onClick={() => setExpanded(allExpanded ? [] : listed.map((todo) => todo.id))}
-            >
-              {t(allExpanded ? 'todo.collapseAll' : 'todo.expandAll')}
-            </button>
-          </div>
           {listed.map((todo) => (
             <TodoRow
               key={todo.id}
@@ -617,13 +633,13 @@ export function NeoAskTodos({
           )}
         </div>
       )}
-      {hasDetails && (
+      {(hasDetails || listed.length > 1) && (
         <div class={neoFooterClass}>
           <span class="flex-1" />
           <ContentDisclosureControl
             data-ask-details-toggle
-            expanded={open}
-            onToggle={() => setOpen(!open)}
+            expanded={everything}
+            onToggle={toggleEverything}
             aria-label={t('ask.details')}
           />
         </div>

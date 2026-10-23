@@ -70,8 +70,6 @@ export const en = {
   'todo.new': 'New',
   'todo.doneWhen': 'Done when: {doneWhen}',
   'todo.open': 'Open',
-  'todo.expandAll': 'Expand all',
-  'todo.collapseAll': 'Collapse all',
   'todo.showDetails': 'Show details: {title}',
   'todo.hideDetails': 'Hide details: {title}',
   'todo.openTitle': 'Open {title}',

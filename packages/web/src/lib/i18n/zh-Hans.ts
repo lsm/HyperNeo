@@ -72,8 +72,6 @@ export const zhHans: Record<keyof typeof en, string> = {
   'todo.new': '新',
   'todo.doneWhen': '做完 = {doneWhen}',
   'todo.open': '打开',
-  'todo.expandAll': '全部展开',
-  'todo.collapseAll': '全部收起',
   'todo.showDetails': '显示详情：{title}',
   'todo.hideDetails': '收起详情：{title}',
   'todo.openTitle': '打开 {title}',
