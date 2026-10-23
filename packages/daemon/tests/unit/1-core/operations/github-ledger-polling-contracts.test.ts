@@ -96,3 +96,18 @@ test('cold and expired destination validators seed shared bodies once and then r
     )
   ).toEqual([true, true, true]);
 }, 30000);
+
+test('slow configured polling keeps 304 payload reuse across its interval and expires inactive raw pages', () => {
+  const result = proof('github-ledger-polling.ts', 'slow-conditional', 'polling-ledger.json');
+  expect(result.verified).toBe(true);
+  expect(result.configuredIntervalMs).toBe(1800_000);
+  expect(result.cycles.map((cycle: { events: unknown[] }) => cycle.events.length)).toEqual([
+    2, 2, 2,
+  ]);
+  const repeat = result.requests.find(
+    (r: { phase: string; path: string }) =>
+      r.phase === 'repeat' && r.path.includes('/pulls/7/reviews')
+  );
+  expect(repeat.status).toBe(304);
+  expect(repeat.bodyBytes).toBe(0);
+}, 30000);

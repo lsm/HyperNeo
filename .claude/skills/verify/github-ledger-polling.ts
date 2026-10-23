@@ -9,7 +9,7 @@ import { GitHubEventExtension } from '../../../packages/daemon/src/lib/external-
 import { SpaceRepository } from '../../../packages/daemon/src/storage/repositories/space-repository.ts';
 
 const [scenario, path] = process.argv.slice(2), run = resolve(path);
-assert(['normal', 'conditional', 'failure', 'retention', 'conditional-reseed'].includes(scenario));
+assert(['normal', 'conditional', 'failure', 'retention', 'conditional-reseed', 'slow-conditional'].includes(scenario));
 assert.equal(process.env.NODE_ENV, 'test'); assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data')); assert(!existsSync(join(run, 'data')));
 assert.equal(process.env.GH_TOKEN, undefined); assert.equal(process.env.GITHUB_TOKEN, undefined);
@@ -23,7 +23,7 @@ const root=${JSON.stringify(run)},args=process.argv.slice(2),phase=readFileSync(
 if(args[0]!=='api'||!args.includes('--include'))process.exit(2);
 const path=args.find(a=>a.startsWith('/repos/')||a==='/user');if(!path)process.exit(2);
 const url=new URL(path,'https://api.github.com'),conditional=args.some(a=>a.startsWith('If-None-Match:'));
-const status=phase==='failed'&&path!=='/user'?503:['conditional','conditional-reseed'].includes(${JSON.stringify(scenario)})&&conditional?304:200;
+const status=phase==='failed'&&path!=='/user'?503:['conditional','conditional-reseed', 'slow-conditional'].includes(${JSON.stringify(scenario)})&&conditional?304:200;
 let body=[];
 const at=new Date(${when}+(phase==='recovered'?1000:0)).toISOString(),head=${JSON.stringify(head)};
 if(path==='/user')body={login:'synthetic-human'};
@@ -34,7 +34,7 @@ else if(url.pathname.endsWith('/reviews'))body=[{id:phase==='recovered'?42:41,st
 else if(/\\/pulls\\/7$/.test(url.pathname))body={number:7,state:'open',mergeable:true,head:{sha:head}};
 else if(url.pathname.endsWith('/pulls'))body=[{number:7,state:'open',updated_at:at,created_at:at,html_url:'https://github.com/synthetic/shared/pull/7',head:{sha:head},user:{login:'synthetic-author'}}];
 if(status===503)body={message:'Synthetic unavailable'};
-appendFileSync(root+'/evidence/requests.jsonl',JSON.stringify({phase,path,status,conditional})+'\\n');
+appendFileSync(root+'/evidence/requests.jsonl',JSON.stringify({phase,path,status,conditional,bodyBytes:status===304?0:Buffer.byteLength(JSON.stringify(body))})+'\\n');
 process.stdout.write('HTTP/2.0 '+status+' Synthetic\\r\\nETag: "pin"\\r\\nX-RateLimit-Remaining: 4900\\r\\nX-RateLimit-Limit: 5000\\r\\nX-RateLimit-Resource: core\\r\\nContent-Type: application/json\\r\\n\\r\\n'+(status===304?'':JSON.stringify(body)));
 process.exitCode=status>=400||status===304?1:0;
 `, { mode: 0o700 });
@@ -61,6 +61,11 @@ try {
     ws!.send(JSON.stringify({ id, type: 'REQ', method, data, sessionId: 'global', timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
   const approvals = () => db.prepare("SELECT id,space_id,topic,payload_json FROM space_external_events WHERE topic LIKE 'github/synthetic/shared/pull_request/7.review_submitted'").all() as { id: string; space_id: string; payload_json: string }[];
+  if (scenario === 'slow-conditional') {
+    const settings = await rpc('settings.global.update', { updates: { githubPollingInterval: 1800 } });
+    assert.equal(settings.settings.githubPollingInterval, 1800);
+    evidence.configuredIntervalMs = 1800_000;
+  }
   const legacyKey = '["pre-existing-unscoped"]';
   if (scenario === 'retention') {
     db.prepare('INSERT INTO pack_coding_poll_facts (subject,fact_revision,observation_revision,value_json,observed_at,attempted_at) VALUES (?,?,?,?,?,?)').run(legacyKey, 3, 5, ' { "kept" : true } ', 100, 110);
@@ -68,9 +73,10 @@ try {
   }
   const legacyRows = db.prepare('SELECT * FROM pack_coding_poll_facts WHERE subject=?').all(legacyKey);
   const normalizedRows = db.prepare('SELECT * FROM pack_coding_ref_facts WHERE subject=?').all(legacyKey);
-  const phases = scenario === 'failure' ? ['initial', 'failed', 'recovered'] : scenario === 'retention' ? ['initial', 'advance-one', 'advance-two'] : scenario === 'conditional-reseed' ? ['initial', 'expired', 'repeat'] : ['initial', 'repeat'];
+  const phases = scenario === 'failure' ? ['initial', 'failed', 'recovered'] : scenario === 'retention' ? ['initial', 'advance-one', 'advance-two'] : scenario === 'conditional-reseed' ? ['initial', 'expired', 'repeat'] : scenario === 'slow-conditional' ? ['initial', 'repeat', 'expired'] : ['initial', 'repeat'];
   for (const phase of phases) {
     writeFileSync(join(run, 'phase'), phase);
+    if (scenario === 'slow-conditional' && phase !== 'initial') db.prepare("UPDATE pack_coding_poll_facts SET attempted_at=? WHERE json_extract(subject,'$[0]') GLOB 'external-event-page:v1:*'").run(Date.now() - (phase === 'repeat' ? 30 : 61) * 60_000);
     if (scenario === 'conditional-reseed' && phase === 'expired') db.prepare("UPDATE pack_coding_poll_facts SET attempted_at=? WHERE json_extract(subject,'$[0]') GLOB 'external-event-page:v1:*'").run(Date.now() - 16 * 60_000);
     if (scenario === 'retention') {
       db.prepare('UPDATE pack_coding_poll_facts SET attempted_at=? WHERE subject<>?').run(Date.now() - 16 * 60_000, legacyKey);
@@ -125,6 +131,12 @@ try {
     assert(evidence.cycles.every(cycle => cycle.pages.every(page => page.reason === null)));
     assert(requests.some(r => r.phase === 'repeat' && r.status === 304));
     assert(!requests.some(r => ['initial', 'expired'].includes(r.phase) && r.conditional));
+  }
+  if (scenario === 'slow-conditional') {
+    const repeatReview = requests.find(r => r.phase === 'repeat' && r.path.includes('/pulls/7/reviews'));
+    assert.equal(repeatReview?.status, 304, `30m watcher re-downloaded ${repeatReview?.bodyBytes} bytes after one interval`);
+    assert.equal(repeatReview.bodyBytes, 0);
+    assert(requests.some(r => r.phase === 'expired' && r.path.includes('/pulls/7/reviews') && r.status === 200));
   }
   evidence.productionWired = true; evidence.requests = requests; evidence.duplicateInitialReviewReads = initialReviews.length; evidence.verified = true;
   console.log(JSON.stringify({ scenario, verified: true, duplicateInitialReviewReads: initialReviews.length, eventCounts: evidence.cycles.map((cycle: any) => cycle.events.length) }));
