@@ -64,7 +64,6 @@ import { adoptNeoFilePacks } from '../neo/packs/index.ts';
 import { getDataDir } from '../data-dir.ts';
 import { createCompletionGateBindings } from '../tasks/complete-task-gates.ts';
 import { isCoderOwnedMergeWorkflow } from '../workflows/post-approval-router.ts';
-import { createGithubConnector } from '../github/connectors/github-connector.ts';
 import { setupOperationHandlers } from './operation-handlers.ts';
 import type { UpgradeIdentity } from '../pairing/upgrade-auth.ts';
 import { createSpaceCallerScopeResolver } from '../space/runtime/space-caller-scope.ts';
@@ -1631,13 +1630,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
             ? artifactProfile.resolveInitialPrimaryLinkUrl(task.workflowRunId)
             : '',
         getPrState: async (prUrl) => {
-          const outcome = await createGithubConnector().ops.getPr(
-            { prUrl },
-            { workspacePath: '', params: {}, rawParams: {}, hookLocalState: {} }
-          );
-          if (!outcome.ok) throw new Error(outcome.error);
-          const state = (outcome.data as { state?: unknown } | null)?.state;
-          return typeof state === 'string' ? state : 'UNKNOWN';
+          const outcome = await neoService.readPrState(prUrl);
+          if ('reason' in outcome) throw new Error(outcome.reason);
+          return outcome.value;
         },
         workflowDeclaresPostApprovalRoute: (taskId) =>
           spaceRuntimeService.workflowDeclaresPostApprovalRoute(taskId),

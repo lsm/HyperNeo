@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createDaemonApp } from '../../../packages/daemon/src/app.ts';
+import { BUILD_METADATA } from '../../../packages/daemon/src/lib/build-metadata.ts';
 import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { createOperationMcpHandler } from '../../../packages/daemon/src/lib/operations/mcp-adapter.ts';
 import { CodingPrLedgerRepository } from '../../../packages/daemon/src/lib/neo/packs/coding/pr-ledger.ts';
@@ -35,7 +36,7 @@ const evidence:Record<string,any>={mode,verified:false,workerMcpAdapter:true,new
 const requests=()=>existsSync(join(run,'evidence/requests.jsonl'))?readFileSync(join(run,'evidence/requests.jsonl'),'utf8').trim().split('\n').filter(Boolean).map(s=>JSON.parse(s)):[];
 try{
  app=await createDaemonApp({config:getConfig({port:0,host:'127.0.0.1',dbPath:join(run,'data/daemon.db')}),verbose:false});
- await app.jobProcessor.stop();assert.notEqual(app.server.port,8399);app.db.updateGlobalSettings({neo:{packs:[]}});
+ await app.jobProcessor.stop();assert.notEqual(app.server.port,8399);evidence.runtime={commit:BUILD_METADATA.commit,pid:process.pid,port:app.server.port};app.db.updateGlobalSettings({neo:{packs:[]}});
  const db=app.db.getDatabase(),tasks=new SpaceTaskRepository(db),sessions=new SessionRepository(db);
  const space=new SpaceRepository(db).createSpace({name:'Synthetic completion',slug:'synthetic-completion',workspacePath:join(run,'home')});
  const workflow=new SpaceWorkflowRepository(db).createWorkflow({spaceId:space.id,name:'Synthetic coding',nodes:[],templateName:'Coder-Only Workflow'});
@@ -71,9 +72,11 @@ try{
   phase('merged');const recovered=fixture(9);evidence.merged=await recovered.complete();assert.equal(tasks.getTask(recovered.id)?.status,'done','A newly merged PR must not be blocked by cached CLOSED state');
   ledger.mergeFacts.record('synthetic/ledger',10,{value:merged,source},Date.now()-180_000,0);
   const prior=ledger.mergeFacts.read('synthetic/ledger',10,Date.now(),Infinity);
+  const priorRow=db.prepare('SELECT value_json,observed_at FROM pack_coding_merge_facts WHERE repo=? AND number=?').get('synthetic/ledger',10);
   phase('failed');const failed=fixture(10);evidence.failed=await failed.complete();assert.equal(tasks.getTask(failed.id)?.status,'approved');assert.match(evidence.failed.detail,/could not verify/);
-  const row=ledger.mergeFacts.read('synthetic/ledger',10,Date.now(),Infinity);assert.equal(row.merge.status,'unknown');assert.equal(row.merge.observedAt,prior.merge.observedAt);
+  const row=ledger.mergeFacts.read('synthetic/ledger',10,Date.now(),Infinity);assert.equal(row.merge.status,'unknown');assert.equal(row.merge.observedAt,prior.merge.observedAt);assert.deepEqual(db.prepare('SELECT value_json,observed_at FROM pack_coding_merge_facts WHERE repo=? AND number=?').get('synthetic/ledger',10),priorRow);
   phase('partial');const partial=fixture(11);evidence.partial=await partial.complete();assert.equal(tasks.getTask(partial.id)?.status,'approved');assert.match(evidence.partial.detail,/could not verify/);
+  phase('recovered');const partialRecovered=fixture(11);evidence.partialRecovered=await partialRecovered.complete();assert.equal(tasks.getTask(partialRecovered.id)?.status,'done');
   evidence.verified=true;
  }
  evidence.counts=Object.fromEntries([...new Set(requests().map(r=>r.phase))].map(p=>[p,requests().filter(r=>r.phase===p).length]));
