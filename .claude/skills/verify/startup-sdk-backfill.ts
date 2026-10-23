@@ -36,7 +36,7 @@ if (mode === 'seed') {
 } else if (mode === 'serve') {
   const { createDaemonApp } = await import('../../../packages/daemon/src/app.ts');
   const { getConfig } = await import('../../../packages/daemon/src/config.ts');
-  const app = await createDaemonApp({ config: getConfig({ host: '127.0.0.1', port, dbPath: path }), verbose: false });
+  const app = await createDaemonApp({ config: getConfig({ host: '127.0.0.1', port, dbPath: path }), verbose: false, standalone: true });
   await app.jobProcessor.stop();
   process.on('SIGTERM', () => { void app.cleanup().then(() => process.exit(0)); });
   writeFileSync(join(run, 'evidence/listening.json'), JSON.stringify({ port: app.server.port }));
@@ -44,6 +44,18 @@ if (mode === 'seed') {
   assert(existsSync(join(run, 'evidence/seed.json')));
   const evidence: Record<string, unknown> = { startup: [], interrupted: null, resumed: null };
   let child: ReturnType<typeof Bun.spawn> | undefined;
+  let ws: WebSocket | undefined;
+  const pending = new Map<string, { done: (value: any) => void; fail: (error: Error) => void }>();
+  const rpc = (method: string, data = {}) => new Promise<any>((done, fail) => {
+    const id = crypto.randomUUID(), timer = setTimeout(() => { pending.delete(id); fail(new Error(`RPC deadline: ${method}`)); }, 10000); pending.set(id, { done: (value) => { clearTimeout(timer); done(value); }, fail: (error) => { clearTimeout(timer); fail(error); } });
+    ws!.send(JSON.stringify({ id, type: 'REQ', sessionId: 'global', method, data, timestamp: new Date().toISOString(), version: '1.0.0' }));
+  });
+  async function connect() {
+    ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    await new Promise<void>((done, fail) => { ws!.onopen = () => done(); ws!.onerror = () => fail(new Error('RPC unavailable')); });
+    ws.onmessage = (event) => { const m = JSON.parse(String(event.data)); const id = pending.has(m.requestId) ? m.requestId : m.id; const waiter = pending.get(id); if (!waiter) return; pending.delete(id); m.error ? waiter.fail(new Error(JSON.stringify(m.error))) : waiter.done(m.data); };
+    ws.onclose = () => { for (const p of pending.values()) p.fail(new Error('Owned daemon disconnected')); pending.clear(); };
+  }
   const probe = new Database(path, { readonly: true });
   const progress = () => {
     const cursor = probe.prepare('SELECT key FROM migration_markers WHERE key GLOB ?').get(`${prefix}*`) as { key: string } | null;
@@ -59,19 +71,33 @@ if (mode === 'seed') {
       try { response = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(500) }); if (response.status === 200) break; } catch {}
       await pause();
     }
-    const result = { label, healthStatus: response?.status ?? null, elapsedMs: performance.now() - began, progress: progress() };
+    const result = { label, healthStatus: response?.status ?? null, elapsedMs: performance.now() - began, progress: progress(), health: response?.status === 200 ? await response.json() : null };
     (evidence.startup as unknown[]).push(result);
     assert.equal(result.healthStatus, 200, 'REPRO: long data backfill blocks HTTP health startup');
     assert.equal(result.progress.complete, false, 'Health must serve while backfill is pending');
     return result;
   }
-  async function stop(signal: 'SIGKILL' | 'SIGTERM') { child?.kill(signal); await child?.exited; child = undefined; }
+  async function stop(signal: 'SIGKILL' | 'SIGTERM') { ws?.close(); ws = undefined; child?.kill(signal); await child?.exited; child = undefined; }
   try {
     assert(!progress().complete);
-    await start('first');
+    await start('first'); await connect();
+    const health = await rpc('system.health');
+    assert(['pending', 'running'].includes(health.dataMigration.state));
+    evidence.healthDuringBackfill = health;
+    const system = await rpc('state.global.snapshot', { includeSessions: false });
+    evidence.globalSystemDuringBackfill = system.system.health;
+    assert(['pending', 'running'].includes(system.system.health.dataMigration.state));
+    let historyReturned = false;
+    const history = rpc('message.sdkMessages', { sessionId: 'synthetic-backfill', limit: 2 }).then(() => { historyReturned = true; }, () => {});
+    await pause(100); assert.equal(historyReturned, false, 'Pending history must wait rather than return an empty projection');
+    const created = await rpc('session.create', { workspacePath: run, title: 'Synthetic new session' });
+    const fresh = await rpc('message.sdkMessages', { sessionId: created.sessionId, limit: 2 });
+    evidence.newSessionDuringBackfill = { sessionId: created.sessionId, page: fresh };
+    assert.equal((await rpc('system.health')).status, 'ok');
+    evidence.historyReadWaited = !historyReturned;
     const until = Date.now() + 30000;
     while (progress().through === 0) { assert(Date.now() < until, 'No persisted progress'); await pause(); }
-    await stop('SIGKILL'); const interrupted = progress(); evidence.interrupted = interrupted;
+    await stop('SIGKILL'); await history; const interrupted = progress(); evidence.interrupted = interrupted;
     assert(interrupted.through > 0 && !interrupted.complete);
     const second = await start('restart'); assert(second.progress.through >= interrupted.through);
     const finishBy = Date.now() + 120000;
@@ -83,7 +109,7 @@ if (mode === 'seed') {
     assert(progress().through === 0, 'Completed pass retires only its cursor');
     const hash = createHash('sha256'); let after = 0, count = 0;
     for (;;) {
-      const page = probe.prepare('SELECT seq,sdk_message FROM sdk_messages WHERE session_id=? AND seq>? ORDER BY seq LIMIT 512').all('synthetic-backfill', after) as { seq: number; sdk_message: string }[];
+      const page = probe.prepare('SELECT m.seq,COALESCE(b.sdk_message,m.sdk_message) AS sdk_message FROM sdk_messages m LEFT JOIN sdk_message_bodies b ON b.seq=m.seq WHERE m.session_id=? AND m.seq>? ORDER BY m.seq LIMIT 512').all('synthetic-backfill', after) as { seq: number; sdk_message: string }[];
       if (!page.length) break;
       for (const row of page) { hash.update(row.sdk_message); after = row.seq; count++; }
     }
