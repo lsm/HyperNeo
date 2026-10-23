@@ -359,7 +359,7 @@ describe('ModelPoolEditor', () => {
     expect(values).toContain('think24k');
   });
 
-  it('falls back to the provider default for a model with no granular modes', () => {
+  it('offers every level for a model with no granular modes', () => {
     const { getAllByTestId } = render(
       <ModelPoolEditor
         modelPool={[{ model: 'kimi-k2', provider: 'kimi', maxConcurrent: 1, weight: 100 }]}
@@ -369,7 +369,7 @@ describe('ModelPoolEditor', () => {
     const values = [
       ...(getAllByTestId('pool-entry-thinking-select')[0] as HTMLSelectElement).options,
     ].map((option) => option.value);
-    expect(values).not.toContain('think16k');
+    expect(values).toContain('think16k');
   });
 
   it('retains a stored level the current model no longer offers', () => {
@@ -391,7 +391,7 @@ describe('ModelPoolEditor', () => {
     expect([...select.options].map((o) => o.value)).toContain('think24k');
     expect(select.value).toBe('think24k');
   });
-  it('clears a granular level when switching to an on/off-only model', () => {
+  it('keeps the chosen level when switching to an on/off-only model', () => {
     const onModelPoolChange = vi.fn();
     const { getAllByTestId } = render(
       <ModelPoolEditor
@@ -416,7 +416,7 @@ describe('ModelPoolEditor', () => {
         provider: 'kimi',
         maxConcurrent: 1,
         weight: 100,
-        thinkingLevel: null,
+        thinkingLevel: 'think24k',
       },
     ]);
   });

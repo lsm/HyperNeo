@@ -231,36 +231,9 @@ export function effortForThinkingLevel(
     .find((effort): effort is ThinkingEffort => !!effort && supported.includes(effort));
 }
 
-export function getThinkingLevelsForModel(
-  provider: string | undefined,
-  mode: 'off' | 'on' | 'granular' | undefined,
-  effortLevels: readonly ThinkingEffort[] | undefined
-): ThinkingLevel[] {
-  const levels = getThinkingOptionsForProvider(provider, mode).map((option) => option.value);
-  if (!effortLevels?.length || levels.length <= 2) return levels;
-  return levels.filter((level) => {
-    const effort = THINKING_LEVEL_EFFORT[level];
-    return !effort || (level !== 'think64k' && effortLevels.includes(effort));
-  });
-}
-
-export function getThinkingOptionsForProvider(
-  provider: string | undefined,
-  mode?: 'off' | 'on' | 'granular'
-): Array<{ value: ThinkingLevel; label: string }> {
-  const resolvedMode = mode ?? PROVIDER_THINKING_MODES[provider as Provider] ?? 'granular';
-  switch (resolvedMode) {
-    case 'off':
-      return [];
-    case 'on':
-      return [
-        { value: 'off', label: 'Off' },
-        { value: 'think32k', label: 'On' },
-      ];
-    case 'granular':
-      return THINKING_LEVELS.map((value) => ({ value, label: THINKING_LEVEL_LABELS[value] }));
-  }
-}
+export const THINKING_OPTIONS: Array<{ value: ThinkingLevel; label: string }> = THINKING_LEVELS.map(
+  (value) => ({ value, label: THINKING_LEVEL_LABELS[value] })
+);
 
 export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
   provider?: Provider;

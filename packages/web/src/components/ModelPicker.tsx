@@ -1,4 +1,4 @@
-import { getThinkingOptionsForProvider } from '@hyperneo/shared';
+import { THINKING_OPTIONS } from '@hyperneo/shared';
 import type { ModelInfo, ThinkingLevel } from '@hyperneo/shared';
 import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
@@ -97,8 +97,8 @@ export function ModelPicker({
     activeProvider,
     activeModelInfo?.id
   );
-  const options = getThinkingOptionsForProvider(activeProvider, activeModelInfo?.thinkingModes);
-  const level = options.some((option) => option.value === thinkingLevel) ? thinkingLevel : 'off';
+  const options = THINKING_OPTIONS;
+  const level = thinkingLevel;
   const thinking = options.find((option) => option.value === level)?.label ?? 'Off';
   const label = activeModelInfo
     ? shortenModelName(activeModelInfo.name, activeProvider)
@@ -144,7 +144,6 @@ export function ModelPicker({
           models={models}
           current={activeModelInfo ?? undefined}
           level={level}
-          options={options}
           busy={busy}
           align={align}
           loading={loading}

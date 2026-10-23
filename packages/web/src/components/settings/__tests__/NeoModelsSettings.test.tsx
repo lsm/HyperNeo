@@ -182,7 +182,7 @@ test('preserves an inherited fallback chain when only primary thinking is edited
   );
 });
 
-test('lists only runnable providers and limits thinking to the server catalog', async () => {
+test('lists only runnable providers and offers every thinking level', async () => {
   auth.mockResolvedValue({
     providers: models.map((model) => ({
       id: model.provider,
@@ -195,7 +195,7 @@ test('lists only runnable providers and limits thinking to the server catalog', 
     [...ui.getByLabelText('Neo model 3 thinking').querySelectorAll('option')].map(
       (option) => option.value
     )
-  ).toEqual(['off', 'think32k']);
+  ).toEqual(['off', 'think8k', 'think16k', 'think24k', 'think32k', 'think48k', 'think64k']);
 });
 
 test('the first model added to an empty list becomes the primary', async () => {
