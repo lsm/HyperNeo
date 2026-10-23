@@ -40,7 +40,7 @@ const control = (phase: string) => writeFileSync(join(run, 'fixture.json'), JSON
 type Request = { phase: string; family: string; args: string[] };
 const requests = (): Request[] => existsSync(join(run, 'evidence/requests.jsonl'))
   ? readFileSync(join(run, 'evidence/requests.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line)) : [];
-const evidence: Record<string, unknown> = { publicRpcChanged: false, ancestryMigrated: false };
+const evidence: Record<string, unknown> = { publicRpcChanged: false, ancestryAssertions: false };
 const network = globalThis.fetch;
 globalThis.fetch = (() => { throw new Error('No real HTTP in this proof'); }) as typeof fetch;
 let app: Awaited<ReturnType<typeof createDaemonApp>> | undefined;

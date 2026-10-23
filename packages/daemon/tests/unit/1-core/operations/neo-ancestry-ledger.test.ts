@@ -4,7 +4,10 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CodingAncestryFactsRepository } from '../../../../src/lib/neo/packs/coding/ancestry-facts.ts';
+import { createCodingAncestryReader } from '../../../../src/lib/neo/packs/coding/ancestry-reader.ts';
 import { createCodingPackTables } from '../../../../src/lib/neo/packs/coding/schema/coding-tables.ts';
+import type { SpawnFn } from '../../../../src/lib/runtime-spawn/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 
 describe('default deploy ancestry ledger contract', () => {
@@ -82,6 +85,81 @@ describe('default deploy ancestry ledger contract', () => {
       createCodingPackTables(db);
       expect(db.prepare('SELECT * FROM pack_coding_merge_facts').all()).toEqual(before);
     } finally {
+      db.close();
+    }
+  });
+});
+
+describe('ancestry identity and revision contracts', () => {
+  const baseOid = 'a'.repeat(40),
+    headOid = 'b'.repeat(40);
+  test('repo, host and both ordered SHAs define the fact', async () => {
+    const db = new Database(':memory:');
+    createCodingPackTables(db);
+    try {
+      const facts = new CodingAncestryFactsRepository(db);
+      facts.record({ repo: 'owner/repo', baseOid, headOid }, { status: 'ahead' }, 100, 0);
+      facts.record(
+        { repo: 'ghe.example/owner/repo', baseOid, headOid },
+        { status: 'behind' },
+        100,
+        0
+      );
+      const read = createCodingAncestryReader(() => db, (() => {
+        throw new Error('Covered ancestry must not spawn');
+      }) as SpawnFn);
+      expect(await read('https://github.com/owner/repo/pull/7', baseOid, headOid)).toBe(true);
+      expect(
+        await read('https://www.github.com/owner/repo/pull/7#discussion', baseOid, headOid)
+      ).toBe(true);
+      expect(await read('https://ghe.example/owner/repo/pull/7', baseOid, headOid)).toBe(false);
+      expect(facts.read({ repo: 'other/repo', baseOid, headOid }).ancestry.status).toBe('unknown');
+      expect(
+        facts.read({ repo: 'owner/repo', baseOid: headOid, headOid: baseOid }).ancestry.status
+      ).toBe('unknown');
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a late positive response cannot replace a newer negative observation', async () => {
+    const db = new Database(':memory:');
+    createCodingPackTables(db);
+    let started!: () => void, finish!: (code: number) => void;
+    const held = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const exit = new Promise<number>((resolve) => {
+      finish = resolve;
+    });
+    const spawn: SpawnFn = () => {
+      started();
+      return {
+        stdout: new Response(JSON.stringify({ status: 'ahead' })).body,
+        stderr: new Response('').body,
+        exited: exit,
+        exitCode: null,
+        kill: () => {},
+      };
+    };
+    try {
+      const result = createCodingAncestryReader(
+        () => db,
+        spawn,
+        () => 100
+      )('https://github.com/owner/repo/pull/7', baseOid, headOid);
+      await held;
+      const facts = new CodingAncestryFactsRepository(db),
+        subject = { repo: 'owner/repo', baseOid, headOid };
+      expect(facts.record(subject, { status: 'behind' }, 100, 0)).toBe(true);
+      finish(0);
+      expect(await result).toBe(false);
+      expect(facts.read(subject)).toMatchObject({
+        observationRevision: 1,
+        ancestry: { status: 'known', comparison: 'behind', contains: false },
+      });
+    } finally {
+      finish(0);
       db.close();
     }
   });

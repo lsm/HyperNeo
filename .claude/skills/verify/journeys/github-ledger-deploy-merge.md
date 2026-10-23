@@ -1,8 +1,10 @@
 # Default deploy reader uses ledger merge facts
 
 Use shared isolation in `../SKILL.md`. This slice moves only the default deploy
-reader's PR merge lookup onto the existing merge-fact repository. Ancestry is
-unchanged. No schema, public operation, permission, timer or UI behavior is added.
+reader's PR merge lookup onto the existing merge-fact repository. Ancestry now
+has its own `github-ledger-deploy-ancestry.md` journey; this helper measures only
+merge acquisitions. The merge slice adds no schema, public operation, permission,
+timer or UI behavior.
 This is proof of the existing local reader composition in a running daemon;
 it does not claim a new card or public RPC deploy-check surface.
 

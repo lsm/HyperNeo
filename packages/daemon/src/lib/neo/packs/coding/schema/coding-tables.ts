@@ -95,6 +95,18 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
     reason TEXT CHECK (reason IS NULL OR reason IN ('failed', 'partial', 'rate_limited', 'not_authorized')),
     PRIMARY KEY (repo, number)
   );
+  CREATE TABLE IF NOT EXISTS pack_coding_ancestry_facts (
+    repo TEXT NOT NULL,
+    base_oid TEXT NOT NULL,
+    head_oid TEXT NOT NULL,
+    status TEXT CHECK (status IS NULL OR status IN ('ahead','identical','behind','diverged')),
+    fact_revision INTEGER NOT NULL,
+    observation_revision INTEGER NOT NULL,
+    observed_at INTEGER,
+    attempted_at INTEGER NOT NULL,
+    reason TEXT CHECK (reason IS NULL OR reason IN ('failed','partial')),
+    PRIMARY KEY (repo, base_oid, head_oid)
+  );
   CREATE TABLE IF NOT EXISTS pack_coding_repo_aliases (
     alias TEXT PRIMARY KEY,
     canonical TEXT NOT NULL
