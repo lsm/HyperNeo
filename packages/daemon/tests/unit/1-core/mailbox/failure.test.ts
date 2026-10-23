@@ -232,7 +232,7 @@ describe('createMailboxDeadHandler', () => {
     const job = claimMailboxJob(mailbox, entry);
     const publishFailed = mock(async () => {});
     const saveFailed = mock(
-      (_sessionId: string, _msg: typeof message, _origin?: string) => persisted
+      async (_sessionId: string, _msg: typeof message, _origin?: string) => persisted
     );
     const handler = createMailboxDeadHandler(() => {}, {
       sdkMessageRepo: mailbox.sdkMessageRepo,
@@ -480,7 +480,7 @@ describe('materializeMailboxFailure', () => {
 
     await materializeMailboxFailure(makeDeadJob(entry, 'mailbox: target session archived'), {
       sdkMessageRepo: mailbox.sdkMessageRepo,
-      saveFailed: () => 'failed-row',
+      saveFailed: async () => 'failed-row',
       notifySender,
     });
     await Promise.resolve();
@@ -501,7 +501,7 @@ describe('materializeMailboxFailure', () => {
 
       await materializeMailboxFailure(makeDeadJob(makeEntry({ origin }), 'delivery failed'), {
         sdkMessageRepo: mailbox.sdkMessageRepo,
-        saveFailed: () => 'failed-row',
+        saveFailed: async () => 'failed-row',
         notifySender,
       });
       await Promise.resolve();
@@ -528,7 +528,7 @@ describe('materializeMailboxFailure', () => {
 
   test('targets unseeded session entries with the deterministic uuid', async () => {
     const mailbox = createMailboxTestDb();
-    const saveFailed = mock(() => 'derived-row');
+    const saveFailed = mock(async () => 'derived-row');
     const entry = makeEntry();
 
     await materializeMailboxFailure(makeDeadJob(entry, 'delivery failed'), {
@@ -638,7 +638,7 @@ describe('materializeMailboxFailure', () => {
 
     await materializeMailboxFailure(makeDeadJob(entry, 'delivery failed'), {
       sdkMessageRepo: repo,
-      saveFailed: () => 'never',
+      saveFailed: async () => 'never',
       settleSkipped,
     });
     capture.stop();
