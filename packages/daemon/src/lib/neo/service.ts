@@ -275,6 +275,18 @@ export class NeoService {
       },
       { subscriberName: 'neo-work-return' }
     );
+    const offModelSwitch = events.subscribe(
+      'session.updated',
+      async ({ sessionId, source }) => {
+        const preferences = this.db.getGlobalSettings().neo?.preferences;
+        if (!source?.startsWith('model-switch') || !preferences) return;
+        if (sessionId !== this.defaultSessionId()) return;
+        await this.applyCompactPercent(sessionId, preferences).catch((error) =>
+          this.log.warn('Neo auto-compact percentage not applied', error)
+        );
+      },
+      { subscriberName: 'neo-model-compact' }
+    );
     const offStatus = events.subscribe(
       'messages.statusChanged',
       ({ sessionId }) => {
@@ -302,6 +314,7 @@ export class NeoService {
     this.unsubscribe = () => {
       offHumanReset();
       offUpdated();
+      offModelSwitch();
       offStatus();
       offDeleted();
       offExternal();
@@ -332,16 +345,22 @@ export class NeoService {
       this.log.warn('Neo model preference not applied', error);
       return null;
     });
-    const session = this.db.getSession(root.sessionId);
-    const percent = session
-      ? neoCompactPercentFor(preferences, target ?? session.config)
-      : undefined;
+    await this.applyCompactPercent(root.sessionId, preferences, target);
+  }
+
+  private async applyCompactPercent(
+    sessionId: string,
+    preferences: NeoModelPreference,
+    target?: { model: string; provider: string } | null
+  ): Promise<void> {
+    const session = this.db.getSession(sessionId);
+    if (!session) return;
+    const percent = neoCompactPercentFor(preferences, target ?? session.config);
     if (
-      session &&
-      (session.config.autoCompactPercent !== percent ||
-        session.metadata.pendingAutoCompactPercent !== undefined)
+      session.config.autoCompactPercent !== percent ||
+      session.metadata.pendingAutoCompactPercent !== undefined
     )
-      await this.sessions.updateSession(root.sessionId, {
+      await this.sessions.updateSession(sessionId, {
         config: { ...session.config, autoCompactPercent: percent },
       });
   }

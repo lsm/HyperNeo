@@ -465,6 +465,42 @@ describe('neo.preferences.set', () => {
     });
   });
 
+  test('a mid-run switch to a fallback gives the Neo session that model percentage', async () => {
+    await invoke('neo.preferences.set', {
+      model: 'claude-opus',
+      provider: 'anthropic',
+      thinkingLevel: 'off',
+      autoCompactPercent: 70,
+      fallbacks: [
+        {
+          model: 'deepseek-v4-flash',
+          provider: 'deepseek',
+          thinkingLevel: 'off',
+          autoCompactPercent: 80,
+        },
+      ],
+    });
+    expect(db.getSession('neo:root')?.config.autoCompactPercent).toBe(70);
+    const config = {
+      ...db.getSession('neo:root')!.config,
+      model: 'deepseek-v4-flash',
+      provider: 'deepseek' as const,
+    };
+    db.updateSession('neo:root', { config });
+    await events.publish('session.updated', {
+      sessionId: 'neo:root',
+      source: 'status',
+      session: { config },
+    });
+    expect(db.getSession('neo:root')?.config.autoCompactPercent).toBe(70);
+    await events.publish('session.updated', {
+      sessionId: 'neo:root',
+      source: 'model-switch',
+      session: { config },
+    });
+    expect(db.getSession('neo:root')?.config.autoCompactPercent).toBe(80);
+  });
+
   test('a new Neo session starts on the preference, thinking included', async () => {
     await invoke('neo.preferences.set', {
       model: 'claude-opus',
