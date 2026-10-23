@@ -38,7 +38,7 @@ export type NeoSessionWatcherDeps = {
   mutedSessions: () => readonly string[] | undefined;
   sessionBranchPrs: (ref: WorkRef) => Promise<string[]>;
   readRemotes: (folder: string) => Promise<string[]>;
-  observeSessions: (sessions: NeoSessionFacts[]) => void;
+  observeSessions: (sessions: NeoSessionFacts[]) => Promise<void>;
   notifyChanged: () => void;
 };
 

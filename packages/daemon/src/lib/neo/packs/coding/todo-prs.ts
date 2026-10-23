@@ -1,4 +1,6 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
+import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
 import type { NeoRefState, NeoRefStateReader } from './ask-prs.ts';
 import type { NeoTodo, NeoTodoCheck } from '@hyperneo/shared/types/neo-ask';
 import { neoWorkPrVerdict, type NeoWorkPr } from '@hyperneo/shared/types/neo-snapshot';
@@ -51,6 +53,13 @@ export class CodingTodoPrRepository {
            OR (claim = 'reported' AND excluded.claim = 'named')`
     );
     for (const { key, claim } of keyed) insert.run(todoId, key, claim, now);
+  }
+
+  write<K extends 'claim' | 'record'>(
+    method: K,
+    ...args: Parameters<CodingTodoPrRepository[K]>
+  ): Promise<void> {
+    return gatewayFor(this.db).run(codingTodoPrWrites, { method, args }) as Promise<void>;
   }
 
   urls(todoId: string): string[] {
@@ -440,9 +449,13 @@ const readIssueFacts = (superpipe({})('coding.issue-facts') as PipelineAPI)
     'facts'
   )
   .pipe(
-    (facts: Omit<CodingTodoFacts, 'observedAt'>, repo: CodingTodoPrRepository, todo: NeoTodo) => {
+    async (
+      facts: Omit<CodingTodoFacts, 'observedAt'>,
+      repo: CodingTodoPrRepository,
+      todo: NeoTodo
+    ) => {
       const observedAt = Date.now();
-      repo.record(todo.id, facts.prs, observedAt);
+      await repo.write('record', todo.id, facts.prs, observedAt);
       return { ...facts, observedAt };
     },
     ['facts', 'repo', 'todo'],
@@ -472,7 +485,7 @@ export function createCodingTodoPack(
     if (todo.check && todo.check.pack !== 'coding') return null;
     if (todo.check?.kind === 'issue_closed')
       return readIssueFacts(todo, readRefs ?? (async () => []), readPrs, repo);
-    repo.claim(todo.id, claimsOf(todo), Date.now());
+    await repo.write('claim', todo.id, claimsOf(todo), Date.now());
     const urls = repo.urls(todo.id);
     if (!urls.length) return todo.check ? { prs: [], observedAt: Date.now() } : null;
     const read = await readPrs(urls);
@@ -482,7 +495,7 @@ export function createCodingTodoPack(
     const window = repo.window(todo.id);
     const prs = codingTodoOwnPrs(todo, claims, read, window);
     const open = todo.check ? [] : codingTodoOpenBranchPrs(todo, claims, read, window, prs);
-    repo.record(todo.id, [...prs, ...open], Date.now());
+    await repo.write('record', todo.id, [...prs, ...open], Date.now());
     return { prs, observedAt: Date.now() };
   };
   return {
@@ -499,13 +512,15 @@ export function createCodingTodoPack(
     },
     schema: createCodingPackTables,
     repository: (todo) => codingTodoRepository(todo, todo.id ? repo.urls(todo.id) : []),
-    openedPrs: (todo, urls) =>
-      todo.check?.kind !== 'issue_closed' &&
-      repo.claim(
+    openedPrs: async (todo, urls) => {
+      if (todo.check?.kind === 'issue_closed') return;
+      await repo.write(
+        'claim',
         todo.id,
         [...claimsOf(todo), ...urls.map((url) => ({ url, claim: 'branch' as const }))],
         Date.now()
-      ),
+      );
+    },
     check: async (todo) => {
       const facts = await readFacts(todo);
       if (!facts) return null;
@@ -557,3 +572,10 @@ export function createCodingTodoPack(
     },
   };
 }
+
+export const codingTodoPrWrites = defineRepositoryOp(
+  'coding.todoPrWrites',
+  'write',
+  CodingTodoPrRepository,
+  ['claim', 'record']
+);

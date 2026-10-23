@@ -97,9 +97,9 @@ export function createCodingPack(deps: {
     todos,
     readFacts: todos.readFacts,
     judge: todos.judge,
-    observeSessions: (sessions, now) => deps.prLedger.observeSessions(sessions, now),
+    observeSessions: (sessions, now) => deps.prLedger.write('observeSessions', sessions, now),
     sweep: async (now) => {
-      deps.prLedger.observeSessions(await readClaudeOwners(), now);
+      await deps.prLedger.write('observeSessions', await readClaudeOwners(), now);
       const transitions = await reconcileCodingPrLedger(
         deps.prLedger,
         deps.projectRepos(),

@@ -130,8 +130,8 @@ export class NeoService {
           await Promise.all(this.installedPacks().map((pack) => pack.sessionLinks?.(ref) ?? []))
         ).flat(),
       readRemotes: async (folder) => (await readWorkspaceIdentity(folder)).remotes ?? [],
-      observeSessions: (sessions) => {
-        for (const pack of this.packs()) pack.observeSessions?.(sessions, Date.now());
+      observeSessions: async (sessions) => {
+        for (const pack of this.packs()) await pack.observeSessions?.(sessions, Date.now());
       },
       notifyChanged: () => this.notifyChanged(),
     });

@@ -473,7 +473,8 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
   const observe = async (id: string, outcome: OperationOutcome, ref: WorkRef) => {
     const todo = store.getTodo(id);
     if (todo)
-      for (const pack of deps.packs()) pack.todos?.openedPrs?.(todo, readDriverOpenedPrs(outcome));
+      for (const pack of deps.packs())
+        await pack.todos?.openedPrs?.(todo, readDriverOpenedPrs(outcome));
     if (todo) relocate(id);
     const turns = readDriverTurnEnds(outcome);
     if (!turns.length) return;
