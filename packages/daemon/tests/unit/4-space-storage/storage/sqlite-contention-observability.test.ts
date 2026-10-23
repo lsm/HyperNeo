@@ -1,4 +1,8 @@
 import { describe, expect, test } from 'bun:test';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, mkdirSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { resolve, join } from 'node:path';
 import { subscribeToStructuredLogs } from '../../../../src/lib/logger';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { withBusyRetry } from '../../../../src/storage/busy-retry';
@@ -109,6 +113,41 @@ describe('SQLite contention diagnostic contract', () => {
       expect(events.at(-1)).toMatchObject({ phase: 'retry', attempt: 3, outcome: 'ok' });
     } finally {
       off();
+    }
+  });
+  test('real gateway, merge and mirror workers retain contention ownership and original times', () => {
+    const root = mkdtempSync(join(tmpdir(), 'hn-sqlite-contention-'));
+    mkdirSync(join(root, 'home'));
+    try {
+      const proof = resolve(
+        import.meta.dirname,
+        '../../../../../../.claude/skills/verify/sqlite-contention.ts'
+      );
+      const child = spawnSync('bun', [proof, root], {
+        env: {
+          PATH: process.env.PATH,
+          HOME: join(root, 'home'),
+          NODE_ENV: 'test',
+          HYPERNEO_DATA_DIR: join(root, 'data'),
+          HYPERNEO_SQL_QUERY_OBSERVABILITY: '1',
+        },
+        timeout: 12_000,
+        encoding: 'utf8',
+      });
+      expect({ status: child.status, error: child.error?.message, stderr: child.stderr }).toEqual({
+        status: 0,
+        error: undefined,
+        stderr: '',
+      });
+      const observed = JSON.parse(readFileSync(join(root, 'observed.json'), 'utf8'));
+      expect(observed.forwardedWorkers).toEqual([
+        'db-gateway-write',
+        'message-search-merge',
+        'project-mirror',
+      ]);
+      expect(observed.rows).toBe(5);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });

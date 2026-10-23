@@ -1,3 +1,7 @@
+import {
+  forwardSQLiteWorkerLog,
+  type SQLiteWorkerLog,
+} from '../storage/sqlite-worker-observability.ts';
 import { Logger, emitStructuredLogEvent } from './logger.ts';
 
 const DEFAULT_MESSAGE_SEARCH_MERGE_TIMEOUT_MS = 30_000;
@@ -45,7 +49,11 @@ export function runMessageSearchMerge(
       worker = new Worker(new URL('./message-search-merge-worker.ts', import.meta.url).href, {
         type: 'module',
       });
-      worker.onmessage = (event: MessageEvent<MergeWorkerResponse>) => {
+      worker.onmessage = (event: MessageEvent<MergeWorkerResponse | SQLiteWorkerLog>) => {
+        if ('log' in event.data) {
+          forwardSQLiteWorkerLog(event.data, 'message-search-merge');
+          return;
+        }
         const { ok, error, lifecycle } = event.data;
         if (lifecycle)
           emitStructuredLogEvent({
@@ -67,7 +75,7 @@ export function runMessageSearchMerge(
         finish('worker-unavailable');
       };
       timer = setTimeout(() => finish('timeout'), timeoutMs);
-      worker.postMessage({ dbPath });
+      worker.postMessage({ dbPath, requestId: crypto.randomUUID() });
     } catch (error) {
       log.warn('message_search_fts background merge could not start:', error);
       finish('worker-unavailable');
