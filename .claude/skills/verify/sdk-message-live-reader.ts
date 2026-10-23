@@ -68,7 +68,7 @@ try {
   }
   const id = 'full', snapshot = events.find(event => event.method === 'liveQuery.snapshot' && event.data.subscriptionId === id)!;
       for (const status of ['deferred', 'consumed'] as const) {
-        const since = events.length, at = performance.now(); app.reactiveDb.db.updateMessageStatus([ids[0]], status);
+        const since = events.length, at = performance.now(); await app.reactiveDb.db.updateMessageStatus([ids[0]], status);
         let delta: typeof events[number] | undefined;
         for (let n = 0; n < 1000; n++) { delta = events.slice(since).find(event => event.method === 'liveQuery.delta' && event.data.subscriptionId === id); if (delta) break; await wait(10); }
         assert(delta, 'No delta after production status write');
@@ -91,7 +91,7 @@ try {
     evidence.workerDeath = await failed; assert(String(evidence.workerDeath).includes('SDK reader timeout'));
     await rpc('liveQuery.subscribe', { queryName: 'messages.bySession', subscriptionId: 'death', params: [sessionId, 30] }); evidence.recoveredAfterDeath = true;
     const since = events.length;
-    app.reactiveDb.db.updateMessageStatus([ids[0]], 'deferred');
+    await app.reactiveDb.db.updateMessageStatus([ids[0]], 'deferred');
     setTimeout(() => selectedWorker!.dispatchEvent(new ErrorEvent('error', { message: 'synthetic live worker fault', cancelable: true })), 300);
     let error: typeof events[number] | undefined;
     for (let n = 0; n < 1000; n++) { error = events.slice(since).find(event => event.method === 'liveQuery.error' && event.data.subscriptionId === 'death'); if (error) break; await wait(10); }
