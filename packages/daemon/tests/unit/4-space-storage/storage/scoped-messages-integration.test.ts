@@ -141,7 +141,7 @@ describe('Scoped invalidation — sdk_messages integration', () => {
     reactiveDb.db.createSession(makeSession('sess-A'));
     reactiveDb.db.createSession(makeSession('sess-B'));
 
-    const msgId = reactiveDb.db.saveUserMessage(
+    const msgId = await reactiveDb.db.saveUserMessage(
       'sess-A',
       {
         type: 'user',

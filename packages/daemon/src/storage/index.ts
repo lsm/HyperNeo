@@ -359,12 +359,12 @@ export class Database {
     return this.sdkMessageRepo.getSDKMessageCount(sessionId);
   }
 
-  saveUserMessage(
+  async saveUserMessage(
     sessionId: string,
     message: SDKMessage,
     sendStatus: SendStatus = 'consumed',
     origin?: MessageOrigin
-  ): string {
+  ): Promise<string> {
     return this.sdkMessageRepo.saveUserMessage(sessionId, message, sendStatus, origin);
   }
 

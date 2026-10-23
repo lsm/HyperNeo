@@ -203,7 +203,7 @@ export class MessagePersistence {
           : 'enqueued';
 
       if (this.db.getSession?.(sessionId)?.status === 'archived') {
-        const dbMessageId = this.db.saveUserMessage(
+        const dbMessageId = await this.db.saveUserMessage(
           sessionId,
           sdkUserMessage,
           'failed',

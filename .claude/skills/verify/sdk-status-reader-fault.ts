@@ -29,7 +29,7 @@ try {
   const rpc=(method:string,data:unknown={})=>new Promise<unknown>((resolve,reject)=>{const id=crypto.randomUUID();const timer=setTimeout(()=>reject(new Error('RPC timeout')),10000);pending.set(id,{resolve:(v)=>{clearTimeout(timer);resolve(v);},reject:(e)=>{clearTimeout(timer);reject(e);}});ws!.send(JSON.stringify({id,method,data,type:'REQ',sessionId:'global',version:'1.0.0',timestamp:new Date().toISOString()}));});
   const {sessionId}=await rpc('session.create',{workspacePath:join(run,'workspace'),config:{queryMode:'manual'}}) as {sessionId:string};
   const text='Full user text 🦊\n'.repeat(2000);
-  app.db.saveUserMessage(sessionId,{type:'user',uuid:'fault-retention',parent_tool_use_id:null,message:{role:'user',content:text}} as SDKMessage,'consumed');
+  await app.db.saveUserMessage(sessionId,{type:'user',uuid:'fault-retention',parent_tool_use_id:null,message:{role:'user',content:text}} as SDKMessage,'consumed');
   const hash=()=>{const h=createHash('sha256');for(const r of app!.db.getDatabase().prepare('SELECT sdk_message FROM sdk_message_bodies ORDER BY seq').iterate() as Iterable<{sdk_message:string}>)h.update(r.sdk_message);return h.digest('hex');};
   const before=hash(),at=performance.now();
   evidence.error=await rpc('session.messages.byStatus',{sessionId,status:'consumed',limit:20}).then(()=>{throw new Error('Fault returned fabricated success');},(error)=>String(error));

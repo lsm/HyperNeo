@@ -185,14 +185,14 @@ describe('Daemon app mailbox registration', () => {
   });
 
   test('failure callbacks persist failed messages and look up the session when settling', async () => {
-    const save = spyOn(app!.db, 'saveUserMessage').mockReturnValue('failed-row');
+    const save = spyOn(app!.db, 'saveUserMessage').mockResolvedValue('failed-row');
     const message = {
       type: 'user',
       session_id: 'session',
       parent_tool_use_id: null,
       message: { role: 'user', content: 'undelivered' },
     } as SDKUserMessage;
-    expect(failureDeps.saveFailed('session', message, 'system')).toBe('failed-row');
+    expect(await failureDeps.saveFailed('session', message, 'system')).toBe('failed-row');
     expect(save.mock.calls).toEqual([['session', message, 'failed', 'system']]);
     const settle = mock(async () => {});
     const cached = spyOn(app!.sessionManager, 'getCachedSession').mockReturnValue(null);

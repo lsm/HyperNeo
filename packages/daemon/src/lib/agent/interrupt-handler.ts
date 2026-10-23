@@ -87,7 +87,7 @@ export class InterruptHandler {
       if (!preserveDeliveryJobs) {
         const failedDbIds: string[] = [];
         await withSessionLock(session.id, async () => {
-          materializeMailboxFailuresForSession(session.id, {
+          await materializeMailboxFailuresForSession(session.id, {
             db: this.ctx.db,
             internalEventBus: this.ctx.internalEventBus,
             preserveDeferred: opts?.skipDeferredReplay !== true,
