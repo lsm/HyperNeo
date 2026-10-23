@@ -2,7 +2,7 @@ import { createNeoIntakeOperation } from '../../../../src/lib/neo/intake.ts';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { GlobalSettings, MessageHub } from '@hyperneo/shared';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import { invokeOperation } from '../../../../src/lib/operations/invoke.ts';
 import {
   createOperationRegistry,
@@ -15,7 +15,7 @@ import {
 import type { SessionManager } from '../../../../src/lib/session/session-manager.ts';
 import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 let db: Awaited<ReturnType<typeof createTestDb>>;
-let service: NeoService;
+let service: ReturnType<typeof createNeoService>;
 let published: GlobalSettings[];
 const human: OperationCaller = { source: 'rpc', principal: 'local' };
 const agent: OperationCaller = {
@@ -28,7 +28,7 @@ beforeEach(async () => {
   db = await createTestDb();
   db.createSession(createTestSession('neo:10000000-0000-4000-8000-000000000002'));
   published = [];
-  service = new NeoService(
+  service = createNeoService(
     db,
     {} as SessionManager,
     { event: mock(() => {}) } as unknown as MessageHub,

@@ -1,3 +1,4 @@
+import { neoSettingsPackBriefs } from '../../../packages/daemon/src/lib/neo/packs/index.ts';
 import { strict as assert } from 'node:assert';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -88,7 +89,7 @@ const execute = async (neo: boolean) => {
     stderr: (data) => writeFileSync(join(run, `${mode}-stderr.log`), data, { flag: 'a' }),
     maxTurns: 8,
   };
-  if (neo) options.systemPrompt = { type: 'custom', prompt: neoPrompt(), snapshot: false };
+  if (neo) options.systemPrompt = { type: 'custom', prompt: neoPrompt(neoSettingsPackBriefs()), snapshot: false };
   const stream = query({ prompt: 'Run the synthetic handoff verification.', options });
   try { for await (const event of stream) writeFileSync(join(run, `${mode}-events.jsonl`), `${JSON.stringify(event)}\n`, { flag: 'a' }); }
   finally { stream.close(); }

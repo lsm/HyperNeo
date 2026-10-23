@@ -25,7 +25,7 @@ import { recoverTaskExecution } from '../tasks/recover-task-execution.ts';
 import { McpAuditLogRepository } from '../../storage/repositories/mcp-audit-log-repository.ts';
 import { createSpaceOperationRegistryProvider } from '../tasks/operations.ts';
 import { collectFamilyOperations, type FamilyOperationContext } from './family-operations/index.ts';
-import { NeoService } from '../neo/service.ts';
+import { createNeoService } from '../neo/packs/runtime.ts';
 import { githubRepoOfTopic } from '../external-events/subscription-operations.ts';
 import {
   NEO_DRIVER_REFRESH,
@@ -1490,7 +1490,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         ? archiveAgentSessions(spaceAgentV2Deps, agent.sessionId)
         : Promise.resolve({ ok: true }),
   };
-  const neoService = new NeoService(
+  const neoService = createNeoService(
     deps.db,
     deps.sessionManager,
     deps.messageHub,

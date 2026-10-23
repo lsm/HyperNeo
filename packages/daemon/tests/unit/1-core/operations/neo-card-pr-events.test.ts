@@ -16,7 +16,7 @@ import {
 import { neoCardWorkerSession, planNeoCardSend } from '../../../../src/lib/neo/card-events.ts';
 import { isSessionTopicCovered } from '../../../../src/lib/external-events/topic-trie.ts';
 import { isNeoCardPrActionable } from '../../../../src/lib/neo/packs/coding/card-pr-events.ts';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import {
   createOperationRegistry,
   defineOperation,
@@ -97,7 +97,7 @@ describe('isSessionTopicCovered', () => {
 
 describe('Neo todo pull request events', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
-  let service: NeoService;
+  let service: ReturnType<typeof createNeoService>;
   let publisher: ExternalEventService;
   let sent: { ref: unknown; message: string }[];
   let watched: string[];
@@ -127,7 +127,7 @@ describe('Neo todo pull request events', () => {
       }),
     ]);
     const bus = new InternalEventBus<DaemonInternalEventMap>();
-    service = new NeoService(
+    service = createNeoService(
       db,
       { getOperationRegistry: () => registry } as unknown as SessionManager,
       { event: mock(() => {}) } as unknown as MessageHub,

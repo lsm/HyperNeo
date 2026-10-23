@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { MessageHub } from '@hyperneo/shared';
 import type { PlaceGroup, WorkStatus } from '../../../../src/lib/drivers/types.ts';
 import { createNeoOperations } from '../../../../src/lib/neo/operations.ts';
-import { NeoService } from '../../../../src/lib/neo/service.ts';
+import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import {
   keepNeoSessionPrs,
   NEO_SESSION_PR_READS_MAX,
@@ -96,9 +96,9 @@ describe('keepNeoSessionPrs', () => {
   });
 });
 
-describe('NeoService session ask links', () => {
+describe('ReturnType<typeof createNeoService> session ask links', () => {
   let db: Awaited<ReturnType<typeof createTestDb>>;
-  let service: NeoService;
+  let service: ReturnType<typeof createNeoService>;
   let sessions: PlaceGroup['work'];
   let status: { status: WorkStatus; lastActivityAt: number; openedPrs?: string[] };
   const events: Array<[string, unknown]> = [];
@@ -162,7 +162,7 @@ describe('NeoService session ask links', () => {
             : { ok: false, reason: 'not_found', detail: 'gone' },
       }),
     ]);
-    service = new NeoService(
+    service = createNeoService(
       db,
       { getOperationRegistry: () => registry } as unknown as SessionManager,
       {
