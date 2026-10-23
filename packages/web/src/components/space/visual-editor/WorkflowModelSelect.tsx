@@ -19,7 +19,6 @@ interface WorkflowModelSelectProps {
   value?: string;
   provider?: string;
   onChange: (value: string | undefined, selection?: WorkflowModelSelection) => void;
-  onModelsLoad?: (models: ModelInfo[]) => void;
   testId: string;
   id?: string;
   className?: string;
@@ -68,7 +67,6 @@ export function WorkflowModelSelect({
   value,
   provider,
   onChange,
-  onModelsLoad,
   testId,
   id,
   className = 'w-full text-xs bg-surface-raised border border-line-strong rounded px-2 py-1.5 text-fg-soft focus:outline-none focus:border-accent disabled:opacity-50 disabled:cursor-not-allowed',
@@ -109,7 +107,6 @@ export function WorkflowModelSelect({
         const loaded = dedupeModelsByProviderAndId(mapRawModelsToModelInfos(response.models ?? []));
         setModels(loaded);
         setLoadState(loaded.length > 0 ? 'ready' : 'no-providers');
-        onModelsLoad?.(loaded);
       } catch {
         if (!cancelled) {
           setModels([]);

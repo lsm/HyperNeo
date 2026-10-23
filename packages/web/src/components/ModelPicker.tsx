@@ -144,7 +144,6 @@ export function ModelPicker({
           models={models}
           current={activeModelInfo ?? undefined}
           level={level}
-          options={options}
           busy={busy}
           align={align}
           loading={loading}

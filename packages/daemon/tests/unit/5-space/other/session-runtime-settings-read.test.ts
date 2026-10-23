@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { Session } from '@hyperneo/shared';
+import { THINKING_OPTIONS, type Session } from '@hyperneo/shared';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import {
   classifySessionOwnership,
@@ -153,13 +153,13 @@ describe('session.runtimeSettings.read', () => {
     expect(h.sessions.get('plain')).toEqual(before);
   });
 
-  test('reports the thinking options the provider supports', async () => {
+  test('reports every thinking option for any provider', async () => {
     const h = harness();
     const withProvider = (id: string, provider: string) =>
       makeSession({ id, config: { model: 'm', provider, maxTokens: 1, temperature: 0 } });
     h.sessions.set('copilot', withProvider('copilot', 'anthropic-copilot'));
     h.sessions.set('haiku', withProvider('haiku', 'anthropic'));
-    expect(settingsOf(await read(h, 'copilot')).thinkingOptions).toEqual([]);
+    expect(settingsOf(await read(h, 'copilot')).thinkingOptions).toEqual(THINKING_OPTIONS);
     expect(settingsOf(await read(h, 'haiku')).thinkingOptions).toEqual(
       expect.arrayContaining([expect.objectContaining({ value: 'think32k' })])
     );

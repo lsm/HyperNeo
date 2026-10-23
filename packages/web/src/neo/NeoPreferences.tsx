@@ -258,7 +258,6 @@ export function NeoPreferences({
           models={models}
           current={current}
           level={level}
-          options={options}
           busy={busy}
           loading={model.loading}
           working={store.isWorking.value}
