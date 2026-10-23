@@ -264,7 +264,6 @@ export interface QueryOptionsBuilderContext {
   readonly session: Session;
   readonly settingsManager: SettingsManager;
   readonly db?: Database;
-  midTurnContextBudgetCheck?(): Promise<void>;
   consumePendingResumeSessionAt?(): string | undefined;
   peekPendingResumeSessionAt?(): string | undefined;
   readonly skillsManager?: SkillsManager;
@@ -450,10 +449,19 @@ export class QueryOptionsBuilder {
       modelInfo?.autoCompactPercent,
       modelInfo?.autoCompactPercentOverride
     );
-    const compactEnv =
-      modelInfo?.autoCompactPercentOverride !== undefined && providerSettings?.autoCompactWindow
+    const compactPercent =
+      modelInfo?.autoCompactPercentOverride ??
+      (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)
+        ? undefined
+        : modelInfo?.autoCompactPercent);
+    const compactEnv = {
+      ...(modelInfo?.autoCompactPercentOverride !== undefined && providerSettings?.autoCompactWindow
         ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(providerSettings.autoCompactWindow) }
-        : {};
+        : {}),
+      ...(compactPercent !== undefined
+        ? { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String(resolveAutoCompactPercent(compactPercent)) }
+        : {}),
+    };
     const mergedEnv = this.getMergedEnvironmentVars(providerContext.sdkConfig.envVars);
     const sdkCliPath = this.getSDKCliPath();
 
@@ -509,7 +517,10 @@ export class QueryOptionsBuilder {
 
       settingSources:
         config.settingSources ?? this.ctx.settingsManager.getGlobalSettings().settingSources,
-      settings: withSdkTranscriptRetention(providerSettings),
+      settings: withSdkTranscriptRetention({
+        ...providerSettings,
+        precomputeCompactionEnabled: true,
+      }),
 
       includePartialMessages: config.includePartialMessages ?? true,
 
@@ -898,6 +909,7 @@ export class QueryOptionsBuilder {
       'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
     ]);
     providerEnvVars.add('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
+    providerEnvVars.add('CLAUDE_AUTOCOMPACT_PCT_OVERRIDE');
     providerEnvVars.add('ANTHROPIC_CUSTOM_HEADERS');
     const processProviderEnvVars = new Set(providerEnvVars);
     processProviderEnvVars.add('CLAUDE_CODE_SUBAGENT_MODEL');
@@ -1066,21 +1078,7 @@ export class QueryOptionsBuilder {
       hooks.PreToolUse = preToolUse;
     }
 
-    const budgetGuardHook = this.ctx.midTurnContextBudgetCheck
-      ? async (): Promise<Record<string, never>> => {
-          try {
-            await this.ctx.midTurnContextBudgetCheck?.();
-          } catch (error) {
-            log.warn('mid-turn context budget check failed:', error);
-          }
-          return {};
-        }
-      : null;
-
     const postHooks: NonNullable<Options['hooks']>['PostToolUse'] = [];
-    if (budgetGuardHook) {
-      postHooks.push({ hooks: [budgetGuardHook] });
-    }
     postHooks.push({ hooks: [loopDetectorHooks.postToolUse] });
     if (outputLimiterEnabled) {
       postHooks.push({ hooks: [createOutputLimiterPostHook(outputLimiterSettings)] });
@@ -1088,9 +1086,6 @@ export class QueryOptionsBuilder {
     hooks.PostToolUse = postHooks;
 
     const postFailureHooks: NonNullable<Options['hooks']>['PostToolUseFailure'] = [];
-    if (budgetGuardHook) {
-      postFailureHooks.push({ hooks: [budgetGuardHook] });
-    }
     postFailureHooks.push({ hooks: [loopDetectorHooks.postToolUseFailure] });
     hooks.PostToolUseFailure = postFailureHooks;
     return hooks;

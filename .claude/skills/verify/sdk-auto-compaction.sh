@@ -9,6 +9,11 @@ cd "$REPO"
 git rev-parse HEAD > "$RUN/evidence/head.txt"
 cd packages/daemon
 env -i HOME="$RUN/home" TMPDIR="$RUN/tmp" PATH="$PATH" NODE_ENV=test \
+  node_modules/.bin/vitest run tests/unit/1-core/agent/message-queue.test.ts \
+  tests/unit/1-core/agent/context-budget-enforcement.test.ts \
+  tests/unit/1-core/agent/query-options-builder.test.ts \
+  tests/unit/1-core/agent/sdk-message-handler.test.ts > "$RUN/evidence/unit.log" 2>&1
+env -i HOME="$RUN/home" TMPDIR="$RUN/tmp" PATH="$PATH" NODE_ENV=test \
   VERIFY_EVIDENCE_DIR="$RUN/evidence" node_modules/.bin/vitest run --config vitest.online.config.ts \
   tests/online/convo/sdk-auto-compaction.test.ts > "$RUN/evidence/sdk.log" 2>&1
 printf 'PASS real-SDK automatic compaction and queued message delivery: %s\n' "$RUN/evidence"

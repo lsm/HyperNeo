@@ -140,8 +140,6 @@ export interface ContextBudgetReevaluationCtx {
   messageQueue: MessageQueue;
   stateManager: ProcessingStateManager;
   logger: Logger;
-  resumePendingWork: () => void;
-  clearPendingResume: () => void;
   fenceModel: string;
   fenceProvider: string | undefined;
   queueClearEpochAtStart: number;
@@ -201,20 +199,8 @@ export function runReevaluationEnforcement(
     messageQueue: ctx.messageQueue,
     stateManager: ctx.stateManager,
     logger: ctx.logger,
-    onCompactionAbandoned: ctx.clearPendingResume,
   });
   return { ...ctx, compactionEnqueued: outcome.compactionEnqueued };
-}
-
-export function settlePendingResumeAfterReevaluation(
-  ctx: ContextBudgetReevaluationCtx
-): ContextBudgetReevaluationCtx {
-  if (ctx.supersededQueued) {
-    ctx.resumePendingWork();
-  } else {
-    ctx.clearPendingResume();
-  }
-  return ctx;
 }
 
 const runReevaluateContextBudget = (
@@ -226,8 +212,6 @@ const runReevaluateContextBudget = (
     queueClearedDuringEvaluation: (ctx: ContextBudgetReevaluationCtx) =>
       ctx.messageQueue.getClearEpoch() !== ctx.queueClearEpochAtStart ||
       ctx.messageQueue.getUserInterruptEpoch() !== ctx.userInterruptEpochAtStart,
-    resumeSettledElsewhere: (ctx: ContextBudgetReevaluationCtx) =>
-      ctx.compactionEnqueued || ctx.messageQueue.hasOutstandingInternalCompaction(),
   })('reevaluate-context-budget') as PipelineAPI
 )
   .input(['ctx'])
@@ -237,8 +221,6 @@ const runReevaluateContextBudget = (
   .pipe('!queueClearedDuringEvaluation', 'ctx')
   .pipe(revokeSupersededCompactions, 'ctx', 'ctx')
   .pipe(runReevaluationEnforcement, 'ctx', 'ctx')
-  .pipe('!resumeSettledElsewhere', 'ctx')
-  .pipe(settlePendingResumeAfterReevaluation, 'ctx', 'ctx')
   .endAsync('ctx');
 
 export function runContextBudgetReevaluation(
