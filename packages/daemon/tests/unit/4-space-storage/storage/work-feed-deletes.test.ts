@@ -69,6 +69,8 @@ describe('purgeWorkFeedSessions', () => {
         return inline.run(...args);
       },
     } as unknown as DbGateway;
+    let ticks = 0;
+    const timer = setInterval(() => (ticks += 1), 0);
     try {
       await purgeWorkFeedSessions(
         gateway,
@@ -76,6 +78,7 @@ describe('purgeWorkFeedSessions', () => {
         Array.from({ length: 100 }, (_, i) => `sdk-${i}`)
       );
       expect(samples.some((left) => left > 0 && left < 2000)).toBe(true);
+      expect(ticks).toBeGreaterThan(0);
       expect(count()).toBe(0);
       expect(storedWorkFeedDigest(db)).toBe(original);
       expect(
@@ -99,6 +102,7 @@ describe('purgeWorkFeedSessions', () => {
         db.prepare("SELECT COUNT(*) AS n FROM message_search_content WHERE kind = 'codex'").get()
       ).toEqual({ n: 200 });
     } finally {
+      clearInterval(timer);
       db.close();
     }
   }, 30000);

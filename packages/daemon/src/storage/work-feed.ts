@@ -140,5 +140,6 @@ export async function purgeWorkFeedSessions(
 ): Promise<void> {
   if (sessionIds.length === 0) return;
   const sessions = JSON.stringify(sessionIds);
-  for (;;) if ((await db.run(deleteWorkFeedBatch, { kind, sessions })) === 0) return;
+  while ((await db.run(deleteWorkFeedBatch, { kind, sessions })) > 0)
+    await new Promise((resolve) => setTimeout(resolve, 0));
 }
