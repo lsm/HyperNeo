@@ -100,6 +100,23 @@ describe('DbGateway', () => {
     expect(starts).toBe(2);
   });
 
+  test('a lane holding 1024 calls refuses the next one instead of queueing it', async () => {
+    const { gateway, workers } = fixture();
+    const held = Array.from({ length: 1024 }, (_, now) =>
+      gateway.run(recordWouldRefuse, { seen, now })
+    );
+    await expect(gateway.run(recordWouldRefuse, { seen, now: 2000 })).rejects.toThrow(
+      'DB gateway write queue full'
+    );
+    await tick();
+    for (const request of workers[0].requests) workers[0].emit({ id: request.id, result: null });
+    await Promise.all(held);
+    void gateway.run(recordWouldRefuse, { seen, now: 3000 });
+    await tick();
+    expect(workers[0].requests).toHaveLength(1025);
+    expect(workers[0].requests.at(-1)?.args).toEqual({ seen, now: 3000 });
+  });
+
   test('waits for the worker to be ready before sending', async () => {
     const worker = new TestWorker(false);
     const gateway = new DbGateway('/synthetic.db', null, undefined, () => worker as never);

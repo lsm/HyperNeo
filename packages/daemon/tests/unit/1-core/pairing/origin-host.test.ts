@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
+import { Logger } from '../../../../src/lib/logger.ts';
 import { createRequestObserver, judgeOriginHost } from '../../../../src/lib/pairing/origin-host.ts';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { DevicePairingRepository } from '../../../../src/storage/repositories/device-pairing-repository.ts';
@@ -124,14 +125,16 @@ describe('recording requests the Origin and Host checks would refuse', () => {
     expect(reads).toBe(1);
   });
 
-  test('a storage failure is swallowed, whether it throws or rejects', async () => {
+  test('a storage failure is swallowed, whether it throws or rejects, and logged once a minute', async () => {
+    const warn = spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
     let rejected = 0;
+    let now = 1;
     const failing = (fail: () => Promise<void>) =>
       createRequestObserver({
         db: () => ({ run: fail }) as unknown as DbGateway,
         allowedHosts: () => [],
         exempt: () => false,
-        now: () => 1,
+        now: () => now,
       });
     const throwing = failing(() => {
       throw new Error('database is locked');
@@ -143,5 +146,19 @@ describe('recording requests the Origin and Host checks would refuse', () => {
     })(request({ host: 'evil.example' }));
     await settled();
     expect(rejected).toBe(1);
+    expect(warn).toHaveBeenCalledTimes(2);
+    const flood = failing(() => {
+      rejected += 1;
+      return Promise.reject(new Error('DB gateway write queue full'));
+    });
+    flood(request({ host: 'evil.example' }));
+    flood(request({ host: 'evil.example' }));
+    await settled();
+    expect(warn).toHaveBeenCalledTimes(3);
+    now += 60_000;
+    flood(request({ host: 'evil.example' }));
+    await settled();
+    expect(warn).toHaveBeenCalledTimes(4);
+    warn.mockRestore();
   });
 });

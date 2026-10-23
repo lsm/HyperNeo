@@ -19,6 +19,8 @@ export type DbGatewayReply =
   | { log: StructuredLogEvent }
   | { id: number; result?: unknown; error?: string };
 
+const MAX_PENDING = 1024;
+
 class WorkerLane {
   private worker: Worker | null = null;
   private ready: Promise<Worker> | null = null;
@@ -36,6 +38,8 @@ class WorkerLane {
   ) {}
 
   send(op: string | null, args?: unknown): Promise<unknown> {
+    if (op !== null && this.pending.size >= MAX_PENDING)
+      return Promise.reject(new Error(`DB gateway ${this.lane} queue full`));
     const id = ++this.id;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });

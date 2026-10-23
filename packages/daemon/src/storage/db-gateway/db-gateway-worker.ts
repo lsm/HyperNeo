@@ -42,7 +42,7 @@ worker.onmessage = ({ data }) => {
       db.exec(
         lane === 'read'
           ? 'PRAGMA query_only=ON; PRAGMA busy_timeout=5000'
-          : 'PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000'
+          : 'PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA synchronous=NORMAL'
       );
     }
     const open = db;
