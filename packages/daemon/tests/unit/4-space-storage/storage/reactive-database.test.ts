@@ -346,7 +346,7 @@ describe('ReactiveDatabase', () => {
       expect(scopes).toEqual(['task-1']);
     });
 
-    test('keeps a batch open until its pending session write lands', async () => {
+    test('a committed batch emits now and its pending session write emits once it lands', async () => {
       await db.createSession(makeSession('batched'));
       const settle = deferUpdates();
       const events: Array<{ tables: string[] }> = [];
@@ -356,11 +356,11 @@ describe('ReactiveDatabase', () => {
       const write = reactiveDb.db.updateSession('batched', { title: 'Later' });
       reactiveDb.notifyChange('space_tasks');
       reactiveDb.commitTransaction();
-      expect(events).toEqual([]);
+      expect(events.map((event) => event.tables)).toEqual([['space_tasks']]);
 
       settle[0]();
       await write;
-      expect(events.map((event) => event.tables.sort())).toEqual([['sessions', 'space_tasks']]);
+      expect(events.map((event) => event.tables)).toEqual([['space_tasks'], ['sessions']]);
     });
 
     test('a later aborted batch keeps the change of a committed batch write', async () => {
