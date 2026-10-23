@@ -8,8 +8,11 @@ import {
 export const DEVICE_COOKIE = 'hyperneo_device';
 
 const revocationListeners = new Set<(deviceId: string) => void>();
+const revokedAt = new Map<string, number>();
+let revocations = 0;
 
 export function announceDeviceRevoked(deviceId: string): void {
+  revokedAt.set(deviceId, ++revocations);
   for (const listener of revocationListeners) listener(deviceId);
 }
 
@@ -44,7 +47,9 @@ export function createUpgradeAuthenticator({ db, now }: UpgradeAuthDeps) {
       const credential = readDeviceCredential(req);
       const host = req.headers.get('host');
       const at = now();
+      const asked = revocations;
       const device = credential ? await db().run(touchDevice, { credential, host, now: at }) : null;
+      if (device && (revokedAt.get(device.id) ?? 0) > asked) return null;
       if (device) return { deviceId: device.id, kind: device.kind };
       const origin = req.headers.get('origin');
       void db()

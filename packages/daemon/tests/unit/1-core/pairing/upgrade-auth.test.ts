@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { createUpgradeAuthenticator } from '../../../../src/lib/pairing/upgrade-auth.ts';
+import {
+  announceDeviceRevoked,
+  createUpgradeAuthenticator,
+} from '../../../../src/lib/pairing/upgrade-auth.ts';
 import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import {
   DevicePairingRepository,
@@ -123,6 +126,32 @@ describe('upgrade authentication (report only)', () => {
     await authenticate(upgrade({ origin: huge }), '10.0.0.1');
     expect(unpaired()[0]).toMatchObject({ count: 2, last: 2_000 });
     expect(total()).toBe(UNPAIRED_ROW_CAP);
+    db.close();
+  });
+
+  test('a device revoked while its upgrade awaits the lookup is treated as unpaired', async () => {
+    const { db, repo, pairDevice, upgrade } = setup();
+    const phone = pairDevice('human', 'Phone');
+    const inline = new DbGateway(':memory:', db);
+    let revokeDuringLookup = true;
+    const gateway = {
+      run: async (...args: Parameters<DbGateway['run']>) => {
+        const result = await inline.run(...args);
+        if (revokeDuringLookup) {
+          repo.revokeDevice(phone.device.id, 2_000);
+          announceDeviceRevoked(phone.device.id);
+        }
+        return result;
+      },
+    } as unknown as DbGateway;
+    const auth = createUpgradeAuthenticator({ db: () => gateway, now: () => 1_000 });
+    const bearer = () => upgrade({ authorization: `Bearer ${phone.credential}` });
+    expect(await auth(bearer(), null)).toBeNull();
+    revokeDuringLookup = false;
+    const other = pairDevice('relay', 'Relay');
+    expect(
+      await auth(upgrade({ authorization: `Bearer ${other.credential}` }), null)
+    ).toMatchObject({ deviceId: other.device.id });
     db.close();
   });
 
