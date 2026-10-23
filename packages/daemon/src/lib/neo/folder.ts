@@ -30,15 +30,16 @@ export function planNeoSessionFiling(
   return sessions.flatMap((session) => (session && !session.workspacePath ? [session.id] : []));
 }
 
-export function fileNeoSessions(
+export async function fileNeoSessions(
   db: {
     getSession(id: string): Pick<Session, 'id' | 'workspacePath'> | null;
-    updateSession(id: string, updates: Partial<Session>): void;
+    updateSession(id: string, updates: Partial<Session>): Promise<void>;
   },
   repo: Pick<NeoRepository, 'defaultBinding'>,
   folder: string
-): void {
+): Promise<void> {
   const root = repo.defaultBinding();
   const sessions = [root ? db.getSession(root.sessionId) : null];
-  for (const id of planNeoSessionFiling(sessions)) db.updateSession(id, { workspacePath: folder });
+  for (const id of planNeoSessionFiling(sessions))
+    await db.updateSession(id, { workspacePath: folder });
 }

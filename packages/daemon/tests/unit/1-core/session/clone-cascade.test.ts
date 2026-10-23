@@ -70,7 +70,7 @@ function makeHarness(overrides: Partial<Harness> = {}): Harness {
   };
   h.deps = {
     listChildren: (parentId) => (parentId === 'parent' ? h.children : []),
-    detach: (id) => {
+    detach: async (id) => {
       h.detached.push(id);
     },
     agentOwning: () => h.owner,
@@ -81,7 +81,7 @@ function makeHarness(overrides: Partial<Harness> = {}): Harness {
       h.agents = [...h.agents, agent];
       return agent;
     },
-    stampProvenance: (sessionId, provenance) => {
+    stampProvenance: async (sessionId, provenance) => {
       h.stamped.push({ sessionId, agentId: provenance.agentId, source: provenance.source });
     },
     archiveChild: async (id) => {

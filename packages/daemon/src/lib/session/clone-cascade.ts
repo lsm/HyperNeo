@@ -18,7 +18,7 @@ export interface ClonesRejection {
 
 export interface CloneCascadeDependencies {
   readonly listChildren: (parentId: string) => Session[];
-  readonly detach: (sessionId: string) => void;
+  readonly detach: (sessionId: string) => Promise<void>;
   readonly agentOwning: (sessionId: string) => SpaceLongHorizonAgent | null;
   readonly listAgents: (spaceId: string) => SpaceLongHorizonAgent[];
   readonly createAgent: (
@@ -40,7 +40,7 @@ export interface CloneCascadeDependencies {
   readonly stampProvenance: (
     sessionId: string,
     provenance: NonNullable<SessionMetadata['promptProvenance']>
-  ) => void;
+  ) => Promise<void>;
   readonly archiveChild: (sessionId: string) => Promise<void>;
   readonly deleteChild: (sessionId: string) => Promise<void>;
 }
@@ -103,14 +103,14 @@ export async function applyCloneChoice(
         settingSources: owner.settingSources,
         toolPermissions: owner.toolPermissions,
       });
-      deps.stampProvenance(child.id, {
+      await deps.stampProvenance(child.id, {
         source: 'flattened_clone',
         hash: agent.id,
         agentId: agent.id,
         agentName: agent.handle,
       });
     }
-    deps.detach(child.id);
+    await deps.detach(child.id);
   }
   return true;
 }
