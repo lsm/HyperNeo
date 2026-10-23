@@ -311,7 +311,7 @@ async function makeTestSession(
   if (opts?.provider) {
     session.config.provider = opts.provider;
   }
-  db.createSession(session);
+  await db.createSession(session);
   const bus = await createTestInternalEventBus();
   const messageHub = new MessageHub();
   const agentSession = new AgentSession(

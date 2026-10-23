@@ -80,7 +80,7 @@ try {
   const config = new ExternalEventExtensionConfigStore(db);
   await config.setGlobalConfig('github', { source: 'github', globallyEnabled: true, capabilities: { polling: true, rpcConfig: true } });
   const sessionId = 'synthetic-private-owner';
-  app.db.createSession({ id: sessionId, title: 'Synthetic private PR owner', workspacePath: join(run, 'home'), createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: {}, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
+  await app.db.createSession({ id: sessionId, title: 'Synthetic private PR owner', workspacePath: join(run, 'home'), createdAt: new Date().toISOString(), lastActiveAt: new Date().toISOString(), status: 'active', config: {}, metadata: { messageCount: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, totalCost: 0, toolCallCount: 0 } });
   const subscriptions = new SessionEventSubscriptionRepository(db);
   for (const repo of repos) {
     const row = github.repo.upsertWatchedRepo({ spaceId: 'sessions', owner: 'synthetic', repo, pollingEnabled: true });

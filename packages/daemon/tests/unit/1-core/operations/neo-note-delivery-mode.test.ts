@@ -18,7 +18,7 @@ describe('Neo daemon notes', () => {
   beforeEach(async () => {
     db = await createTestDb();
     events = new InternalEventBus<DaemonInternalEventMap>();
-    db.createSession({ ...createTestSession(rootId), workspacePath: null });
+    await db.createSession({ ...createTestSession(rootId), workspacePath: null });
     service = createNeoService(
       db,
       {} as unknown as SessionManager,
@@ -54,7 +54,7 @@ describe('Neo daemon notes', () => {
   });
 
   test('a message to a busy ordinary chat is not deferred', async () => {
-    db.createSession(createTestSession('chat-1'));
+    await db.createSession(createTestSession('chat-1'));
     await events.publish('session.updated', {
       sessionId: 'chat-1',
       processingState: { status: 'processing' } as never,

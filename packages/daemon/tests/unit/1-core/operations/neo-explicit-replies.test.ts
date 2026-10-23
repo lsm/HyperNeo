@@ -33,7 +33,7 @@ async function received(kind = 'human', target = sessionId, consumed = true) {
       human
     );
   else {
-    if (target !== sessionId) db.createSession(createTestSession(target));
+    if (target !== sessionId) await db.createSession(createTestSession(target));
     db.getSDKMessageRepo().saveUserMessage(
       target,
       {
@@ -55,7 +55,7 @@ async function received(kind = 'human', target = sessionId, consumed = true) {
 }
 beforeEach(async () => {
   db = await createTestDb();
-  db.createSession(createTestSession(sessionId));
+  await db.createSession(createTestSession(sessionId));
   service = createNeoService(
     db,
     {} as SessionManager,

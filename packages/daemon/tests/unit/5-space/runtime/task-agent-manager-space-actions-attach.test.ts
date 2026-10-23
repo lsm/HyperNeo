@@ -537,8 +537,8 @@ describe('TaskAgentManager — worker operations attach (#4600)', () => {
       db.getJobQueueRepo(),
       {} as ConstructorParameters<typeof SessionManager>[7]
     );
-    const restore = (id: string) => {
-      db.createSession(createTestSession(id));
+    const restore = async (id: string) => {
+      await db.createSession(createTestSession(id));
       const session = AgentSession.restore(
         id,
         db,
@@ -563,8 +563,8 @@ describe('TaskAgentManager — worker operations attach (#4600)', () => {
         execute: async () => 'probed',
       }),
     ]);
-    const worker = restore('worker-scoped');
-    const plain = restore('plain-global');
+    const worker = await restore('worker-scoped');
+    const plain = await restore('plain-global');
     try {
       worker.setOperationRegistryProvider(() => scoped);
       manager.registerSession(worker);

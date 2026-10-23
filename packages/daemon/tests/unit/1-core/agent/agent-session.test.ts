@@ -2762,14 +2762,14 @@ describe('AgentSession', () => {
       expect(updateConfigSpy).toHaveBeenCalledWith({ maxTokens: 4096 });
     });
 
-    it('updateMetadata should delegate to sessionConfigHandler', () => {
+    it('updateMetadata should delegate to sessionConfigHandler', async () => {
       const updateMetadataSpy = mock(() => {});
       // biome-ignore lint: test mock access
       (agentSession as unknown as Record<string, unknown>).sessionConfigHandler = {
         updateMetadata: updateMetadataSpy,
       };
 
-      agentSession.updateMetadata({ title: 'New Title' });
+      await agentSession.updateMetadata({ title: 'New Title' });
 
       expect(updateMetadataSpy).toHaveBeenCalledWith({ title: 'New Title' });
     });
@@ -5828,7 +5828,7 @@ describe('AgentSession', () => {
     beforeEach(async () => {
       db = await createTestDb();
       const session = createTestSession(sessionId);
-      db.createSession(session);
+      await db.createSession(session);
       agentSession = new AgentSession(
         session,
         db,
@@ -5961,7 +5961,7 @@ describe('AgentSession', () => {
     }): Promise<void> {
       db = await createTestDb();
       const session = createTestSession(sessionId);
-      db.createSession(session);
+      await db.createSession(session);
       const repo = db.getSDKMessageRepo();
       repo.saveUserMessage(
         sessionId,
@@ -6080,7 +6080,7 @@ describe('AgentSession', () => {
       const db = await createTestDb();
       const session = createTestSession(sessionId);
       session.config.provider = row.provider ?? 'anthropic';
-      db.createSession(session);
+      await db.createSession(session);
       const repo = db.getSDKMessageRepo();
       if (row.delivery !== 'missing') {
         repo.saveUserMessage(
@@ -6289,8 +6289,8 @@ describe('AgentSession', () => {
       const db = await createTestDb();
       try {
         const session = createTestSession(sessionId);
-        db.createSession(session);
-        db.updateSession(sessionId, { status: 'archived' });
+        await db.createSession(session);
+        await db.updateSession(sessionId, { status: 'archived' });
         db.getSDKMessageRepo().saveUserMessage(
           sessionId,
           {
@@ -6330,7 +6330,7 @@ describe('AgentSession', () => {
           ...session.config,
           provider: 'custom:removed' as Session['config']['provider'],
         };
-        db.createSession(session);
+        await db.createSession(session);
         db.getSDKMessageRepo().saveUserMessage(
           sessionId,
           {
@@ -6377,7 +6377,7 @@ describe('AgentSession', () => {
       try {
         const session = createTestSession(sessionId);
         session.config = { ...session.config, model: 'model-no-provider-owns' };
-        db.createSession(session);
+        await db.createSession(session);
         db.getSDKMessageRepo().saveUserMessage(
           sessionId,
           {
@@ -6433,7 +6433,7 @@ describe('AgentSession', () => {
       const db = await createTestDb();
       try {
         const session = createTestSession(sessionId);
-        db.createSession(session);
+        await db.createSession(session);
         db.getSDKMessageRepo().saveUserMessage(
           sessionId,
           {
@@ -6478,7 +6478,7 @@ describe('AgentSession', () => {
       const db = await createTestDb();
       try {
         const session = createTestSession(sessionId);
-        db.createSession(session);
+        await db.createSession(session);
         db.getSDKMessageRepo().saveUserMessage(
           sessionId,
           {
@@ -6542,7 +6542,7 @@ describe('AgentSession', () => {
       const db = await createTestDb();
       try {
         const session = createTestSession(sessionId);
-        db.createSession(session);
+        await db.createSession(session);
         const repo = db.getSDKMessageRepo();
         repo.saveUserMessage(
           sessionId,
@@ -6596,7 +6596,7 @@ describe('AgentSession', () => {
       try {
         const session = createTestSession(sessionId);
         session.config.provider = 'acp';
-        db.createSession(session);
+        await db.createSession(session);
         const repo = db.getSDKMessageRepo();
         repo.saveUserMessage(
           sessionId,
@@ -6662,7 +6662,7 @@ describe('AgentSession', () => {
       const db = await createTestDb();
       try {
         const session = createTestSession(sessionId);
-        db.createSession(session);
+        await db.createSession(session);
         const repo = db.getSDKMessageRepo();
         repo.saveUserMessage(
           sessionId,
@@ -6718,7 +6718,7 @@ describe('AgentSession', () => {
       const db = await createTestDb();
       try {
         const session = createTestSession(sessionId);
-        db.createSession(session);
+        await db.createSession(session);
         const repo = db.getSDKMessageRepo();
         repo.saveUserMessage(
           sessionId,
@@ -6781,7 +6781,7 @@ describe('AgentSession', () => {
       const db = await createTestDb();
       try {
         const session = createTestSession(sessionId);
-        db.createSession(session);
+        await db.createSession(session);
         const repo = db.getSDKMessageRepo();
         repo.saveUserMessage(
           sessionId,
@@ -6846,7 +6846,7 @@ describe('AgentSession', () => {
       if (opts?.provider) {
         session.config.provider = opts.provider;
       }
-      db.createSession(session);
+      await db.createSession(session);
       db.getSDKMessageRepo().saveUserMessage(
         sessionId,
         {

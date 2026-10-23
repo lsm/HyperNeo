@@ -269,7 +269,7 @@ describe('resolveTaskIdForSession memoization (per-save query dedup)', () => {
     ]);
   });
 
-  test('a failing session write still invalidates the cached taskId', async () => {
+  test('a failing session write keeps the cached taskId, since the stored task is unchanged', async () => {
     await reactiveDb.db.createSession(makeSession('s-task', 'worker', { taskId: 'task-1' }));
     await reactiveDb.db.saveSDKMessage('s-task', assistantMessage('one'));
     expect(taskResolutions).toBe(1);
@@ -284,13 +284,13 @@ describe('resolveTaskIdForSession memoization (per-save query dedup)', () => {
       return countingPrepare(sql, ...rest);
     }) as typeof bunDb.prepare;
 
-    expect(() =>
+    await expect(
       reactiveDb.db.updateSession('s-task', { context: { taskId: 'task-2' } })
-    ).toThrow();
+    ).rejects.toThrow('simulated session write failure');
 
     bunDb.prepare = countingPrepare;
     await reactiveDb.db.saveSDKMessage('s-task', assistantMessage('two'));
-    expect(taskResolutions).toBe(2);
+    expect(taskResolutions).toBe(1);
     expect(taskIdsOf('s-task')).toEqual([{ task_id: 'task-1' }, { task_id: 'task-1' }]);
   });
 });

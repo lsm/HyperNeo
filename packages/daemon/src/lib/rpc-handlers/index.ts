@@ -1200,7 +1200,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       await deps.db.updateSession(sessionId, {
         metadata: { ...current.metadata, promptProvenance },
       });
-      deps.db.notifyChange('sessions', { sessionId });
     }
   };
   spaceAgentV2Deps.stampProvenance = stampProvenance;
@@ -1208,7 +1207,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     listChildren: (parentId) => deps.db.listChildSessions(parentId),
     detach: async (sessionId) => {
       await deps.db.detachSessionFromParent(sessionId);
-      deps.db.notifyChange('sessions', { sessionId });
     },
     agentOwning: (sessionId) => {
       const id = spaceAgentRepo.getBySessionId(sessionId)?.id;

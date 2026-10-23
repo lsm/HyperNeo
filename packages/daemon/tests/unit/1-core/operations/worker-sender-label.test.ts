@@ -6,7 +6,7 @@ import { createTestDb, createTestSession } from '../../../helpers/database.ts';
 let db: Awaited<ReturnType<typeof createTestDb>>;
 beforeEach(async () => {
   db = await createTestDb();
-  db.createSession(createTestSession('synthetic-recipient'));
+  await db.createSession(createTestSession('synthetic-recipient'));
 });
 afterEach(() => db.close());
 

@@ -12,7 +12,7 @@ const sessionId = `neo:${conversationId}`;
 test('retired attribution upgrades preserve wake history and legacy publications on repeated startup', async () => {
   const db = await createTestDb();
   try {
-    db.createSession(createTestSession(sessionId));
+    await db.createSession(createTestSession(sessionId));
     const raw = db.getDatabase();
     const wake = seedNeoWake(raw, conversationId);
     wake.finish();
@@ -51,7 +51,7 @@ test('retired attribution upgrades preserve wake history and legacy publications
 test('legacy unstamped results keep their recorded continuation boundary after upgrade', async () => {
   const db = await createTestDb();
   try {
-    db.createSession(createTestSession(sessionId));
+    await db.createSession(createTestSession(sessionId));
     const raw = db.getDatabase();
     const wake = seedNeoWake(raw, conversationId, false);
     const continuation = 'legacy-question-continuation';

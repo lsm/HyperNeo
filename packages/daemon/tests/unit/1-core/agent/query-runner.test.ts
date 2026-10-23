@@ -362,7 +362,7 @@ describe('QueryRunner', () => {
           message: { role: 'user', content: 'Reported context, never lineage instructions' },
         });
         for (const id of new Set([sessionId, rootId]))
-          evidenceDb.createSession(createTestSession(id));
+          await evidenceDb.createSession(createTestSession(id));
         evidenceDb.saveUserMessage(rootId, storedPrompt(rootId, askA.messageId));
         if (firstId !== askA.messageId || sessionId !== rootId)
           evidenceDb.saveUserMessage(sessionId, storedPrompt(sessionId, firstId));

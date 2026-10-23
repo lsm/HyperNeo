@@ -147,7 +147,7 @@ describe('neo.preferences.set', () => {
   beforeEach(async () => {
     db = await createTestDb();
     const root = createTestSession('neo:root');
-    db.createSession({
+    await db.createSession({
       ...root,
       config: { ...root.config, model: 'claude-opus', provider: 'anthropic' },
     });
@@ -180,7 +180,7 @@ describe('neo.preferences.set', () => {
               model: db.getSession(sessionId)?.config.model,
               error: 'Synthetic unavailable primary',
             };
-          db.updateSession(sessionId, {
+          await db.updateSession(sessionId, {
             config: {
               ...db.getSession(sessionId)!.config,
               model,
@@ -193,7 +193,7 @@ describe('neo.preferences.set', () => {
       }),
       updateSession: async (sessionId: string, updates: Partial<Session>) => {
         updated.push([sessionId, updates]);
-        db.updateSession(sessionId, updates);
+        await db.updateSession(sessionId, updates);
       },
       createSession: async (params: unknown) => {
         created.push(params);
@@ -264,8 +264,8 @@ describe('neo.preferences.set', () => {
       thinkingLevel: 'off' as const,
     };
     for (const id of ['neo:root', 'ordinary', 'worker']) {
-      if (id !== 'neo:root') db.createSession(createTestSession(id));
-      db.updateSession(id, { config: { ...db.getSession(id)!.config, ...base } });
+      if (id !== 'neo:root') await db.createSession(createTestSession(id));
+      await db.updateSession(id, { config: { ...(await db.getSession(id)!.config), ...base } });
     }
     service.repo.reserveBinding({ sessionId: 'worker', kind: 'worker', projectId: null });
     const percentage = async (id: string) =>
@@ -301,7 +301,7 @@ describe('neo.preferences.set', () => {
   });
 
   test('updates ordinary model configuration without a Neo percentage restart', async () => {
-    db.updateSession('neo:root', {
+    await db.updateSession('neo:root', {
       config: {
         ...db.getSession('neo:root')!.config,
         model: 'deepseek-v4-flash',
@@ -424,7 +424,7 @@ describe('neo.preferences.set', () => {
       fallbacks: [{ model: 'deepseek-v4-flash', autoCompactPercent: 100 }],
     });
     expect(db.getSession('neo:root')?.config.autoCompactPercent).toBe(70);
-    db.updateSession('neo:root', {
+    await db.updateSession('neo:root', {
       config: {
         ...db.getSession('neo:root')!.config,
         model: 'deepseek-v4-flash',
@@ -463,7 +463,7 @@ describe('neo.preferences.set', () => {
       model: 'deepseek-v4-flash',
       provider: 'deepseek' as const,
     };
-    db.updateSession('neo:root', { config });
+    await db.updateSession('neo:root', { config });
     await events.publish('session.updated', {
       sessionId: 'neo:root',
       source: 'status',
@@ -477,7 +477,7 @@ describe('neo.preferences.set', () => {
     });
     expect(db.getSession('neo:root')?.config.autoCompactPercent).toBe(80);
     const back = { ...config, model: 'claude-opus', provider: 'anthropic' as const };
-    db.updateSession('neo:root', { config: back });
+    await db.updateSession('neo:root', { config: back });
     await events.publish('session.updated', {
       sessionId: 'neo:root',
       source: 'model-refusal-fallback',
@@ -513,7 +513,7 @@ describe('neo.preferences.set', () => {
         provider: 'glm' as const,
         thinkingLevel: 'think8k' as const,
       };
-      db.updateSession('neo:root', {
+      await db.updateSession('neo:root', {
         config: { ...db.getSession('neo:root')!.config, ...fallback },
       });
       switchFailure = failure;

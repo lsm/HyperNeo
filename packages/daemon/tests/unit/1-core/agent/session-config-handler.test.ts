@@ -137,40 +137,40 @@ describe('SessionConfigHandler', () => {
   });
 
   describe('updateMetadata', () => {
-    it('should update title', () => {
-      handler.updateMetadata({ title: 'New Title' });
+    it('should update title', async () => {
+      await handler.updateMetadata({ title: 'New Title' });
 
       expect(mockSession.title).toBe('New Title');
     });
 
-    it('should update status', () => {
-      handler.updateMetadata({ status: 'archived' });
+    it('should update status', async () => {
+      await handler.updateMetadata({ status: 'archived' });
 
       expect(mockSession.status).toBe('archived');
     });
 
-    it('should update archivedAt', () => {
+    it('should update archivedAt', async () => {
       const timestamp = Date.now();
-      handler.updateMetadata({ archivedAt: timestamp });
+      await handler.updateMetadata({ archivedAt: timestamp });
 
       expect(mockSession.archivedAt).toBe(timestamp);
     });
 
-    it('should update worktree', () => {
+    it('should update worktree', async () => {
       const worktree = {
         enabled: true,
         path: '/worktree/path',
         branch: 'feature-branch',
       };
-      handler.updateMetadata({ worktree });
+      await handler.updateMetadata({ worktree });
 
       expect(mockSession.worktree).toEqual(worktree);
     });
 
-    it('should clear the cached ACP session id', () => {
+    it('should clear the cached ACP session id', async () => {
       mockSession.acpSessionId = 'remote-session';
 
-      handler.updateMetadata({ acpSessionId: undefined });
+      await handler.updateMetadata({ acpSessionId: undefined });
 
       expect(mockSession.acpSessionId).toBeUndefined();
       expect(updateSessionSpy).toHaveBeenCalledWith(mockSession.id, {
@@ -178,10 +178,10 @@ describe('SessionConfigHandler', () => {
       });
     });
 
-    it('should merge metadata fields', () => {
+    it('should merge metadata fields', async () => {
       mockSession.metadata = { existingField: 'value', toUpdate: 'old' };
 
-      handler.updateMetadata({ metadata: { toUpdate: 'new', newField: 'added' } });
+      await handler.updateMetadata({ metadata: { toUpdate: 'new', newField: 'added' } });
 
       expect(mockSession.metadata).toEqual({
         existingField: 'value',
@@ -190,19 +190,21 @@ describe('SessionConfigHandler', () => {
       });
     });
 
-    it('should delete metadata fields when value is null', () => {
+    it('should delete metadata fields when value is null', async () => {
       mockSession.metadata = { field1: 'value1', field2: 'value2' };
 
-      handler.updateMetadata({ metadata: { field1: null } as unknown as Session['metadata'] });
+      await handler.updateMetadata({
+        metadata: { field1: null } as unknown as Session['metadata'],
+      });
 
       expect(mockSession.metadata.field1).toBeUndefined();
       expect(mockSession.metadata.field2).toBe('value2');
     });
 
-    it('should delete metadata fields when value is undefined', () => {
+    it('should delete metadata fields when value is undefined', async () => {
       mockSession.metadata = { field1: 'value1', field2: 'value2' };
 
-      handler.updateMetadata({
+      await handler.updateMetadata({
         metadata: { field1: undefined } as unknown as Session['metadata'],
       });
 
@@ -210,28 +212,28 @@ describe('SessionConfigHandler', () => {
       expect(mockSession.metadata.field2).toBe('value2');
     });
 
-    it('should merge config updates', () => {
+    it('should merge config updates', async () => {
       mockSession.config = { model: 'default', maxTokens: 4096 } as Session['config'];
 
-      handler.updateMetadata({ config: { model: 'opus' } as Session['config'] });
+      await handler.updateMetadata({ config: { model: 'opus' } as Session['config'] });
 
       expect(mockSession.config.model).toBe('opus');
       expect(mockSession.config.maxTokens).toBe(4096);
     });
 
-    it('should persist updates to database', () => {
+    it('should persist updates to database', async () => {
       const updates = { title: 'Updated Title' };
-      handler.updateMetadata(updates);
+      await handler.updateMetadata(updates);
 
       expect(updateSessionSpy).toHaveBeenCalledTimes(1);
       expect(updateSessionSpy).toHaveBeenCalledWith(mockSession.id, updates);
     });
 
-    it('should update workspacePath and recreate settingsManager', () => {
+    it('should update workspacePath and recreate settingsManager', async () => {
       const ctx = handler as unknown as { ctx: SessionConfigHandlerContext };
       const originalSettingsManager = ctx.ctx.settingsManager;
 
-      handler.updateMetadata({ workspacePath: '/new/workspace' });
+      await handler.updateMetadata({ workspacePath: '/new/workspace' });
 
       expect(mockSession.workspacePath).toBe('/new/workspace');
       expect(ctx.ctx.settingsManager).not.toBe(originalSettingsManager);
