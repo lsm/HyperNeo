@@ -323,6 +323,15 @@ test.each(['ordinary', 'neo'] as const)(
             message.compact_metadata.trigger === 'auto'
         )
       ).not.toHaveLength(0);
+      const compacted = messages.findIndex(
+        (message) => message.type === 'system' && message.subtype === 'compact_boundary'
+      );
+      const continued = messages.findIndex(
+        (message) =>
+          message.type === 'assistant' &&
+          JSON.stringify(message.message).includes('COMPACT_CONTINUED_SUCCESS')
+      );
+      expect(continued).toBeGreaterThan(compacted);
       expect(built).toHaveLength(1);
       expect(summaryCalls).toBeGreaterThan(0);
       expect(receipts.size).toBe(2);

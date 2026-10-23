@@ -450,6 +450,7 @@ export class QueryOptionsBuilder {
       modelInfo?.autoCompactPercentOverride
     );
     const compactPercent =
+      config.autoCompactPercent ??
       modelInfo?.autoCompactPercentOverride ??
       (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)
         ? undefined

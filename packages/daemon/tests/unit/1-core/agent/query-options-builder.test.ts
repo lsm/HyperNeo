@@ -936,6 +936,15 @@ describe('QueryOptionsBuilder', () => {
       }
     );
 
+    it('passes an explicit percentage even when model metadata is unavailable', async () => {
+      setModelsCache(new Map());
+      mockSession.config.model = 'synthetic-unknown-model';
+      mockSession.config.autoCompactPercent = 60;
+      const options = await builder.build();
+      expect(options.env?.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE).toBe('60');
+      expect(options.settings?.autoCompactWindow).toBeUndefined();
+    });
+
     it('uses the same explicit native percentage for an ordinary session and Neo', async () => {
       setModelsCache(
         new Map([
