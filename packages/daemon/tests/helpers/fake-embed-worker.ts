@@ -7,7 +7,11 @@ const worker = globalThis as unknown as WorkerGlobal;
 const load = process.env.FAKE_EMBED_LOAD ?? '';
 let inFlight = 0;
 
-if (load === 'fail') worker.postMessage({ loadError: 'model files missing' });
+if (load === 'missing-native')
+  worker.postMessage({
+    loadError: "Cannot find module '../bin/napi-v6/darwin/x64/onnxruntime_binding.node'",
+  });
+else if (load === 'fail') worker.postMessage({ loadError: 'model files missing' });
 else setTimeout(() => worker.postMessage({ ready: true }), load === 'slow' ? 400 : 0);
 
 worker.onmessage = async ({ data }) => {
