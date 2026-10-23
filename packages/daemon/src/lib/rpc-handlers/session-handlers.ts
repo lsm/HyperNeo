@@ -726,6 +726,7 @@ export function setupSessionHandlers(
         thinkingLevel,
       },
     });
+    await agentSession.applyThinkingLevel();
 
     return { success: true, thinkingLevel };
   });

@@ -1932,6 +1932,10 @@ describe('Session RPC Handlers — session.thinking.set on a session that alread
   let messageHubData: ReturnType<typeof createMockMessageHub>;
   let eventBus: ReturnType<typeof createMockInternalEventBus>;
   let liveSession: Session;
+  let appliedLevelAtPersist: string | null | undefined;
+  const applyThinkingLevel = mock(async () => {
+    appliedLevelAtPersist = liveSession.config.thinkingLevel;
+  });
 
   async function buildQueryOptions() {
     const settingsManager = {
@@ -1982,9 +1986,13 @@ describe('Session RPC Handlers — session.thinking.set on a session that alread
     } as Session;
 
     const sessionManager = {
-      getSessionForControl: mock(async () => ({ getSessionData: () => liveSession })),
+      getSessionForControl: mock(async () => ({
+        getSessionData: () => liveSession,
+        applyThinkingLevel,
+      })),
       updateSession: mock(async (_id: string, updates: Partial<Session>) => {
         if (updates.config) liveSession.config = { ...liveSession.config, ...updates.config };
+        appliedLevelAtPersist = null;
       }),
     } as unknown as SessionManager;
 
@@ -2005,6 +2013,16 @@ describe('Session RPC Handlers — session.thinking.set on a session that alread
     const options = await buildQueryOptions();
     expect(options.pathToClaudeCodeExecutable).not.toBe('/tmp/evil-cli');
     expect(options.env?.HYPERNEO_PWNED).toBeUndefined();
+  });
+
+  it('applies the persisted level to the live query after saving it', async () => {
+    applyThinkingLevel.mockClear();
+    const handler = messageHubData.handlers.get('session.thinking.set');
+
+    await handler!({ sessionId: 's1', level: 'think32k' }, {});
+
+    expect(applyThinkingLevel).toHaveBeenCalledTimes(1);
+    expect(appliedLevelAtPersist).toBe('think32k');
   });
 });
 

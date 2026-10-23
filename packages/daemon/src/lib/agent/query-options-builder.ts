@@ -293,6 +293,27 @@ export function getBuiltFallbackIdentity(session: object): BuiltFallbackIdentity
   return builtFallbackBySession.get(session);
 }
 
+export const DISABLE_THINKING_ENV = 'CLAUDE_CODE_DISABLE_THINKING';
+
+export function liveThinkingUpdate(
+  resolved: { thinking?: ThinkingConfig; effort?: ThinkingEffort },
+  level: ThinkingLevel
+): { maxThinkingTokens?: number; effortLevel?: ThinkingEffort; disableThinking?: boolean } {
+  const { thinking, effort } = resolved;
+  const maxThinkingTokens = !thinking
+    ? undefined
+    : thinking.type === 'disabled'
+      ? 0
+      : thinking.type === 'enabled'
+        ? thinking.budgetTokens
+        : (THINKING_LEVEL_TOKENS[level] ?? THINKING_LEVEL_TOKENS.think8k);
+  return {
+    maxThinkingTokens,
+    effortLevel: effort,
+    disableThinking: thinking ? thinking.type === 'disabled' : undefined,
+  };
+}
+
 export class QueryOptionsBuilder {
   private askUserQuestionHook?: HookCallback;
   private deferredPermissionMode?: PermissionMode;
@@ -631,18 +652,7 @@ export class QueryOptionsBuilder {
     return { type: 'enabled', budgetTokens: tokens };
   }
 
-  addSessionStateOptions(options: Options): Options {
-    const result = { ...options } as Options & { thinking?: ThinkingConfig };
-
-    if (this.ctx.session.sdkSessionId) {
-      result.resume = this.ctx.session.sdkSessionId;
-    }
-
-    const resumeSessionAt = this.ctx.peekPendingResumeSessionAt?.();
-    if (resumeSessionAt && result.resume) {
-      result.resumeSessionAt = resumeSessionAt;
-    }
-
+  resolveThinkingOptions(): { thinking?: ThinkingConfig; effort?: ThinkingEffort } {
     const providerId = this.ctx.session.config.provider;
     let thinkingModes: 'off' | 'on' | 'granular' =
       PROVIDER_THINKING_MODES[providerId as keyof typeof PROVIDER_THINKING_MODES] ?? 'granular';
@@ -704,6 +714,27 @@ export class QueryOptionsBuilder {
         }
       }
     }
+
+    return { thinking: thinkingConfig, effort };
+  }
+
+  addSessionStateOptions(options: Options): Options {
+    const result = { ...options } as Options & { thinking?: ThinkingConfig };
+
+    if (this.ctx.session.sdkSessionId) {
+      result.resume = this.ctx.session.sdkSessionId;
+    }
+
+    const resumeSessionAt = this.ctx.peekPendingResumeSessionAt?.();
+    if (resumeSessionAt && result.resume) {
+      result.resumeSessionAt = resumeSessionAt;
+    }
+
+    const { thinking: thinkingConfig, effort } = this.resolveThinkingOptions();
+    const env = { ...(result.env ?? {}) };
+    delete env[DISABLE_THINKING_ENV];
+    if (thinkingConfig?.type === 'disabled') env[DISABLE_THINKING_ENV] = '1';
+    result.env = env;
 
     if (thinkingConfig) {
       result.thinking = thinkingConfig;
