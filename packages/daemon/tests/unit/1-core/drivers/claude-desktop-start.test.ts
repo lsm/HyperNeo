@@ -271,15 +271,11 @@ describe('claude-desktop start', () => {
     try {
       const result = launchInClaudeDesktop('synthetic-hung', dir, {
         spawn: (_args, options) => {
+          const command = `trap '' HUP; echo $$ > "${pidFile}"; exec sleep 300`;
           const child = nativeSpawn(
-            [
-              'script',
-              '-q',
-              '/dev/null',
-              '/bin/sh',
-              '-c',
-              `trap '' HUP; echo $$ > "${pidFile}"; exec sleep 300`,
-            ],
+            process.platform === 'darwin'
+              ? ['script', '-q', '/dev/null', '/bin/sh', '-c', command]
+              : ['script', '-q', '-c', command, '/dev/null'],
             options
           );
           wrapperPid = child.pid;

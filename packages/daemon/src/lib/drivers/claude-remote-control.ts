@@ -143,7 +143,33 @@ async function createWakeHelper(deps: ClaudeDesktopAdapterDeps): Promise<Gate<Rc
   };
 }
 
+type OpenHelper = Gate<{ record: RcToggle['record']; liveSessions: readonly ClaudeLiveSession[] }>;
+const openingWakeHelpers = new WeakMap<ClaudeDesktopAdapterDeps, Promise<OpenHelper>>();
+
 export async function openRcToggle(
+  records: readonly ClaudeDesktopRecord[],
+  liveSessions: readonly ClaudeLiveSession[],
+  deps: ClaudeDesktopAdapterDeps,
+  title = RC_TOGGLE_TITLE
+): Promise<OpenHelper> {
+  if (title !== 'desktop-wake') return openHelper(records, liveSessions, deps, title);
+  const pending = openingWakeHelpers.get(deps);
+  if (pending) return pending;
+  const opening = (async () => {
+    const current = await loadClaudeDesktopRecords(deps, new Map());
+    const live = await probeLiveClaudeSessions(deps);
+    if ('reason' in live) return live;
+    return openHelper(current, live.value, deps, title);
+  })();
+  openingWakeHelpers.set(deps, opening);
+  try {
+    return await opening;
+  } finally {
+    openingWakeHelpers.delete(deps);
+  }
+}
+
+async function openHelper(
   records: readonly ClaudeDesktopRecord[],
   liveSessions: readonly ClaudeLiveSession[],
   deps: ClaudeDesktopAdapterDeps,

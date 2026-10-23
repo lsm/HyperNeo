@@ -1,3 +1,4 @@
+import { collectDescendantPids, listProcesses } from '../process-watchdog.ts';
 import { runLagPhase } from '../event-loop-activity.ts';
 import { workStartPreparation, type WorkExecutionPreparer } from './start-preparation.ts';
 import type { createClaudeDesktopModsDriver } from './claude-desktop-mods-driver.ts';
@@ -1312,11 +1313,25 @@ export async function launchInClaudeDesktop(
     return await Promise.race([
       proc.exited.catch(() => -1),
       new Promise<number>((resolve) => {
-        timer = setTimeout(() => {
+        timer = setTimeout(async () => {
           try {
-            proc.kill('SIGKILL');
-          } catch {}
-          resolve(-1);
+            if (proc.pid) {
+              const owned = collectDescendantPids(
+                await listProcesses().catch(() => []),
+                new Set([proc.pid])
+              );
+              for (const pid of [...owned].reverse()) {
+                try {
+                  process.kill(pid, 'SIGKILL');
+                } catch {}
+              }
+            }
+          } finally {
+            try {
+              proc.kill('SIGKILL');
+            } catch {}
+            resolve(-1);
+          }
         }, BOOTSTRAP_TIMEOUT_MS);
       }),
     ]);
