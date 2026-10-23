@@ -73,24 +73,67 @@ describe('session schedule firing', () => {
     await createSessionScheduleFire(deps())(jobs.getJob(row.pendingJobId!)!);
     return scheduler.repo.get(id)!;
   };
-  test('upgrade starts quiet counting fresh and preserves it on later restarts', async () => {
-    const row = create();
-    await fire(row.id);
-    db.prepare(
-      "UPDATE session_schedules SET due_count = 9, last_outcome = 'skipped_busy' WHERE id = ?"
-    ).run(row.id);
-    db.exec("DELETE FROM migration_markers WHERE key = 'migration_448'");
-    runMigrations(db, () => {});
-    const first = await fire(row.id);
-    expect(first.dueCount).toBe(1);
-    expect(first.nextRunAt).toBe(now + 60000);
-    runMigrations(db, () => {});
-    expect((await fire(row.id)).dueCount).toBe(2);
-    expect(notices).toEqual([]);
-    expect((await fire(row.id)).dueCount).toBe(3);
-    expect(notices).toEqual([row.id]);
-    expect(deliveries).toHaveLength(1);
-  });
+  test.each(['none', 'human', 'ask', 'todo'])(
+    'upgrade with %s history stays quiet across later restarts',
+    async (history) => {
+      const row = create();
+      await fire(row.id);
+      if (history === 'human')
+        new SDKMessageRepository(db).saveUserMessage(
+          'recipient',
+          {
+            type: 'user',
+            uuid: 'old-human',
+            inputKind: 'human',
+            message: { role: 'user', content: 'Earlier work' },
+            parent_tool_use_id: null,
+            session_id: 'sdk-old',
+          },
+          'consumed'
+        );
+      if (history === 'ask' || history === 'todo') {
+        const asks = new NeoAskTodoRepository(db);
+        const ask = asks.openAsk({
+          id: 'old-ask',
+          sessionId: 'recipient',
+          originMessageId: null,
+          projectId: null,
+          title: 'Earlier work',
+          request: 'Review',
+          createdAt: now,
+          goalId: null,
+        });
+        if (history === 'todo')
+          asks.addTodo(
+            'old-todo',
+            ask.id,
+            {
+              title: 'Review',
+              doneWhen: 'Reviewed',
+              check: null,
+              instruction: null,
+              named: null,
+            },
+            now
+          );
+      }
+      db.prepare(
+        "UPDATE session_schedules SET due_count = 9, last_outcome = 'skipped_busy' WHERE id = ?"
+      ).run(row.id);
+      db.exec("DELETE FROM migration_markers WHERE key = 'migration_448'");
+      runMigrations(db, () => {});
+      const first = await fire(row.id);
+      expect(first.lastOutcome).toBe('skipped_unchanged');
+      expect(first.dueCount).toBe(1);
+      expect(first.nextRunAt).toBe(now + 60000);
+      runMigrations(db, () => {});
+      expect((await fire(row.id)).dueCount).toBe(2);
+      expect(notices).toEqual([]);
+      expect((await fire(row.id)).dueCount).toBe(3);
+      expect(notices).toEqual([row.id]);
+      expect(deliveries).toHaveLength(1);
+    }
+  );
   test('changed facts fire once, quiet wakes back off without turns, and progress resets', async () => {
     const initial = create();
     const first = await fire(initial.id);

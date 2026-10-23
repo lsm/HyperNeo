@@ -6,6 +6,7 @@ import { getConfig } from '../../../packages/daemon/src/config.ts';
 import { MessageHub, WebSocketClientTransport } from '../../../packages/shared/src/mod.ts';
 import { SessionScheduler } from '../../../packages/daemon/src/lib/scheduler/session-schedules.ts';
 import { JobQueueProcessor, type JobHandler } from '../../../packages/daemon/src/storage/job-queue-processor.ts';
+import { runMigrations } from '../../../packages/daemon/src/storage/schema/index.ts';
 import { NeoRepository } from '../../../packages/daemon/src/storage/repositories/neo-repository.ts';
 import { NeoPublicationRepository } from '../../../packages/daemon/src/storage/repositories/neo-publication-repository.ts';
 
@@ -50,10 +51,17 @@ try {
   const result = await call('goal.session.create', { ownerSessionId: target, title: 'Wait for review work', doneTest: 'New work completed', cadence: { kind: 'every', everyMs: 1_200_000 }, nudgeEvery: 2 });
   assert(result.accepted, JSON.stringify(result));
   const id = scheduler.repo.getBySource('goal', result.goal.id)!.id;
+  app.db.getSDKMessageRepo().saveUserMessage(target, { type: 'user', uuid: 'prior-human', inputKind: 'human', message: { role: 'user', content: 'Earlier work' }, parent_tool_use_id: null, session_id: 'prior-sdk' }, 'consumed');
   const baseline = await scheduler.source('goal')!.facts(result.goal.id); assert(baseline);
   scheduler.repo.recordOutcome(scheduler.repo.get(id)!, 'fired', baseline.digest, 'prior-delivery');
   const pendingInputs = () => app!.jobQueue.listActiveByPayload('mailbox', { 'to.sessionId': target });
   const inputRows = () => app!.db.getDatabase().prepare("SELECT sdk_uuid FROM sdk_messages WHERE session_id = ? AND message_type = 'user'").all(target);
+  const initialInputs = inputRows();
+  app.db.getDatabase().prepare("UPDATE session_schedules SET due_count = 9, last_outcome = 'skipped_busy' WHERE id = ?").run(id);
+  app.db.getDatabase().exec("DELETE FROM migration_markers WHERE key = 'migration_448'");
+  evidence.upgradeBefore = scheduler.repo.get(id);
+  runMigrations(app.db.getDatabase(), () => {});
+  evidence.upgradeAfter = scheduler.repo.get(id);
   const conversationId = new NeoRepository(app.db.getDatabase()).conversationId()!;
   const publications = () => new NeoPublicationRepository(app!.db.getDatabase()).list(conversationId, 0, 100) ?? [];
   const before = publications().length;
@@ -73,7 +81,7 @@ try {
     assert.equal(row.dueCount, count);
     assert.equal(row.nextRunAt! - now, Math.min(1_200_000 * 2 ** Math.max(0, count - 2), 28_800_000));
     assert.equal(publications().length - before, count < 3 ? 0 : 1);
-    assert.deepEqual(inputRows(), []);
+    assert.deepEqual(inputRows(), initialInputs);
     assert.equal(pendingInputs().length, 0);
     assert.equal(live.queryPromise, null);
   }
