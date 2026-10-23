@@ -26,7 +26,9 @@ try {
         evidence.refusedWithNoCardError = true;
         break;
       }
-      await card('finish').waitFor({ state: 'hidden' });
+      await page.locator('[data-ask="finish"][data-ask-state="done"]:visible').waitFor();
+      assert.equal(await card('finish').getByRole('button', { name: 'Ask actions' }).count(), 0);
+      await card('finish').screenshot({ path: `${run}/evidence/marked-done.png` });
     }
     await card('stop-failure').getByRole('button', { name: 'Ask actions' }).click();
     await page.getByRole('menuitem', { name: 'Mark done' }).click();
@@ -35,6 +37,7 @@ try {
     assert.match(await alert.innerText(), /still open/);
     assert.equal(await page.getByRole('alert').count(), 1);
     await card('stop-failure').screenshot({ path: `${run}/evidence/card-error-${width}.png` });
+    await page.getByRole('menu').waitFor({ state: 'hidden' });
     await card('stop-failure').getByRole('button', { name: 'Ask actions' }).click();
     await page.getByRole('menuitem', { name: 'Mark done' }).click();
     await alert.waitFor();

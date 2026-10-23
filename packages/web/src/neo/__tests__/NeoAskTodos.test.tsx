@@ -560,8 +560,9 @@ describe('NeoAskTodos', () => {
           failure instanceof Error ? failure.message : '请求没能关闭，请重试。'
         )
       );
+      await waitFor(() => expect(app.queryByRole('menu')).toBeNull());
       fireEvent.click(app.getByRole('button', { name: '更多操作' }));
-      fireEvent.click(app.getByRole('menuitem', { name: '标记做完' }));
+      fireEvent.click(await app.findByRole('menuitem', { name: '标记做完' }));
       await waitFor(() => expect(app.queryByRole('alert')).toBeNull());
       expect(onSettle).toHaveBeenCalledTimes(2);
     }

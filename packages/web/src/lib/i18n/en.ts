@@ -60,6 +60,7 @@ export const en = {
   'ask.drop': 'Drop this ask',
   'ask.moreDone': '{count} done — show more',
   'ask.moreDoneFailed': 'Couldn’t load the done todos.',
+  'ask.settleFailed': 'Couldn’t close this request. Please try again.',
   'ask.moreDoneRefused': 'Couldn’t load the done todos: {reason}',
   'ask.todos': 'Todos',
   'ask.removed': 'Removed',

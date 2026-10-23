@@ -246,9 +246,11 @@ export function createNeoAskRecordOperations(
       'result:outcome'
     )
     .pipe(
-      (ask: NeoAsk, input: z.infer<typeof Settle>) =>
-        requireNeoAskTodosFinished(ask, input.status, store.listTodos(ask.id)),
-      ['outcome', 'input'],
+      (ask: NeoAsk, input: z.infer<typeof Settle>, caller: OperationCaller) =>
+        caller.source === 'rpc' && caller.principal === 'local'
+          ? { value: ask }
+          : requireNeoAskTodosFinished(ask, input.status, store.listTodos(ask.id)),
+      ['outcome', 'input', 'caller'],
       'result:outcome'
     )
     .pipe(
@@ -295,7 +297,7 @@ export function createNeoAskRecordOperations(
     defineOperation({
       name: 'neo.ask.settle',
       description:
-        'End an ask: done when its todos are done, dropped when the human drops it. done is refused while any todo is neither done nor removed with a reason; the refusal lists them. outcome is one short sentence the ask shows. Open questions are retired and running sessions stop.',
+        'End an ask: done when its todos are done, dropped when the human drops it. Agent completion is refused while any todo is neither done nor removed with a reason; a local human may explicitly confirm done. outcome is one short sentence the ask shows. Open questions are retired and running sessions stop.',
       inputSchema: Settle,
       resultSchema: AskResult,
       policy: { safetyClass: 'mutate', roles: ['neo'] },
