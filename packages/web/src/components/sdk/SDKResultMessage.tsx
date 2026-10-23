@@ -1,8 +1,7 @@
-import { CheckGlyph } from '../icons/common-glyphs.tsx';
+import { CheckGlyph, ChevronDownGlyph } from '../icons/common-glyphs.tsx';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import { isSDKResultSuccess, isSDKResultError } from '@hyperneo/shared/sdk/type-guards';
 import { getInvokedOperationName } from './tools/tool-utils.ts';
-import { ContentDisclosureControl } from '../ui/ContentDisclosureControl.tsx';
 import { useState } from 'preact/hooks';
 
 type ResultMessage = Extract<SDKMessage, { type: 'result' }>;
@@ -28,41 +27,53 @@ export function SDKResultMessage({ message }: Props) {
 
   return (
     <div
-      class={`flow-root rounded border mb-4 p-3 ${
+      class={`rounded border mb-4 ${
         isSuccess ? 'bg-success/10 border-success/40' : 'bg-danger/10 border-danger/40'
       }`}
     >
-      <span class="inline-flex max-w-full flex-wrap items-center gap-2 text-xs">
-        {isSuccess ? (
-          <svg class="w-4 h-4 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-            />
-          </svg>
-        ) : (
-          <svg class="w-4 h-4 text-danger" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"
-            />
-          </svg>
-        )}
-        <span class="font-medium text-success-soft">
-          {inputTokens}→{outputTokens} tokens
-        </span>
-        <span class="text-success-soft">•</span>
-        <span class="font-mono text-success-soft">${message.total_cost_usd.toFixed(4)}</span>
-        <span class="text-success-soft">•</span>
-        <span class="text-success-soft">{(message.duration_ms / 1000).toFixed(2)}s</span>
-      </span>
+      <button
+        onClick={() => setShowDetails(!showDetails)}
+        class="w-full px-3 py-2 flex items-center justify-between hover:bg-green-100 dark:hover:bg-green-900/20 transition-colors"
+      >
+        <div class="flex items-center gap-2 text-xs">
+          {isSuccess ? (
+            <svg class="w-4 h-4 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+            </svg>
+          ) : (
+            <svg class="w-4 h-4 text-danger" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+            </svg>
+          )}
+          <span class="font-medium text-success-soft">
+            {inputTokens}→{outputTokens} tokens
+          </span>
+          <span class="text-success-soft">•</span>
+          <span class="font-mono text-success-soft">${message.total_cost_usd.toFixed(4)}</span>
+          <span class="text-success-soft">•</span>
+          <span class="text-success-soft">{(message.duration_ms / 1000).toFixed(2)}s</span>
+        </div>
+        <ChevronDownGlyph
+          class={`w-4 h-4 text-success transition-transform ${showDetails ? 'rotate-180' : ''}`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+          pathProps={{ strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: 2 }}
+        />
+      </button>
 
       {showDetails && (
-        <div class="mt-3 border-t border-success/40 bg-surface pt-3 space-y-3">
+        <div class="p-3 border-t border-success/40 bg-surface space-y-3">
           <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
             <StatCard
               label="Input Tokens"
@@ -270,11 +281,6 @@ export function SDKResultMessage({ message }: Props) {
           )}
         </div>
       )}
-      <ContentDisclosureControl
-        expanded={showDetails}
-        onToggle={() => setShowDetails(!showDetails)}
-        aria-label="Result details"
-      />
     </div>
   );
 }

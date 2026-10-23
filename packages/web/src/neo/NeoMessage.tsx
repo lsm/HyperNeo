@@ -1,7 +1,5 @@
 import type { ChatMessage } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
-import { useState } from 'preact/hooks';
-import { ContentDisclosureControl } from '../components/ui/ContentDisclosureControl.tsx';
 import type { NeoWork } from '@hyperneo/shared/types/neo-context';
 import MarkdownRenderer from '../components/chat/MarkdownRenderer.tsx';
 import { CopyButton } from '../components/ui/CopyButton.tsx';
@@ -48,7 +46,6 @@ export function NeoMessage({
   author?: string;
   children?: ComponentChildren;
 }) {
-  const [reportOpen, setReportOpen] = useState(false);
   const user = message.type === 'user';
   const images = neoMessageImageSources(message);
   const copyDisabled = !text.trim();
@@ -127,26 +124,21 @@ export function NeoMessage({
           return user ? <NeoClampedText text={text}>{body}</NeoClampedText> : body;
         })()}
         {work?.report && !user && (
-          <div class="mt-4 flow-root border-t border-line pt-3">
-            <span class="text-sm font-medium text-fg">Read result · {work.title}</span>
-            {reportOpen && (
-              <div class="mt-3 rounded-xl border border-line bg-surface p-4">
-                <p class="mb-3 text-xs text-fg-muted">
-                  HyperNeo’s response, not independently verified.
-                </p>
-                <MarkdownRenderer
-                  content={work.report}
-                  class="neo-markdown neo-markdown-assistant text-base leading-relaxed"
-                />
-                <CopyButton text={work.report} label="Copy work result" />
-              </div>
-            )}
-            <ContentDisclosureControl
-              expanded={reportOpen}
-              onToggle={() => setReportOpen(!reportOpen)}
-              aria-label={`Read result · ${work.title}`}
-            />
-          </div>
+          <details class="mt-4 border-t border-line pt-3">
+            <summary class="cursor-pointer text-sm font-medium text-accent hover:underline">
+              Read result · {work.title}
+            </summary>
+            <div class="mt-3 rounded-xl border border-line bg-surface p-4">
+              <p class="mb-3 text-xs text-fg-muted">
+                HyperNeo’s response, not independently verified.
+              </p>
+              <MarkdownRenderer
+                content={work.report}
+                class="neo-markdown neo-markdown-assistant text-base leading-relaxed"
+              />
+              <CopyButton text={work.report} label="Copy work result" />
+            </div>
+          </details>
         )}
       </div>
       <div class={`mt-1 flex items-center gap-3 ${user ? 'justify-end' : ''}`}>
