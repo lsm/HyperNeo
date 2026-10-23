@@ -27,6 +27,8 @@ type Row = {
   reason: Reason | null;
 };
 
+const acquisitions = new WeakMap<Database, Map<string, Promise<Response>>>();
+
 function pageKey(subject: Subject): string {
   return JSON.stringify([
     subject.credentialId,
@@ -84,6 +86,24 @@ export class CodingPollFactsRepository {
 
   read(subject: Subject, now: number, maxAgeMs: number) {
     return readPage(this.db, subject, now, maxAgeMs);
+  }
+
+  async acquire(
+    subject: Subject,
+    validator: string | null,
+    request: () => Promise<Response>
+  ): Promise<Response> {
+    const active = acquisitions.get(this.db) ?? new Map<string, Promise<Response>>();
+    acquisitions.set(this.db, active);
+    const key = JSON.stringify([pageKey(subject), validator]);
+    let pending = active.get(key);
+    if (!pending) {
+      pending = Promise.resolve()
+        .then(request)
+        .finally(() => active.delete(key));
+      active.set(key, pending);
+    }
+    return (await pending).clone() as Response;
   }
 
   record(
