@@ -201,7 +201,7 @@ export class SpaceTaskRepository {
           now,
           isTerminalStatus(initialStatus) ? 1 : 0
         );
-    });
+    }, 'immediate');
 
     insertTx();
     this.upsertTaskSearchRow(id);

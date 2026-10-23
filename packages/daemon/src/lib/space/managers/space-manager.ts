@@ -125,7 +125,7 @@ function createSpaceAtomic(ctx: CreateSpaceCtx): CreateSpaceCtx {
       });
 
       return newSpace;
-    })() as Space;
+    }, 'immediate')() as Space;
     return { ...ctx, space };
   } catch (err) {
     return { ...ctx, error: err as Error };
