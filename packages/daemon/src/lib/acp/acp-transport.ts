@@ -267,12 +267,14 @@ export class AcpTransport {
 
       let submitted: Promise<Error | undefined> = Promise.resolve(undefined);
       const settleAfterSubmit = (response: AcpJsonRpcResponse) => {
-        const hold = setTimeout(
-          () => reject(new Error(`Submission check timed out after ${timeoutMs}ms: ${method}`)),
-          timeoutMs
-        );
+        const hold = setTimeout(() => {
+          this.pendingRequests.delete(id);
+          reject(new Error(`Submission check timed out after ${timeoutMs}ms: ${method}`));
+        }, timeoutMs);
+        this.pendingRequests.set(id, { resolve: () => {}, reject, timer: hold });
         void submitted.then((failure) => {
           clearTimeout(hold);
+          if (this.pendingRequests.get(id)?.timer === hold) this.pendingRequests.delete(id);
           if (failure) reject(failure);
           else resolve(response);
         });

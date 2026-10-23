@@ -131,6 +131,26 @@ describe('AcpTransport.sendRequest onSubmitted', () => {
     }
   });
 
+  it('close rejects a request held on its submission check', async () => {
+    const transport = answeringAgent();
+    let entered: () => void = () => {};
+    const checking = new Promise<void>((resolve) => (entered = resolve));
+    const request = transport.sendRequest('session/prompt', { sessionId: 's' } as never, {
+      onSubmitted: () => {
+        entered();
+        return new Promise<void>(() => {});
+      },
+    });
+    const outcome = request.then(
+      () => 'resolved',
+      (error: Error) => error.message
+    );
+    await checking;
+    await settleLater();
+    await transport.close();
+    expect(await outcome).not.toBe('resolved');
+  });
+
   it('rejects when an async onSubmitted fails after the response arrived', async () => {
     const transport = answeringAgent();
     try {
