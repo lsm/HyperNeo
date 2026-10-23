@@ -62,7 +62,12 @@ export async function readGithubDeploys(
   urls: readonly string[],
   daemonCommits: () => Promise<NeoDaemonCommit[]>,
   spawnImpl: SpawnFn = spawnProcess,
-  readMerge: (url: string) => Promise<string | null> = (url) => readMergeCommit(url, spawnImpl)
+  readMerge: (url: string) => Promise<string | null> = (url) => readMergeCommit(url, spawnImpl),
+  containsMerge: (url: string, merge: string, commit: string) => Promise<boolean> = (
+    url,
+    merge,
+    commit
+  ) => readContains(url, merge, commit, spawnImpl)
 ): Promise<NeoDeployRead> {
   const prs = [];
   for (const url of urls) prs.push({ url, mergeCommit: await readMerge(url) });
@@ -73,7 +78,7 @@ export async function readGithubDeploys(
       if (
         daemon.commit &&
         pr.mergeCommit &&
-        (await readContains(pr.url, pr.mergeCommit, daemon.commit, spawnImpl))
+        (await containsMerge(pr.url, pr.mergeCommit, daemon.commit))
       )
         contains.push(pr.mergeCommit);
     daemons.push({ ...daemon, contains });
