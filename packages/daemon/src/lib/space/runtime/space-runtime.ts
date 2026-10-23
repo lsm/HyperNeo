@@ -2208,9 +2208,7 @@ export class SpaceRuntime {
           const existing = messages.getMessageByStatusAndUuid(targetSessionId, status, uuid);
           if (existing) return { dbId: existing.dbId, replayed: true };
         }
-        const dbId = await Promise.resolve(
-          messages.saveUserMessage(targetSessionId, message, 'deferred', 'system')
-        );
+        const dbId = await messages.saveUserMessage(targetSessionId, message, 'deferred', 'system');
         return { dbId, replayed: false };
       },
       reopenFailedDigest: (targetSessionId, uuid) => {

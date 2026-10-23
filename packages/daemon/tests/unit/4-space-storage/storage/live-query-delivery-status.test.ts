@@ -117,7 +117,7 @@ describe('messages.bySession delivery-status reactive pipeline', () => {
     expect(diffs[0].type).toBe('snapshot');
     expect(diffs[0].rows).toHaveLength(0);
 
-    const rowId = reactiveDb.db.saveUserMessage(
+    const rowId = await reactiveDb.db.saveUserMessage(
       sessionId,
       makeUserMessage('u-1', 'hello'),
       'enqueued'
@@ -158,7 +158,7 @@ describe('messages.bySession delivery-status reactive pipeline', () => {
   });
 
   test('the snapshot after a reconnect reconciles to the latest send_status (single row)', async () => {
-    const rowId = reactiveDb.db.saveUserMessage(
+    const rowId = await reactiveDb.db.saveUserMessage(
       sessionId,
       makeUserMessage('u-2', 'reconcile'),
       'enqueued'
@@ -179,7 +179,7 @@ describe('messages.bySession delivery-status reactive pipeline', () => {
   });
 
   test('a job_queue retry transition re-evaluates the feed (job_queue is a feed dependency)', async () => {
-    const rowId = reactiveDb.db.saveUserMessage(
+    const rowId = await reactiveDb.db.saveUserMessage(
       sessionId,
       makeUserMessage('u-job', 'retry me'),
       'enqueued'

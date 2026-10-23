@@ -571,7 +571,7 @@ export class SessionLifecycle {
 
     try {
       const failedDbIds: string[] = [];
-      materializeMailboxFailuresForSession(sessionId, {
+      await materializeMailboxFailuresForSession(sessionId, {
         db: this.db,
         internalEventBus: this.internalEventBus,
         settleSkipped: (sid, messageUuid) =>
@@ -714,7 +714,7 @@ export class SessionLifecycle {
       }
       try {
         const failedDbIds: string[] = [];
-        materializeMailboxFailuresForSession(sessionId, {
+        await materializeMailboxFailuresForSession(sessionId, {
           db: this.db,
           internalEventBus: this.internalEventBus,
           settleSkipped: (sid, messageUuid) =>
