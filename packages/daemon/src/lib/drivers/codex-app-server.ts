@@ -8,6 +8,7 @@ import { selectCodexConfiguration } from './codex-start-configuration.ts';
 
 const log = new Logger('codex-send');
 const CALL_TIMEOUT_MS = 30_000;
+const CLOSE_RETENTION_MS = 30 * 60_000;
 
 export interface CodexAppServer {
   call(method: string, params: Record<string, unknown>): Promise<unknown>;
@@ -82,20 +83,27 @@ type Pending = {
   timer: ReturnType<typeof setTimeout>;
 };
 
-export function connectCodexAppServer(socketPath: string): Promise<CodexAppServer> {
+export function connectCodexAppServer(
+  socketPath: string,
+  maxCloseRetentionMs = CLOSE_RETENTION_MS
+): Promise<CodexAppServer> {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(`ws+unix://${socketPath}:/`);
     const pending = new Map<number, Pending>();
     let nextId = 1;
     let closing = false;
+    let closeTimer: ReturnType<typeof setTimeout> | undefined;
     const turns = new Map<string, { id: string; releasing: boolean }>();
     const completed = new Set<string>();
     const closeIfReleased = () => {
-      if (closing && !turns.size) socket.close();
+      if (closing && !turns.size) {
+        clearTimeout(closeTimer);
+        socket.close();
+      }
     };
-    const release = (threadId: string) => {
+    const release = (threadId: string, expired = false) => {
       const turn = turns.get(threadId);
-      if (!turn || turn.releasing || !completed.has(`${threadId}/${turn.id}`)) return;
+      if (!turn || turn.releasing || (!expired && !completed.has(`${threadId}/${turn.id}`))) return;
       turn.releasing = true;
       void call('thread/unsubscribe', { threadId })
         .then(
@@ -105,6 +113,7 @@ export function connectCodexAppServer(socketPath: string): Promise<CodexAppServe
               turnId: turn.id,
               result,
               idleGraceMinutes: 30,
+              reason: expired ? 'close-retention-expired' : 'turn-completed',
             }),
           (error) =>
             log.warn('work.send app-server unsubscribe failed', {
@@ -171,6 +180,9 @@ export function connectCodexAppServer(socketPath: string): Promise<CodexAppServe
       }
     });
     socket.on('close', () => {
+      clearTimeout(closeTimer);
+      turns.clear();
+      completed.clear();
       for (const waiting of pending.values()) {
         clearTimeout(waiting.timer);
         waiting.reject(new Error('The Codex app-server closed the connection.'));
@@ -188,6 +200,16 @@ export function connectCodexAppServer(socketPath: string): Promise<CodexAppServe
         resolve({
           call,
           close: () => {
+            if (!closing && turns.size) {
+              closeTimer = setTimeout(() => {
+                log.warn('work.send app-server close retention expired', {
+                  maxCloseRetentionMs,
+                  threadIds: [...turns.keys()],
+                });
+                for (const threadId of turns.keys()) release(threadId, true);
+              }, maxCloseRetentionMs);
+              closeTimer.unref?.();
+            }
             closing = true;
             closeIfReleased();
           },

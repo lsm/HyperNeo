@@ -35,3 +35,11 @@ for the project check. Never use archive/unarchive to transfer ownership, edit
 native state, or run the legacy `codex-send.ts prepare` workaround. Existing
 background-owned threads may retain the official unsubscribe idle grace; this
 journey does not claim immediate release.
+
+If the no-Desktop app-server connection misses the matching completion event,
+its deferred close retains the subscription for at most 30 minutes before
+requesting official unsubscribe anyway. That RPC retains its existing 30-second
+timeout; the socket then closes on success or failure. This does not interrupt
+the turn or bypass the server's official idle grace. The real Unix WebSocket
+contract also covers absent and mismatched completion notifications with a short
+test-only retention deadline, requiring one unsubscribe and a closed socket.
