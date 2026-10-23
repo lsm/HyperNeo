@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  bindGateway,
   DbGateway,
+  gatewayFor,
   type DbGatewayReply,
   type DbGatewayRequest,
 } from '../../../../src/storage/db-gateway/db-gateway';
@@ -240,6 +242,48 @@ describe('DbGateway', () => {
       'test.counter does not run wipe'
     );
     expect(await gateway.call(counts, 'count')).toBe(2);
+    db.close();
+  });
+
+  test('table changes an op records replay on the main thread before its caller resumes', async () => {
+    const touch = defineDbOp({
+      name: 'test.touch',
+      mode: 'write',
+      run: (_db: Database, table: string, changes) => {
+        changes.notifyChange(table, { sessionId: 's1' });
+        return table;
+      },
+    });
+    const replayed: unknown[] = [];
+    const db = new Database(':memory:');
+    const inline = new DbGateway(':memory:', db);
+    inline.onChanges = (changes) => replayed.push(...changes);
+    expect(await inline.run(touch, 'sessions')).toBe('sessions');
+    expect(replayed).toEqual([{ table: 'sessions', scope: { sessionId: 's1' } }]);
+
+    const { gateway, workers } = fixture();
+    gateway.onChanges = (changes) => replayed.push(...changes);
+    const pending = gateway.run(touch, 'tasks').then(() => replayed.length);
+    await tick();
+    workers[0].emit({
+      id: workers[0].requests[0].id,
+      result: 'tasks',
+      changes: [{ table: 'tasks' }],
+    });
+    expect(await pending).toBe(2);
+    workers[0].emit({ id: 99, error: 'late', changes: [{ table: 'ignored' }] } as DbGatewayReply);
+    expect(replayed.at(-1)).toEqual({ table: 'tasks' });
+    db.close();
+  });
+
+  test('gatewayFor returns the gateway bound to a connection, or an inline one', async () => {
+    const db = new Database(':memory:');
+    const unbound = gatewayFor(db);
+    expect(gatewayFor(db)).toBe(unbound);
+    const bound = new DbGateway(':memory:', db);
+    bindGateway(db, bound);
+    expect(gatewayFor(db)).toBe(bound);
+    expect(gatewayFor(new Database(':memory:'))).not.toBe(bound);
     db.close();
   });
 

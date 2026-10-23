@@ -779,6 +779,26 @@ describe('markPendingDeliveriesFailedBefore', () => {
     ]);
   });
 
+  test('through the gateway, reports each expired delivery to the hook exactly once', async () => {
+    const hookCalls: string[] = [];
+    store.setDeliveryTerminalHook((event) =>
+      hookCalls.push(`${event.deliveryKey}:${event.reason}`)
+    );
+    store.store(EVENT_A);
+    store.registerExpectedDelivery('evt-a', 'dk-1', TARGET);
+    store.registerExpectedDelivery('evt-a', 'dk-2', TARGET);
+    hookCalls.length = 0;
+    const now = Date.now();
+    ageEvent('evt-a', now - 400_000);
+
+    await store.expirePendingDeliveriesBefore(now - 300_000, new Set(['dk-2']), now);
+
+    expect(hookCalls).toEqual(['dk-1:ttl_expired']);
+    expect(store.getDelivery('evt-a', 'dk-1')?.state).toBe('failed');
+    expect(store.getDelivery('evt-a', 'dk-2')?.state).toBe('pending');
+    expect(await store.expirePublishedEventsBefore(now - 300_000, now)).toBe(0);
+  });
+
   test('leaves fresh rows untouched', () => {
     store.store(EVENT_A);
     store.registerExpectedDelivery('evt-a', 'dk-1', TARGET);

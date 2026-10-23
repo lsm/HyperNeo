@@ -1580,8 +1580,9 @@ export class SpaceRuntime {
       }
       return;
     }
-    this.expirePublishedExternalEventsPastTtl();
-    this.redispatchPublishedEventsWithoutDeliveries();
+    void this.expirePublishedExternalEventsPastTtl().then(() =>
+      this.redispatchPublishedEventsWithoutDeliveries()
+    );
   }
 
   private async handleExternalEvent(payload: ExternalEventPublishedPayload): Promise<void> {
@@ -4102,8 +4103,8 @@ export class SpaceRuntime {
       await this.checkStandaloneTasks();
       await this.recoverRateLimitedTasks();
 
-      this.expirePublishedExternalEventsPastTtl();
-      this.expirePendingExternalEventDeliveriesPastTtl();
+      await this.expirePublishedExternalEventsPastTtl();
+      await this.expirePendingExternalEventDeliveriesPastTtl();
 
       this.pruneExpiredCycleEvents();
       this.pruneDigestHandoffDebt();
@@ -5003,11 +5004,11 @@ export class SpaceRuntime {
     }
   }
 
-  private expirePublishedExternalEventsPastTtl(now = Date.now()): void {
+  private async expirePublishedExternalEventsPastTtl(now = Date.now()): Promise<void> {
     const store = this.config.externalEventStore;
     if (!store) return;
     try {
-      store.markPublishedEventsFailedBefore(now - EXTERNAL_EVENT_QUEUE_TTL_MS, now);
+      await store.expirePublishedEventsBefore(now - EXTERNAL_EVENT_QUEUE_TTL_MS, now);
     } catch (err) {
       log.warn(
         `SpaceRuntime: TTL sweep failed: ${err instanceof Error ? err.message : String(err)}`
@@ -5015,7 +5016,7 @@ export class SpaceRuntime {
     }
   }
 
-  private expirePendingExternalEventDeliveriesPastTtl(now = Date.now()): void {
+  private async expirePendingExternalEventDeliveriesPastTtl(now = Date.now()): Promise<void> {
     const store = this.config.externalEventStore;
     if (!store) return;
     try {
@@ -5023,7 +5024,11 @@ export class SpaceRuntime {
         ...this.externalEventDeliveriesInFlight,
         ...this.immediateDispatchesInFlight,
       ]);
-      store.markPendingDeliveriesFailedBefore(now - EXTERNAL_EVENT_QUEUE_TTL_MS, inFlightKeys, now);
+      await store.expirePendingDeliveriesBefore(
+        now - EXTERNAL_EVENT_QUEUE_TTL_MS,
+        inFlightKeys,
+        now
+      );
     } catch (err) {
       log.warn(
         `SpaceRuntime: pending-delivery TTL sweep failed: ${err instanceof Error ? err.message : String(err)}`

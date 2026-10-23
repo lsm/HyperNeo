@@ -1,5 +1,6 @@
 import { subscribeToStructuredLogs } from '../../lib/logger.ts';
 import { Database } from '../sqlite-compat.ts';
+import { ChangeRecorder } from './db-op.ts';
 import { DB_OPS } from './db-ops.ts';
 import type { DbGatewayReply, DbGatewayRequest } from './db-gateway.ts';
 
@@ -46,11 +47,12 @@ worker.onmessage = ({ data }) => {
       );
     }
     const open = db;
+    const recorder = new ChangeRecorder();
     const result = open.transaction(
-      () => op.run(open, data.args as never),
+      () => op.run(open, data.args as never, recorder),
       lane === 'write' ? 'immediate' : 'deferred'
     )();
-    worker.postMessage({ id, result });
+    worker.postMessage({ id, result, changes: recorder.changes });
   } catch (error) {
     worker.postMessage({ id, error: error instanceof Error ? error.message : String(error) });
   }

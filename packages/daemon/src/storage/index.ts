@@ -1,4 +1,4 @@
-import { DbGateway } from './db-gateway/db-gateway.ts';
+import { bindGateway, DbGateway } from './db-gateway/db-gateway.ts';
 import { countPendingTurns, readPendingTurns } from './turn-vectors.ts';
 import { readMessageFacts, type NeoMessageStatusRef } from '../lib/neo/message-status.ts';
 import { readMessageFeed, type MessageFeedArgs } from './sdk-message-feed-read.ts';
@@ -155,6 +155,12 @@ export class Database {
   async initialize(reactiveDb: ReactiveDatabase): Promise<void> {
     await this.core.initialize();
     this.reactiveDb = reactiveDb;
+    bindGateway(this.core.getDb(), this.gateway);
+    this.gateway.onChanges = (changes) => {
+      reactiveDb.beginTransaction();
+      for (const { table, scope } of changes) reactiveDb.notifyChange(table, scope);
+      reactiveDb.commitTransaction();
+    };
 
     const db = this.core.getDb();
     this.shortIdAllocator = new ShortIdAllocator(db);

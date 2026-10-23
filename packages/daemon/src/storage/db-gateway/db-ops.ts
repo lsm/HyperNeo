@@ -1,3 +1,4 @@
+import { externalEventSweeps } from '../../lib/external-events/external-event-store.ts';
 import {
   recordUnpaired,
   recordWouldRefuse,
@@ -7,8 +8,12 @@ import { jobQueueReads, jobQueueWrites } from '../repositories/job-queue-reposit
 import type { DbOp } from './db-op.ts';
 
 export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
-  [recordWouldRefuse, touchDevice, recordUnpaired, jobQueueWrites, jobQueueReads].map((op) => [
-    op.name,
-    op,
-  ])
+  [
+    recordWouldRefuse,
+    touchDevice,
+    recordUnpaired,
+    jobQueueWrites,
+    jobQueueReads,
+    externalEventSweeps,
+  ].map((op) => [op.name, op])
 );
