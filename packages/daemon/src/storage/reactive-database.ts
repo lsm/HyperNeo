@@ -287,6 +287,8 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
   const emitter = new EventEmitter();
   const tableVersions: Record<string, number> = {};
   let transactionDepth = 0;
+  let heldWrites = 0;
+  let abortedBatches = 0;
   const pendingTables = new Set<string>();
   const pendingTableScopes = new Map<string, TableChangeScope | null>();
   const proxiedTableWrites: string[] = [];
@@ -313,7 +315,7 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
     tableVersions[table] = getVersion(table) + 1;
     const version = tableVersions[table];
 
-    if (transactionDepth > 0) {
+    if (transactionDepth > 0 || heldWrites > 0) {
       pendingTables.add(table);
       addPendingScope(table, scope);
       return;
@@ -386,16 +388,26 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
             emit();
             return result;
           }
-          const batched = transactionDepth > 0;
-          if (batched) reactiveDb.beginTransaction();
+          if (transactionDepth === 0)
+            return result.then((settled) => {
+              emit();
+              return settled;
+            });
+          heldWrites += 1;
+          const batch = abortedBatches;
+          const release = (landed: boolean) => {
+            if (landed && batch === abortedBatches) emit();
+            else if (landed) tableVersions[mapping.table] = getVersion(mapping.table) + 1;
+            heldWrites -= 1;
+            if (transactionDepth === 0 && heldWrites === 0) flushPendingTables();
+          };
           return result.then(
             (settled) => {
-              emit();
-              if (batched) reactiveDb.commitTransaction();
+              release(true);
               return settled;
             },
             (error: unknown) => {
-              if (batched) reactiveDb.commitTransaction();
+              release(false);
               throw error;
             }
           );
@@ -423,7 +435,7 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
     commitTransaction(): void {
       if (transactionDepth <= 0) return;
       transactionDepth -= 1;
-      if (transactionDepth === 0) {
+      if (transactionDepth === 0 && heldWrites === 0) {
         flushPendingTables();
       }
     },
@@ -431,6 +443,7 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
       if (transactionDepth <= 0) return;
       transactionDepth -= 1;
       if (transactionDepth === 0) {
+        abortedBatches += 1;
         pendingTables.clear();
         pendingTableScopes.clear();
         taskIdCacheFor(db).clear();
