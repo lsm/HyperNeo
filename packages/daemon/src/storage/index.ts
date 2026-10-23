@@ -302,8 +302,8 @@ export class Database {
     message: SDKMessage,
     origin?: MessageOrigin,
     options?: { stampInternalCompactionTurn?: boolean }
-  ): boolean {
-    return this.sdkMessageRepo.saveSDKMessage(sessionId, message, origin, options);
+  ): Promise<boolean> {
+    return Promise.resolve(this.sdkMessageRepo.saveSDKMessage(sessionId, message, origin, options));
   }
 
   getSDKMessages(

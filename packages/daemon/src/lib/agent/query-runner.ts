@@ -1312,7 +1312,7 @@ export class QueryRunner {
                   isSDKResultSuccess(message) ? message.result : message.errors.join('\n')
                 ));
             if (authRetry || authResult) {
-              if (authResult) this.ctx.db.saveSDKMessage(session.id, message);
+              if (authResult) await this.ctx.db.saveSDKMessage(session.id, message);
               throw new Error('401 Claude authentication failed');
             }
           }
@@ -2450,7 +2450,7 @@ export class QueryRunner {
       },
     } as unknown as SDKMessage;
 
-    if (!db.saveSDKMessage(session.id, assistantMessage)) {
+    if (!(await db.saveSDKMessage(session.id, assistantMessage))) {
       if (options?.markAsError) {
         internalEventBus.publishAsync('session.error', {
           sessionId: session.id,

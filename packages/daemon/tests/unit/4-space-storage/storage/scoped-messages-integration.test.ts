@@ -94,7 +94,7 @@ describe('Scoped invalidation — sdk_messages integration', () => {
     expect(diffsA.length).toBe(1);
 
     for (let i = 0; i < 5; i++) {
-      reactiveDb.db.saveSDKMessage('sess-B', {
+      await reactiveDb.db.saveSDKMessage('sess-B', {
         type: 'assistant',
         uuid: `b-msg-${i}`,
         session_id: 'sess-B',
@@ -122,7 +122,7 @@ describe('Scoped invalidation — sdk_messages integration', () => {
 
     expect(diffsA.length).toBe(1);
 
-    reactiveDb.db.saveSDKMessage('sess-A', {
+    await reactiveDb.db.saveSDKMessage('sess-A', {
       type: 'assistant',
       uuid: 'a-msg-1',
       session_id: 'sess-A',
@@ -190,29 +190,29 @@ describe('Scoped invalidation — sdk_messages integration', () => {
       scopeFilter: (scope) => !scope.sessionId || scope.sessionId === 'sess-B',
     });
 
-    reactiveDb.db.saveSDKMessage('sess-A', {
-      type: 'assistant',
-      uuid: 'a1',
-      session_id: 'sess-A',
-      parent_tool_use_id: null,
-      message: { role: 'assistant', content: [{ type: 'text', text: 'A1' }] },
-    } as any);
-
-    reactiveDb.db.saveSDKMessage('sess-B', {
-      type: 'assistant',
-      uuid: 'b1',
-      session_id: 'sess-B',
-      parent_tool_use_id: null,
-      message: { role: 'assistant', content: [{ type: 'text', text: 'B1' }] },
-    } as any);
-
-    reactiveDb.db.saveSDKMessage('sess-A', {
-      type: 'assistant',
-      uuid: 'a2',
-      session_id: 'sess-A',
-      parent_tool_use_id: null,
-      message: { role: 'assistant', content: [{ type: 'text', text: 'A2' }] },
-    } as any);
+    await Promise.all([
+      reactiveDb.db.saveSDKMessage('sess-A', {
+        type: 'assistant',
+        uuid: 'a1',
+        session_id: 'sess-A',
+        parent_tool_use_id: null,
+        message: { role: 'assistant', content: [{ type: 'text', text: 'A1' }] },
+      } as any),
+      reactiveDb.db.saveSDKMessage('sess-B', {
+        type: 'assistant',
+        uuid: 'b1',
+        session_id: 'sess-B',
+        parent_tool_use_id: null,
+        message: { role: 'assistant', content: [{ type: 'text', text: 'B1' }] },
+      } as any),
+      reactiveDb.db.saveSDKMessage('sess-A', {
+        type: 'assistant',
+        uuid: 'a2',
+        session_id: 'sess-A',
+        parent_tool_use_id: null,
+        message: { role: 'assistant', content: [{ type: 'text', text: 'A2' }] },
+      } as any),
+    ]);
 
     await Promise.resolve();
 

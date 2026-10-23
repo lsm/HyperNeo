@@ -466,6 +466,20 @@ describe('SDKMessageHandler', () => {
       expect(saveSDKMessageSpy).toHaveBeenCalledWith('test-session-id', message);
     });
 
+    it('closes the change batch without discarding it when an async save rejects', async () => {
+      saveSDKMessageSpy.mockImplementation(() => Promise.reject(new Error('writer closed')));
+      const message = {
+        type: 'assistant',
+        uuid: 'rejected-save',
+        message: { role: 'assistant', content: [] },
+      } as unknown as SDKMessage;
+
+      await expect(handler.handleMessage(message)).rejects.toThrow('writer closed');
+
+      expect(mockDb.commitTransaction).toHaveBeenCalledTimes(1);
+      expect(mockDb.abortTransaction).not.toHaveBeenCalled();
+    });
+
     it.each(
       [
         [

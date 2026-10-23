@@ -58,9 +58,9 @@ try {
     app.db.saveUserMessage(sessionId, { type:'user',uuid:`page-${i}`,parent_tool_use_id:null,message:{role:'user',content:[{type:'tool_result',tool_use_id:`tool-${i}`,content:large}]} } as SDKMessage, 'consumed');
     await wait(0);
   }
-  app.db.saveSDKMessage(sessionId,{type:'assistant',uuid:'parent',parent_tool_use_id:null,message:{role:'assistant',content:[{type:'tool_use',id:'page-child',name:'Bash',input:{}}]}} as SDKMessage);
+  await app.db.saveSDKMessage(sessionId,{type:'assistant',uuid:'parent',parent_tool_use_id:null,message:{role:'assistant',content:[{type:'tool_use',id:'page-child',name:'Bash',input:{}}]}} as SDKMessage);
   for(let i=0;i<5;i++) app.db.saveUserMessage(sessionId,{type:'user',uuid:`child-${i}`,parent_tool_use_id:'page-child',message:{role:'user',content:[{type:'tool_result',tool_use_id:`child-tool-${i}`,content:large}]}} as SDKMessage,'consumed');
-  app.db.saveSDKMessage(sessionId,{type:'system',subtype:'task_started',uuid:'background',task_id:'page-task'} as SDKMessage);
+  await app.db.saveSDKMessage(sessionId,{type:'system',subtype:'task_started',uuid:'background',task_id:'page-task'} as SDKMessage);
   const raw = app.db.getDatabase();
   raw.prepare('UPDATE sdk_messages SET timestamp=? WHERE session_id=?').run('2026-10-21T12:00:00.000Z',sessionId);
   raw.exec('CREATE TABLE sdk_status_probe_counter(value INTEGER); INSERT INTO sdk_status_probe_counter VALUES(0)');

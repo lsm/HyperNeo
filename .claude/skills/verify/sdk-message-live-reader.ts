@@ -38,9 +38,9 @@ try {
   const large = 'complete tool output 🦊\n'.repeat(500000);
   const ids: string[] = [];
   for (let i = 0; i < 24; i++) { const saved = app.db.saveUserMessage(sessionId, { type: 'user', uuid: `live-${i}`, parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `tool-${i}`, content: large }] } } as SDKMessage, 'consumed'); ids.push(saved); await wait(0); }
-  app.db.saveSDKMessage(sessionId, { type: 'assistant', uuid: 'parent', parent_tool_use_id: null, message: { role: 'assistant', content: [{ type: 'tool_use', id: 'live-child', name: 'Bash', input: {} }] } } as SDKMessage);
+  await app.db.saveSDKMessage(sessionId, { type: 'assistant', uuid: 'parent', parent_tool_use_id: null, message: { role: 'assistant', content: [{ type: 'tool_use', id: 'live-child', name: 'Bash', input: {} }] } } as SDKMessage);
   for (let i = 0; i < 5; i++) app.db.saveUserMessage(sessionId, { type: 'user', uuid: `child-${i}`, parent_tool_use_id: 'live-child', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `child-tool-${i}`, content: large }] } } as SDKMessage, 'consumed');
-  app.db.saveSDKMessage(sessionId, { type: 'system', subtype: 'task_started', uuid: 'background', task_id: 'live-task' } as SDKMessage);
+  await app.db.saveSDKMessage(sessionId, { type: 'system', subtype: 'task_started', uuid: 'background', task_id: 'live-task' } as SDKMessage);
   const raw = app.db.getDatabase();
   const hash = () => { const h = createHash('sha256'); let count = 0, bytes = 0; for (const row of raw.prepare('SELECT COALESCE(b.sdk_message,m.sdk_message) AS body FROM sdk_messages m LEFT JOIN sdk_message_bodies b ON b.seq=m.seq ORDER BY m.seq').iterate() as Iterable<{ body: string }>) { h.update(row.body); count++; bytes += Buffer.byteLength(row.body); } return { sha256: h.digest('hex'), count, bytes }; };
   const reference = (compact: boolean) => { const map = compact ? mapThinMessageRow : mapMessageRow; return { rows: expandSessionMessages(raw.prepare(MESSAGES_BY_SESSION_SQL).all(sessionId, 30) as Record<string, unknown>[], [sessionId, 30], raw).map(map), metadata: { backgroundTaskMessages: (raw.prepare(BACKGROUND_TASK_METADATA_SQL).all(...Array(7).fill(sessionId)) as Record<string, unknown>[]).map(map).reverse() } }; };

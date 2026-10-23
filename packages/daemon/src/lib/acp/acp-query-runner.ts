@@ -1728,7 +1728,7 @@ export class AcpQueryRunner {
 
     let persisted = false;
     try {
-      persisted = db.saveSDKMessage(session.id, assistantMessage);
+      persisted = await db.saveSDKMessage(session.id, assistantMessage);
     } catch (error) {
       logger.warn('Failed to persist ACP assistant error message:', error);
     }
