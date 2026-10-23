@@ -1,6 +1,5 @@
 import { receivedNeoHumanInput } from './human-input.ts';
 import { workerIdentity } from '@hyperneo/shared/types/worker-identity';
-import { hostname } from 'node:os';
 import { fillPrompt, NEO_SESSION_TRACK } from '@hyperneo/prompts';
 import type {
   GlobalSettings,
@@ -25,7 +24,6 @@ import { NeoSessionSeenRepository } from '../../storage/repositories/neo-session
 import { NeoTodoSessionRepository } from '../../storage/repositories/neo-todo-session-repository.ts';
 import { SessionEventSubscriptionRepository } from '../../storage/repositories/session-event-subscription-repository.ts';
 import { createArtifactRefReader } from '../artifacts/read-operations.ts';
-import { BUILD_METADATA } from '../build-metadata.ts';
 import { readWorkerIdentity, sessionWorkerRef } from './worker-identity.ts';
 import { readWorkspaceIdentity } from '../drivers/code-identity.ts';
 import type { WorkRef } from '../drivers/types.ts';
@@ -46,7 +44,6 @@ import type { MailboxMessageContent } from '../mailbox/entry.ts';
 import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
 import { invokeOperation } from '../operations/invoke.ts';
 import { onHumanDevicesReset } from '../pairing/human-device-reset.ts';
-import { remoteDaemons } from '../remote-daemons/registry.ts';
 import type { SessionManager } from '../session/session-manager.ts';
 import {
   neoCardWorkerSession,
@@ -55,7 +52,6 @@ import {
   planNeoCardSend,
   planNeoCardTopicsEnded,
 } from './card-events.ts';
-import { readNeoDaemonCommits } from './daemon-commits.ts';
 import { driverWorkCaller } from './driver-work.ts';
 import { neoFolderPath } from './folder.ts';
 import { openNeoDefaultSession } from './inbox.ts';
@@ -64,26 +60,10 @@ import {
   neoCompactPercentFor,
   planNeoAlignment,
 } from './model-preference.ts';
-import type { NeoRefStateReader } from './packs/coding/ask-prs.ts';
-import { createCodingRefReader } from './packs/coding/ref-reader.ts';
-import {
-  localCodingSessionId,
-  type NeoBranchPrReader,
-  neoWorkBranch,
-} from './packs/coding/branch-prs.ts';
-import { createCodingBranchPrReader } from './packs/coding/branch-reader.ts';
-import { type NeoDeployReader, readGithubDeploys } from './packs/coding/deploy-checks.ts';
-import type { NeoGithubLister } from './packs/coding/github-query.ts';
-import { createCodingQueryReader } from './packs/coding/query-reader.ts';
-import { createCodingPack } from './packs/coding/pack.ts';
-import { CodingPrEventRepository } from './packs/coding/pr-events.ts';
-import { CodingPrLedgerRepository } from './packs/coding/pr-ledger.ts';
-import { CodingPrSweepRepository } from './packs/coding/pr-sweep.ts';
+import { localCodingSessionId, neoWorkBranch } from './packs/coding/branch-prs.ts';
 import { CodingTodoPrRepository } from './packs/coding/todo-prs.ts';
-import { type NeoWorkPrReader } from './packs/coding/work-prs.ts';
-import { createCodingWorkPrReader } from './packs/coding/work-reader.ts';
 import { neoEnabledPacks, neoPackBriefs, neoPacks } from './packs/index.ts';
-import { createLifeAdminPack } from './packs/life-admin/pack.ts';
+import { createNeoBuiltinPacks, createNeoCodingReaders } from './packs/runtime.ts';
 import type {
   NeoCardEventSubscription,
   NeoPack,
@@ -137,16 +117,12 @@ export class NeoService {
   private disposed = false;
   filePacks: readonly NeoPack[] = [];
   private readonly builtinPacks: NeoPack[];
-  readPrs: NeoWorkPrReader = createCodingWorkPrReader(() => this.db.getDatabase());
-  readBranchPrs: NeoBranchPrReader = createCodingBranchPrReader(() => this.db.getDatabase());
-  readRefStates: NeoRefStateReader = createCodingRefReader(
-    () => new CodingPrLedgerRepository(this.db.getDatabase()).refFacts
-  );
-  listGithub: NeoGithubLister = createCodingQueryReader(() => this.db.getDatabase());
-  readDeploys: NeoDeployReader = (urls) =>
-    readGithubDeploys(urls, () =>
-      readNeoDaemonCommits({ name: hostname(), commit: BUILD_METADATA.commit }, remoteDaemons)
-    );
+  private readonly codingReaders = createNeoCodingReaders(() => this.db.getDatabase());
+  readPrs = this.codingReaders.readPrs;
+  readBranchPrs = this.codingReaders.readBranchPrs;
+  readRefStates = this.codingReaders.readRefStates;
+  listGithub = this.codingReaders.listGithub;
+  readDeploys = this.codingReaders.readDeploys;
   readonly notifyChanged: () => void;
   private readonly noteWorking: () => void;
   private workingKey = '';
@@ -220,23 +196,17 @@ export class NeoService {
     this.cardEvents = new NeoCardEventSubscriptionRepository(db.getDatabase());
     this.sessionSubscriptions = new SessionEventSubscriptionRepository(db.getDatabase());
     this.sessionEvents = new SessionExternalEventStore(db.getDatabase());
-    this.builtinPacks = [
-      createCodingPack({
-        readPrs: (urls) => this.readPrs(urls),
-        readRefStates: (refs) => this.readRefStates(refs),
-        listGithub: (args, coverage) => this.listGithub(args, coverage),
-        todoPrs: this.todoPrs,
-        prLedger: new CodingPrLedgerRepository(db.getDatabase()),
-        prSweep: new CodingPrSweepRepository(db.getDatabase()),
-        prEvents: new CodingPrEventRepository(db.getDatabase()),
-        prSweepDeps: {
-          tell: (ref, key, text) => this.sendToRef(ref, key, text),
-          wake: (key, text) => this.wakeNeo(key, text),
-        },
-        projectRepos: () => this.repo.allRepositories(),
-      }),
-      createLifeAdminPack(),
-    ];
+    this.builtinPacks = createNeoBuiltinPacks(db.getDatabase(), {
+      readPrs: (urls) => this.readPrs(urls),
+      readRefStates: (refs) => this.readRefStates(refs),
+      listGithub: (args, coverage) => this.listGithub(args, coverage),
+      todoPrs: this.todoPrs,
+      prSweepDeps: {
+        tell: (ref, key, text) => this.sendToRef(ref, key, text),
+        wake: (key, text) => this.wakeNeo(key, text),
+      },
+      projectRepos: () => this.repo.allRepositories(),
+    });
     for (const pack of this.builtinPacks) pack.todos?.schema(db.getDatabase());
     const notifyPublication = () => {
       try {
