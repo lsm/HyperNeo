@@ -1,4 +1,9 @@
-import { THINKING_LEVELS, type ModelInfo, type ThinkingLevel } from '@hyperneo/shared';
+import {
+  THINKING_LEVELS,
+  THINKING_OPTIONS,
+  type ModelInfo,
+  type ThinkingLevel,
+} from '@hyperneo/shared';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import {
   filterModelsBySearch,
@@ -13,7 +18,6 @@ export function NeoModelMenu({
   models,
   current,
   level,
-  options,
   busy,
   loading,
   working,
@@ -29,7 +33,6 @@ export function NeoModelMenu({
   models: ModelInfo[];
   current?: ModelInfo;
   level: ThinkingLevel;
-  options: { value: ThinkingLevel; label: string }[];
   busy: boolean;
   loading: boolean;
   working: boolean;
@@ -167,28 +170,12 @@ export function NeoModelMenu({
           <span class="text-xs font-medium text-fg-muted">Thinking</span>
           <span class="text-[10px] text-fg-faint">{working ? scope.working : scope.idle}</span>
         </div>
-        {options.length > 4 ? (
-          <ThinkingSlider level={level} options={options} busy={busy} onThinking={onThinking} />
-        ) : options.length ? (
-          <div role="group" aria-label="Thinking" class="flex gap-1 rounded-xl bg-surface p-1">
-            {options.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                aria-label={option.label}
-                aria-pressed={level === option.value}
-                disabled={busy}
-                title={option.label}
-                onClick={() => onThinking(option.value)}
-                class={`min-w-0 flex-1 rounded-lg py-1.5 text-xs transition-colors focus-visible:outline-accent disabled:opacity-50 ${level === option.value ? 'bg-accent/15 font-medium text-accent' : 'text-fg-muted hover:bg-fill-soft'}`}
-              >
-                {option.label.replace('Think ', '')}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <p class="text-xs text-fg-faint">Not available for this model</p>
-        )}
+        <ThinkingSlider
+          level={level}
+          options={THINKING_OPTIONS}
+          busy={busy}
+          onThinking={onThinking}
+        />
       </div>
       {onRestart && (
         <div class="shrink-0 border-t border-line p-2">

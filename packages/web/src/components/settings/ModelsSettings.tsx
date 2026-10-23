@@ -12,8 +12,7 @@ import {
   AUTO_COMPACT_PERCENT_MAX,
   resolveAutoCompactPercent,
   findSameModel,
-  getThinkingOptionsForProvider,
-  THINKING_LEVEL_LABELS,
+  THINKING_OPTIONS,
   type FallbackModelEntry,
   type ModelInfo,
   type NeoModelPreference,
@@ -47,7 +46,6 @@ interface RawModelEntry {
   description: string;
   alias?: string;
   provider?: string;
-  thinkingLevels?: ThinkingLevel[];
   autoCompactPercent?: number;
 }
 
@@ -412,7 +410,7 @@ function OverrideEditorModal({
   );
 }
 
-type SettingsModel = ModelInfo & { thinkingLevels?: ThinkingLevel[] };
+type SettingsModel = ModelInfo;
 type NeoModelEntry = NonNullable<NeoModelPreference['fallbacks']>[number];
 const entryKey = (entry: { provider: string; model: string }) => `${entry.provider}/${entry.model}`;
 function percentTexts(preference?: NeoModelPreference | null): Record<string, string> {
@@ -492,10 +490,7 @@ function NeoModelSettings({
     label: string,
     change: (thinkingLevel: ThinkingLevel) => void
   ) {
-    const info = findSameModel(availableModels, entry);
-    const options = info?.thinkingLevels
-      ? info.thinkingLevels.map((value) => ({ value, label: THINKING_LEVEL_LABELS[value] }))
-      : getThinkingOptionsForProvider(entry.provider, info?.thinkingModes);
+    const options = THINKING_OPTIONS;
     return (
       <select
         aria-label={label}
@@ -730,9 +725,6 @@ export function ModelsSettings({ neoOnly = false }: { neoOnly?: boolean } = {}) 
       setAvailableModels(
         mapRawModelsToModelInfos(modelsResponse.models).map((model) => ({
           ...model,
-          thinkingLevels: modelsResponse.models.find(
-            (raw) => raw.id === model.id && (raw.provider ?? model.provider) === model.provider
-          )?.thinkingLevels,
           autoCompactPercent: modelsResponse.models.find(
             (raw) => raw.id === model.id && (raw.provider ?? model.provider) === model.provider
           )?.autoCompactPercent,

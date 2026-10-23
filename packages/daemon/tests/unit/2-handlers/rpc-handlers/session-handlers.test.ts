@@ -230,32 +230,6 @@ describe('Session RPC Handlers — models.list', () => {
     expect(result.models.map((model) => model.id)).toEqual(['deepseek-v4-flash']);
   });
 
-  it('lists the thinking levels each model accepts', async () => {
-    const models = [
-      { id: 'sonnet', name: 'Sonnet', provider: 'anthropic', contextWindow: 200_000 },
-      { id: 'kimi-k3', name: 'Kimi', provider: 'kimi', contextWindow: 200_000 },
-      {
-        id: 'quiet',
-        name: 'Quiet',
-        provider: 'anthropic',
-        contextWindow: 200_000,
-        thinkingModes: 'off',
-      },
-    ] as ModelInfo[];
-    setModelsCache(new Map([['global', models]]));
-
-    const handler = messageHubData.handlers.get('models.list')!;
-    const result = (await handler({ useCache: true }, {})) as {
-      models: Array<{ id: string; thinkingLevels: string[] }>;
-    };
-
-    expect(Object.fromEntries(result.models.map((m) => [m.id, m.thinkingLevels]))).toEqual({
-      sonnet: ['off', 'think8k', 'think16k', 'think24k', 'think32k', 'think48k', 'think64k'],
-      'kimi-k3': ['off', 'think32k'],
-      quiet: [],
-    });
-  });
-
   it('returns the providers that answered first while a slow provider is still loading', async () => {
     let releaseSlow: () => void = () => {};
     const slowGate = new Promise<void>((resolve) => {
@@ -1932,6 +1906,10 @@ describe('Session RPC Handlers — session.thinking.set on a session that alread
   let messageHubData: ReturnType<typeof createMockMessageHub>;
   let eventBus: ReturnType<typeof createMockInternalEventBus>;
   let liveSession: Session;
+  let appliedLevelAtPersist: string | null | undefined;
+  const applyThinkingLevel = mock(async () => {
+    appliedLevelAtPersist = liveSession.config.thinkingLevel;
+  });
 
   async function buildQueryOptions() {
     const settingsManager = {
@@ -1982,9 +1960,13 @@ describe('Session RPC Handlers — session.thinking.set on a session that alread
     } as Session;
 
     const sessionManager = {
-      getSessionForControl: mock(async () => ({ getSessionData: () => liveSession })),
+      getSessionForControl: mock(async () => ({
+        getSessionData: () => liveSession,
+        applyThinkingLevel,
+      })),
       updateSession: mock(async (_id: string, updates: Partial<Session>) => {
         if (updates.config) liveSession.config = { ...liveSession.config, ...updates.config };
+        appliedLevelAtPersist = null;
       }),
     } as unknown as SessionManager;
 
@@ -2005,6 +1987,16 @@ describe('Session RPC Handlers — session.thinking.set on a session that alread
     const options = await buildQueryOptions();
     expect(options.pathToClaudeCodeExecutable).not.toBe('/tmp/evil-cli');
     expect(options.env?.HYPERNEO_PWNED).toBeUndefined();
+  });
+
+  it('applies the persisted level to the live query after saving it', async () => {
+    applyThinkingLevel.mockClear();
+    const handler = messageHubData.handlers.get('session.thinking.set');
+
+    await handler!({ sessionId: 's1', level: 'think32k' }, {});
+
+    expect(applyThinkingLevel).toHaveBeenCalledTimes(1);
+    expect(appliedLevelAtPersist).toBe('think32k');
   });
 });
 

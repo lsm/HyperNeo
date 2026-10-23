@@ -1,5 +1,5 @@
 import type { Session, ThinkingLevel } from '@hyperneo/shared';
-import { getThinkingOptionsForProvider } from '@hyperneo/shared';
+import { THINKING_OPTIONS } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { AgentSession } from '../agent/agent-session.ts';
@@ -104,7 +104,7 @@ function projectRuntimeSettings(
     model: session.config?.model ?? null,
     provider,
     thinkingLevel: session.config?.thinkingLevel ?? null,
-    thinkingOptions: provider ? getThinkingOptionsForProvider(provider) : [],
+    thinkingOptions: provider ? THINKING_OPTIONS : [],
   };
 }
 

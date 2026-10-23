@@ -1,4 +1,4 @@
-import { getThinkingOptionsForProvider, normalizeThinkingLevel } from '@hyperneo/shared';
+import { normalizeThinkingLevel, THINKING_OPTIONS } from '@hyperneo/shared';
 import type { ModelInfo, ThinkingLevel } from '@hyperneo/shared';
 import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
 import { useEffect, useRef, useState } from 'preact/hooks';
@@ -63,7 +63,7 @@ export function NeoPreferences({
   const level = normalizeThinkingLevel(
     (!forSession && preference?.thinkingLevel) || store.sessionInfo.value?.config?.thinkingLevel
   );
-  const options = getThinkingOptionsForProvider(info?.provider, info?.thinkingModes);
+  const options = THINKING_OPTIONS;
   const busy = saving || model.loading || !connected;
   useClickOutside(ref, () => setOpen(false), open);
   useEffect(() => {
@@ -91,9 +91,7 @@ export function NeoPreferences({
   const name = pending
     ? shortenModelName(pendingInfo?.name || pending.model)
     : shortenModelName(info?.name || currentId || 'Model');
-  const thinking = options.length
-    ? (options.find((option) => option.value === level)?.label ?? 'Off')
-    : 'Off';
+  const thinking = options.find((option) => option.value === level)?.label ?? 'Off';
 
   async function save(next: NeoModelPreference, picked = false) {
     setSaving(true);
@@ -219,7 +217,7 @@ export function NeoPreferences({
           aria-label={`Thinking: ${thinking}`}
           title={`Thinking: ${thinking}`}
         >
-          <ThinkingLevelIcon level={options.length ? level : 'off'} />
+          <ThinkingLevelIcon level={level} />
         </span>
         <NeoIcon
           name="chevron"
@@ -259,8 +257,7 @@ export function NeoPreferences({
           id={forSession ? 'neo-preferences-session' : 'neo-preferences'}
           models={models}
           current={current}
-          level={options.some((option) => option.value === level) ? level : 'off'}
-          options={options}
+          level={level}
           busy={busy}
           loading={model.loading}
           working={store.isWorking.value}

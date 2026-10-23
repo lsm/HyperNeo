@@ -220,7 +220,12 @@ import {
 } from './query-lifecycle-manager.ts';
 import type { QueryLike } from './query-like.ts';
 import { QueryModeHandler, type QueryModeHandlerContext } from './query-mode-handler.ts';
-import { QueryOptionsBuilder, type QueryOptionsBuilderContext } from './query-options-builder.ts';
+import {
+  liveThinkingUpdate,
+  QueryOptionsBuilder,
+  type QueryOptionsBuilderContext,
+} from './query-options-builder.ts';
+import { AcpQueryAdapter } from '../acp/acp-query-adapter.ts';
 import { QueryRunner, type QueryRunnerContext, type TrackedAgentProcess } from './query-runner.ts';
 import { RateLimitWatchdog } from './rate-limit-watchdog.ts';
 import { selectStaleSubmittedDeliveries } from './reconciler-sweep.ts';
@@ -1564,6 +1569,14 @@ export class AgentSession
       : { success: false, model: this.session.config.model, error: 'The model switch failed' };
   }
 
+  cancelPendingModelSwitch(): Promise<{ cancelled: boolean }> {
+    return this.queueModelSwitch(async () => {
+      const cancelled = !!this.session.metadata?.pendingModelSwitch;
+      await this.setPendingModelSwitch(undefined);
+      return { cancelled };
+    });
+  }
+
   private async applyPendingModelSwitch(): Promise<boolean> {
     const pending = this.session.metadata?.pendingModelSwitch;
     if (!pending || modelSwitchTiming(this.stateManager.getState().status) !== 'now') return false;
@@ -1606,6 +1619,17 @@ export class AgentSession
 
   async setMaxThinkingTokens(tokens: number | null): Promise<{ success: boolean; error?: string }> {
     return this.sdkRuntimeConfig.setMaxThinkingTokens(tokens);
+  }
+
+  async applyThinkingLevel(): Promise<void> {
+    if (this.queryObject instanceof AcpQueryAdapter) return;
+    const level = this.optionsBuilder.getEffectiveThinkingLevel();
+    getProviderRegistry()
+      .get(this.session.config.provider ?? '')
+      ?.setSessionThinkingConfig?.(this.session.id, level);
+    await this.sdkRuntimeConfig.applyThinking(
+      liveThinkingUpdate(this.optionsBuilder.resolveThinkingOptions(), level)
+    );
   }
 
   async setPermissionMode(mode: string): Promise<{ success: boolean; error?: string }> {

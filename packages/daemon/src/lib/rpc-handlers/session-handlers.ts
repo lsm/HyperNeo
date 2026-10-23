@@ -16,7 +16,6 @@ import type {
 import {
   composeDraftWhole,
   generateUUID,
-  getThinkingLevelsForModel,
   matchesDraftOrComposition,
   normalizeThinkingLevel,
 } from '@hyperneo/shared';
@@ -637,6 +636,15 @@ export function setupSessionHandlers(
     return result;
   });
 
+  messageHub.onRequest('session.model.cancelPending', async (data) => {
+    const { sessionId: targetSessionId } = data as { sessionId: string };
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
+    if (!agentSession) {
+      throw new Error('Session not found');
+    }
+    return agentSession.cancelPendingModelSwitch();
+  });
+
   messageHub.onRequest('session.coordinator.switch', async (data) => {
     const { sessionId: targetSessionId, coordinatorMode } = data as {
       sessionId: string;
@@ -726,6 +734,7 @@ export function setupSessionHandlers(
         thinkingLevel,
       },
     });
+    await agentSession.applyThinkingLevel();
 
     return { success: true, thinkingLevel };
   });
@@ -824,7 +833,6 @@ export function setupSessionHandlers(
           context_window: m.contextWindow,
           autoCompactPercent: m.autoCompactPercent,
           thinkingModes: m.thinkingModes,
-          thinkingLevels: getThinkingLevelsForModel(m.provider, m.thinkingModes, m.effortLevels),
           available: m.available !== false,
           type: 'model' as const,
         })),

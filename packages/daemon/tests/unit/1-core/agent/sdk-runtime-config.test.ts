@@ -152,6 +152,40 @@ describe('SDKRuntimeConfig', () => {
     });
   });
 
+  describe('applyThinking', () => {
+    it('sends the budget and effort to the live query', async () => {
+      const applyFlagSettings = mock(async () => {});
+      Object.assign(mockQueryObject as object, { applyFlagSettings });
+      config = createConfig();
+
+      await config.applyThinking({ maxThinkingTokens: 0, effortLevel: 'low' });
+
+      expect(setMaxThinkingTokensSpy).toHaveBeenCalledWith(0);
+      expect(applyFlagSettings).toHaveBeenCalledWith({ effortLevel: 'low' });
+    });
+
+    it('turns thinking off through the CLI env and back on with 0', async () => {
+      const applyFlagSettings = mock(async () => {});
+      Object.assign(mockQueryObject as object, { applyFlagSettings });
+      config = createConfig();
+
+      await config.applyThinking({ disableThinking: true });
+      await config.applyThinking({ disableThinking: false, effortLevel: 'high' });
+
+      expect(applyFlagSettings.mock.calls).toEqual([
+        [{ env: { CLAUDE_CODE_DISABLE_THINKING: '1' } }],
+        [{ effortLevel: 'high', env: { CLAUDE_CODE_DISABLE_THINKING: '0' } }],
+      ]);
+    });
+
+    it('leaves the query untouched when nothing resolves', async () => {
+      config = createConfig();
+      await config.applyThinking({});
+
+      expect(setMaxThinkingTokensSpy).not.toHaveBeenCalled();
+    });
+  });
+
   describe('setMaxThinkingTokens', () => {
     it('should set tokens when query not active', async () => {
       config = createConfig({ queryObject: null });

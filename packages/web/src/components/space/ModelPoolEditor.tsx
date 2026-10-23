@@ -1,6 +1,6 @@
 import { CloseGlyph } from '../icons/common-glyphs.tsx';
-import type { AgentModelPoolEntry, ModelInfo, ThinkingLevel } from '@hyperneo/shared';
-import { THINKING_LEVEL_LABELS, getThinkingOptionsForProvider } from '@hyperneo/shared';
+import type { AgentModelPoolEntry, ThinkingLevel } from '@hyperneo/shared';
+import { THINKING_OPTIONS } from '@hyperneo/shared';
 import { useState } from 'preact/hooks';
 import { newPoolEntry } from './agent-model-pool';
 import {
@@ -31,41 +31,13 @@ export function ModelPoolEditor({
   onModelPoolChange,
 }: ModelPoolEditorProps) {
   const [draft, setDraft] = useState<NumericDraft | null>(null);
-  const [models, setModels] = useState<ModelInfo[]>([]);
 
   const modelChangePatch = (
     entry: AgentModelPoolEntry,
     model: string | undefined,
     selection?: WorkflowModelSelection
   ): Partial<AgentModelPoolEntry> => {
-    const provider = selection?.provider ?? undefined;
-    const resolved = models.find(
-      (candidate) => candidate.id === model && (!provider || candidate.provider === provider)
-    );
-    const supported = getThinkingOptionsForProvider(provider, resolved?.thinkingModes).map(
-      (option) => option.value
-    );
-    const keepsLevel = !entry.thinkingLevel || !resolved || supported.includes(entry.thinkingLevel);
-    return {
-      model: model ?? '',
-      provider,
-      ...(keepsLevel ? {} : { thinkingLevel: null }),
-    };
-  };
-
-  const thinkingOptionsFor = (entry: AgentModelPoolEntry) => {
-    const resolved = models.find(
-      (candidate) =>
-        candidate.id === entry.model && (!entry.provider || candidate.provider === entry.provider)
-    );
-    const options = getThinkingOptionsForProvider(entry.provider, resolved?.thinkingModes);
-    if (entry.thinkingLevel && !options.some((option) => option.value === entry.thinkingLevel)) {
-      return [
-        ...options,
-        { value: entry.thinkingLevel, label: THINKING_LEVEL_LABELS[entry.thinkingLevel] },
-      ];
-    }
-    return options;
+    return { model: model ?? '', provider: selection?.provider ?? undefined };
   };
 
   const updateEntry = (index: number, patch: Partial<AgentModelPoolEntry>) => {
@@ -120,7 +92,6 @@ export function ModelPoolEditor({
                 onChange={(value, selection?: WorkflowModelSelection) =>
                   updateEntry(index, modelChangePatch(entry, value, selection))
                 }
-                onModelsLoad={setModels}
                 testId="pool-entry-model-select"
                 className="flex-1 min-w-0 bg-surface border border-line-strong rounded px-2.5 py-1.5 text-fg focus:outline-none focus:border-accent font-mono text-sm"
               />
@@ -138,7 +109,7 @@ export function ModelPoolEditor({
                   class="bg-surface border border-line-strong rounded px-2 py-1 text-fg text-sm focus:outline-none focus:border-accent"
                 >
                   <option value="">Agent default</option>
-                  {thinkingOptionsFor(entry).map((option) => (
+                  {THINKING_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}
                     </option>
