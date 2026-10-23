@@ -53,6 +53,10 @@ Check `evidence/observed.json` and `native-events.jsonl`:
   ignores SIGHUP, so killing the wrapper alone cannot satisfy the check.
   The proof checks the child is absent or terminated before fixture cleanup;
   its `finally` retains emergency cleanup on an unfixed baseline.
+- If import succeeds but native wake refuses, the failure retains the exact
+  work ref and Desktop link. Use that ref with work.status to inspect the same
+  imported session before sending again; a delayed native input may still
+  arrive, so a failed delivery is not permission to create a replacement.
 - If the preparation transcript exists but import fails, the refusal names
   the retained session ID and execution directory for recovery. Do not delete
   that directory: import may have partially succeeded. Native handoff may be

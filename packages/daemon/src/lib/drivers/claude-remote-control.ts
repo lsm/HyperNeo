@@ -298,7 +298,11 @@ export function withClaudeRemoteControl(
       if (started.ok) {
         const target = { sessionId: started.value.ref.id, title: started.value.title };
         const delivery = await wake(target, startRequest.message, deps);
-        if (!delivery.ok) return delivery;
+        if (!delivery.ok)
+          return {
+            ...delivery,
+            detail: `${delivery.detail} Retained imported session ${JSON.stringify(started.value.ref)}. Open ${started.value.link ?? started.value.ref.id} and inspect work.status before sending again; native delivery may still arrive.`,
+          };
         const status = await adapter.status?.(started.value.ref);
         if (status?.ok) {
           const {

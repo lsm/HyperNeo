@@ -144,9 +144,6 @@ import mddriversClaudeDesktopWakeBrief from './drivers/claude-desktop-wake-brief
 import mddriversClaudeDesktopWakeRequest from './drivers/claude-desktop-wake-request.md' with {
   type: 'text',
 };
-import mddriversClaudeRcToggleBrief from './drivers/claude-rc-toggle-brief.md' with {
-  type: 'text',
-};
 import mddriversClaudeRcToggleRequest from './drivers/claude-rc-toggle-request.md' with {
   type: 'text',
 };
@@ -333,7 +330,6 @@ const registry: Record<string, string> = {
   'drivers/claude-desktop-prepare.md': mddriversClaudeDesktopPrepare,
   'drivers/claude-desktop-wake-brief.md': mddriversClaudeDesktopWakeBrief,
   'drivers/claude-desktop-wake-request.md': mddriversClaudeDesktopWakeRequest,
-  'drivers/claude-rc-toggle-brief.md': mddriversClaudeRcToggleBrief,
   'drivers/claude-rc-toggle-request.md': mddriversClaudeRcToggleRequest,
   'mailbox/delivery-failed.md': mdmailboxDeliveryFailed,
   'messaging/reply-protocol.md': mdmessagingReplyProtocol,
@@ -467,7 +463,6 @@ export const {
   CLAUDE_DESKTOP_PREPARE,
   CLAUDE_DESKTOP_WAKE_BRIEF,
   CLAUDE_DESKTOP_WAKE_REQUEST,
-  CLAUDE_RC_TOGGLE_BRIEF,
   CLAUDE_RC_TOGGLE_REQUEST,
   MAILBOX_DELIVERY_FAILED,
   MESSAGING_REPLY_PROTOCOL,
