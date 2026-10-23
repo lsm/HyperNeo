@@ -109,6 +109,20 @@ test('one list shows the primary first and Make primary moves another model to t
   );
 });
 
+test('removing every model and adding one back saves an explicit empty fallback chain', async () => {
+  const ui = await editor();
+  for (let n = 0; n < 3; n++) fireEvent.click(ui.getAllByTitle('Remove')[0]);
+  fireEvent.click(ui.getByRole('button', { name: 'Add Neo model' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'router/test' }));
+  fireEvent.click(ui.getByRole('button', { name: 'Save Neo models' }));
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith('operation.invoke', {
+      name: 'neo.preferences.set',
+      input: { model: 'router/test', provider: 'openrouter', thinkingLevel: 'off', fallbacks: [] },
+    })
+  );
+});
+
 test('shows a refused save without discarding edits or changing the general session chain', async () => {
   const ui = await editor();
   request.mockImplementation(async (method) =>

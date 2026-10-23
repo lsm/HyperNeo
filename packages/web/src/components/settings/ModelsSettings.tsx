@@ -462,7 +462,9 @@ function NeoModelSettings({
       model: first.model,
       provider: first.provider,
       thinkingLevel: first.thinkingLevel,
-      ...(draft?.fallbacks === undefined && rest.length === 0 ? {} : { fallbacks: rest }),
+      ...(preference?.fallbacks === undefined && draft?.fallbacks === undefined && !rest.length
+        ? {}
+        : { fallbacks: rest }),
     });
   }
   const providers = [...groupedModels.entries()]
