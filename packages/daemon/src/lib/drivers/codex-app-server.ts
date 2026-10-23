@@ -52,7 +52,9 @@ export async function startCodexBootstrapServer(
     },
     close: () =>
       (closing ??= (async () => {
+        let timedOut = false;
         const timer = setTimeout(() => {
+          timedOut = true;
           void transport.close();
         }, 5_000);
         try {
@@ -61,7 +63,9 @@ export async function startCodexBootstrapServer(
           await transport.close();
           if (exit?.code !== 0)
             throw new Error(
-              `Codex bootstrap exited with ${exit?.signal ?? exit?.code ?? 'unknown status'}.`
+              timedOut
+                ? 'Codex bootstrap did not exit within 5 seconds; Desktop handoff aborted.'
+                : `Codex bootstrap exited with ${exit?.signal ?? exit?.code ?? 'unknown status'}.`
             );
         } finally {
           clearTimeout(timer);

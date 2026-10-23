@@ -26,7 +26,9 @@ request must return `not_delivered` with the saved thread ID in its detail,
 without handing off or submitting an opening turn. It must not become an
 `execution_failed` RPC error during cleanup. A subsequent name refusal combined
 with the same exit 7 must preserve the name error, typed rejection and saved
-thread ID; cleanup must not replace the first error. The delayed
+thread ID; cleanup must not replace the first error. A bootstrap held past
+the existing five-second close deadline reports that deadline explicitly and
+must submit no Desktop turn after forced termination. The delayed
 exit and abnormal-exit unit contracts separately pin the process lifecycle.
 Keep `evidence/observed.json` and `evidence/open.jsonl`. The daemon and peers close
 in `finally`. This proves routing and lifecycle through the production operation
