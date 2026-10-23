@@ -24,6 +24,7 @@ const MAX_PENDING = 1024;
 class WorkerLane {
   private worker: Worker | null = null;
   private ready: Promise<Worker> | null = null;
+  private closed = false;
   private id = 0;
   private readonly pending = new Map<
     number,
@@ -38,6 +39,8 @@ class WorkerLane {
   ) {}
 
   send(op: string | null, args?: unknown): Promise<unknown> {
+    if (op !== null && this.closed)
+      return Promise.reject(new Error(`DB gateway ${this.lane} closed`));
     if (op !== null && this.pending.size >= MAX_PENDING)
       return Promise.reject(new Error(`DB gateway ${this.lane} queue full`));
     const id = ++this.id;
@@ -57,6 +60,7 @@ class WorkerLane {
   }
 
   close(): Promise<void> {
+    this.closed = true;
     if (!this.worker) return Promise.resolve();
     return this.send(null)
       .catch(() => {})

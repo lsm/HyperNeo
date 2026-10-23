@@ -129,7 +129,7 @@ describe('DbGateway', () => {
     expect(await pending).toBeNull();
   });
 
-  test('close asks each started worker to close its connection, then stops it', async () => {
+  test('close asks each started worker to close its connection, stops it, and refuses later calls', async () => {
     const { gateway, workers } = fixture();
     const write = gateway.run(recordWouldRefuse, { seen, now: 5 });
     await tick();
@@ -141,6 +141,9 @@ describe('DbGateway', () => {
     workers[0].emit({ id: workers[0].requests.at(-1)!.id, result: null });
     await closing;
     expect(workers[0].stopped).toBe(true);
+    await expect(gateway.run(recordWouldRefuse, { seen, now: 6 })).rejects.toThrow(
+      'DB gateway write closed'
+    );
     expect(workers).toHaveLength(1);
   });
 
