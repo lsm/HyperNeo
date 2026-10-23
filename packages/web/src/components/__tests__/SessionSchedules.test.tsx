@@ -248,6 +248,16 @@ describe('SessionSchedules', () => {
     await screen.findByText('No schedules');
     expect(summary.querySelector('span')?.textContent?.trim()).toBe('Schedules · 0');
   });
+  it.each([
+    ['en', 'Reset — new progress'],
+    ['zh-Hans', '有新进展，检查间隔已重置'],
+  ] as const)('localizes a progress reset in %s', async (language, label) => {
+    locale.value = language;
+    rows = [{ ...row, lastOutcome: 'progress', lastSkipReason: null }];
+    render(<SessionSchedules sessionId="root" />);
+    expect(await screen.findByText(new RegExp(label))).toBeTruthy();
+    expect(screen.queryByText('progress')).toBeNull();
+  });
   it('localizes the visible strip and controls', async () => {
     locale.value = 'zh-Hans';
     render(<SessionSchedules sessionId="root" />);
