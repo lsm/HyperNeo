@@ -33,6 +33,7 @@ import {
   type OpencodeModelMetadata,
 } from './opencode-catalogue.js';
 import { PROVIDER_REQUEST_TIMEOUT_MS } from './shared/request-timeout.ts';
+import { sessionThinkingForLevel } from './shared/session-thinking.ts';
 
 export interface OpencodeProviderOptions {
   bridgeFactory?: (
@@ -485,6 +486,12 @@ export class OpencodeProvider implements Provider {
 
   translateModelIdForSdk(_modelId: string): string {
     return 'default';
+  }
+
+  setSessionThinkingConfig(sessionId: string, thinkingLevel: string | undefined): void {
+    const thinking = sessionThinkingForLevel(thinkingLevel);
+    for (const bridge of this.bridges.values())
+      bridge.setSessionThinkingConfig?.(sessionId, thinking);
   }
 
   private stopBridges(): void {
