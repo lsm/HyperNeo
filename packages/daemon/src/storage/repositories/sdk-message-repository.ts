@@ -1944,18 +1944,17 @@ export class SDKMessageRepository {
     comparison: TimestampComparison
   ): number {
     const isoTimestamp = new Date(timestamp).toISOString();
-    const rows = this.db
-      .prepare(
-        `SELECT id, sdk_uuid FROM sdk_messages WHERE session_id = ? AND timestamp ${comparison} ?`
-      )
-      .all(sessionId, isoTimestamp) as Array<{ id: string; sdk_uuid: string | null }>;
+    const select = this.db.prepare(
+      `SELECT id, sdk_uuid FROM sdk_messages WHERE session_id = ? AND timestamp ${comparison} ?`
+    );
     const stmt = this.db.prepare(
       `DELETE FROM sdk_messages WHERE session_id = ? AND timestamp ${comparison} ?`
     );
-    let deleted = 0;
+    let rows: Array<{ id: string; sdk_uuid: string | null }> = [];
     let badgeChanged = false;
     this.db.transaction(() => {
-      deleted = stmt.run(sessionId, isoTimestamp).changes;
+      rows = select.all(sessionId, isoTimestamp) as typeof rows;
+      stmt.run(sessionId, isoTimestamp);
       badgeChanged = this.applyBadgeUpdate(sessionId, planBadgeRecompute());
       for (const { sdk_uuid } of rows) {
         if (sdk_uuid) this.clearDeliveryTurnEnd(sessionId, sdk_uuid);
@@ -1963,7 +1962,7 @@ export class SDKMessageRepository {
     })();
     if (badgeChanged) this.notifySessionsChanged(sessionId);
     for (const row of rows) this.deleteMessageSearchRow(row.id);
-    return deleted;
+    return rows.length;
   }
 
   deleteMessagesAfter(sessionId: string, afterTimestamp: number): number {

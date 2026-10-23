@@ -4359,6 +4359,19 @@ describe('SDKMessageRepository', () => {
       expect(deletedCount).toBe(0);
     });
 
+    it('counts deleted messages, not rows a delete trigger also removes', async () => {
+      db.exec(`CREATE TABLE trigger_shadow (id TEXT PRIMARY KEY);
+        CREATE TRIGGER trigger_shadow_ad AFTER DELETE ON sdk_messages
+        BEGIN DELETE FROM trigger_shadow WHERE id = old.id; END;`);
+      const middleTime = Date.now() - 1;
+      repository.saveSDKMessage('session-1', createUserMessage('Second'));
+      repository.saveSDKMessage('session-1', createUserMessage('Third'));
+      db.exec('INSERT INTO trigger_shadow SELECT id FROM sdk_messages');
+
+      expect(repository.deleteMessagesAfter('session-1', middleTime)).toBe(2);
+      expect(repository.getSDKMessageCount('session-1')).toBe(0);
+    });
+
     it('should only delete from specified session', async () => {
       repository.saveSDKMessage('session-1', createUserMessage('Session 1'));
       await new Promise((r) => setTimeout(r, 10));
