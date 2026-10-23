@@ -8,7 +8,6 @@ import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoPack, NeoTodoCheckResult } from '../../../../src/lib/neo/pack-contract.ts';
 import {
   createNeoTodoRunner,
-  neoAskIdleNote,
   neoTodoNote,
   planNeoTodoCheck,
   planNeoTodoSettled,
@@ -55,7 +54,6 @@ function setup(
   const told: string[] = [];
   const toldKeys: (string | undefined)[] = [];
   let prOpen = false;
-  const askNotes: string[] = [];
   const checkedTodos: string[] = [];
   let status: unknown = null;
   let sendResult: unknown;
@@ -73,8 +71,6 @@ function setup(
         return packDone === null ? null : { done: packDone, evidence: '#1 已合并' };
       },
       statusLine: () => null,
-      topics: () => [],
-      event: () => [],
       waiting: () => prOpen,
     },
   } satisfies NeoPack;
@@ -98,9 +94,7 @@ function setup(
       told.push(note);
       toldKeys.push(key);
     },
-    tellAsk: async (_ask, messageId) => {
-      askNotes.push(messageId);
-    },
+
     changed: () => {},
   });
   const add = (check: NeoTodo['check'] = null, instruction: string | null = 'Build the rows.') => {
@@ -125,7 +119,6 @@ function setup(
     calls,
     told,
     toldKeys,
-    askNotes,
     checkedTodos,
     add,
     setStatus: (value: unknown) => {
@@ -142,45 +135,6 @@ function setup(
     },
   };
 }
-
-describe('neoAskIdleNote', () => {
-  test('names an open ask that nothing moves, and stays quiet while a todo runs or a question waits', () => {
-    const { store, add } = setup();
-    const ask = store.getAsk('ask')!;
-    const todo = add();
-    expect(neoAskIdleNote(ask, store.listTodos('ask'), [])).toBe(
-      'Ask "iOS card" is open, but no todo is running and no question is open. Todos: "Rows" todo.'
-    );
-    const doing = store.updateTodo(todo, { state: 'doing' }, 2);
-    expect(neoAskIdleNote(ask, [doing], [])).toBeNull();
-    const question = store.askQuestion(
-      'q',
-      'ask',
-      {
-        text: 'Which?',
-        kind: 'reply',
-        options: null,
-        multiple: false,
-        noLabel: null,
-        yesLabel: null,
-        startTodos: null,
-      },
-      3
-    );
-    expect(neoAskIdleNote(ask, [todo], [question])).toBeNull();
-  });
-});
-
-describe('idle open asks', () => {
-  test('refresh keys the idle note by ask state, so delivery tells it once', async () => {
-    const { store, runner, add, askNotes } = setup();
-    add();
-    await runner.refresh(() => {});
-    await runner.refresh(() => {});
-    const updatedAt = store.getAsk('ask')!.updatedAt;
-    expect(askNotes).toEqual([`neo-ask-idle:ask:${updatedAt}`, `neo-ask-idle:ask:${updatedAt}`]);
-  });
-});
 
 describe('neo todo runner', () => {
   test('refuses the external effect if accepting its durable input fails', async () => {
@@ -393,7 +347,6 @@ describe('neo todo runner', () => {
     expect(report).toContain('Initial report');
     expect(store.getTodo(todo.id)?.state).toBe('doing');
     expect(sessions.readFollowAnchor(todo.id)).toBe(4000);
-    runner.recheck([todo.id]);
     await runner.refresh(() => {});
     expect(store.getTodo(todo.id)).toMatchObject({
       state: 'doing',
@@ -594,7 +547,6 @@ describe('neo todo runner', () => {
       },
       packs: () => [],
       tell: async () => {},
-      tellAsk: async () => {},
       changed: () => {},
     });
     await runner.start(todo.id);
@@ -628,7 +580,6 @@ describe('neo todo runner', () => {
       tell: async (_ask, _todo, note) => {
         told.push(note);
       },
-      tellAsk: async () => {},
       changed: () => {},
     });
     const result = await failing.start(todo.id);
@@ -653,7 +604,6 @@ describe('neo todo runner', () => {
           return completed({ ok: false, reason: 'unavailable', detail: 'Synthetic refusal' });
         },
         tell: async () => {},
-        tellAsk: async () => {},
         changed: () => {},
       });
       expect(await runner.start(todo.id)).toMatchObject({
@@ -685,7 +635,6 @@ describe('neo todo runner', () => {
         }),
       packs: () => [],
       tell: async () => {},
-      tellAsk: async () => {},
       changed: () => {},
     });
     const result = await accepted.start(todo.id);
@@ -719,7 +668,6 @@ describe('neo todo runner', () => {
       tell: async (_ask, _todo, note) => {
         told.push(note);
       },
-      tellAsk: async () => {},
       changed: () => {},
     });
     const result = await waiting.start(todo.id);
@@ -834,7 +782,6 @@ describe('neo todo runner uncertainty', () => {
       },
       packs: () => [],
       tell: async () => {},
-      tellAsk: async () => {},
       changed: () => {},
     });
     const result = await flaky.start(todo.id);
@@ -864,7 +811,6 @@ describe('neo todo runner uncertainty', () => {
         completed({ ok: false, reason: 'unsupported', detail: 'This adapter cannot stop.' }),
       packs: () => [],
       tell: async () => {},
-      tellAsk: async () => {},
       changed: () => {},
     });
     expect(await unsupported.stop(store.getTodo(resumed.id)!)).toBeNull();
@@ -874,7 +820,6 @@ describe('neo todo runner uncertainty', () => {
       invoke: async () => completed({ ok: false, reason: 'unavailable', detail: 'Offline.' }),
       packs: () => [],
       tell: async () => {},
-      tellAsk: async () => {},
       changed: () => {},
     });
     expect(await refusing.stop(store.getTodo(resumed.id)!)).toBe('stop_failed: Offline.');
@@ -1063,7 +1008,6 @@ describe('a todo sent to an existing session', () => {
           : completed({ ok: true, value: { status: 'done', lastActivityAt: lastActivity } }),
       packs: () => [],
       tell: async () => {},
-      tellAsk: async () => {},
       changed: () => {},
     });
     const sent = (id: string) => {
@@ -1204,7 +1148,6 @@ describe('blocked todos', () => {
       tell: async (_ask, _todo, note) => {
         told.push(note);
       },
-      tellAsk: async () => {},
       changed: () => {},
     });
     await failing.start(todo.id);
@@ -1276,7 +1219,6 @@ describe('stopped worker ladder', () => {
     const clock = vi.spyOn(Date, 'now');
     const at = async (minutes: number) => {
       clock.mockReturnValue(base + minutes * MIN);
-      harness.runner.recheck([todo.id]);
       await harness.runner.refresh(() => {});
     };
     const sends = () =>
@@ -1454,7 +1396,6 @@ describe('current explicit removal behavior before recompute', () => {
             });
           },
           tell: async () => {},
-          tellAsk: async () => {},
           changed: () => {},
         });
         await runner.refresh(() => {});

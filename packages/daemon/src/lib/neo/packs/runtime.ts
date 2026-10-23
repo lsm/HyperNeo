@@ -3,8 +3,6 @@ import { createNeoProjectTreeOperations } from './coding/project-tree-operations
 import { NeoService } from '../service.ts';
 import { localCodingSessionId, neoWorkBranch } from './coding/branch-prs.ts';
 import { CodingTodoPrRepository } from './coding/todo-prs.ts';
-import { requireClosedPrEvent } from '../../external-events/session-subscription-close.ts';
-import { pullRequestUrlOfTopic } from '../../github/parse-pr-url.ts';
 import { hostname } from 'node:os';
 import type { Database } from '../../../storage/sqlite-compat.ts';
 import { BUILD_METADATA } from '../../build-metadata.ts';
@@ -71,23 +69,6 @@ export function createNeoService(...args: NeoServiceArgs) {
         },
         projectRepos: () => configured.repo.allRepositories(),
       });
-      coding.retainedTodoIds = (ids) =>
-        new Set(
-          [...todoPrs.prsForTodos(ids)]
-            .filter(([, prs]) => prs.some((pr) => pr.state === 'MERGED'))
-            .map(([id]) => id)
-        );
-      coding.refreshOnEvent = (event) => {
-        const read = todoPrs.latest(pullRequestUrlOfTopic(event.topic) ?? '');
-        const head = event.payload.headSha ?? event.payload.commitId;
-        return (
-          'value' in
-            requireClosedPrEvent({
-              record: { event, state: 'published', createdAt: 0, updatedAt: 0 },
-            }) ||
-          (typeof head === 'string' && (!read || read.readAt < event.occurredAt))
-        );
-      };
       coding.sessionLinks = async (ref) => {
         const localId = localCodingSessionId(ref);
         const branch = neoWorkBranch(localId ? db.getSession(localId) : null);

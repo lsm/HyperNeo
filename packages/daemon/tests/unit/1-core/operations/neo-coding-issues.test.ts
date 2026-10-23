@@ -82,7 +82,6 @@ function fixture() {
       sessions,
       packs: () => [pack],
       changed: () => {},
-      tellAsk: async () => {},
       tell: async (_ask, _todo, text) => {
         notes.push(text);
       },
@@ -166,7 +165,6 @@ function fixture() {
     },
     at: async (minutes: number) => {
       now = 100_000 + minutes * MIN;
-      runner.recheck(['first', 'next']);
       await runner.refresh(warn);
     },
     restart() {

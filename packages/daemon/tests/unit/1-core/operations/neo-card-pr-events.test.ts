@@ -13,9 +13,7 @@ import {
   InternalEventBus,
   type DaemonInternalEventMap,
 } from '../../../../src/lib/internal-event-bus.ts';
-import { neoCardWorkerSession, planNeoCardSend } from '../../../../src/lib/neo/card-events.ts';
 import { isSessionTopicCovered } from '../../../../src/lib/external-events/topic-trie.ts';
-import { isNeoCardPrActionable } from '../../../../src/lib/neo/packs/coding/card-pr-events.ts';
 import { createNeoService } from '../../../../src/lib/neo/packs/runtime.ts';
 import {
   createOperationRegistry,
@@ -33,53 +31,6 @@ const open = {
   checks: 'passing' as const,
   review: 'none' as const,
 };
-
-describe('isNeoCardPrActionable', () => {
-  test.each([
-    ['review_submitted', true],
-    ['review_comment_created', true],
-    ['comment_polled', true],
-    ['reaction_added', true],
-    ['check_failed', true],
-    ['suite_failed', true],
-    ['status_failure', true],
-    ['merge_conflict', true],
-    ['polled', false],
-    ['check_skipped', false],
-    ['check_cancelled', false],
-    ['status_pending', false],
-    ['status_success', false],
-    ['merge_conflict_resolved', false],
-    ['synchronize', false],
-  ])('%s forwards: %s', (action, forwards) => {
-    expect(isNeoCardPrActionable(action)).toBe(forwards);
-  });
-});
-
-describe('planNeoCardSend', () => {
-  const work = { id: 'w', status: 'queued' as const, report: null, sessionId: 'native' };
-  test('sends through the driver when the card runs in another tool, else to its session', () => {
-    expect(planNeoCardSend({ work, ref })).toEqual({ via: 'driver', ref });
-    expect(planNeoCardSend({ work, ref: null })).toEqual({ via: 'session', sessionId: 'native' });
-    expect(planNeoCardSend({ work: { ...work, status: 'cancelled' }, ref })).toEqual({
-      via: 'none',
-    });
-  });
-});
-
-describe('neoCardWorkerSession', () => {
-  test('names a local HyperNeo worker or the target session, never another tool', () => {
-    expect(neoCardWorkerSession({ via: 'driver', ref: { adapter: 'hyperneo', id: 's9' } })).toBe(
-      's9'
-    );
-    expect(
-      neoCardWorkerSession({ via: 'driver', ref: { adapter: 'hyperneo', daemon: 'tts', id: 's9' } })
-    ).toBeNull();
-    expect(neoCardWorkerSession({ via: 'driver', ref })).toBeNull();
-    expect(neoCardWorkerSession({ via: 'session', sessionId: 'native' })).toBe('native');
-    expect(neoCardWorkerSession({ via: 'none' })).toBeNull();
-  });
-});
 
 describe('isSessionTopicCovered', () => {
   const followed = [{ session: 's9', topic: 'github/lsm/HyperNeo/pull_request/7.*' }];

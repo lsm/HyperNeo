@@ -44,8 +44,6 @@ function fixture() {
         };
       },
       statusLine: () => null,
-      topics: () => [],
-      event: () => [],
     },
   } satisfies NeoPack;
   const open = () => {
@@ -112,7 +110,6 @@ function fixture() {
         };
       },
       tell: async () => {},
-      tellAsk: async () => {},
       changed: () => {},
     });
   };

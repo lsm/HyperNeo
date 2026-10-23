@@ -7,7 +7,6 @@ import { createCodingClaudeOwnerReader } from './claude-pr-owners.ts';
 import { NEO_PACK_CODING_INSTRUCTIONS, NEO_PACK_CODING_WORKER_RULES } from '@hyperneo/prompts';
 import { type CodingTodoPrRepository, createCodingTodoPack } from './todo-prs.ts';
 import type { NeoPack, NeoPackBrief } from '../../pack-contract.ts';
-import { routeNeoCardPrEvent } from './card-pr-events.ts';
 import { prepareCodingExecution } from './prepare-execution.ts';
 import {
   type CodingLedgerRead,
@@ -123,9 +122,5 @@ export function createCodingPack(deps: {
     instructions: () => NEO_PACK_CODING_INSTRUCTIONS,
     workerRules: NEO_PACK_CODING_WORKER_RULES,
     workGoal: withCodingWorkGoal,
-    routeExternalEvent: (event, subscriptions) => {
-      const route = routeNeoCardPrEvent(event, subscriptions, (url) => deps.todoPrs.latest(url));
-      return route ? { ...route, workIds: [] } : null;
-    },
   };
 }
