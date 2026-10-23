@@ -29,6 +29,17 @@ export function createCodingPackTables(db: Database, activatedAt = Date.now()): 
     read_at INTEGER NOT NULL,
     PRIMARY KEY (repo, number)
   );
+  CREATE TABLE IF NOT EXISTS pack_coding_poll_facts (
+    subject TEXT PRIMARY KEY CHECK (json_valid(subject)),
+    fact_revision INTEGER NOT NULL,
+    observation_revision INTEGER NOT NULL,
+    value_json TEXT CHECK (value_json IS NULL OR json_valid(value_json)),
+    etag TEXT,
+    next_url TEXT,
+    observed_at INTEGER,
+    attempted_at INTEGER NOT NULL,
+    reason TEXT CHECK (reason IS NULL OR reason IN ('failed','partial','rate_limited','not_authorized'))
+  );
   CREATE TABLE IF NOT EXISTS pack_coding_query_facts (
     subject TEXT PRIMARY KEY CHECK (json_valid(subject)),
     coverage_json TEXT NOT NULL CHECK (json_valid(coverage_json)),
