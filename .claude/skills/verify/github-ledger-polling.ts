@@ -9,7 +9,7 @@ import { GitHubEventExtension } from '../../../packages/daemon/src/lib/external-
 import { SpaceRepository } from '../../../packages/daemon/src/storage/repositories/space-repository.ts';
 
 const [scenario, path] = process.argv.slice(2), run = resolve(path);
-assert(['normal', 'conditional', 'failure'].includes(scenario));
+assert(['normal', 'conditional', 'failure', 'retention'].includes(scenario));
 assert.equal(process.env.NODE_ENV, 'test'); assert.equal(process.env.HOME, join(run, 'home'));
 assert.equal(process.env.HYPERNEO_DATA_DIR, join(run, 'data')); assert(!existsSync(join(run, 'data')));
 assert.equal(process.env.GH_TOKEN, undefined); assert.equal(process.env.GITHUB_TOKEN, undefined);
@@ -61,14 +61,34 @@ try {
     ws!.send(JSON.stringify({ id, type: 'REQ', method, data, sessionId: 'global', timestamp: new Date().toISOString(), version: '1.0.0' }));
   });
   const approvals = () => db.prepare("SELECT id,space_id,topic,payload_json FROM space_external_events WHERE topic LIKE 'github/synthetic/shared/pull_request/7.review_submitted'").all() as { id: string; space_id: string; payload_json: string }[];
-  const phases = scenario === 'failure' ? ['initial', 'failed', 'recovered'] : ['initial', 'repeat'];
+  const legacyKey = '["pre-existing-unscoped"]';
+  if (scenario === 'retention') {
+    db.prepare('INSERT INTO pack_coding_poll_facts (subject,fact_revision,observation_revision,value_json,observed_at,attempted_at) VALUES (?,?,?,?,?,?)').run(legacyKey, 3, 5, ' { "kept" : true } ', 100, 110);
+    db.prepare('INSERT INTO pack_coding_ref_facts (subject,fact_revision,observation_revision,value_json,observed_at,attempted_at) VALUES (?,?,?,?,?,?)').run(legacyKey, 7, 11, ' { "normalized" : true } ', 100, 110);
+  }
+  const legacyRows = db.prepare('SELECT * FROM pack_coding_poll_facts WHERE subject=?').all(legacyKey);
+  const normalizedRows = db.prepare('SELECT * FROM pack_coding_ref_facts WHERE subject=?').all(legacyKey);
+  const phases = scenario === 'failure' ? ['initial', 'failed', 'recovered'] : scenario === 'retention' ? ['initial', 'advance-one', 'advance-two'] : ['initial', 'repeat'];
   for (const phase of phases) {
     writeFileSync(join(run, 'phase'), phase);
+    if (scenario === 'retention') {
+      db.prepare('UPDATE pack_coding_poll_facts SET attempted_at=? WHERE subject<>?').run(Date.now() - 16 * 60_000, legacyKey);
+      for (const watched of github.repo.listPollingRepos()) {
+        const watermark = when - 3600_000 + phases.indexOf(phase) * 1000;
+        github.repo.updatePollCursorJson(watched.id, { ...watched.pollCursor, endpointLastSeenAt: { issue_comments: watermark, review_comments: watermark, pulls: watermark } });
+      }
+    }
     const reply = await rpc('space.github.pollOnce', {});
     const watched = []; for (const space of spaces) watched.push(await rpc('space.github.listWatchedRepos', {spaceId: space.id}));
     const events = approvals();
     const pages = db.prepare('SELECT subject,fact_revision,observation_revision,reason,http_json FROM pack_coding_poll_facts').all();
     evidence.cycles.push({ phase, reply, watched, events, pages });
+    if (scenario === 'retention') {
+      assert(pages.length <= 10, `Expired raw pages accumulated: ${pages.length} rows; expected at most nine current pages plus one protected row`);
+      assert.deepEqual(db.prepare('SELECT * FROM pack_coding_poll_facts WHERE subject=?').all(legacyKey), legacyRows);
+      assert.deepEqual(db.prepare('SELECT * FROM pack_coding_ref_facts WHERE subject=?').all(legacyKey), normalizedRows);
+      evidence.protectedRowsUnchanged = true;
+    }
     assert.equal(new Set(events.map(event => event.id)).size, events.length);
     for (const space of spaces) assert.equal(events.filter(event => event.space_id === space.id).length, phase === 'recovered' ? 2 : 1);
     for (const event of events) assert.equal(JSON.parse(event.payload_json).commitId, head);

@@ -71,3 +71,15 @@ test('existing conditional and large-response RPC journey completes with read-ch
   expect(result.cycles.at(-1).reply).toEqual({ count: 0 });
   expect(result.cycles.at(-1).storedComments).toBe(100);
 }, 30000);
+
+test('expired raw pages do not accumulate as polling windows advance; legacy rows and history survive', () => {
+  const result = proof('github-ledger-polling.ts', 'retention', 'polling-ledger.json');
+  expect(result.verified).toBe(true);
+  expect(result.protectedRowsUnchanged).toBe(true);
+  expect(result.cycles.map((cycle: { events: unknown[] }) => cycle.events.length)).toEqual([
+    2, 2, 2,
+  ]);
+  expect(result.cycles.map((cycle: { pages: unknown[] }) => cycle.pages.length)).toEqual([
+    10, 10, 10,
+  ]);
+}, 30000);
