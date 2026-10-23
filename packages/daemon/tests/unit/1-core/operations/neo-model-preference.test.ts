@@ -499,6 +499,14 @@ describe('neo.preferences.set', () => {
       session: { config },
     });
     expect(db.getSession('neo:root')?.config.autoCompactPercent).toBe(80);
+    const back = { ...config, model: 'claude-opus', provider: 'anthropic' as const };
+    db.updateSession('neo:root', { config: back });
+    await events.publish('session.updated', {
+      sessionId: 'neo:root',
+      source: 'model-refusal-fallback',
+      session: { config: back },
+    });
+    expect(db.getSession('neo:root')?.config.autoCompactPercent).toBe(70);
   });
 
   test('a new Neo session starts on the preference, thinking included', async () => {

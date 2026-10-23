@@ -104,6 +104,13 @@ type NeoFollowedTodoSnapshot = {
   prs: Map<string, NeoWorkPr[]>;
 };
 
+const MODEL_CHANGE_SOURCES = new Set([
+  'model-switch',
+  'model-switch-rollback',
+  'model-refusal-fallback',
+  'runtime-settings',
+]);
+
 export class NeoService {
   readonly repo: NeoRepository;
   readonly publications: NeoPublicationRepository;
@@ -278,9 +285,10 @@ export class NeoService {
     const offModelSwitch = events.subscribe(
       'session.updated',
       async ({ sessionId, source }) => {
-        const preferences = this.db.getGlobalSettings().neo?.preferences;
-        if (!source?.startsWith('model-switch') || !preferences) return;
+        if (!source || !MODEL_CHANGE_SOURCES.has(source)) return;
         if (sessionId !== this.defaultSessionId()) return;
+        const preferences = this.db.getGlobalSettings().neo?.preferences;
+        if (!preferences) return;
         await this.applyCompactPercent(sessionId, preferences).catch((error) =>
           this.log.warn('Neo auto-compact percentage not applied', error)
         );
