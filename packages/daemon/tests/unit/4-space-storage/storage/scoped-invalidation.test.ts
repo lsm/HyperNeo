@@ -168,7 +168,7 @@ describe('ReactiveDatabase — scope extraction', () => {
     reactiveDb.on('change', (data) => events.push(data));
 
     await reactiveDb.db.createSession(makeSession('sess-3'));
-    reactiveDb.db.deleteMessagesAfter('sess-3', Date.now());
+    await reactiveDb.db.deleteMessagesAfter('sess-3', Date.now());
 
     const sdkEvent = events.find((e) => e.tables.includes('sdk_messages'));
     expect(sdkEvent).toBeDefined();

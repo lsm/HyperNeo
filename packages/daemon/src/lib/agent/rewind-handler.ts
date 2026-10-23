@@ -236,7 +236,7 @@ export class RewindHandler {
   ): Promise<RewindResult> {
     const { session, db, lifecycleManager } = this.ctx;
 
-    const messagesDeleted = db.deleteMessagesAtAndAfter(session.id, rewindPoint.timestamp);
+    const messagesDeleted = await db.deleteMessagesAtAndAfter(session.id, rewindPoint.timestamp);
 
     const sdkWorkspacePath = sessionSdkPath(session);
     if (!sdkWorkspacePath) {
@@ -527,7 +527,7 @@ export class RewindHandler {
 
       let messagesDeleted = 0;
       if (mode === 'conversation' || mode === 'both') {
-        messagesDeleted = db.deleteMessagesAtAndAfter(session.id, earliestTimestamp);
+        messagesDeleted = await db.deleteMessagesAtAndAfter(session.id, earliestTimestamp);
 
         const rewindSdkPath = sessionSdkPath(session);
         if (!rewindSdkPath) {

@@ -1094,12 +1094,13 @@ export class AgentSession
     { changed: false } | { changed: true; dbId: string; uuid: string; removedFromMemory: boolean }
   > {
     const result = await withSessionLock(this.session.id, async () => {
+      const messages = this.db.getSDKMessageRepo();
       const remove = () =>
         mode === 'remove'
           ? expectedStatus
-            ? this.db.deletePendingUserMessage(this.session.id, messageDbId, expectedStatus)
-            : this.db.deletePendingUserMessage(this.session.id, messageDbId)
-          : this.db.deferEnqueuedUserMessage(this.session.id, messageDbId);
+            ? messages.deletePendingUserMessage(this.session.id, messageDbId, expectedStatus)
+            : messages.deletePendingUserMessage(this.session.id, messageDbId)
+          : messages.deferEnqueuedUserMessage(this.session.id, messageDbId);
       const result = commitRemoval
         ? this.db.getDatabase().transaction(() => {
             const removed = remove();

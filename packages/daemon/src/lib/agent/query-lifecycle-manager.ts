@@ -419,7 +419,7 @@ export class QueryLifecycleManager {
       timestamp: Date.now(),
     };
 
-    db.saveHyperNeoActionMessage(session.id, actionMessage);
+    await db.saveHyperNeoActionMessage(session.id, actionMessage);
 
     if (
       messageRepo?.hasUnresolvedHyperNeoAction &&

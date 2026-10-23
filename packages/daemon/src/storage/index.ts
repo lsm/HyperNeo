@@ -486,18 +486,18 @@ export class Database {
     this.sdkMessageRepo.updateMessageTimestamp(messageId, timestampMs);
   }
 
-  deletePendingUserMessage(
+  async deletePendingUserMessage(
     sessionId: string,
     messageId: string,
     expectedStatus?: 'deferred' | 'enqueued'
-  ): { dbId: string; uuid: string; status: 'deferred' | 'enqueued' } | null {
+  ): Promise<{ dbId: string; uuid: string; status: 'deferred' | 'enqueued' } | null> {
     return this.sdkMessageRepo.deletePendingUserMessage(sessionId, messageId, expectedStatus);
   }
 
-  deferEnqueuedUserMessage(
+  async deferEnqueuedUserMessage(
     sessionId: string,
     messageId: string
-  ): { dbId: string; uuid: string } | null {
+  ): Promise<{ dbId: string; uuid: string } | null> {
     return this.sdkMessageRepo.deferEnqueuedUserMessage(sessionId, messageId);
   }
 
@@ -505,11 +505,11 @@ export class Database {
   commitTransaction?(): void;
   abortTransaction?(): void;
 
-  deleteMessagesAfter(sessionId: string, afterTimestamp: number): number {
+  async deleteMessagesAfter(sessionId: string, afterTimestamp: number): Promise<number> {
     return this.sdkMessageRepo.deleteMessagesAfter(sessionId, afterTimestamp);
   }
 
-  deleteMessagesAtAndAfter(sessionId: string, atTimestamp: number): number {
+  async deleteMessagesAtAndAfter(sessionId: string, atTimestamp: number): Promise<number> {
     return this.sdkMessageRepo.deleteMessagesAtAndAfter(sessionId, atTimestamp);
   }
 
@@ -528,19 +528,22 @@ export class Database {
     return this.sdkMessageRepo.countMessagesAfter(sessionId, afterTimestamp);
   }
 
-  saveHyperNeoActionMessage(sessionId: string, message: HyperNeoActionMessage): string {
+  async saveHyperNeoActionMessage(
+    sessionId: string,
+    message: HyperNeoActionMessage
+  ): Promise<string> {
     return this.sdkMessageRepo.saveHyperNeoActionMessage(sessionId, message);
   }
 
-  updateHyperNeoActionMessage(rowId: string, updated: HyperNeoActionMessage): void {
+  async updateHyperNeoActionMessage(rowId: string, updated: HyperNeoActionMessage): Promise<void> {
     this.sdkMessageRepo.updateHyperNeoActionMessage(rowId, updated);
   }
 
-  updateHyperNeoActionMessageByUuid(
+  async updateHyperNeoActionMessageByUuid(
     sessionId: string,
     messageUuid: string,
     updated: HyperNeoActionMessage
-  ): void {
+  ): Promise<void> {
     this.sdkMessageRepo.updateHyperNeoActionMessageByUuid(sessionId, messageUuid, updated);
   }
 
