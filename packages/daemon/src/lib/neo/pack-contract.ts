@@ -3,19 +3,8 @@ import type { NeoTodo, NeoTodoCheck } from '@hyperneo/shared/types/neo-ask';
 import type { WorkExecutionPreparation } from '../drivers/start-preparation.ts';
 import type { WorkRef, WorkStatus } from '../drivers/types.ts';
 import type { Database } from '../../storage/sqlite-compat.ts';
-import type { ExternalEvent } from '../external-events/types.ts';
 import type { NeoStatusLine } from './status-codes.ts';
 import type { OperationDefinition } from '../operations/registry.ts';
-
-export interface NeoCardEventSubscription {
-  workId: string;
-  topic: string;
-}
-
-export interface NeoPackEventRoute {
-  workIds: string[];
-  ending: NeoCardEventSubscription[];
-}
 
 export interface NeoPackBrief {
   id: string;
@@ -57,8 +46,6 @@ export interface NeoTodoPack {
   schema(db: Database): void;
   check(todo: NeoTodo): Promise<NeoTodoCheckResult | null>;
   statusLine(todo: NeoTodo): NeoStatusLine | null;
-  topics(todo: NeoTodo): string[];
-  event(event: ExternalEvent): string[];
   openedPrs?(todo: NeoTodo, urls: readonly string[]): void;
   repository?(draft: Pick<NeoTodo, 'check' | 'named'> & { id?: string }): string | null;
   waiting?(todo: NeoTodo): boolean;
@@ -88,8 +75,6 @@ export interface NeoPackPreferenceDeclaration {
 }
 
 export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
-  retainedTodoIds?(ids: readonly string[]): Set<string>;
-  refreshOnEvent?(event: ExternalEvent): boolean;
   sessionLinks?(ref: WorkRef | null): Promise<string[]>;
   operations?: readonly OperationDefinition[];
   preferences?: Record<string, NeoPackPreferenceDeclaration>;
@@ -105,10 +90,6 @@ export interface NeoPack extends NeoPackBrief, Partial<NeoTodoFactJudge> {
   workGoal?(instruction: string, goal: NeoWorkGoal | null): string;
   prepareExecution?: NeoExecutionPreparation;
   instructions(): string | null;
-  routeExternalEvent?(
-    event: ExternalEvent,
-    subscriptions: readonly NeoCardEventSubscription[]
-  ): NeoPackEventRoute | null;
 }
 
 export type NeoExecutionPreparation = WorkExecutionPreparation;

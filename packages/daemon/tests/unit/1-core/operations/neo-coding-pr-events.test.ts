@@ -94,7 +94,7 @@ describe('PR ledger events', () => {
     db.close();
   });
 
-  test('an unowned PR, or one a todo claims, sends nothing from the ledger', async () => {
+  test('an unowned PR stays quiet and a claimed PR receives its ledger event', async () => {
     const { db, told, woken, cycle } = setup();
     await cycle(response([node(1), node(2)]), 100);
     db.prepare(
@@ -112,7 +112,9 @@ describe('PR ledger events', () => {
       JSON.stringify(owner)
     );
     await cycle(response([node(1, {}, 'FAILURE'), node(2, {}, 'FAILURE')]), 200);
-    expect(told).toEqual([]);
+    expect(told).toEqual([
+      expect.objectContaining({ ref: owner, key: 'neo-pr-event:lsm/a#2:head2abc:failing' }),
+    ]);
     expect(woken).toEqual([]);
     db.close();
   });

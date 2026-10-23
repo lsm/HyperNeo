@@ -71,13 +71,6 @@ export function parseGitHubTopic(topic: string): GitHubTopic | null {
   };
 }
 
-export function pullRequestUrlOfTopic(topic: string): string | null {
-  const parsed = parseGitHubTopic(topic);
-  return parsed?.resource === 'pull_request' && /^\d+$/.test(parsed.entity)
-    ? `https://github.com/${parsed.owner}/${parsed.repo}/pull/${parsed.entity}`
-    : null;
-}
-
 export const KNOWN_TOPIC_FROM_SOURCES: ReadonlySet<string> = new Set<string>(['primaryLink']);
 
 export function pullRequestNumbersOfTopics(

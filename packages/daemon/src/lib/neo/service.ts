@@ -10,15 +10,13 @@ import type {
   Session,
   SessionConfig,
 } from '@hyperneo/shared';
-import type { NeoAsk, NeoTodo } from '@hyperneo/shared/types/neo-ask';
-import type { NeoWork } from '@hyperneo/shared/types/neo-context';
+import type { NeoTodo } from '@hyperneo/shared/types/neo-ask';
 import type { NeoPublicationInput } from '@hyperneo/shared/types/neo-publication';
 import type { NeoWorkingEvent } from '@hyperneo/shared/types/neo-snapshot';
 import { type NeoModelPreference } from '@hyperneo/shared/types/settings';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/database.ts';
 import { NeoAskTodoRepository } from '../../storage/repositories/neo-ask-todo-repository.ts';
-import { NeoCardEventSubscriptionRepository } from '../../storage/repositories/neo-card-event-subscription-repository.ts';
 import { NeoConversationAskRepository } from '../../storage/repositories/neo-conversation-ask-repository.ts';
 import { NeoPublicationRepository } from '../../storage/repositories/neo-publication-repository.ts';
 import { NeoRepository } from '../../storage/repositories/neo-repository.ts';
@@ -48,18 +46,11 @@ import {
 import { neoEnabledPacks, neoPackBriefs, neoPacks } from './pack-selection.ts';
 import type { NeoPack, NeoPackBrief, NeoPackRuntime } from './pack-contract.ts';
 import { neoPromptTools, planNeoSessionConfig } from './session-config.ts';
-import { neoSessionStatus } from './session-status.ts';
 import { createNeoPublisher } from './publication-operation.ts';
 import type { NeoSessionNotice, NeoSessionNoticeGroup } from './session-watch.ts';
 import { NeoSessionWatcher } from './session-watcher.ts';
-import { createNeoTodoRunner, type NeoTodoRunner, neoTodoCard } from './todo-runner.ts';
+import { createNeoTodoRunner, type NeoTodoRunner } from './todo-runner.ts';
 import { neoWorkingKey, readNeoWorking } from './working.ts';
-
-type NeoFollowedTodoSnapshot = {
-  todos: Map<string, NeoTodo>;
-  asks: Map<string, NeoAsk>;
-  retained: Set<string>;
-};
 
 export class NeoService {
   readonly repo: NeoRepository;
@@ -69,7 +60,6 @@ export class NeoService {
   readonly todos: NeoAskTodoRepository;
   readonly todoSessions: NeoTodoSessionRepository;
   readonly todoRunner: NeoTodoRunner;
-  readonly cardEvents: NeoCardEventSubscriptionRepository;
   get sessionNotices(): NeoSessionNotice[] {
     return this.sessionWatcher.sessionNotices;
   }
@@ -159,14 +149,8 @@ export class NeoService {
           ask.sessionId
         );
       },
-      tellAsk: async (ask, messageId, note) => {
-        const status = neoSessionStatus(this.db.getSession(ask.sessionId)?.processingState);
-        if (status !== 'idle' || this.hasDelivery(ask.sessionId, messageId)) return;
-        await this.deliverForward(ask.sessionId, messageId, note, ask.sessionId);
-      },
       changed: this.notifyChanged,
     });
-    this.cardEvents = new NeoCardEventSubscriptionRepository(db.getDatabase());
     const runtime = composePacks(this);
     this.builtinPacks = runtime.packs;
     this.defaultPacks = runtime.defaults;
@@ -495,25 +479,6 @@ export class NeoService {
 
   private packEvidenceWorkIds(): string[] {
     return this.todos.listCheckable().map((todo) => todo.id);
-  }
-
-  private followedTodo(workId: string, snapshot?: NeoFollowedTodoSnapshot): NeoWork | null {
-    const todo = snapshot ? snapshot.todos.get(workId) : this.todos.getTodo(workId);
-    const ask = todo
-      ? snapshot
-        ? snapshot.asks.get(todo.askId)
-        : this.todos.getAsk(todo.askId)
-      : null;
-    return todo &&
-      ask &&
-      ask.status !== 'dropped' &&
-      ((ask.status === 'open' && ['todo', 'doing', 'blocked'].includes(todo.state)) ||
-        (todo.state === 'done' &&
-          (snapshot
-            ? snapshot.retained.has(workId)
-            : this.installedPacks().some((pack) => pack.retainedTodoIds?.([workId]).has(workId)))))
-      ? neoTodoCard(todo, ask)
-      : null;
   }
 
   async trackSession(root: string, notice: NeoSessionNotice, now: number): Promise<{ ok: true }> {
