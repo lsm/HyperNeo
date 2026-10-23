@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
 import type { ClaudeDesktopAdapterDeps } from '../../../../src/lib/drivers/claude-desktop-adapter';
 import {
   findRcToggle,
+  openRcToggle,
   requireDisconnectedTarget,
   runClaudeRemoteControlRequest,
   withClaudeRemoteControl,
@@ -100,6 +101,15 @@ describe('runClaudeRemoteControlRequest', () => {
       spawn: (args, options) => {
         spawned.push({ args, cwd: options?.cwd });
         if (args.includes('--desktop')) {
+          const id = args.at(-1) as string;
+          if (id === 'new-rc')
+            write({
+              ...record(id),
+              cliSessionId: id,
+              title: 'desktop-wake',
+              cwd: '/Users/test',
+              permissionMode: 'acceptEdits',
+            });
           live.push({
             sessionId: args.at(-1) as string,
             status: 'idle',
@@ -157,6 +167,25 @@ describe('runClaudeRemoteControlRequest', () => {
       detail: expect.stringContaining('existing authorized rc-toggle'),
     });
     expect(spawned).toEqual([]);
+  });
+
+  test('a stopped forwarding helper retains its history while a fresh acceptEdits helper is prepared', async () => {
+    const old = record('old', {
+      title: 'desktop-wake',
+      cwd: '/Users/test',
+      permissionMode: 'acceptEdits',
+    });
+    write(old);
+    const oldPath = join(dir, 'acct/scope/local_old.json');
+    const bytes = readFileSync(oldPath, 'utf8');
+    const result = await openRcToggle([old], [], deps(), 'desktop-wake');
+    expect(result).toMatchObject({
+      value: { record: { sessionId: 'local_new-rc', permissionMode: 'acceptEdits' } },
+    });
+    expect(spawned[0].args).toContain('--session-id');
+    expect(spawned[0].args).toContain('acceptEdits');
+    expect(spawned[0].args).not.toContain('bypassPermissions');
+    expect(readFileSync(oldPath, 'utf8')).toBe(bytes);
   });
 
   test('leaves a session that already has its Remote Control set alone', async () => {
