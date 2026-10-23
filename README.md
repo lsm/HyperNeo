@@ -4,20 +4,17 @@
 
 Claude Code web UI for coding, life, and anything in between.
 
-## Screenshots
-
-<table>
-  <tr>
-    <td><img src="docs/screenshot-desktop.png" alt="HyperNeo Desktop UI" height="500"></td>
-    <td><img src="docs/screenshot-mobile.jpeg" alt="HyperNeo Mobile UI" height="500"></td>
-  </tr>
-</table>
+HyperNeo runs a daemon on your machine that drives Claude Code agent sessions inside your workspace and serves a browser UI for them: several sessions side by side, model switching mid-conversation, tasks and goals with approvals, and MCP tools for files, git, and shell work. Sessions and history stay in a local SQLite database.
 
 <p align="center">
-  <em>Desktop and mobile interfaces showing coordinator mode with multi-agent workflow and task management</em>
+  <img src="docs/hyperneo-overview.svg" alt="HyperNeo architecture: a browser UI talks to the local hyperneo daemon over HTTP and WebSocket on localhost:9283; the daemon runs agent tools in your workspace and calls model providers such as Anthropic, OpenRouter, and Ollama">
 </p>
 
-Run `hyperneo` in any directory to get a full-featured web interface for Claude right in your browser. Manage multiple conversations at once, switch models on the fly, and let the agent read, write, and run code in your project — all from a clean, responsive UI.
+## Who it's for
+
+- Developers who use Claude Code or the Anthropic API and want a browser — including a phone — for agents working in local repositories
+- Anyone running several agent sessions at once and tracking their output as tasks and goals
+- People routing agents through OpenRouter or Ollama (local or cloud) instead of, or alongside, Anthropic
 
 ## Quick start
 
@@ -29,15 +26,26 @@ hyperneo
 
 Open `http://localhost:9283` and start a conversation.
 
-## Features
+Already logged in to Claude Code? HyperNeo picks up that login from `~/.claude/.credentials.json` or the macOS Keychain, so the export is optional.
 
-- **Multi-session conversations** — run multiple independent agent sessions side by side
-- **Model switching** — swap between Sonnet, Opus, and Haiku mid-conversation
-- **File and git operations** — the agent reads, writes, and commits within your workspace
-- **MCP server support** — connect external tools via the Model Context Protocol
-- **Rewind and checkpoints** — roll back file changes or conversation history to any point
-- **Extended thinking** — enable thinking mode with configurable token budgets (8k/16k/32k)
-- **macOS and Linux** — native binaries for darwin-arm64, darwin-x64, linux-x64, and linux-arm64
+Prefer a native app? [Releases](https://github.com/lsm/HyperNeo/releases) ship a desktop build: `.dmg` for macOS (Apple Silicon and Intel), `.msi`/`.exe` for Windows x64, and `.deb`/`.rpm` for Linux x64. The Linux and Windows installers are unsigned.
+
+## CLI
+
+```
+hyperneo [options]
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `-p, --port <port>` | `9283` | Port to listen on |
+| `--host <host>` | `0.0.0.0` | Host to bind to |
+| `--db-path <path>` | `~/.hyperneo/data/daemon.db` | Database file path |
+| `--workspace <path>` | — | Default workspace root for file indexing |
+| `-V, --version` | | Show version number |
+| `-h, --help` | | Show help |
+
+Subcommands such as `hyperneo send <session-id> <text>` and `hyperneo build` interact with a running daemon; see `hyperneo --help`. A standalone daemon without the web UI is published as [`hyperneod`](https://www.npmjs.com/package/hyperneod).
 
 ## Authentication
 
@@ -48,27 +56,24 @@ Set one of these environment variables before starting:
 | `ANTHROPIC_API_KEY` | Anthropic API key (recommended) |
 | `CLAUDE_CODE_OAUTH_TOKEN` | OAuth token from Claude Code |
 | `OPENROUTER_API_KEY` | OpenRouter API key for OpenRouter models |
+| `OLLAMA_API_KEY` | Optional API key for a local Ollama server |
 | `OLLAMA_BASE_URL` | Optional local Ollama URL (defaults to `http://localhost:11434`) |
 | `OLLAMA_CLOUD_API_KEY` | Ollama Cloud API key |
-| `OLLAMA_CLOUD_BASE_URL` | Optional Ollama Cloud API URL (defaults to `https://ollama.com`) |
+| `OLLAMA_CLOUD_BASE_URL` | Optional Ollama Cloud URL (defaults to `https://ollama.com`) |
 
 OpenRouter models use `provider/model` IDs such as `anthropic/claude-sonnet-4.6` and `openrouter/auto`. See [OpenRouter setup](docs/providers/openrouter-setup.md) for provider details and compatibility notes.
 
-Ollama local and Ollama Cloud models use the native `/api/chat` and `/api/tags` APIs through HyperNeo's provider bridge. See [Ollama setup](docs/providers/ollama-setup.md) for local and cloud configuration.
+Ollama local and Ollama Cloud models use the native `/api/chat` and `/api/tags` APIs through HyperNeo's provider bridge. See [Ollama setup](docs/providers/ollama-setup.md) for local and cloud configuration. The same bridge also supports GLM, Kimi, MiniMax, DeepSeek, and OpenCode endpoints.
 
-## Usage
+## Features
 
-```
-hyperneo [path] [options]
-```
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `path` | `.` | Workspace directory |
-| `-p, --port` | `9283` | Port to listen on |
-| `--host` | `0.0.0.0` | Host to bind to |
-| `--db-path` | `./data/daemon.db` | Database location |
-| `-V, --version` | | Show version number |
+- **Multi-session conversations** — run multiple independent agent sessions side by side
+- **Spaces, tasks, and goals** — organize work, with approvals before agents act on it
+- **Model switching** — swap models mid-conversation, with extended-thinking budgets from 8k to 64k tokens
+- **MCP server support** — connect external tools via the Model Context Protocol
+- **Skills** — plugin and MCP skills extend sessions; Web Search, Chrome DevTools, and Playwright ship built in
+- **Rewind** — roll back file changes, the conversation, or both, to any earlier point
+- **Runs on your machine** — npm binaries for macOS, Linux, and Windows; desktop installers; and a standalone daemon
 
 ## Development
 
@@ -77,7 +82,7 @@ This project uses a `dev` branch for active development. See [CONTRIBUTING.md](C
 Quick overview:
 - All feature PRs should target the `dev` branch
 - Releases go directly from `dev` via version tags
-- E2E tests run on-demand via `workflow_dispatch`
+- Requires [Bun](https://bun.sh/) 1.3.8 or later: `bun install`, then `bun run dev` for a dev server or `bun run check` for the full quality suite
 
 ## License
 
