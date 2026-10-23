@@ -878,6 +878,7 @@ describe('QueryOptionsBuilder', () => {
       mockSettingsManager.getGlobalSettings = mock(() => ({
         env: {
           CLAUDE_CODE_AUTO_COMPACT_WINDOW: '200000',
+          CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '10',
           CLAUDE_CODE_SUBAGENT_MODEL: 'settings-subagent',
           ENABLE_TOOL_SEARCH: 'false',
           KEEP_GLOBAL: 'global',
@@ -893,6 +894,7 @@ describe('QueryOptionsBuilder', () => {
         KEEP_GLOBAL: 'global',
       });
       expect(options.env).not.toHaveProperty('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
+      expect(options.env).not.toHaveProperty('CLAUDE_AUTOCOMPACT_PCT_OVERRIDE');
       expect(options.env?.CLAUDE_CODE_SUBAGENT_MODEL).toBe('settings-subagent');
       expect(options.env?.ENABLE_TOOL_SEARCH).toBe('false');
     });
@@ -930,8 +932,18 @@ describe('QueryOptionsBuilder', () => {
           KEEP_GLOBAL: 'global',
         });
         expect(options.env).not.toHaveProperty('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
+        expect(options.env).not.toHaveProperty('CLAUDE_AUTOCOMPACT_PCT_OVERRIDE');
       }
     );
+
+    it('passes an explicit percentage even when model metadata is unavailable', async () => {
+      setModelsCache(new Map());
+      mockSession.config.model = 'synthetic-unknown-model';
+      mockSession.config.autoCompactPercent = 60;
+      const options = await builder.build();
+      expect(options.env?.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE).toBe('60');
+      expect(options.settings?.autoCompactWindow).toBeUndefined();
+    });
 
     it('uses the same explicit native percentage for an ordinary session and Neo', async () => {
       setModelsCache(
@@ -958,11 +970,17 @@ describe('QueryOptionsBuilder', () => {
         const overridden = await builder.build();
         expect(overridden.settings?.autoCompactWindow).toBe(733_000);
         expect(overridden.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('733000');
+        expect(overridden.env?.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE).toBe('70');
+        expect(overridden.settings?.precomputeCompactionEnabled).toBe(true);
         mockSession.id = 'ordinary';
-        expect((await builder.build()).settings?.autoCompactWindow).toBe(733_000);
+        const ordinary = await builder.build();
+        expect(ordinary.settings?.autoCompactWindow).toBe(733_000);
+        expect(ordinary.env?.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE).toBe('70');
         mockSession.id = 'neo:fixture';
         delete mockSession.config.autoCompactPercent;
-        expect((await builder.build()).settings?.autoCompactWindow).toBeUndefined();
+        const inherited = await builder.build();
+        expect(inherited.settings?.autoCompactWindow).toBeUndefined();
+        expect(inherited.env?.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE).toBeUndefined();
       } finally {
         setModelsCache(new Map());
       }
@@ -970,7 +988,10 @@ describe('QueryOptionsBuilder', () => {
 
     it('should not override SDK auto-compaction settings for native anthropic provider', async () => {
       const options = await builder.build();
-      expect(options.settings).toEqual({ cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS });
+      expect(options.settings).toEqual({
+        precomputeCompactionEnabled: true,
+        cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS,
+      });
     });
 
     it('should pin SDK transcript retention for every session', async () => {
@@ -1181,49 +1202,7 @@ describe('QueryOptionsBuilder', () => {
       resetProviderRegistry();
     });
 
-    it('wires a PostToolUse hook that invokes the mid-turn context budget check', async () => {
-      registerOpenRouterProvider();
-      setModelsCache(new Map());
-      const budgetCheck = mock(() => {});
-      mockSession.config.provider = 'openrouter';
-      mockSession.config.model = 'any-model';
-      const options = await new QueryOptionsBuilder({
-        ...mockContext,
-        midTurnContextBudgetCheck: budgetCheck,
-      }).build();
-
-      const postToolUse = options.hooks?.PostToolUse;
-      expect(postToolUse).toBeDefined();
-      expect(postToolUse!.length).toBeGreaterThan(0);
-
-      const hook = postToolUse![0]!.hooks[0]!;
-      await hook({ hook_event_name: 'PostToolUse' } as never, undefined, {
-        signal: new AbortController().signal,
-      });
-      expect(budgetCheck).toHaveBeenCalledTimes(1);
-    });
-
-    it('wires the mid-turn context budget check into PostToolUseFailure as well', async () => {
-      registerOpenRouterProvider();
-      setModelsCache(new Map());
-      const budgetCheck = mock(() => {});
-      mockSession.config.provider = 'openrouter';
-      mockSession.config.model = 'any-model';
-      const options = await new QueryOptionsBuilder({
-        ...mockContext,
-        midTurnContextBudgetCheck: budgetCheck,
-      }).build();
-
-      const postToolUseFailure = options.hooks?.PostToolUseFailure;
-      expect(postToolUseFailure).toBeDefined();
-      const guardEntry = postToolUseFailure![0]!;
-      await guardEntry.hooks[0]!({ hook_event_name: 'PostToolUseFailure' } as never, undefined, {
-        signal: new AbortController().signal,
-      });
-      expect(budgetCheck).toHaveBeenCalledTimes(1);
-    });
-
-    it('should enable SDK auto-compaction for OpenRouter models with their full context window (percent enforcement lives in the daemon backstop)', async () => {
+    it('configures SDK window and percentage for OpenRouter models', async () => {
       registerOpenRouterProvider();
       setModelsCache(
         new Map([
@@ -1255,13 +1234,17 @@ describe('QueryOptionsBuilder', () => {
       expect(options.settings).toEqual({
         autoCompactEnabled: true,
         autoCompactWindow: 1_000_000,
+        precomputeCompactionEnabled: true,
         cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS,
       });
+      expect(options.settings?.precomputeCompactionEnabled).toBe(true);
       mockSession.config.model = 'pct-model';
       const pctOptions = await builder.build();
+      expect(pctOptions.env?.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE).toBe('80');
       expect(pctOptions.settings).toEqual({
         autoCompactEnabled: true,
         autoCompactWindow: 833_000,
+        precomputeCompactionEnabled: true,
         cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS,
       });
     });
@@ -1272,12 +1255,18 @@ describe('QueryOptionsBuilder', () => {
       mockSession.config.provider = 'openrouter';
       mockSession.config.model = 'unknown-model';
       const options = await builder.build();
-      expect(options.settings).toEqual({ cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS });
+      expect(options.settings).toEqual({
+        precomputeCompactionEnabled: true,
+        cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS,
+      });
     });
 
     it('should leave provider settings empty for native anthropic provider', async () => {
       const options = await builder.build();
-      expect(options.settings).toEqual({ cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS });
+      expect(options.settings).toEqual({
+        precomputeCompactionEnabled: true,
+        cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS,
+      });
     });
   });
 

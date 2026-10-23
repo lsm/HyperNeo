@@ -125,7 +125,6 @@ import mdspaceTaskMessageVerificationLabel from './space/task-message/verificati
   type: 'text',
 };
 import mdagentBashLoopRecovery from './agent/bash-loop-recovery.md' with { type: 'text' };
-import mdagentCompactionResume from './agent/compaction-resume.md' with { type: 'text' };
 import mdagentLoopRecovery from './agent/loop-recovery.md' with { type: 'text' };
 import mdagentQuestionCancelled from './agent/question-cancelled.md' with { type: 'text' };
 import mdagentRepeatedToolError from './agent/repeated-tool-error.md' with { type: 'text' };
@@ -313,7 +312,6 @@ const registry: Record<string, string> = {
   'space/task-message/goal-outcome.md': mdspaceTaskMessageGoalOutcome,
   'space/task-message/verification-label.md': mdspaceTaskMessageVerificationLabel,
   'agent/bash-loop-recovery.md': mdagentBashLoopRecovery,
-  'agent/compaction-resume.md': mdagentCompactionResume,
   'agent/loop-recovery.md': mdagentLoopRecovery,
   'agent/question-cancelled.md': mdagentQuestionCancelled,
   'agent/repeated-tool-error.md': mdagentRepeatedToolError,
@@ -444,7 +442,6 @@ export const {
   TASK_MESSAGE_GOAL_OUTCOME,
   TASK_MESSAGE_VERIFICATION_LABEL,
   AGENT_BASH_LOOP_RECOVERY,
-  AGENT_COMPACTION_RESUME,
   AGENT_LOOP_RECOVERY,
   AGENT_QUESTION_CANCELLED,
   AGENT_REPEATED_TOOL_ERROR,
