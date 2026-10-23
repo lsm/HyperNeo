@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
+import { Logger } from '../../../../src/lib/logger.ts';
 import {
   announceDeviceRevoked,
   createUpgradeAuthenticator,
@@ -153,6 +154,27 @@ describe('upgrade authentication (report only)', () => {
       await auth(upgrade({ authorization: `Bearer ${other.credential}` }), null)
     ).toMatchObject({ deviceId: other.device.id });
     db.close();
+  });
+
+  test('an unpaired sighting the gateway refuses is logged at most once a minute', async () => {
+    const warn = spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    let now = 1;
+    const full = { run: () => Promise.reject(new Error('DB gateway write queue full')) };
+    const auth = createUpgradeAuthenticator({
+      db: () => full as unknown as DbGateway,
+      now: () => now,
+    });
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+    const plain = () => new Request('http://127.0.0.1:9283/ws', { headers: { host: 'h' } });
+    expect(await auth(plain(), null)).toBeNull();
+    expect(await auth(plain(), null)).toBeNull();
+    await settle();
+    expect(warn).toHaveBeenCalledTimes(1);
+    now += 60_000;
+    await auth(plain(), null);
+    await settle();
+    expect(warn).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
   });
 
   test('a revoked device is treated as unpaired', async () => {
