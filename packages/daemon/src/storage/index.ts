@@ -297,6 +297,11 @@ export class Database {
     return Promise.resolve();
   }
 
+  setSessionLastError(id: string, lastError: string | null): Promise<void> {
+    this.sessionRepo.setLastError(id, lastError);
+    return Promise.resolve();
+  }
+
   saveSDKMessage(
     sessionId: string,
     message: SDKMessage,
