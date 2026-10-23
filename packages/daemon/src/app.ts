@@ -1148,7 +1148,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       now: Date.now,
     });
     const observeRequest = createRequestObserver({
-      devices: () => pairing,
+      db: () => db.gateway,
       allowedHosts: () => settingsManager.getGlobalSettings().allowedHosts ?? [],
       exempt: (req) =>
         extensionManager

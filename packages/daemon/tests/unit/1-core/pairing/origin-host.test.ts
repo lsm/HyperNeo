@@ -1,8 +1,12 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
+import { Logger } from '../../../../src/lib/logger.ts';
 import { createRequestObserver, judgeOriginHost } from '../../../../src/lib/pairing/origin-host.ts';
+import { DbGateway } from '../../../../src/storage/db-gateway/db-gateway.ts';
 import { DevicePairingRepository } from '../../../../src/storage/repositories/device-pairing-repository.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
+
+const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 const request = (headers: Record<string, string>, method = 'GET') =>
   new Request('http://127.0.0.1:9283/ws', { method, headers });
@@ -55,9 +59,10 @@ describe('recording requests the Origin and Host checks would refuse', () => {
     runMigrations(db, () => {});
     createTables(db);
     const repo = new DevicePairingRepository(db);
+    const gateway = new DbGateway(':memory:', db);
     let now = 1_000;
     const observe = createRequestObserver({
-      devices: () => repo,
+      db: () => gateway,
       allowedHosts: () => allowed,
       exempt: (req) => new URL(req.url).pathname === '/webhooks/github',
       now: () => now,
@@ -65,7 +70,7 @@ describe('recording requests the Origin and Host checks would refuse', () => {
     return { db, repo, observe, allowed, tick: () => (now += 1_000) };
   }
 
-  test('records each request that would be refused once, counting repeats, and never refuses', () => {
+  test('records each request that would be refused once, counting repeats, and never refuses', async () => {
     const { db, repo, observe, allowed, tick } = setup();
     const foreign = () => request({ host: 'mac.tailnet.ts.net', origin: 'https://evil.example' });
     expect(observe(foreign())).toBeUndefined();
@@ -78,6 +83,7 @@ describe('recording requests the Origin and Host checks would refuse', () => {
         headers: { host: 'hooks.example' },
       })
     );
+    await settled();
     expect(repo.listWouldRefuse()).toEqual([
       {
         reason: 'host_not_allowed',
@@ -91,6 +97,7 @@ describe('recording requests the Origin and Host checks would refuse', () => {
     ]);
     allowed.push('mac.tailnet.ts.net');
     observe(foreign());
+    await settled();
     expect(repo.listWouldRefuse().map((row) => row.reason)).toEqual([
       'origin_not_allowed',
       'host_not_allowed',
@@ -101,7 +108,7 @@ describe('recording requests the Origin and Host checks would refuse', () => {
   test('loopback requests are judged without reading the settings', () => {
     let reads = 0;
     const observe = createRequestObserver({
-      devices: () => {
+      db: () => {
         throw new Error('no record expected');
       },
       allowedHosts: () => {
@@ -118,15 +125,40 @@ describe('recording requests the Origin and Host checks would refuse', () => {
     expect(reads).toBe(1);
   });
 
-  test('a storage failure is swallowed', () => {
-    const observe = createRequestObserver({
-      devices: () => {
-        throw new Error('database is locked');
-      },
-      allowedHosts: () => [],
-      exempt: () => false,
-      now: () => 1,
+  test('a storage failure is swallowed, whether it throws or rejects, and logged once a minute', async () => {
+    const warn = spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    let rejected = 0;
+    let now = 1;
+    const failing = (fail: () => Promise<void>) =>
+      createRequestObserver({
+        db: () => ({ run: fail }) as unknown as DbGateway,
+        allowedHosts: () => [],
+        exempt: () => false,
+        now: () => now,
+      });
+    const throwing = failing(() => {
+      throw new Error('database is locked');
     });
-    expect(() => observe(request({ host: 'evil.example' }))).not.toThrow();
+    expect(() => throwing(request({ host: 'evil.example' }))).not.toThrow();
+    failing(() => {
+      rejected += 1;
+      return Promise.reject(new Error('database is locked'));
+    })(request({ host: 'evil.example' }));
+    await settled();
+    expect(rejected).toBe(1);
+    expect(warn).toHaveBeenCalledTimes(2);
+    const flood = failing(() => {
+      rejected += 1;
+      return Promise.reject(new Error('DB gateway write queue full'));
+    });
+    flood(request({ host: 'evil.example' }));
+    flood(request({ host: 'evil.example' }));
+    await settled();
+    expect(warn).toHaveBeenCalledTimes(3);
+    now += 60_000;
+    flood(request({ host: 'evil.example' }));
+    await settled();
+    expect(warn).toHaveBeenCalledTimes(4);
+    warn.mockRestore();
   });
 });

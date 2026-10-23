@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { Database } from '../sqlite-compat.ts';
+import { defineDbOp } from '../db-gateway/db-op.ts';
 
 export type DeviceKind = 'human' | 'relay' | 'daemon';
 
@@ -21,6 +22,41 @@ const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 export function normalizePairingCode(code: string): string {
   return code.replace(/[\s-]/g, '').toUpperCase();
 }
+
+export const recordWouldRefuse = defineDbOp({
+  name: 'pairing.recordWouldRefuse',
+  mode: 'write',
+  run: (
+    db: Database,
+    {
+      seen,
+      now,
+    }: {
+      seen: { reason: string; kind: string; host: string | null; origin: string | null };
+      now: number;
+    }
+  ): void => {
+    const key = [
+      seen.reason,
+      seen.kind,
+      seen.host?.slice(0, UNPAIRED_FIELD_MAX) ?? null,
+      seen.origin?.slice(0, UNPAIRED_FIELD_MAX) ?? null,
+    ];
+    const seenAgain = db
+      .prepare(
+        `UPDATE would_refuse_requests SET count = count + 1, last_seen_at = ?
+         WHERE reason = ? AND kind = ? AND IFNULL(host, '') = IFNULL(?, '')
+           AND IFNULL(origin, '') = IFNULL(?, '')`
+      )
+      .run(now, ...key);
+    if (seenAgain.changes > 0) return;
+    db.prepare(
+      `INSERT INTO would_refuse_requests (reason, kind, host, origin, first_seen_at, last_seen_at)
+       SELECT ?, ?, ?, ?, ?, ?
+       WHERE (SELECT COUNT(*) FROM would_refuse_requests) < ?`
+    ).run(...key, now, now, UNPAIRED_ROW_CAP);
+  },
+});
 
 export class DevicePairingRepository {
   constructor(private readonly db: Database) {}
@@ -68,33 +104,6 @@ export class DevicePairingRepository {
            (client, origin, host, remote_address, credential_rejected, first_seen_at, last_seen_at)
          SELECT ?, ?, ?, ?, ?, ?, ?
          WHERE (SELECT COUNT(*) FROM unpaired_connections) < ?`
-      )
-      .run(...key, now, now, UNPAIRED_ROW_CAP);
-  }
-
-  recordWouldRefuse(
-    seen: { reason: string; kind: string; host: string | null; origin: string | null },
-    now: number
-  ): void {
-    const key = [
-      seen.reason,
-      seen.kind,
-      seen.host?.slice(0, UNPAIRED_FIELD_MAX) ?? null,
-      seen.origin?.slice(0, UNPAIRED_FIELD_MAX) ?? null,
-    ];
-    const seenAgain = this.db
-      .prepare(
-        `UPDATE would_refuse_requests SET count = count + 1, last_seen_at = ?
-         WHERE reason = ? AND kind = ? AND IFNULL(host, '') = IFNULL(?, '')
-           AND IFNULL(origin, '') = IFNULL(?, '')`
-      )
-      .run(now, ...key);
-    if (seenAgain.changes > 0) return;
-    this.db
-      .prepare(
-        `INSERT INTO would_refuse_requests (reason, kind, host, origin, first_seen_at, last_seen_at)
-         SELECT ?, ?, ?, ?, ?, ?
-         WHERE (SELECT COUNT(*) FROM would_refuse_requests) < ?`
       )
       .run(...key, now, now, UNPAIRED_ROW_CAP);
   }

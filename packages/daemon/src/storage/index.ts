@@ -1,3 +1,4 @@
+import { DbGateway } from './db-gateway/db-gateway.ts';
 import { countPendingTurns, readPendingTurns } from './turn-vectors.ts';
 import { readMessageFacts, type NeoMessageStatusRef } from '../lib/neo/message-status.ts';
 import { readMessageFeed, type MessageFeedArgs } from './sdk-message-feed-read.ts';
@@ -123,6 +124,7 @@ export class Database {
   private agentMemoryRepo!: AgentMemoryRepository;
   private readonly embedder = new WorkerAgentMemoryEmbedder();
   private sdkStatusReader: SDKStatusReader | null = null;
+  private dbGateway: DbGateway | null = null;
   private evolutionRepo!: EvolutionRepository;
   private goalAutomationCursorRepo!: GoalAutomationCursorRepository;
   private providerRepo!: ProviderRepository;
@@ -424,6 +426,14 @@ export class Database {
     return this.getSDKReader().readCodexSnapshot(statePath, includeClosed);
   }
 
+  get gateway(): DbGateway {
+    return (this.dbGateway ??= new DbGateway(
+      this.getDbPath(),
+      this.getDbPath() === ':memory:' ? this.getDatabase() : null,
+      this.options?.queryObservability
+    ));
+  }
+
   private getSDKReader() {
     return (this.sdkStatusReader ??= new SDKStatusReader(
       this.getDbPath(),
@@ -632,7 +642,11 @@ export class Database {
       clearInterval(this.messageSearchIndexTimer);
       this.messageSearchIndexTimer = null;
     }
-    if (this.sdkStatusReader) return this.sdkStatusReader.close().finally(() => this.core.close());
+    const gateway = this.dbGateway?.close();
+    if (this.sdkStatusReader || gateway)
+      return Promise.all([this.sdkStatusReader?.close(), gateway])
+        .then(() => {})
+        .finally(() => this.core.close());
     this.core.close();
   }
 }
