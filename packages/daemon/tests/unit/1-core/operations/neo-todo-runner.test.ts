@@ -1295,7 +1295,7 @@ describe('stopped worker ladder', () => {
         expect.stringContaining('stopped for 40 min'),
       ]);
       expect(h.store.getTodo(h.todo.id)?.state).toBe('doing');
-      expect(h.told).toEqual([expect.stringContaining('two reminders without progress')]);
+      expect(h.told).toEqual([expect.stringContaining('reminder window elapsed without progress')]);
     } finally {
       h.clock.mockRestore();
       h.db.close();

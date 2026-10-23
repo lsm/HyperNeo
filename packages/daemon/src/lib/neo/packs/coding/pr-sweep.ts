@@ -70,7 +70,7 @@ export function codingPrEscalationText(
 ): string {
   const why = unreachable
     ? `its owner ${owned(row.owner!)} could not be reached`
-    : `its owner ${owned(row.owner!)} was reminded ${CODING_PR_REMINDERS} times without progress`;
+    : `its owner ${owned(row.owner!)} has made no progress`;
   return `PR sweep: ${row.repo}#${row.number} "${row.title}" has been ${STATE_TEXT[row.state] ?? row.state} for ${minutesSince(row, now)} min on head ${row.head.slice(0, 7)}, and ${why}. Reassign it to a free session.${row.state === 'approved_green' ? ' Or merge it yourself if the owner is gone.' : ''}`;
 }
 

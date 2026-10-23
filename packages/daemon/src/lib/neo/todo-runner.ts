@@ -622,7 +622,7 @@ export function createNeoTodoRunner(deps: NeoTodoRunnerDeps) {
       await deps.tell(
         ask,
         todo,
-        `Todo "${todo.title}" has made no progress for ${minutes} min; ${plan.kind === 'escalate' ? 'two reminders without progress' : 'its worker could not be reached'}. Decide how to continue.`,
+        `Todo "${todo.title}" has made no progress for ${minutes} min; ${plan.kind === 'escalate' ? 'the reminder window elapsed without progress' : 'its worker could not be reached'}. Decide how to continue.`,
         `neo-todo-remind:${todo.id}:${incident.since}:${plan.nudges}`
       );
     sessions.recordNudge(todo.id, { since: incident.since, nudges: delivered ? plan.nudges : 3 });

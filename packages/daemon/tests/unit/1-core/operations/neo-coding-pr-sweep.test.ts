@@ -66,7 +66,7 @@ describe('PR sweep ladder', () => {
       'lsm/hyperneo#7 "Fix login" has been approved and green for 20 min on head abc1234. Merge it now with a manual squash on this head.'
     );
     expect(woken).toHaveLength(1);
-    expect(woken[0].text).toContain('was reminded 2 times without progress');
+    expect(woken[0].text).toContain('has made no progress');
     db.close();
   });
 
