@@ -6,7 +6,8 @@ watched destinations; a later cycle has a new ID. Credentials, representation,
 exact URL and validator retain their coverage boundaries. No new RPC, permission,
 scheduler or row-rewriting migration is introduced. Destination cursors/delivery stay separate.
 
-Run normal, conditional, failure and retention with a fresh absolute RUN for each:
+Run normal, conditional, failure, retention and conditional-reseed with a fresh
+absolute RUN for each:
 
 ```bash
 RUN=$(mktemp -d /private/tmp/hyperneo-poll-wire-XXXXXX)
@@ -23,12 +24,13 @@ auth files, live DB or real GitHub are used. Resources close in finally.
 
 Inspect `evidence/polling-ledger.json` and actual `requests.jsonl`. Against the
 same pre-Wire fixture (18 initial/18 repeat, eight failure/18 recovery GETs),
-expect nine initial/normal-repeat/recovery GETs and ten conditional-repeat GETs.
+expect nine initial/normal-repeat/conditional-repeat/recovery GETs.
 The identical review endpoint is acquired once per initial cycle. Failed pages
 remain unknown and use eight GETs; neither destination's successful timestamp or
 cutoff advances. Recovery retains both earlier events and adds one approval each.
-A changed `since` URL's 304 has no matching stored page: it stays unknown and is
-not falsely shared, accounting for the tenth conditional request. Stored metadata
+Cold/expired pages and changed `since` URLs fetch once without If-None-Match.
+Only a known ledger body matching the validator permits a conditional GET;
+a valid 304 then refreshes its coverage. Unvalidated 304s remain unknown. Stored metadata
 contains only allowed rate/validator headers. These are synthetic REST counts,
 not GraphQL cost, deployed quota measurements or proof of downstream acceptance.
 
@@ -47,6 +49,10 @@ inactivity, checked on acquisition with an additive timestamp index. This covers
 about seven default polling intervals without a new timer. Expiry never targets
 existing unscoped rows, normalized facts or source history. Unit contracts also
 advance window/page/credential identities through 30 minutes, then idle/recover.
+`conditional-reseed` starts with destination ETags but no ledger body, expires
+only new synthetic raw-cache pages, then repeats unchanged. Each cycle makes nine
+GETs, retains 2/2/2 source events and known bodies; only the warm repeat sends
+conditional headers. The failing pre-fix contract made 12/16/16 GETs.
 Retain comparable before/after evidence.
 After merge, confirm the automatic rollout with owner RPC; never deploy/restart
 or force live polling. Durable outbox and remaining reader moves are later slices.

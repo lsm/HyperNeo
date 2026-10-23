@@ -85,3 +85,57 @@ test('failed configured credentials refuse even a covered page before collection
     db.close();
   }
 });
+
+test('cold and expired validators seed once without a conditional header; warm validators use 304', async () => {
+  const db = new Database(':memory:');
+  createCodingPackTables(db);
+  const facts = new CodingPollFactsRepository(db);
+  const sent: (string | null)[] = [];
+  const source = (cycle: string) =>
+    createGitHubPollSource({
+      collection: {
+        collect: (...args) => facts.collectExternalEventPage(...args),
+        cycle,
+        credentialId: 'opaque-one',
+      },
+      fetchImpl: (async (_input, init) => {
+        const validator = new Headers(init?.headers).get('if-none-match');
+        sent.push(validator);
+        return validator
+          ? new Response(null, { status: 304, headers: { etag: '"page"' } })
+          : Response.json({ head: 'current' }, { headers: { etag: '"page"' } });
+      }) as typeof fetch,
+      hasInjectedFetch: true,
+      hasToken: true,
+      readFailed: false,
+      credentialSource: 'credential-store',
+      repo: 'synthetic/shared',
+      observe: () => {},
+      onAccessible: () => {},
+    });
+  const conditionalHeaders = { ...headers, 'If-None-Match': '"page"' };
+  try {
+    const cold = await Promise.all([
+      source('cold')(url, { headers: conditionalHeaders }),
+      source('cold')(url, { headers: conditionalHeaders }),
+    ]);
+    for (const response of cold) expect(await response.json()).toEqual({ head: 'current' });
+    expect(sent).toEqual([null]);
+    expect((await source('warm')(url, { headers: conditionalHeaders })).status).toBe(304);
+    expect(await (await source('warm')(url, { headers: conditionalHeaders })).json()).toEqual({
+      head: 'current',
+    });
+    expect(sent).toEqual([null, '"page"']);
+    db.prepare(
+      "UPDATE pack_coding_poll_facts SET attempted_at=? WHERE json_extract(subject,'$[0]') GLOB 'external-event-page:v1:*'"
+    ).run(Date.now() - 16 * 60_000);
+    const expired = await Promise.all([
+      source('expired')(url, { headers: conditionalHeaders }),
+      source('expired')(url, { headers: conditionalHeaders }),
+    ]);
+    for (const response of expired) expect(await response.json()).toEqual({ head: 'current' });
+    expect(sent).toEqual([null, '"page"', null]);
+  } finally {
+    db.close();
+  }
+});

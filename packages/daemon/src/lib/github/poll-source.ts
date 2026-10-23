@@ -7,7 +7,7 @@ export type GitHubPollCollector = (
   subject: { credentialId: string; url: string; accept: string; apiVersion: string },
   cycle: string,
   validator: string | null,
-  request: () => Promise<Response>
+  request: (validator: string | null) => Promise<Response>
 ) => Promise<Response>;
 
 export interface GitHubRateLimitInfo {
@@ -90,7 +90,12 @@ export function createGitHubPollSource(options: GitHubPollSourceOptions): typeof
           },
           options.collection.cycle,
           headers.get('if-none-match'),
-          () => request(input, init)
+          (validator) => {
+            const requestHeaders = new Headers(headers);
+            if (validator) requestHeaders.set('If-None-Match', validator);
+            else requestHeaders.delete('If-None-Match');
+            return request(input, { ...init, headers: requestHeaders });
+          }
         )
       : await request(input, init);
     if (!bucketRecorded) {

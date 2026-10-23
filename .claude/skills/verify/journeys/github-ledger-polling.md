@@ -45,7 +45,7 @@ and large-response journey with read-checkout sync active. That older fixture
 must supply repository/default-ref metadata as well as its response pages.
 
 The Wire journey compares against that saved baseline and requires nine initial/
-normal-repeat/recovery GETs, ten conditional-repeat and eight failed GETs.
+normal-repeat/conditional-repeat/recovery GETs and eight failed GETs.
 Collector changes must retain independent destination histories, exact-head
 payloads, repeat deduplication and failure cutoffs while reducing the duplicated
 source requests. This proof observes persisted source history, not worker wakes,

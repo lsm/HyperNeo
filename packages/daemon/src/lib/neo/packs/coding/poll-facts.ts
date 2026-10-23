@@ -96,7 +96,7 @@ export class CodingPollFactsRepository {
     subject: Subject,
     cycle: string,
     validator: string | null,
-    request: () => Promise<Response>,
+    request: (validator: string | null) => Promise<Response>,
     now = Date.now
   ) {
     return collectPollHttp(this, subject, cycle, validator, request, now);
