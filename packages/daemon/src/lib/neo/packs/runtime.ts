@@ -39,15 +39,15 @@ export function createNeoBuiltinPacks(
   db: Database,
   deps: Omit<Parameters<typeof createCodingPack>[0], 'prLedger' | 'prSweep' | 'prEvents'>
 ) {
-  return [
-    createCodingPack({
+  return {
+    coding: createCodingPack({
       ...deps,
       prLedger: new CodingPrLedgerRepository(db),
       prSweep: new CodingPrSweepRepository(db),
       prEvents: new CodingPrEventRepository(db),
     }),
-    createLifeAdminPack(),
-  ];
+    lifeAdmin: createLifeAdminPack(),
+  };
 }
 
 type NeoServiceArgs =
@@ -60,7 +60,7 @@ export function createNeoService(...args: NeoServiceArgs) {
   const service = new NeoService(
     (core) => {
       const configured = Object.assign(core, readers, { todoPrs });
-      const packs = createNeoBuiltinPacks(db.getDatabase(), {
+      const { coding, lifeAdmin } = createNeoBuiltinPacks(db.getDatabase(), {
         readPrs: (urls) => configured.readPrs(urls),
         readRefStates: (refs) => configured.readRefStates(refs),
         listGithub: (args, coverage) => configured.listGithub(args, coverage),
@@ -71,13 +71,13 @@ export function createNeoService(...args: NeoServiceArgs) {
         },
         projectRepos: () => configured.repo.allRepositories(),
       });
-      packs[0].retainedTodoIds = (ids) =>
+      coding.retainedTodoIds = (ids) =>
         new Set(
           [...todoPrs.prsForTodos(ids)]
             .filter(([, prs]) => prs.some((pr) => pr.state === 'MERGED'))
             .map(([id]) => id)
         );
-      packs[0].refreshOnEvent = (event) => {
+      coding.refreshOnEvent = (event) => {
         const read = todoPrs.latest(pullRequestUrlOfTopic(event.topic) ?? '');
         const head = event.payload.headSha ?? event.payload.commitId;
         return (
@@ -88,13 +88,13 @@ export function createNeoService(...args: NeoServiceArgs) {
           (typeof head === 'string' && (!read || read.readAt < event.occurredAt))
         );
       };
-      packs[0].sessionLinks = async (ref) => {
+      coding.sessionLinks = async (ref) => {
         const localId = localCodingSessionId(ref);
         const branch = neoWorkBranch(localId ? db.getSession(localId) : null);
         return branch ? configured.readBranchPrs(branch) : [];
       };
       return {
-        packs,
+        packs: [coding, lifeAdmin],
         defaults: NEO_DEFAULT_PACKS,
         operations: createNeoProjectTreeOperations(core.repo, (refs) =>
           configured.readRefStates(refs)

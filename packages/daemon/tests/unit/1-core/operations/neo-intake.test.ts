@@ -119,7 +119,12 @@ describe('durable Neo intake operation', () => {
 
   test('registers the operation in the real Neo operation family', () => {
     const registry = createOperationRegistry(
-      createNeoOperations({ db, repo, installedPacks: () => [] } as unknown as NeoService)
+      createNeoOperations({
+        db,
+        repo,
+        installedPacks: () => [],
+        packOperations: [],
+      } as unknown as NeoService)
     );
     expect(registry.get('neo.message.send')?.policy?.safetyClass).toBe('human_only');
     expect(registry.get('neo.message.send')?.description).toContain('does not mean');
