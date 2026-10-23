@@ -214,8 +214,7 @@ describe('claude-desktop start', () => {
       '--permission-mode',
       'bypassPermissions',
     ]);
-    expect(spawned[0]).toContain('--model');
-    expect(spawned[0]).toContain('haiku');
+    expect(spawned[0]).not.toContain('--model');
     expect(spawned[0].at(-1)).not.toContain(request.message);
     expect(spawned[1]).toEqual([
       'script',

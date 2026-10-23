@@ -16,6 +16,7 @@ import {
   type ClaudeRecordCache,
   type ClaudeLiveSession,
   claudeDirectInput,
+  claudeNativeInput,
   claudeInputEvidence,
   claudeTranscriptState,
   createClaudeDesktopAdapter,
@@ -678,6 +679,26 @@ describe('claude-desktop adapter against the app session records', () => {
     }).find({ includeClosed: true, limit: 20 });
     rmSync(archivedOnly, { recursive: true, force: true });
     expect(asked).toBe(false);
+  });
+
+  test('explicit status observes a new permission wait without reusing the previous idle state', async () => {
+    let pending = false;
+    const driver = adapter(() => [
+      {
+        sessionId: 'cli-a1',
+        pid: 1,
+        owner: 'desktop',
+        status: pending ? 'waiting' : 'idle',
+        ...(pending ? { waitingFor: 'permission prompt' } : {}),
+      },
+    ]);
+    const ref = { adapter: 'claude-desktop', id: 'local_a1' };
+    expect(await driver.status!(ref)).toMatchObject({ ok: true, value: { status: 'done' } });
+    pending = true;
+    expect(await driver.status!(ref)).toMatchObject({
+      ok: true,
+      value: { status: 'needs_you', waitingFor: 'permission prompt' },
+    });
   });
 
   test('status reports live state and the last reply from the transcript', async () => {
@@ -1444,5 +1465,38 @@ describe('claudeInputEvidence', () => {
       receipt,
       state: 'unavailable',
     });
+  });
+});
+
+describe('native Desktop message confirmation', () => {
+  test('requires the actual helper, user receipt and complete message rather than a matching prefix', () => {
+    const message = 'Same opening line\nComplete quoted "tail" 😀';
+    const entry = (helper: string, text: string, type = 'user') =>
+      JSON.stringify({
+        type,
+        uuid: 'native-task',
+        timestamp: '2026-10-22T23:00:00.000Z',
+        message: {
+          content: `<system-reminder>Desktop</system-reminder>\n<cross-session-message from="${helper}" name="desktop-wake">\n${text}\n</cross-session-message>`,
+        },
+      });
+    expect(claudeNativeInput([entry('local_helper', message)], 'local_helper', message)).toEqual({
+      inputId: 'native-task',
+      at: Date.parse('2026-10-22T23:00:00.000Z'),
+    });
+    expect(
+      claudeNativeInput([entry('local_other', message)], 'local_helper', message)
+    ).toBeUndefined();
+    expect(
+      claudeNativeInput(
+        [entry('local_helper', 'Same opening line\nDifferent tail')],
+        'local_helper',
+        message
+      )
+    ).toBeUndefined();
+    expect(
+      claudeNativeInput([entry('local_helper', message, 'assistant')], 'local_helper', message)
+    ).toBeUndefined();
+    expect(claudeNativeInput(['{bad'], 'local_helper', message)).toBeUndefined();
   });
 });

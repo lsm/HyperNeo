@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
@@ -121,33 +121,24 @@ describe('runClaudeRemoteControlRequest', () => {
 
   const relayed = () => spawned.find((call) => call.args.includes('HyperNeo relay'))?.args.at(-1);
 
-  test('uses the injected inbox with its reply context for a confirmed CLI helper', async () => {
+  test('refuses a CLI-owned RC helper without sending or changing its permissions', async () => {
     write(record('rc', { title: 'rc-toggle', cwd: '/Users/test' }));
     live = [{ sessionId: 'cli-rc', status: 'idle', pid: 1, owner: 'cli' }];
-    const calls: unknown[] = [];
-    const context = { from: 'session:origin', caller: { source: 'internal' as const } };
-    const transcripts = join(dir, 'projects', '-Users-test');
-    mkdirSync(transcripts, { recursive: true });
-    const receipt = { executionId: 'cli-rc', inputId: 'rc-in' };
-    const configured = {
-      ...deps(),
-      sendInbox: async (...args: unknown[]) => {
-        calls.push(args);
-        appendFileSync(
-          join(transcripts, 'cli-rc.jsonl'),
-          `${JSON.stringify({ type: 'user', uuid: 'rc-in' })}\n`
-        );
-        return {
-          ok: true as const,
-          value: { delivered: false, unconfirmed: true as const, receipt },
-        };
-      },
-    };
+    let sends = 0;
     expect(
-      await runClaudeRemoteControlRequest(target, configured, new Map(), context)
-    ).toMatchObject({ ok: true, value: { delivered: true, receipt } });
-    expect(calls).toHaveLength(1);
-    expect(calls[0]).toEqual(['cli-rc', expect.stringContaining('local_t1'), context]);
+      await runClaudeRemoteControlRequest(
+        target,
+        {
+          ...deps(),
+          sendInbox: async () => {
+            sends++;
+            return { ok: true, value: { delivered: true } };
+          },
+        },
+        new Map()
+      )
+    ).toMatchObject({ ok: false, reason: 'unsupported' });
+    expect(sends).toBe(0);
     expect(spawned).toEqual([]);
   });
 
@@ -159,27 +150,13 @@ describe('runClaudeRemoteControlRequest', () => {
     expect(relayed()).toBeUndefined();
   });
 
-  test('creates rc-toggle with its brief when there is none', async () => {
-    const outcome = await runClaudeRemoteControlRequest(target, deps(), new Map());
-    expect(outcome).toMatchObject({ ok: false, reason: 'unsupported' });
-    const created = spawned[0];
-    expect(created.cwd).toBe('/Users/test');
-    expect(created.args.slice(0, 11)).toEqual([
-      'claude',
-      '-p',
-      '--session-id',
-      'new-rc',
-      '-n',
-      'rc-toggle',
-      '--permission-mode',
-      'bypassPermissions',
-      '--model',
-      'haiku',
-      '--',
-    ]);
-    expect(created.args.at(-1)).toContain('You are rc-toggle.');
-    expect(spawned[1].args.slice(-3)).toEqual(['--desktop', '--resume', 'new-rc']);
-    expect(relayed()).toBeUndefined();
+  test('requires the existing authorized rc-toggle instead of creating a replacement', async () => {
+    expect(await runClaudeRemoteControlRequest(target, deps(), new Map())).toMatchObject({
+      ok: false,
+      reason: 'not_delivered',
+      detail: expect.stringContaining('existing authorized rc-toggle'),
+    });
+    expect(spawned).toEqual([]);
   });
 
   test('leaves a session that already has its Remote Control set alone', async () => {
