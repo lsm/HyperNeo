@@ -417,6 +417,28 @@ describe('MessageQueue', () => {
       expect(queue.size()).toBe(0);
     });
 
+    it('waits for an async onMessageYielded before yielding, and rejects on its failure', async () => {
+      queue.start();
+      let persisted = false;
+      queue.onMessageYielded = async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        persisted = true;
+      };
+      queue.enqueueWithId('msg-async-yield', 'Hello');
+      const generator = queue.messageGenerator(testSessionId);
+      const result = await generator.next();
+      expect(persisted).toBe(true);
+      result.value.onSent();
+
+      const callbackError = new Error('async persistence failed');
+      queue.onMessageYielded = async () => {
+        throw callbackError;
+      };
+      const rejection = queue.enqueueWithId('msg-async-fail', 'Hello').catch((error) => error);
+      await expect(generator.next()).rejects.toBe(callbackError);
+      expect(await rejection).toBe(callbackError);
+    });
+
     it('size() counts messages shifted out and yielded but not yet acknowledged', async () => {
       queue.start();
       queue.enqueueWithId('msg-inflight-size', 'Hello');
