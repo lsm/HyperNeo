@@ -35,6 +35,7 @@ interface QueuePreviewTrayProps {
   currentTurnTotal?: number;
   nextTurnTotal?: number;
   pendingModel?: string | null;
+  onCancelPendingModel?: () => void;
   className?: string;
   onDeferMessage?: (message: QueuePreviewMessage) => void;
   onPromoteMessage?: (message: QueuePreviewMessage) => void;
@@ -156,6 +157,7 @@ export function QueuePreviewTray({
   currentTurnTotal,
   nextTurnTotal,
   pendingModel,
+  onCancelPendingModel,
   className = '',
   onDeferMessage,
   onPromoteMessage,
@@ -231,6 +233,18 @@ export function QueuePreviewTray({
                 >
                   {pendingModel} · {t('composer.switchesNextTurn')}
                 </p>
+                {onCancelPendingModel && (
+                  <button
+                    type="button"
+                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-fg-faint transition-colors hover:bg-danger/15 hover:text-danger-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/60"
+                    title="Cancel"
+                    aria-label={`Cancel the switch to ${pendingModel}`}
+                    data-testid="cancel-pending-model"
+                    onClick={onCancelPendingModel}
+                  >
+                    <TrashIcon />
+                  </button>
+                )}
               </div>
             </div>
           )}

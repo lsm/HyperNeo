@@ -637,6 +637,15 @@ export function setupSessionHandlers(
     return result;
   });
 
+  messageHub.onRequest('session.model.cancelPending', async (data) => {
+    const { sessionId: targetSessionId } = data as { sessionId: string };
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
+    if (!agentSession) {
+      throw new Error('Session not found');
+    }
+    return agentSession.cancelPendingModelSwitch();
+  });
+
   messageHub.onRequest('session.coordinator.switch', async (data) => {
     const { sessionId: targetSessionId, coordinatorMode } = data as {
       sessionId: string;

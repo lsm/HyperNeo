@@ -932,6 +932,16 @@ export default function MessageInput({
     [refreshQueuedMessages, sessionId]
   );
 
+  const handleCancelPendingModel = useCallback(async () => {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) return;
+    try {
+      await hub.request('session.model.cancelPending', { sessionId });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    }
+  }, [sessionId]);
+
   const handlePromoteQueuedMessage = useCallback(
     async (queued: QueuePreviewMessage) => {
       const hub = connectionManager.getHubIfConnected();
@@ -1244,6 +1254,9 @@ export default function MessageInput({
             !disabled && (
               <QueuePreviewTray
                 pendingModel={pendingModelName}
+                onCancelPendingModel={() => {
+                  void handleCancelPendingModel();
+                }}
                 currentTurnMessages={queuedForCurrentTurn}
                 nextTurnMessages={queuedForNextTurn}
                 currentTurnTotal={queuedCurrentTurnTotal}

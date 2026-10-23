@@ -181,4 +181,18 @@ describe('QueuePreviewTray — pending model row', () => {
     );
     expect(without.queryByTestId('queued-pending-model')).toBeNull();
   });
+
+  it('cancels the pending switch from its row', () => {
+    const onCancel = vi.fn();
+    const { getByTestId } = render(
+      <QueuePreviewTray
+        currentTurnMessages={[]}
+        nextTurnMessages={[]}
+        pendingModel="Opus 5.5"
+        onCancelPendingModel={onCancel}
+      />
+    );
+    fireEvent.click(getByTestId('cancel-pending-model'));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
 });
