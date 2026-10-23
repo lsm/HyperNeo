@@ -67,6 +67,15 @@ export class SDKRuntimeConfig {
     }
   }
 
+  async applyThinking(update: { maxThinkingTokens?: number; effortLevel?: string }): Promise<void> {
+    const { queryObject } = this.ctx;
+    if (!queryObject) return;
+    if (update.maxThinkingTokens !== undefined)
+      await queryObject.setMaxThinkingTokens?.(update.maxThinkingTokens);
+    if (update.effortLevel)
+      await queryObject.applyFlagSettings?.({ effortLevel: update.effortLevel });
+  }
+
   async setPermissionMode(mode: string): Promise<ConfigUpdateResult> {
     const { session, db, internalEventBus, logger, queryObject, firstMessageReceived } = this.ctx;
 

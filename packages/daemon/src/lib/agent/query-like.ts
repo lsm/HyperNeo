@@ -19,6 +19,7 @@ export type QueryLike = AsyncIterable<SDKMessage> & {
   supportedModels?(): Promise<SDKModelInfo[]>;
   getContextUsage?(): Promise<SDKControlGetContextUsageResponse>;
   setMaxThinkingTokens?(tokens: number | null): Promise<void>;
+  applyFlagSettings?(settings: { effortLevel?: string | null }): Promise<void>;
   setPermissionMode?(mode: string): Promise<void>;
   mcpServerStatus?(): Promise<unknown[]>;
   rewindFiles(userMessageId: string, options?: { dryRun?: boolean }): Promise<RewindFilesResult>;
