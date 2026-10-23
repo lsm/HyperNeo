@@ -130,6 +130,7 @@ export class WorkerAgentMemoryEmbedder implements AgentMemoryEmbedder {
         this.retryAt = 0;
         this.failures = 0;
         this.loggedFailure = null;
+        log.info('Embeddings ready', this.model);
         loaded?.();
       } else if ('loadError' in data)
         lose(new Error(`embedding model failed to load: ${data.loadError}`), data.retryable);
