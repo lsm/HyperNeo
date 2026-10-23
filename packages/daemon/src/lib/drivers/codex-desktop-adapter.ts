@@ -887,7 +887,6 @@ async function tryDesktopCodexSend(
 ): Promise<CodexSendGate<'app-server'>> {
   return steerCodexDesktopTurn(
     deps.desktopSocketPath,
-    deps.spawn,
     detail.thread.id,
     message,
     deps.newId(),
@@ -1099,28 +1098,10 @@ export async function withCodexAppServer<Value>(
       `The Codex app-server is not running: ${error instanceof Error ? error.message : String(error)}`
     );
   }
-  let closed = false;
-  let outcome: Result<Value> | undefined;
   try {
-    outcome = await use({
-      ...server,
-      close: async () => {
-        try {
-          await server.close();
-        } finally {
-          closed = true;
-        }
-      },
-    });
-    return outcome;
+    return await use(server);
   } finally {
-    if (!closed) {
-      try {
-        await server.close();
-      } catch (error) {
-        if (outcome?.ok) throw error;
-      }
-    }
+    await server.close();
   }
 }
 

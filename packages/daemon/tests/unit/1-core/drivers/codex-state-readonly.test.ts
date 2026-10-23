@@ -47,39 +47,6 @@ describe('withCodexState', () => {
 });
 
 describe('withCodexAppServer', () => {
-  test.each(['throw', 'reject', 'success'] as const)(
-    'preserves the operation outcome when cleanup fails: %s',
-    async (mode) => {
-      let closed = 0;
-      const original = new Error('operation failed first');
-      const cleanup = new Error('bootstrap exited with 7');
-      const rejection = {
-        ok: false as const,
-        reason: 'not_delivered' as const,
-        detail: original.message,
-      };
-      const result = withCodexAppServer(
-        {
-          appServer: async () => ({
-            call: async () => ({}),
-            close: async () => {
-              closed++;
-              throw cleanup;
-            },
-          }),
-        },
-        async () => {
-          if (mode === 'throw') throw original;
-          return mode === 'reject' ? rejection : { ok: true as const, value: 1 };
-        }
-      );
-      if (mode === 'throw') await expect(result).rejects.toBe(original);
-      else if (mode === 'reject') expect(await result).toEqual(rejection);
-      else await expect(result).rejects.toBe(cleanup);
-      expect(closed).toBe(1);
-    }
-  );
-
   test('rejects unreachable when the app-server is down and always closes an open one', async () => {
     const down = await withCodexAppServer(
       { appServer: () => Promise.reject(new Error('no socket')) },

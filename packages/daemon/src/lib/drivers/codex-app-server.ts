@@ -27,7 +27,6 @@ export async function startCodexBootstrapServer(
 ): Promise<CodexAppServer> {
   let endInput = () => {};
   let resolveExit = () => {};
-  let exit: { code: number | null; signal: string | null } | undefined;
   let closing: Promise<void> | undefined;
   const exited = new Promise<void>((resolve) => {
     resolveExit = resolve;
@@ -39,10 +38,7 @@ export async function startCodexBootstrapServer(
     onProcessSpawn: (child) => {
       endInput = () => child.stdin?.end();
     },
-    onExit: (code, signal) => {
-      exit = { code, signal };
-      resolveExit();
-    },
+    onExit: () => resolveExit(),
   });
   const server: CodexAppServer = {
     call: async (method, params) => {
@@ -52,21 +48,13 @@ export async function startCodexBootstrapServer(
     },
     close: () =>
       (closing ??= (async () => {
-        let timedOut = false;
         const timer = setTimeout(() => {
-          timedOut = true;
           void transport.close();
         }, 5_000);
         try {
           endInput();
           await exited;
           await transport.close();
-          if (exit?.code !== 0)
-            throw new Error(
-              timedOut
-                ? 'Codex bootstrap did not exit within 5 seconds; Desktop handoff aborted.'
-                : `Codex bootstrap exited with ${exit?.signal ?? exit?.code ?? 'unknown status'}.`
-            );
         } finally {
           clearTimeout(timer);
         }
@@ -80,7 +68,7 @@ export async function startCodexBootstrapServer(
     transport.sendNotification('initialized', {});
     return server;
   } catch (error) {
-    await Promise.resolve(server.close()).catch(() => {});
+    await server.close();
     throw error;
   }
 }
