@@ -9,9 +9,9 @@ Chromium executable, always launched headless with a fresh profile.
 The helper creates only synthetic Neo/session goals and reminders through RPC;
 last-outcome/skip/nudge values are explicit DB fixtures, not proof of wake delivery.
 The browser opens both `/neo` and `/session/<id>` at 1280/390px. Each strip starts
-folded and shows only its own target's rows. Use its shared more button (the summary text is inert), inspect interval/cron,
+folded and shows only its own target's rows. Expand it, inspect interval/cron,
 next/last timestamps, skip reason and nudge distance (or “Nudge due” after the
-threshold), then use the goal row's shared more button for its read-only definition. Pause/resume must update
+threshold), then open the goal title's read-only definition. Pause/resume must update
 both UI and a fresh real RPC read.
 The helper also opens a synthetic Space session route: no strip or schedule list
 RPC may be present there, including after focus. `reproduce` as the final browser

@@ -155,7 +155,9 @@ function GoalList({ sessionId }: { sessionId: string }) {
             <span class="break-words text-xs text-fg-muted">
               {effect === null ? t('goals.noJournal') : effect}
             </span>
-            {selected === goal.id && <GoalDefinition ownerSessionId={sessionId} goalId={goal.id} />}
+            {selected === goal.id && (
+              <GoalDefinition ownerSessionId={sessionId} goalId={goal.id} explicit />
+            )}
             <ContentDisclosureControl
               expanded={selected === goal.id}
               onToggle={() => setSelected(selected === goal.id ? null : goal.id)}

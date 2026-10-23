@@ -68,7 +68,7 @@ afterEach(() => {
 });
 async function open() {
   await screen.findByText('Ship guide');
-  fireEvent.click(screen.getByRole('button', { name: 'more — Schedules' }));
+  fireEvent.click(screen.getByText('Schedules'));
 }
 
 describe('SessionSchedules', () => {
@@ -109,7 +109,7 @@ describe('SessionSchedules', () => {
   it('opens the linked goal definition with its owner and done-test', async () => {
     render(<SessionSchedules sessionId="root" />);
     await open();
-    fireEvent.click(screen.getByRole('button', { name: 'more — Ship guide' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Ship guide' }));
     await screen.findByText('Guide is public');
     expect(screen.getByText('Publish for adopters.')).toBeTruthy();
     expect(request).toHaveBeenCalledWith('operation.invoke', {
@@ -133,7 +133,7 @@ describe('SessionSchedules', () => {
     ];
     render(<SessionSchedules sessionId="root" />);
     await screen.findByText('Check release');
-    fireEvent.click(screen.getByRole('button', { name: 'more — Schedules' }));
+    fireEvent.click(screen.getByText('Schedules'));
     expect(screen.getByText('0 9 * * * · Asia/Shanghai')).toBeTruthy();
     expect(screen.getByText('Source unavailable')).toBeTruthy();
     expect(screen.getByText(/Session closed/)).toBeTruthy();
@@ -196,7 +196,7 @@ describe('SessionSchedules', () => {
         await vi.advanceTimersByTimeAsync(1);
       });
       const details = container.querySelector('details')!;
-      fireEvent.click(screen.getByRole('button', { name: 'more — Schedules' }));
+      details.open = true;
       rows = [{ ...row, dueCount: 0, lastOutcome: 'fired', lastSkipReason: null }];
       await act(async () => {
         await vi.advanceTimersByTimeAsync(30000);
@@ -216,7 +216,7 @@ describe('SessionSchedules', () => {
     render(<SessionSchedules sessionId="root" />);
     await open();
     request.mockResolvedValueOnce({ accepted: false, reason: 'Goal no longer exists' });
-    fireEvent.click(screen.getByRole('button', { name: 'more — Ship guide' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Ship guide' }));
     expect((await screen.findByRole('alert')).textContent).toContain('Goal no longer exists');
     expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
   });
@@ -238,15 +238,15 @@ describe('SessionSchedules', () => {
     const { container } = render(<SessionSchedules sessionId="root" />);
     await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
     const summary = container.querySelector('summary')!;
-    expect(summary.querySelector('span')?.textContent?.trim()).toBe('Schedules');
+    expect(summary.textContent?.trim()).toBe('Schedules');
     reject(new Error('Read unavailable'));
     await screen.findByText('Read unavailable');
-    expect(summary.querySelector('span')?.textContent?.trim()).toBe('Schedules');
+    expect(summary.textContent?.trim()).toBe('Schedules');
     rows = [];
-    fireEvent.click(screen.getByRole('button', { name: 'more — Schedules' }));
+    fireEvent.click(summary);
     fireEvent.click(screen.getByRole('button', { name: 'Refresh schedules' }));
     await screen.findByText('No schedules');
-    expect(summary.querySelector('span')?.textContent?.trim()).toBe('Schedules · 0');
+    expect(summary.textContent?.trim()).toBe('Schedules · 0');
   });
   it.each([
     ['en', 'Reset — new progress'],
