@@ -381,10 +381,10 @@ export class AnthropicProvider implements Provider {
   }
 
   convertSdkModels(sdkModels: SdkModelRow[]): ModelInfo[] {
-    return sdkModels
+    const models = sdkModels
       .filter((sdkModel) => isAnthropicSdkModelId(sdkModel.value))
       .map((sdkModel) => ({
-        id: sdkModel.value,
+        id: sdkModel.value === 'default' ? 'default' : (sdkModel.resolvedModel ?? sdkModel.value),
         name: sdkModel.displayName || sdkModel.value,
         alias: sdkModel.value,
         family: anthropicFamily(
@@ -399,6 +399,10 @@ export class AnthropicProvider implements Provider {
           ? { effortLevels: sdkModel.supportedEffortLevels }
           : {}),
       }));
+    return models.filter((model) => {
+      const same = models.filter(({ id }) => id === model.id);
+      return (same.find(({ alias }) => alias !== model.id) ?? same[0]) === model;
+    });
   }
 
   getModelEffortLevels(modelId: string): ModelInfo['effortLevels'] {
