@@ -27,7 +27,13 @@ const Create = z.object({
   target: WorkRefSchema,
   cadence: SessionScheduleCadenceSchema,
   note: z.string().trim().min(1).max(2000),
-  nudgeEvery: z.number().int().min(1).max(100).default(1),
+  nudgeEvery: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .default(1)
+    .describe('Legacy compatibility only; never forces a turn when facts are unchanged.'),
 });
 const List = z.object({ target: WorkRefSchema.optional() });
 const ById = z.object({ scheduleId: z.string().min(1) });
@@ -154,7 +160,7 @@ export function createSessionScheduleOperations(scheduler: SessionScheduler) {
     defineOperation({
       name: 'schedule.session.create',
       description:
-        'Wake a session on a cadence with a reminder note: cadence every (everyMs, at least one minute) or cron (cron, timezone). The target is a work ref from work.find. Neo or the user only.',
+        'Create a fact-driven reminder schedule: cadence every (everyMs, at least one minute) or cron (cron, timezone) sets check times, not forced turns. After the first delivery, unchanged reminders stay quiet and back off; due time is not a new fact. nudgeEvery is legacy compatibility only. The target is a work ref from work.find. Neo or the user only.',
       inputSchema: Create,
       resultSchema: ScheduleResult,
       policy: policy('mutate'),
