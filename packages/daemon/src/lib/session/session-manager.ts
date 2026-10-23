@@ -201,10 +201,10 @@ export class SessionManager {
     return agentSession;
   }
 
-  private preserveResetCostBaseline(
+  private async preserveResetCostBaseline(
     agentSession: AgentSession,
     persistedSession: Session
-  ): Session {
+  ): Promise<Session> {
     const currentSession = agentSession.getSessionData();
     const currentMetadata = currentSession.metadata ?? {};
     const lastSdkCost = currentMetadata.lastSdkCost || 0;
@@ -216,7 +216,7 @@ export class SessionManager {
       costBaseline: costBaseline + lastSdkCost,
       lastSdkCost: 0,
     };
-    this.db.updateSession(currentSession.id, { metadata });
+    await this.db.updateSession(currentSession.id, { metadata });
     return { ...persistedSession, metadata };
   }
 
@@ -277,7 +277,7 @@ export class SessionManager {
       if (!persistedSession) {
         throw new Error(`Session not found: ${sessionId}`);
       }
-      const sessionForFreshInstance = this.preserveResetCostBaseline(
+      const sessionForFreshInstance = await this.preserveResetCostBaseline(
         agentSession,
         persistedSession
       );
@@ -882,7 +882,7 @@ export class SessionManager {
   }
 
   private async interruptProviderSession(sessionId: string, session?: Session): Promise<void> {
-    this.db.updateSession(sessionId, {
+    await this.db.updateSession(sessionId, {
       acpSessionId: undefined,
       ...(session?.metadata?.acpContextUsageEstimate !== undefined
         ? {

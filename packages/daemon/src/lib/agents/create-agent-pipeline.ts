@@ -22,7 +22,7 @@ export interface CreateSpaceAgentDeps extends Dependencies {
   listDisplayNames(spaceId: string): string[];
   createAgent(params: CreateSpaceAgentParams): SpaceAgent;
   seedTemplateExtras?(agent: SpaceAgent, template: SpaceAgentTemplate): void;
-  stampSession?(sessionId: string, agent: SpaceAgent): void;
+  stampSession?(sessionId: string, agent: SpaceAgent): Promise<void> | undefined;
   publishCreated(agent: SpaceAgent): Promise<void>;
   validateTools(tools: string[]): string | null;
   validateModel(model: string, provider: string | null): Promise<string | null>;
@@ -288,12 +288,12 @@ function classifyPersistenceCollision(
   return null;
 }
 
-export function stampBoundSession(
+export async function stampBoundSession(
   agent: SpaceAgent,
   request: CreateSpaceAgentInput,
   stampSession: CreateSpaceAgentDeps['stampSession']
-): SpaceAgent {
-  if (request.sessionId && stampSession) stampSession(request.sessionId, agent);
+): Promise<SpaceAgent> {
+  if (request.sessionId && stampSession) await stampSession(request.sessionId, agent);
   return agent;
 }
 

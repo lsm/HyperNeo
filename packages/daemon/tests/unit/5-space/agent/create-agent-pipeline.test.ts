@@ -699,7 +699,9 @@ it('rejects a task-owned session', async () => {
 it('stamps the bound session with the created agent before publishing', async () => {
   const h = makeHarness();
   const order: string[] = [];
-  h.deps.stampSession = (sessionId, agent) => order.push(`stamp:${sessionId}:${agent.handle}`);
+  h.deps.stampSession = async (sessionId, agent) => {
+    order.push(`stamp:${sessionId}:${agent.handle}`);
+  };
   h.deps.publishCreated = async () => {
     order.push('publish');
   };
