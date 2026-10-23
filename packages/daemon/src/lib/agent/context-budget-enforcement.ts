@@ -1,7 +1,7 @@
-import type { SessionContextModelInfo } from '../model-service.ts';
 import type { ContextInfo, Session } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Logger } from '../logger.ts';
+import type { SessionContextModelInfo } from '../model-service.ts';
 import {
   type ContextBudgetDecision,
   contextBudgetThreshold,
@@ -144,14 +144,13 @@ export interface ContextBudgetReevaluationCtx {
   fenceProvider: string | undefined;
   queueClearEpochAtStart: number;
   userInterruptEpochAtStart: number;
-  supersededQueued: boolean;
   modelInfo: SessionContextModelInfo | null;
   compactionEnqueued: boolean;
 }
 
 export type ContextBudgetReevaluationInput = Omit<
   ContextBudgetReevaluationCtx,
-  'fenceModel' | 'fenceProvider' | 'supersededQueued' | 'modelInfo' | 'compactionEnqueued'
+  'fenceModel' | 'fenceProvider' | 'modelInfo' | 'compactionEnqueued'
 >;
 
 export function revokeSupersededCompactions(
@@ -161,7 +160,7 @@ export function revokeSupersededCompactions(
   if (revoked > 0) {
     ctx.contextTracker.clearCompactionCooldown();
   }
-  return { ...ctx, supersededQueued: revoked > 0 };
+  return ctx;
 }
 
 export async function resolveReevaluationModelInfo(
@@ -230,7 +229,6 @@ export function runContextBudgetReevaluation(
     ...input,
     fenceModel: input.session.config.model,
     fenceProvider: input.session.config.provider,
-    supersededQueued: false,
     modelInfo: null,
     compactionEnqueued: false,
   }) as Promise<ContextBudgetReevaluationCtx>;

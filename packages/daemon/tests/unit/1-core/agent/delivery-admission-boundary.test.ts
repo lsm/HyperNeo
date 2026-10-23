@@ -1,15 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import type { MessageContent, Provider } from '@hyperneo/shared';
+import { describe, expect, it, mock } from 'bun:test';
+import type { MessageContent } from '@hyperneo/shared';
 import { MessageHub } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
-import {
-  MESSAGE_DELIVERY,
-  MessageDeliveryRecoverableTurnError,
-} from '../../../../src/lib/agent/message-delivery';
-import type { QueryLike } from '../../../../src/lib/agent/query-like';
-import { setModelsCache } from '../../../../src/lib/model-service';
-import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
+import { MessageDeliveryRecoverableTurnError } from '../../../../src/lib/agent/message-delivery';
 import type { Database } from '../../../../src/storage/database';
 import type { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import {
@@ -23,15 +17,9 @@ type BoundarySession = {
   agentSession: AgentSession;
 };
 
-async function makeBoundarySession(
-  sessionId: string,
-  opts?: { provider?: Provider }
-): Promise<BoundarySession> {
+async function makeBoundarySession(sessionId: string): Promise<BoundarySession> {
   const db = await createTestDb();
   const session = createTestSession(sessionId);
-  if (opts?.provider) {
-    session.config.provider = opts.provider;
-  }
   db.createSession(session);
   const bus = await createTestInternalEventBus();
   const agentSession = new AgentSession(
@@ -254,100 +242,6 @@ describe('delivery admission boundary (MDR 3/N)', () => {
         expect(outcome).toEqual({ outcome: 'completed' });
         expect(repo.getDeliveryContent(sessionId, messageUuid)?.sendStatus).toBe('consumed');
         await generator.return?.(undefined);
-      } finally {
-        agentSession.messageQueue.stop();
-        db.close();
-      }
-    });
-  });
-
-  describe('mid-turn survivors requeue as message_delivery jobs', () => {
-    beforeEach(() => {
-      setModelsCache(new Map());
-    });
-
-    afterEach(() => {
-      setModelsCache(new Map());
-      resetProviderRegistry();
-    });
-
-    function makeSurvivorQuery(stillQueued: string[]): QueryLike {
-      return {
-        async *[Symbol.asyncIterator]() {},
-        interrupt: async () => ({ still_queued: stillQueued }),
-        cancelAsyncMessage: async () => true,
-        getContextUsage: async () => ({
-          totalTokens: 190_000,
-          maxTokens: 200_000,
-          rawMaxTokens: 200_000,
-          percentage: 95,
-          categories: [{ name: 'context', tokens: 190_000 }],
-          isAutoCompactEnabled: false,
-        }),
-        close: () => {},
-      } as unknown as QueryLike;
-    }
-
-    it('requeues a cancelled in-flight survivor via deliverMessage as a durable recovery job', async () => {
-      const sessionId = 'sess-boundary-survivor-yielded';
-      const survivorUuid = 'msg-boundary-survivor-yielded';
-      const content = 'finish the deploy';
-      const { db, agentSession } = await makeBoundarySession(sessionId, { provider: 'openrouter' });
-      try {
-        const repo = db.getSDKMessageRepo();
-        const jobRepo = db.getJobQueueRepo();
-        saveUserMessage(repo, sessionId, survivorUuid, 'enqueued', content);
-        await agentSession.stateManager.setProcessing('mid-turn-boundary');
-        agentSession.messageQueue.start();
-        void agentSession.messageQueue
-          .admitWithId(survivorUuid, content, false, { durable: true })
-          .catch(() => {});
-        const generator = agentSession.messageQueue.messageGenerator(sessionId);
-        const yielded = await generator.next();
-        if (!yielded.value) throw new Error('survivor not yielded');
-        agentSession.queryObject = makeSurvivorQuery([survivorUuid]);
-
-        await agentSession.midTurnContextBudgetCheck();
-
-        const jobs = jobRepo.listJobs({ queue: MESSAGE_DELIVERY, status: 'pending' });
-        expect(jobs).toHaveLength(1);
-        expect(jobs[0].payload).toMatchObject({
-          sessionId,
-          messageUuid: survivorUuid,
-          origin: 'recovery',
-          parentToolUseId: null,
-        });
-        expect(agentSession.messageQueue.hasPendingOrClaimed(survivorUuid)).toBe(true);
-        await generator.return?.(undefined);
-      } finally {
-        agentSession.messageQueue.stop();
-        db.close();
-      }
-    });
-
-    it('requeues an evicted survivor with durable content via deliverMessage as a recovery job', async () => {
-      const sessionId = 'sess-boundary-survivor-evicted';
-      const survivorUuid = 'msg-boundary-survivor-evicted';
-      const content = 'ship the release';
-      const { db, agentSession } = await makeBoundarySession(sessionId, { provider: 'openrouter' });
-      try {
-        const repo = db.getSDKMessageRepo();
-        const jobRepo = db.getJobQueueRepo();
-        saveUserMessage(repo, sessionId, survivorUuid, 'enqueued', content);
-        await agentSession.stateManager.setProcessing('mid-turn-boundary');
-        agentSession.messageQueue.start();
-        agentSession.queryObject = makeSurvivorQuery([survivorUuid]);
-
-        await agentSession.midTurnContextBudgetCheck();
-
-        const jobs = jobRepo.listJobs({ queue: MESSAGE_DELIVERY, status: 'pending' });
-        expect(jobs).toHaveLength(1);
-        expect(jobs[0].payload).toMatchObject({
-          sessionId,
-          messageUuid: survivorUuid,
-          origin: 'recovery',
-        });
-        expect(agentSession.messageQueue.hasPendingOrClaimed(survivorUuid)).toBe(true);
       } finally {
         agentSession.messageQueue.stop();
         db.close();

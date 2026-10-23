@@ -11,6 +11,7 @@ cd packages/daemon
 env -i HOME="$RUN/home" TMPDIR="$RUN/tmp" PATH="$PATH" NODE_ENV=test HYPERNEO_DATA_DIR="$RUN/data" \
   node_modules/.bin/vitest run tests/unit/1-core/agent/message-queue.test.ts \
   tests/unit/1-core/agent/context-budget-enforcement.test.ts \
+  tests/unit/1-core/agent/delivery-admission-boundary.test.ts \
   tests/unit/1-core/agent/agent-session.test.ts \
   tests/unit/1-core/agent/query-options-builder.test.ts \
   tests/unit/1-core/agent/sdk-message-handler.test.ts > "$RUN/evidence/unit.log" 2>&1

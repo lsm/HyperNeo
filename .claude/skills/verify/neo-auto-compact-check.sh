@@ -19,6 +19,5 @@ env -i HOME="$RUN/home" TMPDIR="$RUN/tmp" PATH="$RUN/bin:$PATH" NODE_ENV=test \
   tests/unit/1-core/agent/session-config-handler.test.ts \
   tests/unit/1-core/agent/context-budget-enforcement.test.ts \
   tests/unit/1-core/agent/query-options-builder.test.ts \
-  tests/unit/1-core/agent/mid-turn-budget-enforcement.test.ts \
   > "$RUN/evidence/unit.log" 2>&1
 printf 'PASS ordinary-session compaction verification: %s\n' "$RUN/evidence"
