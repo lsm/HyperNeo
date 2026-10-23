@@ -269,6 +269,32 @@ describe('withCodexDesktopIpc', () => {
   }
 
   describe('Desktop worker ownership', () => {
+    test('rejects a successful discovery without an owner ID without opening or starting another writer', async () => {
+      const f = await fixture((message, _socket, send) =>
+        send({
+          type: 'response',
+          requestId: message.requestId,
+          resultType: 'success',
+        })
+      );
+      const w = await driverFor(f.path, () => 0);
+      expect(
+        await w.driver.send!({ adapter: 'codex-desktop', id: 'thread-1' }, 'next task', {
+          from: 'user',
+          caller: { source: 'rpc' },
+        })
+      ).toMatchObject({
+        ok: false,
+        reason: 'not_delivered',
+        detail: expect.stringContaining('did not confirm thread ownership'),
+      });
+      expect(w.launched).toEqual([]);
+      expect(w.shared).toEqual([]);
+      expect(
+        f.seen.filter((message) => message.type === 'request').map((message) => message.method)
+      ).toEqual(['initialize', 'thread-owner-discovery']);
+    });
+
     test.each([false, true])(
       'opens an unowned saved worker in Desktop before its next turn, idle=%s',
       async (idle) => {
