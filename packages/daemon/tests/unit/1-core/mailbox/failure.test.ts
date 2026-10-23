@@ -152,6 +152,29 @@ describe('createMailboxDeadHandler', () => {
     mailbox.close();
   });
 
+  test('publishes the failed row id once an async save settles', async () => {
+    const mailbox = createMailboxTestDb();
+    const publishFailed = mock(async () => {});
+    const entry = makeEntry({ origin: 'chat', messageUuid: 'async-save' });
+    const job = claimMailboxJob(mailbox, entry);
+    const handler = createMailboxDeadHandler(() => {}, {
+      sdkMessageRepo: mailbox.sdkMessageRepo,
+      saveFailed: async (sessionId, message, origin) =>
+        mailbox.sdkMessageRepo.saveUserMessage(sessionId, message, 'failed', origin),
+      publishFailed,
+    });
+    job.status = 'dead';
+    job.error = 'mailbox: target session archived';
+
+    handler(job);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const row = mailbox.sdkRows()[0];
+    expect(row.send_status).toBe('failed');
+    expect(publishFailed).toHaveBeenCalledWith(SESSION_ID, row.id);
+    mailbox.close();
+  });
+
   test('a human inputKind failure row keeps null origin; task stays system+synthetic', async () => {
     for (const inputKind of ['human', 'task'] as const) {
       const mailbox = createMailboxTestDb();
