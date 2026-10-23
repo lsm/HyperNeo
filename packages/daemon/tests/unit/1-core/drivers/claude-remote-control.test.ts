@@ -8,6 +8,7 @@ import {
   findRcToggle,
   openRcToggle,
   requireDisconnectedTarget,
+  runClaudeDesktopWake,
   runClaudeRemoteControlRequest,
   withClaudeRemoteControl,
 } from '../../../../src/lib/drivers/claude-remote-control';
@@ -59,7 +60,7 @@ describe('requireDisconnectedTarget', () => {
   });
 });
 
-describe('runClaudeRemoteControlRequest and openRcToggle', () => {
+describe('runClaudeRemoteControlRequest, openRcToggle and runClaudeDesktopWake', () => {
   let dir: string;
   let spawned: Array<{ args: string[]; cwd?: string }>;
   let live: Array<{
@@ -130,6 +131,25 @@ describe('runClaudeRemoteControlRequest and openRcToggle', () => {
   }
 
   const relayed = () => spawned.find((call) => call.args.includes('HyperNeo relay'))?.args.at(-1);
+
+  test.each(['cli', 'unknown', 'ambiguous'] as const)(
+    'native wake refuses a %s target owner before opening or requesting any helper',
+    async (owner) => {
+      write(record('t1'));
+      live =
+        owner === 'ambiguous'
+          ? [
+              { sessionId: 'cli-t1', status: 'idle', pid: 1, owner: 'desktop' },
+              { sessionId: 'cli-t1', status: 'idle', pid: 2, owner: 'desktop' },
+            ]
+          : [{ sessionId: 'cli-t1', status: 'idle', pid: 1, owner }];
+      expect(await runClaudeDesktopWake(target, 'Do not deliver', deps())).toMatchObject({
+        ok: false,
+        reason: 'unreachable',
+      });
+      expect(spawned).toEqual([]);
+    }
+  );
 
   test('refuses a CLI-owned RC helper without sending or changing its permissions', async () => {
     write(record('rc', { title: 'rc-toggle', cwd: '/Users/test' }));

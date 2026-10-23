@@ -83,6 +83,19 @@ try {
   assert.equal(detail.value.lastReply, `Completed: ${follow}`);
   assert.equal(detail.value.inputEvidence?.transcriptState, 'completed');
   assert.equal(digest(recordPath), importedHash);
+  const nativeSessions = JSON.parse(readFileSync(join(run, 'evidence/native-sessions.json'), 'utf8')) as Array<{ id: string; pid: number }>;
+  const targetPid = nativeSessions.find(s => `local_${s.id}` === ref.id)!.pid;
+  const registration = join(run, 'home/.claude/sessions', `${targetPid}.json`);
+  const registrationBytes = readFileSync(registration, 'utf8');
+  for (const entrypoint of ['cli', 'unknown-owner']) {
+    writeFileSync(registration, JSON.stringify({ ...JSON.parse(registrationBytes), entrypoint }));
+    const before = events().length;
+    const refusedOwner = await rpc<Result<WorkDelivery>>('work.send', { ref, message: `Refuse ${entrypoint} ownership` });
+    assert(!refusedOwner.ok, `Native delivery bypassed ${entrypoint} target owner`);
+    assert.equal(refusedOwner.reason, 'unreachable');
+    assert.equal(events().length, before);
+    writeFileSync(registration, registrationBytes);
+  }
   writeFileSync(join(run, 'evidence/fault'), 'waiting');
   assert((await rpc<Result<WorkDelivery>>('work.send', { ref, message: 'Synthetic permission-bound task' })).ok);
   const waiting = await rpc<Result<WorkDetail>>('work.status', { ref });
