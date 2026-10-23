@@ -17,6 +17,7 @@ import {
   initializeProviders,
   markBuiltInProviderDisabled,
   markBuiltInProviderEnabled,
+  waitForOptionalProviderRegistration,
 } from '../../../../src/lib/providers/factory';
 import { AgentChildProcessRepository } from '../../../../src/storage/repositories/agent-child-process-repository';
 import { NeoRepository } from '../../../../src/storage/repositories/neo-repository';
@@ -6380,6 +6381,11 @@ describe('AgentSession', () => {
     it('fails each delivery once and tells the user every time when an unpinned session has no registered provider', async () => {
       const db = await createTestDb();
       const registry = initializeProviders();
+      await waitForOptionalProviderRegistration(registry);
+      const copilot = registry.get('anthropic-copilot');
+      const copilotAvailability = copilot
+        ? spyOn(copilot, 'isAvailable').mockImplementation(async () => false)
+        : undefined;
       const anthropic = registry.get('anthropic');
       markBuiltInProviderDisabled('anthropic');
       registry.unregister('anthropic');
@@ -6432,6 +6438,7 @@ describe('AgentSession', () => {
           )
         );
       } finally {
+        copilotAvailability?.mockRestore();
         markBuiltInProviderEnabled('anthropic');
         if (anthropic) registry.register(anthropic);
         db.close();
