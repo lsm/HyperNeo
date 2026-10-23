@@ -1,9 +1,8 @@
 # Daemon database: one writer, no SQLite on the main thread
 
-Status: draft for agreement between the three sessions moving the daemon's
-database work (fullstack 2 owns the gateway and this plan, ccd-dev1 owns
-`sessions`, ccd-dev2 owns `sdk_messages`). Nothing below lands until the human
-approves it.
+Status: draft. Three owners move the daemon's database work: the gateway owner
+(gateway core, this plan, the guard), the `sessions` owner and the
+`sdk_messages` owner. Nothing below lands until it is approved.
 
 ## Why
 
@@ -67,12 +66,12 @@ or a last-writer-wins column. So:
 
 | Owner | Tables | Cross-table ops it owns |
 |---|---|---|
-| ccd-dev1 | `sessions` (all columns, including `processing_state` and metadata), `session_incarnations`, session child rows deleted with a session | `updateSession` with its search-row rebuild, delete and retitle (search rows are written inside the op); `deleteSession` with `mcp_enablement`, `delivery_turn_end`, `neo_goals` and children's `parent_id`; `createSession` with its workspace-ownership check |
-| ccd-dev2 | `sdk_messages`, `sdk_message_bodies`, consumed seq, replacement edges, the delivery outbox | `saveSDKMessage` with its admission: body, replacement edges, `message_search_pending` schedule and the `sessions.visible_message_count` badge, all in one op; session teardown (mailbox failures, `cancelForSessionWithMessages`, `markDeliveryFailedByUuid`, deferred rows) as one op; `JobQueueRepository.transitionDeliverySendStatusFenced` (it writes `sdk_messages` and moves in the `sdk_messages` switch, not with the job queue); the SDK body copy |
-| fullstack 2 | gateway core, `DB_OPS`, the guard; `job_queue` (except the method above); pairing; external events; `message_search_*` flush and FTS merge; `work_feed_*`; `pack_coding_*`; `space_*`, `neo_*`, goals, evolution, agent memory, schedules and every remaining table | `SpaceTaskRepository.updateTask/archiveTask` with the terminal-task session archive (moves after the `sessions` switch); the project mirror |
+| `sessions` owner | `sessions` (all columns, including `processing_state` and metadata), `session_incarnations`, session child rows deleted with a session | `updateSession` with its search-row rebuild, delete and retitle (search rows are written inside the op); `deleteSession` with `mcp_enablement`, `delivery_turn_end`, `neo_goals` and children's `parent_id`; `createSession` with its workspace-ownership check |
+| `sdk_messages` owner | `sdk_messages`, `sdk_message_bodies`, consumed seq, replacement edges, the delivery outbox | `saveSDKMessage` with its admission: body, replacement edges, `message_search_pending` schedule and the `sessions.visible_message_count` badge, all in one op; session teardown (mailbox failures, `cancelForSessionWithMessages`, `markDeliveryFailedByUuid`, deferred rows) as one op; `JobQueueRepository.transitionDeliverySendStatusFenced` (it writes `sdk_messages` and moves in the `sdk_messages` switch, not with the job queue); the SDK body copy |
+| gateway owner | gateway core, `DB_OPS`, the guard; `job_queue` (except the method above); pairing; external events; `message_search_*` flush and FTS merge; `work_feed_*`; `pack_coding_*`; `space_*`, `neo_*`, goals, evolution, agent memory, schedules and every remaining table | `SpaceTaskRepository.updateTask/archiveTask` with the terminal-task session archive (moves after the `sessions` switch); the project mirror |
 
 `visible_message_count` is written only by message code, so it is a
-`sdk_messages` column in practice and moves with ccd-dev2's switch.
+`sdk_messages` column in practice and moves with the `sdk_messages` switch.
 
 ## Order
 
@@ -80,7 +79,7 @@ or a last-writer-wins column. So:
    (#8300), session-event writer folded in, search-index flush in batches,
    change replay with `gatewayFor(db)` and the external-event TTL sweep,
    `pack_coding_*` writers together.
-2. Async callers first (ccd-dev1 and ccd-dev2 prep PRs). These change no write
+2. Async callers first (the `sessions` and `sdk_messages` owners' prep PRs). These change no write
    location.
 3. Switches, one owner at a time: `sessions`, then `sdk_messages`, then
    `space_tasks` with its session archive, then the remaining repositories by
