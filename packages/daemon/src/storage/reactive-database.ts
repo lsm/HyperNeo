@@ -381,9 +381,24 @@ export function createReactiveDatabase(db: Database): ReactiveDatabase {
         proxiedTableWrites.push(mapping.table);
         try {
           const result = (value as (...a: unknown[]) => unknown).apply(target, args);
-          const scope = mapping.extractScope?.(args, target);
-          incrementAndEmit(mapping.table, scope);
-          return result;
+          const emit = () => incrementAndEmit(mapping.table, mapping.extractScope?.(args, target));
+          if (!(result instanceof Promise)) {
+            emit();
+            return result;
+          }
+          const batched = transactionDepth > 0;
+          if (batched) reactiveDb.beginTransaction();
+          return result.then(
+            (settled) => {
+              emit();
+              if (batched) reactiveDb.commitTransaction();
+              return settled;
+            },
+            (error: unknown) => {
+              if (batched) reactiveDb.commitTransaction();
+              throw error;
+            }
+          );
         } finally {
           proxiedTableWrites.pop();
         }
