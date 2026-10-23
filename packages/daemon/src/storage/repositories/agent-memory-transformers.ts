@@ -211,15 +211,17 @@ function configureTransformersEnv(env: TransformersModule['env'], cacheDir: stri
   env.customCache = new TransformersFileCache(cacheDir);
 
   const defaultFetch = env.fetch;
-  env.fetch = (url, options) => {
+  env.fetch = async (url, options) => {
     const urlString = url.toString();
     if (urlString.includes('huggingface.co') && urlString.includes('granite-embedding-small')) {
       const filename = urlString.split('/').pop();
       log.info('Fetching embedding model asset', filename);
-      return defaultFetch(`${GITHUB_RELEASE_BASE}/${filename}`, {
+      const response = await defaultFetch(`${GITHUB_RELEASE_BASE}/${filename}`, {
         ...withoutAuthorization(options),
         signal: prefetchAbortController?.signal,
       });
+      if (response.ok) await new TransformersFileCache(cacheDir).put(urlString, response.clone());
+      return response;
     }
     return defaultFetch(url, options);
   };
