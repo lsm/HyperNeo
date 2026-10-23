@@ -134,6 +134,27 @@ describe('session schedule firing', () => {
       expect(deliveries).toHaveLength(1);
     }
   );
+  test('upgrade still delivers source facts that changed since the stored baseline', async () => {
+    const row = create();
+    await fire(row.id);
+    new SDKMessageRepository(db).saveUserMessage(
+      'recipient',
+      {
+        type: 'user',
+        uuid: 'old-human',
+        inputKind: 'human',
+        message: { role: 'user', content: 'Earlier work' },
+        parent_tool_use_id: null,
+        session_id: 'sdk-old',
+      },
+      'consumed'
+    );
+    digest = 'new-source-facts';
+    db.exec("DELETE FROM migration_markers WHERE key = 'migration_448'");
+    runMigrations(db, () => {});
+    expect((await fire(row.id)).lastOutcome).toBe('fired');
+    expect(deliveries).toHaveLength(2);
+  });
   test('changed facts fire once, quiet wakes back off without turns, and progress resets', async () => {
     const initial = create();
     const first = await fire(initial.id);
