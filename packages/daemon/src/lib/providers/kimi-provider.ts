@@ -1,4 +1,5 @@
-import type { ModelInfo } from '@hyperneo/shared';
+import type { ModelInfo, ThinkingEffort } from '@hyperneo/shared';
+import { THINKING_EFFORTS } from '@hyperneo/shared';
 import type {
   CuratedModel,
   ListRemoteModelsOptions,
@@ -473,6 +474,10 @@ export class KimiProvider implements Provider {
 
   getModelForTier(_tier: ModelTier): string | undefined {
     return KimiProvider.DEFAULT_MODEL;
+  }
+
+  getModelEffortLevels(): ThinkingEffort[] {
+    return [...THINKING_EFFORTS];
   }
 
   getModelThinkingMode(modelId: string): 'off' | 'on' | 'granular' | undefined {

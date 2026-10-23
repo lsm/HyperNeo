@@ -1,4 +1,5 @@
-import type { ModelInfo } from '@hyperneo/shared';
+import type { ModelInfo, ThinkingEffort } from '@hyperneo/shared';
+import { THINKING_EFFORTS } from '@hyperneo/shared';
 import type {
   CuratedModel,
   ListRemoteModelsOptions,
@@ -248,6 +249,10 @@ export class DeepSeekProvider implements Provider {
 
   getModelForTier(tier: ModelTier): string | undefined {
     return tier === 'opus' ? 'deepseek-v4-pro' : 'deepseek-v4-flash';
+  }
+
+  getModelEffortLevels(): ThinkingEffort[] {
+    return [...THINKING_EFFORTS];
   }
 
   buildSdkConfig(modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {

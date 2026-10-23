@@ -8,7 +8,8 @@ import type {
   ProviderSdkConfig,
   ProviderSessionConfig,
 } from '@hyperneo/shared/provider';
-import type { ModelInfo } from '@hyperneo/shared';
+import type { ModelInfo, ThinkingEffort } from '@hyperneo/shared';
+import { THINKING_EFFORTS } from '@hyperneo/shared';
 import { probeAnthropicCompatCredentials } from './shared/credential-probe.js';
 import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 import { fetchRemoteModelList } from './shared/model-list.js';
@@ -312,6 +313,10 @@ export class GlmProvider implements Provider {
 
   getModelForTier(_tier: ModelTier): string | undefined {
     return 'glm-5-turbo';
+  }
+
+  getModelEffortLevels(): ThinkingEffort[] {
+    return [...THINKING_EFFORTS];
   }
 
   buildSdkConfig(modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
