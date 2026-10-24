@@ -609,7 +609,12 @@ export class SpaceTaskManager {
       }, 'immediate')();
       this.reactiveDb?.notifyChange('space_tasks');
     } else {
-      updated = this.taskRepo.updateTask(taskId, repoParams);
+      updated = await spaceTaskLaneFor(this.db, this.reactiveDb).call(
+        spaceTaskWrites,
+        'updateTask',
+        taskId,
+        repoParams
+      );
     }
     const depsChanged =
       resolvedParams.dependsOn !== undefined &&
