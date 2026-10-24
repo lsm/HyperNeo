@@ -12,6 +12,7 @@ const DONE_FIELDS =
   'number title headRefName headRefOid state isDraft mergeable reviewDecision closedAt createdAt';
 
 const FIELDS = `${DONE_FIELDS}
+  files(first: 100) { nodes { path } pageInfo { hasNextPage } }
   reviews(last: 30, states: [APPROVED, CHANGES_REQUESTED]) { nodes { state commit { oid } author { login } } }
   author { login __typename }
   comments(last: 10) { nodes { author { login } createdAt } }

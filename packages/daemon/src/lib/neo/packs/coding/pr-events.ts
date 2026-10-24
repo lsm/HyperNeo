@@ -20,6 +20,8 @@ export function planCodingPrEvent(row: CodingPrTransition): { key: string; text:
     key: `neo-pr-event:${row.repo}#${row.number}:${row.head}:${row.state}`,
     text: `${pr(row)} ${text}`,
   });
+  if (row.state === 'merged') return owner(`was merged on head ${head(row)}.`);
+  if (row.state === 'closed') return owner(`was closed without merging on head ${head(row)}.`);
   if (row.state === 'failing')
     return owner(`has failing CI on head ${head(row)}. Fix it and push.`);
   if (row.state === 'changes_requested')
