@@ -37,11 +37,11 @@ function snap(overrides: Partial<ProcessSnapshot> = {}): ProcessSnapshot {
   };
 }
 
-function repoWithRows(rows: PersistedAgentChild[]) {
+async function repoWithRows(rows: PersistedAgentChild[]) {
   const db = new Database(':memory:');
   runMigration264(db);
   const repo = new AgentChildProcessRepository(db);
-  for (const row of rows) repo.record(row);
+  for (const row of rows) await repo.record(row);
   return { db, repo };
 }
 
@@ -142,7 +142,7 @@ test('the plan partitions survivors from every skip reason', () => {
 });
 
 test('the sweep kills survivors and clears the record so it runs once', async () => {
-  const { db, repo } = repoWithRows([child({ pid: 1 }), child({ pid: 2 })]);
+  const { db, repo } = await repoWithRows([child({ pid: 1 }), child({ pid: 2 })]);
   const kill = mock(() => {});
 
   await sweepOrphanedAgentChildren(
@@ -163,7 +163,7 @@ test('the sweep kills survivors and clears the record so it runs once', async ()
 });
 
 test('the record is kept when the process list cannot be read', async () => {
-  const { db, repo } = repoWithRows([child({ pid: 1 })]);
+  const { db, repo } = await repoWithRows([child({ pid: 1 })]);
   const kill = mock(() => {});
   const logError = mock(() => {});
 
@@ -182,7 +182,7 @@ test('the record is kept when the process list cannot be read', async () => {
 });
 
 test('a kill that throws does not abandon the rest of the sweep', async () => {
-  const { db, repo } = repoWithRows([child({ pid: 1 }), child({ pid: 2 })]);
+  const { db, repo } = await repoWithRows([child({ pid: 1 }), child({ pid: 2 })]);
   const killed: number[] = [];
 
   await sweepOrphanedAgentChildren(
@@ -205,7 +205,7 @@ test('a kill that throws does not abandon the rest of the sweep', async () => {
 });
 
 test('nothing recorded means no process listing at all', async () => {
-  const { db, repo } = repoWithRows([]);
+  const { db, repo } = await repoWithRows([]);
   const list = mock(async () => []);
 
   await sweepOrphanedAgentChildren(
@@ -219,15 +219,15 @@ test('nothing recorded means no process listing at all', async () => {
   db.close();
 });
 
-test('the repository round-trips a child and forgets it on exit', () => {
-  const { db, repo } = repoWithRows([]);
-  repo.record(child({ pid: 7 }));
+test('the repository round-trips a child and forgets it on exit', async () => {
+  const { db, repo } = await repoWithRows([]);
+  await repo.record(child({ pid: 7 }));
   expect(repo.list()).toEqual([child({ pid: 7 })]);
 
-  repo.record(child({ pid: 7, sessionId: 'sess-2', startedAt: NOW }));
+  await repo.record(child({ pid: 7, sessionId: 'sess-2', startedAt: NOW }));
   expect(repo.list()).toEqual([child({ pid: 7, sessionId: 'sess-2', startedAt: NOW })]);
 
-  repo.forget(7);
+  await repo.forget(7);
   expect(repo.list()).toEqual([]);
   db.close();
 });
@@ -260,7 +260,7 @@ test('an orphan is killed by process group, falling back to the bare pid', () =>
 });
 
 test('a child recorded while ps is running survives the sweep (#4904 review)', async () => {
-  const { db, repo } = repoWithRows([child({ pid: 1 }), child({ pid: 2 })]);
+  const { db, repo } = await repoWithRows([child({ pid: 1 }), child({ pid: 2 })]);
   const killed: number[] = [];
 
   await sweepOrphanedAgentChildren(
@@ -269,7 +269,7 @@ test('a child recorded while ps is running survives the sweep (#4904 review)', a
     () => {},
     {
       list: async () => {
-        repo.record(child({ pid: 3, sessionId: 'spawned-during-ps' }));
+        await repo.record(child({ pid: 3, sessionId: 'spawned-during-ps' }));
         return [snap({ pid: 1 }), snap({ pid: 3 })];
       },
       kill: (pid) => killed.push(pid),
@@ -282,19 +282,23 @@ test('a child recorded while ps is running survives the sweep (#4904 review)', a
   db.close();
 });
 
-test('forgetMany removes only the pids it is given', () => {
-  const { db, repo } = repoWithRows([child({ pid: 1 }), child({ pid: 2 }), child({ pid: 3 })]);
+test('forgetMany removes only the pids it is given', async () => {
+  const { db, repo } = await repoWithRows([
+    child({ pid: 1 }),
+    child({ pid: 2 }),
+    child({ pid: 3 }),
+  ]);
 
-  repo.forgetMany([]);
+  await repo.forgetMany([]);
   expect(repo.list()).toHaveLength(3);
 
-  repo.forgetMany([1, 3]);
+  await repo.forgetMany([1, 3]);
   expect(repo.list().map((row) => row.pid)).toEqual([2]);
   db.close();
 });
 
 test('a failed record delete keeps the rows and does not abort boot (#4904 review)', async () => {
-  const { db, repo } = repoWithRows([child({ pid: 1 })]);
+  const { db, repo } = await repoWithRows([child({ pid: 1 })]);
   const logError = mock(() => {});
   repo.forgetMany = () => {
     throw new Error('SQLITE_BUSY');
@@ -312,7 +316,7 @@ test('a failed record delete keeps the rows and does not abort boot (#4904 revie
 });
 
 test('the sweep swallows any failure, not only the ones it names', async () => {
-  const { db, repo } = repoWithRows([child({ pid: 1 })]);
+  const { db, repo } = await repoWithRows([child({ pid: 1 })]);
   const logError = mock(() => {});
 
   await expect(
@@ -354,7 +358,7 @@ test('a process that is currently our own child is never killed (#4904 review)',
 });
 
 test('a reused pid respawned by this daemon survives a crash-loop restart (#4904 review)', async () => {
-  const { db, repo } = repoWithRows([child({ pid: 4242, daemonPid: 111 })]);
+  const { db, repo } = await repoWithRows([child({ pid: 4242, daemonPid: 111 })]);
   const killed: number[] = [];
 
   await sweepOrphanedAgentChildren(
@@ -373,8 +377,8 @@ test('a reused pid respawned by this daemon survives a crash-loop restart (#4904
 });
 
 test('the sweep leaves rows written by the running daemon in place', async () => {
-  const { db, repo } = repoWithRows([child({ pid: 1, daemonPid: 111 })]);
-  repo.record(child({ pid: 2, daemonPid: process.pid, sessionId: 'spawned-now' }));
+  const { db, repo } = await repoWithRows([child({ pid: 1, daemonPid: 111 })]);
+  await repo.record(child({ pid: 2, daemonPid: process.pid, sessionId: 'spawned-now' }));
 
   await sweepOrphanedAgentChildren(
     repo,
@@ -392,7 +396,7 @@ test('the sweep leaves rows written by the running daemon in place', async () =>
 });
 
 test('a platform that cannot enumerate processes keeps its records (#4904 review)', async () => {
-  const { db, repo } = repoWithRows([child({ pid: 1 }), child({ pid: 2 })]);
+  const { db, repo } = await repoWithRows([child({ pid: 1 }), child({ pid: 2 })]);
   const list = mock(async () => []);
   const kill = mock(() => {});
 

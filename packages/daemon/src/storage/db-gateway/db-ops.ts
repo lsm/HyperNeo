@@ -30,6 +30,10 @@ import {
   registerClient,
   unregisterClient,
 } from '../repositories/client-registration-repository.ts';
+import {
+  forgetAgentChildren,
+  recordAgentChild,
+} from '../repositories/agent-child-process-repository.ts';
 import { recordOperationRefusal } from '../repositories/operation-refusal-repository.ts';
 import { messageSearchIndexWrites } from '../repositories/sdk-message-repository.ts';
 import { sessionWrites } from '../repositories/session-repository.ts';
@@ -64,5 +68,7 @@ export const DB_OPS: ReadonlyMap<string, DbOp<never, unknown>> = new Map(
     removeRemoteDaemonSecret,
     registerClient,
     unregisterClient,
+    recordAgentChild,
+    forgetAgentChildren,
   ].map((op) => [op.name, op])
 );

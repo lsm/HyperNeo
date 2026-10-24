@@ -24,6 +24,10 @@ import {
   registerClient,
   unregisterClient,
 } from '../../../../src/storage/repositories/client-registration-repository';
+import {
+  forgetAgentChildren,
+  recordAgentChild,
+} from '../../../../src/storage/repositories/agent-child-process-repository';
 import { recordOperationRefusal } from '../../../../src/storage/repositories/operation-refusal-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
@@ -360,6 +364,8 @@ describe('DbGateway', () => {
     expect(DB_OPS.get(removeRemoteDaemonSecret.name)).toBe(removeRemoteDaemonSecret);
     expect(DB_OPS.get(registerClient.name)).toBe(registerClient);
     expect(DB_OPS.get(unregisterClient.name)).toBe(unregisterClient);
+    expect(DB_OPS.get(recordAgentChild.name)).toBe(recordAgentChild);
+    expect(DB_OPS.get(forgetAgentChildren.name)).toBe(forgetAgentChildren);
   });
 
   test('a Claude inbox route is upserted through the gateway', async () => {
