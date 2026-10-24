@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { vi } from 'vitest';
 import { createNodeSpawn } from '../../../../src/lib/runtime-spawn/node-backend';
 import { listProcesses } from '../../../../src/lib/process-watchdog';
+import { neoReadCheckoutPaths } from '../../../../src/lib/neo/read-access';
 import {
   createClaudeDesktopAdapter,
   launchInClaudeDesktop,
@@ -522,6 +523,20 @@ describe('claude-desktop start', () => {
     const reloaded = adapter();
     expect((await reloaded.status!({ adapter: 'claude-desktop', id: 'local_u1' })).ok).toBe(true);
     expect(readPolicy(first).permissions.deny).toContain(`Edit(/${sibling}/**)`);
+  });
+
+  test('worker repository contents cannot grant Neo write access into a prepared clone', async () => {
+    const readCheckout = join(dir, 'data/worktrees/acme/demo/neo-read');
+    mkdirSync(readCheckout, { recursive: true });
+    const result = await adapter({
+      prepareExecution: async (_preparation, { destination }) => {
+        mkdirSync(join(destination, '.git/info'), { recursive: true });
+        mkdirSync(join(destination, 'neo-read'));
+        return { ok: true, value: { directory: destination, release: async () => {} } };
+      },
+    }).start!({ ...request, preparation: { pack: 'coding', parameters: {} } }, user);
+    expect(result.ok).toBe(true);
+    expect(neoReadCheckoutPaths()).toEqual([readCheckout]);
   });
 
   test('preparing from a linked checkout also protects its main repository', async () => {
