@@ -1,5 +1,6 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { CodingStageFactsRepository } from './stage-facts.ts';
+import { CodingDeliveryFactsRepository } from './delivery-facts.ts';
 import { gatewayFor } from '../../../../storage/db-gateway/db-gateway.ts';
 import { defineRepositoryOp } from '../../../../storage/db-gateway/db-op.ts';
 import type { NeoRefState, NeoRefStateReader } from './ask-prs.ts';
@@ -32,9 +33,11 @@ export function codingPrKey(url: string): string | null {
 
 export class CodingTodoPrRepository {
   readonly stageFacts: CodingStageFactsRepository;
+  readonly deliveryFacts: CodingDeliveryFactsRepository;
 
   constructor(private readonly db: Database) {
     this.stageFacts = new CodingStageFactsRepository(db);
+    this.deliveryFacts = new CodingDeliveryFactsRepository(db);
   }
 
   stages(todoId: string) {
