@@ -1,6 +1,7 @@
 import type { Database as NodeDatabase } from './sqlite-node.ts';
 import {
   createObservedStatementProxy,
+  createObservedTransaction,
   observeExecExecution,
   SQLiteQueryObserver,
   type SQLiteQueryObservabilityOptions,
@@ -90,19 +91,21 @@ if (isBun) {
       fn: (...args: TArgs) => TReturn,
       mode: 'deferred' | 'immediate' | 'exclusive' = 'deferred'
     ): (...args: TArgs) => TReturn {
-      const txn = super.transaction(fn) as unknown as {
-        immediate?: (...args: TArgs) => TReturn;
-        exclusive?: (...args: TArgs) => TReturn;
-      } & ((...args: TArgs) => TReturn);
-      const variant =
-        mode === 'deferred' ? txn : mode === 'immediate' ? txn.immediate : txn.exclusive;
-      if (!variant) {
-        throw new Error(`bun:sqlite transaction does not expose the ${mode}() variant`);
-      }
+      const create = (body: (...args: TArgs) => TReturn) => {
+        const txn = super.transaction(body) as unknown as {
+          immediate?: (...args: TArgs) => TReturn;
+          exclusive?: (...args: TArgs) => TReturn;
+        } & ((...args: TArgs) => TReturn);
+        const variant =
+          mode === 'deferred' ? txn : mode === 'immediate' ? txn.immediate : txn.exclusive;
+        if (!variant)
+          throw new Error(`bun:sqlite transaction does not expose the ${mode}() variant`);
+        return variant;
+      };
       const observer = this.queryObserver;
-      if (!observer) return mode === 'deferred' ? txn : (...args: TArgs) => variant(...args);
-      return (...args: TArgs) =>
-        observeExecExecution(observer, 'transaction', () => variant(...args), 'transaction');
+      return observer
+        ? createObservedTransaction(observer, mode, () => this.inTransaction, create, fn)
+        : create(fn);
     }
 
     override close(): void {

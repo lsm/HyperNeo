@@ -1,4 +1,4 @@
-import { subscribeToStructuredLogs } from '../../lib/logger.ts';
+import { publishSQLiteWorkerLogs } from '../sqlite-worker-observability.ts';
 import { Database } from '../sqlite-compat.ts';
 import { ChangeRecorder } from './db-op.ts';
 import { DB_OPS } from './db-ops.ts';
@@ -9,27 +9,22 @@ const worker = globalThis as unknown as {
   postMessage(reply: DbGatewayReply): void;
 };
 let db: Database | null = null;
-let workerOperation = 'db-gateway';
-subscribeToStructuredLogs((log) => {
-  if (log.module === 'hyperneo:daemon:sqlite.query')
-    worker.postMessage({
-      log: {
-        ...log,
-        metadata:
-          log.metadata.event === 'summary' ? log.metadata : { ...log.metadata, workerOperation },
-      },
-    });
-});
+let identity: Record<string, unknown> = {};
+publishSQLiteWorkerLogs(
+  (message) => worker.postMessage(message),
+  () => identity
+);
 
 worker.onmessage = ({ data }) => {
   const { id, lane, op: name } = data;
+  identity = { workerOperation: name, workerRequestId: id };
   if (name === null) {
     db?.close();
     db = null;
     worker.postMessage({ id, result: null });
     return;
   }
-  workerOperation = name;
+
   try {
     const op = DB_OPS.get(name);
     if (!op || op.mode !== lane) throw new Error(`Unknown ${lane} DB op: ${name}`);
