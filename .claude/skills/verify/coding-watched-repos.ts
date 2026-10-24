@@ -84,6 +84,14 @@ try {
   await close(); await open();
   assert.deepEqual(await watched(), ['chosen/repo']);
   evidence.legacy = { watchList: ['chosen/repo'], laterProjectNotEnrolled: true };
+  assert.deepEqual(await call('neo.project.forget', { projectId: 'legacy' }), { ok: true, repos: ['chosen/repo', 'foreign/repo'] });
+  assert.deepEqual(await watched(), []);
+  const beforeForgetSweep = gh();
+  await service!.pack('coding')!.sweep!(Date.now());
+  assert.equal(gh(), beforeForgetSweep);
+  await close(); await open();
+  assert.deepEqual(await watched(), []);
+  evidence.projectForget = { watchList: [], additionalGithubCalls: 0, survivesRestart: true };
   evidence.passed = true;
 } finally {
   await close(); evidence.resourcesClosed = true;

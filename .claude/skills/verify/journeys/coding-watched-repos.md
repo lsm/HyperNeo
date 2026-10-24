@@ -25,3 +25,9 @@ restarts to prove it is not enrolled. The helper stops all its resources in
 suppression of retained terminal/unowned notices are pinned by
 `coding-watched-repos.test.ts`. The settings UI and owned-session automatic
 addition are follow-up slices; this journey does not claim either surface.
+
+Finally forget the synthetic legacy project through `neo.project.forget`: its
+watch must be removed, another sweep must make no GitHub call, and restart must
+keep the empty list. Unit contracts also pin refusal, shared repos, aliases,
+disabled packs and atomic rollback if unwatch storage fails. Retained ledger
+history is hidden from active reads, not deleted by forgetting a project.
