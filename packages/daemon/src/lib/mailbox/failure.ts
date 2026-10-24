@@ -117,6 +117,35 @@ function samePromptMessage(stored: SDKMessage, incoming: SDKUserMessage): boolea
   );
 }
 
+type MailboxFailureRowOutcome = { failedId?: string; uuidOwned: boolean; save?: true };
+
+export function persistExistingMailboxFailure(
+  repository: SDKMessageRepository,
+  target: SessionFailureTarget,
+  message: SDKUserMessage,
+  entryId: string,
+  onOwnershipKnown?: () => void
+): MailboxFailureRowOutcome {
+  return withBusyRetry(() => {
+    const siblings = repository.getStoredPromptsByUuid(target.sessionId, target.messageUuid);
+    onOwnershipKnown?.();
+    if (siblings.some((stored) => !samePromptMessage(stored, message))) {
+      emitUuidConflictSkip(target, entryId);
+      return { uuidOwned: false };
+    }
+    const failedRow = repository.getMessageByStatusAndUuid?.(
+      target.sessionId,
+      'failed',
+      target.messageUuid
+    );
+    const failedId =
+      repository.markDeliveryFailedByUuid(target.sessionId, target.messageUuid) ?? failedRow?.dbId;
+    return failedId === undefined && siblings.length === 0
+      ? { uuidOwned: true, save: true }
+      : { failedId, uuidOwned: true };
+  });
+}
+
 export async function persistFailedRowStage(ctx: MailboxFailureCtx): Promise<MailboxFailureCtx> {
   const target = ctx.target;
   const message = ctx.message;
@@ -125,32 +154,13 @@ export async function persistFailedRowStage(ctx: MailboxFailureCtx): Promise<Mai
   const synthetic = mailboxMessageIsSynthetic(entry.origin, entry.message);
   let ownershipKnown = false;
   try {
-    const outcome = await withBusyRetry(
-      ():
-        | { failedId?: string; uuidOwned: boolean; save?: true }
-        | Promise<{ failedId?: string; uuidOwned: boolean; save?: true }> => {
-        const siblings = ctx.deps.sdkMessageRepo.getStoredPromptsByUuid(
-          target.sessionId,
-          target.messageUuid
-        );
+    const outcome = persistExistingMailboxFailure(
+      ctx.deps.sdkMessageRepo,
+      target,
+      message,
+      entry.id,
+      () => {
         ownershipKnown = true;
-        if (siblings.some((stored) => !samePromptMessage(stored, message))) {
-          emitUuidConflictSkip(target, entry.id);
-          return { uuidOwned: false };
-        }
-        const failedRow = ctx.deps.sdkMessageRepo.getMessageByStatusAndUuid?.(
-          target.sessionId,
-          'failed',
-          target.messageUuid
-        );
-        return ctx.deps.sdkMessageRepo
-          .write('markDeliveryFailedByUuid', target.sessionId, target.messageUuid)
-          .then((writtenId) => {
-            const failedId = writtenId ?? failedRow?.dbId;
-            return failedId === undefined && siblings.length === 0
-              ? { uuidOwned: true, save: true as const }
-              : { failedId, uuidOwned: true };
-          });
       }
     );
     const failedId = outcome.save
