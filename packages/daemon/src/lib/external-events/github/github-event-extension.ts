@@ -127,6 +127,12 @@ interface GitHubEventExtensionOptions {
   reactiveDb?: ReactiveDatabase;
   autoReconcileWebhooks?: boolean;
   sessionRepoReferenced?: (owner: string, repo: string) => boolean;
+  sessionWatchRepos?: () => { owner: string; repo: string }[];
+  reportPollingHealth?: (
+    repos: GitHubWatchedRepo[],
+    reached: Set<string>,
+    now: number
+  ) => Promise<void>;
   subscribedPullRequests?: (watched: { spaceId: string; owner: string; repo: string }) => number[];
   syncReadCheckout?: (watched: GitHubPollingRepo, request: typeof fetch) => Promise<unknown>;
 }
@@ -318,6 +324,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   async start(context: ExternalEventExtensionContext): Promise<void> {
     this.context = context;
     this.stopped = false;
+    this.reconcileSessionWatches();
     if (this.options.autoReconcileWebhooks) {
       this.reconcileSweepPromise = this.reconcileManagedWebhooks()
         .catch((error) => {
@@ -1005,6 +1012,12 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private async pollEnabledSpaces(
     fetchImpl: typeof fetch = this.options.fetchImpl ?? fetch
   ): Promise<number> {
+    return this.withPollingHealth(undefined, () => this.pollEnabledSpacesCore(fetchImpl));
+  }
+
+  private async pollEnabledSpacesCore(
+    fetchImpl: typeof fetch = this.options.fetchImpl ?? fetch
+  ): Promise<number> {
     if (!this.context) return 0;
     if (!(await this.isPollingGloballyEnabled())) return 0;
     const sessionConfig = await this.context.config.getSpaceConfig(
@@ -1037,6 +1050,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     spaceId: string,
     fetchImpl: typeof fetch = this.options.fetchImpl ?? fetch
   ): Promise<number> {
+    return this.withPollingHealth(spaceId, () => this.pollSpaceCore(spaceId, fetchImpl));
+  }
+
+  private async pollSpaceCore(
+    spaceId: string,
+    fetchImpl: typeof fetch = this.options.fetchImpl ?? fetch
+  ): Promise<number> {
     if (!this.context) return 0;
     if (!(await this.isPollingGloballyEnabled())) return 0;
     if (Date.now() < this.rateLimitedUntil) {
@@ -1059,6 +1079,47 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (Date.now() < this.rateLimitedUntil) break;
     }
     return count;
+  }
+
+  private reconcileSessionWatches(): void {
+    for (const repo of this.options.sessionWatchRepos?.() ?? []) {
+      if (this.repo.getWatchedRepo(SESSION_EVENT_SCOPE, repo.owner, repo.repo)) continue;
+      this.repo.upsertWatchedRepo({
+        spaceId: SESSION_EVENT_SCOPE,
+        ...repo,
+        enabled: true,
+        pollingEnabled: true,
+        webhookEnabled: false,
+      });
+    }
+  }
+
+  private async withPollingHealth(
+    spaceId: string | undefined,
+    poll: () => Promise<number>
+  ): Promise<number> {
+    if (!(await this.isPollingGloballyEnabled())) return 0;
+    this.reconcileSessionWatches();
+    const repos = this.repo.listPollingRepos(spaceId);
+    const eligible: GitHubWatchedRepo[] = [];
+    for (const repo of repos) {
+      if (this.reapUnreferencedSessionRepo(repo)) continue;
+      const config = await this.context!.config.getSpaceConfig(repo.spaceId, this.sourceId);
+      if (config?.enabled !== false) eligible.push(repo);
+    }
+    try {
+      return await poll();
+    } finally {
+      const reached = new Set(
+        eligible
+          .filter((repo) => {
+            const current = this.repo.getWatchedRepoById(repo.id);
+            return current?.lastPollAt != null && current.lastPollAt !== repo.lastPollAt;
+          })
+          .map((repo) => repo.id)
+      );
+      await this.options.reportPollingHealth?.(eligible, reached, Date.now());
+    }
   }
 
   private async isPollingGloballyEnabled(): Promise<boolean> {
