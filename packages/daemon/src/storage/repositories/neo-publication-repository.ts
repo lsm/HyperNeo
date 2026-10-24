@@ -77,24 +77,39 @@ function appendImmutable(
         )
           return { accepted: false, reason: 'publication_conflict' };
         if (
-          current.revisions?.some((revision) => revision.revisionId === input.cardReply!.mutationId)
+          input.publicationId === (current.revisionId ?? current.publicationId) ||
+          current.revisions?.some(
+            (revision) =>
+              revision.revisionId === input.publicationId ||
+              (input.cardReply!.mutationId !== current.cardReply!.mutationId &&
+                revision.revisionId === input.cardReply!.mutationId)
+          )
         )
           return { accepted: true, created: false, publication: current };
+        const revisions = [...(current.revisions ?? [])];
+        for (const revisionId of new Set([
+          current.revisionId ?? current.publicationId,
+          current.cardReply.mutationId,
+        ])) {
+          if (revisions.some((revision) => revision.revisionId === revisionId)) continue;
+          revisions.push({
+            revisionId,
+            shortText: current.shortText,
+            fullText: current.fullText,
+            createdAt: current.editedAt ?? current.createdAt,
+            producerInput: current.answerInput ?? current.producerInput,
+            askOrigin: current.answerOrigin ?? current.askOrigin,
+            awaiting: current.awaiting,
+          });
+        }
         const next = {
-          ...input,
-          publicationId: current.publicationId,
-          revisions:
-            current.cardReply?.mutationId === input.cardReply.mutationId
-              ? current.revisions
-              : [
-                  ...(current.revisions ?? []),
-                  {
-                    revisionId: current.cardReply!.mutationId,
-                    shortText: current.shortText,
-                    fullText: current.fullText,
-                    createdAt: current.createdAt,
-                  },
-                ],
+          ...(JSON.parse(prior.payloadJson) as NeoPublicationInput),
+          shortText: input.shortText,
+          fullText: input.fullText,
+          links: input.links,
+          cardReply: input.cardReply,
+          revisionId: input.publicationId,
+          revisions,
         };
         db.prepare('UPDATE neo_publications SET payload_json = ? WHERE sequence = ?').run(
           JSON.stringify(next),

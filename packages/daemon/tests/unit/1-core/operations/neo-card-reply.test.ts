@@ -1,3 +1,5 @@
+import type { MessageHub } from '@hyperneo/shared';
+import { readNeoPublications } from '../../../../../web/src/neo/publication-client.ts';
 import { describe, expect, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat.ts';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -179,6 +181,117 @@ describe('card reply notices', () => {
       f.db.close();
     }
   });
+
+  test.each(['replacement', 'rewording', 'manual'] as const)(
+    'an edited notice survives %s without losing history or edit retry identity',
+    async (mode) => {
+      const f = setup();
+      try {
+        if (mode === 'rewording')
+          f.store.askQuestion(
+            'start',
+            'ask',
+            {
+              text: 'Start?',
+              kind: 'start',
+              options: null,
+              multiple: false,
+              noLabel: null,
+              yesLabel: null,
+              startTodos: ['todo'],
+            },
+            1
+          );
+        const initial = await f.ask({
+          replyTo: [human1],
+          ...(mode === 'rewording' ? { kind: 'start' } : {}),
+        });
+        const before = f.rows()[0];
+        const revisionId = crypto.randomUUID();
+        const origin = { sessionId: owner.sessionId!, messageId: human1 };
+        const text = { shortText: 'An edited reply', fullText: 'An edited reply in detail' };
+        expect(
+          f.publications.edit(
+            conversationId,
+            before.publicationId,
+            text,
+            '2026-10-24T16:00:00.000Z',
+            'neo',
+            origin,
+            revisionId
+          ).accepted
+        ).toBe(true);
+        f.db.exec(
+          "UPDATE neo_publications SET payload_json = json_set(payload_json, '$.awaiting', 'Human choice')"
+        );
+        if (mode === 'manual') {
+          expect(
+            f.publications.append({
+              conversationId,
+              publicationId: crypto.randomUUID(),
+              shortText: 'Manual revision',
+              fullText: 'Manual revision',
+              links: [],
+              cardReply: before.cardReply,
+            }).accepted
+          ).toBe(true);
+        } else {
+          expect(
+            (
+              await f.ask({
+                replyTo: [human1],
+                text: 'Revised question',
+                ...(mode === 'rewording' ? { kind: 'start' } : { replaces: initial.question.id }),
+              })
+            ).ok
+          ).toBe(true);
+        }
+        const current = f.rows()[0];
+        expect(current).toMatchObject({
+          publicationId: before.publicationId,
+          sequence: before.sequence,
+          editedAt: '2026-10-24T16:00:00.000Z',
+          editedBy: 'neo',
+          awaiting: 'Human choice',
+          answerInput: origin,
+          answerOrigin: origin,
+        });
+        const page = await readNeoPublications(
+          { conversationId, after: 0 },
+          async () =>
+            ({
+              request: async () => ({
+                ok: true,
+                conversationId,
+                items: f.rows(),
+                nextAfter: current.sequence,
+              }),
+            }) as unknown as MessageHub,
+          () => true
+        );
+        expect(page.state).toBe('ready');
+        expect(
+          f.publications.edit(
+            conversationId,
+            before.publicationId,
+            text,
+            '2026-10-24T16:01:00.000Z',
+            'neo',
+            origin,
+            revisionId
+          )
+        ).toMatchObject({ accepted: true, created: false });
+        expect(f.rows()).toEqual([current]);
+        const ids = [
+          current.revisionId ?? current.publicationId,
+          ...(current.revisions?.map((item) => item.revisionId) ?? []),
+        ];
+        expect(new Set(ids).size).toBe(ids.length);
+      } finally {
+        f.db.close();
+      }
+    }
+  );
 
   test('publication failure rolls the question mutation back', async () => {
     const f = setup();

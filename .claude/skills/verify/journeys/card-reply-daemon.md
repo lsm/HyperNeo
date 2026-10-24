@@ -32,3 +32,10 @@ old mutation retries after replacements/rewording, and transaction rollback when
 publication persistence fails. No web/iOS rendering or navigation, external
 provider turn, arbitrary ask.outcome/todo-text updates, credential files, live
 database/copy or live daemon are exercised. Those UI changes are separate work.
+
+The daemon proof also edits the first notice through `neo.publication.edit`
+before replacing the question. Retargeting must preserve edit metadata and
+archive the edit identity so retrying the edit neither rewinds the notice nor
+duplicates revision IDs. After restart/manual reuse, the existing web publication
+reader must still accept the entire returned page. Unit regressions exercise
+replacement, start rewording and manual reuse with retained provenance/awaiting.
