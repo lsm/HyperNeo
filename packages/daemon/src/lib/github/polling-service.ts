@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { createGitHubPollSource, type GitHubPollCollector } from './poll-source.ts';
 import type { GitHubEvent } from '@hyperneo/shared';
 import { Logger } from '../logger.ts';
 import { normalizePollingEvent } from './event-normalizer.ts';
@@ -7,6 +9,11 @@ const log = new Logger('github-polling');
 
 const DEFAULT_BASE_URL = 'https://api.github.com';
 const DEFAULT_USER_AGENT = 'HyperNeo-GitHub-Integration/1.0';
+
+type PollingOptions = Partial<PollingConfig> & {
+  token: string;
+  collectPollPage?: GitHubPollCollector;
+};
 
 interface RepoState {
   owner: string;
@@ -22,11 +29,9 @@ export class GitHubPollingService {
   private running = false;
   private isPolling = false;
   private onEvent?: (event: GitHubEvent) => Promise<void> | void;
+  private collectPollPage?: GitHubPollCollector;
 
-  constructor(
-    config: Partial<PollingConfig> & { token: string },
-    onEvent?: (event: GitHubEvent) => Promise<void> | void
-  ) {
+  constructor(config: PollingOptions, onEvent?: (event: GitHubEvent) => Promise<void> | void) {
     this.config = {
       token: config.token,
       interval: config.interval ?? 60000,
@@ -34,6 +39,7 @@ export class GitHubPollingService {
       userAgent: config.userAgent ?? DEFAULT_USER_AGENT,
     };
     this.onEvent = onEvent;
+    this.collectPollPage = config.collectPollPage;
   }
 
   start(): void {
@@ -108,8 +114,9 @@ export class GitHubPollingService {
     this.isPolling = true;
 
     try {
+      const cycle = crypto.randomUUID();
       const pollPromises = Array.from(this.repositories.values()).map((repo) =>
-        this.pollRepository(repo)
+        this.pollRepository(repo, cycle)
       );
 
       await Promise.allSettled(pollPromises);
@@ -118,15 +125,32 @@ export class GitHubPollingService {
     }
   }
 
-  private async pollRepository(state: RepoState): Promise<GitHubEvent[]> {
+  private async pollRepository(state: RepoState, cycle: string): Promise<GitHubEvent[]> {
     const key = `${state.owner}/${state.repo}`;
     const events: GitHubEvent[] = [];
 
     try {
-      const issuesEvents = await this.pollIssues(state);
+      const request = this.collectPollPage
+        ? createGitHubPollSource({
+            collection: {
+              collect: this.collectPollPage,
+              cycle,
+              credentialId: `legacy:${createHash('sha256').update(this.config.token).digest('hex')}`,
+            },
+            fetchImpl: fetch,
+            hasInjectedFetch: false,
+            hasToken: true,
+            readFailed: false,
+            credentialSource: 'GITHUB_TOKEN',
+            repo: key,
+            observe: () => {},
+            onAccessible: () => {},
+          })
+        : fetch;
+      const issuesEvents = await this.pollIssues(state, request);
       events.push(...issuesEvents);
 
-      const commentsEvents = await this.pollComments(state);
+      const commentsEvents = await this.pollComments(state, request);
       events.push(...commentsEvents);
 
       state.lastPollTime = new Date().toISOString();
@@ -145,7 +169,7 @@ export class GitHubPollingService {
     return events;
   }
 
-  private async pollIssues(state: RepoState): Promise<GitHubEvent[]> {
+  private async pollIssues(state: RepoState, request: typeof fetch): Promise<GitHubEvent[]> {
     const url = `${this.config.baseUrl}/repos/${state.owner}/${state.repo}/issues`;
     const fullName = `${state.owner}/${state.repo}`;
 
@@ -163,7 +187,7 @@ export class GitHubPollingService {
     const since =
       state.lastPollTime !== new Date(0).toISOString() ? `?since=${state.lastPollTime}` : '';
 
-    const response = await fetch(`${url}${since}`, { headers });
+    const response = await request(`${url}${since}`, { headers });
 
     this.handleRateLimit(response);
 
@@ -200,7 +224,7 @@ export class GitHubPollingService {
     return events;
   }
 
-  private async pollComments(state: RepoState): Promise<GitHubEvent[]> {
+  private async pollComments(state: RepoState, request: typeof fetch): Promise<GitHubEvent[]> {
     const url = `${this.config.baseUrl}/repos/${state.owner}/${state.repo}/issues/comments`;
     const fullName = `${state.owner}/${state.repo}`;
 
@@ -218,7 +242,7 @@ export class GitHubPollingService {
     const since =
       state.lastPollTime !== new Date(0).toISOString() ? `?since=${state.lastPollTime}` : '';
 
-    const response = await fetch(`${url}${since}`, { headers });
+    const response = await request(`${url}${since}`, { headers });
 
     this.handleRateLimit(response);
 
@@ -277,7 +301,7 @@ export class GitHubPollingService {
 }
 
 export function createPollingService(
-  config: Partial<PollingConfig> & { token: string },
+  config: PollingOptions,
   onEvent?: (event: GitHubEvent) => Promise<void> | void
 ): GitHubPollingService {
   return new GitHubPollingService(config, onEvent);
