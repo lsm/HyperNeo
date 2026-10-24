@@ -7,22 +7,27 @@ import { codexStatePath, OWN_THREADS, withCodexState } from '../../storage/codex
 
 function codexWorkspace(id: string, home: string): string | null {
   try {
-    return withCodexState(codexStatePath(home), (db) => {
-      const row = db.prepare(`SELECT cwd FROM threads WHERE id = ? AND ${OWN_THREADS}`).get(id) as {
-        cwd: string;
-      } | null;
-      return row?.cwd ?? null;
-    });
+    return withCodexState(
+      codexStatePath(home),
+      (db) => {
+        const row = db
+          .prepare(`SELECT cwd FROM threads WHERE id = ? AND ${OWN_THREADS}`)
+          .get(id) as {
+          cwd: string;
+        } | null;
+        return row?.cwd ?? null;
+      },
+      0
+    );
   } catch {
     return null;
   }
 }
 
-export function loadRegistrationBinding(
+export function loadArtifactOwnershipBinding(
   db: Database,
   daemonId: string,
-  context: ArtifactContext,
-  home = homedir()
+  context: ArtifactContext
 ): ArtifactContextBinding | null {
   const work = new NeoAskTodoRepository(db);
   const todo = context.kind === 'todo' ? work.getTodo(context.id) : null;
@@ -31,18 +36,15 @@ export function loadRegistrationBinding(
   const ref = todo ? new NeoTodoSessionRepository(db).readRef(todo.id) : null;
   if (ref?.daemon || (ref && !['hyperneo', 'codex-desktop'].includes(ref.adapter))) return null;
   if (ref?.adapter === 'codex-desktop') {
-    const workspacePath = codexWorkspace(ref.id, home);
-    return workspacePath
-      ? {
-          context,
-          daemonId,
-          neoSessionId: ask.sessionId,
-          workerSessionId: `${ref.adapter}:${ref.id}`,
-          workerRef: { adapter: ref.adapter, id: ref.id },
-          workspacePath,
-          approvedEvidenceRoots: [],
-        }
-      : null;
+    return {
+      context,
+      daemonId,
+      neoSessionId: ask.sessionId,
+      workerSessionId: `${ref.adapter}:${ref.id}`,
+      workerRef: { adapter: ref.adapter, id: ref.id },
+      workspacePath: null,
+      approvedEvidenceRoots: [],
+    };
   }
   const workerSessionId = ref?.id ?? null;
   const session = db
@@ -56,4 +58,16 @@ export function loadRegistrationBinding(
     workspacePath: session?.workspace_path ?? null,
     approvedEvidenceRoots: [],
   };
+}
+
+export function loadRegistrationBinding(
+  db: Database,
+  daemonId: string,
+  context: ArtifactContext,
+  home = homedir()
+): ArtifactContextBinding | null {
+  const binding = loadArtifactOwnershipBinding(db, daemonId, context);
+  if (!binding?.workerRef) return binding;
+  const workspacePath = codexWorkspace(binding.workerRef.id, home);
+  return workspacePath ? { ...binding, workspacePath } : null;
 }

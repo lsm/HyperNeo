@@ -18,6 +18,11 @@ denies foreign callers and outside-root files, and registers from Neo's own ask
 workspace. It proves ownership again after the todo changes worker. It always
 closes the daemon and WebSocket and retains evidence/native-registration.json.
 
+It also holds an exclusive lock on a separate synthetic native state DB: snapshot
+get/ref and multi-chunk reads still work, while changing the todo worker revokes
+access immediately. A new capture refuses the locked source promptly; admission
+and finish still reread cwd with zero busy wait. No long-lived cwd cache is used.
+
 An optional third argument names a headless browser script receiving the owned
 port and run directory; use it to open the todo's existing ArtifactCards preview.
 No new project/evidence roots, remote refs, or sensitive root exemptions apply.

@@ -1,5 +1,4 @@
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { ARTIFACT_DEFAULT_LIMITS, type ArtifactRef } from '@hyperneo/shared/types/artifact-file';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
@@ -18,7 +17,7 @@ import {
   ArtifactFileMetadataSchema,
 } from './file-contracts.ts';
 import { authorizeArtifactCaller, type ArtifactContext } from './file-policy.ts';
-import { loadRegistrationBinding } from './registration-binding.ts';
+import { loadArtifactOwnershipBinding } from './registration-binding.ts';
 import { readArtifactChunk } from './read-snapshot.ts';
 import { prepareArtifactHtml, type ArtifactHtmlAsset } from './html-preview.ts';
 import { ArtifactBundleSchema, artifactBundleLimit, bindArtifactBundle } from './bundle.ts';
@@ -36,26 +35,18 @@ const rowContext = (row: StoredArtifactFile): ArtifactContext => ({
   id: row.context_id,
 });
 
-function authorizesContext(
-  db: Database,
-  context: ArtifactContext,
-  caller: OperationCaller,
-  home: string
-) {
+function authorizesContext(db: Database, context: ArtifactContext, caller: OperationCaller) {
   const daemonId = new ArtifactFileReadRepository(db).daemonId();
-  const binding = daemonId ? loadRegistrationBinding(db, daemonId, context, home) : null;
+  const binding = daemonId ? loadArtifactOwnershipBinding(db, daemonId, context) : null;
   return !!binding && 'value' in authorizeArtifactCaller(binding, caller);
 }
 
 export type ArtifactRefReader = (artifactId: string, caller: OperationCaller) => ArtifactRef | null;
 
-export function createArtifactRefReader(
-  database: () => Database,
-  home = homedir()
-): ArtifactRefReader {
+export function createArtifactRefReader(database: () => Database): ArtifactRefReader {
   return (artifactId, caller) => {
     const row = new ArtifactFileReadRepository(database()).get(artifactId);
-    return row && authorizesContext(database(), rowContext(row), caller, home)
+    return row && authorizesContext(database(), rowContext(row), caller)
       ? (JSON.parse(row.receipt).artifact as ArtifactRef)
       : null;
   };
@@ -64,12 +55,11 @@ export function createArtifactRefReader(
 export function createArtifactReadOperations(
   database: () => Database,
   data = getDataDir(),
-  readChunk = readArtifactChunk,
-  home = homedir()
+  readChunk = readArtifactChunk
 ) {
   const repo = () => new ArtifactFileReadRepository(database());
   function authorizeContext(context: ArtifactContext, caller: OperationCaller) {
-    return authorizesContext(database(), context, caller, home)
+    return authorizesContext(database(), context, caller)
       ? { value: context }
       : { reason: unavailable() };
   }

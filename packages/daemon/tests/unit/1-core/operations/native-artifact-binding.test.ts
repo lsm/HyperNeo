@@ -69,7 +69,7 @@ afterEach(() => {
 });
 
 describe('native artifact workspace ownership', () => {
-  test('keeps a custom home across registration and later authorization', () => {
+  test('keeps custom-home capture and owned snapshot reads working during native locks', () => {
     const proof = join(root, 'proof');
     mkdirSync(join(proof, 'home'), { recursive: true });
     execFileSync(
@@ -98,7 +98,12 @@ describe('native artifact workspace ownership', () => {
     );
     expect(
       JSON.parse(readFileSync(join(proof, 'evidence/native-registration.json'), 'utf8'))
-    ).toMatchObject({ passed: true, customHomeConsistent: true });
+    ).toMatchObject({
+      passed: true,
+      customHomeConsistent: true,
+      snapshotReadsUnderNativeLock: true,
+      revocationUnderNativeLock: true,
+    });
   });
 
   test('binds only the native thread cwd and preserves producer identity', () => {

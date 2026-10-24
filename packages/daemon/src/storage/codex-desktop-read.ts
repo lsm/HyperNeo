@@ -17,14 +17,14 @@ const BUSY_TIMEOUT_MS = 2_000;
 
 export const codexStatePath = (home: string): string => join(home, '.codex', 'state_5.sqlite');
 
-function readCodexStateOnce<T>(path: string, read: (db: Database) => T): T {
+function readCodexStateOnce<T>(path: string, read: (db: Database) => T, busyTimeoutMs: number): T {
   const db = runLagPhase(
     'scanner:codex_desktop:open',
     () => new Database(path, { readonly: true })
   );
   try {
     runLagPhase('scanner:codex_desktop:configure', () =>
-      db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`)
+      db.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}`)
     );
     return runLagPhase('scanner:codex_desktop:query', () => read(db));
   } finally {
@@ -32,12 +32,16 @@ function readCodexStateOnce<T>(path: string, read: (db: Database) => T): T {
   }
 }
 
-export function withCodexState<T>(statePath: string, read: (db: Database) => T): T {
+export function withCodexState<T>(
+  statePath: string,
+  read: (db: Database) => T,
+  busyTimeoutMs = BUSY_TIMEOUT_MS
+): T {
   try {
-    return readCodexStateOnce(statePath, read);
+    return readCodexStateOnce(statePath, read, busyTimeoutMs);
   } catch (error) {
     if (!/unable to open database file|readonly database/.test(String(error))) throw error;
-    return readCodexStateOnce(`file:${encodeURI(statePath)}?immutable=1`, read);
+    return readCodexStateOnce(`file:${encodeURI(statePath)}?immutable=1`, read, busyTimeoutMs);
   }
 }
 

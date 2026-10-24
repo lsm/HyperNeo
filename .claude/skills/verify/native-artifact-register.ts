@@ -109,11 +109,47 @@ try {
     const customInput = { ...input, requestId: 'custom-home' };
     const custom = await createArtifactRegistration(() => customDb, join(root, 'data'), customHome).execute(customInput, owner) as { accepted: boolean; artifact: ArtifactRef };
     assert.equal(custom.accepted, true);
-    const customGet = createArtifactReadOperations(() => customDb, join(root, 'data'), undefined, customHome).find((op) => op.name === 'artifact.file.get')!;
+    const customGet = createArtifactReadOperations(() => customDb, join(root, 'data')).find((op) => op.name === 'artifact.file.get')!;
     assert.equal((await customGet.execute({ artifactId: custom.artifact.artifactId }, owner) as { accepted: boolean }).accepted, true, 'custom-home authorization must use the registration native state');
-    assert.deepEqual(createArtifactRefReader(() => customDb, customHome)(custom.artifact.artifactId, owner), custom.artifact);
+    assert.deepEqual(createArtifactRefReader(() => customDb)(custom.artifact.artifactId, owner), custom.artifact);
     const sources = new ArtifactReferenceSourceRepository(customDb, custom.artifact.daemonId, customHome);
     assert.equal(sources.load({ kind: 'todo', id: context.id })?.bindings[0]?.workspacePath, join(root, 'workspace'));
+    const largeText = 'Synthetic retained log line\n'.repeat(24000);
+    await writeFile(join(root, 'workspace', 'large.log'), largeText);
+    const largeInput = { ...customInput, requestId: 'locked-preview', path: 'large.log' };
+    const capture = createArtifactRegistration(() => customDb, join(root, 'data'), customHome);
+    const large = await capture.execute(largeInput, owner) as { accepted: boolean; artifact: ArtifactRef };
+    assert.equal(large.accepted, true);
+    native.exec('BEGIN EXCLUSIVE');
+    try {
+      assert.equal((await customGet.execute({ artifactId: custom.artifact.artifactId }, owner) as { accepted: boolean }).accepted, true, 'snapshot ownership must not reopen the locked native state');
+      const reads = createArtifactReadOperations(() => customDb, join(root, 'data'));
+      const read = reads.find((op) => op.name === 'artifact.file.read')!;
+      let offset = 0;
+      let chunks = 0;
+      do {
+        const part = await read.execute({ artifactId: large.artifact.artifactId, offset, maxBytes: 256 * 1024 }, owner) as { accepted: boolean; data: string; complete: boolean; nextOffset: number };
+        assert.equal(part.accepted, true);
+        assert.equal(Buffer.from(part.data, 'base64').toString(), largeText.slice(offset, part.nextOffset));
+        offset = part.nextOffset;
+        chunks++;
+        if (part.complete) break;
+      } while (offset < Buffer.byteLength(largeText));
+      assert(chunks > 1);
+      assert.equal(offset, Buffer.byteLength(largeText));
+      assert(createArtifactRefReader(() => customDb)(large.artifact.artifactId, owner));
+      const start = performance.now();
+      assert.deepEqual(await capture.execute({ ...customInput, requestId: 'locked-new-capture' }, owner), { accepted: false, reason: 'unavailable' });
+      evidence.captureLockRefusalMs = performance.now() - start;
+      assert(Number(evidence.captureLockRefusalMs) < 1000, 'capture must not wait for the native writer');
+      customDb.prepare('UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = ?').run(JSON.stringify({ adapter: 'codex-desktop', id: 'revoked' }), context.id);
+      assert.deepEqual(await customGet.execute({ artifactId: large.artifact.artifactId }, owner), { accepted: false, reason: 'unavailable' });
+      evidence.snapshotReadsUnderNativeLock = true;
+      evidence.revocationUnderNativeLock = true;
+    } finally {
+      native.exec('ROLLBACK');
+      customDb.prepare('UPDATE neo_todo_sessions SET ref = ? WHERE todo_id = ?').run(JSON.stringify({ adapter: 'codex-desktop', id: 'custom-worker' }), context.id);
+    }
     const bytes = Buffer.from('# Synthetic pinned blob\n');
     const captured = await captureGitArtifact(customDb, join(root, 'data'), { repository: 'synthetic/repo', sha: 'a'.repeat(40), path: 'custom.md', context: { kind: 'todo', id: context.id } }, 'custom-home-git', async () => true, async () => ({ accepted: true, bytes, sha256: createHash('sha256').update(bytes).digest('hex'), blobSha: 'b'.repeat(40) }), customHome) as { accepted: boolean };
     assert.equal(captured.accepted, true, 'Git authorization must use the same configured home');
