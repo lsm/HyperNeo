@@ -45,6 +45,7 @@ db.prepare('UPDATE threads SET rollout_path = ?').run(rollout);
 db.close();
 let owner = 'missing';
 let ownerReadyAt = 0;
+let openedReadyAt = 0;
 let active = true;
 let loaded = true;
 let resumeError = '';
@@ -69,7 +70,20 @@ const desktop = createServer((socket) => {
       calls.push({ desktop: request.method, version: request.version, params: request.params });
       if(owner==='delayed' && Date.now()>=ownerReadyAt)owner='owned';
       if(request.method==='thread-owner-discovery' && owner==='missing' && !existsSync(refuseOpen)
-        && existsSync(openLog) && readFileSync(openLog,'utf8').includes('codex://threads/synthetic')) owner='owned';
+        && existsSync(openLog) && readFileSync(openLog,'utf8').includes('codex://threads/synthetic')) {
+        if(!openedReadyAt)openedReadyAt=Date.now()+400;
+        if(Date.now()>=openedReadyAt)owner='owned';
+      }
+      if(request.method==='thread-owner-discovery' && owner==='missing' && request.params?.conversationId==='synthetic'
+        ){
+        const timer=setTimeout(()=>{
+          if(socket.destroyed)return;
+          const body=Buffer.from(JSON.stringify({type:'response',requestId:request.requestId,resultType:'error',error:'no-client-found'}));
+          const header=Buffer.alloc(4);header.writeUInt32LE(body.length);socket.write(Buffer.concat([header,body]));
+        },10_000);
+        socket.once('close',()=>clearTimeout(timer));
+        continue;
+      }
       const response = request.method === 'initialize' ? { resultType: 'success', result: { clientId: 'synthetic-client' } }
         : request.method === 'thread-owner-discovery' ? (owner === 'owned' || request.params?.conversationId === 'new-handoff-control') ? { resultType: 'success', handledByClientId: 'fixture-owner' } : { resultType: 'error', error: (owner === 'missing' || owner === 'delayed') ? 'no-client-found' : 'request-version-mismatch' }
         : request.method === 'thread-follower-start-turn' ? startError ? { resultType: 'error', error: 'start unavailable' } : { resultType: 'success', result: { result: { turn: { id: 'desktop-started' } } } }
@@ -129,8 +143,12 @@ try {
     return request.desktop === 'thread-follower-start-turn' && request.params?.conversationId === 'new-handoff-control';
   }), 'New-thread control must open and hand off its first turn');
   const ownerlessBefore=calls.length;
+  const ownerlessStarted=performance.now();
   const ownerless=await send();
+  timings.push({ delayedNegativeOwnerDeliveryMs: performance.now()-ownerlessStarted, nativeNegativeDelayMs: 10_000, asynchronousOpenReadyMs: 400 });
+  assert.equal(ownerless.ok,true,JSON.stringify(ownerless));
   assert.equal(ownerless.value.steeredIntoTurnId,'desktop-active');
+  assert(performance.now()-ownerlessStarted<3_000,'Slow negative discovery must leave time to open and deliver');
   assert(!calls.slice(ownerlessBefore).some(call=>(call as {server?:string}).server==='thread/resume'));
   const desktopQueueBefore=calls.length;
   const desktopQueued=await send('queue');

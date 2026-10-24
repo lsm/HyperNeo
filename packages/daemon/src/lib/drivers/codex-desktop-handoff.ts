@@ -37,6 +37,23 @@ async function codexDesktopRunning(spawn: SpawnFn, platform = process.platform):
   }
 }
 
+function discoverCodexDesktopOwner({ call }: CodexDesktopIpc, threadId: string) {
+  return call(
+    'thread-owner-discovery',
+    { hostId: 'local', conversationId: threadId },
+    1,
+    undefined,
+    1_000
+  ).catch((error: unknown) => {
+    if (
+      error instanceof Error &&
+      error.message === 'Codex Desktop thread-owner-discovery timed out.'
+    )
+      return undefined;
+    throw error;
+  });
+}
+
 async function openCodexDesktopOwner(
   { call }: CodexDesktopIpc,
   spawn: SpawnFn,
@@ -65,14 +82,14 @@ async function openCodexDesktopOwner(
     clearTimeout(timer);
     if (code !== 0) throw new Error(stderr.trim() || 'Could not open the thread in Codex Desktop.');
     do {
-      const discovered = await call(
-        'thread-owner-discovery',
-        { hostId: 'local', conversationId: threadId },
-        1
-      );
-      if (discovered.resultType === 'success' && discovered.handledByClientId)
+      const discovered = await discoverCodexDesktopOwner({ call }, threadId);
+      if (discovered?.resultType === 'success' && discovered.handledByClientId)
         return discovered.handledByClientId;
-      if (discovered.resultType !== 'success' && discovered.error !== 'no-client-found')
+      if (
+        discovered &&
+        discovered.resultType !== 'success' &&
+        discovered.error !== 'no-client-found'
+      )
         throw new Error(discovered.error ?? 'Codex Desktop ownership discovery failed.');
       await new Promise((resolve) =>
         setTimeout(resolve, Math.min(200, Math.max(0, deadline - Date.now())))
@@ -132,20 +149,16 @@ export async function steerCodexDesktopTurn(
   let dispatched = false;
   try {
     const admit = async ({ call }: CodexDesktopIpc): Promise<CodexSendGate<'app-server'>> => {
-      let owner = await call(
-        'thread-owner-discovery',
-        { hostId: 'local', conversationId: threadId },
-        1
-      );
+      let owner = await discoverCodexDesktopOwner({ call }, threadId);
       log.warn('work.send owner discovery', {
         threadId,
         messageId,
-        result: owner.resultType,
-        ownerClientId: owner.handledByClientId,
-        reason: owner.error,
+        result: owner?.resultType ?? 'pending',
+        ownerClientId: owner?.handledByClientId,
+        reason: owner?.error,
       });
-      if (owner.resultType !== 'success' || !owner.handledByClientId) {
-        if (owner.error !== 'no-client-found')
+      if (owner?.resultType !== 'success' || !owner.handledByClientId) {
+        if (owner && owner.error !== 'no-client-found')
           throw new Error(owner.error ?? 'Codex Desktop did not confirm an owner.');
         owner = {
           resultType: 'success',

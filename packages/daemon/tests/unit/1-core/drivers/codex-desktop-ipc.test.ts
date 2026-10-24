@@ -149,6 +149,46 @@ describe('withCodexDesktopIpc', () => {
       }
     );
 
+    test('opens while negative owner discovery is pending and waits for asynchronous ownership', async () => {
+      let opened = false;
+      let readyAt = Infinity;
+      const f = await fixture((message, _socket, send) => {
+        if (message.method === 'thread-owner-discovery' && Date.now() < readyAt) return;
+        send({
+          type: 'response',
+          requestId: message.requestId,
+          resultType: 'success',
+          handledByClientId: 'desktop-owner',
+          result: { result: { turnId: 'desktop-turn' } },
+        });
+      });
+      const started = performance.now();
+      const result = await steerCodexDesktopTurn(
+        f.path,
+        () => {
+          opened = true;
+          readyAt = Date.now() + 400;
+          return {
+            stdout: null,
+            stderr: null,
+            exited: Promise.resolve(0),
+            exitCode: 0,
+            kill: () => {},
+          };
+        },
+        'thread-1',
+        'marker',
+        'input-1',
+        'auto',
+        async () => true
+      );
+      expect(result).toMatchObject({
+        reason: { ok: true, value: { delivered: true, steeredIntoTurnId: 'desktop-turn' } },
+      });
+      expect(opened).toBe(true);
+      expect(performance.now() - started).toBeLessThan(3_000);
+    }, 10_000);
+
     test('refuses within eight seconds when Desktop never acquires the thread', async () => {
       const started = performance.now();
       const f = await fixture((message, _socket, send) =>
