@@ -333,6 +333,7 @@ describe('Neo MVP', () => {
       'pack.preferences.get',
       'pack.preferences.list',
       'neo.todo.add',
+      'neo.todo.bind',
       'neo.todo.edit',
       'neo.todo.remove',
       'neo.todo.continue',
