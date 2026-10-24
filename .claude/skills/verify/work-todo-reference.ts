@@ -54,6 +54,8 @@ try {
   }
   const start = await call('work.start', { adapter: 'hyperneo', place: { machine: 'fixture', folder: join(run, 'workspace'), name: 'Synthetic' }, title: 'Synthetic new work', message: 'Synthetic work' });
   const followUp = await call('work.send', { ref, message: 'More context for the existing todo', todoId: 'open-todo' });
+  const runner = await call('neo.todo.add', { askId: 'open', title: 'Synthetic runner work', doneWhen: 'Tracked dispatch', instruction: 'Synthetic opening task', target: { verb: 'send', ref }, start: true });
+  const continued = await call('neo.todo.continue', { todoId: runner.todo?.id, message: 'Additional synthetic context' });
   const internal = await invokeOperation(registry, 'work.send', { ref, message: 'Trusted daemon notification' }, { ...caller, source: 'internal' });
   evidence.receipts = receipts;
   evidence.internal = internal;
@@ -62,6 +64,8 @@ try {
   assert(failures.every(result => result.ok === false && result.reason === 'todo_required'), 'Neo MCP work without an open-ask todo must be refused');
   assert.equal(start.reason, 'todo_required');
   assert.equal(followUp.ok, true, JSON.stringify(followUp));
+  assert.equal(runner.todo?.state, 'doing', JSON.stringify(runner));
+  assert.equal(continued.ok, true, JSON.stringify(continued));
   assert.equal(internal.kind, 'completed');
   assert(internal.kind === 'completed' && (internal.value as { ok: boolean }).ok);
   evidence.passed = true;

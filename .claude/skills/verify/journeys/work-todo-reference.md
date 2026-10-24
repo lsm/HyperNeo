@@ -13,7 +13,8 @@ follow-up naming an open-ask todo, and trusted internal daemon dispatch remains
 accepted without a todo reference. Retain evidence/result.json and the daemon
 log; the baseline accepts untracked sends and this helper fails.
 
-Also run the existing dispatch-evidence.ts journey in its own fresh isolated
-environment. Its actual todo runner, synthetic Codex peer and CLI inbox must
-still accept opening work and follow-ups across restart. This proves operation
-admission and durable transport acceptance, not provider/model receipt.
+The same helper invokes neo.todo.add with start:true and neo.todo.continue through
+the production MCP door. Its actual todo runner must create a doing todo and
+accept the follow-up through the local worker adapter without an explicit todoId
+on its internal work call. This proves operation admission and durable transport
+acceptance, not provider/model receipt or external Desktop harness behavior.

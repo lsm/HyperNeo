@@ -76,6 +76,7 @@ async function call(
       adapters: () => adapters,
       remote: { list: () => [{ daemonId: 'laptop' }], invoke },
       daemonName: 'imac',
+      isOpenTodo: (todoId) => todoId === 'open-todo',
     })
   );
   const outcome = await invokeOperation(registry, name, input, caller);
@@ -712,7 +713,11 @@ describe('work verb operations', () => {
     const forwarded: unknown[] = [];
     await call(
       'work.send',
-      { ref: { adapter: 'hyperneo', daemon: 'laptop', id: 's9' }, message: 'hi' },
+      {
+        ref: { adapter: 'hyperneo', daemon: 'laptop', id: 's9' },
+        message: 'hi',
+        todoId: 'open-todo',
+      },
       async (_daemonId, _name, input) => {
         forwarded.push(input);
         return { ok: true, value: { delivered: true } };

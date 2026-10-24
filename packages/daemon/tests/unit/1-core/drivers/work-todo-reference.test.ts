@@ -77,6 +77,17 @@ describe('Neo work todo reference', () => {
       }
     });
 
+    test(`${name} also requires the todo on a Neo RPC call`, async () => {
+      const { registry, delivered } = fixture();
+      expect(await invokeOperation(registry, name, input, { ...neo, source: 'rpc' })).toMatchObject(
+        {
+          kind: 'completed',
+          value: { ok: false, reason: 'todo_required' },
+        }
+      );
+      expect(delivered).toEqual([]);
+    });
+
     test(`${name} accepts an open-ask reference and trusted internal dispatch`, async () => {
       const { registry, delivered } = fixture();
       for (const [caller, request] of [
